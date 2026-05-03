@@ -58,6 +58,15 @@ while :; do
         continue
     fi
 
+    # Append the shipping addendum so the agent commits, pushes, and opens
+    # the PR autonomously.
+    ADDENDUM_FILE="$REPO_ROOT/scripts/dispatch-addendum.md"
+    if [ -f "$ADDENDUM_FILE" ]; then
+        TASK_BRIEF="$(printf '%s\n\n%s' "$TASK_BRIEF" "$(cat "$ADDENDUM_FILE")")"
+    else
+        echo "ralph[$WORKTREE_NAME]: warning: $ADDENDUM_FILE missing; running without ship-it instructions" >&2
+    fi
+
     TS="$(date -u +%Y%m%dT%H%M%SZ)"
     LOG_FILE="$LOG_DIR/${TS}-${WORKTREE_NAME}-${TASK_ID}.json"
 
@@ -73,9 +82,23 @@ while :; do
     if claude --model "$MODEL" \
               --print "$TASK_BRIEF" \
               --output-format json > "$LOG_FILE" 2>&1; then
-        bash scripts/finalize-task.sh "$WORKTREE_NAME" "$TASK_ID" "ok"
+        # Don't mark DONE. The DONE flip is the human's call after the PR
+        # merges, via `pnpm finalize <wt> <id> ok`. Leave the task CLAIMED.
+        echo ""
+        echo "ralph[$WORKTREE_NAME]: $TASK_ID ready for review (queue stays CLAIMED:$WORKTREE_NAME: until merge)"
+        PR_URL="$(grep -oE 'https://github\.com/[^[:space:]"\\]+/pull/[0-9]+' "$LOG_FILE" 2>/dev/null | head -n1 || true)"
+        if [ -n "$PR_URL" ]; then
+            echo "ralph[$WORKTREE_NAME]: PR -> $PR_URL"
+        else
+            echo "ralph[$WORKTREE_NAME]: no PR URL found in transcript; check the log or the worktree" >&2
+        fi
+        echo "ralph[$WORKTREE_NAME]: after the PR merges, run: pnpm finalize $WORKTREE_NAME $TASK_ID ok"
     else
         bash scripts/finalize-task.sh "$WORKTREE_NAME" "$TASK_ID" "fail" \
             "claude exited non-zero (see $LOG_FILE)"
+        echo "ralph[$WORKTREE_NAME]: $TASK_ID returned to queue (see $LOG_FILE)" >&2
     fi
+    # Either way, this worktree is now on a feature branch, not main.
+    # Looping again would commit the next task on the wrong branch, so exit.
+    break
 done

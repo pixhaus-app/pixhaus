@@ -86,6 +86,17 @@ if ($claimedId -ne $TaskId) {
     exit 1
 }
 
+# Append the shipping addendum so the agent commits, pushes, and opens the
+# PR autonomously instead of stopping at "should I commit?".
+$addendumFile = Join-Path $repoRoot 'scripts/dispatch-addendum.md'
+if (Test-Path -LiteralPath $addendumFile -PathType Leaf) {
+    $addendum = [System.IO.File]::ReadAllText($addendumFile, $utf8)
+    $taskBrief = "$taskBrief`n`n$addendum"
+}
+else {
+    [Console]::Error.WriteLine("dispatch: warning: $addendumFile missing; running without ship-it instructions")
+}
+
 # Prepare the log file in the main repo (not the worktree).
 $logDir = Join-Path $repoRoot 'logs/dispatch'
 New-Item -ItemType Directory -Path $logDir -Force | Out-Null
@@ -110,8 +121,22 @@ $claudeRc = $LASTEXITCODE
 Set-Location -LiteralPath $repoRoot
 
 if ($claudeRc -eq 0) {
-    & node $runMjs finalize-task $Worktree $TaskId 'ok'
-    Write-Output "dispatch: $TaskId finalized ok"
+    # Don't mark DONE yet. The DONE flip is the human's call after the PR
+    # merges, via `pnpm finalize <wt> <id> ok`.
+    Write-Output ''
+    Write-Output "dispatch: $TaskId ready for review (queue stays CLAIMED:${Worktree}: until merge)"
+    $logContent = ''
+    if (Test-Path -LiteralPath $logFile -PathType Leaf) {
+        $logContent = [System.IO.File]::ReadAllText($logFile, $utf8)
+    }
+    $prMatch = [regex]::Match($logContent, 'https://github\.com/[^\s"\\]+/pull/[0-9]+')
+    if ($prMatch.Success) {
+        Write-Output "dispatch: PR -> $($prMatch.Value)"
+    }
+    else {
+        [Console]::Error.WriteLine('dispatch: no PR URL found in transcript; check the log or the worktree manually')
+    }
+    Write-Output "dispatch: after the PR merges, run: pnpm finalize $Worktree $TaskId ok"
 }
 else {
     $reason = "claude exited non-zero (see $logFile)"
