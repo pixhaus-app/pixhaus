@@ -28,6 +28,11 @@ jobs:
     steps:
       - uses: actions/checkout@v6
 
+      - name: Stub ui/dist for tauri::generate_context!
+        run: |
+          mkdir -p ui/dist
+          printf '<!doctype html><title>stub</title>' > ui/dist/index.html
+
       - name: Install Tauri Linux deps
         if: runner.os == 'Linux'
         run: |
