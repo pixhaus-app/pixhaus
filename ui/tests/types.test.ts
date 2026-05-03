@@ -1,20 +1,18 @@
 import { describe, expect, it } from "vitest";
 
 import sample from "./fixtures/sample-project.json" with { type: "json" };
-import type {
-  CelData,
-  LayerKind,
-  Project,
-  SelectionRegion,
-  TilesetSource,
-} from "../src/lib/types";
+import type { CelData, LayerKind, Project, SelectionRegion, TilesetSource } from "../src/lib/types";
 
 // The fixture is written by `cargo test -p pixhaus-core --test round_trip`.
-// Re-running the Rust test suite refreshes the file. The cast below is the
-// whole point: TypeScript verifies at compile time that the JSON shape
-// matches the Rust-generated `Project` type. The runtime assertions then
-// pin the field values so a silent serde rename (or a missing
-// `skip_serializing_if`) breaks the test rather than the data model.
+// Re-running the Rust test suite refreshes the file.
+//
+// JSON imports widen string literals to `string` (e.g. `color_mode: "rgba"`
+// becomes `string`, not the `ColorMode` union), so a direct typed binding
+// fails to compile even when the shapes do match. The cast bridges that
+// JSON-import limitation; the round-trip Rust test guarantees the file's
+// shape, and the runtime assertions below pin every literal-typed
+// discriminator (layer kinds, blend modes, region kinds, schema version)
+// so a serde rename or missing field surfaces as a test failure.
 const project = sample as unknown as Project;
 
 describe("Project fixture mirrors the Rust data model", () => {
@@ -74,10 +72,7 @@ describe("Project fixture mirrors the Rust data model", () => {
   });
 
   it("represents rectangular selections with a kind tag", () => {
-    const region = project.selection.region as Extract<
-      SelectionRegion,
-      { kind: "rect" }
-    >;
+    const region = project.selection.region as Extract<SelectionRegion, { kind: "rect" }>;
     expect(region.kind).toBe("rect");
     expect(region.bounds).toEqual({
       origin: { x: 4, y: 4 },

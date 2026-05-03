@@ -6,7 +6,8 @@
  * The data model does not own pixel bytes; it references them by
  * this ID. Resolution is the responsibility of whichever subsystem
  * owns the buffer registry (loader, undo stack, render compositor).
- * Using `u64` leaves room for buffers that outlive a single
- * project session without ID reuse.
+ * `u32` matches the other IDs in this module and the TS-side
+ * `number` mirror; the 4-billion-buffer headroom is more than any
+ * realistic editing session will mint.
  */
 export type PixelBufferId = number;

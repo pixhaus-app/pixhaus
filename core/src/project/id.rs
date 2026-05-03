@@ -107,9 +107,10 @@ id_newtype! {
     /// The data model does not own pixel bytes; it references them by
     /// this ID. Resolution is the responsibility of whichever subsystem
     /// owns the buffer registry (loader, undo stack, render compositor).
-    /// Using `u64` leaves room for buffers that outlive a single
-    /// project session without ID reuse.
-    PixelBufferId, u64
+    /// `u32` matches the other IDs in this module and the TS-side
+    /// `number` mirror; the 4-billion-buffer headroom is more than any
+    /// realistic editing session will mint.
+    PixelBufferId, u32
 }
 
 id_newtype! {
@@ -151,10 +152,10 @@ mod tests {
     }
 
     #[test]
-    fn pixel_buffer_id_is_u64() {
-        let id = PixelBufferId::new(u64::MAX);
+    fn pixel_buffer_id_is_u32() {
+        let id = PixelBufferId::new(u32::MAX);
         let bytes = rmp_serde::to_vec_named(&id).unwrap();
         let back: PixelBufferId = rmp_serde::from_slice(&bytes).unwrap();
-        assert_eq!(back.get(), u64::MAX);
+        assert_eq!(back.get(), u32::MAX);
     }
 }

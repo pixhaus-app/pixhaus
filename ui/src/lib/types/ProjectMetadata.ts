@@ -23,12 +23,16 @@ description?: string | null,
 author?: string | null, 
 /**
  * UTC seconds-since-epoch at which the project was first created.
+ * `i64` on the Rust side keeps the full range; the TS mirror is
+ * pinned to `number` because serde_json writes plain JSON numbers
+ * and seconds-since-epoch fits in `Number.MAX_SAFE_INTEGER` for
+ * any realistic timestamp.
  */
-created_at: bigint, 
+created_at: number, 
 /**
  * UTC seconds-since-epoch of the most recent save.
  */
-updated_at: bigint, 
+updated_at: number, 
 /**
  * Pixhaus build that wrote this file (e.g. `"0.1.0"`). Cosmetic
  * — version-gating happens via [`SchemaVersion`], not this field.

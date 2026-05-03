@@ -71,7 +71,7 @@ use ts_rs::TS;
 /// All strings are user-facing; keep them short. Timestamps are
 /// stored as UTC seconds-since-epoch so they round-trip without
 /// timezone ambiguity.
-#[derive(Clone, Debug, Default, Eq, PartialEq, Serialize, Deserialize, TS)]
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize, TS)]
 #[ts(export)]
 pub struct ProjectMetadata {
     /// Display name shown in the title bar and project tree.
@@ -83,8 +83,14 @@ pub struct ProjectMetadata {
     #[serde(skip_serializing_if = "Option::is_none", default)]
     pub author: Option<String>,
     /// UTC seconds-since-epoch at which the project was first created.
+    /// `i64` on the Rust side keeps the full range; the TS mirror is
+    /// pinned to `number` because `serde_json` writes plain JSON numbers
+    /// and seconds-since-epoch fits in `Number.MAX_SAFE_INTEGER` for
+    /// any realistic timestamp.
+    #[ts(type = "number")]
     pub created_at: i64,
     /// UTC seconds-since-epoch of the most recent save.
+    #[ts(type = "number")]
     pub updated_at: i64,
     /// Pixhaus build that wrote this file (e.g. `"0.1.0"`). Cosmetic
     /// — version-gating happens via [`SchemaVersion`], not this field.

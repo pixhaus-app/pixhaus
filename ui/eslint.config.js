@@ -4,7 +4,7 @@ import solid from "eslint-plugin-solid/configs/typescript";
 
 export default [
   {
-    files: ["src/**/*.{ts,tsx}"],
+    files: ["src/**/*.{ts,tsx}", "tests/**/*.{ts,tsx}"],
     languageOptions: {
       parser: tsparser,
       parserOptions: {
