@@ -1,0 +1,13 @@
+# typos config. https://github.com/crate-ci/typos
+#
+# docs/planning/ is imported reference material from the SpriteMaster
+# workspace. It contains many proper nouns (Canva, UE) and abbreviations
+# typos can't classify, plus quoted typo examples in articles about
+# spell-checking. Excluded wholesale; if those docs ever become live
+# specs we maintain, lift the exclusion and address the warnings
+# individually.
+
+[files]
+extend-exclude = [
+    "docs/planning/**",
+]

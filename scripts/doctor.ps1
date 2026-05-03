@@ -171,19 +171,21 @@ else {
 # ---- Anthropic ----
 Section 'Anthropic'
 
-# Never print the value, only whether it is set.
-if ($env:ANTHROPIC_API_KEY) {
-    Pass 'ANTHROPIC_API_KEY set'
-}
-else {
-    Fail 'ANTHROPIC_API_KEY' '$env:ANTHROPIC_API_KEY = "..." before running ralph or dispatch'
-}
-
+# Pixhaus uses Claude Code via subscription (Pro/Max). The claude CLI handles
+# auth itself via OAuth login; ANTHROPIC_API_KEY is only needed for direct
+# API mode. Don't print its value if set.
 if (Has-Command 'claude') {
     Pass 'claude CLI'
 }
 else {
     Fail 'claude CLI' 'install Claude Code; see https://claude.com/claude-code'
+}
+
+if ($env:ANTHROPIC_API_KEY) {
+    Pass 'ANTHROPIC_API_KEY set (API mode)'
+}
+else {
+    Pass 'ANTHROPIC_API_KEY not set (subscription mode; claude CLI handles auth)'
 }
 
 # ---- Repo state ----

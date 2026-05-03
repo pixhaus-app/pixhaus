@@ -142,17 +142,19 @@ fi
 # ---- Anthropic ----
 section "Anthropic"
 
-# Don't print the value, only whether it's set.
-if [ -n "${ANTHROPIC_API_KEY:-}" ]; then
-    pass "ANTHROPIC_API_KEY set"
-else
-    fail "ANTHROPIC_API_KEY" "export ANTHROPIC_API_KEY=... before running ralph or dispatch"
-fi
-
+# Pixhaus uses Claude Code via subscription (Pro/Max). The claude CLI handles
+# auth itself via OAuth login; ANTHROPIC_API_KEY is only needed for direct
+# API mode. Don't print its value if set.
 if command -v claude >/dev/null 2>&1; then
     pass "claude CLI"
 else
     fail "claude CLI" "install Claude Code; see https://claude.com/claude-code"
+fi
+
+if [ -n "${ANTHROPIC_API_KEY:-}" ]; then
+    pass "ANTHROPIC_API_KEY set (API mode)"
+else
+    pass "ANTHROPIC_API_KEY not set (subscription mode; claude CLI handles auth)"
 fi
 
 # ---- Repo state ----

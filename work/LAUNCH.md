@@ -43,13 +43,17 @@ pnpm run doctor    # PASS/WARN/FAIL report on toolchain, env vars, gh auth,
 `bootstrap` is safe to re-run. `doctor` is read-only. Both work on Windows
 (PowerShell) and *nix.
 
-The doctor report lists what to fix if anything's red. Two things doctor
-can't fix automatically:
+The doctor report lists what to fix if anything's red. Pixhaus uses
+Claude Code via subscription (Pro/Max), not direct API — the `claude`
+CLI handles auth via its own OAuth login, so `ANTHROPIC_API_KEY` is
+not required. Doctor reports it informationally either way.
 
-- `ANTHROPIC_API_KEY` — export it in the shell that will run dispatch /
-  ralph. Doctor checks for presence, not value.
-- `gh auth status` — `gh auth login` (interactive); needed for the ralph
-  loop to open PRs.
+Two things doctor can't fix automatically:
+
+- `claude` not logged in — run `claude` once interactively to complete
+  the subscription login flow.
+- `gh auth status` — `gh auth login` (interactive); needed for the
+  ralph loop to open PRs.
 
 ## First dispatch
 
