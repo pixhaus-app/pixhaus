@@ -5,7 +5,8 @@
 //! and no UI; downstream crates compose it into a working editor.
 //!
 //! Features land per the streams in `docs/planning/work/streams.md` (S01 onwards).
-//! The bedrock data model is specified in `docs/planning/work/bedrock.md` (B2).
+//! The bedrock data model is specified in `docs/planning/work/bedrock.md` (B2) and
+//! lives in [`project`].
 
 #![cfg_attr(
     test,
@@ -13,11 +14,25 @@
         clippy::unwrap_used,
         clippy::expect_used,
         clippy::panic,
-        clippy::missing_panics_doc
+        clippy::missing_panics_doc,
+        // The workspace-wide clippy.toml disallows std `unwrap`/`expect`
+        // via the `disallowed_methods` lint; tests get the same exemption
+        // as `unwrap_used`/`expect_used` so they may panic on failure
+        // rather than thread `Result` through an assert.
+        clippy::disallowed_methods,
     )
 )]
+// The `ts-rs` derive macro emits an internal `_ts_rs_export()` test that
+// calls `.expect()` on `std::fs` results. Since the generated code is
+// always behind `#[cfg(test)]`, allowing the lint at crate root only
+// affects test compilation.
+#![cfg_attr(test, allow(clippy::missing_const_for_fn))]
 
-/// Returns the crate name. Placeholder until the data model lands (B2).
+pub mod fixtures;
+pub mod project;
+
+/// Returns the crate name. Stable, public marker that downstream crates
+/// can use as a sanity check after a workspace-wide upgrade.
 #[must_use]
 pub fn crate_name() -> &'static str {
     "pixhaus-core"

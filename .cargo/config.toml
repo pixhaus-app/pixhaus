@@ -1,0 +1,10 @@
+# Workspace-wide cargo configuration. Lives at the workspace root so it
+# applies whether `cargo` is run from the workspace or from any member crate.
+
+[env]
+# Where ts-rs writes generated TypeScript bindings during `cargo test`.
+# Resolved relative to this file's parent (the workspace root) thanks to
+# `relative = true`. Setting this here lets every Rust type that derives
+# `TS` declare `#[ts(export)]` without spelling out a per-type path back
+# into the UI workspace.
+TS_RS_EXPORT_DIR = { value = "ui/src/lib/types", relative = true, force = true }

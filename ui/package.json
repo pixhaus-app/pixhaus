@@ -8,10 +8,10 @@
     "build": "tsc --noEmit && vite build",
     "preview": "vite preview --port 1420 --strictPort",
     "typecheck": "tsc --noEmit",
-    "lint": "eslint \"src/**/*.{ts,tsx}\"",
-    "lint:fix": "eslint \"src/**/*.{ts,tsx}\" --fix",
-    "format": "prettier --write \"src/**/*.{ts,tsx,css,json}\"",
-    "format:check": "prettier --check \"src/**/*.{ts,tsx,css,json}\"",
+    "lint": "eslint \"{src,tests}/**/*.{ts,tsx}\"",
+    "lint:fix": "eslint \"{src,tests}/**/*.{ts,tsx}\" --fix",
+    "format": "prettier --write \"{src,tests}/**/*.{ts,tsx,css,json}\"",
+    "format:check": "prettier --check \"{src,tests}/**/*.{ts,tsx,css,json}\"",
     "test": "vitest run"
   },
   "dependencies": {
