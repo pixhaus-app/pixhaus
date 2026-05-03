@@ -11,9 +11,12 @@ description = "Pixhaus core: pixel buffers, layers, frames, blend modes, undo"
 [dependencies]
 serde.workspace = true
 thiserror.workspace = true
+ts-rs.workspace = true
 
 [dev-dependencies]
 anyhow.workspace = true
+rmp-serde.workspace = true
+serde_json.workspace = true
 
 [lints]
 workspace = true
