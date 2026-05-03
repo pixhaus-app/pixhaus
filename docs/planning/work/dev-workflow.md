@@ -85,14 +85,14 @@ git worktree add ../pixhaus-worktrees/stream-s07 -b feat/s07-pixhaus-format
 # ...one per concurrent stream
 ```
 
-Each worktree gets its own ralph loop:
+Each worktree gets its own ralph loop. On Windows, swap `bash scripts/ralph.sh` for `node scripts/run.mjs ralph` (or `pwsh -File scripts/ralph.ps1`) — same flag, same behavior:
 
 ```bash
 # Terminal 1
-./scripts/ralph.sh stream-s01
+node scripts/run.mjs ralph stream-s01
 
 # Terminal 2
-./scripts/ralph.sh stream-s02
+node scripts/run.mjs ralph stream-s02
 
 # etc.
 ```
@@ -116,7 +116,7 @@ Claude Code runs hooks on tool events (defined in `.claude/settings.json`). For 
         "hooks": [
           {
             "type": "command",
-            "command": "scripts/post-edit.sh"
+            "command": "node scripts/run.mjs post-edit"
           }
         ]
       }
@@ -125,7 +125,15 @@ Claude Code runs hooks on tool events (defined in `.claude/settings.json`). For 
 }
 ```
 
-`scripts/post-edit.sh`:
+### Cross-platform dispatch
+
+Every hook script in `scripts/` ships in two forms: `<name>.sh` for *nix and `<name>.ps1` for Windows PowerShell. A small Node dispatcher (`scripts/run.mjs`) picks the right one at invocation time using `process.platform`. Node is already required for the UI workspace, so this adds no runtime dependency.
+
+The same pattern wires `.githooks/pre-commit` — that file is a tiny shim (`exec node "$(dirname "$0")/../scripts/run.mjs" pre-commit "$@"`) that git on any OS can execute. Git for Windows still launches it via Git Bash, but the dispatcher then picks `pre-commit.ps1` so the actual checks run in native PowerShell.
+
+When you add a new hook script: write both `.sh` and `.ps1`, give them the same behavior, and invoke them through `node scripts/run.mjs <name>`.
+
+`scripts/post-edit.sh` (the `.ps1` mirror lives next to it):
 
 ```bash
 #!/usr/bin/env bash
@@ -263,9 +271,9 @@ Before B1 runs:
 - [ ] `bacon` installed for background watching
 - [ ] `cargo-nextest`, `cargo-deny`, `cargo-audit`, `cargo-machete`, `cargo-watch`, `typos` installed
 - [ ] `.claude/settings.json` configured with hooks
-- [ ] `scripts/ralph.sh` and helper scripts in place
+- [ ] `scripts/ralph.{sh,ps1}` and helper scripts (with their `.ps1` siblings) in place; `scripts/run.mjs` dispatcher reachable via `node`
 - [ ] `work/queue.md` populated with the first batch of tasks (B1, B8 to start)
 - [ ] First worktree set up (or template documented)
 - [ ] Personal review cadence agreed with yourself
 
-That's the minimum viable launchpad. Once it's all in place, run `./scripts/ralph.sh main` and watch B1 land.
+That's the minimum viable launchpad. Once it's all in place, run `node scripts/run.mjs ralph main` and watch B1 land.

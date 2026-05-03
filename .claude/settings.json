@@ -7,7 +7,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "bash scripts/post-edit.sh"
+            "command": "node scripts/run.mjs post-edit"
           }
         ]
       }

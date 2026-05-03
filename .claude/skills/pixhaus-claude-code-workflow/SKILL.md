@@ -17,7 +17,7 @@ is locked, and your job is to implement against it.
 Steps for a typical task:
 
 1. Pull from `main`. Confirm the queue lists the task as unclaimed.
-2. Claim the task by editing `work/queue.md` (or via `scripts/claim-next-task.sh`).
+2. Claim the task by editing `work/queue.md` (or via `node scripts/run.mjs claim-next-task <worktree>`).
 3. Read the brief in `docs/planning/work/bedrock.md` or `docs/planning/work/streams.md`.
 4. Branch: `git switch -c feat/sNN-<slug>` or `feat/bN-<slug>`.
 5. Implement. The post-edit hook formats and type-checks each file you save.
@@ -147,8 +147,10 @@ Worktrees live at `../pixhaus-worktrees/<name>` next to the main repo.
 Create one with:
 
 ```bash
-bash scripts/new-worktree.sh stream-s07
+node scripts/run.mjs new-worktree stream-s07
 ```
+
+The dispatcher (`scripts/run.mjs`) picks `new-worktree.sh` on *nix and `new-worktree.ps1` on Windows. Every script in `scripts/` ships in both forms — when you add a new one, write both `.sh` and `.ps1` and route invocations through `node scripts/run.mjs <task>`.
 
 Hard rules:
 
@@ -167,8 +169,11 @@ bedrock-first architecture is designed to make it rare.
 
 ## Reading hook output
 
-The post-edit hook (`scripts/post-edit.sh`) runs after every Edit/Write.
-Its output appears in your tool result — read it.
+The post-edit hook (`scripts/post-edit.sh` on *nix, `scripts/post-edit.ps1` on
+Windows; routed through `scripts/run.mjs`) runs after every Edit/Write.
+Its output appears in your tool result — read it. Both versions emit the same
+prefixes (`post-edit: ...`); PowerShell error wording for the underlying
+`cargo` / `tsc` output differs slightly from bash, but the signals are the same.
 
 Common signals:
 
