@@ -8,7 +8,7 @@
   "homepage": "https://pixhaus.app",
   "repository": {
     "type": "git",
-    "url": "https://github.com/pixhaus/pixhaus"
+    "url": "https://github.com/pixhaus-app/pixhaus"
   },
   "packageManager": "pnpm@10.33.2",
   "engines": {

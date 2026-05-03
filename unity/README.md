@@ -15,7 +15,7 @@ openupm add app.pixhaus.unity
 Manual install: add the following to `Packages/manifest.json` under `dependencies`:
 
 ```json
-"app.pixhaus.unity": "https://github.com/pixhaus/pixhaus.git?path=/unity"
+"app.pixhaus.unity": "https://github.com/pixhaus-app/pixhaus.git?path=/unity"
 ```
 
 ## Layout

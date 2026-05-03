@@ -14,7 +14,7 @@ edition = "2024"
 rust-version = "1.85"
 authors = ["Luis <luis@agsense.es>"]
 license = "MIT"
-repository = "https://github.com/pixhaus/pixhaus"
+repository = "https://github.com/pixhaus-app/pixhaus"
 homepage = "https://pixhaus.app"
 
 [workspace.dependencies]

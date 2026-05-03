@@ -5,8 +5,8 @@
   "description": "Unity importer and runtime helpers for Pixhaus sprite sheets and tilemap exports.",
   "unity": "2022.3",
   "documentationUrl": "https://pixhaus.app/docs/unity",
-  "changelogUrl": "https://github.com/pixhaus/pixhaus/blob/main/unity/CHANGELOG.md",
-  "licensesUrl": "https://github.com/pixhaus/pixhaus/blob/main/LICENSE",
+  "changelogUrl": "https://github.com/pixhaus-app/pixhaus/blob/main/unity/CHANGELOG.md",
+  "licensesUrl": "https://github.com/pixhaus-app/pixhaus/blob/main/LICENSE",
   "keywords": ["pixel-art", "sprite", "tilemap", "2d", "aseprite", "pixhaus"],
   "author": {
     "name": "Pixhaus contributors",
