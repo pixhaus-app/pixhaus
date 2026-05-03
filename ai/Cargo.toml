@@ -1,0 +1,22 @@
+[package]
+name = "pixhaus-ai"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Pixhaus AI verb runtime, backends, and built-in verbs"
+
+[dependencies]
+pixhaus-core = { path = "../core" }
+serde.workspace = true
+thiserror.workspace = true
+tokio.workspace = true
+tracing.workspace = true
+
+[dev-dependencies]
+anyhow.workspace = true
+
+[lints]
+workspace = true

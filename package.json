@@ -1,0 +1,39 @@
+{
+  "name": "pixhaus-workspace",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Pixhaus — open-source AI-native pixel art editor",
+  "license": "MIT",
+  "author": "Luis <luis@agsense.es>",
+  "homepage": "https://pixhaus.app",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/pixhaus/pixhaus"
+  },
+  "packageManager": "pnpm@10.33.2",
+  "engines": {
+    "node": ">=22.0.0",
+    "pnpm": ">=10.0.0"
+  },
+  "scripts": {
+    "dev": "cargo tauri dev --config app/tauri.conf.json",
+    "build": "cargo tauri build --config app/tauri.conf.json",
+    "ui:dev": "pnpm --filter pixhaus-ui dev",
+    "ui:build": "pnpm --filter pixhaus-ui build",
+    "typecheck": "pnpm -r typecheck",
+    "lint": "pnpm -r lint",
+    "lint:fix": "pnpm -r lint:fix",
+    "format": "pnpm -r format",
+    "format:check": "pnpm -r format:check",
+    "test": "pnpm -r test"
+  },
+  "devDependencies": {
+    "@tauri-apps/cli": "^2.11.0"
+  },
+  "pnpm": {
+    "onlyBuiltDependencies": [
+      "esbuild",
+      "@tauri-apps/cli"
+    ]
+  }
+}

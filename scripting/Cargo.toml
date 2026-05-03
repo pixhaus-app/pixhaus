@@ -1,0 +1,19 @@
+[package]
+name = "pixhaus-scripting"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Pixhaus Lua scripting runtime via mlua"
+
+[dependencies]
+pixhaus-core = { path = "../core" }
+thiserror.workspace = true
+
+[dev-dependencies]
+anyhow.workspace = true
+
+[lints]
+workspace = true

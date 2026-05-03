@@ -1,0 +1,39 @@
+name: Docs
+
+# Stub docs workflow. Full docs site deployment lands with stream S41.
+# For now this workflow validates that the planning docs exist and Markdown
+# is well-formed; it does not deploy anywhere.
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "docs/**"
+      - ".github/workflows/docs.yml"
+  pull_request:
+    paths:
+      - "docs/**"
+      - ".github/workflows/docs.yml"
+  workflow_dispatch:
+
+jobs:
+  validate:
+    name: Validate docs
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Confirm planning docs are present
+        run: |
+          test -d docs/planning || (echo "docs/planning missing" && exit 1)
+          test -f docs/planning/README.md || (echo "docs/planning/README.md missing" && exit 1)
+          test -d docs/planning/work || (echo "docs/planning/work missing" && exit 1)
+
+      - name: Install lychee
+        uses: lycheeverse/lychee-action@v2
+        with:
+          args: --offline --include-fragments docs/
+          fail: false
+
+  # TODO(S41): Build and deploy the docs site (mdbook or astro).
+  # See docs/planning/work/streams.md#s41 for the full docs site spec.

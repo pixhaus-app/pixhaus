@@ -1,0 +1,8 @@
+avoid-breaking-exported-api = false
+msrv = "1.85"
+disallowed-methods = [
+    { path = "std::option::Option::unwrap", reason = "use `?`, `unwrap_or`, or `ok_or` to surface errors" },
+    { path = "std::result::Result::unwrap", reason = "use `?` or pattern-match the error" },
+    { path = "std::option::Option::expect", reason = "use `ok_or_else` with a typed error" },
+    { path = "std::result::Result::expect", reason = "use `?` or `map_err` with context" },
+]

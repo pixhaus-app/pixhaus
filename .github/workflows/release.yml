@@ -1,0 +1,59 @@
+name: Release
+
+# Stub release workflow. Full per-OS bundle builds (Windows, macOS, Linux)
+# land with stream S50. For now this workflow runs on tag push and creates
+# a GitHub Release with the changelog body.
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Tag to release (e.g., v0.2.0)"
+        required: true
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    name: Create GitHub Release
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Resolve tag
+        id: tag
+        run: |
+          TAG="${{ github.event.inputs.tag || github.ref_name }}"
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+
+      - name: Extract changelog section
+        id: changelog
+        run: |
+          TAG="${{ steps.tag.outputs.tag }}"
+          if [ -f CHANGELOG.md ]; then
+            awk -v tag="$TAG" '
+              $0 ~ "^## \\[?" substr(tag,2) "\\]?" { in_section=1; next }
+              in_section && /^## \[?[0-9v]/ { exit }
+              in_section { print }
+            ' CHANGELOG.md > release_body.md
+          else
+            echo "Release $TAG" > release_body.md
+          fi
+
+      - name: Create release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.tag.outputs.tag }}
+          name: Pixhaus ${{ steps.tag.outputs.tag }}
+          body_path: release_body.md
+          draft: true
+          prerelease: ${{ contains(steps.tag.outputs.tag, '-') }}
+
+  # TODO(S50): Add per-OS Tauri bundle build matrix here.
+  # See docs/planning/work/streams.md#s50 for the full bundle pipeline spec.

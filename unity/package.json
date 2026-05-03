@@ -1,0 +1,24 @@
+{
+  "name": "app.pixhaus.unity",
+  "version": "0.1.0",
+  "displayName": "Pixhaus",
+  "description": "Unity importer and runtime helpers for Pixhaus sprite sheets and tilemap exports.",
+  "unity": "2022.3",
+  "documentationUrl": "https://pixhaus.app/docs/unity",
+  "changelogUrl": "https://github.com/pixhaus/pixhaus/blob/main/unity/CHANGELOG.md",
+  "licensesUrl": "https://github.com/pixhaus/pixhaus/blob/main/LICENSE",
+  "keywords": ["pixel-art", "sprite", "tilemap", "2d", "aseprite", "pixhaus"],
+  "author": {
+    "name": "Pixhaus contributors",
+    "email": "luis@agsense.es",
+    "url": "https://pixhaus.app"
+  },
+  "dependencies": {},
+  "samples": [
+    {
+      "displayName": "Sprite sheet import",
+      "description": "Sample sprite sheet exported from Pixhaus.",
+      "path": "Samples~/SpriteSheetImport"
+    }
+  ]
+}
