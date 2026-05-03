@@ -7,7 +7,8 @@
 // Usage: node scripts/run.mjs <task> [args...]
 //   <task>  one of: post-edit | pre-commit | claim-next-task | finalize-task |
 //                   find-crate-for-file | ralph | install-tools |
-//                   setup-git-hooks | new-worktree
+//                   setup-git-hooks | new-worktree | bootstrap | doctor |
+//                   dispatch | fan-out-bedrock | pre-pr
 //
 // Why this exists: .claude/settings.json hooks and .githooks/pre-commit need
 // a single command line that works on every developer OS. Node is already

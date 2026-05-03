@@ -51,7 +51,7 @@ try {
     $lines = [System.IO.File]::ReadAllLines($queueAbs, $utf8)
 
     $lineNo = -1
-    $needle = "^- \[~\] CLAIMED:${WorktreeName}:${TaskId}"
+    $needle = "^- \[~\] CLAIMED:${WorktreeName}:\s*${TaskId}"
     for ($i = 0; $i -lt $lines.Count; $i++) {
         if ($lines[$i] -match $needle) {
             $lineNo = $i
@@ -72,14 +72,16 @@ try {
     }
     else {
         if (-not $Reason) { $Reason = 'returned to queue' }
-        $base = $line -replace "^- \[~\] CLAIMED:${WorktreeName}:${TaskId}", "- [ ] UNCLAIMED: ${TaskId}"
+        $base = $line -replace "^- \[~\] CLAIMED:${WorktreeName}:\s*${TaskId}", "- [ ] UNCLAIMED: ${TaskId}"
         $base = $base -replace ' \[FAIL: [^\]]+\]', ''
         $newLine = "${base} [FAIL: ${Reason}]"
         Write-Output "finalize: ${TaskId} -> returned to queue (reason: ${Reason})"
     }
 
     $lines[$lineNo] = $newLine
-    [System.IO.File]::WriteAllLines($queueAbs, $lines, $utf8)
+    # Force LF newlines (Environment.NewLine is CRLF on Windows; .gitattributes
+    # mandates LF for queue.md, and a CRLF write would dirty the working tree).
+    [System.IO.File]::WriteAllText($queueAbs, ($lines -join "`n") + "`n", $utf8)
 }
 finally {
     Remove-Item -LiteralPath $lockDir -Recurse -Force -ErrorAction SilentlyContinue

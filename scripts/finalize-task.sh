@@ -37,7 +37,7 @@ until mkdir "$LOCK_DIR" 2>/dev/null; do
 done
 trap 'rm -rf "$LOCK_DIR"' EXIT
 
-LINE_NO="$(grep -n "^- \[~\] CLAIMED:${WORKTREE_NAME}:${TASK_ID}" "$QUEUE" | head -n1 | cut -d: -f1 || true)"
+LINE_NO="$(grep -nE "^- \[~\] CLAIMED:${WORKTREE_NAME}:[[:space:]]*${TASK_ID}" "$QUEUE" | head -n1 | cut -d: -f1 || true)"
 if [ -z "$LINE_NO" ]; then
     echo "finalize: could not find claimed task ${TASK_ID} for ${WORKTREE_NAME}" >&2
     exit 1
@@ -52,7 +52,7 @@ else
     if [ -z "$REASON" ]; then
         REASON="returned to queue"
     fi
-    BASE="$(echo "$LINE" | sed -E "s/^- \[~\] CLAIMED:${WORKTREE_NAME}:${TASK_ID}/- [ ] UNCLAIMED: ${TASK_ID}/" | sed -E 's/ \[FAIL: [^]]+\]//')"
+    BASE="$(echo "$LINE" | sed -E "s/^- \[~\] CLAIMED:${WORKTREE_NAME}:[[:space:]]*${TASK_ID}/- [ ] UNCLAIMED: ${TASK_ID}/" | sed -E 's/ \[FAIL: [^]]+\]//')"
     NEW_LINE="${BASE} [FAIL: ${REASON}]"
     echo "finalize: ${TASK_ID} -> returned to queue (reason: ${REASON})"
 fi

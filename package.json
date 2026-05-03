@@ -25,7 +25,11 @@
     "lint:fix": "pnpm -r lint:fix",
     "format": "pnpm -r format",
     "format:check": "pnpm -r format:check",
-    "test": "pnpm -r test"
+    "test": "pnpm -r test",
+    "bootstrap": "node scripts/run.mjs bootstrap",
+    "doctor": "node scripts/run.mjs doctor",
+    "dispatch": "node scripts/run.mjs dispatch",
+    "fan-out": "node scripts/run.mjs fan-out-bedrock"
   },
   "devDependencies": {
     "@tauri-apps/cli": "^2.11.0"

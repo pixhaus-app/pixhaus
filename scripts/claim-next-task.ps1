@@ -80,7 +80,8 @@ try {
 
     $newLine = $taskLine -replace '^- \[ \] UNCLAIMED:', "- [~] CLAIMED:${WorktreeName}:"
     $lines[$taskLineNo] = $newLine
-    [System.IO.File]::WriteAllLines($queueAbs, $lines, $utf8)
+    # Force LF newlines (see comment in finalize-task.ps1).
+    [System.IO.File]::WriteAllText($queueAbs, ($lines -join "`n") + "`n", $utf8)
 
     $briefMatch = [regex]::Match($taskLine, 'docs/planning/work/[a-zA-Z0-9_/-]+\.md(#[a-zA-Z0-9_-]+)?')
     $briefFile = ''

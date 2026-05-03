@@ -65,6 +65,12 @@ pnpm prettier --write ui/ && pnpm eslint ui/
 
 # Pre-PR gate
 ./scripts/pre-pr.sh
+
+# Setup and launch
+pnpm bootstrap                        # first-time setup, idempotent
+pnpm run doctor                       # check the dev environment (use `run`: pnpm has its own `doctor`)
+pnpm dispatch B2 --model claude-opus-4-7
+pnpm fan-out                          # print parallel ralph commands for unclaimed bedrock
 ```
 
 ## Conventions

@@ -24,80 +24,64 @@ What to confirm before starting the ralph loop on B2. Verified state of the repo
 
 - `scripts/pre-pr.sh` and `pre-pr.ps1` created (referenced in `CLAUDE.md` but missing from initial scaffold). Runs the full local gate before opening a PR — clippy + nextest + doc + UI typecheck/lint/test/build.
 - `rustfmt.toml` updated to `edition = "2024"` (was on 2021, mismatched the workspace).
+- Launch automation added: `pnpm bootstrap` (idempotent setup), `pnpm run doctor` (env check), `pnpm dispatch <task>` (one-shot Claude run), `pnpm fan-out` (parallel ralph commands for B3–B7).
+- `finalize-task` regex now tolerates the space after the colon that `claim-next-task` writes (`CLAIMED:<wt>: <id>`); the no-whitespace pattern never matched.
 
 ## Manual prerequisites before launching
 
 These need your hands or your auth — not Claude Code's.
 
 ```bash
-# 1. Install dev tools
-bash scripts/install-tools.sh
-# (or PowerShell: pwsh scripts/install-tools.ps1)
-
-# 2. Wire git hooks
-bash scripts/setup-git-hooks.sh
-
-# 3. Verify Rust toolchain matches rust-toolchain.toml
-rustup show
-# Should show 1.95 active. If not: rustup toolchain install 1.95 && rustup default 1.95
-
-# 4. Sanity-check the build
-cargo check --workspace --all-targets
-cargo nextest run --workspace
-pnpm install
-pnpm typecheck
-pnpm test
-pnpm dev   # should open an empty Pixhaus window — Ctrl-C to close
-
-# 5. Verify hooks fire
-# Edit any .rs file, save it from inside a Claude Code session, watch
-# scripts/post-edit.sh output cargo check results.
-# Try a commit with bad formatting — pre-commit should reject it.
-
-# 6. ANTHROPIC_API_KEY exported in the shell that will run ralph
-echo $ANTHROPIC_API_KEY  # not empty
-
-# 7. GitHub auth — gh CLI logged in for the ralph loop to open PRs
-gh auth status
-# If not: gh auth login
+pnpm bootstrap     # idempotent: installs cargo + pnpm tools, wires hooks,
+                   # fetches deps, builds the ui/dist stub, runs cargo check
+                   # + pnpm typecheck + tests, ends with doctor.
+pnpm run doctor    # PASS/WARN/FAIL report on toolchain, env vars, gh auth,
+                   # ANTHROPIC_API_KEY, claude CLI, queue state, disk space.
+                   # Use `run`: pnpm reserves `pnpm doctor` for itself.
 ```
+
+`bootstrap` is safe to re-run. `doctor` is read-only. Both work on Windows
+(PowerShell) and *nix.
+
+The doctor report lists what to fix if anything's red. Two things doctor
+can't fix automatically:
+
+- `ANTHROPIC_API_KEY` — export it in the shell that will run dispatch /
+  ralph. Doctor checks for presence, not value.
+- `gh auth status` — `gh auth login` (interactive); needed for the ralph
+  loop to open PRs.
 
 ## First dispatch
 
 Bedrock B2 (the core data model). Single agent, Opus, careful review. Everything else depends on this.
 
 ```bash
-# Set up the worktree
-bash scripts/new-worktree.sh stream-b2
-
-# Open a fresh terminal in the worktree
-cd ../pixhaus-worktrees/stream-b2
-
-# Dispatch B2 with Opus directly (don't use the ralph loop for B2 — review it manually before B3-B7 fan out)
-claude --model claude-opus-4-7 --print "$(bash ../../pixhaus/scripts/claim-next-task.sh stream-b2 | tail -n +2)"
+pnpm dispatch B2 --model claude-opus-4-7
 ```
 
-Review the resulting PR carefully. B2 is the data model that every other stream consumes; mistakes propagate fast.
+`dispatch` claims B2, creates the worktree at `../pixhaus-worktrees/stream-b2`,
+runs Claude once, finalizes ok/fail, and tees the transcript to
+`logs/dispatch/`. One-shot — exits when Claude does.
+
+Review the resulting PR carefully. B2 is the data model that every other
+stream consumes; mistakes propagate fast.
 
 ## After B2 merges
 
-The bedrock fans out. Spin up four to six worktrees, run ralph in each, let Sonnet pick up B3, B4, B6, B7 in parallel. Keep B5 (verb plugin protocol) on Opus — it's the highest-leverage spec and warrants the careful run.
+The bedrock fans out. B3, B4, B6, B7 in parallel on Sonnet; B5 stays on
+Opus (highest-leverage spec).
 
 ```bash
-# In four separate terminals
-bash scripts/new-worktree.sh stream-b3 && cd ../pixhaus-worktrees/stream-b3 && bash scripts/ralph.sh stream-b3
-bash scripts/new-worktree.sh stream-b4 && cd ../pixhaus-worktrees/stream-b4 && bash scripts/ralph.sh stream-b4
-bash scripts/new-worktree.sh stream-b6 && cd ../pixhaus-worktrees/stream-b6 && bash scripts/ralph.sh stream-b6
-bash scripts/new-worktree.sh stream-b7 && cd ../pixhaus-worktrees/stream-b7 && bash scripts/ralph.sh stream-b7
-
-# B5 separately with Opus
-PIXHAUS_RALPH_MODEL=claude-opus-4-7 \
-    bash scripts/new-worktree.sh stream-b5 && \
-    cd ../pixhaus-worktrees/stream-b5 && \
-    bash scripts/ralph.sh stream-b5
+pnpm fan-out
 ```
 
-`tmuxinator` or `zellij` makes managing four-plus terminals less painful.
+Default mode prints one command block per terminal — copy/paste each into
+its own shell. With `--background`, fan-out runs the ralph loops as
+backgrounded jobs in the current shell instead (bash uses `nohup ... &`,
+PowerShell uses `Start-Job`); print PIDs / job IDs and use those to stop.
+
+`tmuxinator` or `zellij` makes managing the printed multi-terminal flow
+less painful.
 
 ## Things to watch
 
