@@ -1,0 +1,92 @@
+# Pixel art is binary; everything else is LF text. This file overrides any
+# contributor's local core.autocrlf, so the repo stays bit-identical across
+# Windows and *nix checkouts.
+
+# Default: detect text vs binary, force LF for text in the working copy.
+* text=auto eol=lf
+
+# Source code
+*.rs        text eol=lf
+*.toml      text eol=lf
+*.ts        text eol=lf
+*.tsx       text eol=lf
+*.js        text eol=lf
+*.jsx       text eol=lf
+*.mjs       text eol=lf
+*.cjs       text eol=lf
+*.json      text eol=lf
+*.jsonc     text eol=lf
+*.css       text eol=lf
+*.scss      text eol=lf
+*.html      text eol=lf
+*.lua       text eol=lf
+*.cs        text eol=lf
+
+# Config and docs
+*.md        text eol=lf
+*.yml       text eol=lf
+*.yaml      text eol=lf
+*.txt       text eol=lf
+*.editorconfig text eol=lf
+.gitignore  text eol=lf
+.gitattributes text eol=lf
+LICENSE*    text eol=lf
+
+# Lockfiles — committed, must round-trip byte-identical
+Cargo.lock      text eol=lf
+pnpm-lock.yaml  text eol=lf
+
+# Shell scripts — MUST be LF on every OS or bash refuses to run them.
+# .githooks/pre-commit has no extension; pin it explicitly.
+*.sh                    text eol=lf
+*.bash                  text eol=lf
+.githooks/pre-commit    text eol=lf
+
+# PowerShell — pinned LF for consistency. Both PS 5.1 and 7+ accept LF.
+*.ps1       text eol=lf
+*.psm1      text eol=lf
+*.psd1      text eol=lf
+
+# Windows batch files — these genuinely require CRLF.
+*.bat       text eol=crlf
+*.cmd       text eol=crlf
+
+# Pixel art and other binary formats Pixhaus reads/writes.
+# Marking binary disables line-ending conversion AND text diffs.
+*.pixhaus   binary
+*.aseprite  binary
+*.ase       binary
+*.psd       binary
+*.psb       binary
+
+# Standard image formats
+*.png       binary
+*.jpg       binary
+*.jpeg      binary
+*.gif       binary
+*.bmp       binary
+*.tga       binary
+*.ico       binary
+*.webp      binary
+*.avif      binary
+
+# Fonts and audio (likely to land with bundled assets later)
+*.ttf       binary
+*.otf       binary
+*.woff      binary
+*.woff2     binary
+*.eot       binary
+*.wav       binary
+*.mp3       binary
+*.ogg       binary
+
+# Archives and compiled artifacts
+*.zip       binary
+*.tar       binary
+*.gz        binary
+*.7z        binary
+*.dll       binary
+*.exe       binary
+*.so        binary
+*.dylib     binary
+*.pdf       binary
