@@ -98,6 +98,15 @@ if [ "$CLAIMED_ID" != "$TASK_ID" ]; then
     exit 1
 fi
 
+# Append the shipping addendum so the agent commits, pushes, and opens the
+# PR autonomously instead of stopping at "should I commit?".
+ADDENDUM_FILE="$REPO_ROOT/scripts/dispatch-addendum.md"
+if [ -f "$ADDENDUM_FILE" ]; then
+    TASK_BRIEF="$(printf '%s\n\n%s' "$TASK_BRIEF" "$(cat "$ADDENDUM_FILE")")"
+else
+    echo "dispatch: warning: $ADDENDUM_FILE missing; running without ship-it instructions" >&2
+fi
+
 # Run Claude once. Tee output to logs/dispatch/.
 mkdir -p logs/dispatch
 TS="$(date -u +%Y%m%dT%H%M%SZ)"
@@ -120,8 +129,18 @@ if claude --model "$MODEL" \
           --print "$TASK_BRIEF" \
           --output-format json 2>&1 | tee "$REPO_ROOT/$LOG_FILE"; then
     cd "$REPO_ROOT"
-    node scripts/run.mjs finalize-task "$WORKTREE" "$TASK_ID" ok
-    echo "dispatch: $TASK_ID finalized ok"
+    # Don't mark DONE yet. The DONE flip is the human's call after the PR
+    # merges, via `pnpm finalize <wt> <id> ok`. The task stays CLAIMED until
+    # then, which is what LAUNCH.md prescribes.
+    echo ""
+    echo "dispatch: $TASK_ID ready for review (queue stays CLAIMED:$WORKTREE: until merge)"
+    PR_URL="$(grep -oE 'https://github\.com/[^[:space:]"\\]+/pull/[0-9]+' "$LOG_FILE" 2>/dev/null | head -n1 || true)"
+    if [ -n "$PR_URL" ]; then
+        echo "dispatch: PR -> $PR_URL"
+    else
+        echo "dispatch: no PR URL found in transcript; check the log or the worktree manually" >&2
+    fi
+    echo "dispatch: after the PR merges, run: pnpm finalize $WORKTREE $TASK_ID ok"
 else
     cd "$REPO_ROOT"
     node scripts/run.mjs finalize-task "$WORKTREE" "$TASK_ID" fail "claude exited non-zero (see $LOG_FILE)"

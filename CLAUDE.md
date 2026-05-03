@@ -71,6 +71,7 @@ pnpm bootstrap                        # first-time setup, idempotent
 pnpm run doctor                       # check the dev environment (use `run`: pnpm has its own `doctor`)
 pnpm dispatch B2 --model claude-opus-4-7
 pnpm fan-out                          # print parallel ralph commands for unclaimed bedrock
+pnpm finalize <worktree> <task> ok    # after the PR merges; flips queue to DONE
 ```
 
 ## Conventions

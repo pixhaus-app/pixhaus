@@ -29,7 +29,8 @@
     "bootstrap": "node scripts/run.mjs bootstrap",
     "doctor": "node scripts/run.mjs doctor",
     "dispatch": "node scripts/run.mjs dispatch",
-    "fan-out": "node scripts/run.mjs fan-out-bedrock"
+    "fan-out": "node scripts/run.mjs fan-out-bedrock",
+    "finalize": "node scripts/run.mjs finalize-task"
   },
   "devDependencies": {
     "@tauri-apps/cli": "^2.11.0"

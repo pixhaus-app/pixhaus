@@ -64,8 +64,19 @@ pnpm dispatch B2 --model claude-opus-4-7
 ```
 
 `dispatch` claims B2, creates the worktree at `../pixhaus-worktrees/stream-b2`,
-runs Claude once, finalizes ok/fail, and tees the transcript to
-`logs/dispatch/`. One-shot — exits when Claude does.
+appends the shipping addendum (`scripts/dispatch-addendum.md`) to the brief,
+runs Claude once, and tees the transcript to `logs/dispatch/`. The agent
+runs the pre-PR gate, commits, pushes, and opens the PR autonomously. The
+dispatch script then prints the PR URL and the post-merge command.
+
+The queue stays at `CLAIMED:stream-b2:` until you merge the PR and run:
+
+```bash
+pnpm finalize stream-b2 B2 ok
+```
+
+That's the DONE flip. Don't skip it — the queue is the source of truth
+for what's actually merged, and fan-out / ralph rely on it.
 
 Review the resulting PR carefully. B2 is the data model that every other
 stream consumes; mistakes propagate fast.
@@ -73,7 +84,9 @@ stream consumes; mistakes propagate fast.
 ## After B2 merges
 
 The bedrock fans out. B3, B4, B6, B7 in parallel on Sonnet; B5 stays on
-Opus (highest-leverage spec).
+Opus (highest-leverage spec). Same shipping flow as B2: each ralph loop
+runs one task, agent ships a PR, you review and merge, then run
+`pnpm finalize stream-bN BN ok` per task.
 
 ```bash
 pnpm fan-out

@@ -68,6 +68,18 @@ while ($true) {
         continue
     }
 
+    # Append the shipping addendum so the agent commits, pushes, and opens
+    # the PR autonomously.
+    $addendumFile = Join-Path $repoRoot 'scripts/dispatch-addendum.md'
+    if (Test-Path -LiteralPath $addendumFile -PathType Leaf) {
+        $utf8 = New-Object System.Text.UTF8Encoding($false)
+        $addendum = [System.IO.File]::ReadAllText($addendumFile, $utf8)
+        $taskBrief = "$taskBrief`n`n$addendum"
+    }
+    else {
+        [Console]::Error.WriteLine("ralph[${WorktreeName}]: warning: $addendumFile missing; running without ship-it instructions")
+    }
+
     $ts = (Get-Date).ToUniversalTime().ToString('yyyyMMddTHHmmssZ')
     $logFile = Join-Path $logDir "${ts}-${WorktreeName}-${taskId}.json"
 
@@ -82,10 +94,30 @@ while ($true) {
 
     & claude --model $model --print $taskBrief --output-format json *> $logFile
     if ($LASTEXITCODE -eq 0) {
-        & node $runMjs finalize-task $WorktreeName $taskId 'ok' | Out-Null
+        # Don't mark DONE. The DONE flip is the human's call after the PR
+        # merges, via `pnpm finalize <wt> <id> ok`.
+        Write-Output ''
+        Write-Output "ralph[${WorktreeName}]: $taskId ready for review (queue stays CLAIMED:${WorktreeName}: until merge)"
+        $logContent = ''
+        if (Test-Path -LiteralPath $logFile -PathType Leaf) {
+            $utf8r = New-Object System.Text.UTF8Encoding($false)
+            $logContent = [System.IO.File]::ReadAllText($logFile, $utf8r)
+        }
+        $prMatch = [regex]::Match($logContent, 'https://github\.com/[^\s"\\]+/pull/[0-9]+')
+        if ($prMatch.Success) {
+            Write-Output "ralph[${WorktreeName}]: PR -> $($prMatch.Value)"
+        }
+        else {
+            [Console]::Error.WriteLine("ralph[${WorktreeName}]: no PR URL found in transcript; check the log or the worktree")
+        }
+        Write-Output "ralph[${WorktreeName}]: after the PR merges, run: pnpm finalize $WorktreeName $taskId ok"
     }
     else {
         $failReason = "claude exited non-zero (see $logFile)"
         & node $runMjs finalize-task $WorktreeName $taskId 'fail' $failReason | Out-Null
+        [Console]::Error.WriteLine("ralph[${WorktreeName}]: $taskId returned to queue (see $logFile)")
     }
+    # Either way, this worktree is now on a feature branch, not main.
+    # Looping again would commit the next task on the wrong branch, so exit.
+    break
 }
