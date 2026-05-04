@@ -18,12 +18,47 @@ export const [onionSkin, setOnionSkin] = createSignal(false);
 export const [showPixelGrid, setShowPixelGrid] = createSignal(true);
 export const [showTileGrid, setShowTileGrid] = createSignal(false);
 
+// Number of canvas pixels between major-grid lines when showTileGrid is on.
+export const [gridSpacing, setGridSpacing] = createSignal(8);
+
+// Onion skin: how many neighbour frames to overlay and at what opacity.
+// onionSkin (above) is the on/off toggle. These three control the overlay's
+// shape; the renderer reads them when onionSkin() is true.
+export const [onionSkinPrev, setOnionSkinPrev] = createSignal(1);
+export const [onionSkinNext, setOnionSkinNext] = createSignal(1);
+export const [onionSkinOpacity, setOnionSkinOpacity] = createSignal(0.4);
+
 // Currently foregrounded sprite and frame.
 export const [activeSpriteId, setActiveSpriteId] = createSignal<SpriteId | null>(null);
 export const [activeFrameIndex, setActiveFrameIndex] = createSignal<number>(0);
 
 // Active selection rect in canvas coordinates, null when no selection.
 export const [selectionRect, setSelectionRect] = createSignal<{
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+} | null>(null);
+
+// ── Brush preview state (S15 will own; defaults are stubs) ─────────────────
+
+export type BrushShape = "round" | "square";
+
+/** Brush diameter in canvas pixels. */
+export const [brushSize, setBrushSize] = createSignal(1);
+export const [brushShape, setBrushShape] = createSignal<BrushShape>("round");
+
+// Cursor position in canvas coordinates, or null when the pointer is off-canvas.
+export const [cursorCanvas, setCursorCanvas] = createSignal<{ x: number; y: number } | null>(null);
+
+// ── Transform target (S16 will own; default null) ──────────────────────────
+
+/**
+ * Bounding box drawn with eight resize handles + one rotation handle.
+ * S16 will set this when a selection is being transformed; for now the
+ * signal exists so renderer/Canvas wiring is in place.
+ */
+export const [transformBounds, setTransformBounds] = createSignal<{
   x: number;
   y: number;
   width: number;

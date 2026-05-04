@@ -12,8 +12,9 @@ import {
   setScrollY,
   setZoom,
   scheduleViewportSync,
+  setCursorCanvas,
 } from "./canvas-state";
-import { snapZoom, clampZoom, zoomAt } from "./viewport";
+import { snapZoom, clampZoom, zoomAt, screenToCanvas } from "./viewport";
 
 // How much the continuous zoom changes per wheel tick (scroll-wheel smooth mode).
 const WHEEL_ZOOM_FACTOR = 1.1;
@@ -135,6 +136,26 @@ export function attachCanvasInput(el: HTMLElement): () => void {
   }
 
   function onMouseMove(e: MouseEvent): void {
+    // Always update the cursor's canvas position so brush-cursor overlays
+    // can track the pointer regardless of pan/draw state.
+    const rect = el.getBoundingClientRect();
+    const sx = e.clientX - rect.left;
+    const sy = e.clientY - rect.top;
+    if (sx >= 0 && sy >= 0 && sx <= rect.width && sy <= rect.height) {
+      const [cx, cy] = screenToCanvas(
+        sx,
+        sy,
+        scrollX(),
+        scrollY(),
+        zoom(),
+        rect.width,
+        rect.height,
+      );
+      setCursorCanvas({ x: cx, y: cy });
+    } else {
+      setCursorCanvas(null);
+    }
+
     if (!pan.active) return;
     const dx = e.clientX - pan.lastX;
     const dy = e.clientY - pan.lastY;
@@ -145,6 +166,10 @@ export function attachCanvasInput(el: HTMLElement): () => void {
     setScrollX(scrollX() - dx / z);
     setScrollY(scrollY() - dy / z);
     scheduleViewportSync();
+  }
+
+  function onMouseLeave(): void {
+    setCursorCanvas(null);
   }
 
   function onMouseUp(): void {
@@ -191,6 +216,7 @@ export function attachCanvasInput(el: HTMLElement): () => void {
   window.addEventListener("keydown", onKeyDown);
   window.addEventListener("keyup", onKeyUp);
   el.addEventListener("contextmenu", onContextMenu);
+  el.addEventListener("mouseleave", onMouseLeave);
 
   return () => {
     el.removeEventListener("wheel", onWheel);
@@ -200,5 +226,6 @@ export function attachCanvasInput(el: HTMLElement): () => void {
     window.removeEventListener("keydown", onKeyDown);
     window.removeEventListener("keyup", onKeyUp);
     el.removeEventListener("contextmenu", onContextMenu);
+    el.removeEventListener("mouseleave", onMouseLeave);
   };
 }

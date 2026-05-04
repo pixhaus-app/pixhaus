@@ -20,6 +20,7 @@ homepage = "https://pixhaus.app"
 [workspace.dependencies]
 anyhow = "1"
 async-trait = "0.1"
+base64 = "0.22"
 criterion = { version = "0.5", default-features = false, features = ["plotters", "cargo_bench_support"] }
 futures = "0.3"
 image = { version = "0.25", default-features = false, features = ["png"] }

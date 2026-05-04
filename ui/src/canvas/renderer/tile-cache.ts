@@ -108,4 +108,21 @@ export class TileCache {
     }
     this.entries.clear();
   }
+
+  /**
+   * Records every cached tile's coordinates into `out` and clears the cache
+   * map without touching GL.  Used by the renderer's context-loss handler:
+   * after the GL context resets all textures are gone, so the cache must be
+   * emptied — and the renderer needs to know which tiles to request again.
+   */
+  markAllDirty(out: Set<string>): void {
+    for (const key of this.entries.keys()) {
+      // Strip the spriteId/frame prefix; renderer wants `tx:ty`.
+      const parts = key.split(":");
+      if (parts.length === 4) out.add(`${parts[2]}:${parts[3]}`);
+    }
+    // The GL textures the entries point at are already invalid after a
+    // context loss event, so just drop the references.
+    this.entries.clear();
+  }
 }

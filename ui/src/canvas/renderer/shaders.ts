@@ -1,9 +1,11 @@
 // GLSL shader sources for the canvas viewport renderer.
 //
-// Three programs:
-//   SPRITE  — renders sprite tiles (checkerboard bg + optional texture)
-//   GRID    — procedural pixel grid overlay (visible at zoom >= 4)
-//   ANTS    — marching-ants selection outline (time-animated dashes)
+// Five programs:
+//   SPRITE      — sprite tiles (checkerboard bg + optional texture)
+//   GRID        — procedural per-pixel grid overlay (visible at zoom >= 4)
+//   MAJOR_GRID  — configurable major-grid overlay (every N canvas pixels)
+//   ONION       — previous/next-frame tile tinted red/blue and additively blended
+//   ANTS        — marching-ants selection outline (time-animated dashes)
 
 // ── Shared helpers ─────────────────────────────────────────────────────────
 
@@ -197,5 +199,78 @@ void main() {
   // Alternate between black and white dashes.
   vec3 color = dash > 0.5 ? vec3(1.0) : vec3(0.0);
   out_color = vec4(color, 0.9);
+}
+`;
+
+// ── Major-grid program ──────────────────────────────────────────────────────
+
+// Fragment shader for the configurable major-grid overlay.
+//
+// Draws a 1-CSS-px line every `u_spacing` canvas pixels in both axes.  Used to
+// visualise tile boundaries when the user is editing tilemaps or sprite sheets.
+// Reuses COMMON_VERT.
+export const MAJOR_GRID_FRAG = /* glsl */ `#version 300 es
+precision highp float;
+
+in vec2 v_screen;
+
+uniform float u_zoom;
+uniform vec2 u_scroll;
+uniform vec2 u_resolution;
+uniform float u_spacing; // canvas pixels between major-grid lines
+
+out vec4 out_color;
+
+void main() {
+  vec2 canvas_pos = (v_screen - u_resolution * 0.5) / u_zoom + u_scroll;
+
+  // Distance to nearest grid line, in canvas pixels.
+  vec2 q = mod(canvas_pos, u_spacing);
+  vec2 dist = min(q, u_spacing - q);
+
+  vec2 dist_css = dist * u_zoom;
+  float line_w = 1.0;
+  float edge_x = smoothstep(line_w, line_w + 1.0, dist_css.x);
+  float edge_y = smoothstep(line_w, line_w + 1.0, dist_css.y);
+  float edge = 1.0 - edge_x * edge_y;
+
+  if (edge < 0.01) discard;
+
+  // Cyan-tinted line, slightly brighter than the per-pixel grid so the two
+  // overlays read distinctly when both are on.
+  out_color = vec4(0.4, 0.7, 1.0, edge * 0.45);
+}
+`;
+
+// ── Onion-skin program ──────────────────────────────────────────────────────
+
+// Fragment shader for onion-skin overlay tiles.
+//
+// Samples one tile texture, multiplies its rgb by u_tint, scales alpha by
+// u_opacity, and outputs the result.  The renderer alpha-blends multiple
+// passes — one per neighbour frame — additively over the current frame.
+// Reuses COMMON_VERT.
+export const ONION_FRAG = /* glsl */ `#version 300 es
+precision mediump float;
+
+in vec2 v_screen;
+
+uniform sampler2D u_tile;
+uniform vec2 u_tile_origin_canvas;
+uniform vec2 u_tile_size_canvas;
+uniform vec3 u_tint;        // rgb multiplier (e.g. red for prev, blue for next)
+uniform float u_opacity;    // 0..1 final alpha multiplier
+uniform float u_zoom;
+uniform vec2 u_scroll;
+uniform vec2 u_resolution;
+
+out vec4 out_color;
+
+void main() {
+  vec2 canvas_pos = (v_screen - u_resolution * 0.5) / u_zoom + u_scroll;
+  vec2 uv = (canvas_pos - u_tile_origin_canvas) / u_tile_size_canvas;
+  vec4 tex = texture(u_tile, uv);
+  // Tint the rgb channel; preserve alpha shape but scale by opacity.
+  out_color = vec4(tex.rgb * u_tint, tex.a * u_opacity);
 }
 `;
