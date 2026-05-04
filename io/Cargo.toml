@@ -18,9 +18,7 @@ zstd.workspace = true
 [dev-dependencies]
 anyhow.workspace = true
 criterion.workspace = true
-rmp-serde.workspace = true
 rstest.workspace = true
-zstd.workspace = true
 
 [[bench]]
 name = "pixhaus_perf"

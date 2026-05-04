@@ -12,6 +12,66 @@ use super::schema::{
     FORMAT_MAJOR, HEADER_LEN, KNOWN_FLAGS, MAGIC, MAX_DECOMPRESSED_BODY, PixhausArchive,
 };
 
+/// Parses + validates the header and locates the compressed body slice.
+///
+/// Validates magic, the required-flags subset invariant, and the
+/// known-required-flags check. Bounds-checks the body slice. These checks
+/// run on every path (v1 fast path *and* older-major migration path) so a
+/// header that should be rejected up-front never reaches decompression.
+fn parse_header(data: &[u8]) -> Result<(u16, u16, &[u8])> {
+    if data.len() < HEADER_LEN {
+        return Err(Error::Truncated);
+    }
+    if &data[0..8] != MAGIC.as_slice() {
+        return Err(Error::InvalidMagic);
+    }
+    let major = u16::from_be_bytes([data[8], data[9]]);
+    let minor = u16::from_be_bytes([data[10], data[11]]);
+
+    let feature_flags = u32::from_be_bytes([data[12], data[13], data[14], data[15]]);
+    let required_flags = u32::from_be_bytes([data[16], data[17], data[18], data[19]]);
+
+    // Spec invariant: required_flags must be a subset of feature_flags.
+    if required_flags & !feature_flags != 0 {
+        return Err(Error::InconsistentFeatureFlags {
+            advertised: feature_flags,
+            required: required_flags,
+        });
+    }
+    let unknown = required_flags & !KNOWN_FLAGS;
+    if unknown != 0 {
+        return Err(Error::UnknownRequiredFeatures { required: unknown });
+    }
+
+    let body_len = usize::try_from(u64::from_be_bytes([
+        data[20], data[21], data[22], data[23], data[24], data[25], data[26], data[27],
+    ]))
+    .map_err(|_| Error::Truncated)?;
+    // Use checked arithmetic so a header claiming a near-usize::MAX
+    // body_len returns Truncated rather than panicking on overflow in
+    // debug builds.
+    let body_end = HEADER_LEN.checked_add(body_len).ok_or(Error::Truncated)?;
+    let body = data.get(HEADER_LEN..body_end).ok_or(Error::Truncated)?;
+    Ok((major, minor, body))
+}
+
+/// Decodes a `MessagePack` body into a `PixhausArchive` and validates the
+/// embedded data-model schema version.
+///
+/// Shared by the v1 fast path and the migration path so future format
+/// bumps don't drift from the v1 validation logic.
+fn deserialize_and_validate(body: &[u8]) -> Result<PixhausArchive> {
+    let archive: PixhausArchive = rmp_serde::from_slice(body)?;
+    let schema = archive.project.schema_version;
+    if !SchemaVersion::current().is_compatible_with(schema) {
+        return Err(Error::UnsupportedSchemaVersion {
+            major: schema.major,
+            minor: schema.minor,
+        });
+    }
+    Ok(archive)
+}
+
 /// Decodes a `.pixhaus` byte slice into a [`PixhausArchive`].
 ///
 /// # Errors
@@ -19,7 +79,11 @@ use super::schema::{
 /// - [`Error::Truncated`] — slice is shorter than the 28-byte header, or
 ///   the body is shorter than `body_len` in the header.
 /// - [`Error::InvalidMagic`] — first 8 bytes do not match `PIXHAUS\0`.
-/// - [`Error::UnsupportedVersion`] — container format major version is not 1.
+/// - [`Error::UnsupportedVersion`] — container format major version is not 1
+///   and no migration step covers it (at v1.0 no steps are registered, so
+///   any older major returns this — but only after the header passes the
+///   `Truncated`, `InvalidMagic`, `InconsistentFeatureFlags`, and
+///   `UnknownRequiredFeatures` checks above).
 /// - [`Error::UnsupportedSchemaVersion`] — embedded `Project::schema_version`
 ///   is not compatible with this build's data model.
 /// - [`Error::UnknownRequiredFeatures`] — `required_flags` contains bits
@@ -31,74 +95,24 @@ use super::schema::{
 /// - [`Error::Io`] — zstd decompression failed.
 /// - [`Error::Deserialize`] — `MessagePack` body could not be decoded.
 pub fn decode(data: &[u8]) -> Result<PixhausArchive> {
-    if data.len() < HEADER_LEN {
-        return Err(Error::Truncated);
+    let (major, minor, compressed) = parse_header(data)?;
+
+    if major > FORMAT_MAJOR {
+        // Newer container format: this build has no path to open it.
+        return Err(Error::UnsupportedVersion { major, minor });
     }
-
-    if &data[0..8] != MAGIC.as_slice() {
-        return Err(Error::InvalidMagic);
-    }
-
-    let major = u16::from_be_bytes([data[8], data[9]]);
-    let minor = u16::from_be_bytes([data[10], data[11]]);
-
-    if major != FORMAT_MAJOR {
-        if major > FORMAT_MAJOR {
-            // Newer container format: this build has no path to open it.
-            return Err(Error::UnsupportedVersion { major, minor });
-        }
+    if major < FORMAT_MAJOR {
         // Older format: attempt migration. apply_chain decompresses the body
         // and applies registered transformation steps, returning a decompressed
         // body in the current format. At v1.0 no migrations are registered so
-        // this always yields UnsupportedVersion — future format bumps add
-        // steps to migrate.rs without touching this dispatch logic.
-        let body_len = usize::try_from(u64::from_be_bytes([
-            data[20], data[21], data[22], data[23], data[24], data[25], data[26], data[27],
-        ]))
-        .map_err(|_| Error::Truncated)?;
-        let body_end = HEADER_LEN.checked_add(body_len).ok_or(Error::Truncated)?;
-        let compressed = data.get(HEADER_LEN..body_end).ok_or(Error::Truncated)?;
+        // this yields UnsupportedVersion for every older-major file that gets
+        // this far — future format bumps add steps to migrate.rs without
+        // touching this dispatch logic.
         let body = migrate::apply_chain(major, minor, compressed, MAX_DECOMPRESSED_BODY)?;
-        let archive: PixhausArchive = rmp_serde::from_slice(&body)?;
-        let schema = archive.project.schema_version;
-        if !SchemaVersion::current().is_compatible_with(schema) {
-            return Err(Error::UnsupportedSchemaVersion {
-                major: schema.major,
-                minor: schema.minor,
-            });
-        }
-        return Ok(archive);
+        return deserialize_and_validate(&body);
     }
-    // minor is forward-compatible: ignore fields we don't recognise.
-
-    let feature_flags = u32::from_be_bytes([data[12], data[13], data[14], data[15]]);
-    let required_flags = u32::from_be_bytes([data[16], data[17], data[18], data[19]]);
-
-    // Spec invariant: required_flags must be a subset of feature_flags.
-    // A header that violates this is malformed; reject before doing any
-    // decompression work.
-    if required_flags & !feature_flags != 0 {
-        return Err(Error::InconsistentFeatureFlags {
-            advertised: feature_flags,
-            required: required_flags,
-        });
-    }
-
-    let unknown = required_flags & !KNOWN_FLAGS;
-    if unknown != 0 {
-        return Err(Error::UnknownRequiredFeatures { required: unknown });
-    }
-
-    let body_len = usize::try_from(u64::from_be_bytes([
-        data[20], data[21], data[22], data[23], data[24], data[25], data[26], data[27],
-    ]))
-    .map_err(|_| Error::Truncated)?;
-
-    // Use checked arithmetic for the body slice bounds so a header
-    // claiming a near-usize::MAX body_len returns Truncated rather than
-    // panicking on overflow in debug builds.
-    let body_end = HEADER_LEN.checked_add(body_len).ok_or(Error::Truncated)?;
-    let compressed = data.get(HEADER_LEN..body_end).ok_or(Error::Truncated)?;
+    // major == FORMAT_MAJOR; minor is forward-compatible: ignore fields
+    // we don't recognise.
 
     // Bounded decompression — caps the buffer at MAX_DECOMPRESSED_BODY
     // bytes so a small file with a malicious zstd frame can't OOM the
@@ -116,20 +130,7 @@ pub fn decode(data: &[u8]) -> Result<PixhausArchive> {
     // Drain any remaining frame bytes to surface trailing-data errors.
     drop(decoder);
 
-    let archive: PixhausArchive = rmp_serde::from_slice(&body)?;
-
-    // Validate data-model schema version embedded in the body. Distinct
-    // error variant from container UnsupportedVersion so users can tell
-    // "wrong .pixhaus format" from "wrong project schema".
-    let schema = archive.project.schema_version;
-    if !SchemaVersion::current().is_compatible_with(schema) {
-        return Err(Error::UnsupportedSchemaVersion {
-            major: schema.major,
-            minor: schema.minor,
-        });
-    }
-
-    Ok(archive)
+    deserialize_and_validate(&body)
 }
 
 /// Reads a `.pixhaus` file from `path` and decodes it.

@@ -18,6 +18,8 @@
     missing_docs
 )]
 
+use std::hint::black_box;
+
 use criterion::{Criterion, Throughput, criterion_group, criterion_main};
 use pixhaus_core::project::Project;
 use pixhaus_io::pixhaus::{PixelBufferEntry, PixhausArchive, decode, encode};
@@ -55,7 +57,11 @@ fn bench_encode(c: &mut Criterion) {
     c.benchmark_group("pixhaus/encode")
         .throughput(Throughput::Bytes(raw_bytes))
         .bench_function("100x256x256_rgba", |b| {
-            b.iter(|| encode(&archive).unwrap());
+            // black_box on input prevents the optimizer from hoisting the
+            // archive's contents out; black_box on the output prevents
+            // dead-code elimination of the encode work whose result is
+            // immediately dropped.
+            b.iter(|| black_box(encode(black_box(&archive)).unwrap()));
         });
 }
 
@@ -67,7 +73,7 @@ fn bench_decode(c: &mut Criterion) {
     c.benchmark_group("pixhaus/decode")
         .throughput(Throughput::Bytes(raw_bytes))
         .bench_function("100x256x256_rgba", |b| {
-            b.iter(|| decode(&encoded).unwrap());
+            b.iter(|| black_box(decode(black_box(&encoded)).unwrap()));
         });
 }
 

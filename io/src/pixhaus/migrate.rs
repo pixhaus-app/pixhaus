@@ -1,11 +1,16 @@
 //! Schema migration for `.pixhaus` files from older format versions.
 //!
-//! When the container format major version bumps past 1, add a migration
-//! step to [`apply_chain`] so older files can still be opened. Each step
-//! receives the raw zstd-compressed body from the old file, decompresses it,
-//! transforms the `MessagePack` bytes to match the next version, and returns
-//! a decompressed body ready for the following step (or for deserialization
-//! if it's the final step).
+//! # Chain contract
+//!
+//! Each migration step receives **zstd-compressed** body bytes (the same
+//! format on disk), decompresses internally, transforms the `MessagePack`
+//! bytes to match the next version, and re-compresses before handing off
+//! to the following step. The final step decompresses one last time and
+//! returns the **decompressed** bytes, ready for `rmp_serde::from_slice`.
+//!
+//! Re-compressing between steps keeps each transform isolated and
+//! independently testable: a step author writes `Vec<u8> -> Vec<u8>` over
+//! decompressed bodies and the chain handles the (de)compression bookend.
 //!
 //! At format v1.0 the chain is empty — there is no prior format to migrate
 //! from.
@@ -17,17 +22,15 @@
 //! ```ignore
 //! if major == 1 {
 //!     let raw = decompress(compressed, limit)?;
+//!     // re-compress for the next step's input contract
 //!     compressed = zstd::encode_all(&*v1_to_v2(raw)?, 3).map_err(Error::Io)?;
 //!     major = 2;
 //! }
 //! if major == FORMAT_MAJOR {
+//!     // final step: caller wants decompressed bytes
 //!     return decompress(&compressed, limit);
 //! }
 //! ```
-//!
-//! The pattern decompresses the old body, transforms it, then re-compresses
-//! before handing off to the next step — keeping each step's transform
-//! isolated and independently testable.
 
 use crate::error::{Error, Result};
 
