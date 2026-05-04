@@ -82,6 +82,8 @@ jobs:
 
     steps:
       - uses: actions/checkout@v6
+        with:
+          ref: ${{ needs.create-release.outputs.tag }}
 
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable

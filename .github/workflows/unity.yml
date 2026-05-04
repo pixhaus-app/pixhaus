@@ -19,18 +19,19 @@ jobs:
     steps:
       - uses: actions/checkout@v6
 
-      - name: Validate package.json is well-formed
-        run: python3 -c "import json,sys; json.load(open('unity/package.json')); print('package.json OK')"
-
-      - name: Check required package structure
+      - name: Validate UPM package layout
         run: |
+          # Existence checks first so a missing file produces a clear, single
+          # error message instead of a Python stack trace from the JSON parse.
           test -f unity/package.json     || (echo "unity/package.json missing"  && exit 1)
           test -f unity/CHANGELOG.md     || (echo "unity/CHANGELOG.md missing"  && exit 1)
           test -d unity/Editor           || (echo "unity/Editor/ missing"       && exit 1)
           test -d unity/Runtime          || (echo "unity/Runtime/ missing"      && exit 1)
+          python3 -c "import json; json.load(open('unity/package.json')); print('package.json OK')"
 
   test:
     name: Unity tests
+    needs: validate-package
     runs-on: ubuntu-latest
     # Enabled by S39. Requires:
     #   - A full Unity test project at unity/Tests~
