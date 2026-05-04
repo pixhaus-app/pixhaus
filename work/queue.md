@@ -36,7 +36,7 @@ The full list is in `docs/planning/work/streams.md`. Critical-path streams
 listed here for visibility — the ralph loop should not claim them until
 their bedrock dependencies are merged.
 
-- [~] CLAIMED:stream-s01: S01 — Pixel buffer and blend modes (★ critical path). Brief: docs/planning/work/streams.md#s01. Blocked by: B2.
+- [x] DONE: S01 — Pixel buffer and blend modes (★ critical path). Brief: docs/planning/work/streams.md#s01. Blocked by: B2.
 - [ ] UNCLAIMED: S02 — Color and palette ops (★ critical path). Brief: docs/planning/work/streams.md#s02. Blocked by: B2.
 - [ ] UNCLAIMED: S05 — Undo/redo command pattern (★ critical path). Brief: docs/planning/work/streams.md#s05. Blocked by: B2.
 - [ ] UNCLAIMED: S06 — Tilemap data structures and autotile rules (★ critical path). Brief: docs/planning/work/streams.md#s06. Blocked by: B2.
