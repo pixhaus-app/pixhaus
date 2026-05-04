@@ -2559,6 +2559,7 @@ name = "pixhaus-io"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "criterion",
  "pixhaus-core",
  "rmp-serde",
  "rstest",
