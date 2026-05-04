@@ -18,4 +18,5 @@ export * from "./layers";
 export * from "./palette";
 export * from "./project";
 export * from "./tiles";
+export * from "./undo";
 export * from "./verbs";

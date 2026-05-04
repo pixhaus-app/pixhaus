@@ -6,6 +6,7 @@
 use std::path::PathBuf;
 
 use pixhaus_core::project::Project;
+use pixhaus_core::undo::History;
 
 /// In-memory document and editor session. Internal to the app crate.
 pub(crate) struct DocumentStore {
@@ -18,6 +19,8 @@ pub(crate) struct DocumentStore {
     pub(crate) next_id: u32,
     /// `true` when the in-memory state differs from the last save.
     pub(crate) dirty: bool,
+    /// Undo/redo history for the active document.
+    pub(crate) history: History,
 }
 
 impl Default for DocumentStore {
@@ -27,6 +30,7 @@ impl Default for DocumentStore {
             path: None,
             next_id: 1,
             dirty: false,
+            history: History::new(),
         }
     }
 }

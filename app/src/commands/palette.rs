@@ -1,11 +1,65 @@
 //! Palette CRUD and color management commands.
 
-use pixhaus_core::project::{Palette, PaletteEntry, PaletteId, Rgba, SpriteId, UserData};
+use pixhaus_core::project::{Palette, PaletteEntry, PaletteId, Project, Rgba, SpriteId, UserData};
+use pixhaus_core::undo::Command;
 use serde::{Deserialize, Deserializer, Serialize};
 use tauri::State;
 
 use crate::error::{AppCommandError, CommandResult};
 use crate::state::AppState;
+
+// ── command impl: PaletteAddColorCommand ─────────────────────────────────────
+
+/// A reversible "append color to palette" command.
+///
+/// Proves the `Command` pattern for IPC mutations: `apply` records the
+/// index it inserted at so `undo` can remove exactly that entry.
+struct PaletteAddColorCommand {
+    sprite_id: SpriteId,
+    palette_id: PaletteId,
+    color: Rgba,
+    name: Option<String>,
+    /// Index of the appended entry; populated by the first `apply` call.
+    added_index: u32,
+}
+
+type CmdResult = std::result::Result<(), Box<dyn std::error::Error + Send + Sync>>;
+
+impl Command for PaletteAddColorCommand {
+    fn label(&self) -> &'static str {
+        "add palette color"
+    }
+
+    fn apply(&mut self, project: &mut Project) -> CmdResult {
+        let palette = find_palette_in_project_mut(project, self.sprite_id, self.palette_id)
+            .map_err(|e| Box::new(e) as Box<dyn std::error::Error + Send + Sync>)?;
+        let entry = PaletteEntry {
+            color: self.color,
+            name: self.name.clone(),
+        };
+        palette.colors.push(entry);
+        self.added_index = u32::try_from(palette.colors.len() - 1).map_err(
+            |_| -> Box<dyn std::error::Error + Send + Sync> {
+                Box::new(AppCommandError::Validation {
+                    detail: "palette has too many colors".into(),
+                })
+            },
+        )?;
+        Ok(())
+    }
+
+    fn undo(&mut self, project: &mut Project) -> CmdResult {
+        let palette = find_palette_in_project_mut(project, self.sprite_id, self.palette_id)
+            .map_err(|e| Box::new(e) as Box<dyn std::error::Error + Send + Sync>)?;
+        let idx = self.added_index as usize;
+        if idx < palette.colors.len() {
+            palette.colors.remove(idx);
+        }
+        Ok(())
+    }
+}
+
+// ── wire format ──────────────────────────────────────────────────────────────
 
 /// Deserialises an optional field with three states: missing (None),
 /// explicit `null` (Some(None)), or a value (Some(Some(value))).
@@ -71,6 +125,8 @@ pub struct PaletteSwapResult {
     /// ID of the second palette.
     pub to_id: PaletteId,
 }
+
+// ── IPC commands ─────────────────────────────────────────────────────────────
 
 /// Adds a new empty palette to a sprite.
 #[tauri::command(async, rename_all = "snake_case")]
@@ -141,25 +197,50 @@ pub async fn palette_delete(
 }
 
 /// Appends a color to a palette. Returns the index of the new swatch.
+///
+/// This mutation is routed through the undo history so `undo` can remove
+/// the color that was appended.
 #[tauri::command(async, rename_all = "snake_case")]
 pub async fn palette_add_color(
     args: PaletteAddColorArgs,
     state: State<'_, AppState>,
 ) -> CommandResult<u32> {
-    let mut doc = state.doc.write().await;
-    let index = {
-        let palette = find_palette_mut(&mut doc, args.sprite_id, args.palette_id)?;
-        let entry = PaletteEntry {
-            color: args.color,
-            name: args.name,
-        };
-        palette.colors.push(entry);
-        u32::try_from(palette.colors.len() - 1).map_err(|_| AppCommandError::Validation {
+    let mut lock = state.doc.write().await;
+    let doc = &mut *lock;
+
+    // Pre-calculate the insertion index while holding an immutable project borrow.
+    let next_index = {
+        let project = doc
+            .project
+            .as_ref()
+            .ok_or(AppCommandError::NoActiveProject)?;
+        let palette = find_palette_in_project(project, args.sprite_id, args.palette_id)?;
+        u32::try_from(palette.colors.len()).map_err(|_| AppCommandError::Validation {
             detail: "palette has too many colors".into(),
         })?
     };
+
+    let cmd = PaletteAddColorCommand {
+        sprite_id: args.sprite_id,
+        palette_id: args.palette_id,
+        color: args.color,
+        name: args.name,
+        added_index: 0,
+    };
+
+    // Disjoint field borrows: doc.project and doc.history are separate fields.
+    let project = doc
+        .project
+        .as_mut()
+        .ok_or(AppCommandError::NoActiveProject)?;
+    doc.history
+        .push(Box::new(cmd), project)
+        .map_err(|e| AppCommandError::Validation {
+            detail: e.to_string(),
+        })?;
+
     doc.dirty = true;
-    Ok(index)
+    Ok(next_index)
 }
 
 /// Removes the swatch at `index` from a palette.
@@ -305,9 +386,57 @@ fn find_palette_mut(
         })
 }
 
+fn find_palette_in_project(
+    project: &Project,
+    sprite_id: SpriteId,
+    palette_id: PaletteId,
+) -> CommandResult<&Palette> {
+    project
+        .sprites
+        .iter()
+        .find(|s| s.id == sprite_id)
+        .ok_or(AppCommandError::NotFound {
+            entity: "sprite".into(),
+            id: u64::from(sprite_id.get()),
+        })?
+        .palettes
+        .iter()
+        .find(|p| p.id == palette_id)
+        .ok_or(AppCommandError::NotFound {
+            entity: "palette".into(),
+            id: u64::from(palette_id.get()),
+        })
+}
+
+fn find_palette_in_project_mut(
+    project: &mut Project,
+    sprite_id: SpriteId,
+    palette_id: PaletteId,
+) -> CommandResult<&mut Palette> {
+    project
+        .sprites
+        .iter_mut()
+        .find(|s| s.id == sprite_id)
+        .ok_or(AppCommandError::NotFound {
+            entity: "sprite".into(),
+            id: u64::from(sprite_id.get()),
+        })?
+        .palettes
+        .iter_mut()
+        .find(|p| p.id == palette_id)
+        .ok_or(AppCommandError::NotFound {
+            entity: "palette".into(),
+            id: u64::from(palette_id.get()),
+        })
+}
+
+// ── tests ─────────────────────────────────────────────────────────────────────
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    use pixhaus_core::project::{PaletteId, Project, Rgba, SpriteId};
+    use pixhaus_core::undo::History;
 
     #[test]
     fn palette_swap_result_preserves_ids() {
@@ -346,5 +475,145 @@ mod tests {
             Some(Some("red".into())),
             "Some(Some) sets the value"
         );
+    }
+
+    // ── PaletteAddColorCommand round-trip ─────────────────────────────────
+
+    fn make_project_with_palette() -> (Project, SpriteId, PaletteId) {
+        use pixhaus_core::project::{Size, Sprite};
+
+        let mut project = Project::new("test");
+        let sprite_id = SpriteId::new(1);
+        let palette_id = PaletteId::new(1);
+        let mut sprite = Sprite::empty(
+            sprite_id,
+            "sprite",
+            Size {
+                width: 8,
+                height: 8,
+            },
+        );
+        sprite.palettes.push(Palette {
+            id: palette_id,
+            name: "main".into(),
+            colors: Vec::new(),
+            user_data: UserData::default(),
+        });
+        project.sprites.push(sprite);
+        (project, sprite_id, palette_id)
+    }
+
+    #[test]
+    fn palette_add_color_command_apply_adds_color() {
+        let (mut project, sprite_id, palette_id) = make_project_with_palette();
+        let mut history = History::new();
+
+        let cmd = PaletteAddColorCommand {
+            sprite_id,
+            palette_id,
+            color: Rgba {
+                r: 255,
+                g: 0,
+                b: 0,
+                a: 255,
+            },
+            name: Some("red".into()),
+            added_index: 0,
+        };
+        history.push(Box::new(cmd), &mut project).unwrap();
+
+        let palette = project
+            .sprites
+            .iter()
+            .find(|s| s.id == sprite_id)
+            .unwrap()
+            .palettes
+            .iter()
+            .find(|p| p.id == palette_id)
+            .unwrap();
+        assert_eq!(palette.colors.len(), 1);
+        assert_eq!(palette.colors[0].color.r, 255);
+    }
+
+    #[test]
+    fn undo_removes_added_color() {
+        let (mut project, sprite_id, palette_id) = make_project_with_palette();
+        let mut history = History::new();
+
+        let cmd = PaletteAddColorCommand {
+            sprite_id,
+            palette_id,
+            color: Rgba {
+                r: 255,
+                g: 0,
+                b: 0,
+                a: 255,
+            },
+            name: None,
+            added_index: 0,
+        };
+        history.push(Box::new(cmd), &mut project).unwrap();
+        assert_eq!(
+            project.sprites[0]
+                .palettes
+                .iter()
+                .find(|p| p.id == palette_id)
+                .unwrap()
+                .colors
+                .len(),
+            1,
+            "color was added"
+        );
+
+        history.undo(&mut project).unwrap();
+
+        let palette = project
+            .sprites
+            .iter()
+            .find(|s| s.id == sprite_id)
+            .unwrap()
+            .palettes
+            .iter()
+            .find(|p| p.id == palette_id)
+            .unwrap();
+        assert_eq!(
+            palette.colors.len(),
+            0,
+            "undo must remove the appended color"
+        );
+    }
+
+    #[test]
+    fn redo_reapplies_add_color() {
+        let (mut project, sprite_id, palette_id) = make_project_with_palette();
+        let mut history = History::new();
+
+        let cmd = PaletteAddColorCommand {
+            sprite_id,
+            palette_id,
+            color: Rgba {
+                r: 0,
+                g: 128,
+                b: 255,
+                a: 255,
+            },
+            name: None,
+            added_index: 0,
+        };
+        history.push(Box::new(cmd), &mut project).unwrap();
+        history.undo(&mut project).unwrap();
+        history.redo(&mut project).unwrap();
+
+        let palette = project
+            .sprites
+            .iter()
+            .find(|s| s.id == sprite_id)
+            .unwrap()
+            .palettes
+            .iter()
+            .find(|p| p.id == palette_id)
+            .unwrap();
+        assert_eq!(palette.colors.len(), 1);
+        assert_eq!(palette.colors[0].color.g, 128);
     }
 }

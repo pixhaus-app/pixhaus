@@ -8,22 +8,28 @@
 //! of redoing. Multiple children represent diverging edit branches;
 //! redo always follows the most-recently-used child.
 //!
-//! Nodes are stored in a flat `Vec`; each node carries its parent index
-//! and a list of child indices. This lets the tree avoid pointer chasing
-//! while keeping append O(1) amortised.
+//! Nodes are stored in a `HashMap` keyed by a monotonically increasing
+//! `NodeId`. This lets deletion reduce `nodes.len()` by one per drop —
+//! no tombstone slots accumulate — while keeping all other indices stable.
 //!
 //! # Memory cap
 //!
-//! The cap is enforced on push. When the total command count exceeds
+//! The cap is enforced on push. When `nodes.len()` exceeds
 //! `max_commands`, or the summed `estimated_size_bytes` across all live
 //! nodes exceeds `max_bytes`, the oldest reachable ancestor of the root
-//! branch is dropped. "Oldest" means the node with the smallest index
-//! that is still on the undo path from `current` to the root.
+//! branch is evicted. Off-path branches hanging off the evicted node
+//! are dropped recursively. The surviving path-continuation node becomes
+//! the new root (its parent is set to `None`).
+
+use std::collections::HashMap;
 
 use crate::project::Project;
 
 use super::command::{CoalesceResult, Command};
 use super::error::{Error, Result};
+
+/// Opaque identifier for a history node. Monotonically increasing; never reused.
+type NodeId = u32;
 
 /// Tuning parameters for the history.
 #[derive(Clone, Debug)]
@@ -50,13 +56,13 @@ impl Default for HistoryConfig {
 /// A single node in the history tree.
 struct HistoryNode {
     command: Box<dyn Command>,
-    parent: Option<usize>,
+    parent: Option<NodeId>,
     /// Children ordered oldest-first; the last entry is most-recently visited.
-    children: Vec<usize>,
+    children: Vec<NodeId>,
 }
 
 impl HistoryNode {
-    fn new(command: Box<dyn Command>, parent: Option<usize>) -> Self {
+    fn new(command: Box<dyn Command>, parent: Option<NodeId>) -> Self {
         Self {
             command,
             parent,
@@ -68,12 +74,14 @@ impl HistoryNode {
 /// The branching undo/redo history.
 ///
 /// `current` is `None` when the project is in its initial (unapplied)
-/// state, i.e. every command has been undone. When `current` is `Some(i)`,
-/// node `i` is the most recently applied command.
+/// state, i.e. every command has been undone. When `current` is `Some(id)`,
+/// node `id` is the most recently applied command.
 pub struct History {
-    nodes: Vec<HistoryNode>,
-    /// Index of the most recently applied command, or `None` at root.
-    current: Option<usize>,
+    nodes: HashMap<NodeId, HistoryNode>,
+    /// Next ID to assign. Monotonically increasing; never reused.
+    next_node_id: NodeId,
+    /// ID of the most recently applied command, or `None` at root.
+    current: Option<NodeId>,
     /// Summed `estimated_size_bytes` across all live nodes.
     total_bytes: usize,
     config: HistoryConfig,
@@ -84,7 +92,8 @@ impl History {
     #[must_use]
     pub fn with_config(config: HistoryConfig) -> Self {
         Self {
-            nodes: Vec::new(),
+            nodes: HashMap::new(),
+            next_node_id: 0,
             current: None,
             total_bytes: 0,
             config,
@@ -97,7 +106,7 @@ impl History {
         Self::with_config(HistoryConfig::default())
     }
 
-    /// Number of nodes currently in the tree (across all branches).
+    /// Number of live nodes currently in the tree (across all branches).
     #[must_use]
     pub fn node_count(&self) -> usize {
         self.nodes.len()
@@ -106,29 +115,23 @@ impl History {
     /// Label of the command that would be undone next, if any.
     #[must_use]
     pub fn undo_label(&self) -> Option<&str> {
-        self.current.map(|i| self.nodes[i].command.label())
+        self.current
+            .and_then(|id| self.nodes.get(&id))
+            .map(|n| n.command.label())
     }
 
     /// Label of the command that would be redone next, if any.
     ///
-    /// Redo follows the most-recently-visited child of `current`.
+    /// When `current` points to a node, follows the most-recently-visited
+    /// child (last in the children list). At root (`current` is `None`),
+    /// returns the label of the most-recently-created root-level node (the
+    /// parentless node with the highest `NodeId`), which is the last root
+    /// that was pushed while at the root state.
     #[must_use]
     pub fn redo_label(&self) -> Option<&str> {
-        let children = match self.current {
-            Some(i) => &self.nodes[i].children,
-            None => {
-                // At root: the next redo target is the first root-level node
-                // that has no parent. We track root nodes as children of a
-                // virtual sentinel — here we scan for nodes with parent=None.
-                return self
-                    .nodes
-                    .iter()
-                    .rev()
-                    .find(|n| n.parent.is_none())
-                    .map(|n| n.command.label());
-            }
-        };
-        children.last().map(|&ci| self.nodes[ci].command.label())
+        self.next_redo_id()
+            .and_then(|id| self.nodes.get(&id))
+            .map(|n| n.command.label())
     }
 
     /// Apply `command` against `project` and push it onto the history.
@@ -143,9 +146,10 @@ impl History {
     pub fn push(&mut self, mut command: Box<dyn Command>, project: &mut Project) -> Result<()> {
         // Attempt coalescing with the current top command.
         if let Some(cur) = self.current {
-            if let CoalesceResult::Merged = self.nodes[cur].command.coalesce(command.as_ref()) {
-                // Merged: the current command now represents both; nothing to push.
-                return Ok(());
+            if let Some(node) = self.nodes.get_mut(&cur) {
+                if let CoalesceResult::Merged = node.command.coalesce(command.as_ref()) {
+                    return Ok(());
+                }
             }
         }
 
@@ -157,19 +161,21 @@ impl History {
             })?;
 
         let parent = self.current;
-        let node_idx = self.nodes.len();
+        let node_id = self.next_node_id;
+        self.next_node_id = self.next_node_id.saturating_add(1);
         let size = command.estimated_size_bytes();
 
-        let node = HistoryNode::new(command, parent);
-        self.nodes.push(node);
+        self.nodes
+            .insert(node_id, HistoryNode::new(command, parent));
         self.total_bytes += size;
 
-        // Register as a child of the current node.
         if let Some(p) = parent {
-            self.nodes[p].children.push(node_idx);
+            if let Some(parent_node) = self.nodes.get_mut(&p) {
+                parent_node.children.push(node_id);
+            }
         }
 
-        self.current = Some(node_idx);
+        self.current = Some(node_id);
         self.enforce_cap();
         Ok(())
     }
@@ -182,14 +188,20 @@ impl History {
     /// Propagates any error from the command's `undo` implementation.
     pub fn undo(&mut self, project: &mut Project) -> Result<()> {
         let cur = self.current.ok_or(Error::NothingToUndo)?;
-        self.nodes[cur]
+        let (label, parent) = self
+            .nodes
+            .get(&cur)
+            .map(|n| (n.command.label().to_owned(), n.parent))
+            .ok_or(Error::NothingToUndo)?;
+
+        self.nodes
+            .get_mut(&cur)
+            .ok_or(Error::NothingToUndo)?
             .command
             .undo(project)
-            .map_err(|source| Error::CommandFailed {
-                label: self.nodes[cur].command.label().to_owned(),
-                source,
-            })?;
-        self.current = self.nodes[cur].parent;
+            .map_err(|source| Error::CommandFailed { label, source })?;
+
+        self.current = parent;
         Ok(())
     }
 
@@ -200,117 +212,131 @@ impl History {
     /// Returns [`Error::NothingToRedo`] if no child exists.
     /// Propagates any error from the command's `apply` implementation.
     pub fn redo(&mut self, project: &mut Project) -> Result<()> {
-        let next = self.next_redo_index().ok_or(Error::NothingToRedo)?;
-        self.nodes[next]
+        let next = self.next_redo_id().ok_or(Error::NothingToRedo)?;
+        let label = self
+            .nodes
+            .get(&next)
+            .map(|n| n.command.label().to_owned())
+            .ok_or(Error::NothingToRedo)?;
+
+        self.nodes
+            .get_mut(&next)
+            .ok_or(Error::NothingToRedo)?
             .command
             .apply(project)
-            .map_err(|source| Error::CommandFailed {
-                label: self.nodes[next].command.label().to_owned(),
-                source,
-            })?;
+            .map_err(|source| Error::CommandFailed { label, source })?;
+
         // Move the redone child to the end of its parent's child list so
         // subsequent redos continue down this branch.
-        if let Some(p) = self.nodes[next].parent {
-            let children = &mut self.nodes[p].children;
-            if let Some(pos) = children.iter().position(|&c| c == next) {
-                children.remove(pos);
-                children.push(next);
+        if let Some(p) = self.nodes.get(&next).and_then(|n| n.parent) {
+            if let Some(parent_node) = self.nodes.get_mut(&p) {
+                if let Some(pos) = parent_node.children.iter().position(|&c| c == next) {
+                    parent_node.children.remove(pos);
+                    parent_node.children.push(next);
+                }
             }
         }
         self.current = Some(next);
         Ok(())
     }
 
-    /// Returns the index of the next node to redo, if any.
-    fn next_redo_index(&self) -> Option<usize> {
+    /// Returns the `NodeId` of the next node to redo, if any.
+    fn next_redo_id(&self) -> Option<NodeId> {
         match self.current {
-            Some(i) => self.nodes[i].children.last().copied(),
+            Some(id) => self.nodes.get(&id)?.children.last().copied(),
             None => {
-                // At root: find root nodes (parent == None) in insertion order.
-                // The most-recently visited root node is what we want.
-                // We look for root nodes and take the last one (most recent push).
+                // At root: redo the most-recently-created parentless node
+                // (highest NodeId among nodes with parent == None).
                 self.nodes
                     .iter()
-                    .enumerate()
                     .filter(|(_, n)| n.parent.is_none())
-                    .map(|(i, _)| i)
-                    .next_back()
+                    .map(|(&id, _)| id)
+                    .max()
             }
         }
     }
 
-    /// Drops the oldest nodes on the linear ancestor chain from the
-    /// current position back to the root until both caps are satisfied.
+    /// Evict the oldest ancestor on the current path until both caps are met.
     ///
-    /// Nodes that are NOT on the current undo path are orphaned when
-    /// their parent is dropped; we drop them recursively. This is a
-    /// simple eager strategy — it keeps the tree bounded without a
-    /// separate GC pass.
+    /// When evicting the oldest node:
+    ///  - Off-path children (not on the current undo path) are dropped
+    ///    recursively along with their entire subtrees.
+    ///  - The path-continuation child becomes the new root (parent set to
+    ///    `None`).
+    ///  - The evicted node is removed from the map. `nodes.len()` decreases.
     fn enforce_cap(&mut self) {
-        while self.nodes.len() > self.config.max_commands
-            || self.total_bytes > self.config.max_bytes
-        {
-            // Collect the root-to-current path.
-            let path = self.current_path();
-            if path.len() < 2 {
-                // Only one node exists; can't drop it while it's current.
+        loop {
+            if self.nodes.len() <= self.config.max_commands
+                && self.total_bytes <= self.config.max_bytes
+            {
                 break;
             }
-            // The oldest node on the path (index 0 is root).
+
+            let path = self.current_path();
+            if path.len() < 2 {
+                // Cannot evict the only/current node.
+                break;
+            }
+
             let oldest = path[0];
-            self.drop_node(oldest);
-            // After dropping the oldest, update `current` if needed — it
-            // can't point to a dropped node, but the path guaranteed
-            // `current` != `oldest`.
+            let keep = path[1]; // path-continuation child; becomes new root
+
+            // Drop off-path children of `oldest`.
+            let off_path: Vec<NodeId> = self
+                .nodes
+                .get(&oldest)
+                .map(|n| n.children.iter().filter(|&&c| c != keep).copied().collect())
+                .unwrap_or_default();
+            for child in off_path {
+                self.drop_subtree(child);
+            }
+
+            // Detach `keep` from `oldest` so it becomes a new root.
+            if let Some(node) = self.nodes.get_mut(&keep) {
+                node.parent = None;
+            }
+
+            // Remove `oldest`.
+            if let Some(node) = self.nodes.remove(&oldest) {
+                self.total_bytes = self
+                    .total_bytes
+                    .saturating_sub(node.command.estimated_size_bytes());
+            }
+        }
+    }
+
+    /// Recursively drop an entire subtree rooted at `id`.
+    ///
+    /// Does not touch the parent's child list — the caller is responsible
+    /// for unlinking `id` from its parent before calling this.
+    fn drop_subtree(&mut self, id: NodeId) {
+        let Some(node) = self.nodes.remove(&id) else {
+            return;
+        };
+        self.total_bytes = self
+            .total_bytes
+            .saturating_sub(node.command.estimated_size_bytes());
+
+        if self.current == Some(id) {
+            self.current = node.parent;
+        }
+
+        for child in node.children {
+            self.drop_subtree(child);
         }
     }
 
     /// Returns the path from the root ancestor of `current` down to
-    /// `current`, as a Vec of node indices oldest-first.
-    fn current_path(&self) -> Vec<usize> {
+    /// `current`, as a `Vec` of node IDs oldest-first.
+    fn current_path(&self) -> Vec<NodeId> {
         let mut path = Vec::new();
-        let mut idx = self.current;
-        while let Some(i) = idx {
-            path.push(i);
-            idx = self.nodes[i].parent;
+        let mut cur = self.current;
+        while let Some(id) = cur {
+            path.push(id);
+            cur = self.nodes.get(&id).and_then(|n| n.parent);
         }
         path.reverse();
         path
-    }
-
-    /// Drop node at `idx` and recursively orphan all its children.
-    ///
-    /// Also removes the node from its parent's child list.
-    fn drop_node(&mut self, idx: usize) {
-        // Collect children before mutating.
-        let children: Vec<usize> = self.nodes[idx].children.clone();
-        let parent = self.nodes[idx].parent;
-        let size = self.nodes[idx].command.estimated_size_bytes();
-
-        // Remove from parent's child list.
-        if let Some(p) = parent {
-            self.nodes[p].children.retain(|&c| c != idx);
-        }
-
-        // Subtract size; replace the node with a tombstone (we keep the
-        // slot to avoid re-indexing — indices must stay stable).
-        self.total_bytes = self.total_bytes.saturating_sub(size);
-
-        // Recursively drop children.
-        for child in children {
-            self.drop_node(child);
-        }
-
-        // Update `current` if it pointed at this node (shouldn't happen
-        // during enforce_cap, but defensive).
-        if self.current == Some(idx) {
-            self.current = parent;
-        }
-
-        // We leave the node in the Vec as a tombstone so indices stay
-        // valid. Replace with a no-op slot that consumes no memory.
-        // `HistoryNode` is not Clone, so we swap with a dummy.
-        self.nodes[idx] = HistoryNode::new(Box::new(TombstoneCommand), None);
     }
 
     /// Returns an ordered iterator over labels from oldest to newest
@@ -318,7 +344,8 @@ impl History {
     pub fn labels(&self) -> impl Iterator<Item = &str> {
         self.current_path()
             .into_iter()
-            .map(|i| self.nodes[i].command.label())
+            .filter_map(|id| self.nodes.get(&id))
+            .map(|n| n.command.label())
     }
 }
 
@@ -328,36 +355,11 @@ impl Default for History {
     }
 }
 
-/// Internal no-op command used as a tombstone when a node is evicted.
-struct TombstoneCommand;
-
-impl Command for TombstoneCommand {
-    fn label(&self) -> &'static str {
-        "<evicted>"
-    }
-
-    fn apply(
-        &mut self,
-        _project: &mut Project,
-    ) -> std::result::Result<(), Box<dyn std::error::Error + Send + Sync>> {
-        Ok(())
-    }
-
-    fn undo(
-        &mut self,
-        _project: &mut Project,
-    ) -> std::result::Result<(), Box<dyn std::error::Error + Send + Sync>> {
-        Ok(())
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::project::Project;
 
-    // Shadow the undo-specific `Result` so test command impls can use
-    // the trait's expected return type without spelling out the full path.
     type CmdResult = std::result::Result<(), Box<dyn std::error::Error + Send + Sync>>;
 
     // ---- helpers -----------------------------------------------------------
@@ -414,10 +416,7 @@ mod tests {
         }
 
         fn coalesce(&mut self, next: &dyn Command) -> CoalesceResult {
-            // Accept any other CoalescingStroke (identified by label).
             if next.label() == "stroke" {
-                // We can't downcast through `dyn Command`, so we push a
-                // synthetic char 'x' to represent the merged tick.
                 self.chars.push('x');
                 CoalesceResult::Merged
             } else {
@@ -509,18 +508,15 @@ mod tests {
         let mut h = History::new();
         let mut p = make_project();
 
-        // Push A, B.
         h.push(Box::new(AppendChar('a')), &mut p).unwrap();
         h.push(Box::new(AppendChar('b')), &mut p).unwrap();
-        // Undo B — we're back at A.
         h.undo(&mut p).unwrap();
         assert_eq!(p.metadata.name, "a");
 
-        // Push C — creates a new branch. B is now a redo branch.
         h.push(Box::new(AppendChar('c')), &mut p).unwrap();
         assert_eq!(p.metadata.name, "ac");
 
-        // Node count: root A (0), B (1), C (2) — three nodes.
+        // Three live nodes: A, B (redo branch), C.
         assert_eq!(h.node_count(), 3);
     }
 
@@ -536,7 +532,6 @@ mod tests {
         h.undo(&mut p).unwrap(); // back to A
         h.undo(&mut p).unwrap(); // back to root
 
-        // Redo takes the most-recently visited child of root, which is A.
         h.redo(&mut p).unwrap();
         assert_eq!(p.metadata.name, "a");
         // A's most-recently visited child is C (pushed after B was visited).
@@ -551,18 +546,12 @@ mod tests {
         let mut h = History::new();
         let mut p = make_project();
 
-        // Push first stroke — applies 'a'.
         h.push(Box::new(CoalescingStroke::new('a')), &mut p)
             .unwrap();
-        // Push second stroke — should coalesce, not create a new node.
         h.push(Box::new(CoalescingStroke::new('b')), &mut p)
             .unwrap();
         // Node count stays at 1 (coalesced).
         assert_eq!(h.node_count(), 1);
-        // The coalesced stroke applied 'x' (representative char) extra.
-        // After apply of stroke 1: "a". After coalesce of stroke 2: no new apply.
-        // (Coalescing only updates the receiver, not re-applies.)
-        // The name should still be "a" because coalesce doesn't call apply again.
         assert_eq!(p.metadata.name, "a");
     }
 
@@ -588,12 +577,17 @@ mod tests {
         let mut h = History::with_config(config);
         let mut p = make_project();
 
-        // Push 4 commands — the cap is 3, so the first should be evicted.
         for c in ['a', 'b', 'c', 'd'] {
             h.push(Box::new(AppendChar(c)), &mut p).unwrap();
         }
-        // Node count includes tombstone slots; current path should have ≤ 3
-        // live commands on it.
+
+        // Live node count must not exceed the cap.
+        assert!(
+            h.node_count() <= 3,
+            "expected ≤3 live nodes, got {}",
+            h.node_count()
+        );
+        // Current path length is bounded too.
         let labels: Vec<&str> = h.labels().collect();
         assert!(
             labels.len() <= 3,
@@ -602,6 +596,54 @@ mod tests {
             labels
         );
         assert_eq!(p.metadata.name, "abcd");
+    }
+
+    #[test]
+    fn eviction_past_cap_keeps_node_count_bounded() {
+        // Push well past max_commands and verify nodes.len() stays bounded.
+        let cap = 5_usize;
+        let config = HistoryConfig {
+            max_commands: cap,
+            max_bytes: usize::MAX,
+        };
+        let mut h = History::with_config(config);
+        let mut p = make_project();
+
+        for i in 0..50_u8 {
+            h.push(Box::new(AppendChar(char::from(b'a' + (i % 26)))), &mut p)
+                .unwrap();
+            assert!(
+                h.node_count() <= cap,
+                "after {} pushes, node_count={} exceeds cap={}",
+                i + 1,
+                h.node_count(),
+                cap
+            );
+        }
+    }
+
+    #[test]
+    fn oldest_node_unreachable_after_eviction() {
+        let config = HistoryConfig {
+            max_commands: 2,
+            max_bytes: usize::MAX,
+        };
+        let mut h = History::with_config(config);
+        let mut p = make_project();
+
+        // Push three commands — the first should be evicted.
+        h.push(Box::new(AppendChar('a')), &mut p).unwrap();
+        let first_id = 0u32; // node 0 is the first push
+        h.push(Box::new(AppendChar('b')), &mut p).unwrap();
+        h.push(Box::new(AppendChar('c')), &mut p).unwrap();
+
+        // Node 0 must have been evicted from the map.
+        assert!(
+            !h.nodes.contains_key(&first_id),
+            "evicted node 0 must not be in the map"
+        );
+        // Only 2 live nodes remain.
+        assert_eq!(h.node_count(), 2);
     }
 
     // ---- labels ------------------------------------------------------------
