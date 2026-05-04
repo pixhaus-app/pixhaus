@@ -86,6 +86,7 @@ fn structural_document() -> AsepriteDocument {
         name: "fx".into(),
         tileset_index: 0,
         uuid: None,
+        unknown_blend_code: None,
     }));
     frame0.chunks.push(Chunk::UserData(UserDataChunk {
         text: Some("group note".into()),
@@ -101,6 +102,7 @@ fn structural_document() -> AsepriteDocument {
         name: "main".into(),
         tileset_index: 0,
         uuid: None,
+        unknown_blend_code: None,
     }));
     // Raster cel on the child layer at frame 0.
     frame0.chunks.push(Chunk::Cel(CelChunk {
@@ -203,6 +205,7 @@ fn buffer_bearing_document() -> AsepriteDocument {
         name: "main".into(),
         tileset_index: 0,
         uuid: None,
+        unknown_blend_code: None,
     }));
     frame.chunks.push(Chunk::Cel(CelChunk {
         layer_index: 0,
@@ -305,10 +308,12 @@ fn structural_archive() -> PixhausArchive {
         name: "hero".into(),
         canvas: Size::new(16, 16),
         color_mode: ColorMode::Rgba,
+        transparent_color_index: None,
         layers: vec![raster_layer],
         frames,
         cels,
         palettes: vec![palette],
+        palette_frame_overrides: Vec::new(),
         tilesets: Vec::new(),
         frame_tags,
         animations: Vec::new(),
@@ -505,6 +510,7 @@ fn tilemap_archive_round_trips_through_aseprite_document() {
         name: "ground".into(),
         tile_size: Size::new(4, 4),
         tile_count: 3,
+        base_index: 1,
         source: TilesetSource::Inline {
             buffer: PixelBufferId::new(20),
         },
@@ -549,10 +555,12 @@ fn tilemap_archive_round_trips_through_aseprite_document() {
         name: "level".into(),
         canvas: Size::new(8, 8),
         color_mode: ColorMode::Rgba,
+        transparent_color_index: None,
         layers: vec![layer],
         frames: vec![Frame::default()],
         cels: vec![cel],
         palettes: Vec::new(),
+        palette_frame_overrides: Vec::new(),
         tilesets: vec![tileset],
         frame_tags: Vec::new(),
         animations: Vec::new(),

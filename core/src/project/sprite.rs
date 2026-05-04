@@ -15,7 +15,7 @@ use super::frame::{Frame, FrameTag};
 use super::geometry::Size;
 use super::id::SpriteId;
 use super::layer::Layer;
-use super::palette::Palette;
+use super::palette::{Palette, PaletteFrameOverride};
 use super::slice::Slice;
 use super::tileset::Tileset;
 use super::user_data::UserData;
@@ -32,6 +32,12 @@ pub struct Sprite {
     pub canvas: Size,
     /// Authoring color mode.
     pub color_mode: ColorMode,
+    /// Palette index treated as transparent in indexed-mode sprites.
+    /// `None` for RGBA / grayscale sprites or when no transparent index
+    /// is declared; defaults to `Some(0)` after a freshly-loaded indexed
+    /// sprite per Aseprite convention.
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub transparent_color_index: Option<u8>,
     /// Layer stack. Order matters: index `0` is the bottom layer.
     pub layers: Vec<Layer>,
     /// Frame timeline. Index is the frame number; `frames.len()` is
@@ -42,6 +48,13 @@ pub struct Sprite {
     pub cels: Vec<Cel>,
     /// Palettes available within this sprite.
     pub palettes: Vec<Palette>,
+    /// Per-frame palette overrides for animated palette-cycling. Keyed
+    /// on frame index; each entry replaces the active palette wholesale
+    /// at that frame boundary. Sparse — frames not present inherit the
+    /// previous frame's palette state. Empty for the common case where
+    /// the palette is constant for the sprite's lifetime.
+    #[serde(skip_serializing_if = "Vec::is_empty", default)]
+    pub palette_frame_overrides: Vec<PaletteFrameOverride>,
     /// Tilesets available within this sprite.
     pub tilesets: Vec<Tileset>,
     /// Editor-side frame tags (named ranges).
@@ -65,10 +78,12 @@ impl Sprite {
             name: name.into(),
             canvas,
             color_mode: ColorMode::Rgba,
+            transparent_color_index: None,
             layers: Vec::new(),
             frames: Vec::new(),
             cels: Vec::new(),
             palettes: Vec::new(),
+            palette_frame_overrides: Vec::new(),
             tilesets: Vec::new(),
             frame_tags: Vec::new(),
             animations: Vec::new(),

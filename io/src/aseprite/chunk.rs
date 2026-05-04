@@ -66,6 +66,11 @@ pub struct LayerChunk {
     pub child_level: u16,
     /// Composition blend mode.
     pub blend: BlendMode,
+    /// Original blend-mode code if it fell outside the 0–18 spec range.
+    /// `None` means [`Self::blend`] is what the file declared; `Some(c)`
+    /// means the reader fell back to `Normal` and the archive layer
+    /// surfaces a [`super::archive::ConversionWarning::UnknownBlendMode`].
+    pub unknown_blend_code: Option<u16>,
     /// Layer opacity, valid only when the file header advertises
     /// per-layer opacity.
     pub opacity: u8,

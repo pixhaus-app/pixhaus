@@ -17,9 +17,9 @@ use std::collections::HashMap;
 use pixhaus_core::project::{
     BrushState, CanvasState, Cel, CelData, ColorMode, FeatureFlags, Frame, FrameIndex, FrameRange,
     FrameTag, IVec2, Layer, LayerId, LayerKind, LoopDirection, NineSlice, Palette, PaletteEntry,
-    PaletteId, Pivot, PixelBufferId, Project, ProjectMetadata, Rect, SchemaVersion, SelectionState,
-    Size, Slice, SliceId, SliceKey, Sprite, SpriteId, TileCell, TileFlags, TileIndex, TilemapData,
-    Tileset, TilesetId, TilesetSource, UserData,
+    PaletteFrameOverride, PaletteId, Pivot, PixelBufferId, Project, ProjectMetadata, Rect,
+    SchemaVersion, SelectionState, Size, Slice, SliceId, SliceKey, Sprite, SpriteId, TileCell,
+    TileFlags, TileIndex, TilemapData, Tileset, TilesetId, TilesetSource, UserData,
 };
 
 use crate::error::{Error, Result};
@@ -80,6 +80,14 @@ pub enum ConversionWarning {
     /// captures the colors but the data model carries them through the
     /// modern 0x2019 chunk only.
     LegacyPaletteEncountered,
+    /// A blend-mode code outside the 0–18 range defined by the spec was
+    /// encountered. The layer falls back to `BlendMode::Normal`. Aseprite
+    /// extensions sometimes register custom blend modes here; round-
+    /// tripping a file with an unknown code drops it.
+    UnknownBlendMode {
+        /// Raw blend-mode code from the layer chunk.
+        code: u16,
+    },
 }
 
 /// Result of converting a [`AsepriteDocument`] into a [`PixhausArchive`].
@@ -138,7 +146,8 @@ pub fn document_to_archive(
     let mut tilesets: Vec<Tileset> = Vec::new();
     let mut tileset_id_by_aseprite_id: HashMap<u32, TilesetId> = HashMap::new();
     let mut frame_tags: Vec<FrameTag> = Vec::new();
-    let mut palette_entries: Vec<PaletteEntry> = Vec::new();
+    let mut base_palette: Vec<PaletteEntry> = Vec::new();
+    let mut palette_frame_overrides: Vec<PaletteFrameOverride> = Vec::new();
     let mut slices: Vec<Slice> = Vec::new();
     let mut frames: Vec<Frame> = doc.frames.iter().map(frame_from_doc).collect();
     let mut cels: Vec<Cel> = Vec::new();
@@ -160,6 +169,9 @@ pub fn document_to_archive(
                     if c.uuid.is_some() {
                         warnings.push(ConversionWarning::LayerUuidDropped);
                     }
+                    if let Some(code) = c.unknown_blend_code {
+                        warnings.push(ConversionWarning::UnknownBlendMode { code });
+                    }
                     let parent = derive_parent(&parent_stack, c.child_level)?;
                     parent_stack.truncate(c.child_level as usize);
                     parent_stack.push(id);
@@ -175,6 +187,7 @@ pub fn document_to_archive(
                         &layer_ids,
                         &mut buffers,
                         &mut next_buffer_id,
+                        doc.header.color_depth,
                         &mut warnings,
                     )?;
                     cels.push(cel);
@@ -188,7 +201,17 @@ pub fn document_to_archive(
                     }
                 }
                 Chunk::Palette(c) => {
-                    palette_entries = c.entries.iter().map(palette_entry_from_wire).collect();
+                    let entries: Vec<PaletteEntry> =
+                        c.entries.iter().map(palette_entry_from_wire).collect();
+                    if frame_index == 0 {
+                        base_palette = entries;
+                    } else {
+                        let frame_no = u32::try_from(frame_index).unwrap_or(u32::MAX);
+                        palette_frame_overrides.push(PaletteFrameOverride {
+                            frame: frame_no,
+                            colors: entries,
+                        });
+                    }
                 }
                 Chunk::OldPalette255(_) | Chunk::OldPalette63(_) => {
                     warnings.push(ConversionWarning::LegacyPaletteEncountered);
@@ -241,13 +264,13 @@ pub fn document_to_archive(
         }
     }
 
-    let palette = if palette_entries.is_empty() {
+    let palette = if base_palette.is_empty() {
         Vec::new()
     } else {
         vec![Palette {
             id: PaletteId::new(1),
             name: "default".into(),
-            colors: palette_entries,
+            colors: base_palette,
             user_data: UserData::default(),
         }]
     };
@@ -272,15 +295,23 @@ pub fn document_to_archive(
         feature_flags = feature_flags.union(FeatureFlags::SLICES);
     }
 
+    let transparent_color_index = if matches!(color_mode, ColorMode::Indexed) {
+        Some(doc.header.transparent_index)
+    } else {
+        None
+    };
+
     let sprite = Sprite {
         id: SpriteId::new(1),
         name: sprite_name.into(),
         canvas,
         color_mode,
+        transparent_color_index,
         layers,
         frames: std::mem::take(&mut frames),
         cels,
         palettes: palette,
+        palette_frame_overrides,
         tilesets,
         frame_tags,
         animations: Vec::new(),
@@ -410,6 +441,7 @@ fn cel_from_chunk(
     layer_ids: &[LayerId],
     buffers: &mut Vec<PixelBufferEntry>,
     next_buffer_id: &mut u32,
+    color_depth: ColorDepth,
     warnings: &mut Vec<ConversionWarning>,
 ) -> Result<Cel> {
     let layer_id =
@@ -440,7 +472,7 @@ fn cel_from_chunk(
                 id: id.get(),
                 width: u32::from(*width),
                 height: u32::from(*height),
-                stride: u32::from(*width) * 4,
+                stride: u32::from(*width) * color_depth.bytes_per_pixel(),
                 pixels: pixels.clone(),
             });
             CelData::Raster {
@@ -595,6 +627,7 @@ fn tileset_from_chunk(
         name: c.name.clone(),
         tile_size: Size::new(u32::from(c.tile_width), u32::from(c.tile_height)),
         tile_count: c.tile_count,
+        base_index: c.base_index,
         source,
         user_data: UserData::default(),
     }
@@ -636,6 +669,7 @@ pub fn archive_to_document(archive: &PixhausArchive) -> AsepriteDocument {
     header.color_depth = color_depth;
     header.color_count =
         u16::try_from(sprite.palettes.first().map_or(0, |p| p.colors.len())).unwrap_or(u16::MAX);
+    header.transparent_index = sprite.transparent_color_index.unwrap_or(0);
 
     let frame_durations: Vec<u16> = if sprite.frames.is_empty() {
         vec![100]
@@ -743,6 +777,21 @@ pub fn archive_to_document(archive: &PixhausArchive) -> AsepriteDocument {
         }
     }
 
+    for override_entry in &sprite.palette_frame_overrides {
+        let frame_idx = override_entry.frame as usize;
+        if frame_idx == 0 {
+            // Frame-0 palette state is carried by sprite.palettes; an
+            // override pinned at frame 0 would duplicate the chunk.
+            continue;
+        }
+        let Some(frame) = frames.get_mut(frame_idx) else {
+            continue;
+        };
+        frame.chunks.push(Chunk::Palette(palette_chunk_from_entries(
+            &override_entry.colors,
+        )));
+    }
+
     AsepriteDocument { header, frames }
 }
 
@@ -795,6 +844,7 @@ fn layer_to_chunk(
         kind,
         child_level,
         blend: layer.blend_mode,
+        unknown_blend_code: None,
         opacity: layer.opacity,
         name: layer.name.clone(),
         tileset_index: tileset_idx,
@@ -911,13 +961,16 @@ fn tags_to_chunk(tags: &[FrameTag]) -> TagsChunk {
 }
 
 fn palette_to_chunk(palette: &Palette) -> PaletteChunk {
-    let last_index = palette.colors.len().saturating_sub(1);
+    palette_chunk_from_entries(&palette.colors)
+}
+
+fn palette_chunk_from_entries(colors: &[PaletteEntry]) -> PaletteChunk {
+    let last_index = colors.len().saturating_sub(1);
     PaletteChunk {
-        palette_size: u32::try_from(palette.colors.len()).unwrap_or(u32::MAX),
+        palette_size: u32::try_from(colors.len()).unwrap_or(u32::MAX),
         first_index: 0,
         last_index: u32::try_from(last_index).unwrap_or(u32::MAX),
-        entries: palette
-            .colors
+        entries: colors
             .iter()
             .map(|e| PaletteEntryWire {
                 color: e.color,
@@ -985,7 +1038,7 @@ fn tileset_to_chunk(
         tile_count: tileset.tile_count,
         tile_width: u16::try_from(tileset.tile_size.width).unwrap_or(u16::MAX),
         tile_height: u16::try_from(tileset.tile_size.height).unwrap_or(u16::MAX),
-        base_index: 1,
+        base_index: tileset.base_index,
         name: tileset.name.clone(),
         source: TilesetSourceWire::Inline { pixels },
     }
@@ -1017,6 +1070,214 @@ mod tests {
         let converted = document_to_archive(&doc, "test").unwrap();
         let sprite = converted.archive.project.sprites.first().unwrap();
         assert_eq!(sprite.canvas, Size::new(64, 32));
+    }
+
+    #[test]
+    fn unknown_blend_mode_surfaces_warning() {
+        // Build a one-frame document carrying a layer chunk whose
+        // unknown_blend_code is set: the archive layer must surface
+        // ConversionWarning::UnknownBlendMode and fall back to Normal.
+        let mut doc = AsepriteDocument::empty(8, 8);
+        doc.frames.push(DocumentFrame::new(100));
+        doc.frames[0].chunks.push(Chunk::Layer(LayerChunk {
+            flags: LAYER_FLAG_VISIBLE | LAYER_FLAG_EDITABLE,
+            kind: LayerKindCode::Normal,
+            child_level: 0,
+            blend: pixhaus_core::project::BlendMode::Normal,
+            unknown_blend_code: Some(99),
+            opacity: 255,
+            name: "main".into(),
+            tileset_index: 0,
+            uuid: None,
+        }));
+        let converted = document_to_archive(&doc, "x").unwrap();
+        assert!(matches!(
+            converted.warnings.first(),
+            Some(ConversionWarning::UnknownBlendMode { code: 99 })
+        ));
+    }
+
+    #[test]
+    fn indexed_color_mode_pulls_transparent_index_from_header() {
+        let mut doc = AsepriteDocument::empty(8, 8);
+        doc.header.color_depth = ColorDepth::Indexed;
+        doc.header.transparent_index = 7;
+        doc.frames.push(DocumentFrame::new(100));
+        let converted = document_to_archive(&doc, "indexed").unwrap();
+        let sprite = converted.archive.project.sprites.first().unwrap();
+        assert_eq!(sprite.color_mode, ColorMode::Indexed);
+        assert_eq!(sprite.transparent_color_index, Some(7));
+    }
+
+    #[test]
+    fn rgba_color_mode_leaves_transparent_index_none() {
+        let mut doc = AsepriteDocument::empty(8, 8);
+        doc.header.transparent_index = 4; // header carries it; we ignore in RGBA
+        doc.frames.push(DocumentFrame::new(100));
+        let converted = document_to_archive(&doc, "rgba").unwrap();
+        let sprite = converted.archive.project.sprites.first().unwrap();
+        assert_eq!(sprite.color_mode, ColorMode::Rgba);
+        assert!(sprite.transparent_color_index.is_none());
+    }
+
+    #[test]
+    fn per_frame_palette_chunks_become_overrides() {
+        use pixhaus_core::project::Rgba;
+
+        // Three frames; frame 0 declares the base palette, frame 1
+        // swaps swatch 1 — the archive must capture the override
+        // separately so it can be re-emitted on write.
+        let mut doc = AsepriteDocument::empty(8, 8);
+        doc.frames.push(DocumentFrame::new(100));
+        doc.frames.push(DocumentFrame::new(100));
+        doc.frames.push(DocumentFrame::new(100));
+        doc.frames[0].chunks.push(Chunk::Palette(PaletteChunk {
+            palette_size: 2,
+            first_index: 0,
+            last_index: 1,
+            entries: vec![
+                PaletteEntryWire {
+                    color: Rgba::transparent(),
+                    name: None,
+                },
+                PaletteEntryWire {
+                    color: Rgba::opaque(10, 20, 30),
+                    name: None,
+                },
+            ],
+        }));
+        doc.frames[1].chunks.push(Chunk::Palette(PaletteChunk {
+            palette_size: 2,
+            first_index: 0,
+            last_index: 1,
+            entries: vec![
+                PaletteEntryWire {
+                    color: Rgba::transparent(),
+                    name: None,
+                },
+                PaletteEntryWire {
+                    color: Rgba::opaque(99, 99, 99),
+                    name: None,
+                },
+            ],
+        }));
+        let converted = document_to_archive(&doc, "p").unwrap();
+        let sprite = converted.archive.project.sprites.first().unwrap();
+        assert_eq!(sprite.palettes.len(), 1);
+        assert_eq!(sprite.palettes[0].colors[1].color, Rgba::opaque(10, 20, 30));
+        assert_eq!(sprite.palette_frame_overrides.len(), 1);
+        assert_eq!(sprite.palette_frame_overrides[0].frame, 1);
+        assert_eq!(
+            sprite.palette_frame_overrides[0].colors[1].color,
+            Rgba::opaque(99, 99, 99)
+        );
+    }
+
+    #[test]
+    fn palette_overrides_round_trip_to_document() {
+        use pixhaus_core::project::{PaletteEntry as CorePaletteEntry, Rgba};
+
+        // Build a sprite carrying a base palette + one frame-1 override,
+        // run it through archive_to_document, and check the document
+        // carries one Palette chunk in frame 0 and one in frame 1.
+        let mut sprite =
+            pixhaus_core::project::Sprite::empty(SpriteId::new(1), "p", Size::new(8, 8));
+        sprite.frames = vec![
+            pixhaus_core::project::Frame::default(),
+            pixhaus_core::project::Frame::default(),
+            pixhaus_core::project::Frame::default(),
+        ];
+        sprite.palettes = vec![Palette {
+            id: PaletteId::new(1),
+            name: "default".into(),
+            colors: vec![
+                CorePaletteEntry::new(Rgba::transparent()),
+                CorePaletteEntry::new(Rgba::opaque(10, 20, 30)),
+            ],
+            user_data: UserData::default(),
+        }];
+        sprite.palette_frame_overrides = vec![PaletteFrameOverride {
+            frame: 1,
+            colors: vec![
+                CorePaletteEntry::new(Rgba::transparent()),
+                CorePaletteEntry::new(Rgba::opaque(99, 99, 99)),
+            ],
+        }];
+        let mut project = Project::new("p");
+        project.sprites = vec![sprite];
+        let archive = PixhausArchive {
+            project,
+            buffers: Vec::new(),
+        };
+        let doc = archive_to_document(&archive);
+        let frame0_palette_count = doc.frames[0]
+            .chunks
+            .iter()
+            .filter(|c| matches!(c, Chunk::Palette(_)))
+            .count();
+        let frame1_palette_count = doc.frames[1]
+            .chunks
+            .iter()
+            .filter(|c| matches!(c, Chunk::Palette(_)))
+            .count();
+        let frame2_palette_count = doc.frames[2]
+            .chunks
+            .iter()
+            .filter(|c| matches!(c, Chunk::Palette(_)))
+            .count();
+        assert_eq!(frame0_palette_count, 1);
+        assert_eq!(frame1_palette_count, 1);
+        assert_eq!(frame2_palette_count, 0);
+    }
+
+    #[test]
+    fn tileset_base_index_round_trips() {
+        // Read side: a tileset chunk with base_index = 5 produces a
+        // Tileset model with base_index = 5.
+        let mut doc = AsepriteDocument::empty(8, 8);
+        doc.frames.push(DocumentFrame::new(100));
+        doc.frames[0].chunks.push(Chunk::Tileset(TilesetChunk {
+            tileset_id: 1,
+            flags: 0,
+            tile_count: 1,
+            tile_width: 4,
+            tile_height: 4,
+            base_index: 5,
+            name: "decals".into(),
+            source: TilesetSourceWire::Inline {
+                pixels: vec![0u8; 4 * 4 * 4],
+            },
+        }));
+        let converted = document_to_archive(&doc, "t").unwrap();
+        let sprite = converted.archive.project.sprites.first().unwrap();
+        assert_eq!(sprite.tilesets[0].base_index, 5);
+
+        // Write side: archive_to_document carries base_index back through.
+        let doc_back = archive_to_document(&converted.archive);
+        let chunk = doc_back.frames[0].chunks.iter().find_map(|c| match c {
+            Chunk::Tileset(t) => Some(t.clone()),
+            _ => None,
+        });
+        assert_eq!(chunk.map(|c| c.base_index), Some(5));
+    }
+
+    #[test]
+    fn transparent_index_round_trips_through_archive_to_document() {
+        // Build an indexed sprite with transparent_color_index=3, run it
+        // through archive_to_document, and verify the header carries 3.
+        let mut sprite =
+            pixhaus_core::project::Sprite::empty(SpriteId::new(1), "ix", Size::new(8, 8));
+        sprite.color_mode = ColorMode::Indexed;
+        sprite.transparent_color_index = Some(3);
+        let mut project = Project::new("ix");
+        project.sprites = vec![sprite];
+        let archive = PixhausArchive {
+            project,
+            buffers: Vec::new(),
+        };
+        let doc = archive_to_document(&archive);
+        assert_eq!(doc.header.color_depth, ColorDepth::Indexed);
+        assert_eq!(doc.header.transparent_index, 3);
     }
 
     #[test]

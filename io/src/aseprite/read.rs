@@ -4,7 +4,7 @@ use std::io::Read;
 use std::path::Path;
 
 use flate2::read::ZlibDecoder;
-use pixhaus_core::project::Rgba;
+use pixhaus_core::project::{BlendMode, Rgba};
 
 use crate::error::{Error, Result};
 
@@ -213,7 +213,10 @@ fn parse_layer(payload: &[u8], header: &DocumentHeader) -> Result<LayerChunk> {
     let _default_w = cur.read_u16_le()?;
     let _default_h = cur.read_u16_le()?;
     let blend_code = cur.read_u16_le()?;
-    let blend = blend_mode_from_aseprite(blend_code).unwrap_or_default();
+    let (blend, unknown_blend_code) = match blend_mode_from_aseprite(blend_code) {
+        Some(mode) => (mode, None),
+        None => (BlendMode::default(), Some(blend_code)),
+    };
     let opacity = cur.read_u8()?;
     cur.skip(3)?; // reserved
     let name = cur.read_aseprite_string()?;
@@ -235,6 +238,7 @@ fn parse_layer(payload: &[u8], header: &DocumentHeader) -> Result<LayerChunk> {
         kind,
         child_level,
         blend,
+        unknown_blend_code,
         opacity,
         name,
         tileset_index,

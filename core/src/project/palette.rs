@@ -115,6 +115,23 @@ impl Palette {
     }
 }
 
+/// Replacement palette state at a specific frame.
+///
+/// Aseprite stores palette changes as one full palette chunk per frame.
+/// Pixhaus mirrors that by carrying a sparse list on the [`super::Sprite`]:
+/// the base palette in `Sprite.palettes` covers frame 0, and each
+/// override here replaces the active palette wholesale at its frame
+/// boundary. Frames with no override inherit the previous frame's
+/// palette state.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize, TS)]
+#[ts(export)]
+pub struct PaletteFrameOverride {
+    /// Frame index this override takes effect on (0-based).
+    pub frame: u32,
+    /// Replacement entries — the full palette state at this frame.
+    pub colors: Vec<PaletteEntry>,
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
