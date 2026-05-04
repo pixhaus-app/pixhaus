@@ -27,12 +27,21 @@ pub fn parse(input: &str) -> Result<Vec<Rgba>> {
 
     for (line_num, raw_line) in input.lines().enumerate() {
         let line = raw_line.trim();
-        if line.is_empty() || line.starts_with('#') {
+        if line.is_empty() {
             continue;
         }
-        // Strip an optional leading '#' that some tools emit
+        // The format allows an optional `#` prefix on color lines (e.g.
+        // `#ff0000`). To avoid swallowing those as comments, we try the
+        // `#`-stripped value as a 6-char hex color *first*. Only lines
+        // that don't parse as a color AND start with `#` are treated as
+        // comments and skipped.
         let hex = line.strip_prefix('#').unwrap_or(line);
         if hex.len() != 6 {
+            if line.starts_with('#') {
+                // Comment line — `#` followed by something that isn't a
+                // 6-hex-digit color (e.g. `# palette name`). Skip.
+                continue;
+            }
             return Err(Error::InvalidPalette(format!(
                 "hex palette line {}: expected 6-char hex, got '{hex}'",
                 line_num + 1
@@ -105,6 +114,19 @@ mod tests {
         let input = "# palette name\nff0000\n";
         let colors = parse(input).unwrap();
         assert_eq!(colors.len(), 1);
+    }
+
+    #[test]
+    fn parse_accepts_hash_prefixed_colors() {
+        // `#ff0000` is a valid Lospec hex color, not a comment. Regression
+        // for thread 1: the prior `starts_with('#')` short-circuit silently
+        // swallowed colors written with the optional `#` prefix.
+        let input = "#ff0000\n#00ff00\n# palette name\n#0000ff\n";
+        let colors = parse(input).unwrap();
+        assert_eq!(colors.len(), 3);
+        assert_eq!(colors[0], Rgba::opaque(255, 0, 0));
+        assert_eq!(colors[1], Rgba::opaque(0, 255, 0));
+        assert_eq!(colors[2], Rgba::opaque(0, 0, 255));
     }
 
     #[test]

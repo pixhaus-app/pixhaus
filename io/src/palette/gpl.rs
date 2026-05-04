@@ -53,12 +53,19 @@ pub fn parse(input: &str) -> Result<(String, Vec<Rgba>)> {
                 colors.push(color);
             }
         } else {
-            // Metadata block
+            // Metadata block. Only the bare `#` (optionally with trailing
+            // whitespace) is the metadata/colors separator. Other lines
+            // beginning with `#` (e.g. `# Created by GIMP`) are comments
+            // that stay inside the metadata block — the prior
+            // `starts_with('#')` short-circuit prematurely flipped to
+            // colors mode and could miss `Name:` lines that followed
+            // a comment.
             if let Some(val) = line.strip_prefix("Name:") {
                 val.trim().clone_into(&mut name);
-            } else if line == "#" || line.starts_with('#') {
+            } else if line == "#" {
                 in_colors = true;
             }
+            // Other `#` lines are metadata comments; ignored.
         }
     }
 
@@ -126,6 +133,24 @@ Columns: 0\n\
     #[test]
     fn parse_rejects_missing_header() {
         assert!(parse("not a palette\n").is_err());
+    }
+
+    #[test]
+    fn parse_keeps_metadata_comments_inside_metadata_block() {
+        // Regression for thread 2: prior code flipped to colors mode on
+        // any `#`-prefixed line, so `Name:` after a comment was missed.
+        let input = "GIMP Palette\n\
+# Created by Pixhaus\n\
+Name: Heroes\n\
+Columns: 4\n\
+#\n\
+255 0 0\n";
+        let (name, colors) = parse(input).unwrap();
+        assert_eq!(
+            name, "Heroes",
+            "Name: must survive a leading metadata comment"
+        );
+        assert_eq!(colors.len(), 1);
     }
 
     #[test]

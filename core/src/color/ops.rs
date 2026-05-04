@@ -6,16 +6,21 @@ use super::space::oklab_mix;
 
 // ── Nearest color ────────────────────────────────────────────────────────────
 
-/// Returns the index of the palette entry whose RGB values are nearest to
-/// `target`, ignoring alpha on both sides.
+/// Returns the index of the entry whose RGB values are nearest to `target`,
+/// ignoring alpha on both sides.
 ///
-/// Uses squared Euclidean distance in sRGB space. Returns `None` if
-/// `palette` is empty.
-pub fn nearest_color_index(palette: &[Rgba], target: Rgba) -> Option<usize> {
+/// Generic over any iterator yielding `Rgba` so callers like
+/// `Palette::nearest_index` can pass `self.colors.iter().map(|e| e.color)`
+/// without first allocating a `Vec<Rgba>`. Uses squared Euclidean distance
+/// in sRGB space. Returns `None` if the iterator yields no items.
+pub fn nearest_color_index<I>(palette: I, target: Rgba) -> Option<usize>
+where
+    I: IntoIterator<Item = Rgba>,
+{
     palette
-        .iter()
+        .into_iter()
         .enumerate()
-        .map(|(i, &c)| {
+        .map(|(i, c)| {
             let dr = i32::from(c.r) - i32::from(target.r);
             let dg = i32::from(c.g) - i32::from(target.g);
             let db = i32::from(c.b) - i32::from(target.b);
@@ -70,10 +75,9 @@ pub fn color_ramp(start: Rgba, end: Rgba, steps: usize) -> Vec<Rgba> {
 /// shifts toward lower indices (backward). Entries outside the range are
 /// copied unchanged.
 ///
-/// # Panics (in debug only)
-///
-/// The function does nothing if `first > last` or either index is out of
-/// bounds; the slice is returned unmodified.
+/// If `first > last`, either index is out of bounds, or `offset == 0`,
+/// the function returns a copy of `entries` unchanged. It does not panic
+/// on bad inputs.
 pub fn palette_cycle(entries: &[Rgba], first: usize, last: usize, offset: isize) -> Vec<Rgba> {
     let mut out = entries.to_vec();
     if first > last || last >= entries.len() || offset == 0 {
@@ -108,22 +112,31 @@ mod tests {
 
     #[test]
     fn nearest_exact_match() {
-        let palette = vec![red(), blue(), green()];
-        assert_eq!(nearest_color_index(&palette, red()), Some(0));
-        assert_eq!(nearest_color_index(&palette, blue()), Some(1));
-        assert_eq!(nearest_color_index(&palette, green()), Some(2));
+        let palette = [red(), blue(), green()];
+        assert_eq!(nearest_color_index(palette.iter().copied(), red()), Some(0));
+        assert_eq!(
+            nearest_color_index(palette.iter().copied(), blue()),
+            Some(1)
+        );
+        assert_eq!(
+            nearest_color_index(palette.iter().copied(), green()),
+            Some(2)
+        );
     }
 
     #[test]
     fn nearest_picks_closest_by_distance() {
-        let palette = vec![Rgba::opaque(0, 0, 0), Rgba::opaque(200, 0, 0)];
+        let palette = [Rgba::opaque(0, 0, 0), Rgba::opaque(200, 0, 0)];
         let target = Rgba::opaque(180, 0, 0);
-        assert_eq!(nearest_color_index(&palette, target), Some(1));
+        assert_eq!(
+            nearest_color_index(palette.iter().copied(), target),
+            Some(1)
+        );
     }
 
     #[test]
     fn nearest_empty_palette_returns_none() {
-        assert_eq!(nearest_color_index(&[], red()), None);
+        assert_eq!(nearest_color_index(std::iter::empty(), red()), None);
     }
 
     // ── palette_swap ─────────────────────────────────────────────────────────

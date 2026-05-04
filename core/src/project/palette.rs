@@ -77,19 +77,23 @@ impl Palette {
     /// `target`, ignoring alpha on both sides.
     ///
     /// Returns `None` if the palette is empty. Index `0` is the transparent
-    /// index in indexed-mode sprites.
+    /// index in indexed-mode sprites. Iterates `self.colors` directly — no
+    /// per-call `Vec` allocation, since this is a hot path for color picking
+    /// and quantization.
     #[must_use]
     pub fn nearest_index(&self, target: Rgba) -> Option<usize> {
-        let colors: Vec<Rgba> = self.colors.iter().map(|e| e.color).collect();
-        nearest_color_index(&colors, target)
+        nearest_color_index(self.colors.iter().map(|e| e.color), target)
     }
 
     /// Returns a copy of this palette with the entries in `[first..=last]`
-    /// shifted forward by `offset` positions (wrapping within the range).
+    /// shifted by `offset` positions (wrapping within the range).
     ///
-    /// Entries outside the range are unchanged. `first` and `last` are
-    /// palette indices (i.e. `u8` values cast to `usize`). If the range is
-    /// invalid or out of bounds, the palette is returned unchanged.
+    /// `offset > 0` rotates entries toward higher indices (forward);
+    /// `offset < 0` rotates toward lower indices (backward); `offset == 0`
+    /// is a no-op. Entries outside `[first..=last]` are unchanged.
+    /// `first` and `last` are palette indices (i.e. `u8` values cast to
+    /// `usize`). If the range is invalid (`first > last`) or out of
+    /// bounds, the palette is returned unchanged.
     #[must_use]
     pub fn apply_cycle(&self, first: u8, last: u8, offset: i32) -> Self {
         let mut new_entries = self.colors.clone();
@@ -157,6 +161,32 @@ mod tests {
         // Colors shifted but names should follow their entries
         assert_eq!(cycled.colors[0].name, Some("green".into()));
         assert_eq!(cycled.colors[1].name, Some("red".into()));
+    }
+
+    #[test]
+    fn apply_cycle_negative_offset_rotates_backward() {
+        // Doc clarification (thread 9): negative offsets must work as
+        // backward rotation, not no-op or panic.
+        let red = Rgba::opaque(255, 0, 0);
+        let green = Rgba::opaque(0, 255, 0);
+        let blue = Rgba::opaque(0, 0, 255);
+        let p = make_palette(vec![red, green, blue]);
+        let cycled = p.apply_cycle(0, 2, -1);
+        // Backward by one: [red, green, blue] -> [green, blue, red]
+        assert_eq!(cycled.color_at(0), Some(green));
+        assert_eq!(cycled.color_at(1), Some(blue));
+        assert_eq!(cycled.color_at(2), Some(red));
+    }
+
+    #[test]
+    fn apply_cycle_zero_offset_is_noop() {
+        let p = make_palette(vec![
+            Rgba::opaque(1, 0, 0),
+            Rgba::opaque(2, 0, 0),
+            Rgba::opaque(3, 0, 0),
+        ]);
+        let cycled = p.apply_cycle(0, 2, 0);
+        assert_eq!(cycled.colors, p.colors);
     }
 
     #[test]

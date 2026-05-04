@@ -63,8 +63,14 @@ fn read_section_v1(data: &[u8], start: usize, count: usize) -> Result<Vec<Rgba>>
     let mut offset = start;
 
     for _ in 0..count {
+        // The prior `break` here returned `Ok(colors)` with a partial
+        // palette when the file was shorter than `count` × 10 bytes —
+        // silently dropping data. File I/O on untrusted input must
+        // surface the truncation.
         if offset + 10 > data.len() {
-            break;
+            return Err(Error::InvalidPalette(
+                "ACO v1: file ends mid-entry; declared count is larger than payload".into(),
+            ));
         }
         let cs = read_u16_be(data, offset)?;
         let c1 = read_u16_be(data, offset + 2)?;
@@ -87,7 +93,9 @@ fn read_section_v2(data: &[u8], start: usize, count: usize) -> Result<Vec<Rgba>>
 
     for _ in 0..count {
         if offset + 10 > data.len() {
-            break;
+            return Err(Error::InvalidPalette(
+                "ACO v2: file ends mid-entry; declared count is larger than payload".into(),
+            ));
         }
         let cs = read_u16_be(data, offset)?;
         let c1 = read_u16_be(data, offset + 2)?;
@@ -95,9 +103,16 @@ fn read_section_v2(data: &[u8], start: usize, count: usize) -> Result<Vec<Rgba>>
         let c3 = read_u16_be(data, offset + 6)?;
         offset += 10;
 
-        // Skip the name: 4-byte length (u32 BE = number of UTF-16 chars) + len * 2 bytes
+        // Skip the name: 4-byte length (u32 BE = number of UTF-16 chars)
+        // + len * 2 bytes. The arithmetic must be checked end-to-end
+        // because `name_len` is read directly from the file: an
+        // adversarial `name_len = u32::MAX` would otherwise overflow the
+        // multiplication on 32-bit targets, or wrap to a small value
+        // and skip past most of the buffer on 64-bit, parsing garbage.
         if offset + 4 > data.len() {
-            break;
+            return Err(Error::InvalidPalette(
+                "ACO v2: file ends before name length field".into(),
+            ));
         }
         let name_len = u32::from_be_bytes([
             data[offset],
@@ -105,7 +120,17 @@ fn read_section_v2(data: &[u8], start: usize, count: usize) -> Result<Vec<Rgba>>
             data[offset + 2],
             data[offset + 3],
         ]) as usize;
-        offset += 4 + name_len * 2;
+        let name_bytes = name_len
+            .checked_mul(2)
+            .ok_or_else(|| Error::InvalidPalette("ACO v2: name length overflow".into()))?;
+        let new_offset = offset
+            .checked_add(4)
+            .and_then(|o| o.checked_add(name_bytes))
+            .ok_or_else(|| Error::InvalidPalette("ACO v2: offset overflow".into()))?;
+        if new_offset > data.len() {
+            return Err(Error::InvalidPalette("ACO v2: file ends mid-name".into()));
+        }
+        offset = new_offset;
 
         if let Some(rgba) = decode_color(cs, c1, c2, c3)? {
             colors.push(rgba);
@@ -200,6 +225,38 @@ mod tests {
         let mut data = build_v1(&[]);
         data[0] = 0;
         data[1] = 3; // version 3
+        assert!(parse(&data).is_err());
+    }
+
+    #[test]
+    fn v1_truncated_payload_returns_error_not_partial_palette() {
+        // Header declares 3 colors but only 2 entries' worth of bytes
+        // follow. Prior code returned `Ok(colors)` with 2 entries — silent
+        // truncation. New behaviour: error.
+        let mut data = build_v1(&[(CS_RGB, 0, 0, 0), (CS_RGB, 0, 0, 0)]);
+        // Bump the count to 3 without adding a third entry
+        data[2..4].copy_from_slice(&3_u16.to_be_bytes());
+        assert!(parse(&data).is_err());
+    }
+
+    #[test]
+    fn v2_huge_name_len_does_not_overflow() {
+        // Adversarial v2 entry where name_len = u32::MAX would, with
+        // unchecked arithmetic, overflow to a small wrapped offset and
+        // proceed to parse garbage. The checked_mul + checked_add guard
+        // converts that into a clean InvalidPalette.
+        let mut data = Vec::new();
+        data.extend_from_slice(&2_u16.to_be_bytes()); // version 2
+        data.extend_from_slice(&1_u16.to_be_bytes()); // count = 1
+        // Color entry: 10 bytes (RGB)
+        data.extend_from_slice(&CS_RGB.to_be_bytes());
+        data.extend_from_slice(&0_u16.to_be_bytes());
+        data.extend_from_slice(&0_u16.to_be_bytes());
+        data.extend_from_slice(&0_u16.to_be_bytes());
+        data.extend_from_slice(&0_u16.to_be_bytes());
+        // Adversarial name_len = u32::MAX
+        data.extend_from_slice(&u32::MAX.to_be_bytes());
+        // (no actual name bytes — relies on the guard)
         assert!(parse(&data).is_err());
     }
 }

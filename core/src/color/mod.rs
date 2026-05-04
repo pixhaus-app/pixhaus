@@ -1,7 +1,8 @@
 //! Color space conversions, harmony tools, and palette operations.
 //!
-//! This module lives in `core` and builds on the [`project::color::Rgba`]
-//! type. It does no I/O; format readers and writers live in `pixhaus-io`.
+//! This module lives in `core` and builds on the
+//! [`crate::project::color::Rgba`] type. It does no I/O; format readers
+//! and writers live in `pixhaus-io`.
 //!
 //! # Modules
 //!
