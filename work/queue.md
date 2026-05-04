@@ -39,7 +39,7 @@ their bedrock dependencies are merged.
 - [x] DONE: S01 — Pixel buffer and blend modes (★ critical path). Brief: docs/planning/work/streams.md#s01. Blocked by: B2.
 - [~] CLAIMED:stream-s02: S02 — Color and palette ops (★ critical path). Brief: docs/planning/work/streams.md#s02. Blocked by: B2.
 - [~] CLAIMED:stream-s05: S05 — Undo/redo command pattern (★ critical path). Brief: docs/planning/work/streams.md#s05. Blocked by: B2.
-- [~] CLAIMED:stream-s06: S06 — Tilemap data structures and autotile rules (★ critical path). Brief: docs/planning/work/streams.md#s06. Blocked by: B2.
+- [x] DONE: S06 — Tilemap data structures and autotile rules (★ critical path). Brief: docs/planning/work/streams.md#s06. Blocked by: B2.
 - [~] CLAIMED:stream-s07: S07 — `.pixhaus` native format (★ critical path). Brief: docs/planning/work/streams.md#s07. Blocked by: B3.
 - [~] CLAIMED:stream-s08: S08 — `.aseprite` read/write (★ critical path). Brief: docs/planning/work/streams.md#s08. Blocked by: B7.
 - [~] CLAIMED:stream-s10: S10 — PNG sprite sheet + JSON export (★ critical path). Brief: docs/planning/work/streams.md#s10. Blocked by: B2 B6.
