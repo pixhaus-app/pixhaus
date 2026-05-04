@@ -28,7 +28,7 @@ For each fixture, the test suite does the following:
 
 1. Load the fixture with `io::aseprite::read(path)`.
 2. Convert to the Pixhaus project data model.
-3. Write back to a temporary `.aseprite` file with `io::aseprite::write(project, path)`.
+3. Write back to a temporary `.aseprite` file with `io::aseprite::write(project, temp_path)`.
 4. Load the written file with `io::aseprite::read(temp_path)`.
 5. Assert that the reloaded project matches the original on all supported fields.
 

@@ -27,7 +27,8 @@ from Hollow Knight-era workflows onward.
 "Read-only" and "ignored" both survive a round-trip open — the file opens without
 error. "Read-only" means the data surfaces somewhere in the UI or model (e.g., an
 external tileset reference becomes an inline tileset). "Ignored" means the data is
-silently dropped with no UI consequence.
+dropped; some ignored fields emit a warning, called out per-chunk and in the
+Known gaps table.
 
 ## File header
 
@@ -72,7 +73,7 @@ per field.
 | 0x2017 | Path (never used) | ignored | Aseprite has never written this chunk |
 | 0x2018 | Tags | read+write | All four loop directions, repeat count |
 | 0x2019 | Palette | read+write | RGBA + per-entry names |
-| 0x2020 | User Data | partial | Text and color only; properties map ignored |
+| 0x2020 | User Data | read+write | Text and color round-trip; properties map ignored (see per-chunk detail) |
 | 0x2022 | Slice | read+write | Bounds, nine-slice, pivot |
 | 0x2023 | Tileset | read+write (inline) | External link read-only in v1 |
 
@@ -207,7 +208,7 @@ discrete events.
 
 ### 0x2020 — User Data
 
-**Support: partial**
+**Support: read+write**
 
 | Field | Disposition | Mapping |
 |---|---|---|
@@ -215,9 +216,8 @@ discrete events.
 | Color RGBA (flag bit 1) | read+write | `UserData.color` |
 | Properties map (flag bit 2) | ignored | Extension data; not stored |
 
-Pixhaus writes User Data for layers, cels, tags, slices, and tilesets where the
-entity has a non-empty `UserData`. It does not write a sprite-level User Data chunk
-in v1.
+Pixhaus writes User Data for the sprite, layers, cels, tags, slices, and tilesets
+where the entity has a non-empty `UserData`.
 
 **Association rules.** User Data chunks do not self-identify their target entity.
 Association is positional within each frame's chunk sequence:

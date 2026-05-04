@@ -135,7 +135,7 @@ Once B1-B6 exist, every parallel stream in `streams.md` can start. B7 informs S3
 
 ## B7. Aseprite format compatibility spec
 
-**Output:** A spec document at `docs/aseprite-compat.md` describing exactly which Aseprite file format features Pixhaus reads and writes. Implementation lives in `io/src/aseprite/` and is driven by a separate stream (S3); this bedrock spec only fixes the contract.
+**Output:** A spec document at `docs/aseprite-compat.md` describing exactly which Aseprite file format features Pixhaus reads and writes. Implementation lives in `io/src/aseprite/` and is driven by a separate stream (S08); this bedrock spec only fixes the contract.
 
 **Acceptance criteria:**
 - Document lists every Aseprite file format chunk type and Pixhaus's support level: read+write, read-only, ignored
@@ -143,7 +143,7 @@ Once B1-B6 exist, every parallel stream in `streams.md` can start. B7 informs S3
 - Known gaps documented explicitly (e.g., "tileset chunks introduced in Aseprite 1.3 are read but not written in v1")
 
 **Agent brief:**
-> Write the Aseprite file format compatibility spec for Pixhaus at `docs/aseprite-compat.md`. The Aseprite binary format is documented at https://github.com/aseprite/aseprite/blob/main/docs/ase-file-specs.md. Walk through every chunk type and decide Pixhaus's support level: full (read+write with feature parity), read-only (we read but do not write back), ignored (we read but discard, with a warning). The minimum bar for "Pixhaus opens an Aseprite file" is: layers (raster + group), frames, frame tags, palette, slices, blend modes, opacity, tileset chunks. Things we may not support immediately: linked cels (workaround acceptable), color profile chunks, user data on every entity. The goal is that 90% of indie pixel artists' .aseprite files open in Pixhaus without warnings. Document write-side compatibility separately — what does a Pixhaus-saved file look like when Aseprite opens it? Implementation lives in stream S3 of streams.md, but the contract is fixed here.
+> Write the Aseprite file format compatibility spec for Pixhaus at `docs/aseprite-compat.md`. The Aseprite binary format is documented at https://github.com/aseprite/aseprite/blob/main/docs/ase-file-specs.md. Walk through every chunk type and decide Pixhaus's support level: full (read+write with feature parity), read-only (we read but do not write back), ignored (we read but discard, with a warning). The minimum bar for "Pixhaus opens an Aseprite file" is: layers (raster + group), frames, frame tags, palette, slices, blend modes, opacity, tileset chunks. Things we may not support immediately: linked cels (workaround acceptable), color profile chunks, user data on every entity. The goal is that 90% of indie pixel artists' .aseprite files open in Pixhaus without warnings. Document write-side compatibility separately — what does a Pixhaus-saved file look like when Aseprite opens it? Implementation lives in stream S08 of streams.md, but the contract is fixed here.
 
 ---
 
