@@ -32,6 +32,7 @@
 //! line-by-line walk-through of the [`echo::EchoVerb`] reference
 //! plugin.
 
+pub mod backend;
 pub mod context;
 pub mod descriptor;
 pub mod echo;
@@ -43,7 +44,8 @@ pub mod progress;
 pub mod runtime;
 pub mod verb;
 
-pub use context::{PixelData, ReferenceImage, StyleReference, VerbContext};
+pub use backend::{BackendInfo, InferenceBackend};
+pub use context::{PixelData, ReferenceImage, StyleReference, VerbContext, VerbContextBuilder};
 pub use descriptor::{BackendCapabilities, CostEstimate, EffectKind, VerbDescriptor, VerbId};
 pub use echo::{ECHO_VERB_ID, EchoInputs, EchoVerb};
 pub use error::{Result, VerbError};
