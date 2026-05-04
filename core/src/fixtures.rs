@@ -164,6 +164,7 @@ pub fn sample_project() -> Project {
         source: TilesetSource::Inline {
             buffer: PixelBufferId::new(2000),
         },
+        properties: Vec::new(),
         user_data: UserData::default(),
     };
 
