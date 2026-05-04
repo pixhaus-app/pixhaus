@@ -7,6 +7,11 @@
 //! 14 built-in verbs land in their own streams (S21–S36); this crate
 //! ships the protocol they all build against.
 //!
+//! # Backend adapters (S22)
+//!
+//! See [`backends`] for the [`backends::InferenceBackend`] trait,
+//! [`backends::BackendRegistry`], and the six provider adapters.
+//!
 //! # Quick start
 //!
 //! ```no_run
@@ -50,9 +55,12 @@
         clippy::missing_panics_doc,
         clippy::disallowed_methods,
         clippy::float_cmp,
+        clippy::print_stderr,
+        clippy::print_stdout,
     )
 )]
 
+pub mod backends;
 pub mod plugin;
 
 /// Returns the crate name. Stable identifier downstream consumers can
