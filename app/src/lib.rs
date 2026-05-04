@@ -72,6 +72,7 @@ pub fn run() -> Result<(), AppError> {
         })
         .invoke_handler(tauri::generate_handler![
             // canvas
+            commands::canvas::canvas_composite,
             commands::canvas::canvas_draw_stroke,
             commands::canvas::canvas_fill,
             commands::canvas::canvas_set_selection,

@@ -9,6 +9,7 @@ import CommandPalette from "../command-palette/CommandPalette";
 import PreferencesModal from "../preferences/PreferencesModal";
 import StatusBar from "./StatusBar";
 import WelcomeScreen from "./WelcomeScreen";
+import Canvas from "../canvas/Canvas";
 
 // Import to trigger initial theme application as a side effect
 import "../preferences/preferences-store";
@@ -38,18 +39,7 @@ const Shell: Component = () => {
           <WelcomeScreen />
         </Show>
         <Show when={activeProject() !== null}>
-          {/* Canvas and editor panels — populated by future streams */}
-          <div
-            style={{
-              display: "flex",
-              "align-items": "center",
-              "justify-content": "center",
-              height: "100%",
-              color: "var(--text-disabled)",
-            }}
-          >
-            Project open — canvas loading...
-          </div>
+          <Canvas />
         </Show>
       </div>
 
