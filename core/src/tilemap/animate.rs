@@ -2,8 +2,9 @@
 //! playback position.
 //!
 //! Animated tiles are defined in [`TileAnimation`] on the tileset's per-tile
-//! [`TileProperties`]. The renderer calls [`step_animation`] each frame with
-//! the elapsed time; the function returns the source [`TileIndex`] to render.
+//! [`crate::project::tileset::TileProperties`]. The renderer calls
+//! [`step_animation`] each frame with the elapsed time; the function returns
+//! the source [`TileIndex`] to render.
 
 use crate::project::id::TileIndex;
 use crate::project::tileset::{AnimLoopMode, TileAnimation};

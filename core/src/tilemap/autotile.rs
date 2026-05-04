@@ -130,7 +130,8 @@ pub enum NeighborCondition {
 /// Sorted list of the 47 valid trimmed bitmasks for the Blob47 autotile.
 ///
 /// `BLOB47_MASKS[i]` is the trimmed 8-neighbor bitmask for tile `i`.
-/// The reverse mapping (bitmask → index) lives in [`BLOB47_INDEX`].
+/// The reverse mapping (bitmask → index) lives in `BLOB47_INDEX`
+/// (private; built from this table at module load).
 pub const BLOB47_MASKS: [u8; 47] = [
     0, 2, 8, 10, 11, 16, 18, 22, 24, 26, 27, 30, 31, 64, 66, 72, 74, 75, 80, 82, 86, 88, 90, 91,
     94, 95, 104, 106, 107, 120, 122, 123, 126, 127, 208, 210, 214, 216, 218, 219, 222, 223, 248,
