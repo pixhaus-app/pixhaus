@@ -40,6 +40,7 @@ use std::io::Cursor;
 use image::{ImageFormat, RgbaImage};
 use pixhaus_core::canvas::PixelBuffer;
 use pixhaus_core::project::Sprite;
+use pixhaus_core::project::geometry::Size;
 
 use crate::error::{Error, Result};
 
@@ -64,6 +65,92 @@ pub struct SheetOutput {
     pub json_bytes: Vec<u8>,
 }
 
+// ── Alpha-trim ────────────────────────────────────────────────────────────────
+
+/// Alpha-trim result for one frame.
+///
+/// Describes the bounding box of non-transparent pixels within the canvas,
+/// in canvas pixel coordinates. Used to pack at trimmed dimensions and to
+/// populate the Aseprite `spriteSourceSize` / `trimmed` JSON fields.
+struct FrameTrim {
+    /// Left edge of the opaque bbox in canvas coordinates.
+    x: u32,
+    /// Top edge of the opaque bbox in canvas coordinates.
+    y: u32,
+    /// Width of the opaque bbox (or 1 for a fully-transparent frame).
+    w: u32,
+    /// Height of the opaque bbox (or 1 for a fully-transparent frame).
+    h: u32,
+    /// `true` when the bbox is smaller than the full canvas.
+    trimmed: bool,
+}
+
+/// Compute the alpha-trim bbox for a single composited frame.
+///
+/// Scans every pixel for `alpha > 0`. If the non-transparent region is
+/// smaller than the canvas, returns a trimmed bbox. A fully-transparent
+/// frame returns a 1×1 bbox at the origin so it still occupies a slot in
+/// the sheet (avoiding index drift) without wasting space.
+fn compute_trim(buf: &PixelBuffer) -> FrameTrim {
+    let w = buf.width();
+    let h = buf.height();
+
+    let mut min_x = w;
+    let mut min_y = h;
+    let mut max_x = 0u32;
+    let mut max_y = 0u32;
+    let mut has_opaque = false;
+
+    for y in 0..h {
+        let Some(row) = buf.row(y) else { continue };
+        for x in 0..w {
+            let off = (x as usize) * 4;
+            let Some(alpha) = row.get(off + 3) else {
+                continue;
+            };
+            if *alpha > 0 {
+                has_opaque = true;
+                min_x = min_x.min(x);
+                min_y = min_y.min(y);
+                max_x = max_x.max(x);
+                max_y = max_y.max(y);
+            }
+        }
+    }
+
+    if !has_opaque {
+        return FrameTrim {
+            x: 0,
+            y: 0,
+            w: 1,
+            h: 1,
+            trimmed: true,
+        };
+    }
+
+    let bw = max_x - min_x + 1;
+    let bh = max_y - min_y + 1;
+
+    // If the bbox touches all four canvas edges the frame is not trimmed.
+    if min_x == 0 && min_y == 0 && bw == w && bh == h {
+        FrameTrim {
+            x: 0,
+            y: 0,
+            w,
+            h,
+            trimmed: false,
+        }
+    } else {
+        FrameTrim {
+            x: min_x,
+            y: min_y,
+            w: bw,
+            h: bh,
+            trimmed: true,
+        }
+    }
+}
+
 // ── Public API ────────────────────────────────────────────────────────────────
 
 /// Export `sprite` as a sprite sheet PNG + Aseprite-compatible JSON.
@@ -74,6 +161,11 @@ pub struct SheetOutput {
 /// as fully transparent buffers of the correct size — the exporter always
 /// includes every frame in the sheet.
 ///
+/// Frames are alpha-trimmed before packing: only the bounding box of
+/// non-transparent pixels is blitted into the sheet, and the pack algorithm
+/// uses the trimmed dimensions. Fully-transparent frames collapse to a 1×1
+/// slot so that frame indices remain stable.
+///
 /// # Errors
 ///
 /// - [`Error::NoFrames`] when `sprite.frames` is empty.
@@ -82,6 +174,8 @@ pub struct SheetOutput {
 /// - [`Error::FrameSizeMismatch`] when any buffer's dimensions differ from
 ///   `sprite.canvas`.
 /// - [`Error::GridColsZero`] when `options.layout` is `Grid { cols: 0 }`.
+/// - [`Error::SheetTooLarge`] when the packed sheet would exceed
+///   [`pack::MAX_SHEET_DIM`] on either axis.
 /// - [`Error::PngEncode`] when the `image` crate fails to encode the PNG.
 /// - [`Error::JsonSerialize`] when JSON serialization fails.
 pub fn export_sprite_sheet(
@@ -91,12 +185,15 @@ pub fn export_sprite_sheet(
 ) -> Result<SheetOutput> {
     validate_frames(sprite, composited_frames)?;
 
-    let frame_count = composited_frames.len();
-    let pack_result = pack::pack_frames(frame_count, sprite.canvas, &options.layout)?;
+    let trims: Vec<FrameTrim> = composited_frames.iter().map(compute_trim).collect();
+    let trimmed_sizes: Vec<Size> = trims.iter().map(|t| Size::new(t.w, t.h)).collect();
+
+    let pack_result = pack::pack_frames(&trimmed_sizes, &options.layout)?;
 
     let sheet_image = render_sheet(
         composited_frames,
         &pack_result.placements,
+        &trims,
         pack_result.sheet_width,
         pack_result.sheet_height,
     );
@@ -105,6 +202,7 @@ pub fn export_sprite_sheet(
     let json_bytes = json::build_json(
         sprite,
         &pack_result.placements,
+        &trims,
         pack_result.sheet_width,
         pack_result.sheet_height,
         &options.sprite_name,
@@ -146,46 +244,47 @@ fn validate_frames(sprite: &Sprite, composited_frames: &[PixelBuffer]) -> Result
 
 // ── Rendering ─────────────────────────────────────────────────────────────────
 
-/// Blit all composited frames onto a blank RGBA sheet.
+/// Blit all composited frames onto a blank RGBA sheet, each at its trimmed region.
 fn render_sheet(
     frames: &[PixelBuffer],
     placements: &[pack::FramePlacement],
+    trims: &[FrameTrim],
     width: u32,
     height: u32,
 ) -> RgbaImage {
     let mut sheet = RgbaImage::new(width, height);
 
-    for (buf, placement) in frames.iter().zip(placements.iter()) {
-        blit_frame(&mut sheet, buf, placement.x, placement.y);
+    for ((buf, placement), trim) in frames.iter().zip(placements.iter()).zip(trims.iter()) {
+        blit_trimmed(&mut sheet, buf, placement.x, placement.y, trim);
     }
 
     sheet
 }
 
-/// Copy one frame buffer onto the sheet at `(dest_x, dest_y)`.
+/// Copy the trimmed region of `src` onto `sheet` at `(dest_x, dest_y)`.
 ///
-/// Copies row-by-row using the frame's `row()` accessor so that padded
-/// (non-tightly-packed) buffers are handled correctly without cloning.
-fn blit_frame(sheet: &mut RgbaImage, src: &PixelBuffer, dest_x: u32, dest_y: u32) {
-    for y in 0..src.height() {
-        let Some(row_bytes) = src.row(y) else {
+/// Uses `row()` so padded (non-tightly-packed) buffers work correctly.
+fn blit_trimmed(
+    sheet: &mut RgbaImage,
+    src: &PixelBuffer,
+    dest_x: u32,
+    dest_y: u32,
+    trim: &FrameTrim,
+) {
+    for dy in 0..trim.h {
+        let Some(row) = src.row(trim.y + dy) else {
             continue;
         };
-        let sheet_y = dest_y + y;
-        for x in 0..src.width() {
-            let off = (x as usize) * 4;
-            let Some(pixel_bytes) = row_bytes.get(off..off + 4) else {
+        let sheet_y = dest_y + dy;
+        for dx in 0..trim.w {
+            let off = ((trim.x + dx) as usize) * 4;
+            let Some(bytes) = row.get(off..off + 4) else {
                 continue;
             };
             sheet.put_pixel(
-                dest_x + x,
+                dest_x + dx,
                 sheet_y,
-                image::Rgba([
-                    pixel_bytes[0],
-                    pixel_bytes[1],
-                    pixel_bytes[2],
-                    pixel_bytes[3],
-                ]),
+                image::Rgba([bytes[0], bytes[1], bytes[2], bytes[3]]),
             );
         }
     }
@@ -309,9 +408,9 @@ mod tests {
     fn four_frame_grid_sheet_has_correct_dimensions() {
         let canvas = Size::new(16, 16);
         let sprite = sprite_with_frames(canvas, 4);
-        let frames: Vec<PixelBuffer> = (0..4)
-            .map(|_| make_frame_buf(16, 16, Rgba::transparent()))
-            .collect();
+        // Fully opaque — no trimming; cell size equals full canvas.
+        let opaque = Rgba::opaque(10, 20, 30);
+        let frames: Vec<PixelBuffer> = (0..4).map(|_| make_frame_buf(16, 16, opaque)).collect();
 
         let output = export_sprite_sheet(
             &sprite,
@@ -374,9 +473,8 @@ mod tests {
             user_data: UserData::default(),
         });
 
-        let frames: Vec<PixelBuffer> = (0..4)
-            .map(|_| make_frame_buf(8, 8, Rgba::transparent()))
-            .collect();
+        let opaque = Rgba::opaque(1, 2, 3);
+        let frames: Vec<PixelBuffer> = (0..4).map(|_| make_frame_buf(8, 8, opaque)).collect();
 
         let output = export_sprite_sheet(
             &sprite,
@@ -434,55 +532,74 @@ mod tests {
         assert_eq!(layers[0]["name"], "body");
     }
 
+    // ── Alpha-trim ────────────────────────────────────────────────────────────
+
     #[test]
-    fn by_row_layout_produces_single_column_sheet() {
+    fn fully_opaque_frame_is_not_trimmed() {
         let canvas = Size::new(16, 16);
-        let sprite = sprite_with_frames(canvas, 3);
-        let frames: Vec<PixelBuffer> = (0..3)
-            .map(|_| make_frame_buf(16, 16, Rgba::transparent()))
-            .collect();
+        let sprite = sprite_with_frames(canvas, 1);
+        let frames = vec![make_frame_buf(16, 16, Rgba::opaque(255, 0, 0))];
 
         let output = export_sprite_sheet(
             &sprite,
             &frames,
             &ExportOptions {
-                layout: LayoutStrategy::ByRow,
-                sprite_name: "stack".to_owned(),
+                layout: LayoutStrategy::Grid { cols: 1 },
+                sprite_name: "solid".to_owned(),
             },
         )
         .unwrap();
 
         let parsed: serde_json::Value = serde_json::from_slice(&output.json_bytes).unwrap();
-        assert_eq!(parsed["meta"]["size"]["w"], 16);
-        assert_eq!(parsed["meta"]["size"]["h"], 48);
-
-        // Each frame is at x=0, y=i*16.
-        for i in 0usize..3 {
-            let f = &parsed["frames"][i];
-            assert_eq!(f["frame"]["x"], 0);
-            assert_eq!(f["frame"]["y"], i as u64 * 16);
-        }
+        let f = &parsed["frames"][0];
+        assert_eq!(f["trimmed"], false);
+        assert_eq!(f["frame"]["w"], 16);
+        assert_eq!(f["frame"]["h"], 16);
+        assert_eq!(f["spriteSourceSize"]["x"], 0);
+        assert_eq!(f["spriteSourceSize"]["y"], 0);
+        assert_eq!(f["spriteSourceSize"]["w"], 16);
+        assert_eq!(f["spriteSourceSize"]["h"], 16);
     }
 
     #[test]
-    fn packed_layout_covers_all_frames() {
-        let canvas = Size::new(8, 8);
-        let sprite = sprite_with_frames(canvas, 9);
-        let frames: Vec<PixelBuffer> = (0..9)
-            .map(|_| make_frame_buf(8, 8, Rgba::transparent()))
-            .collect();
+    fn off_center_sprite_gets_trimmed_metadata() {
+        // 16 × 16 canvas; only pixels at (8..15, 12..15) are opaque (bottom-right 8×4).
+        let canvas = Size::new(16, 16);
+        let sprite = sprite_with_frames(canvas, 1);
+
+        let mut buf = PixelBuffer::new(16, 16).unwrap();
+        // Paint 8 columns × 4 rows in the bottom-right corner.
+        for y in 12u32..16 {
+            for x in 8u32..16 {
+                buf.set_pixel(x, y, Rgba::opaque(200, 100, 50));
+            }
+        }
+        let frames = vec![buf];
 
         let output = export_sprite_sheet(
             &sprite,
             &frames,
             &ExportOptions {
-                layout: LayoutStrategy::Packed,
-                sprite_name: "packed".to_owned(),
+                layout: LayoutStrategy::Grid { cols: 1 },
+                sprite_name: "trimtest".to_owned(),
             },
         )
         .unwrap();
 
         let parsed: serde_json::Value = serde_json::from_slice(&output.json_bytes).unwrap();
-        assert_eq!(parsed["frames"].as_array().unwrap().len(), 9);
+        let f = &parsed["frames"][0];
+
+        assert_eq!(f["trimmed"], true, "frame should be trimmed");
+        // The packed frame rect in the sheet is the trimmed 8 × 4 region.
+        assert_eq!(f["frame"]["w"], 8);
+        assert_eq!(f["frame"]["h"], 4);
+        // spriteSourceSize describes where the trimmed region sits on the canvas.
+        assert_eq!(f["spriteSourceSize"]["x"], 8);
+        assert_eq!(f["spriteSourceSize"]["y"], 12);
+        assert_eq!(f["spriteSourceSize"]["w"], 8);
+        assert_eq!(f["spriteSourceSize"]["h"], 4);
+        // sourceSize is always the full canvas.
+        assert_eq!(f["sourceSize"]["w"], 16);
+        assert_eq!(f["sourceSize"]["h"], 16);
     }
 }

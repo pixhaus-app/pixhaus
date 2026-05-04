@@ -62,7 +62,10 @@ fn decode_sheet_png(png_bytes: &[u8]) -> image::RgbaImage {
 fn small_grid_sheet_dimensions_and_frame_count() {
     let canvas = Size::new(16, 16);
     let sprite = sprite_with_n_frames("hero", canvas, 4);
-    let frames: Vec<PixelBuffer> = (0..4).map(|_| transparent_buf(16, 16)).collect();
+    // Fully opaque so no trimming occurs; cell size equals the full canvas.
+    let frames: Vec<PixelBuffer> = (0..4)
+        .map(|_| solid_buf(16, 16, Rgba::opaque(10, 20, 30)))
+        .collect();
 
     let output = export_sprite_sheet(
         &sprite,
@@ -123,7 +126,10 @@ fn small_grid_pixels_placed_correctly() {
 fn small_grid_json_frame_rects_match_layout() {
     let canvas = Size::new(16, 16);
     let sprite = sprite_with_n_frames("sprite", canvas, 4);
-    let frames: Vec<PixelBuffer> = (0..4).map(|_| transparent_buf(16, 16)).collect();
+    // Fully opaque so no trimming occurs; frame rects equal the full canvas size.
+    let frames: Vec<PixelBuffer> = (0..4)
+        .map(|_| solid_buf(16, 16, Rgba::opaque(10, 20, 30)))
+        .collect();
 
     let output = export_sprite_sheet(
         &sprite,
@@ -183,7 +189,10 @@ fn large_packed_sheet_contains_all_frames() {
 fn large_packed_sheet_no_frame_overlaps_in_json() {
     let canvas = Size::new(4, 4);
     let sprite = sprite_with_n_frames("big", canvas, 100);
-    let frames: Vec<PixelBuffer> = (0..100).map(|_| transparent_buf(4, 4)).collect();
+    // Fully opaque — no trimming; each frame occupies a 4 × 4 cell.
+    let frames: Vec<PixelBuffer> = (0..100)
+        .map(|_| solid_buf(4, 4, Rgba::opaque(1, 2, 3)))
+        .collect();
 
     let output = export_sprite_sheet(
         &sprite,
@@ -198,16 +207,20 @@ fn large_packed_sheet_no_frame_overlaps_in_json() {
     let json = decode_sheet_json(&output.json_bytes);
     let frames_json = json["frames"].as_array().unwrap();
 
-    // Verify no two frame rects overlap.
+    // Verify no two frame rects overlap using the actual frame dimensions.
     for i in 0..frames_json.len() {
         for j in (i + 1)..frames_json.len() {
             let a = &frames_json[i]["frame"];
             let b = &frames_json[j]["frame"];
             let ax = a["x"].as_i64().unwrap();
             let ay = a["y"].as_i64().unwrap();
+            let aw = a["w"].as_i64().unwrap();
+            let ah = a["h"].as_i64().unwrap();
             let bx = b["x"].as_i64().unwrap();
             let by = b["y"].as_i64().unwrap();
-            let overlap = ax < bx + 4 && bx < ax + 4 && ay < by + 4 && by < ay + 4;
+            let bw = b["w"].as_i64().unwrap();
+            let bh = b["h"].as_i64().unwrap();
+            let overlap = ax < bx + bw && bx < ax + aw && ay < by + bh && by < ay + ah;
             assert!(!overlap, "frames {i} and {j} overlap");
         }
     }
@@ -217,7 +230,10 @@ fn large_packed_sheet_no_frame_overlaps_in_json() {
 fn large_packed_sheet_all_frames_within_sheet_bounds() {
     let canvas = Size::new(8, 8);
     let sprite = sprite_with_n_frames("bounds", canvas, 64);
-    let frames: Vec<PixelBuffer> = (0..64).map(|_| transparent_buf(8, 8)).collect();
+    // Fully opaque — no trimming; each frame's right/bottom edge is x+8, y+8.
+    let frames: Vec<PixelBuffer> = (0..64)
+        .map(|_| solid_buf(8, 8, Rgba::opaque(1, 2, 3)))
+        .collect();
 
     let output = export_sprite_sheet(
         &sprite,
@@ -237,13 +253,15 @@ fn large_packed_sheet_all_frames_within_sheet_bounds() {
     for (i, f) in frames_json.iter().enumerate() {
         let x = f["frame"]["x"].as_u64().unwrap();
         let y = f["frame"]["y"].as_u64().unwrap();
+        let fw = f["frame"]["w"].as_u64().unwrap();
+        let fh = f["frame"]["h"].as_u64().unwrap();
         assert!(
-            x + 8 <= sheet_w,
-            "frame {i} right edge {x}+8 exceeds sheet width {sheet_w}"
+            x + fw <= sheet_w,
+            "frame {i} right edge {x}+{fw} exceeds sheet width {sheet_w}"
         );
         assert!(
-            y + 8 <= sheet_h,
-            "frame {i} bottom edge {y}+8 exceeds sheet height {sheet_h}"
+            y + fh <= sheet_h,
+            "frame {i} bottom edge {y}+{fh} exceeds sheet height {sheet_h}"
         );
     }
 }

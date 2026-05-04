@@ -124,6 +124,20 @@ pub enum Error {
     /// JSON serialization of sprite sheet metadata failed.
     #[error("JSON serialization failed: {0}")]
     JsonSerialize(#[from] serde_json::Error),
+
+    /// The packed sprite sheet would exceed the per-side dimension cap.
+    ///
+    /// Many GPUs reject textures wider or taller than 8 192–16 384 px.
+    /// Any sheet that large is also unusable as a Unity sprite atlas.
+    #[error("sprite sheet dimensions {width}×{height} exceed the per-side cap of {max} px")]
+    SheetTooLarge {
+        /// Computed sheet width that triggered the error.
+        width: u32,
+        /// Computed sheet height that triggered the error.
+        height: u32,
+        /// The cap that was exceeded (`MAX_SHEET_DIM`).
+        max: u32,
+    },
 }
 
 /// Crate-local result alias.

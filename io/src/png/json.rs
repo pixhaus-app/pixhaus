@@ -176,13 +176,14 @@ pub struct IVec2Json {
 
 /// Build and serialize the sprite sheet JSON for `sprite`.
 ///
-/// `placements` must have the same length as `sprite.frames`.
+/// `placements` and `trims` must each have the same length as `sprite.frames`.
 /// `sprite_name` is used as the base name for frame filenames and the PNG
 /// filename in `meta.image`.
 #[allow(clippy::cast_possible_wrap)]
 pub fn build_json(
     sprite: &Sprite,
     placements: &[FramePlacement],
+    trims: &[super::FrameTrim],
     sheet_width: u32,
     sheet_height: u32,
     sprite_name: &str,
@@ -196,24 +197,27 @@ pub fn build_json(
         .iter()
         .enumerate()
         .zip(placements.iter())
-        .map(|((index, frame), placement)| {
+        .zip(trims.iter())
+        .map(|(((index, frame), placement), trim)| {
+            // Rect of this frame's bitmap within the packed sheet.
             let in_sheet = RectJson {
                 x: placement.x as i32,
                 y: placement.y as i32,
-                w: cw,
-                h: ch,
+                w: trim.w,
+                h: trim.h,
             };
+            // Where the trimmed region sits within the full canvas.
             let on_canvas = RectJson {
-                x: 0,
-                y: 0,
-                w: cw,
-                h: ch,
+                x: trim.x as i32,
+                y: trim.y as i32,
+                w: trim.w,
+                h: trim.h,
             };
             FrameJson {
                 filename: format!("{sprite_name} {index}"),
                 frame: in_sheet,
                 rotated: false,
-                trimmed: false,
+                trimmed: trim.trimmed,
                 sprite_source_size: on_canvas,
                 source_size: SizeJson { w: cw, h: ch },
                 duration: frame.duration_ms,

@@ -6,12 +6,20 @@
 //! - [`LayoutStrategy::ByRow`] — one frame per row; the simplest possible layout.
 //! - [`LayoutStrategy::Packed`] — Skyline bin-packing for a near-square sheet.
 //!
-//! All strategies require uniform frame dimensions (every frame must have the
-//! same width and height as `Sprite.canvas`).
+//! All strategies accept per-frame sizes so that alpha-trimmed frames pack
+//! at their trimmed dimensions rather than the full canvas size.
 
 use pixhaus_core::project::geometry::Size;
 
 use crate::error::{Error, Result};
+
+/// Maximum pixels allowed on any single side of the packed sheet.
+///
+/// Most GPUs cap texture dimensions at 8 192 or 16 384 px; a sheet beyond
+/// 16 384 × 16 384 is also unusable as a Unity sprite atlas. Inputs that
+/// would produce a larger sheet fail with [`Error::SheetTooLarge`] before
+/// any allocation occurs.
+pub const MAX_SHEET_DIM: u32 = 16_384;
 
 /// Strategy for placing frames on the sprite sheet.
 #[derive(Debug, Clone)]
@@ -19,22 +27,23 @@ pub enum LayoutStrategy {
     /// Place frames in a uniform grid with a fixed column count.
     ///
     /// Frames are arranged left-to-right, top-to-bottom. `cols` must be
-    /// non-zero. The row count is `ceil(frame_count / cols)`.
+    /// non-zero. The cell size is the maximum trimmed width × maximum
+    /// trimmed height across all frames, so the grid stays rectangular
+    /// even when individual frames differ in size after alpha-trim.
     Grid {
         /// Column count. Must be non-zero.
         cols: u32,
     },
     /// One frame per row.
     ///
-    /// Sheet width equals frame width; sheet height equals frame height times
-    /// the frame count. Equivalent to `Grid { cols: 1 }` but more explicit.
+    /// Sheet width equals the maximum trimmed frame width; each row height
+    /// equals the trimmed height of the frame in that row.
     ByRow,
     /// Bin-packed layout that minimises wasted area.
     ///
-    /// Uses a Skyline algorithm to place frames. The initial sheet width is
-    /// chosen so the sheet is approximately square. Because sprite sheet
-    /// frames always have uniform dimensions, the packed layout degenerates
-    /// to an optimised grid with minimal wasted cells.
+    /// Uses a Skyline algorithm to place frames. Each frame is packed at
+    /// its trimmed dimensions. The initial sheet width targets a square
+    /// sheet based on the total trimmed area.
     Packed,
 }
 
@@ -58,73 +67,108 @@ pub struct PackResult {
     pub sheet_height: u32,
 }
 
-/// Pack `frame_count` frames of uniform `frame_size` using `strategy`.
+/// Pack `frame_sizes` using `strategy`.
+///
+/// Each element of `frame_sizes` is the effective (possibly alpha-trimmed)
+/// width and height for that frame. Pass the full canvas size for frames
+/// that were not trimmed.
 ///
 /// # Errors
 ///
-/// - [`Error::NoFrames`] when `frame_count == 0`.
+/// - [`Error::NoFrames`] when `frame_sizes` is empty.
 /// - [`Error::GridColsZero`] when `strategy` is `Grid { cols: 0 }`.
-pub fn pack_frames(
-    frame_count: usize,
-    frame_size: Size,
-    strategy: &LayoutStrategy,
-) -> Result<PackResult> {
-    if frame_count == 0 {
+/// - [`Error::SheetTooLarge`] when the resulting sheet would exceed
+///   [`MAX_SHEET_DIM`] on either axis before any allocation is attempted.
+pub fn pack_frames(frame_sizes: &[Size], strategy: &LayoutStrategy) -> Result<PackResult> {
+    if frame_sizes.is_empty() {
         return Err(Error::NoFrames);
     }
-    // frame_count > 0 here; sprite sheet frames are bounded by display memory,
-    // so truncation to u32 is safe in practice.
-    #[allow(clippy::cast_possible_truncation)]
-    let n = frame_count as u32;
-    let fw = frame_size.width;
-    let fh = frame_size.height;
+    if let LayoutStrategy::Grid { cols: 0 } = strategy {
+        return Err(Error::GridColsZero);
+    }
 
-    match strategy {
-        LayoutStrategy::Grid { cols } => {
-            if *cols == 0 {
-                return Err(Error::GridColsZero);
-            }
-            let cols = *cols;
-            let rows = n.div_ceil(cols);
-            let placements = (0..n)
-                .map(|i| FramePlacement {
-                    x: (i % cols) * fw,
-                    y: (i / cols) * fh,
-                })
-                .collect();
-            Ok(PackResult {
-                placements,
-                sheet_width: fw * cols,
-                sheet_height: fh * rows,
-            })
-        }
-        LayoutStrategy::ByRow => {
-            let placements = (0..n).map(|i| FramePlacement { x: 0, y: i * fh }).collect();
-            Ok(PackResult {
-                placements,
-                sheet_width: fw,
-                sheet_height: fh * n,
-            })
-        }
-        LayoutStrategy::Packed => Ok(pack_skyline(n, frame_size)),
+    let result = match strategy {
+        LayoutStrategy::Grid { cols } => pack_grid(frame_sizes, *cols),
+        LayoutStrategy::ByRow => pack_by_row(frame_sizes),
+        LayoutStrategy::Packed => pack_skyline(frame_sizes),
+    };
+
+    if result.sheet_width > MAX_SHEET_DIM || result.sheet_height > MAX_SHEET_DIM {
+        return Err(Error::SheetTooLarge {
+            width: result.sheet_width,
+            height: result.sheet_height,
+            max: MAX_SHEET_DIM,
+        });
+    }
+
+    Ok(result)
+}
+
+// ── Strategy implementations ─────────────────────────────────────────────────
+
+/// Grid layout: uniform cell size = max trimmed width × max trimmed height.
+#[allow(clippy::cast_possible_truncation)]
+fn pack_grid(frame_sizes: &[Size], cols: u32) -> PackResult {
+    let n = frame_sizes.len() as u32;
+    let max_w = frame_sizes.iter().map(|s| s.width).max().unwrap_or(1);
+    let max_h = frame_sizes.iter().map(|s| s.height).max().unwrap_or(1);
+    let rows = n.div_ceil(cols);
+    let placements = (0..n)
+        .map(|i| FramePlacement {
+            x: (i % cols) * max_w,
+            y: (i / cols) * max_h,
+        })
+        .collect();
+    PackResult {
+        placements,
+        sheet_width: max_w * cols,
+        sheet_height: max_h * rows,
+    }
+}
+
+/// `ByRow` layout: max trimmed width × cumulative trimmed heights.
+fn pack_by_row(frame_sizes: &[Size]) -> PackResult {
+    let max_w = frame_sizes.iter().map(|s| s.width).max().unwrap_or(1);
+    let mut y = 0u32;
+    let placements = frame_sizes
+        .iter()
+        .map(|s| {
+            let p = FramePlacement { x: 0, y };
+            y += s.height;
+            p
+        })
+        .collect();
+    PackResult {
+        placements,
+        sheet_width: max_w,
+        sheet_height: y,
     }
 }
 
 /// Skyline-based packing for the [`LayoutStrategy::Packed`] variant.
-fn pack_skyline(n: u32, frame_size: Size) -> PackResult {
-    let fw = frame_size.width;
-    let fh = frame_size.height;
+///
+/// Initial sheet width is `ceil(sqrt(total_trimmed_area))`, clamped to at
+/// least the widest single frame. For uniform-size inputs this is identical
+/// to the previous `ceil(sqrt(n)) * fw` formula.
+fn pack_skyline(frame_sizes: &[Size]) -> PackResult {
+    let max_w = frame_sizes.iter().map(|s| s.width).max().unwrap_or(1);
+    let total_area: u64 = frame_sizes
+        .iter()
+        .map(|s| u64::from(s.width) * u64::from(s.height))
+        .sum();
 
-    // Target a square sheet: ceil(sqrt(N)) columns.
-    #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
-    let target_cols = f64::from(n).sqrt().ceil() as u32;
-    let sheet_w = fw * target_cols.max(1);
+    #[allow(
+        clippy::cast_possible_truncation,
+        clippy::cast_sign_loss,
+        clippy::cast_precision_loss
+    )]
+    let sheet_w = ((total_area as f64).sqrt().ceil() as u32).max(max_w);
 
     let mut skyline = Skyline::new(sheet_w);
-    let mut placements = Vec::with_capacity(n as usize);
+    let mut placements = Vec::with_capacity(frame_sizes.len());
 
-    for _ in 0..n {
-        let (x, y) = skyline.place(fw, fh);
+    for s in frame_sizes {
+        let (x, y) = skyline.place(s.width, s.height);
         placements.push(FramePlacement { x, y });
     }
 
@@ -134,6 +178,8 @@ fn pack_skyline(n: u32, frame_size: Size) -> PackResult {
         sheet_height: skyline.max_height(),
     }
 }
+
+// ── Skyline bin-packer ───────────────────────────────────────────────────────
 
 /// Skyline bin-packer.
 ///
@@ -282,12 +328,16 @@ mod tests {
         Size::new(w, h)
     }
 
-    // ── Error cases ─────────────────────────────────────────────────────────
+    fn uniform(count: usize, w: u32, h: u32) -> Vec<Size> {
+        vec![size(w, h); count]
+    }
+
+    // ── Error cases ──────────────────────────────────────────────────────────
 
     #[test]
     fn no_frames_returns_error() {
         assert!(matches!(
-            pack_frames(0, size(16, 16), &LayoutStrategy::ByRow),
+            pack_frames(&[], &LayoutStrategy::ByRow),
             Err(Error::NoFrames)
         ));
     }
@@ -295,16 +345,26 @@ mod tests {
     #[test]
     fn grid_cols_zero_returns_error() {
         assert!(matches!(
-            pack_frames(4, size(16, 16), &LayoutStrategy::Grid { cols: 0 }),
+            pack_frames(&uniform(4, 16, 16), &LayoutStrategy::Grid { cols: 0 }),
             Err(Error::GridColsZero)
         ));
     }
 
-    // ── Grid ────────────────────────────────────────────────────────────────
+    #[test]
+    fn sheet_too_large_is_rejected() {
+        // 65 frames of 256 × 256 in ByRow → height = 65 × 256 = 16 640 > 16 384.
+        // The check fires before any allocation.
+        assert!(matches!(
+            pack_frames(&uniform(65, 256, 256), &LayoutStrategy::ByRow),
+            Err(Error::SheetTooLarge { .. })
+        ));
+    }
+
+    // ── Grid ─────────────────────────────────────────────────────────────────
 
     #[test]
     fn grid_single_row_four_frames() {
-        let r = pack_frames(4, size(16, 16), &LayoutStrategy::Grid { cols: 4 }).unwrap();
+        let r = pack_frames(&uniform(4, 16, 16), &LayoutStrategy::Grid { cols: 4 }).unwrap();
         assert_eq!(r.sheet_width, 64);
         assert_eq!(r.sheet_height, 16);
         assert_eq!(r.placements[0], FramePlacement { x: 0, y: 0 });
@@ -314,7 +374,7 @@ mod tests {
 
     #[test]
     fn grid_wraps_to_second_row() {
-        let r = pack_frames(6, size(16, 16), &LayoutStrategy::Grid { cols: 4 }).unwrap();
+        let r = pack_frames(&uniform(6, 16, 16), &LayoutStrategy::Grid { cols: 4 }).unwrap();
         assert_eq!(r.sheet_width, 64);
         assert_eq!(r.sheet_height, 32);
         assert_eq!(r.placements[4], FramePlacement { x: 0, y: 16 });
@@ -323,7 +383,7 @@ mod tests {
 
     #[test]
     fn grid_single_frame() {
-        let r = pack_frames(1, size(32, 32), &LayoutStrategy::Grid { cols: 1 }).unwrap();
+        let r = pack_frames(&uniform(1, 32, 32), &LayoutStrategy::Grid { cols: 1 }).unwrap();
         assert_eq!(r.sheet_width, 32);
         assert_eq!(r.sheet_height, 32);
         assert_eq!(r.placements[0], FramePlacement { x: 0, y: 0 });
@@ -333,7 +393,7 @@ mod tests {
 
     #[test]
     fn by_row_stacks_vertically() {
-        let r = pack_frames(3, size(32, 32), &LayoutStrategy::ByRow).unwrap();
+        let r = pack_frames(&uniform(3, 32, 32), &LayoutStrategy::ByRow).unwrap();
         assert_eq!(r.sheet_width, 32);
         assert_eq!(r.sheet_height, 96);
         assert_eq!(r.placements[0], FramePlacement { x: 0, y: 0 });
@@ -341,19 +401,31 @@ mod tests {
         assert_eq!(r.placements[2], FramePlacement { x: 0, y: 64 });
     }
 
+    #[test]
+    fn by_row_variable_heights() {
+        // Trimmed frames with different heights.
+        let sizes = vec![size(10, 5), size(10, 8), size(10, 3)];
+        let r = pack_frames(&sizes, &LayoutStrategy::ByRow).unwrap();
+        assert_eq!(r.sheet_width, 10);
+        assert_eq!(r.sheet_height, 16); // 5 + 8 + 3
+        assert_eq!(r.placements[0], FramePlacement { x: 0, y: 0 });
+        assert_eq!(r.placements[1], FramePlacement { x: 0, y: 5 });
+        assert_eq!(r.placements[2], FramePlacement { x: 0, y: 13 });
+    }
+
     // ── Packed (Skyline) ─────────────────────────────────────────────────────
 
     #[test]
     fn packed_single_frame_at_origin() {
-        let r = pack_frames(1, size(16, 16), &LayoutStrategy::Packed).unwrap();
+        let r = pack_frames(&uniform(1, 16, 16), &LayoutStrategy::Packed).unwrap();
         assert_eq!(r.placements[0], FramePlacement { x: 0, y: 0 });
         assert_eq!(r.sheet_height, 16);
     }
 
     #[test]
     fn packed_four_frames_fit_in_2x2_grid() {
-        let r = pack_frames(4, size(16, 16), &LayoutStrategy::Packed).unwrap();
-        // sqrt(4) = 2, so 2 cols × 16 = 32 wide, 32 tall.
+        let r = pack_frames(&uniform(4, 16, 16), &LayoutStrategy::Packed).unwrap();
+        // sqrt(4 * 16 * 16) = sqrt(1024) = 32
         assert_eq!(r.sheet_width, 32);
         assert_eq!(r.sheet_height, 32);
         assert_eq!(r.placements.len(), 4);
@@ -362,14 +434,14 @@ mod tests {
 
     #[test]
     fn packed_nine_frames_no_overlap() {
-        let r = pack_frames(9, size(16, 16), &LayoutStrategy::Packed).unwrap();
+        let r = pack_frames(&uniform(9, 16, 16), &LayoutStrategy::Packed).unwrap();
         assert_eq!(r.placements.len(), 9);
         no_overlaps(&r.placements, 16, 16);
     }
 
     #[test]
     fn packed_hundred_frames_no_overlap() {
-        let r = pack_frames(100, size(8, 8), &LayoutStrategy::Packed).unwrap();
+        let r = pack_frames(&uniform(100, 8, 8), &LayoutStrategy::Packed).unwrap();
         assert_eq!(r.placements.len(), 100);
         no_overlaps(&r.placements, 8, 8);
     }
