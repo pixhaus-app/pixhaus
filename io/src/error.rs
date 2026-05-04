@@ -79,6 +79,65 @@ pub enum Error {
     /// The archive could not be encoded to `MessagePack`.
     #[error("serialization failed: {0}")]
     Serialize(#[from] rmp_serde::encode::Error),
+
+    // ── PNG sprite sheet (S10) ──────────────────────────────────────────────
+    /// The frame list passed to the sprite sheet exporter was empty.
+    #[error("no frames to export")]
+    NoFrames,
+
+    /// `Grid { cols: 0 }` is not a valid layout strategy.
+    #[error("grid column count must be non-zero")]
+    GridColsZero,
+
+    /// The number of composited frame buffers does not match the number
+    /// of frames in the sprite.
+    #[error("frame buffer count {buffers} does not match sprite frame count {frames}")]
+    FrameCountMismatch {
+        /// Number of pixel buffers supplied by the caller.
+        buffers: usize,
+        /// Number of frames declared in the sprite.
+        frames: usize,
+    },
+
+    /// A composited frame buffer has the wrong dimensions.
+    #[error(
+        "frame {index} has wrong size: expected {expected_w}×{expected_h}, \
+         got {actual_w}×{actual_h}"
+    )]
+    FrameSizeMismatch {
+        /// Zero-based frame index.
+        index: usize,
+        /// Expected width (from `Sprite.canvas`).
+        expected_w: u32,
+        /// Expected height (from `Sprite.canvas`).
+        expected_h: u32,
+        /// Actual buffer width.
+        actual_w: u32,
+        /// Actual buffer height.
+        actual_h: u32,
+    },
+
+    /// PNG encoding failed.
+    #[error("PNG encoding failed: {0}")]
+    PngEncode(#[from] image::ImageError),
+
+    /// JSON serialization of sprite sheet metadata failed.
+    #[error("JSON serialization failed: {0}")]
+    JsonSerialize(#[from] serde_json::Error),
+
+    /// The packed sprite sheet would exceed the per-side dimension cap.
+    ///
+    /// Many GPUs reject textures wider or taller than 8 192–16 384 px.
+    /// Any sheet that large is also unusable as a Unity sprite atlas.
+    #[error("sprite sheet dimensions {width}×{height} exceed the per-side cap of {max} px")]
+    SheetTooLarge {
+        /// Computed sheet width that triggered the error.
+        width: u32,
+        /// Computed sheet height that triggered the error.
+        height: u32,
+        /// The cap that was exceeded (`MAX_SHEET_DIM`).
+        max: u32,
+    },
 }
 
 /// Crate-local result alias.

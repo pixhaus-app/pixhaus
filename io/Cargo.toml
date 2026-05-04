@@ -10,7 +10,9 @@ description = "Pixhaus file I/O: .pixhaus, .aseprite, .psd, png, .tmx"
 
 [dependencies]
 pixhaus-core = { path = "../core" }
+image.workspace = true
 serde.workspace = true
+serde_json.workspace = true
 thiserror.workspace = true
 rmp-serde.workspace = true
 zstd.workspace = true
