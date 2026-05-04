@@ -10,4 +10,5 @@ pub mod layers;
 pub mod palette;
 pub mod project;
 pub mod tiles;
+pub mod undo;
 pub mod verbs;

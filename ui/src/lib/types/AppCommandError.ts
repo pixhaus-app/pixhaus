@@ -43,4 +43,10 @@ stream: string, } } | { "kind": "validation", "message": {
 /**
  * What was invalid, in plain text.
  */
+detail: string, } } | { "kind": "nothing_to_undo" } | { "kind": "nothing_to_redo" } | { "kind": "history_corrupted", "message": { 
+/**
+ * Human-readable description of the underlying failure (the
+ * command label and the wrapped error from
+ * `core::undo::Error`).
+ */
 detail: string, } };
