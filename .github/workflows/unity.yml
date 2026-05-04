@@ -1,0 +1,79 @@
+name: Unity
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "unity/**"
+      - ".github/workflows/unity.yml"
+  pull_request:
+    paths:
+      - "unity/**"
+      - ".github/workflows/unity.yml"
+  workflow_dispatch:
+
+jobs:
+  validate-package:
+    name: Validate UPM package
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Validate package.json is well-formed
+        run: python3 -c "import json,sys; json.load(open('unity/package.json')); print('package.json OK')"
+
+      - name: Check required package structure
+        run: |
+          test -f unity/package.json     || (echo "unity/package.json missing"  && exit 1)
+          test -f unity/CHANGELOG.md     || (echo "unity/CHANGELOG.md missing"  && exit 1)
+          test -d unity/Editor           || (echo "unity/Editor/ missing"       && exit 1)
+          test -d unity/Runtime          || (echo "unity/Runtime/ missing"      && exit 1)
+
+  test:
+    name: Unity tests
+    runs-on: ubuntu-latest
+    # Enabled by S39. Requires:
+    #   - A full Unity test project at unity/Tests~
+    #   - Secrets: UNITY_LICENSE, UNITY_EMAIL, UNITY_PASSWORD
+    #     (activate via https://license.unity3d.com/manual)
+    # See docs/planning/work/streams.md#s39.
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Check test project exists
+        id: prereqs
+        run: |
+          if [ -d unity/Tests~ ]; then
+            echo "run=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "run=false" >> "$GITHUB_OUTPUT"
+            echo "No test project at unity/Tests~. Skipping Unity tests until S39 lands."
+          fi
+
+      - name: Cache Unity Library
+        if: steps.prereqs.outputs.run == 'true'
+        uses: actions/cache@v4
+        with:
+          path: unity/Tests~/Library
+          key: Unity-${{ runner.os }}-${{ hashFiles('unity/**') }}
+          restore-keys: Unity-${{ runner.os }}-
+
+      - name: Run Unity tests
+        if: steps.prereqs.outputs.run == 'true'
+        uses: game-ci/unity-test-runner@v4
+        env:
+          UNITY_LICENSE: ${{ secrets.UNITY_LICENSE }}
+          UNITY_EMAIL: ${{ secrets.UNITY_EMAIL }}
+          UNITY_PASSWORD: ${{ secrets.UNITY_PASSWORD }}
+        with:
+          projectPath: unity/Tests~
+          testMode: all
+          artifactsPath: unity-test-results
+          githubToken: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Upload test results
+        if: steps.prereqs.outputs.run == 'true' && always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: unity-test-results
+          path: unity-test-results
