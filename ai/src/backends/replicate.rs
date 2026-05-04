@@ -1,0 +1,515 @@
+//! Replicate backend adapter.
+//!
+//! Replicate is a model marketplace where any model can be run by
+//! submitting a prediction and polling for results. This adapter exposes
+//! the generic [`InferenceRequest::Replicate`] request type so verbs can
+//! run arbitrary Replicate models, plus standard image generation through
+//! a configurable default model.
+//!
+//! # Polling
+//!
+//! Replicate predictions are asynchronous. This adapter submits the job,
+//! then polls `/v1/predictions/{id}` at 1-second intervals until the
+//! status reaches `succeeded` or `failed`. The `cancel` token fires the
+//! polling loop early.
+//!
+//! # Pricing
+//!
+//! Replicate charges per-second of GPU compute. Estimates are
+//! model-specific; this adapter returns a fixed rough estimate.
+
+use std::time::Duration;
+
+use async_trait::async_trait;
+use base64::Engine as _;
+use serde::Deserialize;
+use tokio::select;
+use tokio_util::sync::CancellationToken;
+use tracing::{debug, instrument, warn};
+
+use super::{
+    BackendError, FrameInterpolationRequest, FrameInterpolationResponse, ImageEditRequest,
+    ImageGenRequest, ImageGenResponse, InferenceBackend, InferenceRequest, InferenceResponse,
+    ReplicateRequest, Result, VerbProgress, check_http_status,
+};
+use crate::plugin::descriptor::{BackendCapabilities, CostEstimate};
+use crate::plugin::progress::VerbProgressEvent;
+
+const BASE_URL: &str = "https://api.replicate.com/v1";
+const POLL_INTERVAL: Duration = Duration::from_secs(1);
+const DEFAULT_IMAGE_MODEL: &str = "stability-ai/stable-diffusion-3";
+
+/// Replicate backend adapter.
+pub struct ReplicateBackend {
+    client: reqwest::Client,
+    api_key: String,
+    base_url: String,
+    image_model: String,
+}
+
+impl ReplicateBackend {
+    /// Constructs an adapter with an explicit API key.
+    #[must_use]
+    pub fn new(api_key: impl Into<String>) -> Self {
+        Self {
+            client: reqwest::Client::builder()
+                .timeout(Duration::from_secs(300))
+                .build()
+                .unwrap_or_default(),
+            api_key: api_key.into(),
+            base_url: BASE_URL.into(),
+            image_model: DEFAULT_IMAGE_MODEL.into(),
+        }
+    }
+
+    /// Constructs an adapter by reading the API key from the OS keychain.
+    pub fn from_keychain() -> Result<Self> {
+        let key = super::ApiKeyStore::get("replicate")?;
+        Ok(Self::new(key))
+    }
+
+    /// Overrides the default image generation model.
+    #[must_use]
+    pub fn with_image_model(mut self, model: impl Into<String>) -> Self {
+        self.image_model = model.into();
+        self
+    }
+
+    /// Overrides the base URL (useful for testing).
+    #[must_use]
+    pub fn with_base_url(mut self, url: impl Into<String>) -> Self {
+        self.base_url = url.into();
+        self
+    }
+
+    /// Submits a raw prediction and polls until it completes or is cancelled.
+    #[allow(clippy::disallowed_methods)]
+    async fn run_prediction(
+        &self,
+        request: ReplicateRequest,
+        progress: &VerbProgress,
+        cancel: &CancellationToken,
+    ) -> Result<serde_json::Value> {
+        // Build submission payload.
+        let mut body = serde_json::json!({ "input": request.input });
+        if let Some(v) = &request.version {
+            body["version"] = serde_json::json!(v);
+        }
+
+        let submit_url = if request.version.is_some() {
+            format!("{}/predictions", self.base_url)
+        } else {
+            format!("{}/models/{}/predictions", self.base_url, request.model)
+        };
+
+        debug!(model = %request.model, "submitting Replicate prediction");
+
+        let submit_req = self
+            .client
+            .post(&submit_url)
+            .bearer_auth(&self.api_key)
+            .json(&body)
+            .build()
+            .map_err(BackendError::Network)?;
+
+        let submit_resp = select! {
+            biased;
+            () = cancel.cancelled() => return Err(BackendError::Cancelled),
+            res = self.client.execute(submit_req) => res.map_err(BackendError::Network)?,
+        };
+
+        let submit_resp = check_http_status(submit_resp).await?;
+        let prediction: PredictionResponse =
+            submit_resp.json().await.map_err(BackendError::Network)?;
+        let id = prediction.id;
+
+        progress
+            .send(VerbProgressEvent::Step {
+                fraction: None,
+                message: format!("Replicate prediction {id} submitted"),
+            })
+            .await;
+
+        // Poll until done.
+        let poll_url = format!("{}/predictions/{}", self.base_url, id);
+        loop {
+            select! {
+                biased;
+                () = cancel.cancelled() => {
+                    // Best-effort cancel the prediction on the server side.
+                    let _ = self.client
+                        .post(format!("{}/predictions/{}/cancel", self.base_url, id))
+                        .bearer_auth(&self.api_key)
+                        .send()
+                        .await;
+                    return Err(BackendError::Cancelled);
+                }
+                () = tokio::time::sleep(POLL_INTERVAL) => {}
+            }
+
+            let poll_req = self
+                .client
+                .get(&poll_url)
+                .bearer_auth(&self.api_key)
+                .build()
+                .map_err(BackendError::Network)?;
+
+            let poll_resp = select! {
+                biased;
+                () = cancel.cancelled() => return Err(BackendError::Cancelled),
+                res = self.client.execute(poll_req) => res.map_err(BackendError::Network)?,
+            };
+
+            let poll_resp = check_http_status(poll_resp).await?;
+            let status: PredictionStatus = poll_resp.json().await.map_err(BackendError::Network)?;
+
+            match status.status.as_deref() {
+                Some("succeeded") => {
+                    return status.output.ok_or_else(|| {
+                        BackendError::InvalidResponse("succeeded but no output".into())
+                    });
+                }
+                Some("failed" | "canceled") => {
+                    let err = status.error.unwrap_or_else(|| "unknown error".into());
+                    return Err(BackendError::Other(format!(
+                        "Replicate prediction failed: {err}"
+                    )));
+                }
+                _ => {
+                    let logs = status.logs.as_deref().unwrap_or("");
+                    if !logs.is_empty() {
+                        progress
+                            .send(VerbProgressEvent::Step {
+                                fraction: None,
+                                message: logs.lines().last().unwrap_or("").to_owned(),
+                            })
+                            .await;
+                    }
+                }
+            }
+        }
+    }
+}
+
+#[async_trait]
+impl InferenceBackend for ReplicateBackend {
+    fn backend_id(&self) -> &'static str {
+        "replicate"
+    }
+
+    fn capabilities(&self) -> BackendCapabilities {
+        BackendCapabilities::IMAGE_GENERATION
+            .union(BackendCapabilities::IMAGE_EDIT)
+            .union(BackendCapabilities::FRAME_INTERPOLATION)
+            .union(BackendCapabilities::VIEW_SYNTHESIS)
+            .union(BackendCapabilities::SEGMENTATION)
+            .union(BackendCapabilities::POSE_ESTIMATION)
+            .union(BackendCapabilities::STYLE_TRAINING)
+    }
+
+    fn supports_streaming(&self) -> bool {
+        false
+    }
+
+    #[allow(clippy::cast_precision_loss)]
+    fn estimate_cost(&self, request: &InferenceRequest) -> CostEstimate {
+        match request {
+            InferenceRequest::ImageGeneration(_)
+            | InferenceRequest::ImageEdit(_)
+            | InferenceRequest::ImageInpaint(_) => CostEstimate {
+                typical_latency: Duration::from_secs(15),
+                max_latency: Duration::from_secs(120),
+                // SD3 on Replicate: ~$0.035 per image = 3.5 cents.
+                typical_usd_cents: 3.5,
+                max_usd_cents: 10.0,
+            },
+            InferenceRequest::FrameInterpolation(req) => CostEstimate {
+                typical_latency: Duration::from_secs(30),
+                max_latency: Duration::from_secs(300),
+                typical_usd_cents: 5.0 * req.num_outputs as f32,
+                max_usd_cents: 20.0 * req.num_outputs as f32,
+            },
+            InferenceRequest::Replicate(_) => CostEstimate {
+                typical_latency: Duration::from_secs(20),
+                max_latency: Duration::from_secs(300),
+                typical_usd_cents: 5.0,
+                max_usd_cents: 50.0,
+            },
+            _ => CostEstimate::free(),
+        }
+    }
+
+    #[instrument(skip(self, request, progress, cancel), fields(backend = "replicate"))]
+    async fn invoke(
+        &self,
+        request: InferenceRequest,
+        progress: VerbProgress,
+        cancel: CancellationToken,
+    ) -> Result<InferenceResponse> {
+        match request {
+            InferenceRequest::ImageGeneration(ref req) => {
+                progress
+                    .send(VerbProgressEvent::Started {
+                        backend: Some("replicate".into()),
+                    })
+                    .await;
+                let model = req
+                    .model
+                    .clone()
+                    .unwrap_or_else(|| self.image_model.clone());
+                let input = build_image_gen_input(req);
+                let rep_req = ReplicateRequest {
+                    model,
+                    version: None,
+                    input,
+                };
+                let output = self.run_prediction(rep_req, &progress, &cancel).await?;
+                let images = extract_url_images(&output).await?;
+                Ok(InferenceResponse::Image(ImageGenResponse {
+                    images,
+                    model: self.image_model.clone(),
+                }))
+            }
+            InferenceRequest::FrameInterpolation(ref req) => {
+                progress
+                    .send(VerbProgressEvent::Started {
+                        backend: Some("replicate".into()),
+                    })
+                    .await;
+                let model = req
+                    .model
+                    .clone()
+                    .unwrap_or_else(|| "google-deepmind/frame-interpolation".into());
+                let input = build_interpolation_input(req);
+                let rep_req = ReplicateRequest {
+                    model,
+                    version: None,
+                    input,
+                };
+                let output = self.run_prediction(rep_req, &progress, &cancel).await?;
+                let frames = extract_url_images(&output).await?;
+                Ok(InferenceResponse::Frames(FrameInterpolationResponse {
+                    frames,
+                    model: "replicate/frame-interpolation".into(),
+                }))
+            }
+            InferenceRequest::Replicate(req) => {
+                progress
+                    .send(VerbProgressEvent::Started {
+                        backend: Some("replicate".into()),
+                    })
+                    .await;
+                let output = self.run_prediction(req, &progress, &cancel).await?;
+                Ok(InferenceResponse::Raw(output))
+            }
+            InferenceRequest::ImageEdit(ref req) | InferenceRequest::ImageInpaint(ref req) => {
+                progress
+                    .send(VerbProgressEvent::Started {
+                        backend: Some("replicate".into()),
+                    })
+                    .await;
+                let model = req
+                    .model
+                    .clone()
+                    .unwrap_or_else(|| "stability-ai/stable-diffusion-3".into());
+                let input = build_image_edit_input(req);
+                let rep_req = ReplicateRequest {
+                    model,
+                    version: None,
+                    input,
+                };
+                let output = self.run_prediction(rep_req, &progress, &cancel).await?;
+                let images = extract_url_images(&output).await?;
+                Ok(InferenceResponse::Image(ImageGenResponse {
+                    images,
+                    model: "replicate/sd3".into(),
+                }))
+            }
+            InferenceRequest::Text(_) | InferenceRequest::ComfyUi(_) => {
+                warn!("Replicate adapter does not support this request type directly");
+                Err(BackendError::UnsupportedCapability)
+            }
+        }
+    }
+}
+
+// ── Helpers ────────────────────────────────────────────────────────────────
+
+#[allow(clippy::disallowed_methods)]
+fn build_image_gen_input(req: &ImageGenRequest) -> serde_json::Value {
+    let mut input = serde_json::json!({
+        "prompt": req.prompt,
+        "width": req.width,
+        "height": req.height,
+        "num_outputs": req.num_images,
+    });
+    if let Some(np) = &req.negative_prompt {
+        input["negative_prompt"] = serde_json::json!(np);
+    }
+    if let Some(steps) = req.steps {
+        input["num_inference_steps"] = serde_json::json!(steps);
+    }
+    if let Some(seed) = req.seed {
+        input["seed"] = serde_json::json!(seed);
+    }
+    input
+}
+
+#[allow(clippy::disallowed_methods)]
+fn build_image_edit_input(req: &ImageEditRequest) -> serde_json::Value {
+    let img_b64 = base64::engine::general_purpose::STANDARD.encode(&req.image);
+    let mut input = serde_json::json!({
+        "prompt": req.prompt,
+        "image": format!("data:image/png;base64,{img_b64}"),
+        "num_outputs": req.num_images,
+    });
+    if let Some(mask) = &req.mask {
+        let mask_b64 = base64::engine::general_purpose::STANDARD.encode(mask);
+        input["mask"] = serde_json::json!(format!("data:image/png;base64,{mask_b64}"));
+    }
+    if let Some(np) = &req.negative_prompt {
+        input["negative_prompt"] = serde_json::json!(np);
+    }
+    input
+}
+
+#[allow(clippy::disallowed_methods)]
+fn build_interpolation_input(req: &FrameInterpolationRequest) -> serde_json::Value {
+    let frames: Vec<String> = req
+        .frames
+        .iter()
+        .map(|f| {
+            let b64 = base64::engine::general_purpose::STANDARD.encode(f);
+            format!("data:image/png;base64,{b64}")
+        })
+        .collect();
+    serde_json::json!({
+        "frames": frames,
+        "num_outputs": req.num_outputs,
+    })
+}
+
+/// Fetches images from URLs returned by Replicate.
+async fn extract_url_images(output: &serde_json::Value) -> Result<Vec<Vec<u8>>> {
+    let client = reqwest::Client::new();
+    let urls: Vec<&str> = match output {
+        serde_json::Value::Array(arr) => arr.iter().filter_map(|v| v.as_str()).collect(),
+        serde_json::Value::String(s) => vec![s.as_str()],
+        _ => {
+            return Err(BackendError::InvalidResponse(
+                "Replicate output is not a URL or array of URLs".into(),
+            ));
+        }
+    };
+
+    let mut images = Vec::with_capacity(urls.len());
+    for url in urls {
+        let resp = client
+            .get(url)
+            .send()
+            .await
+            .map_err(BackendError::Network)?;
+        let bytes = resp.bytes().await.map_err(BackendError::Network)?;
+        images.push(bytes.to_vec());
+    }
+    Ok(images)
+}
+
+// ── Wire types ─────────────────────────────────────────────────────────────
+
+#[derive(Deserialize)]
+struct PredictionResponse {
+    id: String,
+}
+
+#[derive(Deserialize)]
+struct PredictionStatus {
+    status: Option<String>,
+    output: Option<serde_json::Value>,
+    error: Option<String>,
+    logs: Option<String>,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::backends::InferenceRequest;
+
+    #[test]
+    fn capabilities_include_image_and_interpolation() {
+        let b = ReplicateBackend::new("k");
+        let caps = b.capabilities();
+        assert!(caps.contains(BackendCapabilities::IMAGE_GENERATION));
+        assert!(caps.contains(BackendCapabilities::FRAME_INTERPOLATION));
+        assert!(caps.contains(BackendCapabilities::STYLE_TRAINING));
+        assert!(!caps.contains(BackendCapabilities::TEXT_GENERATION));
+    }
+
+    #[test]
+    fn build_image_gen_input_includes_prompt() {
+        let req = ImageGenRequest {
+            model: None,
+            prompt: "a cat in space".into(),
+            negative_prompt: None,
+            width: 512,
+            height: 512,
+            steps: Some(30),
+            seed: Some(42),
+            num_images: 1,
+            style_image: None,
+        };
+        let input = build_image_gen_input(&req);
+        assert_eq!(input["prompt"], "a cat in space");
+        assert_eq!(input["seed"], 42);
+        assert_eq!(input["num_inference_steps"], 30);
+    }
+
+    #[test]
+    fn estimate_cost_image_gen_nonzero() {
+        let b = ReplicateBackend::new("k");
+        let req = InferenceRequest::ImageGeneration(ImageGenRequest {
+            model: None,
+            prompt: "test".into(),
+            negative_prompt: None,
+            width: 512,
+            height: 512,
+            steps: None,
+            seed: None,
+            num_images: 1,
+            style_image: None,
+        });
+        let est = b.estimate_cost(&req);
+        assert!(est.typical_usd_cents > 0.0);
+    }
+
+    #[tokio::test]
+    async fn integration_image_generation() {
+        let Some(api_key) = std::env::var("PIXHAUS_REPLICATE_API_KEY").ok() else {
+            eprintln!("skipping: PIXHAUS_REPLICATE_API_KEY not set");
+            return;
+        };
+
+        let backend =
+            ReplicateBackend::new(api_key).with_image_model("stability-ai/stable-diffusion-3");
+        let req = InferenceRequest::ImageGeneration(ImageGenRequest {
+            model: None,
+            prompt: "a simple red square on white background".into(),
+            negative_prompt: None,
+            width: 64,
+            height: 64,
+            steps: Some(10),
+            seed: Some(42),
+            num_images: 1,
+            style_image: None,
+        });
+        let (progress, _rx) = VerbProgress::channel();
+        let cancel = CancellationToken::new();
+
+        let resp = backend.invoke(req, progress, cancel).await.unwrap();
+        let InferenceResponse::Image(img) = resp else {
+            panic!("expected image response");
+        };
+        assert_eq!(img.images.len(), 1);
+        assert!(!img.images[0].is_empty());
+    }
+}
