@@ -7,6 +7,7 @@ use pixhaus_core::project::SchemaVersion;
 
 use crate::error::{Error, Result};
 
+use super::migrate;
 use super::schema::{
     FORMAT_MAJOR, HEADER_LEN, KNOWN_FLAGS, MAGIC, MAX_DECOMPRESSED_BODY, PixhausArchive,
 };
@@ -42,7 +43,31 @@ pub fn decode(data: &[u8]) -> Result<PixhausArchive> {
     let minor = u16::from_be_bytes([data[10], data[11]]);
 
     if major != FORMAT_MAJOR {
-        return Err(Error::UnsupportedVersion { major, minor });
+        if major > FORMAT_MAJOR {
+            // Newer container format: this build has no path to open it.
+            return Err(Error::UnsupportedVersion { major, minor });
+        }
+        // Older format: attempt migration. apply_chain decompresses the body
+        // and applies registered transformation steps, returning a decompressed
+        // body in the current format. At v1.0 no migrations are registered so
+        // this always yields UnsupportedVersion — future format bumps add
+        // steps to migrate.rs without touching this dispatch logic.
+        let body_len = usize::try_from(u64::from_be_bytes([
+            data[20], data[21], data[22], data[23], data[24], data[25], data[26], data[27],
+        ]))
+        .map_err(|_| Error::Truncated)?;
+        let body_end = HEADER_LEN.checked_add(body_len).ok_or(Error::Truncated)?;
+        let compressed = data.get(HEADER_LEN..body_end).ok_or(Error::Truncated)?;
+        let body = migrate::apply_chain(major, minor, compressed, MAX_DECOMPRESSED_BODY)?;
+        let archive: PixhausArchive = rmp_serde::from_slice(&body)?;
+        let schema = archive.project.schema_version;
+        if !SchemaVersion::current().is_compatible_with(schema) {
+            return Err(Error::UnsupportedSchemaVersion {
+                major: schema.major,
+                minor: schema.minor,
+            });
+        }
+        return Ok(archive);
     }
     // minor is forward-compatible: ignore fields we don't recognise.
 

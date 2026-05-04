@@ -19,6 +19,7 @@
 //!
 //! For file-backed I/O, see [`encode_to_file`] and [`decode_from_file`].
 
+mod migrate;
 mod read;
 mod schema;
 mod write;
