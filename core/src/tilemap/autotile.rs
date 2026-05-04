@@ -1,0 +1,795 @@
+//! Autotile engine: selects the right tile for a cell based on its neighbors.
+//!
+//! # Autotile kinds
+//!
+//! Four kinds are supported:
+//!
+//! - **Blob47** — 47-tile Wang edge-blob (the de facto standard). Checks all 8
+//!   neighbors; corner neighbors only count when both adjacent cardinal
+//!   neighbors are also filled. Produces a tile index `0..47`.
+//!
+//! - **Corner16** — 16-tile Wang corner-blob. Samples the 4 diagonal neighbors
+//!   only; each combination of the 4 corners is a distinct tile.
+//!   Produces a tile index `0..16`.
+//!
+//! - **Minimal4** — 4-tile minimal blob. Maps the number of cardinal neighbor
+//!   connections (0–3+) directly to a tile index `0..4`.
+//!
+//! - **Custom** — user-defined rules checked in order; first match wins.
+//!
+//! # Neighbor convention
+//!
+//! The engine receives a closure `is_same(cell)` that returns `true` when a
+//! neighbor cell should be treated as "same tile kind" for the purpose of
+//! autotile matching. The caller controls what counts as a match (same tile
+//! index, same autotile group, etc.).
+//!
+//! Out-of-bounds positions pass `None` to the closure, so borders behave
+//! however the caller decides (typically `false`, meaning "not filled").
+
+use serde::{Deserialize, Serialize};
+use ts_rs::TS;
+
+use crate::project::id::TileIndex;
+use crate::project::tilemap::{TileCell, TileFlags, TilemapData};
+
+// ---------------------------------------------------------------------------
+// Neighbor bit constants — shared by Blob47 and custom rules
+// ---------------------------------------------------------------------------
+
+/// Bitmask bit for the top-left (NW) neighbor.
+pub const BIT_NW: u8 = 1 << 0;
+/// Bitmask bit for the top (N) neighbor.
+pub const BIT_N: u8 = 1 << 1;
+/// Bitmask bit for the top-right (NE) neighbor.
+pub const BIT_NE: u8 = 1 << 2;
+/// Bitmask bit for the left (W) neighbor.
+pub const BIT_W: u8 = 1 << 3;
+/// Bitmask bit for the right (E) neighbor.
+pub const BIT_E: u8 = 1 << 4;
+/// Bitmask bit for the bottom-left (SW) neighbor.
+pub const BIT_SW: u8 = 1 << 5;
+/// Bitmask bit for the bottom (S) neighbor.
+pub const BIT_S: u8 = 1 << 6;
+/// Bitmask bit for the bottom-right (SE) neighbor.
+pub const BIT_SE: u8 = 1 << 7;
+
+// ---------------------------------------------------------------------------
+// Autotile kind
+// ---------------------------------------------------------------------------
+
+/// Autotile algorithm variant for a tileset.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize, TS)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+#[ts(export)]
+pub enum AutotileKind {
+    /// 47-tile Wang edge-blob. Checks all 8 neighbors with corner trimming.
+    /// Tile indices `0..47`; see [`blob47_tile_index`].
+    Blob47,
+    /// 16-tile Wang corner-blob. Checks the 4 diagonal neighbors only.
+    /// Tile indices `0..16`; see [`corner16_tile_index`].
+    Corner16,
+    /// 4-tile minimal blob. Maps cardinal-connection degree `0..=3+` to
+    /// tile indices `0..4`; see [`minimal4_tile_index`].
+    Minimal4,
+    /// User-defined rule set. Rules are checked in order; the first match
+    /// determines the output. Falls back to `default_tile` when no rule
+    /// matches.
+    Custom(AutotileRuleSet),
+}
+
+// ---------------------------------------------------------------------------
+// Custom rule set
+// ---------------------------------------------------------------------------
+
+/// A user-defined autotile rule set.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize, TS)]
+#[ts(export)]
+pub struct AutotileRuleSet {
+    /// Rules checked in declaration order; first match wins.
+    pub rules: Vec<AutotileRule>,
+    /// Tile index used when no rule matches.
+    pub default_tile: TileIndex,
+}
+
+/// One rule in a custom autotile rule set.
+///
+/// Eight neighbor conditions cover all 8 surrounding cells in the order
+/// NW, N, NE, W, E, SW, S, SE (matching the `BIT_*` constant order above).
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize, TS)]
+#[ts(export)]
+pub struct AutotileRule {
+    /// Condition for each of the 8 neighbors. Order: NW, N, NE, W, E, SW, S, SE.
+    pub conditions: [NeighborCondition; 8],
+    /// Tile index to emit when all conditions match.
+    pub result_tile: TileIndex,
+    /// Flags (flip/rotation) to apply to the result tile.
+    pub result_flags: TileFlags,
+}
+
+/// Required state of one neighbor cell in a custom autotile rule.
+#[derive(Copy, Clone, Debug, Default, Eq, PartialEq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "snake_case")]
+#[ts(export)]
+pub enum NeighborCondition {
+    /// Any state matches — the neighbor is not checked.
+    #[default]
+    Any,
+    /// The neighbor must be a matching (filled) tile.
+    Filled,
+    /// The neighbor must be empty or a non-matching tile.
+    Empty,
+}
+
+// ---------------------------------------------------------------------------
+// The 47 valid trimmed Blob47 masks, sorted ascending.
+// Generated by enumerating all 256 masks and filtering those where corner
+// bits are only set when both adjacent cardinal bits are set.
+// ---------------------------------------------------------------------------
+
+/// Sorted list of the 47 valid trimmed bitmasks for the Blob47 autotile.
+///
+/// `BLOB47_MASKS[i]` is the trimmed 8-neighbor bitmask for tile `i`.
+/// The reverse mapping (bitmask → index) lives in [`BLOB47_INDEX`].
+pub const BLOB47_MASKS: [u8; 47] = [
+    0, 2, 8, 10, 11, 16, 18, 22, 24, 26, 27, 30, 31, 64, 66, 72, 74, 75, 80, 82, 86, 88, 90, 91,
+    94, 95, 104, 106, 107, 120, 122, 123, 126, 127, 208, 210, 214, 216, 218, 219, 222, 223, 248,
+    250, 251, 254, 255,
+];
+
+/// Reverse-lookup table: trimmed 8-bit bitmask → Blob47 tile index.
+///
+/// `BLOB47_INDEX[mask]` is the tile index for the given trimmed mask.
+/// `u8::MAX` (255) is used as a sentinel for masks that are not in
+/// [`BLOB47_MASKS`]; in practice a correctly trimmed mask always hits a
+/// valid entry.
+static BLOB47_INDEX: [u8; 256] = build_blob47_index();
+
+const fn build_blob47_index() -> [u8; 256] {
+    let mut table = [u8::MAX; 256];
+    let mut i = 0usize;
+    while i < 47 {
+        // i < 47 < 256, so this truncation is intentional and always safe.
+        #[allow(clippy::cast_possible_truncation)]
+        let idx = i as u8;
+        table[BLOB47_MASKS[i] as usize] = idx;
+        i += 1;
+    }
+    table
+}
+
+// ---------------------------------------------------------------------------
+// Blob47 — 47-tile Wang edge-blob
+// ---------------------------------------------------------------------------
+
+/// Trims a raw 8-neighbor bitmask for Blob47 by clearing corner bits whose
+/// adjacent cardinal neighbors are not both set.
+///
+/// - NW(bit0) is valid only when N(bit1) AND W(bit3) are set.
+/// - NE(bit2) is valid only when N(bit1) AND E(bit4) are set.
+/// - SW(bit5) is valid only when S(bit6) AND W(bit3) are set.
+/// - SE(bit7) is valid only when S(bit6) AND E(bit4) are set.
+#[must_use]
+pub fn trim_blob47_mask(mask: u8) -> u8 {
+    let n = mask & BIT_N != 0;
+    let e = mask & BIT_E != 0;
+    let s = mask & BIT_S != 0;
+    let w = mask & BIT_W != 0;
+
+    // Keep all cardinal bits. Keep corner bits only when adjacent cards match.
+    let mut trimmed = mask & (BIT_N | BIT_E | BIT_S | BIT_W);
+    if n && w {
+        trimmed |= mask & BIT_NW;
+    }
+    if n && e {
+        trimmed |= mask & BIT_NE;
+    }
+    if s && w {
+        trimmed |= mask & BIT_SW;
+    }
+    if s && e {
+        trimmed |= mask & BIT_SE;
+    }
+    trimmed
+}
+
+/// Returns the Blob47 tile index (0–46) for the given raw 8-bit neighbor mask.
+///
+/// Corner trimming is applied automatically. The return value is always in
+/// `0..47` because every trimmed mask is in [`BLOB47_MASKS`].
+#[must_use]
+pub fn blob47_tile_index(raw_mask: u8) -> u8 {
+    let trimmed = trim_blob47_mask(raw_mask);
+    let idx = BLOB47_INDEX[trimmed as usize];
+    // Trimmed mask must always hit a valid entry; if the table is wrong this
+    // is a bug in the constant arrays above, which we catch in tests.
+    debug_assert!(
+        idx != u8::MAX,
+        "untrimmed mask {trimmed} not in BLOB47_MASKS"
+    );
+    if idx == u8::MAX { 0 } else { idx }
+}
+
+// ---------------------------------------------------------------------------
+// Corner16 — 16-tile Wang corner-blob
+// ---------------------------------------------------------------------------
+
+/// Returns the Corner16 tile index (0–15) for the given 4-bit corner mask.
+///
+/// The mask bits are: bit0 = NW present, bit1 = NE present,
+/// bit2 = SW present, bit3 = SE present. The tile index equals the mask
+/// directly (0–15).
+#[must_use]
+pub const fn corner16_tile_index(corner_mask: u8) -> u8 {
+    corner_mask & 0x0F
+}
+
+// ---------------------------------------------------------------------------
+// Minimal4 — 4-tile minimal blob
+// ---------------------------------------------------------------------------
+
+/// Returns the Minimal4 tile index (0–3) for the given 4-bit cardinal mask.
+///
+/// The tile index equals the popcount of the cardinal bits, clamped to 3:
+/// - 0: isolated (no connections)
+/// - 1: one-way end cap
+/// - 2: two-way connection
+/// - 3: junction (3 or 4 connections)
+#[must_use]
+pub const fn minimal4_tile_index(cardinal_mask: u8) -> u8 {
+    match (cardinal_mask & 0x0F).count_ones() {
+        0 => 0,
+        1 => 1,
+        2 => 2,
+        _ => 3,
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Main engine entry point
+// ---------------------------------------------------------------------------
+
+/// Computes the autotile [`TileCell`] for position `(x, y)` in `tilemap`
+/// under the given [`AutotileKind`].
+///
+/// `is_same` receives `Option<TileCell>` for each neighbor: `None` for
+/// out-of-bounds positions, `Some(cell)` otherwise. Return `true` when that
+/// neighbor counts as "filled" for matching purposes.
+///
+/// The returned `TileCell`'s `index` is relative to the autotile region in
+/// the tileset (i.e., the caller adds the base offset for the autotile block).
+pub fn resolve_autotile(
+    tilemap: &TilemapData,
+    x: u32,
+    y: u32,
+    kind: &AutotileKind,
+    is_same: impl Fn(Option<TileCell>) -> bool,
+) -> TileCell {
+    match kind {
+        AutotileKind::Blob47 => resolve_blob47(tilemap, x, y, is_same),
+        AutotileKind::Corner16 => resolve_corner16(tilemap, x, y, is_same),
+        AutotileKind::Minimal4 => resolve_minimal4(tilemap, x, y, is_same),
+        AutotileKind::Custom(rules) => resolve_custom(tilemap, x, y, rules, is_same),
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Per-kind resolution helpers
+// ---------------------------------------------------------------------------
+
+fn resolve_blob47(
+    tilemap: &TilemapData,
+    x: u32,
+    y: u32,
+    is_same: impl Fn(Option<TileCell>) -> bool,
+) -> TileCell {
+    let raw_mask = build_8neighbor_mask(tilemap, x, y, &is_same);
+    let idx = blob47_tile_index(raw_mask);
+    TileCell {
+        index: TileIndex::new(u32::from(idx)),
+        flags: TileFlags::empty(),
+    }
+}
+
+fn resolve_corner16(
+    tilemap: &TilemapData,
+    x: u32,
+    y: u32,
+    is_same: impl Fn(Option<TileCell>) -> bool,
+) -> TileCell {
+    let bit = |dx, dy| u8::from(is_same(neighbor(tilemap, x, y, dx, dy)));
+    // Bit layout: NW=0, NE=1, SW=2, SE=3
+    let corner_mask = bit(-1, -1) | (bit(1, -1) << 1) | (bit(-1, 1) << 2) | (bit(1, 1) << 3);
+    TileCell {
+        index: TileIndex::new(u32::from(corner16_tile_index(corner_mask))),
+        flags: TileFlags::empty(),
+    }
+}
+
+fn resolve_minimal4(
+    tilemap: &TilemapData,
+    x: u32,
+    y: u32,
+    is_same: impl Fn(Option<TileCell>) -> bool,
+) -> TileCell {
+    let bit = |dx, dy| u8::from(is_same(neighbor(tilemap, x, y, dx, dy)));
+    // Bit layout: N=0, E=1, S=2, W=3
+    let cardinal_mask = bit(0, -1) | (bit(1, 0) << 1) | (bit(0, 1) << 2) | (bit(-1, 0) << 3);
+    TileCell {
+        index: TileIndex::new(u32::from(minimal4_tile_index(cardinal_mask))),
+        flags: TileFlags::empty(),
+    }
+}
+
+fn resolve_custom(
+    tilemap: &TilemapData,
+    x: u32,
+    y: u32,
+    rules: &AutotileRuleSet,
+    is_same: impl Fn(Option<TileCell>) -> bool,
+) -> TileCell {
+    // Build a snapshot of all 8 neighbors once, then check each rule.
+    let neighbors: [Option<TileCell>; 8] = [
+        neighbor(tilemap, x, y, -1, -1), // NW
+        neighbor(tilemap, x, y, 0, -1),  // N
+        neighbor(tilemap, x, y, 1, -1),  // NE
+        neighbor(tilemap, x, y, -1, 0),  // W
+        neighbor(tilemap, x, y, 1, 0),   // E
+        neighbor(tilemap, x, y, -1, 1),  // SW
+        neighbor(tilemap, x, y, 0, 1),   // S
+        neighbor(tilemap, x, y, 1, 1),   // SE
+    ];
+
+    for rule in &rules.rules {
+        if rule_matches(rule, &neighbors, &is_same) {
+            return TileCell {
+                index: rule.result_tile,
+                flags: rule.result_flags,
+            };
+        }
+    }
+
+    TileCell {
+        index: rules.default_tile,
+        flags: TileFlags::empty(),
+    }
+}
+
+fn rule_matches(
+    rule: &AutotileRule,
+    neighbors: &[Option<TileCell>; 8],
+    is_same: &impl Fn(Option<TileCell>) -> bool,
+) -> bool {
+    for (condition, &cell) in rule.conditions.iter().zip(neighbors.iter()) {
+        match condition {
+            NeighborCondition::Any => {}
+            NeighborCondition::Filled => {
+                if !is_same(cell) {
+                    return false;
+                }
+            }
+            NeighborCondition::Empty => {
+                if is_same(cell) {
+                    return false;
+                }
+            }
+        }
+    }
+    true
+}
+
+// ---------------------------------------------------------------------------
+// Neighbor helpers
+// ---------------------------------------------------------------------------
+
+/// Returns the cell at `(x + dx, y + dy)`, or `None` if out of bounds.
+fn neighbor(tilemap: &TilemapData, x: u32, y: u32, dx: i32, dy: i32) -> Option<TileCell> {
+    let nx = i64::from(x) + i64::from(dx);
+    let ny = i64::from(y) + i64::from(dy);
+    // Bounds check before u32 conversion — negative values are out of bounds.
+    let nx = u32::try_from(nx).ok()?;
+    let ny = u32::try_from(ny).ok()?;
+    tilemap.cell(nx, ny)
+}
+
+/// Builds the raw 8-bit neighbor mask for Blob47 at `(x, y)`.
+fn build_8neighbor_mask(
+    tilemap: &TilemapData,
+    x: u32,
+    y: u32,
+    is_same: &impl Fn(Option<TileCell>) -> bool,
+) -> u8 {
+    let bit = |dx, dy| u8::from(is_same(neighbor(tilemap, x, y, dx, dy)));
+
+    (bit(-1, -1) * BIT_NW)
+        | (bit(0, -1) * BIT_N)
+        | (bit(1, -1) * BIT_NE)
+        | (bit(-1, 0) * BIT_W)
+        | (bit(1, 0) * BIT_E)
+        | (bit(-1, 1) * BIT_SW)
+        | (bit(0, 1) * BIT_S)
+        | (bit(1, 1) * BIT_SE)
+}
+
+// ---------------------------------------------------------------------------
+// Tests
+// ---------------------------------------------------------------------------
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::project::id::TileIndex;
+    use crate::project::tilemap::{TileCell, TileFlags, TilemapData};
+
+    // Helper: build a tilemap where every cell with index > 0 counts as "same".
+    fn filled_map(w: u32, h: u32) -> TilemapData {
+        let mut m = TilemapData::empty(w, h);
+        for cell in &mut m.cells {
+            cell.index = TileIndex::new(1);
+        }
+        m
+    }
+
+    fn is_filled(c: Option<TileCell>) -> bool {
+        c.is_some_and(|c| c.index.get() != 0)
+    }
+
+    // --- BLOB47_MASKS has exactly 47 entries --------------------------------
+
+    #[test]
+    fn blob47_masks_has_47_entries() {
+        assert_eq!(BLOB47_MASKS.len(), 47);
+    }
+
+    // --- Every mask in BLOB47_MASKS survives trimming unchanged -------------
+
+    #[test]
+    fn blob47_masks_are_already_trimmed() {
+        for &mask in &BLOB47_MASKS {
+            assert_eq!(
+                trim_blob47_mask(mask),
+                mask,
+                "mask {mask:#010b} changed after trimming"
+            );
+        }
+    }
+
+    // --- No duplicate masks in BLOB47_MASKS ---------------------------------
+
+    #[test]
+    fn blob47_masks_are_unique() {
+        let mut seen = [false; 256];
+        for &mask in &BLOB47_MASKS {
+            assert!(
+                !seen[mask as usize],
+                "duplicate mask {mask} in BLOB47_MASKS"
+            );
+            seen[mask as usize] = true;
+        }
+    }
+
+    // --- Reverse lookup round-trips -----------------------------------------
+
+    #[test]
+    fn blob47_index_round_trips_all_masks() {
+        for (expected_idx, &mask) in BLOB47_MASKS.iter().enumerate() {
+            let got = blob47_tile_index(mask);
+            // expected_idx < 47, so try_from always succeeds.
+            let expected_u8 = u8::try_from(expected_idx).unwrap();
+            assert_eq!(
+                got, expected_u8,
+                "mask {mask:#010b} → expected index {expected_idx}, got {got}"
+            );
+        }
+    }
+
+    // --- Specific cases for trim_blob47_mask --------------------------------
+
+    #[test]
+    fn trim_clears_nw_when_n_missing() {
+        // NW=1, W=8, but no N → NW must be cleared.
+        let mask = BIT_NW | BIT_W;
+        assert_eq!(trim_blob47_mask(mask), BIT_W);
+    }
+
+    #[test]
+    fn trim_clears_ne_when_e_missing() {
+        let mask = BIT_NE | BIT_N;
+        assert_eq!(trim_blob47_mask(mask), BIT_N);
+    }
+
+    #[test]
+    fn trim_preserves_corners_when_cards_present() {
+        // N + W + NW corner: all should survive.
+        let mask = BIT_N | BIT_W | BIT_NW;
+        assert_eq!(trim_blob47_mask(mask), mask);
+    }
+
+    #[test]
+    fn trim_full_mask_unchanged() {
+        assert_eq!(trim_blob47_mask(0xFF), 0xFF);
+    }
+
+    // --- Blob47 isolation and full-surround cases ---------------------------
+
+    #[test]
+    fn blob47_isolated_is_index_zero() {
+        // No neighbors → mask 0 → index 0.
+        assert_eq!(blob47_tile_index(0), 0);
+    }
+
+    #[test]
+    fn blob47_fully_surrounded_is_index_46() {
+        // All 8 neighbors present → mask 0xFF (trimmed is still 0xFF) → last index.
+        assert_eq!(blob47_tile_index(0xFF), 46);
+    }
+
+    // --- Corner16 -----------------------------------------------------------
+
+    #[test]
+    fn corner16_no_corners_is_zero() {
+        assert_eq!(corner16_tile_index(0), 0);
+    }
+
+    #[test]
+    fn corner16_all_corners_is_15() {
+        assert_eq!(corner16_tile_index(0x0F), 15);
+    }
+
+    #[test]
+    fn corner16_ignores_high_bits() {
+        assert_eq!(corner16_tile_index(0xFF), 15);
+    }
+
+    // --- Minimal4 -----------------------------------------------------------
+
+    #[test]
+    fn minimal4_zero_connections_is_zero() {
+        assert_eq!(minimal4_tile_index(0b0000), 0);
+    }
+
+    #[test]
+    fn minimal4_one_connection_is_one() {
+        assert_eq!(minimal4_tile_index(0b0001), 1);
+        assert_eq!(minimal4_tile_index(0b0010), 1);
+    }
+
+    #[test]
+    fn minimal4_two_connections_is_two() {
+        assert_eq!(minimal4_tile_index(0b0011), 2);
+        assert_eq!(minimal4_tile_index(0b0101), 2);
+    }
+
+    #[test]
+    fn minimal4_three_connections_is_three() {
+        assert_eq!(minimal4_tile_index(0b0111), 3);
+    }
+
+    #[test]
+    fn minimal4_four_connections_is_three() {
+        assert_eq!(minimal4_tile_index(0b1111), 3);
+    }
+
+    // --- resolve_autotile on a fully-filled 3×3 map ------------------------
+
+    #[test]
+    fn blob47_center_of_filled_3x3_is_fully_surrounded() {
+        let map = filled_map(3, 3);
+        let cell = resolve_autotile(&map, 1, 1, &AutotileKind::Blob47, is_filled);
+        // All 8 neighbors filled → index 46.
+        assert_eq!(cell.index, TileIndex::new(46));
+        assert_eq!(cell.flags, TileFlags::empty());
+    }
+
+    #[test]
+    fn blob47_top_left_corner_of_filled_3x3() {
+        let map = filled_map(3, 3);
+        let cell = resolve_autotile(&map, 0, 0, &AutotileKind::Blob47, is_filled);
+        // For (0,0): E=(1,0) filled, S=(0,1) filled, SE=(1,1) filled.
+        // NW/N/NE/W/SW all out of bounds → false.
+        // raw_mask = BIT_E | BIT_S | BIT_SE = 16 | 64 | 128 = 208.
+        // trim: SE valid because S&&E → trimmed = 208.
+        // BLOB47_MASKS[34] = 208 → index 34.
+        assert_eq!(cell.index, TileIndex::new(34));
+    }
+
+    #[test]
+    fn minimal4_center_of_filled_3x3_is_three() {
+        let map = filled_map(3, 3);
+        let cell = resolve_autotile(&map, 1, 1, &AutotileKind::Minimal4, is_filled);
+        assert_eq!(cell.index, TileIndex::new(3));
+    }
+
+    #[test]
+    fn minimal4_isolated_tile_is_zero() {
+        let mut map = TilemapData::empty(3, 3);
+        map.cells[4] = TileCell {
+            index: TileIndex::new(1),
+            flags: TileFlags::empty(),
+        };
+        let cell = resolve_autotile(&map, 1, 1, &AutotileKind::Minimal4, is_filled);
+        assert_eq!(cell.index, TileIndex::new(0));
+    }
+
+    // --- resolve_autotile: Custom rules -------------------------------------
+
+    #[test]
+    fn custom_first_matching_rule_wins() {
+        let rule_set = AutotileRuleSet {
+            rules: vec![
+                // Match: N is filled → tile 5
+                AutotileRule {
+                    conditions: [
+                        NeighborCondition::Any,    // NW
+                        NeighborCondition::Filled, // N
+                        NeighborCondition::Any,    // NE
+                        NeighborCondition::Any,    // W
+                        NeighborCondition::Any,    // E
+                        NeighborCondition::Any,    // SW
+                        NeighborCondition::Any,    // S
+                        NeighborCondition::Any,    // SE
+                    ],
+                    result_tile: TileIndex::new(5),
+                    result_flags: TileFlags::empty(),
+                },
+            ],
+            default_tile: TileIndex::new(0),
+        };
+
+        let mut map = TilemapData::empty(3, 3);
+        // Place a filled tile above (1,1) at (1,0).
+        map.cells[1] = TileCell {
+            index: TileIndex::new(1),
+            flags: TileFlags::empty(),
+        };
+        map.cells[4] = TileCell {
+            index: TileIndex::new(1),
+            flags: TileFlags::empty(),
+        };
+
+        let cell = resolve_autotile(&map, 1, 1, &AutotileKind::Custom(rule_set), is_filled);
+        assert_eq!(cell.index, TileIndex::new(5));
+    }
+
+    #[test]
+    fn custom_falls_back_to_default_when_no_rule_matches() {
+        let rule_set = AutotileRuleSet {
+            rules: vec![AutotileRule {
+                conditions: {
+                    let mut c = [NeighborCondition::Any; 8];
+                    c[1] = NeighborCondition::Filled; // N must be filled
+                    c
+                },
+                result_tile: TileIndex::new(5),
+                result_flags: TileFlags::empty(),
+            }],
+            default_tile: TileIndex::new(7),
+        };
+
+        let map = TilemapData::empty(3, 3); // all cells empty
+        let cell = resolve_autotile(&map, 1, 1, &AutotileKind::Custom(rule_set), is_filled);
+        assert_eq!(cell.index, TileIndex::new(7));
+    }
+
+    #[test]
+    fn custom_empty_condition_matches_empty_neighbor() {
+        let rule_set = AutotileRuleSet {
+            rules: vec![AutotileRule {
+                conditions: {
+                    let mut c = [NeighborCondition::Any; 8];
+                    c[1] = NeighborCondition::Empty; // N must be empty
+                    c
+                },
+                result_tile: TileIndex::new(3),
+                result_flags: TileFlags::empty(),
+            }],
+            default_tile: TileIndex::new(0),
+        };
+
+        let map = TilemapData::empty(3, 3);
+        let cell = resolve_autotile(&map, 1, 1, &AutotileKind::Custom(rule_set), is_filled);
+        assert_eq!(cell.index, TileIndex::new(3));
+    }
+
+    // --- resolve_autotile: corner16 on a filled map -------------------------
+
+    #[test]
+    fn corner16_center_all_diagonals_filled_is_15() {
+        let map = filled_map(3, 3);
+        let cell = resolve_autotile(&map, 1, 1, &AutotileKind::Corner16, is_filled);
+        assert_eq!(cell.index, TileIndex::new(15));
+    }
+
+    #[test]
+    fn corner16_top_left_no_nw_diagonal() {
+        let map = filled_map(3, 3);
+        // (0,0) has no NW diagonal (out of bounds), but NE at (1,-1) is OOB too.
+        // Only SW=(–1,1)=OOB and SE=(1,1) is in-bounds.
+        // For (0,0): NW=OOB(false), NE=OOB(false), SW=OOB(false), SE=cell(1,1)=filled
+        // corner_mask = 0 | 0 | 0 | 1<<3 = 8
+        let cell = resolve_autotile(&map, 0, 0, &AutotileKind::Corner16, is_filled);
+        assert_eq!(cell.index, TileIndex::new(8)); // only SE bit
+    }
+
+    // --- Out-of-bounds: neighbors past map edge are treated as empty --------
+
+    #[test]
+    fn blob47_edge_cell_treats_oob_as_empty() {
+        let map = filled_map(2, 2);
+        // (0,0): only E and S in-bounds and filled → mask = BIT_E | BIT_S = 16 | 64 = 80
+        // trimmed = 80 (SE corner only active when S&&E, but SE is OOB, so SE=0)
+        // Hmm, wait: (0,0)'s SE neighbor is (1,1) which IS in the map.
+        // Let me recalculate: for (0,0) in a 2x2 filled map:
+        //   NW=OOB=false, N=OOB=false, NE=OOB=false
+        //   W=OOB=false,              E=(1,0)=filled
+        //   SW=OOB=false, S=(0,1)=filled, SE=(1,1)=filled
+        // raw mask = BIT_E | BIT_S | BIT_SE = 16 | 64 | 128 = 208
+        // trimmed: SE only if S&&E → true → trimmed = 208
+        // BLOB47_MASKS[34] = 208 → index 34
+        let cell = resolve_autotile(&map, 0, 0, &AutotileKind::Blob47, is_filled);
+        assert_eq!(cell.index, TileIndex::new(34));
+    }
+
+    // --- Custom rule flags are forwarded ------------------------------------
+
+    #[test]
+    fn custom_result_flags_are_forwarded() {
+        let rule_set = AutotileRuleSet {
+            rules: vec![AutotileRule {
+                conditions: [NeighborCondition::Any; 8],
+                result_tile: TileIndex::new(2),
+                result_flags: TileFlags::FLIP_X,
+            }],
+            default_tile: TileIndex::new(0),
+        };
+        let map = TilemapData::empty(1, 1);
+        let cell = resolve_autotile(&map, 0, 0, &AutotileKind::Custom(rule_set), is_filled);
+        assert_eq!(cell.flags, TileFlags::FLIP_X);
+    }
+
+    // --- AutotileKind round-trip (serde) ------------------------------------
+
+    #[test]
+    fn autotile_kind_blob47_round_trip() {
+        let k = AutotileKind::Blob47;
+        let json = serde_json::to_string(&k).unwrap();
+        assert_eq!(json, "{\"kind\":\"blob47\"}");
+        let back: AutotileKind = serde_json::from_str(&json).unwrap();
+        assert_eq!(k, back);
+    }
+
+    #[test]
+    fn autotile_kind_custom_round_trip() {
+        let k = AutotileKind::Custom(AutotileRuleSet {
+            rules: vec![],
+            default_tile: TileIndex::new(0),
+        });
+        let bytes = rmp_serde::to_vec_named(&k).unwrap();
+        let back: AutotileKind = rmp_serde::from_slice(&bytes).unwrap();
+        assert_eq!(k, back);
+    }
+
+    // --- Trimming corner cases (proptest-style manual checks) ---------------
+
+    #[test]
+    fn trim_zero_mask_stays_zero() {
+        assert_eq!(trim_blob47_mask(0), 0);
+    }
+
+    #[test]
+    fn all_47_trimmed_masks_map_to_valid_indices() {
+        for raw in 0u8..=255 {
+            let trimmed = trim_blob47_mask(raw);
+            let idx = blob47_tile_index(raw);
+            // idx should be < 47 and BLOB47_MASKS[idx] should equal trimmed
+            assert!(
+                (idx as usize) < 47,
+                "raw {raw}, trimmed {trimmed}: index {idx} out of range"
+            );
+            assert_eq!(
+                BLOB47_MASKS[idx as usize], trimmed,
+                "raw {raw}, trimmed {trimmed}: index {idx} maps back to wrong mask"
+            );
+        }
+    }
+}

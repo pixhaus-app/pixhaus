@@ -31,6 +31,7 @@
 pub mod canvas;
 pub mod fixtures;
 pub mod project;
+pub mod tilemap;
 
 /// Returns the crate name. Stable, public marker that downstream crates
 /// can use as a sanity check after a workspace-wide upgrade.

@@ -59,7 +59,10 @@ pub use selection::{SelectionRegion, SelectionState};
 pub use slice::{NineSlice, Pivot, Slice, SliceKey};
 pub use sprite::Sprite;
 pub use tilemap::{TileCell, TileFlags, TilemapData};
-pub use tileset::{Tileset, TilesetSource};
+pub use tileset::{
+    AnimLoopMode, CollisionShape, TileAnimation, TileAnimationFrame, TileProperties, Tileset,
+    TilesetSource,
+};
 pub use user_data::UserData;
 
 use serde::{Deserialize, Serialize};
