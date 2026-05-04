@@ -24,7 +24,7 @@ author?: string | null,
 /**
  * UTC seconds-since-epoch at which the project was first created.
  * `i64` on the Rust side keeps the full range; the TS mirror is
- * pinned to `number` because serde_json writes plain JSON numbers
+ * pinned to `number` because `serde_json` writes plain JSON numbers
  * and seconds-since-epoch fits in `Number.MAX_SAFE_INTEGER` for
  * any realistic timestamp.
  */
