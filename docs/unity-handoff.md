@@ -293,14 +293,14 @@ Encoding formula for a cell with `(index, flags)` against a tileset with `firstg
 ```
 gid = 0                           when index == 0 (empty tile)
 
-gid = index + firstgid - 1        otherwise, before flags
+gid = (index - 1) + firstgid      otherwise, before flags
 
 gid |= 0x80000000                 when TileFlags::FLIP_X is set
 gid |= 0x40000000                 when TileFlags::FLIP_Y is set
 gid |= 0x20000000                 when TileFlags::FLIP_DIAGONAL is set
 ```
 
-The `index + firstgid - 1` formula places tile index 1 at GID `firstgid`, tile index 2 at GID `firstgid + 1`, and so on. Index 0 (empty) always encodes as GID 0 regardless of `firstgid`.
+Tiled semantics: in a tileset with `firstgid=N`, GID `N` is the first real tile (atlas local id 0). Pixhaus's `TileIndex(0)` is the project-side "empty" sentinel and never appears in the tileset atlas; `TileIndex(1)` maps to atlas local id 0, `TileIndex(2)` to local id 1, and so on. The atlas contains only real tiles — there is no reserved transparent slot.
 
 Example encoded values (single tileset, firstgid=1):
 
@@ -324,12 +324,14 @@ The bit layout matches Tiled's native format, so standard Tiled tooling (includi
          name="dungeon"
          tilewidth="16" tileheight="16"
          spacing="0" margin="0"
-         tilecount="6" columns="6">
-  <image source="dungeon.png" width="96" height="16"/>
+         tilecount="5" columns="5">
+  <image source="dungeon.png" width="80" height="16"/>
 </tileset>
 ```
 
-Tiles are packed in a **single horizontal row** in the PNG atlas. Atlas width is `tile_size.width * tile_count`; atlas height is `tile_size.height`. Tile index 0 (the empty tile) occupies the leftmost column and is fully transparent. Importers must skip index 0 when constructing Unity tile assets.
+`tilecount` and `columns` are the count of real tiles from `Tileset.tile_count` — the project-side `TileIndex(0)` "empty" sentinel is not represented in the atlas.
+
+Tiles are packed in a **single horizontal row** in the PNG atlas. Atlas width is `tile_size.width * tile_count`; atlas height is `tile_size.height`. The leftmost column is the first real tile (atlas local id 0). Pixhaus's `TileIndex(0)` is a project-side "empty" sentinel and is not represented in the atlas — empty cells encode as `gid = 0` directly.
 
 #### TSX attributes
 
@@ -340,7 +342,7 @@ Tiles are packed in a **single horizontal row** in the PNG atlas. Atlas width is
 | `tileheight` | `Tileset.tile_size.height`.                                   |
 | `spacing`    | `0`. No gaps between tiles in the atlas.                      |
 | `margin`     | `0`. No border around the atlas.                              |
-| `tilecount`  | `Tileset.tile_count`. Includes the empty tile at index 0.     |
+| `tilecount`  | `Tileset.tile_count`. Real tiles only; `TileIndex(0)` empty is not in the atlas. |
 | `columns`    | `Tileset.tile_count`. Single row, N columns.                  |
 
 ---

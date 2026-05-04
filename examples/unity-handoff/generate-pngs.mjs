@@ -131,21 +131,24 @@ function checkerboard(width, height, cellSize, colorA, colorB) {
 }
 
 // --- Generate dungeon.png ----------------------------------------------------
-// 96×16: six 16×16 tiles in a single row (tile 0 transparent, tiles 1–5 tinted).
-// Each tile column is a distinct color to make the atlas layout obvious.
+// 80×16: five real 16×16 tiles in a single row. Pixhaus's TileIndex(0)
+// is a project-side "empty" sentinel and is not in the atlas — empty
+// cells encode as gid=0 directly.
+//
+// Atlas local id (= GID - firstgid) → tile:
+//   0 floor, 1 wall, 2 corner, 3 torch, 4 chest
 {
-  const tileW = 16, tileH = 16, tileCount = 6;
+  const tileW = 16, tileH = 16, tileCount = 5;
   const w = tileW * tileCount, h = tileH;
   const pixels = Buffer.alloc(w * h * 4, 0); // start fully transparent
 
-  // Tile palettes: [R, G, B, A]. Tile 0 stays transparent.
+  // Tile palettes: [R, G, B, A]. Index = atlas local id.
   const tileColors = [
-    [0,   0,   0,   0  ],  // 0: empty — fully transparent
-    [100, 100, 100, 220],  // 1: floor — mid grey
-    [60,  60,  80,  220],  // 2: wall — dark blue-grey
-    [80,  80,  100, 220],  // 3: corner — slightly lighter
-    [220, 160, 40,  220],  // 4: torch — warm orange
-    [120, 80,  40,  220],  // 5: chest — brown
+    [100, 100, 100, 220],  // 0: floor   — mid grey
+    [60,  60,  80,  220],  // 1: wall    — dark blue-grey
+    [80,  80,  100, 220],  // 2: corner  — slightly lighter
+    [220, 160, 40,  220],  // 3: torch   — warm orange
+    [120, 80,  40,  220],  // 4: chest   — brown
   ];
 
   for (let tile = 0; tile < tileCount; tile++) {
@@ -155,7 +158,7 @@ function checkerboard(width, height, cellSize, colorA, colorB) {
         const px = tile * tileW + x;
         const i = (y * w + px) * 4;
         // Darken edges so individual tiles are visually bounded.
-        const edge = (x === 0 || x === tileW - 1 || y === 0 || y === tileH - 1) && tile > 0;
+        const edge = x === 0 || x === tileW - 1 || y === 0 || y === tileH - 1;
         pixels[i]     = edge ? Math.max(0, r - 40) : r;
         pixels[i + 1] = edge ? Math.max(0, g - 40) : g;
         pixels[i + 2] = edge ? Math.max(0, b - 40) : b;
@@ -165,7 +168,7 @@ function checkerboard(width, height, cellSize, colorA, colorB) {
   }
 
   writeFileSync(join(__dir, 'tilemap', 'dungeon.png'), makePng(w, h, pixels));
-  console.log('wrote tilemap/dungeon.png     (96×16 RGBA tileset placeholder, 6 tiles)');
+  console.log('wrote tilemap/dungeon.png     (80×16 RGBA tileset placeholder, 5 real tiles)');
 }
 
 console.log('done.');
