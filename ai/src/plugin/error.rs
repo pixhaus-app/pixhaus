@@ -35,14 +35,22 @@ pub enum VerbError {
     #[error("missing required context: {0}")]
     MissingContext(&'static str),
 
-    /// The selected backend does not advertise one of the capabilities
-    /// the verb's descriptor declared as required.
-    #[error("backend missing capability `{capability}` required by verb `{verb}`")]
+    /// No registered backend satisfies all of the capabilities the verb
+    /// requires. `required` is the full bitfield from the descriptor.
+    #[error("no backend satisfies capabilities {required:#010x} required by verb `{verb}`")]
     UnsupportedCapability {
-        /// The verb whose descriptor declared the capability.
+        /// The verb whose descriptor declared the required capabilities.
         verb: VerbId,
-        /// The capability name that no configured backend supports.
-        capability: &'static str,
+        /// The unsatisfied capability bitfield.
+        required: u32,
+    },
+
+    /// A backend that was selected for the verb reported it is not
+    /// currently reachable (e.g. Ollama process is down).
+    #[error("backend `{id}` is not available")]
+    BackendUnavailable {
+        /// Identifier of the backend that is down.
+        id: String,
     },
 
     /// The invocation was cancelled before producing a preview.
@@ -101,5 +109,24 @@ mod tests {
         let bad: serde_json::Error = serde_json::from_str::<u32>("nope").unwrap_err();
         let err: VerbError = bad.into();
         assert!(matches!(err, VerbError::Payload(_)));
+    }
+
+    #[test]
+    fn unsupported_capability_renders_bits() {
+        let err = VerbError::UnsupportedCapability {
+            verb: VerbId::new("pixhaus.builtin.inbetween"),
+            required: 0x0000_0024, // IMAGE_GENERATION | FRAME_INTERPOLATION
+        };
+        let msg = err.to_string();
+        assert!(msg.contains("0x00000024"));
+        assert!(msg.contains("inbetween"));
+    }
+
+    #[test]
+    fn backend_unavailable_renders_id() {
+        let err = VerbError::BackendUnavailable {
+            id: "ollama.llama3".into(),
+        };
+        assert_eq!(err.to_string(), "backend `ollama.llama3` is not available");
     }
 }

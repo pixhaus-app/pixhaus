@@ -1,26 +1,43 @@
-//! Verb runtime: registry, dispatch, preview/commit lifecycle.
+//! Verb runtime: registry, dispatch, backend selection, preview/commit
+//! lifecycle.
 //!
-//! [`VerbRuntime`] is the host-side coordinator. It owns the registry
-//! of `Arc<dyn Verb>` instances, mints [`super::preview::PreviewId`]s,
-//! and converts an invocation request into a
-//! [`VerbInvocation`] handle the caller drives.
+//! [`VerbRuntime`] is the host-side coordinator. It owns:
+//!
+//! - the verb registry (`Arc<dyn Verb>` by ID),
+//! - the backend registry (`Arc<dyn InferenceBackend>` ordered by
+//!   priority), and
+//! - the preview ID minter.
 //!
 //! # State model
 //!
-//! The runtime is intentionally lightweight:
+//! The runtime keeps two read-mostly registries behind `RwLock`s, and
+//! one lock-free atomic counter:
 //!
-//! - `verbs` — read-mostly registry behind a `parking_lot::RwLock`.
-//!   Reads (lookup by ID, list descriptors) take the read lock; the
-//!   only writes happen during plugin load / unload.
-//! - `id_minter` — atomic counter for preview IDs. Lock-free.
+//! - `verbs` — writes only on plugin load / unload.
+//! - `backends` — writes only when the user changes backend config.
+//! - `id_minter` — lock-free atomic increment; never blocks.
 //!
-//! There is **no** pending-preview map. [`VerbPreview`]s are values
-//! the caller carries between `finish` and `commit` / `discard`. This
-//! is by design — every preview-tracking system that lived inside the
-//! runtime had to handle "what if the preview is dropped?", "what if
-//! the user closes the dialog?", "what if the document closes?". By
-//! handing the preview back to the caller, the runtime sidesteps the
-//! whole class of bugs.
+//! There is **no** pending-preview map. [`VerbPreview`]s are values the
+//! caller carries between `finish` and `commit` / `discard`. Handing
+//! the value back to the caller sidesteps the whole "what if the dialog
+//! closes?" class of bugs.
+//!
+//! # Backend selection and fallback chains
+//!
+//! Before spawning a verb worker, [`VerbRuntime::invoke`] resolves a
+//! backend:
+//!
+//! 1. If the verb's `required_capabilities` are empty, no backend is
+//!    needed — `ctx.backend` is `None`.
+//! 2. Otherwise the runtime walks `backends` in ascending priority order
+//!    and picks the first entry that is available *and* whose
+//!    `capabilities` are a superset of the required set.
+//! 3. If no backend qualifies, the invocation fails with
+//!    [`VerbError::UnsupportedCapability`].
+//!
+//! The selected backend is attached to the `VerbContext` before it
+//! reaches the verb. Verbs downcast `ctx.backend` to a more specific
+//! sub-trait when they need to make inference calls.
 
 use std::collections::HashMap;
 use std::fmt;
@@ -33,8 +50,9 @@ use tokio::task::JoinHandle;
 use tokio_util::sync::CancellationToken;
 use tracing::{debug, instrument, trace};
 
+use super::backend::{BackendInfo, InferenceBackend};
 use super::context::VerbContext;
-use super::descriptor::{VerbDescriptor, VerbId};
+use super::descriptor::{BackendCapabilities, VerbDescriptor, VerbId};
 use super::error::{Result, VerbError};
 use super::inputs::VerbInputs;
 use super::output::VerbOutput;
@@ -44,28 +62,50 @@ use super::preview::{
 use super::progress::{VerbProgress, VerbProgressEvent};
 use super::verb::Verb;
 
-/// Coordinator for verb registration and dispatch.
+/// One entry in the backend priority list.
+struct BackendEntry {
+    backend: Arc<dyn InferenceBackend>,
+    /// Lower value = tried first during capability matching.
+    priority: u16,
+}
+
+/// Coordinator for verb registration, backend selection, and dispatch.
 ///
 /// One `VerbRuntime` lives per editor session. Construct via
 /// [`VerbRuntime::new`], wrap in an `Arc`, and share across the
 /// command handlers.
-#[derive(Default)]
 pub struct VerbRuntime {
     verbs: RwLock<HashMap<VerbId, Arc<dyn Verb>>>,
+    /// Priority-ordered list of registered backends. The list is kept
+    /// sorted by `priority` ascending whenever an entry is inserted so
+    /// [`VerbRuntime::select_backend`] can short-circuit on first match
+    /// without sorting on every call.
+    backends: RwLock<Vec<BackendEntry>>,
     id_minter: PreviewIdMinter,
 }
 
+impl Default for VerbRuntime {
+    fn default() -> Self {
+        Self {
+            verbs: RwLock::new(HashMap::new()),
+            backends: RwLock::new(Vec::new()),
+            id_minter: PreviewIdMinter::new(),
+        }
+    }
+}
+
 impl fmt::Debug for VerbRuntime {
-    /// Lists registered verb IDs only — `dyn Verb` is not `Debug`, and
-    /// dumping descriptors at every `dbg!` would be noisy. The
-    /// `id_minter` field is intentionally omitted; its monotonic
-    /// counter is internal scaffolding and not interesting in a debug
-    /// dump.
+    /// Lists registered verb IDs and backend IDs. Neither `dyn Verb`
+    /// nor `dyn InferenceBackend` is `Debug`; we surface the stable
+    /// identifiers instead. `id_minter` is intentionally omitted.
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         let verbs = self.verbs.read();
-        let ids: Vec<&VerbId> = verbs.keys().collect();
+        let verb_ids: Vec<&VerbId> = verbs.keys().collect();
+        let backends = self.backends.read();
+        let backend_ids: Vec<&str> = backends.iter().map(|e| e.backend.id()).collect();
         f.debug_struct("VerbRuntime")
-            .field("registered", &ids)
+            .field("verbs", &verb_ids)
+            .field("backends", &backend_ids)
             .finish_non_exhaustive()
     }
 }
@@ -133,14 +173,123 @@ impl VerbRuntime {
         self.verbs.read().is_empty()
     }
 
+    // ── Backend registry ────────────────────────────────────────────────────
+
+    /// Registers an inference backend.
+    ///
+    /// Backends are ordered by `priority`; lower value = tried first
+    /// when selecting a backend for a verb invocation. The list is kept
+    /// sorted on insertion so [`Self::select_backend`] is a linear scan
+    /// without an extra sort pass.
+    ///
+    /// Returns [`VerbError::AlreadyRegistered`] if a backend with the
+    /// same ID already exists. Variant re-use is intentional: the
+    /// variant carries a [`VerbId`] whose inner string equals the
+    /// backend ID.
+    pub fn register_backend<B: InferenceBackend>(&self, backend: B, priority: u16) -> Result<()> {
+        let id_str = backend.id().to_owned();
+        let arc: Arc<dyn InferenceBackend> = Arc::new(backend);
+        let mut backends = self.backends.write();
+        if backends.iter().any(|e| e.backend.id() == id_str) {
+            return Err(VerbError::AlreadyRegistered(VerbId::new(id_str)));
+        }
+        debug!(id = %id_str, priority, "registering backend");
+        // Insert in sorted position so the list stays ordered.
+        let pos = backends
+            .iter()
+            .position(|e| e.priority > priority)
+            .unwrap_or(backends.len());
+        backends.insert(
+            pos,
+            BackendEntry {
+                backend: arc,
+                priority,
+            },
+        );
+        Ok(())
+    }
+
+    /// Removes a backend from the registry. Returns
+    /// [`VerbError::NotFound`] if no such backend exists.
+    ///
+    /// In-flight invocations that already received a reference to this
+    /// backend continue to run — unregistering is shallow.
+    pub fn unregister_backend(&self, id: &str) -> Result<()> {
+        let mut backends = self.backends.write();
+        let pos = backends
+            .iter()
+            .position(|e| e.backend.id() == id)
+            .ok_or_else(|| VerbError::NotFound(VerbId::new(id)))?;
+        debug!(id, "unregistered backend");
+        backends.remove(pos);
+        Ok(())
+    }
+
+    /// Returns metadata snapshots for all registered backends, in
+    /// priority order.
+    #[must_use]
+    pub fn list_backends(&self) -> Vec<BackendInfo> {
+        self.backends
+            .read()
+            .iter()
+            .map(|e| BackendInfo {
+                id: e.backend.id().to_owned(),
+                display_name: e.backend.display_name().to_owned(),
+                capabilities: e.backend.capabilities(),
+                available: e.backend.is_available(),
+                priority: e.priority,
+            })
+            .collect()
+    }
+
+    /// Returns the number of registered backends.
+    #[must_use]
+    pub fn backend_count(&self) -> usize {
+        self.backends.read().len()
+    }
+
+    /// Selects the highest-priority backend that is available *and*
+    /// whose capabilities are a superset of `required`.
+    ///
+    /// Returns [`VerbError::UnsupportedCapability`] if no backend
+    /// qualifies. The search is linear over the priority-sorted list;
+    /// for the expected registry size (< 10 backends) a sorted scan is
+    /// faster than a heap.
+    pub fn select_backend(
+        &self,
+        required: BackendCapabilities,
+        verb: &VerbId,
+    ) -> Result<Arc<dyn InferenceBackend>> {
+        self.backends
+            .read()
+            .iter()
+            .find(|e| e.backend.is_available() && e.backend.capabilities().contains(required))
+            .map(|e| e.backend.clone())
+            .ok_or_else(|| VerbError::UnsupportedCapability {
+                verb: verb.clone(),
+                required: required.0,
+            })
+    }
+
+    // ── Dispatch ────────────────────────────────────────────────────────────
+
     /// Starts an invocation. Returns a [`VerbInvocation`] the caller
     /// drives to completion.
     ///
-    /// The verb is looked up, validated against `inputs`, and spawned
-    /// as a tokio task with a fresh cancellation token and progress
-    /// channel. The caller drains progress through
-    /// [`VerbInvocation::next_progress`] and ultimately awaits
-    /// [`VerbInvocation::finish`] for the [`VerbPreview`].
+    /// Before spawning, the runtime:
+    ///
+    /// 1. Looks up the verb by `id` — `VerbError::NotFound` if absent.
+    /// 2. Validates `inputs` via the verb's `validate` — `VerbError::Schema`
+    ///    on failure.
+    /// 3. If the verb's `required_capabilities` are non-empty, selects the
+    ///    highest-priority available backend that satisfies them, and
+    ///    attaches it to `ctx`. Returns `VerbError::UnsupportedCapability`
+    ///    if no backend qualifies.
+    /// 4. Spawns the verb on the tokio runtime with a fresh cancellation
+    ///    token and progress channel.
+    ///
+    /// The caller drains progress through [`VerbInvocation::next_progress`]
+    /// and awaits [`VerbInvocation::finish`] for the [`VerbPreview`].
     #[instrument(skip(self, ctx, inputs), fields(verb = %id))]
     pub fn invoke(
         &self,
@@ -155,6 +304,19 @@ impl VerbRuntime {
             .cloned()
             .ok_or_else(|| VerbError::NotFound(id.clone()))?;
         verb.validate(&inputs)?;
+
+        // Capability check and backend injection. Verbs that need no
+        // backend (empty capabilities) skip this; ctx.backend stays None.
+        let mut ctx = ctx;
+        let required = verb.descriptor().required_capabilities;
+        if !required.is_empty() {
+            let backend = self.select_backend(required, id)?;
+            debug!(
+                backend = %backend.id(),
+                "selected backend for verb"
+            );
+            ctx.backend = Some(backend);
+        }
 
         let cancel = CancellationToken::new();
         let (progress, progress_rx) = VerbProgress::channel();
@@ -691,5 +853,287 @@ mod tests {
         assert!(runtime.is_empty());
         let err = runtime.unregister(&VerbId::new("test.un")).unwrap_err();
         assert!(matches!(err, VerbError::NotFound(_)));
+    }
+
+    // ── Backend registry tests ───────────────────────────────────────────────
+
+    use crate::plugin::backend::InferenceBackend;
+
+    #[derive(Debug)]
+    struct StubBackend {
+        id: &'static str,
+        caps: BackendCapabilities,
+        available: bool,
+    }
+
+    impl InferenceBackend for StubBackend {
+        fn id(&self) -> &str {
+            self.id
+        }
+        fn capabilities(&self) -> BackendCapabilities {
+            self.caps
+        }
+        fn cost_estimate(&self, _: BackendCapabilities) -> CostEstimate {
+            CostEstimate::free()
+        }
+        fn is_available(&self) -> bool {
+            self.available
+        }
+    }
+
+    fn caps_backend(id: &'static str, caps: BackendCapabilities) -> StubBackend {
+        StubBackend {
+            id,
+            caps,
+            available: true,
+        }
+    }
+
+    #[test]
+    fn register_and_list_backends() {
+        let rt = VerbRuntime::new();
+        rt.register_backend(
+            caps_backend("local", BackendCapabilities::TEXT_GENERATION),
+            0,
+        )
+        .unwrap();
+        rt.register_backend(
+            caps_backend("cloud", BackendCapabilities::IMAGE_GENERATION),
+            10,
+        )
+        .unwrap();
+
+        let list = rt.list_backends();
+        assert_eq!(list.len(), 2);
+        // Priority-sorted: local (0) before cloud (10).
+        assert_eq!(list[0].id, "local");
+        assert_eq!(list[1].id, "cloud");
+        assert_eq!(rt.backend_count(), 2);
+    }
+
+    #[test]
+    fn duplicate_backend_registration_fails() {
+        let rt = VerbRuntime::new();
+        rt.register_backend(caps_backend("b", BackendCapabilities::empty()), 0)
+            .unwrap();
+        let err = rt
+            .register_backend(caps_backend("b", BackendCapabilities::empty()), 1)
+            .unwrap_err();
+        assert!(matches!(err, VerbError::AlreadyRegistered(_)));
+    }
+
+    #[test]
+    fn unregister_backend_removes_entry() {
+        let rt = VerbRuntime::new();
+        rt.register_backend(caps_backend("b", BackendCapabilities::empty()), 0)
+            .unwrap();
+        rt.unregister_backend("b").unwrap();
+        assert_eq!(rt.backend_count(), 0);
+
+        let err = rt.unregister_backend("b").unwrap_err();
+        assert!(matches!(err, VerbError::NotFound(_)));
+    }
+
+    #[test]
+    fn select_backend_respects_capabilities() {
+        let rt = VerbRuntime::new();
+        rt.register_backend(
+            caps_backend("text-only", BackendCapabilities::TEXT_GENERATION),
+            0,
+        )
+        .unwrap();
+        rt.register_backend(
+            caps_backend(
+                "multimodal",
+                BackendCapabilities::TEXT_GENERATION.union(BackendCapabilities::IMAGE_GENERATION),
+            ),
+            10,
+        )
+        .unwrap();
+
+        // text-only is tried first and satisfies TEXT_GENERATION.
+        let b = rt
+            .select_backend(BackendCapabilities::TEXT_GENERATION, &VerbId::new("v"))
+            .unwrap();
+        assert_eq!(b.id(), "text-only");
+
+        // IMAGE_GENERATION only available in multimodal.
+        let b = rt
+            .select_backend(BackendCapabilities::IMAGE_GENERATION, &VerbId::new("v"))
+            .unwrap();
+        assert_eq!(b.id(), "multimodal");
+    }
+
+    #[test]
+    fn select_backend_skips_unavailable() {
+        let rt = VerbRuntime::new();
+        // High-priority backend that is down.
+        rt.register_backend(
+            StubBackend {
+                id: "down",
+                caps: BackendCapabilities::TEXT_GENERATION,
+                available: false,
+            },
+            0,
+        )
+        .unwrap();
+        // Lower-priority backend that is up.
+        rt.register_backend(
+            StubBackend {
+                id: "up",
+                caps: BackendCapabilities::TEXT_GENERATION,
+                available: true,
+            },
+            10,
+        )
+        .unwrap();
+
+        let b = rt
+            .select_backend(BackendCapabilities::TEXT_GENERATION, &VerbId::new("v"))
+            .unwrap();
+        assert_eq!(b.id(), "up");
+    }
+
+    #[test]
+    fn select_backend_returns_unsupported_when_none_match() {
+        let rt = VerbRuntime::new();
+        rt.register_backend(
+            caps_backend("text-only", BackendCapabilities::TEXT_GENERATION),
+            0,
+        )
+        .unwrap();
+
+        let err = rt
+            .select_backend(BackendCapabilities::IMAGE_GENERATION, &VerbId::new("v"))
+            .unwrap_err();
+        assert!(matches!(err, VerbError::UnsupportedCapability { .. }));
+    }
+
+    #[tokio::test]
+    async fn invoke_injects_backend_into_ctx() {
+        // A verb that requires TEXT_GENERATION; its invoke records which
+        // backend was selected.
+        use std::sync::Arc;
+        use std::sync::atomic::{AtomicBool, Ordering};
+
+        struct RecordsBackend {
+            descriptor: VerbDescriptor,
+            saw_backend: Arc<AtomicBool>,
+        }
+        #[async_trait]
+        impl Verb for RecordsBackend {
+            fn descriptor(&self) -> &VerbDescriptor {
+                &self.descriptor
+            }
+            async fn invoke(
+                &self,
+                ctx: VerbContext,
+                _inputs: VerbInputs,
+                _progress: VerbProgress,
+                _cancel: CancellationToken,
+            ) -> Result<VerbOutput> {
+                self.saw_backend
+                    .store(ctx.backend.is_some(), Ordering::SeqCst);
+                Ok(empty_output(Duration::ZERO))
+            }
+        }
+
+        let saw = Arc::new(AtomicBool::new(false));
+        let rt = VerbRuntime::new();
+        rt.register_backend(
+            caps_backend("text", BackendCapabilities::TEXT_GENERATION),
+            0,
+        )
+        .unwrap();
+
+        let desc = VerbDescriptor {
+            id: VerbId::new("test.needs-backend"),
+            display_name: "NeedsBackend".into(),
+            description: String::new(),
+            version: "0.0.1".into(),
+            required_capabilities: BackendCapabilities::TEXT_GENERATION,
+            input_schema: serde_json::json!({}),
+            output_schema: None,
+            output_kinds: vec![EffectKind::AddLayer],
+            cost_estimate: CostEstimate::free(),
+            streaming: false,
+            cancellable: false,
+            documentation_url: None,
+        };
+        rt.register(RecordsBackend {
+            descriptor: desc,
+            saw_backend: saw.clone(),
+        })
+        .unwrap();
+
+        let inv = rt
+            .invoke(
+                &VerbId::new("test.needs-backend"),
+                VerbContext::empty(metadata()),
+                VerbInputs::empty(),
+            )
+            .unwrap();
+        inv.finish().await.unwrap();
+
+        assert!(
+            saw.load(Ordering::SeqCst),
+            "verb did not receive a backend in ctx"
+        );
+    }
+
+    #[tokio::test]
+    async fn invoke_without_matching_backend_fails() {
+        // Verb requires IMAGE_GENERATION but only TEXT_GENERATION is registered.
+        struct NeedsImage(VerbDescriptor);
+        #[async_trait]
+        impl Verb for NeedsImage {
+            fn descriptor(&self) -> &VerbDescriptor {
+                &self.0
+            }
+            async fn invoke(
+                &self,
+                _ctx: VerbContext,
+                _inputs: VerbInputs,
+                _progress: VerbProgress,
+                _cancel: CancellationToken,
+            ) -> Result<VerbOutput> {
+                Ok(empty_output(Duration::ZERO))
+            }
+        }
+
+        let rt = VerbRuntime::new();
+        rt.register_backend(
+            caps_backend("text-only", BackendCapabilities::TEXT_GENERATION),
+            0,
+        )
+        .unwrap();
+
+        let desc = VerbDescriptor {
+            id: VerbId::new("test.img"),
+            display_name: "NeedsImage".into(),
+            description: String::new(),
+            version: "0.0.1".into(),
+            required_capabilities: BackendCapabilities::IMAGE_GENERATION,
+            input_schema: serde_json::json!({}),
+            output_schema: None,
+            output_kinds: vec![EffectKind::AddLayer],
+            cost_estimate: CostEstimate::free(),
+            streaming: false,
+            cancellable: false,
+            documentation_url: None,
+        };
+        rt.register(NeedsImage(desc)).unwrap();
+
+        let err = rt
+            .invoke(
+                &VerbId::new("test.img"),
+                VerbContext::empty(metadata()),
+                VerbInputs::empty(),
+            )
+            .unwrap_err();
+        assert!(
+            matches!(err, VerbError::UnsupportedCapability { .. }),
+            "expected UnsupportedCapability, got {err:?}"
+        );
     }
 }

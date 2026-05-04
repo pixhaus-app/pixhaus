@@ -11,11 +11,15 @@
 //! useful verb (a sprite is bytes of structured data, not pixel
 //! buffers).
 
+use std::sync::Arc;
+
 use serde::{Deserialize, Serialize};
 
 use pixhaus_core::project::{
     FrameIndex, IVec2, LayerId, Palette, ProjectMetadata, Rect, Size, Sprite, SpriteId,
 };
+
+use super::backend::InferenceBackend;
 
 /// Raw pixel bytes carried in or out of a verb.
 ///
@@ -143,7 +147,18 @@ pub enum StyleReference {
 /// Constructed by the host from the live project state. Verbs may mine
 /// any field, including the full [`Sprite`], to inform their backend
 /// calls. Mutations come back as [`super::output::VerbEffect`]s.
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+///
+/// Use [`VerbContextBuilder`] to construct a context from live editor
+/// state — it is more readable than field assignment and enforces the
+/// expected field order.
+///
+/// # Serialization
+///
+/// `VerbContext` serialises without the `backend` field (the field is
+/// skipped). Deserialising a context always yields `backend: None`.
+/// The runtime fills in `backend` on each invocation; the field is
+/// never persisted.
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct VerbContext {
     /// Project metadata snapshot.
     pub project: ProjectMetadata,
@@ -170,11 +185,42 @@ pub struct VerbContext {
     /// Project-level style references the user (or a prior style-
     /// learning verb) configured.
     pub style_refs: Vec<StyleReference>,
+    /// Backend selected by the runtime for this invocation.
+    ///
+    /// Set by [`super::runtime::VerbRuntime::invoke`] after capability
+    /// checking. `None` when the verb's `required_capabilities` are
+    /// empty (local CPU only) or when no backends are registered.
+    ///
+    /// Verbs that need a specific inference method downcast:
+    /// `ctx.backend.as_deref().and_then(|b| (b as &dyn Any).downcast_ref::<MyBackend>())`.
+    /// That downcast lives in the verb, not in the protocol.
+    #[serde(skip, default)]
+    pub backend: Option<Arc<dyn InferenceBackend>>,
+}
+
+impl PartialEq for VerbContext {
+    /// Two contexts are equal when their project state is equal. The
+    /// `backend` field is excluded from comparison: it is runtime
+    /// infrastructure, not part of the serialisable project snapshot.
+    fn eq(&self, other: &Self) -> bool {
+        self.project == other.project
+            && self.sprite == other.sprite
+            && self.active_sprite == other.active_sprite
+            && self.active_layer == other.active_layer
+            && self.active_frame == other.active_frame
+            && self.active_palette == other.active_palette
+            && self.selection == other.selection
+            && self.references == other.references
+            && self.style_refs == other.style_refs
+    }
 }
 
 impl VerbContext {
-    /// Constructs an empty context with no active selection. Useful in
-    /// tests and as a starting point for context-builder code.
+    /// Constructs an empty context with no active state.
+    ///
+    /// Prefer [`VerbContext::builder`] in application code where several
+    /// fields are being filled in; `empty` is useful in tests and in code
+    /// that builds contexts incrementally.
     #[must_use]
     pub fn empty(project: ProjectMetadata) -> Self {
         Self {
@@ -187,7 +233,14 @@ impl VerbContext {
             selection: None,
             references: Vec::new(),
             style_refs: Vec::new(),
+            backend: None,
         }
+    }
+
+    /// Returns a [`VerbContextBuilder`] seeded with project metadata.
+    #[must_use]
+    pub fn builder(project: ProjectMetadata) -> VerbContextBuilder {
+        VerbContextBuilder::new(project)
     }
 
     /// Returns the active sprite, or [`super::error::VerbError::MissingContext`]
@@ -218,6 +271,118 @@ impl VerbContext {
     pub fn require_active_frame(&self) -> super::error::Result<FrameIndex> {
         self.active_frame
             .ok_or(super::error::VerbError::MissingContext("active frame"))
+    }
+}
+
+/// Ergonomic builder for [`VerbContext`].
+///
+/// Preferred over direct field assignment in host code that packages
+/// the current editor state for a verb invocation. Construct with
+/// [`VerbContext::builder`].
+///
+/// # Example
+///
+/// ```no_run
+/// use pixhaus_ai::plugin::{VerbContext, PixelData, ReferenceImage};
+/// use pixhaus_core::project::{FrameIndex, LayerId, ProjectMetadata, SpriteId, IVec2};
+///
+/// # let metadata = ProjectMetadata {
+/// #     name: "demo".into(), description: None, author: None,
+/// #     created_at: 0, updated_at: 0, editor_version: "0".into(),
+/// # };
+/// let ctx = VerbContext::builder(metadata)
+///     .with_active_sprite(SpriteId::new(1))
+///     .with_active_layer(LayerId::new(3))
+///     .with_active_frame(FrameIndex::new(2))
+///     .add_reference(ReferenceImage {
+///         origin: IVec2::new(0, 0),
+///         pixels: PixelData::rgba8(1, 1, vec![0, 0, 0, 255]),
+///         label: "Ref".into(),
+///     })
+///     .build();
+/// ```
+#[derive(Debug)]
+pub struct VerbContextBuilder {
+    ctx: VerbContext,
+}
+
+impl VerbContextBuilder {
+    /// Constructs a builder seeded with project metadata. All optional
+    /// fields default to `None` / empty.
+    #[must_use]
+    pub fn new(project: ProjectMetadata) -> Self {
+        Self {
+            ctx: VerbContext::empty(project),
+        }
+    }
+
+    /// Sets the full sprite snapshot, and also sets `active_sprite`
+    /// to the sprite's ID so callers do not need to set both.
+    #[must_use]
+    pub fn with_sprite(mut self, sprite: Sprite) -> Self {
+        self.ctx.active_sprite = Some(sprite.id);
+        self.ctx.sprite = Some(sprite);
+        self
+    }
+
+    /// Sets only the active sprite ID without providing the full
+    /// snapshot. Use [`Self::with_sprite`] when the full `Sprite` is
+    /// available.
+    #[must_use]
+    pub fn with_active_sprite(mut self, id: SpriteId) -> Self {
+        self.ctx.active_sprite = Some(id);
+        self
+    }
+
+    /// Sets the active layer.
+    #[must_use]
+    pub fn with_active_layer(mut self, id: LayerId) -> Self {
+        self.ctx.active_layer = Some(id);
+        self
+    }
+
+    /// Sets the active frame.
+    #[must_use]
+    pub fn with_active_frame(mut self, frame: FrameIndex) -> Self {
+        self.ctx.active_frame = Some(frame);
+        self
+    }
+
+    /// Sets the active palette.
+    #[must_use]
+    pub fn with_active_palette(mut self, palette: Palette) -> Self {
+        self.ctx.active_palette = Some(palette);
+        self
+    }
+
+    /// Sets the selection bounds.
+    #[must_use]
+    pub fn with_selection(mut self, selection: Rect) -> Self {
+        self.ctx.selection = Some(selection);
+        self
+    }
+
+    /// Appends a reference image to the context.
+    #[must_use]
+    pub fn add_reference(mut self, reference: ReferenceImage) -> Self {
+        self.ctx.references.push(reference);
+        self
+    }
+
+    /// Appends a style reference to the context.
+    #[must_use]
+    pub fn add_style_ref(mut self, style_ref: StyleReference) -> Self {
+        self.ctx.style_refs.push(style_ref);
+        self
+    }
+
+    /// Finalises the builder and returns the [`VerbContext`].
+    ///
+    /// `backend` is left as `None`; the runtime fills it in during
+    /// dispatch based on capability selection.
+    #[must_use]
+    pub fn build(self) -> VerbContext {
+        self.ctx
     }
 }
 
@@ -292,5 +457,83 @@ mod tests {
         let json = serde_json::to_string(&p).unwrap();
         let back: PixelData = serde_json::from_str(&json).unwrap();
         assert_eq!(back, p);
+    }
+
+    #[test]
+    fn builder_sets_all_fields() {
+        use pixhaus_core::project::{IVec2, SpriteId};
+
+        let ctx = VerbContext::builder(metadata())
+            .with_active_sprite(SpriteId::new(7))
+            .with_active_frame(FrameIndex::new(3))
+            .add_reference(ReferenceImage {
+                origin: IVec2::new(0, 0),
+                pixels: PixelData::rgba8(1, 1, vec![0, 0, 0, 255]),
+                label: "Ref".into(),
+            })
+            .build();
+
+        assert_eq!(ctx.active_sprite, Some(SpriteId::new(7)));
+        assert_eq!(ctx.active_frame, Some(FrameIndex::new(3)));
+        assert_eq!(ctx.references.len(), 1);
+        assert!(ctx.backend.is_none());
+    }
+
+    #[test]
+    fn context_equality_ignores_backend() {
+        // Two contexts with identical project state but one has a
+        // backend attached; they should compare as equal.
+        use crate::plugin::backend::InferenceBackend;
+        use crate::plugin::descriptor::{BackendCapabilities, CostEstimate};
+
+        #[derive(Debug)]
+        struct Stub;
+        impl InferenceBackend for Stub {
+            fn id(&self) -> &'static str {
+                "stub"
+            }
+            fn capabilities(&self) -> BackendCapabilities {
+                BackendCapabilities::empty()
+            }
+            fn cost_estimate(&self, _: BackendCapabilities) -> CostEstimate {
+                CostEstimate::free()
+            }
+        }
+
+        let mut ctx_a = VerbContext::empty(metadata());
+        let ctx_b = VerbContext::empty(metadata());
+        ctx_a.backend = Some(Arc::new(Stub));
+
+        assert_eq!(ctx_a, ctx_b);
+    }
+
+    #[test]
+    fn context_serializes_without_backend() {
+        use crate::plugin::backend::InferenceBackend;
+        use crate::plugin::descriptor::{BackendCapabilities, CostEstimate};
+
+        #[derive(Debug)]
+        struct Stub;
+        impl InferenceBackend for Stub {
+            fn id(&self) -> &'static str {
+                "stub"
+            }
+            fn capabilities(&self) -> BackendCapabilities {
+                BackendCapabilities::empty()
+            }
+            fn cost_estimate(&self, _: BackendCapabilities) -> CostEstimate {
+                CostEstimate::free()
+            }
+        }
+
+        let mut ctx = VerbContext::empty(metadata());
+        ctx.backend = Some(Arc::new(Stub));
+
+        let json = serde_json::to_string(&ctx).unwrap();
+        // The backend field must not appear in the serialised form.
+        assert!(!json.contains("backend"));
+
+        let back: VerbContext = serde_json::from_str(&json).unwrap();
+        assert!(back.backend.is_none());
     }
 }
