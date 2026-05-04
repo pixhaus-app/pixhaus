@@ -9,8 +9,9 @@ use super::schema::{FORMAT_MAJOR, FORMAT_MINOR, MAGIC, PixhausArchive, ZSTD_LEVE
 /// Encodes `archive` into the `.pixhaus` binary format and returns the
 /// resulting byte vector.
 ///
-/// The body is MessagePack-serialized then zstd-compressed at level
-/// [`ZSTD_LEVEL`]. The 28-byte header is prepended uncompressed.
+/// The body is MessagePack-serialized then zstd-compressed at the
+/// schema's `ZSTD_LEVEL` (3 — zstd default). The 28-byte header is
+/// prepended uncompressed.
 pub fn encode(archive: &PixhausArchive) -> Result<Vec<u8>> {
     let body_raw = rmp_serde::to_vec_named(archive)?;
     let body = zstd::encode_all(body_raw.as_slice(), ZSTD_LEVEL).map_err(Error::Io)?;
