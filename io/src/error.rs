@@ -68,6 +68,25 @@ pub enum Error {
     #[error("file is truncated or corrupt")]
     Truncated,
 
+    /// A palette file is malformed or contains an unsupported variant.
+    #[error("invalid palette format: {0}")]
+    InvalidPalette(String),
+
+    /// A RIFF PAL or ACO file contains a color space Pixhaus cannot convert.
+    #[error("unsupported color space: {code}")]
+    UnsupportedColorSpace {
+        /// The raw color space code from the file.
+        code: u16,
+    },
+
+    /// The Lospec HTTP API returned an error or an unexpected response.
+    #[error("Lospec API error: {0}")]
+    LospecApi(String),
+
+    /// An HTTP request to the Lospec API failed.
+    #[error("HTTP request failed: {0}")]
+    Http(#[from] reqwest::Error),
+
     /// A filesystem or stream operation failed.
     #[error("I/O error: {0}")]
     Io(#[from] std::io::Error),

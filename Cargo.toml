@@ -37,6 +37,8 @@ tokio-util = { version = "0.7", features = ["rt"] }
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 ts-rs = { version = "12", features = ["serde-compat"] }
+palette = "0.7"
+reqwest = { version = "0.13", default-features = false, features = ["blocking", "json", "rustls"] }
 
 [workspace.lints.rust]
 unsafe_code = "forbid"
