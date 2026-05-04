@@ -1,12 +1,8 @@
 import type { Component } from "solid-js";
+import Shell from "./shell/Shell";
 
 const App: Component = () => {
-  return (
-    <main class="shell">
-      <h1>Pixhaus</h1>
-      <p>The editor is empty until the streams land.</p>
-    </main>
-  );
+  return <Shell />;
 };
 
 export default App;
