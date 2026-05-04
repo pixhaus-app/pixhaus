@@ -1,0 +1,47 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<map version="1.10" tiledversion="1.10.0"
+     orientation="orthogonal" renderorder="right-down"
+     width="8" height="8"
+     tilewidth="16" tileheight="16"
+     infinite="0" nextlayerid="3" nextobjectid="1">
+
+  <tileset firstgid="1" source="dungeon.tsx"/>
+
+  <!-- Ground layer: floor (1), wall (2), inner corner (3), empty void (0) -->
+  <layer id="1" name="ground" width="8" height="8">
+    <data encoding="csv">
+1,1,1,1,1,1,1,1,
+1,2,2,2,2,2,2,1,
+1,2,3,3,3,3,2,1,
+1,2,3,0,0,3,2,1,
+1,2,3,0,0,3,2,1,
+1,2,3,3,3,3,2,1,
+1,2,2,2,2,2,2,1,
+1,1,1,1,1,1,1,1
+    </data>
+  </layer>
+
+  <!--
+    Decoration layer: torches (tile 4) at room corners with flip flags.
+
+    Encoded values:
+      4            = tile 4, no flags (torch, left-facing)
+      2147483652   = tile 4 | 0x80000000 (flip X — torch, right-facing)
+      1073741828   = tile 4 | 0x40000000 (flip Y — torch, upside-down)
+      3221225476   = tile 4 | 0xC0000000 (flip X + flip Y)
+      5            = tile 5, no flags (chest)
+  -->
+  <layer id="2" name="decoration" width="8" height="8">
+    <data encoding="csv">
+0,0,0,0,0,0,0,0,
+0,0,0,0,0,0,0,0,
+0,0,4,0,0,2147483652,0,0,
+0,0,0,0,5,0,0,0,
+0,0,0,5,0,0,0,0,
+0,0,1073741828,0,0,3221225476,0,0,
+0,0,0,0,0,0,0,0,
+0,0,0,0,0,0,0,0
+    </data>
+  </layer>
+
+</map>
