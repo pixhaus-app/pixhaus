@@ -46,7 +46,7 @@ their bedrock dependencies are merged.
 - [x] DONE: S13 — Application shell and command palette (★ critical path). Brief: docs/planning/work/streams.md#s13. Blocked by: B4.
 - [x] DONE: S14 — Canvas viewport (WebGL2) (★ critical path). Brief: docs/planning/work/streams.md#s14. Blocked by: B4 S01.
 - [x] DONE: S21 — Verb runtime (★ critical path). Brief: docs/planning/work/streams.md#s21. Blocked by: B5.
-- [~] CLAIMED:stream-s22: S22 — Backend adapters (★ critical path). Brief: docs/planning/work/streams.md#s22. Blocked by: B5.
+- [x] DONE: S22 — Backend adapters (★ critical path). Brief: docs/planning/work/streams.md#s22. Blocked by: B5.
 - [x] DONE: S39 — Unity importer package (★ critical path). Brief: docs/planning/work/streams.md#s39. Blocked by: B6.
 - [x] DONE: S49 — CI/CD pipelines (★ critical path). Brief: docs/planning/work/streams.md#s49. Independent of bedrock; can start anytime.
 
