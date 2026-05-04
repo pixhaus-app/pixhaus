@@ -119,10 +119,13 @@ pub struct TileDirtyPayload {
 
 /// Builds an all-transparent `TileDirtyPayload` for a tile of the given size.
 ///
-/// Until S15 lands the pixel-buffer registry, `canvas_composite` has no real
-/// pixel data to emit.  Sending transparent tiles still wires the IPC plumbing
-/// end-to-end so subsequent streams can replace the byte source without
-/// changing the event contract or the frontend's listener.
+/// Used by the (currently dormant) `emit_tile_dirty_for_sprite` helper.
+/// S15 will replace the all-zero buffer with real composited bytes; the
+/// payload shape stays stable.
+#[allow(
+    dead_code,
+    reason = "consumed by S15 once the pixel-buffer registry is wired"
+)]
 fn make_empty_tile_payload(
     sprite_id: SpriteId,
     frame_index: u32,
@@ -150,10 +153,18 @@ fn make_empty_tile_payload(
 
 /// Emits one `canvas:tile-dirty` event per tile covering the sprite's canvas.
 ///
-/// Called from `canvas_composite` after metadata is computed; the frontend's
-/// renderer listens on the same window and uploads each tile.  Events are
-/// fire-and-forget — emit failures are logged but never propagated, so a
-/// transient IPC hiccup can't fail the composite call.
+/// Currently dormant — `canvas_composite` does *not* call this. Emitting
+/// hundreds of multi-KiB transparent payloads on every sprite switch
+/// produced a multi-MiB IPC burst with no visual effect (the renderer
+/// composites against a checkerboard when no tile is bound). S15 will
+/// re-enable a guarded version once it has real pixel data to ship,
+/// likely scoped to the visible region rather than the whole canvas.
+/// Events are fire-and-forget — emit failures are logged but never
+/// propagated, so a transient IPC hiccup can't fail the composite call.
+#[allow(
+    dead_code,
+    reason = "consumed by S15 once the pixel-buffer registry is wired"
+)]
 fn emit_tile_dirty_for_sprite(
     app: &AppHandle,
     sprite_id: SpriteId,
@@ -184,23 +195,26 @@ fn emit_tile_dirty_for_sprite(
     }
 }
 
-/// Returns the tile grid dimensions for the given sprite and emits one
-/// `canvas:tile-dirty` event per tile so the renderer can populate its cache.
+/// Returns the tile grid dimensions for the given sprite.
 ///
 /// The renderer calls this when a sprite becomes active to learn its canvas
-/// size and tile layout.  Tile data is delivered via the event stream, not
-/// the return value, so payloads stay small and the renderer can ingest tiles
-/// incrementally.
-///
-/// Tiles currently carry transparent pixels until stream S15 integrates S01's
-/// pixel buffers; the IPC contract is stable from this stream onward.
+/// size and tile layout. The renderer is also wired to consume
+/// `canvas:tile-dirty` events for tile uploads, but this command does not
+/// emit them: at the current stream cut there are no real pixel buffers
+/// to ship, and emitting one event per tile (256 events for a 4096x4096
+/// sprite, each carrying a base64-encoded 256 KiB transparent payload)
+/// caused multi-MiB IPC bursts on every sprite switch with no visual
+/// effect — the renderer composites against a checkerboard when no tile
+/// is bound. Stream S15 is responsible for emitting tile events backed by
+/// real pixel data once S01's buffer registry is wired in; the IPC
+/// contract (event name + payload shape) is stable from this stream
+/// onward so S15 only adds the producer.
 #[tauri::command(async, rename_all = "snake_case")]
 pub async fn canvas_composite(
     sprite_id: SpriteId,
     state: State<'_, AppState>,
-    app: AppHandle,
 ) -> CommandResult<CanvasComposite> {
-    let (w, h, frame_index) = {
+    let (w, h) = {
         let doc = state.doc.read().await;
         let project = doc
             .project
@@ -214,15 +228,8 @@ pub async fn canvas_composite(
                 entity: "sprite".into(),
                 id: u64::from(sprite_id.get()),
             })?;
-
-        let frame = project
-            .canvas
-            .active_frame
-            .map_or(0, pixhaus_core::project::FrameIndex::get);
-        (sprite.canvas.width, sprite.canvas.height, frame)
+        (sprite.canvas.width, sprite.canvas.height)
     };
-
-    emit_tile_dirty_for_sprite(&app, sprite_id, frame_index, w, h);
 
     Ok(CanvasComposite {
         sprite_width: w,

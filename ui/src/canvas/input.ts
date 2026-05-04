@@ -15,6 +15,7 @@ import {
   setCursorCanvas,
 } from "./canvas-state";
 import { snapZoom, clampZoom, zoomAt, screenToCanvas } from "./viewport";
+import { isEditableTarget } from "../keybinds/keybind-manager";
 
 // How much the continuous zoom changes per wheel tick (scroll-wheel smooth mode).
 const WHEEL_ZOOM_FACTOR = 1.1;
@@ -182,9 +183,11 @@ export function attachCanvasInput(el: HTMLElement): () => void {
   // ── Space key ─────────────────────────────────────────────────────────
 
   function onKeyDown(e: KeyboardEvent): void {
-    // Ignore if focus is on an editable element (command palette input etc.)
-    const target = e.target as Element | null;
-    if (target instanceof HTMLInputElement || target instanceof HTMLTextAreaElement) return;
+    // Funnel through the shared editable-target check so spacebar pan
+    // doesn't fire while the user is typing into an `<input>`,
+    // `<textarea>`, `<select>`, or any contenteditable element. The
+    // local check used to only handle `<input>`/`<textarea>`.
+    if (isEditableTarget(e)) return;
 
     if (e.code === "Space" && !spaceHeld) {
       spaceHeld = true;

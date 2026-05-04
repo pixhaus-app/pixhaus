@@ -8,6 +8,7 @@
 import { createSignal } from "solid-js";
 import type { CanvasState, SpriteId } from "../lib/types";
 import { canvasSetViewport } from "../lib/commands/canvas";
+import { fitZoom } from "./viewport";
 
 // ── Viewport state ─────────────────────────────────────────────────────────
 
@@ -94,8 +95,10 @@ export function scheduleViewportSync(): void {
 
 function pushViewportToRust(): void {
   const sprite = activeSpriteId();
-  // Skip sync when no sprite is active — the project may not be open yet.
-  if (!sprite) return;
+  // Skip sync when no sprite is active — the project may not be open
+  // yet. Use an explicit null check: SpriteId is a numeric newtype and
+  // `0` is a valid id, which `if (!sprite)` would silently swallow.
+  if (sprite === null) return;
 
   const state: CanvasState = {
     active_sprite: sprite,
@@ -130,14 +133,10 @@ export function resetViewport(
   setScrollX(spriteW * 0.5);
   setScrollY(spriteH * 0.5);
 
-  // Fit zoom: largest snap that leaves 16 px padding.
-  const padding = 16;
-  const raw = Math.min((vpW - padding * 2) / spriteW, (vpH - padding * 2) / spriteH);
-  const snaps = [1 / 16, 1 / 8, 1 / 4, 1 / 2, 1, 2, 4, 8, 16] as const;
-  const candidates = snaps.filter((z) => z <= raw);
-  const fit: number =
-    candidates.length > 0 ? (candidates[candidates.length - 1] as number) : 1 / 16;
-  setZoom(fit);
+  // Fit zoom delegates to viewport.ts so the snap/padding rules stay
+  // in one place — both the keyboard zoom shortcuts and this reset path
+  // pick the same value for a given sprite + viewport pair.
+  setZoom(fitZoom(spriteW, spriteH, vpW, vpH));
 
   setActiveSpriteId(spriteId);
   setActiveFrameIndex(0);

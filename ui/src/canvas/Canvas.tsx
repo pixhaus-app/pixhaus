@@ -10,7 +10,7 @@
 //   unmount → destroy renderer, remove all listeners
 
 import { onMount, onCleanup, createEffect, createSignal, type Component } from "solid-js";
-import { listen, type UnlistenFn } from "@tauri-apps/api/event";
+import { listen } from "@tauri-apps/api/event";
 import { CanvasRenderer } from "./renderer";
 import { attachCanvasInput } from "./input";
 import { BrushCursor, TransformHandles } from "./overlays";
@@ -74,11 +74,18 @@ const Canvas: Component = () => {
     const ro = new ResizeObserver((entries) => {
       const entry = entries[0];
       if (!entry) return;
+      // Local-binding guard so the static analyzer can prove the
+      // canvas is non-null for every property access in this block.
+      // In practice the ref is always populated by the time
+      // ResizeObserver fires (it's bound on mount), but a future
+      // unmount-during-callback path would otherwise NPE.
+      const canvas = canvasEl;
+      if (!canvas) return;
       const { width, height } = entry.contentRect;
       const w = Math.round(width);
       const h = Math.round(height);
-      canvasEl.width = w;
-      canvasEl.height = h;
+      canvas.width = w;
+      canvas.height = h;
       setVpW(w);
       setVpH(h);
       renderer.setViewport({
@@ -91,8 +98,11 @@ const Canvas: Component = () => {
     });
     ro.observe(containerEl);
 
-    let unlisten: UnlistenFn | undefined;
-    listen<TileDirtyPayload>("canvas:tile-dirty", (event) => {
+    // Hold the listen() promise rather than the resolved UnlistenFn so
+    // an unmount that happens before listen() resolves still detaches
+    // the listener (the cleanup awaits the promise and calls fn() on
+    // resolve). Mirrors the pattern used by Shell.tsx::menuListenerPromise.
+    const tileDirtyPromise = listen<TileDirtyPayload>("canvas:tile-dirty", (event) => {
       const p = event.payload;
       const raw = atob(p.data);
       const bytes = new Uint8Array(raw.length);
@@ -102,54 +112,75 @@ const Canvas: Component = () => {
         width: p.width,
         height: p.height,
       });
-    })
-      .then((fn) => {
-        unlisten = fn;
-      })
-      .catch((err: unknown) => {
-        console.warn("[pixhaus] listen canvas:tile-dirty failed:", err);
-      });
+    });
 
     // ── Reactive bridge: push signal changes to the renderer ─────────────
+    //
+    // Split into two effects so toggling the pixel grid, onion skin, or
+    // scrubbing frames re-renders without re-running canvas_composite,
+    // and so a later canvas_composite reply doesn't clobber state from
+    // an in-flight sprite switch.
+    //
+    // Effect A: fetch composite metadata when (project, sprite) changes.
+    // Stale-result protection: each invocation increments
+    // `compositeRequestId`; only the latest response writes the size
+    // signals.
+    const [spriteSize, setSpriteSize] = createSignal<{ w: number; h: number } | null>(null);
+    let compositeRequestId = 0;
+
     createEffect(() => {
       const spriteId = activeSpriteId();
       const proj = activeProject();
       if (!proj || spriteId === null) {
-        renderer.setSprite(null);
+        setSpriteSize(null);
         return;
       }
-
+      const requestId = ++compositeRequestId;
       canvasComposite(spriteId)
         .then((info) => {
-          renderer.setSprite({
-            spriteId: String(spriteId),
-            frameIndex: activeFrameIndex(),
-            spriteWidth: info.sprite_width,
-            spriteHeight: info.sprite_height,
-            showPixelGrid: showPixelGrid(),
-            onionSkin: onionSkin(),
-          });
+          if (requestId !== compositeRequestId) return; // stale
+          setSpriteSize({ w: info.sprite_width, h: info.sprite_height });
         })
         .catch((err: unknown) => {
           console.warn("[pixhaus] canvas_composite failed:", err);
-          renderer.setSprite({
-            spriteId: String(spriteId),
-            frameIndex: activeFrameIndex(),
-            spriteWidth: 32,
-            spriteHeight: 32,
-            showPixelGrid: showPixelGrid(),
-            onionSkin: onionSkin(),
-          });
+          if (requestId !== compositeRequestId) return;
+          // Fall back to a small placeholder so the renderer still has
+          // dimensions to draw the checkerboard against.
+          setSpriteSize({ w: 32, h: 32 });
         });
     });
 
+    // Effect B: synchronously push the latest sprite/frame/grid/onion-skin
+    // tuple to the renderer. Re-fires on every signal change — Solid
+    // tracks every read at the top of the closure.
     createEffect(() => {
+      const spriteId = activeSpriteId();
+      const size = spriteSize();
+      if (spriteId === null || size === null) {
+        renderer.setSprite(null);
+        return;
+      }
+      renderer.setSprite({
+        spriteId: String(spriteId),
+        frameIndex: activeFrameIndex(),
+        spriteWidth: size.w,
+        spriteHeight: size.h,
+        showPixelGrid: showPixelGrid(),
+        onionSkin: onionSkin(),
+      });
+    });
+
+    createEffect(() => {
+      // Local-binding guard for the same null-safety reasons as the
+      // ResizeObserver callback above.
+      const canvas = canvasEl;
+      if (!canvas) return;
       renderer.setViewport({
         scrollX: scrollX(),
         scrollY: scrollY(),
         zoom: zoom(),
-        width: canvasEl.width,
-        height: canvasEl.height,
+        width: canvas.width,
+        height: canvas.height,
       });
     });
 
@@ -172,7 +203,11 @@ const Canvas: Component = () => {
     onCleanup(() => {
       ro.disconnect();
       detachInput();
-      unlisten?.();
+      tileDirtyPromise
+        .then((unlisten) => unlisten())
+        .catch((err: unknown) => {
+          console.warn("[pixhaus] failed to unlisten canvas:tile-dirty:", err);
+        });
       renderer.destroy();
     });
   });

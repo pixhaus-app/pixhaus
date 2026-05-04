@@ -101,9 +101,12 @@ export function clampZoom(z: number): number {
 }
 
 /**
- * Centres the viewport on the given sprite canvas rect (origin + size).
- * Returns the scroll values that frame the sprite with padding if the
- * current zoom makes it fit, or show it at 1:1 otherwise.
+ * Returns the scroll values that centre the viewport on the sprite's
+ * geometric centre.
+ *
+ * Padding and zoom are the caller's responsibility — see {@link fitZoom}
+ * for zoom selection. This helper is intentionally minimal so it can be
+ * combined with any zoom value the caller has already chosen.
  */
 export function scrollToCentre(
   spriteW: number,
@@ -113,8 +116,16 @@ export function scrollToCentre(
 }
 
 /**
- * Fits the sprite into the viewport at the largest snap zoom where it
- * still fits, with at least `padding` CSS pixels on each side.
+ * Fits the sprite into the viewport at the largest entry in
+ * {@link SNAP_ZOOMS} that still leaves at least `padding` CSS pixels on
+ * each side.
+ *
+ * Snapping (rather than continuous clamping) means keyboard zoom
+ * shortcuts, the reset-on-load path, and the wheel handler all converge
+ * on the same set of zoom values, so the UI feels deliberate rather
+ * than fuzzy. If even the smallest snap (1/16) doesn't fit — viewport
+ * is tiny relative to the sprite — falls back to {@link MIN_ZOOM}
+ * via {@link clampZoom}.
  */
 export function fitZoom(
   spriteW: number,
@@ -127,5 +138,12 @@ export function fitZoom(
   const maxH = vpH - padding * 2;
   if (maxW <= 0 || maxH <= 0 || spriteW === 0 || spriteH === 0) return 1;
   const raw = Math.min(maxW / spriteW, maxH / spriteH);
-  return clampZoom(raw);
+  // Pick the largest snap value <= raw. SNAP_ZOOMS is sorted ascending,
+  // so walking it backwards stops at the first match. Clamp the result
+  // so a sub-MIN_ZOOM raw still produces a valid (clamped) zoom.
+  for (let i = SNAP_ZOOMS.length - 1; i >= 0; i--) {
+    const candidate = SNAP_ZOOMS[i] as number;
+    if (candidate <= raw) return clampZoom(candidate);
+  }
+  return clampZoom(SNAP_ZOOMS[0] as number);
 }
