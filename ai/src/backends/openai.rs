@@ -1,8 +1,10 @@
 //! `OpenAI` backend adapter.
 //!
-//! Supports text generation (GPT-5 family), vision-language, image
-//! generation (DALL-E 4), image editing/inpainting, tool-use, and
-//! embeddings. Implemented as a raw HTTP client for consistency with the
+//! Supports text generation, vision-language queries, image generation,
+//! image editing/inpainting, and tool-use over `/v1/chat/completions` and
+//! `/v1/images/generations`. Embeddings are not yet wired through the
+//! verb runtime — the request type lands alongside the first verb that
+//! needs it. Implemented as a raw HTTP client for consistency with the
 //! other adapters.
 //!
 //! # Models
@@ -138,13 +140,8 @@ impl OpenAiBackend {
             .tool_calls
             .unwrap_or_default()
             .into_iter()
-            .map(|tc| ToolCall {
-                id: tc.id,
-                name: tc.function.name,
-                input: serde_json::from_str(&tc.function.arguments)
-                    .unwrap_or(serde_json::Value::Null),
-            })
-            .collect();
+            .map(parse_tool_call)
+            .collect::<Result<Vec<_>>>()?;
 
         let input_tokens = raw.usage.prompt_tokens;
         let output_tokens = raw.usage.completion_tokens;
@@ -297,13 +294,17 @@ impl InferenceBackend for OpenAiBackend {
     }
 
     fn capabilities(&self) -> BackendCapabilities {
+        // EMBEDDINGS intentionally not advertised: there is no
+        // embeddings request type yet, so claiming the capability would
+        // make this backend selectable for a request it cannot satisfy.
+        // Wire it back in when the verb runtime grows an embeddings
+        // request variant.
         BackendCapabilities::TEXT_GENERATION
             .union(BackendCapabilities::VISION_LANGUAGE)
             .union(BackendCapabilities::IMAGE_GENERATION)
             .union(BackendCapabilities::IMAGE_EDIT)
             .union(BackendCapabilities::IMAGE_INPAINT)
             .union(BackendCapabilities::TOOL_USE)
-            .union(BackendCapabilities::EMBEDDINGS)
     }
 
     fn supports_streaming(&self) -> bool {
@@ -409,10 +410,18 @@ fn cost_chat_cents(input_tokens: u32, output_tokens: u32) -> f32 {
 fn build_chat_body(req: &TextGenRequest, model: &str) -> serde_json::Value {
     let mut messages: Vec<serde_json::Value> = Vec::new();
 
-    // System message.
-    let sys = req.system.as_deref().unwrap_or("").to_owned()
-        + &req
-            .messages
+    // System message: merge the explicit `req.system` with any system-role
+    // messages from the conversation. Both sources are joined with "\n\n"
+    // so a non-empty `req.system` followed by a system-role message reads
+    // as two paragraphs rather than running together.
+    let mut sys_parts: Vec<&str> = Vec::new();
+    if let Some(s) = req.system.as_deref()
+        && !s.is_empty()
+    {
+        sys_parts.push(s);
+    }
+    sys_parts.extend(
+        req.messages
             .iter()
             .filter(|m| matches!(m.role, ChatRole::System))
             .flat_map(|m| &m.content)
@@ -423,8 +432,9 @@ fn build_chat_body(req: &TextGenRequest, model: &str) -> serde_json::Value {
                     None
                 }
             })
-            .collect::<Vec<_>>()
-            .join("\n\n");
+            .filter(|s| !s.is_empty()),
+    );
+    let sys = sys_parts.join("\n\n");
 
     if !sys.trim().is_empty() {
         messages.push(serde_json::json!({
@@ -501,6 +511,26 @@ fn build_chat_body(req: &TextGenRequest, model: &str) -> serde_json::Value {
     }
 
     body
+}
+
+/// Converts one wire-level tool call into the public [`ToolCall`].
+///
+/// Returns [`BackendError::InvalidResponse`] when the model produced an
+/// `arguments` payload that isn't valid JSON. Without this guard the
+/// runtime would receive `null` arguments and silently misroute the
+/// tool — a parser failure is the kind of corruption callers must see.
+fn parse_tool_call(tc: ToolCallWire) -> Result<ToolCall> {
+    let input = serde_json::from_str(&tc.function.arguments).map_err(|e| {
+        BackendError::InvalidResponse(format!(
+            "OpenAI tool_call '{}' arguments not valid JSON: {e}",
+            tc.function.name
+        ))
+    })?;
+    Ok(ToolCall {
+        id: tc.id,
+        name: tc.function.name,
+        input,
+    })
 }
 
 fn decode_image_data(data: Vec<ImageData>) -> Result<Vec<Vec<u8>>> {
@@ -584,6 +614,71 @@ mod tests {
         assert!(caps.contains(BackendCapabilities::IMAGE_EDIT));
         assert!(caps.contains(BackendCapabilities::IMAGE_INPAINT));
         assert!(caps.contains(BackendCapabilities::TOOL_USE));
+        // EMBEDDINGS is intentionally not advertised — there is no
+        // embeddings request type yet.
+        assert!(!caps.contains(BackendCapabilities::EMBEDDINGS));
+    }
+
+    #[test]
+    fn parse_tool_call_returns_invalid_response_on_malformed_json() {
+        let tc = ToolCallWire {
+            id: "call_1".into(),
+            function: FunctionCall {
+                name: "set_pixel".into(),
+                arguments: "{not_valid_json".into(),
+            },
+        };
+        let err = parse_tool_call(tc).expect_err("malformed JSON must error");
+        match err {
+            BackendError::InvalidResponse(msg) => {
+                assert!(
+                    msg.contains("set_pixel"),
+                    "error should mention the offending tool name: {msg}"
+                );
+            }
+            other => panic!("expected InvalidResponse, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn parse_tool_call_passes_valid_arguments_through() {
+        let tc = ToolCallWire {
+            id: "call_2".into(),
+            function: FunctionCall {
+                name: "set_pixel".into(),
+                arguments: r##"{"x":3,"y":4,"color":"#ff0000"}"##.into(),
+            },
+        };
+        let parsed = parse_tool_call(tc).expect("valid JSON must parse");
+        assert_eq!(parsed.id, "call_2");
+        assert_eq!(parsed.name, "set_pixel");
+        assert_eq!(parsed.input["x"], 3);
+        assert_eq!(parsed.input["color"], "#ff0000");
+    }
+
+    #[test]
+    fn build_chat_body_merges_system_with_separator() {
+        use super::super::ChatMessage;
+        // Both `req.system` and a system-role message in `req.messages`
+        // must be joined with "\n\n" so they read as separate paragraphs
+        // rather than running together.
+        let mut req = TextGenRequest::user("hello");
+        req.system = Some("you are helpful".into());
+        req.messages.insert(
+            0,
+            ChatMessage {
+                role: ChatRole::System,
+                content: vec![ContentPart::text("be terse")],
+            },
+        );
+        let body = build_chat_body(&req, "gpt-4o");
+        let msgs = body["messages"].as_array().unwrap();
+        assert_eq!(msgs[0]["role"], "system");
+        let combined = msgs[0]["content"].as_str().unwrap();
+        assert!(
+            combined.contains("you are helpful\n\nbe terse"),
+            "system parts must be joined with two newlines, got: {combined:?}"
+        );
     }
 
     #[test]

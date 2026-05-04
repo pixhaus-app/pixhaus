@@ -98,6 +98,7 @@ impl ComfyUiBackend {
     async fn run_workflow(
         &self,
         workflow: serde_json::Value,
+        timeout_override: Option<Duration>,
         progress: &VerbProgress,
         cancel: &CancellationToken,
     ) -> Result<Vec<Vec<u8>>> {
@@ -132,10 +133,14 @@ impl ComfyUiBackend {
             })
             .await;
 
-        // Poll history until the job appears and has outputs.
+        // Poll history until the job appears and has outputs. Per-call
+        // override (from `ComfyUiRequest.timeout`) wins over the
+        // backend-level default so callers can dial the deadline up for
+        // long jobs or down for quick previews.
+        let job_timeout = timeout_override.unwrap_or(self.job_timeout);
         let started = std::time::Instant::now();
         loop {
-            if started.elapsed() > self.job_timeout {
+            if started.elapsed() > job_timeout {
                 return Err(BackendError::Other("ComfyUI job timed out".into()));
             }
 
@@ -217,15 +222,28 @@ impl ComfyUiBackend {
             let total = filenames.len();
             let mut images = Vec::with_capacity(total);
             for (filename, subfolder) in &filenames {
-                let mut url = format!("{}/view?filename={filename}&type=output", self.base_url);
-                if !subfolder.is_empty() {
-                    use std::fmt::Write as _;
-                    let _ = write!(url, "&subfolder={subfolder}");
+                // Build the /view URL with `query_pairs_mut` so any `&`,
+                // `#`, space, or non-ASCII character in the filename or
+                // subfolder gets percent-encoded — `format!` would let
+                // those break the request.
+                let mut url =
+                    reqwest::Url::parse(&format!("{}/view", self.base_url)).map_err(|e| {
+                        BackendError::InvalidResponse(format!(
+                            "ComfyUI base URL is not parseable: {e}"
+                        ))
+                    })?;
+                {
+                    let mut q = url.query_pairs_mut();
+                    q.append_pair("filename", filename);
+                    q.append_pair("type", "output");
+                    if !subfolder.is_empty() {
+                        q.append_pair("subfolder", subfolder);
+                    }
                 }
 
                 let img_req = self
                     .client
-                    .get(&url)
+                    .get(url)
                     .build()
                     .map_err(BackendError::Network)?;
 
@@ -280,7 +298,11 @@ impl ComfyUiBackend {
             },
             "5": {
                 "class_type": "EmptyLatentImage",
-                "inputs": { "width": req.width, "height": req.height, "batch_size": 1 }
+                "inputs": {
+                    "width": req.width,
+                    "height": req.height,
+                    "batch_size": req.num_images.max(1),
+                }
             },
             "6": {
                 "class_type": "CLIPTextEncode",
@@ -367,10 +389,13 @@ impl InferenceBackend for ComfyUiBackend {
     }
 
     fn capabilities(&self) -> BackendCapabilities {
+        // IMAGE_INPAINT and FRAME_INTERPOLATION are not advertised: both
+        // require dedicated ComfyUI workflows (mask + VAEEncodeForInpaint
+        // for inpaint, AnimateDiff for interpolation) which are not yet
+        // bundled. Callers can still drive those workflows manually via
+        // `InferenceRequest::ComfyUi` with their own graph.
         BackendCapabilities::IMAGE_GENERATION
             .union(BackendCapabilities::IMAGE_EDIT)
-            .union(BackendCapabilities::IMAGE_INPAINT)
-            .union(BackendCapabilities::FRAME_INTERPOLATION)
             .union(BackendCapabilities::STYLE_TRAINING)
     }
 
@@ -403,24 +428,37 @@ impl InferenceBackend for ComfyUiBackend {
                     })
                     .await;
                 let workflow = Self::txt2img_workflow(req);
-                let images = self.run_workflow(workflow, &progress, &cancel).await?;
+                let images = self
+                    .run_workflow(workflow, None, &progress, &cancel)
+                    .await?;
                 Ok(InferenceResponse::Image(ImageGenResponse {
                     images,
                     model: "comfyui/txt2img".into(),
                 }))
             }
-            InferenceRequest::ImageEdit(ref req) | InferenceRequest::ImageInpaint(ref req) => {
+            InferenceRequest::ImageEdit(ref req) => {
                 progress
                     .send(VerbProgressEvent::Started {
                         backend: Some("comfyui".into()),
                     })
                     .await;
                 let workflow = Self::img2img_workflow(req);
-                let images = self.run_workflow(workflow, &progress, &cancel).await?;
+                let images = self
+                    .run_workflow(workflow, None, &progress, &cancel)
+                    .await?;
                 Ok(InferenceResponse::Image(ImageGenResponse {
                     images,
                     model: "comfyui/img2img".into(),
                 }))
+            }
+            InferenceRequest::ImageInpaint(_) => {
+                // Inpainting needs a dedicated workflow with `LoadImageMask`
+                // + `VAEEncodeForInpaint` nodes wired to the request mask.
+                // The default img2img workflow has no mask handling, so
+                // dispatching to it would silently drop the mask. Drive a
+                // bespoke graph through `InferenceRequest::ComfyUi`
+                // instead until the workflow ships in a follow-up.
+                Err(BackendError::UnsupportedCapability)
             }
             InferenceRequest::ComfyUi(ref req) => {
                 progress
@@ -429,21 +467,21 @@ impl InferenceBackend for ComfyUiBackend {
                     })
                     .await;
                 let workflow = req.workflow.clone();
-                let images = self.run_workflow(workflow, &progress, &cancel).await?;
+                let images = self
+                    .run_workflow(workflow, req.timeout, &progress, &cancel)
+                    .await?;
                 Ok(InferenceResponse::Image(ImageGenResponse {
                     images,
                     model: "comfyui/custom".into(),
                 }))
             }
             InferenceRequest::FrameInterpolation(_) => {
-                // Frame interpolation via ComfyUI requires a specific workflow
-                // (e.g. AnimateDiff). Return UnsupportedCapability to prompt
-                // the caller to provide a raw ComfyUi workflow.
-                Err(BackendError::Other(
-                    "ComfyUI frame interpolation requires a custom workflow; \
-                     use InferenceRequest::ComfyUi with an AnimateDiff workflow"
-                        .into(),
-                ))
+                // Frame interpolation via ComfyUI requires a specific
+                // workflow (e.g. AnimateDiff). Surface this as a
+                // capability mismatch so callers can branch on it the
+                // same way they do for other unsupported request types,
+                // and run a bespoke graph via `InferenceRequest::ComfyUi`.
+                Err(BackendError::UnsupportedCapability)
             }
             InferenceRequest::Text(_) | InferenceRequest::Replicate(_) => {
                 warn!("ComfyUI does not support this request type");
@@ -494,7 +532,11 @@ mod tests {
         let caps = b.capabilities();
         assert!(caps.contains(BackendCapabilities::IMAGE_GENERATION));
         assert!(caps.contains(BackendCapabilities::IMAGE_EDIT));
-        assert!(caps.contains(BackendCapabilities::IMAGE_INPAINT));
+        // Inpaint and frame interpolation are intentionally not
+        // advertised — they need bespoke workflows the caller must
+        // provide via `InferenceRequest::ComfyUi`.
+        assert!(!caps.contains(BackendCapabilities::IMAGE_INPAINT));
+        assert!(!caps.contains(BackendCapabilities::FRAME_INTERPOLATION));
         assert!(!caps.contains(BackendCapabilities::TEXT_GENERATION));
     }
 
@@ -533,6 +575,57 @@ mod tests {
         let positive_text = wf["6"]["inputs"]["text"].as_str().unwrap();
         assert_eq!(positive_text, "a sunny meadow");
         assert_eq!(wf["5"]["inputs"]["width"], 512);
+    }
+
+    #[test]
+    fn txt2img_workflow_threads_num_images_into_batch_size() {
+        let req = ImageGenRequest {
+            model: None,
+            prompt: "test".into(),
+            negative_prompt: None,
+            width: 512,
+            height: 512,
+            steps: None,
+            seed: None,
+            num_images: 4,
+            style_image: None,
+        };
+        let wf = ComfyUiBackend::txt2img_workflow(&req);
+        assert_eq!(wf["5"]["inputs"]["batch_size"], 4);
+    }
+
+    #[test]
+    fn txt2img_workflow_clamps_zero_num_images_to_one() {
+        let req = ImageGenRequest {
+            model: None,
+            prompt: "test".into(),
+            negative_prompt: None,
+            width: 512,
+            height: 512,
+            steps: None,
+            seed: None,
+            num_images: 0,
+            style_image: None,
+        };
+        let wf = ComfyUiBackend::txt2img_workflow(&req);
+        // ComfyUI rejects batch_size = 0; clamp keeps the workflow runnable.
+        assert_eq!(wf["5"]["inputs"]["batch_size"], 1);
+    }
+
+    #[test]
+    fn view_url_percent_encodes_special_characters() {
+        // The `/view` URL is built with `query_pairs_mut` so any `&`,
+        // space, or non-ASCII filename gets percent-encoded. Without
+        // this the request would fragment on raw `&` and ComfyUI would
+        // see a different filename than was generated.
+        let mut url = reqwest::Url::parse("http://localhost:8188/view").unwrap();
+        url.query_pairs_mut()
+            .append_pair("filename", "x y&z=1.png")
+            .append_pair("type", "output")
+            .append_pair("subfolder", "outputs/2026 May");
+        let s = url.as_str();
+        assert!(s.contains("filename=x+y%26z%3D1.png"), "got: {s}");
+        assert!(s.contains("subfolder=outputs%2F2026+May"), "got: {s}");
     }
 
     #[test]

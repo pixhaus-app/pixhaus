@@ -259,16 +259,13 @@ impl InferenceBackend for ReplicateBackend {
                     .unwrap_or_else(|| self.image_model.clone());
                 let input = build_image_gen_input(req);
                 let rep_req = ReplicateRequest {
-                    model,
+                    model: model.clone(),
                     version: None,
                     input,
                 };
                 let output = self.run_prediction(rep_req, &progress, &cancel).await?;
                 let images = extract_url_images(&output).await?;
-                Ok(InferenceResponse::Image(ImageGenResponse {
-                    images,
-                    model: self.image_model.clone(),
-                }))
+                Ok(InferenceResponse::Image(ImageGenResponse { images, model }))
             }
             InferenceRequest::FrameInterpolation(ref req) => {
                 progress
@@ -282,7 +279,7 @@ impl InferenceBackend for ReplicateBackend {
                     .unwrap_or_else(|| "google-deepmind/frame-interpolation".into());
                 let input = build_interpolation_input(req);
                 let rep_req = ReplicateRequest {
-                    model,
+                    model: model.clone(),
                     version: None,
                     input,
                 };
@@ -290,7 +287,7 @@ impl InferenceBackend for ReplicateBackend {
                 let frames = extract_url_images(&output).await?;
                 Ok(InferenceResponse::Frames(FrameInterpolationResponse {
                     frames,
-                    model: "replicate/frame-interpolation".into(),
+                    model,
                 }))
             }
             InferenceRequest::Replicate(req) => {
@@ -314,16 +311,13 @@ impl InferenceBackend for ReplicateBackend {
                     .unwrap_or_else(|| "stability-ai/stable-diffusion-3".into());
                 let input = build_image_edit_input(req);
                 let rep_req = ReplicateRequest {
-                    model,
+                    model: model.clone(),
                     version: None,
                     input,
                 };
                 let output = self.run_prediction(rep_req, &progress, &cancel).await?;
                 let images = extract_url_images(&output).await?;
-                Ok(InferenceResponse::Image(ImageGenResponse {
-                    images,
-                    model: "replicate/sd3".into(),
-                }))
+                Ok(InferenceResponse::Image(ImageGenResponse { images, model }))
             }
             InferenceRequest::Text(_) | InferenceRequest::ComfyUi(_) => {
                 warn!("Replicate adapter does not support this request type directly");
@@ -409,6 +403,9 @@ async fn extract_url_images(output: &serde_json::Value) -> Result<Vec<Vec<u8>>> 
             .send()
             .await
             .map_err(BackendError::Network)?;
+        // Validate status before reading the body so an HTML/JSON error
+        // page doesn't sneak through as image bytes.
+        let resp = check_http_status(resp).await?;
         let bytes = resp.bytes().await.map_err(BackendError::Network)?;
         images.push(bytes.to_vec());
     }

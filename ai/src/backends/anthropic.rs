@@ -1,7 +1,9 @@
 //! Anthropic Claude backend adapter.
 //!
 //! Supports text generation, vision-language queries, and tool-use
-//! (function calling). Streaming is handled via Server-Sent Events.
+//! (function calling) over the non-streaming `/v1/messages` endpoint.
+//! SSE streaming will land alongside the verb runtime's stream sink
+//! (S23+); today every call awaits the complete response.
 //!
 //! No official Rust SDK exists as of May 2026; this is a hand-rolled
 //! HTTP client as recommended in `docs/planning/ecosystem/03-ai-ml.md`.

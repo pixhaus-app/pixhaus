@@ -24,9 +24,11 @@
 //! # API key management
 //!
 //! Cloud backends retrieve their API keys from the OS keychain via
-//! [`keys::ApiKeyStore`] — never from environment variables or files.
-//! The configuration UI (S13) writes keys into the keychain; the adapter
-//! reads them on first use.
+//! [`keys::ApiKeyStore`] in production. The configuration UI (S13)
+//! writes keys into the keychain; the adapter reads them on first use.
+//! Integration tests bypass the keychain and read from environment
+//! variables (e.g. `OPENAI_API_KEY`) so CI can exercise the adapters
+//! without touching the developer's system keyring.
 
 pub mod anthropic;
 pub mod comfyui;
@@ -384,7 +386,11 @@ pub enum InferenceResponse {
     Image(ImageGenResponse),
     /// Frame interpolation response.
     Frames(FrameInterpolationResponse),
-    /// Raw JSON value (Replicate and `ComfyUI` raw responses).
+    /// Raw JSON value used by Replicate when the prediction output
+    /// doesn't fit a typed variant. `ComfyUI` returns
+    /// [`InferenceResponse::Image`] for its raw workflow execution; the
+    /// only current producer of this variant is the Replicate adapter's
+    /// [`InferenceRequest::Replicate`] arm.
     Raw(serde_json::Value),
 }
 

@@ -99,40 +99,8 @@ impl StabilityBackend {
 
         debug!(model = %model, "sending Stability generate request");
 
-        let mut form = reqwest::multipart::Form::new()
-            .text("prompt", req.prompt.clone())
-            .text("model", model.clone())
-            .text("output_format", "png");
-
-        if let Some(np) = &req.negative_prompt {
-            form = form.text("negative_prompt", np.clone());
-        }
-        if let Some(seed) = req.seed {
-            form = form.text("seed", seed.to_string());
-        }
-
-        let http_req = self
-            .client
-            .post(format!(
-                "{}/v2beta/stable-image/generate/sd3",
-                self.base_url
-            ))
-            .header("authorization", format!("Bearer {}", self.api_key))
-            .header("accept", "image/*")
-            .multipart(form)
-            .build()
-            .map_err(BackendError::Network)?;
-
-        let http_resp = select! {
-            biased;
-            () = cancel.cancelled() => return Err(BackendError::Cancelled),
-            res = self.client.execute(http_req) => res.map_err(BackendError::Network)?,
-        };
-
-        let http_resp = check_http_status(http_resp).await?;
-        let bytes = http_resp.bytes().await.map_err(BackendError::Network)?;
-
-        let cost_cents = price_cents(&model) * req.num_images as f32;
+        let count = req.num_images.max(1);
+        let cost_cents = price_cents(&model) * count as f32;
         progress
             .send(VerbProgressEvent::Cost(CostUpdate {
                 usd_cents: cost_cents,
@@ -141,11 +109,45 @@ impl StabilityBackend {
             }))
             .await;
 
-        // Stability returns a single PNG; replicate num_images times if > 1.
-        // In practice, SD3 generate endpoint returns one image per call;
-        // callers wanting multiple images should call invoke multiple times.
-        let mut images = Vec::with_capacity(req.num_images as usize);
-        for _ in 0..req.num_images.max(1) {
+        // Stability's SD3 endpoint returns one PNG per call. Loop the
+        // request `count` times so the response actually carries
+        // `num_images` distinct images. If a seed is supplied, derive
+        // per-image seeds (`seed + i`) so the outputs are reproducible
+        // *and* distinct; an unset seed lets Stability pick a random one
+        // per call.
+        let mut images = Vec::with_capacity(count as usize);
+        for i in 0..count {
+            let mut form = reqwest::multipart::Form::new()
+                .text("prompt", req.prompt.clone())
+                .text("model", model.clone())
+                .text("output_format", "png");
+            if let Some(np) = &req.negative_prompt {
+                form = form.text("negative_prompt", np.clone());
+            }
+            if let Some(seed) = req.seed {
+                form = form.text("seed", seed.saturating_add(u64::from(i)).to_string());
+            }
+
+            let http_req = self
+                .client
+                .post(format!(
+                    "{}/v2beta/stable-image/generate/sd3",
+                    self.base_url
+                ))
+                .header("authorization", format!("Bearer {}", self.api_key))
+                .header("accept", "image/*")
+                .multipart(form)
+                .build()
+                .map_err(BackendError::Network)?;
+
+            let http_resp = select! {
+                biased;
+                () = cancel.cancelled() => return Err(BackendError::Cancelled),
+                res = self.client.execute(http_req) => res.map_err(BackendError::Network)?,
+            };
+
+            let http_resp = check_http_status(http_resp).await?;
+            let bytes = http_resp.bytes().await.map_err(BackendError::Network)?;
             images.push(bytes.to_vec());
         }
 
@@ -167,58 +169,14 @@ impl StabilityBackend {
 
         debug!(model = %model, "sending Stability inpaint request");
 
-        let mut form = reqwest::multipart::Form::new()
-            .text("prompt", req.prompt.clone())
-            .text("output_format", "png")
-            .part(
-                "image",
-                reqwest::multipart::Part::bytes(req.image.clone())
-                    .file_name("image.png")
-                    .mime_str("image/png")
-                    .map_err(|e| BackendError::Other(e.to_string()))?,
-            );
-
-        if let Some(mask) = &req.mask {
-            form = form.part(
-                "mask",
-                reqwest::multipart::Part::bytes(mask.clone())
-                    .file_name("mask.png")
-                    .mime_str("image/png")
-                    .map_err(|e| BackendError::Other(e.to_string()))?,
-            );
-        }
-        if let Some(np) = &req.negative_prompt {
-            form = form.text("negative_prompt", np.clone());
-        }
-
         let endpoint = if req.mask.is_some() {
             "inpaint"
         } else {
             "image-to-image"
         };
 
-        let http_req = self
-            .client
-            .post(format!(
-                "{}/v2beta/stable-image/edit/{}",
-                self.base_url, endpoint
-            ))
-            .header("authorization", format!("Bearer {}", self.api_key))
-            .header("accept", "image/*")
-            .multipart(form)
-            .build()
-            .map_err(BackendError::Network)?;
-
-        let http_resp = select! {
-            biased;
-            () = cancel.cancelled() => return Err(BackendError::Cancelled),
-            res = self.client.execute(http_req) => res.map_err(BackendError::Network)?,
-        };
-
-        let http_resp = check_http_status(http_resp).await?;
-        let bytes = http_resp.bytes().await.map_err(BackendError::Network)?;
-
-        let cost_cents = price_cents(&model) * req.num_images as f32;
+        let count = req.num_images.max(1);
+        let cost_cents = price_cents(&model) * count as f32;
         progress
             .send(VerbProgressEvent::Cost(CostUpdate {
                 usd_cents: cost_cents,
@@ -227,10 +185,61 @@ impl StabilityBackend {
             }))
             .await;
 
-        Ok(ImageGenResponse {
-            images: vec![bytes.to_vec()],
-            model,
-        })
+        // Stability's edit endpoint returns one PNG per call. Loop the
+        // request `count` times so the response matches the cost we
+        // already announced. The same image + mask are submitted each
+        // pass; Stability's seed is implicit, so each call is a fresh
+        // sample.
+        let mut images = Vec::with_capacity(count as usize);
+        for _ in 0..count {
+            let mut form = reqwest::multipart::Form::new()
+                .text("prompt", req.prompt.clone())
+                .text("output_format", "png")
+                .part(
+                    "image",
+                    reqwest::multipart::Part::bytes(req.image.clone())
+                        .file_name("image.png")
+                        .mime_str("image/png")
+                        .map_err(|e| BackendError::Other(e.to_string()))?,
+                );
+
+            if let Some(mask) = &req.mask {
+                form = form.part(
+                    "mask",
+                    reqwest::multipart::Part::bytes(mask.clone())
+                        .file_name("mask.png")
+                        .mime_str("image/png")
+                        .map_err(|e| BackendError::Other(e.to_string()))?,
+                );
+            }
+            if let Some(np) = &req.negative_prompt {
+                form = form.text("negative_prompt", np.clone());
+            }
+
+            let http_req = self
+                .client
+                .post(format!(
+                    "{}/v2beta/stable-image/edit/{}",
+                    self.base_url, endpoint
+                ))
+                .header("authorization", format!("Bearer {}", self.api_key))
+                .header("accept", "image/*")
+                .multipart(form)
+                .build()
+                .map_err(BackendError::Network)?;
+
+            let http_resp = select! {
+                biased;
+                () = cancel.cancelled() => return Err(BackendError::Cancelled),
+                res = self.client.execute(http_req) => res.map_err(BackendError::Network)?,
+            };
+
+            let http_resp = check_http_status(http_resp).await?;
+            let bytes = http_resp.bytes().await.map_err(BackendError::Network)?;
+            images.push(bytes.to_vec());
+        }
+
+        Ok(ImageGenResponse { images, model })
     }
 }
 

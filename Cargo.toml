@@ -28,7 +28,7 @@ keyring = "3"
 parking_lot = "0.12"
 proptest = "1"
 rayon = "1.10"
-reqwest = { version = "0.12", default-features = false, features = ["json", "stream", "rustls-tls", "multipart"] }
+reqwest = { version = "0.12", default-features = false, features = ["blocking", "json", "stream", "rustls-tls", "multipart"] }
 thiserror = "2"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
@@ -41,7 +41,6 @@ tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 ts-rs = { version = "12", features = ["serde-compat"] }
 palette = "0.7"
-reqwest = { version = "0.13", default-features = false, features = ["blocking", "json", "rustls"] }
 
 [workspace.lints.rust]
 unsafe_code = "forbid"
