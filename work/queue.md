@@ -23,7 +23,7 @@ project and warrants the higher-cost model.
 - [ ] UNCLAIMED: B4 — IPC command catalog. Brief: docs/planning/work/bedrock.md#b4-ipc-command-catalog. Depends on: B2.
 - [~] CLAIMED:stream-b5: B5 — AI verb plugin protocol [OPUS-REQUIRED]. Brief: docs/planning/work/bedrock.md#b5-ai-verb-plugin-protocol. Depends on: B2. Highest leverage in project.
 - [ ] UNCLAIMED: B6 — Unity handoff format. Brief: docs/planning/work/bedrock.md#b6-unity-handoff-format. Depends on: B2.
-- [~] CLAIMED:stream-b7: B7 — Aseprite format compatibility spec. Brief: docs/planning/work/bedrock.md#b7-aseprite-format-compatibility-spec. Parallel with B2 (no blocker).
+- [x] DONE: B7 — Aseprite format compatibility spec. Brief: docs/planning/work/bedrock.md#b7-aseprite-format-compatibility-spec. Parallel with B2 (no blocker).
 
 ## Bedrock — done (this scaffold)
 
