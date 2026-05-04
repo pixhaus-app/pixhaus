@@ -16,6 +16,7 @@
 
 pub mod commands;
 pub mod error;
+pub mod menu;
 pub mod state;
 
 pub use error::{AppCommandError, CommandResult};
@@ -58,7 +59,17 @@ pub fn run() -> Result<(), AppError> {
     let context = tauri::generate_context!();
 
     tauri::Builder::default()
+        .plugin(tauri_plugin_dialog::init())
+        .plugin(tauri_plugin_window_state::Builder::default().build())
         .manage(AppState::new())
+        .setup(|app| {
+            let m = menu::build(app.handle())?;
+            app.set_menu(m)?;
+            Ok(())
+        })
+        .on_menu_event(|app, event| {
+            menu::handle_event(app, &event);
+        })
         .invoke_handler(tauri::generate_handler![
             // canvas
             commands::canvas::canvas_draw_stroke,

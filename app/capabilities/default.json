@@ -4,6 +4,8 @@
   "description": "Default permissions granted to the Pixhaus main window.",
   "windows": ["main"],
   "permissions": [
-    "core:default"
+    "core:default",
+    "dialog:default",
+    "window-state:default"
   ]
 }
