@@ -1,0 +1,7 @@
+# Seeds for failure cases proptest has generated in the past. It is
+# automatically read and these particular cases re-run before any
+# novel cases are generated.
+#
+# It is recommended to check this file in to source control so that
+# everyone who runs the test benefits from these saved cases.
+cc 036e030e13c0e69ab3e04320f46f0743b65982aef1fb9148d9352896ff971d93 # shrinks to dst = Rgba { r: 0, g: 0, b: 1, a: 0 }, opacity = 0

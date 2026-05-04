@@ -9,14 +9,27 @@ repository.workspace = true
 description = "Pixhaus core: pixel buffers, layers, frames, blend modes, undo"
 
 [dependencies]
+image.workspace = true
+rayon.workspace = true
 serde.workspace = true
 thiserror.workspace = true
 ts-rs.workspace = true
 
 [dev-dependencies]
 anyhow.workspace = true
+criterion.workspace = true
+proptest.workspace = true
 rmp-serde.workspace = true
+rstest.workspace = true
 serde_json.workspace = true
+
+[[bench]]
+name = "blend"
+harness = false
+
+[[bench]]
+name = "composite"
+harness = false
 
 [lints]
 workspace = true
