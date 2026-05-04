@@ -16,7 +16,9 @@
 
 use pixhaus_core::fixtures::sample_project;
 use pixhaus_core::project::{FeatureFlags, PixelBufferId, Project};
-use pixhaus_io::pixhaus::{PixelBufferEntry, PixhausArchive, decode, encode};
+use pixhaus_io::pixhaus::{
+    PixelBufferEntry, PixhausArchive, decode, decode_from_file, encode, encode_to_file,
+};
 use rstest::rstest;
 
 // ── pixel data helpers ───────────────────────────────────────────────────────
@@ -149,13 +151,34 @@ fn rejects_unsupported_major_version() {
 #[test]
 fn rejects_unknown_required_features() {
     let mut bytes = encode(&empty_archive()).unwrap();
-    // required_flags at offset 16–19
+    // Set bit 31 in BOTH feature_flags (offset 12-15) and required_flags
+    // (offset 16-19). The flags-subset check passes (required ⊆ feature),
+    // so the unknown-required-features branch fires.
     let unknown: u32 = 1 << 31;
     let flag_bytes = unknown.to_be_bytes();
+    bytes[12..16].copy_from_slice(&flag_bytes);
     bytes[16..20].copy_from_slice(&flag_bytes);
     assert!(matches!(
         decode(&bytes).unwrap_err(),
         pixhaus_io::Error::UnknownRequiredFeatures { .. },
+    ));
+}
+
+#[test]
+fn rejects_inconsistent_feature_flags() {
+    let mut bytes = encode(&empty_archive()).unwrap();
+    // required_flags has a bit absent from feature_flags. Spec invariant
+    // violation; reader rejects before any decompression work.
+    let bit: u32 = 1 << 0;
+    let bit_bytes = bit.to_be_bytes();
+    // feature_flags stays at 0, required_flags carries bit 0.
+    bytes[16..20].copy_from_slice(&bit_bytes);
+    assert!(matches!(
+        decode(&bytes).unwrap_err(),
+        pixhaus_io::Error::InconsistentFeatureFlags {
+            advertised: 0,
+            required: 1
+        },
     ));
 }
 
@@ -206,6 +229,35 @@ fn buffer_lookup_finds_by_id() {
 #[test]
 fn buffer_lookup_returns_none_for_missing_id() {
     assert!(full_archive().buffer(PixelBufferId::new(9999)).is_none());
+}
+
+// ── filesystem helpers exercise encode_to_file / decode_from_file ──────────
+
+#[test]
+fn fs_round_trip_full_archive() {
+    let archive = full_archive();
+    // Unique filename under the OS temp dir; clean up at the end.
+    let nanos = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |d| d.as_nanos());
+    let path = std::env::temp_dir().join(format!(
+        "pixhaus-fs-roundtrip-{}-{nanos}.pixhaus",
+        std::process::id(),
+    ));
+
+    encode_to_file(&archive, &path).expect("encode_to_file should succeed");
+    let loaded = decode_from_file(&path).expect("decode_from_file should succeed");
+    let _ = std::fs::remove_file(&path);
+
+    // Project structurally matches; buffer payloads round-trip.
+    assert_eq!(loaded.project.metadata.name, archive.project.metadata.name);
+    assert_eq!(loaded.buffers.len(), archive.buffers.len());
+    for (a, b) in archive.buffers.iter().zip(loaded.buffers.iter()) {
+        assert_eq!(a.id, b.id);
+        assert_eq!(a.width, b.width);
+        assert_eq!(a.height, b.height);
+        assert_eq!(a.pixels, b.pixels);
+    }
 }
 
 // ── cel linkage survives round-trip ──────────────────────────────────────────

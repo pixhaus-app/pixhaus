@@ -141,8 +141,8 @@ Suppose format 1.1 adds an optional `thumbnail` field to `PixhausArchive`:
 
 1. The writer sets bit 5 in `feature_flags` (a new `THUMBNAIL` constant).
 2. The writer does NOT set bit 5 in `required_flags` — thumbnails are optional.
-3. A 1.0 reader: `required_flags & !KNOWN_FLAGS == 0` (bit 5 is not required), so it proceeds. MessagePack skips the unknown `thumbnail` key because `PixhausArchive` uses `#[serde(default)]`.
-4. A 1.1 reader: reads the thumbnail normally.
+3. A 1.0 reader: `required_flags & !KNOWN_FLAGS == 0` (bit 5 is not required), so it proceeds. Serde silently skips unknown map keys by default, so the 1.0 reader ignores `thumbnail`.
+4. A 1.1 reader: reads the thumbnail normally. The mirror direction — a 1.1 reader loading a 1.0 file — relies on `#[serde(default)]` on the new `thumbnail` field so the missing-key case yields `None` instead of a deserialization error.
 
 ## Quick reference
 

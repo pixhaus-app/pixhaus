@@ -6,17 +6,18 @@
 //! # Quick start
 //!
 //! ```no_run
-//! use pixhaus_io::pixhaus::{PixhausArchive, encode, decode_from_file};
+//! use pixhaus_io::pixhaus::{PixhausArchive, encode, decode};
 //! use pixhaus_core::project::Project;
 //!
-//! // Write
+//! // Round-trip in memory.
 //! let archive = PixhausArchive::new(Project::new("my_sprite"));
-//! let bytes = encode(&archive).expect("encode failed");
-//!
-//! // Read
-//! let loaded = decode_from_file("my_sprite.pixhaus").expect("decode failed");
+//! let bytes = encode(&archive)?;
+//! let loaded = decode(&bytes)?;
 //! let _project = loaded.project;
+//! # Ok::<(), pixhaus_io::error::Error>(())
 //! ```
+//!
+//! For file-backed I/O, see [`encode_to_file`] and [`decode_from_file`].
 
 mod read;
 mod schema;

@@ -2,7 +2,7 @@
 //!
 //! See `docs/file-format.md` for the full byte-level specification.
 
-use pixhaus_core::project::{PixelBufferId, Project};
+use pixhaus_core::project::{FeatureFlags, PixelBufferId, Project};
 use serde::{Deserialize, Serialize};
 
 /// Magic bytes that identify a `.pixhaus` file.
@@ -34,11 +34,22 @@ pub const ZSTD_LEVEL: i32 = 3;
 
 /// Bitfield of feature flags this reader understands.
 ///
-/// Any bit set in a file's `required_flags` that is absent here causes
-/// the reader to reject the file with [`UnknownRequiredFeatures`].
+/// Sourced from [`FeatureFlags::ALL`] in `pixhaus-core` so adding a new
+/// flag in the data model can't silently desync the I/O layer. Any bit
+/// set in a file's `required_flags` that is absent here causes the
+/// reader to reject the file with [`UnknownRequiredFeatures`].
 ///
 /// [`UnknownRequiredFeatures`]: crate::error::Error::UnknownRequiredFeatures
-pub const KNOWN_FLAGS: u32 = 0x1F; // TILEMAPS | REFERENCES | ANIMATIONS | SLICES | VERB_HISTORY
+pub const KNOWN_FLAGS: u32 = FeatureFlags::ALL.0;
+
+/// Safety cap on the decompressed body, in bytes.
+///
+/// Without a cap, a small `.pixhaus` file with a maliciously crafted
+/// zstd frame can claim a multi-GB decompressed body and OOM the
+/// process before any deserialization runs. 256 MiB comfortably
+/// covers any realistic project; larger projects should split into
+/// multiple files or stream-decode (post-v1).
+pub const MAX_DECOMPRESSED_BODY: u64 = 256 * 1024 * 1024;
 
 /// Top-level structure encoded into the `.pixhaus` file body.
 ///

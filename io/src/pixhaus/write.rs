@@ -4,7 +4,7 @@ use std::path::Path;
 
 use crate::error::{Error, Result};
 
-use super::schema::{FORMAT_MAJOR, FORMAT_MINOR, MAGIC, PixhausArchive, ZSTD_LEVEL};
+use super::schema::{FORMAT_MAJOR, FORMAT_MINOR, KNOWN_FLAGS, MAGIC, PixhausArchive, ZSTD_LEVEL};
 
 /// Encodes `archive` into the `.pixhaus` binary format and returns the
 /// resulting byte vector.
@@ -16,7 +16,11 @@ pub fn encode(archive: &PixhausArchive) -> Result<Vec<u8>> {
     let body_raw = rmp_serde::to_vec_named(archive)?;
     let body = zstd::encode_all(body_raw.as_slice(), ZSTD_LEVEL).map_err(Error::Io)?;
 
-    let feature_flags: u32 = archive.project.feature_flags.0;
+    // Mask against KNOWN_FLAGS so a caller producing flags this build
+    // doesn't recognise can't burn an unreadable file. The reader
+    // rejects unknown required_flags, so emitting them at write time
+    // would just produce a self-incompatible artifact.
+    let feature_flags: u32 = archive.project.feature_flags.0 & KNOWN_FLAGS;
     // v1.0: every present feature is required; future minors may relax this.
     let required_flags: u32 = feature_flags;
     let body_len: u64 = body.len() as u64;
