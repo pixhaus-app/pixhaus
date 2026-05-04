@@ -28,6 +28,7 @@
 // affects test compilation.
 #![cfg_attr(test, allow(clippy::missing_const_for_fn))]
 
+pub mod canvas;
 pub mod fixtures;
 pub mod project;
 
