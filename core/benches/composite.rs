@@ -46,7 +46,7 @@ fn make_layer(seed: u32) -> PixelBuffer {
 
 fn bench_stack(c: &mut Criterion, layer_count: usize) {
     let buffers: Vec<PixelBuffer> = (0..layer_count)
-        .map(|i| make_layer(0x1357_9bdf ^ (i as u32 * 0x9e37_79b9)))
+        .map(|i| make_layer(0x1357_9bdf ^ (i as u32).wrapping_mul(0x9e37_79b9)))
         .collect();
     let inputs: Vec<LayerInput<'_>> = buffers
         .iter()
