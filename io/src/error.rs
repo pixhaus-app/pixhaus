@@ -79,6 +79,51 @@ pub enum Error {
     /// The archive could not be encoded to `MessagePack`.
     #[error("serialization failed: {0}")]
     Serialize(#[from] rmp_serde::encode::Error),
+
+    // ── PNG sprite sheet (S10) ──────────────────────────────────────────────
+    /// The frame list passed to the sprite sheet exporter was empty.
+    #[error("no frames to export")]
+    NoFrames,
+
+    /// `Grid { cols: 0 }` is not a valid layout strategy.
+    #[error("grid column count must be non-zero")]
+    GridColsZero,
+
+    /// The number of composited frame buffers does not match the number
+    /// of frames in the sprite.
+    #[error("frame buffer count {buffers} does not match sprite frame count {frames}")]
+    FrameCountMismatch {
+        /// Number of pixel buffers supplied by the caller.
+        buffers: usize,
+        /// Number of frames declared in the sprite.
+        frames: usize,
+    },
+
+    /// A composited frame buffer has the wrong dimensions.
+    #[error(
+        "frame {index} has wrong size: expected {expected_w}×{expected_h}, \
+         got {actual_w}×{actual_h}"
+    )]
+    FrameSizeMismatch {
+        /// Zero-based frame index.
+        index: usize,
+        /// Expected width (from `Sprite.canvas`).
+        expected_w: u32,
+        /// Expected height (from `Sprite.canvas`).
+        expected_h: u32,
+        /// Actual buffer width.
+        actual_w: u32,
+        /// Actual buffer height.
+        actual_h: u32,
+    },
+
+    /// PNG encoding failed.
+    #[error("PNG encoding failed: {0}")]
+    PngEncode(#[from] image::ImageError),
+
+    /// JSON serialization of sprite sheet metadata failed.
+    #[error("JSON serialization failed: {0}")]
+    JsonSerialize(#[from] serde_json::Error),
 }
 
 /// Crate-local result alias.

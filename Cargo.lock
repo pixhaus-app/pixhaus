@@ -2560,10 +2560,12 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "criterion",
+ "image",
  "pixhaus-core",
  "rmp-serde",
  "rstest",
  "serde",
+ "serde_json",
  "thiserror 2.0.18",
  "zstd",
 ]

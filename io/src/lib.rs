@@ -1,9 +1,9 @@
 //! Pixhaus I/O: read and write the formats Pixhaus speaks.
 //!
 //! The native `.pixhaus` format is implemented in the [`pixhaus`] module.
-//! Aseprite read/write follows in B7; PNG sequences, sprite sheets, PSD
-//! import, and Tiled `.tmx` export each get their own module as the
-//! corresponding streams land.
+//! PNG sprite sheet + JSON export (S10) lives in the [`png`] module.
+//! Aseprite read/write, PSD import, and Tiled `.tmx` export land in
+//! subsequent streams.
 
 #![cfg_attr(
     test,
@@ -11,11 +11,13 @@
         clippy::unwrap_used,
         clippy::expect_used,
         clippy::panic,
-        clippy::missing_panics_doc
+        clippy::missing_panics_doc,
+        clippy::disallowed_methods,
     )
 )]
 
 pub mod pixhaus;
+pub mod png;
 
 pub mod error;
 pub use error::{Error, Result};
