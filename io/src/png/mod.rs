@@ -174,8 +174,8 @@ fn compute_trim(buf: &PixelBuffer) -> FrameTrim {
 /// - [`Error::FrameSizeMismatch`] when any buffer's dimensions differ from
 ///   `sprite.canvas`.
 /// - [`Error::GridColsZero`] when `options.layout` is `Grid { cols: 0 }`.
-/// - [`Error::SheetTooLarge`] when the packed sheet would exceed
-///   [`pack::MAX_SHEET_DIM`] on either axis.
+/// - [`Error::SheetTooLarge`] when the packed sheet would exceed the
+///   internal `MAX_SHEET_DIM` cap (16 384 px per side) on either axis.
 /// - [`Error::PngEncode`] when the `image` crate fails to encode the PNG.
 /// - [`Error::JsonSerialize`] when JSON serialization fails.
 pub fn export_sprite_sheet(
