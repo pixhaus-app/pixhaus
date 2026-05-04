@@ -7,6 +7,7 @@ use pixhaus_core::project::{FrameIndex, LayerId, SpriteId, TileCell, TileIndex};
 use serde::Deserialize;
 use tauri::State;
 
+use crate::error::{AppCommandError, CommandResult};
 use crate::state::AppState;
 
 /// Arguments for placing a tile on a tilemap cel.
@@ -59,28 +60,34 @@ pub struct AutotileArgs {
 /// Places a tile cell at a position on a tilemap layer.
 ///
 /// Requires stream S06 (tilemap data structures). Returns an error until S06 lands.
-#[tauri::command(async)]
-pub async fn tile_place(_args: TilePlaceArgs, _state: State<'_, AppState>) -> Result<(), String> {
-    Err("not yet implemented: tile_place requires S06 (tilemap)".to_string())
+#[tauri::command(async, rename_all = "snake_case")]
+pub async fn tile_place(_args: TilePlaceArgs, _state: State<'_, AppState>) -> CommandResult<()> {
+    Err(AppCommandError::Unimplemented {
+        stream: "S06 (tilemap)".into(),
+    })
 }
 
 /// Erases a tile cell at a position on a tilemap layer.
 ///
 /// Requires stream S06 (tilemap data structures). Returns an error until S06 lands.
-#[tauri::command(async)]
-pub async fn tile_erase(_args: TileEraseArgs, _state: State<'_, AppState>) -> Result<(), String> {
-    Err("not yet implemented: tile_erase requires S06 (tilemap)".to_string())
+#[tauri::command(async, rename_all = "snake_case")]
+pub async fn tile_erase(_args: TileEraseArgs, _state: State<'_, AppState>) -> CommandResult<()> {
+    Err(AppCommandError::Unimplemented {
+        stream: "S06 (tilemap)".into(),
+    })
 }
 
 /// Applies autotile rules to a region of a tilemap layer.
 ///
 /// Requires stream S06 (tilemap data structures). Returns an error until S06 lands.
-#[tauri::command(async)]
+#[tauri::command(async, rename_all = "snake_case")]
 pub async fn tile_autotile_apply(
     _args: AutotileArgs,
     _state: State<'_, AppState>,
-) -> Result<(), String> {
-    Err("not yet implemented: tile_autotile_apply requires S06 (tilemap)".to_string())
+) -> CommandResult<()> {
+    Err(AppCommandError::Unimplemented {
+        stream: "S06 (tilemap)".into(),
+    })
 }
 
 #[cfg(test)]

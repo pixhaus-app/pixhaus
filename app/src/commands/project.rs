@@ -4,6 +4,7 @@ use pixhaus_core::project::{ColorMode, Project, ProjectMetadata, Size, Sprite, S
 use serde::{Deserialize, Serialize};
 use tauri::State;
 
+use crate::error::{AppCommandError, CommandResult};
 use crate::state::AppState;
 
 /// Status snapshot returned by project-level commands.
@@ -33,12 +34,9 @@ pub struct SpriteAddArgs {
 }
 
 /// Creates a new empty project, replacing any currently open document.
-#[tauri::command(async)]
-pub async fn project_new(
-    name: String,
-    state: State<'_, AppState>,
-) -> Result<ProjectStatus, String> {
-    let mut doc = state.doc.lock().await;
+#[tauri::command(async, rename_all = "snake_case")]
+pub async fn project_new(name: String, state: State<'_, AppState>) -> CommandResult<ProjectStatus> {
+    let mut doc = state.doc.write().await;
     let project = Project::new(name);
     let status = ProjectStatus {
         metadata: project.metadata.clone(),
@@ -56,29 +54,30 @@ pub async fn project_new(
 /// Opens a project from disk.
 ///
 /// Requires B3 (`.pixhaus` file format). Returns an error until B3 lands.
-#[tauri::command(async)]
+#[tauri::command(async, rename_all = "snake_case")]
 pub async fn project_open(
     _path: String,
     _state: State<'_, AppState>,
-) -> Result<ProjectStatus, String> {
-    Err("not yet implemented: project_open requires B3 (.pixhaus format)".to_string())
+) -> CommandResult<ProjectStatus> {
+    Err(AppCommandError::Unimplemented {
+        stream: "B3 (.pixhaus format)".into(),
+    })
 }
 
 /// Saves the active project to disk.
 ///
 /// Requires B3 (`.pixhaus` file format). Returns an error until B3 lands.
-#[tauri::command(async)]
-pub async fn project_save(
-    _path: Option<String>,
-    _state: State<'_, AppState>,
-) -> Result<(), String> {
-    Err("not yet implemented: project_save requires B3 (.pixhaus format)".to_string())
+#[tauri::command(async, rename_all = "snake_case")]
+pub async fn project_save(_path: Option<String>, _state: State<'_, AppState>) -> CommandResult<()> {
+    Err(AppCommandError::Unimplemented {
+        stream: "B3 (.pixhaus format)".into(),
+    })
 }
 
 /// Closes the active project, discarding all in-memory state.
-#[tauri::command(async)]
-pub async fn project_close(state: State<'_, AppState>) -> Result<(), String> {
-    let mut doc = state.doc.lock().await;
+#[tauri::command(async, rename_all = "snake_case")]
+pub async fn project_close(state: State<'_, AppState>) -> CommandResult<()> {
+    let mut doc = state.doc.write().await;
     doc.project = None;
     doc.path = None;
     doc.dirty = false;
@@ -86,9 +85,9 @@ pub async fn project_close(state: State<'_, AppState>) -> Result<(), String> {
 }
 
 /// Returns the active project's status, or `None` if no project is open.
-#[tauri::command(async)]
-pub async fn project_get(state: State<'_, AppState>) -> Result<Option<ProjectStatus>, String> {
-    let doc = state.doc.lock().await;
+#[tauri::command(async, rename_all = "snake_case")]
+pub async fn project_get(state: State<'_, AppState>) -> CommandResult<Option<ProjectStatus>> {
+    let doc = state.doc.read().await;
     let Some(project) = &doc.project else {
         return Ok(None);
     };
@@ -104,13 +103,16 @@ pub async fn project_get(state: State<'_, AppState>) -> Result<Option<ProjectSta
 }
 
 /// Adds a new empty sprite to the active project.
-#[tauri::command(async)]
-pub async fn sprite_add(args: SpriteAddArgs, state: State<'_, AppState>) -> Result<Sprite, String> {
-    let mut doc = state.doc.lock().await;
+#[tauri::command(async, rename_all = "snake_case")]
+pub async fn sprite_add(args: SpriteAddArgs, state: State<'_, AppState>) -> CommandResult<Sprite> {
+    let mut doc = state.doc.write().await;
     let id = SpriteId::new(doc.next_id);
     doc.next_id += 1;
     let sprite = {
-        let project = doc.project.as_mut().ok_or("no active project")?;
+        let project = doc
+            .project
+            .as_mut()
+            .ok_or(AppCommandError::NoActiveProject)?;
         let mut sprite = Sprite::empty(
             id,
             args.name,
@@ -125,15 +127,21 @@ pub async fn sprite_add(args: SpriteAddArgs, state: State<'_, AppState>) -> Resu
 }
 
 /// Removes a sprite from the active project by ID.
-#[tauri::command(async)]
-pub async fn sprite_delete(sprite_id: SpriteId, state: State<'_, AppState>) -> Result<(), String> {
-    let mut doc = state.doc.lock().await;
+#[tauri::command(async, rename_all = "snake_case")]
+pub async fn sprite_delete(sprite_id: SpriteId, state: State<'_, AppState>) -> CommandResult<()> {
+    let mut doc = state.doc.write().await;
     {
-        let project = doc.project.as_mut().ok_or("no active project")?;
+        let project = doc
+            .project
+            .as_mut()
+            .ok_or(AppCommandError::NoActiveProject)?;
         let before = project.sprites.len();
         project.sprites.retain(|s| s.id != sprite_id);
         if project.sprites.len() == before {
-            return Err(format!("sprite {} not found", sprite_id.get()));
+            return Err(AppCommandError::NotFound {
+                entity: "sprite".into(),
+                id: u64::from(sprite_id.get()),
+            });
         }
     }
     doc.dirty = true;
@@ -141,10 +149,13 @@ pub async fn sprite_delete(sprite_id: SpriteId, state: State<'_, AppState>) -> R
 }
 
 /// Returns all sprites in the active project.
-#[tauri::command(async)]
-pub async fn sprite_list(state: State<'_, AppState>) -> Result<Vec<Sprite>, String> {
-    let doc = state.doc.lock().await;
-    let project = doc.project.as_ref().ok_or("no active project")?;
+#[tauri::command(async, rename_all = "snake_case")]
+pub async fn sprite_list(state: State<'_, AppState>) -> CommandResult<Vec<Sprite>> {
+    let doc = state.doc.read().await;
+    let project = doc
+        .project
+        .as_ref()
+        .ok_or(AppCommandError::NoActiveProject)?;
     Ok(project.sprites.clone())
 }
 

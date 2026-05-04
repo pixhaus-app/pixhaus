@@ -34,19 +34,21 @@ impl Default for DocumentStore {
 /// Shared application state registered with `tauri::Builder::manage`.
 ///
 /// Commands receive `tauri::State<'_, AppState>` and lock `doc` to
-/// read or mutate the document. The `Mutex` serialises all writes;
-/// concurrent reads are fine through the `MutexGuard` scope.
+/// read or mutate the document. `RwLock` lets read-only commands
+/// (`project_get`, `sprite_list`, `frame_list`, `layer_list`,
+/// `palette_list`) take a shared read guard so they don't block each
+/// other; mutating commands take the write guard.
 pub struct AppState {
-    /// Mutable document store. Lock, mutate, release — never hold across
-    /// an unrelated async suspension.
-    pub(crate) doc: tokio::sync::Mutex<DocumentStore>,
+    /// Document store guarded by a tokio `RwLock`. Lock, work, release
+    /// — never hold across an unrelated async suspension.
+    pub(crate) doc: tokio::sync::RwLock<DocumentStore>,
 }
 
 impl AppState {
     /// Constructs the initial state with no open project.
     pub fn new() -> Self {
         Self {
-            doc: tokio::sync::Mutex::new(DocumentStore::default()),
+            doc: tokio::sync::RwLock::new(DocumentStore::default()),
         }
     }
 }

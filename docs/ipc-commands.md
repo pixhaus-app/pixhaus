@@ -14,7 +14,27 @@ the two sides.
 | `<1 ms` | Synchronous in-memory read or mutation. Never touches disk or a pixel buffer. |
 | `<50 ms` | Light I/O or small buffer work. Runs on the tokio thread pool. |
 | `<500 ms` | Disk I/O or non-trivial computation. Callers should show a spinner. |
-| `stub` | Not yet implemented. Returns an error with a message naming the blocking stream. |
+| `stub` | Not yet implemented. Rejects with `Unimplemented { stream }`. |
+
+## Error contract
+
+Every command in this catalog returns `Result<T, AppCommandError>`. The TS side receives a discriminated union with the wire shape `{ kind, message? }`; the Rust enum is `app/src/error.rs::AppCommandError` and the generated TS type is `ui/src/lib/types/AppCommandError.ts`.
+
+Variants:
+
+| `kind` | Payload | When |
+|---|---|---|
+| `no_active_project` | — | The active document is `None` (no project open). |
+| `not_found` | `entity: String, id: u64` | Lookup by integer ID failed (sprite, layer, frame, palette, etc.). |
+| `not_found_by_name` | `entity: String, name: String` | Lookup by name failed (frame tag, animation). |
+| `out_of_range` | `detail: String` | Index, position, or count outside valid bounds. |
+| `conflict` | `detail: String` | Duplicate name or other invariant clash. |
+| `unimplemented` | `stream: String` | Stub command awaiting the named stream. |
+| `validation` | `detail: String` | Argument validation failure (overflow, malformed input). |
+
+UI surfaces should switch on `kind` and localise the user-visible text — never string-match `message`. The `message` field is for diagnostics and may include identifiers, indexes, or other detail that varies per call.
+
+Per-command **Errors** rows below name the variants a given command can emit; the message text is illustrative, not contractual.
 
 ---
 
@@ -52,7 +72,7 @@ Opens a project from disk. **Stub** — requires B3 (`.pixhaus` format).
 |---|---|
 | **Arguments** | `path: String` |
 | **Returns** | `ProjectStatus` |
-| **Errors** | Always: `"not yet implemented: project_open requires B3"` |
+| **Errors** | Always: `unimplemented` |
 | **Latency** | `stub` → `<500 ms` when implemented |
 
 ### `project_save`
@@ -63,7 +83,7 @@ Saves the active project to the given path. **Stub** — requires B3.
 |---|---|
 | **Arguments** | `path: Option<String>` — uses current path if `null` |
 | **Returns** | `()` |
-| **Errors** | Always: `"not yet implemented: project_save requires B3"` |
+| **Errors** | Always: `unimplemented` |
 | **Latency** | `stub` → `<500 ms` when implemented |
 
 ### `project_close`
@@ -97,7 +117,7 @@ Adds a new empty sprite to the active project.
 |---|---|
 | **Arguments** | `args: SpriteAddArgs` |
 | **Returns** | `Sprite` |
-| **Errors** | `"no active project"` |
+| **Errors** | `no_active_project` |
 | **Latency** | `<1 ms` |
 
 `SpriteAddArgs`:
@@ -118,7 +138,7 @@ Removes a sprite from the active project by ID.
 |---|---|
 | **Arguments** | `sprite_id: SpriteId` |
 | **Returns** | `()` |
-| **Errors** | `"no active project"`, `"sprite N not found"` |
+| **Errors** | `no_active_project`, `not_found` (sprite) |
 | **Latency** | `<1 ms` |
 
 ### `sprite_list`
@@ -129,7 +149,7 @@ Returns all sprites in the active project.
 |---|---|
 | **Arguments** | — |
 | **Returns** | `Sprite[]` |
-| **Errors** | `"no active project"` |
+| **Errors** | `no_active_project` |
 | **Latency** | `<1 ms` |
 
 ---
@@ -146,7 +166,7 @@ Paints a freehand stroke. **Stub** — requires S01 (pixel buffers).
 |---|---|
 | **Arguments** | `args: DrawStrokeArgs` |
 | **Returns** | `()` |
-| **Errors** | Always: `"not yet implemented: canvas_draw_stroke requires S01"` |
+| **Errors** | Always: `unimplemented` |
 | **Latency** | `stub` → `<50 ms` for typical strokes when implemented |
 
 `DrawStrokeArgs`:
@@ -169,7 +189,7 @@ Flood-fills a contiguous region. **Stub** — requires S01.
 |---|---|
 | **Arguments** | `args: FillArgs` |
 | **Returns** | `()` |
-| **Errors** | Always: `"not yet implemented: canvas_fill requires S01"` |
+| **Errors** | Always: `unimplemented` |
 | **Latency** | `stub` → `<50 ms` when implemented |
 
 `FillArgs`:
@@ -188,7 +208,7 @@ Applies translate/flip/rotate to a cel. **Stub** — requires S01.
 |---|---|
 | **Arguments** | `args: TransformArgs` |
 | **Returns** | `()` |
-| **Errors** | Always: `"not yet implemented: canvas_transform requires S01"` |
+| **Errors** | Always: `unimplemented` |
 | **Latency** | `stub` → `<50 ms` when implemented |
 
 `TransformArgs`:
@@ -209,7 +229,7 @@ Sets the canvas selection. Pass `null` for `region` to clear.
 |---|---|
 | **Arguments** | `region: SelectionRegion \| null`, `anchor_layer: LayerId \| null` |
 | **Returns** | `SelectionState` |
-| **Errors** | `"no active project"` |
+| **Errors** | `no_active_project` |
 | **Latency** | `<1 ms` |
 
 ### `canvas_set_viewport`
@@ -220,7 +240,7 @@ Replaces the entire canvas viewport state.
 |---|---|
 | **Arguments** | `canvas: CanvasState` |
 | **Returns** | `CanvasState` |
-| **Errors** | `"no active project"` |
+| **Errors** | `no_active_project` |
 | **Latency** | `<1 ms` |
 | **Side effects** | Persisted in the project so save/load restores the viewport. |
 
@@ -238,7 +258,7 @@ Adds a new layer to a sprite. Appended above all existing layers.
 |---|---|
 | **Arguments** | `args: LayerAddArgs` |
 | **Returns** | `Layer` |
-| **Errors** | `"no active project"`, `"sprite N not found"` |
+| **Errors** | `no_active_project`, `not_found` (sprite) |
 | **Latency** | `<1 ms` |
 
 `LayerAddArgs`:
@@ -258,7 +278,7 @@ Removes a layer and all its cels.
 |---|---|
 | **Arguments** | `sprite_id: SpriteId`, `layer_id: LayerId` |
 | **Returns** | `()` |
-| **Errors** | `"no active project"`, `"sprite N not found"`, `"layer N not found"` |
+| **Errors** | `no_active_project`, `not_found` (sprite or layer) |
 | **Latency** | `<1 ms` |
 
 ### `layer_list`
@@ -269,7 +289,7 @@ Returns all layers in a sprite, bottom to top.
 |---|---|
 | **Arguments** | `sprite_id: SpriteId` |
 | **Returns** | `Layer[]` |
-| **Errors** | `"no active project"`, `"sprite N not found"` |
+| **Errors** | `no_active_project`, `not_found` (sprite) |
 | **Latency** | `<1 ms` |
 
 ### `layer_rename`
@@ -280,7 +300,7 @@ Renames a layer.
 |---|---|
 | **Arguments** | `sprite_id: SpriteId`, `layer_id: LayerId`, `name: String` |
 | **Returns** | `LayerRenamed { layer_id, name }` |
-| **Errors** | `"no active project"`, `"sprite N not found"`, `"layer N not found"` |
+| **Errors** | `no_active_project`, `not_found` (sprite or layer) |
 | **Latency** | `<1 ms` |
 
 ### `layer_reorder`
@@ -291,7 +311,7 @@ Moves a layer to a new stack position. `new_index` is clamped to `[0, len-1]`.
 |---|---|
 | **Arguments** | `sprite_id: SpriteId`, `layer_id: LayerId`, `new_index: u32` |
 | **Returns** | `()` |
-| **Errors** | `"no active project"`, `"sprite N not found"`, `"layer N not found"` |
+| **Errors** | `no_active_project`, `not_found` (sprite or layer) |
 | **Latency** | `<1 ms` |
 
 ### `layer_set_blend_mode`
@@ -300,7 +320,7 @@ Moves a layer to a new stack position. `new_index` is clamped to `[0, len-1]`.
 |---|---|
 | **Arguments** | `sprite_id`, `layer_id`, `blend_mode: BlendMode` |
 | **Returns** | `()` |
-| **Errors** | `"no active project"`, `"sprite N not found"`, `"layer N not found"` |
+| **Errors** | `no_active_project`, `not_found` (sprite or layer) |
 | **Latency** | `<1 ms` |
 
 ### `layer_set_opacity`
@@ -341,7 +361,7 @@ Appends a new frame at the end of the timeline.
 |---|---|
 | **Arguments** | `sprite_id: SpriteId`, `duration_ms: u32` |
 | **Returns** | `FrameAddResult { frame: Frame, index: FrameIndex }` |
-| **Errors** | `"no active project"`, `"sprite N not found"` |
+| **Errors** | `no_active_project`, `not_found` (sprite) |
 | **Latency** | `<1 ms` |
 
 ### `frame_delete`
@@ -352,7 +372,7 @@ Deletes a frame and all its cels.
 |---|---|
 | **Arguments** | `sprite_id`, `frame_index: FrameIndex` |
 | **Returns** | `()` |
-| **Errors** | `"no active project"`, `"sprite N not found"`, `"frame index N out of range"` |
+| **Errors** | `no_active_project`, `not_found` (sprite), `out_of_range` |
 | **Latency** | `<1 ms` |
 
 ### `frame_duplicate`
@@ -403,7 +423,7 @@ Creates a named frame tag. Tags with duplicate names are rejected.
 |---|---|
 | **Arguments** | `args: FrameTagCreateArgs` |
 | **Returns** | `FrameTag` |
-| **Errors** | `"frame tag 'name' already exists"` |
+| **Errors** | `no_active_project`, `not_found` (sprite), `conflict` |
 | **Latency** | `<1 ms` |
 
 `FrameTagCreateArgs`:
@@ -422,7 +442,7 @@ Removes a named frame tag.
 |---|---|
 | **Arguments** | `sprite_id`, `tag_name: String` |
 | **Returns** | `()` |
-| **Errors** | `"frame tag 'name' not found"` |
+| **Errors** | `no_active_project`, `not_found` (sprite), `not_found_by_name` (frame_tag) |
 | **Latency** | `<1 ms` |
 
 ---
@@ -475,7 +495,7 @@ Adds a new empty palette to a sprite.
 |---|---|
 | **Arguments** | `sprite_id`, `name: String` |
 | **Returns** | `Palette` |
-| **Errors** | `"no active project"`, `"sprite N not found"` |
+| **Errors** | `no_active_project`, `not_found` (sprite) |
 | **Latency** | `<1 ms` |
 
 ### `palette_delete`
@@ -511,7 +531,7 @@ Removes the swatch at a given index.
 |---|---|
 | **Arguments** | `sprite_id`, `palette_id`, `index: u32` |
 | **Returns** | `()` |
-| **Errors** | `"palette index N out of range"` |
+| **Errors** | `no_active_project`, `not_found` (sprite or palette), `out_of_range` |
 | **Latency** | `<1 ms` |
 
 ### `palette_set_color`

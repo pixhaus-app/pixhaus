@@ -6,6 +6,7 @@ use pixhaus_core::project::{
 use serde::{Deserialize, Serialize};
 use tauri::State;
 
+use crate::error::{AppCommandError, CommandResult};
 use crate::state::AppState;
 
 /// Result returned when a frame is added or duplicated.
@@ -33,29 +34,34 @@ pub struct FrameTagCreateArgs {
 }
 
 /// Appends a new frame at the end of the timeline.
-#[tauri::command(async)]
+#[tauri::command(async, rename_all = "snake_case")]
 pub async fn frame_add(
     sprite_id: SpriteId,
     duration_ms: u32,
     state: State<'_, AppState>,
-) -> Result<FrameAddResult, String> {
-    let mut doc = state.doc.lock().await;
+) -> CommandResult<FrameAddResult> {
+    let mut doc = state.doc.write().await;
     let result = {
         let sprite = doc
             .project
             .as_mut()
-            .ok_or("no active project")?
+            .ok_or(AppCommandError::NoActiveProject)?
             .sprites
             .iter_mut()
             .find(|s| s.id == sprite_id)
-            .ok_or_else(|| format!("sprite {} not found", sprite_id.get()))?;
+            .ok_or(AppCommandError::NotFound {
+                entity: "sprite".into(),
+                id: u64::from(sprite_id.get()),
+            })?;
         let frame = Frame {
             duration_ms,
             user_data: UserData::default(),
         };
-        let index = FrameIndex::new(
-            u32::try_from(sprite.frames.len()).map_err(|_| "sprite has too many frames")?,
-        );
+        let index = FrameIndex::new(u32::try_from(sprite.frames.len()).map_err(|_| {
+            AppCommandError::Validation {
+                detail: "sprite has too many frames".into(),
+            }
+        })?);
         sprite.frames.push(frame.clone());
         FrameAddResult { frame, index }
     };
@@ -64,29 +70,34 @@ pub async fn frame_add(
 }
 
 /// Deletes a frame from the timeline by index. Also removes all cels on that frame.
-#[tauri::command(async)]
+#[tauri::command(async, rename_all = "snake_case")]
 pub async fn frame_delete(
     sprite_id: SpriteId,
     frame_index: FrameIndex,
     state: State<'_, AppState>,
-) -> Result<(), String> {
-    let mut doc = state.doc.lock().await;
+) -> CommandResult<()> {
+    let mut doc = state.doc.write().await;
     {
         let sprite = doc
             .project
             .as_mut()
-            .ok_or("no active project")?
+            .ok_or(AppCommandError::NoActiveProject)?
             .sprites
             .iter_mut()
             .find(|s| s.id == sprite_id)
-            .ok_or_else(|| format!("sprite {} not found", sprite_id.get()))?;
+            .ok_or(AppCommandError::NotFound {
+                entity: "sprite".into(),
+                id: u64::from(sprite_id.get()),
+            })?;
         let idx = frame_index.get() as usize;
         if idx >= sprite.frames.len() {
-            return Err(format!(
-                "frame index {} out of range (sprite has {} frames)",
-                idx,
-                sprite.frames.len()
-            ));
+            return Err(AppCommandError::OutOfRange {
+                detail: format!(
+                    "frame index {} out of range (sprite has {} frames)",
+                    idx,
+                    sprite.frames.len()
+                ),
+            });
         }
         sprite.frames.remove(idx);
         sprite.cels.retain(|c| c.frame_index != frame_index);
@@ -96,38 +107,45 @@ pub async fn frame_delete(
 }
 
 /// Duplicates a frame, inserting the copy immediately after the source.
-#[tauri::command(async)]
+#[tauri::command(async, rename_all = "snake_case")]
 pub async fn frame_duplicate(
     sprite_id: SpriteId,
     frame_index: FrameIndex,
     state: State<'_, AppState>,
-) -> Result<FrameAddResult, String> {
-    let mut doc = state.doc.lock().await;
+) -> CommandResult<FrameAddResult> {
+    let mut doc = state.doc.write().await;
     let result = {
         let sprite = doc
             .project
             .as_mut()
-            .ok_or("no active project")?
+            .ok_or(AppCommandError::NoActiveProject)?
             .sprites
             .iter_mut()
             .find(|s| s.id == sprite_id)
-            .ok_or_else(|| format!("sprite {} not found", sprite_id.get()))?;
+            .ok_or(AppCommandError::NotFound {
+                entity: "sprite".into(),
+                id: u64::from(sprite_id.get()),
+            })?;
         let idx = frame_index.get() as usize;
         if idx >= sprite.frames.len() {
-            return Err(format!(
-                "frame index {} out of range (sprite has {} frames)",
-                idx,
-                sprite.frames.len()
-            ));
+            return Err(AppCommandError::OutOfRange {
+                detail: format!(
+                    "frame index {} out of range (sprite has {} frames)",
+                    idx,
+                    sprite.frames.len()
+                ),
+            });
         }
         let frame = sprite.frames[idx].clone();
         let insert_at = idx + 1;
         sprite.frames.insert(insert_at, frame.clone());
         FrameAddResult {
             frame,
-            index: FrameIndex::new(
-                u32::try_from(insert_at).map_err(|_| "frame index exceeds u32::MAX")?,
-            ),
+            index: FrameIndex::new(u32::try_from(insert_at).map_err(|_| {
+                AppCommandError::Validation {
+                    detail: "frame index exceeds u32::MAX".into(),
+                }
+            })?),
         }
     };
     doc.dirty = true;
@@ -135,29 +153,32 @@ pub async fn frame_duplicate(
 }
 
 /// Moves a frame from one position to another in the timeline.
-#[tauri::command(async)]
+#[tauri::command(async, rename_all = "snake_case")]
 pub async fn frame_reorder(
     sprite_id: SpriteId,
     from_index: FrameIndex,
     to_index: FrameIndex,
     state: State<'_, AppState>,
-) -> Result<(), String> {
-    let mut doc = state.doc.lock().await;
+) -> CommandResult<()> {
+    let mut doc = state.doc.write().await;
     {
         let sprite = doc
             .project
             .as_mut()
-            .ok_or("no active project")?
+            .ok_or(AppCommandError::NoActiveProject)?
             .sprites
             .iter_mut()
             .find(|s| s.id == sprite_id)
-            .ok_or_else(|| format!("sprite {} not found", sprite_id.get()))?;
+            .ok_or(AppCommandError::NotFound {
+                entity: "sprite".into(),
+                id: u64::from(sprite_id.get()),
+            })?;
         let from = from_index.get() as usize;
         let len = sprite.frames.len();
         if from >= len {
-            return Err(format!(
-                "from_index {from} out of range (sprite has {len} frames)"
-            ));
+            return Err(AppCommandError::OutOfRange {
+                detail: format!("from_index {from} out of range (sprite has {len} frames)"),
+            });
         }
         let to = (to_index.get() as usize).min(len.saturating_sub(1));
         let frame = sprite.frames.remove(from);
@@ -168,28 +189,33 @@ pub async fn frame_reorder(
 }
 
 /// Updates the display duration for a single frame.
-#[tauri::command(async)]
+#[tauri::command(async, rename_all = "snake_case")]
 pub async fn frame_set_duration(
     sprite_id: SpriteId,
     frame_index: FrameIndex,
     duration_ms: u32,
     state: State<'_, AppState>,
-) -> Result<(), String> {
-    let mut doc = state.doc.lock().await;
+) -> CommandResult<()> {
+    let mut doc = state.doc.write().await;
     {
         let sprite = doc
             .project
             .as_mut()
-            .ok_or("no active project")?
+            .ok_or(AppCommandError::NoActiveProject)?
             .sprites
             .iter_mut()
             .find(|s| s.id == sprite_id)
-            .ok_or_else(|| format!("sprite {} not found", sprite_id.get()))?;
+            .ok_or(AppCommandError::NotFound {
+                entity: "sprite".into(),
+                id: u64::from(sprite_id.get()),
+            })?;
         let idx = frame_index.get() as usize;
         let frame = sprite
             .frames
             .get_mut(idx)
-            .ok_or_else(|| format!("frame index {idx} out of range"))?;
+            .ok_or_else(|| AppCommandError::OutOfRange {
+                detail: format!("frame index {idx} out of range"),
+            })?;
         frame.duration_ms = duration_ms;
     }
     doc.dirty = true;
@@ -199,23 +225,28 @@ pub async fn frame_set_duration(
 /// Creates a named frame tag on a sprite.
 ///
 /// Tags with duplicate names are rejected.
-#[tauri::command(async)]
+#[tauri::command(async, rename_all = "snake_case")]
 pub async fn frame_tag_create(
     args: FrameTagCreateArgs,
     state: State<'_, AppState>,
-) -> Result<FrameTag, String> {
-    let mut doc = state.doc.lock().await;
+) -> CommandResult<FrameTag> {
+    let mut doc = state.doc.write().await;
     let tag = {
         let sprite = doc
             .project
             .as_mut()
-            .ok_or("no active project")?
+            .ok_or(AppCommandError::NoActiveProject)?
             .sprites
             .iter_mut()
             .find(|s| s.id == args.sprite_id)
-            .ok_or_else(|| format!("sprite {} not found", args.sprite_id.get()))?;
+            .ok_or(AppCommandError::NotFound {
+                entity: "sprite".into(),
+                id: u64::from(args.sprite_id.get()),
+            })?;
         if sprite.frame_tags.iter().any(|t| t.name == args.name) {
-            return Err(format!("frame tag {:?} already exists", args.name));
+            return Err(AppCommandError::Conflict {
+                detail: format!("frame tag {:?} already exists", args.name),
+            });
         }
         let tag = FrameTag {
             name: args.name,
@@ -232,26 +263,32 @@ pub async fn frame_tag_create(
 }
 
 /// Deletes a named frame tag from a sprite.
-#[tauri::command(async)]
+#[tauri::command(async, rename_all = "snake_case")]
 pub async fn frame_tag_delete(
     sprite_id: SpriteId,
     tag_name: String,
     state: State<'_, AppState>,
-) -> Result<(), String> {
-    let mut doc = state.doc.lock().await;
+) -> CommandResult<()> {
+    let mut doc = state.doc.write().await;
     {
         let sprite = doc
             .project
             .as_mut()
-            .ok_or("no active project")?
+            .ok_or(AppCommandError::NoActiveProject)?
             .sprites
             .iter_mut()
             .find(|s| s.id == sprite_id)
-            .ok_or_else(|| format!("sprite {} not found", sprite_id.get()))?;
+            .ok_or(AppCommandError::NotFound {
+                entity: "sprite".into(),
+                id: u64::from(sprite_id.get()),
+            })?;
         let before = sprite.frame_tags.len();
         sprite.frame_tags.retain(|t| t.name != tag_name);
         if sprite.frame_tags.len() == before {
-            return Err(format!("frame tag {tag_name:?} not found"));
+            return Err(AppCommandError::NotFoundByName {
+                entity: "frame_tag".into(),
+                name: tag_name.clone(),
+            });
         }
     }
     doc.dirty = true;
@@ -259,20 +296,23 @@ pub async fn frame_tag_delete(
 }
 
 /// Returns all frames in a sprite's timeline.
-#[tauri::command(async)]
+#[tauri::command(async, rename_all = "snake_case")]
 pub async fn frame_list(
     sprite_id: SpriteId,
     state: State<'_, AppState>,
-) -> Result<Vec<Frame>, String> {
-    let doc = state.doc.lock().await;
+) -> CommandResult<Vec<Frame>> {
+    let doc = state.doc.write().await;
     let sprite = doc
         .project
         .as_ref()
-        .ok_or("no active project")?
+        .ok_or(AppCommandError::NoActiveProject)?
         .sprites
         .iter()
         .find(|s| s.id == sprite_id)
-        .ok_or_else(|| format!("sprite {} not found", sprite_id.get()))?;
+        .ok_or(AppCommandError::NotFound {
+            entity: "sprite".into(),
+            id: u64::from(sprite_id.get()),
+        })?;
     Ok(sprite.frames.clone())
 }
 

@@ -6,6 +6,7 @@
 use serde::{Deserialize, Serialize};
 use tauri::State;
 
+use crate::error::{AppCommandError, CommandResult};
 use crate::state::AppState;
 
 /// Arguments for invoking a verb.
@@ -56,26 +57,30 @@ pub struct VerbInfo {
 /// Invokes a registered AI verb with the given context.
 ///
 /// Requires bedrock B5 (verb plugin protocol). Returns an error until B5 lands.
-#[tauri::command(async)]
+#[tauri::command(async, rename_all = "snake_case")]
 pub async fn verb_invoke(
     _args: VerbInvokeArgs,
     _state: State<'_, AppState>,
-) -> Result<VerbResult, String> {
-    Err("not yet implemented: verb_invoke requires B5 (verb plugin protocol)".to_string())
+) -> CommandResult<VerbResult> {
+    Err(AppCommandError::Unimplemented {
+        stream: "B5 (verb plugin protocol)".into(),
+    })
 }
 
 /// Lists all registered verbs. Returns an empty list until B5 lands.
-#[tauri::command(async)]
-pub async fn verb_list(_state: State<'_, AppState>) -> Result<Vec<VerbInfo>, String> {
+#[tauri::command(async, rename_all = "snake_case")]
+pub async fn verb_list(_state: State<'_, AppState>) -> CommandResult<Vec<VerbInfo>> {
     Ok(Vec::new())
 }
 
 /// Cancels an in-progress verb invocation by its opaque ID.
 ///
 /// Requires bedrock B5 (verb plugin protocol). Returns an error until B5 lands.
-#[tauri::command(async)]
-pub async fn verb_cancel(_verb_id: String, _state: State<'_, AppState>) -> Result<(), String> {
-    Err("not yet implemented: verb_cancel requires B5 (verb plugin protocol)".to_string())
+#[tauri::command(async, rename_all = "snake_case")]
+pub async fn verb_cancel(_verb_id: String, _state: State<'_, AppState>) -> CommandResult<()> {
+    Err(AppCommandError::Unimplemented {
+        stream: "B5 (verb plugin protocol)".into(),
+    })
 }
 
 #[cfg(test)]

@@ -9,12 +9,16 @@
         clippy::unwrap_used,
         clippy::expect_used,
         clippy::panic,
-        clippy::missing_panics_doc
+        clippy::missing_panics_doc,
+        clippy::disallowed_methods
     )
 )]
 
 pub mod commands;
+pub mod error;
 pub mod state;
+
+pub use error::{AppCommandError, CommandResult};
 
 use tracing_subscriber::EnvFilter;
 
