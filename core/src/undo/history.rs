@@ -22,33 +22,85 @@
 //! the new root (its parent is set to `None`).
 
 use std::collections::HashMap;
+use std::num::NonZeroUsize;
 
 use crate::project::Project;
 
 use super::command::{CoalesceResult, Command};
 use super::error::{Error, Result};
 
-/// Opaque identifier for a history node. Monotonically increasing; never reused.
-type NodeId = u32;
+/// Opaque identifier for a history node.
+///
+/// Newtype around [`u32`] so it cannot be confused with any other count
+/// or index in the codebase. IDs are monotonically increasing and never
+/// reused; the underlying space is 2^32 ≈ 4 billion edits per session,
+/// which `History::push` defends against via [`Error::HistoryFull`].
+#[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
+struct NodeId(u32);
+
+impl NodeId {
+    /// First ID issued by a fresh history.
+    const ZERO: Self = Self(0);
+
+    /// Returns the next ID after `self`, or `None` at saturation.
+    fn next(self) -> Option<Self> {
+        self.0.checked_add(1).map(Self)
+    }
+}
 
 /// Tuning parameters for the history.
+///
+/// Both caps are `NonZeroUsize`: zero would mean "evict everything on
+/// push", which the data structure can't honour (the just-pushed node
+/// has nothing to evict to). Use [`HistoryConfig::new`] or
+/// [`HistoryConfig::default`].
 #[derive(Clone, Debug)]
 pub struct HistoryConfig {
     /// Maximum number of nodes retained across all branches.
-    ///
-    /// Default: `500`.
-    pub max_commands: usize,
+    pub max_commands: NonZeroUsize,
     /// Maximum total heap bytes across all retained commands.
+    pub max_bytes: NonZeroUsize,
+}
+
+impl HistoryConfig {
+    /// Constructs a config from the given caps.
     ///
-    /// Default: `500 * 1024 * 1024` (500 MiB).
-    pub max_bytes: usize,
+    /// Both caps are typed as [`NonZeroUsize`] so a `0` cap is rejected at
+    /// the type level — no silent disable. Use the literal constructors
+    /// (`NonZeroUsize::new(n).expect("...")`) at call sites or
+    /// [`HistoryConfig::default`] for sane defaults.
+    #[must_use]
+    pub const fn new(max_commands: NonZeroUsize, max_bytes: NonZeroUsize) -> Self {
+        Self {
+            max_commands,
+            max_bytes,
+        }
+    }
 }
 
 impl Default for HistoryConfig {
     fn default() -> Self {
+        // Compile-time `const` blocks force the `Option::expect` to be
+        // evaluated by the compiler against literal non-zero values, so
+        // a panic here would be a build error, not a runtime risk. The
+        // local `#[allow]` is scoped to this single function for that
+        // reason.
+        #[allow(
+            clippy::disallowed_methods,
+            clippy::expect_used,
+            reason = "const-evaluated literals; cannot panic at runtime"
+        )]
+        const DEFAULT_MAX_COMMANDS: NonZeroUsize = NonZeroUsize::new(500).expect("500 is non-zero");
+        #[allow(
+            clippy::disallowed_methods,
+            clippy::expect_used,
+            reason = "const-evaluated literals; cannot panic at runtime"
+        )]
+        const DEFAULT_MAX_BYTES: NonZeroUsize =
+            NonZeroUsize::new(500 * 1024 * 1024).expect("500 MiB is non-zero");
         Self {
-            max_commands: 500,
-            max_bytes: 500 * 1024 * 1024,
+            max_commands: DEFAULT_MAX_COMMANDS,
+            max_bytes: DEFAULT_MAX_BYTES,
         }
     }
 }
@@ -59,14 +111,22 @@ struct HistoryNode {
     parent: Option<NodeId>,
     /// Children ordered oldest-first; the last entry is most-recently visited.
     children: Vec<NodeId>,
+    /// `command.estimated_size_bytes()` captured at insertion time.
+    ///
+    /// Cached so eviction's `total_bytes` accounting can't drift if a
+    /// command's size value changes between insertion and eviction (which
+    /// would be a misbehaving `Command` impl, but harmless to defend against).
+    size_bytes: usize,
 }
 
 impl HistoryNode {
     fn new(command: Box<dyn Command>, parent: Option<NodeId>) -> Self {
+        let size_bytes = command.estimated_size_bytes();
         Self {
             command,
             parent,
             children: Vec::new(),
+            size_bytes,
         }
     }
 }
@@ -76,15 +136,26 @@ impl HistoryNode {
 /// `current` is `None` when the project is in its initial (unapplied)
 /// state, i.e. every command has been undone. When `current` is `Some(id)`,
 /// node `id` is the most recently applied command.
+///
+/// The history can become **poisoned** if a `Command::apply` or `undo`
+/// implementation returns an error mid-mutation: at that point the project
+/// state is unspecified and further history operations would compound the
+/// damage. While poisoned every `push`/`undo`/`redo` returns
+/// [`Error::Poisoned`]; the caller should reload the project to recover.
 pub struct History {
     nodes: HashMap<NodeId, HistoryNode>,
     /// Next ID to assign. Monotonically increasing; never reused.
     next_node_id: NodeId,
     /// ID of the most recently applied command, or `None` at root.
     current: Option<NodeId>,
-    /// Summed `estimated_size_bytes` across all live nodes.
+    /// Summed `size_bytes` across all live nodes.
     total_bytes: usize,
     config: HistoryConfig,
+    /// Set when a command's `apply` or `undo` failed mid-mutation.
+    ///
+    /// While `Some(_)`, `push`/`undo`/`redo` reject with [`Error::Poisoned`].
+    /// Cleared only by constructing a fresh `History`.
+    poisoned: Option<String>,
 }
 
 impl History {
@@ -93,10 +164,11 @@ impl History {
     pub fn with_config(config: HistoryConfig) -> Self {
         Self {
             nodes: HashMap::new(),
-            next_node_id: 0,
+            next_node_id: NodeId::ZERO,
             current: None,
             total_bytes: 0,
             config,
+            poisoned: None,
         }
     }
 
@@ -136,43 +208,66 @@ impl History {
 
     /// Apply `command` against `project` and push it onto the history.
     ///
-    /// If the top command coalesces with this one, the two are merged
-    /// into a single history entry and `command` is dropped.
+    /// **Protocol**: `apply` runs *first*, advancing the project. Then,
+    /// if the previous top command's [`Command::coalesce`] returns
+    /// [`CoalesceResult::Merged`], the just-applied command is dropped
+    /// from the history (the merged-into command's undo state must
+    /// already cover both effects after coalesce returns). If coalesce
+    /// returns [`CoalesceResult::Keep`], the command is recorded as a
+    /// new history node.
     ///
     /// # Errors
     ///
-    /// Propagates any error from `command.apply`. On error the command
-    /// is not recorded.
+    /// - [`Error::Poisoned`] if the history was previously poisoned by
+    ///   a failed `apply`/`undo`. Reload the project to recover.
+    /// - [`Error::HistoryFull`] if 4 billion edits have accumulated in
+    ///   this session.
+    /// - [`Error::CommandFailed`] propagated from `command.apply`. On a
+    ///   failed apply the project state is unspecified and the history
+    ///   becomes [`Error::Poisoned`] for all subsequent operations.
     pub fn push(&mut self, mut command: Box<dyn Command>, project: &mut Project) -> Result<()> {
-        // Attempt coalescing with the current top command.
-        if let Some(cur) = self.current {
-            if let Some(node) = self.nodes.get_mut(&cur) {
-                if let CoalesceResult::Merged = node.command.coalesce(command.as_ref()) {
-                    return Ok(());
-                }
-            }
+        self.check_not_poisoned()?;
+
+        // Reserve a NodeId up front so we surface HistoryFull *before*
+        // mutating the project. If 2^32-1 edits have already happened in
+        // one session, fail loud rather than wrap and silently overwrite
+        // node 0.
+        let reserved_next = self.next_node_id.next().ok_or(Error::HistoryFull)?;
+
+        // Apply first — the project state advances regardless of whether
+        // the command coalesces with the current top. coalesce is then a
+        // pure undo-state-merge operation and never silently skips work.
+        if let Err(source) = command.apply(project) {
+            let label = command.label().to_owned();
+            self.poisoned = Some(format!("apply '{label}' failed: {source}"));
+            return Err(Error::CommandFailed { label, source });
         }
 
-        command
-            .apply(project)
-            .map_err(|source| Error::CommandFailed {
-                label: command.label().to_owned(),
-                source,
-            })?;
+        // Offer the freshly-applied command to the current top for
+        // coalescing. If accepted, the merged-into command is responsible
+        // for absorbing the new command's undo state; we drop the new
+        // command without recording a new node.
+        if let Some(cur) = self.current
+            && let Some(node) = self.nodes.get_mut(&cur)
+            && matches!(
+                node.command.coalesce(command.as_ref()),
+                CoalesceResult::Merged
+            )
+        {
+            return Ok(());
+        }
 
         let parent = self.current;
         let node_id = self.next_node_id;
-        self.next_node_id = self.next_node_id.saturating_add(1);
-        let size = command.estimated_size_bytes();
+        self.next_node_id = reserved_next;
+        let node = HistoryNode::new(command, parent);
+        self.total_bytes = self.total_bytes.saturating_add(node.size_bytes);
+        self.nodes.insert(node_id, node);
 
-        self.nodes
-            .insert(node_id, HistoryNode::new(command, parent));
-        self.total_bytes += size;
-
-        if let Some(p) = parent {
-            if let Some(parent_node) = self.nodes.get_mut(&p) {
-                parent_node.children.push(node_id);
-            }
+        if let Some(p) = parent
+            && let Some(parent_node) = self.nodes.get_mut(&p)
+        {
+            parent_node.children.push(node_id);
         }
 
         self.current = Some(node_id);
@@ -180,13 +275,27 @@ impl History {
         Ok(())
     }
 
+    /// Returns `Err(Error::Poisoned { detail })` if the history is
+    /// poisoned, otherwise `Ok(())`.
+    fn check_not_poisoned(&self) -> Result<()> {
+        match &self.poisoned {
+            Some(detail) => Err(Error::Poisoned {
+                detail: detail.clone(),
+            }),
+            None => Ok(()),
+        }
+    }
+
     /// Undo the current command, moving `current` to its parent.
     ///
     /// # Errors
     ///
-    /// Returns [`Error::NothingToUndo`] if already at root.
-    /// Propagates any error from the command's `undo` implementation.
+    /// - [`Error::Poisoned`] if a prior failure poisoned the history.
+    /// - [`Error::NothingToUndo`] if already at root.
+    /// - [`Error::CommandFailed`] propagated from `Command::undo`. On
+    ///   failure the history becomes poisoned.
     pub fn undo(&mut self, project: &mut Project) -> Result<()> {
+        self.check_not_poisoned()?;
         let cur = self.current.ok_or(Error::NothingToUndo)?;
         let (label, parent) = self
             .nodes
@@ -194,12 +303,16 @@ impl History {
             .map(|n| (n.command.label().to_owned(), n.parent))
             .ok_or(Error::NothingToUndo)?;
 
-        self.nodes
+        if let Err(source) = self
+            .nodes
             .get_mut(&cur)
             .ok_or(Error::NothingToUndo)?
             .command
             .undo(project)
-            .map_err(|source| Error::CommandFailed { label, source })?;
+        {
+            self.poisoned = Some(format!("undo '{label}' failed: {source}"));
+            return Err(Error::CommandFailed { label, source });
+        }
 
         self.current = parent;
         Ok(())
@@ -209,9 +322,12 @@ impl History {
     ///
     /// # Errors
     ///
-    /// Returns [`Error::NothingToRedo`] if no child exists.
-    /// Propagates any error from the command's `apply` implementation.
+    /// - [`Error::Poisoned`] if a prior failure poisoned the history.
+    /// - [`Error::NothingToRedo`] if no child exists.
+    /// - [`Error::CommandFailed`] propagated from `Command::apply`. On
+    ///   failure the history becomes poisoned.
     pub fn redo(&mut self, project: &mut Project) -> Result<()> {
+        self.check_not_poisoned()?;
         let next = self.next_redo_id().ok_or(Error::NothingToRedo)?;
         let label = self
             .nodes
@@ -219,22 +335,25 @@ impl History {
             .map(|n| n.command.label().to_owned())
             .ok_or(Error::NothingToRedo)?;
 
-        self.nodes
+        if let Err(source) = self
+            .nodes
             .get_mut(&next)
             .ok_or(Error::NothingToRedo)?
             .command
             .apply(project)
-            .map_err(|source| Error::CommandFailed { label, source })?;
+        {
+            self.poisoned = Some(format!("redo '{label}' failed: {source}"));
+            return Err(Error::CommandFailed { label, source });
+        }
 
         // Move the redone child to the end of its parent's child list so
         // subsequent redos continue down this branch.
-        if let Some(p) = self.nodes.get(&next).and_then(|n| n.parent) {
-            if let Some(parent_node) = self.nodes.get_mut(&p) {
-                if let Some(pos) = parent_node.children.iter().position(|&c| c == next) {
-                    parent_node.children.remove(pos);
-                    parent_node.children.push(next);
-                }
-            }
+        if let Some(p) = self.nodes.get(&next).and_then(|n| n.parent)
+            && let Some(parent_node) = self.nodes.get_mut(&p)
+            && let Some(pos) = parent_node.children.iter().position(|&c| c == next)
+        {
+            parent_node.children.remove(pos);
+            parent_node.children.push(next);
         }
         self.current = Some(next);
         Ok(())
@@ -266,8 +385,8 @@ impl History {
     ///  - The evicted node is removed from the map. `nodes.len()` decreases.
     fn enforce_cap(&mut self) {
         loop {
-            if self.nodes.len() <= self.config.max_commands
-                && self.total_bytes <= self.config.max_bytes
+            if self.nodes.len() <= self.config.max_commands.get()
+                && self.total_bytes <= self.config.max_bytes.get()
             {
                 break;
             }
@@ -296,11 +415,11 @@ impl History {
                 node.parent = None;
             }
 
-            // Remove `oldest`.
+            // Remove `oldest` using its cached size_bytes (set at insertion);
+            // never re-call estimated_size_bytes on the trait object so a
+            // misbehaving Command can't drift the total_bytes accounting.
             if let Some(node) = self.nodes.remove(&oldest) {
-                self.total_bytes = self
-                    .total_bytes
-                    .saturating_sub(node.command.estimated_size_bytes());
+                self.total_bytes = self.total_bytes.saturating_sub(node.size_bytes);
             }
         }
     }
@@ -309,17 +428,20 @@ impl History {
     ///
     /// Does not touch the parent's child list — the caller is responsible
     /// for unlinking `id` from its parent before calling this.
+    ///
+    /// `id` must not be on the current undo path. `enforce_cap` only ever
+    /// passes off-path subtree roots here, so dropping `current` is a bug
+    /// in the caller. The debug-assert turns silent state corruption into
+    /// a loud test failure.
     fn drop_subtree(&mut self, id: NodeId) {
+        debug_assert!(
+            self.current != Some(id),
+            "drop_subtree must not evict the current node (id={id:?})"
+        );
         let Some(node) = self.nodes.remove(&id) else {
             return;
         };
-        self.total_bytes = self
-            .total_bytes
-            .saturating_sub(node.command.estimated_size_bytes());
-
-        if self.current == Some(id) {
-            self.current = node.parent;
-        }
+        self.total_bytes = self.total_bytes.saturating_sub(node.size_bytes);
 
         for child in node.children {
             self.drop_subtree(child);
@@ -360,7 +482,8 @@ mod tests {
     use super::*;
     use crate::project::Project;
 
-    type CmdResult = std::result::Result<(), Box<dyn std::error::Error + Send + Sync>>;
+    use super::super::error::CommandError;
+    type CmdResult = super::super::error::CommandResult;
 
     // ---- helpers -----------------------------------------------------------
 
@@ -439,7 +562,7 @@ mod tests {
         let mut p = make_project();
         h.push(Box::new(AppendChar('a')), &mut p).unwrap();
         assert_eq!(p.metadata.name, "a");
-        assert_eq!(h.current, Some(0));
+        assert_eq!(h.current, Some(NodeId(0)));
     }
 
     #[test]
@@ -460,7 +583,7 @@ mod tests {
         h.undo(&mut p).unwrap();
         h.redo(&mut p).unwrap();
         assert_eq!(p.metadata.name, "a");
-        assert_eq!(h.current, Some(0));
+        assert_eq!(h.current, Some(NodeId(0)));
     }
 
     #[test]
@@ -550,9 +673,36 @@ mod tests {
             .unwrap();
         h.push(Box::new(CoalescingStroke::new('b')), &mut p)
             .unwrap();
-        // Node count stays at 1 (coalesced).
+        // Node count stays at 1 (the second push coalesced into the first).
         assert_eq!(h.node_count(), 1);
-        assert_eq!(p.metadata.name, "a");
+        // Project state has BOTH strokes applied: 'a' from the first push,
+        // 'b' from the second (the apply runs before coalesce).
+        assert_eq!(p.metadata.name, "ab");
+    }
+
+    #[test]
+    fn undo_after_coalesced_pushes_reverses_all_applied_effects() {
+        // Regression for the apply-then-coalesce contract: after N
+        // coalesced pushes, undoing the merged node must restore the
+        // pre-first-push state. If apply were skipped on coalesce, the
+        // merged node's undo would over-pop, corrupting state.
+        let mut h = History::new();
+        let mut p = make_project();
+        p.metadata.name = "base".into();
+
+        h.push(Box::new(CoalescingStroke::new('a')), &mut p)
+            .unwrap();
+        h.push(Box::new(CoalescingStroke::new('b')), &mut p)
+            .unwrap();
+        h.push(Box::new(CoalescingStroke::new('c')), &mut p)
+            .unwrap();
+        assert_eq!(p.metadata.name, "baseabc");
+
+        h.undo(&mut p).unwrap();
+        assert_eq!(
+            p.metadata.name, "base",
+            "merged undo must reverse every applied effect"
+        );
     }
 
     #[test]
@@ -568,12 +718,13 @@ mod tests {
 
     // ---- memory eviction ---------------------------------------------------
 
+    fn nz(n: usize) -> NonZeroUsize {
+        NonZeroUsize::new(n).unwrap()
+    }
+
     #[test]
     fn memory_cap_evicts_oldest_nodes() {
-        let config = HistoryConfig {
-            max_commands: 3,
-            max_bytes: usize::MAX,
-        };
+        let config = HistoryConfig::new(nz(3), nz(usize::MAX));
         let mut h = History::with_config(config);
         let mut p = make_project();
 
@@ -601,11 +752,8 @@ mod tests {
     #[test]
     fn eviction_past_cap_keeps_node_count_bounded() {
         // Push well past max_commands and verify nodes.len() stays bounded.
-        let cap = 5_usize;
-        let config = HistoryConfig {
-            max_commands: cap,
-            max_bytes: usize::MAX,
-        };
+        let cap = nz(5);
+        let config = HistoryConfig::new(cap, nz(usize::MAX));
         let mut h = History::with_config(config);
         let mut p = make_project();
 
@@ -613,27 +761,24 @@ mod tests {
             h.push(Box::new(AppendChar(char::from(b'a' + (i % 26)))), &mut p)
                 .unwrap();
             assert!(
-                h.node_count() <= cap,
+                h.node_count() <= cap.get(),
                 "after {} pushes, node_count={} exceeds cap={}",
                 i + 1,
                 h.node_count(),
-                cap
+                cap.get()
             );
         }
     }
 
     #[test]
     fn oldest_node_unreachable_after_eviction() {
-        let config = HistoryConfig {
-            max_commands: 2,
-            max_bytes: usize::MAX,
-        };
+        let config = HistoryConfig::new(nz(2), nz(usize::MAX));
         let mut h = History::with_config(config);
         let mut p = make_project();
 
         // Push three commands — the first should be evicted.
         h.push(Box::new(AppendChar('a')), &mut p).unwrap();
-        let first_id = 0u32; // node 0 is the first push
+        let first_id = NodeId(0); // node 0 is the first push
         h.push(Box::new(AppendChar('b')), &mut p).unwrap();
         h.push(Box::new(AppendChar('c')), &mut p).unwrap();
 
@@ -644,6 +789,39 @@ mod tests {
         );
         // Only 2 live nodes remain.
         assert_eq!(h.node_count(), 2);
+    }
+
+    // ---- poisoning ---------------------------------------------------------
+
+    /// A command whose `apply` always fails; used to trigger poisoning.
+    struct FailingApply;
+    impl Command for FailingApply {
+        fn label(&self) -> &'static str {
+            "failing apply"
+        }
+        fn apply(&mut self, _project: &mut Project) -> CmdResult {
+            Err(CommandError::Other("simulated failure".into()))
+        }
+        fn undo(&mut self, _project: &mut Project) -> CmdResult {
+            Ok(())
+        }
+    }
+
+    #[test]
+    fn failed_push_poisons_history_and_blocks_subsequent_ops() {
+        let mut h = History::new();
+        let mut p = make_project();
+
+        let result = h.push(Box::new(FailingApply), &mut p);
+        assert!(matches!(result, Err(Error::CommandFailed { .. })));
+
+        // All subsequent ops must report Poisoned, not silently succeed.
+        assert!(matches!(
+            h.push(Box::new(AppendChar('a')), &mut p),
+            Err(Error::Poisoned { .. })
+        ));
+        assert!(matches!(h.undo(&mut p), Err(Error::Poisoned { .. })));
+        assert!(matches!(h.redo(&mut p), Err(Error::Poisoned { .. })));
     }
 
     // ---- labels ------------------------------------------------------------

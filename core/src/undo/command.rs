@@ -2,7 +2,14 @@
 
 use crate::project::Project;
 
+use super::error::CommandResult;
+
 /// Outcome of attempting to merge two consecutive commands.
+///
+/// Marked `#[non_exhaustive]` so future variants (e.g. a `Failed` arm
+/// for incompatible merges) can be added without breaking external
+/// matches.
+#[non_exhaustive]
 pub enum CoalesceResult {
     /// The commands were merged. The receiver now embodies both.
     Merged,
@@ -35,33 +42,31 @@ pub trait Command: Send + Sync + 'static {
     ///
     /// # Errors
     ///
-    /// Returns an error if the mutation cannot complete. The project
-    /// state after a failed `apply` is unspecified; callers should
-    /// treat it as corrupted and surface the error to the user.
-    fn apply(
-        &mut self,
-        project: &mut Project,
-    ) -> Result<(), Box<dyn std::error::Error + Send + Sync>>;
+    /// Returns [`super::CommandError`] if the mutation cannot complete.
+    /// On failure the project state is unspecified — the [`super::History`]
+    /// becomes poisoned and rejects all subsequent operations until the
+    /// caller reloads the document.
+    fn apply(&mut self, project: &mut Project) -> CommandResult;
 
     /// Reverse the effect of the most recent `apply`, restoring
     /// `project` to the state it was in before.
     ///
     /// # Errors
     ///
-    /// Returns an error if the reversal cannot complete. Same
-    /// corruption caveat as `apply`.
-    fn undo(
-        &mut self,
-        project: &mut Project,
-    ) -> Result<(), Box<dyn std::error::Error + Send + Sync>>;
+    /// Same corruption caveat as `apply`: a failure here poisons the
+    /// [`super::History`].
+    fn undo(&mut self, project: &mut Project) -> CommandResult;
 
     /// Attempt to merge `next` into `self`.
     ///
-    /// Called when `next` is pushed onto the stack and the top command
-    /// is `self`. If the two commands represent the same logical action
-    /// (e.g. two consecutive brush ticks in the same stroke), merging
-    /// them produces a single history entry. Return [`CoalesceResult::Merged`]
-    /// if the merge happened; the stack discards `next` in that case.
+    /// **Contract**: the caller has already invoked `next.apply(project)`
+    /// before this method runs. The implementer's job is to update `self`'s
+    /// undo state so that a future `self.undo(project)` reverses the
+    /// effects of *both* the original apply (already on `self`) and the
+    /// just-run apply of `next`. Return [`CoalesceResult::Merged`] if
+    /// the merge happened — the stack discards `next` in that case.
+    /// Return [`CoalesceResult::Keep`] to leave `next` as a separate
+    /// history entry.
     ///
     /// The default never coalesces.
     #[allow(unused_variables)]

@@ -82,6 +82,32 @@ pub enum AppCommandError {
         /// What was invalid, in plain text.
         detail: String,
     },
+
+    /// `undo` was called but the history is at the root state.
+    ///
+    /// Distinct from [`Self::Validation`] so the UI can disable the
+    /// undo menu item by switching on `kind` rather than parsing a
+    /// localised message.
+    #[error("nothing to undo")]
+    NothingToUndo,
+
+    /// `redo` was called but no redo branch exists at the current node.
+    #[error("nothing to redo")]
+    NothingToRedo,
+
+    /// The undo history was poisoned by a prior failed `apply`/`undo`,
+    /// or a command's `apply`/`undo` failed during this operation.
+    ///
+    /// The project state may be inconsistent. The host should surface
+    /// "history corrupted, please reload" and disable further edits
+    /// until a fresh project is loaded.
+    #[error("history corrupted: {detail}")]
+    HistoryCorrupted {
+        /// Human-readable description of the underlying failure (the
+        /// command label and the wrapped error from
+        /// `core::undo::Error`).
+        detail: String,
+    },
 }
 
 /// Crate-local result alias.

@@ -1,12 +1,34 @@
 //! Palette CRUD and color management commands.
 
 use pixhaus_core::project::{Palette, PaletteEntry, PaletteId, Project, Rgba, SpriteId, UserData};
-use pixhaus_core::undo::Command;
+use pixhaus_core::undo::{
+    Command, CommandError, CommandResult as UndoCommandResult, Error as UndoError,
+};
 use serde::{Deserialize, Deserializer, Serialize};
 use tauri::State;
 
 use crate::error::{AppCommandError, CommandResult};
 use crate::state::AppState;
+
+/// Maps a `core::undo::Error` raised by `History::push` of a palette
+/// command into the typed IPC error contract.
+///
+/// Mirrors `commands::undo::map_undo_error` but is duplicated here to
+/// keep `commands::undo` private. `CommandFailed` and `Poisoned` both
+/// indicate the project state is suspect; collapse them onto
+/// `HistoryCorrupted` so the UI can show a recovery prompt.
+fn map_palette_undo_error(err: UndoError) -> AppCommandError {
+    match err {
+        UndoError::CommandFailed { .. } | UndoError::Poisoned { .. } => {
+            AppCommandError::HistoryCorrupted {
+                detail: err.to_string(),
+            }
+        }
+        other => AppCommandError::Validation {
+            detail: other.to_string(),
+        },
+    }
+}
 
 // ── command impl: PaletteAddColorCommand ─────────────────────────────────────
 
@@ -23,34 +45,27 @@ struct PaletteAddColorCommand {
     added_index: u32,
 }
 
-type CmdResult = std::result::Result<(), Box<dyn std::error::Error + Send + Sync>>;
-
 impl Command for PaletteAddColorCommand {
     fn label(&self) -> &'static str {
         "add palette color"
     }
 
-    fn apply(&mut self, project: &mut Project) -> CmdResult {
+    fn apply(&mut self, project: &mut Project) -> UndoCommandResult {
         let palette = find_palette_in_project_mut(project, self.sprite_id, self.palette_id)
-            .map_err(|e| Box::new(e) as Box<dyn std::error::Error + Send + Sync>)?;
+            .map_err(CommandError::from_message)?;
         let entry = PaletteEntry {
             color: self.color,
             name: self.name.clone(),
         };
         palette.colors.push(entry);
-        self.added_index = u32::try_from(palette.colors.len() - 1).map_err(
-            |_| -> Box<dyn std::error::Error + Send + Sync> {
-                Box::new(AppCommandError::Validation {
-                    detail: "palette has too many colors".into(),
-                })
-            },
-        )?;
+        self.added_index = u32::try_from(palette.colors.len() - 1)
+            .map_err(|_| CommandError::Other("palette has too many colors".into()))?;
         Ok(())
     }
 
-    fn undo(&mut self, project: &mut Project) -> CmdResult {
+    fn undo(&mut self, project: &mut Project) -> UndoCommandResult {
         let palette = find_palette_in_project_mut(project, self.sprite_id, self.palette_id)
-            .map_err(|e| Box::new(e) as Box<dyn std::error::Error + Send + Sync>)?;
+            .map_err(CommandError::from_message)?;
         let idx = self.added_index as usize;
         if idx < palette.colors.len() {
             palette.colors.remove(idx);
@@ -235,9 +250,7 @@ pub async fn palette_add_color(
         .ok_or(AppCommandError::NoActiveProject)?;
     doc.history
         .push(Box::new(cmd), project)
-        .map_err(|e| AppCommandError::Validation {
-            detail: e.to_string(),
-        })?;
+        .map_err(map_palette_undo_error)?;
 
     doc.dirty = true;
     Ok(next_index)

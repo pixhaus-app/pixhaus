@@ -9,7 +9,7 @@
 //! # Quick start
 //!
 //! ```rust
-//! use pixhaus_core::undo::{Command, History, HistoryConfig};
+//! use pixhaus_core::undo::{Command, CommandResult, History};
 //! use pixhaus_core::project::Project;
 //!
 //! struct RenameProject { old: String, new: String }
@@ -17,16 +17,12 @@
 //! impl Command for RenameProject {
 //!     fn label(&self) -> &str { "rename project" }
 //!
-//!     fn apply(&mut self, p: &mut Project)
-//!         -> Result<(), Box<dyn std::error::Error + Send + Sync>>
-//!     {
+//!     fn apply(&mut self, p: &mut Project) -> CommandResult {
 //!         self.old = std::mem::replace(&mut p.metadata.name, self.new.clone());
 //!         Ok(())
 //!     }
 //!
-//!     fn undo(&mut self, p: &mut Project)
-//!         -> Result<(), Box<dyn std::error::Error + Send + Sync>>
-//!     {
+//!     fn undo(&mut self, p: &mut Project) -> CommandResult {
 //!         p.metadata.name = self.old.clone();
 //!         Ok(())
 //!     }
@@ -56,8 +52,9 @@
 //! The stack evicts the oldest commands on the current undo path once the
 //! total node count exceeds [`HistoryConfig::max_commands`] or the summed
 //! [`Command::estimated_size_bytes`] exceeds [`HistoryConfig::max_bytes`].
-//! Evicted nodes become tombstones; their child branches survive until
-//! the child is also evicted.
+//! Evicted nodes are removed from the underlying map (no tombstones); off-path
+//! subtrees rooted at the evicted node are dropped recursively, and the
+//! path-continuation child becomes the new root.
 //!
 //! # Coalescing
 //!
@@ -73,5 +70,5 @@ pub mod error;
 pub mod history;
 
 pub use command::{CoalesceResult, Command};
-pub use error::{Error, Result};
+pub use error::{CommandError, CommandResult, Error, Result};
 pub use history::{History, HistoryConfig};
