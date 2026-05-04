@@ -25,7 +25,7 @@
 use std::collections::HashMap;
 use std::fmt;
 use std::sync::Arc;
-use std::time::{Instant, SystemTime};
+use std::time::Instant;
 
 use parking_lot::RwLock;
 use tokio::sync::mpsc;
@@ -38,20 +38,11 @@ use super::descriptor::{VerbDescriptor, VerbId};
 use super::error::{Result, VerbError};
 use super::inputs::VerbInputs;
 use super::output::VerbOutput;
-use super::preview::{PreviewId, PreviewIdMinter, VerbCommit, VerbDiscard, VerbPreview};
+use super::preview::{
+    PreviewId, PreviewIdMinter, VerbCommit, VerbDiscard, VerbPreview, now_unix_seconds,
+};
 use super::progress::{VerbProgress, VerbProgressEvent};
 use super::verb::Verb;
-
-/// Returns the current UTC time as seconds since the Unix epoch,
-/// clamped at `i64::MAX` if the system clock is far enough in the
-/// future to overflow `i64`.
-fn now_unix_seconds() -> i64 {
-    SystemTime::now()
-        .duration_since(SystemTime::UNIX_EPOCH)
-        .ok()
-        .and_then(|d| i64::try_from(d.as_secs()).ok())
-        .unwrap_or(i64::MAX)
-}
 
 /// Coordinator for verb registration and dispatch.
 ///
@@ -200,7 +191,7 @@ impl VerbRuntime {
             descriptor,
             cancel,
             progress_rx,
-            join,
+            join: Some(join),
             started,
             preview_id,
         })
@@ -262,7 +253,10 @@ pub struct VerbInvocation {
     descriptor: VerbDescriptor,
     cancel: CancellationToken,
     progress_rx: mpsc::Receiver<VerbProgressEvent>,
-    join: JoinHandle<Result<VerbOutput>>,
+    /// `Some` until [`Self::finish`] consumes it. The `Option` lets
+    /// `Drop` distinguish a consumed handle (no-op) from an abandoned
+    /// one (fire cancellation).
+    join: Option<JoinHandle<Result<VerbOutput>>>,
     started: Instant,
     preview_id: PreviewId,
 }
@@ -278,6 +272,28 @@ impl fmt::Debug for VerbInvocation {
             .field("started", &self.started)
             .field("cancelled", &self.cancel.is_cancelled())
             .finish_non_exhaustive()
+    }
+}
+
+impl Drop for VerbInvocation {
+    /// Fires the cancellation token when the handle is dropped before
+    /// [`Self::finish`] consumed it.
+    ///
+    /// Without this, dropping a `VerbInvocation` (closing a UI dialog,
+    /// `?` propagation in a host method) leaves the spawned worker
+    /// running with no observer — an LLM call has real cost on the
+    /// line. Cooperative cancellation is the protocol's contract;
+    /// authors who want forcible abort should hold their own
+    /// `JoinHandle` and `abort()` explicitly.
+    ///
+    /// `finish` takes the join handle out, so its absence here means
+    /// the invocation already completed naturally and cancelling would
+    /// be a redundant signal (also unhelpful when introspecting
+    /// `cancel.is_cancelled()` after a successful run).
+    fn drop(&mut self) {
+        if self.join.is_some() {
+            self.cancel.cancel();
+        }
     }
 }
 
@@ -327,21 +343,28 @@ impl VerbInvocation {
     /// On verb error, the invocation propagates the error. On a
     /// panicked or aborted worker, returns
     /// [`VerbError::Aborted`].
-    pub async fn finish(self) -> Result<VerbPreview> {
-        let Self {
-            join,
-            started,
-            preview_id,
-            verb_id,
-            ..
-        } = self;
+    pub async fn finish(mut self) -> Result<VerbPreview> {
+        // `take` leaves `self.join` as `None`; the `Drop` impl uses
+        // that to skip its cancel-on-drop signal, since natural
+        // completion already drove the worker to exit. A `None` here
+        // means a programmer called `finish` twice; surface that as
+        // `Aborted` rather than panic — the no-unwrap/no-expect rule.
+        let join = self
+            .join
+            .take()
+            .ok_or_else(|| VerbError::Aborted("VerbInvocation::finish called twice".into()))?;
         let join_result = join.await;
-        let elapsed = started.elapsed();
+        let elapsed = self.started.elapsed();
         let output = match join_result {
             Ok(inner) => inner?,
             Err(join_err) => return Err(VerbError::Aborted(join_err.to_string())),
         };
-        Ok(VerbPreview::new(preview_id, verb_id, output, elapsed))
+        Ok(VerbPreview::new(
+            self.preview_id,
+            self.verb_id.clone(),
+            output,
+            elapsed,
+        ))
     }
 }
 
@@ -597,6 +620,65 @@ mod tests {
         let discard = runtime.discard(preview.clone(), Some("user rejected".into()));
         assert_eq!(discard.preview, preview.id);
         assert_eq!(discard.reason.as_deref(), Some("user rejected"));
+    }
+
+    #[tokio::test]
+    async fn drop_cancels_in_flight_invocation() {
+        use std::sync::Arc;
+        use std::sync::atomic::{AtomicBool, Ordering};
+
+        struct SignalsOnCancel {
+            descriptor: VerbDescriptor,
+            observed: Arc<AtomicBool>,
+        }
+        #[async_trait]
+        impl Verb for SignalsOnCancel {
+            fn descriptor(&self) -> &VerbDescriptor {
+                &self.descriptor
+            }
+            async fn invoke(
+                &self,
+                _ctx: VerbContext,
+                _inputs: VerbInputs,
+                _progress: VerbProgress,
+                cancel: CancellationToken,
+            ) -> Result<VerbOutput> {
+                cancel.cancelled().await;
+                self.observed.store(true, Ordering::SeqCst);
+                Err(VerbError::Cancelled)
+            }
+        }
+
+        let observed = Arc::new(AtomicBool::new(false));
+        let runtime = VerbRuntime::new();
+        runtime
+            .register(SignalsOnCancel {
+                descriptor: descriptor("test.drop-cancels", true, false),
+                observed: observed.clone(),
+            })
+            .unwrap();
+
+        {
+            let _inv = runtime
+                .invoke(
+                    &VerbId::new("test.drop-cancels"),
+                    VerbContext::empty(metadata()),
+                    VerbInputs::empty(),
+                )
+                .unwrap();
+            // Drop at end of scope; Drop impl fires the cancel token.
+        }
+
+        // Worker observes cancellation and sets `observed`. Poll briefly
+        // with a deadline rather than a fixed sleep.
+        let deadline = std::time::Instant::now() + Duration::from_secs(1);
+        while !observed.load(Ordering::SeqCst) && std::time::Instant::now() < deadline {
+            tokio::task::yield_now().await;
+        }
+        assert!(
+            observed.load(Ordering::SeqCst),
+            "drop did not cancel the in-flight verb"
+        );
     }
 
     #[tokio::test]

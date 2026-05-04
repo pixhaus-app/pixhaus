@@ -70,13 +70,22 @@ impl PreviewIdMinter {
         }
     }
 
-    /// Issues the next ID. Wraps at `u64::MAX`, but realistic editor
-    /// sessions will not approach that — the type leaves room for a
-    /// hundred million previews per millisecond for several centuries.
+    /// Issues the next ID. Skips `0` on wrap so the sentinel invariant
+    /// holds for the lifetime of the process. Realistic editor sessions
+    /// will never wrap — the type leaves room for a hundred million
+    /// previews per millisecond for several centuries — but a CAS loop
+    /// is cheap and removes a footgun.
     pub fn issue(&self) -> PreviewId {
         // `Relaxed` is fine: we need a unique value per call, not an
         // ordering with respect to other shared state.
-        PreviewId(self.next.fetch_add(1, Ordering::Relaxed))
+        loop {
+            let current = self.next.fetch_add(1, Ordering::Relaxed);
+            if current != 0 {
+                return PreviewId(current);
+            }
+            // The post-increment value was 0 (wrapped). Skip it and try
+            // again; the next fetch_add will return 1.
+        }
     }
 }
 
@@ -130,16 +139,18 @@ impl VerbPreview {
     }
 }
 
-/// Returns the current UTC time as seconds since the Unix epoch,
-/// clamped to `i64::MAX` if the clock is set far enough in the future
-/// to overflow `i64`. The protocol uses `i64` because seconds-since-
-/// epoch round-trips through `serde_json` as a plain number.
-fn now_unix_seconds() -> i64 {
-    SystemTime::now()
-        .duration_since(SystemTime::UNIX_EPOCH)
-        .ok()
-        .and_then(|d| i64::try_from(d.as_secs()).ok())
-        .unwrap_or(i64::MAX)
+/// Returns the current UTC time as seconds since the Unix epoch.
+/// Pre-epoch system clocks (any `duration_since` failure) clamp to `0`
+/// — stamping with epoch is preferable to stamping with `i64::MAX`,
+/// which would put the timestamp 292 billion years in the future.
+/// Far-future clocks that overflow `i64::try_from` clamp to `i64::MAX`.
+/// The protocol uses `i64` because seconds-since-epoch round-trips
+/// through `serde_json` as a plain number.
+pub(crate) fn now_unix_seconds() -> i64 {
+    match SystemTime::now().duration_since(SystemTime::UNIX_EPOCH) {
+        Ok(d) => i64::try_from(d.as_secs()).unwrap_or(i64::MAX),
+        Err(_) => 0,
+    }
 }
 
 #[cfg(test)]

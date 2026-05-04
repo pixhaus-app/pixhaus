@@ -65,9 +65,16 @@ impl PixelData {
     }
 
     /// Returns `true` if the byte count, stride, and dimensions are
-    /// internally consistent.
+    /// internally consistent. `bytes_per_pixel` must be one of the four
+    /// supported pixel widths — `1` (indexed/alpha), `2` (grayscale +
+    /// alpha), `3` (RGB), `4` (RGBA). Zero would let downstream code
+    /// divide by it; values above 4 don't match any format the runtime
+    /// hands out.
     #[must_use]
     pub fn is_well_formed(&self) -> bool {
+        if !matches!(self.bytes_per_pixel, 1..=4) {
+            return false;
+        }
         let row_min = u64::from(self.width) * u64::from(self.bytes_per_pixel);
         let stride = u64::from(self.stride);
         let height = u64::from(self.height);
