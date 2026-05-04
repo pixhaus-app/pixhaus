@@ -13,9 +13,13 @@
         clippy::panic,
         clippy::missing_panics_doc,
         clippy::disallowed_methods,
+        clippy::cast_lossless,
+        clippy::cast_possible_truncation,
+        clippy::uninlined_format_args,
     )
 )]
 
+pub mod palette;
 pub mod pixhaus;
 pub mod png;
 

@@ -20,6 +20,8 @@
         // as `unwrap_used`/`expect_used` so they may panic on failure
         // rather than thread `Result` through an assert.
         clippy::disallowed_methods,
+        clippy::cast_lossless,
+        clippy::cast_possible_truncation,
     )
 )]
 // The `ts-rs` derive macro emits an internal `_ts_rs_export()` test that
@@ -29,6 +31,7 @@
 #![cfg_attr(test, allow(clippy::missing_const_for_fn))]
 
 pub mod canvas;
+pub mod color;
 pub mod fixtures;
 pub mod project;
 pub mod tilemap;
