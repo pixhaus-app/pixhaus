@@ -10,13 +10,19 @@ description = "Pixhaus AI verb runtime, backends, and built-in verbs"
 
 [dependencies]
 pixhaus-core = { path = "../core" }
+async-trait.workspace = true
+parking_lot.workspace = true
 serde.workspace = true
+serde_json.workspace = true
 thiserror.workspace = true
 tokio.workspace = true
+tokio-util.workspace = true
 tracing.workspace = true
 
 [dev-dependencies]
 anyhow.workspace = true
+rmp-serde.workspace = true
+tokio = { workspace = true, features = ["full", "test-util"] }
 
 [lints]
 workspace = true

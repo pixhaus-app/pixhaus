@@ -19,11 +19,15 @@ homepage = "https://pixhaus.app"
 
 [workspace.dependencies]
 anyhow = "1"
+async-trait = "0.1"
+futures = "0.3"
+parking_lot = "0.12"
 thiserror = "2"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 rmp-serde = "1"
 tokio = { version = "1", features = ["full"] }
+tokio-util = { version = "0.7", features = ["rt"] }
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 ts-rs = { version = "11", features = ["serde-compat"] }
