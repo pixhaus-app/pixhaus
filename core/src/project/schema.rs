@@ -86,6 +86,21 @@ impl FeatureFlags {
     /// File contains AI verb history (preview-then-commit transcripts).
     pub const VERB_HISTORY: Self = Self(1 << 4);
 
+    /// All flags currently defined by this build.
+    ///
+    /// Single source of truth for "which feature bits does this Pixhaus
+    /// version know about?". Downstream crates (notably `pixhaus-io`)
+    /// consume this rather than redeclaring the bitmask, so adding a
+    /// new flag in this enum without touching every consumer cannot
+    /// silently desync.
+    pub const ALL: Self = Self(
+        Self::TILEMAPS.0
+            | Self::REFERENCES.0
+            | Self::ANIMATIONS.0
+            | Self::SLICES.0
+            | Self::VERB_HISTORY.0,
+    );
+
     /// Returns the empty set.
     #[must_use]
     pub const fn empty() -> Self {
