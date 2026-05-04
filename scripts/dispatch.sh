@@ -127,6 +127,7 @@ cd "$WORKTREE_PATH"
 # tee preserves the user's view of the transcript while persisting it.
 if claude --model "$MODEL" \
           --print "$TASK_BRIEF" \
+          --permission-mode bypassPermissions \
           --output-format json 2>&1 | tee "$REPO_ROOT/$LOG_FILE"; then
     cd "$REPO_ROOT"
     # Don't mark DONE yet. The DONE flip is the human's call after the PR

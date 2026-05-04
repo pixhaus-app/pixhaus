@@ -92,7 +92,7 @@ while ($true) {
         exit 1
     }
 
-    & claude --model $model --print $taskBrief --output-format json *> $logFile
+    & claude --model $model --print $taskBrief --permission-mode bypassPermissions --output-format json *> $logFile
     if ($LASTEXITCODE -eq 0) {
         # Don't mark DONE. The DONE flip is the human's call after the PR
         # merges, via `pnpm finalize <wt> <id> ok`.

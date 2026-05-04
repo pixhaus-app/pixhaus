@@ -115,7 +115,7 @@ if (-not (Get-Command claude -ErrorAction SilentlyContinue)) {
 Set-Location -LiteralPath $worktreePath
 
 # Tee-Object writes to file and pipeline simultaneously.
-& claude --model $Model --print $taskBrief --output-format json 2>&1 | Tee-Object -FilePath $logFile
+& claude --model $Model --print $taskBrief --permission-mode bypassPermissions --output-format json 2>&1 | Tee-Object -FilePath $logFile
 $claudeRc = $LASTEXITCODE
 
 Set-Location -LiteralPath $repoRoot

@@ -81,6 +81,7 @@ while :; do
 
     if claude --model "$MODEL" \
               --print "$TASK_BRIEF" \
+              --permission-mode bypassPermissions \
               --output-format json > "$LOG_FILE" 2>&1; then
         # Don't mark DONE. The DONE flip is the human's call after the PR
         # merges, via `pnpm finalize <wt> <id> ok`. Leave the task CLAIMED.
