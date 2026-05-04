@@ -19,7 +19,7 @@ project and warrants the higher-cost model.
 ## Bedrock — open
 
 - [x] DONE: B2 — Core data model (Rust + TS). Brief: docs/planning/work/bedrock.md#b2-core-data-model. Priority: highest, single agent. Blocks: B3 B4 B5 B6.
-- [~] CLAIMED:stream-b3: B3 — `.pixhaus` project file format. Brief: docs/planning/work/bedrock.md#b3-project-file-format-pixhaus. Depends on: B2.
+- [x] DONE: B3 — `.pixhaus` project file format. Brief: docs/planning/work/bedrock.md#b3-project-file-format-pixhaus. Depends on: B2.
 - [ ] UNCLAIMED: B4 — IPC command catalog. Brief: docs/planning/work/bedrock.md#b4-ipc-command-catalog. Depends on: B2.
 - [x] DONE: B5 — AI verb plugin protocol [OPUS-REQUIRED]. Brief: docs/planning/work/bedrock.md#b5-ai-verb-plugin-protocol. Depends on: B2. Highest leverage in project.
 - [ ] UNCLAIMED: B6 — Unity handoff format. Brief: docs/planning/work/bedrock.md#b6-unity-handoff-format. Depends on: B2.
