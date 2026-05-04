@@ -1,5 +1,10 @@
 #!/usr/bin/env bash
-# Atomically claim the next unclaimed task from work/queue.md.
+# Atomically claim a task from work/queue.md.
+#
+# Without a target id, claims the first UNCLAIMED line. With one,
+# claims that specific task (must still be UNCLAIMED). Dispatch passes
+# the requested id so multi-claim parallel runs don't race for the
+# top-of-queue slot.
 #
 # Lock strategy: mkdir is atomic on POSIX and Windows. We use a lock dir
 # rather than `flock` so this works under Git Bash on Windows.
@@ -9,14 +14,15 @@
 #   line 2+: full brief text for the task
 # Exit code:
 #   0 = claimed
-#   1 = no tasks available
+#   1 = no matching task available
 #   2 = usage error
 
 set -uo pipefail
 
 WORKTREE_NAME="${1:-}"
+TARGET_TASK_ID="${2:-}"
 if [ -z "$WORKTREE_NAME" ]; then
-    echo "usage: claim-next-task.sh <worktree-name>" >&2
+    echo "usage: claim-next-task.sh <worktree-name> [<task-id>]" >&2
     exit 2
 fi
 
@@ -43,8 +49,13 @@ until mkdir "$LOCK_DIR" 2>/dev/null; do
 done
 trap 'rm -rf "$LOCK_DIR"' EXIT
 
-# Find the first task line that's UNCLAIMED.
-TASK_LINE_NO="$(grep -n '^- \[ \] UNCLAIMED:' "$QUEUE" | head -n1 | cut -d: -f1 || true)"
+# Find the task line. If TARGET_TASK_ID is given, look for that specific
+# id; otherwise take the first UNCLAIMED line.
+if [ -n "$TARGET_TASK_ID" ]; then
+    TASK_LINE_NO="$(grep -nE "^- \[ \] UNCLAIMED:[[:space:]]*${TARGET_TASK_ID}([[:space:]]|$)" "$QUEUE" | head -n1 | cut -d: -f1 || true)"
+else
+    TASK_LINE_NO="$(grep -n '^- \[ \] UNCLAIMED:' "$QUEUE" | head -n1 | cut -d: -f1 || true)"
+fi
 if [ -z "$TASK_LINE_NO" ]; then
     exit 1
 fi

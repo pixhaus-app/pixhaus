@@ -76,11 +76,10 @@ else
     echo "dispatch: reusing existing worktree $WORKTREE"
 fi
 
-# Claim atomically. claim-next-task picks the next UNCLAIMED line, which
-# is what we want only if the requested task is the next one. Verify
-# afterwards.
-echo "dispatch: claiming next task as worktree=$WORKTREE"
-CLAIM_OUTPUT="$(node scripts/run.mjs claim-next-task "$WORKTREE" 2>&1)"
+# Claim atomically by id. claim-next-task targets the requested task
+# rather than the top of UNCLAIMED so parallel dispatches don't race.
+echo "dispatch: claiming $TASK_ID as worktree=$WORKTREE"
+CLAIM_OUTPUT="$(node scripts/run.mjs claim-next-task "$WORKTREE" "$TASK_ID" 2>&1)"
 CLAIM_RC=$?
 if [ $CLAIM_RC -ne 0 ] || [ -z "$CLAIM_OUTPUT" ]; then
     echo "dispatch: claim-next-task failed" >&2
@@ -124,9 +123,14 @@ fi
 # cd into the worktree so Claude operates against that checkout.
 cd "$WORKTREE_PATH"
 
-# tee preserves the user's view of the transcript while persisting it.
-if claude --model "$MODEL" \
-          --print "$TASK_BRIEF" \
+# Pipe the brief via stdin instead of passing it as --print's argument.
+# *nix ARG_MAX is generous (>= 128 KB on Linux/macOS) but Windows' Git
+# Bash forwards through CreateProcess and caps at ~32 KB, the same limit
+# the .ps1 mirror dodges. Keep both shells consistent. claude reads from
+# stdin in --print mode when no positional prompt is supplied. tee
+# preserves the user's view of the transcript while persisting it.
+if printf '%s' "$TASK_BRIEF" | claude --model "$MODEL" \
+          --print \
           --permission-mode bypassPermissions \
           --output-format json 2>&1 | tee "$REPO_ROOT/$LOG_FILE"; then
     cd "$REPO_ROOT"

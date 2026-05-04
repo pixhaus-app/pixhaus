@@ -66,8 +66,8 @@ else {
 }
 
 # Claim atomically. Verify the claimed id matches the requested one.
-Write-Output "dispatch: claiming next task as worktree=$Worktree"
-$claimOutput = & node $runMjs claim-next-task $Worktree 2>&1
+Write-Output "dispatch: claiming $TaskId as worktree=$Worktree"
+$claimOutput = & node $runMjs claim-next-task $Worktree $TaskId 2>&1
 $claimRc = $LASTEXITCODE
 if ($claimRc -ne 0 -or -not $claimOutput) {
     [Console]::Error.WriteLine('dispatch: claim-next-task failed')
@@ -114,8 +114,12 @@ if (-not (Get-Command claude -ErrorAction SilentlyContinue)) {
 
 Set-Location -LiteralPath $worktreePath
 
-# Tee-Object writes to file and pipeline simultaneously.
-& claude --model $Model --print $taskBrief --permission-mode bypassPermissions --output-format json 2>&1 | Tee-Object -FilePath $logFile
+# Pipe the brief via stdin instead of passing it as --print's argument.
+# Windows' CreateProcess caps the command line at ~32 KB; the full brief
+# plus dispatch addendum easily exceeds that for stream tasks. Stdin has
+# no such limit. claude reads from stdin in --print mode when no positional
+# prompt is supplied.
+$taskBrief | & claude --model $Model --print --permission-mode bypassPermissions --output-format json 2>&1 | Tee-Object -FilePath $logFile
 $claudeRc = $LASTEXITCODE
 
 Set-Location -LiteralPath $repoRoot

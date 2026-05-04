@@ -1,4 +1,9 @@
-# Atomically claim the next unclaimed task from work/queue.md.
+# Atomically claim a task from work/queue.md.
+#
+# Without a TargetTaskId, claims the first UNCLAIMED line. With one,
+# claims that specific task (must still be UNCLAIMED). Dispatch passes
+# the requested ID so multi-claim parallel runs don't race for the
+# top-of-queue slot.
 #
 # Lock strategy: New-Item -ItemType Directory is atomic on NTFS, mirroring
 # the mkdir-based approach in claim-next-task.sh.
@@ -8,19 +13,21 @@
 #   line 2+: full brief text for the task
 # Exit code:
 #   0 = claimed
-#   1 = no tasks available
+#   1 = no matching task available
 #   2 = usage error
 
 [CmdletBinding()]
 param(
     [Parameter(Position = 0)]
-    [string]$WorktreeName
+    [string]$WorktreeName,
+    [Parameter(Position = 1)]
+    [string]$TargetTaskId = ''
 )
 
 $ErrorActionPreference = 'Continue'
 
 if (-not $WorktreeName) {
-    [Console]::Error.WriteLine('usage: claim-next-task.ps1 <worktree-name>')
+    [Console]::Error.WriteLine('usage: claim-next-task.ps1 <worktree-name> [<task-id>]')
     exit 2
 }
 
@@ -61,10 +68,22 @@ try {
     $lines = [System.IO.File]::ReadAllLines($queueAbs, $utf8)
 
     $taskLineNo = -1
-    for ($i = 0; $i -lt $lines.Count; $i++) {
-        if ($lines[$i] -match '^- \[ \] UNCLAIMED:') {
-            $taskLineNo = $i
-            break
+    if ($TargetTaskId) {
+        $escaped = [regex]::Escape($TargetTaskId)
+        $targetPattern = "^- \[ \] UNCLAIMED:\s*$escaped(\s|$)"
+        for ($i = 0; $i -lt $lines.Count; $i++) {
+            if ($lines[$i] -match $targetPattern) {
+                $taskLineNo = $i
+                break
+            }
+        }
+    }
+    else {
+        for ($i = 0; $i -lt $lines.Count; $i++) {
+            if ($lines[$i] -match '^- \[ \] UNCLAIMED:') {
+                $taskLineNo = $i
+                break
+            }
         }
     }
 
