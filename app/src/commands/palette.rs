@@ -1,11 +1,29 @@
 //! Palette CRUD and color management commands.
 
 use pixhaus_core::project::{Palette, PaletteEntry, PaletteId, Rgba, SpriteId, UserData};
-use serde::{Deserialize, Serialize};
+use serde::{Deserialize, Deserializer, Serialize};
 use tauri::State;
 
 use crate::error::{AppCommandError, CommandResult};
 use crate::state::AppState;
+
+/// Deserialises an optional field with three states: missing (None),
+/// explicit `null` (Some(None)), or a value (Some(Some(value))).
+///
+/// Used by `palette_set_color` to distinguish "leave name unchanged"
+/// (omit the key) from "clear the name" (`name: null`) — `Option<String>`
+/// alone collapses both into `None` and gives no way to clear.
+#[allow(
+    clippy::option_option,
+    reason = "three-state wire contract — see fn doc"
+)]
+fn double_option<'de, T, D>(d: D) -> Result<Option<Option<T>>, D::Error>
+where
+    T: Deserialize<'de>,
+    D: Deserializer<'de>,
+{
+    Deserialize::deserialize(d).map(Some)
+}
 
 /// Arguments for adding a color to a palette.
 #[derive(Debug, Deserialize)]
@@ -32,7 +50,17 @@ pub struct PaletteSetColorArgs {
     /// New color value.
     pub color: Rgba,
     /// Optional rename for the swatch.
-    pub name: Option<String>,
+    ///
+    /// Wire format is three-state: omit the key to keep the existing
+    /// name, send `null` to clear it, send a string to set it. The
+    /// double-`Option` lets serde distinguish missing-key from
+    /// `null`-value, which a flat `Option<String>` collapses.
+    #[serde(default, deserialize_with = "double_option")]
+    #[allow(
+        clippy::option_option,
+        reason = "three-state wire contract — see field doc"
+    )]
+    pub name: Option<Option<String>>,
 }
 
 /// Result returned when two palettes are swapped.
@@ -179,8 +207,10 @@ pub async fn palette_set_color(
                 detail: format!("palette index {idx} out of range (palette has {len} colors)"),
             })?;
         entry.color = args.color;
-        if let Some(name) = args.name {
-            entry.name = Some(name);
+        // Three-state name update: outer None = key omitted (keep),
+        // Some(None) = explicit null (clear), Some(Some(s)) = set.
+        if let Some(new_name) = args.name {
+            entry.name = new_name;
         }
     }
     doc.dirty = true;
@@ -287,5 +317,34 @@ mod tests {
         };
         assert_eq!(result.from_id.get(), 1);
         assert_eq!(result.to_id.get(), 2);
+    }
+
+    fn args_from_json(json: &str) -> PaletteSetColorArgs {
+        serde_json::from_str(json).expect("valid PaletteSetColorArgs json")
+    }
+
+    const BASE: &str =
+        r#""sprite_id":1,"palette_id":2,"index":0,"color":{"r":0,"g":0,"b":0,"a":255}"#;
+
+    #[test]
+    fn name_omitted_means_keep() {
+        let args = args_from_json(&format!("{{{BASE}}}"));
+        assert!(args.name.is_none(), "outer None signals keep");
+    }
+
+    #[test]
+    fn name_null_means_clear() {
+        let args = args_from_json(&format!("{{{BASE},\"name\":null}}"));
+        assert_eq!(args.name, Some(None), "Some(None) signals clear");
+    }
+
+    #[test]
+    fn name_string_means_set() {
+        let args = args_from_json(&format!("{{{BASE},\"name\":\"red\"}}"));
+        assert_eq!(
+            args.name,
+            Some(Some("red".into())),
+            "Some(Some) sets the value"
+        );
     }
 }

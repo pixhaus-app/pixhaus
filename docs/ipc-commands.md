@@ -305,7 +305,7 @@ Renames a layer.
 
 ### `layer_reorder`
 
-Moves a layer to a new stack position. `new_index` is clamped to `[0, len-1]`.
+Moves a layer to a new stack position. `new_index` is the **final position the layer lands at** in the resulting stack, clamped to `[0, len-1]`. After the call, `sprite.layers[new_index].id == layer_id`.
 
 | | |
 |---|---|

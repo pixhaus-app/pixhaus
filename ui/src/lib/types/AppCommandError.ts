@@ -10,8 +10,8 @@
  */
 export type AppCommandError = { "kind": "no_active_project" } | { "kind": "not_found", "message": { 
 /**
- * Entity kind: "sprite", "layer", "frame", "palette",
- * "tileset", "slice", "frame_tag", etc.
+ * Entity kind: `"sprite"`, `"layer"`, `"frame"`, `"palette"`,
+ * `"tileset"`, `"slice"`, `"frame_tag"`, etc.
  */
 entity: string, 
 /**
@@ -19,7 +19,7 @@ entity: string,
  */
 id: bigint, } } | { "kind": "not_found_by_name", "message": { 
 /**
- * Entity kind: "frame_tag", "animation", etc.
+ * Entity kind: `"frame_tag"`, `"animation"`, etc.
  */
 entity: string, 
 /**
