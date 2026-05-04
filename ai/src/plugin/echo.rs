@@ -127,7 +127,9 @@ impl Verb for EchoVerb {
         cancel: CancellationToken,
     ) -> Result<VerbOutput> {
         let started = std::time::Instant::now();
-        let inputs: EchoInputs = inputs.deserialize()?;
+        // Consume the JSON value: the payload carries pixel bytes that
+        // would otherwise be cloned by the borrowed deserialiser.
+        let inputs: EchoInputs = inputs.deserialize_owned()?;
         let sprite_id = ctx.require_sprite_id()?;
         let active_frame = ctx.active_frame.unwrap_or(FrameIndex::new(0));
 

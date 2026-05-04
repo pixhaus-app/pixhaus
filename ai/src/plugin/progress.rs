@@ -65,8 +65,13 @@ pub struct CostUpdate {
 /// One progress event a verb emits while running.
 ///
 /// Events are descriptive: the receiver renders them however it likes.
-/// New variants are additive so consumers built against an older
-/// protocol can ignore unknown kinds gracefully.
+/// New variants are additive within a Pixhaus build — every consumer
+/// is compiled against the same enum, so a verb that emits a new
+/// variant always reaches a runtime that knows the variant. Across
+/// the IPC boundary, the wire form is `#[serde(tag = "kind")]`;
+/// unknown tags surface as a deserialisation error rather than being
+/// silently dropped, so a UI built against an older protocol is
+/// expected to upgrade in lockstep with the runtime.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum VerbProgressEvent {

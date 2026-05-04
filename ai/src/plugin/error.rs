@@ -49,13 +49,6 @@ pub enum VerbError {
     #[error("verb invocation was cancelled")]
     Cancelled,
 
-    /// A verb declared `cancellable: false` in its descriptor but the
-    /// caller invoked it with a cancellation token that fired anyway.
-    /// The runtime surfaces this so the UI can disable the cancel
-    /// button rather than silently ignore the signal.
-    #[error("verb `{0}` is not cancellable")]
-    NotCancellable(VerbId),
-
     /// The verb-side worker panicked or was aborted by the executor.
     #[error("verb worker terminated abnormally: {0}")]
     Aborted(String),

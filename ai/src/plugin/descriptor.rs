@@ -197,8 +197,6 @@ impl CostEstimate {
 pub enum EffectKind {
     /// Adds a new layer (and optionally cels) to the active sprite.
     AddLayer,
-    /// Replaces the contents of an existing layer.
-    ReplaceLayer,
     /// Adds one or more cels to existing layers.
     AddCels,
     /// Replaces existing cel pixel data.

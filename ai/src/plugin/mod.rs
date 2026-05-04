@@ -10,8 +10,10 @@
 //!   snapshot of the project — palette, layer stack, active frame,
 //!   reference images, project style references.
 //! - **Inputs.** [`inputs::VerbInputs`] carries the verb-specific
-//!   payload as JSON, validated against the descriptor's
-//!   `input_schema`.
+//!   payload as JSON. The descriptor's `input_schema` is the contract
+//!   the UI consults when generating forms; the runtime does not
+//!   enforce it. Verbs implement [`verb::Verb::validate`] for the
+//!   checks that matter.
 //! - **Invocation.** [`verb::Verb::invoke`] runs the verb, returning a
 //!   [`output::VerbOutput`] that describes effects to apply on commit.
 //! - **Streaming.** Verbs emit [`progress::VerbProgressEvent`]s

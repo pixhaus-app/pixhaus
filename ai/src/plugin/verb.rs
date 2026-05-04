@@ -24,7 +24,12 @@ use super::inputs::VerbInputs;
 use super::output::VerbOutput;
 use super::progress::VerbProgress;
 
-/// The static-method-only trait every AI verb implements.
+/// The dyn-safe trait every AI verb implements.
+///
+/// All methods take `&self`; the runtime stores verbs as
+/// `Arc<dyn Verb>` and dispatches calls across worker threads, so
+/// implementations carry their own state behind shared ownership
+/// rather than relying on `&mut self`.
 ///
 /// # Lifecycle
 ///
@@ -48,8 +53,14 @@ use super::progress::VerbProgress;
 /// Verbs that declare `cancellable: true` in their descriptor are
 /// expected to observe `cancel.is_cancelled()` between expensive
 /// operations and return [`super::error::VerbError::Cancelled`] when
-/// it fires. The runtime applies a hard timeout if the verb ignores
-/// cancellation indefinitely; ignoring it is a bug.
+/// it fires. The runtime double-checks the token after the verb
+/// returns: a verb that returns `Ok(_)` while the token is set has
+/// its result overridden with `Err(Cancelled)` so a half-finished
+/// preview never reaches the undo stack. There is no
+/// runtime-enforced timeout — a verb that ignores cancellation
+/// indefinitely will keep its task slot until it returns. Ignoring
+/// the token is a bug; verb authors are expected to wire it through
+/// any `select!` that awaits a backend.
 ///
 /// # Threading
 ///

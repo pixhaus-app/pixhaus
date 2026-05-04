@@ -54,12 +54,24 @@ impl VerbInputs {
         self.0
     }
 
-    /// Deserialises the payload into a verb-specific type. Wraps the
+    /// Deserialises the payload into a verb-specific type. Clones the
+    /// inner JSON value, so for large payloads (anything carrying
+    /// `PixelData` or other byte buffers) prefer
+    /// [`Self::deserialize_owned`] from inside `invoke`. Wraps the
     /// underlying serde error as
     /// [`super::error::VerbError::Schema`] so callers can route
     /// validation failures through a single error variant.
     pub fn deserialize<T: for<'de> Deserialize<'de>>(&self) -> Result<T> {
         serde_json::from_value(self.0.clone()).map_err(|e| VerbError::Schema(e.to_string()))
+    }
+
+    /// Consuming counterpart to [`Self::deserialize`]. The verb's
+    /// [`super::verb::Verb::invoke`] receives `VerbInputs` by value,
+    /// so the typical hot path can hand the JSON straight to serde
+    /// without the deep clone — meaningful when the payload carries a
+    /// `PixelData` chunk in the megabyte range.
+    pub fn deserialize_owned<T: for<'de> Deserialize<'de>>(self) -> Result<T> {
+        serde_json::from_value(self.0).map_err(|e| VerbError::Schema(e.to_string()))
     }
 }
 
@@ -102,5 +114,23 @@ mod tests {
         let i = VerbInputs::new(serde_json::json!({"x": 1}));
         let v = i.into_value();
         assert_eq!(v, serde_json::json!({"x": 1}));
+    }
+
+    #[test]
+    fn deserialize_owned_matches_borrowed() {
+        let s = Sample {
+            name: "echo".into(),
+            count: 7,
+        };
+        let i = VerbInputs::from_struct(&s).unwrap();
+        let owned: Sample = i.deserialize_owned().unwrap();
+        assert_eq!(owned, s);
+    }
+
+    #[test]
+    fn deserialize_owned_surfaces_schema_error() {
+        let i = VerbInputs::new(serde_json::json!({"name": 7}));
+        let err = i.deserialize_owned::<Sample>().unwrap_err();
+        assert!(matches!(err, VerbError::Schema(_)));
     }
 }

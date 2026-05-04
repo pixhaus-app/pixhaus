@@ -93,10 +93,13 @@ impl Default for PreviewIdMinter {
 ///
 /// `VerbPreview` is a value, not a handle. The runtime returns it from
 /// [`super::runtime::VerbInvocation::finish`] and the caller keeps
-/// hold until they decide what to do. Cloning is cheap because the
-/// big payload (pixel buffers in `output.effects`) is `Vec<u8>`-shaped
-/// and reference-counted by serde-side moves rather than at the value
-/// level — but the data still copies, so don't clone gratuitously.
+/// hold until they decide what to do. The big payload — pixel buffers
+/// inside `output.effects` and the optional `thumbnail` — is plain
+/// `Vec<u8>`, so cloning a preview deep-copies those bytes.
+/// `VerbPreview` is `Clone` for serde and IPC plumbing; in the normal
+/// flow callers should *move* the preview into
+/// [`super::runtime::VerbRuntime::commit`] or
+/// [`super::runtime::VerbRuntime::discard`] rather than clone it.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct VerbPreview {
     /// Unique ID for this preview within the session.

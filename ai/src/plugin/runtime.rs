@@ -38,7 +38,7 @@ use super::descriptor::{VerbDescriptor, VerbId};
 use super::error::{Result, VerbError};
 use super::inputs::VerbInputs;
 use super::output::VerbOutput;
-use super::preview::{PreviewIdMinter, VerbCommit, VerbDiscard, VerbPreview};
+use super::preview::{PreviewId, PreviewIdMinter, VerbCommit, VerbDiscard, VerbPreview};
 use super::progress::{VerbProgress, VerbProgressEvent};
 use super::verb::Verb;
 
@@ -156,7 +156,7 @@ impl VerbRuntime {
         id: &VerbId,
         ctx: VerbContext,
         inputs: VerbInputs,
-    ) -> Result<VerbInvocation<'_>> {
+    ) -> Result<VerbInvocation> {
         let verb = self
             .verbs
             .read()
@@ -169,6 +169,12 @@ impl VerbRuntime {
         let (progress, progress_rx) = VerbProgress::channel();
         let started = Instant::now();
         let descriptor = verb.descriptor().clone();
+        // Mint the preview ID up front so the invocation is `'static`
+        // and can be moved into a tokio::spawn or stored in app state
+        // without tying it to a borrow of the runtime. IDs are cheap
+        // (a single atomic increment); spending one on a verb that
+        // ends up failing is fine.
+        let preview_id = self.id_minter.issue();
 
         let cancel_for_task = cancel.clone();
         let join: JoinHandle<Result<VerbOutput>> = tokio::spawn(async move {
@@ -196,7 +202,7 @@ impl VerbRuntime {
             progress_rx,
             join,
             started,
-            id_minter: &self.id_minter,
+            preview_id,
         })
     }
 
@@ -243,37 +249,39 @@ impl VerbRuntime {
 
 /// Active invocation handle returned by [`VerbRuntime::invoke`].
 ///
-/// Holds:
+/// Owns everything it needs to drive the verb to completion:
 /// - a [`CancellationToken`] the caller fires to cancel the verb;
 /// - the receiver half of the progress channel;
 /// - the join handle of the spawned worker;
-/// - the start instant for elapsed-time bookkeeping.
-///
-/// The handle borrows the runtime's [`PreviewIdMinter`] so
-/// [`Self::finish`] can mint the resulting preview's ID without
-/// reaching back into the runtime. The borrow lives only as long as
-/// the invocation itself.
-pub struct VerbInvocation<'a> {
+/// - the start instant for elapsed-time bookkeeping;
+/// - a [`PreviewId`] minted at invocation time, so the handle is
+///   `'static` and can be moved into a tokio task or stored in
+///   long-lived app state without borrowing the runtime.
+pub struct VerbInvocation {
     verb_id: VerbId,
     descriptor: VerbDescriptor,
     cancel: CancellationToken,
     progress_rx: mpsc::Receiver<VerbProgressEvent>,
     join: JoinHandle<Result<VerbOutput>>,
     started: Instant,
-    id_minter: &'a PreviewIdMinter,
+    preview_id: PreviewId,
 }
 
-impl fmt::Debug for VerbInvocation<'_> {
+impl fmt::Debug for VerbInvocation {
+    /// Lists the fields useful for diagnostics; the descriptor, the
+    /// progress receiver, and the join handle are intentionally
+    /// omitted (verbose, not informative in a debug dump).
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("VerbInvocation")
             .field("verb", &self.verb_id)
+            .field("preview_id", &self.preview_id)
             .field("started", &self.started)
             .field("cancelled", &self.cancel.is_cancelled())
-            .finish()
+            .finish_non_exhaustive()
     }
 }
 
-impl VerbInvocation<'_> {
+impl VerbInvocation {
     /// Returns the verb ID this invocation is running.
     #[must_use]
     pub fn verb(&self) -> &VerbId {
@@ -284,6 +292,14 @@ impl VerbInvocation<'_> {
     #[must_use]
     pub fn descriptor(&self) -> &VerbDescriptor {
         &self.descriptor
+    }
+
+    /// Returns the [`PreviewId`] minted for this invocation. Stable
+    /// for the lifetime of the invocation; reused as the resulting
+    /// [`VerbPreview::id`].
+    #[must_use]
+    pub fn preview_id(&self) -> PreviewId {
+        self.preview_id
     }
 
     /// Fires the cancellation token. The verb observes it via
@@ -315,7 +331,7 @@ impl VerbInvocation<'_> {
         let Self {
             join,
             started,
-            id_minter,
+            preview_id,
             verb_id,
             ..
         } = self;
@@ -325,7 +341,6 @@ impl VerbInvocation<'_> {
             Ok(inner) => inner?,
             Err(join_err) => return Err(VerbError::Aborted(join_err.to_string())),
         };
-        let preview_id = id_minter.issue();
         Ok(VerbPreview::new(preview_id, verb_id, output, elapsed))
     }
 }

@@ -393,7 +393,6 @@ to prevent a partial preview from sneaking onto the undo stack.
 | `MissingContext(&'static str)` | `require_sprite` / `require_active_layer` etc. |
 | `UnsupportedCapability { verb, capability }` | Configured backend lacks a needed capability. |
 | `Cancelled` | Token fired before a preview was produced. |
-| `NotCancellable(VerbId)` | Caller cancelled a verb that declared `cancellable: false`. |
 | `Aborted(String)` | Worker panicked or was aborted by the executor. |
 | `Backend(String)` | Catch-all for backend-side failures. |
 | `Payload(serde_json::Error)` | (De)serialisation issue. |
