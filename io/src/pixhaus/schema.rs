@@ -114,10 +114,18 @@ impl PixelBufferEntry {
         PixelBufferId::new(self.id)
     }
 
-    /// Returns the expected byte length for a packed buffer (`width * bytes_per_channel`
-    /// per row). Actual `pixels.len()` may be larger when `stride > width * bpc`.
+    /// Returns the expected byte length for a packed buffer (`width *
+    /// bytes_per_pixel` per row). Actual `pixels.len()` may be larger
+    /// when `stride > width * bpp`.
+    ///
+    /// Widens to `u64` before multiplying so large-but-valid dimensions
+    /// (`width = u32::MAX, height = u32::MAX`) don't wrap silently in
+    /// release builds; the result then casts to `usize`, saturating to
+    /// `usize::MAX` on 32-bit targets where the product exceeds the
+    /// addressable range.
     #[must_use]
-    pub fn packed_len(&self, bytes_per_channel: u32) -> usize {
-        (self.width * self.height * bytes_per_channel) as usize
+    pub fn packed_len(&self, bytes_per_pixel: u32) -> usize {
+        let bytes = u64::from(self.width) * u64::from(self.height) * u64::from(bytes_per_pixel);
+        usize::try_from(bytes).unwrap_or(usize::MAX)
     }
 }

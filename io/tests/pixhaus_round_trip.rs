@@ -15,7 +15,7 @@
 )]
 
 use pixhaus_core::fixtures::sample_project;
-use pixhaus_core::project::{FeatureFlags, PixelBufferId, Project};
+use pixhaus_core::project::{FeatureFlags, PixelBufferId, Project, SchemaVersion};
 use pixhaus_io::pixhaus::{
     PixelBufferEntry, PixhausArchive, decode, decode_from_file, encode, encode_to_file,
 };
@@ -93,11 +93,14 @@ fn round_trip(#[case] archive: PixhausArchive) {
     let encoded = encode(&archive).expect("encode failed");
     let decoded = decode(&encoded).expect("decode failed");
 
-    assert_eq!(decoded.project.metadata.name, archive.project.metadata.name,);
-    assert_eq!(decoded.project.feature_flags, archive.project.feature_flags);
-    assert_eq!(decoded.project.sprites.len(), archive.project.sprites.len());
-    assert_eq!(decoded.buffers.len(), archive.buffers.len());
+    // Full structural equality. sample_project covers every B2 type, so
+    // a regression in any field (layer kinds, cel data, frame tags,
+    // animations, palettes, slices, tilesets, selection state) surfaces
+    // here rather than slipping through a partial assertion list.
+    assert_eq!(decoded.project, archive.project);
 
+    // Buffers are not part of Project's PartialEq; assert separately.
+    assert_eq!(decoded.buffers.len(), archive.buffers.len());
     for (orig, back) in archive.buffers.iter().zip(decoded.buffers.iter()) {
         assert_eq!(back.id, orig.id);
         assert_eq!(back.width, orig.width);
@@ -231,6 +234,66 @@ fn buffer_lookup_returns_none_for_missing_id() {
     assert!(full_archive().buffer(PixelBufferId::new(9999)).is_none());
 }
 
+// ── safety guards: decompression cap, schema version, write-time flag check
+
+#[test]
+fn rejects_decompression_bomb() {
+    // 256 MiB + 1 byte of zeros compresses to a few KB but exceeds the
+    // MAX_DECOMPRESSED_BODY cap on decode. Synthesising the file
+    // directly (rather than via encode) keeps the test fast and lets
+    // us bypass the now-stricter encode flag validation.
+    const CAP: usize = 256 * 1024 * 1024;
+    let bomb = vec![0u8; CAP + 1];
+    let compressed = zstd::encode_all(bomb.as_slice(), 3).expect("compress");
+
+    let mut bytes = Vec::with_capacity(28 + compressed.len());
+    bytes.extend_from_slice(b"PIXHAUS\0"); // magic
+    bytes.extend_from_slice(&1u16.to_be_bytes()); // format major
+    bytes.extend_from_slice(&0u16.to_be_bytes()); // format minor
+    bytes.extend_from_slice(&0u32.to_be_bytes()); // feature_flags
+    bytes.extend_from_slice(&0u32.to_be_bytes()); // required_flags
+    bytes.extend_from_slice(&(compressed.len() as u64).to_be_bytes());
+    bytes.extend_from_slice(&compressed);
+
+    let err = decode(&bytes).unwrap_err();
+    assert!(matches!(
+        err,
+        pixhaus_io::Error::DecompressedTooLarge { .. },
+    ));
+}
+
+#[test]
+fn rejects_incompatible_schema_version() {
+    let mut project = Project::new("future");
+    // Bump the major past anything this build supports.
+    project.schema_version = SchemaVersion {
+        major: 99,
+        minor: 0,
+    };
+    let archive = PixhausArchive::new(project);
+    let bytes = encode(&archive).expect("encode failed");
+
+    let err = decode(&bytes).unwrap_err();
+    match err {
+        pixhaus_io::Error::UnsupportedSchemaVersion { major, .. } => {
+            assert_eq!(major, 99);
+        }
+        other => panic!("expected UnsupportedSchemaVersion, got: {other:?}"),
+    }
+}
+
+#[test]
+fn write_rejects_unknown_feature_flags() {
+    let mut archive = empty_archive();
+    // Set a flag bit this build doesn't define.
+    archive.project.feature_flags = FeatureFlags(1 << 31);
+    let err = encode(&archive).unwrap_err();
+    assert!(matches!(
+        err,
+        pixhaus_io::Error::UnknownRequiredFeatures { .. },
+    ));
+}
+
 // ── filesystem helpers exercise encode_to_file / decode_from_file ──────────
 
 #[test]
@@ -249,13 +312,17 @@ fn fs_round_trip_full_archive() {
     let loaded = decode_from_file(&path).expect("decode_from_file should succeed");
     let _ = std::fs::remove_file(&path);
 
-    // Project structurally matches; buffer payloads round-trip.
-    assert_eq!(loaded.project.metadata.name, archive.project.metadata.name);
+    // Same depth as the in-memory round_trip: full structural equality
+    // on Project plus per-buffer byte equality. Catches regressions in
+    // encode_to_file/decode_from_file that the in-memory codec wouldn't
+    // surface (path handling, tempfile rename, file size guard).
+    assert_eq!(loaded.project, archive.project);
     assert_eq!(loaded.buffers.len(), archive.buffers.len());
     for (a, b) in archive.buffers.iter().zip(loaded.buffers.iter()) {
         assert_eq!(a.id, b.id);
         assert_eq!(a.width, b.width);
         assert_eq!(a.height, b.height);
+        assert_eq!(a.stride, b.stride);
         assert_eq!(a.pixels, b.pixels);
     }
 }

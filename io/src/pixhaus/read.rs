@@ -109,9 +109,25 @@ pub fn decode(data: &[u8]) -> Result<PixhausArchive> {
 
 /// Reads a `.pixhaus` file from `path` and decodes it.
 ///
+/// Cheap-rejects oversized files via metadata before reading any
+/// bytes: any file larger than the schema's `MAX_DECOMPRESSED_BODY`
+/// (256 MiB) plus the 28-byte header cannot fit a valid archive
+/// (compressed body is always smaller than decompressed). This keeps
+/// a maliciously huge file from OOM-ing the process before the
+/// in-memory format guards run.
+///
 /// This is a blocking call; wrap in `tokio::task::spawn_blocking` when
 /// calling from async context.
 pub fn decode_from_file(path: impl AsRef<Path>) -> Result<PixhausArchive> {
+    let path = path.as_ref();
+    let metadata = std::fs::metadata(path)?;
+    let file_len = metadata.len();
+    let max_file_len = MAX_DECOMPRESSED_BODY + HEADER_LEN as u64;
+    if file_len > max_file_len {
+        return Err(Error::DecompressedTooLarge {
+            limit: MAX_DECOMPRESSED_BODY,
+        });
+    }
     let bytes = std::fs::read(path)?;
     decode(&bytes)
 }

@@ -102,7 +102,7 @@ zstd level 3 (the library default) is used when writing. Readers use whatever le
 - `ColorMode::Grayscale` — 1 byte per pixel (luminance)
 - `ColorMode::Indexed` — 1 byte per pixel (palette index)
 
-Stride may exceed `width * bytes_per_channel` for alignment. Readers must step by `stride` bytes per row, not `width * bpc`.
+Stride may exceed `width * bytes_per_pixel` for alignment. Readers must step by `stride` bytes per row, not `width * bpp`. (`bytes_per_pixel` is `4` for RGBA, `1` for grayscale or indexed — whichever the sprite's color mode implies.)
 
 A `PixelBufferEntry` whose `pixels` vec is empty is valid and means "no content" (e.g. an empty reference layer). Zero-sized buffers are still indexed so the project's IDs remain stable.
 
