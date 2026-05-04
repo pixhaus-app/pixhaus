@@ -149,6 +149,62 @@ impl BackendCapabilities {
     pub const fn is_empty(self) -> bool {
         self.0 == 0
     }
+
+    /// Returns the set bits as a `Vec<&'static str>` of capability
+    /// names, in declaration order.
+    ///
+    /// Used by [`std::fmt::Display`] and by error messages so
+    /// rendered output reads `TEXT_GENERATION, VISION_LANGUAGE`
+    /// instead of an opaque hex bitfield like `0x00000003`.
+    /// Unknown bits (set in `self` but not enumerated below) are
+    /// reported as `"UNKNOWN(<bit>)"` so they're still visible.
+    #[must_use]
+    pub fn names(self) -> Vec<&'static str> {
+        // Listed in bit order so the rendered output is stable.
+        const KNOWN: &[(BackendCapabilities, &str)] = &[
+            (BackendCapabilities::TEXT_GENERATION, "TEXT_GENERATION"),
+            (BackendCapabilities::VISION_LANGUAGE, "VISION_LANGUAGE"),
+            (BackendCapabilities::IMAGE_GENERATION, "IMAGE_GENERATION"),
+            (BackendCapabilities::IMAGE_EDIT, "IMAGE_EDIT"),
+            (BackendCapabilities::IMAGE_INPAINT, "IMAGE_INPAINT"),
+            (
+                BackendCapabilities::FRAME_INTERPOLATION,
+                "FRAME_INTERPOLATION",
+            ),
+            (BackendCapabilities::POSE_ESTIMATION, "POSE_ESTIMATION"),
+            (BackendCapabilities::SEGMENTATION, "SEGMENTATION"),
+            (BackendCapabilities::AUDIO_ANALYSIS, "AUDIO_ANALYSIS"),
+            (BackendCapabilities::STYLE_TRAINING, "STYLE_TRAINING"),
+            (BackendCapabilities::TOOL_USE, "TOOL_USE"),
+            (BackendCapabilities::EMBEDDINGS, "EMBEDDINGS"),
+            (BackendCapabilities::VIEW_SYNTHESIS, "VIEW_SYNTHESIS"),
+        ];
+        let mut names = Vec::new();
+        let mut covered: u32 = 0;
+        for &(bit, name) in KNOWN {
+            if self.contains(bit) {
+                names.push(name);
+                covered |= bit.0;
+            }
+        }
+        // Surface any unrecognised bits so a future capability that
+        // hasn't been added to KNOWN doesn't disappear silently.
+        let leftover = self.0 & !covered;
+        if leftover != 0 {
+            names.push("UNKNOWN");
+        }
+        names
+    }
+}
+
+impl std::fmt::Display for BackendCapabilities {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        if self.is_empty() {
+            return f.write_str("none");
+        }
+        let names = self.names();
+        f.write_str(&names.join(", "))
+    }
 }
 
 /// Coarse latency / cost expectations a verb advertises in advance.

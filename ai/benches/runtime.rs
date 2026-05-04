@@ -18,7 +18,9 @@
     missing_docs
 )]
 
-use criterion::{BenchmarkId, Criterion, criterion_group, criterion_main};
+use std::any::Any;
+
+use criterion::{BatchSize, BenchmarkId, Criterion, criterion_group, criterion_main};
 use pixhaus_ai::plugin::{
     BackendCapabilities, CostEstimate, EchoVerb, EffectKind, InferenceBackend, PixelData,
     VerbContext, VerbDescriptor, VerbId, VerbInputs, VerbOutput, VerbProgress, VerbRuntime,
@@ -105,6 +107,9 @@ struct StubBackend {
 }
 
 impl InferenceBackend for StubBackend {
+    fn as_any(&self) -> &dyn Any {
+        self
+    }
     fn id(&self) -> &str {
         self.id
     }
@@ -120,27 +125,36 @@ impl InferenceBackend for StubBackend {
 
 /// Measures the overhead of `invoke → finish` for a no-op verb with no
 /// backend requirement (no capability check).
+///
+/// `VerbId` is hoisted outside the loop and `iter_batched` constructs
+/// `VerbContext` + `VerbInputs` in the unmeasured setup phase, so the
+/// reported time reflects only the runtime's invoke+finish path — not
+/// the cost of building the call-site arguments.
 fn bench_dispatch_no_backend(c: &mut Criterion) {
     let rt = Runtime::new().unwrap();
     let runtime = VerbRuntime::new();
     runtime
         .register(NoopVerb::new("noop", BackendCapabilities::empty()))
         .unwrap();
+    let id = VerbId::new("noop");
 
     c.bench_function("dispatch/no_backend", |b| {
-        b.iter(|| {
-            rt.block_on(async {
-                let inv = runtime
-                    .invoke(&VerbId::new("noop"), ctx_with_sprite(), VerbInputs::empty())
-                    .unwrap();
-                inv.finish().await.unwrap();
-            });
-        });
+        b.iter_batched(
+            || (ctx_with_sprite(), VerbInputs::empty()),
+            |(ctx, inputs)| {
+                rt.block_on(async {
+                    let inv = runtime.invoke(&id, ctx, inputs).unwrap();
+                    inv.finish().await.unwrap();
+                });
+            },
+            BatchSize::SmallInput,
+        );
     });
 }
 
 /// Measures `invoke → finish` when a backend is registered and
-/// capability selection is required.
+/// capability selection is required. Same hoisting rationale as
+/// `bench_dispatch_no_backend`.
 fn bench_dispatch_with_backend(c: &mut Criterion) {
     let rt = Runtime::new().unwrap();
     let runtime = VerbRuntime::new();
@@ -159,20 +173,19 @@ fn bench_dispatch_with_backend(c: &mut Criterion) {
             BackendCapabilities::TEXT_GENERATION,
         ))
         .unwrap();
+    let id = VerbId::new("needs-text");
 
     c.bench_function("dispatch/with_backend", |b| {
-        b.iter(|| {
-            rt.block_on(async {
-                let inv = runtime
-                    .invoke(
-                        &VerbId::new("needs-text"),
-                        ctx_with_sprite(),
-                        VerbInputs::empty(),
-                    )
-                    .unwrap();
-                inv.finish().await.unwrap();
-            });
-        });
+        b.iter_batched(
+            || (ctx_with_sprite(), VerbInputs::empty()),
+            |(ctx, inputs)| {
+                rt.block_on(async {
+                    let inv = runtime.invoke(&id, ctx, inputs).unwrap();
+                    inv.finish().await.unwrap();
+                });
+            },
+            BatchSize::SmallInput,
+        );
     });
 }
 

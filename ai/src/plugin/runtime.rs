@@ -182,16 +182,17 @@ impl VerbRuntime {
     /// sorted on insertion so [`Self::select_backend`] is a linear scan
     /// without an extra sort pass.
     ///
-    /// Returns [`VerbError::AlreadyRegistered`] if a backend with the
-    /// same ID already exists. Variant re-use is intentional: the
-    /// variant carries a [`VerbId`] whose inner string equals the
-    /// backend ID.
+    /// Returns [`VerbError::BackendAlreadyRegistered`] if a backend
+    /// with the same id already exists. The dedicated variant (rather
+    /// than `AlreadyRegistered`, which is for verbs) lets backend-
+    /// management UIs surface "backend X already registered" instead of
+    /// "verb X already registered".
     pub fn register_backend<B: InferenceBackend>(&self, backend: B, priority: u16) -> Result<()> {
         let id_str = backend.id().to_owned();
         let arc: Arc<dyn InferenceBackend> = Arc::new(backend);
         let mut backends = self.backends.write();
         if backends.iter().any(|e| e.backend.id() == id_str) {
-            return Err(VerbError::AlreadyRegistered(VerbId::new(id_str)));
+            return Err(VerbError::BackendAlreadyRegistered(id_str));
         }
         debug!(id = %id_str, priority, "registering backend");
         // Insert in sorted position so the list stays ordered.
@@ -210,7 +211,7 @@ impl VerbRuntime {
     }
 
     /// Removes a backend from the registry. Returns
-    /// [`VerbError::NotFound`] if no such backend exists.
+    /// [`VerbError::BackendNotFound`] if no such backend exists.
     ///
     /// In-flight invocations that already received a reference to this
     /// backend continue to run — unregistering is shallow.
@@ -219,7 +220,7 @@ impl VerbRuntime {
         let pos = backends
             .iter()
             .position(|e| e.backend.id() == id)
-            .ok_or_else(|| VerbError::NotFound(VerbId::new(id)))?;
+            .ok_or_else(|| VerbError::BackendNotFound(id.to_owned()))?;
         debug!(id, "unregistered backend");
         backends.remove(pos);
         Ok(())
@@ -251,24 +252,48 @@ impl VerbRuntime {
     /// Selects the highest-priority backend that is available *and*
     /// whose capabilities are a superset of `required`.
     ///
-    /// Returns [`VerbError::UnsupportedCapability`] if no backend
-    /// qualifies. The search is linear over the priority-sorted list;
-    /// for the expected registry size (< 10 backends) a sorted scan is
-    /// faster than a heap.
+    /// Distinguishes two failure modes the UI needs to render
+    /// differently:
+    ///
+    /// - [`VerbError::UnsupportedCapability`] — no registered backend
+    ///   advertises the required capabilities at all. The user must
+    ///   configure a suitable backend.
+    /// - [`VerbError::BackendUnavailable`] — at least one registered
+    ///   backend matches the capability set, but every match reports
+    ///   `is_available() == false`. The user should start the backend
+    ///   (e.g. launch the Ollama process) and retry.
+    ///
+    /// The search is linear over the priority-sorted list; for the
+    /// expected registry size (< 10 backends) a sorted scan is faster
+    /// than a heap.
     pub fn select_backend(
         &self,
         required: BackendCapabilities,
         verb: &VerbId,
     ) -> Result<Arc<dyn InferenceBackend>> {
-        self.backends
-            .read()
+        let backends = self.backends.read();
+        // First pass: an available backend that matches.
+        if let Some(entry) = backends
             .iter()
             .find(|e| e.backend.is_available() && e.backend.capabilities().contains(required))
-            .map(|e| e.backend.clone())
-            .ok_or_else(|| VerbError::UnsupportedCapability {
-                verb: verb.clone(),
-                required: required.0,
-            })
+        {
+            return Ok(entry.backend.clone());
+        }
+        // Second pass: any backend matches but isn't available — surface
+        // the highest-priority match's id so the UI can guide the user.
+        if let Some(entry) = backends
+            .iter()
+            .find(|e| e.backend.capabilities().contains(required))
+        {
+            return Err(VerbError::BackendUnavailable {
+                id: entry.backend.id().to_owned(),
+            });
+        }
+        // No registered backend matches at all.
+        Err(VerbError::UnsupportedCapability {
+            verb: verb.clone(),
+            required,
+        })
     }
 
     // ── Dispatch ────────────────────────────────────────────────────────────
@@ -867,6 +892,9 @@ mod tests {
     }
 
     impl InferenceBackend for StubBackend {
+        fn as_any(&self) -> &dyn std::any::Any {
+            self
+        }
         fn id(&self) -> &str {
             self.id
         }
@@ -919,7 +947,12 @@ mod tests {
         let err = rt
             .register_backend(caps_backend("b", BackendCapabilities::empty()), 1)
             .unwrap_err();
-        assert!(matches!(err, VerbError::AlreadyRegistered(_)));
+        // Dedicated variant — the backend-management UI must distinguish
+        // backend duplicates from verb duplicates.
+        assert!(
+            matches!(&err, VerbError::BackendAlreadyRegistered(id) if id == "b"),
+            "expected BackendAlreadyRegistered, got {err:?}"
+        );
     }
 
     #[test]
@@ -931,7 +964,10 @@ mod tests {
         assert_eq!(rt.backend_count(), 0);
 
         let err = rt.unregister_backend("b").unwrap_err();
-        assert!(matches!(err, VerbError::NotFound(_)));
+        assert!(
+            matches!(&err, VerbError::BackendNotFound(id) if id == "b"),
+            "expected BackendNotFound, got {err:?}"
+        );
     }
 
     #[test]
@@ -1007,6 +1043,33 @@ mod tests {
             .select_backend(BackendCapabilities::IMAGE_GENERATION, &VerbId::new("v"))
             .unwrap_err();
         assert!(matches!(err, VerbError::UnsupportedCapability { .. }));
+    }
+
+    #[test]
+    fn select_backend_distinguishes_unavailable_from_unsupported() {
+        // Regression for thread 2: when the only registered backend
+        // matching the required capabilities is unavailable, the runtime
+        // must surface `BackendUnavailable` (so the UI can prompt the
+        // user to start the backend) instead of `UnsupportedCapability`
+        // (which would imply no backend exists at all).
+        let rt = VerbRuntime::new();
+        rt.register_backend(
+            StubBackend {
+                id: "ollama",
+                caps: BackendCapabilities::TEXT_GENERATION,
+                available: false,
+            },
+            0,
+        )
+        .unwrap();
+
+        let err = rt
+            .select_backend(BackendCapabilities::TEXT_GENERATION, &VerbId::new("v"))
+            .unwrap_err();
+        assert!(
+            matches!(&err, VerbError::BackendUnavailable { id } if id == "ollama"),
+            "expected BackendUnavailable, got {err:?}"
+        );
     }
 
     #[tokio::test]

@@ -187,12 +187,23 @@ pub struct VerbContext {
     pub style_refs: Vec<StyleReference>,
     /// Backend selected by the runtime for this invocation.
     ///
-    /// Set by [`super::runtime::VerbRuntime::invoke`] after capability
-    /// checking. `None` when the verb's `required_capabilities` are
-    /// empty (local CPU only) or when no backends are registered.
+    /// Contract enforced by [`super::runtime::VerbRuntime::invoke`]:
     ///
-    /// Verbs that need a specific inference method downcast:
-    /// `ctx.backend.as_deref().and_then(|b| (b as &dyn Any).downcast_ref::<MyBackend>())`.
+    /// - When the verb's `required_capabilities` is empty (local CPU
+    ///   only, like `EchoVerb`), this is `None`.
+    /// - When the verb declares any required capabilities, this is
+    ///   guaranteed to be `Some(_)` by the time the verb body runs.
+    ///   Backend selection happens before spawn; if no registered
+    ///   backend matches, `invoke` returns
+    ///   [`super::error::VerbError::UnsupportedCapability`] or
+    ///   [`super::error::VerbError::BackendUnavailable`] without ever
+    ///   reaching the verb. So a verb that declared required
+    ///   capabilities can `expect(...)` on this field without further
+    ///   handling.
+    ///
+    /// Verbs that need a specific inference method downcast via
+    /// [`super::backend::InferenceBackend::as_any`]:
+    /// `ctx.backend.as_ref().and_then(|b| b.as_any().downcast_ref::<MyBackend>())`.
     /// That downcast lives in the verb, not in the protocol.
     #[serde(skip, default)]
     pub backend: Option<Arc<dyn InferenceBackend>>,
@@ -489,6 +500,9 @@ mod tests {
         #[derive(Debug)]
         struct Stub;
         impl InferenceBackend for Stub {
+            fn as_any(&self) -> &dyn std::any::Any {
+                self
+            }
             fn id(&self) -> &'static str {
                 "stub"
             }
@@ -515,6 +529,9 @@ mod tests {
         #[derive(Debug)]
         struct Stub;
         impl InferenceBackend for Stub {
+            fn as_any(&self) -> &dyn std::any::Any {
+                self
+            }
             fn id(&self) -> &'static str {
                 "stub"
             }

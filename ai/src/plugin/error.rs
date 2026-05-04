@@ -8,7 +8,7 @@
 
 use thiserror::Error;
 
-use super::descriptor::VerbId;
+use super::descriptor::{BackendCapabilities, VerbId};
 
 /// Closed set of verb-protocol failures.
 ///
@@ -36,22 +36,45 @@ pub enum VerbError {
     MissingContext(&'static str),
 
     /// No registered backend satisfies all of the capabilities the verb
-    /// requires. `required` is the full bitfield from the descriptor.
-    #[error("no backend satisfies capabilities {required:#010x} required by verb `{verb}`")]
+    /// requires. `required` is the full capability set from the descriptor.
+    ///
+    /// Distinct from [`Self::BackendUnavailable`]: this variant means
+    /// no backend in the registry advertises the capabilities at all.
+    /// `BackendUnavailable` means a matching backend exists but is
+    /// down; the UI surfaces them differently (the former asks the
+    /// user to configure a backend, the latter to start one).
+    #[error("no backend satisfies capabilities [{required}] required by verb `{verb}`")]
     UnsupportedCapability {
         /// The verb whose descriptor declared the required capabilities.
         verb: VerbId,
-        /// The unsatisfied capability bitfield.
-        required: u32,
+        /// The unsatisfied capability set, rendered by name in the
+        /// error message via [`BackendCapabilities`]'s `Display` impl.
+        required: BackendCapabilities,
     },
 
-    /// A backend that was selected for the verb reported it is not
-    /// currently reachable (e.g. Ollama process is down).
-    #[error("backend `{id}` is not available")]
+    /// One or more backends advertise the required capabilities but
+    /// none are currently reachable (e.g. Ollama process is down,
+    /// API key revoked). The string is the id of the highest-priority
+    /// matching backend.
+    #[error("backend `{id}` advertises the required capabilities but is not currently available")]
     BackendUnavailable {
-        /// Identifier of the backend that is down.
+        /// Identifier of the backend that matched but is down.
         id: String,
     },
+
+    /// A backend with this id is already registered.
+    ///
+    /// Distinct from [`Self::AlreadyRegistered`] (which is for verbs)
+    /// so backend-management UIs surface the right object type.
+    #[error("backend `{0}` is already registered")]
+    BackendAlreadyRegistered(String),
+
+    /// No backend with this id is registered.
+    ///
+    /// Distinct from [`Self::NotFound`] (which is for verbs) so
+    /// backend-management UIs surface the right object type.
+    #[error("no backend registered with id `{0}`")]
+    BackendNotFound(String),
 
     /// The invocation was cancelled before producing a preview.
     #[error("verb invocation was cancelled")]
@@ -112,13 +135,22 @@ mod tests {
     }
 
     #[test]
-    fn unsupported_capability_renders_bits() {
+    fn unsupported_capability_renders_named_bits() {
+        // Regression for thread 3: prior message rendered the
+        // capability mask as `0x00000024`. Users couldn't tell which
+        // capabilities were missing. Now the names appear directly.
         let err = VerbError::UnsupportedCapability {
             verb: VerbId::new("pixhaus.builtin.inbetween"),
-            required: 0x0000_0024, // IMAGE_GENERATION | FRAME_INTERPOLATION
+            required: BackendCapabilities::IMAGE_GENERATION
+                .union(BackendCapabilities::FRAME_INTERPOLATION),
         };
         let msg = err.to_string();
-        assert!(msg.contains("0x00000024"));
+        assert!(msg.contains("IMAGE_GENERATION"), "msg = {msg}");
+        assert!(msg.contains("FRAME_INTERPOLATION"), "msg = {msg}");
+        assert!(
+            !msg.contains("0x"),
+            "named output must replace the hex bitfield: {msg}"
+        );
         assert!(msg.contains("inbetween"));
     }
 
@@ -127,6 +159,24 @@ mod tests {
         let err = VerbError::BackendUnavailable {
             id: "ollama.llama3".into(),
         };
-        assert_eq!(err.to_string(), "backend `ollama.llama3` is not available");
+        assert!(err.to_string().contains("ollama.llama3"));
+    }
+
+    #[test]
+    fn backend_already_registered_renders_id() {
+        let err = VerbError::BackendAlreadyRegistered("anthropic.claude".into());
+        assert_eq!(
+            err.to_string(),
+            "backend `anthropic.claude` is already registered"
+        );
+    }
+
+    #[test]
+    fn backend_not_found_renders_id() {
+        let err = VerbError::BackendNotFound("ollama.llama3".into());
+        assert_eq!(
+            err.to_string(),
+            "no backend registered with id `ollama.llama3`"
+        );
     }
 }

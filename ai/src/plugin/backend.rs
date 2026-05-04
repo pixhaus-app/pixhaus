@@ -43,6 +43,8 @@
 //! New methods on `InferenceBackend` itself require a semver minor bump of
 //! `pixhaus-ai`.
 
+use std::any::Any;
+
 use serde::{Deserialize, Serialize};
 
 use super::descriptor::{BackendCapabilities, CostEstimate};
@@ -61,12 +63,40 @@ use super::descriptor::{BackendCapabilities, CostEstimate};
 /// generic parameters, so the runtime can store `Arc<dyn
 /// InferenceBackend>`.
 ///
+/// # Downcasting to a concrete adapter
+///
+/// The trait extends [`Any`] and requires implementors to provide
+/// [`Self::as_any`] so verb code can recover the concrete adapter type
+/// from the `Arc<dyn InferenceBackend>` stored on
+/// [`super::context::VerbContext::backend`]:
+///
+/// ```ignore
+/// // In a verb that needs Anthropic-specific calls:
+/// if let Some(concrete) = ctx.backend
+///     .as_ref()
+///     .and_then(|b| b.as_any().downcast_ref::<AnthropicAdapter>())
+/// {
+///     concrete.call_messages_api(...)
+/// }
+/// ```
+///
+/// The `as_any` method must return `self` and is a single-line impl
+/// (`fn as_any(&self) -> &dyn Any { self }`). Keeping it explicit
+/// rather than a defaulted trait extension preserves object safety
+/// without pulling in a downcast helper crate.
+///
 /// # Debug
 ///
 /// Implementors must derive or implement [`std::fmt::Debug`] so
 /// `VerbContext` can derive `Debug`. A minimal impl that prints the
 /// backend's ID is usually sufficient.
-pub trait InferenceBackend: std::fmt::Debug + Send + Sync + 'static {
+pub trait InferenceBackend: Any + std::fmt::Debug + Send + Sync + 'static {
+    /// Returns `self` as a `&dyn Any` so verbs can downcast the
+    /// `Arc<dyn InferenceBackend>` from `VerbContext::backend` to a
+    /// concrete adapter type. Implementations are always
+    /// `fn as_any(&self) -> &dyn Any { self }`.
+    fn as_any(&self) -> &dyn Any;
+
     /// Stable machine-readable identifier for this backend instance.
     ///
     /// Recommended format: `"<provider>.<model>"` (e.g.
@@ -145,6 +175,9 @@ mod tests {
     }
 
     impl InferenceBackend for AlwaysOn {
+        fn as_any(&self) -> &dyn Any {
+            self
+        }
         fn id(&self) -> &str {
             self.id
         }
@@ -192,5 +225,23 @@ mod tests {
             caps: BackendCapabilities::empty(),
         };
         assert!(b.is_available());
+    }
+
+    #[test]
+    fn dyn_backend_downcasts_to_concrete_via_as_any() {
+        // Regression for thread 1: verbs must be able to recover the
+        // concrete adapter type from `Arc<dyn InferenceBackend>` so
+        // they can invoke provider-specific call surfaces. Without
+        // `Any` as a supertrait + an `as_any` method, the downcast
+        // documented in the trait docs would not compile.
+        use std::sync::Arc;
+        let concrete = Arc::new(AlwaysOn {
+            id: "test.concrete",
+            caps: BackendCapabilities::TEXT_GENERATION,
+        });
+        let dynamic: Arc<dyn InferenceBackend> = concrete.clone();
+        let recovered = dynamic.as_any().downcast_ref::<AlwaysOn>();
+        assert!(recovered.is_some());
+        assert_eq!(recovered.unwrap().id(), "test.concrete");
     }
 }
