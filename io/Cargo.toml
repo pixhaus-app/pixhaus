@@ -10,6 +10,7 @@ description = "Pixhaus file I/O: .pixhaus, .aseprite, .psd, png, .tmx"
 
 [dependencies]
 pixhaus-core = { path = "../core" }
+flate2.workspace = true
 image.workspace = true
 reqwest.workspace = true
 serde.workspace = true

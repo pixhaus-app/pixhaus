@@ -171,6 +171,87 @@ pub enum Error {
         /// The cap that was exceeded (`MAX_SHEET_DIM`).
         max: u32,
     },
+
+    // ── Aseprite (S08) ──────────────────────────────────────────────────────
+    /// The first two bytes of the frame magic word (offset 4 of every
+    /// frame header in an Aseprite file) do not match `0xF1FA`.
+    #[error("bad aseprite frame magic: expected 0xF1FA, found {found:#06x}")]
+    BadAsepriteFrameMagic {
+        /// Magic word read from the frame header.
+        found: u16,
+    },
+
+    /// The two magic bytes at offset 4 of an Aseprite header do not
+    /// match `0xA5E0`.
+    #[error("not an .aseprite file (expected magic 0xA5E0, found {found:#06x})")]
+    BadAsepriteMagic {
+        /// Magic word read from the file header.
+        found: u16,
+    },
+
+    /// The aseprite header declares a color depth this reader does not
+    /// support. Valid values per spec: 32 (RGBA), 16 (Grayscale), 8
+    /// (Indexed).
+    #[error("unsupported aseprite color depth: {bits} bits per pixel")]
+    UnsupportedColorDepth {
+        /// Bits-per-pixel value from the header.
+        bits: u16,
+    },
+
+    /// The aseprite layer chunk uses a child level that would underflow
+    /// the parent stack — i.e. claims to be a child of a layer that is
+    /// not present in the chunk stream.
+    #[error("aseprite layer hierarchy is malformed (child level {child} has no parent)")]
+    InvalidLayerHierarchy {
+        /// Child-level value from the offending layer chunk.
+        child: u16,
+    },
+
+    /// The aseprite cel chunk references a layer index that exceeds the
+    /// number of layer chunks parsed so far in the document.
+    #[error("aseprite cel references unknown layer index {layer}")]
+    UnknownCelLayer {
+        /// Layer index field on the cel chunk.
+        layer: u16,
+    },
+
+    /// The aseprite cel chunk declares a type the reader does not
+    /// understand. Valid values per spec: 0 (raw), 1 (linked), 2
+    /// (compressed image), 3 (compressed tilemap).
+    #[error("unsupported aseprite cel type: {kind}")]
+    UnsupportedCelType {
+        /// Cel-type field read from the chunk.
+        kind: u16,
+    },
+
+    /// The aseprite layer chunk declares a type the reader does not
+    /// understand. Valid values per spec: 0 (normal), 1 (group), 2
+    /// (tilemap).
+    #[error("unsupported aseprite layer type: {kind}")]
+    UnsupportedLayerType {
+        /// Layer-type field read from the chunk.
+        kind: u16,
+    },
+
+    /// A compressed cel or tileset chunk decompressed past the
+    /// per-chunk safety cap. Prevents a maliciously crafted zlib frame
+    /// from OOM-ing the reader before chunks downstream get a chance
+    /// to parse.
+    #[error("aseprite chunk decompressed past {limit}-byte safety cap")]
+    AsepriteChunkTooLarge {
+        /// Per-chunk cap that was breached, in bytes.
+        limit: u64,
+    },
+
+    /// The aseprite tilemap cel declares a tile bit width Pixhaus does
+    /// not support. The Aseprite spec only documents 32-bit tiles in
+    /// 1.3+; encountering any other value means a future or corrupt
+    /// extension.
+    #[error("unsupported aseprite tilemap tile width: {bits} bits per tile")]
+    UnsupportedTileBitWidth {
+        /// Bits-per-tile field from the tilemap cel header.
+        bits: u16,
+    },
 }
 
 /// Crate-local result alias.
