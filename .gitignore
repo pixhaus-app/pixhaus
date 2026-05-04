@@ -40,6 +40,9 @@ lerna-debug.log*
 *.swp
 *.swo
 *~
+# UPM convention: Samples~ directories use a tilde suffix to prevent Unity auto-import.
+# The *~ rule above would suppress them without this exception.
+!unity/Samples~/
 .DS_Store
 
 # Worktrees and ralph loop runtime
