@@ -88,8 +88,8 @@ pub fn pack_frames(frame_sizes: &[Size], strategy: &LayoutStrategy) -> Result<Pa
     }
 
     let result = match strategy {
-        LayoutStrategy::Grid { cols } => pack_grid(frame_sizes, *cols),
-        LayoutStrategy::ByRow => pack_by_row(frame_sizes),
+        LayoutStrategy::Grid { cols } => pack_grid(frame_sizes, *cols)?,
+        LayoutStrategy::ByRow => pack_by_row(frame_sizes)?,
         LayoutStrategy::Packed => pack_skyline(frame_sizes),
     };
 
@@ -107,42 +107,64 @@ pub fn pack_frames(frame_sizes: &[Size], strategy: &LayoutStrategy) -> Result<Pa
 // ── Strategy implementations ─────────────────────────────────────────────────
 
 /// Grid layout: uniform cell size = max trimmed width × max trimmed height.
+///
+/// Sheet dimensions use [`u32::checked_mul`] so a hostile or accidental
+/// input that would overflow `u32` produces [`Error::SheetTooLarge`]
+/// before any allocation, instead of wrapping past `MAX_SHEET_DIM` and
+/// panicking later in `RgbaImage::new`. Once the sheet-dim check passes,
+/// per-frame placement coordinates are bounded by the sheet dims and
+/// can't overflow themselves.
 #[allow(clippy::cast_possible_truncation)]
-fn pack_grid(frame_sizes: &[Size], cols: u32) -> PackResult {
+fn pack_grid(frame_sizes: &[Size], cols: u32) -> Result<PackResult> {
     let n = frame_sizes.len() as u32;
     let max_w = frame_sizes.iter().map(|s| s.width).max().unwrap_or(1);
     let max_h = frame_sizes.iter().map(|s| s.height).max().unwrap_or(1);
     let rows = n.div_ceil(cols);
+    let sheet_width = max_w.checked_mul(cols).ok_or(Error::SheetTooLarge {
+        width: u32::MAX,
+        height: max_h.saturating_mul(rows),
+        max: MAX_SHEET_DIM,
+    })?;
+    let sheet_height = max_h.checked_mul(rows).ok_or(Error::SheetTooLarge {
+        width: sheet_width,
+        height: u32::MAX,
+        max: MAX_SHEET_DIM,
+    })?;
     let placements = (0..n)
         .map(|i| FramePlacement {
             x: (i % cols) * max_w,
             y: (i / cols) * max_h,
         })
         .collect();
-    PackResult {
+    Ok(PackResult {
         placements,
-        sheet_width: max_w * cols,
-        sheet_height: max_h * rows,
-    }
+        sheet_width,
+        sheet_height,
+    })
 }
 
 /// `ByRow` layout: max trimmed width × cumulative trimmed heights.
-fn pack_by_row(frame_sizes: &[Size]) -> PackResult {
+///
+/// `y` accumulates with [`u32::checked_add`] so a frame list whose total
+/// height would overflow `u32` produces [`Error::SheetTooLarge`] before
+/// allocation rather than wrapping silently past `MAX_SHEET_DIM`.
+fn pack_by_row(frame_sizes: &[Size]) -> Result<PackResult> {
     let max_w = frame_sizes.iter().map(|s| s.width).max().unwrap_or(1);
+    let mut placements = Vec::with_capacity(frame_sizes.len());
     let mut y = 0u32;
-    let placements = frame_sizes
-        .iter()
-        .map(|s| {
-            let p = FramePlacement { x: 0, y };
-            y += s.height;
-            p
-        })
-        .collect();
-    PackResult {
+    for s in frame_sizes {
+        placements.push(FramePlacement { x: 0, y });
+        y = y.checked_add(s.height).ok_or(Error::SheetTooLarge {
+            width: max_w,
+            height: u32::MAX,
+            max: MAX_SHEET_DIM,
+        })?;
+    }
+    Ok(PackResult {
         placements,
         sheet_width: max_w,
         sheet_height: y,
-    }
+    })
 }
 
 /// Skyline-based packing for the [`LayoutStrategy::Packed`] variant.
@@ -246,20 +268,23 @@ impl Skyline {
     /// one with the lowest ceiling (ties broken by leftmost `x`), then
     /// updates the skyline.
     fn place(&mut self, w: u32, h: u32) -> (u32, u32) {
-        let mut best_x = 0u32;
-        let mut best_y = u32::MAX;
-
-        // Collect starts first to avoid holding an immutable borrow while mutating.
-        let starts: Vec<u32> = self.segs.iter().map(|&(x, _)| x).collect();
-
-        for x in starts {
-            if let Some(y) = self.ceiling(x, w) {
-                if y < best_y {
-                    best_y = y;
-                    best_x = x;
+        // Pick the best (lowest-ceiling, leftmost-x) placement candidate
+        // by iterating segment starts directly. Ends the borrow on
+        // `self.segs` before the mutation in `update`/`merge` — no
+        // intermediate Vec allocation per placement.
+        let (mut best_x, mut best_y) = {
+            let mut bx = 0u32;
+            let mut by = u32::MAX;
+            for &(x, _) in &self.segs {
+                if let Some(y) = self.ceiling(x, w)
+                    && y < by
+                {
+                    by = y;
+                    bx = x;
                 }
             }
-        }
+            (bx, by)
+        };
 
         if best_y == u32::MAX {
             // Sheet is narrower than w — stack on the full height.
@@ -356,6 +381,33 @@ mod tests {
         // The check fires before any allocation.
         assert!(matches!(
             pack_frames(&uniform(65, 256, 256), &LayoutStrategy::ByRow),
+            Err(Error::SheetTooLarge { .. })
+        ));
+    }
+
+    #[test]
+    fn pack_grid_rejects_overflow_in_sheet_dims() {
+        // max_w * cols would overflow u32 (u32::MAX/2 + 1) * 4 wraps.
+        // The cap check post-multiply wouldn't catch this — the wrapped
+        // value sits well below MAX_SHEET_DIM. The pre-multiply
+        // checked_mul guard turns the wrap into a clean SheetTooLarge.
+        let huge_w = (u32::MAX / 2) + 1;
+        let sizes = uniform(4, huge_w, 16);
+        assert!(matches!(
+            pack_frames(&sizes, &LayoutStrategy::Grid { cols: 4 }),
+            Err(Error::SheetTooLarge { .. })
+        ));
+    }
+
+    #[test]
+    fn pack_by_row_rejects_overflow_in_total_height() {
+        // Three frames whose summed height overflows u32. Without the
+        // checked_add guard `y` would wrap to a small value and bypass
+        // MAX_SHEET_DIM; with the guard, this returns SheetTooLarge.
+        let huge_h = (u32::MAX / 2) + 1;
+        let sizes = vec![size(16, huge_h), size(16, huge_h), size(16, 1)];
+        assert!(matches!(
+            pack_frames(&sizes, &LayoutStrategy::ByRow),
             Err(Error::SheetTooLarge { .. })
         ));
     }

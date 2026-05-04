@@ -263,7 +263,23 @@ fn render_sheet(
 
 /// Copy the trimmed region of `src` onto `sheet` at `(dest_x, dest_y)`.
 ///
-/// Uses `row()` so padded (non-tightly-packed) buffers work correctly.
+/// Writes each scanline as a single `copy_from_slice` into the sheet's
+/// raw RGBA buffer rather than per-pixel `put_pixel` — about an order
+/// of magnitude faster for large sheets, and louder when the bbox-vs-
+/// source-buffer invariant ever breaks (the `expect()` panics instead
+/// of silently skipping rows).
+///
+/// The `expect()` is justified locally: `trim` is computed from `src`
+/// in `compute_trim` upstream in the same `export_sprite_sheet` call,
+/// so every row index in `[trim.y, trim.y + trim.h)` is in-range and
+/// `row()` is always `Some(_)`. A `None` would mean the exporter
+/// pipeline is out of sync with itself — failing loud at this exact
+/// site is the right behaviour.
+#[allow(
+    clippy::disallowed_methods,
+    clippy::expect_used,
+    reason = "internal invariant: trim is derived from src in the same call"
+)]
 fn blit_trimmed(
     sheet: &mut RgbaImage,
     src: &PixelBuffer,
@@ -271,22 +287,18 @@ fn blit_trimmed(
     dest_y: u32,
     trim: &FrameTrim,
 ) {
+    let sheet_w = sheet.width();
+    let dst = sheet.as_mut();
     for dy in 0..trim.h {
-        let Some(row) = src.row(trim.y + dy) else {
-            continue;
-        };
+        let row = src
+            .row(trim.y + dy)
+            .expect("trim bbox derived from src; trim.y + dy < src.height()");
+        let start = (trim.x as usize) * 4;
+        let end = start + (trim.w as usize) * 4;
+        let row_slice = &row[start..end];
         let sheet_y = dest_y + dy;
-        for dx in 0..trim.w {
-            let off = ((trim.x + dx) as usize) * 4;
-            let Some(bytes) = row.get(off..off + 4) else {
-                continue;
-            };
-            sheet.put_pixel(
-                dest_x + dx,
-                sheet_y,
-                image::Rgba([bytes[0], bytes[1], bytes[2], bytes[3]]),
-            );
-        }
+        let dst_offset = ((sheet_y as usize) * (sheet_w as usize) + (dest_x as usize)) * 4;
+        dst[dst_offset..dst_offset + row_slice.len()].copy_from_slice(row_slice);
     }
 }
 

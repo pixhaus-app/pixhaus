@@ -34,7 +34,7 @@ pub struct FrameJson {
     pub frame: RectJson,
     /// Always `false`. Frame rotation in the atlas is not supported.
     pub rotated: bool,
-    /// `true` when the frame was alpha-trimmed. Currently always `false`.
+    /// `true` when the frame was alpha-trimmed (set from `FrameTrim.trimmed`).
     pub trimmed: bool,
     /// Canvas region covered by this frame.
     ///
@@ -192,13 +192,30 @@ pub fn build_json(
     let ch = sprite.canvas.height;
     let png_name = format!("{sprite_name}.png");
 
+    // Internal invariant: one placement and one trim per frame. The
+    // public `export_sprite_sheet` validates frame counts at the API
+    // boundary, so a mismatch here would mean the exporter pipeline is
+    // out of sync with itself. Indexing (rather than `zip`) makes the
+    // failure loud — out-of-bounds panics in release; the debug_assert
+    // catches the same misuse in tests with a clearer message.
+    debug_assert_eq!(
+        placements.len(),
+        sprite.frames.len(),
+        "build_json: one placement per frame"
+    );
+    debug_assert_eq!(
+        trims.len(),
+        sprite.frames.len(),
+        "build_json: one trim per frame"
+    );
+
     let frames: Vec<FrameJson> = sprite
         .frames
         .iter()
         .enumerate()
-        .zip(placements.iter())
-        .zip(trims.iter())
-        .map(|(((index, frame), placement), trim)| {
+        .map(|(index, frame)| {
+            let placement = &placements[index];
+            let trim = &trims[index];
             // Rect of this frame's bitmap within the packed sheet.
             let in_sheet = RectJson {
                 x: placement.x as i32,
