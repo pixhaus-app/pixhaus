@@ -36,7 +36,7 @@ use pixhaus_io::aseprite::{
     AsepriteDocument, CelChunk, CelChunkData, Chunk, ConversionWarning, DocumentFrame,
     DocumentHeader, LayerChunk, LayerKindCode, PaletteChunk, PaletteEntryWire, SliceChunk,
     SliceKeyEntry, TagEntry, TagsChunk, TilesetChunk, TilesetSourceWire, UserDataChunk,
-    archive_to_document, decode, document_to_archive, encode,
+    archive_to_document, decode, decode_from_file, document_to_archive, encode, encode_to_file,
 };
 use pixhaus_io::pixhaus::{PixelBufferEntry, PixhausArchive};
 
@@ -514,6 +514,7 @@ fn tilemap_archive_round_trips_through_aseprite_document() {
         source: TilesetSource::Inline {
             buffer: PixelBufferId::new(20),
         },
+        properties: Vec::new(),
         user_data: UserData::default(),
     };
     let mut tilemap = TilemapData::empty(2, 2);
@@ -679,8 +680,66 @@ fn document_warns_on_external_tileset() {
     let bytes = encode(&doc).unwrap();
     let back = decode(&bytes).unwrap();
     let converted = document_to_archive(&back, "x").unwrap();
-    assert!(matches!(
-        converted.warnings.first(),
-        Some(ConversionWarning::ExternalTilesetInlined { .. })
+    assert!(
+        converted
+            .warnings
+            .iter()
+            .any(|w| matches!(w, ConversionWarning::ExternalTilesetUnresolved { .. })),
+        "expected ExternalTilesetUnresolved warning, got: {:?}",
+        converted.warnings
+    );
+}
+
+// ── filesystem helpers exercise encode_to_file / decode_from_file ──────────
+
+#[test]
+fn fs_round_trip_aseprite_document() {
+    // Mirror of pixhaus_round_trip::fs_round_trip_full_archive: encode a
+    // structurally rich document to a file under the OS temp dir, decode
+    // it back, and assert byte-level equality of the wire form. Catches
+    // path/IO regressions the in-memory codec would miss.
+    let mut doc = AsepriteDocument::empty(8, 8);
+    doc.frames.push(DocumentFrame::new(100));
+    doc.frames[0].chunks.push(Chunk::Layer(LayerChunk {
+        flags: 1, // visible
+        kind: LayerKindCode::Normal,
+        child_level: 0,
+        blend: BlendMode::Normal,
+        unknown_blend_code: None,
+        opacity: 255,
+        name: "main".into(),
+        tileset_index: 0,
+        uuid: None,
+    }));
+    doc.frames[0].chunks.push(Chunk::Cel(CelChunk {
+        layer_index: 0,
+        x: 0,
+        y: 0,
+        opacity: 255,
+        z_index: 0,
+        data: CelChunkData::Compressed {
+            width: 4,
+            height: 4,
+            pixels: rgba_solid(4, 4, [255, 128, 64, 255]),
+        },
+    }));
+
+    let nanos = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |d| d.as_nanos());
+    let path = std::env::temp_dir().join(format!(
+        "pixhaus-fs-roundtrip-aseprite-{}-{nanos}.aseprite",
+        std::process::id(),
     ));
+
+    encode_to_file(&doc, &path).expect("encode_to_file should succeed");
+    let loaded = decode_from_file(&path).expect("decode_from_file should succeed");
+    let _ = std::fs::remove_file(&path);
+
+    // Byte-level equality on the chunk stream — a regression in the file
+    // layout (e.g. trailing-byte padding) would diverge here even when
+    // every individual chunk parses correctly.
+    let original_bytes = encode(&doc).unwrap();
+    let loaded_bytes = encode(&loaded).unwrap();
+    assert_eq!(original_bytes, loaded_bytes);
 }

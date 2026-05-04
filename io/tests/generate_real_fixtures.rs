@@ -299,6 +299,7 @@ fn tilemap_with_tileset() -> PixhausArchive {
         source: TilesetSource::Inline {
             buffer: PixelBufferId::new(20),
         },
+        properties: Vec::new(),
         user_data: UserData::default(),
     };
     let buf = buffer(20, 4, 12, 4, tile_pixels);

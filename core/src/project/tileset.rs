@@ -155,7 +155,6 @@ fn default_base_index() -> i16 {
     1
 }
 
-
 /// Where a tileset's pixel data is stored.
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize, TS)]
 #[serde(tag = "kind", rename_all = "snake_case")]
@@ -233,6 +232,7 @@ mod tests {
             source: TilesetSource::Inline {
                 buffer: PixelBufferId::new(7),
             },
+            properties: Vec::new(),
             user_data: UserData::default(),
         };
         let bytes = rmp_serde::to_vec_named(&t).unwrap();

@@ -88,6 +88,20 @@ pub enum ConversionWarning {
         /// Raw blend-mode code from the layer chunk.
         code: u16,
     },
+    /// One or more `UserData` chunks followed a `Palette` chunk.
+    /// Aseprite uses these to attach metadata to individual palette
+    /// entries; Pixhaus does not model per-entry palette user-data, so
+    /// they are dropped rather than leaking onto whichever chunk
+    /// preceded the palette. Emitted at most once per conversion.
+    PaletteEntryUserDataDropped,
+    /// An external-file tileset reference could not be resolved because
+    /// the referenced file was not bundled with the document. The
+    /// tileset is imported with no pixel data — callers should re-link
+    /// the source after import.
+    ExternalTilesetUnresolved {
+        /// The external file path or name as it appears in the file.
+        path: String,
+    },
 }
 
 /// Result of converting a [`AsepriteDocument`] into a [`PixhausArchive`].
@@ -101,12 +115,26 @@ pub struct ConvertedArchive {
 
 #[derive(Copy, Clone, Debug)]
 enum UserDataTarget {
+    /// No previous chunk owns the next `UserData`. Subsequent
+    /// `UserData` chunks are dropped (Pixhaus doesn't model orphan
+    /// user-data).
     None,
+    /// A leading frame-0 `UserData` attaches to the sprite itself per
+    /// the Aseprite spec. Initialised at the start of frame 0 and
+    /// cleared after the first chunk that takes ownership.
+    Sprite,
     Layer(usize),
     Cel(usize),
+    /// Tag user-data is index-walked: each consecutive `UserData`
+    /// chunk after a `Tags` chunk attaches to the *next* tag
+    /// (`Tag(i)`, `Tag(i+1)`, ...) until the chunk run ends.
     Tag(usize),
     Slice(usize),
     Tileset(usize),
+    /// Palette user-data drops on the floor: Aseprite supports per-
+    /// entry user-data, but Pixhaus doesn't model it. Emit a warning
+    /// the first time we drop one, then ignore the rest in the run.
+    PaletteEntry,
 }
 
 /// Translate an [`AsepriteDocument`] into a [`PixhausArchive`], gathering
@@ -157,10 +185,50 @@ pub fn document_to_archive(
     let mut next_tileset_id: u32 = 1;
     let mut next_slice_id: u32 = 1;
 
+    // Pre-pass: materialise every Tileset chunk before the main loop so
+    // tilemap layers can resolve their tileset references regardless of
+    // chunk order in the source file. Aseprite emits tilesets and the
+    // layers that reference them in arbitrary order, and a single linear
+    // pass would silently fall back to TilesetId(0) whenever a layer
+    // chunk arrived first.
+    let mut tileset_ordinal_by_wire: HashMap<u32, usize> = HashMap::new();
+    for frame in &doc.frames {
+        for chunk in &frame.chunks {
+            if let Chunk::Tileset(c) = chunk {
+                if tileset_ordinal_by_wire.contains_key(&c.tileset_id) {
+                    // Multiple Tileset chunks for the same wire id are
+                    // not part of the spec; keep the first occurrence.
+                    continue;
+                }
+                let id = TilesetId::new(next_tileset_id);
+                next_tileset_id += 1;
+                tileset_id_by_aseprite_id.insert(c.tileset_id, id);
+                tileset_ordinal_by_wire.insert(c.tileset_id, tilesets.len());
+                let tileset = tileset_from_chunk(
+                    c,
+                    id,
+                    &mut buffers,
+                    &mut next_buffer_id,
+                    doc.header.color_depth,
+                    &mut warnings,
+                );
+                tilesets.push(tileset);
+            }
+        }
+    }
+
     let mut last_target = UserDataTarget::None;
+    let mut sprite_user_data = UserData::default();
+    let mut palette_user_data_warned = false;
 
     for (frame_index, frame) in doc.frames.iter().enumerate() {
         let frame_idx = FrameIndex::new(u32::try_from(frame_index).unwrap_or(u32::MAX));
+        // The first chunk of frame 0 owns the sprite's UserData per the
+        // Aseprite spec. Initialise the target so a leading UserData
+        // chunk lands on the sprite instead of being dropped.
+        if frame_index == 0 {
+            last_target = UserDataTarget::Sprite;
+        }
         for chunk in &frame.chunks {
             match chunk {
                 Chunk::Layer(c) => {
@@ -196,22 +264,30 @@ pub fn document_to_archive(
                 Chunk::Tags(c) => {
                     let start = frame_tags.len();
                     frame_tags.extend(c.tags.iter().map(tag_from_chunk));
-                    if !c.tags.is_empty() {
+                    if c.tags.is_empty() {
+                        last_target = UserDataTarget::None;
+                    } else {
                         last_target = UserDataTarget::Tag(start);
                     }
                 }
                 Chunk::Palette(c) => {
                     let entries: Vec<PaletteEntry> =
                         c.entries.iter().map(palette_entry_from_wire).collect();
-                    if frame_index == 0 {
-                        base_palette = entries;
-                    } else {
-                        let frame_no = u32::try_from(frame_index).unwrap_or(u32::MAX);
-                        palette_frame_overrides.push(PaletteFrameOverride {
-                            frame: frame_no,
-                            colors: entries,
-                        });
-                    }
+                    apply_palette_chunk(
+                        frame_index,
+                        c.first_index as usize,
+                        c.last_index as usize,
+                        c.palette_size as usize,
+                        entries,
+                        &mut base_palette,
+                        &mut palette_frame_overrides,
+                    );
+                    // Aseprite per-entry palette user-data isn't modelled
+                    // by Pixhaus; switch to the dropped-with-warning
+                    // target so subsequent UserData chunks in the run
+                    // don't latch onto whichever target preceded this
+                    // palette chunk.
+                    last_target = UserDataTarget::PaletteEntry;
                 }
                 Chunk::OldPalette255(_) | Chunk::OldPalette63(_) => {
                     warnings.push(ConversionWarning::LegacyPaletteEncountered);
@@ -222,19 +298,15 @@ pub fn document_to_archive(
                     last_target = UserDataTarget::Slice(slices.len() - 1);
                 }
                 Chunk::Tileset(c) => {
-                    let id = TilesetId::new(next_tileset_id);
-                    next_tileset_id += 1;
-                    tileset_id_by_aseprite_id.insert(c.tileset_id, id);
-                    let tileset = tileset_from_chunk(
-                        c,
-                        id,
-                        &mut buffers,
-                        &mut next_buffer_id,
-                        doc.header.color_depth,
-                        &mut warnings,
-                    );
-                    tilesets.push(tileset);
-                    last_target = UserDataTarget::Tileset(tilesets.len() - 1);
+                    // The chunk itself was materialised in the pre-pass;
+                    // point user-data at the matching tileset by its
+                    // wire id so any UserData chunk that follows lands
+                    // on the right Pixhaus `Tileset`.
+                    if let Some(&idx) = tileset_ordinal_by_wire.get(&c.tileset_id) {
+                        last_target = UserDataTarget::Tileset(idx);
+                    } else {
+                        last_target = UserDataTarget::None;
+                    }
                 }
                 Chunk::ColorProfile(_) => {
                     warnings.push(ConversionWarning::ColorProfileDiscarded);
@@ -244,14 +316,17 @@ pub fn document_to_archive(
                         warnings.push(ConversionWarning::UserDataPropertiesDiscarded);
                     }
                     let user_data = user_data_from_chunk(c);
-                    apply_user_data_to_target(
+                    last_target = apply_user_data_to_target(
                         last_target,
                         user_data,
+                        &mut sprite_user_data,
                         &mut layers,
                         &mut cels,
                         &mut frame_tags,
                         &mut slices,
                         &mut tilesets,
+                        &mut palette_user_data_warned,
+                        &mut warnings,
                     );
                 }
                 Chunk::ExternalFiles(_) | Chunk::Unknown { .. } => {
@@ -263,6 +338,31 @@ pub fn document_to_archive(
             }
         }
     }
+
+    // Reference layers carry their image on the layer itself, not as a
+    // generic cel. Aseprite still ships the pixel data via a cel chunk
+    // (because the wire format has no other way to deliver it), so we
+    // pull the matching cel back out and seat its buffer + position on
+    // the `LayerKind::Reference` value. Without this fixup the layer
+    // reads as a transparent placeholder and round-tripping loses the
+    // reference image.
+    let layer_id_to_pos: HashMap<LayerId, usize> =
+        layers.iter().enumerate().map(|(i, l)| (l.id, i)).collect();
+    cels.retain(|cel| {
+        let Some(&pos) = layer_id_to_pos.get(&cel.layer_id) else {
+            return true;
+        };
+        if !matches!(layers[pos].kind, LayerKind::Reference { .. }) {
+            return true;
+        }
+        if let CelData::Raster { buffer, .. } = &cel.data {
+            layers[pos].kind = LayerKind::Reference {
+                image: *buffer,
+                origin: cel.position,
+            };
+        }
+        false
+    });
 
     let palette = if base_palette.is_empty() {
         Vec::new()
@@ -316,7 +416,7 @@ pub fn document_to_archive(
         frame_tags,
         animations: Vec::new(),
         slices,
-        user_data: UserData::default(),
+        user_data: sprite_user_data,
     };
 
     let project = Project {
@@ -353,41 +453,146 @@ fn derive_parent(stack: &[LayerId], child_level: u16) -> Result<Option<LayerId>>
     Ok(stack.get(depth - 1).copied())
 }
 
+/// Applies a `UserData` chunk to the target the previous chunk
+/// announced and returns the target that should own the *next*
+/// `UserData` chunk.
+///
+/// Most targets ([`UserDataTarget::Layer`], [`UserDataTarget::Cel`],
+/// [`UserDataTarget::Slice`], [`UserDataTarget::Tileset`],
+/// [`UserDataTarget::Sprite`]) consume one chunk and then transition to
+/// [`UserDataTarget::None`] — back-to-back `UserData` chunks would
+/// otherwise overwrite the same target. [`UserDataTarget::Tag`] walks
+/// forward through the tag run, mirroring the spec's "`Tag1` →
+/// `UserData`, `Tag2` → `UserData`, ..." sequencing.
+/// [`UserDataTarget::PaletteEntry`] drops the chunk (Pixhaus has no
+/// per-entry palette user-data) and stays in that state so an entire
+/// palette user-data run is dropped without leaking onto whichever
+/// chunk preceded the palette.
+#[allow(clippy::too_many_arguments)]
 fn apply_user_data_to_target(
     target: UserDataTarget,
     user_data: UserData,
+    sprite_user_data: &mut UserData,
     layers: &mut [Layer],
     cels: &mut [Cel],
     tags: &mut [FrameTag],
     slices: &mut [Slice],
     tilesets: &mut [Tileset],
-) {
+    palette_user_data_warned: &mut bool,
+    warnings: &mut Vec<ConversionWarning>,
+) -> UserDataTarget {
     match target {
-        UserDataTarget::None => {}
+        UserDataTarget::None => UserDataTarget::None,
+        UserDataTarget::Sprite => {
+            *sprite_user_data = user_data;
+            UserDataTarget::None
+        }
         UserDataTarget::Layer(idx) => {
             if let Some(layer) = layers.get_mut(idx) {
                 layer.user_data = user_data;
             }
+            UserDataTarget::None
         }
         UserDataTarget::Cel(idx) => {
             if let Some(cel) = cels.get_mut(idx) {
                 cel.user_data = user_data;
             }
+            UserDataTarget::None
         }
         UserDataTarget::Tag(idx) => {
             if let Some(tag) = tags.get_mut(idx) {
                 tag.user_data = user_data;
             }
+            UserDataTarget::Tag(idx + 1)
         }
         UserDataTarget::Slice(idx) => {
             if let Some(slice) = slices.get_mut(idx) {
                 slice.user_data = user_data;
             }
+            UserDataTarget::None
         }
         UserDataTarget::Tileset(idx) => {
             if let Some(tileset) = tilesets.get_mut(idx) {
                 tileset.user_data = user_data;
             }
+            UserDataTarget::None
+        }
+        UserDataTarget::PaletteEntry => {
+            if !*palette_user_data_warned {
+                warnings.push(ConversionWarning::PaletteEntryUserDataDropped);
+                *palette_user_data_warned = true;
+            }
+            UserDataTarget::PaletteEntry
+        }
+    }
+}
+
+/// Merges a single Aseprite palette chunk into the running base palette
+/// (frame 0) or per-frame override list (any other frame).
+///
+/// Aseprite palette chunks declare a `[first_index, last_index]` slice
+/// rather than a complete palette: a writer that updates only entries
+/// 5..=7 in frame 0 emits one chunk with `first_index=5, last_index=7,
+/// entries=[c5, c6, c7]`. Replacing the whole palette with `entries`
+/// clobbers the surrounding colours; instead resize the destination to
+/// `palette_size` and overwrite the slice in place.
+fn apply_palette_chunk(
+    frame_index: usize,
+    first_index: usize,
+    last_index: usize,
+    palette_size: usize,
+    entries: Vec<PaletteEntry>,
+    base_palette: &mut Vec<PaletteEntry>,
+    palette_frame_overrides: &mut Vec<PaletteFrameOverride>,
+) {
+    if frame_index == 0 {
+        merge_palette_slice(base_palette, first_index, last_index, palette_size, entries);
+    } else {
+        let frame_no = u32::try_from(frame_index).unwrap_or(u32::MAX);
+        // The override list keeps a complete palette per frame, so seed
+        // it from the base palette and then overlay this chunk's slice.
+        if let Some(existing) = palette_frame_overrides
+            .iter_mut()
+            .find(|p| p.frame == frame_no)
+        {
+            merge_palette_slice(
+                &mut existing.colors,
+                first_index,
+                last_index,
+                palette_size,
+                entries,
+            );
+        } else {
+            let mut colors = base_palette.clone();
+            merge_palette_slice(&mut colors, first_index, last_index, palette_size, entries);
+            palette_frame_overrides.push(PaletteFrameOverride {
+                frame: frame_no,
+                colors,
+            });
+        }
+    }
+}
+
+fn merge_palette_slice(
+    target: &mut Vec<PaletteEntry>,
+    first_index: usize,
+    last_index: usize,
+    palette_size: usize,
+    entries: Vec<PaletteEntry>,
+) {
+    let needed_len = palette_size
+        .max(last_index.saturating_add(1))
+        .max(first_index.saturating_add(entries.len()));
+    if target.len() < needed_len {
+        target.resize(
+            needed_len,
+            PaletteEntry::new(pixhaus_core::project::Rgba::new(0, 0, 0, 0)),
+        );
+    }
+    for (offset, entry) in entries.into_iter().enumerate() {
+        let dst = first_index.saturating_add(offset);
+        if let Some(slot) = target.get_mut(dst) {
+            *slot = entry;
         }
     }
 }
@@ -594,9 +799,20 @@ fn tileset_from_chunk(
         });
     }
     let source = match &c.source {
-        TilesetSourceWire::External { .. } => {
-            warnings.push(ConversionWarning::ExternalTilesetInlined {
-                name: c.name.clone(),
+        TilesetSourceWire::External {
+            external_file_id,
+            external_tileset_id,
+        } => {
+            // External tilesets reference pixels that live in a sibling
+            // file; resolving that file isn't yet wired through the
+            // codec. The tileset is imported with an empty buffer so
+            // the document still loads — surface a clear warning so the
+            // caller can re-link the source rather than silently shipping
+            // a transparent tilesheet.
+            warnings.push(ConversionWarning::ExternalTilesetUnresolved {
+                path: format!(
+                    "external_file_id={external_file_id}, external_tileset_id={external_tileset_id}"
+                ),
             });
             let buf_id = PixelBufferId::new(*next_buffer_id);
             *next_buffer_id += 1;
@@ -629,6 +845,7 @@ fn tileset_from_chunk(
         tile_count: c.tile_count,
         base_index: c.base_index,
         source,
+        properties: Vec::new(),
         user_data: UserData::default(),
     }
 }
@@ -693,14 +910,24 @@ pub fn archive_to_document(archive: &PixhausArchive) -> AsepriteDocument {
         .map(|(i, l)| (l.id, u16::try_from(i).unwrap_or(u16::MAX)))
         .collect();
 
-    let tileset_index: HashMap<TilesetId, u32> = sprite
-        .tilesets
-        .iter()
-        .enumerate()
-        .map(|(i, t)| (t.id, u32::try_from(i).unwrap_or(u32::MAX)))
-        .collect();
+    // Layer chunks reference a tileset by the *wire id* the matching
+    // Tileset chunk emits (`TilesetChunk.tileset_id`), not its ordinal
+    // position in the tileset list. Keying the lookup by ordinal worked
+    // only when the Pixhaus `TilesetId` values happened to be `0..n-1`;
+    // any project that re-orders tilesets or reuses ids breaks otherwise.
+    let tileset_index: HashMap<TilesetId, u32> =
+        sprite.tilesets.iter().map(|t| (t.id, t.id.get())).collect();
 
     if let Some(frame0) = frames.first_mut() {
+        // Sprite-level user-data must be the first UserData chunk in
+        // frame 0 — Aseprite's convention is "the first chunk owns the
+        // sprite". Emitting it ahead of the layer/cel chunks below keeps
+        // it from being attached to the wrong target on read.
+        if !sprite.user_data.is_empty() {
+            frame0
+                .chunks
+                .push(Chunk::UserData(user_data_to_chunk(&sprite.user_data)));
+        }
         let mut child_levels: HashMap<LayerId, u16> = HashMap::new();
         for layer in &sprite.layers {
             let level = compute_child_level(layer, &sprite.layers, &mut child_levels);
@@ -715,11 +942,44 @@ pub fn archive_to_document(archive: &PixhausArchive) -> AsepriteDocument {
         }
     }
 
+    // Reference-layer images live on `LayerKind::Reference` rather than
+    // in `sprite.cels`. Synthesise a cel chunk on frame 0 for each one
+    // so the wire format actually carries the reference image; without
+    // this the layer round-trips as transparent.
+    let synthesized_reference_cels: Vec<Cel> = sprite
+        .layers
+        .iter()
+        .filter_map(|l| match &l.kind {
+            LayerKind::Reference { image, origin } => {
+                let size = buffer_lookup
+                    .get(&image.get())
+                    .map_or(Size::new(0, 0), |b| Size::new(b.width, b.height));
+                Some(Cel {
+                    layer_id: l.id,
+                    frame_index: FrameIndex::new(0),
+                    position: *origin,
+                    opacity: 255,
+                    data: CelData::Raster {
+                        buffer: *image,
+                        size,
+                    },
+                    user_data: UserData::default(),
+                })
+            }
+            _ => None,
+        })
+        .collect();
+
     let mut cels_by_frame: Vec<Vec<&Cel>> = vec![Vec::new(); frames.len()];
     for cel in &sprite.cels {
         let idx = cel.frame_index.get() as usize;
         if let Some(bucket) = cels_by_frame.get_mut(idx) {
             bucket.push(cel);
+        }
+    }
+    for synth in &synthesized_reference_cels {
+        if let Some(bucket) = cels_by_frame.first_mut() {
+            bucket.push(synth);
         }
     }
     for (frame_idx, bucket) in cels_by_frame.iter().enumerate() {
@@ -750,7 +1010,13 @@ pub fn archive_to_document(archive: &PixhausArchive) -> AsepriteDocument {
                 }
             }
         }
-        if let Some(palette) = sprite.palettes.first() {
+        if let Some(palette) = sprite.palettes.first()
+            && !palette.colors.is_empty()
+        {
+            // An empty palette would serialize with `last_index = 0`
+            // and `entries = []`; the reader uses last_index to allocate
+            // one entry and then hits EOF trying to fill it. Skip the
+            // chunk entirely when there are no colours to emit.
             frame0
                 .chunks
                 .push(Chunk::Palette(palette_to_chunk(palette)));
@@ -782,6 +1048,9 @@ pub fn archive_to_document(archive: &PixhausArchive) -> AsepriteDocument {
         if frame_idx == 0 {
             // Frame-0 palette state is carried by sprite.palettes; an
             // override pinned at frame 0 would duplicate the chunk.
+            continue;
+        }
+        if override_entry.colors.is_empty() {
             continue;
         }
         let Some(frame) = frames.get_mut(frame_idx) else {

@@ -136,10 +136,16 @@ fn read_frame(cursor: &mut Cursor<'_>, header: &DocumentHeader) -> Result<Docume
     let duration_ms = cursor.read_u16_le()?;
     cursor.skip(2)?; // reserved
     let new_chunk_count = cursor.read_u32_le()?;
-    let chunk_count = if new_chunk_count == 0 {
-        u32::from(old_chunk_count)
-    } else {
+    // Per Aseprite spec: the legacy 16-bit count is authoritative
+    // unless it saturates at 0xFFFF, in which case the writer punts to
+    // the 32-bit count. Trusting the 32-bit field whenever it is
+    // non-zero misreads files where both fields are populated but
+    // disagree (e.g. an editor that filled new but left old at the
+    // pre-1.3 default).
+    let chunk_count = if old_chunk_count == 0xFFFF {
         new_chunk_count
+    } else {
+        u32::from(old_chunk_count)
     };
 
     let mut chunks = Vec::with_capacity(chunk_count as usize);
@@ -442,7 +448,14 @@ fn parse_old_palette(payload: &[u8], scale_63_to_255: bool) -> Result<OldPalette
     let packets = cur.read_u16_le()?;
     let mut colors = Vec::new();
     for _ in 0..packets {
-        let _skip = cur.read_u8()?;
+        // Each packet's `skip` advances the destination index past the
+        // last-written entry. Files that update a non-contiguous palette
+        // range rely on this — without it the run colours collapse onto
+        // index 0 and every subsequent palette entry is shifted.
+        let skip = usize::from(cur.read_u8()?);
+        if skip > 0 {
+            colors.resize(colors.len() + skip, Rgba::new(0, 0, 0, 0));
+        }
         let run_byte = cur.read_u8()?;
         let run = if run_byte == 0 {
             256usize

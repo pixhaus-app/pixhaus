@@ -248,7 +248,15 @@ fn write_cel(c: &CelChunk) -> Result<Vec<u8>> {
 
 fn write_color_profile(c: &ColorProfileChunk) -> Vec<u8> {
     let mut out = Vec::with_capacity(16);
-    put_u16_le(&mut out, c.kind);
+    // Pixhaus does not carry ICC profile bytes through the data model;
+    // emitting `kind = 2` (ICC) without the trailing profile payload
+    // produces a malformed chunk that the reader cannot parse. Coerce
+    // any ICC value down to `kind = 0` (sRGB) so the chunk body matches
+    // its 16-byte fixed layout. Callers that need ICC round-tripping
+    // should drop the chunk entirely; `archive_to_document` already
+    // does that by emitting `ColorProfileDiscarded`.
+    let kind = if c.kind == 2 { 0 } else { c.kind };
+    put_u16_le(&mut out, kind);
     put_u16_le(&mut out, u16::from(c.fixed_gamma));
     put_u32_le(&mut out, c.gamma_fixed_16_16);
     put_zeros(&mut out, 8);
