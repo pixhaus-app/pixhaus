@@ -2304,6 +2304,7 @@ dependencies = [
 name = "pixhaus-app"
 version = "0.1.0"
 dependencies = [
+ "anyhow",
  "pixhaus-ai",
  "pixhaus-core",
  "pixhaus-io",
@@ -2313,8 +2314,10 @@ dependencies = [
  "tauri",
  "tauri-build",
  "thiserror 2.0.18",
+ "tokio",
  "tracing",
  "tracing-subscriber",
+ "ts-rs",
 ]
 
 [[package]]

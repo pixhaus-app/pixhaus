@@ -26,11 +26,14 @@ pixhaus-io = { path = "../io" }
 pixhaus-ai = { path = "../ai" }
 pixhaus-scripting = { path = "../scripting" }
 tauri = { version = "2.11", features = [] }
+anyhow.workspace = true
 serde.workspace = true
 serde_json = "1"
+tokio.workspace = true
 tracing.workspace = true
 tracing-subscriber.workspace = true
 thiserror.workspace = true
+ts-rs.workspace = true
 
 [lints]
 workspace = true

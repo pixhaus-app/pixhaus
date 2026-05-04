@@ -1,7 +1,7 @@
 //! Pixhaus application shell entry point.
 //!
-//! IPC commands land here per the catalog in B4. The shell wires the core,
-//! io, ai, and scripting crates into a Tauri 2 process.
+//! IPC commands are defined in `commands/` per the catalog in B4. The
+//! shell wires `core`, `io`, `ai`, and `scripting` into a Tauri 2 process.
 
 #![cfg_attr(
     test,
@@ -9,11 +9,20 @@
         clippy::unwrap_used,
         clippy::expect_used,
         clippy::panic,
-        clippy::missing_panics_doc
+        clippy::missing_panics_doc,
+        clippy::disallowed_methods
     )
 )]
 
+pub mod commands;
+pub mod error;
+pub mod state;
+
+pub use error::{AppCommandError, CommandResult};
+
 use tracing_subscriber::EnvFilter;
+
+use state::AppState;
 
 /// Application errors at the shell layer.
 #[derive(Debug, thiserror::Error)]
@@ -48,7 +57,61 @@ pub fn run() -> Result<(), AppError> {
     #[allow(clippy::disallowed_methods)]
     let context = tauri::generate_context!();
 
-    tauri::Builder::default().run(context)?;
+    tauri::Builder::default()
+        .manage(AppState::new())
+        .invoke_handler(tauri::generate_handler![
+            // canvas
+            commands::canvas::canvas_draw_stroke,
+            commands::canvas::canvas_fill,
+            commands::canvas::canvas_set_selection,
+            commands::canvas::canvas_set_viewport,
+            commands::canvas::canvas_transform,
+            // frames
+            commands::frames::frame_add,
+            commands::frames::frame_delete,
+            commands::frames::frame_duplicate,
+            commands::frames::frame_list,
+            commands::frames::frame_reorder,
+            commands::frames::frame_set_duration,
+            commands::frames::frame_tag_create,
+            commands::frames::frame_tag_delete,
+            // layers
+            commands::layers::layer_add,
+            commands::layers::layer_delete,
+            commands::layers::layer_list,
+            commands::layers::layer_rename,
+            commands::layers::layer_reorder,
+            commands::layers::layer_set_blend_mode,
+            commands::layers::layer_set_locked,
+            commands::layers::layer_set_opacity,
+            commands::layers::layer_set_visibility,
+            // palette
+            commands::palette::palette_add,
+            commands::palette::palette_add_color,
+            commands::palette::palette_delete,
+            commands::palette::palette_list,
+            commands::palette::palette_remove_color,
+            commands::palette::palette_set_color,
+            commands::palette::palette_swap,
+            // project
+            commands::project::project_close,
+            commands::project::project_get,
+            commands::project::project_new,
+            commands::project::project_open,
+            commands::project::project_save,
+            commands::project::sprite_add,
+            commands::project::sprite_delete,
+            commands::project::sprite_list,
+            // tiles
+            commands::tiles::tile_autotile_apply,
+            commands::tiles::tile_erase,
+            commands::tiles::tile_place,
+            // verbs
+            commands::verbs::verb_cancel,
+            commands::verbs::verb_invoke,
+            commands::verbs::verb_list,
+        ])
+        .run(context)?;
 
     Ok(())
 }
