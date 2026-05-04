@@ -11,3 +11,8 @@
 extend-exclude = [
     "docs/planning/**",
 ]
+
+[default.extend-words]
+# "PN" is a valid fragment in the PNG acronym (Portable Network Graphics).
+# typos conflates it with the "ON" abbreviation correction.
+PN = "PN"
