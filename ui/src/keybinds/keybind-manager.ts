@@ -32,8 +32,16 @@ function comboFromEvent(e: KeyboardEvent): string {
   return parts.join("+");
 }
 
-// Returns true when the event target is an editable input element.
-function isEditableTarget(e: KeyboardEvent): boolean {
+/**
+ * Returns true when the event target is an editable input element.
+ *
+ * Treats `<input>`, `<textarea>`, `<select>`, and any element with the
+ * `contenteditable` attribute as editable. Any keyboard handler whose
+ * shortcuts could conflict with text entry (the global keybind manager,
+ * the canvas spacebar-pan handler, etc.) should funnel through this
+ * helper so the rules stay consistent.
+ */
+export function isEditableTarget(e: KeyboardEvent): boolean {
   const target = e.target;
   if (!(target instanceof Element)) return false;
   const tag = target.tagName.toLowerCase();

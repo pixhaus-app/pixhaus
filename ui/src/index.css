@@ -625,3 +625,39 @@ body {
 .prefs__btn:hover {
   background: var(--accent-hover);
 }
+
+/* ── Canvas viewport ──────────────────────────────────────────────────────── */
+
+/* Outer div that receives mouse/keyboard events and fills the shell-main area */
+.canvas-container {
+  position: relative;
+  width: 100%;
+  height: 100%;
+  overflow: hidden;
+  /* Remove the default focus ring — the canvas handles its own focus cues */
+  outline: none;
+  /* Prevent text selection when dragging to pan */
+  user-select: none;
+}
+
+/* The WebGL2 drawing surface — sized to match the container by ResizeObserver */
+.canvas-viewport {
+  display: block;
+  width: 100%;
+  height: 100%;
+  /* Pixel art: nearest-neighbour upscaling so the CSS size matches GL viewport */
+  image-rendering: pixelated;
+}
+
+/* SVG overlays drawn above the WebGL surface. The brush cursor passes pointer
+   events through; transform handles will need to opt back in once S16 wires
+   hit-testing. */
+.canvas-overlay {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+}
+
+.transform-handles-overlay [data-handle] {
+  pointer-events: auto;
+}

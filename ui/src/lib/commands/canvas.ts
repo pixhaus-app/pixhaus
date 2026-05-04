@@ -48,7 +48,31 @@ export type TransformArgs = {
   rotate_cw90: number;
 };
 
+// ── result types ─────────────────────────────────────────────────────────────
+
+export type CanvasComposite = {
+  /** Sprite canvas width in pixels. */
+  sprite_width: number;
+  /** Sprite canvas height in pixels. */
+  sprite_height: number;
+  /** Tile side length in canvas pixels. */
+  tile_size: number;
+  /** Number of tile columns. */
+  tiles_x: number;
+  /** Number of tile rows. */
+  tiles_y: number;
+};
+
 // ── commands ──────────────────────────────────────────────────────────────────
+
+/**
+ * Returns tile-grid metadata for the given sprite.
+ * The renderer calls this when a sprite becomes active to learn canvas size
+ * and tile layout.  Actual pixel data arrives via canvas:tile-dirty events.
+ */
+export function canvasComposite(spriteId: SpriteId): Promise<CanvasComposite> {
+  return invoke<CanvasComposite>("canvas_composite", { sprite_id: spriteId });
+}
 
 /**
  * Paints a freehand stroke on a layer cel.
