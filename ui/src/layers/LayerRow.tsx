@@ -154,11 +154,15 @@ const LayerRow: Component<Props> = (props) => {
       // Bad payload: ignore the drop rather than mutating state.
     }
     if (parsed === null || parsed.index === props.layerIndex) return;
-    reorderLayer(
-      props.spriteId,
-      parsed.id,
+    // When dropping onto row 0 from below, the `props.layerIndex - 1`
+    // branch yields -1; the backend rejects negative indices so clamp
+    // to 0. The same `Math.max(0, …)` covers any future drag math that
+    // tries to slide a row off the top.
+    const newIndex = Math.max(
+      0,
       parsed.index > props.layerIndex ? props.layerIndex : props.layerIndex - 1,
     );
+    reorderLayer(props.spriteId, parsed.id, newIndex);
   }
 
   return (

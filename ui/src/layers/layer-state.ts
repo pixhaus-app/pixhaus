@@ -18,7 +18,12 @@ import {
   layerSetOpacity,
   layerSetVisibility,
 } from "../lib/commands/layers";
-import { activeSpriteId, activeLayerId, setActiveLayerId } from "../canvas/canvas-state";
+import {
+  activeSpriteId,
+  activeLayerId,
+  setActiveLayerId,
+  scheduleViewportSync,
+} from "../canvas/canvas-state";
 
 // ── Tree flattening ─────────────────────────────────────────────────────────
 
@@ -77,14 +82,26 @@ export const [isLayerPanelVisible, setLayerPanelVisible] = createSignal(true);
 // The panel renders in reverse to show topmost layers at the top of the list.
 export const [layers, setLayers] = createSignal<Layer[]>([]);
 
+// Monotonically incremented on every refreshLayers() call. The async
+// layerList() resolves out-of-order if the active sprite changes
+// between two refreshes; by capturing the token we started with and
+// comparing against the current value, late responses get dropped
+// instead of overwriting the new sprite's layer list.
+let refreshToken = 0;
+
 export function refreshLayers(): void {
+  refreshToken += 1;
+  const myToken = refreshToken;
   const spriteId = activeSpriteId();
   if (spriteId === null) {
     setLayers([]);
     return;
   }
   layerList(spriteId)
-    .then(setLayers)
+    .then((next) => {
+      if (myToken !== refreshToken) return; // stale
+      setLayers(next);
+    })
     .catch((err: unknown) => {
       console.error("[pixhaus] layer_list:", err);
     });
@@ -100,6 +117,10 @@ export const [selectedLayerIds, setSelectedLayerIds] = createSignal<ReadonlySet<
 
 export function selectLayer(id: LayerId, extend: boolean): void {
   setActiveLayerId(id);
+  // The backend keeps its own CanvasState.active_layer; without this
+  // sync the editor's painting target stays on the old layer until the
+  // next viewport interaction.
+  scheduleViewportSync();
   if (extend) {
     setSelectedLayerIds((prev) => new Set([...prev, id]));
   } else {
