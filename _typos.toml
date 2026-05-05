@@ -22,3 +22,6 @@ extend-exclude = [
 PN = "PN"
 # "Sur" is part of "Big Sur" (macOS 11 codename), not a misspelling of "Sure".
 Sur = "Sur"
+# `numer_denom_ms` is the upstream image-rs method name on
+# image::Delay returning a rational (numerator/denominator) in ms.
+numer = "numer"
