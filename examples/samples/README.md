@@ -1,14 +1,17 @@
 # Pixhaus sample projects
 
 Five `.pixhaus` project files covering the asset types described in the S45
-stream brief. They serve three purposes:
+stream brief. They serve two purposes today:
 
 1. **Tutorial starting points** — open any file in Pixhaus and start painting
    over the placeholder art.
-2. **Test fixtures** — consumed by integration tests that verify the editor
-   loads, renders, and exports them without errors.
-3. **Marketing demos** — referenced by `examples/unity-sample/` and the
-   documentation site.
+2. **Round-trip test fixtures** — `io/tests/generate_sample_projects.rs::committed_samples_round_trip_against_current_builders`
+   decodes every file in this directory and asserts it matches what the
+   in-memory builder would produce, so a stale fixture (left over after
+   a builder change but not regenerated via `PIXHAUS_REGEN_SAMPLES`) fails CI.
+
+A future Unity demo project (`examples/unity-sample/`) and the
+documentation site will consume these files once those streams land.
 
 ## Files
 

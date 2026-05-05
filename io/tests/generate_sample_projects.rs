@@ -461,6 +461,14 @@ fn build_knight() -> PixhausArchive {
     // Layer stack (bottom to top): shadow, knight group, armor (in group),
     // skin (in group), weapon, outline.
     let layers = vec![
+        // Pixhaus stores layers bottom-to-top (index 0 = bottommost).
+        // Order so the shadow renders first (behind everything), then
+        // the knight group with armor → skin → outline stacking
+        // inside, then the weapon on top of the character. The R1
+        // version had this stack inverted, putting the shadow at the
+        // top.
+        raster(6, "shadow", BlendMode::Multiply, 100, None),
+        group(2, "knight"),
         Layer {
             id: LayerId::new(1),
             name: "armor".into(),
@@ -472,11 +480,9 @@ fn build_knight() -> PixhausArchive {
             parent: Some(LayerId::new(2)),
             user_data: UserData::default(),
         },
-        group(2, "knight"),
         raster(3, "skin", BlendMode::Normal, 255, Some(2)),
         raster(4, "outline", BlendMode::Normal, 255, Some(2)),
         raster(5, "weapon", BlendMode::Normal, 255, None),
-        raster(6, "shadow", BlendMode::Multiply, 100, None),
     ];
 
     let mut sprite = Sprite::empty(SpriteId::new(1), "knight-32x32", Size::new(W, H));
@@ -556,6 +562,47 @@ fn forest_tileset_pixels() -> Vec<u8> {
     tileset_strip(FOREST_TILE_SIZE, FOREST_TILE_SIZE, &forest_tile_colors())
 }
 
+/// Per-tile metadata for the 17-tile forest tileset. Stone tiles
+/// (indices 9-12) carry full collision; tile 13 (water) has the
+/// `water_anim` animation. Shared between the standalone tileset
+/// sample and the level sample so the level's inlined tileset keeps
+/// the same collision / animation contract.
+fn forest_tile_properties(n: u32, water_anim: TileAnimation) -> Vec<TileProperties> {
+    let mut props: Vec<TileProperties> = (0..n).map(|_| TileProperties::default()).collect();
+    for i in 9..=12 {
+        if let Some(p) = props.get_mut(i as usize) {
+            p.collision = CollisionShape::Full;
+        }
+    }
+    if let Some(p) = props.get_mut(13) {
+        p.animation = Some(water_anim);
+    }
+    props
+}
+
+/// Build the water animation referenced by tile 13 in the forest
+/// tileset. Hoisted so the level sample can reproduce it without
+/// duplicating frame literals.
+fn forest_water_anim() -> TileAnimation {
+    TileAnimation {
+        frames: vec![
+            TileAnimationFrame {
+                tile_index: TileIndex::new(13),
+                duration_ms: 150,
+            },
+            TileAnimationFrame {
+                tile_index: TileIndex::new(14),
+                duration_ms: 150,
+            },
+            TileAnimationFrame {
+                tile_index: TileIndex::new(15),
+                duration_ms: 150,
+            },
+        ],
+        loop_mode: AnimLoopMode::Loop,
+    }
+}
+
 fn build_forest_tileset() -> PixhausArchive {
     let tw = FOREST_TILE_SIZE;
     let th = FOREST_TILE_SIZE;
@@ -585,36 +632,7 @@ fn build_forest_tileset() -> PixhausArchive {
     ];
 
     // Water animation: tile 13 cycles through tiles 13→14→15 at 150 ms each.
-    let water_anim = TileAnimation {
-        frames: vec![
-            TileAnimationFrame {
-                tile_index: TileIndex::new(13),
-                duration_ms: 150,
-            },
-            TileAnimationFrame {
-                tile_index: TileIndex::new(14),
-                duration_ms: 150,
-            },
-            TileAnimationFrame {
-                tile_index: TileIndex::new(15),
-                duration_ms: 150,
-            },
-        ],
-        loop_mode: AnimLoopMode::Loop,
-    };
-
-    // Build properties vec sized to tile_count. Most tiles are default.
-    // Entry 13 carries the water animation.
-    let mut properties: Vec<TileProperties> = (0..n).map(|_| TileProperties::default()).collect();
-    // Stone tiles (9-12) get full collision.
-    for i in 9..=12 {
-        properties[i as usize].collision = CollisionShape::Full;
-    }
-    // Water tile 13 drives the animation.
-    properties[13] = TileProperties {
-        collision: CollisionShape::None,
-        animation: Some(water_anim),
-    };
+    let properties = forest_tile_properties(n, forest_water_anim());
 
     let tileset = Tileset {
         id: TilesetId::new(1),
@@ -1005,7 +1023,11 @@ fn build_forest_level() -> PixhausArchive {
         source: TilesetSource::Inline {
             buffer: PixelBufferId::new(4000),
         },
-        properties: Vec::new(),
+        // Inline the same per-tile metadata the standalone tileset
+        // sample carries — collision shapes (stone tiles 9-12) plus the
+        // water-tile animation. Importers that care about collision or
+        // animated tiles need this to match the tileset-forest sample.
+        properties: forest_tile_properties(FOREST_TILE_COUNT, forest_water_anim()),
         user_data: UserData::default(),
     };
 
