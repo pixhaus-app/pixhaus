@@ -128,19 +128,52 @@ pub fn export_tilemap(
     validate_tileset_indices(tilesets.len(), layers)?;
     let firstgids = compute_firstgids(tilesets);
     validate_tile_indices(tilesets, layers)?;
+    // Compute filenames once, deduplicating collisions by suffixing the
+    // index. Two tilesets sharing a display name would otherwise both
+    // resolve to `{name}.tsx` and the second write would clobber the
+    // first. Use the same filenames in both the TSX outputs and the
+    // <tileset source="..."> references inside the TMX.
+    let filenames = tsx_filenames(tilesets);
     let tsx_outputs = tilesets
         .iter()
-        .map(|ts_input| {
-            let filename = format!("{}.tsx", ts_input.tileset.name);
+        .zip(filenames.iter())
+        .map(|(ts_input, filename)| {
             let tsx = tileset_xml::build_tsx(ts_input.tileset, &ts_input.image_path);
-            TilesetOutput { filename, tsx }
+            TilesetOutput {
+                filename: filename.clone(),
+                tsx,
+            }
         })
         .collect();
-    let tmx = build_tmx(tilesets, &firstgids, layers, options)?;
+    let tmx = build_tmx(tilesets, &firstgids, &filenames, layers, options)?;
+    schema::validate_tmx(&tmx)?;
     Ok(TiledExportOutput {
         tmx,
         tilesets: tsx_outputs,
     })
+}
+
+/// Computes the per-tileset TSX filenames, suffixing duplicates with their
+/// input index. `["forest", "forest", "stone"]` becomes `["forest.tsx",
+/// "forest_1.tsx", "stone.tsx"]`. The first occurrence keeps the bare name
+/// so the common case (unique names) stays readable.
+fn tsx_filenames(tilesets: &[TilesetExportInput<'_>]) -> Vec<String> {
+    let mut seen: std::collections::HashMap<&str, usize> = std::collections::HashMap::new();
+    tilesets
+        .iter()
+        .enumerate()
+        .map(|(i, ts_input)| {
+            let name: &str = ts_input.tileset.name.as_str();
+            let count = seen.entry(name).or_insert(0);
+            let filename = if *count == 0 {
+                format!("{name}.tsx")
+            } else {
+                format!("{name}_{i}.tsx")
+            };
+            *count += 1;
+            filename
+        })
+        .collect()
 }
 
 // ── Validation ────────────────────────────────────────────────────────────────
@@ -237,6 +270,7 @@ fn compute_firstgids(tilesets: &[TilesetExportInput<'_>]) -> Vec<u32> {
 fn build_tmx(
     tilesets: &[TilesetExportInput<'_>],
     firstgids: &[u32],
+    tsx_filenames: &[String],
     layers: &[TiledLayerInput<'_>],
     _options: &TiledExportOptions,
 ) -> Result<String> {
@@ -267,13 +301,12 @@ fn build_tmx(
     .ok();
     out.push('\n');
 
-    for (i, ts_input) in tilesets.iter().enumerate() {
-        let tsx_file = format!("{}.tsx", ts_input.tileset.name);
+    for (i, _ts_input) in tilesets.iter().enumerate() {
         writeln!(
             out,
             "  <tileset firstgid=\"{}\" source=\"{}\"/>",
             firstgids[i],
-            xml_escape_attr(&tsx_file)
+            xml_escape_attr(&tsx_filenames[i])
         )
         .ok();
     }
@@ -837,6 +870,65 @@ mod tests {
         let out = export_tilemap(&[sample_ts_input(&ts)], &[], &options()).unwrap();
         assert_eq!(out.tilesets.len(), 1);
         assert_eq!(out.tilesets[0].filename, "dungeon.tsx");
+    }
+
+    #[test]
+    fn duplicate_tileset_names_produce_unique_tsx_filenames() {
+        // Two tilesets sharing the display name "forest" used to both
+        // get "forest.tsx", clobbering each other on disk and breaking
+        // the TMX <tileset source="..."> resolution.
+        let a = Tileset {
+            id: TilesetId::new(1),
+            name: "forest".into(),
+            tile_size: Size::new(16, 16),
+            tile_count: 4,
+            base_index: 1,
+            source: TilesetSource::External {
+                path: "a.png".into(),
+            },
+            properties: Vec::new(),
+            user_data: UserData::default(),
+        };
+        let b = Tileset {
+            id: TilesetId::new(2),
+            name: "forest".into(), // intentional collision
+            tile_size: Size::new(16, 16),
+            tile_count: 4,
+            base_index: 1,
+            source: TilesetSource::External {
+                path: "b.png".into(),
+            },
+            properties: Vec::new(),
+            user_data: UserData::default(),
+        };
+        let inputs = [
+            TilesetExportInput {
+                tileset: &a,
+                image_path: "a.png".into(),
+            },
+            TilesetExportInput {
+                tileset: &b,
+                image_path: "b.png".into(),
+            },
+        ];
+        let out = export_tilemap(&inputs, &[], &options()).unwrap();
+        assert_eq!(out.tilesets.len(), 2);
+        assert_eq!(out.tilesets[0].filename, "forest.tsx");
+        assert_eq!(out.tilesets[1].filename, "forest_1.tsx");
+        // The TMX must reference the deduplicated filenames so Tiled
+        // resolves both tilesets correctly.
+        assert!(out.tmx.contains(r#"source="forest.tsx""#));
+        assert!(out.tmx.contains(r#"source="forest_1.tsx""#));
+    }
+
+    #[test]
+    fn schema_validation_runs_on_export() {
+        // Valid export passes; this is a smoke test that schema::validate_tmx
+        // is actually invoked from the public path. (Negative cases are
+        // covered by the schema module's own unit tests.)
+        let ts = sample_tileset();
+        let out = export_tilemap(&[sample_ts_input(&ts)], &[], &options()).unwrap();
+        assert!(super::schema::validate_tmx(&out.tmx).is_ok());
     }
 
     #[test]

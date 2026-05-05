@@ -125,7 +125,9 @@ fn check_infinite_attribute(tmx: &str) -> Result<()> {
 /// collected `firstgid` values in document order.
 fn check_tileset_elements(tmx: &str) -> Result<Vec<u32>> {
     let mut firstgids = Vec::new();
-    for (line_no, line) in tmx.lines().enumerate() {
+    for (line_idx, line) in tmx.lines().enumerate() {
+        // Humans read line numbers as 1-based; enumerate() is 0-based.
+        let line_no = line_idx + 1;
         let trimmed = line.trim_start();
         if !trimmed.starts_with("<tileset ") {
             continue;
