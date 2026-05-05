@@ -1,21 +1,27 @@
 import { createSignal } from "solid-js";
 import type { ProjectStatus } from "./lib/commands/project";
+import { loadStorageJSON } from "./lib/utils/storage";
 
 export type RecentProject = { name: string; path: string };
 
 const MAX_RECENT = 10;
 const RECENT_KEY = "pixhaus:recent-projects";
 
+function isRecentProjectArray(v: unknown): v is RecentProject[] {
+  return (
+    Array.isArray(v) &&
+    v.every(
+      (e) =>
+        e !== null &&
+        typeof e === "object" &&
+        typeof (e as RecentProject).name === "string" &&
+        typeof (e as RecentProject).path === "string",
+    )
+  );
+}
+
 function loadRecent(): RecentProject[] {
-  try {
-    const raw = localStorage.getItem(RECENT_KEY);
-    if (raw !== null) {
-      return JSON.parse(raw) as RecentProject[];
-    }
-  } catch {
-    // malformed — start fresh
-  }
-  return [];
+  return loadStorageJSON<RecentProject[]>(RECENT_KEY, [], isRecentProjectArray);
 }
 
 const [activeProject, setActiveProjectInternal] = createSignal<ProjectStatus | null>(null);
