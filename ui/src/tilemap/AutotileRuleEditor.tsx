@@ -8,11 +8,17 @@
 // State is held locally: rule sets are persisted to the project once the full
 // tilemap IPC lands (S06).  Until then changes survive the panel session.
 
-import { For, Show, createSignal, createMemo, type Component } from "solid-js";
+import { For, Show, createMemo, type Component } from "solid-js";
 import { produce } from "solid-js/store";
-import { createStore } from "solid-js/store";
 import type { AutotileKind, AutotileRule, NeighborCondition, TileIndex } from "../lib/types";
-import { localAutotileKind, setLocalAutotileKind } from "./tilemap-state";
+import {
+  autotileDefaultTile,
+  autotileRules,
+  localAutotileKind,
+  setAutotileDefaultTile,
+  setAutotileRules,
+  setLocalAutotileKind,
+} from "./tilemap-state";
 
 // ── Neighbor order: NW, N, NE, W, E, SW, S, SE (matches core constants) ──────
 
@@ -198,18 +204,29 @@ const RuleRow: Component<RuleRowProps> = (props) => {
 const AutotileRuleEditor: Component = () => {
   const kind = localAutotileKind;
 
-  // Local custom rule state — mirrors AutotileRuleSet fields.
-  const [rules, setRules] = createStore<AutotileRule[]>([]);
-  const [defaultTile, setDefaultTile] = createSignal<TileIndex>(1 as TileIndex);
+  // Custom rule state lives at module scope in tilemap-state so it
+  // survives the editor unmounting (e.g. when the user switches
+  // preferences tabs). The aliases below keep the rest of this file
+  // readable.
+  const rules = autotileRules;
+  const setRules = setAutotileRules;
+  const defaultTile = autotileDefaultTile;
+  const setDefaultTile = setAutotileDefaultTile;
 
   // ── Kind picker ───────────────────────────────────────────────────────
 
   // Builds a fully-typed AutotileKind for a button click. The custom
   // variant is intersected with AutotileRuleSet, so a bare `{ kind:
-  // "custom" }` object is invalid — supply rules and default_tile too.
+  // "custom" }` object is invalid — pull the live rules + default_tile
+  // from the hoisted state so the kind value reflects the current
+  // editor contents.
   function buildKind(k: AutotileKind["kind"]): AutotileKind {
     if (k === "custom") {
-      return { kind: "custom", rules: [], default_tile: 1 as TileIndex };
+      return {
+        kind: "custom",
+        rules: [...autotileRules],
+        default_tile: autotileDefaultTile(),
+      };
     }
     return { kind: k };
   }

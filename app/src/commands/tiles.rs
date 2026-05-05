@@ -143,6 +143,12 @@ pub async fn tileset_add(
     let mut doc = state.doc.write().await;
     let id = TilesetId::new(doc.next_id);
     doc.next_id += 1;
+    // PixelBufferId(0) is the project's null/sentinel slot. Mint a fresh
+    // id from doc.next_id so the inline tileset's atlas buffer doesn't
+    // alias the sentinel — the actual atlas pixels are written to this
+    // buffer when S01 grows the tileset's tile count.
+    let buffer_id = PixelBufferId::new(doc.next_id);
+    doc.next_id += 1;
     let tileset = {
         let sprite = doc
             .project
@@ -163,9 +169,7 @@ pub async fn tileset_add(
             // The pixel buffer subsystem (S01) grows this as tiles are added.
             tile_count: 1,
             base_index: 1,
-            source: TilesetSource::Inline {
-                buffer: PixelBufferId::new(0),
-            },
+            source: TilesetSource::Inline { buffer: buffer_id },
             properties: Vec::new(),
             user_data: UserData::default(),
         };

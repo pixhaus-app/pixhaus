@@ -7,7 +7,15 @@
 // handler all read and write the same signals.
 
 import { createSignal } from "solid-js";
-import type { AutotileKind, LayerId, Tileset, TilesetId } from "../lib/types";
+import { createStore } from "solid-js/store";
+import type {
+  AutotileKind,
+  AutotileRule,
+  LayerId,
+  TileIndex,
+  Tileset,
+  TilesetId,
+} from "../lib/types";
 
 // ── TileFlags bit constants ────────────────────────────────────────────────
 // Mirrors core/src/project/tilemap.rs — TileFlags is a transparent u8.
@@ -55,8 +63,20 @@ export const [autotileMode, setAutotileMode] = createSignal(false);
 // ── Local autotile rule state ──────────────────────────────────────────────
 // Autotile kind / rule set for the active tileset.  Persisted to the project
 // once the full tilemap IPC (S06) lands; held in UI state for now.
+//
+// These signals live at module scope (not inside AutotileRuleEditor) so the
+// rules and default_tile survive the editor unmounting — e.g. when the user
+// switches preferences tabs and back. Solid's <Tabs/> implementation here
+// destroys the inactive panel's components, so any state inside the
+// component is lost on every tab switch.
 
 export const [localAutotileKind, setLocalAutotileKind] = createSignal<AutotileKind | null>(null);
+
+export const [autotileRules, setAutotileRules] = createStore<AutotileRule[]>([]);
+
+export const [autotileDefaultTile, setAutotileDefaultTile] = createSignal<TileIndex>(
+  1 as TileIndex,
+);
 
 // ── Helpers ────────────────────────────────────────────────────────────────
 
