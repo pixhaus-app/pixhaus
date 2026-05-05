@@ -1,9 +1,9 @@
 //! Tilemap editing commands.
-//!
-//! All commands here are stubbed until stream S06 (tilemap data structures and
-//! autotile rules) lands.
 
-use pixhaus_core::project::{FrameIndex, LayerId, SpriteId, TileCell, TileIndex};
+use pixhaus_core::project::{
+    FrameIndex, LayerId, PixelBufferId, Size, SpriteId, TileCell, TileIndex, Tileset, TilesetId,
+    TilesetSource, UserData,
+};
 use serde::Deserialize;
 use tauri::State;
 
@@ -90,6 +90,129 @@ pub async fn tile_autotile_apply(
     })
 }
 
+// ── Tileset management ────────────────────────────────────────────────────────
+
+/// Arguments for adding a new tileset to a sprite.
+#[derive(Debug, Deserialize)]
+pub struct TilesetAddArgs {
+    /// Target sprite.
+    pub sprite_id: SpriteId,
+    /// Display name for the new tileset.
+    pub name: String,
+    /// Width of each tile in pixels.
+    pub tile_width: u32,
+    /// Height of each tile in pixels.
+    pub tile_height: u32,
+}
+
+/// Lists all tilesets in a sprite.
+#[tauri::command(async, rename_all = "snake_case")]
+pub async fn tileset_list(
+    sprite_id: SpriteId,
+    state: State<'_, AppState>,
+) -> CommandResult<Vec<Tileset>> {
+    let doc = state.doc.read().await;
+    let sprite = doc
+        .project
+        .as_ref()
+        .ok_or(AppCommandError::NoActiveProject)?
+        .sprites
+        .iter()
+        .find(|s| s.id == sprite_id)
+        .ok_or(AppCommandError::NotFound {
+            entity: "sprite".into(),
+            id: u64::from(sprite_id.get()),
+        })?;
+    Ok(sprite.tilesets.clone())
+}
+
+/// Adds a new empty tileset to a sprite.
+#[tauri::command(async, rename_all = "snake_case")]
+pub async fn tileset_add(
+    args: TilesetAddArgs,
+    state: State<'_, AppState>,
+) -> CommandResult<Tileset> {
+    if args.tile_width == 0 || args.tile_height == 0 {
+        return Err(AppCommandError::Validation {
+            detail: format!(
+                "tileset tile size must be positive (got {}x{})",
+                args.tile_width, args.tile_height
+            ),
+        });
+    }
+    let mut doc = state.doc.write().await;
+    let id = TilesetId::new(doc.next_id);
+    doc.next_id += 1;
+    // PixelBufferId(0) is the project's null/sentinel slot. Mint a fresh
+    // id from doc.next_id so the inline tileset's atlas buffer doesn't
+    // alias the sentinel — the actual atlas pixels are written to this
+    // buffer when S01 grows the tileset's tile count.
+    let buffer_id = PixelBufferId::new(doc.next_id);
+    doc.next_id += 1;
+    let tileset = {
+        let sprite = doc
+            .project
+            .as_mut()
+            .ok_or(AppCommandError::NoActiveProject)?
+            .sprites
+            .iter_mut()
+            .find(|s| s.id == args.sprite_id)
+            .ok_or(AppCommandError::NotFound {
+                entity: "sprite".into(),
+                id: u64::from(args.sprite_id.get()),
+            })?;
+        let tileset = Tileset {
+            id,
+            name: args.name,
+            tile_size: Size::new(args.tile_width, args.tile_height),
+            // tile_count = 1 (just the implicit empty tile at index 0).
+            // The pixel buffer subsystem (S01) grows this as tiles are added.
+            tile_count: 1,
+            base_index: 1,
+            source: TilesetSource::Inline { buffer: buffer_id },
+            properties: Vec::new(),
+            user_data: UserData::default(),
+        };
+        sprite.tilesets.push(tileset.clone());
+        tileset
+    };
+    doc.dirty = true;
+    Ok(tileset)
+}
+
+/// Renames a tileset.
+#[tauri::command(async, rename_all = "snake_case")]
+pub async fn tileset_rename(
+    sprite_id: SpriteId,
+    tileset_id: TilesetId,
+    name: String,
+    state: State<'_, AppState>,
+) -> CommandResult<()> {
+    let mut doc = state.doc.write().await;
+    let sprite = doc
+        .project
+        .as_mut()
+        .ok_or(AppCommandError::NoActiveProject)?
+        .sprites
+        .iter_mut()
+        .find(|s| s.id == sprite_id)
+        .ok_or(AppCommandError::NotFound {
+            entity: "sprite".into(),
+            id: u64::from(sprite_id.get()),
+        })?;
+    let tileset = sprite
+        .tilesets
+        .iter_mut()
+        .find(|t| t.id == tileset_id)
+        .ok_or(AppCommandError::NotFound {
+            entity: "tileset".into(),
+            id: u64::from(tileset_id.get()),
+        })?;
+    tileset.name = name;
+    doc.dirty = true;
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -109,5 +232,23 @@ mod tests {
             },
         };
         assert_eq!(args.cell.index.get(), 5);
+    }
+
+    #[test]
+    fn tileset_add_args_fields() {
+        let args = TilesetAddArgs {
+            sprite_id: SpriteId::new(1),
+            name: "dungeon".into(),
+            tile_width: 16,
+            tile_height: 16,
+        };
+        assert_eq!(args.tile_width, 16);
+        assert_eq!(args.tile_height, 16);
+    }
+
+    #[test]
+    fn tileset_add_uses_default_user_data() {
+        let ud = UserData::default();
+        assert!(ud.is_empty());
     }
 }

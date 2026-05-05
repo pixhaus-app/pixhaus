@@ -12,6 +12,8 @@ import StatusBar from "./StatusBar";
 import WelcomeScreen from "./WelcomeScreen";
 import Canvas from "../canvas/Canvas";
 import PalettePanel from "../palette/PalettePanel";
+import TilemapPanel from "../tilemap/TilemapPanel";
+import { activeTilemapCtx } from "../tilemap/tilemap-state";
 
 // Import to trigger initial theme application as a side effect
 import "../preferences/preferences-store";
@@ -42,7 +44,12 @@ const Shell: Component = () => {
             <WelcomeScreen />
           </Show>
           <Show when={activeProject() !== null}>
-            <Canvas />
+            <div class="shell-workspace">
+              <Canvas />
+              <Show when={activeTilemapCtx() !== null}>
+                <TilemapPanel />
+              </Show>
+            </div>
           </Show>
         </div>
 

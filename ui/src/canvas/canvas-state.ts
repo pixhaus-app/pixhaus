@@ -6,7 +6,7 @@
 // canvas state stays current.
 
 import { createSignal } from "solid-js";
-import type { CanvasState, SpriteId } from "../lib/types";
+import type { CanvasState, LayerId, SpriteId } from "../lib/types";
 import { canvasSetViewport } from "../lib/commands/canvas";
 import { fitZoom } from "./viewport";
 
@@ -32,6 +32,11 @@ export const [onionSkinOpacity, setOnionSkinOpacity] = createSignal(0.4);
 // Currently foregrounded sprite and frame.
 export const [activeSpriteId, setActiveSpriteId] = createSignal<SpriteId | null>(null);
 export const [activeFrameIndex, setActiveFrameIndex] = createSignal<number>(0);
+
+// Currently selected layer. Null when no project is open or no layer is
+// focused. S17 (layer panel) will own the write side; this module owns the
+// signal so the canvas input handler can read it without a circular import.
+export const [activeLayerId, setActiveLayerId] = createSignal<LayerId | null>(null);
 
 // Active selection rect in canvas coordinates, null when no selection.
 export const [selectionRect, setSelectionRect] = createSignal<{
@@ -102,7 +107,7 @@ function pushViewportToRust(): void {
 
   const state: CanvasState = {
     active_sprite: sprite,
-    active_layer: null,
+    active_layer: activeLayerId(),
     active_frame: activeFrameIndex(),
     scroll_x: scrollX(),
     scroll_y: scrollY(),
