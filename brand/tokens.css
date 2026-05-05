@@ -1,0 +1,203 @@
+/*
+  Pixhaus design tokens.
+
+  This file is the source of truth for the brand. Both the editor UI
+  (ui/src/index.css) and the marketing website (S47) derive their token
+  values from here.
+
+  Import order in consuming packages:
+    1. This file  (brand tokens)
+    2. Geist font declarations  (brand/fonts.css or 'geist/dist/fonts.css')
+    3. Local theme overrides
+
+  Token naming:
+    --brand-*    Brand identity values (palette, type, geometry). Stable.
+    --color-*    Semantic color aliases that map brand values to intent.
+    --space-*    Spacing scale.
+    --radius-*   Border radius scale.
+    --type-*     Typography scale.
+    --motion-*   Animation timing.
+    --z-*        Z-index scale.
+*/
+
+/* ── Brand palette ────────────────────────────────────────────────────────── */
+
+:root {
+  /* Primary: Pixhaus Indigo */
+  --brand-indigo-50:  #f0eeff;
+  --brand-indigo-100: #e0dcff;
+  --brand-indigo-200: #c5bdfd;
+  --brand-indigo-300: #a497fb;
+  --brand-indigo-400: #9080f8;
+  --brand-indigo-500: #7c6cef;   /* brand primary */
+  --brand-indigo-600: #6555d4;
+  --brand-indigo-700: #5040b2;
+  --brand-indigo-800: #3b2e8a;
+  --brand-indigo-900: #271e5e;
+
+  /* Neutrals: near-black to near-white, blue-tinted */
+  --brand-neutral-0:   #0f0f13;
+  --brand-neutral-50:  #17171e;
+  --brand-neutral-100: #1e1e27;
+  --brand-neutral-150: #252530;
+  --brand-neutral-200: #2c2c3a;
+  --brand-neutral-300: #2a2a35;
+  --brand-neutral-400: #3d3d50;
+  --brand-neutral-500: #5a5a72;
+  --brand-neutral-600: #9090a8;
+  --brand-neutral-700: #b8b8cc;
+  --brand-neutral-800: #d8d8e8;
+  --brand-neutral-900: #e6e6f0;
+  --brand-neutral-950: #f0f0f4;
+  --brand-neutral-1000: #ffffff;
+
+  /* Semantic: status colors */
+  --brand-green:  #4caf6e;
+  --brand-yellow: #e8a534;
+  --brand-red:    #e05252;
+  --brand-blue:   #5b9de8;
+
+  /* ── Semantic color aliases (light/dark toggled by theme) ─────────────── */
+
+  /* These use the dark theme values as the default (editor is dark-first). */
+  --color-bg-app:       var(--brand-neutral-0);
+  --color-bg-panel:     var(--brand-neutral-50);
+  --color-bg-elevated:  var(--brand-neutral-100);
+  --color-bg-hover:     var(--brand-neutral-150);
+  --color-bg-active:    var(--brand-neutral-200);
+  --color-bg-selection: #2a3a5c;
+
+  --color-border:       var(--brand-neutral-300);
+  --color-border-strong: var(--brand-neutral-400);
+
+  --color-text-primary:   var(--brand-neutral-900);
+  --color-text-secondary: var(--brand-neutral-600);
+  --color-text-disabled:  #4a4a60;
+  --color-text-on-accent: var(--brand-neutral-1000);
+
+  --color-accent:        var(--brand-indigo-500);
+  --color-accent-hover:  var(--brand-indigo-400);
+  --color-accent-subtle: rgba(124, 108, 239, 0.15);
+  --color-accent-border: rgba(124, 108, 239, 0.4);
+
+  --color-success: var(--brand-green);
+  --color-warning: var(--brand-yellow);
+  --color-error:   var(--brand-red);
+  --color-info:    var(--brand-blue);
+
+  /* ── Typography ─────────────────────────────────────────────────────────── */
+
+  --brand-font-sans:
+    "Geist", -apple-system, BlinkMacSystemFont, "Segoe UI",
+    Roboto, Helvetica, Arial, sans-serif;
+
+  --brand-font-mono:
+    "Geist Mono", "JetBrains Mono", "Cascadia Code", "Fira Code",
+    "Menlo", "Monaco", "Consolas", monospace;
+
+  --type-size-xs:   10px;
+  --type-size-sm:   11px;
+  --type-size-base: 13px;
+  --type-size-md:   14px;
+  --type-size-lg:   16px;
+  --type-size-xl:   20px;
+  --type-size-2xl:  24px;
+  --type-size-3xl:  28px;
+  --type-size-4xl:  36px;
+
+  --type-weight-regular:  400;
+  --type-weight-medium:   500;
+  --type-weight-semibold: 600;
+  --type-weight-bold:     700;
+
+  --type-leading-tight:  1.2;
+  --type-leading-snug:   1.35;
+  --type-leading-normal: 1.5;
+  --type-leading-relaxed: 1.65;
+
+  --type-tracking-tight:  -0.03em;
+  --type-tracking-normal: 0em;
+  --type-tracking-wide:   0.05em;
+  --type-tracking-wider:  0.08em;
+  --type-tracking-widest: 0.12em;
+
+  /* ── Spacing ─────────────────────────────────────────────────────────────── */
+
+  --space-1:  2px;
+  --space-2:  4px;
+  --space-3:  6px;
+  --space-4:  8px;
+  --space-5:  10px;
+  --space-6:  12px;
+  --space-7:  14px;
+  --space-8:  16px;
+  --space-10: 20px;
+  --space-12: 24px;
+  --space-16: 32px;
+  --space-20: 40px;
+  --space-24: 48px;
+  --space-32: 64px;
+
+  /* ── Border radius ───────────────────────────────────────────────────────── */
+
+  --radius-sm:   3px;
+  --radius-md:   5px;
+  --radius-lg:   8px;
+  --radius-xl:   12px;
+  --radius-full: 9999px;
+
+  /* ── Motion ─────────────────────────────────────────────────────────────── */
+
+  --motion-fast:   80ms ease;
+  --motion-mid:   150ms ease;
+  --motion-slow:  300ms ease;
+  --motion-enter: 200ms cubic-bezier(0.16, 1, 0.3, 1);
+  --motion-exit:  150ms cubic-bezier(0.4, 0, 1, 1);
+
+  /* ── Z-index ─────────────────────────────────────────────────────────────── */
+
+  --z-base:      0;
+  --z-raised:    10;
+  --z-dropdown:  100;
+  --z-modal:     500;
+  --z-overlay:   900;
+  --z-toast:     1000;
+  --z-tooltip:   1100;
+
+  /* ── Shell geometry ──────────────────────────────────────────────────────── */
+
+  --shell-statusbar-height: 22px;
+  --shell-titlebar-height:  0px;
+  --shell-panel-min-width:  200px;
+  --shell-panel-max-width:  400px;
+}
+
+/* ── Light theme overrides ────────────────────────────────────────────────── */
+
+[data-theme="light"] {
+  color-scheme: light;
+
+  --color-bg-app:       var(--brand-neutral-950);
+  --color-bg-panel:     #f8f8fc;
+  --color-bg-elevated:  var(--brand-neutral-1000);
+  --color-bg-hover:     var(--brand-neutral-800);
+  --color-bg-active:    var(--brand-neutral-700);
+  --color-bg-selection: #d0e4ff;
+
+  --color-border:        #d4d4e0;
+  --color-border-strong: var(--brand-neutral-700);
+
+  --color-text-primary:   #1a1a2e;
+  --color-text-secondary: var(--brand-neutral-500);
+  --color-text-disabled:  var(--brand-neutral-700);
+
+  --color-accent:        #4a7cd4;
+  --color-accent-hover:  #3a6ac4;
+  --color-accent-subtle: rgba(74, 124, 212, 0.1);
+  --color-accent-border: rgba(74, 124, 212, 0.4);
+
+  --color-success: #2e8a50;
+  --color-warning: #c07820;
+  --color-error:   #c43030;
+  --color-info:    #3870c0;
+}
