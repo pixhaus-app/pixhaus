@@ -2,12 +2,13 @@
 //
 // Use this when you need direct control over the comparison — e.g. to compare
 // a cropped region, or to diff two arbitrary PNG buffers rather than relying
-// on Playwright's toHaveScreenshot().
+// on Playwright's expect(page).toHaveScreenshot().
 //
-// For most tests, prefer page.toHaveScreenshot() in specs; it uses the same
-// underlying pixelmatch algorithm and handles baseline management automatically.
+// For most tests, prefer expect(page).toHaveScreenshot() in specs; it uses
+// the same underlying pixelmatch algorithm and handles baseline management
+// automatically.
 
-import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname } from "node:path";
 import { PNG } from "pngjs";
 import pixelmatch from "pixelmatch";
@@ -64,9 +65,16 @@ export function compareScreenshot(
   }
 
   const diff = new PNG({ width: actual.width, height: actual.height });
-  const diffPixels = pixelmatch(actual.data, baseline.data, diff.data, actual.width, actual.height, {
-    threshold,
-  });
+  const diffPixels = pixelmatch(
+    actual.data,
+    baseline.data,
+    diff.data,
+    actual.width,
+    actual.height,
+    {
+      threshold,
+    },
+  );
 
   if (diffPixels > 0) {
     mkdirSync(dirname(diffPath), { recursive: true });
@@ -81,10 +89,5 @@ export function compareScreenshot(
 }
 
 function pathExists(p: string): boolean {
-  try {
-    readFileSync(p);
-    return true;
-  } catch {
-    return false;
-  }
+  return existsSync(p);
 }

@@ -65,7 +65,14 @@ export async function injectTauriMock(page: Page): Promise<void> {
   await page.addInitScript(TAURI_MOCK_SCRIPT);
 }
 
-/** Configures a named IPC command to return a fixed value (or call a factory).
+/** Configures a named IPC command to return a fixed value when invoked.
+ *
+ *  The response is structured-cloned into the page context, so it must be
+ *  serialisable — primitives, plain objects, arrays, typed arrays. Functions
+ *  cannot cross the boundary; the inner overrides table supports a factory
+ *  callback, but it can only be set from inside the page (not via this
+ *  helper from the test runner).
+ *
  *  Must be called after injectTauriMock() and before page.goto(). */
 export async function mockInvokeResponse(
   page: Page,
@@ -78,7 +85,9 @@ export async function mockInvokeResponse(
     ({ c, r }: { c: string; r: unknown }) => {
       (
         window as unknown as {
-          __PIXHAUS_MOCK__: { setResponse: (cmd: string, val: unknown) => void };
+          __PIXHAUS_MOCK__: {
+            setResponse: (cmd: string, val: unknown) => void;
+          };
         }
       ).__PIXHAUS_MOCK__.setResponse(c, r);
     },
