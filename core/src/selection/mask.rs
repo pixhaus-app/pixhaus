@@ -53,11 +53,16 @@ impl SelectionMask {
     pub fn from_raw(width: u32, height: u32, data: Vec<u8>) -> Result<Self> {
         let expected = (width as usize) * (height as usize);
         if data.len() != expected {
+            // The buffer is flat — there's no real "actual width × actual height"
+            // pair to report. Hold height fixed and infer width from the byte
+            // count so the message at least gives the caller a hint at where
+            // the mismatch came from. height.max(1) avoids div-by-zero when
+            // the caller passes a zero-sized mask with non-empty data.
             return Err(Error::SizeMismatch {
                 expected_w: width,
                 expected_h: height,
-                actual_w: width,
-                actual_h: u32::try_from(data.len()).unwrap_or(u32::MAX) / height.max(1),
+                actual_w: u32::try_from(data.len()).unwrap_or(u32::MAX) / height.max(1),
+                actual_h: height,
             });
         }
         Ok(Self {
@@ -79,7 +84,7 @@ impl SelectionMask {
         self.height
     }
 
-    /// `true` if both dimensions are zero.
+    /// `true` when the mask covers zero pixels, i.e. either dimension is zero.
     #[must_use]
     pub const fn is_empty(&self) -> bool {
         self.width == 0 || self.height == 0
