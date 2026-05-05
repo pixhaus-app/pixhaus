@@ -340,6 +340,22 @@ fn anim(id: u32, name: &str, start: u32, end: u32, dir: LoopDirection, speed: f3
     }
 }
 
+/// Maps a compass-direction string to the 0-7 corner offset used by
+/// `indexed_dir_frame()` so directional animations differ visually.
+fn direction_to_corner(dir: &str) -> u8 {
+    match dir {
+        "s" => 0,
+        "sw" => 1,
+        "w" => 2,
+        "nw" => 3,
+        "n" => 4,
+        "ne" => 5,
+        "e" => 6,
+        "se" => 7,
+        _ => 0,
+    }
+}
+
 // ── S45(a): character-knight.pixhaus ────────────────────────────────────────
 //
 // 32×32 indexed sprite, 167 frames. Layer 1 ("armor") carries all cel pixel
@@ -392,35 +408,31 @@ fn build_knight() -> PixhausArchive {
     // idle (4 frames, PingPong)
     push("idle", 4, 120, 4, LoopDirection::PingPong, true, None);
 
-    // walk-8dir (8 frames × 8 directions)
-    for (i, &dir) in ["s", "sw", "w", "nw", "n", "ne", "e", "se"]
-        .iter()
-        .enumerate()
-    {
+    // walk-8dir (8 frames × 8 directions). Each direction is a real
+    // engine-side animation entry, not just a frame tag — the showcase
+    // sample's whole point is to exercise all eight handoff paths.
+    for dir in ["s", "sw", "w", "nw", "n", "ne", "e", "se"] {
         push(
             &format!("walk-{dir}"),
             8,
             100,
             4,
             LoopDirection::Forward,
-            i == 0, // export Animation only for walk-s
-            Some(i as u8),
+            true,
+            Some(direction_to_corner(dir)),
         );
     }
 
     // run-8dir (8 frames × 8 directions)
-    for (i, &dir) in ["s", "sw", "w", "nw", "n", "ne", "e", "se"]
-        .iter()
-        .enumerate()
-    {
+    for dir in ["s", "sw", "w", "nw", "n", "ne", "e", "se"] {
         push(
             &format!("run-{dir}"),
             8,
             60,
             5, // armor-light: slightly brighter to hint at speed
             LoopDirection::Forward,
-            i == 0,
-            Some(i as u8),
+            true,
+            Some(direction_to_corner(dir)),
         );
     }
 
@@ -432,7 +444,7 @@ fn build_knight() -> PixhausArchive {
             80,
             10, // gold: weapon swing
             LoopDirection::Forward,
-            i == 0,
+            true,
             Some((i * 2) as u8), // S→0, W→2, N→4, E→6
         );
     }
@@ -799,6 +811,10 @@ fn build_ui_sprites() -> PixhausArchive {
             }],
             user_data: UserData::default(),
         },
+        // NineSlice.center origins are RELATIVE to the slice's bounds.origin
+        // (see NineSlice doc in core/src/project/slice.rs). Importers add
+        // bounds.origin themselves at render time. Earlier samples baked
+        // absolute canvas coords, which made every importer offset twice.
         Slice {
             id: SliceId::new(2),
             name: "mana-bar".into(),
@@ -807,7 +823,7 @@ fn build_ui_sprites() -> PixhausArchive {
                 bounds: Rect::from_xywh(0, 12, 64, 8),
                 nine_slice: Some(NineSlice {
                     center: Rect {
-                        origin: IVec2::new(2, 14),
+                        origin: IVec2::new(2, 2),
                         size: Size::new(60, 4),
                     },
                 }),
@@ -823,7 +839,7 @@ fn build_ui_sprites() -> PixhausArchive {
                 bounds: Rect::from_xywh(0, 24, 32, 14),
                 nine_slice: Some(NineSlice {
                     center: Rect {
-                        origin: IVec2::new(2, 26),
+                        origin: IVec2::new(2, 2),
                         size: Size::new(28, 10),
                     },
                 }),
@@ -841,7 +857,7 @@ fn build_ui_sprites() -> PixhausArchive {
                 bounds: Rect::from_xywh(36, 24, 32, 14),
                 nine_slice: Some(NineSlice {
                     center: Rect {
-                        origin: IVec2::new(38, 26),
+                        origin: IVec2::new(2, 2),
                         size: Size::new(28, 10),
                     },
                 }),
@@ -859,7 +875,7 @@ fn build_ui_sprites() -> PixhausArchive {
                 bounds: Rect::from_xywh(0, 42, 96, 30),
                 nine_slice: Some(NineSlice {
                     center: Rect {
-                        origin: IVec2::new(4, 46),
+                        origin: IVec2::new(4, 4),
                         size: Size::new(88, 22),
                     },
                 }),
@@ -1177,5 +1193,48 @@ fn ui_sprites_has_all_slices() {
                 slice.name
             );
         }
+    }
+}
+
+/// Walks every sample under `examples/samples/` and re-decodes it, then
+/// confirms it round-trips back to the same project. Without this, a
+/// stale fixture (left over after a builder change but not regenerated
+/// via `PIXHAUS_REGEN_SAMPLES`) would merge silently — every other test
+/// in this file builds the archive in memory and never touches the
+/// committed bytes. See `examples/samples/README.md`.
+#[test]
+fn committed_samples_round_trip_against_current_builders() {
+    let samples_dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .expect("io crate has parent")
+        .join("examples")
+        .join("samples");
+    assert!(
+        samples_dir.exists(),
+        "examples/samples/ not found at {} — has the directory moved?",
+        samples_dir.display()
+    );
+
+    // Each (filename, builder) pair: read the committed file, decode,
+    // and compare against what the current builder would produce. A
+    // mismatch means the committed sample is stale.
+    let cases: &[(&str, fn() -> PixhausArchive)] = &[
+        ("character-knight.pixhaus", build_knight),
+        ("tileset-forest.pixhaus", build_forest_tileset),
+        ("enemy-slime.pixhaus", build_slime),
+        ("ui-sprites.pixhaus", build_ui_sprites),
+        ("level-forest.pixhaus", build_forest_level),
+    ];
+
+    for (filename, builder) in cases {
+        let path = samples_dir.join(filename);
+        let bytes = std::fs::read(&path).unwrap_or_else(|e| panic!("read {}: {e}", path.display()));
+        let on_disk = pixhaus_io::pixhaus::decode(&bytes)
+            .unwrap_or_else(|e| panic!("decode {}: {e:?}", path.display()));
+        let in_memory = builder();
+        assert_eq!(
+            on_disk.project, in_memory.project,
+            "{filename} is stale — re-run PIXHAUS_REGEN_SAMPLES=1 cargo nextest run -p pixhaus-io --test generate_sample_projects"
+        );
     }
 }
