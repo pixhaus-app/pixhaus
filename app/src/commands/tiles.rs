@@ -132,6 +132,14 @@ pub async fn tileset_add(
     args: TilesetAddArgs,
     state: State<'_, AppState>,
 ) -> CommandResult<Tileset> {
+    if args.tile_width == 0 || args.tile_height == 0 {
+        return Err(AppCommandError::Validation {
+            detail: format!(
+                "tileset tile size must be positive (got {}x{})",
+                args.tile_width, args.tile_height
+            ),
+        });
+    }
     let mut doc = state.doc.write().await;
     let id = TilesetId::new(doc.next_id);
     doc.next_id += 1;

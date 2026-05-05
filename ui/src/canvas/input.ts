@@ -50,13 +50,32 @@ function canvasToTileCell(
   tileH: number,
 ): { cellX: number; cellY: number } | null {
   if (cx < 0 || cy < 0) return null;
+  // Guard against zero-sized tilesets — division would yield Infinity
+  // and downstream IPC payloads would carry garbage cell coordinates.
+  if (tileW <= 0 || tileH <= 0) return null;
   return { cellX: Math.floor(cx / tileW), cellY: Math.floor(cy / tileH) };
+}
+
+// Last cell painted in the current drag stroke. Reset to null when a
+// new stroke starts so the first dispatch of every stroke fires; while
+// the stroke is active, dispatchTilePaint suppresses repeats over the
+// same cell to avoid spamming IPC on every mousemove.
+let lastPaintedCell: { x: number; y: number } | null = null;
+
+/** Suppresses an error log when the catch is a known S06 stub. */
+function isUnimplemented(err: unknown): boolean {
+  return (
+    err !== null && typeof err === "object" && (err as { kind?: unknown }).kind === "unimplemented"
+  );
 }
 
 /**
  * Dispatches a tile place or erase IPC call for the given screen position.
- * Errors (including the S06 Unimplemented stub) are swallowed — the user
- * sees the tile painting cursor but no visual change until S06 lands.
+ *
+ * The S06 verb stubs return `Unimplemented{stream:"S06"}`; those are
+ * silently dropped so the user can still place the cursor while we wait
+ * for that stream to land. Any other error is real and gets logged to
+ * the console rather than vanishing.
  */
 function dispatchTilePaint(
   screenX: number,
@@ -80,7 +99,24 @@ function dispatchTilePaint(
   const cell = canvasToTileCell(cx, cy, tile_size.width, tile_size.height);
   if (!cell) return;
 
+  // Skip the IPC if the stroke has already painted this cell. The
+  // cursor still moves smoothly because cell tracking happens upstream
+  // of this function.
+  if (
+    lastPaintedCell !== null &&
+    lastPaintedCell.x === cell.cellX &&
+    lastPaintedCell.y === cell.cellY
+  ) {
+    return;
+  }
+  lastPaintedCell = { x: cell.cellX, y: cell.cellY };
+
   const frameIndex = activeFrameIndex();
+  const onErr = (err: unknown): void => {
+    if (!isUnimplemented(err)) {
+      console.error("[pixhaus] tile paint:", err);
+    }
+  };
 
   if (erase) {
     tileErase({
@@ -89,9 +125,7 @@ function dispatchTilePaint(
       frame_index: frameIndex,
       cell_x: cell.cellX,
       cell_y: cell.cellY,
-    }).catch(() => {
-      // S06 not yet landed — swallow the Unimplemented error.
-    });
+    }).catch(onErr);
     return;
   }
 
@@ -102,9 +136,7 @@ function dispatchTilePaint(
       frame_index: frameIndex,
       rule_set: ctx.tileset.name,
       source_tile: selectedTileIndex(),
-    }).catch(() => {
-      // S06 not yet landed.
-    });
+    }).catch(onErr);
     return;
   }
 
@@ -115,9 +147,12 @@ function dispatchTilePaint(
     cell_x: cell.cellX,
     cell_y: cell.cellY,
     cell: { index: selectedTileIndex(), flags: selectedTileFlags() },
-  }).catch(() => {
-    // S06 not yet landed.
-  });
+  }).catch(onErr);
+}
+
+/** Resets the per-stroke deduplication so the next stroke starts fresh. */
+function resetTilePaintStroke(): void {
+  lastPaintedCell = null;
 }
 
 // ── Pan state ──────────────────────────────────────────────────────────────
@@ -239,6 +274,7 @@ export function attachCanvasInput(el: HTMLElement): () => void {
         e.preventDefault();
         tilePaintActive = true;
         tilePaintErase = tilemapTool() === "erase";
+        resetTilePaintStroke();
         dispatchTilePaint(e.clientX, e.clientY, el, tilePaintErase);
         return;
       }
@@ -246,6 +282,7 @@ export function attachCanvasInput(el: HTMLElement): () => void {
         e.preventDefault();
         tilePaintActive = true;
         tilePaintErase = true;
+        resetTilePaintStroke();
         dispatchTilePaint(e.clientX, e.clientY, el, true);
         return;
       }
@@ -302,6 +339,7 @@ export function attachCanvasInput(el: HTMLElement): () => void {
 
   function onMouseUp(): void {
     tilePaintActive = false;
+    resetTilePaintStroke();
     if (pan.active) {
       pan.active = false;
       el.style.cursor = spaceHeld ? "grab" : "";

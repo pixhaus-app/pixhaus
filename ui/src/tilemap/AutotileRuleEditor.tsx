@@ -204,6 +204,16 @@ const AutotileRuleEditor: Component = () => {
 
   // ── Kind picker ───────────────────────────────────────────────────────
 
+  // Builds a fully-typed AutotileKind for a button click. The custom
+  // variant is intersected with AutotileRuleSet, so a bare `{ kind:
+  // "custom" }` object is invalid — supply rules and default_tile too.
+  function buildKind(k: AutotileKind["kind"]): AutotileKind {
+    if (k === "custom") {
+      return { kind: "custom", rules: [], default_tile: 1 as TileIndex };
+    }
+    return { kind: k };
+  }
+
   function selectKind(k: AutotileKind) {
     setLocalAutotileKind(k);
     if (k.kind === "custom") {
@@ -254,7 +264,7 @@ const AutotileRuleEditor: Component = () => {
               <button
                 class="are__kind-btn"
                 classList={{ "are__kind-btn--active": currentKind()?.kind === k }}
-                onClick={() => selectKind({ kind: k } as AutotileKind)}
+                onClick={() => selectKind(buildKind(k))}
               >
                 {k}
               </button>
