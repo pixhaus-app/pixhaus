@@ -41,7 +41,7 @@ their bedrock dependencies are merged.
 - [x] DONE: S05 — Undo/redo command pattern (★ critical path). Brief: docs/planning/work/streams.md#s05. Blocked by: B2.
 - [x] DONE: S06 — Tilemap data structures and autotile rules (★ critical path). Brief: docs/planning/work/streams.md#s06. Blocked by: B2.
 - [x] DONE: S07 — `.pixhaus` native format (★ critical path). Brief: docs/planning/work/streams.md#s07. Blocked by: B3.
-- [~] CLAIMED:stream-s08: S08 — `.aseprite` read/write (★ critical path). Brief: docs/planning/work/streams.md#s08. Blocked by: B7.
+- [x] DONE: S08 — `.aseprite` read/write (★ critical path). Brief: docs/planning/work/streams.md#s08. Blocked by: B7.
 - [x] DONE: S10 — PNG sprite sheet + JSON export (★ critical path). Brief: docs/planning/work/streams.md#s10. Blocked by: B2 B6.
 - [x] DONE: S13 — Application shell and command palette (★ critical path). Brief: docs/planning/work/streams.md#s13. Blocked by: B4.
 - [x] DONE: S14 — Canvas viewport (WebGL2) (★ critical path). Brief: docs/planning/work/streams.md#s14. Blocked by: B4 S01.
