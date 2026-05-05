@@ -200,7 +200,7 @@ pub async fn layer_list(
     sprite_id: SpriteId,
     state: State<'_, AppState>,
 ) -> CommandResult<Vec<Layer>> {
-    let doc = state.doc.write().await;
+    let doc = state.doc.read().await;
     let sprite = doc
         .project
         .as_ref()

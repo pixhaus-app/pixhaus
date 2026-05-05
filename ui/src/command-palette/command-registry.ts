@@ -5,6 +5,7 @@ import { keybindPreset, customKeybinds } from "../preferences/preferences-store"
 import { ASEPRITE_DEFAULTS, PHOTOSHOP_DEFAULTS, defaultCombo } from "../keybinds/defaults";
 import { projectNew, projectOpen, projectSave, projectClose } from "../lib/commands/project";
 import { setActiveProject, pushRecentProject } from "../project-state";
+import { extractFilename } from "../lib/utils/path";
 
 export type Command = {
   readonly id: string;
@@ -61,9 +62,7 @@ const COMMANDS: ReadonlyMap<string, CommandEntry> = new Map<string, CommandEntry
             if (path === null) return;
             return projectOpen(path).then((status) => {
               setActiveProject(status);
-              const parts = path.split(/[\\/]/);
-              const name = parts[parts.length - 1] ?? path;
-              pushRecentProject({ name, path });
+              pushRecentProject({ name: extractFilename(path), path });
             });
           })
           .catch((err: unknown) => console.error("[pixhaus] project_open:", err));

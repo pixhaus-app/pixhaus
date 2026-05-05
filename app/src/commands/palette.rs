@@ -334,18 +334,27 @@ pub async fn palette_swap(
                 entity: "sprite".into(),
                 id: u64::from(sprite_id.get()),
             })?;
-        let from_pos = sprite.palettes.iter().position(|p| p.id == from_id).ok_or(
-            AppCommandError::NotFound {
-                entity: "palette".into(),
-                id: u64::from(from_id.get()),
-            },
-        )?;
-        let to_pos = sprite.palettes.iter().position(|p| p.id == to_id).ok_or(
-            AppCommandError::NotFound {
-                entity: "palette".into(),
-                id: u64::from(to_id.get()),
-            },
-        )?;
+        let mut from_pos: Option<usize> = None;
+        let mut to_pos: Option<usize> = None;
+        for (i, p) in sprite.palettes.iter().enumerate() {
+            if p.id == from_id {
+                from_pos = Some(i);
+            }
+            if p.id == to_id {
+                to_pos = Some(i);
+            }
+            if from_pos.is_some() && to_pos.is_some() {
+                break;
+            }
+        }
+        let from_pos = from_pos.ok_or(AppCommandError::NotFound {
+            entity: "palette".into(),
+            id: u64::from(from_id.get()),
+        })?;
+        let to_pos = to_pos.ok_or(AppCommandError::NotFound {
+            entity: "palette".into(),
+            id: u64::from(to_id.get()),
+        })?;
         sprite.palettes.swap(from_pos, to_pos);
     }
     doc.dirty = true;
@@ -358,7 +367,7 @@ pub async fn palette_list(
     sprite_id: SpriteId,
     state: State<'_, AppState>,
 ) -> CommandResult<Vec<Palette>> {
-    let doc = state.doc.write().await;
+    let doc = state.doc.read().await;
     let sprite = doc
         .project
         .as_ref()

@@ -2,6 +2,7 @@ import { For, type Component } from "solid-js";
 import { open as dialogOpen } from "@tauri-apps/plugin-dialog";
 import { recentProjects, setActiveProject, pushRecentProject } from "../project-state";
 import { projectNew, projectOpen } from "../lib/commands/project";
+import { extractFilename } from "../lib/utils/path";
 
 const PIXHAUS_FILTER = [{ name: "Pixhaus Projects", extensions: ["pixhaus"] }];
 
@@ -22,9 +23,7 @@ const WelcomeScreen: Component = () => {
         if (path === null) return;
         return projectOpen(path).then((status) => {
           setActiveProject(status);
-          const parts = path.split(/[\\/]/);
-          const name = parts[parts.length - 1] ?? path;
-          pushRecentProject({ name, path });
+          pushRecentProject({ name: extractFilename(path), path });
         });
       })
       .catch((err: unknown) => console.error("[pixhaus] project_open:", err));
@@ -34,9 +33,7 @@ const WelcomeScreen: Component = () => {
     projectOpen(path)
       .then((status) => {
         setActiveProject(status);
-        const parts = path.split(/[\\/]/);
-        const name = parts[parts.length - 1] ?? path;
-        pushRecentProject({ name, path });
+        pushRecentProject({ name: extractFilename(path), path });
       })
       .catch((err: unknown) => console.error("[pixhaus] project_open:", err));
   }

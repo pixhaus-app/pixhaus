@@ -1,4 +1,5 @@
 import { createSignal } from "solid-js";
+import { loadStorageJSON } from "../lib/utils/storage";
 
 export type Theme = "dark" | "light" | "pixhaus";
 export type KeybindPreset = "aseprite" | "photoshop" | "custom";
@@ -17,19 +18,17 @@ function loadPreset(): KeybindPreset {
   return v === "aseprite" || v === "photoshop" || v === "custom" ? v : "aseprite";
 }
 
+function isStringRecord(v: unknown): v is Record<string, string> {
+  return (
+    v !== null &&
+    typeof v === "object" &&
+    !Array.isArray(v) &&
+    Object.values(v as Record<string, unknown>).every((x) => typeof x === "string")
+  );
+}
+
 function loadCustom(): Record<string, string> {
-  try {
-    const raw = localStorage.getItem(CUSTOM_KEY);
-    if (raw !== null) {
-      const parsed: unknown = JSON.parse(raw);
-      if (parsed !== null && typeof parsed === "object" && !Array.isArray(parsed)) {
-        return parsed as Record<string, string>;
-      }
-    }
-  } catch {
-    // malformed JSON — start fresh
-  }
-  return {};
+  return loadStorageJSON<Record<string, string>>(CUSTOM_KEY, {}, isStringRecord);
 }
 
 const [theme, setThemeInternal] = createSignal<Theme>(loadTheme());
@@ -64,10 +63,8 @@ export function setCustomKeybind(commandId: string, combo: string): void {
 
 export function clearCustomKeybind(commandId: string): void {
   setCustomKeybindsInternal((prev) => {
-    const next: Record<string, string> = {};
-    for (const [k, v] of Object.entries(prev)) {
-      if (k !== commandId) next[k] = v;
-    }
+    const next = { ...prev };
+    delete next[commandId];
     localStorage.setItem(CUSTOM_KEY, JSON.stringify(next));
     return next;
   });

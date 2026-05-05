@@ -5,14 +5,20 @@
 // this barrel so a future move of the generator (e.g. a different
 // output dir) only changes one file.
 
+export type { AnimLoopMode } from "./AnimLoopMode";
 export type { Animation } from "./Animation";
 export type { AnimationId } from "./AnimationId";
+export type { AppCommandError } from "./AppCommandError";
+export type { AutotileKind } from "./AutotileKind";
+export type { AutotileRule } from "./AutotileRule";
+export type { AutotileRuleSet } from "./AutotileRuleSet";
 export type { BlendMode } from "./BlendMode";
 export type { BrushShape } from "./BrushShape";
 export type { BrushState } from "./BrushState";
 export type { CanvasState } from "./CanvasState";
 export type { Cel } from "./Cel";
 export type { CelData } from "./CelData";
+export type { CollisionShape } from "./CollisionShape";
 export type { ColorMode } from "./ColorMode";
 export type { FeatureFlags } from "./FeatureFlags";
 export type { Frame } from "./Frame";
@@ -24,6 +30,7 @@ export type { Layer } from "./Layer";
 export type { LayerId } from "./LayerId";
 export type { LayerKind } from "./LayerKind";
 export type { LoopDirection } from "./LoopDirection";
+export type { NeighborCondition } from "./NeighborCondition";
 export type { NineSlice } from "./NineSlice";
 export type { Palette } from "./Palette";
 export type { PaletteEntry } from "./PaletteEntry";
@@ -44,9 +51,12 @@ export type { SliceId } from "./SliceId";
 export type { SliceKey } from "./SliceKey";
 export type { Sprite } from "./Sprite";
 export type { SpriteId } from "./SpriteId";
+export type { TileAnimation } from "./TileAnimation";
+export type { TileAnimationFrame } from "./TileAnimationFrame";
 export type { TileCell } from "./TileCell";
 export type { TileFlags } from "./TileFlags";
 export type { TileIndex } from "./TileIndex";
+export type { TileProperties } from "./TileProperties";
 export type { TilemapData } from "./TilemapData";
 export type { Tileset } from "./Tileset";
 export type { TilesetId } from "./TilesetId";
