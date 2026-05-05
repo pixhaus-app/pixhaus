@@ -22,25 +22,45 @@ pub struct SelectionMask {
     height: u32,
 }
 
+/// Returns `width * height` as `usize`, or [`Error::DimensionOverflow`]
+/// when the product exceeds `usize::MAX`. All `SelectionMask`
+/// constructors and morphology helpers route through this helper so the
+/// no-`unwrap`/no-`panic` rule from CLAUDE.md is enforced for every
+/// allocation that scales with both dimensions.
+pub(super) fn checked_area(width: u32, height: u32) -> Result<usize> {
+    (width as usize)
+        .checked_mul(height as usize)
+        .ok_or(Error::DimensionOverflow { width, height })
+}
+
 impl SelectionMask {
     /// Empty mask with all pixels deselected.
-    #[must_use]
-    pub fn new(width: u32, height: u32) -> Self {
-        Self {
-            data: vec![0u8; (width as usize) * (height as usize)],
+    ///
+    /// # Errors
+    ///
+    /// Returns [`Error::DimensionOverflow`] when `width * height`
+    /// exceeds `usize::MAX` (relevant on 32-bit hosts and at the
+    /// extreme end of the 64-bit range).
+    pub fn new(width: u32, height: u32) -> Result<Self> {
+        Ok(Self {
+            data: vec![0u8; checked_area(width, height)?],
             width,
             height,
-        }
+        })
     }
 
     /// Fully selected mask — every pixel at coverage 255.
-    #[must_use]
-    pub fn full(width: u32, height: u32) -> Self {
-        Self {
-            data: vec![255u8; (width as usize) * (height as usize)],
+    ///
+    /// # Errors
+    ///
+    /// Returns [`Error::DimensionOverflow`] when `width * height`
+    /// exceeds `usize::MAX`.
+    pub fn full(width: u32, height: u32) -> Result<Self> {
+        Ok(Self {
+            data: vec![255u8; checked_area(width, height)?],
             width,
             height,
-        }
+        })
     }
 
     /// Constructs from raw coverage bytes.
@@ -51,7 +71,7 @@ impl SelectionMask {
     ///
     /// Returns [`Error::SizeMismatch`] if the byte count does not match.
     pub fn from_raw(width: u32, height: u32, data: Vec<u8>) -> Result<Self> {
-        let expected = (width as usize) * (height as usize);
+        let expected = checked_area(width, height)?;
         if data.len() != expected {
             // The buffer is flat — there's no real "actual width × actual height"
             // pair to report. Hold height fixed and infer width from the byte
@@ -254,9 +274,18 @@ impl SelectionMask {
     }
 }
 
+// Default builds the empty (0×0) mask directly. We don't `derive` it so
+// the constructor stays infallible — `SelectionMask::new` returns
+// Result<Self, Error::DimensionOverflow>, but 0×0 can't overflow, so the
+// derived Default would have to call `.unwrap()` outside test code.
+#[allow(clippy::derivable_impls)]
 impl Default for SelectionMask {
     fn default() -> Self {
-        Self::new(0, 0)
+        Self {
+            data: Vec::new(),
+            width: 0,
+            height: 0,
+        }
     }
 }
 
@@ -266,7 +295,7 @@ mod tests {
 
     #[test]
     fn new_mask_all_zero() {
-        let m = SelectionMask::new(4, 4);
+        let m = SelectionMask::new(4, 4).unwrap();
         assert_eq!(m.selected_count(), 0);
         for y in 0..4 {
             for x in 0..4 {
@@ -277,7 +306,7 @@ mod tests {
 
     #[test]
     fn full_mask_all_255() {
-        let m = SelectionMask::full(4, 4);
+        let m = SelectionMask::full(4, 4).unwrap();
         assert_eq!(m.selected_count(), 16);
         for y in 0..4 {
             for x in 0..4 {
@@ -288,14 +317,14 @@ mod tests {
 
     #[test]
     fn get_out_of_bounds_returns_none() {
-        let m = SelectionMask::new(4, 4);
+        let m = SelectionMask::new(4, 4).unwrap();
         assert_eq!(m.get(4, 0), None);
         assert_eq!(m.get(0, 4), None);
     }
 
     #[test]
     fn set_and_get_round_trip() {
-        let mut m = SelectionMask::new(4, 4);
+        let mut m = SelectionMask::new(4, 4).unwrap();
         m.set(1, 2, 128);
         assert_eq!(m.get(1, 2), Some(128));
         assert!(m.is_selected(1, 2));
@@ -304,7 +333,7 @@ mod tests {
 
     #[test]
     fn invert_produces_complement() {
-        let mut m = SelectionMask::new(2, 1);
+        let mut m = SelectionMask::new(2, 1).unwrap();
         m.set(0, 0, 0);
         m.set(1, 0, 255);
         let inv = m.invert();
@@ -314,10 +343,10 @@ mod tests {
 
     #[test]
     fn union_takes_max() {
-        let mut a = SelectionMask::new(2, 1);
+        let mut a = SelectionMask::new(2, 1).unwrap();
         a.set(0, 0, 100);
         a.set(1, 0, 50);
-        let mut b = SelectionMask::new(2, 1);
+        let mut b = SelectionMask::new(2, 1).unwrap();
         b.set(0, 0, 50);
         b.set(1, 0, 200);
         let u = a.union(&b).unwrap();
@@ -327,10 +356,10 @@ mod tests {
 
     #[test]
     fn intersect_takes_min() {
-        let mut a = SelectionMask::new(2, 1);
+        let mut a = SelectionMask::new(2, 1).unwrap();
         a.set(0, 0, 100);
         a.set(1, 0, 255);
-        let mut b = SelectionMask::new(2, 1);
+        let mut b = SelectionMask::new(2, 1).unwrap();
         b.set(0, 0, 50);
         b.set(1, 0, 128);
         let i = a.intersect(&b).unwrap();
@@ -340,10 +369,10 @@ mod tests {
 
     #[test]
     fn subtract_saturates_at_zero() {
-        let mut a = SelectionMask::new(2, 1);
+        let mut a = SelectionMask::new(2, 1).unwrap();
         a.set(0, 0, 100);
         a.set(1, 0, 50);
-        let mut b = SelectionMask::new(2, 1);
+        let mut b = SelectionMask::new(2, 1).unwrap();
         b.set(0, 0, 255);
         b.set(1, 0, 10);
         let s = a.subtract(&b).unwrap();
@@ -353,10 +382,10 @@ mod tests {
 
     #[test]
     fn xor_abs_diff() {
-        let mut a = SelectionMask::new(2, 1);
+        let mut a = SelectionMask::new(2, 1).unwrap();
         a.set(0, 0, 200);
         a.set(1, 0, 100);
-        let mut b = SelectionMask::new(2, 1);
+        let mut b = SelectionMask::new(2, 1).unwrap();
         b.set(0, 0, 50);
         b.set(1, 0, 200);
         let x = a.xor(&b).unwrap();
@@ -366,8 +395,8 @@ mod tests {
 
     #[test]
     fn size_mismatch_returns_error() {
-        let a = SelectionMask::full(4, 4);
-        let b = SelectionMask::full(8, 8);
+        let a = SelectionMask::full(4, 4).unwrap();
+        let b = SelectionMask::full(8, 8).unwrap();
         assert!(a.union(&b).is_err());
         assert!(a.intersect(&b).is_err());
         assert!(a.subtract(&b).is_err());

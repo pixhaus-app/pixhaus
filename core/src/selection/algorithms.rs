@@ -46,11 +46,16 @@ fn clamp_canvas(v: i64, limit: u32) -> u32 {
 /// the canvas of size `(canvas_w, canvas_h)`.
 ///
 /// An empty rect produces an empty mask.
-#[must_use]
-pub fn select_rect(canvas_w: u32, canvas_h: u32, bounds: Rect) -> SelectionMask {
-    let mut mask = SelectionMask::new(canvas_w, canvas_h);
+///
+/// # Errors
+///
+/// Returns [`Error::DimensionOverflow`] if `canvas_w * canvas_h`
+/// overflows `usize` (relevant on 32-bit hosts and at the extreme end
+/// of 64-bit).
+pub fn select_rect(canvas_w: u32, canvas_h: u32, bounds: Rect) -> Result<SelectionMask> {
+    let mut mask = SelectionMask::new(canvas_w, canvas_h)?;
     if bounds.is_empty() || canvas_w == 0 || canvas_h == 0 {
-        return mask;
+        return Ok(mask);
     }
     let ox = i64::from(bounds.origin.x);
     let oy = i64::from(bounds.origin.y);
@@ -64,18 +69,22 @@ pub fn select_rect(canvas_w: u32, canvas_h: u32, bounds: Rect) -> SelectionMask 
             mask.set(x, y, 255);
         }
     }
-    mask
+    Ok(mask)
 }
 
 /// Selects all pixels whose centres fall inside the ellipse inscribed
 /// in `bounds`, clipped to the canvas.
 ///
 /// Uses integer-safe point-in-ellipse testing on pixel centres.
-#[must_use]
-pub fn select_ellipse(canvas_w: u32, canvas_h: u32, bounds: Rect) -> SelectionMask {
-    let mut mask = SelectionMask::new(canvas_w, canvas_h);
+///
+/// # Errors
+///
+/// Returns [`Error::DimensionOverflow`] when `canvas_w * canvas_h`
+/// overflows `usize`.
+pub fn select_ellipse(canvas_w: u32, canvas_h: u32, bounds: Rect) -> Result<SelectionMask> {
+    let mut mask = SelectionMask::new(canvas_w, canvas_h)?;
     if bounds.is_empty() || canvas_w == 0 || canvas_h == 0 {
-        return mask;
+        return Ok(mask);
     }
 
     // Work in 64-bit fixed-point to keep the arithmetic exact.
@@ -95,7 +104,7 @@ pub fn select_ellipse(canvas_w: u32, canvas_h: u32, bounds: Rect) -> SelectionMa
 
     // Degenerate: zero-radius ellipse.
     if a2 == 0 || b2 == 0 {
-        return mask;
+        return Ok(mask);
     }
 
     let a2sq = a2 * a2;
@@ -121,7 +130,7 @@ pub fn select_ellipse(canvas_w: u32, canvas_h: u32, bounds: Rect) -> SelectionMa
             }
         }
     }
-    mask
+    Ok(mask)
 }
 
 /// Selects all pixels inside a polygon defined by `points` using an
@@ -129,11 +138,15 @@ pub fn select_ellipse(canvas_w: u32, canvas_h: u32, bounds: Rect) -> SelectionMa
 ///
 /// The polygon is automatically closed (last point connects back to
 /// first). Fewer than three points produce an empty mask.
-#[must_use]
-pub fn select_polygon(canvas_w: u32, canvas_h: u32, points: &[IVec2]) -> SelectionMask {
-    let mut mask = SelectionMask::new(canvas_w, canvas_h);
+///
+/// # Errors
+///
+/// Returns [`Error::DimensionOverflow`] when `canvas_w * canvas_h`
+/// overflows `usize`.
+pub fn select_polygon(canvas_w: u32, canvas_h: u32, points: &[IVec2]) -> Result<SelectionMask> {
+    let mut mask = SelectionMask::new(canvas_w, canvas_h)?;
     if points.len() < 3 || canvas_w == 0 || canvas_h == 0 {
-        return mask;
+        return Ok(mask);
     }
 
     let n = points.len();
@@ -159,25 +172,33 @@ pub fn select_polygon(canvas_w: u32, canvas_h: u32, points: &[IVec2]) -> Selecti
         // Sort and fill between pairs.
         intersections.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
         let mut k = 0;
+        let canvas_w_i32 = i32::try_from(canvas_w).unwrap_or(i32::MAX);
         while k + 1 < intersections.len() {
             // Safe: intersection values are bounded by polygon vertex coords (i32 range).
             #[allow(clippy::cast_possible_truncation)]
             let x0 = intersections[k].ceil() as i32;
             #[allow(clippy::cast_possible_truncation)]
             let x1 = intersections[k + 1].floor() as i32;
-            for x in x0..=x1 {
-                if x >= 0 {
-                    let xu = u32::try_from(x).unwrap_or(0);
-                    if xu < canvas_w {
-                        mask.set(xu, u32::try_from(scan_y).unwrap_or(0), 255);
-                    }
-                }
+            // Clip to the canvas BEFORE iterating. A polygon vertex
+            // far outside the canvas (say x = 1_000_000_000) used to
+            // make the inner loop visit a billion pixels and skip them
+            // one at a time; clip first so the loop bound matches the
+            // actual fillable range.
+            let lo = x0.max(0);
+            let hi = x1.min(canvas_w_i32 - 1);
+            if hi < lo {
+                k += 2;
+                continue;
+            }
+            for x in lo..=hi {
+                let xu = u32::try_from(x).unwrap_or(0);
+                mask.set(xu, u32::try_from(scan_y).unwrap_or(0), 255);
             }
             k += 2;
         }
     }
 
-    mask
+    Ok(mask)
 }
 
 // --- pixel-based algorithms --------------------------------------------------
@@ -193,8 +214,8 @@ pub fn select_polygon(canvas_w: u32, canvas_h: u32, points: &[IVec2]) -> Selecti
 ///
 /// # Errors
 ///
-/// Returns [`Error::SeedOutOfBounds`] if `(seed_x, seed_y)` is outside
-/// the buffer.
+/// - [`Error::SeedOutOfBounds`] if `(seed_x, seed_y)` is outside the buffer.
+/// - [`Error::DimensionOverflow`] if `width * height` overflows `usize`.
 pub fn magic_wand(
     buffer: &PixelBuffer,
     seed_x: u32,
@@ -215,8 +236,9 @@ pub fn magic_wand(
 
     let seed_color = buffer.pixel(seed_x, seed_y).unwrap_or(Rgba::transparent());
 
-    let mut mask = SelectionMask::new(w, h);
-    let mut visited = vec![false; (w as usize) * (h as usize)];
+    let area = super::mask::checked_area(w, h)?;
+    let mut mask = SelectionMask::new(w, h)?;
+    let mut visited = vec![false; area];
     let mut queue: VecDeque<(u32, u32)> = VecDeque::new();
 
     let seed_idx = (seed_y as usize) * (w as usize) + (seed_x as usize);
@@ -274,11 +296,14 @@ pub fn magic_wand(
 ///
 /// Tolerance is a per-channel absolute-difference threshold (same
 /// semantics as [`magic_wand`]).
-#[must_use]
-pub fn color_range(buffer: &PixelBuffer, reference: Rgba, tolerance: u8) -> SelectionMask {
+///
+/// # Errors
+///
+/// Returns [`Error::DimensionOverflow`] when `width * height` overflows.
+pub fn color_range(buffer: &PixelBuffer, reference: Rgba, tolerance: u8) -> Result<SelectionMask> {
     let w = buffer.width();
     let h = buffer.height();
-    let mut mask = SelectionMask::new(w, h);
+    let mut mask = SelectionMask::new(w, h)?;
 
     for y in 0..h {
         for x in 0..w {
@@ -291,7 +316,7 @@ pub fn color_range(buffer: &PixelBuffer, reference: Rgba, tolerance: u8) -> Sele
         }
     }
 
-    mask
+    Ok(mask)
 }
 
 /// Returns `true` when every channel of `a` and `b` differs by at most
@@ -323,7 +348,7 @@ mod tests {
 
     #[test]
     fn rect_fills_bounds() {
-        let m = select_rect(8, 8, Rect::from_xywh(2, 2, 4, 3));
+        let m = select_rect(8, 8, Rect::from_xywh(2, 2, 4, 3)).unwrap();
         assert_eq!(m.selected_count(), 12);
         assert!(m.is_fully_selected(2, 2));
         assert!(m.is_fully_selected(5, 4));
@@ -333,19 +358,19 @@ mod tests {
 
     #[test]
     fn rect_clips_to_canvas() {
-        let m = select_rect(4, 4, Rect::from_xywh(-1, -1, 6, 6));
+        let m = select_rect(4, 4, Rect::from_xywh(-1, -1, 6, 6)).unwrap();
         assert_eq!(m.selected_count(), 16);
     }
 
     #[test]
     fn rect_empty_bounds_returns_empty() {
-        let m = select_rect(8, 8, Rect::from_xywh(2, 2, 0, 4));
+        let m = select_rect(8, 8, Rect::from_xywh(2, 2, 0, 4)).unwrap();
         assert_eq!(m.selected_count(), 0);
     }
 
     #[test]
     fn rect_out_of_canvas_returns_empty() {
-        let m = select_rect(8, 8, Rect::from_xywh(10, 10, 4, 4));
+        let m = select_rect(8, 8, Rect::from_xywh(10, 10, 4, 4)).unwrap();
         assert_eq!(m.selected_count(), 0);
     }
 
@@ -353,7 +378,7 @@ mod tests {
 
     #[test]
     fn ellipse_1x1_selects_single_pixel() {
-        let m = select_ellipse(8, 8, Rect::from_xywh(3, 3, 1, 1));
+        let m = select_ellipse(8, 8, Rect::from_xywh(3, 3, 1, 1)).unwrap();
         assert!(m.is_fully_selected(3, 3));
         assert_eq!(m.selected_count(), 1);
     }
@@ -361,14 +386,14 @@ mod tests {
     #[test]
     fn ellipse_interior_is_filled() {
         // 8x8 ellipse — centre pixel must always be selected.
-        let m = select_ellipse(16, 16, Rect::from_xywh(0, 0, 8, 8));
+        let m = select_ellipse(16, 16, Rect::from_xywh(0, 0, 8, 8)).unwrap();
         assert!(m.is_fully_selected(4, 4));
     }
 
     #[test]
     fn ellipse_corners_excluded() {
         // A 4x4 bounding rect; the corners of the rect are outside the ellipse.
-        let m = select_ellipse(8, 8, Rect::from_xywh(0, 0, 4, 4));
+        let m = select_ellipse(8, 8, Rect::from_xywh(0, 0, 4, 4)).unwrap();
         assert!(!m.is_selected(0, 0));
         assert!(!m.is_selected(3, 0));
         assert!(!m.is_selected(0, 3));
@@ -377,7 +402,7 @@ mod tests {
 
     #[test]
     fn ellipse_clips_to_canvas() {
-        let m = select_ellipse(4, 4, Rect::from_xywh(-2, -2, 8, 8));
+        let m = select_ellipse(4, 4, Rect::from_xywh(-2, -2, 8, 8)).unwrap();
         // All 16 pixels should be inside the ellipse after clipping.
         assert_eq!(m.selected_count(), 16);
     }
@@ -386,7 +411,7 @@ mod tests {
 
     #[test]
     fn polygon_fewer_than_three_points_is_empty() {
-        let m = select_polygon(8, 8, &[IVec2::new(0, 0), IVec2::new(4, 4)]);
+        let m = select_polygon(8, 8, &[IVec2::new(0, 0), IVec2::new(4, 4)]).unwrap();
         assert_eq!(m.selected_count(), 0);
     }
 
@@ -394,7 +419,7 @@ mod tests {
     fn polygon_triangle_fills_interior() {
         // Triangle with vertices (0,0), (7,0), (3,7)
         let pts = [IVec2::new(0, 0), IVec2::new(7, 0), IVec2::new(3, 7)];
-        let m = select_polygon(8, 8, &pts);
+        let m = select_polygon(8, 8, &pts).unwrap();
         // Interior point must be selected.
         assert!(m.is_selected(3, 3));
         // Outside the triangle.
@@ -412,7 +437,7 @@ mod tests {
             IVec2::new(5, 5),
             IVec2::new(1, 5),
         ];
-        let m = select_polygon(8, 8, &pts);
+        let m = select_polygon(8, 8, &pts).unwrap();
         // Interior pixel.
         assert!(m.is_selected(3, 3));
         // Top-left vertex row is included.
@@ -498,7 +523,7 @@ mod tests {
     #[test]
     fn color_range_selects_all_matching() {
         let buf = make_two_color_buffer();
-        let m = color_range(&buf, red(), 0);
+        let m = color_range(&buf, red(), 0).unwrap();
         assert_eq!(m.selected_count(), 4);
         for y in 0..2u32 {
             for x in 0..2u32 {
@@ -511,14 +536,14 @@ mod tests {
     #[test]
     fn color_range_tolerance_255_selects_all() {
         let buf = make_two_color_buffer();
-        let m = color_range(&buf, green(), 255);
+        let m = color_range(&buf, green(), 255).unwrap();
         assert_eq!(m.selected_count(), 16);
     }
 
     #[test]
     fn color_range_zero_tolerance_exact_match_only() {
         let buf = make_two_color_buffer();
-        let m = color_range(&buf, blue(), 0);
+        let m = color_range(&buf, blue(), 0).unwrap();
         assert_eq!(m.selected_count(), 12);
     }
 }

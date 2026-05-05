@@ -30,6 +30,18 @@ pub enum Error {
         /// Buffer height.
         height: u32,
     },
+
+    /// `width × height` overflowed `usize`. On 64-bit hosts this only
+    /// triggers near `u32::MAX` per side; on 32-bit hosts it can fire
+    /// for `46_341 × 46_341` and above. Reject early so we don't panic
+    /// inside `vec![0u8; …]`.
+    #[error("selection dimensions {width}x{height} overflow usize")]
+    DimensionOverflow {
+        /// Requested width.
+        width: u32,
+        /// Requested height.
+        height: u32,
+    },
 }
 
 /// Convenience alias for results in this module.

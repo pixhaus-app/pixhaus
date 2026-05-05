@@ -48,7 +48,7 @@ fn solid(w: u32, h: u32, color: Rgba) -> PixelBuffer {
 
 #[test]
 fn rect_selects_exact_bounds() {
-    let m = select_rect(10, 10, Rect::from_xywh(2, 3, 4, 3));
+    let m = select_rect(10, 10, Rect::from_xywh(2, 3, 4, 3)).unwrap();
     assert_eq!(m.selected_count(), 12);
     assert!(m.is_fully_selected(2, 3));
     assert!(m.is_fully_selected(5, 5));
@@ -59,19 +59,19 @@ fn rect_selects_exact_bounds() {
 
 #[test]
 fn rect_full_canvas() {
-    let m = select_rect(8, 8, Rect::from_xywh(0, 0, 8, 8));
+    let m = select_rect(8, 8, Rect::from_xywh(0, 0, 8, 8)).unwrap();
     assert_eq!(m.selected_count(), 64);
 }
 
 #[test]
 fn rect_negative_origin_clips() {
-    let m = select_rect(4, 4, Rect::from_xywh(-2, -2, 6, 6));
+    let m = select_rect(4, 4, Rect::from_xywh(-2, -2, 6, 6)).unwrap();
     assert_eq!(m.selected_count(), 16);
 }
 
 #[test]
 fn rect_zero_size_empty() {
-    let m = select_rect(8, 8, Rect::from_xywh(0, 0, 0, 0));
+    let m = select_rect(8, 8, Rect::from_xywh(0, 0, 0, 0)).unwrap();
     assert_eq!(m.selected_count(), 0);
 }
 
@@ -81,13 +81,13 @@ fn rect_zero_size_empty() {
 
 #[test]
 fn ellipse_circle_centre_selected() {
-    let m = select_ellipse(20, 20, Rect::from_xywh(0, 0, 10, 10));
+    let m = select_ellipse(20, 20, Rect::from_xywh(0, 0, 10, 10)).unwrap();
     assert!(m.is_fully_selected(5, 5));
 }
 
 #[test]
 fn ellipse_corners_excluded() {
-    let m = select_ellipse(10, 10, Rect::from_xywh(1, 1, 8, 8));
+    let m = select_ellipse(10, 10, Rect::from_xywh(1, 1, 8, 8)).unwrap();
     assert!(!m.is_selected(1, 1));
     assert!(!m.is_selected(8, 1));
     assert!(!m.is_selected(1, 8));
@@ -97,8 +97,8 @@ fn ellipse_corners_excluded() {
 #[test]
 fn ellipse_wide_rect() {
     // 10 wide, 4 tall — should select more pixels than 4 wide, 4 tall circle.
-    let wide = select_ellipse(20, 20, Rect::from_xywh(0, 0, 10, 4));
-    let square = select_ellipse(20, 20, Rect::from_xywh(0, 0, 4, 4));
+    let wide = select_ellipse(20, 20, Rect::from_xywh(0, 0, 10, 4)).unwrap();
+    let square = select_ellipse(20, 20, Rect::from_xywh(0, 0, 4, 4)).unwrap();
     assert!(wide.selected_count() > square.selected_count());
 }
 
@@ -110,7 +110,7 @@ fn ellipse_wide_rect() {
 fn polygon_right_triangle() {
     // Right triangle: (0,0), (7,0), (7,7)
     let pts = [IVec2::new(0, 0), IVec2::new(7, 0), IVec2::new(7, 7)];
-    let m = select_polygon(8, 8, &pts);
+    let m = select_polygon(8, 8, &pts).unwrap();
     // Bottom-left corner must be outside the triangle.
     assert!(!m.is_selected(0, 7));
     // Close to the hypotenuse (inside).
@@ -128,7 +128,7 @@ fn polygon_square_fills_interior() {
         IVec2::new(7, 7),
         IVec2::new(0, 7),
     ];
-    let poly = select_polygon(8, 8, &pts);
+    let poly = select_polygon(8, 8, &pts).unwrap();
     // Interior pixel.
     assert!(poly.is_selected(4, 4));
     // Top row included.
@@ -141,7 +141,7 @@ fn polygon_square_fills_interior() {
 
 #[test]
 fn polygon_degenerate_two_points_empty() {
-    let m = select_polygon(8, 8, &[IVec2::new(0, 0), IVec2::new(4, 4)]);
+    let m = select_polygon(8, 8, &[IVec2::new(0, 0), IVec2::new(4, 4)]).unwrap();
     assert_eq!(m.selected_count(), 0);
 }
 
@@ -224,14 +224,14 @@ fn color_range_exact_selects_matching_pixels() {
     let buf = checkerboard(4, 4);
     // Black pixels (0,0,0,255) vs white (255,255,255,255).
     let black = Rgba::opaque(0, 0, 0);
-    let m = color_range(&buf, black, 0);
+    let m = color_range(&buf, black, 0).unwrap();
     assert_eq!(m.selected_count(), 8); // half of 16
 }
 
 #[test]
 fn color_range_tolerance_255_selects_all() {
     let buf = checkerboard(4, 4);
-    let m = color_range(&buf, Rgba::opaque(128, 128, 128), 255);
+    let m = color_range(&buf, Rgba::opaque(128, 128, 128), 255).unwrap();
     assert_eq!(m.selected_count(), 16);
 }
 
@@ -246,7 +246,7 @@ fn color_range_non_contiguous() {
         buf.set_pixel(x, 0, red);
         buf.set_pixel(x, 1, blue);
     }
-    let m = color_range(&buf, red, 0);
+    let m = color_range(&buf, red, 0).unwrap();
     assert_eq!(m.selected_count(), 4);
     for x in 0..4u32 {
         assert!(m.is_fully_selected(x, 0));
@@ -260,8 +260,8 @@ fn color_range_non_contiguous() {
 
 #[test]
 fn union_combines_selections() {
-    let a = select_rect(8, 8, Rect::from_xywh(0, 0, 4, 4));
-    let b = select_rect(8, 8, Rect::from_xywh(4, 4, 4, 4));
+    let a = select_rect(8, 8, Rect::from_xywh(0, 0, 4, 4)).unwrap();
+    let b = select_rect(8, 8, Rect::from_xywh(4, 4, 4, 4)).unwrap();
     let u = a.union(&b).unwrap();
     assert_eq!(u.selected_count(), 32);
     assert!(u.is_fully_selected(0, 0));
@@ -271,8 +271,8 @@ fn union_combines_selections() {
 
 #[test]
 fn intersect_overlap_only() {
-    let a = select_rect(8, 8, Rect::from_xywh(0, 0, 6, 6));
-    let b = select_rect(8, 8, Rect::from_xywh(4, 4, 4, 4));
+    let a = select_rect(8, 8, Rect::from_xywh(0, 0, 6, 6)).unwrap();
+    let b = select_rect(8, 8, Rect::from_xywh(4, 4, 4, 4)).unwrap();
     let i = a.intersect(&b).unwrap();
     // Overlap region is (4..6) x (4..6) = 4 pixels.
     assert_eq!(i.selected_count(), 4);
@@ -282,8 +282,8 @@ fn intersect_overlap_only() {
 
 #[test]
 fn subtract_removes_overlap() {
-    let a = select_rect(8, 8, Rect::from_xywh(0, 0, 6, 6));
-    let b = select_rect(8, 8, Rect::from_xywh(4, 4, 4, 4));
+    let a = select_rect(8, 8, Rect::from_xywh(0, 0, 6, 6)).unwrap();
+    let b = select_rect(8, 8, Rect::from_xywh(4, 4, 4, 4)).unwrap();
     let s = a.subtract(&b).unwrap();
     // a had 36, b removes the 4 overlapping pixels.
     assert_eq!(s.selected_count(), 32);
@@ -293,8 +293,8 @@ fn subtract_removes_overlap() {
 
 #[test]
 fn xor_symmetric_difference() {
-    let a = select_rect(8, 8, Rect::from_xywh(0, 0, 6, 6)); // 36 pixels
-    let b = select_rect(8, 8, Rect::from_xywh(4, 4, 4, 4)); // 16 pixels
+    let a = select_rect(8, 8, Rect::from_xywh(0, 0, 6, 6)).unwrap(); // 36 pixels
+    let b = select_rect(8, 8, Rect::from_xywh(4, 4, 4, 4)).unwrap(); // 16 pixels
     let x = a.xor(&b).unwrap();
     // Overlap (4 pixels) → 0. a-only (32) → 255. b-only (12) → 255.
     assert_eq!(x.selected_count(), 44);
@@ -305,7 +305,7 @@ fn xor_symmetric_difference() {
 
 #[test]
 fn invert_flips_selection() {
-    let m = select_rect(4, 4, Rect::from_xywh(0, 0, 2, 2));
+    let m = select_rect(4, 4, Rect::from_xywh(0, 0, 2, 2)).unwrap();
     let inv = m.invert();
     assert_eq!(inv.selected_count(), 12);
     assert!(!inv.is_selected(0, 0));
@@ -314,8 +314,8 @@ fn invert_flips_selection() {
 
 #[test]
 fn boolean_ops_size_mismatch_errors() {
-    let a = SelectionMask::full(4, 4);
-    let b = SelectionMask::full(5, 5);
+    let a = SelectionMask::full(4, 4).unwrap();
+    let b = SelectionMask::full(5, 5).unwrap();
     assert!(a.union(&b).is_err());
     assert!(a.intersect(&b).is_err());
     assert!(a.subtract(&b).is_err());
@@ -328,9 +328,9 @@ fn boolean_ops_size_mismatch_errors() {
 
 #[test]
 fn expand_grows_selection() {
-    let mut m = SelectionMask::new(10, 10);
+    let mut m = SelectionMask::new(10, 10).unwrap();
     m.set(5, 5, 255);
-    let e = expand(&m, 2);
+    let e = expand(&m, 2).unwrap();
     // Centre stays selected.
     assert!(e.is_fully_selected(5, 5));
     // Adjacent cardinal pixels.
@@ -344,8 +344,8 @@ fn expand_grows_selection() {
 
 #[test]
 fn contract_shrinks_selection() {
-    let m = select_rect(10, 10, Rect::from_xywh(0, 0, 10, 10));
-    let c = contract(&m, 1);
+    let m = select_rect(10, 10, Rect::from_xywh(0, 0, 10, 10)).unwrap();
+    let c = contract(&m, 1).unwrap();
     // Edge pixels eroded.
     assert!(!c.is_selected(0, 0));
     assert!(!c.is_selected(9, 9));
@@ -357,20 +357,20 @@ fn contract_shrinks_selection() {
 fn expand_then_contract_roundtrip_approximates_original() {
     // Expanding then contracting by the same amount should roughly
     // restore the original for a convex selection (with some edge loss).
-    let m = select_rect(20, 20, Rect::from_xywh(5, 5, 10, 10));
-    let e = expand(&m, 2);
-    let ec = contract(&e, 2);
+    let m = select_rect(20, 20, Rect::from_xywh(5, 5, 10, 10)).unwrap();
+    let e = expand(&m, 2).unwrap();
+    let ec = contract(&e, 2).unwrap();
     // Should not have gained pixels vs original.
     assert!(ec.selected_count() <= m.selected_count());
 }
 
 #[test]
 fn feather_reduces_hard_edges() {
-    let mut m = SelectionMask::new(12, 1);
+    let mut m = SelectionMask::new(12, 1).unwrap();
     for x in 0..6u32 {
         m.set(x, 0, 255);
     }
-    let f = feather(&m, 3);
+    let f = feather(&m, 3).unwrap();
     // Pixel at the far end of the selected half is still fully selected.
     assert_eq!(f.get(0, 0), Some(255));
     // Pixel at the boundary has intermediate coverage.
@@ -383,8 +383,8 @@ fn feather_reduces_hard_edges() {
 
 #[test]
 fn feather_preserves_deep_interior() {
-    let m = SelectionMask::full(20, 20);
-    let f = feather(&m, 3);
+    let m = SelectionMask::full(20, 20).unwrap();
+    let f = feather(&m, 3).unwrap();
     // Deep interior pixel should remain at 255.
     assert_eq!(f.get(10, 10), Some(255));
 }
@@ -402,7 +402,7 @@ fn pipeline_wand_then_expand_then_invert() {
     let wand = magic_wand(&buf, 0, 0, 0, Connectivity::Four).unwrap();
     assert_eq!(wand.selected_count(), 64);
     // Expand does not add pixels (already full).
-    let expanded = expand(&wand, 1);
+    let expanded = expand(&wand, 1).unwrap();
     assert_eq!(expanded.selected_count(), 64);
     // Invert selects nothing.
     let inv = expanded.invert();
@@ -411,8 +411,8 @@ fn pipeline_wand_then_expand_then_invert() {
 
 #[test]
 fn pipeline_rect_subtract_ellipse() {
-    let rect = select_rect(10, 10, Rect::from_xywh(0, 0, 10, 10));
-    let ellipse = select_ellipse(10, 10, Rect::from_xywh(0, 0, 10, 10));
+    let rect = select_rect(10, 10, Rect::from_xywh(0, 0, 10, 10)).unwrap();
+    let ellipse = select_ellipse(10, 10, Rect::from_xywh(0, 0, 10, 10)).unwrap();
     let ring = rect.subtract(&ellipse).unwrap();
     // The four corners of the rect are outside the ellipse and should
     // be in the ring selection.

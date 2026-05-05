@@ -15,6 +15,8 @@
 //! These functions are the low-level implementation; the editor UI
 //! controls when they are invoked.
 
+#[allow(unused_imports)] // Error referenced from rustdoc intra-doc links.
+use super::error::{Error, Result};
 use super::mask::SelectionMask;
 
 /// Expands the selection by `by` pixels using a circular structuring
@@ -25,14 +27,18 @@ use super::mask::SelectionMask;
 /// canvas boundary are treated as unselected.
 ///
 /// `by == 0` returns a clone of the input.
-#[must_use]
-pub fn expand(mask: &SelectionMask, by: u32) -> SelectionMask {
+///
+/// # Errors
+///
+/// Returns [`Error::DimensionOverflow`] when `width * height` overflows
+/// `usize` while allocating the output mask.
+pub fn expand(mask: &SelectionMask, by: u32) -> Result<SelectionMask> {
     if by == 0 || mask.is_empty() {
-        return mask.clone();
+        return Ok(mask.clone());
     }
     let w = mask.width();
     let h = mask.height();
-    let mut out = SelectionMask::new(w, h);
+    let mut out = SelectionMask::new(w, h)?;
     let by_i = i64::from(by);
     let by_sq = by_i * by_i;
     let w_i64 = i64::from(w);
@@ -65,7 +71,7 @@ pub fn expand(mask: &SelectionMask, by: u32) -> SelectionMask {
             }
         }
     }
-    out
+    Ok(out)
 }
 
 /// Contracts the selection by `by` pixels using a circular structuring
@@ -76,14 +82,17 @@ pub fn expand(mask: &SelectionMask, by: u32) -> SelectionMask {
 /// count as unselected, so edge pixels erode away first.
 ///
 /// `by == 0` returns a clone of the input.
-#[must_use]
-pub fn contract(mask: &SelectionMask, by: u32) -> SelectionMask {
+///
+/// # Errors
+///
+/// Returns [`Error::DimensionOverflow`] when `width * height` overflows.
+pub fn contract(mask: &SelectionMask, by: u32) -> Result<SelectionMask> {
     if by == 0 || mask.is_empty() {
-        return mask.clone();
+        return Ok(mask.clone());
     }
     let w = mask.width();
     let h = mask.height();
-    let mut out = SelectionMask::new(w, h);
+    let mut out = SelectionMask::new(w, h)?;
     let by_i = i64::from(by);
     let by_sq = by_i * by_i;
     let w_i64 = i64::from(w);
@@ -120,7 +129,7 @@ pub fn contract(mask: &SelectionMask, by: u32) -> SelectionMask {
             }
         }
     }
-    out
+    Ok(out)
 }
 
 /// Feathers the selection by applying a two-pass box blur of the given
@@ -129,17 +138,21 @@ pub fn contract(mask: &SelectionMask, by: u32) -> SelectionMask {
 /// The result has soft edges: coverage transitions from 255 (fully
 /// selected) to 0 (unselected) over approximately `radius` pixels.
 /// `radius == 0` returns a clone of the input.
-#[must_use]
-pub fn feather(mask: &SelectionMask, radius: u32) -> SelectionMask {
+///
+/// # Errors
+///
+/// Returns [`Error::DimensionOverflow`] when `width * height` overflows.
+pub fn feather(mask: &SelectionMask, radius: u32) -> Result<SelectionMask> {
     if radius == 0 || mask.is_empty() {
-        return mask.clone();
+        return Ok(mask.clone());
     }
+    let area = super::mask::checked_area(mask.width(), mask.height())?;
     let w = mask.width() as usize;
     let h = mask.height() as usize;
     let r = radius as usize;
 
     // --- horizontal pass (stored as u16, range 0-255) ---
-    let mut h_pass = vec![0u16; w * h];
+    let mut h_pass = vec![0u16; area];
     for y in 0..h {
         for x in 0..w {
             let x_start = x.saturating_sub(r);
@@ -163,7 +176,7 @@ pub fn feather(mask: &SelectionMask, radius: u32) -> SelectionMask {
     }
 
     // --- vertical pass ---
-    let mut out = SelectionMask::new(mask.width(), mask.height());
+    let mut out = SelectionMask::new(mask.width(), mask.height())?;
     for y in 0..h {
         for x in 0..w {
             let y_start = y.saturating_sub(r);
@@ -181,7 +194,7 @@ pub fn feather(mask: &SelectionMask, radius: u32) -> SelectionMask {
             );
         }
     }
-    out
+    Ok(out)
 }
 
 #[cfg(test)]
@@ -193,17 +206,17 @@ mod tests {
 
     #[test]
     fn expand_zero_is_identity() {
-        let mut m = SelectionMask::new(4, 4);
+        let mut m = SelectionMask::new(4, 4).unwrap();
         m.set(2, 2, 255);
-        let e = expand(&m, 0);
+        let e = expand(&m, 0).unwrap();
         assert_eq!(e, m);
     }
 
     #[test]
     fn expand_grows_single_pixel() {
-        let mut m = SelectionMask::new(8, 8);
+        let mut m = SelectionMask::new(8, 8).unwrap();
         m.set(4, 4, 255);
-        let e = expand(&m, 1);
+        let e = expand(&m, 1).unwrap();
         // 4-connected: centre + 4 cardinal neighbours.
         // With circular SE of radius 1: pixels at distance <= 1.
         // Those are: (4,4), (3,4), (5,4), (4,3), (4,5) = 5 pixels.
@@ -216,16 +229,16 @@ mod tests {
 
     #[test]
     fn expand_does_not_shrink_full_mask() {
-        let m = SelectionMask::full(4, 4);
-        let e = expand(&m, 2);
+        let m = SelectionMask::full(4, 4).unwrap();
+        let e = expand(&m, 2).unwrap();
         assert_eq!(e.selected_count(), 16);
     }
 
     #[test]
     fn expand_at_canvas_edge_clips() {
-        let mut m = SelectionMask::new(4, 4);
+        let mut m = SelectionMask::new(4, 4).unwrap();
         m.set(0, 0, 255);
-        let e = expand(&m, 2);
+        let e = expand(&m, 2).unwrap();
         // Expansion never creates pixels outside [0, 3] x [0, 3].
         assert!(e.get(0, 0).is_some());
         assert_eq!(e.get(5, 5), None);
@@ -235,15 +248,15 @@ mod tests {
 
     #[test]
     fn contract_zero_is_identity() {
-        let m = SelectionMask::full(4, 4);
-        let c = contract(&m, 0);
+        let m = SelectionMask::full(4, 4).unwrap();
+        let c = contract(&m, 0).unwrap();
         assert_eq!(c, m);
     }
 
     #[test]
     fn contract_erodes_edges() {
-        let m = SelectionMask::full(5, 5);
-        let c = contract(&m, 1);
+        let m = SelectionMask::full(5, 5).unwrap();
+        let c = contract(&m, 1).unwrap();
         // Edge pixels should be eroded; interior 3x3 should remain.
         assert!(!c.is_selected(0, 0));
         assert!(!c.is_selected(4, 4));
@@ -252,20 +265,20 @@ mod tests {
 
     #[test]
     fn contract_by_half_width_empties_thin_selection() {
-        let mut m = SelectionMask::new(6, 1);
+        let mut m = SelectionMask::new(6, 1).unwrap();
         for x in 0..6 {
             m.set(x, 0, 255);
         }
         // A single-row selection contracted by 1 should empty completely
         // because every pixel is adjacent to unselected (out-of-bounds) pixels.
-        let c = contract(&m, 1);
+        let c = contract(&m, 1).unwrap();
         assert_eq!(c.selected_count(), 0);
     }
 
     #[test]
     fn contract_does_not_expand_empty() {
-        let m = SelectionMask::new(4, 4);
-        let c = contract(&m, 2);
+        let m = SelectionMask::new(4, 4).unwrap();
+        let c = contract(&m, 2).unwrap();
         assert_eq!(c.selected_count(), 0);
     }
 
@@ -273,28 +286,28 @@ mod tests {
 
     #[test]
     fn feather_zero_is_identity() {
-        let m = SelectionMask::full(4, 4);
-        let f = feather(&m, 0);
+        let m = SelectionMask::full(4, 4).unwrap();
+        let f = feather(&m, 0).unwrap();
         assert_eq!(f, m);
     }
 
     #[test]
     fn feather_preserves_full_interior() {
         // Large fully-selected mask: pixels far from the edge are unaffected.
-        let m = SelectionMask::full(20, 20);
-        let f = feather(&m, 2);
+        let m = SelectionMask::full(20, 20).unwrap();
+        let f = feather(&m, 2).unwrap();
         // Centre pixel should remain at 255.
         assert_eq!(f.get(10, 10), Some(255));
     }
 
     #[test]
     fn feather_softens_edges() {
-        let mut m = SelectionMask::new(10, 1);
+        let mut m = SelectionMask::new(10, 1).unwrap();
         // Left half selected.
         for x in 0..5u32 {
             m.set(x, 0, 255);
         }
-        let f = feather(&m, 2);
+        let f = feather(&m, 2).unwrap();
         // Pixel exactly at the boundary should have intermediate coverage.
         let edge_val = f.get(4, 0).unwrap_or(0);
         assert!(edge_val < 255, "edge pixel should be softened");
@@ -302,10 +315,10 @@ mod tests {
 
     #[test]
     fn feather_fully_selected_stays_255_at_centre() {
-        let mut m = SelectionMask::new(11, 11);
+        let mut m = SelectionMask::new(11, 11).unwrap();
         // Centre pixel only.
         m.set(5, 5, 255);
-        let f = feather(&m, 1);
+        let f = feather(&m, 1).unwrap();
         // Centre should be reduced; surrounding should be non-zero.
         let centre = f.get(5, 5).unwrap_or(0);
         let adj = f.get(4, 5).unwrap_or(0);
