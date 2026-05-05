@@ -1,9 +1,10 @@
 //! Photoshop `.psd` import for Pixhaus.
 //!
-//! This module reads PSD files and converts them into a [`PixhausArchive`]
-//! suitable for the native `.pixhaus` encoder or for in-editor use. Write
-//! support is intentionally out of scope: PSD is used as a migration path
-//! from Photoshop sprite workflows, not as a round-trip format.
+//! This module reads PSD files and converts them into a [`ConvertedArchive`]
+//! suitable for re-encoding through the native `.pixhaus` writer or for
+//! in-editor use. Write support is intentionally out of scope: PSD is used
+//! as a migration path from Photoshop sprite workflows, not as a round-trip
+//! format.
 //!
 //! ## What is imported
 //!

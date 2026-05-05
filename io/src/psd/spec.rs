@@ -4,7 +4,12 @@
 //! not re-exported from the crate root, so pattern matching by variant name is
 //! not possible from external code. We work around this by formatting the value
 //! with `{:?}` and matching on the resulting string. The debug format for a
-//! derived enum is exactly the variant name, which is stable within semver.
+//! derived enum is exactly the variant name, which is stable within semver — but
+//! the upstream crate could swap `derive(Debug)` for a custom impl in a patch
+//! release. We pin `psd = "=0.3.5"` in the workspace `Cargo.toml` so a routine
+//! `cargo update` can't bring in such a change unnoticed; the
+//! `psd_blend_mode_debug_strings_are_stable` test below also fails loud if it
+//! does happen during a deliberate version bump.
 
 use pixhaus_core::project::BlendMode;
 

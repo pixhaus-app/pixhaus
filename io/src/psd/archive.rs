@@ -134,8 +134,10 @@ pub fn document_to_archive(psd: &psd::Psd, name: &str) -> Result<ConvertedArchiv
     let mut cels: Vec<Cel> = Vec::new();
     let mut buffers: Vec<PixelBufferEntry> = Vec::new();
 
-    // Emit group layers in visual order from group_ids_in_order().
-    for &psd_group_id in psd.group_ids_in_order() {
+    // PSD's group_ids_in_order() returns top-to-bottom; Pixhaus stores
+    // layers bottom-to-top (index 0 is the bottommost). Reverse so the
+    // visual stack order survives the import.
+    for &psd_group_id in psd.group_ids_in_order().iter().rev() {
         let Some(group) = psd.groups().get(&psd_group_id) else {
             continue;
         };
@@ -166,8 +168,9 @@ pub fn document_to_archive(psd: &psd::Psd, name: &str) -> Result<ConvertedArchiv
         });
     }
 
-    // Emit pixel layers. psd.layers() is ordered top-to-bottom visually.
-    for psd_layer in psd.layers() {
+    // Emit pixel layers. psd.layers() is ordered top-to-bottom visually;
+    // reverse for Pixhaus's bottom-to-top convention (see groups loop above).
+    for psd_layer in psd.layers().iter().rev() {
         let layer_id = LayerId::new(next_layer_id);
         next_layer_id += 1;
 
