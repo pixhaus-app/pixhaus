@@ -113,6 +113,23 @@ pub enum AppCommandError {
 /// Crate-local result alias.
 pub type CommandResult<T> = std::result::Result<T, AppCommandError>;
 
+/// Maps `pixhaus_io::Error` onto the IPC error contract.
+///
+/// Every variant currently lands on [`AppCommandError::Validation`] —
+/// the user-facing message preserves the source's `Display`, which
+/// already includes the file/format context (magic, version, etc.).
+/// A future cut may split into dedicated `IoFailure` /
+/// `IncompatibleFile` variants so the UI can branch on them, but the
+/// single mapping keeps every fallible IO command (`project_open`,
+/// later `project_save`, future palette load/save) consistent today.
+impl From<pixhaus_io::Error> for AppCommandError {
+    fn from(err: pixhaus_io::Error) -> Self {
+        AppCommandError::Validation {
+            detail: err.to_string(),
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

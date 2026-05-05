@@ -6,6 +6,7 @@ import { ASEPRITE_DEFAULTS, PHOTOSHOP_DEFAULTS, defaultCombo } from "../keybinds
 import { projectNew, projectOpen, projectSave, projectClose } from "../lib/commands/project";
 import { setActiveProject, pushRecentProject } from "../project-state";
 import { extractFilename } from "../lib/utils/path";
+import { reportCommandFailure } from "../lib/utils/errors";
 import { activeSpriteId, activeLayerId } from "../canvas/canvas-state";
 import {
   addLayer,
@@ -60,7 +61,7 @@ const COMMANDS: ReadonlyMap<string, CommandEntry> = new Map<string, CommandEntry
           .then((status) => {
             setActiveProject(status);
           })
-          .catch((err: unknown) => console.error("[pixhaus] project_new:", err));
+          .catch((err: unknown) => reportCommandFailure("project_new", err));
       },
     },
   ],
@@ -79,7 +80,7 @@ const COMMANDS: ReadonlyMap<string, CommandEntry> = new Map<string, CommandEntry
               pushRecentProject({ name: extractFilename(path), path });
             });
           })
-          .catch((err: unknown) => console.error("[pixhaus] project_open:", err));
+          .catch((err: unknown) => reportCommandFailure("project_open", err));
       },
     },
   ],
@@ -90,7 +91,7 @@ const COMMANDS: ReadonlyMap<string, CommandEntry> = new Map<string, CommandEntry
       label: "Save",
       category: "File",
       handler: () => {
-        projectSave().catch((err: unknown) => console.error("[pixhaus] project_save:", err));
+        projectSave().catch((err: unknown) => reportCommandFailure("project_save", err));
       },
     },
   ],
@@ -106,7 +107,7 @@ const COMMANDS: ReadonlyMap<string, CommandEntry> = new Map<string, CommandEntry
             if (path === null) return;
             return projectSave(path);
           })
-          .catch((err: unknown) => console.error("[pixhaus] project_save (as):", err));
+          .catch((err: unknown) => reportCommandFailure("project_save_as", err));
       },
     },
   ],
@@ -119,7 +120,7 @@ const COMMANDS: ReadonlyMap<string, CommandEntry> = new Map<string, CommandEntry
       handler: () => {
         projectClose()
           .then(() => setActiveProject(null))
-          .catch((err: unknown) => console.error("[pixhaus] project_close:", err));
+          .catch((err: unknown) => reportCommandFailure("project_close", err));
       },
     },
   ],

@@ -1,5 +1,7 @@
 //! Project lifecycle commands: new, open, save, close, sprite CRUD.
 
+use std::path::PathBuf;
+
 use pixhaus_core::project::{ColorMode, Project, ProjectMetadata, Size, Sprite, SpriteId};
 use serde::{Deserialize, Serialize};
 use tauri::State;
@@ -51,17 +53,81 @@ pub async fn project_new(name: String, state: State<'_, AppState>) -> CommandRes
     Ok(status)
 }
 
-/// Opens a project from disk.
+/// Opens a `.pixhaus` project from disk.
 ///
-/// Requires B3 (`.pixhaus` file format). Returns an error until B3 lands.
+/// Decodes the file via [`pixhaus_io::pixhaus::decode_from_file`] on a
+/// blocking-thread pool (the decoder reads + zstd-decompresses + msgpack-
+/// deserialises synchronously and we must not stall the tokio runtime),
+/// then atomically swaps the loaded project into the app's document
+/// store.
+///
+/// `next_id` is recomputed from the loaded project so subsequent CRUD
+/// minting can't collide with ids that came in from disk. The pixel
+/// buffers in the archive are dropped for now; `DocumentStore` doesn't
+/// have a buffer cache yet, and the canvas-side composite path will
+/// pick them up when that's wired.
 #[tauri::command(async, rename_all = "snake_case")]
 pub async fn project_open(
-    _path: String,
-    _state: State<'_, AppState>,
+    path: String,
+    state: State<'_, AppState>,
 ) -> CommandResult<ProjectStatus> {
-    Err(AppCommandError::Unimplemented {
-        stream: "B3 (.pixhaus format)".into(),
+    let path_buf = PathBuf::from(&path);
+    let archive = tokio::task::spawn_blocking({
+        let path_buf = path_buf.clone();
+        move || pixhaus_io::pixhaus::decode_from_file(&path_buf)
     })
+    .await
+    .map_err(|join_err| AppCommandError::Validation {
+        detail: format!("decode task panicked: {join_err}"),
+    })??;
+
+    let project = archive.project;
+    let next_id = compute_next_id(&project);
+    let status = ProjectStatus {
+        metadata: project.metadata.clone(),
+        path: Some(path),
+        dirty: false,
+        sprite_count: project.sprites.len(),
+    };
+
+    let mut doc = state.doc.write().await;
+    doc.project = Some(project);
+    doc.path = Some(path_buf);
+    doc.dirty = false;
+    doc.next_id = next_id;
+    Ok(status)
+}
+
+/// Returns one greater than the maximum id seen across every entity in
+/// `project`, or `1` if the project is empty. Calling sites that mint
+/// fresh ids monotonically (every `*_add` command) need this to avoid
+/// reusing an id that came in from disk.
+fn compute_next_id(project: &Project) -> u32 {
+    let mut max = 0u32;
+    for sprite in &project.sprites {
+        max = max.max(sprite.id.get());
+        for layer in &sprite.layers {
+            max = max.max(layer.id.get());
+        }
+        for palette in &sprite.palettes {
+            max = max.max(palette.id.get());
+        }
+        for tileset in &sprite.tilesets {
+            max = max.max(tileset.id.get());
+        }
+        for slice in &sprite.slices {
+            max = max.max(slice.id.get());
+        }
+        for animation in &sprite.animations {
+            max = max.max(animation.id.get());
+        }
+        for cel in &sprite.cels {
+            if let pixhaus_core::project::CelData::Raster { buffer, .. } = &cel.data {
+                max = max.max(buffer.get());
+            }
+        }
+    }
+    max.saturating_add(1)
 }
 
 /// Saves the active project to disk.
@@ -174,5 +240,52 @@ mod tests {
         };
         assert_eq!(status.sprite_count, 0);
         assert!(status.dirty);
+    }
+
+    #[test]
+    fn compute_next_id_empty_project_returns_one() {
+        assert_eq!(compute_next_id(&Project::new("empty")), 1);
+    }
+
+    /// Round-trip: build a project in memory, encode it to a temp file,
+    /// then load it back through `decode_from_file` and verify
+    /// `compute_next_id` is past every loaded entity.
+    ///
+    /// We don't depend on `examples/samples/*.pixhaus` here — that
+    /// fixture is owned by the io crate's tests and importing it from
+    /// app/ would couple two crates' test setups. Building a sprite
+    /// in-line is enough to lock the contract.
+    #[test]
+    fn compute_next_id_passes_max_loaded_id() {
+        use pixhaus_core::project::{
+            BlendMode, Layer, LayerId, LayerKind, Palette, PaletteId, Size, Sprite, SpriteId,
+            UserData,
+        };
+        let mut project = Project::new("nextid-fixture");
+        let mut sprite = Sprite::empty(SpriteId::new(7), "main", Size::new(8, 8));
+        sprite.layers.push(Layer {
+            id: LayerId::new(11),
+            name: "bg".into(),
+            kind: LayerKind::Raster,
+            blend_mode: BlendMode::Normal,
+            opacity: 255,
+            visible: true,
+            locked: false,
+            parent: None,
+            user_data: UserData::default(),
+        });
+        sprite.palettes.push(Palette {
+            id: PaletteId::new(42),
+            name: "main".into(),
+            colors: Vec::new(),
+            user_data: UserData::default(),
+        });
+        project.sprites.push(sprite);
+
+        let next = compute_next_id(&project);
+        assert!(
+            next > 42,
+            "next_id must exceed every loaded id; got {next} for max id 42"
+        );
     }
 }
