@@ -42,6 +42,9 @@
       "esbuild",
       "@tauri-apps/cli",
       "sharp"
-    ]
+    ],
+    "overrides": {
+      "yaml@<2.8.3": ">=2.8.3"
+    }
   }
 }
