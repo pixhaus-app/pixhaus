@@ -1,0 +1,29 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 232 48" width="232" height="48" role="img" aria-label="pixhaus">
+  <!-- Full logo for light backgrounds. Fill is near-black. -->
+  <g fill="#1a1a2e">
+    <g transform="translate(4, 4) scale(0.4)">
+      <rect x="41" y="1" width="18" height="18" rx="2"/>
+      <rect x="21" y="21" width="18" height="18" rx="2"/>
+      <rect x="41" y="21" width="18" height="18" rx="2"/>
+      <rect x="61" y="21" width="18" height="18" rx="2"/>
+      <rect x="1"  y="41" width="18" height="18" rx="2"/>
+      <rect x="21" y="41" width="18" height="18" rx="2"/>
+      <rect x="41" y="41" width="18" height="18" rx="2"/>
+      <rect x="61" y="41" width="18" height="18" rx="2"/>
+      <rect x="81" y="41" width="18" height="18" rx="2"/>
+      <rect x="1"  y="61" width="18" height="18" rx="2"/>
+      <rect x="21" y="61" width="18" height="18" rx="2"/>
+      <rect x="61" y="61" width="18" height="18" rx="2"/>
+      <rect x="81" y="61" width="18" height="18" rx="2"/>
+      <rect x="1"  y="81" width="18" height="18" rx="2"/>
+      <rect x="21" y="81" width="18" height="18" rx="2"/>
+      <rect x="61" y="81" width="18" height="18" rx="2"/>
+      <rect x="81" y="81" width="18" height="18" rx="2"/>
+    </g>
+    <text
+      x="54" y="34"
+      font-family="'Geist', -apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif"
+      font-size="28" font-weight="600" letter-spacing="-0.03em"
+    >pixhaus</text>
+  </g>
+</svg>

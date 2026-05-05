@@ -20,6 +20,10 @@ node_modules/
 # Vite
 ui/dist/
 ui/dist-ssr/
+
+# Astro docs site build output
+docs/site/dist/
+docs/site/.astro/
 *.local
 
 # Logs
@@ -94,6 +98,9 @@ unity/Logs/
 coverage/
 *.lcov
 tarpaulin-report.html
+
+# Playwright
+.playwright-report/
 
 # Misc agent state
 .claude/local-cache/
