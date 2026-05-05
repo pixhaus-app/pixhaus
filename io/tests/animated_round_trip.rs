@@ -79,6 +79,8 @@ fn webp_anmf_count(bytes: &[u8]) -> usize {
 /// Extract `(width, height)` from the VP8X chunk of an animated WebP.
 ///
 /// VP8X stores canvas dimensions as `(dim - 1)` packed into 24-bit LE fields.
+/// Returns `None` for any input that doesn't expose a complete VP8X chunk —
+/// truncated or otherwise malformed bytes never panic this helper.
 fn webp_vp8x_dims(bytes: &[u8]) -> Option<(u32, u32)> {
     if bytes.len() < 12 {
         return None;
@@ -86,16 +88,22 @@ fn webp_vp8x_dims(bytes: &[u8]) -> Option<(u32, u32)> {
     let mut pos = 12usize;
     while pos + 8 <= bytes.len() {
         let tag = &bytes[pos..pos + 4];
-        let chunk_size = u32::from_le_bytes(bytes[pos + 4..pos + 8].try_into().unwrap()) as usize;
+        let size_bytes: [u8; 4] = bytes[pos + 4..pos + 8].try_into().ok()?;
+        let chunk_size = u32::from_le_bytes(size_bytes) as usize;
+        let payload_end = pos.checked_add(8)?.checked_add(chunk_size)?;
+        if payload_end > bytes.len() {
+            // Truncated chunk header — bail rather than slice past the buffer.
+            return None;
+        }
         if tag == b"VP8X" && chunk_size >= 10 {
-            let d = &bytes[pos + 8..pos + 8 + chunk_size];
+            let d = &bytes[pos + 8..payload_end];
             // Canvas width  - 1 at bytes 4–6 (24-bit LE)
             let w = u32::from_le_bytes([d[4], d[5], d[6], 0]) + 1;
             // Canvas height - 1 at bytes 7–9 (24-bit LE)
             let h = u32::from_le_bytes([d[7], d[8], d[9], 0]) + 1;
             return Some((w, h));
         }
-        pos += 8 + chunk_size;
+        pos = payload_end;
         if chunk_size % 2 != 0 {
             pos += 1;
         }
@@ -480,7 +488,14 @@ fn mp4_external_gate_ffprobe_validates_container() {
     ];
     let bytes = encode_mp4(&frames, &VideoOptions::default()).unwrap();
 
-    let temp_path = std::env::temp_dir().join("pixhaus_mp4_gate_test.mp4");
+    // Per-test unique filename so parallel nextest runs don't collide.
+    // Falls back to a process-id + nanos suffix; tempfile crate isn't
+    // a dev-dep so we keep this lightweight.
+    let nanos = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |d| d.as_nanos());
+    let suffix = format!("{}_{}", std::process::id(), nanos);
+    let temp_path = std::env::temp_dir().join(format!("pixhaus_mp4_gate_test_{suffix}.mp4"));
     std::fs::write(&temp_path, &bytes).unwrap();
 
     let probe = std::process::Command::new("ffprobe")
