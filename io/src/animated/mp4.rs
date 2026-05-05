@@ -212,6 +212,15 @@ fn run_ffmpeg(
         &options.pix_fmt,
     ]);
 
+    // libx264 + chroma-subsampled formats (yuv420p, yuv422p, etc.) reject
+    // odd dimensions. Pixel-art canvases are commonly odd-sized
+    // (e.g. 17×17). Pad up to the next even number on each axis with a
+    // transparent edge so the encoder accepts the input — for the common
+    // 16×N and 32×N grids this is a no-op.
+    if needs_even_dims(&options.pix_fmt) {
+        cmd.args(["-vf", "pad=ceil(iw/2)*2:ceil(ih/2)*2:0:0:color=black@0"]);
+    }
+
     for arg in &options.extra_args {
         cmd.arg(arg);
     }
@@ -235,6 +244,17 @@ fn run_ffmpeg(
     }
 
     Ok(())
+}
+
+/// Pix formats with chroma subsampling that require even canvas
+/// dimensions when paired with libx264. Anything beginning with
+/// `yuv4xy` where the second digit is `2` or `0` falls in this bucket
+/// (4:2:0, 4:2:2, etc.).
+fn needs_even_dims(pix_fmt: &str) -> bool {
+    matches!(
+        pix_fmt,
+        "yuv420p" | "yuv420p10le" | "yuv422p" | "yuv422p10le" | "yuv440p" | "nv12" | "nv21"
+    )
 }
 
 // ── Temp directory RAII guard ─────────────────────────────────────────────────

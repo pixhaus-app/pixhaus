@@ -76,63 +76,45 @@ fn to_gif_repeat(lc: LoopCount) -> Repeat {
     }
 }
 
-/// Build a flat RGB (3-bytes-per-entry) colour table from a core palette.
-fn palette_to_rgb_table(palette: &Palette) -> Vec<u8> {
-    let mut table = Vec::with_capacity(palette.colors.len() * 3);
-    for entry in &palette.colors {
-        table.push(entry.color.r);
-        table.push(entry.color.g);
-        table.push(entry.color.b);
-    }
-    table
-}
-
-/// Build a flat RGB colour table from the `NeuQuant` colour map.
-///
-/// `color_quant::NeuQuant::color_map_rgba()` returns groups of 4 bytes
-/// (RGBA). The GIF colour table needs RGB triples.
-fn neuquant_to_rgb_table(rgba_map: &[u8]) -> Vec<u8> {
-    rgba_map
-        .chunks_exact(4)
-        .flat_map(|c| [c[0], c[1], c[2]])
-        .collect()
-}
+// `palette_to_rgb_table` and `neuquant_to_rgb_table` were inlined into
+// the encode_* functions when those functions started building rgba4
+// first and deriving the RGB table from it (so the appended transparent
+// slot stays consistent across both tables).
 
 /// Quantize `rgba_pixels` against `palette` (RGBA4 entries) and return a
 /// packed Vec of palette indices (one byte per pixel).
 ///
-/// When `reserve_zero_for_transparent` is true, opaque pixels are matched
-/// against `palette[1..]` only — index 0 is reserved for the transparent
-/// colour the encoder will set. Without the reserve, an opaque pixel
-/// whose colour happens to match `palette[0]` would quantize to index 0
-/// and disappear behind the transparency mask once the encoder marks
-/// that index as transparent.
+/// `transparent_index`, when `Some`, names the palette slot the encoder
+/// has marked as transparent. Pixels with `alpha == 0` map directly to
+/// that index; opaque pixels skip it in their nearest-colour search so
+/// they can never accidentally render as transparent. When `None`, the
+/// frame has no transparency contract and every pixel matches against
+/// the full palette.
 fn quantize_to_palette(
     rgba_pixels: &[u8],
     palette: &[[u8; 4]],
     width: u32,
     height: u32,
     dither: DitherMode,
-    reserve_zero_for_transparent: bool,
+    transparent_index: Option<u8>,
 ) -> Vec<u8> {
     let mut pixels = rgba_pixels.to_owned();
     dither::apply(dither, &mut pixels, width, height, palette);
 
-    let opaque_palette_start = usize::from(reserve_zero_for_transparent && !palette.is_empty());
+    let skip_idx = transparent_index.map(usize::from);
 
     pixels
         .chunks_exact(4)
         .map(|p| {
-            // Transparent pixels map to palette index 0 by convention.
             if p[3] == 0 {
-                return 0u8;
+                return transparent_index.unwrap_or(0);
             }
             let rgba4 = [p[0], p[1], p[2], p[3]];
             // Linear scan — palette ≤ 256, so this is at most 256 compares.
             palette
                 .iter()
                 .enumerate()
-                .skip(opaque_palette_start)
+                .filter(|(i, _)| skip_idx.is_none_or(|s| *i != s))
                 .min_by_key(|&(_, &c)| {
                     let sq = |a: u8, b: u8| {
                         let d = u32::from(a).abs_diff(u32::from(b));
@@ -143,6 +125,31 @@ fn quantize_to_palette(
                 .map_or(0, |(i, _)| u8::try_from(i).unwrap_or(0))
         })
         .collect()
+}
+
+/// Resolves the GIF transparent-index strategy for a palette that may
+/// be reused as-is or extended by one slot.
+///
+/// Returns `(rgba4_palette, transparent_index)`:
+///
+/// - When `palette` already contains an entry with `alpha == 0`, its
+///   index is the transparent slot — the user's palette stays
+///   bit-for-bit identical and no slot is wasted.
+/// - When no such entry exists and `palette.len() < 256`, an extra
+///   transparent slot is appended at index `palette.len()`.
+/// - When the palette is full (256 entries) and no alpha=0 entry
+///   exists, returns `None` for the index — callers must not mark
+///   transparency in the encoded frame.
+fn resolve_transparent_index(rgba4: &mut Vec<[u8; 4]>) -> Option<u8> {
+    if let Some((i, _)) = rgba4.iter().enumerate().find(|(_, c)| c[3] == 0) {
+        return u8::try_from(i).ok();
+    }
+    if rgba4.len() < 256 {
+        let idx = rgba4.len();
+        rgba4.push([0, 0, 0, 0]);
+        return u8::try_from(idx).ok();
+    }
+    None
 }
 
 /// Extract raw RGBA bytes from a [`PixelBuffer`] into a flat `Vec<u8>`.
@@ -262,35 +269,46 @@ fn encode_existing_palette<W: Write>(
         });
     }
 
-    let rgb_table = palette_to_rgb_table(palette);
-    let rgba4: Vec<[u8; 4]> = palette
+    let mut rgba4: Vec<[u8; 4]> = palette
         .colors
         .iter()
         .map(|e| [e.color.r, e.color.g, e.color.b, e.color.a])
         .collect();
+
+    // Pre-flight: pick a transparent slot up front so every frame
+    // shares the same global palette + transparent index. Append an
+    // extra slot if the user's palette doesn't already designate one.
+    let any_transparent_pixel = frames
+        .iter()
+        .any(|(b, _)| buffer_to_rgba_vec(b).chunks_exact(4).any(|p| p[3] == 0));
+    let transparent_idx = if any_transparent_pixel {
+        resolve_transparent_index(&mut rgba4)
+    } else {
+        None
+    };
+
+    let rgb_table: Vec<u8> = rgba4.iter().flat_map(|c| [c[0], c[1], c[2]]).collect();
 
     let mut encoder = Encoder::new(writer, w16, h16, &rgb_table)?;
     encoder.set_repeat(to_gif_repeat(options.repeat))?;
 
     for (buf, duration_ms) in frames {
         let rgba = buffer_to_rgba_vec(buf);
-        let has_transparent = rgba.chunks_exact(4).any(|p| p[3] == 0);
         let indexed = quantize_to_palette(
             &rgba,
             &rgba4,
             width,
             height,
             options.dither,
-            has_transparent,
+            transparent_idx,
         );
-        let transparent = has_transparent.then_some(0u8);
 
         let frame = Frame {
             delay: ms_to_centisec(*duration_ms),
             width: w16,
             height: h16,
             buffer: Cow::Owned(indexed),
-            transparent,
+            transparent: transparent_idx,
             palette: None, // use global colour table
             ..Frame::default()
         };
@@ -318,37 +336,45 @@ fn encode_global_quantize<W: Write>(
 
     // NeuQuant: sample_fac 10 is a good balance of speed vs. quality.
     let nq = color_quant::NeuQuant::new(10, 256, &all_pixels);
-    let rgb_table = neuquant_to_rgb_table(&nq.color_map_rgba());
 
-    // Build RGBA4 palette for dither + quantize.
-    let rgba4: Vec<[u8; 4]> = nq
+    // Build RGBA4 palette for dither + quantize. Resolve a transparent
+    // slot up front (NeuQuant won't include alpha=0 entries unless any
+    // input pixel was fully transparent, so we usually need to append).
+    let mut rgba4: Vec<[u8; 4]> = nq
         .color_map_rgba()
         .chunks_exact(4)
         .map(|c| [c[0], c[1], c[2], c[3]])
         .collect();
+
+    let any_transparent_pixel = all_pixels.chunks_exact(4).any(|p| p[3] == 0);
+    let transparent_idx = if any_transparent_pixel {
+        resolve_transparent_index(&mut rgba4)
+    } else {
+        None
+    };
+
+    let rgb_table: Vec<u8> = rgba4.iter().flat_map(|c| [c[0], c[1], c[2]]).collect();
 
     let mut encoder = Encoder::new(writer, w16, h16, &rgb_table)?;
     encoder.set_repeat(to_gif_repeat(options.repeat))?;
 
     for (buf, duration_ms) in frames {
         let rgba = buffer_to_rgba_vec(buf);
-        let has_transparent = rgba.chunks_exact(4).any(|p| p[3] == 0);
         let indexed = quantize_to_palette(
             &rgba,
             &rgba4,
             width,
             height,
             options.dither,
-            has_transparent,
+            transparent_idx,
         );
-        let transparent = has_transparent.then_some(0u8);
 
         let frame = Frame {
             delay: ms_to_centisec(*duration_ms),
             width: w16,
             height: h16,
             buffer: Cow::Owned(indexed),
-            transparent,
+            transparent: transparent_idx,
             palette: None,
             ..Frame::default()
         };

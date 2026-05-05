@@ -220,6 +220,16 @@ pub enum Error {
     #[error("animated WebP encoding failed: {0}")]
     WebPEncode(String),
 
+    /// The caller passed `WebPOptions` with values outside the
+    /// libwebp-accepted ranges (`quality` `[0, 100]`, `method` `[0, 6]`,
+    /// `loop_count` `>= 0`). Caught up front so libwebp's opaque error
+    /// codes don't leak through.
+    #[error("invalid WebP options: {detail}")]
+    InvalidWebPOptions {
+        /// Human-readable description of which field was out of range.
+        detail: String,
+    },
+
     /// No `ffmpeg` binary was found on `PATH`. MP4 export requires ffmpeg.
     #[error("ffmpeg not found on PATH; install ffmpeg to enable MP4 export")]
     FfmpegNotFound,

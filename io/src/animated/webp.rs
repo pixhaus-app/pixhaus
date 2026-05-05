@@ -68,6 +68,28 @@ pub fn encode_webp(frames: &[(PixelBuffer, u32)], options: &WebPOptions) -> Resu
         return Err(Error::NoAnimationFrames);
     }
 
+    // Validate the option fields up front. libwebp rejects bad values
+    // mid-encode with opaque error codes; explicit checks here surface
+    // the problem before any frame is touched.
+    if !(0.0..=100.0).contains(&options.quality) || options.quality.is_nan() {
+        return Err(Error::InvalidWebPOptions {
+            detail: format!("quality must be in [0.0, 100.0]; got {}", options.quality),
+        });
+    }
+    if !(0..=6).contains(&options.method) {
+        return Err(Error::InvalidWebPOptions {
+            detail: format!("method must be in [0, 6]; got {}", options.method),
+        });
+    }
+    if options.loop_count < 0 {
+        return Err(Error::InvalidWebPOptions {
+            detail: format!(
+                "loop_count must be >= 0 (0 = loop forever); got {}",
+                options.loop_count
+            ),
+        });
+    }
+
     let (first_buf, _) = &frames[0];
     let width = first_buf.width();
     let height = first_buf.height();
