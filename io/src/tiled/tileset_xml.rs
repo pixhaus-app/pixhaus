@@ -16,13 +16,15 @@ use pixhaus_core::project::tileset::{
 
 use std::fmt::Write;
 
-use super::{TILED_APP_VERSION, TILED_FORMAT_VERSION, TiledExportOptions, xml_escape_attr};
+use super::{TILED_APP_VERSION, TILED_FORMAT_VERSION, xml_escape_attr};
 
 /// Generates the `.tsx` tileset XML for `tileset`.
 ///
+/// `image_path` is written verbatim into `<image source="…">`.
+///
 /// Image dimensions are computed assuming a single-row atlas:
 /// `image_width = (tile_count - 1) * tile_width`, `image_height = tile_height`.
-pub(super) fn build_tsx(tileset: &Tileset, options: &TiledExportOptions) -> String {
+pub(super) fn build_tsx(tileset: &Tileset, image_path: &str) -> String {
     // Exclude the empty-tile sentinel (index 0) from the atlas count.
     let real_tile_count = tileset.tile_count.saturating_sub(1);
     let tile_w = tileset.tile_size.width;
@@ -44,7 +46,7 @@ pub(super) fn build_tsx(tileset: &Tileset, options: &TiledExportOptions) -> Stri
     writeln!(
         out,
         "  <image source=\"{}\" width=\"{image_w}\" height=\"{image_h}\"/>",
-        xml_escape_attr(&options.tileset_image_path)
+        xml_escape_attr(image_path)
     )
     .ok();
 
@@ -158,16 +160,9 @@ mod tests {
         }
     }
 
-    fn opts() -> TiledExportOptions {
-        TiledExportOptions {
-            name: "dungeon".into(),
-            tileset_image_path: "dungeon.png".into(),
-        }
-    }
-
     #[test]
     fn build_tsx_produces_well_formed_header() {
-        let tsx = build_tsx(&sample_tileset(), &opts());
+        let tsx = build_tsx(&sample_tileset(), "dungeon.png");
         assert!(tsx.starts_with("<?xml version=\"1.0\" encoding=\"UTF-8\"?>"));
         assert!(tsx.contains("<tileset"));
         assert!(tsx.contains("</tileset>"));
@@ -176,14 +171,14 @@ mod tests {
     #[test]
     fn single_row_image_dimensions_computed_from_tile_count() {
         // tile_count=6 → 5 real tiles → image 80×16.
-        let tsx = build_tsx(&sample_tileset(), &opts());
+        let tsx = build_tsx(&sample_tileset(), "dungeon.png");
         assert!(tsx.contains("width=\"80\""));
         assert!(tsx.contains("height=\"16\""));
     }
 
     #[test]
     fn columns_equals_real_tile_count() {
-        let tsx = build_tsx(&sample_tileset(), &opts());
+        let tsx = build_tsx(&sample_tileset(), "dungeon.png");
         assert!(tsx.contains("columns=\"5\""));
     }
 
@@ -197,7 +192,7 @@ mod tests {
                 animation: None,
             },
         ];
-        let tsx = build_tsx(&ts, &opts());
+        let tsx = build_tsx(&ts, "dungeon.png");
         assert!(tsx.contains("<tile id=\"0\">"));
         assert!(tsx.contains("<property name=\"collision\" type=\"bool\" value=\"true\"/>"));
     }
@@ -212,7 +207,7 @@ mod tests {
                 animation: None,
             },
         ];
-        let tsx = build_tsx(&ts, &opts());
+        let tsx = build_tsx(&ts, "dungeon.png");
         // Tile has no interesting properties → no <tile> element at all.
         assert!(!tsx.contains("<tile id="));
     }
@@ -239,7 +234,7 @@ mod tests {
                 }),
             },
         ];
-        let tsx = build_tsx(&ts, &opts());
+        let tsx = build_tsx(&ts, "dungeon.png");
         assert!(tsx.contains("<animation>"));
         assert!(tsx.contains("<frame tileid=\"0\" duration=\"150\"/>"));
         assert!(tsx.contains("<frame tileid=\"1\" duration=\"150\"/>"));
@@ -263,13 +258,13 @@ mod tests {
                 }),
             },
         ];
-        let tsx = build_tsx(&ts, &opts());
+        let tsx = build_tsx(&ts, "dungeon.png");
         assert!(tsx.contains("tileid=\"2\""));
     }
 
     #[test]
     fn tileset_with_no_properties_emits_no_tile_elements() {
-        let tsx = build_tsx(&sample_tileset(), &opts());
+        let tsx = build_tsx(&sample_tileset(), "dungeon.png");
         assert!(!tsx.contains("<tile id="));
     }
 
@@ -287,11 +282,7 @@ mod tests {
             properties: Vec::new(),
             user_data: UserData::default(),
         };
-        let opts = TiledExportOptions {
-            name: "forest".into(),
-            tileset_image_path: "tilesets/forest.png".into(),
-        };
-        let tsx = build_tsx(&ts, &opts);
+        let tsx = build_tsx(&ts, "tilesets/forest.png");
         assert!(tsx.contains("source=\"tilesets/forest.png\""));
     }
 
@@ -299,7 +290,7 @@ mod tests {
     fn tileset_name_with_special_chars_is_escaped() {
         let mut ts = sample_tileset();
         ts.name = "dungeon & cave".into();
-        let tsx = build_tsx(&ts, &opts());
+        let tsx = build_tsx(&ts, "dungeon.png");
         assert!(tsx.contains("name=\"dungeon &amp; cave\""));
     }
 
@@ -317,7 +308,7 @@ mod tests {
             properties: Vec::new(),
             user_data: UserData::default(),
         };
-        let tsx = build_tsx(&ts, &opts());
+        let tsx = build_tsx(&ts, "empty.png");
         assert!(tsx.contains("tilecount=\"0\""));
     }
 }

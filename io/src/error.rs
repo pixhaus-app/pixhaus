@@ -303,6 +303,25 @@ pub enum Error {
         height: u32,
     },
 
+    /// A layer's `tileset_index` is out of bounds for the tilesets slice.
+    #[error(
+        "layer {layer_index} references tileset {tileset_index} \
+         but only {tileset_count} tilesets were provided"
+    )]
+    TiledLayerTilesetIndexOutOfRange {
+        /// Zero-based layer index in the input slice.
+        layer_index: usize,
+        /// The `tileset_index` value that was out of range.
+        tileset_index: usize,
+        /// Number of tilesets provided.
+        tileset_count: usize,
+    },
+
+    /// Generated TMX output fails a structural constraint from the Tiled 1.10
+    /// TMX schema. The message names the violated constraint.
+    #[error("TMX schema violation: {0}")]
+    TiledSchemaViolation(String),
+
     // ── PSD import (S09) ────────────────────────────────────────────────────
     /// The `psd` crate returned a parse error.
     #[error("PSD parse error: {0}")]
