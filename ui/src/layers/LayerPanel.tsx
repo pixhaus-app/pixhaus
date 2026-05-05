@@ -37,18 +37,13 @@ const ROW_HEIGHT = 32;
 const LayerPanel: Component = () => {
   const spriteId = activeSpriteId;
 
-  onMount(() => {
-    // Initial load when the panel mounts with a sprite already active.
-    refreshLayers();
-  });
-
+  // Single effect handles both the initial load and every sprite change.
+  // The previous version had onMount + a tracking effect, which fired
+  // refreshLayers() twice on mount and could race when the sprite-id
+  // signal changed before the first IPC settled.
   createEffect(() => {
-    // Re-fetch when the active sprite changes.
-    const id = spriteId();
-    if (id !== null) refreshLayers();
-    else {
-      // Project closed — the layer-state refreshLayers() will clear the list.
-    }
+    spriteId(); // track
+    refreshLayers();
   });
 
   const flatEntries = createMemo(() => flattenLayers(layers(), isGroupExpanded));

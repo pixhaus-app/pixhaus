@@ -32,6 +32,14 @@ export type FlatEntry = { layer: Layer; depth: number; index: number };
  * Groups that are collapsed exclude their children from the result.
  */
 export function flattenLayers(all: Layer[], expandedCheck: (id: LayerId) => boolean): FlatEntry[] {
+  // Pre-compute id → index once so the recursive walk is O(n) instead
+  // of O(n²) (the prior implementation called all.indexOf() per node).
+  const indexById = new Map<LayerId, number>();
+  for (let i = 0; i < all.length; i++) {
+    const layer = all[i];
+    if (layer !== undefined) indexById.set(layer.id, i);
+  }
+
   const childrenOf = new Map<LayerId | null, Layer[]>();
   for (const layer of all) {
     const key = layer.parent ?? null;
@@ -47,7 +55,7 @@ export function flattenLayers(all: Layer[], expandedCheck: (id: LayerId) => bool
     for (let i = children.length - 1; i >= 0; i--) {
       const layer = children[i];
       if (layer === undefined) continue;
-      const index = all.indexOf(layer);
+      const index = indexById.get(layer.id) ?? 0;
       result.push({ layer, depth, index });
       if (layer.kind.kind === "group" && expandedCheck(layer.id)) {
         visit(layer.id, depth + 1);

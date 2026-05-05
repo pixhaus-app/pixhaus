@@ -104,11 +104,24 @@ const LayerRow: Component<Props> = (props) => {
     setLayerBlendMode(props.spriteId, props.layer.id, value);
   }
 
-  // Drag-to-reorder handlers
+  // Drag-to-reorder handlers.
+  //
+  // The drag payload carries TWO bits of information:
+  //   id    — the dragged layer's stable LayerId (so the drop target
+  //           can pass it to reorderLayer; using only the source's
+  //           index would mean the drop handler reorders the wrong
+  //           layer if any panel state has changed since dragstart).
+  //   index — the source's flat-list index, used to compute the
+  //           target insert position (moving down vs. up needs the
+  //           ±1 adjustment so the dragged row lands at the visual
+  //           drop slot).
   function handleDragStart(e: DragEvent): void {
     if (e.dataTransfer) {
       e.dataTransfer.effectAllowed = "move";
-      e.dataTransfer.setData("text/plain", String(props.layerIndex));
+      e.dataTransfer.setData(
+        "text/plain",
+        JSON.stringify({ id: props.layer.id, index: props.layerIndex }),
+      );
     }
   }
 
@@ -125,12 +138,26 @@ const LayerRow: Component<Props> = (props) => {
   function handleDrop(e: DragEvent): void {
     e.preventDefault();
     setDragOverIndex(null);
-    const fromIndex = parseInt(e.dataTransfer?.getData("text/plain") ?? "", 10);
-    if (isNaN(fromIndex) || fromIndex === props.layerIndex) return;
+    const raw = e.dataTransfer?.getData("text/plain") ?? "";
+    let parsed: { id: number; index: number } | null = null;
+    try {
+      const v = JSON.parse(raw) as unknown;
+      if (
+        v !== null &&
+        typeof v === "object" &&
+        typeof (v as { id: unknown }).id === "number" &&
+        typeof (v as { index: unknown }).index === "number"
+      ) {
+        parsed = v as { id: number; index: number };
+      }
+    } catch {
+      // Bad payload: ignore the drop rather than mutating state.
+    }
+    if (parsed === null || parsed.index === props.layerIndex) return;
     reorderLayer(
       props.spriteId,
-      props.layer.id,
-      fromIndex > props.layerIndex ? props.layerIndex : props.layerIndex - 1,
+      parsed.id,
+      parsed.index > props.layerIndex ? props.layerIndex : props.layerIndex - 1,
     );
   }
 
