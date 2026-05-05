@@ -1,14 +1,35 @@
 import { For, type Component } from "solid-js";
 import { open as dialogOpen } from "@tauri-apps/plugin-dialog";
 import { recentProjects, setActiveProject, pushRecentProject } from "../project-state";
-import { projectNew, projectOpen } from "../lib/commands/project";
+import {
+  projectNew,
+  projectOpen,
+  projectImportPsd,
+  type ProjectStatus,
+} from "../lib/commands/project";
 import { extractFilename } from "../lib/utils/path";
 import { reportCommandFailure } from "../lib/utils/errors";
 
-const PIXHAUS_FILTER = [{ name: "Pixhaus Projects", extensions: ["pixhaus"] }];
+const OPEN_FILTERS = [
+  { name: "All supported files", extensions: ["pixhaus", "psd"] },
+  { name: "Pixhaus Projects", extensions: ["pixhaus"] },
+  { name: "Photoshop Documents", extensions: ["psd"] },
+];
 
 async function pickOpenPath(): Promise<string | null> {
-  return dialogOpen({ multiple: false as const, filters: PIXHAUS_FILTER });
+  return dialogOpen({ multiple: false as const, filters: OPEN_FILTERS });
+}
+
+function openByExtension(path: string): Promise<ProjectStatus> {
+  return path.toLowerCase().endsWith(".psd") ? projectImportPsd(path) : projectOpen(path);
+}
+
+/// Returns the IPC operation name that `openByExtension` actually invokes
+/// for `path`, used in error reporting so the alert names the command
+/// the user actually triggered (PSD imports must not be reported as
+/// `project_open` failures).
+function openOperationName(path: string): string {
+  return path.toLowerCase().endsWith(".psd") ? "project_import_psd" : "project_open";
 }
 
 const WelcomeScreen: Component = () => {
@@ -22,21 +43,25 @@ const WelcomeScreen: Component = () => {
     pickOpenPath()
       .then((path) => {
         if (path === null) return;
-        return projectOpen(path).then((status) => {
-          setActiveProject(status);
-          pushRecentProject({ name: extractFilename(path), path });
-        });
+        const op = openOperationName(path);
+        return openByExtension(path)
+          .then((status) => {
+            setActiveProject(status);
+            pushRecentProject({ name: extractFilename(path), path });
+          })
+          .catch((err: unknown) => reportCommandFailure(op, err));
       })
-      .catch((err: unknown) => reportCommandFailure("project_open", err));
+      .catch((err: unknown) => reportCommandFailure("file_dialog", err));
   }
 
   function handleOpenRecent(path: string): void {
-    projectOpen(path)
+    const op = openOperationName(path);
+    openByExtension(path)
       .then((status) => {
         setActiveProject(status);
         pushRecentProject({ name: extractFilename(path), path });
       })
-      .catch((err: unknown) => reportCommandFailure("project_open", err));
+      .catch((err: unknown) => reportCommandFailure(op, err));
   }
 
   return (

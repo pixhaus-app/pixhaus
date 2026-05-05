@@ -5,9 +5,25 @@ use std::path::PathBuf;
 use pixhaus_core::project::{ColorMode, Project, ProjectMetadata, Size, Sprite, SpriteId};
 use serde::{Deserialize, Serialize};
 use tauri::State;
+use tokio::task::JoinError;
 
 use crate::error::{AppCommandError, CommandResult};
 use crate::state::AppState;
+
+/// Maps a `tokio::task::JoinError` from a `spawn_blocking` task into a
+/// human-readable validation error. Distinguishes panic from
+/// runtime-initiated cancellation so the UI / log surface reflects what
+/// actually happened (Copilot review of PR #50).
+fn describe_join_error(op: &str, err: &JoinError) -> AppCommandError {
+    let detail = if err.is_panic() {
+        format!("{op} task panicked")
+    } else if err.is_cancelled() {
+        format!("{op} task cancelled (runtime shutdown)")
+    } else {
+        format!("{op} task did not complete: {err}")
+    };
+    AppCommandError::Validation { detail }
+}
 
 /// Status snapshot returned by project-level commands.
 #[derive(Debug, Serialize)]
@@ -77,9 +93,7 @@ pub async fn project_open(
         move || pixhaus_io::pixhaus::decode_from_file(&path_buf)
     })
     .await
-    .map_err(|join_err| AppCommandError::Validation {
-        detail: format!("decode task panicked: {join_err}"),
-    })??;
+    .map_err(|join_err| describe_join_error("pixhaus decode", &join_err))??;
 
     let project = archive.project;
     let next_id = compute_next_id(&project);
@@ -128,6 +142,51 @@ fn compute_next_id(project: &Project) -> u32 {
         }
     }
     max.saturating_add(1)
+}
+
+/// Imports a `.psd` file and makes it the active project.
+///
+/// Decodes via [`pixhaus_io::psd::decode_from_file`] on a blocking-thread
+/// pool, then replaces the active project in the same way `project_open`
+/// does. The imported project has no associated filesystem path (it has not
+/// been saved as `.pixhaus` yet), so `dirty` is `true` on return.
+///
+/// Non-fatal conversion warnings are logged at the `warn` level; callers do
+/// not receive them through this command because the `ProjectStatus` type
+/// has no warnings field. A future command revision can add that field when
+/// the UI has a surface to display warnings.
+#[tauri::command(async, rename_all = "snake_case")]
+pub async fn project_import_psd(
+    path: String,
+    state: State<'_, AppState>,
+) -> CommandResult<ProjectStatus> {
+    let path_buf = PathBuf::from(&path);
+    let converted = tokio::task::spawn_blocking({
+        let path_buf = path_buf.clone();
+        move || pixhaus_io::psd::decode_from_file(&path_buf)
+    })
+    .await
+    .map_err(|join_err| describe_join_error("PSD decode", &join_err))??;
+
+    for w in &converted.warnings {
+        tracing::warn!(path = %path_buf.display(), warning = ?w, "PSD import warning");
+    }
+
+    let project = converted.archive.project;
+    let next_id = compute_next_id(&project);
+    let status = ProjectStatus {
+        metadata: project.metadata.clone(),
+        path: None,
+        dirty: true,
+        sprite_count: project.sprites.len(),
+    };
+
+    let mut doc = state.doc.write().await;
+    doc.project = Some(project);
+    doc.path = None;
+    doc.dirty = true;
+    doc.next_id = next_id;
+    Ok(status)
 }
 
 /// Saves the active project to disk.

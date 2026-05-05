@@ -42,6 +42,14 @@ pub enum ConversionWarning {
         /// Name of the affected layer.
         layer_name: String,
     },
+    /// A pixel layer has a raster (user-supplied) layer mask. The `psd` crate
+    /// stores mask channel data internally but does not expose it through the
+    /// public API; the mask is not applied to the layer's alpha channel on
+    /// import. The layer's unmasked pixel data is preserved.
+    RasterMaskIgnored {
+        /// Name of the affected layer.
+        layer_name: String,
+    },
     /// A pixel layer has zero width or height and contributes no pixel
     /// data. The layer itself is still present in the layer list but has
     /// no associated cel.
@@ -189,6 +197,19 @@ pub fn document_to_archive(psd: &psd::Psd, name: &str) -> Result<ConvertedArchiv
 
         if psd_layer.is_clipping_mask() {
             warnings.push(ConversionWarning::ClippingMaskIgnored {
+                layer_name: psd_layer.name().to_string(),
+            });
+        }
+
+        // Detect a raster (user-supplied) layer mask. The psd crate parses
+        // mask channel data but does not expose it via public API, so we
+        // cannot apply it to the alpha channel. We warn instead of silently
+        // dropping so callers can communicate the loss to the user.
+        if psd_layer
+            .compression(psd::PsdChannelKind::UserSuppliedLayerMask)
+            .is_ok()
+        {
+            warnings.push(ConversionWarning::RasterMaskIgnored {
                 layer_name: psd_layer.name().to_string(),
             });
         }

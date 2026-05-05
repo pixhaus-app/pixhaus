@@ -16,7 +16,12 @@
 //!
 //! ## What is skipped or approximated
 //!
+//! - **Raster (user-supplied) layer masks**: detected and reported as
+//!   [`ConversionWarning::RasterMaskIgnored`]; the `psd` crate does not
+//!   expose mask channel bytes through its public API, so the mask cannot be
+//!   applied to the layer's alpha channel. Unmasked pixel data is preserved.
 //! - **Clipping masks**: pixel data is included; the mask is not applied.
+//!   Reported as [`ConversionWarning::ClippingMaskIgnored`].
 //! - **Adjustment layers** and **smart objects**: imported as raster layers
 //!   with the pixel data the `psd` crate can extract.
 //! - **16-bit and 32-bit** per-channel modes: the `psd` crate converts to
@@ -25,7 +30,7 @@
 //! - **CMYK, Lab, Indexed, Multichannel**: rejected with [`Error::PsdParse`].
 //! - **Layer effects** (drop shadow, glow, etc.): not preserved.
 //! - **Text layers**: imported as rasterized pixel data (no editable text).
-//! - **Vector masks**: ignored; pixel masks are not applied either.
+//! - **Vector masks**: no channel data in the `psd` crate; silently absent.
 //!
 //! ## Layer ordering note
 //!

@@ -108,6 +108,7 @@ pub fn run() -> Result<(), AppError> {
             // project
             commands::project::project_close,
             commands::project::project_get,
+            commands::project::project_import_psd,
             commands::project::project_new,
             commands::project::project_open,
             commands::project::project_save,

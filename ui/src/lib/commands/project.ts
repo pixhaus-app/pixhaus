@@ -37,6 +37,16 @@ export function projectOpen(path: string): Promise<ProjectStatus> {
 }
 
 /**
+ * Imports a PSD file and makes it the active project.
+ * The imported project has no filesystem path (not saved as .pixhaus yet),
+ * so dirty is true on return. Non-fatal conversion warnings are logged on
+ * the Rust side; callers do not receive them through this command.
+ */
+export function projectImportPsd(path: string): Promise<ProjectStatus> {
+  return invoke<ProjectStatus>("project_import_psd", { path });
+}
+
+/**
  * Saves the active project to disk.
  * Requires B3 (.pixhaus format) — returns an error until B3 lands.
  */
