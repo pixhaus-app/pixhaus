@@ -10,9 +10,15 @@
 [files]
 extend-exclude = [
     "docs/planning/**",
+    # Build artifacts — typos in class names are Astro/Starlight internals, not our content.
+    "docs/site/dist/**",
+    # Pagefind compiled search bundle — third-party minified JS.
+    "docs/site/src/content/docs/**/.astro/**",
 ]
 
 [default.extend-words]
 # "PN" is a valid fragment in the PNG acronym (Portable Network Graphics).
 # typos conflates it with the "ON" abbreviation correction.
 PN = "PN"
+# "Sur" is part of "Big Sur" (macOS 11 codename), not a misspelling of "Sure".
+Sur = "Sur"

@@ -21,6 +21,11 @@ homepage = "https://pixhaus.app"
 anyhow = "1"
 async-trait = "0.1"
 base64 = "0.22"
+# Pinned exactly because we depend on the Debug format of its private
+# `BlendMode` enum (see io/src/psd/spec.rs). A routine `cargo update`
+# could silently change those strings; bump the pin deliberately when
+# adopting a new version and re-run the blend-mode tests.
+psd = "=0.3.5"
 criterion = { version = "0.5", default-features = false, features = ["plotters", "cargo_bench_support"] }
 flate2 = "1"
 futures = "0.3"
