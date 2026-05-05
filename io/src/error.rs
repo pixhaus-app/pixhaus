@@ -172,6 +172,11 @@ pub enum Error {
         max: u32,
     },
 
+    // ── PSD import (S09) ────────────────────────────────────────────────────
+    /// The `psd` crate returned a parse error.
+    #[error("PSD parse error: {0}")]
+    PsdParse(String),
+
     // ── Aseprite (S08) ──────────────────────────────────────────────────────
     /// The first two bytes of the frame magic word (offset 4 of every
     /// frame header in an Aseprite file) do not match `0xF1FA`.
