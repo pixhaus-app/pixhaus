@@ -1,0 +1,35 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100" width="100" height="100" role="img" aria-label="Pixhaus symbol">
+  <!--
+    Pixhaus symbol: a pixel-grid house mark.
+    5x5 cells, 18x18px each, 2px gap, 1px inset padding.
+    The door gap at col 2, rows 3-4 is intentional negative space.
+    Use fill="currentColor" to inherit the color context.
+  -->
+
+  <!-- Peak: col 2, row 0 -->
+  <rect x="41" y="1" width="18" height="18" rx="2" fill="currentColor"/>
+
+  <!-- Upper roof: cols 1-3, row 1 -->
+  <rect x="21" y="21" width="18" height="18" rx="2" fill="currentColor"/>
+  <rect x="41" y="21" width="18" height="18" rx="2" fill="currentColor"/>
+  <rect x="61" y="21" width="18" height="18" rx="2" fill="currentColor"/>
+
+  <!-- Roof base / eave: cols 0-4, row 2 -->
+  <rect x="1"  y="41" width="18" height="18" rx="2" fill="currentColor"/>
+  <rect x="21" y="41" width="18" height="18" rx="2" fill="currentColor"/>
+  <rect x="41" y="41" width="18" height="18" rx="2" fill="currentColor"/>
+  <rect x="61" y="41" width="18" height="18" rx="2" fill="currentColor"/>
+  <rect x="81" y="41" width="18" height="18" rx="2" fill="currentColor"/>
+
+  <!-- Upper wall / door header: cols 0-1, 3-4, row 3 -->
+  <rect x="1"  y="61" width="18" height="18" rx="2" fill="currentColor"/>
+  <rect x="21" y="61" width="18" height="18" rx="2" fill="currentColor"/>
+  <rect x="61" y="61" width="18" height="18" rx="2" fill="currentColor"/>
+  <rect x="81" y="61" width="18" height="18" rx="2" fill="currentColor"/>
+
+  <!-- Lower wall / door: cols 0-1, 3-4, row 4 (col 2 stays empty = door opening) -->
+  <rect x="1"  y="81" width="18" height="18" rx="2" fill="currentColor"/>
+  <rect x="21" y="81" width="18" height="18" rx="2" fill="currentColor"/>
+  <rect x="61" y="81" width="18" height="18" rx="2" fill="currentColor"/>
+  <rect x="81" y="81" width="18" height="18" rx="2" fill="currentColor"/>
+</svg>

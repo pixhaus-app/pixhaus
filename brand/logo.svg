@@ -1,0 +1,45 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 232 48" width="232" height="48" role="img" aria-label="pixhaus">
+  <!--
+    Pixhaus full logo: symbol + wordmark.
+    Symbol is 40x40 inset in the 48px row height (4px top/bottom padding).
+    Wordmark follows with 14px gap.
+    Both use fill="currentColor" so the containing element controls color.
+  -->
+
+  <!-- Symbol (40x40, centered vertically in 48px row) -->
+  <g transform="translate(4, 4) scale(0.4)">
+    <!-- Peak -->
+    <rect x="41" y="1" width="18" height="18" rx="2" fill="currentColor"/>
+    <!-- Upper roof -->
+    <rect x="21" y="21" width="18" height="18" rx="2" fill="currentColor"/>
+    <rect x="41" y="21" width="18" height="18" rx="2" fill="currentColor"/>
+    <rect x="61" y="21" width="18" height="18" rx="2" fill="currentColor"/>
+    <!-- Roof base -->
+    <rect x="1"  y="41" width="18" height="18" rx="2" fill="currentColor"/>
+    <rect x="21" y="41" width="18" height="18" rx="2" fill="currentColor"/>
+    <rect x="41" y="41" width="18" height="18" rx="2" fill="currentColor"/>
+    <rect x="61" y="41" width="18" height="18" rx="2" fill="currentColor"/>
+    <rect x="81" y="41" width="18" height="18" rx="2" fill="currentColor"/>
+    <!-- Upper wall -->
+    <rect x="1"  y="61" width="18" height="18" rx="2" fill="currentColor"/>
+    <rect x="21" y="61" width="18" height="18" rx="2" fill="currentColor"/>
+    <rect x="61" y="61" width="18" height="18" rx="2" fill="currentColor"/>
+    <rect x="81" y="61" width="18" height="18" rx="2" fill="currentColor"/>
+    <!-- Lower wall with door opening -->
+    <rect x="1"  y="81" width="18" height="18" rx="2" fill="currentColor"/>
+    <rect x="21" y="81" width="18" height="18" rx="2" fill="currentColor"/>
+    <rect x="61" y="81" width="18" height="18" rx="2" fill="currentColor"/>
+    <rect x="81" y="81" width="18" height="18" rx="2" fill="currentColor"/>
+  </g>
+
+  <!-- Wordmark (x=54: 40px symbol + 14px gap) -->
+  <text
+    x="54"
+    y="34"
+    fill="currentColor"
+    font-family="'Geist', -apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif"
+    font-size="28"
+    font-weight="600"
+    letter-spacing="-0.03em"
+  >pixhaus</text>
+</svg>
