@@ -99,6 +99,9 @@ coverage/
 *.lcov
 tarpaulin-report.html
 
+# Playwright
+.playwright-report/
+
 # Misc agent state
 .claude/local-cache/
 .claude/*.lock

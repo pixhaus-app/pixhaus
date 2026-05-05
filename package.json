@@ -26,6 +26,8 @@
     "format": "pnpm -r format",
     "format:check": "pnpm -r format:check",
     "test": "pnpm -r test",
+    "visual:test": "pnpm --filter @pixhaus/visual-tests pw",
+    "visual:update": "pnpm --filter @pixhaus/visual-tests update-snapshots",
     "bootstrap": "node scripts/run.mjs bootstrap",
     "doctor": "node scripts/run.mjs doctor",
     "dispatch": "node scripts/run.mjs dispatch",
