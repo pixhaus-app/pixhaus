@@ -67,6 +67,7 @@ pub struct TiledExportOptions {
 }
 
 /// Output of [`export_tilemap`]: raw UTF-8 XML for both files.
+#[derive(Debug)]
 pub struct TiledExportOutput {
     /// Contents of the `.tmx` map file.
     pub tmx: String,
@@ -95,8 +96,9 @@ pub fn export_tilemap(
     options: &TiledExportOptions,
 ) -> Result<TiledExportOutput> {
     validate_layers(layers)?;
+    validate_tile_indices(tileset, layers)?;
     let tsx = tileset_xml::build_tsx(tileset, options);
-    let tmx = build_tmx(tileset, layers, options);
+    let tmx = build_tmx(tileset, layers, options)?;
     Ok(TiledExportOutput { tmx, tsx })
 }
 
@@ -121,13 +123,48 @@ fn validate_layers(layers: &[TiledLayerInput<'_>]) -> Result<()> {
     Ok(())
 }
 
+/// Pre-flight check: every non-empty cell in every layer references a
+/// tile index that exists in the tileset. Stale references would
+/// produce GIDs that point at the wrong atlas entry once Tiled
+/// resolves them via `firstgid + (gid - 1)`.
+fn validate_tile_indices(tileset: &Tileset, layers: &[TiledLayerInput<'_>]) -> Result<()> {
+    let tile_count = tileset.tile_count;
+    for (layer_index, layer) in layers.iter().enumerate() {
+        for row in 0..layer.data.height {
+            for col in 0..layer.data.width {
+                let cell = layer.data.cell(col, row).ok_or(Error::TiledMissingCell {
+                    layer_index,
+                    col,
+                    row,
+                    width: layer.data.width,
+                    height: layer.data.height,
+                })?;
+                if cell.is_empty() {
+                    continue;
+                }
+                let idx = cell.index.get();
+                if idx >= tile_count {
+                    return Err(Error::TiledTileIndexOutOfRange {
+                        layer_index,
+                        col,
+                        row,
+                        tile_index: idx,
+                        tile_count,
+                    });
+                }
+            }
+        }
+    }
+    Ok(())
+}
+
 // ── TMX building ──────────────────────────────────────────────────────────────
 
 fn build_tmx(
     tileset: &Tileset,
     layers: &[TiledLayerInput<'_>],
     options: &TiledExportOptions,
-) -> String {
+) -> Result<String> {
     let tile_w = tileset.tile_size.width;
     let tile_h = tileset.tile_size.height;
     let (map_w, map_h) = layers
@@ -161,14 +198,19 @@ fn build_tmx(
     out.push('\n');
     for (i, layer) in layers.iter().enumerate() {
         let id = u32::try_from(i).unwrap_or(u32::MAX).saturating_add(1);
-        append_layer_xml(&mut out, id, layer);
+        append_layer_xml(&mut out, id, i, layer)?;
         out.push('\n');
     }
     out.push_str("</map>\n");
-    out
+    Ok(out)
 }
 
-fn append_layer_xml(out: &mut String, id: u32, layer: &TiledLayerInput<'_>) {
+fn append_layer_xml(
+    out: &mut String,
+    id: u32,
+    layer_index: usize,
+    layer: &TiledLayerInput<'_>,
+) -> Result<()> {
     let w = layer.data.width;
     let h = layer.data.height;
     writeln!(
@@ -178,36 +220,46 @@ fn append_layer_xml(out: &mut String, id: u32, layer: &TiledLayerInput<'_>) {
     )
     .ok();
     out.push_str("    <data encoding=\"csv\">\n");
-    out.push_str(&encode_csv(layer.data));
+    encode_csv_into(out, layer_index, layer.data)?;
     out.push_str("    </data>\n");
     out.push_str("  </layer>\n");
+    Ok(())
 }
 
 // ── CSV encoding ──────────────────────────────────────────────────────────────
 
-/// Encodes `data` as a CSV block matching Tiled's format.
+/// Encodes `data` as a CSV block matching Tiled's format and appends it
+/// to `out`. Streams directly into the buffer to avoid the per-row +
+/// per-cell `String` allocations the prior `Vec<Vec<String>>` shape
+/// implied. Returns [`Error::TiledMissingCell`] if any in-bounds cell
+/// is `None` (caught earlier by `validate_tile_indices` but kept here
+/// as a defence-in-depth invariant).
 ///
 /// Rows are on separate lines separated by a comma: all rows except the
 /// last end with a trailing comma before the newline, matching Tiled's
 /// own export. Empty cells encode as `0`; occupied cells encode as a
 /// `u32` with Tiled flip bits OR-ed into the high three bits.
-fn encode_csv(data: &TilemapData) -> String {
-    let mut rows: Vec<String> = Vec::with_capacity(data.height as usize);
+fn encode_csv_into(out: &mut String, layer_index: usize, data: &TilemapData) -> Result<()> {
     for row in 0..data.height {
-        let mut parts: Vec<String> = Vec::with_capacity(data.width as usize);
-        for col in 0..data.width {
-            // col/row are guaranteed in-range; unwrap_or_default is a
-            // belt-and-suspenders guard against future structural changes.
-            let cell = data.cell(col, row).unwrap_or_default();
-            parts.push(encode_gid(cell).to_string());
+        if row > 0 {
+            out.push_str(",\n");
         }
-        rows.push(parts.join(","));
+        for col in 0..data.width {
+            let cell = data.cell(col, row).ok_or(Error::TiledMissingCell {
+                layer_index,
+                col,
+                row,
+                width: data.width,
+                height: data.height,
+            })?;
+            if col > 0 {
+                out.push(',');
+            }
+            write!(out, "{}", encode_gid(cell)).ok();
+        }
     }
-    // join(",\n") places a comma at the end of every row except the last,
-    // which is the format Tiled itself writes.
-    let mut csv = rows.join(",\n");
-    csv.push('\n');
-    csv
+    out.push('\n');
+    Ok(())
 }
 
 // ── GID encoding ─────────────────────────────────────────────────────────────
@@ -365,9 +417,15 @@ mod tests {
 
     // ── CSV encoding ──────────────────────────────────────────────────────────
 
+    fn csv_for(data: &TilemapData) -> String {
+        let mut out = String::new();
+        encode_csv_into(&mut out, 0, data).expect("test-only call: data is well-formed");
+        out
+    }
+
     #[test]
     fn all_empty_2x2_encodes_to_zeros() {
-        let csv = encode_csv(&TilemapData::empty(2, 2));
+        let csv = csv_for(&TilemapData::empty(2, 2));
         assert_eq!(csv, "0,0,\n0,0\n");
     }
 
@@ -378,7 +436,7 @@ mod tests {
             index: TileIndex::new(2),
             flags: TileFlags::empty(),
         };
-        assert_eq!(encode_csv(&data), "2\n");
+        assert_eq!(csv_for(&data), "2\n");
     }
 
     #[test]
@@ -388,7 +446,7 @@ mod tests {
             index: TileIndex::new(1),
             flags: TileFlags::empty(),
         };
-        let csv = encode_csv(&data);
+        let csv = csv_for(&data);
         let last = csv.trim_end_matches('\n').lines().last().unwrap_or("");
         assert!(!last.ends_with(','), "last row must not end with a comma");
     }
@@ -400,8 +458,57 @@ mod tests {
             index: TileIndex::new(4),
             flags: TileFlags::FLIP_X,
         };
-        let csv = encode_csv(&data);
+        let csv = csv_for(&data);
         assert_eq!(csv, "2147483652\n");
+    }
+
+    // ── Tile-index validation ─────────────────────────────────────────────────
+
+    #[test]
+    fn out_of_range_tile_index_is_rejected() {
+        // sample_tileset has tile_count = 6; index 7 is past the end.
+        let mut data = TilemapData::empty(2, 1);
+        data.cells[0] = TileCell {
+            index: TileIndex::new(7),
+            flags: TileFlags::empty(),
+        };
+        let layers = [TiledLayerInput {
+            name: "stale",
+            data: &data,
+        }];
+        let err = export_tilemap(&sample_tileset(), &layers, &options())
+            .expect_err("must reject stale tile index");
+        match err {
+            Error::TiledTileIndexOutOfRange {
+                layer_index,
+                col,
+                row,
+                tile_index,
+                tile_count,
+            } => {
+                assert_eq!(layer_index, 0);
+                assert_eq!(col, 0);
+                assert_eq!(row, 0);
+                assert_eq!(tile_index, 7);
+                assert_eq!(tile_count, 6);
+            }
+            other => panic!("wrong variant: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn empty_cell_with_out_of_range_index_field_is_allowed() {
+        // TileIndex(0) is the empty sentinel — it should not trip
+        // the index-out-of-range check even when tile_count is 0.
+        let data = TilemapData::empty(1, 1);
+        let mut tileset = sample_tileset();
+        tileset.tile_count = 0;
+        let layers = [TiledLayerInput {
+            name: "blank",
+            data: &data,
+        }];
+        // Should succeed: every cell is empty.
+        export_tilemap(&tileset, &layers, &options()).unwrap();
     }
 
     // ── Export ────────────────────────────────────────────────────────────────

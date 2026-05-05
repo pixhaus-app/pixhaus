@@ -10,7 +10,9 @@
 //! entry.
 
 use pixhaus_core::project::id::TileIndex;
-use pixhaus_core::project::tileset::{CollisionShape, TileAnimation, TileProperties, Tileset};
+use pixhaus_core::project::tileset::{
+    AnimLoopMode, CollisionShape, TileAnimation, TileProperties, Tileset,
+};
 
 use std::fmt::Write;
 
@@ -92,13 +94,35 @@ fn append_properties_element(out: &mut String, props: &TileProperties) {
 /// Appends an `<animation>` block for the given tile animation.
 ///
 /// Each frame's `tile_index` is converted to a Tiled local ID by
-/// subtracting 1. `TileIndex(0)` in an animation frame is clamped to
-/// local id `0` rather than wrapping, though in practice an animation
-/// referencing the empty sentinel is an authoring error.
+/// subtracting 1. [`TileIndex(0)`](TileIndex) is the empty-tile
+/// sentinel and never has a local-id mapping; frames referencing it
+/// are an authoring error and are skipped (with a comment in the
+/// output) rather than silently encoded as the first real tile.
+///
+/// Tiled's animation model assumes a forward loop. Pixhaus also
+/// supports [`AnimLoopMode::Once`] and [`AnimLoopMode::PingPong`];
+/// those modes can't be expressed in the TSX, so the export emits a
+/// comment noting the downgrade for round-trip diagnostics.
 fn append_animation_element(out: &mut String, anim: &TileAnimation) {
+    if anim.loop_mode != AnimLoopMode::Loop {
+        writeln!(
+            out,
+            "    <!-- pixhaus loop_mode={:?}; Tiled supports forward-loop only -->",
+            anim.loop_mode
+        )
+        .ok();
+    }
     out.push_str("    <animation>\n");
     for frame in &anim.frames {
-        let local_id = frame.tile_index.get().saturating_sub(1);
+        let raw = frame.tile_index.get();
+        if raw == 0 {
+            // TileIndex(0) is the empty sentinel — no atlas slot to
+            // reference. Emit a comment so the omission is debuggable
+            // when Tiled disagrees with Pixhaus on frame count.
+            out.push_str("      <!-- skipped frame: TileIndex(0) is the empty sentinel -->\n");
+            continue;
+        }
+        let local_id = raw - 1;
         writeln!(
             out,
             "      <frame tileid=\"{local_id}\" duration=\"{}\"/>",
