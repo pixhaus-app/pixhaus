@@ -6,6 +6,7 @@ import type { Frame } from "./Frame";
 import type { FrameTag } from "./FrameTag";
 import type { Layer } from "./Layer";
 import type { Palette } from "./Palette";
+import type { PaletteFrameOverride } from "./PaletteFrameOverride";
 import type { Size } from "./Size";
 import type { Slice } from "./Slice";
 import type { SpriteId } from "./SpriteId";
@@ -33,6 +34,13 @@ canvas: Size,
  */
 color_mode: ColorMode, 
 /**
+ * Palette index treated as transparent in indexed-mode sprites.
+ * `None` for RGBA / grayscale sprites or when no transparent index
+ * is declared; defaults to `Some(0)` after a freshly-loaded indexed
+ * sprite per Aseprite convention.
+ */
+transparent_color_index?: number | null, 
+/**
  * Layer stack. Order matters: index `0` is the bottom layer.
  */
 layers: Array<Layer>, 
@@ -50,6 +58,14 @@ cels: Array<Cel>,
  * Palettes available within this sprite.
  */
 palettes: Array<Palette>, 
+/**
+ * Per-frame palette overrides for animated palette-cycling. Keyed
+ * on frame index; each entry replaces the active palette wholesale
+ * at that frame boundary. Sparse — frames not present inherit the
+ * previous frame's palette state. Empty for the common case where
+ * the palette is constant for the sprite's lifetime.
+ */
+palette_frame_overrides?: Array<PaletteFrameOverride>, 
 /**
  * Tilesets available within this sprite.
  */

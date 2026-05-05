@@ -27,6 +27,13 @@ tile_size: Size,
  */
 tile_count: number, 
 /**
+ * Index displayed for the first non-empty tile. Aseprite stores
+ * this so a tileset can present itself as 1-based ("tile 1") or
+ * 0-based ("tile 0") in its UI without renumbering pixel data.
+ * Tile id `0` always remains the empty tile internally.
+ */
+base_index: number, 
+/**
  * Where the tile pixels live.
  */
 source: TilesetSource, 

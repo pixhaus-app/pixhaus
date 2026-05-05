@@ -53,7 +53,7 @@ pub use id::{
     TilesetId,
 };
 pub use layer::{Layer, LayerKind};
-pub use palette::{Palette, PaletteEntry};
+pub use palette::{Palette, PaletteEntry, PaletteFrameOverride};
 pub use schema::{FeatureFlags, SchemaVersion};
 pub use selection::{SelectionRegion, SelectionState};
 pub use slice::{NineSlice, Pivot, Slice, SliceKey};

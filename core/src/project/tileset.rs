@@ -116,6 +116,12 @@ pub struct Tileset {
     /// Number of tiles the tileset declares. Index `0` is the empty
     /// tile by convention; `tile_count` includes that index.
     pub tile_count: u32,
+    /// Index displayed for the first non-empty tile. Aseprite stores
+    /// this so a tileset can present itself as 1-based ("tile 1") or
+    /// 0-based ("tile 0") in its UI without renumbering pixel data.
+    /// Tile id `0` always remains the empty tile internally.
+    #[serde(default = "default_base_index")]
+    pub base_index: i16,
     /// Where the tile pixels live.
     pub source: TilesetSource,
     /// Per-tile metadata. Length may be less than `tile_count`; indices
@@ -144,6 +150,10 @@ static DEFAULT_TILE_PROPS: TileProperties = TileProperties {
     collision: CollisionShape::None,
     animation: None,
 };
+
+fn default_base_index() -> i16 {
+    1
+}
 
 /// Where a tileset's pixel data is stored.
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize, TS)]
@@ -175,6 +185,7 @@ mod tests {
             name: "dungeon".into(),
             tile_size: Size::new(16, 16),
             tile_count: 64,
+            base_index: 1,
             source: TilesetSource::Inline {
                 buffer: PixelBufferId::new(42),
             },
@@ -198,6 +209,7 @@ mod tests {
             name: "shared".into(),
             tile_size: Size::new(8, 8),
             tile_count: 32,
+            base_index: 1,
             source: TilesetSource::External {
                 path: "tilesets/shared.png".into(),
             },
@@ -207,6 +219,25 @@ mod tests {
         let bytes = rmp_serde::to_vec_named(&t).unwrap();
         let back: Tileset = rmp_serde::from_slice(&bytes).unwrap();
         assert_eq!(t, back);
+    }
+
+    #[test]
+    fn base_index_round_trips_non_default_value() {
+        let t = Tileset {
+            id: TilesetId::new(3),
+            name: "decals".into(),
+            tile_size: Size::new(8, 8),
+            tile_count: 4,
+            base_index: 5,
+            source: TilesetSource::Inline {
+                buffer: PixelBufferId::new(7),
+            },
+            properties: Vec::new(),
+            user_data: UserData::default(),
+        };
+        let bytes = rmp_serde::to_vec_named(&t).unwrap();
+        let back: Tileset = rmp_serde::from_slice(&bytes).unwrap();
+        assert_eq!(back.base_index, 5);
     }
 
     #[test]
