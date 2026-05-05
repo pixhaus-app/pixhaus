@@ -86,7 +86,7 @@ The shipped command palette has a single timeline entry (`window:toggle-timeline
 ## Customizing shortcuts
 
 Open `Edit > Keybinds` to remap any shortcut. Two built-in presets are available:
-- **Aseprite** — Aseprite-compatible defaults (current default)
+- **Aseprite** — [Aseprite-compatible defaults](/reference/preset-aseprite/) (current default)
 - **Photoshop** — Photoshop-compatible defaults
 
 Load a preset, then modify individual bindings as needed. Presets do not overwrite customized bindings automatically.
