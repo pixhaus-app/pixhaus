@@ -1,14 +1,27 @@
 import { For, type Component } from "solid-js";
 import { open as dialogOpen } from "@tauri-apps/plugin-dialog";
 import { recentProjects, setActiveProject, pushRecentProject } from "../project-state";
-import { projectNew, projectOpen } from "../lib/commands/project";
+import {
+  projectNew,
+  projectOpen,
+  projectImportPsd,
+  type ProjectStatus,
+} from "../lib/commands/project";
 import { extractFilename } from "../lib/utils/path";
 import { reportCommandFailure } from "../lib/utils/errors";
 
-const PIXHAUS_FILTER = [{ name: "Pixhaus Projects", extensions: ["pixhaus"] }];
+const OPEN_FILTERS = [
+  { name: "All supported files", extensions: ["pixhaus", "psd"] },
+  { name: "Pixhaus Projects", extensions: ["pixhaus"] },
+  { name: "Photoshop Documents", extensions: ["psd"] },
+];
 
 async function pickOpenPath(): Promise<string | null> {
-  return dialogOpen({ multiple: false as const, filters: PIXHAUS_FILTER });
+  return dialogOpen({ multiple: false as const, filters: OPEN_FILTERS });
+}
+
+function openByExtension(path: string): Promise<ProjectStatus> {
+  return path.toLowerCase().endsWith(".psd") ? projectImportPsd(path) : projectOpen(path);
 }
 
 const WelcomeScreen: Component = () => {
@@ -22,7 +35,7 @@ const WelcomeScreen: Component = () => {
     pickOpenPath()
       .then((path) => {
         if (path === null) return;
-        return projectOpen(path).then((status) => {
+        return openByExtension(path).then((status) => {
           setActiveProject(status);
           pushRecentProject({ name: extractFilename(path), path });
         });
@@ -31,7 +44,7 @@ const WelcomeScreen: Component = () => {
   }
 
   function handleOpenRecent(path: string): void {
-    projectOpen(path)
+    openByExtension(path)
       .then((status) => {
         setActiveProject(status);
         pushRecentProject({ name: extractFilename(path), path });

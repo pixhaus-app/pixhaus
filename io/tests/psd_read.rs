@@ -142,6 +142,15 @@ mod blend_mode_spec {
             ConversionWarning::HighBitDepthDownsampled { bits: 16 }
         ));
     }
+
+    #[test]
+    fn raster_mask_ignored_warning_is_cloneable_and_comparable() {
+        let w = ConversionWarning::RasterMaskIgnored {
+            layer_name: "shadow".into(),
+        };
+        assert_eq!(w.clone(), w);
+        assert!(matches!(w, ConversionWarning::RasterMaskIgnored { .. }));
+    }
 }
 
 // ── Layer structure round-trip helpers ───────────────────────────────────────
