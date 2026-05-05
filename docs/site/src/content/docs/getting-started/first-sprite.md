@@ -32,7 +32,7 @@ This guide walks through creating a 32x32 sprite from a blank canvas.
 | Zoom in/out | `+` / `-` |
 | Fit to window | `Ctrl+0` |
 | Undo | `Ctrl+Z` |
-| Redo | `Ctrl+Y` |
+| Redo | `Ctrl+Shift+Z` |
 | Swap fg/bg colors | `X` |
 
 <Aside>

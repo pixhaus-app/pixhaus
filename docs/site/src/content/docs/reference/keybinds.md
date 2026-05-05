@@ -3,7 +3,13 @@ title: Keyboard shortcuts
 description: Default keyboard shortcuts and how to customize them.
 ---
 
-## Global
+import { Aside } from "@astrojs/starlight/components";
+
+<Aside type="caution" title="What ships today">
+The shortcuts below mark which streams have wired the corresponding command. Entries flagged "planned" appear in the keybinds preset table but do not have a working handler yet — invoking them no-ops and logs a warning. The brush, layer-management, animation-playback, and selection streams will land them.
+</Aside>
+
+## Global (working today)
 
 | Action | Windows/Linux | macOS |
 |---|---|---|
@@ -16,7 +22,7 @@ description: Default keyboard shortcuts and how to customize them.
 | Redo | `Ctrl+Shift+Z` | `Cmd+Shift+Z` |
 | Preferences | `Ctrl+,` | `Cmd+,` |
 
-## Tools
+## Tools (planned — wired by the brush stream)
 
 | Tool | Shortcut |
 |---|---|
@@ -43,36 +49,26 @@ description: Default keyboard shortcuts and how to customize them.
 | Zoom 200% | `Ctrl+2` |
 | Pan | `Space+drag` or middle mouse drag |
 | Toggle pixel grid | `Ctrl+G` |
-| Toggle onion skin | `Shift+F1` |
 
-## Color
+## Color (planned — wired by the palette panel)
 
 | Action | Shortcut |
 |---|---|
 | Swap fg/bg colors | `X` |
 | Reset to black/white | `D` |
 
-## Layers
+## Layers (planned — wired by the layer panel)
 
 | Action | Shortcut |
 |---|---|
 | New raster layer | `Shift+Ctrl+N` |
 | Toggle layer visibility | `Ctrl+Shift+H` (while layer selected) |
 
-## Timeline
+## Timeline (planned — wired by the animation timeline stream)
 
-| Action | Shortcut |
-|---|---|
-| Toggle timeline | `Tab` |
-| Play/pause | `Space` |
-| Next frame | `.` |
-| Previous frame | `,` |
-| First frame | `Home` |
-| Last frame | `End` |
-| New frame | `Alt+N` |
-| Tag selection | `Ctrl+B` |
+The shipped command palette has a single timeline entry (`window:toggle-timeline`); per-frame navigation, play/pause, and tag operations all land with the timeline panel stream.
 
-## Selection
+## Selection (planned — wired by the selection UI stream)
 
 | Action | Shortcut |
 |---|---|

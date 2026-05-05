@@ -10,11 +10,11 @@ This guide walks through creating a 4-frame idle animation.
 <Steps>
 1. **Open your sprite** or start from the project saved in [Your first sprite](/getting-started/first-sprite/).
 
-2. **Open the timeline.** `View > Timeline` or `Tab`. The timeline panel appears at the bottom. Frame 1 is already there.
+2. **Open the timeline.** `View > Timeline`. The timeline panel appears alongside the layers. Frame 1 is already there.
 
-3. **Add frames.** Right-click in the frame header area and choose `Insert frame after`. Repeat until you have 4 frames. Alternatively, `Frame > New Frame` (`Alt+N`).
+3. **Add frames.** Right-click in the frame header area and choose `Insert frame after`. Repeat until you have 4 frames. Alternatively, `Frame > New Frame`.
 
-4. **Draw each frame.** Click on a frame number in the timeline to make it active. Draw changes to the canvas for that frame only. Use onion skin (`View > Onion Skin` or `Shift+F1`) to see the previous frame as a faint ghost.
+4. **Draw each frame.** Click on a frame number in the timeline to make it active. Draw changes to the canvas for that frame only. Use onion skin (`View > Onion Skin`) to see the previous frame as a faint ghost.
 
 5. **Set frame duration.** Click the duration field above each frame (shows `100ms` by default). Change it to `150ms` for a slower idle.
 

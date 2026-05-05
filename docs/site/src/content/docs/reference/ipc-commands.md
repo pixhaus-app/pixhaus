@@ -29,7 +29,7 @@ Export commands (sprite sheet, `.aseprite`, GIF, TMX) live behind individual str
 
 | Command | Description |
 |---|---|
-| `layer_new` | Add a new raster or tilemap layer |
+| `layer_add` | Add a new raster or tilemap layer |
 | `layer_delete` | Delete a layer by ID |
 | `layer_reorder` | Move a layer to a new position |
 | `layer_rename` | Rename a layer |
@@ -37,17 +37,20 @@ Export commands (sprite sheet, `.aseprite`, GIF, TMX) live behind individual str
 | `layer_set_opacity` | Change opacity |
 | `layer_set_visibility` | Show or hide |
 | `layer_set_locked` | Lock or unlock |
+| `layer_list` | List all layers in a sprite |
 
 ### Frames
 
 | Command | Description |
 |---|---|
-| `frame_new` | Insert a new frame |
+| `frame_add` | Append a new frame to the timeline |
 | `frame_delete` | Delete a frame |
 | `frame_duplicate` | Duplicate a frame |
+| `frame_reorder` | Move a frame to a new position |
 | `frame_set_duration` | Set frame duration in ms |
-| `frame_tag_new` | Create a frame tag |
+| `frame_tag_create` | Create a frame tag |
 | `frame_tag_delete` | Delete a frame tag |
+| `frame_list` | List all frames in a sprite |
 
 ### Palette
 

@@ -7,16 +7,16 @@ The Pixhaus editor follows the same panel layout as Aseprite: canvas in the cent
 
 ## Layout
 
-| Panel | Default location | Shortcut |
-|---|---|---|
-| Canvas | Center | — |
-| Tool options | Top bar | — |
-| Layers | Right | `F7` |
-| Timeline | Bottom | `Tab` |
-| Color / Palette | Bottom-left | `F4` |
-| Command palette | Overlay | `Ctrl+K` |
+| Panel | Default location |
+|---|---|
+| Canvas | Center |
+| Tool options | Top bar |
+| Layers | Right |
+| Timeline | Right (below layers) |
+| Color / Palette | Bottom-left |
+| Command palette (`Ctrl+K`) | Overlay |
 
-All panels are dockable and can be rearranged. `View > Reset layout` restores the default.
+Panel-toggle shortcuts (Layers / Timeline / Palette) are part of the planned brush + window stream and are not wired today; use the View menu in the meantime.
 
 ## Canvas
 
@@ -31,10 +31,10 @@ Above 800% zoom the pixel grid appears automatically. Disable it in `View > Pixe
 ## Keybinds
 
 Pixhaus ships two built-in presets:
-- **Pixhaus default** — the native layout
-- **Aseprite-compatible** — maps to Aseprite's defaults so existing muscle memory transfers
+- **Aseprite** — Aseprite-compatible defaults (currently the shipped default)
+- **Photoshop** — Photoshop-compatible defaults
 
-Load a preset at `Edit > Keybinds > Load preset`. Individual keys are remappable. See the [keyboard shortcuts reference](/reference/keybinds/).
+Load a preset at `Preferences > Keybinds`. Individual keys are remappable. See the [keyboard shortcuts reference](/reference/keybinds/).
 
 ## Projects
 
