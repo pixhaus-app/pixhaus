@@ -38,7 +38,8 @@
   "pnpm": {
     "onlyBuiltDependencies": [
       "esbuild",
-      "@tauri-apps/cli"
+      "@tauri-apps/cli",
+      "sharp"
     ]
   }
 }

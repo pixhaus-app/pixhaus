@@ -1,0 +1,32 @@
+---
+title: Pixhaus documentation
+description: Open-source AI-native pixel art editor for sprites, animations, and tilemaps.
+template: splash
+hero:
+  tagline: The open-source AI-native pixel art editor for sprites, animations, and tilemaps.
+  actions:
+    - text: Get started
+      link: /getting-started/introduction/
+      icon: right-arrow
+      variant: primary
+    - text: View on GitHub
+      link: https://github.com/pixhaus-app/pixhaus
+      icon: external
+---
+
+import { CardGrid, Card } from "@astrojs/starlight/components";
+
+<CardGrid stagger>
+  <Card title="Pixel-perfect editing" icon="pencil">
+    Frame-based timeline, onion skin, blend modes, indexed-color palette discipline — everything you know from Aseprite, in one tool.
+  </Card>
+  <Card title="Tilemaps as first-class layers" icon="puzzle">
+    Tilemaps live alongside sprites in the same project. Autotile rules, animated tiles, and tileset editing without switching apps.
+  </Card>
+  <Card title="AI verbs in canvas" icon="rocket">
+    Inbetween, Continue, Extend, Variant, Cleanup, and more — AI commands that run with your palette, layers, and style as context.
+  </Card>
+  <Card title="Unity handoff built in" icon="external">
+    Export sprite sheets, animation clips, and tilemaps directly to Unity with the first-party Pixhaus importer package.
+  </Card>
+</CardGrid>
