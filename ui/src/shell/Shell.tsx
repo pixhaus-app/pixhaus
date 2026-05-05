@@ -3,6 +3,7 @@ import { listen } from "@tauri-apps/api/event";
 import { isCommandPaletteOpen } from "../palette-state";
 import { isPreferencesOpen } from "../preferences/preferences-state";
 import { activeProject } from "../project-state";
+import { activeSpriteId } from "../canvas/canvas-state";
 import { dispatchCommand } from "../command-palette/command-registry";
 import { setupKeybindManager } from "../keybinds/keybind-manager";
 import CommandPalette from "../command-palette/CommandPalette";
@@ -10,6 +11,7 @@ import PreferencesModal from "../preferences/PreferencesModal";
 import StatusBar from "./StatusBar";
 import WelcomeScreen from "./WelcomeScreen";
 import Canvas from "../canvas/Canvas";
+import PalettePanel from "../palette/PalettePanel";
 
 // Import to trigger initial theme application as a side effect
 import "../preferences/preferences-store";
@@ -34,13 +36,17 @@ const Shell: Component = () => {
 
   return (
     <div class="shell">
-      <div class="shell-main">
-        <Show when={activeProject() === null}>
-          <WelcomeScreen />
-        </Show>
-        <Show when={activeProject() !== null}>
-          <Canvas />
-        </Show>
+      <div class="shell-body">
+        <div class="shell-main">
+          <Show when={activeProject() === null}>
+            <WelcomeScreen />
+          </Show>
+          <Show when={activeProject() !== null}>
+            <Canvas />
+          </Show>
+        </div>
+
+        <PalettePanel spriteId={activeSpriteId()} />
       </div>
 
       <StatusBar />
