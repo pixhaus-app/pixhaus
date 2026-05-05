@@ -172,12 +172,17 @@ fn compute_fps(frames: &[(PixelBuffer, u32)]) -> f64 {
         return 25.0;
     }
     let total_ms: u64 = frames.iter().map(|(_, d)| u64::from(*d)).sum();
-    let avg_ms = total_ms / frames.len() as u64;
-    if avg_ms == 0 {
+    // Keep the mean in f64 throughout — integer-dividing first floors the
+    // fractional part and shortens the export. A 1000-frame export with
+    // 1.5 ms duration each used to round the mean to 1 ms (1000 fps)
+    // instead of the real ~666 fps.
+    #[allow(clippy::cast_precision_loss)]
+    let avg_ms = total_ms as f64 / frames.len() as f64;
+    if avg_ms <= 0.0 {
         return 60.0;
     }
     // Round to two decimal places to avoid ffmpeg's rational-number quirks.
-    let fps = 1000.0 / f64::from(u32::try_from(avg_ms).unwrap_or(u32::MAX));
+    let fps = 1000.0 / avg_ms;
     (fps * 100.0).round() / 100.0
 }
 
@@ -240,14 +245,41 @@ struct TempDir {
 
 impl TempDir {
     fn create() -> Result<Self> {
-        // Use a uniquely named subdirectory under the system temp dir.
+        // The previous implementation used SystemTime::subsec_nanos() which
+        // repeats every second; two concurrent encodes in the same second
+        // would land in the same dir and create_dir_all silently reuses an
+        // existing one, leaking PNGs across runs.
+        //
+        // Combine pid + monotonic-ish nanos + an in-process counter so
+        // collisions inside the same process are impossible and across
+        // processes are vanishingly rare. Use create_dir (not _all) so the
+        // call fails if the path is already taken; retry with a fresh
+        // suffix until success or we hit the retry cap.
+        use std::sync::atomic::{AtomicU64, Ordering};
         use std::time::{SystemTime, UNIX_EPOCH};
-        let unique = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .map_or(0, |d| d.subsec_nanos());
-        let path = std::env::temp_dir().join(format!("pixhaus_mp4_{unique}"));
-        std::fs::create_dir_all(&path)?;
-        Ok(Self { path })
+
+        static COUNTER: AtomicU64 = AtomicU64::new(0);
+
+        let pid = std::process::id();
+        let base = std::env::temp_dir();
+
+        for attempt in 0..32 {
+            let nanos = SystemTime::now().duration_since(UNIX_EPOCH).map_or(0, |d| {
+                d.as_secs()
+                    .saturating_mul(1_000_000_000)
+                    .saturating_add(u64::from(d.subsec_nanos()))
+            });
+            let count = COUNTER.fetch_add(1, Ordering::Relaxed);
+            let path = base.join(format!("pixhaus_mp4_{pid}_{nanos}_{count}_{attempt}"));
+            match std::fs::create_dir(&path) {
+                Ok(()) => return Ok(Self { path }),
+                Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => {}
+                Err(e) => return Err(Error::Io(e)),
+            }
+        }
+        Err(Error::Io(std::io::Error::other(
+            "could not allocate a unique temp directory after 32 attempts",
+        )))
     }
 }
 

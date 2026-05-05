@@ -100,22 +100,30 @@ fn neuquant_to_rgb_table(rgba_map: &[u8]) -> Vec<u8> {
 
 /// Quantize `rgba_pixels` against `palette` (RGBA4 entries) and return a
 /// packed Vec of palette indices (one byte per pixel).
+///
+/// When `reserve_zero_for_transparent` is true, opaque pixels are matched
+/// against `palette[1..]` only — index 0 is reserved for the transparent
+/// colour the encoder will set. Without the reserve, an opaque pixel
+/// whose colour happens to match `palette[0]` would quantize to index 0
+/// and disappear behind the transparency mask once the encoder marks
+/// that index as transparent.
 fn quantize_to_palette(
     rgba_pixels: &[u8],
     palette: &[[u8; 4]],
     width: u32,
     height: u32,
     dither: DitherMode,
+    reserve_zero_for_transparent: bool,
 ) -> Vec<u8> {
     let mut pixels = rgba_pixels.to_owned();
     dither::apply(dither, &mut pixels, width, height, palette);
 
+    let opaque_palette_start = usize::from(reserve_zero_for_transparent && !palette.is_empty());
+
     pixels
         .chunks_exact(4)
         .map(|p| {
-            // Transparent pixels map to palette index 0 by convention; the
-            // encoder marks index 0 as the transparent colour if any frame has
-            // transparent pixels.
+            // Transparent pixels map to palette index 0 by convention.
             if p[3] == 0 {
                 return 0u8;
             }
@@ -124,6 +132,7 @@ fn quantize_to_palette(
             palette
                 .iter()
                 .enumerate()
+                .skip(opaque_palette_start)
                 .min_by_key(|&(_, &c)| {
                     let sq = |a: u8, b: u8| {
                         let d = u32::from(a).abs_diff(u32::from(b));
@@ -241,6 +250,12 @@ fn encode_existing_palette<W: Write>(
         Error::InvalidPalette("ExistingPalette mode requires a project palette".into())
     })?;
 
+    if palette.colors.is_empty() {
+        return Err(Error::InvalidPalette(
+            "ExistingPalette mode requires a non-empty palette".into(),
+        ));
+    }
+
     if palette.colors.len() > 256 {
         return Err(Error::PaletteExceedsGifMax {
             count: palette.colors.len(),
@@ -259,9 +274,15 @@ fn encode_existing_palette<W: Write>(
 
     for (buf, duration_ms) in frames {
         let rgba = buffer_to_rgba_vec(buf);
-        let indexed = quantize_to_palette(&rgba, &rgba4, width, height, options.dither);
-
         let has_transparent = rgba.chunks_exact(4).any(|p| p[3] == 0);
+        let indexed = quantize_to_palette(
+            &rgba,
+            &rgba4,
+            width,
+            height,
+            options.dither,
+            has_transparent,
+        );
         let transparent = has_transparent.then_some(0u8);
 
         let frame = Frame {
@@ -311,9 +332,15 @@ fn encode_global_quantize<W: Write>(
 
     for (buf, duration_ms) in frames {
         let rgba = buffer_to_rgba_vec(buf);
-        let indexed = quantize_to_palette(&rgba, &rgba4, width, height, options.dither);
-
         let has_transparent = rgba.chunks_exact(4).any(|p| p[3] == 0);
+        let indexed = quantize_to_palette(
+            &rgba,
+            &rgba4,
+            width,
+            height,
+            options.dither,
+            has_transparent,
+        );
         let transparent = has_transparent.then_some(0u8);
 
         let frame = Frame {
