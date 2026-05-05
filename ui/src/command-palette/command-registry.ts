@@ -14,6 +14,12 @@ import {
   isLayerPanelVisible,
   setLayerPanelVisible,
 } from "../layers/layer-state";
+import {
+  tilemapTool,
+  setTilemapTool,
+  autotileMode,
+  setAutotileMode,
+} from "../tilemap/tilemap-state";
 
 export type Command = {
   readonly id: string;
@@ -232,6 +238,47 @@ const COMMANDS: ReadonlyMap<string, CommandEntry> = new Map<string, CommandEntry
     },
   ],
 
+  // ── Tilemap ───────────────────────────────────────────────────────────────
+  [
+    "tilemap:tool-pencil",
+    {
+      id: "tilemap:tool-pencil",
+      label: "Tile pencil",
+      category: "Tilemap",
+      keywords: ["paint", "place", "draw"],
+      handler: () => setTilemapTool("pencil"),
+    },
+  ],
+  [
+    "tilemap:tool-erase",
+    {
+      id: "tilemap:tool-erase",
+      label: "Tile eraser",
+      category: "Tilemap",
+      keywords: ["erase", "clear", "delete"],
+      handler: () => setTilemapTool("erase"),
+    },
+  ],
+  [
+    "tilemap:toggle-autotile",
+    {
+      id: "tilemap:toggle-autotile",
+      label: "Toggle autotile mode",
+      category: "Tilemap",
+      keywords: ["autotile", "auto", "wang", "rules"],
+      handler: () => setAutotileMode(!autotileMode()),
+    },
+  ],
+  [
+    "tilemap:toggle-tool",
+    {
+      id: "tilemap:toggle-tool",
+      label: "Toggle tile tool (pencil/erase)",
+      category: "Tilemap",
+      handler: () => setTilemapTool(tilemapTool() === "pencil" ? "erase" : "pencil"),
+    },
+  ],
+
   // ── Select ────────────────────────────────────────────────────────────────
   [
     "select:all",
@@ -383,6 +430,16 @@ const COMMANDS: ReadonlyMap<string, CommandEntry> = new Map<string, CommandEntry
       label: "Toggle Color Palette",
       category: "Window",
       handler: stub("window:toggle-palette"),
+    },
+  ],
+  [
+    "window:toggle-tilemap",
+    {
+      id: "window:toggle-tilemap",
+      label: "Toggle Tilemap Panel",
+      category: "Window",
+      keywords: ["tiles", "autotile", "tileset"],
+      handler: stub("window:toggle-tilemap"),
     },
   ],
 

@@ -1,0 +1,251 @@
+// Palette swatch grid.
+//
+// Features:
+//   - Click to set as foreground index (shift-click for background)
+//   - Drag-to-reorder (visual only — persisted via future palette_reorder_colors command)
+//   - Right-click context menu: rename, delete, lock/unlock
+//   - Per-swatch lock indicator (prevents accidental edits)
+//   - Double-click to open color picker for that swatch
+//
+// The grid is a flat CSS grid; each swatch is a button for keyboard navigation.
+
+import { createSignal, For, Show, type Component } from "solid-js";
+import type { PaletteEntry, Rgba } from "../lib/types";
+import {
+  foregroundIndex,
+  backgroundIndex,
+  setForegroundIndex,
+  setBackgroundIndex,
+  lockedIndices,
+  toggleLock,
+  activePalette,
+  startEditing,
+} from "./palette-panel-state";
+import { rgbaToCss, contrastColor } from "./color-utils";
+
+type Props = {
+  /** Called when the user double-clicks a swatch to open the color picker. */
+  onPickerOpen: (index: number) => void;
+  /** Called when the user requests to remove a swatch. */
+  onRemove: (index: number) => void;
+  /** Called when the user requests to rename a swatch. */
+  onRename: (index: number, name: string) => void;
+};
+
+type ContextMenu = {
+  x: number;
+  y: number;
+  index: number;
+};
+
+const PaletteGrid: Component<Props> = (props) => {
+  const [contextMenu, setContextMenu] = createSignal<ContextMenu | null>(null);
+  const [dragFrom, setDragFrom] = createSignal<number | null>(null);
+  const [dragOver, setDragOver] = createSignal<number | null>(null);
+
+  const closeMenu = () => setContextMenu(null);
+
+  const handleContextMenu = (e: MouseEvent, index: number) => {
+    e.preventDefault();
+    setContextMenu({ x: e.clientX, y: e.clientY, index });
+  };
+
+  const handleClick = (e: MouseEvent, index: number) => {
+    closeMenu();
+    if (e.shiftKey) {
+      setBackgroundIndex(index);
+    } else {
+      setForegroundIndex(index);
+    }
+  };
+
+  const handleDblClick = (index: number) => {
+    const p = activePalette();
+    const entry = p?.colors[index];
+    if (entry) {
+      startEditing(index, entry.color);
+      props.onPickerOpen(index);
+    }
+  };
+
+  // ── Drag-to-reorder (visual only until palette_reorder_colors lands) ─────
+  const handleDragStart = (e: DragEvent, index: number) => {
+    if (e.dataTransfer) {
+      e.dataTransfer.effectAllowed = "move";
+      e.dataTransfer.setData("text/plain", String(index));
+    }
+    setDragFrom(index);
+  };
+
+  const handleDragOver = (e: DragEvent, index: number) => {
+    e.preventDefault();
+    if (e.dataTransfer) e.dataTransfer.dropEffect = "move";
+    setDragOver(index);
+  };
+
+  const handleDrop = (e: DragEvent, toIndex: number) => {
+    e.preventDefault();
+    const fromIndex = dragFrom();
+    setDragFrom(null);
+    setDragOver(null);
+    if (fromIndex === null || fromIndex === toIndex) return;
+    // TODO(s18): call palette_reorder_colors IPC command once it exists.
+    // For now, log intent and leave palette unchanged.
+    console.warn("[pixhaus] palette_reorder_colors not yet implemented — reorder is visual only");
+  };
+
+  const handleDragEnd = () => {
+    setDragFrom(null);
+    setDragOver(null);
+  };
+
+  const handleRenamePrompt = (index: number) => {
+    closeMenu();
+    const p = activePalette();
+    const entry = p?.colors[index];
+    const current = entry?.name ?? "";
+    const next = window.prompt("Swatch name:", current);
+    if (next !== null) props.onRename(index, next);
+  };
+
+  const handleDelete = (index: number) => {
+    closeMenu();
+    if (lockedIndices().has(index)) return;
+    props.onRemove(index);
+  };
+
+  const handleToggleLock = (index: number) => {
+    closeMenu();
+    toggleLock(index);
+  };
+
+  const palette = () => activePalette();
+
+  return (
+    <>
+      <div class="pgrid" role="listbox" aria-label="Palette swatches" aria-multiselectable="false">
+        <For each={palette()?.colors ?? []}>
+          {(entry: PaletteEntry, i) => {
+            const index = i();
+            const isFg = () => foregroundIndex() === index;
+            const isBg = () => backgroundIndex() === index;
+            const locked = () => lockedIndices().has(index);
+            const isDragSrc = () => dragFrom() === index;
+            const isDragTarget = () => dragOver() === index;
+
+            return (
+              <button
+                class="pgrid__swatch"
+                classList={{
+                  "pgrid__swatch--fg": isFg(),
+                  "pgrid__swatch--bg": isBg(),
+                  "pgrid__swatch--locked": locked(),
+                  "pgrid__swatch--drag-src": isDragSrc(),
+                  "pgrid__swatch--drag-target": isDragTarget(),
+                }}
+                style={{ background: rgbaToCss(entry.color) }}
+                role="option"
+                aria-selected={isFg()}
+                aria-label={entry.name ?? `Swatch ${index}`}
+                title={buildTitle(index, entry.color, entry.name)}
+                draggable={!locked()}
+                onClick={(e) => handleClick(e, index)}
+                onDblClick={() => handleDblClick(index)}
+                onContextMenu={(e) => handleContextMenu(e, index)}
+                onDragStart={(e) => handleDragStart(e, index)}
+                onDragOver={(e) => handleDragOver(e, index)}
+                onDrop={(e) => handleDrop(e, index)}
+                onDragEnd={handleDragEnd}
+              >
+                <Show when={isFg()}>
+                  <span
+                    class="pgrid__fg-marker"
+                    style={{ color: contrastColor(entry.color) }}
+                    aria-hidden="true"
+                  >
+                    F
+                  </span>
+                </Show>
+                <Show when={isBg() && !isFg()}>
+                  <span
+                    class="pgrid__bg-marker"
+                    style={{ color: contrastColor(entry.color) }}
+                    aria-hidden="true"
+                  >
+                    B
+                  </span>
+                </Show>
+                <Show when={locked()}>
+                  <span class="pgrid__lock-icon" aria-hidden="true">
+                    &#x1F512;
+                  </span>
+                </Show>
+              </button>
+            );
+          }}
+        </For>
+      </div>
+
+      {/* Context menu */}
+      <Show when={contextMenu() !== null}>
+        <div
+          class="pgrid__menu-backdrop"
+          onClick={closeMenu}
+          onContextMenu={(e) => {
+            e.preventDefault();
+            closeMenu();
+          }}
+        />
+        <div
+          class="pgrid__menu"
+          style={{ left: `${contextMenu()!.x}px`, top: `${contextMenu()!.y}px` }}
+          role="menu"
+        >
+          <button
+            class="pgrid__menu-item"
+            role="menuitem"
+            onClick={() => {
+              const idx = contextMenu()!.index;
+              closeMenu();
+              handleDblClick(idx);
+            }}
+          >
+            Edit color
+          </button>
+          <button
+            class="pgrid__menu-item"
+            role="menuitem"
+            onClick={() => handleRenamePrompt(contextMenu()!.index)}
+          >
+            Rename
+          </button>
+          <button
+            class="pgrid__menu-item"
+            role="menuitem"
+            onClick={() => handleToggleLock(contextMenu()!.index)}
+          >
+            {lockedIndices().has(contextMenu()!.index) ? "Unlock" : "Lock"}
+          </button>
+          <div class="pgrid__menu-sep" role="separator" />
+          <button
+            class="pgrid__menu-item pgrid__menu-item--danger"
+            role="menuitem"
+            disabled={lockedIndices().has(contextMenu()!.index)}
+            onClick={() => handleDelete(contextMenu()!.index)}
+          >
+            Remove swatch
+          </button>
+        </div>
+      </Show>
+    </>
+  );
+};
+
+function buildTitle(index: number, color: Rgba, name?: string | null): string {
+  const hex =
+    "#" + [color.r, color.g, color.b].map((x) => x.toString(16).padStart(2, "0")).join("");
+  const label = name ? `${name} (${hex})` : hex;
+  return `[${index}] ${label}\nClick: foreground  Shift+click: background  Dbl-click: edit`;
+}
+
+export default PaletteGrid;

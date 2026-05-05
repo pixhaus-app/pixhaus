@@ -34,6 +34,7 @@ pub mod canvas;
 pub mod color;
 pub mod fixtures;
 pub mod project;
+pub mod selection;
 pub mod tilemap;
 pub mod undo;
 

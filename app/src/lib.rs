@@ -118,6 +118,9 @@ pub fn run() -> Result<(), AppError> {
             commands::tiles::tile_autotile_apply,
             commands::tiles::tile_erase,
             commands::tiles::tile_place,
+            commands::tiles::tileset_add,
+            commands::tiles::tileset_list,
+            commands::tiles::tileset_rename,
             // undo/redo
             commands::undo::redo,
             commands::undo::undo,

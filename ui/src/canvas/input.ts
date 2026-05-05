@@ -1,8 +1,13 @@
-// Canvas input handling: pan, zoom, cursor feedback.
+// Canvas input handling: pan, zoom, cursor feedback, and tile-paint mode.
 //
 // Returns a cleanup function to remove all listeners.  Mount by calling
 // attachCanvasInput(canvasEl) inside a Solid onMount, then call the returned
 // function in onCleanup.
+//
+// Tile-paint mode activates automatically when `activeTilemapCtx` is non-null.
+// Left-click places the selected tile; right-click erases the cell. Tile
+// commands are forwarded to the IPC layer; until S06 lands they return an
+// Unimplemented error that is silently swallowed.
 
 import {
   scrollX,
@@ -13,12 +18,142 @@ import {
   setZoom,
   scheduleViewportSync,
   setCursorCanvas,
+  activeSpriteId,
+  activeFrameIndex,
+  activeLayerId,
 } from "./canvas-state";
 import { snapZoom, clampZoom, zoomAt, screenToCanvas } from "./viewport";
 import { isEditableTarget } from "../keybinds/keybind-manager";
+import {
+  activeTilemapCtx,
+  selectedTileIndex,
+  selectedTileFlags,
+  tilemapTool,
+  autotileMode,
+} from "../tilemap/tilemap-state";
+import { tilePlace, tileErase, tileAutotileApply } from "../lib/commands/tiles";
 
 // How much the continuous zoom changes per wheel tick (scroll-wheel smooth mode).
 const WHEEL_ZOOM_FACTOR = 1.1;
+
+// ── Tile-paint helpers ─────────────────────────────────────────────────────
+
+/**
+ * Converts a canvas-coordinate point to a tile cell address, given a tile
+ * size.  Returns null when the coordinate is outside the valid grid range
+ * (negative canvas position).
+ */
+function canvasToTileCell(
+  cx: number,
+  cy: number,
+  tileW: number,
+  tileH: number,
+): { cellX: number; cellY: number } | null {
+  if (cx < 0 || cy < 0) return null;
+  // Guard against zero-sized tilesets — division would yield Infinity
+  // and downstream IPC payloads would carry garbage cell coordinates.
+  if (tileW <= 0 || tileH <= 0) return null;
+  return { cellX: Math.floor(cx / tileW), cellY: Math.floor(cy / tileH) };
+}
+
+// Last cell painted in the current drag stroke. Reset to null when a
+// new stroke starts so the first dispatch of every stroke fires; while
+// the stroke is active, dispatchTilePaint suppresses repeats over the
+// same cell to avoid spamming IPC on every mousemove.
+let lastPaintedCell: { x: number; y: number } | null = null;
+
+/** Suppresses an error log when the catch is a known S06 stub. */
+function isUnimplemented(err: unknown): boolean {
+  return (
+    err !== null && typeof err === "object" && (err as { kind?: unknown }).kind === "unimplemented"
+  );
+}
+
+/**
+ * Dispatches a tile place or erase IPC call for the given screen position.
+ *
+ * The S06 verb stubs return `Unimplemented{stream:"S06"}`; those are
+ * silently dropped so the user can still place the cursor while we wait
+ * for that stream to land. Any other error is real and gets logged to
+ * the console rather than vanishing.
+ */
+function dispatchTilePaint(
+  screenX: number,
+  screenY: number,
+  el: HTMLElement,
+  erase: boolean,
+): void {
+  const ctx = activeTilemapCtx();
+  if (!ctx) return;
+
+  const spriteId = activeSpriteId();
+  const layerId = activeLayerId();
+  if (spriteId === null || layerId === null) return;
+
+  const rect = el.getBoundingClientRect();
+  const sx = screenX - rect.left;
+  const sy = screenY - rect.top;
+  const [cx, cy] = screenToCanvas(sx, sy, scrollX(), scrollY(), zoom(), rect.width, rect.height);
+
+  const { tile_size } = ctx.tileset;
+  const cell = canvasToTileCell(cx, cy, tile_size.width, tile_size.height);
+  if (!cell) return;
+
+  // Skip the IPC if the stroke has already painted this cell. The
+  // cursor still moves smoothly because cell tracking happens upstream
+  // of this function.
+  if (
+    lastPaintedCell !== null &&
+    lastPaintedCell.x === cell.cellX &&
+    lastPaintedCell.y === cell.cellY
+  ) {
+    return;
+  }
+  lastPaintedCell = { x: cell.cellX, y: cell.cellY };
+
+  const frameIndex = activeFrameIndex();
+  const onErr = (err: unknown): void => {
+    if (!isUnimplemented(err)) {
+      console.error("[pixhaus] tile paint:", err);
+    }
+  };
+
+  if (erase) {
+    tileErase({
+      sprite_id: spriteId,
+      layer_id: layerId,
+      frame_index: frameIndex,
+      cell_x: cell.cellX,
+      cell_y: cell.cellY,
+    }).catch(onErr);
+    return;
+  }
+
+  if (autotileMode()) {
+    tileAutotileApply({
+      sprite_id: spriteId,
+      layer_id: layerId,
+      frame_index: frameIndex,
+      rule_set: ctx.tileset.name,
+      source_tile: selectedTileIndex(),
+    }).catch(onErr);
+    return;
+  }
+
+  tilePlace({
+    sprite_id: spriteId,
+    layer_id: layerId,
+    frame_index: frameIndex,
+    cell_x: cell.cellX,
+    cell_y: cell.cellY,
+    cell: { index: selectedTileIndex(), flags: selectedTileFlags() },
+  }).catch(onErr);
+}
+
+/** Resets the per-stroke deduplication so the next stroke starts fresh. */
+function resetTilePaintStroke(): void {
+  lastPaintedCell = null;
+}
 
 // ── Pan state ──────────────────────────────────────────────────────────────
 
@@ -37,6 +172,9 @@ interface PanState {
 export function attachCanvasInput(el: HTMLElement): () => void {
   const pan: PanState = { active: false, lastX: 0, lastY: 0 };
   let spaceHeld = false;
+  // Tracks whether a tile-paint drag stroke is in progress.
+  let tilePaintActive = false;
+  let tilePaintErase = false;
 
   // ── Wheel zoom ────────────────────────────────────────────────────────
 
@@ -129,6 +267,27 @@ export function attachCanvasInput(el: HTMLElement): () => void {
       startPan(e);
       return;
     }
+
+    // Tile-paint mode: left-click places, right-click erases.
+    if (activeTilemapCtx() !== null && !spaceHeld) {
+      if (e.button === 0) {
+        e.preventDefault();
+        tilePaintActive = true;
+        tilePaintErase = tilemapTool() === "erase";
+        resetTilePaintStroke();
+        dispatchTilePaint(e.clientX, e.clientY, el, tilePaintErase);
+        return;
+      }
+      if (e.button === 2) {
+        e.preventDefault();
+        tilePaintActive = true;
+        tilePaintErase = true;
+        resetTilePaintStroke();
+        dispatchTilePaint(e.clientX, e.clientY, el, true);
+        return;
+      }
+    }
+
     // Left mouse + spacebar pans.
     if (e.button === 0 && spaceHeld) {
       e.preventDefault();
@@ -157,6 +316,11 @@ export function attachCanvasInput(el: HTMLElement): () => void {
       setCursorCanvas(null);
     }
 
+    // Continue tile-paint drag.
+    if (tilePaintActive) {
+      dispatchTilePaint(e.clientX, e.clientY, el, tilePaintErase);
+    }
+
     if (!pan.active) return;
     const dx = e.clientX - pan.lastX;
     const dy = e.clientY - pan.lastY;
@@ -174,6 +338,8 @@ export function attachCanvasInput(el: HTMLElement): () => void {
   }
 
   function onMouseUp(): void {
+    tilePaintActive = false;
+    resetTilePaintStroke();
     if (pan.active) {
       pan.active = false;
       el.style.cursor = spaceHeld ? "grab" : "";

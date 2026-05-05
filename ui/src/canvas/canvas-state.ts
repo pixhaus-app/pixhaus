@@ -30,6 +30,10 @@ export const [onionSkinNext, setOnionSkinNext] = createSignal(1);
 export const [onionSkinOpacity, setOnionSkinOpacity] = createSignal(0.4);
 
 // Currently foregrounded sprite, frame, and layer.
+//
+// activeLayerId is owned by this module (not the layer panel) so the
+// canvas input handler can read it without a circular import. The
+// layer panel writes to it via setActiveLayerId on selection.
 export const [activeSpriteId, setActiveSpriteId] = createSignal<SpriteId | null>(null);
 export const [activeFrameIndex, setActiveFrameIndex] = createSignal<number>(0);
 export const [activeLayerId, setActiveLayerId] = createSignal<LayerId | null>(null);
