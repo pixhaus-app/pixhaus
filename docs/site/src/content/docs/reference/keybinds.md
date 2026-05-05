@@ -22,6 +22,13 @@ The shortcuts below mark which streams have wired the corresponding command. Ent
 | Redo | `Ctrl+Shift+Z` | `Cmd+Shift+Z` |
 | Preferences | `Ctrl+,` | `Cmd+,` |
 
+## Window panels (working today)
+
+| Action | Shortcut |
+|---|---|
+| Toggle layers panel | `Ctrl+Shift+L` |
+| Toggle timeline panel | `Ctrl+Shift+T` |
+
 ## Tools (planned — wired by the brush stream)
 
 | Tool | Shortcut |

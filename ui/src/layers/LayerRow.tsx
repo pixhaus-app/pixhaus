@@ -312,7 +312,21 @@ const RenameInput: Component<RenameInputProps> = (props) => {
   }
 
   onCleanup(() => {
-    // If the input unmounts without committing (e.g., clicked away), commit.
+    // If the input unmounts mid-edit (panel collapsed, project closed,
+    // row scrolled out of the virtual window) the onBlur handler won't
+    // fire — DOM removal doesn't dispatch blur. Commit the typed value
+    // here so users don't lose what they typed. Empty input falls back
+    // to a cancel so we don't IPC an empty rename. The renamingLayerId
+    // guard avoids re-committing if some other path (Enter, Escape,
+    // blur) already finalized this rename.
+    if (renamingLayerId() === props.layerId) {
+      const v = value().trim();
+      if (v.length > 0) {
+        commitRename(props.layerId, v);
+      } else {
+        cancelRename();
+      }
+    }
   });
 
   return (
