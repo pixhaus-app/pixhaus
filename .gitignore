@@ -97,3 +97,5 @@ tarpaulin-report.html
 
 # Misc agent state
 .claude/local-cache/
+.claude/*.lock
+.followup-*.md
