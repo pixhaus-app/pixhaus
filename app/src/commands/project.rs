@@ -5,9 +5,25 @@ use std::path::PathBuf;
 use pixhaus_core::project::{ColorMode, Project, ProjectMetadata, Size, Sprite, SpriteId};
 use serde::{Deserialize, Serialize};
 use tauri::State;
+use tokio::task::JoinError;
 
 use crate::error::{AppCommandError, CommandResult};
 use crate::state::AppState;
+
+/// Maps a `tokio::task::JoinError` from a `spawn_blocking` task into a
+/// human-readable validation error. Distinguishes panic from
+/// runtime-initiated cancellation so the UI / log surface reflects what
+/// actually happened (Copilot review of PR #50).
+fn describe_join_error(op: &str, err: &JoinError) -> AppCommandError {
+    let detail = if err.is_panic() {
+        format!("{op} task panicked")
+    } else if err.is_cancelled() {
+        format!("{op} task cancelled (runtime shutdown)")
+    } else {
+        format!("{op} task did not complete: {err}")
+    };
+    AppCommandError::Validation { detail }
+}
 
 /// Status snapshot returned by project-level commands.
 #[derive(Debug, Serialize)]
@@ -77,9 +93,7 @@ pub async fn project_open(
         move || pixhaus_io::pixhaus::decode_from_file(&path_buf)
     })
     .await
-    .map_err(|join_err| AppCommandError::Validation {
-        detail: format!("decode task panicked: {join_err}"),
-    })??;
+    .map_err(|join_err| describe_join_error("pixhaus decode", &join_err))??;
 
     let project = archive.project;
     let next_id = compute_next_id(&project);
@@ -152,9 +166,7 @@ pub async fn project_import_psd(
         move || pixhaus_io::psd::decode_from_file(&path_buf)
     })
     .await
-    .map_err(|join_err| AppCommandError::Validation {
-        detail: format!("PSD decode task panicked: {join_err}"),
-    })??;
+    .map_err(|join_err| describe_join_error("PSD decode", &join_err))??;
 
     for w in &converted.warnings {
         tracing::warn!(path = %path_buf.display(), warning = ?w, "PSD import warning");

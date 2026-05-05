@@ -24,6 +24,14 @@ function openByExtension(path: string): Promise<ProjectStatus> {
   return path.toLowerCase().endsWith(".psd") ? projectImportPsd(path) : projectOpen(path);
 }
 
+/// Returns the IPC operation name that `openByExtension` actually invokes
+/// for `path`, used in error reporting so the alert names the command
+/// the user actually triggered (PSD imports must not be reported as
+/// `project_open` failures).
+function openOperationName(path: string): string {
+  return path.toLowerCase().endsWith(".psd") ? "project_import_psd" : "project_open";
+}
+
 const WelcomeScreen: Component = () => {
   function handleNewProject(): void {
     projectNew("Untitled")
@@ -35,21 +43,25 @@ const WelcomeScreen: Component = () => {
     pickOpenPath()
       .then((path) => {
         if (path === null) return;
-        return openByExtension(path).then((status) => {
-          setActiveProject(status);
-          pushRecentProject({ name: extractFilename(path), path });
-        });
+        const op = openOperationName(path);
+        return openByExtension(path)
+          .then((status) => {
+            setActiveProject(status);
+            pushRecentProject({ name: extractFilename(path), path });
+          })
+          .catch((err: unknown) => reportCommandFailure(op, err));
       })
-      .catch((err: unknown) => reportCommandFailure("project_open", err));
+      .catch((err: unknown) => reportCommandFailure("file_dialog", err));
   }
 
   function handleOpenRecent(path: string): void {
+    const op = openOperationName(path);
     openByExtension(path)
       .then((status) => {
         setActiveProject(status);
         pushRecentProject({ name: extractFilename(path), path });
       })
-      .catch((err: unknown) => reportCommandFailure("project_open", err));
+      .catch((err: unknown) => reportCommandFailure(op, err));
   }
 
   return (
