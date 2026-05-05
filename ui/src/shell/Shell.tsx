@@ -8,6 +8,7 @@ import { dispatchCommand } from "../command-palette/command-registry";
 import { setupKeybindManager } from "../keybinds/keybind-manager";
 import CommandPalette from "../command-palette/CommandPalette";
 import PreferencesModal from "../preferences/PreferencesModal";
+import ToastHost from "../lib/toast/ToastHost";
 import StatusBar from "./StatusBar";
 import WelcomeScreen from "./WelcomeScreen";
 import Canvas from "../canvas/Canvas";
@@ -71,6 +72,8 @@ const Shell: Component = () => {
       <Show when={isPreferencesOpen()}>
         <PreferencesModal />
       </Show>
+
+      <ToastHost />
     </div>
   );
 };
