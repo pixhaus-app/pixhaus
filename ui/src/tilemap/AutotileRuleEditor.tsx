@@ -10,7 +10,7 @@
 
 import { For, Show, createMemo, type Component } from "solid-js";
 import { produce } from "solid-js/store";
-import type { AutotileKind, AutotileRule, NeighborCondition, TileIndex } from "../lib/types";
+import type { AutotileKind, AutotileRule, TileIndex } from "../lib/types";
 import {
   autotileDefaultTile,
   autotileRules,
@@ -19,6 +19,9 @@ import {
   setAutotileRules,
   setLocalAutotileKind,
 } from "./tilemap-state";
+import { blankRule, conditionLabel, conditionTitle, nextCondition } from "./autotile-helpers";
+
+export { blankRule, conditionLabel, conditionTitle, nextCondition } from "./autotile-helpers";
 
 // ── Neighbor order: NW, N, NE, W, E, SW, S, SE (matches core constants) ──────
 
@@ -30,34 +33,6 @@ const GRID_POSITIONS = [0, 1, 2, 3, 5, 6, 7, 8] as const; // skip index 4
 
 // Maps from the 8-element conditions tuple to 3×3 grid cell indices.
 const CONDITION_TO_GRID: readonly number[] = GRID_POSITIONS;
-
-// ── Helpers ────────────────────────────────────────────────────────────────
-
-function nextCondition(c: NeighborCondition): NeighborCondition {
-  if (c === "any") return "filled";
-  if (c === "filled") return "empty";
-  return "any";
-}
-
-function conditionLabel(c: NeighborCondition): string {
-  if (c === "filled") return "F";
-  if (c === "empty") return "E";
-  return "·";
-}
-
-function conditionTitle(c: NeighborCondition): string {
-  if (c === "filled") return "Filled";
-  if (c === "empty") return "Empty";
-  return "Any";
-}
-
-function blankRule(): AutotileRule {
-  return {
-    conditions: ["any", "any", "any", "any", "any", "any", "any", "any"],
-    result_tile: 1 as TileIndex,
-    result_flags: 0,
-  };
-}
 
 // ── Standard-set description ───────────────────────────────────────────────
 
@@ -176,11 +151,11 @@ const RuleRow: Component<RuleRowProps> = (props) => {
         <input
           class="are__rule-tile-input"
           type="number"
-          min={1}
+          min={0}
           value={props.rule.result_tile}
           onInput={(e) => {
             const v = parseInt(e.currentTarget.value, 10);
-            if (!isNaN(v) && v >= 1) {
+            if (!isNaN(v) && v >= 0) {
               props.onResultTileChange(props.index, v);
             }
           }}
@@ -335,11 +310,11 @@ const AutotileRuleEditor: Component = () => {
             <input
               class="are__rule-tile-input"
               type="number"
-              min={1}
+              min={0}
               value={defaultTile()}
               onInput={(e) => {
                 const v = parseInt(e.currentTarget.value, 10);
-                if (!isNaN(v) && v >= 1) setDefaultTile(v as TileIndex);
+                if (!isNaN(v) && v >= 0) setDefaultTile(v as TileIndex);
               }}
             />
           </div>
