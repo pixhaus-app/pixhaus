@@ -3,6 +3,7 @@ import { open as dialogOpen } from "@tauri-apps/plugin-dialog";
 import { recentProjects, setActiveProject, pushRecentProject } from "../project-state";
 import { projectNew, projectOpen } from "../lib/commands/project";
 import { extractFilename } from "../lib/utils/path";
+import { reportCommandFailure } from "../lib/utils/errors";
 
 const PIXHAUS_FILTER = [{ name: "Pixhaus Projects", extensions: ["pixhaus"] }];
 
@@ -14,7 +15,7 @@ const WelcomeScreen: Component = () => {
   function handleNewProject(): void {
     projectNew("Untitled")
       .then((status) => setActiveProject(status))
-      .catch((err: unknown) => console.error("[pixhaus] project_new:", err));
+      .catch((err: unknown) => reportCommandFailure("project_new", err));
   }
 
   function handleOpenProject(): void {
@@ -26,7 +27,7 @@ const WelcomeScreen: Component = () => {
           pushRecentProject({ name: extractFilename(path), path });
         });
       })
-      .catch((err: unknown) => console.error("[pixhaus] project_open:", err));
+      .catch((err: unknown) => reportCommandFailure("project_open", err));
   }
 
   function handleOpenRecent(path: string): void {
@@ -35,7 +36,7 @@ const WelcomeScreen: Component = () => {
         setActiveProject(status);
         pushRecentProject({ name: extractFilename(path), path });
       })
-      .catch((err: unknown) => console.error("[pixhaus] project_open:", err));
+      .catch((err: unknown) => reportCommandFailure("project_open", err));
   }
 
   return (
