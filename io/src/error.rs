@@ -242,7 +242,71 @@ pub enum Error {
         /// Stderr captured from ffmpeg.
         stderr: String,
     },
+    // ── Tiled TMX export (S12) ─────────────────────────────────────────────────
+    /// Two or more tilemap layers passed to the TMX exporter have different
+    /// `width` or `height` values. Tiled requires all layers in a map to
+    /// share the same dimensions.
+    #[error(
+        "tilemap layers must share the same dimensions: \
+         expected {expected_w}×{expected_h}, \
+         layer {layer_index} has {got_w}×{got_h}"
+    )]
+    TiledLayerSizeMismatch {
+        /// Width of the first (reference) layer.
+        expected_w: u32,
+        /// Height of the first (reference) layer.
+        expected_h: u32,
+        /// Width of the offending layer.
+        got_w: u32,
+        /// Height of the offending layer.
+        got_h: u32,
+        /// Zero-based index of the offending layer in the input slice.
+        layer_index: usize,
+    },
 
+    /// A tilemap layer addressed a cell index that the tileset can't
+    /// resolve (`tile_index >= tileset.tile_count`). Stale tile
+    /// references must be cleaned up before export — a partially-empty
+    /// GID would point at the wrong atlas slot in Tiled.
+    #[error(
+        "tile index {tile_index} in layer {layer_index} at ({col}, {row}) \
+         is past the end of the tileset (tile_count = {tile_count})"
+    )]
+    TiledTileIndexOutOfRange {
+        /// Zero-based layer index in the input slice.
+        layer_index: usize,
+        /// Column of the offending cell.
+        col: u32,
+        /// Row of the offending cell.
+        row: u32,
+        /// The `TileIndex` value that was out of range.
+        tile_index: u32,
+        /// The tileset's `tile_count` for context.
+        tile_count: u32,
+    },
+
+    /// A tilemap layer's `cell(col, row)` returned `None` for an
+    /// in-bounds coordinate. Indicates a structural defect in the layer
+    /// data — the exporter rejects rather than silently emitting an
+    /// empty cell.
+    #[error("tilemap layer {layer_index} has no cell at ({col}, {row}) within {width}×{height}")]
+    TiledMissingCell {
+        /// Zero-based layer index in the input slice.
+        layer_index: usize,
+        /// Column with no cell.
+        col: u32,
+        /// Row with no cell.
+        row: u32,
+        /// Layer's declared width.
+        width: u32,
+        /// Layer's declared height.
+        height: u32,
+    },
+
+    // ── PSD import (S09) ────────────────────────────────────────────────────
+    /// The `psd` crate returned a parse error.
+    #[error("PSD parse error: {0}")]
+    PsdParse(String),
     // ── Aseprite (S08) ──────────────────────────────────────────────────────
     /// The first two bytes of the frame magic word (offset 4 of every
     /// frame header in an Aseprite file) do not match `0xF1FA`.

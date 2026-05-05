@@ -14,6 +14,7 @@ color_quant.workspace = true
 flate2.workspace = true
 gif.workspace = true
 image.workspace = true
+psd.workspace = true
 reqwest.workspace = true
 serde.workspace = true
 serde_json.workspace = true
