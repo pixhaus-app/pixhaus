@@ -1,39 +1,72 @@
 name: Docs
 
-# Stub docs workflow. Full docs site deployment lands with stream S41.
-# For now this workflow validates that the planning docs exist and Markdown
-# is well-formed; it does not deploy anywhere.
-
 on:
   push:
     branches: [main]
     paths:
       - "docs/**"
       - ".github/workflows/docs.yml"
+      - "package.json"
+      - "pnpm-workspace.yaml"
+      - "pnpm-lock.yaml"
   pull_request:
     paths:
       - "docs/**"
       - ".github/workflows/docs.yml"
+      - "package.json"
+      - "pnpm-workspace.yaml"
+      - "pnpm-lock.yaml"
   workflow_dispatch:
 
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
 jobs:
-  validate:
-    name: Validate docs
+  build:
+    name: Build docs site
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v4
 
-      - name: Confirm planning docs are present
+      # pnpm version is read from package.json's `packageManager` field
+      # (pnpm@10.33.2). Setting `version: 10` here clashed with that.
+      - uses: pnpm/action-setup@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm --filter pixhaus-docs install --frozen-lockfile
+
+      - name: Build Starlight site
+        run: pnpm --filter pixhaus-docs build
+
+      - name: Upload Pages artifact
+        if: github.ref == 'refs/heads/main'
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: docs/site/dist
+
+      - name: Validate planning docs are present
         run: |
           test -d docs/planning || (echo "docs/planning missing" && exit 1)
           test -f docs/planning/README.md || (echo "docs/planning/README.md missing" && exit 1)
-          test -d docs/planning/work || (echo "docs/planning/work missing" && exit 1)
 
-      - name: Install lychee
-        uses: lycheeverse/lychee-action@v2
-        with:
-          args: --offline --include-fragments docs/
-          fail: false
-
-  # TODO(S41): Build and deploy the docs site (mdbook or astro).
-  # See docs/planning/work/streams.md#s41 for the full docs site spec.
+  deploy:
+    name: Deploy to GitHub Pages
+    if: github.ref == 'refs/heads/main'
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4

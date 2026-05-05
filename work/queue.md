@@ -50,6 +50,36 @@ their bedrock dependencies are merged.
 - [x] DONE: S39 — Unity importer package (★ critical path). Brief: docs/planning/work/streams.md#s39. Blocked by: B6.
 - [x] DONE: S49 — CI/CD pipelines (★ critical path). Brief: docs/planning/work/streams.md#s49. Independent of bedrock; can start anytime.
 
+## Streams — second wave (post-critical-path, parallel-safe)
+
+- [~] CLAIMED:stream-s03: S03 — Selection algorithms. Brief: docs/planning/work/streams.md#s03. Blocked by: B2 S01.
+- [~] CLAIMED:stream-s09: S09 — `.psd` import. Brief: docs/planning/work/streams.md#s09. Blocked by: B2 S01.
+- [~] CLAIMED:stream-s11: S11 — Animated GIF + WebP export. Brief: docs/planning/work/streams.md#s11. Blocked by: S01 S02.
+- [~] CLAIMED:stream-s12: S12 — TMX tilemap export. Brief: docs/planning/work/streams.md#s12. Blocked by: B6 S06 S10.
+- [~] CLAIMED:stream-s17: S17 — Layer panel. Brief: docs/planning/work/streams.md#s17. Blocked by: S05 S13.
+- [~] CLAIMED:stream-s18: S18 — Color and palette panel. Brief: docs/planning/work/streams.md#s18. Blocked by: S02.
+- [~] CLAIMED:stream-s20: S20 — Tilemap UI. Brief: docs/planning/work/streams.md#s20. Blocked by: S06 S13 S14.
+- [~] CLAIMED:stream-s41: S41 — User documentation site. Brief: docs/planning/work/streams.md#s41. Stub now, fills as features land.
+- [~] CLAIMED:stream-s45: S45 — Sample projects and fixtures. Brief: docs/planning/work/streams.md#s45.
+- [~] CLAIMED:stream-s46: S46 — Logo, visual identity, design tokens. Brief: docs/planning/work/streams.md#s46.
+- [~] CLAIMED:stream-s52: S52 — Visual regression test harness. Brief: docs/planning/work/streams.md#s52. Blocked by: B1 S14.
+
+## Streams — third wave (review follow-ups)
+
+Each `*-followup` task carries the gaps the review pass deliberately
+deferred from its parent stream's PR. Bodies are short — the parent PR
+description and the linked review comments are the source of truth.
+
+- [ ] UNCLAIMED: S09-followup — apply raster layer masks during PSD import; build a real-world fixture corpus (Photoshop CC, Affinity Photo); wire S13 file-open dialog to accept `.psd`. Parent: PR #43.
+- [ ] UNCLAIMED: S11-followup — round-trip decode tests for GIF, WebP, MP4 using `image-rs` plus an external decoder gate. Parent: PR #40.
+- [ ] UNCLAIMED: S12-followup — accept multiple tilesets in `export_tilemap()` (TMX `firstgid` math + `TiledLayerInput` carries a tileset reference); add an XSD schema validation pass against Tiled's spec; add an automated round-trip test against the S39 importer. Parent: PR #38.
+- [ ] UNCLAIMED: S17-followup — variable-height virtualization so the active row's 56px height stops conflicting with the 32px assumption; implement merge-down / merge-selected / flatten-visible / convert-to-group / convert-to-tilemap-layer context-menu items; drag-into-group reparenting; commit-rename-on-unmount; fix the test-count-off-by-one. Parent: PR #35.
+- [ ] UNCLAIMED: S18-followup — wire palette reorder through a real IPC command (currently visual-only with a console.warn); add `.aco` (Photoshop) format support to PaletteIOMenu. Parent: PR #41.
+- [ ] UNCLAIMED: S20-followup — unit tests for AutotileRuleEditor; allow TileIndex(0) in the custom-rule editor + default-tile input + selectedTileIndex defaults; full tilemap CRUD UI in TilemapPanel; expose `tilesets` from `lib/commands/index.ts`. Parent: PR #37.
+- [ ] UNCLAIMED: S41-followup — write the Aseprite-compat preset README the keybinds doc references. Parent: PR #39.
+- [ ] UNCLAIMED: S45-followup — preserve per-tile metadata (animation, collision shapes) when inlining the forest tileset into the level sample. Parent: PR #42.
+- [ ] UNCLAIMED: S52-followup — replace the `null`-default Tauri mock with realistic per-command responses so canvas tests actually render content; commit the seed baseline PNGs (must run on Linux to match CI's Chromium AA). Parent: PR #36.
+
 ## Operating notes
 
 - One claim per worktree; the loop stops if the lock dir cannot be acquired
