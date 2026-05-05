@@ -43,6 +43,7 @@ interface TilesetsTabProps {
   activeId: TilesetId | null;
   onSwitch: (ts: Tileset) => void;
   onCreated: () => void;
+  onTilesetRenamed: (ts: Tileset) => void;
 }
 
 const TilesetsTab: Component<TilesetsTabProps> = (props) => {
@@ -89,6 +90,13 @@ const TilesetsTab: Component<TilesetsTabProps> = (props) => {
     if (name && name !== ts.name) {
       await tilesetRename(props.spriteId, ts.id, name);
       await refetch();
+      // If the renamed tileset is the currently-active context, the
+      // header still shows the old name — propagate the new Tileset
+      // object up to refresh activeTilemapCtx.
+      if (props.activeId === ts.id) {
+        const updated = (tilesets() ?? []).find((t) => t.id === ts.id);
+        if (updated) props.onTilesetRenamed(updated);
+      }
     }
     setRenamingId(null);
   }
@@ -198,11 +206,15 @@ const TilesetsTab: Component<TilesetsTabProps> = (props) => {
 // ── Root component ─────────────────────────────────────────────────────────
 
 const TilemapPanel: Component = () => {
-  const [activeTab, setActiveTab] = createSignal<Tab>("tileset");
-
   const ctx = activeTilemapCtx;
   const tileset = createMemo(() => ctx()?.tileset ?? null);
   const spriteId = activeSpriteId;
+
+  // Default to the tab that's actually visible: when no tileset is
+  // active the Tileset and Rules tabs are gated behind a Show, leaving
+  // a blank body if `activeTab` defaults there. Pick `tilesets` so the
+  // empty-state user lands on the create-new form.
+  const [activeTab, setActiveTab] = createSignal<Tab>(ctx() === null ? "tilesets" : "tileset");
 
   // Reset selection when the context switches to a different tileset.
   createEffect(() => {
@@ -224,6 +236,12 @@ const TilemapPanel: Component = () => {
 
   function onTilesetCreated() {
     // Stay on the Tilesets tab so the user sees the updated list.
+  }
+
+  function onTilesetRenamed(updated: Tileset) {
+    const c = ctx();
+    if (!c) return;
+    setActiveTilemapCtx({ ...c, tileset: updated });
   }
 
   return (
@@ -312,6 +330,7 @@ const TilemapPanel: Component = () => {
               activeId={ctx()?.tilesetId ?? null}
               onSwitch={switchTileset}
               onCreated={onTilesetCreated}
+              onTilesetRenamed={onTilesetRenamed}
             />
           </Show>
         </div>

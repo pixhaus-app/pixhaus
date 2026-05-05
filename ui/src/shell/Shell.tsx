@@ -15,7 +15,6 @@ import LayerPanel from "../layers/LayerPanel";
 import { isLayerPanelVisible } from "../layers/layer-state";
 import PalettePanel from "../palette/PalettePanel";
 import TilemapPanel from "../tilemap/TilemapPanel";
-import { activeTilemapCtx } from "../tilemap/tilemap-state";
 
 // Import to trigger initial theme application as a side effect
 import "../preferences/preferences-store";
@@ -49,7 +48,7 @@ const Shell: Component = () => {
             <div class="editor-layout">
               <div class="editor-layout__canvas">
                 <Canvas />
-                <Show when={activeTilemapCtx() !== null}>
+                <Show when={activeSpriteId() !== null}>
                   <TilemapPanel />
                 </Show>
               </div>

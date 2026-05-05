@@ -42,8 +42,11 @@ export const [activeTilemapCtx, setActiveTilemapCtx] = createSignal<ActiveTilema
 // ── Tile selection ─────────────────────────────────────────────────────────
 
 // Selected tile index in the active tileset.
-// Index 0 is the empty tile by convention; 1 is the first paintable tile.
-export const [selectedTileIndex, setSelectedTileIndex] = createSignal<number>(0);
+// Index 0 is the empty-tile sentinel; default to 1 (the first paintable
+// tile) so the pencil tool starts in paint mode rather than erase mode.
+// Users can still select index 0 explicitly to paint "empty" if they
+// want the autotile editor's empty default.
+export const [selectedTileIndex, setSelectedTileIndex] = createSignal<number>(1);
 
 // Bitfield of flags to apply when placing a tile (flip X, flip Y, diagonal).
 export const [selectedTileFlags, setSelectedTileFlags] = createSignal<number>(0);
@@ -90,7 +93,9 @@ export function isTilemapActive(): boolean {
  * Call when switching to a new tileset so stale selection state doesn't carry over.
  */
 export function resetTileSelection(): void {
-  setSelectedTileIndex(0);
+  // Match the module-level default (1 = first paintable tile, not the
+  // empty sentinel).
+  setSelectedTileIndex(1);
   setSelectedTileFlags(0);
   setTilemapTool("pencil");
 }
