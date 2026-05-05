@@ -43,7 +43,7 @@ export const [activeTilemapCtx, setActiveTilemapCtx] = createSignal<ActiveTilema
 
 // Selected tile index in the active tileset.
 // Index 0 is the empty tile by convention; 1 is the first paintable tile.
-export const [selectedTileIndex, setSelectedTileIndex] = createSignal<number>(1);
+export const [selectedTileIndex, setSelectedTileIndex] = createSignal<number>(0);
 
 // Bitfield of flags to apply when placing a tile (flip X, flip Y, diagonal).
 export const [selectedTileFlags, setSelectedTileFlags] = createSignal<number>(0);
@@ -75,7 +75,7 @@ export const [localAutotileKind, setLocalAutotileKind] = createSignal<AutotileKi
 export const [autotileRules, setAutotileRules] = createStore<AutotileRule[]>([]);
 
 export const [autotileDefaultTile, setAutotileDefaultTile] = createSignal<TileIndex>(
-  1 as TileIndex,
+  0 as TileIndex,
 );
 
 // ── Helpers ────────────────────────────────────────────────────────────────
@@ -90,7 +90,7 @@ export function isTilemapActive(): boolean {
  * Call when switching to a new tileset so stale selection state doesn't carry over.
  */
 export function resetTileSelection(): void {
-  setSelectedTileIndex(1);
+  setSelectedTileIndex(0);
   setSelectedTileFlags(0);
   setTilemapTool("pencil");
 }
