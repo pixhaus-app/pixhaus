@@ -6,6 +6,14 @@ import { ASEPRITE_DEFAULTS, PHOTOSHOP_DEFAULTS, defaultCombo } from "../keybinds
 import { projectNew, projectOpen, projectSave, projectClose } from "../lib/commands/project";
 import { setActiveProject, pushRecentProject } from "../project-state";
 import { extractFilename } from "../lib/utils/path";
+import { activeSpriteId, activeLayerId } from "../canvas/canvas-state";
+import {
+  addLayer,
+  beginRename,
+  deleteLayer,
+  isLayerPanelVisible,
+  setLayerPanelVisible,
+} from "../layers/layer-state";
 
 export type Command = {
   readonly id: string;
@@ -170,15 +178,40 @@ const COMMANDS: ReadonlyMap<string, CommandEntry> = new Map<string, CommandEntry
   // ── Layer ─────────────────────────────────────────────────────────────────
   [
     "layer:new",
-    { id: "layer:new", label: "New Layer", category: "Layer", handler: stub("layer:new") },
+    {
+      id: "layer:new",
+      label: "New Layer",
+      category: "Layer",
+      handler: () => {
+        const id = activeSpriteId();
+        if (id !== null) addLayer(id, "Layer");
+      },
+    },
   ],
   [
     "layer:delete",
-    { id: "layer:delete", label: "Delete Layer", category: "Layer", handler: stub("layer:delete") },
+    {
+      id: "layer:delete",
+      label: "Delete Layer",
+      category: "Layer",
+      handler: () => {
+        const spriteId = activeSpriteId();
+        const layerId = activeLayerId();
+        if (spriteId !== null && layerId !== null) deleteLayer(spriteId, layerId);
+      },
+    },
   ],
   [
     "layer:rename",
-    { id: "layer:rename", label: "Rename Layer", category: "Layer", handler: stub("layer:rename") },
+    {
+      id: "layer:rename",
+      label: "Rename Layer",
+      category: "Layer",
+      handler: () => {
+        const layerId = activeLayerId();
+        if (layerId !== null) beginRename(layerId);
+      },
+    },
   ],
   [
     "layer:merge-down",
@@ -331,7 +364,7 @@ const COMMANDS: ReadonlyMap<string, CommandEntry> = new Map<string, CommandEntry
       id: "window:toggle-layers",
       label: "Toggle Layer Panel",
       category: "Window",
-      handler: stub("window:toggle-layers"),
+      handler: () => setLayerPanelVisible(!isLayerPanelVisible()),
     },
   ],
   [
