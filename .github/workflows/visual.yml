@@ -29,13 +29,30 @@ jobs:
       - name: Install Playwright browsers
         run: pnpm --filter @pixhaus/visual-tests exec playwright install chromium --with-deps
 
+      # Skip the comparison until at least one baseline is committed.
+      # tests/visual/baselines/ holds nothing but a .gitkeep on the
+      # initial S52 merge; without baselines, every test "passes" on
+      # first run by writing the actual image as the new baseline,
+      # which is false-green. Gate the comparison so CI flips to green
+      # only after a contributor seeds baselines from a Linux runner
+      # (see tests/visual/README.md).
+      - name: Check for committed baselines
+        id: baselines
+        run: |
+          count=$(find tests/visual/baselines -type f -name '*.png' 2>/dev/null | wc -l)
+          echo "count=$count" >> "$GITHUB_OUTPUT"
+          if [ "$count" -eq 0 ]; then
+            echo "::notice::No baseline screenshots committed under tests/visual/baselines/. Skipping comparison; see tests/visual/README.md to seed."
+          fi
+
       - name: Run visual regression tests
+        if: steps.baselines.outputs.count != '0'
         run: pnpm visual:test
 
       # Diff images are written to tests/visual/test-results/ on failure.
       # Upload them so reviewers can inspect the regression without re-running.
       - name: Upload diff artifacts
-        if: failure()
+        if: failure() && steps.baselines.outputs.count != '0'
         uses: actions/upload-artifact@v4
         with:
           name: visual-regression-diffs-${{ github.run_id }}
