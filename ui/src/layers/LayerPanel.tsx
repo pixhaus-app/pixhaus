@@ -13,7 +13,6 @@ import {
   createMemo,
   createSignal,
   onCleanup,
-  onMount,
 } from "solid-js";
 import { activeSpriteId } from "../canvas/canvas-state";
 import {
@@ -50,19 +49,24 @@ const LayerPanel: Component = () => {
 
   // ── Virtual scroll ─────────────────────────────────────────────────────────
 
-  let scrollContainer!: HTMLDivElement;
   const [scrollTop, setScrollTop] = createSignal(0);
   const [containerHeight, setContainerHeight] = createSignal(400);
 
-  let resizeObserver: ResizeObserver;
-  onMount(() => {
-    resizeObserver = new ResizeObserver((entries) => {
-      const entry = entries[0];
-      if (entry) setContainerHeight(entry.contentRect.height);
-    });
-    resizeObserver.observe(scrollContainer);
+  // The scroll container lives inside two <Show> conditionals (sprite
+  // present + non-empty layer list), so it isn't in the DOM at the
+  // outer onMount tick — the previous onMount-then-observe(scrollContainer)
+  // pattern threw "parameter 1 is not of type 'Element'" the first time
+  // a project loaded. Use a callback ref so the observer attaches when
+  // the element actually mounts and detaches on unmount, regardless of
+  // how many times the inner Show toggles.
+  const resizeObserver = new ResizeObserver((entries) => {
+    const entry = entries[0];
+    if (entry) setContainerHeight(entry.contentRect.height);
   });
-  onCleanup(() => resizeObserver?.disconnect());
+  const scrollContainerRef = (el: HTMLDivElement): void => {
+    resizeObserver.observe(el);
+  };
+  onCleanup(() => resizeObserver.disconnect());
 
   const totalHeight = createMemo(() => flatEntries().length * ROW_HEIGHT);
 
@@ -142,7 +146,7 @@ const LayerPanel: Component = () => {
         >
           {/* Virtual scroll container */}
           <div
-            ref={scrollContainer}
+            ref={scrollContainerRef}
             class="layer-panel__scroll"
             onScroll={(e) => setScrollTop(e.currentTarget.scrollTop)}
           >
