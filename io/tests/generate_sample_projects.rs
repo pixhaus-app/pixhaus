@@ -1218,6 +1218,75 @@ fn ui_sprites_has_all_slices() {
     }
 }
 
+/// Verifies the level's inlined forest tileset carries the same per-tile
+/// metadata as the standalone tileset sample: collision shapes on stone
+/// tiles 9-12 and the 3-frame water animation on tile 13.
+///
+/// This is the regression guard for S45-followup. The builder already
+/// calls `forest_tile_properties()` at construction time; this test
+/// makes that contract explicit so a future edit that drops the call
+/// cannot merge without a visible failure.
+#[test]
+fn forest_level_tileset_preserves_metadata() {
+    let archive = build_forest_level();
+    let tileset = &archive.project.sprites[0].tilesets[0];
+    assert_eq!(
+        tileset.tile_count, FOREST_TILE_COUNT,
+        "level tileset tile_count must match forest definition"
+    );
+
+    // Stone tiles 9-12 must have full collision.
+    for i in 9u32..=12 {
+        let props = tileset.tile_properties(TileIndex::new(i));
+        assert_eq!(
+            props.collision,
+            CollisionShape::Full,
+            "tile {i} must have CollisionShape::Full in the inlined level tileset"
+        );
+    }
+
+    // Tile 13 must carry the 3-frame water animation.
+    let water = tileset
+        .tile_properties(TileIndex::new(13))
+        .animation
+        .as_ref()
+        .expect("tile 13 must have an animation in the inlined level tileset");
+    assert_eq!(
+        water.frames.len(),
+        3,
+        "water animation must have 3 frames in the level tileset"
+    );
+    assert_eq!(
+        water.loop_mode,
+        AnimLoopMode::Loop,
+        "water animation loop mode must be Loop"
+    );
+    for (i, frame) in water.frames.iter().enumerate() {
+        assert_eq!(
+            frame.duration_ms, 150,
+            "water frame {i} must be 150 ms in the level tileset"
+        );
+    }
+}
+
+/// Asserts the level's inlined tileset properties are identical to the
+/// standalone tileset's properties. If someone updates one without the
+/// other the gap shows up here before it reaches CI consumers (Unity
+/// importer, TMX exporter) that assume the two are equivalent.
+#[test]
+fn forest_level_tileset_properties_match_standalone() {
+    let level = build_forest_level();
+    let standalone = build_forest_tileset();
+
+    let level_props = &level.project.sprites[0].tilesets[0].properties;
+    let standalone_props = &standalone.project.sprites[0].tilesets[0].properties;
+
+    assert_eq!(
+        level_props, standalone_props,
+        "level's inlined tileset properties must match the standalone tileset's properties"
+    );
+}
+
 /// Walks every sample under `examples/samples/` and re-decodes it, then
 /// confirms it round-trips back to the same project. Without this, a
 /// stale fixture (left over after a builder change but not regenerated
