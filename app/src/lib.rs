@@ -103,6 +103,7 @@ pub fn run() -> Result<(), AppError> {
             commands::palette::palette_delete,
             commands::palette::palette_list,
             commands::palette::palette_remove_color,
+            commands::palette::palette_reorder_colors,
             commands::palette::palette_set_color,
             commands::palette::palette_swap,
             // project

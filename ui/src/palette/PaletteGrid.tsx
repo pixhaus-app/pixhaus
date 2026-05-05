@@ -2,7 +2,7 @@
 //
 // Features:
 //   - Click to set as foreground index (shift-click for background)
-//   - Drag-to-reorder (visual only — persisted via future palette_reorder_colors command)
+//   - Drag-to-reorder (persisted via palette_reorder_colors)
 //   - Right-click context menu: rename, delete, lock/unlock
 //   - Per-swatch lock indicator (prevents accidental edits)
 //   - Double-click to open color picker for that swatch
@@ -11,6 +11,9 @@
 
 import { createSignal, For, Show, type Component } from "solid-js";
 import type { PaletteEntry, Rgba } from "../lib/types";
+import { paletteReorderColors } from "../lib/commands/palette";
+import { reportCommandFailure } from "../lib/utils/errors";
+import { activeSpriteId } from "../canvas/canvas-state";
 import {
   foregroundIndex,
   backgroundIndex,
@@ -19,6 +22,8 @@ import {
   lockedIndices,
   toggleLock,
   activePalette,
+  activePaletteId,
+  refreshPalettes,
   startEditing,
 } from "./palette-panel-state";
 import { rgbaToCss, contrastColor } from "./color-utils";
@@ -68,7 +73,7 @@ const PaletteGrid: Component<Props> = (props) => {
     }
   };
 
-  // ── Drag-to-reorder (visual only until palette_reorder_colors lands) ─────
+  // ── Drag-to-reorder ──────────────────────────────────────────────────────
   const handleDragStart = (e: DragEvent, index: number) => {
     if (e.dataTransfer) {
       e.dataTransfer.effectAllowed = "move";
@@ -89,9 +94,12 @@ const PaletteGrid: Component<Props> = (props) => {
     setDragFrom(null);
     setDragOver(null);
     if (fromIndex === null || fromIndex === toIndex) return;
-    // TODO(s18): call palette_reorder_colors IPC command once it exists.
-    // For now, log intent and leave palette unchanged.
-    console.warn("[pixhaus] palette_reorder_colors not yet implemented — reorder is visual only");
+    const spriteId = activeSpriteId();
+    const paletteId = activePaletteId();
+    if (spriteId === null || paletteId === null) return;
+    paletteReorderColors(spriteId, paletteId, fromIndex, toIndex)
+      .then(() => refreshPalettes(spriteId))
+      .catch((err: unknown) => reportCommandFailure("palette_reorder_colors", err));
   };
 
   const handleDragEnd = () => {

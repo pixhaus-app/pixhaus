@@ -3,6 +3,8 @@
 use std::path::PathBuf;
 
 use pixhaus_core::project::{ColorMode, Project, ProjectMetadata, Size, Sprite, SpriteId};
+use pixhaus_core::undo::History;
+use pixhaus_io::pixhaus::PixhausArchive;
 use serde::{Deserialize, Serialize};
 use tauri::State;
 
@@ -50,6 +52,10 @@ pub async fn project_new(name: String, state: State<'_, AppState>) -> CommandRes
     doc.path = None;
     doc.dirty = true;
     doc.next_id = 1;
+    // Reset undo so a fresh project doesn't inherit the previous
+    // session's history (which would walk into commands written
+    // against a different sprite set).
+    doc.history = History::new();
     Ok(status)
 }
 
@@ -95,6 +101,9 @@ pub async fn project_open(
     doc.path = Some(path_buf);
     doc.dirty = false;
     doc.next_id = next_id;
+    // Reset undo so opening a different project doesn't inherit the
+    // previous session's command history.
+    doc.history = History::new();
     Ok(status)
 }
 
@@ -132,12 +141,66 @@ fn compute_next_id(project: &Project) -> u32 {
 
 /// Saves the active project to disk.
 ///
-/// Requires B3 (`.pixhaus` file format). Returns an error until B3 lands.
+/// Mirrors [`project_open`]: encodes the in-memory project via
+/// [`pixhaus_io::pixhaus::encode_to_file`] on the blocking-thread pool
+/// (the encoder zstd-compresses + msgpack-serialises synchronously and
+/// must not stall the tokio runtime).
+///
+/// Path resolution:
+/// - `Some(path)` overrides any previous save target (Save As).
+/// - `None` uses the document store's last-known path. If both are
+///   absent the caller hasn't picked a file yet — return
+///   [`AppCommandError::Validation`] so the UI can route to a save-as
+///   flow.
+///
+/// `DocumentStore` has no pixel-buffer cache today, so the encoded
+/// archive ships with `buffers: Vec::new()`. Cels carry their
+/// `PixelBufferId` references but the bytes round-trip lossily — the
+/// pixel-buffer-storage stream (`S15-prep`) picks that up.
 #[tauri::command(async, rename_all = "snake_case")]
-pub async fn project_save(_path: Option<String>, _state: State<'_, AppState>) -> CommandResult<()> {
-    Err(AppCommandError::Unimplemented {
-        stream: "B3 (.pixhaus format)".into(),
+pub async fn project_save(path: Option<String>, state: State<'_, AppState>) -> CommandResult<()> {
+    let target = {
+        let doc = state.doc.read().await;
+        if doc.project.is_none() {
+            return Err(AppCommandError::NoActiveProject);
+        }
+        match path {
+            Some(p) => PathBuf::from(p),
+            None => doc
+                .path
+                .clone()
+                .ok_or_else(|| AppCommandError::Validation {
+                    detail: "save requires a path on first call (use save-as)".into(),
+                })?,
+        }
+    };
+
+    // Snapshot the project so we can release the read lock before doing
+    // blocking I/O. Cloning the Project is fine — it's the same
+    // round-trip the round-trip tests already hit.
+    let archive = {
+        let doc = state.doc.read().await;
+        let project = doc
+            .project
+            .as_ref()
+            .ok_or(AppCommandError::NoActiveProject)?
+            .clone();
+        PixhausArchive::new(project)
+    };
+
+    let target_for_blocking = target.clone();
+    tokio::task::spawn_blocking(move || {
+        pixhaus_io::pixhaus::encode_to_file(&archive, &target_for_blocking)
     })
+    .await
+    .map_err(|join_err| AppCommandError::Validation {
+        detail: format!("encode task panicked: {join_err}"),
+    })??;
+
+    let mut doc = state.doc.write().await;
+    doc.path = Some(target);
+    doc.dirty = false;
+    Ok(())
 }
 
 /// Closes the active project, discarding all in-memory state.

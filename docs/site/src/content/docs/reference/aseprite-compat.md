@@ -43,7 +43,23 @@ Pixhaus reads and writes `.aseprite` files. This page documents the round-trip f
 
 ## Keybind compatibility
 
-Pixhaus ships an Aseprite-compatible keybind preset (load via `Edit > Keybinds > Load preset > Aseprite`). The mapping covers all common tools and timeline operations. Uncommon Aseprite keybinds with no Pixhaus equivalent are documented in the preset's `README`.
+Pixhaus ships an Aseprite-compatible keybind preset (load via `Preferences > Keybinds > Aseprite`). The mapping covers the global, canvas, tool, and timeline operations Pixhaus has wired so far. The full table of working-today shortcuts lives in [Keyboard shortcuts](/reference/keybinds/) under the "Global" and "Canvas" sections.
+
+### Known incompatibilities
+
+Aseprite shortcuts Pixhaus does not yet bind by default — these will arrive with the streams that wire the corresponding feature:
+
+| Aseprite shortcut | Action | Status |
+|---|---|---|
+| `B`, `E`, `M`, `Z`, `H`, `I`, `K`, `G` | Pencil / eraser / marquee / zoom / hand / eyedropper / shading / paint bucket | Planned: brush engine stream |
+| `Tab` | Toggle timeline panel | Planned: animation timeline stream |
+| `F1`–`F4` | Toggle layer / palette / preview / mini-editor panels | Planned: layer panel + palette panel + preview window streams |
+| `Ctrl+Y` (redo) | Pixhaus uses `Ctrl+Shift+Z` instead | Intentional divergence — `Ctrl+Y` is also bound to redo as a fallback once the redo command lands |
+| `Alt+N` | New frame | Planned: timeline stream |
+| `Shift+F1` | Toggle onion skin | Planned: animation timeline stream |
+| `Ctrl+Shift+M` | Sprite resize | Planned: canvas-edit stream |
+
+Anything not on this list and not in the [Keyboard shortcuts](/reference/keybinds/) page is unbound today; remap any combo at `Preferences > Keybinds`.
 
 ## Scripting compatibility
 

@@ -361,6 +361,47 @@ pub async fn palette_swap(
     Ok(PaletteSwapResult { from_id, to_id })
 }
 
+/// Moves a colour from `from_index` to `to_index` within a palette,
+/// shifting every entry between by one. Used by the palette panel's
+/// drag-to-reorder UI; the previous behaviour was a `console.warn`
+/// stub that left the on-disk order untouched.
+///
+/// Both indices are bounds-checked against the palette's current
+/// length. `from_index == to_index` is a no-op.
+#[tauri::command(async, rename_all = "snake_case")]
+pub async fn palette_reorder_colors(
+    sprite_id: SpriteId,
+    palette_id: PaletteId,
+    from_index: u32,
+    to_index: u32,
+    state: State<'_, AppState>,
+) -> CommandResult<()> {
+    let mut doc = state.doc.write().await;
+    {
+        let palette = find_palette_mut(&mut doc, sprite_id, palette_id)?;
+        let len = palette.colors.len();
+        let from = from_index as usize;
+        let to = to_index as usize;
+        if from >= len {
+            return Err(AppCommandError::OutOfRange {
+                detail: format!("from_index {from} out of range (palette has {len} colors)"),
+            });
+        }
+        if to >= len {
+            return Err(AppCommandError::OutOfRange {
+                detail: format!("to_index {to} out of range (palette has {len} colors)"),
+            });
+        }
+        if from == to {
+            return Ok(());
+        }
+        let entry = palette.colors.remove(from);
+        palette.colors.insert(to, entry);
+    }
+    doc.dirty = true;
+    Ok(())
+}
+
 /// Returns all palettes in a sprite.
 #[tauri::command(async, rename_all = "snake_case")]
 pub async fn palette_list(

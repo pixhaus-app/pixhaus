@@ -53,6 +53,25 @@ export function paletteRemoveColor(
   return invoke<void>("palette_remove_color", { sprite_id, palette_id, index });
 }
 
+/**
+ * Moves a color from `from_index` to `to_index` within a palette,
+ * shifting every entry between by one. The drag-to-reorder UI in
+ * PaletteGrid calls this to persist the new order.
+ */
+export function paletteReorderColors(
+  sprite_id: SpriteId,
+  palette_id: PaletteId,
+  from_index: number,
+  to_index: number,
+): Promise<void> {
+  return invoke<void>("palette_reorder_colors", {
+    sprite_id,
+    palette_id,
+    from_index,
+    to_index,
+  });
+}
+
 /** Replaces the color (and optionally the name) at a specific palette index. */
 export function paletteSetColor(args: PaletteSetColorArgs): Promise<void> {
   return invoke<void>("palette_set_color", { args });
