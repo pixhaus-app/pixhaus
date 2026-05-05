@@ -89,7 +89,4 @@ end)
 
 ## More examples
 
-Sample plugins are in `examples/plugins/` in the repository, including:
-- `color-reduction.lua` — posterize the active layer to a reduced color count
-- `sprite-sheet-info.lua` — print frame dimensions and tag names to the console
-- `aseprite-compat-test.lua` — verify which Aseprite API calls work in Pixhaus
+Sample Lua plugins ship alongside the scripting host (S38). Once that stream lands, look under `examples/plugins/` in the repository — planned examples include a posterize-to-reduced-palette filter, a sprite-sheet metadata dumper, and an Aseprite API compatibility probe.

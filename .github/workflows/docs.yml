@@ -6,10 +6,16 @@ on:
     paths:
       - "docs/**"
       - ".github/workflows/docs.yml"
+      - "package.json"
+      - "pnpm-workspace.yaml"
+      - "pnpm-lock.yaml"
   pull_request:
     paths:
       - "docs/**"
       - ".github/workflows/docs.yml"
+      - "package.json"
+      - "pnpm-workspace.yaml"
+      - "pnpm-lock.yaml"
   workflow_dispatch:
 
 concurrency:

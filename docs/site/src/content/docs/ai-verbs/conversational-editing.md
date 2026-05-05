@@ -7,7 +7,7 @@ Describe what you want to change in plain language. The AI plans a command seque
 
 Invoke via `AI > Conversational editing` or `Ctrl+Shift+K`.
 
-Example: `Make this enemy look angrier, add a scar over the left eye, slow the walk to 8fps`'
+Example: `Make this enemy look angrier, add a scar over the left eye, slow the walk to 8fps`
 
 **Backend:** Vision-language model with tool-use capability. Simple, specific requests work best.
 

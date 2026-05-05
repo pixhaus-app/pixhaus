@@ -7,7 +7,7 @@ Generates a complete autotile-compatible tileset from a text description, constr
 
 Invoke via `AI > Tileset from description`. Describe the style and environment. The verb generates the full 47-tile Wang blob set.
 
-Example: `dark stone dungeon floor with moss, 32x32 tiles, muted palette`'
+Example: `dark stone dungeon floor with moss, 32x32 tiles, muted palette`
 
 **Backend:** Image generation with strong consistency constraints and project style LoRA if trained.
 

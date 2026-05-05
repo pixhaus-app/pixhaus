@@ -13,7 +13,7 @@ description: Default keyboard shortcuts and how to customize them.
 | Save | `Ctrl+S` | `Cmd+S` |
 | Save as | `Ctrl+Shift+S` | `Cmd+Shift+S` |
 | Undo | `Ctrl+Z` | `Cmd+Z` |
-| Redo | `Ctrl+Y` | `Cmd+Y` |
+| Redo | `Ctrl+Shift+Z` | `Cmd+Shift+Z` |
 | Preferences | `Ctrl+,` | `Cmd+,` |
 
 ## Tools
@@ -83,7 +83,7 @@ description: Default keyboard shortcuts and how to customize them.
 ## Customizing shortcuts
 
 Open `Edit > Keybinds` to remap any shortcut. Two built-in presets are available:
-- **Pixhaus default** — the native layout
-- **Aseprite-compatible** — maps to Aseprite defaults
+- **Aseprite** — Aseprite-compatible defaults (current default)
+- **Photoshop** — Photoshop-compatible defaults
 
 Load a preset, then modify individual bindings as needed. Presets do not overwrite customized bindings automatically.

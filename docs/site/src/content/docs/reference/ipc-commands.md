@@ -19,13 +19,11 @@ The Pixhaus UI communicates with the Rust backend via Tauri IPC commands. Plugin
 |---|---|
 | `project_new` | Create a new empty project |
 | `project_open` | Open a `.pixhaus` or `.aseprite` file |
-| `project_save` | Save the active project |
-| `project_save_as` | Save to a new path |
+| `project_save` | Save the active project (optional path argument for save-as) |
 | `project_close` | Close the active project |
-| `project_export_sprite_sheet` | Export frames as PNG + JSON |
-| `project_export_aseprite` | Export to `.aseprite` format |
-| `project_export_gif` | Export animated GIF |
-| `project_export_tmx` | Export Tiled `.tmx` tilemap |
+| `project_get` | Returns the active `ProjectStatus` or `None` |
+
+Export commands (sprite sheet, `.aseprite`, GIF, TMX) live behind individual streams and are not yet exposed on the IPC surface. This page is updated as those streams ship.
 
 ### Layers
 
@@ -55,11 +53,15 @@ The Pixhaus UI communicates with the Rust backend via Tauri IPC commands. Plugin
 
 | Command | Description |
 |---|---|
-| `palette_set_color` | Set a palette color by index |
-| `palette_add_color` | Append a color to the palette |
-| `palette_delete_color` | Remove a palette entry |
-| `palette_load` | Load a palette file |
-| `palette_save` | Save the palette to a file |
+| `palette_add` | Add a new palette to a sprite |
+| `palette_delete` | Remove a palette by id |
+| `palette_add_color` | Append a color to a palette |
+| `palette_set_color` | Replace a color at a specific index |
+| `palette_remove_color` | Remove a color by index |
+| `palette_swap` | Swap two palettes' positions |
+| `palette_list` | List all palettes on a sprite |
+
+Palette file I/O (`.gpl`, `.hex`, `.pal`, Lospec) currently runs entirely in the UI without a backend round-trip; see the palette panel for usage.
 
 ## Error handling
 

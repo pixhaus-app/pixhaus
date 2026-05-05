@@ -59,7 +59,7 @@ app.commands.register {
 
 WASM plugins are compiled with `extism`. The plugin exposes functions that the host calls using the Extism protocol.
 
-See `examples/plugins/wasm-example/` in the repository for a full Rust-WASM plugin example.
+A Rust-WASM plugin example will land alongside the plugin loader (S37); until then, refer to the [Extism plug-in guide](https://extism.org/docs/concepts/plug-in) for the host-side ABI.
 
 ## Hot-reload
 
