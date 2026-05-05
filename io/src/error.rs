@@ -172,6 +172,28 @@ pub enum Error {
         max: u32,
     },
 
+    // ── Tiled TMX export (S12) ─────────────────────────────────────────────────
+    /// Two or more tilemap layers passed to the TMX exporter have different
+    /// `width` or `height` values. Tiled requires all layers in a map to
+    /// share the same dimensions.
+    #[error(
+        "tilemap layers must share the same dimensions: \
+         expected {expected_w}×{expected_h}, \
+         layer {layer_index} has {got_w}×{got_h}"
+    )]
+    TiledLayerSizeMismatch {
+        /// Width of the first (reference) layer.
+        expected_w: u32,
+        /// Height of the first (reference) layer.
+        expected_h: u32,
+        /// Width of the offending layer.
+        got_w: u32,
+        /// Height of the offending layer.
+        got_h: u32,
+        /// Zero-based index of the offending layer in the input slice.
+        layer_index: usize,
+    },
+
     // ── Aseprite (S08) ──────────────────────────────────────────────────────
     /// The first two bytes of the frame magic word (offset 4 of every
     /// frame header in an Aseprite file) do not match `0xF1FA`.

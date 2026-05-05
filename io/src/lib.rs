@@ -23,6 +23,7 @@ pub mod aseprite;
 pub mod palette;
 pub mod pixhaus;
 pub mod png;
+pub mod tiled;
 
 pub mod error;
 pub use error::{Error, Result};
