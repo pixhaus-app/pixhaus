@@ -1,0 +1,18 @@
+{
+  "name": "@pixhaus/visual-tests",
+  "version": "0.0.1",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "pw": "playwright test",
+    "update-snapshots": "playwright test --update-snapshots",
+    "report": "playwright show-report"
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.47.0",
+    "@types/pixelmatch": "^5.2.6",
+    "@types/pngjs": "^6.0.4",
+    "pixelmatch": "^5.3.0",
+    "pngjs": "^7.0.0"
+  }
+}
