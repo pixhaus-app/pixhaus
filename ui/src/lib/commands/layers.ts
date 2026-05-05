@@ -88,3 +88,41 @@ export function layerRename(
 export function layerList(sprite_id: SpriteId): Promise<Layer[]> {
   return invoke<Layer[]>("layer_list", { sprite_id });
 }
+
+/** Sets the parent group of a layer. Pass `parent_id = null` to make it top-level. */
+export function layerSetParent(
+  sprite_id: SpriteId,
+  layer_id: LayerId,
+  parent_id: LayerId | null,
+): Promise<void> {
+  return invoke<void>("layer_set_parent", { sprite_id, layer_id, parent_id });
+}
+
+/** Converts a layer to a group. Removes any cels on the layer. */
+export function layerConvertToGroup(sprite_id: SpriteId, layer_id: LayerId): Promise<void> {
+  return invoke<void>("layer_convert_to_group", { sprite_id, layer_id });
+}
+
+/** Converts a layer to a tilemap layer backed by the given tileset. */
+export function layerConvertToTilemap(
+  sprite_id: SpriteId,
+  layer_id: LayerId,
+  tileset_id: number,
+): Promise<void> {
+  return invoke<void>("layer_convert_to_tilemap", { sprite_id, layer_id, tileset_id });
+}
+
+/** Merges a layer with the layer immediately below it. Requires S01. */
+export function layerMergeDown(sprite_id: SpriteId, layer_id: LayerId): Promise<void> {
+  return invoke<void>("layer_merge_down", { sprite_id, layer_id });
+}
+
+/** Merges the given layers into a single raster layer. Requires S01. */
+export function layerMergeSelected(sprite_id: SpriteId, layer_ids: LayerId[]): Promise<void> {
+  return invoke<void>("layer_merge_selected", { sprite_id, layer_ids });
+}
+
+/** Flattens all visible layers into a single raster layer. Requires S01. */
+export function layerFlattenVisible(sprite_id: SpriteId): Promise<void> {
+  return invoke<void>("layer_flatten_visible", { sprite_id });
+}

@@ -6,7 +6,18 @@
 
 import { type Component, Show, createEffect, onCleanup } from "solid-js";
 import type { Layer, LayerId, SpriteId } from "../lib/types";
-import { addLayer, beginRename, deleteLayer, layers } from "./layer-state";
+import {
+  addLayer,
+  beginRename,
+  convertLayerToGroup,
+  convertLayerToTilemap,
+  deleteLayer,
+  flattenVisibleLayers,
+  layers,
+  mergeLayerDown,
+  mergeSelectedLayers,
+  selectedLayerIds,
+} from "./layer-state";
 
 export type ContextMenuTarget = {
   x: number;
@@ -54,6 +65,17 @@ const LayerContextMenu: Component<Props> = (props) => {
   }
 
   const layer = () => targetLayer();
+  const isGroup = () => layer()?.kind.kind === "group";
+  const isTilemap = () => layer()?.kind.kind === "tilemap";
+  // Merge Down requires a layer below this one in the flat list.
+  const canMergeDown = () => {
+    const l = layer();
+    if (!l) return false;
+    const all = layers();
+    const idx = all.findIndex((x) => x.id === l.id);
+    return idx > 0;
+  };
+  const multiSelected = () => selectedLayerIds().size >= 2;
 
   return (
     <Show when={props.target !== null && layer() !== undefined}>
@@ -75,7 +97,50 @@ const LayerContextMenu: Component<Props> = (props) => {
         >
           Duplicate
         </button>
+
         <div class="ctx-menu__separator" />
+
+        <button
+          class="ctx-menu__item"
+          onClick={action(() => mergeLayerDown(props.spriteId, props.target!.layerId))}
+          disabled={!canMergeDown()}
+          title={canMergeDown() ? undefined : "No layer below to merge into"}
+        >
+          Merge Down
+        </button>
+        <button
+          class="ctx-menu__item"
+          onClick={action(() => mergeSelectedLayers(props.spriteId, selectedLayerIds()))}
+          disabled={!multiSelected()}
+          title={multiSelected() ? undefined : "Select two or more layers to merge"}
+        >
+          Merge Selected
+        </button>
+        <button class="ctx-menu__item" onClick={action(() => flattenVisibleLayers(props.spriteId))}>
+          Flatten Visible
+        </button>
+
+        <div class="ctx-menu__separator" />
+
+        <button
+          class="ctx-menu__item"
+          onClick={action(() => convertLayerToGroup(props.spriteId, props.target!.layerId))}
+          disabled={isGroup()}
+          title={isGroup() ? "Layer is already a group" : undefined}
+        >
+          Convert to Group
+        </button>
+        <button
+          class="ctx-menu__item"
+          onClick={action(() => convertLayerToTilemap(props.spriteId, props.target!.layerId))}
+          disabled={isTilemap()}
+          title={isTilemap() ? "Layer is already a tilemap layer" : undefined}
+        >
+          Convert to Tilemap Layer
+        </button>
+
+        <div class="ctx-menu__separator" />
+
         <button
           class="ctx-menu__item ctx-menu__item--danger"
           onClick={action(() => deleteLayer(props.spriteId, props.target!.layerId))}

@@ -85,6 +85,7 @@ describe("flattenLayers", () => {
     // Rust order: group at 0, child at 1 (but child has parent = group id)
     const result = flattenLayers([g, child], allExpanded);
     // group first (top level), then child (nested)
+    expect(result).toHaveLength(2);
     expect(at(result, 0).layer).toBe(g);
     expect(at(result, 0).depth).toBe(0);
     expect(at(result, 1).layer).toBe(child);
@@ -128,6 +129,22 @@ describe("flattenLayers", () => {
     expect(names).toContain("B");
     expect(names).toContain("ChildB");
     expect(names).not.toContain("ChildA");
+  });
+
+  it("renders multiple children of a group in reverse order within the group", () => {
+    const g = group(1, "Group");
+    const bottom = raster(2, "Bottom", 1);
+    const top = raster(3, "Top", 1);
+    // Rust order: g at 0, bottom at 1, top at 2.
+    const result = flattenLayers([g, bottom, top], allExpanded);
+    // group first, then children reversed: top before bottom
+    expect(result).toHaveLength(3);
+    expect(at(result, 0).layer).toBe(g);
+    expect(at(result, 0).depth).toBe(0);
+    expect(at(result, 1).layer).toBe(top);
+    expect(at(result, 1).depth).toBe(1);
+    expect(at(result, 2).layer).toBe(bottom);
+    expect(at(result, 2).depth).toBe(1);
   });
 
   it("preserves top-level order even when groups have children", () => {

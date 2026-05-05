@@ -1,6 +1,6 @@
 //! Layer CRUD and property commands.
 
-use pixhaus_core::project::{BlendMode, Layer, LayerId, LayerKind, SpriteId, UserData};
+use pixhaus_core::project::{BlendMode, Layer, LayerId, LayerKind, SpriteId, TilesetId, UserData};
 use serde::{Deserialize, Serialize};
 use tauri::State;
 
@@ -239,6 +239,187 @@ pub async fn layer_rename(
     }
     doc.dirty = true;
     Ok(LayerRenamed { layer_id, name })
+}
+
+/// Sets the parent of a layer. Pass `parent_id = None` to make it top-level.
+///
+/// Rejects if `parent_id` points to a non-existent layer or to a layer that
+/// is not a group.
+#[tauri::command(async, rename_all = "snake_case")]
+pub async fn layer_set_parent(
+    sprite_id: SpriteId,
+    layer_id: LayerId,
+    parent_id: Option<LayerId>,
+    state: State<'_, AppState>,
+) -> CommandResult<()> {
+    let mut doc = state.doc.write().await;
+    {
+        let sprite = doc
+            .project
+            .as_mut()
+            .ok_or(AppCommandError::NoActiveProject)?
+            .sprites
+            .iter_mut()
+            .find(|s| s.id == sprite_id)
+            .ok_or(AppCommandError::NotFound {
+                entity: "sprite".into(),
+                id: u64::from(sprite_id.get()),
+            })?;
+        // Validate parent exists and is a group.
+        if let Some(pid) = parent_id {
+            let parent =
+                sprite
+                    .layers
+                    .iter()
+                    .find(|l| l.id == pid)
+                    .ok_or(AppCommandError::NotFound {
+                        entity: "layer".into(),
+                        id: u64::from(pid.get()),
+                    })?;
+            if !matches!(parent.kind, LayerKind::Group { .. }) {
+                return Err(AppCommandError::Validation {
+                    detail: "target layer is not a group".into(),
+                });
+            }
+        }
+        let layer = sprite.layers.iter_mut().find(|l| l.id == layer_id).ok_or(
+            AppCommandError::NotFound {
+                entity: "layer".into(),
+                id: u64::from(layer_id.get()),
+            },
+        )?;
+        layer.parent = parent_id;
+    }
+    doc.dirty = true;
+    Ok(())
+}
+
+/// Converts a layer to a group. Removes any cels on the layer.
+#[tauri::command(async, rename_all = "snake_case")]
+pub async fn layer_convert_to_group(
+    sprite_id: SpriteId,
+    layer_id: LayerId,
+    state: State<'_, AppState>,
+) -> CommandResult<()> {
+    let mut doc = state.doc.write().await;
+    {
+        let sprite = doc
+            .project
+            .as_mut()
+            .ok_or(AppCommandError::NoActiveProject)?
+            .sprites
+            .iter_mut()
+            .find(|s| s.id == sprite_id)
+            .ok_or(AppCommandError::NotFound {
+                entity: "sprite".into(),
+                id: u64::from(sprite_id.get()),
+            })?;
+        {
+            let layer = sprite.layers.iter_mut().find(|l| l.id == layer_id).ok_or(
+                AppCommandError::NotFound {
+                    entity: "layer".into(),
+                    id: u64::from(layer_id.get()),
+                },
+            )?;
+            layer.kind = LayerKind::Group { collapsed: false };
+        }
+        // Groups have no cels; drop any that were on this layer.
+        sprite.cels.retain(|c| c.layer_id != layer_id);
+    }
+    doc.dirty = true;
+    Ok(())
+}
+
+/// Converts a layer to a tilemap layer using the given tileset.
+/// Removes any raster cels on the layer.
+#[tauri::command(async, rename_all = "snake_case")]
+pub async fn layer_convert_to_tilemap(
+    sprite_id: SpriteId,
+    layer_id: LayerId,
+    tileset_id: TilesetId,
+    state: State<'_, AppState>,
+) -> CommandResult<()> {
+    let mut doc = state.doc.write().await;
+    {
+        let sprite = doc
+            .project
+            .as_mut()
+            .ok_or(AppCommandError::NoActiveProject)?
+            .sprites
+            .iter_mut()
+            .find(|s| s.id == sprite_id)
+            .ok_or(AppCommandError::NotFound {
+                entity: "sprite".into(),
+                id: u64::from(sprite_id.get()),
+            })?;
+        // Validate tileset exists.
+        if !sprite.tilesets.iter().any(|ts| ts.id == tileset_id) {
+            return Err(AppCommandError::NotFound {
+                entity: "tileset".into(),
+                id: u64::from(tileset_id.get()),
+            });
+        }
+        {
+            let layer = sprite.layers.iter_mut().find(|l| l.id == layer_id).ok_or(
+                AppCommandError::NotFound {
+                    entity: "layer".into(),
+                    id: u64::from(layer_id.get()),
+                },
+            )?;
+            layer.kind = LayerKind::Tilemap {
+                tileset: tileset_id,
+            };
+        }
+        // Drop raster cels; tilemap cels are a different variant and
+        // will be populated when the user paints tiles.
+        sprite.cels.retain(|c| c.layer_id != layer_id);
+    }
+    doc.dirty = true;
+    Ok(())
+}
+
+/// Merges a layer with the layer immediately below it.
+///
+/// Requires S01 (pixel-buffer registry). Returns `Unimplemented` until
+/// that stream lands.
+#[tauri::command(async, rename_all = "snake_case")]
+pub async fn layer_merge_down(
+    _sprite_id: SpriteId,
+    _layer_id: LayerId,
+    _state: State<'_, AppState>,
+) -> CommandResult<()> {
+    Err(AppCommandError::Unimplemented {
+        stream: "S01".into(),
+    })
+}
+
+/// Merges the given set of layers into a single raster layer.
+///
+/// Requires S01 (pixel-buffer registry). Returns `Unimplemented` until
+/// that stream lands.
+#[tauri::command(async, rename_all = "snake_case")]
+pub async fn layer_merge_selected(
+    _sprite_id: SpriteId,
+    _layer_ids: Vec<LayerId>,
+    _state: State<'_, AppState>,
+) -> CommandResult<()> {
+    Err(AppCommandError::Unimplemented {
+        stream: "S01".into(),
+    })
+}
+
+/// Flattens all visible layers into a single raster layer.
+///
+/// Requires S01 (pixel-buffer registry). Returns `Unimplemented` until
+/// that stream lands.
+#[tauri::command(async, rename_all = "snake_case")]
+pub async fn layer_flatten_visible(
+    _sprite_id: SpriteId,
+    _state: State<'_, AppState>,
+) -> CommandResult<()> {
+    Err(AppCommandError::Unimplemented {
+        stream: "S01".into(),
+    })
 }
 
 // ── helpers ──────────────────────────────────────────────────────────────────
