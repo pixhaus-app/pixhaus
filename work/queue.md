@@ -52,17 +52,17 @@ their bedrock dependencies are merged.
 
 ## Streams — second wave (post-critical-path, parallel-safe)
 
-- [~] CLAIMED:stream-s03: S03 — Selection algorithms. Brief: docs/planning/work/streams.md#s03. Blocked by: B2 S01.
-- [~] CLAIMED:stream-s09: S09 — `.psd` import. Brief: docs/planning/work/streams.md#s09. Blocked by: B2 S01.
-- [~] CLAIMED:stream-s11: S11 — Animated GIF + WebP export. Brief: docs/planning/work/streams.md#s11. Blocked by: S01 S02.
-- [~] CLAIMED:stream-s12: S12 — TMX tilemap export. Brief: docs/planning/work/streams.md#s12. Blocked by: B6 S06 S10.
-- [~] CLAIMED:stream-s17: S17 — Layer panel. Brief: docs/planning/work/streams.md#s17. Blocked by: S05 S13.
-- [~] CLAIMED:stream-s18: S18 — Color and palette panel. Brief: docs/planning/work/streams.md#s18. Blocked by: S02.
-- [~] CLAIMED:stream-s20: S20 — Tilemap UI. Brief: docs/planning/work/streams.md#s20. Blocked by: S06 S13 S14.
-- [~] CLAIMED:stream-s41: S41 — User documentation site. Brief: docs/planning/work/streams.md#s41. Stub now, fills as features land.
-- [~] CLAIMED:stream-s45: S45 — Sample projects and fixtures. Brief: docs/planning/work/streams.md#s45.
-- [~] CLAIMED:stream-s46: S46 — Logo, visual identity, design tokens. Brief: docs/planning/work/streams.md#s46.
-- [~] CLAIMED:stream-s52: S52 — Visual regression test harness. Brief: docs/planning/work/streams.md#s52. Blocked by: B1 S14.
+- [x] DONE: S03 — Selection algorithms. Brief: docs/planning/work/streams.md#s03. Blocked by: B2 S01.
+- [x] DONE: S09 — `.psd` import. Brief: docs/planning/work/streams.md#s09. Blocked by: B2 S01.
+- [x] DONE: S11 — Animated GIF + WebP export. Brief: docs/planning/work/streams.md#s11. Blocked by: S01 S02.
+- [x] DONE: S12 — TMX tilemap export. Brief: docs/planning/work/streams.md#s12. Blocked by: B6 S06 S10.
+- [x] DONE: S17 — Layer panel. Brief: docs/planning/work/streams.md#s17. Blocked by: S05 S13.
+- [x] DONE: S18 — Color and palette panel. Brief: docs/planning/work/streams.md#s18. Blocked by: S02.
+- [x] DONE: S20 — Tilemap UI. Brief: docs/planning/work/streams.md#s20. Blocked by: S06 S13 S14.
+- [x] DONE: S41 — User documentation site. Brief: docs/planning/work/streams.md#s41. Stub now, fills as features land.
+- [x] DONE: S45 — Sample projects and fixtures. Brief: docs/planning/work/streams.md#s45.
+- [x] DONE: S46 — Logo, visual identity, design tokens. Brief: docs/planning/work/streams.md#s46.
+- [x] DONE: S52 — Visual regression test harness. Brief: docs/planning/work/streams.md#s52. Blocked by: B1 S14.
 
 ## Streams — third wave (review follow-ups)
 
