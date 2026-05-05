@@ -37,8 +37,14 @@ void main() {
 // When u_has_tile is false (no GPU data yet), draws a procedural checkerboard
 // that represents the transparent canvas.  When u_has_tile is true, alpha-
 // composites the RGBA texture over the same checkerboard background.
+//
+// Precision must match COMMON_VERT (highp) or WebGL2 rejects the program
+// link with "Precisions of uniform 'u_zoom' differ between VERTEX and
+// FRAGMENT shaders." `highp` is guaranteed available in fragment shaders
+// per the WebGL2 baseline; this is a desktop target and the precision
+// difference has no measurable performance impact.
 export const SPRITE_FRAG = /* glsl */ `#version 300 es
-precision mediump float;
+precision highp float;
 
 in vec2 v_screen;
 
@@ -148,7 +154,7 @@ void main() {
 `;
 
 export const ANTS_FRAG = /* glsl */ `#version 300 es
-precision mediump float;
+precision highp float;
 
 in vec2 v_screen;
 in vec2 v_canvas;
@@ -251,7 +257,7 @@ void main() {
 // passes — one per neighbour frame — additively over the current frame.
 // Reuses COMMON_VERT.
 export const ONION_FRAG = /* glsl */ `#version 300 es
-precision mediump float;
+precision highp float;
 
 in vec2 v_screen;
 
