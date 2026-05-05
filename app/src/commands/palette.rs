@@ -379,26 +379,38 @@ pub async fn palette_reorder_colors(
     let mut doc = state.doc.write().await;
     {
         let palette = find_palette_mut(&mut doc, sprite_id, palette_id)?;
-        let len = palette.colors.len();
-        let from = from_index as usize;
-        let to = to_index as usize;
-        if from >= len {
-            return Err(AppCommandError::OutOfRange {
-                detail: format!("from_index {from} out of range (palette has {len} colors)"),
-            });
-        }
-        if to >= len {
-            return Err(AppCommandError::OutOfRange {
-                detail: format!("to_index {to} out of range (palette has {len} colors)"),
-            });
-        }
-        if from == to {
-            return Ok(());
-        }
-        let entry = palette.colors.remove(from);
-        palette.colors.insert(to, entry);
+        reorder_palette_colors_in_place(palette, from_index, to_index)?;
     }
     doc.dirty = true;
+    Ok(())
+}
+
+/// Pure reorder-in-place helper. Lifted out of `palette_reorder_colors`
+/// so the bounds and shift behaviour are testable without standing up
+/// a tauri `State`.
+fn reorder_palette_colors_in_place(
+    palette: &mut Palette,
+    from_index: u32,
+    to_index: u32,
+) -> CommandResult<()> {
+    let len = palette.colors.len();
+    let from = from_index as usize;
+    let to = to_index as usize;
+    if from >= len {
+        return Err(AppCommandError::OutOfRange {
+            detail: format!("from_index {from} out of range (palette has {len} colors)"),
+        });
+    }
+    if to >= len {
+        return Err(AppCommandError::OutOfRange {
+            detail: format!("to_index {to} out of range (palette has {len} colors)"),
+        });
+    }
+    if from == to {
+        return Ok(());
+    }
+    let entry = palette.colors.remove(from);
+    palette.colors.insert(to, entry);
     Ok(())
 }
 
@@ -644,6 +656,81 @@ mod tests {
             0,
             "undo must remove the appended color"
         );
+    }
+
+    // ── reorder_palette_colors_in_place ───────────────────────────────────
+
+    fn palette_with_named_colors(names: &[&str]) -> Palette {
+        let colors = names
+            .iter()
+            .map(|n| PaletteEntry {
+                color: Rgba {
+                    r: 0,
+                    g: 0,
+                    b: 0,
+                    a: 255,
+                },
+                name: Some((*n).into()),
+            })
+            .collect();
+        Palette {
+            id: PaletteId::new(1),
+            name: "main".into(),
+            colors,
+            user_data: UserData::default(),
+        }
+    }
+
+    fn names_of(palette: &Palette) -> Vec<&str> {
+        palette
+            .colors
+            .iter()
+            .map(|c| c.name.as_deref().unwrap_or(""))
+            .collect()
+    }
+
+    #[test]
+    fn reorder_forward_shifts_intermediate_entries_left() {
+        let mut palette = palette_with_named_colors(&["a", "b", "c", "d"]);
+        reorder_palette_colors_in_place(&mut palette, 0, 2).unwrap();
+        assert_eq!(names_of(&palette), vec!["b", "c", "a", "d"]);
+    }
+
+    #[test]
+    fn reorder_backward_shifts_intermediate_entries_right() {
+        let mut palette = palette_with_named_colors(&["a", "b", "c", "d"]);
+        reorder_palette_colors_in_place(&mut palette, 3, 1).unwrap();
+        assert_eq!(names_of(&palette), vec!["a", "d", "b", "c"]);
+    }
+
+    #[test]
+    fn reorder_same_index_is_a_noop() {
+        let mut palette = palette_with_named_colors(&["a", "b", "c"]);
+        reorder_palette_colors_in_place(&mut palette, 1, 1).unwrap();
+        assert_eq!(names_of(&palette), vec!["a", "b", "c"]);
+    }
+
+    #[test]
+    fn reorder_from_index_out_of_range_returns_out_of_range() {
+        let mut palette = palette_with_named_colors(&["a", "b"]);
+        let err = reorder_palette_colors_in_place(&mut palette, 5, 0).unwrap_err();
+        assert!(
+            matches!(err, AppCommandError::OutOfRange { .. }),
+            "expected OutOfRange, got {err:?}"
+        );
+        // Palette is untouched on error.
+        assert_eq!(names_of(&palette), vec!["a", "b"]);
+    }
+
+    #[test]
+    fn reorder_to_index_out_of_range_returns_out_of_range() {
+        let mut palette = palette_with_named_colors(&["a", "b"]);
+        let err = reorder_palette_colors_in_place(&mut palette, 0, 9).unwrap_err();
+        assert!(
+            matches!(err, AppCommandError::OutOfRange { .. }),
+            "expected OutOfRange, got {err:?}"
+        );
+        assert_eq!(names_of(&palette), vec!["a", "b"]);
     }
 
     #[test]

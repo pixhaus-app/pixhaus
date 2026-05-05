@@ -9,7 +9,7 @@ use serde::{Deserialize, Serialize};
 use tauri::State;
 
 use crate::error::{AppCommandError, CommandResult};
-use crate::state::AppState;
+use crate::state::{AppState, DocumentStore};
 
 /// Status snapshot returned by project-level commands.
 #[derive(Debug, Serialize)]
@@ -41,12 +41,18 @@ pub struct SpriteAddArgs {
 #[tauri::command(async, rename_all = "snake_case")]
 pub async fn project_new(name: String, state: State<'_, AppState>) -> CommandResult<ProjectStatus> {
     let mut doc = state.doc.write().await;
-    let project = Project::new(name);
+    Ok(install_new_project(&mut doc, Project::new(name)))
+}
+
+/// Resets the document store to host a brand-new project. Lifted out of
+/// `project_new` so the history-reset invariant is testable without a
+/// tauri `State`.
+fn install_new_project(doc: &mut DocumentStore, project: Project) -> ProjectStatus {
     let status = ProjectStatus {
         metadata: project.metadata.clone(),
         path: None,
         dirty: true,
-        sprite_count: 0,
+        sprite_count: project.sprites.len(),
     };
     doc.project = Some(project);
     doc.path = None;
@@ -56,7 +62,7 @@ pub async fn project_new(name: String, state: State<'_, AppState>) -> CommandRes
     // session's history (which would walk into commands written
     // against a different sprite set).
     doc.history = History::new();
-    Ok(status)
+    status
 }
 
 /// Opens a `.pixhaus` project from disk.
@@ -87,24 +93,34 @@ pub async fn project_open(
         detail: format!("decode task panicked: {join_err}"),
     })??;
 
-    let project = archive.project;
+    let mut doc = state.doc.write().await;
+    Ok(install_loaded_project(&mut doc, archive.project, path_buf))
+}
+
+/// Swaps a freshly-decoded project into the document store and resets
+/// per-document state (path, dirty flag, id counter, undo history).
+/// Lifted out of `project_open` so the history-reset and id-recompute
+/// invariants are testable without a tauri `State`.
+fn install_loaded_project(
+    doc: &mut DocumentStore,
+    project: Project,
+    path: PathBuf,
+) -> ProjectStatus {
     let next_id = compute_next_id(&project);
     let status = ProjectStatus {
         metadata: project.metadata.clone(),
-        path: Some(path),
+        path: Some(path.to_string_lossy().into_owned()),
         dirty: false,
         sprite_count: project.sprites.len(),
     };
-
-    let mut doc = state.doc.write().await;
     doc.project = Some(project);
-    doc.path = Some(path_buf);
+    doc.path = Some(path);
     doc.dirty = false;
     doc.next_id = next_id;
     // Reset undo so opening a different project doesn't inherit the
     // previous session's command history.
     doc.history = History::new();
-    Ok(status)
+    status
 }
 
 /// Returns one greater than the maximum id seen across every entity in
@@ -159,48 +175,70 @@ fn compute_next_id(project: &Project) -> u32 {
 /// pixel-buffer-storage stream (`S15-prep`) picks that up.
 #[tauri::command(async, rename_all = "snake_case")]
 pub async fn project_save(path: Option<String>, state: State<'_, AppState>) -> CommandResult<()> {
-    let target = {
-        let doc = state.doc.read().await;
-        if doc.project.is_none() {
-            return Err(AppCommandError::NoActiveProject);
-        }
-        match path {
-            Some(p) => PathBuf::from(p),
-            None => doc
-                .path
-                .clone()
-                .ok_or_else(|| AppCommandError::Validation {
-                    detail: "save requires a path on first call (use save-as)".into(),
-                })?,
-        }
+    // Hold the write guard for the entire save so a concurrent
+    // project_open / project_new can't mutate doc.project between our
+    // archive snapshot and the dirty/path bookkeeping at the end. The
+    // editor is single-user so the contention is theoretical, but the
+    // write-guard-for-duration shape makes the invariant local: the
+    // bytes on disk match the dirty=false state we record.
+    let mut doc = state.doc.write().await;
+
+    let target = match path {
+        Some(p) => PathBuf::from(p),
+        None => doc
+            .path
+            .clone()
+            .ok_or_else(|| AppCommandError::Validation {
+                detail: "save requires a path on first call (use save-as)".into(),
+            })?,
     };
 
-    // Snapshot the project so we can release the read lock before doing
-    // blocking I/O. Cloning the Project is fine — it's the same
-    // round-trip the round-trip tests already hit.
-    let archive = {
-        let doc = state.doc.read().await;
-        let project = doc
-            .project
-            .as_ref()
-            .ok_or(AppCommandError::NoActiveProject)?
-            .clone();
-        PixhausArchive::new(project)
-    };
+    let now_secs = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |d| i64::try_from(d.as_secs()).unwrap_or(i64::MAX));
+    let project = doc
+        .project
+        .as_mut()
+        .ok_or(AppCommandError::NoActiveProject)?;
+    stamp_save_metadata(project, now_secs);
 
+    // Clone so encode_to_file can run on the blocking pool without
+    // borrowing across .await. The Project is the same value the
+    // round-trip tests already exercise; cloning is the cost of
+    // crossing the spawn_blocking boundary.
+    let archive = PixhausArchive::new(project.clone());
     let target_for_blocking = target.clone();
-    tokio::task::spawn_blocking(move || {
+    let encode_result = tokio::task::spawn_blocking(move || {
         pixhaus_io::pixhaus::encode_to_file(&archive, &target_for_blocking)
     })
     .await
-    .map_err(|join_err| AppCommandError::Validation {
-        detail: format!("encode task panicked: {join_err}"),
-    })??;
+    .map_err(|join_err| {
+        let detail = if join_err.is_panic() {
+            "encode task panicked".into()
+        } else if join_err.is_cancelled() {
+            "encode task cancelled (runtime shutdown)".into()
+        } else {
+            format!("encode task did not complete: {join_err}")
+        };
+        AppCommandError::Validation { detail }
+    })?;
+    encode_result?;
 
-    let mut doc = state.doc.write().await;
     doc.path = Some(target);
     doc.dirty = false;
     Ok(())
+}
+
+/// Stamps `updated_at` + `editor_version` on every save and lazily
+/// initialises `created_at` if the project hasn't been saved before.
+/// `now_secs` is taken as a parameter so tests can pin a deterministic
+/// timestamp instead of reaching for the wall clock.
+fn stamp_save_metadata(project: &mut Project, now_secs: i64) {
+    if project.metadata.created_at == 0 {
+        project.metadata.created_at = now_secs;
+    }
+    project.metadata.updated_at = now_secs;
+    project.metadata.editor_version = env!("CARGO_PKG_VERSION").into();
 }
 
 /// Closes the active project, discarding all in-memory state.
@@ -291,6 +329,37 @@ pub async fn sprite_list(state: State<'_, AppState>) -> CommandResult<Vec<Sprite
 #[cfg(test)]
 mod tests {
     use super::*;
+    use pixhaus_core::undo::{Command, CommandResult as UndoCommandResult};
+
+    /// No-op `Command` used by the history-reset regression tests. It
+    /// pushes nothing onto the project; the history just needs *a* node
+    /// so we can observe that `install_*_project` clears it.
+    struct NoOpCommand;
+    impl Command for NoOpCommand {
+        fn label(&self) -> &'static str {
+            "noop"
+        }
+        fn apply(&mut self, _project: &mut Project) -> UndoCommandResult {
+            Ok(())
+        }
+        fn undo(&mut self, _project: &mut Project) -> UndoCommandResult {
+            Ok(())
+        }
+    }
+
+    fn doc_with_history_entry() -> DocumentStore {
+        let mut doc = DocumentStore::default();
+        let mut project = Project::new("seed");
+        doc.history
+            .push(Box::new(NoOpCommand), &mut project)
+            .expect("seed history push");
+        doc.project = Some(project);
+        assert!(
+            doc.history.node_count() > 0,
+            "test setup: history should be non-empty before the reset"
+        );
+        doc
+    }
 
     #[test]
     fn project_status_sprite_count_zero_on_new() {
@@ -349,6 +418,109 @@ mod tests {
         assert!(
             next > 42,
             "next_id must exceed every loaded id; got {next} for max id 42"
+        );
+    }
+
+    // ── history-reset regression tests ────────────────────────────────────
+    //
+    // Both project_new and project_open must clear the undo history so
+    // commands recorded against a previous project can't replay against
+    // an unrelated set of sprites. These cover the helpers the tauri
+    // commands now delegate to.
+
+    #[test]
+    fn install_new_project_clears_history() {
+        let mut doc = doc_with_history_entry();
+        let _ = install_new_project(&mut doc, Project::new("fresh"));
+        assert_eq!(
+            doc.history.node_count(),
+            0,
+            "project_new must drop the previous session's undo history"
+        );
+        assert_eq!(doc.next_id, 1);
+        assert!(doc.path.is_none());
+        assert!(doc.dirty);
+    }
+
+    #[test]
+    fn install_loaded_project_clears_history() {
+        let mut doc = doc_with_history_entry();
+        let _ = install_loaded_project(
+            &mut doc,
+            Project::new("loaded"),
+            PathBuf::from("/tmp/x.pixhaus"),
+        );
+        assert_eq!(
+            doc.history.node_count(),
+            0,
+            "project_open must drop the previous session's undo history"
+        );
+        assert!(!doc.dirty, "loaded project starts clean");
+        assert_eq!(
+            doc.path.as_deref(),
+            Some(std::path::Path::new("/tmp/x.pixhaus"))
+        );
+    }
+
+    // ── stamp_save_metadata ───────────────────────────────────────────────
+
+    #[test]
+    fn stamp_save_metadata_initialises_created_at_when_zero() {
+        let mut project = Project::new("fresh");
+        project.metadata.created_at = 0;
+        stamp_save_metadata(&mut project, 1_700_000_000);
+        assert_eq!(project.metadata.created_at, 1_700_000_000);
+        assert_eq!(project.metadata.updated_at, 1_700_000_000);
+        assert_eq!(project.metadata.editor_version, env!("CARGO_PKG_VERSION"));
+    }
+
+    #[test]
+    fn stamp_save_metadata_preserves_existing_created_at() {
+        let mut project = Project::new("existing");
+        project.metadata.created_at = 1_000_000_000;
+        stamp_save_metadata(&mut project, 1_700_000_000);
+        assert_eq!(
+            project.metadata.created_at, 1_000_000_000,
+            "created_at must not be overwritten on subsequent saves"
+        );
+        assert_eq!(project.metadata.updated_at, 1_700_000_000);
+    }
+
+    // ── filesystem round-trip ─────────────────────────────────────────────
+    //
+    // Goes through the io crate (encode_to_file / decode_from_file) but
+    // bypasses the tauri command itself — `State<'_, AppState>` is not
+    // constructible from a unit test. The point of this test is to lock
+    // the metadata-stamping contract end-to-end: stamp + encode + decode
+    // returns a project whose updated_at and editor_version survived the
+    // archive round-trip.
+
+    #[test]
+    fn metadata_round_trips_through_pixhaus_archive() {
+        use pixhaus_io::pixhaus::{decode_from_file, encode_to_file};
+
+        let mut project = Project::new("round-trip");
+        project.metadata.created_at = 0;
+        stamp_save_metadata(&mut project, 1_700_000_000);
+
+        let nanos = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map_or(0, |d| d.as_nanos());
+        let path = std::env::temp_dir().join(format!(
+            "pixhaus-app-save-roundtrip-{}-{nanos}.pixhaus",
+            std::process::id(),
+        ));
+
+        let archive = PixhausArchive::new(project);
+        encode_to_file(&archive, &path).expect("encode");
+        let loaded = decode_from_file(&path).expect("decode");
+        let _ = std::fs::remove_file(&path);
+
+        assert_eq!(loaded.project.metadata.created_at, 1_700_000_000);
+        assert_eq!(loaded.project.metadata.updated_at, 1_700_000_000);
+        assert_eq!(
+            loaded.project.metadata.editor_version,
+            env!("CARGO_PKG_VERSION")
         );
     }
 }

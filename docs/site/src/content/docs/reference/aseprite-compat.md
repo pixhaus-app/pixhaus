@@ -54,7 +54,8 @@ Aseprite shortcuts Pixhaus does not yet bind by default — these will arrive wi
 | `B`, `E`, `M`, `Z`, `H`, `I`, `K`, `G` | Pencil / eraser / marquee / zoom / hand / eyedropper / shading / paint bucket | Planned: brush engine stream |
 | `Tab` | Toggle timeline panel | Planned: animation timeline stream |
 | `F1`–`F4` | Toggle layer / palette / preview / mini-editor panels | Planned: layer panel + palette panel + preview window streams |
-| `Ctrl+Y` (redo) | Pixhaus uses `Ctrl+Shift+Z` instead | Intentional divergence — `Ctrl+Y` is also bound to redo as a fallback once the redo command lands |
+| `Ctrl+Y` (redo) | Pixhaus uses `Ctrl+Shift+Z` instead | Intentional divergence |
+| `F7` (toggle layers) | Pixhaus uses `Ctrl+Shift+L` instead | Intentional divergence |
 | `Alt+N` | New frame | Planned: timeline stream |
 | `Shift+F1` | Toggle onion skin | Planned: animation timeline stream |
 | `Ctrl+Shift+M` | Sprite resize | Planned: canvas-edit stream |
