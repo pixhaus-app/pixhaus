@@ -1,9 +1,13 @@
 /**
  * export-icons.mjs
  *
- * Generates app/icons/  PNG rasters from the pixel-house symbol geometry
- * defined in brand/logo-symbol.svg.  All sizes are rendered from the same
- * integer cell grid so scaling never introduces sub-pixel blur.
+ * Generates app/icons/ PNG rasters from the pixel-house symbol. The
+ * geometry lives in the GRID constant below; brand/logo-symbol.svg
+ * mirrors it for vector consumers (web, docs, README). The two are
+ * kept in sync by hand — if you change one, change the other.
+ *
+ * All sizes are rendered from the same integer cell grid so scaling
+ * never introduces sub-pixel blur.
  *
  * Run via:  node scripts/run.mjs export-icons
  * Or directly: node scripts/export-icons.mjs
@@ -43,18 +47,22 @@ const GRID = [
 
 /** Render the 5x5 grid into a flat RGBA Uint8ClampedArray of size×size pixels. */
 function rasterize(size) {
-  // Largest integer cell size so that 5 cells leave equal padding.
+  // Largest integer cell size so 5 cells fit. When (size - used) is odd
+  // we can't split the leftover evenly; bias the extra pixel to the
+  // right/bottom so the visual offset is consistent across sizes.
   const cellSize = Math.floor(size / 5);
   const used = 5 * cellSize;
-  const pad = Math.floor((size - used) / 2);
+  const slack = size - used;
+  const padLeft = Math.floor(slack / 2);
+  // padRight = slack - padLeft (unused but kept for clarity)
 
   const buf = new Uint8ClampedArray(size * size * 4);
 
   for (let row = 0; row < 5; row++) {
     for (let col = 0; col < 5; col++) {
       const color = GRID[row][col] ? BRAND : CLEAR;
-      const ox = pad + col * cellSize;
-      const oy = pad + row * cellSize;
+      const ox = padLeft + col * cellSize;
+      const oy = padLeft + row * cellSize;
       for (let dy = 0; dy < cellSize; dy++) {
         for (let dx = 0; dx < cellSize; dx++) {
           const x = ox + dx;

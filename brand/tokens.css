@@ -1,13 +1,17 @@
 /*
   Pixhaus design tokens.
 
-  This file is the source of truth for the brand. Both the editor UI
-  (ui/src/index.css) and the marketing website (S47) derive their token
-  values from here.
+  This file is the source of truth for the brand palette, type scale,
+  spacing, radius, motion, and z-index. The marketing website (S47)
+  imports it directly. The editor UI (ui/src/index.css) currently
+  re-declares its own tokens; the long-term plan is for it to import
+  this file too, but the editor's --color-* aliases are baked into
+  many components and we want one stream to do that conversion cleanly.
 
   Import order in consuming packages:
     1. This file  (brand tokens)
-    2. Geist font declarations  (brand/fonts.css or 'geist/dist/fonts.css')
+    2. Geist font declarations  (consumers import @fontsource/geist
+       and @fontsource/geist-mono — no separate fonts.css)
     3. Local theme overrides
 
   Token naming:

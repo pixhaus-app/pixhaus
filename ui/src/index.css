@@ -146,26 +146,9 @@ select {
   --error: #d44a4a;
   --info: #5b9de8;
 
-  --color-bg-app: var(--bg-app);
-  --color-bg-panel: var(--bg-panel);
-  --color-bg-elevated: var(--bg-elevated);
-  --color-bg-hover: var(--bg-hover);
-  --color-bg-active: var(--bg-active);
-  --color-bg-selection: var(--bg-selection);
-  --color-border: var(--border);
-  --color-border-strong: var(--border-strong);
-  --color-text-primary: var(--text-primary);
-  --color-text-secondary: var(--text-secondary);
-  --color-text-disabled: var(--text-disabled);
-  --color-text-on-accent: var(--text-on-accent);
-  --color-accent: var(--accent);
-  --color-accent-hover: var(--accent-hover);
-  --color-accent-subtle: var(--accent-subtle);
-  --color-accent-border: var(--accent-border);
-  --color-success: var(--success);
-  --color-warning: var(--warning);
-  --color-error: var(--error);
-  --color-info: var(--info);
+  /* No --color-* aliases here — the :root block above declares them
+     once via `var(--bg-app)` etc., and CSS resolves var() at render
+     time, so theme overrides of the underlying tokens propagate. */
 }
 
 /* ── Light theme ──────────────────────────────────────────────────────────── */
@@ -198,26 +181,7 @@ select {
   --error: #c43030;
   --info: #3870c0;
 
-  --color-bg-app: var(--bg-app);
-  --color-bg-panel: var(--bg-panel);
-  --color-bg-elevated: var(--bg-elevated);
-  --color-bg-hover: var(--bg-hover);
-  --color-bg-active: var(--bg-active);
-  --color-bg-selection: var(--bg-selection);
-  --color-border: var(--border);
-  --color-border-strong: var(--border-strong);
-  --color-text-primary: var(--text-primary);
-  --color-text-secondary: var(--text-secondary);
-  --color-text-disabled: var(--text-disabled);
-  --color-text-on-accent: var(--text-on-accent);
-  --color-accent: var(--accent);
-  --color-accent-hover: var(--accent-hover);
-  --color-accent-subtle: var(--accent-subtle);
-  --color-accent-border: var(--accent-border);
-  --color-success: var(--success);
-  --color-warning: var(--warning);
-  --color-error: var(--error);
-  --color-info: var(--info);
+  /* No --color-* aliases here — see :root block. */
 }
 
 /* ── Shared base styles that use the variables ────────────────────────────── */
