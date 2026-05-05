@@ -1,0 +1,76 @@
+// Tilemap editor state.
+//
+// This module owns all signals that drive the tilemap sub-UI: which tileset is
+// active, which tile the brush is carrying, the active tool, and whether
+// autotile resolution is enabled. The state is module-level (not component-
+// scoped) because the tileset panel, the rule editor, and the canvas input
+// handler all read and write the same signals.
+
+import { createSignal } from "solid-js";
+import type { AutotileKind, LayerId, Tileset, TilesetId } from "../lib/types";
+
+// ── TileFlags bit constants ────────────────────────────────────────────────
+// Mirrors core/src/project/tilemap.rs — TileFlags is a transparent u8.
+
+export const TILE_FLIP_X = 1 << 0;
+export const TILE_FLIP_Y = 1 << 1;
+export const TILE_FLIP_DIAGONAL = 1 << 2;
+
+// ── Active tilemap context ─────────────────────────────────────────────────
+
+/**
+ * Set when a tilemap layer is foregrounded; null otherwise.
+ * S17 (layer panel) will call `setActiveTilemapCtx` when the active layer
+ * changes. For now the user must call it directly (e.g. from a stub command).
+ */
+export type ActiveTilemapCtx = {
+  layerId: LayerId;
+  tilesetId: TilesetId;
+  tileset: Tileset;
+};
+
+export const [activeTilemapCtx, setActiveTilemapCtx] = createSignal<ActiveTilemapCtx | null>(null);
+
+// ── Tile selection ─────────────────────────────────────────────────────────
+
+// Selected tile index in the active tileset.
+// Index 0 is the empty tile by convention; 1 is the first paintable tile.
+export const [selectedTileIndex, setSelectedTileIndex] = createSignal<number>(1);
+
+// Bitfield of flags to apply when placing a tile (flip X, flip Y, diagonal).
+export const [selectedTileFlags, setSelectedTileFlags] = createSignal<number>(0);
+
+// ── Tool ──────────────────────────────────────────────────────────────────
+
+export type TilemapTool = "pencil" | "erase";
+
+export const [tilemapTool, setTilemapTool] = createSignal<TilemapTool>("pencil");
+
+// ── Autotile mode ──────────────────────────────────────────────────────────
+
+// When true, the brush resolves the autotile rule set after each stroke rather
+// than placing the selected tile index literally.
+export const [autotileMode, setAutotileMode] = createSignal(false);
+
+// ── Local autotile rule state ──────────────────────────────────────────────
+// Autotile kind / rule set for the active tileset.  Persisted to the project
+// once the full tilemap IPC (S06) lands; held in UI state for now.
+
+export const [localAutotileKind, setLocalAutotileKind] = createSignal<AutotileKind | null>(null);
+
+// ── Helpers ────────────────────────────────────────────────────────────────
+
+/** Returns true when the canvas is in tilemap-paint mode. */
+export function isTilemapActive(): boolean {
+  return activeTilemapCtx() !== null;
+}
+
+/**
+ * Resets tile selection and tool to defaults.
+ * Call when switching to a new tileset so stale selection state doesn't carry over.
+ */
+export function resetTileSelection(): void {
+  setSelectedTileIndex(1);
+  setSelectedTileFlags(0);
+  setTilemapTool("pencil");
+}
