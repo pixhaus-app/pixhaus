@@ -172,6 +172,76 @@ pub enum Error {
         max: u32,
     },
 
+    // ── Animated export (S11) ──────────────────────────────────────────────
+    /// The frame list passed to an animated exporter was empty.
+    #[error("no frames to export")]
+    NoAnimationFrames,
+
+    /// The number of composited frame buffers does not match the number of
+    /// frames declared in the sprite.
+    #[error("frame buffer count {buffers} does not match sprite frame count {frames}")]
+    AnimFrameCountMismatch {
+        /// Number of pixel buffers supplied by the caller.
+        buffers: usize,
+        /// Number of frames declared in the sprite.
+        frames: usize,
+    },
+
+    /// A composited frame buffer has the wrong dimensions for animated export.
+    #[error(
+        "animation frame {index} has wrong size: expected {expected_w}×{expected_h}, \
+         got {actual_w}×{actual_h}"
+    )]
+    AnimFrameSizeMismatch {
+        /// Zero-based frame index.
+        index: usize,
+        /// Expected width (from `Sprite.canvas`).
+        expected_w: u32,
+        /// Expected height (from `Sprite.canvas`).
+        expected_h: u32,
+        /// Actual buffer width.
+        actual_w: u32,
+        /// Actual buffer height.
+        actual_h: u32,
+    },
+
+    /// The existing palette has more entries than GIF supports (256 max).
+    #[error("existing palette has {count} entries; GIF supports at most 256")]
+    PaletteExceedsGifMax {
+        /// Number of palette entries in the project palette.
+        count: usize,
+    },
+
+    /// The `gif` crate reported an encoding error.
+    #[error("GIF encoding failed: {0}")]
+    GifEncode(#[from] gif::EncodingError),
+
+    /// The `webp` crate reported an error building the animated WebP.
+    #[error("animated WebP encoding failed: {0}")]
+    WebPEncode(String),
+
+    /// The caller passed `WebPOptions` with values outside the
+    /// libwebp-accepted ranges (`quality` `[0, 100]`, `method` `[0, 6]`,
+    /// `loop_count` `>= 0`). Caught up front so libwebp's opaque error
+    /// codes don't leak through.
+    #[error("invalid WebP options: {detail}")]
+    InvalidWebPOptions {
+        /// Human-readable description of which field was out of range.
+        detail: String,
+    },
+
+    /// No `ffmpeg` binary was found on `PATH`. MP4 export requires ffmpeg.
+    #[error("ffmpeg not found on PATH; install ffmpeg to enable MP4 export")]
+    FfmpegNotFound,
+
+    /// `ffmpeg` exited with a non-zero status code.
+    #[error("ffmpeg exited with status {code:?}: {stderr}")]
+    FfmpegFailed {
+        /// Exit code, if the process terminated normally.
+        code: Option<i32>,
+        /// Stderr captured from ffmpeg.
+        stderr: String,
+    },
     // ── Tiled TMX export (S12) ─────────────────────────────────────────────────
     /// Two or more tilemap layers passed to the TMX exporter have different
     /// `width` or `height` values. Tiled requires all layers in a map to
@@ -237,7 +307,6 @@ pub enum Error {
     /// The `psd` crate returned a parse error.
     #[error("PSD parse error: {0}")]
     PsdParse(String),
-
     // ── Aseprite (S08) ──────────────────────────────────────────────────────
     /// The first two bytes of the frame magic word (offset 4 of every
     /// frame header in an Aseprite file) do not match `0xF1FA`.

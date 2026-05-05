@@ -19,6 +19,7 @@
     )
 )]
 
+pub mod animated;
 pub mod aseprite;
 pub mod palette;
 pub mod pixhaus;
