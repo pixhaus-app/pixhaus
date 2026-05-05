@@ -1,0 +1,43 @@
+name: Visual Regression
+
+on:
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  visual:
+    name: Visual regression (chromium/linux)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: pnpm/action-setup@v6
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - name: pnpm install
+        run: pnpm install --frozen-lockfile
+
+      - name: Install Playwright browsers
+        run: pnpm --filter @pixhaus/visual-tests exec playwright install chromium --with-deps
+
+      - name: Run visual regression tests
+        run: pnpm visual:test
+
+      # Diff images are written to tests/visual/test-results/ on failure.
+      # Upload them so reviewers can inspect the regression without re-running.
+      - name: Upload diff artifacts
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: visual-regression-diffs-${{ github.run_id }}
+          path: tests/visual/test-results/
+          retention-days: 14
