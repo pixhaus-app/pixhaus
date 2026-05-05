@@ -46,14 +46,15 @@ const PaletteIOMenu: Component<Props> = (props) => {
   const [exportFormat, setExportFormat] = createSignal<Format>("gpl");
   const [error, setError] = createSignal<string | null>(null);
 
-  let fileInput: HTMLInputElement | undefined;
+  // Solid binds the ref synchronously when the <input> mounts, before any
+  // user click can fire handleImportClick. Use the definite-assignment
+  // assertion (`!`) so we can drop the redundant truthiness check.
+  let fileInput!: HTMLInputElement;
 
   const handleImportClick = () => {
     setError(null);
-    if (fileInput) {
-      fileInput.accept = FORMAT_ACCEPT[importFormat()];
-      fileInput.click();
-    }
+    fileInput.accept = FORMAT_ACCEPT[importFormat()];
+    fileInput.click();
   };
 
   const handleFileChange = (e: Event) => {
