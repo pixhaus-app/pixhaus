@@ -1,7 +1,15 @@
 /* ── Base ──────────────────────────────────────────────────────────────────── */
 
 :root {
-  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+  font-family:
+    "Geist",
+    -apple-system,
+    BlinkMacSystemFont,
+    "Segoe UI",
+    Roboto,
+    Helvetica,
+    Arial,
+    sans-serif;
   font-size: 13px;
   line-height: 1.4;
   -webkit-font-smoothing: antialiased;
@@ -59,7 +67,7 @@ select {
   --text-disabled: #4a4a60;
   --text-on-accent: #ffffff;
 
-  /* Accent — Pixhaus brand blue-violet */
+  /* Accent — Pixhaus Indigo (brand primary) */
   --accent: #7c6cef;
   --accent-hover: #9080f8;
   --accent-subtle: rgba(124, 108, 239, 0.15);
@@ -73,9 +81,9 @@ select {
 
   /* Shell geometry */
   --statusbar-height: 22px;
-  --titlebar-height: 0px; /* OS provides title bar */
+  --titlebar-height: 0px;
 
-  /* Palette: command palette overlay */
+  /* Command palette overlay */
   --palette-backdrop: rgba(0, 0, 0, 0.6);
   --palette-width: 580px;
   --palette-max-height: 420px;
@@ -84,6 +92,28 @@ select {
   /* Transition */
   --transition-fast: 80ms ease;
   --transition-mid: 150ms ease;
+
+  /* brand/tokens.css aliases — consumed by S47 website sharing this token set */
+  --color-bg-app: var(--bg-app);
+  --color-bg-panel: var(--bg-panel);
+  --color-bg-elevated: var(--bg-elevated);
+  --color-bg-hover: var(--bg-hover);
+  --color-bg-active: var(--bg-active);
+  --color-bg-selection: var(--bg-selection);
+  --color-border: var(--border);
+  --color-border-strong: var(--border-strong);
+  --color-text-primary: var(--text-primary);
+  --color-text-secondary: var(--text-secondary);
+  --color-text-disabled: var(--text-disabled);
+  --color-text-on-accent: var(--text-on-accent);
+  --color-accent: var(--accent);
+  --color-accent-hover: var(--accent-hover);
+  --color-accent-subtle: var(--accent-subtle);
+  --color-accent-border: var(--accent-border);
+  --color-success: var(--success);
+  --color-warning: var(--warning);
+  --color-error: var(--error);
+  --color-info: var(--info);
 }
 
 /* ── Dark theme ───────────────────────────────────────────────────────────── */
@@ -115,6 +145,10 @@ select {
   --warning: #d4922e;
   --error: #d44a4a;
   --info: #5b9de8;
+
+  /* No --color-* aliases here — the :root block above declares them
+     once via `var(--bg-app)` etc., and CSS resolves var() at render
+     time, so theme overrides of the underlying tokens propagate. */
 }
 
 /* ── Light theme ──────────────────────────────────────────────────────────── */
@@ -146,6 +180,8 @@ select {
   --warning: #c07820;
   --error: #c43030;
   --info: #3870c0;
+
+  /* No --color-* aliases here — see :root block. */
 }
 
 /* ── Shared base styles that use the variables ────────────────────────────── */
