@@ -29,13 +29,13 @@ export const [onionSkinPrev, setOnionSkinPrev] = createSignal(1);
 export const [onionSkinNext, setOnionSkinNext] = createSignal(1);
 export const [onionSkinOpacity, setOnionSkinOpacity] = createSignal(0.4);
 
-// Currently foregrounded sprite and frame.
+// Currently foregrounded sprite, frame, and layer.
+//
+// activeLayerId is owned by this module (not the layer panel) so the
+// canvas input handler can read it without a circular import. The
+// layer panel writes to it via setActiveLayerId on selection.
 export const [activeSpriteId, setActiveSpriteId] = createSignal<SpriteId | null>(null);
 export const [activeFrameIndex, setActiveFrameIndex] = createSignal<number>(0);
-
-// Currently selected layer. Null when no project is open or no layer is
-// focused. S17 (layer panel) will own the write side; this module owns the
-// signal so the canvas input handler can read it without a circular import.
 export const [activeLayerId, setActiveLayerId] = createSignal<LayerId | null>(null);
 
 // Active selection rect in canvas coordinates, null when no selection.
@@ -145,5 +145,6 @@ export function resetViewport(
 
   setActiveSpriteId(spriteId);
   setActiveFrameIndex(0);
+  setActiveLayerId(null);
   scheduleViewportSync();
 }

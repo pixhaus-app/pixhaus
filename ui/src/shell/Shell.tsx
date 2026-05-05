@@ -11,6 +11,8 @@ import PreferencesModal from "../preferences/PreferencesModal";
 import StatusBar from "./StatusBar";
 import WelcomeScreen from "./WelcomeScreen";
 import Canvas from "../canvas/Canvas";
+import LayerPanel from "../layers/LayerPanel";
+import { isLayerPanelVisible } from "../layers/layer-state";
 import PalettePanel from "../palette/PalettePanel";
 import TilemapPanel from "../tilemap/TilemapPanel";
 import { activeTilemapCtx } from "../tilemap/tilemap-state";
@@ -44,10 +46,15 @@ const Shell: Component = () => {
             <WelcomeScreen />
           </Show>
           <Show when={activeProject() !== null}>
-            <div class="shell-workspace">
-              <Canvas />
-              <Show when={activeTilemapCtx() !== null}>
-                <TilemapPanel />
+            <div class="editor-layout">
+              <div class="editor-layout__canvas">
+                <Canvas />
+                <Show when={activeTilemapCtx() !== null}>
+                  <TilemapPanel />
+                </Show>
+              </div>
+              <Show when={isLayerPanelVisible()}>
+                <LayerPanel />
               </Show>
             </div>
           </Show>
