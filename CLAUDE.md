@@ -76,11 +76,11 @@ pnpm finalize <worktree> <task> ok    # after the PR merges; flips queue to DONE
 
 ## Conventions
 
-**Branches:** `feat/sNN-<slug>` for streams, `fix/<issue>-<slug>`, `chore/<slug>`, `docs/<slug>`.
+**Branches:** `feat/sNN-<slug>` for streams, `fix/<issue>-<slug>`, `chore/<slug>`, `docs/<slug>`. Every change ships on its own branch — never commit directly to `main`, even for one-line fixes. If you find yourself on `main` with edits, branch first and re-apply.
 
 **Commits:** Conventional Commits — `feat:`, `fix:`, `chore:`, `docs:`, `refactor:`, `test:`.
 
-**PRs:** open against `main`. Never merge directly. Reference the stream from `docs/planning/work/streams.md`. Use the PR template — what changed, why, test plan, screenshots if UI.
+**PRs:** every push opens a PR. Run `gh pr create --base main` immediately after `git push -u origin <branch>` — don't stop at the push and don't wait to be asked. Never merge directly. Reference the stream from `docs/planning/work/streams.md`. Use the PR template — what changed, why, test plan, screenshots if UI.
 
 **Errors:** `thiserror` in library crates (`core`, `io`, `ai`, `scripting`). `anyhow` only in `app/`. Never `Box<dyn Error>` in public APIs. No `unwrap()` or `panic!()` outside tests.
 
