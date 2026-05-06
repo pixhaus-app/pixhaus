@@ -30,6 +30,7 @@ import {
 } from "../crash-reporting/crash-reporting";
 import TimelinePanel from "../timeline/TimelinePanel";
 import { isTimelinePanelVisible } from "../timeline/timeline-state";
+import { isPalettePanelVisible, isTilemapPanelVisible } from "./panel-state";
 
 const Shell: Component = () => {
   onMount(() => {
@@ -83,7 +84,7 @@ const Shell: Component = () => {
               <div class="editor-layout__canvas-area">
                 <div class="editor-layout__canvas">
                   <Canvas />
-                  <Show when={activeSpriteId() !== null}>
+                  <Show when={activeSpriteId() !== null && isTilemapPanelVisible()}>
                     <TilemapPanel />
                   </Show>
                 </div>
@@ -98,7 +99,9 @@ const Shell: Component = () => {
           </Show>
         </div>
 
-        <PalettePanel spriteId={activeSpriteId()} />
+        <Show when={isPalettePanelVisible()}>
+          <PalettePanel spriteId={activeSpriteId()} />
+        </Show>
       </div>
 
       <StatusBar />

@@ -99,6 +99,8 @@ pub fn run() -> Result<(), AppError> {
             menu::handle_event(app, &event);
         })
         .invoke_handler(tauri::generate_handler![
+            // app info
+            commands::app_info::app_about,
             // crash reporting
             commands::crash_reporting::crash_reporting_get_enabled,
             commands::crash_reporting::crash_reporting_set_enabled,
