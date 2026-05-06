@@ -32,9 +32,13 @@ import {
   activeSpriteId,
   activeFrameIndex,
   selectionRect,
+  resetCanvasState,
+  resetViewport,
 } from "./canvas-state";
 import { activeProject } from "../project-state";
+import type { ProjectStatus } from "../lib/commands/project";
 import { canvasComposite } from "../lib/commands/canvas";
+import { spriteList } from "../lib/commands/project";
 
 // ── Tile-dirty event payload ────────────────────────────────────────────────
 
@@ -112,6 +116,60 @@ const Canvas: Component = () => {
         width: p.width,
         height: p.height,
       });
+    });
+
+    // ── Auto-select first sprite when a project loads ─────────────────────
+    //
+    // Nothing else sets activeSpriteId on project open; without this the
+    // canvas compositor and layer panel never fire their first IPC calls.
+    // Re-fires on every project-identity change (project_new and
+    // project_open both publish a fresh ProjectStatus), and clears
+    // per-document canvas state when the project closes so a stale
+    // activeSpriteId from the previous project doesn't pre-empt the next
+    // auto-select.
+    //
+    // Cancellation: each invocation captures a request id; the .then
+    // bails when a newer call has bumped the counter, so a slow
+    // sprite_list response from a closed project can't write into the
+    // currently-open one. Mirrors the compositeRequestId pattern below.
+    let lastSeenProject: ProjectStatus | null = null;
+    let spriteListRequestId = 0;
+    createEffect(() => {
+      const proj = activeProject();
+      if (proj === lastSeenProject) return;
+      lastSeenProject = proj;
+      if (!proj) {
+        resetCanvasState();
+        return;
+      }
+      // Drop any previous-project selection so the !== null check below
+      // doesn't short-circuit on a stale id from a different document.
+      resetCanvasState();
+
+      const requestId = ++spriteListRequestId;
+      spriteList()
+        .then((sprites) => {
+          if (requestId !== spriteListRequestId) return; // stale
+          const first = sprites[0];
+          if (!first) return;
+          // Read viewport dimensions live: the ResizeObserver may not
+          // have fired by the time sprite_list resolves on a fresh
+          // mount, leaving vpW/vpH at their initial 1. The container
+          // ref always has its layout box by here because the effect
+          // runs after onMount.
+          const rect = containerEl.getBoundingClientRect();
+          resetViewport(
+            first.canvas.width,
+            first.canvas.height,
+            Math.max(rect.width, 1),
+            Math.max(rect.height, 1),
+            first.id,
+          );
+        })
+        .catch((err: unknown) => {
+          if (requestId !== spriteListRequestId) return;
+          console.warn("[pixhaus] sprite_list failed:", err);
+        });
     });
 
     // ── Reactive bridge: push signal changes to the renderer ─────────────
@@ -201,6 +259,10 @@ const Canvas: Component = () => {
     });
 
     onCleanup(() => {
+      // Bump the request id so any in-flight sprite_list / canvas_composite
+      // .then bails before mutating destroyed state.
+      spriteListRequestId++;
+      compositeRequestId++;
       ro.disconnect();
       detachInput();
       tileDirtyPromise

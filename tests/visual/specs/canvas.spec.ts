@@ -1,17 +1,15 @@
 // Visual regression tests for the canvas viewport.
 //
-// Depends on: S14 (canvas renderer). Tests here validate the canvas container
-// structure and overlay elements. Pixel-level WebGL rendering requires the
-// Rust backend, which is not available in the Vite-only test environment —
-// the canvas element renders but tile data is never received.
+// The Tauri mock provides realistic defaults for sprite_list, canvas_composite,
+// layer_list, and other commands issued during canvas startup — see
+// helpers/tauri-mock.ts. Tests override project_new so the shell transitions
+// from WelcomeScreen to Canvas, then rely on the global defaults to fill in
+// the sprite metadata so the renderer draws a 32×32 checkerboard rather than
+// a black rectangle.
 //
-// When S14 is complete, extend these tests with:
-//   - canvas at 100% zoom with a 32x32 sprite
-//   - canvas at 800% zoom showing the pixel grid overlay
-//   - onion skin overlay rendering
-//
-// Each UI stream should add its own spec file; this file ships the harness
-// pattern for canvas-level visual tests.
+// Pixel-level tile data (canvas:tile-dirty events) requires the Rust backend
+// and is not exercised here. Once S01 (pixel buffers) lands these tests can
+// fire synthetic tile events to exercise the full compositing path.
 
 import { test, expect } from "@playwright/test";
 import { injectTauriMock, mockInvokeResponse } from "../helpers/tauri-mock";
@@ -41,10 +39,16 @@ test.beforeEach(async ({ page }) => {
   await page.waitForSelector(".shell");
 });
 
-test("canvas mounts after project_new resolves", async ({ page }) => {
+// Opens the project and waits for the canvas element to be visible.
+// The ResizeObserver fires synchronously on mount so by the time
+// toBeVisible() resolves the canvas.width has already been set.
+async function openProjectAndWaitForCanvas(page: import("@playwright/test").Page) {
   await page.getByRole("button", { name: "New Project" }).click();
-  // Canvas container should replace the welcome screen.
-  await expect(page.locator(".canvas-container")).toBeVisible();
+  await expect(page.locator(".canvas-container canvas")).toBeVisible();
+}
+
+test("canvas mounts and renders checkerboard after project_new resolves", async ({ page }) => {
+  await openProjectAndWaitForCanvas(page);
   await expect(page.locator(".welcome")).not.toBeVisible();
   await expect(page).toHaveScreenshot("canvas-with-project.png");
 });
@@ -56,9 +60,8 @@ test("status bar reflects the open project name", async ({ page }) => {
 });
 
 test("canvas element is present and sized in the DOM", async ({ page }) => {
-  await page.getByRole("button", { name: "New Project" }).click();
+  await openProjectAndWaitForCanvas(page);
   const canvas = page.locator(".canvas-container canvas");
-  await expect(canvas).toBeVisible();
   // The canvas must have non-zero dimensions after mount.
   const box = await canvas.boundingBox();
   expect(box).not.toBeNull();

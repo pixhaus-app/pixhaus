@@ -2,17 +2,17 @@
 
 Playwright + pixelmatch harness for the editor UI. Runs in CI on Linux Chromium with a fixed 1280×800 viewport.
 
-## Bootstrapping baselines
+## Baselines
 
-Baselines (`tests/visual/baselines/*.png`) are not committed yet. The first CI run on `main` after this harness merges will fail because no reference images exist.
+Baselines (`tests/visual/baselines/*.png`) are committed and were generated on Linux (Ubuntu 22.04, Playwright Chromium) to match CI rendering.
 
-To bootstrap:
+To regenerate after an intentional UI change:
 
 ```bash
 # Inside a Linux environment that matches CI (Ubuntu 22.04, Chromium):
 pnpm visual:update    # runs `playwright test --update-snapshots`
 git add tests/visual/baselines
-git commit -m "test(visual): bootstrap baseline screenshots"
+git commit -m "test(visual): update baseline screenshots"
 ```
 
 Do not generate baselines on Windows or macOS — Chromium font hinting and antialiasing differ across platforms by enough pixels to break the 2% tolerance once the run lands on Linux CI.
