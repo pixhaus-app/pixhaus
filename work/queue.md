@@ -84,7 +84,7 @@ description and the linked review comments are the source of truth.
 
 Items the third-wave review surfaced that did not fit any single stream's scope.
 
-- [ ] UNCLAIMED: S15-prep — add a pixel-buffer cache to `app::state::DocumentStore` so loaded sprites retain their pixels across the `decode_from_file` round-trip. Today `project_open` drops `archive.buffers` and `project_save` ships `buffers: Vec::new()`, which is fine while the canvas composite is stubbed but blocks the real S15 painting work. Surfaced by Copilot review of PR #49 (the `S15-prep` queue entry the followup batch noted but never logged). Independent of bedrock; touches `app/src/state.rs` and the `project_open`/`project_save` commands.
+- [x] DONE: S15-prep — add a pixel-buffer cache to `app::state::DocumentStore` so loaded sprites retain their pixels across the `decode_from_file` round-trip. Surfaced by Copilot review of PR #49. Touches `app/src/state.rs` and the `project_open`/`project_save`/`project_import_psd` commands. Shipped: PR #63.
 - [x] DONE: ui-toast — replaced `window.alert()` in `reportCommandFailure` with a non-blocking toast host (`ui/src/lib/toast/`). ToastHost is mounted once in Shell; any catch block calls `pushToast()`. Auto-dismiss after 6s; manual close button.
 
 ## Operating notes
