@@ -47,12 +47,10 @@ function loadCrashDialogShown(): boolean {
 function loadOrCreateUid(): string {
   const stored = localStorage.getItem(CRASH_UID_KEY);
   if (stored) return stored;
-  // Generate a simple random UUID v4 without a library dependency.
-  const uid = "xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx".replace(/[xy]/g, (c) => {
-    const r = (Math.random() * 16) | 0;
-    const v = c === "x" ? r : (r & 0x3) | 0x8;
-    return v.toString(16);
-  });
+  // Tauri's webview is modern Chromium (>= 92) so crypto.randomUUID is
+  // always available; no fallback needed. Math.random()-based UUIDs are
+  // not cryptographically random and easily collide across reinstalls.
+  const uid = crypto.randomUUID();
   localStorage.setItem(CRASH_UID_KEY, uid);
   return uid;
 }

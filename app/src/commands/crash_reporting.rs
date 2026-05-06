@@ -28,14 +28,28 @@ pub fn crash_reporting_set_enabled(enabled: bool) {
 mod tests {
     use super::*;
 
+    /// Captures the global `crash_reporting::ENABLED` atomic on
+    /// construction and restores it on drop. Both tests in this module
+    /// mutate the same global, so without this guard the order in which
+    /// nextest scheduled them affected later runs (especially when
+    /// run with `--test-threads=8`).
+    struct EnabledGuard(bool);
+    impl Drop for EnabledGuard {
+        fn drop(&mut self) {
+            crash_reporting::set_enabled(self.0);
+        }
+    }
+
     #[test]
     fn get_enabled_returns_current_state() {
+        let _guard = EnabledGuard(crash_reporting::is_enabled());
         crash_reporting::set_enabled(false);
         assert!(!crash_reporting_get_enabled());
     }
 
     #[test]
     fn set_enabled_round_trips() {
+        let _guard = EnabledGuard(crash_reporting::is_enabled());
         crash_reporting::set_enabled(false);
         crash_reporting_set_enabled(true);
         assert!(crash_reporting::is_enabled());

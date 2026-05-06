@@ -29,13 +29,17 @@ import {
   setCrashReportingEnabled as setSentryEnabled,
 } from "../crash-reporting/crash-reporting";
 
-// Import to trigger initial theme application as a side effect
-import "../preferences/preferences-store";
-
 const Shell: Component = () => {
   onMount(() => {
     // Initialise JS-layer crash reporting using the stored preference.
     initCrashReporting({ enabled: crashReportingEnabled(), uid: crashReportingUid });
+    // Sync the Rust-side ENABLED gate so the panic hook honours the same
+    // persisted preference. Without this, a user who opted in on a
+    // previous session restarts to a state where the JS Sentry client
+    // is initialised but Rust drops every panic in `before_send` until
+    // they interact with the dialog again. setSentryEnabled returns void
+    // and handles its own IPC errors internally — fire-and-forget.
+    setSentryEnabled(crashReportingEnabled());
 
     // Forward native menu events to the command dispatcher
     const menuListenerPromise = listen<string>("shell:menu", (event) => {

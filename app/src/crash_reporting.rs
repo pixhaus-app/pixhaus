@@ -2,13 +2,17 @@
 //!
 //! Controlled at runtime by the user's preference. If no DSN was compiled
 //! in via `PIXHAUS_SENTRY_DSN`, the module is a no-op: all public symbols
-//! still exist so call sites compile identically across configurations.
+//! still exist so call sites compile identically across configurations,
+//! but `init()` returns an empty guard and the Sentry panic hook is
+//! never installed.
 //!
 //! Call [`init`] once at startup (before async work starts), hold the
 //! returned [`Guard`] for the full process lifetime, then call
-//! [`set_enabled`] whenever the user preference changes. The Sentry
-//! client is initialized regardless so the panic hook is always in place;
-//! a `before_send` callback gates all events behind the preference flag.
+//! [`set_enabled`] whenever the user preference changes. When a DSN is
+//! present the Sentry client is initialised unconditionally so the
+//! panic hook is always wired up; a `before_send` callback gates all
+//! events behind the runtime preference flag so opting out drops
+//! events at the client rather than skipping the install entirely.
 
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};

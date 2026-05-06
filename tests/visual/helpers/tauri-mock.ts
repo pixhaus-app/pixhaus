@@ -122,6 +122,19 @@ export const TAURI_MOCK_SCRIPT = `
 
   // Plugin namespace — plugins check for window.__TAURI__.<plugin>.
   window.__TAURI__ = {};
+
+  // Suppress the first-launch crash-reporting consent dialog so it
+  // doesn't intercept pointer events in tests. The Shell renders the
+  // dialog whenever localStorage 'pixhaus:crash-reporting-dialog-shown'
+  // is unset, and Playwright runs each test in a fresh context with
+  // empty storage. Pre-seeding the flag matches what a returning user
+  // sees and keeps the visual tests focused on the actual editor UI.
+  try {
+    localStorage.setItem('pixhaus:crash-reporting-dialog-shown', '1');
+  } catch (_err) {
+    // localStorage may be unavailable in some test environments;
+    // dialog suppression is best-effort here.
+  }
 })();
 `;
 
