@@ -20,6 +20,7 @@
 
 pub mod auto_mesh_deformation;
 pub mod cleanup;
+pub mod continue_verb;
 pub mod critique;
 pub mod extend;
 pub mod inbetween;
