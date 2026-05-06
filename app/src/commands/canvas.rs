@@ -1,8 +1,9 @@
 //! Canvas operation commands.
 //!
-//! Pixel-drawing operations (`draw_stroke`, `fill`, `transform`) are stubbed
-//! until stream S01 (pixel buffer and blend modes) lands. Viewport, selection,
-//! and composite-info commands are fully implemented.
+//! Pixel-drawing operations (`draw_stroke`, `fill`) are stubbed until stream
+//! S01 (pixel buffer and blend modes) lands. Transform operations are
+//! implemented as of stream S04. Viewport, selection, and composite-info
+//! commands are fully implemented.
 
 use base64::Engine;
 use pixhaus_core::canvas::PixelBuffer;
@@ -11,6 +12,8 @@ use pixhaus_core::project::{
     CanvasState, Cel, CelData, FrameIndex, LayerId, PixelBufferId, Rgba, SelectionRegion,
     SelectionState, Size, SpriteId,
 };
+use pixhaus_core::selection::SelectionMask;
+use pixhaus_core::transforms::{self, RotateMode, ScaleMode, TransformSpec};
 use pixhaus_io::pixhaus::PixelBufferEntry;
 use serde::{Deserialize, Serialize};
 use tauri::{AppHandle, Emitter, State};
@@ -78,7 +81,117 @@ pub struct FillArgs {
     pub tolerance: u8,
 }
 
-/// Arguments for a transform operation. Requires S01.
+/// One transform operation in a [`TransformArgs`] batch.
+///
+/// Operations are applied in order. The output of each becomes the
+/// input of the next.
+#[derive(Debug, Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum TransformOpArg {
+    /// Integer-pixel translate.
+    Translate {
+        /// Horizontal offset in pixels. Positive moves right.
+        dx: i32,
+        /// Vertical offset in pixels. Positive moves down.
+        dy: i32,
+    },
+    /// Resize using nearest-neighbor sampling.
+    ScaleNearest {
+        /// Target width in pixels.
+        new_width: u32,
+        /// Target height in pixels.
+        new_height: u32,
+    },
+    /// Integer-multiple upscale — each pixel becomes an N×N block.
+    ScaleIntegerMultiple {
+        /// Scale factor. Each source pixel becomes `factor × factor` pixels.
+        factor: u32,
+    },
+    /// Integer-divisor downscale — samples top-left of each N×N block.
+    ScaleIntegerDivisor {
+        /// Divisor. Each `divisor × divisor` block maps to one output pixel.
+        divisor: u32,
+    },
+    /// 90° clockwise rotation (lossless).
+    Rotate90Cw,
+    /// 90° counter-clockwise rotation (lossless).
+    Rotate90Ccw,
+    /// 180° rotation (lossless).
+    Rotate180,
+    /// Arbitrary rotation via `RotSprite` (pixel-art quality).
+    RotateRotSprite {
+        /// Rotation angle in degrees, counter-clockwise.
+        degrees: f32,
+    },
+    /// Arbitrary rotation via direct bilinear interpolation.
+    RotateBilinear {
+        /// Rotation angle in degrees, counter-clockwise.
+        degrees: f32,
+    },
+    /// Horizontal mirror.
+    FlipHorizontal,
+    /// Vertical mirror.
+    FlipVertical,
+    /// Horizontal shear by `factor` pixels per row.
+    SkewX {
+        /// Shear magnitude: horizontal offset per pixel of height.
+        factor: f32,
+    },
+    /// Vertical shear by `factor` pixels per column.
+    SkewY {
+        /// Shear magnitude: vertical offset per pixel of width.
+        factor: f32,
+    },
+    /// Projective warp — `corners` is `[TL, TR, BR, BL]` in canvas pixels.
+    Perspective {
+        /// Destination corners: `[top-left, top-right, bottom-right, bottom-left]`.
+        corners: [(f32, f32); 4],
+    },
+}
+
+impl TransformOpArg {
+    fn to_transform_spec(&self) -> TransformSpec {
+        match self {
+            Self::Translate { dx, dy } => TransformSpec::Translate { dx: *dx, dy: *dy },
+            Self::ScaleNearest {
+                new_width,
+                new_height,
+            } => TransformSpec::Scale {
+                new_width: *new_width,
+                new_height: *new_height,
+                mode: ScaleMode::NearestNeighbor,
+            },
+            Self::ScaleIntegerMultiple { factor } => TransformSpec::Scale {
+                new_width: 0, // not used for IntegerMultiple
+                new_height: 0,
+                mode: ScaleMode::IntegerMultiple(*factor),
+            },
+            Self::ScaleIntegerDivisor { divisor } => TransformSpec::Scale {
+                new_width: 0,
+                new_height: 0,
+                mode: ScaleMode::IntegerDivisor(*divisor),
+            },
+            Self::Rotate90Cw => TransformSpec::Rotate90Cw,
+            Self::Rotate90Ccw => TransformSpec::Rotate90Ccw,
+            Self::Rotate180 => TransformSpec::Rotate180,
+            Self::RotateRotSprite { degrees } => TransformSpec::RotateArbitrary {
+                degrees: *degrees,
+                mode: RotateMode::RotSprite,
+            },
+            Self::RotateBilinear { degrees } => TransformSpec::RotateArbitrary {
+                degrees: *degrees,
+                mode: RotateMode::Bilinear,
+            },
+            Self::FlipHorizontal => TransformSpec::FlipHorizontal,
+            Self::FlipVertical => TransformSpec::FlipVertical,
+            Self::SkewX { factor } => TransformSpec::SkewX { factor: *factor },
+            Self::SkewY { factor } => TransformSpec::SkewY { factor: *factor },
+            Self::Perspective { corners } => TransformSpec::Perspective { corners: *corners },
+        }
+    }
+}
+
+/// Arguments for a transform operation batch.
 #[derive(Debug, Deserialize)]
 pub struct TransformArgs {
     /// Target sprite.
@@ -87,16 +200,9 @@ pub struct TransformArgs {
     pub layer_id: LayerId,
     /// Target frame (0-indexed).
     pub frame_index: u32,
-    /// Translation delta in canvas pixels.
-    pub translate_x: i32,
-    /// Translation delta in canvas pixels.
-    pub translate_y: i32,
-    /// Horizontal flip.
-    pub flip_x: bool,
-    /// Vertical flip.
-    pub flip_y: bool,
-    /// Clockwise rotation in 90-degree steps (0–3).
-    pub rotate_cw90: u8,
+    /// Ordered list of operations to apply. Applied sequentially; the
+    /// output of each becomes the input of the next.
+    pub ops: Vec<TransformOpArg>,
 }
 
 /// Metadata returned by [`canvas_composite`].
@@ -572,17 +678,239 @@ pub async fn canvas_fill(
     )
 }
 
-/// Applies a geometric transform (translate, flip, rotate) to a layer cel.
+/// Applies one or more geometric transforms to a raster layer cel.
 ///
-/// Requires stream S01 (pixel buffers). Returns an error until S01 lands.
+/// Operations in `args.ops` are applied sequentially; the output of each
+/// step becomes the input of the next. The final result is written back to
+/// the pixel buffer store and the cel's size is updated if the dimensions
+/// changed (e.g. after a 90° rotation).
+///
+/// The active canvas selection is forwarded to transforms that support it
+/// ([`TransformOpArg::Translate`], [`TransformOpArg::FlipHorizontal`],
+/// [`TransformOpArg::FlipVertical`]). Other operations ignore the selection
+/// and apply to the full buffer.
+///
+/// # Errors
+///
+/// - [`AppCommandError::NoActiveProject`] — no project is open.
+/// - [`AppCommandError::NotFound`] — sprite, layer, cel, or pixel buffer
+///   is not present.
+/// - [`AppCommandError::Validation`] — transform failed (e.g. empty buffer,
+///   invalid scale factor).
+/// - [`AppCommandError::Unimplemented`] — cel is not a raster cel.
+#[allow(
+    clippy::too_many_lines,
+    clippy::cast_possible_wrap,
+    clippy::cast_sign_loss,
+    clippy::cast_possible_truncation
+)]
 #[tauri::command(async, rename_all = "snake_case")]
 pub async fn canvas_transform(
-    _args: TransformArgs,
-    _state: State<'_, AppState>,
+    args: TransformArgs,
+    state: State<'_, AppState>,
+    app: AppHandle,
 ) -> CommandResult<()> {
-    Err(AppCommandError::Unimplemented {
-        stream: "S01 (pixel buffers)".into(),
-    })
+    let mut doc = state.doc.write().await;
+    let frame_index = FrameIndex::new(args.frame_index);
+
+    // ── Phase 1: read project state, then release the borrow ──────────────
+    // `doc.project` and `doc.pixel_buffers` are separate fields but Rust
+    // can't tell that through a shared `&mut doc` borrow, so we extract
+    // everything we need from the project before touching pixel_buffers.
+    let (sprite_idx, buf_id, cel_pos, sprite_canvas_w, sprite_canvas_h, selection_region) = {
+        let project = doc
+            .project
+            .as_ref()
+            .ok_or(AppCommandError::NoActiveProject)?;
+
+        let sprite_idx = project
+            .sprites
+            .iter()
+            .position(|s| s.id == args.sprite_id)
+            .ok_or_else(|| AppCommandError::NotFound {
+                entity: "sprite".into(),
+                id: u64::from(args.sprite_id.get()),
+            })?;
+
+        let sprite = &project.sprites[sprite_idx];
+        let cel = sprite
+            .cels
+            .iter()
+            .find(|c| c.layer_id == args.layer_id && c.frame_index == frame_index)
+            .ok_or_else(|| AppCommandError::NotFound {
+                entity: "cel".into(),
+                id: u64::from(args.frame_index),
+            })?;
+
+        let buf_id = match &cel.data {
+            CelData::Raster { buffer, .. } => *buffer,
+            _ => {
+                return Err(AppCommandError::Unimplemented {
+                    stream: "raster cels only".into(),
+                });
+            }
+        };
+
+        let selection_region = project.selection.region.clone();
+        (
+            sprite_idx,
+            buf_id,
+            cel.position,
+            sprite.canvas.width,
+            sprite.canvas.height,
+            selection_region,
+        )
+    }; // project borrow released
+
+    // ── Phase 2: pixel buffer operations ──────────────────────────────────
+    let entry_idx = doc
+        .pixel_buffers
+        .iter()
+        .position(|e| e.id == buf_id.get())
+        .ok_or_else(|| AppCommandError::NotFound {
+            entity: "pixel buffer".into(),
+            id: u64::from(buf_id.get()),
+        })?;
+
+    let pixel_buf = {
+        let entry = &doc.pixel_buffers[entry_idx];
+        PixelBuffer::from_raw(
+            entry.width,
+            entry.height,
+            entry.stride,
+            entry.pixels.clone(),
+        )
+        .map_err(|e| AppCommandError::Validation {
+            detail: e.to_string(),
+        })?
+    };
+
+    // ── Build a selection mask for the cel, if there is one ────────────────
+    let mask: Option<SelectionMask> = match &selection_region {
+        None => None,
+        Some(SelectionRegion::Rect { bounds }) => {
+            let bw = pixel_buf.width();
+            let bh = pixel_buf.height();
+            let mut m = SelectionMask::new(bw, bh).map_err(|e| AppCommandError::Validation {
+                detail: e.to_string(),
+            })?;
+            // Convert canvas-space rect to cel-local buffer coordinates.
+            let rx = bounds.origin.x - cel_pos.x;
+            let ry = bounds.origin.y - cel_pos.y;
+            let rw = bounds.size.width as i32;
+            let rh = bounds.size.height as i32;
+            for y in 0..bh as i32 {
+                for x in 0..bw as i32 {
+                    if x >= rx && x < rx + rw && y >= ry && y < ry + rh {
+                        m.set(x as u32, y as u32, 255);
+                    }
+                }
+            }
+            if m.selected_count() == 0 {
+                None
+            } else {
+                Some(m)
+            }
+        }
+        Some(SelectionRegion::Mask { mask: mask_id, .. }) => doc
+            .pixel_buffers
+            .iter()
+            .find(|e| e.id == mask_id.get())
+            .and_then(|e| SelectionMask::from_raw(e.width, e.height, e.pixels.clone()).ok()),
+    };
+
+    // ── Apply each transform operation in sequence ─────────────────────────
+    let mut current = pixel_buf;
+    for op in &args.ops {
+        let spec = op.to_transform_spec();
+        current = transforms::apply_transform(&spec, &current, mask.as_ref()).map_err(|e| {
+            AppCommandError::Validation {
+                detail: e.to_string(),
+            }
+        })?;
+    }
+
+    let new_w = current.width();
+    let new_h = current.height();
+    let new_stride = current.stride();
+    let new_pixels = current.as_bytes().to_vec();
+
+    doc.pixel_buffers[entry_idx] = PixelBufferEntry {
+        id: buf_id.get(),
+        width: new_w,
+        height: new_h,
+        stride: new_stride,
+        pixels: new_pixels,
+    };
+
+    // ── Phase 3: update project state ─────────────────────────────────────
+    {
+        let project = doc
+            .project
+            .as_mut()
+            .ok_or(AppCommandError::NoActiveProject)?;
+        let sprite = &mut project.sprites[sprite_idx];
+        let orig_size = sprite
+            .cels
+            .iter()
+            .find(|c| c.layer_id == args.layer_id && c.frame_index == frame_index)
+            .and_then(|c| match &c.data {
+                CelData::Raster { size, .. } => Some(*size),
+                _ => None,
+            })
+            .unwrap_or_else(|| Size::new(new_w, new_h));
+
+        if new_w != orig_size.width || new_h != orig_size.height {
+            if let Some(cel) = sprite
+                .cels
+                .iter_mut()
+                .find(|c| c.layer_id == args.layer_id && c.frame_index == frame_index)
+            {
+                cel.data = CelData::Raster {
+                    buffer: buf_id,
+                    size: Size::new(new_w, new_h),
+                };
+            }
+        }
+    } // project borrow released
+
+    doc.dirty = true;
+
+    // ── Emit tile-dirty events for the affected sprite region ──────────────
+    // The renderer listens for canvas:tile-dirty and re-uploads changed tiles.
+    // We emit the full set of tiles covering the canvas so the renderer refreshes.
+    let tiles_x = sprite_canvas_w.div_ceil(TILE_SIZE);
+    let tiles_y = sprite_canvas_h.div_ceil(TILE_SIZE);
+    let sprite_id_raw = args.sprite_id.get();
+    let frame_idx_raw = args.frame_index;
+
+    for ty in 0..tiles_y {
+        for tx in 0..tiles_x {
+            let x0 = tx * TILE_SIZE;
+            let y0 = ty * TILE_SIZE;
+            let w = (sprite_canvas_w - x0).min(TILE_SIZE);
+            let h = (sprite_canvas_h - y0).min(TILE_SIZE);
+            let pixels = (w as usize) * (h as usize) * 4;
+            let data = base64::engine::general_purpose::STANDARD.encode(vec![0u8; pixels]);
+            let payload = TileDirtyPayload {
+                sprite_id: sprite_id_raw,
+                frame_index: frame_idx_raw,
+                tile_x: tx,
+                tile_y: ty,
+                width: w,
+                height: h,
+                data,
+            };
+            if let Err(err) = app.emit("canvas:tile-dirty", payload) {
+                tracing::warn!(
+                    "failed to emit canvas:tile-dirty for sprite {} tile ({tx},{ty}): {err}",
+                    sprite_id_raw,
+                );
+            }
+        }
+    }
+
+    Ok(())
 }
 
 /// Sets the canvas selection. Pass `None` for `region` to clear the selection.

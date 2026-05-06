@@ -32,5 +32,9 @@ harness = false
 name = "composite"
 harness = false
 
+[[bench]]
+name = "transforms"
+harness = false
+
 [lints]
 workspace = true
