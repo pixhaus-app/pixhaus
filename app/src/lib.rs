@@ -17,6 +17,7 @@
 pub mod commands;
 pub mod error;
 pub mod menu;
+pub mod pixel_history;
 pub mod state;
 
 pub use error::{AppCommandError, CommandResult};

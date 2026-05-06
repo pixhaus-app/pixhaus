@@ -27,7 +27,7 @@ interface BrushCursorProps extends ViewportProps {
   cursor: { x: number; y: number } | null;
   /** Brush diameter in canvas pixels. */
   size: number;
-  shape: "round" | "square";
+  shape: "pixel" | "circle" | "square";
 }
 
 /**
@@ -78,7 +78,7 @@ export const BrushCursor: Component<BrushCursorProps> = (props) => {
             viewBox={`0 0 ${props.vpW} ${props.vpH}`}
             aria-hidden="true"
           >
-            {props.shape === "round" ? (
+            {props.shape === "circle" ? (
               <ellipse
                 cx={sx0 + w / 2}
                 cy={sy0 + h / 2}
@@ -93,8 +93,8 @@ export const BrushCursor: Component<BrushCursorProps> = (props) => {
               <rect
                 x={sx0}
                 y={sy0}
-                width={w}
-                height={h}
+                width={Math.max(w, 1)}
+                height={Math.max(h, 1)}
                 fill="none"
                 stroke="white"
                 stroke-width="1"

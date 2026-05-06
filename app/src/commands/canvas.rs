@@ -5,19 +5,24 @@
 //! and composite-info commands are fully implemented.
 
 use base64::Engine;
+use pixhaus_core::canvas::PixelBuffer;
+use pixhaus_core::canvas::tools::{BrushShape, draw_stroke, flood_fill};
 use pixhaus_core::project::{
-    CanvasState, LayerId, Rgba, SelectionRegion, SelectionState, SpriteId,
+    CanvasState, Cel, CelData, FrameIndex, LayerId, PixelBufferId, Rgba, SelectionRegion,
+    SelectionState, Size, SpriteId,
 };
+use pixhaus_io::pixhaus::PixelBufferEntry;
 use serde::{Deserialize, Serialize};
 use tauri::{AppHandle, Emitter, State};
 
 use crate::error::{AppCommandError, CommandResult};
+use crate::pixel_history::{PixelOp, PixelOpBatch};
 use crate::state::AppState;
 
 /// Tile size used by the canvas renderer, in canvas pixels per side.
 pub const TILE_SIZE: u32 = 256;
 
-/// Arguments for a freehand stroke. Requires S01.
+/// Arguments for a freehand stroke.
 #[derive(Debug, Deserialize)]
 pub struct DrawStrokeArgs {
     /// Target sprite.
@@ -32,6 +37,26 @@ pub struct DrawStrokeArgs {
     pub color: Rgba,
     /// Per-point pressure values, same length as `points`. `1.0` = full pressure.
     pub pressure: Vec<f32>,
+    /// Brush shape: `"pixel"`, `"circle"`, or `"square"`.
+    #[serde(default = "default_brush_shape")]
+    pub brush_shape: String,
+    /// Brush diameter in canvas pixels.
+    #[serde(default = "default_brush_size")]
+    pub brush_size: u32,
+    /// Enable pixel-perfect post-pass (removes diagonal corner artifacts).
+    #[serde(default)]
+    pub pixel_perfect: bool,
+    /// Erase mode: draw with fully-transparent pixels instead of `color`.
+    #[serde(default)]
+    pub erase: bool,
+}
+
+fn default_brush_shape() -> String {
+    "pixel".to_owned()
+}
+
+fn default_brush_size() -> u32 {
+    1
 }
 
 /// Arguments for a flood fill. Requires S01.
@@ -195,6 +220,195 @@ fn emit_tile_dirty_for_sprite(
     }
 }
 
+/// Emits `canvas:tile-dirty` events for every tile of a pixel buffer after
+/// a drawing operation.  One event per tile; each carries the extracted
+/// RGBA bytes for its region.  Stride-aware: reads at `buf_stride` bytes
+/// per row and packs the tile data tight before base64-encoding.
+pub(crate) fn emit_buffer_tiles(
+    app: &AppHandle,
+    sprite_id: u32,
+    frame_index: u32,
+    buf_w: u32,
+    buf_h: u32,
+    buf_stride: u32,
+    pixels: &[u8],
+) {
+    let tiles_x = buf_w.div_ceil(TILE_SIZE);
+    let tiles_y = buf_h.div_ceil(TILE_SIZE);
+
+    for ty in 0..tiles_y {
+        for tx in 0..tiles_x {
+            let x0 = tx * TILE_SIZE;
+            let y0 = ty * TILE_SIZE;
+            let w = (buf_w - x0).min(TILE_SIZE);
+            let h = (buf_h - y0).min(TILE_SIZE);
+
+            let mut tile_bytes = vec![0u8; (w * h * 4) as usize];
+            for row in 0..h {
+                let src =
+                    ((y0 + row) as usize * buf_stride as usize + x0 as usize * 4).min(pixels.len());
+                let dst = row as usize * w as usize * 4;
+                let copy_len = (w as usize * 4).min(pixels.len().saturating_sub(src));
+                tile_bytes[dst..dst + copy_len].copy_from_slice(&pixels[src..src + copy_len]);
+            }
+
+            let data = base64::engine::general_purpose::STANDARD.encode(&tile_bytes);
+            let payload = TileDirtyPayload {
+                sprite_id,
+                frame_index,
+                tile_x: tx,
+                tile_y: ty,
+                width: w,
+                height: h,
+                data,
+            };
+            if let Err(err) = app.emit("canvas:tile-dirty", payload) {
+                tracing::warn!("failed to emit canvas:tile-dirty tile ({tx},{ty}): {err}");
+            }
+        }
+    }
+}
+
+/// Parses a brush shape string into the core `BrushShape` enum.
+fn parse_brush_shape(s: &str) -> BrushShape {
+    match s {
+        "circle" => BrushShape::Circle,
+        "square" => BrushShape::Square,
+        _ => BrushShape::Pixel,
+    }
+}
+
+/// Finds an existing raster buffer id for `(layer_id, frame_index)` in `sprite.cels`.
+fn find_cel_buffer(cels: &[Cel], layer_id: LayerId, frame_index: u32) -> Option<PixelBufferId> {
+    cels.iter().find_map(|c| {
+        if c.layer_id == layer_id && c.frame_index.get() == frame_index {
+            if let CelData::Raster { buffer, .. } = c.data {
+                Some(buffer)
+            } else {
+                None
+            }
+        } else {
+            None
+        }
+    })
+}
+
+/// Ensures a raster pixel buffer exists for `(sprite_id, layer_id, frame_index)`.
+///
+/// If no cel exists for that address, creates a transparent buffer the size of
+/// the sprite canvas and registers both the buffer and the cel. Returns the
+/// buffer id.
+fn ensure_raster_buffer(
+    doc: &mut crate::state::DocumentStore,
+    sprite_id: SpriteId,
+    layer_id: LayerId,
+    frame_index: u32,
+) -> CommandResult<PixelBufferId> {
+    let (canvas_w, canvas_h, existing) = {
+        let project = doc
+            .project
+            .as_ref()
+            .ok_or(AppCommandError::NoActiveProject)?;
+        let sprite = project
+            .sprites
+            .iter()
+            .find(|s| s.id == sprite_id)
+            .ok_or_else(|| AppCommandError::NotFound {
+                entity: "sprite".into(),
+                id: u64::from(sprite_id.get()),
+            })?;
+        let buf_id = find_cel_buffer(&sprite.cels, layer_id, frame_index);
+        (sprite.canvas.width, sprite.canvas.height, buf_id)
+    };
+
+    if let Some(id) = existing {
+        return Ok(id);
+    }
+
+    let new_id = PixelBufferId::new(doc.next_id);
+    doc.next_id += 1;
+    let stride = canvas_w * 4;
+    doc.pixel_buffers.push(PixelBufferEntry {
+        id: new_id.get(),
+        width: canvas_w,
+        height: canvas_h,
+        stride,
+        pixels: vec![0u8; (stride * canvas_h) as usize],
+    });
+    let project = doc
+        .project
+        .as_mut()
+        .ok_or(AppCommandError::NoActiveProject)?;
+    let sprite = project
+        .sprites
+        .iter_mut()
+        .find(|s| s.id == sprite_id)
+        .ok_or_else(|| AppCommandError::NotFound {
+            entity: "sprite".into(),
+            id: u64::from(sprite_id.get()),
+        })?;
+    sprite.cels.push(Cel::raster(
+        layer_id,
+        FrameIndex::new(frame_index),
+        new_id,
+        Size::new(canvas_w, canvas_h),
+    ));
+    Ok(new_id)
+}
+
+/// Applies a pixel mutation, records an undo op, and emits tile-dirty events.
+#[allow(clippy::too_many_arguments)]
+fn commit_pixel_op(
+    doc: &mut crate::state::DocumentStore,
+    app: &AppHandle,
+    buffer_id: PixelBufferId,
+    sprite_id: SpriteId,
+    frame_index: u32,
+    before: Vec<u8>,
+    new_pixels: Vec<u8>,
+    label: &str,
+) -> CommandResult<()> {
+    let entry = doc
+        .pixel_buffers
+        .iter_mut()
+        .find(|e| e.id == buffer_id.get())
+        .ok_or_else(|| AppCommandError::NotFound {
+            entity: "pixel buffer".into(),
+            id: u64::from(buffer_id.get()),
+        })?;
+
+    entry.pixels = new_pixels;
+
+    let op = PixelOp {
+        buffer_id: entry.id,
+        buf_width: entry.width,
+        buf_height: entry.height,
+        buf_stride: entry.stride,
+        sprite_id: sprite_id.get(),
+        frame_index,
+        before,
+        after: entry.pixels.clone(),
+    };
+    let (w, h, stride) = (entry.width, entry.height, entry.stride);
+    let emit_pixels = entry.pixels.clone();
+
+    doc.pixel_history.push(PixelOpBatch {
+        label: label.to_owned(),
+        ops: vec![op],
+    });
+    emit_buffer_tiles(
+        app,
+        sprite_id.get(),
+        frame_index,
+        w,
+        h,
+        stride,
+        &emit_pixels,
+    );
+    doc.dirty = true;
+    Ok(())
+}
+
 /// Returns the tile grid dimensions for the given sprite.
 ///
 /// The renderer calls this when a sprite becomes active to learn its canvas
@@ -242,25 +456,120 @@ pub async fn canvas_composite(
 
 /// Paints a freehand stroke on a layer cel.
 ///
-/// Requires stream S01 (pixel buffers). Returns an error until S01 lands.
+/// Creates a transparent cel + buffer lazily if none exists for the
+/// `(layer, frame)` pair.  Pushes a `PixelOpBatch` for undo and emits
+/// `canvas:tile-dirty` events for every tile that covers the buffer.
 #[tauri::command(async, rename_all = "snake_case")]
 pub async fn canvas_draw_stroke(
-    _args: DrawStrokeArgs,
-    _state: State<'_, AppState>,
+    app: AppHandle,
+    args: DrawStrokeArgs,
+    state: State<'_, AppState>,
 ) -> CommandResult<()> {
-    Err(AppCommandError::Unimplemented {
-        stream: "S01 (pixel buffers)".into(),
-    })
+    let mut lock = state.doc.write().await;
+    let doc = &mut *lock;
+
+    let buffer_id = ensure_raster_buffer(doc, args.sprite_id, args.layer_id, args.frame_index)?;
+
+    let (before, w, h, stride) = {
+        let entry = doc
+            .pixel_buffers
+            .iter()
+            .find(|e| e.id == buffer_id.get())
+            .ok_or_else(|| AppCommandError::NotFound {
+                entity: "pixel buffer".into(),
+                id: u64::from(buffer_id.get()),
+            })?;
+        (
+            entry.pixels.clone(),
+            entry.width,
+            entry.height,
+            entry.stride,
+        )
+    };
+
+    let mut pbuf = PixelBuffer::from_raw(w, h, stride, before.clone()).map_err(|e| {
+        AppCommandError::Validation {
+            detail: e.to_string(),
+        }
+    })?;
+
+    let color = if args.erase {
+        Rgba::transparent()
+    } else {
+        args.color
+    };
+    let shape = parse_brush_shape(&args.brush_shape);
+    draw_stroke(
+        &mut pbuf,
+        &args.points,
+        color,
+        shape,
+        args.brush_size,
+        args.pixel_perfect,
+    );
+
+    commit_pixel_op(
+        doc,
+        &app,
+        buffer_id,
+        args.sprite_id,
+        args.frame_index,
+        before,
+        pbuf.as_bytes().to_vec(),
+        "stroke",
+    )
 }
 
 /// Flood-fills a contiguous region on a layer cel.
 ///
-/// Requires stream S01 (pixel buffers). Returns an error until S01 lands.
+/// Creates a cel + buffer lazily, applies BFS flood-fill, then emits
+/// `canvas:tile-dirty` events for the whole buffer.
 #[tauri::command(async, rename_all = "snake_case")]
-pub async fn canvas_fill(_args: FillArgs, _state: State<'_, AppState>) -> CommandResult<()> {
-    Err(AppCommandError::Unimplemented {
-        stream: "S01 (pixel buffers)".into(),
-    })
+pub async fn canvas_fill(
+    app: AppHandle,
+    args: FillArgs,
+    state: State<'_, AppState>,
+) -> CommandResult<()> {
+    let mut lock = state.doc.write().await;
+    let doc = &mut *lock;
+
+    let buffer_id = ensure_raster_buffer(doc, args.sprite_id, args.layer_id, args.frame_index)?;
+
+    let (before, w, h, stride) = {
+        let entry = doc
+            .pixel_buffers
+            .iter()
+            .find(|e| e.id == buffer_id.get())
+            .ok_or_else(|| AppCommandError::NotFound {
+                entity: "pixel buffer".into(),
+                id: u64::from(buffer_id.get()),
+            })?;
+        (
+            entry.pixels.clone(),
+            entry.width,
+            entry.height,
+            entry.stride,
+        )
+    };
+
+    let mut pbuf = PixelBuffer::from_raw(w, h, stride, before.clone()).map_err(|e| {
+        AppCommandError::Validation {
+            detail: e.to_string(),
+        }
+    })?;
+
+    flood_fill(&mut pbuf, args.x, args.y, args.color, args.tolerance);
+
+    commit_pixel_op(
+        doc,
+        &app,
+        buffer_id,
+        args.sprite_id,
+        args.frame_index,
+        before,
+        pbuf.as_bytes().to_vec(),
+        "fill",
+    )
 }
 
 /// Applies a geometric transform (translate, flip, rotate) to a layer cel.
@@ -330,6 +639,10 @@ mod tests {
             points: vec![[0.0, 0.0], [1.0, 1.0]],
             color: Rgba::opaque(255, 0, 0),
             pressure: vec![1.0, 0.8],
+            brush_shape: "pixel".to_owned(),
+            brush_size: 1,
+            pixel_perfect: false,
+            erase: false,
         };
         assert_eq!(args.points.len(), args.pressure.len());
     }

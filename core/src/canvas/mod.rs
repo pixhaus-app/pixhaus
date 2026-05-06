@@ -23,6 +23,7 @@ pub mod blend;
 pub mod buffer;
 pub mod composite;
 pub mod error;
+pub mod tools;
 
 pub use blend::{blend, blend_normal, mul_un8, premix};
 pub use buffer::{IndexedBuffer, PixelBuffer, RGBA_BYTES_PER_PIXEL};

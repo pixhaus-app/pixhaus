@@ -23,6 +23,14 @@ export type DrawStrokeArgs = {
   color: Rgba;
   /** Per-point pressure values, same length as `points`. 1.0 = full pressure. */
   pressure: number[];
+  /** Brush shape: "pixel", "circle", or "square". Defaults to "pixel". */
+  brush_shape: "pixel" | "circle" | "square";
+  /** Brush diameter in canvas pixels. Defaults to 1. */
+  brush_size: number;
+  /** Remove diagonal corner artifacts from pixel-art strokes. */
+  pixel_perfect: boolean;
+  /** Draw with fully-transparent pixels (eraser mode). */
+  erase: boolean;
 };
 
 export type FillArgs = {
