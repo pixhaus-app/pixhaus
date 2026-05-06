@@ -57,7 +57,7 @@ use crate::plugin::descriptor::{BackendCapabilities, CostEstimate};
 /// actual inference surface.
 pub struct BackendProxy {
     inner: Arc<dyn FatBackend>,
-    cached_id: String,
+    cached_id: &'static str,
     cached_caps: BackendCapabilities,
 }
 
@@ -66,7 +66,7 @@ impl BackendProxy {
     /// `capabilities` are captured at construction time so calls into
     /// the thin trait never touch async code.
     pub fn new(backend: impl FatBackend) -> Self {
-        let cached_id = backend.backend_id().to_owned();
+        let cached_id = backend.backend_id();
         let cached_caps = backend.capabilities();
         Self {
             inner: Arc::new(backend),
@@ -99,8 +99,8 @@ impl ThinBackend for BackendProxy {
         self
     }
 
-    fn id(&self) -> &str {
-        &self.cached_id
+    fn id(&self) -> &'static str {
+        self.cached_id
     }
 
     fn capabilities(&self) -> BackendCapabilities {

@@ -619,7 +619,7 @@ impl crate::plugin::backend::InferenceBackend for OpenAiBackend {
         self
     }
 
-    fn id(&self) -> &str {
+    fn id(&self) -> &'static str {
         self.backend_id()
     }
 

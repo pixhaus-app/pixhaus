@@ -75,6 +75,6 @@ pub use verb::Verb;
 
 // Re-export built-in verbs so downstream crates can register them via a single
 // `use pixhaus_ai::plugin::*` rather than digging into the verbs sub-tree.
-pub use crate::verbs::{
+pub use crate::verbs::project_style_learning::{
     PROJECT_STYLE_LEARNING_VERB_ID, ProjectStyleLearningVerb, StyleLearningInputs, TrainedModelRef,
 };
