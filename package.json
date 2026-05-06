@@ -20,6 +20,8 @@
     "build": "cargo tauri build --config app/tauri.conf.json",
     "ui:dev": "pnpm --filter pixhaus-ui dev",
     "ui:build": "pnpm --filter pixhaus-ui build",
+    "website:dev": "pnpm --filter pixhaus-website dev",
+    "website:build": "pnpm --filter pixhaus-website build",
     "typecheck": "pnpm -r typecheck",
     "lint": "pnpm -r lint",
     "lint:fix": "pnpm -r lint:fix",

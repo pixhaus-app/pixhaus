@@ -1,0 +1,168 @@
+---
+import BaseLayout from "../../layouts/BaseLayout.astro";
+import { getCollection, render } from "astro:content";
+
+export async function getStaticPaths() {
+  const posts = await getCollection("blog", ({ data }) => !data.draft);
+  return posts.map((post) => ({
+    params: { slug: post.id },
+    props: { post },
+  }));
+}
+
+const { post } = Astro.props;
+const { Content } = await render(post);
+
+function formatDate(date: Date): string {
+  return date.toLocaleDateString("en-US", {
+    year: "numeric",
+    month: "long",
+    day: "numeric",
+  });
+}
+---
+
+<BaseLayout
+  title={post.data.title}
+  description={post.data.description}
+  ogImage="/og/blog.svg"
+>
+  <div class="max-w-2xl mx-auto px-6 py-20">
+    <!-- Back link -->
+    <a
+      href="/blog"
+      class="inline-flex items-center gap-1.5 text-sm mb-10 transition-colors"
+      style="color: var(--color-neutral-500);"
+    >
+      <svg
+        xmlns="http://www.w3.org/2000/svg"
+        width="14"
+        height="14"
+        fill="none"
+        viewBox="0 0 24 24"
+        stroke="currentColor"
+        stroke-width="2"
+        aria-hidden="true"
+      >
+        <path stroke-linecap="round" stroke-linejoin="round" d="M10 19l-7-7m0 0l7-7m-7 7h18" />
+      </svg>
+      All posts
+    </a>
+
+    <!-- Post header -->
+    <header class="mb-10">
+      <p class="text-sm mb-3" style="color: var(--color-neutral-500);">
+        <time datetime={post.data.date.toISOString()}>
+          {formatDate(post.data.date)}
+        </time>
+        &middot; {post.data.author}
+      </p>
+      <h1
+        class="text-3xl md:text-4xl font-bold mb-4"
+        style="color: var(--color-neutral-900); letter-spacing: -0.04em; line-height: 1.15;"
+      >
+        {post.data.title}
+      </h1>
+      <p class="text-base leading-relaxed" style="color: var(--color-neutral-600);">
+        {post.data.description}
+      </p>
+    </header>
+
+    <hr class="mb-10" style="border-color: var(--color-neutral-200);" />
+
+    <!-- Post content -->
+    <div class="prose">
+      <Content />
+    </div>
+  </div>
+</BaseLayout>
+
+<style>
+  .prose {
+    color: var(--color-neutral-700);
+    line-height: 1.75;
+    font-size: 15px;
+  }
+
+  .prose h2 {
+    color: var(--color-neutral-900);
+    font-size: 20px;
+    font-weight: 700;
+    letter-spacing: -0.02em;
+    margin-top: 2.5rem;
+    margin-bottom: 0.75rem;
+  }
+
+  .prose h3 {
+    color: var(--color-neutral-900);
+    font-size: 16px;
+    font-weight: 600;
+    margin-top: 2rem;
+    margin-bottom: 0.5rem;
+  }
+
+  .prose p {
+    margin-bottom: 1.25rem;
+  }
+
+  .prose a {
+    color: var(--brand-indigo-400);
+    text-decoration: underline;
+    text-underline-offset: 2px;
+  }
+
+  .prose ul {
+    list-style-type: disc;
+    padding-left: 1.5rem;
+    margin-bottom: 1.25rem;
+  }
+
+  .prose ul li {
+    margin-bottom: 0.4rem;
+  }
+
+  .prose ol {
+    list-style-type: decimal;
+    padding-left: 1.5rem;
+    margin-bottom: 1.25rem;
+  }
+
+  .prose code {
+    font-family: var(--brand-font-mono);
+    font-size: 13px;
+    background: var(--color-neutral-100);
+    padding: 1px 5px;
+    border-radius: 3px;
+    border: 1px solid var(--color-neutral-200);
+    color: var(--color-neutral-800);
+  }
+
+  .prose pre {
+    background: var(--color-neutral-100);
+    border: 1px solid var(--color-neutral-200);
+    border-radius: 8px;
+    padding: 1rem;
+    overflow-x: auto;
+    margin-bottom: 1.25rem;
+  }
+
+  .prose pre code {
+    background: none;
+    border: none;
+    padding: 0;
+    font-size: 13px;
+  }
+
+  .prose blockquote {
+    border-left: 3px solid var(--brand-indigo-500);
+    padding-left: 1rem;
+    color: var(--color-neutral-600);
+    font-style: italic;
+    margin: 1.5rem 0;
+  }
+
+  .prose strong {
+    color: var(--color-neutral-900);
+    font-weight: 600;
+  }
+</style>

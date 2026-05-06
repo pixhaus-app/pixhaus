@@ -1,0 +1,80 @@
+---
+import BaseLayout from "../../layouts/BaseLayout.astro";
+import { getCollection } from "astro:content";
+
+const posts = (await getCollection("blog", ({ data }) => !data.draft))
+  .sort((a, b) => b.data.date.valueOf() - a.data.date.valueOf());
+
+function formatDate(date: Date): string {
+  return date.toLocaleDateString("en-US", {
+    year: "numeric",
+    month: "long",
+    day: "numeric",
+  });
+}
+---
+
+<BaseLayout
+  title="Blog"
+  description="Development updates, release notes, and design thinking from the Pixhaus team."
+  ogImage="/og/blog.svg"
+>
+  <div class="max-w-3xl mx-auto px-6 py-20">
+    <div class="mb-12">
+      <h1
+        class="text-3xl md:text-4xl font-bold mb-4"
+        style="color: var(--color-neutral-900); letter-spacing: -0.04em;"
+      >
+        Blog
+      </h1>
+      <p class="text-base" style="color: var(--color-neutral-600);">
+        Development updates, release notes, and design decisions.
+      </p>
+    </div>
+
+    {
+      posts.length === 0 ? (
+        <p class="text-sm" style="color: var(--color-neutral-500);">
+          No posts yet. Check back soon.
+        </p>
+      ) : (
+        <ul class="space-y-8">
+          {posts.map((post) => (
+            <li>
+              <article>
+                <a href={`/blog/${post.id}`} class="group block">
+                  <p
+                    class="text-xs mb-2"
+                    style="color: var(--color-neutral-500);"
+                  >
+                    <time datetime={post.data.date.toISOString()}>
+                      {formatDate(post.data.date)}
+                    </time>
+                    {" "}
+                    &middot; {post.data.author}
+                  </p>
+                  <h2
+                    class="text-xl font-bold mb-2 transition-colors"
+                    style="color: var(--color-neutral-900); letter-spacing: -0.02em;"
+                  >
+                    {post.data.title}
+                  </h2>
+                  <p class="text-sm leading-relaxed" style="color: var(--color-neutral-600);">
+                    {post.data.description}
+                  </p>
+                  <span
+                    class="inline-block mt-3 text-sm font-medium transition-colors"
+                    style="color: var(--brand-indigo-400);"
+                  >
+                    Read post &rarr;
+                  </span>
+                </a>
+              </article>
+              <hr class="mt-8" style="border-color: var(--color-neutral-200);" />
+            </li>
+          ))}
+        </ul>
+      )
+    }
+  </div>
+</BaseLayout>
