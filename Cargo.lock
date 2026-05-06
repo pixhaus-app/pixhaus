@@ -2642,6 +2642,7 @@ dependencies = [
  "base64 0.22.1",
  "criterion",
  "futures",
+ "image",
  "keyring",
  "parking_lot",
  "pixhaus-core",

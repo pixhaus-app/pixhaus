@@ -62,6 +62,7 @@
 
 pub mod backends;
 pub mod plugin;
+pub mod verbs;
 
 /// Returns the crate name. Stable identifier downstream consumers can
 /// use as a sanity check after a workspace-wide upgrade.
