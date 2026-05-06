@@ -21,6 +21,7 @@
 pub mod auto_mesh_deformation;
 pub mod cleanup;
 pub mod critique;
+pub mod extend;
 pub mod inbetween;
 pub mod motion_from_video;
 pub mod project_style_learning;

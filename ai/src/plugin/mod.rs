@@ -45,6 +45,7 @@ pub mod preview;
 pub mod progress;
 pub mod runtime;
 pub mod verb;
+pub mod view_synthesis;
 
 pub use crate::verbs::auto_mesh_deformation::{
     AUTO_MESH_DEFORMATION_VERB_ID, AutoMeshDeformationVerb, AutoMeshInputs,
@@ -75,6 +76,7 @@ pub use progress::{
 };
 pub use runtime::{VerbInvocation, VerbRuntime};
 pub use verb::Verb;
+pub use view_synthesis::{Direction, DirectionalViewRequest, ViewSynthesisBackend};
 
 // Re-export built-in verbs so downstream crates can register them via a single
 // `use pixhaus_ai::plugin::*` rather than digging into the verbs sub-tree.
