@@ -139,6 +139,26 @@ pub trait InferenceBackend: Any + std::fmt::Debug + Send + Sync + 'static {
     fn is_available(&self) -> bool {
         true
     }
+
+    /// Returns `self` as a [`super::view_synthesis::ViewSynthesisBackend`]
+    /// if this backend implements novel-view synthesis. Default: `None`.
+    ///
+    /// Backends that advertise
+    /// [`BackendCapabilities::VIEW_SYNTHESIS`] must override this and
+    /// return `Some(self)`. The Extend verb (S25) calls this accessor
+    /// to recover the view-synthesis calling interface without
+    /// hard-coding specific backend types.
+    ///
+    /// # Example
+    ///
+    /// ```ignore
+    /// fn as_view_synthesis(&self) -> Option<&dyn ViewSynthesisBackend> {
+    ///     Some(self)
+    /// }
+    /// ```
+    fn as_view_synthesis(&self) -> Option<&dyn super::view_synthesis::ViewSynthesisBackend> {
+        None
+    }
 }
 
 /// Snapshot of a registered backend's metadata, without the `Arc<dyn
