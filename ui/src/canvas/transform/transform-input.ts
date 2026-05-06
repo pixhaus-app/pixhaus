@@ -5,7 +5,10 @@
 // handlers for the drag lifecycle, updates transformBounds live (preview),
 // and commits the new selection rect via IPC on release.
 //
-// Rotation and pixel-level transforms (flip, rotate) are stubbed until S04.
+// Body drags translate both the marquee and the pixels — the IPC translate
+// runs first (consuming the original selection as a mask) and the moved
+// selection is committed second. Resize handles only update the marquee;
+// committing them as a scale op is out of scope for this task.
 
 import {
   transformDrag,
@@ -21,8 +24,9 @@ import {
   zoom,
   activeSpriteId,
   activeLayerId,
+  activeFrameIndex,
 } from "../canvas-state";
-import { canvasSetSelection, canvasTransform } from "../../lib/commands/canvas";
+import { canvasSetSelection, canvasTransform, type TransformOp } from "../../lib/commands/canvas";
 import { pushToast } from "../../lib/toast/toast-state";
 
 // Converts a canvas-coordinate bounds object to the IPC Rect type.
@@ -52,6 +56,69 @@ async function commitBounds(bounds: {
   } catch (err: unknown) {
     console.error("[pixhaus] canvas_set_selection (transform commit) failed:", err);
   }
+}
+
+// Translates the active layer's pixels by the given canvas-pixel delta and
+// then moves the selection to follow them. The order matters: the IPC
+// translate consumes the *current* selection as a mask, so the selection
+// must still cover the original pixels when canvas_transform runs. The
+// selection is updated second so the marching ants land on the moved pixels.
+async function commitBodyTranslate(
+  originalBounds: { x: number; y: number; width: number; height: number },
+  newBounds: { x: number; y: number; width: number; height: number },
+): Promise<void> {
+  const dx = Math.round(newBounds.x - originalBounds.x);
+  const dy = Math.round(newBounds.y - originalBounds.y);
+
+  // Snap the live preview to integer pixels so the marquee lines up with
+  // the painted pixels.
+  const snappedBounds = {
+    ...newBounds,
+    x: originalBounds.x + dx,
+    y: originalBounds.y + dy,
+  };
+
+  if (dx === 0 && dy === 0) {
+    setSelectionRect(snappedBounds);
+    setTransformBounds(snappedBounds);
+    syncNumericFromBounds(snappedBounds);
+    return;
+  }
+
+  const spriteId = activeSpriteId();
+  const layerId = activeLayerId();
+  if (spriteId === null || layerId === null) {
+    // No active document — fall back to a marquee-only commit.
+    void commitBounds(snappedBounds);
+    return;
+  }
+
+  try {
+    await canvasTransform({
+      sprite_id: spriteId,
+      layer_id: layerId,
+      frame_index: activeFrameIndex(),
+      ops: [{ kind: "translate", dx, dy }],
+    });
+  } catch (err: unknown) {
+    const e = err as { kind?: string; stream?: string };
+    if (e?.kind === "unimplemented") {
+      pushToast({
+        title: `Move requires ${e.stream ?? "S04"} — not yet available.`,
+        kind: "info",
+      });
+    } else {
+      console.error("[pixhaus] canvas_transform (body translate) failed:", err);
+    }
+    // Revert the marquee to the original position so it doesn't drift away
+    // from the still-stationary pixels.
+    setSelectionRect(originalBounds);
+    setTransformBounds(originalBounds);
+    syncNumericFromBounds(originalBounds);
+    return;
+  }
+
+  void commitBounds(snappedBounds);
 }
 
 // Reverts local signals to the originalBounds captured at drag start.
@@ -127,8 +194,14 @@ export function startTransformDrag(handle: TransformHandle, e: PointerEvent): vo
     const dy = dyScreen / z;
 
     const newBounds = applyHandleDelta(drag.handle, drag.originalBounds, dx, dy);
+    const handle = drag.handle;
+    const original = drag.originalBounds;
     setTransformDrag(null);
-    void commitBounds(newBounds);
+    if (handle === "body") {
+      void commitBodyTranslate(original, newBounds);
+    } else {
+      void commitBounds(newBounds);
+    }
     cleanup();
   };
 
@@ -190,124 +263,48 @@ export function attachTransformKeyboard(): () => void {
   return () => window.removeEventListener("keydown", onKeyDown);
 }
 
-// ── Pixel-level transform stubs ───────────────────────────────────────────────
+// ── Pixel-level transform helpers ─────────────────────────────────────────────
 
-/**
- * Dispatches a flip-horizontal transform via IPC.
- * Stubs until S01/S04 land.
- */
+// Shared dispatcher: runs one op against the active sprite/layer/frame and
+// surfaces an Unimplemented error as a toast instead of a console log.
+function dispatchTransformOp(op: TransformOp, label: string): void {
+  const spriteId = activeSpriteId();
+  const layerId = activeLayerId();
+  if (spriteId === null || layerId === null) return;
+  canvasTransform({
+    sprite_id: spriteId,
+    layer_id: layerId,
+    frame_index: activeFrameIndex(),
+    ops: [op],
+  }).catch((err: unknown) => {
+    const e = err as { kind?: string; stream?: string };
+    if (e?.kind === "unimplemented") {
+      pushToast({
+        title: `${label} requires ${e.stream ?? "S04"} — not yet available.`,
+        kind: "info",
+      });
+    } else {
+      console.error(`[pixhaus] canvas_transform (${label}) failed:`, err);
+    }
+  });
+}
+
+/** Dispatches a flip-horizontal transform via IPC. */
 export function dispatchFlipX(): void {
-  const spriteId = activeSpriteId();
-  const layerId = activeLayerId();
-  if (spriteId === null || layerId === null) return;
-  canvasTransform({
-    sprite_id: spriteId,
-    layer_id: layerId,
-    frame_index: 0,
-    translate_x: 0,
-    translate_y: 0,
-    flip_x: true,
-    flip_y: false,
-    rotate_cw90: 0,
-  }).catch((err: unknown) => {
-    const e = err as { kind?: string; stream?: string };
-    if (e?.kind === "unimplemented") {
-      pushToast({
-        title: `Flip requires ${e.stream ?? "S01"} — not yet available.`,
-        kind: "info",
-      });
-    } else {
-      console.error("[pixhaus] canvas_transform (flip X) failed:", err);
-    }
-  });
+  dispatchTransformOp({ kind: "flip_horizontal" }, "Flip horizontal");
 }
 
-/**
- * Dispatches a flip-vertical transform via IPC.
- * Stubs until S01/S04 land.
- */
+/** Dispatches a flip-vertical transform via IPC. */
 export function dispatchFlipY(): void {
-  const spriteId = activeSpriteId();
-  const layerId = activeLayerId();
-  if (spriteId === null || layerId === null) return;
-  canvasTransform({
-    sprite_id: spriteId,
-    layer_id: layerId,
-    frame_index: 0,
-    translate_x: 0,
-    translate_y: 0,
-    flip_x: false,
-    flip_y: true,
-    rotate_cw90: 0,
-  }).catch((err: unknown) => {
-    const e = err as { kind?: string; stream?: string };
-    if (e?.kind === "unimplemented") {
-      pushToast({
-        title: `Flip requires ${e.stream ?? "S01"} — not yet available.`,
-        kind: "info",
-      });
-    } else {
-      console.error("[pixhaus] canvas_transform (flip Y) failed:", err);
-    }
-  });
+  dispatchTransformOp({ kind: "flip_vertical" }, "Flip vertical");
 }
 
-/**
- * Dispatches a 90° clockwise rotation via IPC.
- * Stubs until S01/S04 land.
- */
+/** Dispatches a 90° clockwise rotation via IPC. */
 export function dispatchRotateCw(): void {
-  const spriteId = activeSpriteId();
-  const layerId = activeLayerId();
-  if (spriteId === null || layerId === null) return;
-  canvasTransform({
-    sprite_id: spriteId,
-    layer_id: layerId,
-    frame_index: 0,
-    translate_x: 0,
-    translate_y: 0,
-    flip_x: false,
-    flip_y: false,
-    rotate_cw90: 1,
-  }).catch((err: unknown) => {
-    const e = err as { kind?: string; stream?: string };
-    if (e?.kind === "unimplemented") {
-      pushToast({
-        title: `Rotate requires ${e.stream ?? "S01"} — not yet available.`,
-        kind: "info",
-      });
-    } else {
-      console.error("[pixhaus] canvas_transform (rotate CW) failed:", err);
-    }
-  });
+  dispatchTransformOp({ kind: "rotate90_cw" }, "Rotate clockwise");
 }
 
-/**
- * Dispatches a 90° counter-clockwise rotation via IPC.
- * Stubs until S01/S04 land.
- */
+/** Dispatches a 90° counter-clockwise rotation via IPC. */
 export function dispatchRotateCcw(): void {
-  const spriteId = activeSpriteId();
-  const layerId = activeLayerId();
-  if (spriteId === null || layerId === null) return;
-  canvasTransform({
-    sprite_id: spriteId,
-    layer_id: layerId,
-    frame_index: 0,
-    translate_x: 0,
-    translate_y: 0,
-    flip_x: false,
-    flip_y: false,
-    rotate_cw90: 3,
-  }).catch((err: unknown) => {
-    const e = err as { kind?: string; stream?: string };
-    if (e?.kind === "unimplemented") {
-      pushToast({
-        title: `Rotate requires ${e.stream ?? "S01"} — not yet available.`,
-        kind: "info",
-      });
-    } else {
-      console.error("[pixhaus] canvas_transform (rotate CCW) failed:", err);
-    }
-  });
+  dispatchTransformOp({ kind: "rotate90_ccw" }, "Rotate counter-clockwise");
 }

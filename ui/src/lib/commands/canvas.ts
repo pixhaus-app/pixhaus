@@ -44,16 +44,39 @@ export type FillArgs = {
   tolerance: number;
 };
 
+/**
+ * One transform operation in a [`TransformArgs`] batch.
+ *
+ * The discriminator field is `kind` and matches the Rust enum
+ * `app::commands::canvas::TransformOpArg` with `serde(tag = "kind",
+ * rename_all = "snake_case")`. Operations are applied in order; the
+ * output of each becomes the input of the next.
+ */
+export type TransformOp =
+  | { kind: "translate"; dx: number; dy: number }
+  | { kind: "scale_nearest"; new_width: number; new_height: number }
+  | { kind: "scale_integer_multiple"; factor: number }
+  | { kind: "scale_integer_divisor"; divisor: number }
+  | { kind: "rotate90_cw" }
+  | { kind: "rotate90_ccw" }
+  | { kind: "rotate180" }
+  | { kind: "rotate_rot_sprite"; degrees: number }
+  | { kind: "rotate_bilinear"; degrees: number }
+  | { kind: "flip_horizontal" }
+  | { kind: "flip_vertical" }
+  | { kind: "skew_x"; factor: number }
+  | { kind: "skew_y"; factor: number }
+  | {
+      kind: "perspective";
+      corners: [[number, number], [number, number], [number, number], [number, number]];
+    };
+
 export type TransformArgs = {
   sprite_id: SpriteId;
   layer_id: LayerId;
   frame_index: FrameIndex;
-  translate_x: number;
-  translate_y: number;
-  flip_x: boolean;
-  flip_y: boolean;
-  /** Clockwise rotation in 90-degree steps (0–3). */
-  rotate_cw90: number;
+  /** Ordered list of operations to apply. */
+  ops: TransformOp[];
 };
 
 // ── result types ─────────────────────────────────────────────────────────────
