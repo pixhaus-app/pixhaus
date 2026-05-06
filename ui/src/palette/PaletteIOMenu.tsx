@@ -6,7 +6,8 @@
 //
 // Export builds a Blob and triggers a download via a temporary <a> element.
 //
-// Formats: .gpl (GIMP), .hex (Lospec), .pal (JASC-PAL text variant).
+// Import formats: .gpl (GIMP), .hex (Lospec), .pal (JASC-PAL text variant), .aco (Photoshop).
+// Export formats: .gpl, .hex, .pal.
 
 import { createSignal, Show, type Component } from "solid-js";
 import type { Rgba } from "../lib/types";
@@ -18,6 +19,7 @@ import {
   toHexFile,
   parseJascPal,
   toJascPal,
+  parseAco,
   type ParsedColor,
 } from "./color-utils";
 
@@ -26,24 +28,26 @@ type Props = {
   onImport: (colors: Rgba[]) => void;
 };
 
-type Format = "gpl" | "hex" | "pal";
+type ImportFormat = "gpl" | "hex" | "pal" | "aco";
+type ExportFormat = "gpl" | "hex" | "pal";
 
-const FORMAT_EXTENSIONS: Record<Format, string> = {
+const IMPORT_ACCEPT: Record<ImportFormat, string> = {
+  gpl: ".gpl",
+  hex: ".hex,.txt",
+  pal: ".pal",
+  aco: ".aco",
+};
+
+const EXPORT_EXTENSIONS: Record<ExportFormat, string> = {
   gpl: ".gpl",
   hex: ".hex",
   pal: ".pal",
 };
 
-const FORMAT_ACCEPT: Record<Format, string> = {
-  gpl: ".gpl",
-  hex: ".hex,.txt",
-  pal: ".pal",
-};
-
 const PaletteIOMenu: Component<Props> = (props) => {
   const [open, setOpen] = createSignal(false);
-  const [importFormat, setImportFormat] = createSignal<Format>("gpl");
-  const [exportFormat, setExportFormat] = createSignal<Format>("gpl");
+  const [importFormat, setImportFormat] = createSignal<ImportFormat>("gpl");
+  const [exportFormat, setExportFormat] = createSignal<ExportFormat>("gpl");
   const [error, setError] = createSignal<string | null>(null);
 
   // Solid binds the ref synchronously when the <input> mounts, before any
@@ -53,8 +57,17 @@ const PaletteIOMenu: Component<Props> = (props) => {
 
   const handleImportClick = () => {
     setError(null);
-    fileInput.accept = FORMAT_ACCEPT[importFormat()];
+    fileInput.accept = IMPORT_ACCEPT[importFormat()];
     fileInput.click();
+  };
+
+  const finish = (parsed: ParsedColor[]) => {
+    if (parsed.length === 0) {
+      setError("No valid colors found in file.");
+      return;
+    }
+    props.onImport(parsed.map((c) => ({ r: c.r, g: c.g, b: c.b, a: 255 })));
+    setOpen(false);
   };
 
   const handleFileChange = (e: Event) => {
@@ -62,34 +75,41 @@ const PaletteIOMenu: Component<Props> = (props) => {
     const file = input.files?.[0];
     if (!file) return;
     const reader = new FileReader();
-    reader.onload = () => {
-      const text = reader.result as string;
-      let parsed: ParsedColor[] = [];
-      try {
-        switch (importFormat()) {
-          case "gpl":
-            parsed = parseGpl(text);
-            break;
-          case "hex":
-            parsed = parseHexFile(text);
-            break;
-          case "pal":
-            parsed = parseJascPal(text);
-            break;
+    const fmt = importFormat();
+
+    if (fmt === "aco") {
+      reader.onload = () => {
+        try {
+          finish(parseAco(reader.result as ArrayBuffer));
+        } catch {
+          setError("Failed to parse file. Check the format.");
         }
-      } catch {
-        setError("Failed to parse file. Check the format.");
-        return;
-      }
-      if (parsed.length === 0) {
-        setError("No valid colors found in file.");
-        return;
-      }
-      const colors: Rgba[] = parsed.map((c) => ({ r: c.r, g: c.g, b: c.b, a: 255 }));
-      props.onImport(colors);
-      setOpen(false);
-    };
-    reader.readAsText(file);
+      };
+      reader.readAsArrayBuffer(file);
+    } else {
+      reader.onload = () => {
+        const text = reader.result as string;
+        let parsed: ParsedColor[] = [];
+        try {
+          switch (fmt) {
+            case "gpl":
+              parsed = parseGpl(text);
+              break;
+            case "hex":
+              parsed = parseHexFile(text);
+              break;
+            case "pal":
+              parsed = parseJascPal(text);
+              break;
+          }
+        } catch {
+          setError("Failed to parse file. Check the format.");
+          return;
+        }
+        finish(parsed);
+      };
+      reader.readAsText(file);
+    }
     // Reset so the same file can be re-selected if needed.
     input.value = "";
   };
@@ -114,7 +134,7 @@ const PaletteIOMenu: Component<Props> = (props) => {
     }
 
     const slug = p.name.toLowerCase().replace(/\s+/g, "-");
-    triggerDownload(content, `${slug}${FORMAT_EXTENSIONS[fmt]}`, "text/plain");
+    triggerDownload(content, `${slug}${EXPORT_EXTENSIONS[fmt]}`, "text/plain");
     setOpen(false);
   };
 
@@ -133,11 +153,12 @@ const PaletteIOMenu: Component<Props> = (props) => {
               <select
                 class="pio__select"
                 value={importFormat()}
-                onChange={(e) => setImportFormat(e.currentTarget.value as Format)}
+                onChange={(e) => setImportFormat(e.currentTarget.value as ImportFormat)}
               >
                 <option value="gpl">GIMP Palette (.gpl)</option>
                 <option value="hex">Lospec Hex (.hex)</option>
                 <option value="pal">JASC-PAL (.pal)</option>
+                <option value="aco">Photoshop Swatches (.aco)</option>
               </select>
               <button class="pio__btn" onClick={handleImportClick}>
                 Choose file…
@@ -157,7 +178,7 @@ const PaletteIOMenu: Component<Props> = (props) => {
               <select
                 class="pio__select"
                 value={exportFormat()}
-                onChange={(e) => setExportFormat(e.currentTarget.value as Format)}
+                onChange={(e) => setExportFormat(e.currentTarget.value as ExportFormat)}
               >
                 <option value="gpl">GIMP Palette (.gpl)</option>
                 <option value="hex">Lospec Hex (.hex)</option>
