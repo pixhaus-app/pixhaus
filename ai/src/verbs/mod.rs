@@ -26,6 +26,7 @@ pub mod motion_from_video;
 pub mod project_style_learning;
 pub mod sketch_finishing;
 pub mod tile;
+pub mod tileset_from_description;
 pub mod variant;
 
 pub use cleanup::CleanupVerb;
