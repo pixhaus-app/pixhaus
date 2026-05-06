@@ -46,13 +46,14 @@ export const [selectionRect, setSelectionRect] = createSignal<{
   height: number;
 } | null>(null);
 
-// ── Brush preview state (S15 will own; defaults are stubs) ─────────────────
+// ── Brush preview state ───────────────────────────────────────────────────────
+//
+// The canonical tool signals live in tools/tool-state.ts (owned by S15).
+// These shims re-export them so Canvas.tsx and overlays.tsx keep reading from
+// a single stable import path without touching those files.
 
-export type BrushShape = "round" | "square";
-
-/** Brush diameter in canvas pixels. */
-export const [brushSize, setBrushSize] = createSignal(1);
-export const [brushShape, setBrushShape] = createSignal<BrushShape>("round");
+export type { BrushShape } from "./tools/tool-state";
+export { toolSize as brushSize, toolShape as brushShape } from "./tools/tool-state";
 
 // Cursor position in canvas coordinates, or null when the pointer is off-canvas.
 export const [cursorCanvas, setCursorCanvas] = createSignal<{ x: number; y: number } | null>(null);

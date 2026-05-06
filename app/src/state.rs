@@ -11,6 +11,8 @@ use pixhaus_core::project::Project;
 use pixhaus_core::undo::History;
 use pixhaus_io::pixhaus::PixelBufferEntry;
 
+use crate::pixel_history::PixelHistory;
+
 /// In-memory document and editor session. Internal to the app crate.
 pub(crate) struct DocumentStore {
     /// Active project, or `None` when no document is open.
@@ -30,6 +32,12 @@ pub(crate) struct DocumentStore {
     /// Retained across the decode round-trip so `project_save` can write
     /// them back without losing content.
     pub(crate) pixel_buffers: Vec<PixelBufferEntry>,
+    /// Undo/redo stack for pixel drawing ops.
+    ///
+    /// Pixel ops mutate `pixel_buffers` directly rather than going through
+    /// `History` (which only sees `&mut Project`). This parallel stack
+    /// stores before/after snapshots so undo/redo can restore them.
+    pub(crate) pixel_history: PixelHistory,
 }
 
 impl Default for DocumentStore {
@@ -41,6 +49,7 @@ impl Default for DocumentStore {
             dirty: false,
             history: History::new(),
             pixel_buffers: Vec::new(),
+            pixel_history: PixelHistory::new(),
         }
     }
 }

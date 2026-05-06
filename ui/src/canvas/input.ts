@@ -22,6 +22,14 @@ import {
   activeFrameIndex,
   activeLayerId,
 } from "./canvas-state";
+import {
+  activeTool,
+  fillTolerance,
+  foregroundColor,
+  pixelPerfect,
+  toolShape,
+  toolSize,
+} from "./tools/tool-state";
 import { snapZoom, clampZoom, zoomAt, screenToCanvas } from "./viewport";
 import { isEditableTarget } from "../keybinds/keybind-manager";
 import {
@@ -32,6 +40,7 @@ import {
   autotileMode,
 } from "../tilemap/tilemap-state";
 import { tilePlace, tileErase, tileAutotileApply } from "../lib/commands/tiles";
+import { canvasDrawStroke, canvasFill } from "../lib/commands/canvas";
 
 // How much the continuous zoom changes per wheel tick (scroll-wheel smooth mode).
 const WHEEL_ZOOM_FACTOR = 1.1;
@@ -155,6 +164,78 @@ function resetTilePaintStroke(): void {
   lastPaintedCell = null;
 }
 
+// ── Freehand stroke state ──────────────────────────────────────────────────
+
+// Points collected during the current stroke (canvas coordinates).
+let strokePoints: Array<[number, number]> = [];
+
+function canvasPointFromEvent(e: MouseEvent, el: HTMLElement): [number, number] {
+  const rect = el.getBoundingClientRect();
+  const sx = e.clientX - rect.left;
+  const sy = e.clientY - rect.top;
+  const [cx, cy] = screenToCanvas(sx, sy, scrollX(), scrollY(), zoom(), rect.width, rect.height);
+  return [cx, cy];
+}
+
+function isDrawingTool(): boolean {
+  const t = activeTool();
+  return t === "pencil" || t === "eraser" || t === "line";
+}
+
+function isFillTool(): boolean {
+  return activeTool() === "fill";
+}
+
+function dispatchStroke(): void {
+  if (strokePoints.length === 0) return;
+
+  const spriteId = activeSpriteId();
+  const layerId = activeLayerId();
+  if (spriteId === null || layerId === null) {
+    strokePoints = [];
+    return;
+  }
+
+  const erase = activeTool() === "eraser";
+  const color = foregroundColor();
+  const points = strokePoints.slice();
+  strokePoints = [];
+
+  canvasDrawStroke({
+    sprite_id: spriteId,
+    layer_id: layerId,
+    frame_index: activeFrameIndex(),
+    points,
+    color: { r: color.r, g: color.g, b: color.b, a: color.a },
+    pressure: points.map(() => 1.0),
+    brush_shape: toolShape(),
+    brush_size: toolSize(),
+    pixel_perfect: pixelPerfect(),
+    erase,
+  }).catch((err: unknown) => {
+    console.error("[pixhaus] canvas_draw_stroke:", err);
+  });
+}
+
+function dispatchFill(canvasX: number, canvasY: number): void {
+  const spriteId = activeSpriteId();
+  const layerId = activeLayerId();
+  if (spriteId === null || layerId === null) return;
+
+  const color = foregroundColor();
+  canvasFill({
+    sprite_id: spriteId,
+    layer_id: layerId,
+    frame_index: activeFrameIndex(),
+    x: Math.floor(canvasX),
+    y: Math.floor(canvasY),
+    color: { r: color.r, g: color.g, b: color.b, a: color.a },
+    tolerance: fillTolerance(),
+  }).catch((err: unknown) => {
+    console.error("[pixhaus] canvas_fill:", err);
+  });
+}
+
 // ── Pan state ──────────────────────────────────────────────────────────────
 
 interface PanState {
@@ -175,6 +256,8 @@ export function attachCanvasInput(el: HTMLElement): () => void {
   // Tracks whether a tile-paint drag stroke is in progress.
   let tilePaintActive = false;
   let tilePaintErase = false;
+  // Tracks whether a freehand drawing stroke is in progress.
+  let drawStrokeActive = false;
 
   // ── Wheel zoom ────────────────────────────────────────────────────────
 
@@ -288,6 +371,22 @@ export function attachCanvasInput(el: HTMLElement): () => void {
       }
     }
 
+    // Drawing / fill tools: left-click only, no spacebar (spacebar pans).
+    if (e.button === 0 && !spaceHeld && activeTilemapCtx() === null) {
+      if (isFillTool()) {
+        e.preventDefault();
+        const [cx, cy] = canvasPointFromEvent(e, el);
+        dispatchFill(cx, cy);
+        return;
+      }
+      if (isDrawingTool()) {
+        e.preventDefault();
+        drawStrokeActive = true;
+        strokePoints = [canvasPointFromEvent(e, el)];
+        return;
+      }
+    }
+
     // Left mouse + spacebar pans.
     if (e.button === 0 && spaceHeld) {
       e.preventDefault();
@@ -321,6 +420,11 @@ export function attachCanvasInput(el: HTMLElement): () => void {
       dispatchTilePaint(e.clientX, e.clientY, el, tilePaintErase);
     }
 
+    // Accumulate stroke points.
+    if (drawStrokeActive) {
+      strokePoints.push(canvasPointFromEvent(e, el));
+    }
+
     if (!pan.active) return;
     const dx = e.clientX - pan.lastX;
     const dy = e.clientY - pan.lastY;
@@ -340,6 +444,12 @@ export function attachCanvasInput(el: HTMLElement): () => void {
   function onMouseUp(): void {
     tilePaintActive = false;
     resetTilePaintStroke();
+
+    if (drawStrokeActive) {
+      drawStrokeActive = false;
+      dispatchStroke();
+    }
+
     if (pan.active) {
       pan.active = false;
       el.style.cursor = spaceHeld ? "grab" : "";

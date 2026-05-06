@@ -14,6 +14,8 @@ import { listen } from "@tauri-apps/api/event";
 import { CanvasRenderer } from "./renderer";
 import { attachCanvasInput } from "./input";
 import { BrushCursor, TransformHandles } from "./overlays";
+import Toolbar from "./tools/Toolbar";
+import ToolOptionsPanel from "./tools/ToolOptionsPanel";
 import {
   scrollX,
   scrollY,
@@ -275,26 +277,30 @@ const Canvas: Component = () => {
   });
 
   return (
-    <div ref={containerEl} class="canvas-container" tabIndex={-1}>
-      <canvas ref={canvasEl} class="canvas-viewport" />
-      <BrushCursor
-        scrollX={scrollX()}
-        scrollY={scrollY()}
-        zoom={zoom()}
-        vpW={vpW()}
-        vpH={vpH()}
-        cursor={cursorCanvas()}
-        size={brushSize()}
-        shape={brushShape()}
-      />
-      <TransformHandles
-        scrollX={scrollX()}
-        scrollY={scrollY()}
-        zoom={zoom()}
-        vpW={vpW()}
-        vpH={vpH()}
-        bounds={transformBounds()}
-      />
+    <div class="canvas-workspace">
+      <Toolbar />
+      <ToolOptionsPanel />
+      <div ref={containerEl} class="canvas-container" tabIndex={-1}>
+        <canvas ref={canvasEl} class="canvas-viewport" />
+        <BrushCursor
+          scrollX={scrollX()}
+          scrollY={scrollY()}
+          zoom={zoom()}
+          vpW={vpW()}
+          vpH={vpH()}
+          cursor={cursorCanvas()}
+          size={brushSize()}
+          shape={brushShape()}
+        />
+        <TransformHandles
+          scrollX={scrollX()}
+          scrollY={scrollY()}
+          zoom={zoom()}
+          vpW={vpW()}
+          vpH={vpH()}
+          bounds={transformBounds()}
+        />
+      </div>
     </div>
   );
 };
