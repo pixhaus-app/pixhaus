@@ -46,6 +46,11 @@ pub mod progress;
 pub mod runtime;
 pub mod verb;
 
+pub use crate::verbs::auto_mesh_deformation::{
+    AUTO_MESH_DEFORMATION_VERB_ID, AutoMeshDeformationVerb, AutoMeshInputs,
+    MESH_RESOLUTION_DEFAULT, MESH_RESOLUTION_MAX, MESH_RESOLUTION_MIN, RigControlPoint, RigData,
+    RigRegion,
+};
 pub use audio_timing::{
     AUDIO_TIMING_VERB_ID, AudioFormat, AudioTimingInputs, AudioTimingMode, AudioTimingVerb,
 };
