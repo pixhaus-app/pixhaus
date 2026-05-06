@@ -25,8 +25,9 @@ jobs:
     outputs:
       release_id: ${{ steps.release.outputs.id }}
       tag: ${{ steps.tag.outputs.tag }}
+      version: ${{ steps.tag.outputs.version }}
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v4
         with:
           fetch-depth: 0
 
@@ -35,6 +36,8 @@ jobs:
         run: |
           TAG="${{ github.event.inputs.tag || github.ref_name }}"
           echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+          # Strip the leading 'v' for the version field
+          echo "version=${TAG#v}" >> "$GITHUB_OUTPUT"
 
       - name: Extract changelog section
         run: |
@@ -51,7 +54,7 @@ jobs:
 
       - name: Create draft release
         id: release
-        uses: softprops/action-gh-release@v3
+        uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ steps.tag.outputs.tag }}
           name: Pixhaus ${{ steps.tag.outputs.tag }}
@@ -81,7 +84,7 @@ jobs:
             bundles: dmg,app
 
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v4
         with:
           ref: ${{ needs.create-release.outputs.tag }}
 
@@ -96,9 +99,9 @@ jobs:
           workspaces: ". -> target"
           shared-key: pixhaus-release-${{ matrix.os }}
 
-      - uses: pnpm/action-setup@v6
+      - uses: pnpm/action-setup@v4
 
-      - uses: actions/setup-node@v6
+      - uses: actions/setup-node@v4
         with:
           node-version: 22
           cache: pnpm
@@ -120,15 +123,112 @@ jobs:
             patchelf \
             rpm
 
+      # macOS: import the Developer ID certificate so the Tauri CLI can sign.
+      # Requires secrets: APPLE_CERTIFICATE (base64 .p12), APPLE_CERTIFICATE_PASSWORD.
+      - name: Import Apple certificate
+        if: runner.os == 'macOS' && env.APPLE_CERTIFICATE != ''
+        env:
+          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+        run: |
+          KEYCHAIN_PATH=$RUNNER_TEMP/build.keychain
+          KEYCHAIN_PASSWORD=$(openssl rand -base64 32)
+          security create-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
+          security set-keychain-settings -lut 21600 "$KEYCHAIN_PATH"
+          security unlock-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
+          echo "$APPLE_CERTIFICATE" | base64 --decode > /tmp/cert.p12
+          security import /tmp/cert.p12 -k "$KEYCHAIN_PATH" \
+            -P "$APPLE_CERTIFICATE_PASSWORD" -T /usr/bin/codesign
+          security list-keychain -d user -s "$KEYCHAIN_PATH"
+          security set-key-partition-list -S apple-tool:,apple: \
+            -s -k "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
+          rm /tmp/cert.p12
+
       - name: Build and upload bundle
         uses: tauri-apps/tauri-action@v0
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # Update artifact signing — private key signs the bundle so the
+          # updater plugin can verify it against the pubkey in tauri.conf.json.
+          # Set TAURI_SIGNING_PRIVATE_KEY and TAURI_SIGNING_PRIVATE_KEY_PASSWORD
+          # in repository secrets. Generate with: scripts/gen-updater-key.sh
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+          # macOS code signing and notarization.
+          # APPLE_SIGNING_IDENTITY: e.g. "Developer ID Application: Pixhaus (TEAMID)"
+          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          # Windows Authenticode signing via a PFX certificate.
+          # WINDOWS_CERTIFICATE: base64-encoded .pfx file
+          WINDOWS_CERTIFICATE: ${{ secrets.WINDOWS_CERTIFICATE }}
+          WINDOWS_CERTIFICATE_PASSWORD: ${{ secrets.WINDOWS_CERTIFICATE_PASSWORD }}
         with:
           releaseId: ${{ needs.create-release.outputs.release_id }}
           args: --config app/tauri.conf.json --bundles ${{ matrix.bundles }}
           includeRelease: true
           includeDebug: false
+          updaterJsonPreferNsis: false
 
-  # TODO(S50): Add code signing (Authenticode/Apple notarization/GPG) and
-  # auto-update manifest generation. See docs/planning/work/streams.md#s50.
+      # Linux AppImage: detached GPG signature for users who verify downloads.
+      # Only runs when GPG_PRIVATE_KEY secret is present.
+      - name: Sign AppImage with GPG
+        if: runner.os == 'Linux' && env.GPG_PRIVATE_KEY != ''
+        env:
+          GPG_PRIVATE_KEY: ${{ secrets.GPG_PRIVATE_KEY }}
+          GPG_KEY_ID: ${{ secrets.GPG_KEY_ID }}
+        run: |
+          echo "$GPG_PRIVATE_KEY" | gpg --batch --import
+          for f in target/release/bundle/appimage/*.AppImage; do
+            gpg --batch --yes --armor --detach-sign \
+              --local-user "$GPG_KEY_ID" "$f"
+            gh release upload "${{ needs.create-release.outputs.tag }}" \
+              "${f}.asc" --clobber
+          done
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  publish:
+    name: Publish release
+    needs: [create-release, build]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      # Download every artifact from the draft release so the manifest
+      # script can read the per-platform .sig files.
+      - name: Download release artifacts
+        run: |
+          mkdir -p release-artifacts
+          gh release download "${{ needs.create-release.outputs.tag }}" \
+            --dir release-artifacts
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      # Generate latest.json from the signed bundles and upload it.
+      - name: Generate and upload latest.json
+        run: |
+          node scripts/gen-update-manifest.mjs \
+            --tag "${{ needs.create-release.outputs.tag }}" \
+            --version "${{ needs.create-release.outputs.version }}" \
+            --artifacts-dir release-artifacts \
+            --output latest.json
+          gh release upload "${{ needs.create-release.outputs.tag }}" \
+            latest.json --clobber
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      # Flip the release from draft to published.
+      - name: Publish release
+        run: |
+          gh release edit "${{ needs.create-release.outputs.tag }}" \
+            --draft=false
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

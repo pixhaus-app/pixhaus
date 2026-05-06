@@ -11,4 +11,5 @@ pub mod palette;
 pub mod project;
 pub mod tiles;
 pub mod undo;
+pub mod updater;
 pub mod verbs;
