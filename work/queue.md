@@ -73,12 +73,12 @@ description and the linked review comments are the source of truth.
 - [x] DONE: S09-followup — apply raster layer masks during PSD import; build a real-world fixture corpus (Photoshop CC, Affinity Photo); wire S13 file-open dialog to accept `.psd`. Parent: PR #43. Shipped: PR #50.
 - [x] DONE: S11-followup — round-trip decode tests for GIF, WebP, MP4 using `image-rs` plus an external decoder gate. Parent: PR #40. Shipped: PR #51.
 - [x] DONE: S12-followup — accept multiple tilesets in `export_tilemap()` (TMX `firstgid` math + `TiledLayerInput` carries a tileset reference); add an XSD schema validation pass against Tiled's spec; add an automated round-trip test against the S39 importer. Parent: PR #38. Shipped: PR #53.
-- [ ] UNCLAIMED: S17-followup — variable-height virtualization so the active row's 56px height stops conflicting with the 32px assumption; implement merge-down / merge-selected / flatten-visible / convert-to-group / convert-to-tilemap-layer context-menu items; drag-into-group reparenting; commit-rename-on-unmount; fix the test-count-off-by-one. Parent: PR #35.
-- [ ] UNCLAIMED: S18-followup — wire palette reorder through a real IPC command (currently visual-only with a console.warn); add `.aco` (Photoshop) format support to PaletteIOMenu. Parent: PR #41.
+- [x] DONE: S17-followup — variable-height virtualization so the active row's 56px height stops conflicting with the 32px assumption; implement merge-down / merge-selected / flatten-visible / convert-to-group / convert-to-tilemap-layer context-menu items; drag-into-group reparenting; commit-rename-on-unmount; fix the test-count-off-by-one. Parent: PR #35. Shipped: PR #60.
+- [x] DONE: S18-followup — wire palette reorder through a real IPC command (currently visual-only with a console.warn); add `.aco` (Photoshop) format support to PaletteIOMenu. Parent: PR #41. Shipped: PR #59.
 - [x] DONE: S20-followup — unit tests for AutotileRuleEditor; allow TileIndex(0) in the custom-rule editor + default-tile input + selectedTileIndex defaults; full tilemap CRUD UI in TilemapPanel; expose `tilesets` from `lib/commands/index.ts`. Parent: PR #37. Shipped: PR #52.
 - [x] DONE: S41-followup — write the Aseprite-compat preset README the keybinds doc references. Parent: PR #39. Shipped: PR #57.
 - [x] DONE: S45-followup — preserve per-tile metadata (animation, collision shapes) when inlining the forest tileset into the level sample. Parent: PR #42. Shipped: PR #56.
-- [ ] UNCLAIMED: S52-followup — replace the `null`-default Tauri mock with realistic per-command responses so canvas tests actually render content; commit the seed baseline PNGs (must run on Linux to match CI's Chromium AA). Parent: PR #36.
+- [x] DONE: S52-followup — replace the `null`-default Tauri mock with realistic per-command responses so canvas tests actually render content; commit the seed baseline PNGs (must run on Linux to match CI's Chromium AA). Parent: PR #36. Shipped: PR #61.
 
 ## Streams — fourth wave (cross-cutting prep + UX gaps)
 
