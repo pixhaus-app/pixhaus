@@ -318,6 +318,8 @@ Streams marked with **★** are on the critical path — they unblock other stre
 
 **Agent brief:**
 > Implement the selection and transform UI in `ui/src/canvas/select/` and `ui/src/canvas/transform/`. Selection tools: rectangular marquee (with shift-add, alt-subtract modifiers), elliptical marquee, freehand lasso (click-and-drag or click-points), magic wand (click pixel, configurable tolerance + connectivity), color range (color picker → tolerance slider → live preview). Transform UI: when a selection is active, show transform handles (corner + edge handles) for scale, plus a rotation handle, plus a free-transform mode. Skew with shift-modifier on edge handles. Numeric input fields for precise transform. Transforms preview live; commit on Enter or click outside. Each commit is one undo command. Marching ants visualization for selection borders, animated.
+>
+> **Ship without asking.** Don't ask for design mockups or browser-based handle layouts — copy the standard 8-handle (corners + edges) + rotation handle pattern from Aseprite/Photoshop and ship. Keep the visual style minimal: 1px white strokes with 1px black outlines for handles and selection borders. If you hit any architectural choice, pick the option that mirrors the existing layer/tilemap panel patterns (Solid signals at module scope, no global stores) and proceed. The goal is a working PR, not a design exploration.
 
 ---
 
@@ -476,7 +478,11 @@ Each verb is its own stream. They share the same shape:
 **Interfaces:** S38 (Lua bindings used by Lua plugins)
 
 **Agent brief:**
-> Implement the plugin loader in `core/src/plugins/`. Plugins live in `~/.pixhaus/plugins/<plugin-name>/` with a `plugin.toml` manifest declaring name, version, author, description, entry point (Lua script path or WASM module path), permissions (can register verbs, tools, panels, commands, format readers/writers). On editor startup, scan plugin directory, load manifests, instantiate plugin instances with restricted capabilities. Plugins register via a host API exposed to Lua/WASM. Hot-reload: editing a plugin file triggers reload without editor restart. Sandbox: WASM plugins can't access filesystem outside the project; Lua plugins use a restricted Lua environment. Document the plugin format in `docs/plugin-system.md` with a worked example.
+> Implement the plugin loader in a **new `plugins/` workspace crate** (`plugins/Cargo.toml`, `plugins/src/lib.rs`). Plugins live in `~/.pixhaus/plugins/<plugin-name>/` with a `plugin.toml` manifest declaring name, version, author, description, entry point (Lua script path or WASM module path), permissions (can register verbs, tools, panels, commands, format readers/writers). On editor startup, scan plugin directory, load manifests, instantiate plugin instances with restricted capabilities. Plugins register via a host API exposed to Lua/WASM. Hot-reload: editing a plugin file triggers reload without editor restart. Sandbox: WASM plugins can't access filesystem outside the project; Lua plugins use a restricted Lua environment. Document the plugin format in `docs/plugin-system.md` with a worked example.
+>
+> **Architecture decision (locked, do not relitigate).** The loader lives in a new top-level `plugins/` crate, NOT in `core/`. `core/` is a pure data-model crate with zero I/O dependencies; the plugin loader needs filesystem watching, manifest parsing, and WASM/Lua runtime embedding. Add `plugins/` to the workspace members in the root `Cargo.toml`, depend on `pixhaus-core` for shared types, and let `app/` consume it. The Lua-binding crate (`scripting/`) already exists and the `extism` dep should be added to the new `plugins/` crate. Keep `core/` deps unchanged.
+>
+> **Ship without asking.** Make the directory-scan path use the standard `dirs::data_local_dir().join("pixhaus/plugins")` pattern (already a transitive dep). For hot-reload, use `notify` (workspace-friendly file-watching crate) — add it to `plugins/Cargo.toml`. Pick reasonable defaults for the manifest schema and emit a JSON Schema for it inside the crate (mirrors how AI verbs ship `input_schema`). The goal is a working loader + one example plugin in `examples/plugins/echo/` proving the round-trip; do not ask for spec clarifications, default to the obvious choice and ship.
 
 ---
 
@@ -620,6 +626,10 @@ Each verb is its own stream. They share the same shape:
 
 **Agent brief:**
 > Set up the Pixhaus community infrastructure. Discord: create server, configure channels (#welcome, #announcements, #general, #showcase, #help, #plugins, #dev, #suggestions, #off-topic), set up roles (newcomer, member, contributor, maintainer), bot integrations (release announcements via webhook, GitHub PR notifications, message moderation). GitHub: enable Discussions, set up issue templates (bug, feature, plugin idea), PR template, code of conduct (Contributor Covenant), Contributing guide referencing `CONTRIBUTING.md` from B8, release-drafter for changelogs. Optional: a Mastodon and Bluesky presence for release announcements. Keep moderation overhead low — the goal is a place users can ask questions and contributors can coordinate.
+>
+> **Ship the in-repo half — defer the external accounts.** This dispatch produces ONE PR with everything that lives in this repository: `.github/ISSUE_TEMPLATE/{bug.yml,feature.yml,plugin_idea.yml}`, `.github/PULL_REQUEST_TEMPLATE.md`, `.github/CODE_OF_CONDUCT.md` (Contributor Covenant 2.1 verbatim), `.github/release-drafter.yml` plus the `.github/workflows/release-drafter.yml` workflow that consumes it, and a new `docs/site/src/content/docs/community.md` page that links to the (forthcoming) Discord, Mastodon, and Bluesky once the human creates them. Add a "Community setup checklist" section to `docs/planning/work/launch-checklist.md` (create the file if missing) listing every external step a human must perform: create the Discord server, configure channels/roles, set up the release-announcements webhook, register Mastodon/Bluesky handles, paste the invite URL into community.md.
+>
+> **Ship without asking.** Don't ask for the Discord URL, the Mastodon handle, or the bot tokens — leave them as `TODO(community-launch)` placeholders that the human replaces during the launch checklist. The PR ships when the in-repo files exist and the checklist documents what's left.
 
 ---
 
