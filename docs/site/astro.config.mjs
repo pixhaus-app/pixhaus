@@ -53,6 +53,10 @@ export default defineConfig({
           autogenerate: { directory: "plugins" },
         },
         {
+          label: "Migration",
+          autogenerate: { directory: "migration" },
+        },
+        {
           label: "Reference",
           autogenerate: { directory: "reference" },
         },
