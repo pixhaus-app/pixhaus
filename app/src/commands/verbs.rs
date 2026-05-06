@@ -1,6 +1,7 @@
 //! AI verb invocation commands.
 //!
-//! `verb_list` returns the descriptors of all registered verbs.
+//! `verb_list` returns the descriptors of all registered verbs, including
+//! plugin-registered verbs (the plugin registry shares the same runtime).
 //! `verb_invoke` runs a verb synchronously and returns its output.
 //! `verb_cancel` is not yet wired (in-flight cancellation requires a
 //! per-session invocation map; tracked for a follow-up stream).

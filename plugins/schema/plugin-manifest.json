@@ -1,0 +1,81 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://pixhaus.app/schemas/plugin-manifest.json",
+  "title": "Pixhaus plugin manifest",
+  "description": "Schema for plugin.toml — the manifest every Pixhaus plugin directory must contain.",
+  "type": "object",
+  "required": ["plugin"],
+  "additionalProperties": false,
+  "properties": {
+    "plugin": {
+      "type": "object",
+      "required": ["name", "version", "entry_point"],
+      "additionalProperties": false,
+      "properties": {
+        "name": {
+          "type": "string",
+          "description": "Machine-readable plugin name. Convention: kebab-case, ASCII only. Used as the registry key and verb-ID namespace prefix.",
+          "pattern": "^[a-z][a-z0-9-]*$",
+          "examples": ["echo", "my-plugin", "palette-tools"]
+        },
+        "version": {
+          "type": "string",
+          "description": "Semantic version of this plugin.",
+          "pattern": "^\\d+\\.\\d+\\.\\d+",
+          "examples": ["0.1.0", "1.2.3"]
+        },
+        "author": {
+          "type": "string",
+          "description": "Optional author or organisation string.",
+          "examples": ["Pixhaus Team", "Jane Developer <jane@example.com>"]
+        },
+        "description": {
+          "type": "string",
+          "description": "One-sentence description shown in the plugin browser."
+        },
+        "entry_point": {
+          "type": "string",
+          "description": "Path to the plugin entry point, relative to the plugin directory. Extension determines the runtime: .wasm → extism WASM host, .lua → mlua Lua runtime.",
+          "examples": ["plugin.wasm", "main.lua", "src/main.wasm"]
+        },
+        "permissions": {
+          "type": "object",
+          "description": "Capabilities this plugin requests from the host. All default to false. The loader enforces these — a plugin that tries to register a capability it did not declare is unloaded.",
+          "additionalProperties": false,
+          "properties": {
+            "register_verbs": {
+              "type": "boolean",
+              "default": false,
+              "description": "May register custom AI verbs via the verb runtime."
+            },
+            "register_tools": {
+              "type": "boolean",
+              "default": false,
+              "description": "May register custom canvas tools (brush, fill, selection algorithms)."
+            },
+            "register_panels": {
+              "type": "boolean",
+              "default": false,
+              "description": "May register custom UI panels."
+            },
+            "register_commands": {
+              "type": "boolean",
+              "default": false,
+              "description": "May register entries in the command palette."
+            },
+            "register_format_readers": {
+              "type": "boolean",
+              "default": false,
+              "description": "May register custom file format readers."
+            },
+            "register_format_writers": {
+              "type": "boolean",
+              "default": false,
+              "description": "May register custom file format writers."
+            }
+          }
+        }
+      }
+    }
+  }
+}

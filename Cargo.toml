@@ -5,6 +5,7 @@ members = [
     "io",
     "ai",
     "scripting",
+    "plugins",
     "app",
 ]
 

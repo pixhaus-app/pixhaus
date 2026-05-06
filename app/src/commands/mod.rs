@@ -9,6 +9,7 @@ pub mod crash_reporting;
 pub mod frames;
 pub mod layers;
 pub mod palette;
+pub mod plugins;
 pub mod project;
 pub mod tiles;
 pub mod undo;

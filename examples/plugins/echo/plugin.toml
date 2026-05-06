@@ -1,0 +1,9 @@
+[plugin]
+name = "echo"
+version = "0.1.0"
+author = "Pixhaus Team"
+description = "Echo verb — returns its inputs as a note. Reference plugin for testing the loader."
+entry_point = "echo.wasm"
+
+[plugin.permissions]
+register_verbs = true
