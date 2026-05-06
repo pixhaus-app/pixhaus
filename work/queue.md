@@ -87,6 +87,53 @@ Items the third-wave review surfaced that did not fit any single stream's scope.
 - [x] DONE: S15-prep — add a pixel-buffer cache to `app::state::DocumentStore` so loaded sprites retain their pixels across the `decode_from_file` round-trip. Surfaced by Copilot review of PR #49. Touches `app/src/state.rs` and the `project_open`/`project_save`/`project_import_psd` commands. Shipped: PR #63.
 - [x] DONE: ui-toast — replaced `window.alert()` in `reportCommandFailure` with a non-blocking toast host (`ui/src/lib/toast/`). ToastHost is mounted once in Shell; any catch block calls `pushToast()`. Auto-dismiss after 6s; manual close button.
 
+## Streams — fifth wave (real editor surface)
+
+Brush, selection/transform, timeline, raster ops. Critical-path
+infra (S01/S05/S13/S14) is done; these turn the project from
+"viewer" into "editor". Fanned out together — they touch different
+panels and rarely overlap.
+
+- [ ] UNCLAIMED: S04 — Transform operations (flip, rotate, scale, free-transform commit). Brief: docs/planning/work/streams.md#s04. Blocked by: S03 S05.
+- [ ] UNCLAIMED: S15 — Brush engine UI (pencil, eraser, fill, line, rectangle, ellipse + per-tool settings). Brief: docs/planning/work/streams.md#s15. Blocked by: S01 S14.
+- [ ] UNCLAIMED: S16 — Selection and transform UI (marquee/lasso/wand handlers, transform handles). Brief: docs/planning/work/streams.md#s16. Blocked by: S03 S14.
+- [ ] UNCLAIMED: S19 — Timeline panel (frame strip, play/pause, onion skin toggle, frame tags). Brief: docs/planning/work/streams.md#s19. Blocked by: S05 S13.
+
+## Streams — AI verbs (B5/S21/S22 unblocked)
+
+Each verb is its own stream under `ai/src/verbs/<name>/`. Briefs in
+docs/planning/work/streams.md#s23-s36. Independent of each other
+except for the shared `ai/src/verbs/mod.rs` registration — expect
+small merge conflicts there as PRs land.
+
+- [ ] UNCLAIMED: S23 — Verb: Inbetween (interpolated key-frame fills). Brief: docs/planning/work/streams.md#s23. Blocked by: B5 S21 S22.
+- [ ] UNCLAIMED: S24 — Verb: Continue (predict next frames). Brief: docs/planning/work/streams.md#s24. Blocked by: B5 S21 S22.
+- [ ] UNCLAIMED: S25 — Verb: Extend (multi-direction views). Brief: docs/planning/work/streams.md#s25. Blocked by: B5 S21 S22.
+- [ ] UNCLAIMED: S26 — Verb: Variant (palette swaps, equipment, expressions). Brief: docs/planning/work/streams.md#s26. Blocked by: B5 S21 S22.
+- [ ] UNCLAIMED: S27 — Verb: Cleanup (palette snap, AA removal, pivot fix). Brief: docs/planning/work/streams.md#s27. Blocked by: B5 S21 S22.
+- [ ] UNCLAIMED: S28 — Verb: Tile (autotile generation). Brief: docs/planning/work/streams.md#s28. Blocked by: B5 S21 S22 S06.
+- [ ] UNCLAIMED: S29 — Verb: Mask (segmentation + edge cleanup). Brief: docs/planning/work/streams.md#s29. Blocked by: B5 S21 S22.
+- [ ] UNCLAIMED: S30 — Verb: Repaint (style transfer at fixed geometry). Brief: docs/planning/work/streams.md#s30. Blocked by: B5 S21 S22.
+- [ ] UNCLAIMED: S31 — Verb: Reference (image-to-sprite from photo). Brief: docs/planning/work/streams.md#s31. Blocked by: B5 S21 S22.
+- [ ] UNCLAIMED: S32 — Verb: Style (style match across sprites). Brief: docs/planning/work/streams.md#s32. Blocked by: B5 S21 S22.
+- [ ] UNCLAIMED: S33 — Verb: Backgrounds (procedural backgrounds). Brief: docs/planning/work/streams.md#s33. Blocked by: B5 S21 S22.
+- [ ] UNCLAIMED: S34 — Verb: Edit (instruction-driven edits). Brief: docs/planning/work/streams.md#s34. Blocked by: B5 S21 S22.
+- [ ] UNCLAIMED: S35 — Verb: Mesh-deform (auto-rig + deformation). Brief: docs/planning/work/streams.md#s35. Blocked by: B5 S21 S22.
+- [ ] UNCLAIMED: S36 — Verb: Promote-to-3D (sprite to volumetric). Brief: docs/planning/work/streams.md#s36. Blocked by: B5 S21 S22.
+
+## Streams — extension surfaces, packaging, content
+
+- [ ] UNCLAIMED: S37 — Plugin loader and public API surface (extism + Lua entry points). Brief: docs/planning/work/streams.md#s37. Blocked by: B5.
+- [ ] UNCLAIMED: S38 — Lua scripting bindings (mlua project/sprite/layer/cel APIs). Brief: docs/planning/work/streams.md#s38. Blocked by: B5 S37.
+- [ ] UNCLAIMED: S40 — Unity sample project demonstrating importer round-trip. Brief: docs/planning/work/streams.md#s40. Blocked by: S39.
+- [ ] UNCLAIMED: S42 — Migration guide from Aseprite (docs page + workflow translations). Brief: docs/planning/work/streams.md#s42.
+- [ ] UNCLAIMED: S43 — Plugin developer guide (SDK quickstart + verb authoring). Brief: docs/planning/work/streams.md#s43.
+- [ ] UNCLAIMED: S44 — Tutorial content (5-10 walkthrough docs). Brief: docs/planning/work/streams.md#s44.
+- [ ] UNCLAIMED: S47 — Website (pixhaus.app landing). Brief: docs/planning/work/streams.md#s47.
+- [ ] UNCLAIMED: S48 — Discord and community setup. Brief: docs/planning/work/streams.md#s48.
+- [ ] UNCLAIMED: S50 — Release packaging (installer/dmg/AppImage + auto-update). Brief: docs/planning/work/streams.md#s50.
+- [ ] UNCLAIMED: S51 — Crash reporting (opt-in Sentry). Brief: docs/planning/work/streams.md#s51.
+
 ## Operating notes
 
 - One claim per worktree; the loop stops if the lock dir cannot be acquired
