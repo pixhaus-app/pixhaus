@@ -1,0 +1,11 @@
+[plugin]
+name        = "Invert Colors Verb"
+version     = "0.1.0"
+author      = "Pixhaus contributors"
+description = "AI verb example compiled to WASM: invert the RGB channels of the active layer."
+entry       = "plugin.wasm"
+license     = "MIT"
+homepage    = "https://github.com/pixhaus-app/pixhaus/tree/main/examples/plugins/custom-verb-wasm"
+
+[permissions]
+verbs = true

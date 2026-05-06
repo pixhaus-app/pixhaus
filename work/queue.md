@@ -127,7 +127,7 @@ small merge conflicts there as PRs land.
 - [ ] UNCLAIMED: S38 — Lua scripting bindings (mlua project/sprite/layer/cel APIs). Brief: docs/planning/work/streams.md#s38. Blocked by: B5 S37.
 - [ ] UNCLAIMED: S40 — Unity sample project demonstrating importer round-trip. Brief: docs/planning/work/streams.md#s40. Blocked by: S39.
 - [ ] UNCLAIMED: S42 — Migration guide from Aseprite (docs page + workflow translations). Brief: docs/planning/work/streams.md#s42.
-- [ ] UNCLAIMED: S43 — Plugin developer guide (SDK quickstart + verb authoring). Brief: docs/planning/work/streams.md#s43.
+- [~] CLAIMED:stream-s43:S43 — Plugin developer guide (SDK quickstart + verb authoring). Brief: docs/planning/work/streams.md#s43.
 - [ ] UNCLAIMED: S44 — Tutorial content (5-10 walkthrough docs). Brief: docs/planning/work/streams.md#s44.
 - [ ] UNCLAIMED: S47 — Website (pixhaus.app landing). Brief: docs/planning/work/streams.md#s47.
 - [ ] UNCLAIMED: S48 — Discord and community setup. Brief: docs/planning/work/streams.md#s48.
