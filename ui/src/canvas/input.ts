@@ -21,6 +21,7 @@ import {
   activeSpriteId,
   activeFrameIndex,
   activeLayerId,
+  isSelectMode,
 } from "./canvas-state";
 import {
   activeTool,
@@ -30,6 +31,8 @@ import {
   toolShape,
   toolSize,
 } from "./tools/tool-state";
+import { attachSelectInput } from "./select/select-input";
+import { transformDrag } from "./transform/transform-state";
 import { snapZoom, clampZoom, zoomAt, screenToCanvas } from "./viewport";
 import { isEditableTarget } from "../keybinds/keybind-manager";
 import {
@@ -249,6 +252,12 @@ interface PanState {
 /**
  * Attaches all canvas interaction listeners to `el`.
  * Returns a cleanup function — call it from Solid's onCleanup.
+ *
+ * Routing priority (highest to lowest):
+ *   1. Transform drag in progress (transform-state)
+ *   2. Space + drag / middle-mouse → pan
+ *   3. Tilemap paint mode (activeTilemapCtx non-null)
+ *   4. Selection mode (isSelectMode true) → selection input
  */
 export function attachCanvasInput(el: HTMLElement): () => void {
   const pan: PanState = { active: false, lastX: 0, lastY: 0 };
@@ -258,6 +267,10 @@ export function attachCanvasInput(el: HTMLElement): () => void {
   let tilePaintErase = false;
   // Tracks whether a freehand drawing stroke is in progress.
   let drawStrokeActive = false;
+
+  // Attach the selection input handler. It manages its own listener
+  // lifecycle internally; we just hold the cleanup reference.
+  const detachSelectInput = attachSelectInput(el);
 
   // ── Wheel zoom ────────────────────────────────────────────────────────
 
@@ -344,12 +357,16 @@ export function attachCanvasInput(el: HTMLElement): () => void {
   }
 
   function onMouseDown(e: MouseEvent): void {
-    // Middle-mouse always pans.
+    // Middle-mouse always pans regardless of active tool.
     if (e.button === 1) {
       e.preventDefault();
       startPan(e);
       return;
     }
+
+    // Selection mode: delegated to the selection input handler.
+    // Transform drag takes priority — skip if one is in progress.
+    if (isSelectMode() && transformDrag() === null && !spaceHeld) return;
 
     // Tile-paint mode: left-click places, right-click erases.
     if (activeTilemapCtx() !== null && !spaceHeld) {
@@ -506,5 +523,6 @@ export function attachCanvasInput(el: HTMLElement): () => void {
     window.removeEventListener("keyup", onKeyUp);
     el.removeEventListener("contextmenu", onContextMenu);
     el.removeEventListener("mouseleave", onMouseLeave);
+    detachSelectInput();
   };
 }

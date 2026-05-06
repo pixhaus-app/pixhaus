@@ -117,6 +117,75 @@ export function canvasSetSelection(
 }
 
 /**
+ * Selects the entire canvas of the given sprite as a rectangular region.
+ */
+export function canvasSelectAll(spriteId: SpriteId): Promise<SelectionState> {
+  return invoke<SelectionState>("canvas_select_all", { sprite_id: spriteId });
+}
+
+/**
+ * Inverts the current selection.
+ * Requires S01 (pixel buffers) — returns an error until S01 lands.
+ */
+export function canvasInvertSelection(
+  spriteId: SpriteId,
+  anchorLayer: LayerId | null,
+): Promise<SelectionState> {
+  return invoke<SelectionState>("canvas_invert_selection", {
+    sprite_id: spriteId,
+    anchor_layer: anchorLayer,
+  });
+}
+
+export type MagicWandArgs = {
+  sprite_id: SpriteId;
+  anchor_layer: LayerId | null;
+  seed_x: number;
+  seed_y: number;
+  tolerance: number;
+  connectivity: "four" | "eight";
+};
+
+/**
+ * Selects a contiguous region via flood-fill from a seed pixel.
+ * Requires S01 (pixel buffers) — returns an error until S01 lands.
+ */
+export function canvasSelectMagicWand(args: MagicWandArgs): Promise<SelectionState> {
+  return invoke<SelectionState>("canvas_select_magic_wand", { ...args });
+}
+
+export type ColorRangeArgs = {
+  sprite_id: SpriteId;
+  anchor_layer: LayerId | null;
+  x: number;
+  y: number;
+  target_color: Rgba;
+  tolerance: number;
+};
+
+/**
+ * Selects pixels within a color tolerance of the target color.
+ * Requires S01 (pixel buffers) — returns an error until S01 lands.
+ */
+export function canvasSelectColorRange(args: ColorRangeArgs): Promise<SelectionState> {
+  return invoke<SelectionState>("canvas_select_color_range", { ...args });
+}
+
+export type LassoArgs = {
+  sprite_id: SpriteId;
+  anchor_layer: LayerId | null;
+  points: Array<{ x: number; y: number }>;
+};
+
+/**
+ * Selects the polygon defined by the given points.
+ * Requires S01 (pixel buffers) — returns an error until S01 lands.
+ */
+export function canvasSelectLasso(args: LassoArgs): Promise<SelectionState> {
+  return invoke<SelectionState>("canvas_select_lasso", { ...args });
+}
+
+/**
  * Replaces the entire canvas viewport state (scroll, zoom, active ids, toggles).
  * The UI calls this on every meaningful viewport change so save/load can restore it.
  */

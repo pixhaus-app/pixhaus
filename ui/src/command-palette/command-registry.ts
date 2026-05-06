@@ -7,7 +7,23 @@ import { projectNew, projectOpen, projectSave, projectClose } from "../lib/comma
 import { setActiveProject, pushRecentProject } from "../project-state";
 import { extractFilename } from "../lib/utils/path";
 import { reportCommandFailure } from "../lib/utils/errors";
-import { activeSpriteId, activeLayerId } from "../canvas/canvas-state";
+import {
+  activeSpriteId,
+  activeLayerId,
+  setIsSelectMode,
+  setSelectionRect,
+  setTransformBounds,
+} from "../canvas/canvas-state";
+import { setSelectTool } from "../canvas/select/select-state";
+import { commitDeselect } from "../canvas/select/select-input";
+import {
+  dispatchFlipX,
+  dispatchFlipY,
+  dispatchRotateCw,
+  dispatchRotateCcw,
+} from "../canvas/transform/transform-input";
+import { canvasSelectAll, canvasInvertSelection } from "../lib/commands/canvas";
+import { pushToast } from "../lib/toast/toast-state";
 import {
   addLayer,
   beginRename,
@@ -283,8 +299,95 @@ const COMMANDS: ReadonlyMap<string, CommandEntry> = new Map<string, CommandEntry
 
   // ── Select ────────────────────────────────────────────────────────────────
   [
+    "select:tool-rect",
+    {
+      id: "select:tool-rect",
+      label: "Rectangle Marquee",
+      category: "Select",
+      keywords: ["select", "rect", "marquee"],
+      handler: () => {
+        setSelectTool("rect");
+        setIsSelectMode(true);
+      },
+    },
+  ],
+  [
+    "select:tool-ellipse",
+    {
+      id: "select:tool-ellipse",
+      label: "Ellipse Marquee",
+      category: "Select",
+      keywords: ["select", "ellipse", "oval", "circle", "marquee"],
+      handler: () => {
+        setSelectTool("ellipse");
+        setIsSelectMode(true);
+      },
+    },
+  ],
+  [
+    "select:tool-lasso",
+    {
+      id: "select:tool-lasso",
+      label: "Lasso",
+      category: "Select",
+      keywords: ["select", "lasso", "freehand", "polygon"],
+      handler: () => {
+        setSelectTool("lasso");
+        setIsSelectMode(true);
+      },
+    },
+  ],
+  [
+    "select:tool-wand",
+    {
+      id: "select:tool-wand",
+      label: "Magic Wand",
+      category: "Select",
+      keywords: ["select", "wand", "magic", "flood", "fill"],
+      handler: () => {
+        setSelectTool("wand");
+        setIsSelectMode(true);
+      },
+    },
+  ],
+  [
+    "select:tool-color-range",
+    {
+      id: "select:tool-color-range",
+      label: "Color Range",
+      category: "Select",
+      keywords: ["select", "color", "range", "hue"],
+      handler: () => {
+        setSelectTool("color-range");
+        setIsSelectMode(true);
+      },
+    },
+  ],
+  [
     "select:all",
-    { id: "select:all", label: "Select All", category: "Select", handler: stub("select:all") },
+    {
+      id: "select:all",
+      label: "Select All",
+      category: "Select",
+      handler: () => {
+        const spriteId = activeSpriteId();
+        if (spriteId === null) return;
+        canvasSelectAll(spriteId)
+          .then((state) => {
+            if (state.region?.kind === "rect") {
+              const b = state.region.bounds;
+              setSelectionRect({
+                x: b.origin.x,
+                y: b.origin.y,
+                width: b.size.width,
+                height: b.size.height,
+              });
+            }
+            setIsSelectMode(true);
+          })
+          .catch((err: unknown) => reportCommandFailure("canvas_select_all", err));
+      },
+    },
   ],
   [
     "select:deselect",
@@ -292,7 +395,12 @@ const COMMANDS: ReadonlyMap<string, CommandEntry> = new Map<string, CommandEntry
       id: "select:deselect",
       label: "Deselect",
       category: "Select",
-      handler: stub("select:deselect"),
+      keywords: ["deselect", "clear", "none"],
+      handler: () => {
+        commitDeselect().catch((err: unknown) => reportCommandFailure("canvas_set_selection", err));
+        setIsSelectMode(false);
+        setTransformBounds(null);
+      },
     },
   ],
   [
@@ -301,7 +409,79 @@ const COMMANDS: ReadonlyMap<string, CommandEntry> = new Map<string, CommandEntry
       id: "select:invert",
       label: "Invert Selection",
       category: "Select",
-      handler: stub("select:invert"),
+      keywords: ["invert", "inverse"],
+      handler: () => {
+        const spriteId = activeSpriteId();
+        const layerId = activeLayerId();
+        if (spriteId === null) return;
+        canvasInvertSelection(spriteId, layerId)
+          .then((state) => {
+            if (state.region?.kind === "rect") {
+              const b = state.region.bounds;
+              setSelectionRect({
+                x: b.origin.x,
+                y: b.origin.y,
+                width: b.size.width,
+                height: b.size.height,
+              });
+            } else {
+              setSelectionRect(null);
+            }
+          })
+          .catch((err: unknown) => {
+            const e = err as { kind?: string; stream?: string };
+            if (e?.kind === "unimplemented") {
+              pushToast({
+                title: `Invert selection requires ${e.stream ?? "S01"} — not yet available.`,
+                kind: "info",
+              });
+            } else {
+              reportCommandFailure("canvas_invert_selection", err);
+            }
+          });
+      },
+    },
+  ],
+
+  // ── Transform ─────────────────────────────────────────────────────────────
+  [
+    "transform:flip-x",
+    {
+      id: "transform:flip-x",
+      label: "Flip Horizontal",
+      category: "Transform",
+      keywords: ["flip", "mirror", "horizontal"],
+      handler: () => dispatchFlipX(),
+    },
+  ],
+  [
+    "transform:flip-y",
+    {
+      id: "transform:flip-y",
+      label: "Flip Vertical",
+      category: "Transform",
+      keywords: ["flip", "mirror", "vertical"],
+      handler: () => dispatchFlipY(),
+    },
+  ],
+  [
+    "transform:rotate-cw",
+    {
+      id: "transform:rotate-cw",
+      label: "Rotate 90° Clockwise",
+      category: "Transform",
+      keywords: ["rotate", "clockwise", "cw", "90"],
+      handler: () => dispatchRotateCw(),
+    },
+  ],
+  [
+    "transform:rotate-ccw",
+    {
+      id: "transform:rotate-ccw",
+      label: "Rotate 90° Counter-clockwise",
+      category: "Transform",
+      keywords: ["rotate", "counter", "ccw", "90"],
+      handler: () => dispatchRotateCcw(),
     },
   ],
 
