@@ -128,7 +128,7 @@ small merge conflicts there as PRs land.
 - [ ] UNCLAIMED: S40 — Unity sample project demonstrating importer round-trip. Brief: docs/planning/work/streams.md#s40. Blocked by: S39.
 - [ ] UNCLAIMED: S42 — Migration guide from Aseprite (docs page + workflow translations). Brief: docs/planning/work/streams.md#s42.
 - [~] CLAIMED:stream-s43:S43 — Plugin developer guide (SDK quickstart + verb authoring). Brief: docs/planning/work/streams.md#s43.
-- [ ] UNCLAIMED: S44 — Tutorial content (5-10 walkthrough docs). Brief: docs/planning/work/streams.md#s44.
+- [~] CLAIMED:stream-s44:S44 — Tutorial content (5-10 walkthrough docs). Brief: docs/planning/work/streams.md#s44.
 - [ ] UNCLAIMED: S47 — Website (pixhaus.app landing). Brief: docs/planning/work/streams.md#s47.
 - [ ] UNCLAIMED: S48 — Discord and community setup. Brief: docs/planning/work/streams.md#s48.
 - [ ] UNCLAIMED: S50 — Release packaging (installer/dmg/AppImage + auto-update). Brief: docs/planning/work/streams.md#s50.
