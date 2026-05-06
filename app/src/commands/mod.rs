@@ -5,6 +5,7 @@
 //! catalog. Add commands there when adding them to a module.
 
 pub mod canvas;
+pub mod crash_reporting;
 pub mod frames;
 pub mod layers;
 pub mod palette;

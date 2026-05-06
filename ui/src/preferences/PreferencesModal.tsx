@@ -7,12 +7,15 @@ import {
   setKeybindPreset,
   customKeybinds,
   clearCustomKeybind,
+  crashReportingEnabled,
+  setCrashReportingEnabled,
   type Theme,
   type KeybindPreset,
 } from "./preferences-store";
+import { setCrashReportingEnabled as setSentryEnabled } from "../crash-reporting/crash-reporting";
 import { getAllCommands } from "../command-palette/command-registry";
 
-type Tab = "general" | "keybinds" | "ai";
+type Tab = "general" | "keybinds" | "ai" | "privacy";
 
 const PreferencesModal: Component = () => {
   const [activeTab, setActiveTab] = createSignal<Tab>("general");
@@ -65,12 +68,21 @@ const PreferencesModal: Component = () => {
           >
             AI Backend
           </button>
+          <button
+            class="prefs__tab"
+            role="tab"
+            aria-selected={activeTab() === "privacy"}
+            onClick={() => setActiveTab("privacy")}
+          >
+            Privacy
+          </button>
         </div>
 
         <div class="prefs__body">
           {activeTab() === "general" && <GeneralTab />}
           {activeTab() === "keybinds" && <KeybindsTab />}
           {activeTab() === "ai" && <AiTab />}
+          {activeTab() === "privacy" && <PrivacyTab />}
         </div>
 
         <div class="prefs__footer">
@@ -185,6 +197,44 @@ const AiTab: Component = () => {
         <div class="prefs__label">
           AI backend configuration will be available once the AI verb runtime (B5) lands.
         </div>
+      </div>
+    </div>
+  );
+};
+
+const PrivacyTab: Component = () => {
+  function handleToggle(e: Event): void {
+    const enabled = (e.currentTarget as HTMLInputElement).checked;
+    setCrashReportingEnabled(enabled);
+    setSentryEnabled(enabled);
+  }
+
+  return (
+    <div class="prefs__section">
+      <p class="prefs__section-title">Crash reporting</p>
+      <div class="prefs__row">
+        <div>
+          <div class="prefs__label">Send anonymous crash reports</div>
+          <div class="prefs__sublabel">
+            Sends stack traces and OS info when Pixhaus crashes. No project content, file names, or
+            personal information is included. See{" "}
+            <a
+              href="https://pixhaus.app/privacy"
+              target="_blank"
+              rel="noopener noreferrer"
+              style={{ color: "var(--accent)" }}
+            >
+              privacy policy
+            </a>{" "}
+            for details.
+          </div>
+        </div>
+        <input
+          type="checkbox"
+          checked={crashReportingEnabled()}
+          onChange={handleToggle}
+          aria-label="Enable anonymous crash reporting"
+        />
       </div>
     </div>
   );
