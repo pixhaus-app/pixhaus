@@ -9,7 +9,7 @@
 //   update → ResizeObserver keeps the GL viewport in sync
 //   unmount → destroy renderer, remove all listeners
 
-import { onMount, onCleanup, createEffect, createSignal, untrack, type Component } from "solid-js";
+import { onMount, onCleanup, createEffect, createSignal, type Component } from "solid-js";
 import { listen } from "@tauri-apps/api/event";
 import { CanvasRenderer } from "./renderer";
 import { attachCanvasInput } from "./input";
@@ -32,9 +32,11 @@ import {
   activeSpriteId,
   activeFrameIndex,
   selectionRect,
+  resetCanvasState,
   resetViewport,
 } from "./canvas-state";
 import { activeProject } from "../project-state";
+import type { ProjectStatus } from "../lib/commands/project";
 import { canvasComposite } from "../lib/commands/canvas";
 import { spriteList } from "../lib/commands/project";
 
@@ -120,36 +122,52 @@ const Canvas: Component = () => {
     //
     // Nothing else sets activeSpriteId on project open; without this the
     // canvas compositor and layer panel never fire their first IPC calls.
-    // Runs once per Canvas mount (the Show in Shell unmounts it on close).
-    let projectSeenNonNull = false;
+    // Re-fires on every project-identity change (project_new and
+    // project_open both publish a fresh ProjectStatus), and clears
+    // per-document canvas state when the project closes so a stale
+    // activeSpriteId from the previous project doesn't pre-empt the next
+    // auto-select.
+    //
+    // Cancellation: each invocation captures a request id; the .then
+    // bails when a newer call has bumped the counter, so a slow
+    // sprite_list response from a closed project can't write into the
+    // currently-open one. Mirrors the compositeRequestId pattern below.
+    let lastSeenProject: ProjectStatus | null = null;
+    let spriteListRequestId = 0;
     createEffect(() => {
       const proj = activeProject();
+      if (proj === lastSeenProject) return;
+      lastSeenProject = proj;
       if (!proj) {
-        projectSeenNonNull = false;
+        resetCanvasState();
         return;
       }
-      if (projectSeenNonNull) return;
-      projectSeenNonNull = true;
+      // Drop any previous-project selection so the !== null check below
+      // doesn't short-circuit on a stale id from a different document.
+      resetCanvasState();
 
-      // Don't overwrite a sprite that was already selected (e.g. restored
-      // from a saved viewport) — only auto-select on a fresh open.
-      if (untrack(activeSpriteId) !== null) return;
-
+      const requestId = ++spriteListRequestId;
       spriteList()
         .then((sprites) => {
+          if (requestId !== spriteListRequestId) return; // stale
           const first = sprites[0];
           if (!first) return;
-          // vpW/vpH are untracked: by the time the async result arrives the
-          // ResizeObserver has already fired its first measurement.
+          // Read viewport dimensions live: the ResizeObserver may not
+          // have fired by the time sprite_list resolves on a fresh
+          // mount, leaving vpW/vpH at their initial 1. The container
+          // ref always has its layout box by here because the effect
+          // runs after onMount.
+          const rect = containerEl.getBoundingClientRect();
           resetViewport(
             first.canvas.width,
             first.canvas.height,
-            Math.max(untrack(vpW), 1),
-            Math.max(untrack(vpH), 1),
+            Math.max(rect.width, 1),
+            Math.max(rect.height, 1),
             first.id,
           );
         })
         .catch((err: unknown) => {
+          if (requestId !== spriteListRequestId) return;
           console.warn("[pixhaus] sprite_list failed:", err);
         });
     });
@@ -241,6 +259,10 @@ const Canvas: Component = () => {
     });
 
     onCleanup(() => {
+      // Bump the request id so any in-flight sprite_list / canvas_composite
+      // .then bails before mutating destroyed state.
+      spriteListRequestId++;
+      compositeRequestId++;
       ro.disconnect();
       detachInput();
       tileDirtyPromise

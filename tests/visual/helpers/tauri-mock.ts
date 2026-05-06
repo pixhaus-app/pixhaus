@@ -25,10 +25,13 @@ export const MOCK_LAYER_ID = 1;
 //   listen(event, handler) → transformCallback(handler) + invoke('plugin:event|listen')
 //   The backend fires events by calling window[callbackId](payload).
 //
-// Default responses mirror what the Rust backend returns for a freshly-created
-// project containing one 32×32 RGBA sprite with one raster layer and one frame.
-// Tests can override any command by calling mockInvokeResponse() after
-// injectTauriMock() and before page.goto().
+// Default responses mirror what the Rust backend returns for a freshly-
+// created project containing one 32×32 RGBA sprite with one frame. The
+// sprite_list response carries an empty `layers` array — the canvas only
+// needs the sprite outline to draw the checkerboard background, and
+// layer_list is what the layer panel reads. Tests can override any
+// command by calling mockInvokeResponse() after injectTauriMock() and
+// before page.goto().
 
 export const TAURI_MOCK_SCRIPT = `
 (() => {

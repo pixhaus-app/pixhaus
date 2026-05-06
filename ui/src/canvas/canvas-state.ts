@@ -124,6 +124,20 @@ function pushViewportToRust(): void {
 // ── Reset ───────────────────────────────────────────────────────────────────
 
 /**
+ * Clears all per-document canvas state — the active sprite/frame/layer
+ * triple and any selection. Called when a project closes or the active
+ * project changes identity so the previous document's selections don't
+ * leak into the next one (e.g. preventing the auto-select-first-sprite
+ * effect from short-circuiting on a stale `activeSpriteId`).
+ */
+export function resetCanvasState(): void {
+  setActiveSpriteId(null);
+  setActiveFrameIndex(0);
+  setActiveLayerId(null);
+  setSelectionRect(null);
+}
+
+/**
  * Resets the viewport to centre the sprite and pick a fit-to-window zoom.
  * Called when a new sprite is loaded.
  */
