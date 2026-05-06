@@ -2514,3 +2514,79 @@ body {
     transform: translateY(0);
   }
 }
+
+/* ── First-launch consent dialog ─────────────────────────────────────────── */
+
+.first-launch-backdrop {
+  position: fixed;
+  inset: 0;
+  background: var(--palette-backdrop);
+  z-index: 950;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.first-launch-dialog {
+  width: 440px;
+  max-width: calc(100vw - 32px);
+  background: var(--bg-elevated);
+  border: 1px solid var(--border-strong);
+  border-radius: 8px;
+  padding: 28px 28px 24px;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  box-shadow:
+    0 12px 32px rgba(0, 0, 0, 0.4),
+    0 2px 8px rgba(0, 0, 0, 0.2);
+}
+
+.first-launch-dialog__title {
+  font-size: 16px;
+  font-weight: 600;
+  margin: 0;
+  color: var(--text-primary);
+}
+
+.first-launch-dialog__body {
+  font-size: 13px;
+  line-height: 1.6;
+  color: var(--text-secondary);
+  margin: 0;
+}
+
+.first-launch-dialog__actions {
+  display: flex;
+  gap: 8px;
+  justify-content: flex-end;
+  margin-top: 4px;
+}
+
+.first-launch-dialog__btn {
+  padding: 7px 18px;
+  border-radius: 5px;
+  font-size: 13px;
+  font-weight: 500;
+  cursor: pointer;
+  border: none;
+  transition: background var(--transition-fast);
+}
+
+.first-launch-dialog__btn--secondary {
+  background: var(--bg-hover);
+  color: var(--text-primary);
+}
+
+.first-launch-dialog__btn--secondary:hover {
+  background: var(--bg-active);
+}
+
+.first-launch-dialog__btn--primary {
+  background: var(--accent);
+  color: var(--text-on-accent);
+}
+
+.first-launch-dialog__btn--primary:hover {
+  background: var(--accent-hover);
+}

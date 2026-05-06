@@ -191,7 +191,7 @@ fn gauss_elim_8x8(a: &mut [[f64; 9]; 8]) -> Result<[f64; 8]> {
 }
 
 /// Computes the inverse of a 3×3 matrix using the adjugate method.
-/// Returns the inverse scaled so that M[2][2] == 1.
+/// Returns the inverse scaled so that `M[2][2] == 1`.
 fn invert_3x3(m: H3x3) -> Result<H3x3> {
     let det = m[0][0] * (m[1][1] * m[2][2] - m[1][2] * m[2][1])
         - m[0][1] * (m[1][0] * m[2][2] - m[1][2] * m[2][0])

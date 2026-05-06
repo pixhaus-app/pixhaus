@@ -15,6 +15,7 @@
 )]
 
 pub mod commands;
+pub mod crash_reporting;
 pub mod error;
 pub mod menu;
 pub mod pixel_history;
@@ -51,6 +52,12 @@ pub fn run() -> Result<(), AppError> {
         )
         .init();
 
+    // Initialise crash reporting early so the panic hook is in place
+    // before any async work starts. The guard must be kept alive for the
+    // full process lifetime; events are gated by `crash_reporting::ENABLED`
+    // which the UI sets via `crash_reporting_set_enabled` on startup.
+    let _crash_guard = crash_reporting::init();
+
     tracing::info!("starting {}", app_name());
 
     // tauri::generate_context! still expands to code that calls .unwrap() on
@@ -79,6 +86,9 @@ pub fn run() -> Result<(), AppError> {
             menu::handle_event(app, &event);
         })
         .invoke_handler(tauri::generate_handler![
+            // crash reporting
+            commands::crash_reporting::crash_reporting_get_enabled,
+            commands::crash_reporting::crash_reporting_set_enabled,
             // canvas
             commands::canvas::canvas_composite,
             commands::canvas::canvas_draw_stroke,

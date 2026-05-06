@@ -16,12 +16,31 @@ import LayerPanel from "../layers/LayerPanel";
 import { isLayerPanelVisible } from "../layers/layer-state";
 import PalettePanel from "../palette/PalettePanel";
 import TilemapPanel from "../tilemap/TilemapPanel";
-
-// Import to trigger initial theme application as a side effect
-import "../preferences/preferences-store";
+import FirstLaunchDialog from "../crash-reporting/FirstLaunchDialog";
+import {
+  crashReportingDialogShown,
+  crashReportingEnabled,
+  crashReportingUid,
+  setCrashReportingEnabled,
+  markCrashReportingDialogShown,
+} from "../preferences/preferences-store";
+import {
+  initCrashReporting,
+  setCrashReportingEnabled as setSentryEnabled,
+} from "../crash-reporting/crash-reporting";
 
 const Shell: Component = () => {
   onMount(() => {
+    // Initialise JS-layer crash reporting using the stored preference.
+    initCrashReporting({ enabled: crashReportingEnabled(), uid: crashReportingUid });
+    // Sync the Rust-side ENABLED gate so the panic hook honours the same
+    // persisted preference. Without this, a user who opted in on a
+    // previous session restarts to a state where the JS Sentry client
+    // is initialised but Rust drops every panic in `before_send` until
+    // they interact with the dialog again. setSentryEnabled returns void
+    // and handles its own IPC errors internally — fire-and-forget.
+    setSentryEnabled(crashReportingEnabled());
+
     // Forward native menu events to the command dispatcher
     const menuListenerPromise = listen<string>("shell:menu", (event) => {
       dispatchCommand(event.payload);
@@ -37,6 +56,18 @@ const Shell: Component = () => {
       removeKeybinds();
     });
   });
+
+  function handleCrashReportingAccept(): void {
+    setCrashReportingEnabled(true);
+    setSentryEnabled(true);
+    markCrashReportingDialogShown();
+  }
+
+  function handleCrashReportingDecline(): void {
+    setCrashReportingEnabled(false);
+    setSentryEnabled(false);
+    markCrashReportingDialogShown();
+  }
 
   return (
     <div class="shell">
@@ -74,6 +105,13 @@ const Shell: Component = () => {
       </Show>
 
       <ToastHost />
+
+      <Show when={!crashReportingDialogShown()}>
+        <FirstLaunchDialog
+          onAccept={handleCrashReportingAccept}
+          onDecline={handleCrashReportingDecline}
+        />
+      </Show>
     </div>
   );
 };
