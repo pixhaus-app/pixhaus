@@ -52,6 +52,9 @@ pub use crate::verbs::auto_mesh_deformation::{
     RigRegion,
 };
 pub use crate::verbs::inbetween::{INBETWEEN_VERB_ID, InbetweenInputs, InbetweenVerb};
+pub use crate::verbs::sketch_finishing::{
+    SKETCH_FINISHING_VERB_ID, SketchFinishingInputs, SketchFinishingVerb, SketchFrame,
+};
 pub use audio_timing::{
     AUDIO_TIMING_VERB_ID, AudioFormat, AudioTimingInputs, AudioTimingMode, AudioTimingVerb,
 };

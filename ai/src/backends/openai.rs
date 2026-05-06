@@ -408,6 +408,50 @@ impl InferenceBackend for OpenAiBackend {
     }
 }
 
+impl crate::plugin::backend::InferenceBackend for OpenAiBackend {
+    fn as_any(&self) -> &dyn std::any::Any {
+        self
+    }
+
+    fn id(&self) -> &'static str {
+        "openai"
+    }
+
+    fn capabilities(&self) -> BackendCapabilities {
+        BackendCapabilities::TEXT_GENERATION
+            .union(BackendCapabilities::VISION_LANGUAGE)
+            .union(BackendCapabilities::IMAGE_GENERATION)
+            .union(BackendCapabilities::IMAGE_EDIT)
+            .union(BackendCapabilities::IMAGE_INPAINT)
+            .union(BackendCapabilities::TOOL_USE)
+    }
+
+    fn cost_estimate(&self, required: BackendCapabilities) -> CostEstimate {
+        let image_caps = BackendCapabilities::IMAGE_GENERATION
+            .union(BackendCapabilities::IMAGE_EDIT)
+            .union(BackendCapabilities::IMAGE_INPAINT);
+        if required.intersection(image_caps).is_empty() {
+            CostEstimate {
+                typical_latency: Duration::from_secs(3),
+                max_latency: Duration::from_secs(30),
+                typical_usd_cents: 0.5,
+                max_usd_cents: 5.0,
+            }
+        } else {
+            CostEstimate {
+                typical_latency: Duration::from_secs(8),
+                max_latency: Duration::from_secs(30),
+                typical_usd_cents: IMAGE_PRICE_CENTS,
+                max_usd_cents: IMAGE_PRICE_CENTS * 2.0,
+            }
+        }
+    }
+
+    fn is_available(&self) -> bool {
+        !self.api_key.is_empty()
+    }
+}
+
 // ── Helpers ────────────────────────────────────────────────────────────────
 
 #[allow(clippy::cast_possible_truncation)]
@@ -611,34 +655,6 @@ struct ImageData {
 
 // Suppress unused import warning.
 fn _assert_frame_req(_: &FrameInterpolationRequest) {}
-
-// ── VerbRuntime bridge ──────────────────────────────────────────────────────
-
-impl crate::plugin::backend::InferenceBackend for OpenAiBackend {
-    fn as_any(&self) -> &dyn std::any::Any {
-        self
-    }
-
-    fn id(&self) -> &'static str {
-        self.backend_id()
-    }
-
-    fn capabilities(&self) -> crate::plugin::descriptor::BackendCapabilities {
-        <Self as super::InferenceBackend>::capabilities(self)
-    }
-
-    fn cost_estimate(
-        &self,
-        _required: crate::plugin::descriptor::BackendCapabilities,
-    ) -> crate::plugin::descriptor::CostEstimate {
-        crate::plugin::descriptor::CostEstimate {
-            typical_latency: std::time::Duration::from_secs(5),
-            max_latency: std::time::Duration::from_secs(60),
-            typical_usd_cents: 1.0,
-            max_usd_cents: 10.0,
-        }
-    }
-}
 
 #[cfg(test)]
 mod tests {

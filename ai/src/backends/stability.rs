@@ -323,6 +323,44 @@ impl InferenceBackend for StabilityBackend {
     }
 }
 
+impl std::fmt::Debug for StabilityBackend {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("StabilityBackend")
+            .field("base_url", &self.base_url)
+            .field("default_model", &self.default_model)
+            .finish_non_exhaustive()
+    }
+}
+
+impl crate::plugin::backend::InferenceBackend for StabilityBackend {
+    fn as_any(&self) -> &dyn std::any::Any {
+        self
+    }
+
+    fn id(&self) -> &'static str {
+        "stability"
+    }
+
+    fn capabilities(&self) -> BackendCapabilities {
+        BackendCapabilities::IMAGE_GENERATION
+            .union(BackendCapabilities::IMAGE_EDIT)
+            .union(BackendCapabilities::IMAGE_INPAINT)
+    }
+
+    fn cost_estimate(&self, _required: BackendCapabilities) -> CostEstimate {
+        CostEstimate {
+            typical_latency: Duration::from_secs(10),
+            max_latency: Duration::from_secs(30),
+            typical_usd_cents: 3.5,
+            max_usd_cents: 6.5,
+        }
+    }
+
+    fn is_available(&self) -> bool {
+        !self.api_key.is_empty()
+    }
+}
+
 // Suppress unused import warnings.
 fn _assert_frame_req(_: &FrameInterpolationRequest) {}
 fn _assert_rep_req(_: &ReplicateRequest) {}

@@ -119,7 +119,7 @@ small merge conflicts there as PRs land.
 - [ ] UNCLAIMED: S33 — Verb: Backgrounds (procedural backgrounds). Brief: docs/planning/work/streams.md#s33. Blocked by: B5 S21 S22.
 - [~] CLAIMED:stream-s34:S34 — Verb: Audio-driven timing (beat detection + lip sync). Brief: docs/planning/work/streams.md#s34. Blocked by: B5 S21 S22.
 - [ ] UNCLAIMED: S35 — Verb: Mesh-deform (auto-rig + deformation). Brief: docs/planning/work/streams.md#s35. Blocked by: B5 S21 S22.
-- [ ] UNCLAIMED: S36 — Verb: Promote-to-3D (sprite to volumetric). Brief: docs/planning/work/streams.md#s36. Blocked by: B5 S21 S22.
+- [~] CLAIMED:stream-s36:S36 — Verb: Promote-to-3D (sprite to volumetric). Brief: docs/planning/work/streams.md#s36. Blocked by: B5 S21 S22.
 
 ## Streams — extension surfaces, packaging, content
 
