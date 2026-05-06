@@ -35,4 +35,4 @@ The in-scope build ships Unity tooling only. The Pixhaus Unity importer package 
 - [Install Pixhaus](/getting-started/installation/) and open it for the first time
 - [Draw your first sprite](/getting-started/first-sprite/)
 - [Build your first animation](/getting-started/first-animation/)
-- Coming from Aseprite? See the [migration guide](/reference/aseprite-compat/)
+- Coming from Aseprite? See the [migration guide](/migration/)
