@@ -13,4 +13,5 @@
 
 pub mod auto_mesh_deformation;
 pub mod inbetween;
+pub mod project_style_learning;
 pub mod variant;
