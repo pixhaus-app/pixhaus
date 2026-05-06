@@ -60,11 +60,18 @@ pub fn run() -> Result<(), AppError> {
 
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
+        .plugin(tauri_plugin_updater::Builder::new().build())
         .plugin(tauri_plugin_window_state::Builder::default().build())
         .manage(AppState::new())
         .setup(|app| {
             let m = menu::build(app.handle())?;
             app.set_menu(m)?;
+
+            let handle = app.handle().clone();
+            tauri::async_runtime::spawn(async move {
+                commands::updater::check_on_startup(handle).await;
+            });
+
             Ok(())
         })
         .on_menu_event(|app, event| {
@@ -132,6 +139,9 @@ pub fn run() -> Result<(), AppError> {
             // undo/redo
             commands::undo::redo,
             commands::undo::undo,
+            // updater
+            commands::updater::updater_check,
+            commands::updater::updater_install,
             // verbs
             commands::verbs::verb_cancel,
             commands::verbs::verb_invoke,

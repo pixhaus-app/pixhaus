@@ -27,6 +27,7 @@ pixhaus-ai = { path = "../ai" }
 pixhaus-scripting = { path = "../scripting" }
 tauri = { version = "2.11", features = [] }
 tauri-plugin-dialog = "2"
+tauri-plugin-updater = "2"
 tauri-plugin-window-state = "2"
 anyhow.workspace = true
 base64.workspace = true
