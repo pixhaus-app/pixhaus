@@ -8,7 +8,7 @@
 //!
 //! | Operation | Function | Pixel-perfect? |
 //! |-----------|----------|----------------|
-//! | Translate | [`translate`] | yes |
+//! | Translate | [`fn@translate`] | yes |
 //! | Scale (nearest-neighbour) | [`scale_nearest`] | yes |
 //! | Scale (integer multiple) | [`scale_integer`] | yes |
 //! | Scale (integer divisor) | [`scale_integer_down`] | yes |
@@ -21,11 +21,11 @@
 //! | Rotate arbitrary (bilinear) | [`rotate_bilinear`] | no |
 //! | Skew X | [`skew_x`] | integer factors only |
 //! | Skew Y | [`skew_y`] | integer factors only |
-//! | Perspective | [`perspective`] | no (documented) |
+//! | Perspective | [`fn@perspective`] | no (documented) |
 //!
 //! # Selection awareness
 //!
-//! [`translate`], [`flip_horizontal`], and [`flip_vertical`] accept an
+//! [`fn@translate`], [`flip_horizontal`], and [`flip_vertical`] accept an
 //! optional [`crate::selection::SelectionMask`]. When a mask is supplied
 //! only the covered pixels are moved; unmasked pixels remain in place.
 //! The remaining operations apply to the full buffer. Selection-scoped
@@ -155,7 +155,7 @@ pub enum TransformSpec {
 /// Applies `spec` to `buf`, returning a new transformed buffer.
 ///
 /// `mask` is forwarded to transforms that support selection-scoped
-/// operation ([`translate`], [`flip_horizontal`], [`flip_vertical`]).
+/// operation ([`fn@translate`], [`flip_horizontal`], [`flip_vertical`]).
 /// All other transforms ignore it and operate on the full buffer.
 ///
 /// # Errors
