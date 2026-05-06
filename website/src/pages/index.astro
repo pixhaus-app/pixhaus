@@ -1,0 +1,650 @@
+---
+import BaseLayout from "../layouts/BaseLayout.astro";
+---
+
+<BaseLayout
+  title="Pixhaus"
+  description="Open-source AI-native pixel art editor for sprites, animations, and tilemaps. Free forever. MIT license."
+  ogImage="/og/home.svg"
+>
+  <!-- Hero -->
+  <section class="relative overflow-hidden pt-20 pb-16 px-6">
+    <!-- Background grid -->
+    <div
+      class="absolute inset-0 pointer-events-none"
+      aria-hidden="true"
+      style="background-image: linear-gradient(var(--color-neutral-200) 1px, transparent 1px), linear-gradient(90deg, var(--color-neutral-200) 1px, transparent 1px); background-size: 32px 32px; opacity: 0.25;"
+    >
+    </div>
+    <!-- Radial fade over grid -->
+    <div
+      class="absolute inset-0 pointer-events-none"
+      aria-hidden="true"
+      style="background: radial-gradient(ellipse 80% 50% at 50% 0%, transparent 0%, var(--color-neutral-0) 70%);"
+    >
+    </div>
+
+    <div class="relative max-w-6xl mx-auto text-center">
+      <!-- Badge -->
+      <div class="inline-flex items-center gap-2 mb-8">
+        <span
+          class="text-xs font-medium px-3 py-1 rounded-full"
+          style="background: rgba(124,108,239,0.15); color: var(--brand-indigo-300); border: 1px solid rgba(124,108,239,0.3);"
+        >
+          Open source · MIT license
+        </span>
+      </div>
+
+      <!-- Headline -->
+      <h1
+        class="text-4xl md:text-6xl font-bold leading-tight tracking-tight mb-6 max-w-4xl mx-auto"
+        style="color: var(--color-neutral-900); letter-spacing: -0.04em;"
+      >
+        Pixel art for Unity,<br />
+        <span style="color: var(--brand-indigo-400);">built open source.</span>
+      </h1>
+
+      <!-- Subheadline -->
+      <p
+        class="text-lg md:text-xl mb-10 max-w-2xl mx-auto leading-relaxed"
+        style="color: var(--color-neutral-600);"
+      >
+        Sprites, animations, and tilemaps in one project. AI verbs that run
+        inside your canvas with your palette, your layers, and your style. Free
+        forever.
+      </p>
+
+      <!-- CTAs -->
+      <div class="flex flex-wrap items-center justify-center gap-4 mb-16">
+        <a
+          href="/download"
+          class="inline-flex items-center gap-2 px-6 py-3 rounded-lg text-base font-semibold transition-colors"
+          style="background: var(--brand-indigo-500); color: white;"
+        >
+          <svg
+            xmlns="http://www.w3.org/2000/svg"
+            width="16"
+            height="16"
+            fill="none"
+            viewBox="0 0 24 24"
+            stroke="currentColor"
+            stroke-width="2"
+            aria-hidden="true"
+          >
+            <path
+              stroke-linecap="round"
+              stroke-linejoin="round"
+              d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4"
+            ></path>
+          </svg>
+          Download free
+        </a>
+        <a
+          href="https://github.com/pixhaus-app/pixhaus"
+          target="_blank"
+          rel="noopener noreferrer"
+          class="inline-flex items-center gap-2 px-6 py-3 rounded-lg text-base font-medium transition-colors"
+          style="color: var(--color-neutral-700); border: 1px solid var(--color-neutral-300);"
+        >
+          <svg
+            xmlns="http://www.w3.org/2000/svg"
+            width="16"
+            height="16"
+            viewBox="0 0 24 24"
+            fill="currentColor"
+            aria-hidden="true"
+          >
+            <path
+              d="M12 0c-6.626 0-12 5.373-12 12 0 5.302 3.438 9.8 8.207 11.387.599.111.793-.261.793-.577v-2.234c-3.338.726-4.033-1.416-4.033-1.416-.546-1.387-1.333-1.756-1.333-1.756-1.089-.745.083-.729.083-.729 1.205.084 1.839 1.237 1.839 1.237 1.07 1.834 2.807 1.304 3.492.997.107-.775.418-1.305.762-1.604-2.665-.305-5.467-1.334-5.467-5.931 0-1.311.469-2.381 1.236-3.221-.124-.303-.535-1.524.117-3.176 0 0 1.008-.322 3.301 1.23.957-.266 1.983-.399 3.003-.404 1.02.005 2.047.138 3.006.404 2.291-1.552 3.297-1.23 3.297-1.23.653 1.653.242 2.874.118 3.176.77.84 1.235 1.911 1.235 3.221 0 4.609-2.807 5.624-5.479 5.921.43.372.823 1.102.823 2.222v3.293c0 .319.192.694.801.576 4.765-1.589 8.199-6.086 8.199-11.386 0-6.627-5.373-12-12-12z"
+            ></path>
+          </svg>
+          View on GitHub
+        </a>
+      </div>
+
+      <!-- Hero editor mockup -->
+      <div
+        class="relative mx-auto rounded-xl overflow-hidden max-w-5xl"
+        style="border: 1px solid var(--color-neutral-200); box-shadow: 0 24px 64px rgba(0,0,0,0.5);"
+        aria-hidden="true"
+      >
+        <!-- Editor chrome -->
+        <div
+          class="flex items-center gap-2 px-4 h-9"
+          style="background: var(--color-neutral-50); border-bottom: 1px solid var(--color-neutral-200);"
+        >
+          <span
+            class="w-3 h-3 rounded-full"
+            style="background: #e05252;"></span>
+          <span
+            class="w-3 h-3 rounded-full"
+            style="background: #e8a534;"></span>
+          <span
+            class="w-3 h-3 rounded-full"
+            style="background: #4caf6e;"></span>
+          <span
+            class="ml-4 text-xs"
+            style="color: var(--color-neutral-500);">knight.pixhaus</span
+          >
+        </div>
+
+        <!-- Editor body -->
+        <div
+          class="flex"
+          style="background: var(--color-neutral-0); min-height: 420px;"
+        >
+          <!-- Left toolbox -->
+          <div
+            class="hidden sm:flex flex-col gap-1 p-2"
+            style="width: 44px; background: var(--color-neutral-50); border-right: 1px solid var(--color-neutral-200);"
+          >
+            {
+              Array.from({ length: 9 }).map((_, i) => (
+                <div
+                  class="w-7 h-7 rounded flex items-center justify-center"
+                  style={
+                    i === 0
+                      ? "background: rgba(124,108,239,0.2);"
+                      : ""
+                  }
+                >
+                  <svg
+                    width="14"
+                    height="14"
+                    viewBox="0 0 14 14"
+                    fill="none"
+                    aria-hidden="true"
+                  >
+                    <rect
+                      x="2"
+                      y="2"
+                      width="10"
+                      height="10"
+                      rx="1"
+                      fill={i === 0 ? "#7c6cef" : "#3d3d50"}
+                    />
+                  </svg>
+                </div>
+              ))
+            }
+          </div>
+
+          <!-- Canvas area -->
+          <div class="flex-1 flex items-center justify-center p-8">
+            <!-- Pixel art knight sprite mock (SVG grid) -->
+            <svg
+              viewBox="0 0 320 320"
+              width="260"
+              height="260"
+              style="image-rendering: pixelated;"
+              aria-label="Knight sprite example"
+            >
+              <rect width="320" height="320" fill="var(--color-neutral-100)" rx="4"/>
+              <!-- Grid lines -->
+              {
+                Array.from({ length: 17 }).map((_, i) => (
+                  <>
+                    <line
+                      x1={i * 20}
+                      y1="0"
+                      x2={i * 20}
+                      y2="320"
+                      stroke="var(--color-neutral-200)"
+                      stroke-width="0.5"
+                    />
+                    <line
+                      x1="0"
+                      y1={i * 20}
+                      x2="320"
+                      y2={i * 20}
+                      stroke="var(--color-neutral-200)"
+                      stroke-width="0.5"
+                    />
+                  </>
+                ))
+              }
+              <!-- Knight silhouette as colored blocks (stylized pixel art) -->
+              <!-- Helmet -->
+              <rect x="120" y="40" width="80" height="20" fill="#9090a8" rx="2"/>
+              <rect x="100" y="60" width="120" height="20" fill="#b8b8cc" rx="2"/>
+              <!-- Face -->
+              <rect x="100" y="80" width="120" height="40" fill="#9090a8" rx="2"/>
+              <rect x="120" y="90" width="20" height="20" fill="var(--color-neutral-0)" rx="1"/>
+              <rect x="180" y="90" width="20" height="20" fill="var(--color-neutral-0)" rx="1"/>
+              <!-- Visor glow -->
+              <rect x="122" y="92" width="16" height="16" fill="#7c6cef" rx="1"/>
+              <rect x="182" y="92" width="16" height="16" fill="#7c6cef" rx="1"/>
+              <!-- Body / chestplate -->
+              <rect x="80" y="120" width="160" height="80" fill="#5a5a72" rx="2"/>
+              <rect x="100" y="130" width="40" height="60" fill="#6555d4" rx="2"/>
+              <rect x="180" y="130" width="40" height="60" fill="#6555d4" rx="2"/>
+              <rect x="140" y="120" width="40" height="80" fill="#3d3d50" rx="2"/>
+              <!-- Arms -->
+              <rect x="40" y="120" width="40" height="60" fill="#9090a8" rx="2"/>
+              <rect x="240" y="120" width="40" height="60" fill="#9090a8" rx="2"/>
+              <!-- Legs -->
+              <rect x="100" y="200" width="40" height="60" fill="#5a5a72" rx="2"/>
+              <rect x="180" y="200" width="40" height="60" fill="#5a5a72" rx="2"/>
+              <!-- Feet -->
+              <rect x="80" y="260" width="60" height="20" fill="#3d3d50" rx="2"/>
+              <rect x="180" y="260" width="60" height="20" fill="#3d3d50" rx="2"/>
+              <!-- Sword -->
+              <rect x="280" y="80" width="10" height="120" fill="#d8d8e8" rx="2"/>
+              <rect x="260" y="100" width="50" height="10" fill="#e8a534" rx="2"/>
+              <!-- Selection marquee -->
+              <rect
+                x="80"
+                y="40"
+                width="200"
+                height="240"
+                fill="none"
+                stroke="#7c6cef"
+                stroke-width="1"
+                stroke-dasharray="4 2"
+              />
+            </svg>
+          </div>
+
+          <!-- Right panels -->
+          <div
+            class="hidden lg:flex flex-col"
+            style="width: 200px; border-left: 1px solid var(--color-neutral-200);"
+          >
+            <!-- Layer panel header -->
+            <div
+              class="px-3 py-2 text-xs font-medium border-b"
+              style="color: var(--color-neutral-600); border-color: var(--color-neutral-200); background: var(--color-neutral-50);"
+            >
+              Layers
+            </div>
+            <!-- Layer items -->
+            {
+              [
+                { name: "Sword", color: "#d8d8e8", active: false },
+                { name: "Knight body", color: "#7c6cef", active: true },
+                { name: "Background", color: "#3d3d50", active: false },
+              ].map(({ name, color, active }) => (
+                <div
+                  class="flex items-center gap-2 px-3 py-2 text-xs border-b"
+                  style={`border-color: var(--color-neutral-200); ${active ? "background: rgba(124,108,239,0.1);" : ""}`}
+                >
+                  <span
+                    class="w-4 h-4 rounded shrink-0"
+                    style={`background: ${color};`}
+                  />
+                  <span style={`color: ${active ? "var(--color-neutral-900)" : "var(--color-neutral-600)"};`}>
+                    {name}
+                  </span>
+                </div>
+              ))
+            }
+
+            <!-- Palette panel header -->
+            <div
+              class="px-3 py-2 text-xs font-medium border-b mt-4"
+              style="color: var(--color-neutral-600); border-color: var(--color-neutral-200); background: var(--color-neutral-50);"
+            >
+              Palette
+            </div>
+            <div class="p-2 grid grid-cols-6 gap-0.5">
+              {
+                [
+                  "#0f0f13", "#1e1e27", "#3d3d50", "#5a5a72",
+                  "#9090a8", "#b8b8cc", "#d8d8e8", "#e6e6f0",
+                  "#271e5e", "#3b2e8a", "#5040b2", "#6555d4",
+                  "#7c6cef", "#9080f8", "#a497fb", "#c5bdfd",
+                  "#e8a534", "#4caf6e", "#e05252", "#5b9de8",
+                  "#17171e", "#252530", "#2c2c3a", "#2a2a35",
+                ].map((c) => (
+                  <span
+                    class="aspect-square rounded-sm"
+                    style={`background: ${c};`}
+                    aria-hidden="true"
+                  />
+                ))
+              }
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- Three pillars -->
+  <section class="py-20 px-6">
+    <div class="max-w-6xl mx-auto">
+      <div class="grid md:grid-cols-3 gap-8">
+        {
+          [
+            {
+              icon: `<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1.5" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" d="M9.53 16.122a3 3 0 00-5.78 1.128 2.25 2.25 0 01-2.4 2.245 4.5 4.5 0 008.4-2.245c0-.399-.078-.78-.22-1.128zm0 0a15.998 15.998 0 003.388-1.62m-5.043-.025a15.994 15.994 0 011.622-3.395m3.42 3.42a15.995 15.995 0 004.764-4.648l3.876-5.814a1.151 1.151 0 00-1.597-1.597L14.146 6.32a15.996 15.996 0 00-4.649 4.763m3.42 3.42a6.776 6.776 0 00-3.42-3.42"/></svg>`,
+              title: "Aseprite-compatible, open source",
+              body: "Reads and writes .aseprite files directly. Your existing sprite library works from day one. MIT license — fork it, host it, ship it.",
+            },
+            {
+              icon: `<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1.5" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" d="M3.75 6A2.25 2.25 0 016 3.75h2.25A2.25 2.25 0 0110.5 6v2.25a2.25 2.25 0 01-2.25 2.25H6a2.25 2.25 0 01-2.25-2.25V6zM3.75 15.75A2.25 2.25 0 016 13.5h2.25a2.25 2.25 0 012.25 2.25V18a2.25 2.25 0 01-2.25 2.25H6A2.25 2.25 0 013.75 18v-2.25zM13.5 6a2.25 2.25 0 012.25-2.25H18A2.25 2.25 0 0120.25 6v2.25A2.25 2.25 0 0118 10.5h-2.25a2.25 2.25 0 01-2.25-2.25V6zM13.5 15.75a2.25 2.25 0 012.25-2.25H18a2.25 2.25 0 012.25 2.25V18A2.25 2.25 0 0118 20.25h-2.25A2.25 2.25 0 0113.5 18v-2.25z"/></svg>`,
+              title: "Tilemaps as first-class layers",
+              body: "Paint tiles and sprites in the same project file, same undo stack, same palette. Autotile rules, animated tiles, TMX export — all built in.",
+            },
+            {
+              icon: `<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1.5" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" d="M9.813 15.904L9 18.75l-.813-2.846a4.5 4.5 0 00-3.09-3.09L2.25 12l2.846-.813a4.5 4.5 0 003.09-3.09L9 5.25l.813 2.846a4.5 4.5 0 003.09 3.09L15.75 12l-2.846.813a4.5 4.5 0 00-3.09 3.09zM18.259 8.715L18 9.75l-.259-1.035a3.375 3.375 0 00-2.455-2.456L14.25 6l1.036-.259a3.375 3.375 0 002.455-2.456L18 2.25l.259 1.035a3.375 3.375 0 002.456 2.456L21.75 6l-1.035.259a3.375 3.375 0 00-2.456 2.456z"/></svg>`,
+              title: "AI verbs, not generators",
+              body: "Inbetween, Continue, Extend, Variant, Cleanup — commands that run in canvas with your palette and your layers. You keep the brush. AI handles the toil.",
+            },
+          ].map(({ icon, title, body }) => (
+            <div
+              class="p-6 rounded-xl"
+              style="background: var(--color-neutral-50); border: 1px solid var(--color-neutral-200);"
+            >
+              <div
+                class="w-10 h-10 rounded-lg flex items-center justify-center mb-4"
+                style="background: rgba(124,108,239,0.15); color: var(--brand-indigo-400);"
+                set:html={icon}
+              />
+              <h2
+                class="text-base font-semibold mb-2"
+                style="color: var(--color-neutral-900);"
+              >
+                {title}
+              </h2>
+              <p class="text-sm leading-relaxed" style="color: var(--color-neutral-600);">
+                {body}
+              </p>
+            </div>
+          ))
+        }
+      </div>
+    </div>
+  </section>
+
+  <!-- AI verbs showcase -->
+  <section
+    class="py-20 px-6 border-t border-b"
+    style="border-color: var(--color-neutral-200);"
+  >
+    <div class="max-w-6xl mx-auto">
+      <div class="text-center mb-12">
+        <h2
+          class="text-2xl md:text-3xl font-bold mb-4"
+          style="color: var(--color-neutral-900); letter-spacing: -0.03em;"
+        >
+          AI verbs
+        </h2>
+        <p class="text-base max-w-xl mx-auto" style="color: var(--color-neutral-600);">
+          Every verb runs inside the canvas with your project context. Output is
+          always a non-destructive layer you accept, edit, or discard.
+        </p>
+      </div>
+
+      <div class="grid sm:grid-cols-2 lg:grid-cols-3 gap-4">
+        {
+          [
+            {
+              name: "Inbetween",
+              description: "Generate intermediate frames between two key frames, palette-locked.",
+              badge: "animation",
+            },
+            {
+              name: "Continue",
+              description: "Predict the next 1–3 frames from the last N, consistent with motion and style.",
+              badge: "animation",
+            },
+            {
+              name: "Extend",
+              description: "Generate 4-direction or 8-direction views from a single sprite.",
+              badge: "sprite",
+            },
+            {
+              name: "Variant",
+              description: "Palette swaps, equipment overlays, and expression sets as derived layers.",
+              badge: "sprite",
+            },
+            {
+              name: "Cleanup",
+              description: "Snap to palette, remove anti-aliasing, fix pivot drift across frames.",
+              badge: "sprite",
+            },
+            {
+              name: "Tile",
+              description: "Generate a 47-blob autotile set from 1–3 example tile transitions.",
+              badge: "tilemap",
+            },
+            {
+              name: "Critique",
+              description: "Vision-language analysis: pose errors, palette violations, missing frames.",
+              badge: "analysis",
+            },
+            {
+              name: "Sketch finishing",
+              description: "Refine rough silhouettes into finished sprites in your project's style.",
+              badge: "sprite",
+            },
+            {
+              name: "Conversational",
+              description: "Natural language driving multi-step editor commands with live preview.",
+              badge: "editing",
+            },
+          ].map(({ name, description, badge }) => (
+            <div
+              class="p-5 rounded-lg"
+              style="background: var(--color-neutral-50); border: 1px solid var(--color-neutral-200);"
+            >
+              <div class="flex items-start justify-between gap-2 mb-2">
+                <h3
+                  class="text-sm font-semibold"
+                  style="color: var(--color-neutral-900);"
+                >
+                  {name}
+                </h3>
+                <span
+                  class="text-xs px-2 py-0.5 rounded-full shrink-0"
+                  style="background: var(--color-neutral-200); color: var(--color-neutral-600);"
+                >
+                  {badge}
+                </span>
+              </div>
+              <p class="text-sm leading-relaxed" style="color: var(--color-neutral-600);">
+                {description}
+              </p>
+            </div>
+          ))
+        }
+      </div>
+
+      <div class="text-center mt-8">
+        <a
+          href="/features#ai-verbs"
+          class="text-sm font-medium"
+          style="color: var(--brand-indigo-400);"
+        >
+          See all 14 verbs and how they work &rarr;
+        </a>
+      </div>
+    </div>
+  </section>
+
+  <!-- How it compares -->
+  <section class="py-20 px-6">
+    <div class="max-w-6xl mx-auto">
+      <div class="text-center mb-12">
+        <h2
+          class="text-2xl md:text-3xl font-bold mb-4"
+          style="color: var(--color-neutral-900); letter-spacing: -0.03em;"
+        >
+          How it compares
+        </h2>
+        <p class="text-base" style="color: var(--color-neutral-600);">
+          Built on Aseprite's workflow, extended where it matters.
+        </p>
+      </div>
+
+      <div
+        class="rounded-xl overflow-hidden"
+        style="border: 1px solid var(--color-neutral-200);"
+      >
+        <table class="w-full text-sm border-collapse">
+          <thead>
+            <tr style="background: var(--color-neutral-50);">
+              <th
+                class="text-left px-6 py-4 font-medium"
+                style="color: var(--color-neutral-600); border-bottom: 1px solid var(--color-neutral-200);"
+              >
+                Feature
+              </th>
+              {
+                ["Pixhaus", "Aseprite", "Pixelorama", "Tiled"].map((tool) => (
+                  <th
+                    class="px-4 py-4 font-semibold text-center"
+                    style={`border-bottom: 1px solid var(--color-neutral-200); color: ${tool === "Pixhaus" ? "var(--brand-indigo-300)" : "var(--color-neutral-600)"}; ${tool === "Pixhaus" ? "background: rgba(124,108,239,0.05);" : ""}`}
+                  >
+                    {tool}
+                  </th>
+                ))
+              }
+            </tr>
+          </thead>
+          <tbody>
+            {
+              [
+                ["Sprite & animation editing", true, true, true, false],
+                ["Tilemap layers (same project)", true, false, false, true],
+                ["AI verbs in canvas", true, false, false, false],
+                [".aseprite file format", true, true, true, false],
+                ["Open source", true, false, true, true],
+                ["MIT license", true, false, true, false],
+                ["Plugin / Lua scripting", true, true, false, false],
+                ["Unity importer package", true, false, false, false],
+              ].map(([feature, ...values], rowIdx) => (
+                <tr
+                  style={`border-bottom: 1px solid var(--color-neutral-200); ${rowIdx % 2 === 1 ? "background: rgba(255,255,255,0.01);" : ""}`}
+                >
+                  <td
+                    class="px-6 py-3.5 font-medium"
+                    style="color: var(--color-neutral-700);"
+                  >
+                    {feature}
+                  </td>
+                  {values.map((v, i) => (
+                    <td
+                      class="px-4 py-3.5 text-center"
+                      style={i === 0 ? "background: rgba(124,108,239,0.05);" : ""}
+                    >
+                      {v ? (
+                        <svg
+                          xmlns="http://www.w3.org/2000/svg"
+                          width="16"
+                          height="16"
+                          viewBox="0 0 24 24"
+                          fill="none"
+                          stroke={i === 0 ? "#7c6cef" : "#4caf6e"}
+                          stroke-width="2.5"
+                          class="mx-auto"
+                          aria-label="Yes"
+                        >
+                          <polyline points="20 6 9 17 4 12" />
+                        </svg>
+                      ) : (
+                        <span
+                          aria-label="No"
+                          style="color: var(--color-neutral-400);"
+                        >
+                          —
+                        </span>
+                      )}
+                    </td>
+                  ))}
+                </tr>
+              ))
+            }
+          </tbody>
+        </table>
+      </div>
+
+      <div class="text-center mt-6">
+        <a
+          href="/compare"
+          class="text-sm font-medium"
+          style="color: var(--brand-indigo-400);"
+        >
+          Full feature comparison &rarr;
+        </a>
+      </div>
+    </div>
+  </section>
+
+  <!-- Open source callout -->
+  <section
+    class="py-20 px-6 border-t"
+    style="border-color: var(--color-neutral-200);"
+  >
+    <div class="max-w-6xl mx-auto">
+      <div
+        class="rounded-2xl p-10 md:p-14 text-center relative overflow-hidden"
+        style="background: linear-gradient(135deg, var(--color-neutral-50) 0%, rgba(124,108,239,0.06) 100%); border: 1px solid var(--color-neutral-200);"
+      >
+        <div
+          class="absolute top-0 right-0 w-64 h-64 pointer-events-none"
+          aria-hidden="true"
+          style="background: radial-gradient(circle at top right, rgba(124,108,239,0.12), transparent 70%);"
+        >
+        </div>
+        <h2
+          class="text-2xl md:text-3xl font-bold mb-4"
+          style="color: var(--color-neutral-900); letter-spacing: -0.03em;"
+        >
+          Built in public. MIT license.
+        </h2>
+        <p
+          class="text-base mb-8 max-w-xl mx-auto leading-relaxed"
+          style="color: var(--color-neutral-600);"
+        >
+          No paid tier, no license server, no telemetry by default. Fork it,
+          host it, extend it. The source is the product.
+        </p>
+        <div class="flex flex-wrap items-center justify-center gap-4">
+          <a
+            href="https://github.com/pixhaus-app/pixhaus"
+            target="_blank"
+            rel="noopener noreferrer"
+            class="inline-flex items-center gap-2 px-6 py-3 rounded-lg text-base font-semibold transition-colors"
+            style="background: var(--brand-indigo-500); color: white;"
+          >
+            View on GitHub
+          </a>
+          <a
+            href="/community"
+            class="inline-flex items-center gap-2 px-6 py-3 rounded-lg text-base font-medium transition-colors"
+            style="color: var(--color-neutral-700); border: 1px solid var(--color-neutral-300);"
+          >
+            Join the community
+          </a>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- Download CTA -->
+  <section class="py-20 px-6">
+    <div class="max-w-2xl mx-auto text-center">
+      <h2
+        class="text-2xl md:text-3xl font-bold mb-4"
+        style="color: var(--color-neutral-900); letter-spacing: -0.03em;"
+      >
+        Ready to start?
+      </h2>
+      <p
+        class="text-base mb-8"
+        style="color: var(--color-neutral-600);"
+      >
+        Windows, macOS, and Linux. Free forever.
+      </p>
+      <a
+        href="/download"
+        class="inline-flex items-center gap-2 px-8 py-4 rounded-xl text-lg font-semibold transition-colors"
+        style="background: var(--brand-indigo-500); color: white;"
+      >
+        Download Pixhaus
+      </a>
+    </div>
+  </section>
+</BaseLayout>

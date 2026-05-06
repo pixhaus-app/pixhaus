@@ -1,0 +1,293 @@
+---
+import BaseLayout from "../layouts/BaseLayout.astro";
+---
+
+<BaseLayout
+  title="Features"
+  description="A full-featured pixel art editor: sprites, frame animation, tilemaps, and 14 AI verbs built in."
+  ogImage="/og/features.svg"
+>
+  <div class="max-w-6xl mx-auto px-6 py-20">
+    <!-- Header -->
+    <div class="text-center mb-20">
+      <h1
+        class="text-3xl md:text-5xl font-bold mb-4"
+        style="color: var(--color-neutral-900); letter-spacing: -0.04em;"
+      >
+        Everything a pixel artist needs
+      </h1>
+      <p
+        class="text-lg max-w-2xl mx-auto"
+        style="color: var(--color-neutral-600);"
+      >
+        Built to feel like Aseprite, extended where it matters. One project
+        file for sprites, animations, tilemaps, and AI operations.
+      </p>
+    </div>
+
+    <!-- Section: Editing core -->
+    <section class="mb-20">
+      <h2
+        class="text-xl font-bold mb-2"
+        style="color: var(--color-neutral-900); letter-spacing: -0.02em;"
+      >
+        Pixel-perfect editing core
+      </h2>
+      <p class="text-sm mb-8" style="color: var(--color-neutral-600);">
+        If an Aseprite user opens Pixhaus and feels lost, the editing layer has
+        failed. The pixel-art surface is ground-truth-equivalent before
+        anything AI ships on top.
+      </p>
+      <div class="grid sm:grid-cols-2 lg:grid-cols-3 gap-4">
+        {
+          [
+            ["Pencil, eraser, fill, line, rectangle, ellipse", "All standard pixel tools with pixel-perfect stroke mode."],
+            ["Dither brush and pattern stamp", "Checker, Bayer 8x8, and custom pattern brushes for classic dithering."],
+            ["Selection: marquee, lasso, magic wand, color range", "With boolean ops (union, intersect, subtract, xor) and expand/contract."],
+            ["Flip, scale, rotate (RotSprite)", "Pixel-aware RotSprite algorithm for integer rotations. No blurring."],
+            ["Indexed-color discipline", "Full palette workflow — palette-swaps, color cycling, transparent index."],
+            [".aseprite and .psd file support", "Read and write .aseprite directly. Import .psd for migration."],
+          ].map(([title, body]) => (
+            <div
+              class="p-5 rounded-lg"
+              style="background: var(--color-neutral-50); border: 1px solid var(--color-neutral-200);"
+            >
+              <h3
+                class="text-sm font-semibold mb-1.5"
+                style="color: var(--color-neutral-900);"
+              >
+                {title}
+              </h3>
+              <p class="text-sm" style="color: var(--color-neutral-600);">
+                {body}
+              </p>
+            </div>
+          ))
+        }
+      </div>
+    </section>
+
+    <!-- Section: Animation -->
+    <section class="mb-20">
+      <h2
+        class="text-xl font-bold mb-2"
+        style="color: var(--color-neutral-900); letter-spacing: -0.02em;"
+      >
+        Frame animation
+      </h2>
+      <p class="text-sm mb-8" style="color: var(--color-neutral-600);">
+        Timeline that includes tilemaps and animated tiles, not just sprite
+        layers.
+      </p>
+      <div class="grid sm:grid-cols-2 lg:grid-cols-3 gap-4">
+        {
+          [
+            ["Frame timeline with tags and loop direction", "Named frame ranges with forward / reverse / pingpong / once loop modes."],
+            ["Onion skin overlay", "Previous and next frames at configurable opacity, tinted for direction."],
+            ["Layer groups with blend modes", "Full blend mode set (Normal, Multiply, Screen, Overlay, and 18 more)."],
+            ["Sprite sheet export (PNG + JSON)", "Aseprite-compatible JSON schema — works with existing Unity importers."],
+            ["Animated GIF, WebP, and MP4 export", "Palette quantization, dithering, loop count, configurable frame timing."],
+            ["Unlimited undo with branch history", "Branching undo tree preserves redo branches across edit paths."],
+          ].map(([title, body]) => (
+            <div
+              class="p-5 rounded-lg"
+              style="background: var(--color-neutral-50); border: 1px solid var(--color-neutral-200);"
+            >
+              <h3
+                class="text-sm font-semibold mb-1.5"
+                style="color: var(--color-neutral-900);"
+              >
+                {title}
+              </h3>
+              <p class="text-sm" style="color: var(--color-neutral-600);">
+                {body}
+              </p>
+            </div>
+          ))
+        }
+      </div>
+    </section>
+
+    <!-- Section: Tilemaps -->
+    <section class="mb-20">
+      <h2
+        class="text-xl font-bold mb-2"
+        style="color: var(--color-neutral-900); letter-spacing: -0.02em;"
+      >
+        Tilemaps as first-class layers
+      </h2>
+      <p class="text-sm mb-8" style="color: var(--color-neutral-600);">
+        Closing the Aseprite–Tiled split. Tileset and tilemap in the same
+        project as the sprites they display.
+      </p>
+      <div class="grid sm:grid-cols-2 lg:grid-cols-3 gap-4">
+        {
+          [
+            ["Tilemap layer type", "Tileset definition, per-cell tile data, rotation and flip flags — all inside the .pixhaus project."],
+            ["Autotile rules", "16-tile Wang corner-blob, 47-tile Wang edge-blob, and rule-based custom sets."],
+            ["Animated tiles", "Water, lava, conveyor belts — tiles cycle independently of the sprite timeline."],
+            ["Tile properties", "Per-tile collision shape, animation timing, autotile group membership."],
+            ["TMX export for Tiled", "SuperTiled2Unity-compatible .tmx + tileset PNG for Unity tilemap pipelines."],
+            ["In-editor rule tile editor", "Visual editor for custom autotile rules — no separate Tiled session required."],
+          ].map(([title, body]) => (
+            <div
+              class="p-5 rounded-lg"
+              style="background: var(--color-neutral-50); border: 1px solid var(--color-neutral-200);"
+            >
+              <h3
+                class="text-sm font-semibold mb-1.5"
+                style="color: var(--color-neutral-900);"
+              >
+                {title}
+              </h3>
+              <p class="text-sm" style="color: var(--color-neutral-600);">
+                {body}
+              </p>
+            </div>
+          ))
+        }
+      </div>
+    </section>
+
+    <!-- Section: AI verbs -->
+    <section id="ai-verbs" class="mb-20">
+      <h2
+        class="text-xl font-bold mb-2"
+        style="color: var(--color-neutral-900); letter-spacing: -0.02em;"
+      >
+        AI verbs
+      </h2>
+      <p class="text-sm mb-2" style="color: var(--color-neutral-600);">
+        Commands that run inside the canvas with your palette, your layers,
+        and your style references as automatic context. Not a side panel. Not a
+        separate generator. Each verb produces a preview layer you accept,
+        edit, or discard — the artist's brush stays in the artist's hand.
+      </p>
+      <p class="text-sm mb-8" style="color: var(--color-neutral-600);">
+        Bring your own API key (Anthropic, OpenAI, Replicate, Stability) or
+        run locally with Ollama and ComfyUI. No backend is mandatory.
+      </p>
+      <div class="grid sm:grid-cols-2 gap-4">
+        {
+          [
+            ["Inbetween", "Generate intermediate frames between two key frames, palette-locked. Uses frame-interpolation models conditioned on source frames."],
+            ["Continue", "Predict the next 1–3 frames given the last N, consistent with motion and style."],
+            ["Extend", "Generate 4-direction or 8-direction views from a single sprite. Renders from synthesized geometry, snaps to palette."],
+            ["Variant", "Palette swaps, equipment overlays, expression sets — as derived layers from a base sprite."],
+            ["Cleanup", "Snap generated or imported sprites to the active palette, remove sub-pixel anti-aliasing, fix pivot drift across frames."],
+            ["Tile", "Generate a 47-tile blob autotile set from 1–3 example transitions, with rules pre-configured."],
+            ["Critique", "Vision-language analysis: pose continuity errors, palette violations, missing frames, pivot drift, style inconsistency — surfaced as a clickable issue list."],
+            ["Project style learning", "Train a per-project LoRA from existing layers. Subsequent verbs use it as a style reference automatically."],
+            ["Conversational editing", "Natural language driving multi-step editor commands. Plans the command sequence, previews it, commits on accept."],
+            ["Motion from video", "Extract pose timing from a reference video into the timeline as keyframe markers and rough silhouettes."],
+            ["Auto-mesh deformation", "Derive a no-bones deformation rig from a single sprite — Live2D-style results without explicit skeleton work."],
+            ["Audio-driven timing", "Beat detection and lip-sync to drive animation frame timing from audio clips."],
+            ["Tileset from description", "Generate a complete autotile-compatible tileset from a text prompt."],
+            ["Sketch finishing", "Refine rough silhouettes and gesture poses into finished sprites in your project's learned style."],
+          ].map(([title, body]) => (
+            <div
+              class="flex gap-4 p-5 rounded-lg"
+              style="background: var(--color-neutral-50); border: 1px solid var(--color-neutral-200);"
+            >
+              <div
+                class="w-1 shrink-0 rounded-full"
+                style="background: var(--brand-indigo-500);"
+              />
+              <div>
+                <h3
+                  class="text-sm font-semibold mb-1"
+                  style="color: var(--color-neutral-900);"
+                >
+                  {title}
+                </h3>
+                <p class="text-sm" style="color: var(--color-neutral-600);">
+                  {body}
+                </p>
+              </div>
+            </div>
+          ))
+        }
+      </div>
+    </section>
+
+    <!-- Section: Engine integration -->
+    <section class="mb-20">
+      <h2
+        class="text-xl font-bold mb-2"
+        style="color: var(--color-neutral-900); letter-spacing: -0.02em;"
+      >
+        Unity integration
+      </h2>
+      <p class="text-sm mb-8" style="color: var(--color-neutral-600);">
+        The first-party Unity package reads Pixhaus exports cleanly, with
+        better pivot and animation tag handling than third-party Aseprite
+        importers.
+      </p>
+      <div class="grid sm:grid-cols-2 lg:grid-cols-3 gap-4">
+        {
+          [
+            ["Pixhaus Unity importer (UPM)", "OpenUPM-compatible package. Auto-slices, generates AnimationClips per frame tag, sets pivots."],
+            ["SpriteAtlas batching", "Multiple imported sprite sheets are combined into a SpriteAtlas automatically."],
+            ["Tilemap support", "Imports TMX exports into Unity's Tilemap system with TileBase assets for each tile."],
+            ["Unity 2022.3 LTS + Unity 6", "Minimum Unity 2022.3 LTS; Unity 6 is the primary test target."],
+          ].map(([title, body]) => (
+            <div
+              class="p-5 rounded-lg"
+              style="background: var(--color-neutral-50); border: 1px solid var(--color-neutral-200);"
+            >
+              <h3
+                class="text-sm font-semibold mb-1.5"
+                style="color: var(--color-neutral-900);"
+              >
+                {title}
+              </h3>
+              <p class="text-sm" style="color: var(--color-neutral-600);">
+                {body}
+              </p>
+            </div>
+          ))
+        }
+      </div>
+    </section>
+
+    <!-- Section: Scripting -->
+    <section>
+      <h2
+        class="text-xl font-bold mb-2"
+        style="color: var(--color-neutral-900); letter-spacing: -0.02em;"
+      >
+        Scripting and plugins
+      </h2>
+      <p class="text-sm mb-8" style="color: var(--color-neutral-600);">
+        Lua scripting with an Aseprite-compatible API surface so existing
+        scripts have a migration path. Plugins reach further: custom UI
+        panels, custom tools, custom AI verbs.
+      </p>
+      <div class="grid sm:grid-cols-2 lg:grid-cols-3 gap-4">
+        {
+          [
+            ["Lua scripting (Lua 5.4)", "Hot-reload. The app global mirrors Aseprite's API. Community scripts port with minimal changes."],
+            ["WASM plugins via extism", "Pre-compile plugins in any language that targets WASM. Sandboxed, no filesystem access outside the project."],
+            ["Custom UI panels", "Plugins can register panels, toolbars, and dialog UIs — not just data transforms."],
+            ["Custom AI verbs", "Register your own verb that calls any backend. The verb protocol is the extension point."],
+          ].map(([title, body]) => (
+            <div
+              class="p-5 rounded-lg"
+              style="background: var(--color-neutral-50); border: 1px solid var(--color-neutral-200);"
+            >
+              <h3
+                class="text-sm font-semibold mb-1.5"
+                style="color: var(--color-neutral-900);"
+              >
+                {title}
+              </h3>
+              <p class="text-sm" style="color: var(--color-neutral-600);">
+                {body}
+              </p>
+            </div>
+          ))
+        }
+      </div>
+    </section>
+  </div>
+</BaseLayout>

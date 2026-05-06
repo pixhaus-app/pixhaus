@@ -1,0 +1,216 @@
+---
+import BaseLayout from "../layouts/BaseLayout.astro";
+
+const features = [
+  {
+    category: "Editing",
+    rows: [
+      { label: "Pixel art editing", pixhaus: true, aseprite: true, pixelorama: true, photoshop: "limited" },
+      { label: "Indexed-color mode", pixhaus: true, aseprite: true, pixelorama: true, photoshop: true },
+      { label: "Palette workflow", pixhaus: true, aseprite: true, pixelorama: true, photoshop: "limited" },
+      { label: "Layer groups with blend modes", pixhaus: true, aseprite: "partial", pixelorama: "partial", photoshop: true },
+      { label: "RotSprite pixel-aware rotation", pixhaus: true, aseprite: true, pixelorama: true, photoshop: false },
+    ],
+  },
+  {
+    category: "Animation",
+    rows: [
+      { label: "Frame animation timeline", pixhaus: true, aseprite: true, pixelorama: true, photoshop: "limited" },
+      { label: "Frame tags / named ranges", pixhaus: true, aseprite: true, pixelorama: true, photoshop: false },
+      { label: "Onion skin", pixhaus: true, aseprite: true, pixelorama: true, photoshop: false },
+      { label: "Sprite sheet PNG + JSON export", pixhaus: true, aseprite: true, pixelorama: true, photoshop: false },
+      { label: "Animated GIF / WebP export", pixhaus: true, aseprite: true, pixelorama: true, photoshop: true },
+    ],
+  },
+  {
+    category: "Tilemaps",
+    rows: [
+      { label: "Tilemap layers (same project)", pixhaus: true, aseprite: "partial", pixelorama: false, photoshop: false },
+      { label: "Autotile rules", pixhaus: true, aseprite: "partial", pixelorama: false, photoshop: false },
+      { label: "Animated tiles", pixhaus: true, aseprite: false, pixelorama: false, photoshop: false },
+      { label: "TMX / Tiled export", pixhaus: true, aseprite: false, pixelorama: false, photoshop: false },
+    ],
+  },
+  {
+    category: "AI",
+    rows: [
+      { label: "AI generation in canvas", pixhaus: true, aseprite: false, pixelorama: false, photoshop: "limited" },
+      { label: "Project-context-aware AI", pixhaus: true, aseprite: false, pixelorama: false, photoshop: false },
+      { label: "Local inference (Ollama / ComfyUI)", pixhaus: true, aseprite: false, pixelorama: false, photoshop: false },
+      { label: "BYO API key", pixhaus: true, aseprite: false, pixelorama: false, photoshop: false },
+    ],
+  },
+  {
+    category: "Engine",
+    rows: [
+      { label: "Unity importer package", pixhaus: true, aseprite: false, pixelorama: false, photoshop: false },
+      { label: "Aseprite-JSON sprite sheet schema", pixhaus: true, aseprite: true, pixelorama: true, photoshop: false },
+    ],
+  },
+  {
+    category: "Open source",
+    rows: [
+      { label: "Open source", pixhaus: true, aseprite: false, pixelorama: true, photoshop: false },
+      { label: "MIT license", pixhaus: true, aseprite: false, pixelorama: "MIT", photoshop: false },
+      { label: "Plugin / Lua scripting", pixhaus: true, aseprite: true, pixelorama: false, photoshop: true },
+      { label: "Custom UI panels via plugins", pixhaus: true, aseprite: false, pixelorama: false, photoshop: true },
+      { label: "No subscription tier", pixhaus: true, aseprite: false, pixelorama: true, photoshop: false },
+    ],
+  },
+];
+
+function renderCell(value: boolean | string) {
+  if (value === true) return { symbol: "✓", color: "#7c6cef" };
+  if (value === false) return { symbol: "—", color: "var(--color-neutral-400)" };
+  return { symbol: "~", color: "var(--brand-yellow)" };
+}
+---
+
+<BaseLayout
+  title="Compare"
+  description="Pixhaus vs Aseprite, Pixelorama, and Photoshop — feature comparison for pixel art editors."
+  ogImage="/og/compare.svg"
+>
+  <div class="max-w-6xl mx-auto px-6 py-20">
+    <!-- Header -->
+    <div class="text-center mb-16">
+      <h1
+        class="text-3xl md:text-5xl font-bold mb-4"
+        style="color: var(--color-neutral-900); letter-spacing: -0.04em;"
+      >
+        How Pixhaus compares
+      </h1>
+      <p
+        class="text-lg max-w-xl mx-auto"
+        style="color: var(--color-neutral-600);"
+      >
+        Built on familiar ground, extended where the existing tools leave gaps.
+      </p>
+    </div>
+
+    <!-- Summary cards -->
+    <div class="grid sm:grid-cols-3 gap-4 mb-16">
+      {
+        [
+          {
+            versus: "Aseprite",
+            summary: "The gold standard for pixel art editing. Pixhaus reads and writes its file format and matches its workflow. The differences are open source, working layer-group blend modes, first-class tilemaps, and AI verbs.",
+          },
+          {
+            versus: "Pixelorama",
+            summary: "An open-source Aseprite alternative. Pixhaus goes further with Aseprite file format compatibility, a real plugin system with custom UI and AI verbs, and a deeper tilemap layer model.",
+          },
+          {
+            versus: "Photoshop",
+            summary: "The broad canvas. Pixhaus is narrower by design: pixel art, animation, tilemaps. What it gives back: pixel-art-specific tools, indexed-color discipline, a tilemap layer type, and AI built for sprite workflows.",
+          },
+        ].map(({ versus, summary }) => (
+          <div
+            class="p-5 rounded-xl"
+            style="background: var(--color-neutral-50); border: 1px solid var(--color-neutral-200);"
+          >
+            <p
+              class="text-xs font-semibold mb-1 uppercase tracking-wider"
+              style="color: var(--brand-indigo-400);"
+            >
+              vs {versus}
+            </p>
+            <p class="text-sm leading-relaxed" style="color: var(--color-neutral-600);">
+              {summary}
+            </p>
+          </div>
+        ))
+      }
+    </div>
+
+    <!-- Legend -->
+    <div
+      class="flex flex-wrap gap-6 mb-6 text-sm"
+      style="color: var(--color-neutral-500);"
+    >
+      <span class="flex items-center gap-1.5">
+        <span style="color: #7c6cef; font-weight: 700;">✓</span> Full support
+      </span>
+      <span class="flex items-center gap-1.5">
+        <span style="color: var(--brand-yellow); font-weight: 700;">~</span> Partial support
+      </span>
+      <span class="flex items-center gap-1.5">
+        <span style="color: var(--color-neutral-400);">—</span> Not supported
+      </span>
+    </div>
+
+    <!-- Comparison table -->
+    <div
+      class="rounded-xl overflow-hidden"
+      style="border: 1px solid var(--color-neutral-200);"
+    >
+      <table class="w-full text-sm border-collapse">
+        <thead>
+          <tr style="background: var(--color-neutral-50);">
+            <th
+              class="text-left px-6 py-4 font-medium w-1/2"
+              style="color: var(--color-neutral-600); border-bottom: 1px solid var(--color-neutral-200);"
+            >
+              Feature
+            </th>
+            {
+              ["Pixhaus", "Aseprite", "Pixelorama", "Photoshop"].map((tool) => (
+                <th
+                  class="px-4 py-4 font-semibold text-center w-[12.5%]"
+                  style={`border-bottom: 1px solid var(--color-neutral-200); color: ${tool === "Pixhaus" ? "var(--brand-indigo-300)" : "var(--color-neutral-600)"}; ${tool === "Pixhaus" ? "background: rgba(124,108,239,0.06);" : ""}`}
+                >
+                  {tool}
+                </th>
+              ))
+            }
+          </tr>
+        </thead>
+        <tbody>
+          {
+            features.map(({ category, rows }) => (
+              <>
+                <tr style="background: var(--color-neutral-100);">
+                  <td
+                    colspan="5"
+                    class="px-6 py-2 text-xs font-semibold uppercase tracking-wider"
+                    style="color: var(--color-neutral-500);"
+                  >
+                    {category}
+                  </td>
+                </tr>
+                {rows.map(({ label, pixhaus, aseprite, pixelorama, photoshop }, rowIdx) => {
+                  const cells = [pixhaus, aseprite, pixelorama, photoshop].map(renderCell);
+                  return (
+                    <tr
+                      style={`border-bottom: 1px solid var(--color-neutral-200); ${rowIdx % 2 === 1 ? "background: rgba(255,255,255,0.01);" : ""}`}
+                    >
+                      <td
+                        class="px-6 py-3"
+                        style="color: var(--color-neutral-700);"
+                      >
+                        {label}
+                      </td>
+                      {cells.map(({ symbol, color }, i) => (
+                        <td
+                          class="px-4 py-3 text-center font-medium"
+                          style={`color: ${color}; ${i === 0 ? "background: rgba(124,108,239,0.04);" : ""}`}
+                        >
+                          {symbol}
+                        </td>
+                      ))}
+                    </tr>
+                  );
+                })}
+              </>
+            ))
+          }
+        </tbody>
+      </table>
+    </div>
+
+    <p class="text-xs mt-4 text-center" style="color: var(--color-neutral-500);">
+      Comparison reflects capabilities as of May 2026. Partial (~) means the feature
+      exists but is limited or requires workarounds.
+    </p>
+  </div>
+</BaseLayout>

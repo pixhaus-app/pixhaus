@@ -1,0 +1,58 @@
+@import "@brand/tokens.css";
+@import "tailwindcss";
+
+@theme {
+  --font-family-sans: "Geist", -apple-system, BlinkMacSystemFont, "Segoe UI",
+    Roboto, Helvetica, Arial, sans-serif;
+  --font-family-mono: "Geist Mono", "JetBrains Mono", "Cascadia Code",
+    "Fira Code", "Menlo", "Monaco", "Consolas", monospace;
+
+  --color-brand-50: #f0eeff;
+  --color-brand-100: #e0dcff;
+  --color-brand-200: #c5bdfd;
+  --color-brand-300: #a497fb;
+  --color-brand-400: #9080f8;
+  --color-brand-500: #7c6cef;
+  --color-brand-600: #6555d4;
+  --color-brand-700: #5040b2;
+  --color-brand-800: #3b2e8a;
+  --color-brand-900: #271e5e;
+
+  --color-neutral-0: #0f0f13;
+  --color-neutral-50: #17171e;
+  --color-neutral-100: #1e1e27;
+  --color-neutral-150: #252530;
+  --color-neutral-200: #2c2c3a;
+  --color-neutral-300: #2a2a35;
+  --color-neutral-400: #3d3d50;
+  --color-neutral-500: #5a5a72;
+  --color-neutral-600: #9090a8;
+  --color-neutral-700: #b8b8cc;
+  --color-neutral-800: #d8d8e8;
+  --color-neutral-900: #e6e6f0;
+  --color-neutral-950: #f0f0f4;
+  --color-neutral-1000: #ffffff;
+}
+
+html {
+  font-family: var(--font-family-sans);
+  background-color: var(--color-neutral-0);
+  color: var(--color-neutral-900);
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+a {
+  color: inherit;
+  text-decoration: none;
+}
+
+:focus-visible {
+  outline: 2px solid var(--brand-indigo-500);
+  outline-offset: 2px;
+  border-radius: 3px;
+}

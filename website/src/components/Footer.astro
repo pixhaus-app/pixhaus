@@ -1,0 +1,145 @@
+---
+type NavItem = { href: string; label: string; external?: boolean };
+
+const currentYear = new Date().getFullYear();
+
+const links: Record<string, NavItem[]> = {
+  Product: [
+    { href: "/features", label: "Features" },
+    { href: "/compare", label: "Compare" },
+    { href: "/download", label: "Download" },
+    { href: "/blog", label: "Blog" },
+  ],
+  Learn: [
+    { href: "https://docs.pixhaus.app", label: "Documentation", external: true },
+    { href: "https://docs.pixhaus.app/getting-started/introduction", label: "Getting started", external: true },
+    { href: "https://docs.pixhaus.app/ai-verbs/overview", label: "AI verbs", external: true },
+    { href: "https://docs.pixhaus.app/reference/aseprite-compat", label: "Aseprite migration", external: true },
+  ],
+  Community: [
+    { href: "/community", label: "Community" },
+    { href: "https://github.com/pixhaus-app/pixhaus", label: "GitHub", external: true },
+    { href: "https://github.com/pixhaus-app/pixhaus/discussions", label: "Discussions", external: true },
+    { href: "https://github.com/pixhaus-app/pixhaus/blob/main/CONTRIBUTING.md", label: "Contributing", external: true },
+  ],
+};
+---
+
+<footer
+  class="mt-24 border-t"
+  style="border-color: var(--color-neutral-200);"
+>
+  <div class="max-w-6xl mx-auto px-6 py-16">
+    <!-- Top: logo + links grid -->
+    <div class="grid grid-cols-2 md:grid-cols-4 gap-12 mb-12">
+      <!-- Brand column -->
+      <div class="col-span-2 md:col-span-1">
+        <a
+          href="/"
+          class="flex items-center gap-2 mb-4"
+          aria-label="Pixhaus home"
+        >
+          <svg
+            xmlns="http://www.w3.org/2000/svg"
+            viewBox="0 0 100 100"
+            width="24"
+            height="24"
+            aria-hidden="true"
+          >
+            <g fill="#7c6cef">
+              <rect x="41" y="1" width="18" height="18" rx="2" />
+              <rect x="21" y="21" width="18" height="18" rx="2" />
+              <rect x="41" y="21" width="18" height="18" rx="2" />
+              <rect x="61" y="21" width="18" height="18" rx="2" />
+              <rect x="1" y="41" width="18" height="18" rx="2" />
+              <rect x="21" y="41" width="18" height="18" rx="2" />
+              <rect x="41" y="41" width="18" height="18" rx="2" />
+              <rect x="61" y="41" width="18" height="18" rx="2" />
+              <rect x="81" y="41" width="18" height="18" rx="2" />
+              <rect x="1" y="61" width="18" height="18" rx="2" />
+              <rect x="21" y="61" width="18" height="18" rx="2" />
+              <rect x="61" y="61" width="18" height="18" rx="2" />
+              <rect x="81" y="61" width="18" height="18" rx="2" />
+              <rect x="1" y="81" width="18" height="18" rx="2" />
+              <rect x="21" y="81" width="18" height="18" rx="2" />
+              <rect x="61" y="81" width="18" height="18" rx="2" />
+              <rect x="81" y="81" width="18" height="18" rx="2" />
+            </g>
+          </svg>
+          <span
+            style="font-size: 16px; font-weight: 600; letter-spacing: -0.03em; color: var(--color-neutral-900);"
+            >pixhaus</span
+          >
+        </a>
+        <p
+          class="text-sm leading-relaxed"
+          style="color: var(--color-neutral-500);"
+        >
+          Open-source AI-native pixel art editor for sprites, animations, and
+          tilemaps.
+        </p>
+        <p class="text-sm mt-2" style="color: var(--color-neutral-500);">
+          MIT license.
+        </p>
+      </div>
+
+      <!-- Link columns -->
+      {
+        Object.entries(links).map(([heading, items]) => (
+          <div>
+            <p
+              class="text-xs font-semibold mb-4 tracking-wider uppercase"
+              style="color: var(--color-neutral-500);"
+            >
+              {heading}
+            </p>
+            <ul class="space-y-2.5">
+              {items.map(({ href, label, external }) => (
+                <li>
+                  <a
+                    href={href}
+                    target={external ? "_blank" : undefined}
+                    rel={external ? "noopener noreferrer" : undefined}
+                    class="text-sm transition-colors"
+                    style="color: var(--color-neutral-600);"
+                  >
+                    {label}
+                  </a>
+                </li>
+              ))}
+            </ul>
+          </div>
+        ))
+      }
+    </div>
+
+    <!-- Bottom bar -->
+    <div
+      class="pt-8 border-t flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4"
+      style="border-color: var(--color-neutral-200);"
+    >
+      <p class="text-sm" style="color: var(--color-neutral-500);">
+        &copy; {currentYear} Pixhaus contributors. MIT license.
+      </p>
+      <div class="flex items-center gap-4">
+        <a
+          href="/rss.xml"
+          class="text-sm transition-colors"
+          style="color: var(--color-neutral-500);"
+          aria-label="RSS feed"
+        >
+          RSS
+        </a>
+        <a
+          href="https://github.com/pixhaus-app/pixhaus"
+          target="_blank"
+          rel="noopener noreferrer"
+          class="text-sm transition-colors"
+          style="color: var(--color-neutral-500);"
+        >
+          GitHub
+        </a>
+      </div>
+    </div>
+  </div>
+</footer>
