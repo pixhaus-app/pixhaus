@@ -36,6 +36,7 @@ pub mod fixtures;
 pub mod project;
 pub mod selection;
 pub mod tilemap;
+pub mod transforms;
 pub mod undo;
 
 /// Returns the crate name. Stable, public marker that downstream crates
