@@ -283,6 +283,101 @@ export function toJascPal(colors: Array<{ r: number; g: number; b: number }>): s
   );
 }
 
+// ACO color space codes
+const ACO_CS_RGB = 0;
+const ACO_CS_HSB = 1;
+const ACO_CS_CMYK = 2;
+const ACO_CS_LAB = 7;
+const ACO_CS_GRAYSCALE = 8;
+
+function decodeAcoColor(
+  view: DataView,
+  offset: number,
+): { r: number; g: number; b: number } | null {
+  const cs = view.getUint16(offset, false);
+  const c1 = view.getUint16(offset + 2, false);
+  const c2 = view.getUint16(offset + 4, false);
+  const c3 = view.getUint16(offset + 6, false);
+  switch (cs) {
+    case ACO_CS_RGB:
+      // Components in [0, 65535]; divide by 257 to get [0, 255]
+      return { r: Math.floor(c1 / 257), g: Math.floor(c2 / 257), b: Math.floor(c3 / 257) };
+    case ACO_CS_GRAYSCALE: {
+      // c1 in [0, 10000]; scale to [0, 255]
+      const gray = Math.min(255, Math.floor((c1 * 255) / 10000));
+      return { r: gray, g: gray, b: gray };
+    }
+    case ACO_CS_HSB:
+    case ACO_CS_CMYK:
+    case ACO_CS_LAB:
+      return null;
+    default:
+      throw new Error(`ACO: unsupported color space ${cs}`);
+  }
+}
+
+function readAcoV1(view: DataView, start: number, count: number): ParsedColor[] {
+  const colors: ParsedColor[] = [];
+  let offset = start;
+  for (let i = 0; i < count; i++) {
+    if (offset + 10 > view.byteLength) {
+      throw new Error("ACO v1: file ends mid-entry; declared count is larger than payload");
+    }
+    const color = decodeAcoColor(view, offset);
+    offset += 10;
+    if (color !== null) colors.push(color);
+  }
+  return colors;
+}
+
+function readAcoV2(view: DataView, start: number, count: number): ParsedColor[] {
+  const colors: ParsedColor[] = [];
+  let offset = start;
+  for (let i = 0; i < count; i++) {
+    if (offset + 10 > view.byteLength) {
+      throw new Error("ACO v2: file ends mid-entry; declared count is larger than payload");
+    }
+    const color = decodeAcoColor(view, offset);
+    offset += 10;
+
+    // Name field: 4-byte char count (UTF-16BE chars) + count * 2 bytes
+    if (offset + 4 > view.byteLength) {
+      throw new Error("ACO v2: file ends before name length field");
+    }
+    const nameLen = view.getUint32(offset, false);
+    const nameBytes = nameLen * 2;
+    offset += 4;
+    if (offset + nameBytes > view.byteLength) {
+      throw new Error("ACO v2: file ends mid-name");
+    }
+
+    let name: string | undefined;
+    if (nameLen > 0) {
+      const chars: number[] = [];
+      for (let j = 0; j < nameLen; j++) {
+        const cp = view.getUint16(offset + j * 2, false);
+        if (cp !== 0) chars.push(cp);
+      }
+      if (chars.length > 0) name = String.fromCharCode(...chars);
+    }
+    offset += nameBytes;
+
+    if (color !== null) colors.push(name ? { ...color, name } : color);
+  }
+  return colors;
+}
+
+/** Parse an Adobe Photoshop Color Swatch (.aco) binary file. */
+export function parseAco(buffer: ArrayBuffer): ParsedColor[] {
+  const view = new DataView(buffer);
+  if (buffer.byteLength < 4) throw new Error("ACO: file too short");
+  const version = view.getUint16(0, false);
+  const count = view.getUint16(2, false);
+  if (version === 1) return readAcoV1(view, 4, count);
+  if (version === 2) return readAcoV2(view, 4, count);
+  throw new Error(`ACO: unsupported version ${version}`);
+}
+
 // ── CSS helpers ───────────────────────────────────────────────────────────────
 
 export function rgbaToCss(c: Rgba): string {
