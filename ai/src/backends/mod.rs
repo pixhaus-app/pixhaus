@@ -31,6 +31,7 @@
 //! without touching the developer's system keyring.
 
 pub mod anthropic;
+pub mod bridge;
 pub mod comfyui;
 pub mod error;
 pub mod keys;
@@ -39,6 +40,7 @@ pub mod openai;
 pub mod replicate;
 pub mod stability;
 
+pub use bridge::BackendProxy;
 pub use error::{BackendError, Result};
 pub use keys::ApiKeyStore;
 

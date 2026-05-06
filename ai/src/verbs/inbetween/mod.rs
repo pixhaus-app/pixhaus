@@ -1,0 +1,637 @@
+//! Verb: Inbetween — generate intermediate frames between two key frames.
+//!
+//! # What it does
+//!
+//! Takes two pixel-art frames (A and B) and generates N intermediate
+//! frames using a frame-interpolation backend (RIFE-class or video
+//! diffusion). If the project has an active palette, the output pixels are
+//! snapped to the nearest palette color by squared Euclidean distance in
+//! RGB space.
+//!
+//! # Output
+//!
+//! A [`VerbEffect::AddFrames`] that inserts N new frames immediately after
+//! `frame_a_index` in the timeline. Each new frame gets one cel on the
+//! active layer.
+//!
+//! # Backend
+//!
+//! Requires `FRAME_INTERPOLATION` capability. The runtime selects a
+//! backend before calling `invoke`; the verb downcasts `ctx.backend` to
+//! [`BackendProxy`] and calls the underlying
+//! fat backend's `invoke(InferenceRequest::FrameInterpolation(...))`.
+
+use std::io::Cursor;
+use std::time::{Duration, Instant};
+
+use async_trait::async_trait;
+use image::ImageFormat;
+use pixhaus_core::project::{Cel, Frame, FrameIndex, LayerId, Palette, PixelBufferId, Size};
+use serde::{Deserialize, Serialize};
+use tokio::select;
+use tokio_util::sync::CancellationToken;
+use tracing::{debug, instrument};
+
+use crate::backends::{
+    BackendProxy, FrameInterpolationRequest, InferenceRequest, InferenceResponse,
+};
+use crate::plugin::context::{PixelData, VerbContext};
+use crate::plugin::descriptor::{
+    BackendCapabilities, CostEstimate, EffectKind, VerbDescriptor, VerbId,
+};
+use crate::plugin::error::{Result, VerbError};
+use crate::plugin::inputs::VerbInputs;
+use crate::plugin::output::{ActualCost, NewPixelBuffer, VerbEffect, VerbOutput};
+use crate::plugin::progress::{VerbProgress, VerbProgressEvent};
+use crate::plugin::verb::Verb;
+
+/// Stable identifier for the built-in Inbetween verb.
+pub const INBETWEEN_VERB_ID: &str = "pixhaus.builtin.inbetween";
+
+/// Maximum intermediate frames per call. Guards against accidental
+/// runaway invocations that would exhaust backend quota.
+const MAX_OUTPUTS: u32 = 16;
+
+/// Placeholder IDs for new layers/buffers within the effect.
+/// The host rewrites them to real IDs at commit time.
+const PLACEHOLDER_LAYER: u32 = 0;
+
+fn default_num_outputs() -> u32 {
+    1
+}
+
+/// Inputs for [`InbetweenVerb`].
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct InbetweenInputs {
+    /// Pixel data of the first key frame.
+    pub frame_a: PixelData,
+    /// Pixel data of the second key frame.
+    pub frame_b: PixelData,
+    /// Timeline index of frame A. The generated cels are inserted
+    /// immediately after this position.
+    pub frame_a_index: u32,
+    /// Timeline index of frame B. Used for validation only (must be
+    /// strictly greater than `frame_a_index`).
+    pub frame_b_index: u32,
+    /// Number of intermediate frames to generate. Clamped to
+    /// `[1, MAX_OUTPUTS]` in `validate`.
+    #[serde(default = "default_num_outputs")]
+    pub num_outputs: u32,
+}
+
+/// Generates intermediate frames between two key frames.
+///
+/// Dispatched to a `FRAME_INTERPOLATION`-capable backend via
+/// [`BackendProxy`]. Output cels are placed on the active layer at new
+/// timeline positions inserted after `frame_a_index`.
+#[derive(Debug)]
+pub struct InbetweenVerb {
+    descriptor: VerbDescriptor,
+}
+
+impl InbetweenVerb {
+    /// Constructs the verb.
+    #[must_use]
+    #[allow(clippy::disallowed_methods)]
+    pub fn new() -> Self {
+        let input_schema = serde_json::json!({
+            "type": "object",
+            "properties": {
+                "frame_a": {
+                    "type": "object",
+                    "description": "Pixel data of the first key frame (RGBA8)"
+                },
+                "frame_b": {
+                    "type": "object",
+                    "description": "Pixel data of the second key frame (RGBA8)"
+                },
+                "frame_a_index": {
+                    "type": "integer",
+                    "minimum": 0,
+                    "description": "Timeline index of frame A"
+                },
+                "frame_b_index": {
+                    "type": "integer",
+                    "minimum": 1,
+                    "description": "Timeline index of frame B (must be > frame_a_index)"
+                },
+                "num_outputs": {
+                    "type": "integer",
+                    "minimum": 1,
+                    "maximum": 16,
+                    "default": 1,
+                    "description": "Number of intermediate frames to generate"
+                }
+            },
+            "required": ["frame_a", "frame_b", "frame_a_index", "frame_b_index"]
+        });
+
+        Self {
+            descriptor: VerbDescriptor {
+                id: VerbId::new(INBETWEEN_VERB_ID),
+                display_name: "Inbetween".into(),
+                description: "Generate intermediate frames between two key frames".into(),
+                version: env!("CARGO_PKG_VERSION").into(),
+                required_capabilities: BackendCapabilities::FRAME_INTERPOLATION,
+                input_schema,
+                output_schema: None,
+                output_kinds: vec![EffectKind::AddFrames, EffectKind::AddCels],
+                cost_estimate: CostEstimate {
+                    typical_latency: Duration::from_secs(30),
+                    max_latency: Duration::from_secs(300),
+                    typical_usd_cents: 5.0,
+                    max_usd_cents: 20.0,
+                },
+                streaming: true,
+                cancellable: true,
+                documentation_url: Some("docs/verbs/inbetween.md".into()),
+            },
+        }
+    }
+}
+
+impl Default for InbetweenVerb {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+#[async_trait]
+impl Verb for InbetweenVerb {
+    fn descriptor(&self) -> &VerbDescriptor {
+        &self.descriptor
+    }
+
+    fn validate(&self, inputs: &VerbInputs) -> Result<()> {
+        let parsed: InbetweenInputs = inputs.deserialize()?;
+
+        if !parsed.frame_a.is_well_formed() {
+            return Err(VerbError::Schema(
+                "inbetween: frame_a pixel data is malformed".into(),
+            ));
+        }
+        if !parsed.frame_b.is_well_formed() {
+            return Err(VerbError::Schema(
+                "inbetween: frame_b pixel data is malformed".into(),
+            ));
+        }
+        if parsed.frame_a.bytes_per_pixel != 4 || parsed.frame_b.bytes_per_pixel != 4 {
+            return Err(VerbError::Schema(
+                "inbetween: both frames must be RGBA8 (bytes_per_pixel == 4)".into(),
+            ));
+        }
+        if parsed.frame_a.width != parsed.frame_b.width
+            || parsed.frame_a.height != parsed.frame_b.height
+        {
+            return Err(VerbError::Schema(
+                "inbetween: frame_a and frame_b must have identical dimensions".into(),
+            ));
+        }
+        if parsed.frame_b_index <= parsed.frame_a_index {
+            return Err(VerbError::Schema(
+                "inbetween: frame_b_index must be strictly greater than frame_a_index".into(),
+            ));
+        }
+        if parsed.num_outputs == 0 || parsed.num_outputs > MAX_OUTPUTS {
+            return Err(VerbError::Schema(format!(
+                "inbetween: num_outputs must be in [1, {MAX_OUTPUTS}], got {}",
+                parsed.num_outputs
+            )));
+        }
+        Ok(())
+    }
+
+    #[instrument(skip(self, ctx, inputs, progress, cancel), fields(verb = INBETWEEN_VERB_ID))]
+    async fn invoke(
+        &self,
+        ctx: VerbContext,
+        inputs: VerbInputs,
+        progress: VerbProgress,
+        cancel: CancellationToken,
+    ) -> Result<VerbOutput> {
+        let started = Instant::now();
+        let inputs: InbetweenInputs = inputs.deserialize_owned()?;
+
+        let sprite_id = ctx.require_sprite_id()?;
+        let active_layer = ctx.require_active_layer()?;
+
+        progress
+            .send(VerbProgressEvent::Started {
+                backend: ctx.backend.as_ref().map(|b| b.id().to_owned()),
+            })
+            .await;
+
+        if cancel.is_cancelled() {
+            return Err(VerbError::Cancelled);
+        }
+
+        // Encode both frames as PNG for the backend.
+        progress.step(Some(0.05), "encoding frames").await;
+        let frame_a_png = pixel_data_to_png(&inputs.frame_a)
+            .map_err(|e| VerbError::Backend(format!("encode frame_a: {e}")))?;
+        let frame_b_png = pixel_data_to_png(&inputs.frame_b)
+            .map_err(|e| VerbError::Backend(format!("encode frame_b: {e}")))?;
+
+        if cancel.is_cancelled() {
+            return Err(VerbError::Cancelled);
+        }
+
+        // Resolve the backend.
+        let proxy = ctx
+            .backend
+            .as_ref()
+            .and_then(|b| b.as_any().downcast_ref::<BackendProxy>())
+            .ok_or_else(|| {
+                VerbError::Backend(
+                    "inbetween: no BackendProxy attached; register a backend with \
+                     FRAME_INTERPOLATION capability via BackendProxy::new()"
+                        .into(),
+                )
+            })?;
+
+        debug!(
+            num_outputs = inputs.num_outputs,
+            "invoking frame interpolation backend"
+        );
+
+        let interp_request = FrameInterpolationRequest {
+            model: None,
+            frames: vec![frame_a_png, frame_b_png],
+            num_outputs: inputs.num_outputs,
+        };
+
+        progress
+            .step(Some(0.1), "calling interpolation backend")
+            .await;
+
+        let backend_result = select! {
+            biased;
+            () = cancel.cancelled() => return Err(VerbError::Cancelled),
+            result = proxy.fat().invoke(
+                InferenceRequest::FrameInterpolation(interp_request),
+                progress.clone(),
+                cancel.child_token(),
+            ) => result,
+        };
+
+        let response = backend_result.map_err(|e| VerbError::Backend(e.to_string()))?;
+
+        if cancel.is_cancelled() {
+            return Err(VerbError::Cancelled);
+        }
+
+        let frame_pngs = match response {
+            InferenceResponse::Frames(r) => r.frames,
+            other => {
+                return Err(VerbError::Backend(format!(
+                    "inbetween: expected Frames response, got {:?}",
+                    std::mem::discriminant(&other)
+                )));
+            }
+        };
+
+        if frame_pngs.len() < inputs.num_outputs as usize {
+            return Err(VerbError::Backend(format!(
+                "inbetween: backend returned {} frames, expected {}",
+                frame_pngs.len(),
+                inputs.num_outputs
+            )));
+        }
+
+        progress
+            .step(Some(0.8), "decoding and palette-snapping output frames")
+            .await;
+
+        // Decode each output PNG, snap to palette if available, pack
+        // into pixel buffers.
+        let palette = ctx.active_palette.as_ref();
+        let frame_size = Size::new(inputs.frame_a.width, inputs.frame_a.height);
+
+        let mut frames = Vec::with_capacity(inputs.num_outputs as usize);
+        let mut cels = Vec::with_capacity(inputs.num_outputs as usize);
+        let mut pixel_buffers = Vec::with_capacity(inputs.num_outputs as usize);
+
+        for (i, png_bytes) in (0u32..).zip(frame_pngs.iter().take(inputs.num_outputs as usize)) {
+            let mut pixel_data = png_to_pixel_data(png_bytes)
+                .map_err(|e| VerbError::Backend(format!("decode output frame {i}: {e}")))?;
+
+            if let Some(pal) = palette {
+                pixel_data = snap_to_palette(pixel_data, pal);
+            }
+
+            let buf_id = PixelBufferId::new(i);
+            let cel = Cel::raster(
+                LayerId::new(PLACEHOLDER_LAYER), // overridden below
+                FrameIndex::new(i),
+                buf_id,
+                frame_size,
+            );
+
+            // Replace the placeholder layer ID with the real active layer.
+            let cel = Cel {
+                layer_id: active_layer,
+                ..cel
+            };
+
+            frames.push(Frame::default());
+            cels.push(cel);
+            pixel_buffers.push(NewPixelBuffer {
+                placeholder: buf_id,
+                pixels: pixel_data,
+            });
+        }
+
+        progress.step(Some(1.0), "done").await;
+
+        let elapsed = started.elapsed();
+        let summary = format!(
+            "Add {} inbetween frame{} after frame {} ({}x{})",
+            inputs.num_outputs,
+            if inputs.num_outputs == 1 { "" } else { "s" },
+            inputs.frame_a_index,
+            inputs.frame_a.width,
+            inputs.frame_a.height,
+        );
+
+        // Use the first generated frame as a preview thumbnail.
+        let thumbnail = pixel_buffers.first().map(|b| b.pixels.clone());
+
+        Ok(VerbOutput {
+            summary,
+            effects: vec![VerbEffect::AddFrames {
+                sprite: sprite_id,
+                after: Some(FrameIndex::new(inputs.frame_a_index)),
+                frames,
+                cels,
+                pixel_buffers,
+            }],
+            thumbnail,
+            actual_cost: ActualCost::free(elapsed.max(Duration::from_micros(1))),
+            notes: if palette.is_none() {
+                vec!["No active palette — output was not snapped to a palette.".into()]
+            } else {
+                vec![]
+            },
+        })
+    }
+}
+
+// ── PNG encode / decode helpers ────────────────────────────────────────────
+
+/// Encodes a [`PixelData`] buffer (must be RGBA8) as PNG bytes.
+fn pixel_data_to_png(data: &PixelData) -> std::result::Result<Vec<u8>, String> {
+    let bpp = data.bytes_per_pixel as usize;
+    let stride = data.stride as usize;
+    let row_bytes = data.width as usize * bpp;
+
+    // De-stride into a tightly-packed buffer.
+    let mut packed = Vec::with_capacity(data.width as usize * data.height as usize * bpp);
+    for row in 0..data.height as usize {
+        let start = row * stride;
+        packed.extend_from_slice(
+            data.bytes
+                .get(start..start + row_bytes)
+                .ok_or("pixel buffer shorter than declared dimensions")?,
+        );
+    }
+
+    let img = image::RgbaImage::from_raw(data.width, data.height, packed)
+        .ok_or("failed to construct RgbaImage from pixel data")?;
+
+    let mut buf = Vec::new();
+    img.write_to(&mut Cursor::new(&mut buf), ImageFormat::Png)
+        .map_err(|e| e.to_string())?;
+    Ok(buf)
+}
+
+/// Decodes a PNG byte slice into an RGBA8 [`PixelData`].
+fn png_to_pixel_data(bytes: &[u8]) -> std::result::Result<PixelData, String> {
+    let img = image::load_from_memory_with_format(bytes, ImageFormat::Png)
+        .map_err(|e| e.to_string())?
+        .into_rgba8();
+    let (width, height) = img.dimensions();
+    Ok(PixelData::rgba8(width, height, img.into_raw()))
+}
+
+// ── Palette snapping ───────────────────────────────────────────────────────
+
+/// Snaps every non-transparent pixel in `data` to the nearest color in
+/// `palette` by squared Euclidean distance in RGB space. Transparent
+/// pixels (alpha == 0) are left unchanged.
+///
+/// If the palette is empty the original buffer is returned as-is.
+fn snap_to_palette(mut data: PixelData, palette: &Palette) -> PixelData {
+    if palette.colors.is_empty() || data.bytes_per_pixel != 4 {
+        return data;
+    }
+
+    // Pre-extract palette colors as [r, g, b] to avoid repeated field
+    // access inside the hot loop.
+    let pal_rgb: Vec<[u8; 3]> = palette
+        .colors
+        .iter()
+        .map(|e| [e.color.r, e.color.g, e.color.b])
+        .collect();
+
+    let bpp = data.bytes_per_pixel as usize;
+    let stride = data.stride as usize;
+    let width = data.width as usize;
+    let height = data.height as usize;
+
+    for y in 0..height {
+        for x in 0..width {
+            let offset = y * stride + x * bpp;
+            let a = data.bytes[offset + 3];
+            if a == 0 {
+                continue;
+            }
+
+            let r = i32::from(data.bytes[offset]);
+            let g = i32::from(data.bytes[offset + 1]);
+            let b = i32::from(data.bytes[offset + 2]);
+
+            let nearest = pal_rgb
+                .iter()
+                .min_by_key(|&&[pr, pg, pb]| {
+                    let dr = r - i32::from(pr);
+                    let dg = g - i32::from(pg);
+                    let db = b - i32::from(pb);
+                    dr * dr + dg * dg + db * db
+                })
+                .copied();
+
+            if let Some([nr, ng, nb]) = nearest {
+                data.bytes[offset] = nr;
+                data.bytes[offset + 1] = ng;
+                data.bytes[offset + 2] = nb;
+                // Alpha unchanged.
+            }
+        }
+    }
+    data
+}
+
+// ── Unit tests ─────────────────────────────────────────────────────────────
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::plugin::inputs::VerbInputs;
+    use pixhaus_core::project::{PaletteEntry, PaletteId, Rgba, UserData};
+
+    fn two_pixel_frame(r: u8, g: u8, b: u8) -> PixelData {
+        PixelData::rgba8(
+            2,
+            2,
+            vec![r, g, b, 255, r, g, b, 255, r, g, b, 255, r, g, b, 255],
+        )
+    }
+
+    fn make_inputs(num_outputs: u32) -> VerbInputs {
+        VerbInputs::from_struct(&InbetweenInputs {
+            frame_a: two_pixel_frame(0, 0, 0),
+            frame_b: two_pixel_frame(255, 255, 255),
+            frame_a_index: 0,
+            frame_b_index: 5,
+            num_outputs,
+        })
+        .unwrap()
+    }
+
+    #[test]
+    fn descriptor_requires_frame_interpolation() {
+        let verb = InbetweenVerb::new();
+        assert!(
+            verb.descriptor()
+                .required_capabilities
+                .contains(BackendCapabilities::FRAME_INTERPOLATION)
+        );
+        assert!(verb.descriptor().cancellable);
+        assert!(verb.descriptor().streaming);
+    }
+
+    #[test]
+    fn validate_rejects_mismatched_dimensions() {
+        let verb = InbetweenVerb::new();
+        let inputs = VerbInputs::from_struct(&InbetweenInputs {
+            frame_a: PixelData::rgba8(2, 2, vec![0; 16]),
+            frame_b: PixelData::rgba8(4, 4, vec![0; 64]),
+            frame_a_index: 0,
+            frame_b_index: 1,
+            num_outputs: 1,
+        })
+        .unwrap();
+        assert!(verb.validate(&inputs).is_err());
+    }
+
+    #[test]
+    fn validate_rejects_b_not_after_a() {
+        let verb = InbetweenVerb::new();
+        let inputs = VerbInputs::from_struct(&InbetweenInputs {
+            frame_a: PixelData::rgba8(2, 2, vec![0; 16]),
+            frame_b: PixelData::rgba8(2, 2, vec![0; 16]),
+            frame_a_index: 5,
+            frame_b_index: 3,
+            num_outputs: 1,
+        })
+        .unwrap();
+        assert!(verb.validate(&inputs).is_err());
+    }
+
+    #[test]
+    fn validate_rejects_zero_outputs() {
+        let verb = InbetweenVerb::new();
+        let inputs = VerbInputs::from_struct(&InbetweenInputs {
+            frame_a: PixelData::rgba8(2, 2, vec![0; 16]),
+            frame_b: PixelData::rgba8(2, 2, vec![0; 16]),
+            frame_a_index: 0,
+            frame_b_index: 2,
+            num_outputs: 0,
+        })
+        .unwrap();
+        assert!(verb.validate(&inputs).is_err());
+    }
+
+    #[test]
+    fn validate_rejects_too_many_outputs() {
+        let verb = InbetweenVerb::new();
+        let inputs = VerbInputs::from_struct(&InbetweenInputs {
+            frame_a: PixelData::rgba8(2, 2, vec![0; 16]),
+            frame_b: PixelData::rgba8(2, 2, vec![0; 16]),
+            frame_a_index: 0,
+            frame_b_index: 20,
+            num_outputs: MAX_OUTPUTS + 1,
+        })
+        .unwrap();
+        assert!(verb.validate(&inputs).is_err());
+    }
+
+    #[test]
+    fn validate_accepts_valid_inputs() {
+        let verb = InbetweenVerb::new();
+        assert!(verb.validate(&make_inputs(1)).is_ok());
+        assert!(verb.validate(&make_inputs(MAX_OUTPUTS)).is_ok());
+    }
+
+    #[test]
+    fn png_round_trip() {
+        let original = PixelData::rgba8(
+            2,
+            2,
+            vec![1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16],
+        );
+        let png = pixel_data_to_png(&original).unwrap();
+        let decoded = png_to_pixel_data(&png).unwrap();
+        assert_eq!(decoded.width, 2);
+        assert_eq!(decoded.height, 2);
+        assert_eq!(decoded.bytes, original.bytes);
+    }
+
+    #[test]
+    fn snap_to_palette_replaces_nearest_color() {
+        let palette = Palette {
+            id: PaletteId::new(1),
+            name: "test".into(),
+            colors: vec![
+                PaletteEntry::new(Rgba {
+                    r: 0,
+                    g: 0,
+                    b: 0,
+                    a: 255,
+                }), // black
+                PaletteEntry::new(Rgba {
+                    r: 255,
+                    g: 0,
+                    b: 0,
+                    a: 255,
+                }), // red
+            ],
+            user_data: UserData::default(),
+        };
+
+        // A pixel that is almost-red should snap to red (255, 0, 0).
+        let data = PixelData::rgba8(1, 1, vec![200, 10, 10, 255]);
+        let snapped = snap_to_palette(data, &palette);
+        assert_eq!(&snapped.bytes[0..4], &[255, 0, 0, 255]);
+    }
+
+    #[test]
+    fn snap_to_palette_leaves_transparent_pixels() {
+        let palette = Palette {
+            id: PaletteId::new(1),
+            name: "test".into(),
+            colors: vec![PaletteEntry::new(Rgba {
+                r: 255,
+                g: 0,
+                b: 0,
+                a: 255,
+            })],
+            user_data: UserData::default(),
+        };
+
+        // Alpha == 0 means fully transparent — should not be changed.
+        let data = PixelData::rgba8(1, 1, vec![100, 100, 100, 0]);
+        let snapped = snap_to_palette(data.clone(), &palette);
+        assert_eq!(snapped.bytes, data.bytes);
+    }
+}

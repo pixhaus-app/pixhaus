@@ -12,4 +12,5 @@
 //! enforce namespacing but the convention prevents collisions.
 
 pub mod auto_mesh_deformation;
+pub mod inbetween;
 pub mod variant;
