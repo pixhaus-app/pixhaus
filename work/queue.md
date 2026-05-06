@@ -125,7 +125,7 @@ small merge conflicts there as PRs land.
 
 - [ ] UNCLAIMED: S37 — Plugin loader and public API surface (extism + Lua entry points). Brief: docs/planning/work/streams.md#s37. Blocked by: B5.
 - [ ] UNCLAIMED: S38 — Lua scripting bindings (mlua project/sprite/layer/cel APIs). Brief: docs/planning/work/streams.md#s38. Blocked by: B5 S37.
-- [ ] UNCLAIMED: S40 — Unity sample project demonstrating importer round-trip. Brief: docs/planning/work/streams.md#s40. Blocked by: S39.
+- [~] CLAIMED:stream-s40: S40 — Unity sample project demonstrating importer round-trip. Brief: docs/planning/work/streams.md#s40. Blocked by: S39.
 - [ ] UNCLAIMED: S42 — Migration guide from Aseprite (docs page + workflow translations). Brief: docs/planning/work/streams.md#s42.
 - [~] CLAIMED:stream-s43:S43 — Plugin developer guide (SDK quickstart + verb authoring). Brief: docs/planning/work/streams.md#s43.
 - [~] CLAIMED:stream-s44:S44 — Tutorial content (5-10 walkthrough docs). Brief: docs/planning/work/streams.md#s44.

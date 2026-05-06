@@ -25,3 +25,5 @@ Sur = "Sur"
 # `numer_denom_ms` is the upstream image-rs method name on
 # image::Delay returning a rational (numerator/denominator) in ms.
 numer = "numer"
+# m_PVREnvironmentMIS: Unity YAML property for Multiple Importance Sampling.
+MIS = "MIS"
