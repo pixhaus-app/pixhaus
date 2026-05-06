@@ -28,6 +28,8 @@ import {
   initCrashReporting,
   setCrashReportingEnabled as setSentryEnabled,
 } from "../crash-reporting/crash-reporting";
+import TimelinePanel from "../timeline/TimelinePanel";
+import { isTimelinePanelVisible } from "../timeline/timeline-state";
 
 const Shell: Component = () => {
   onMount(() => {
@@ -78,10 +80,15 @@ const Shell: Component = () => {
           </Show>
           <Show when={activeProject() !== null}>
             <div class="editor-layout">
-              <div class="editor-layout__canvas">
-                <Canvas />
-                <Show when={activeSpriteId() !== null}>
-                  <TilemapPanel />
+              <div class="editor-layout__canvas-area">
+                <div class="editor-layout__canvas">
+                  <Canvas />
+                  <Show when={activeSpriteId() !== null}>
+                    <TilemapPanel />
+                  </Show>
+                </div>
+                <Show when={isTimelinePanelVisible()}>
+                  <TimelinePanel />
                 </Show>
               </div>
               <Show when={isLayerPanelVisible()}>

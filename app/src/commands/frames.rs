@@ -1,7 +1,7 @@
 //! Frame timeline commands: add, delete, duplicate, reorder, tag CRUD.
 
 use pixhaus_core::project::{
-    Frame, FrameIndex, FrameRange, FrameTag, LoopDirection, Sprite, SpriteId, UserData,
+    Cel, Frame, FrameIndex, FrameRange, FrameTag, LoopDirection, Sprite, SpriteId, UserData,
 };
 use serde::{Deserialize, Serialize};
 use tauri::State;
@@ -440,6 +440,45 @@ pub async fn frame_list(
             id: u64::from(sprite_id.get()),
         })?;
     Ok(sprite.frames.clone())
+}
+
+/// Returns all cels in a sprite (sparse flat list keyed by layer+frame).
+#[tauri::command(async, rename_all = "snake_case")]
+pub async fn cel_list(sprite_id: SpriteId, state: State<'_, AppState>) -> CommandResult<Vec<Cel>> {
+    let doc = state.doc.read().await;
+    let sprite = doc
+        .project
+        .as_ref()
+        .ok_or(AppCommandError::NoActiveProject)?
+        .sprites
+        .iter()
+        .find(|s| s.id == sprite_id)
+        .ok_or(AppCommandError::NotFound {
+            entity: "sprite".into(),
+            id: u64::from(sprite_id.get()),
+        })?;
+    Ok(sprite.cels.clone())
+}
+
+/// Returns all frame tags for a sprite.
+#[tauri::command(async, rename_all = "snake_case")]
+pub async fn frame_tag_list(
+    sprite_id: SpriteId,
+    state: State<'_, AppState>,
+) -> CommandResult<Vec<FrameTag>> {
+    let doc = state.doc.read().await;
+    let sprite = doc
+        .project
+        .as_ref()
+        .ok_or(AppCommandError::NoActiveProject)?
+        .sprites
+        .iter()
+        .find(|s| s.id == sprite_id)
+        .ok_or(AppCommandError::NotFound {
+            entity: "sprite".into(),
+            id: u64::from(sprite_id.get()),
+        })?;
+    Ok(sprite.frame_tags.clone())
 }
 
 #[cfg(test)]

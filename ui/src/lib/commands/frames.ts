@@ -1,7 +1,15 @@
 // Frame timeline commands: add, delete, duplicate, reorder, tag CRUD.
 
 import { invoke } from "@tauri-apps/api/core";
-import type { Frame, FrameIndex, FrameRange, FrameTag, LoopDirection, SpriteId } from "../types";
+import type {
+  Cel,
+  Frame,
+  FrameIndex,
+  FrameRange,
+  FrameTag,
+  LoopDirection,
+  SpriteId,
+} from "../types";
 
 // ── response types ────────────────────────────────────────────────────────────
 
@@ -71,4 +79,14 @@ export function frameTagDelete(sprite_id: SpriteId, tag_name: string): Promise<v
 /** Returns all frames in a sprite's timeline. */
 export function frameList(sprite_id: SpriteId): Promise<Frame[]> {
   return invoke<Frame[]>("frame_list", { sprite_id });
+}
+
+/** Returns all cels for a sprite (sparse flat list keyed by layer+frame). */
+export function celList(sprite_id: SpriteId): Promise<Cel[]> {
+  return invoke<Cel[]>("cel_list", { sprite_id });
+}
+
+/** Returns all frame tags for a sprite. */
+export function frameTagList(sprite_id: SpriteId): Promise<FrameTag[]> {
+  return invoke<FrameTag[]>("frame_tag_list", { sprite_id });
 }
