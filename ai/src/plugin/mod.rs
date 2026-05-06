@@ -32,6 +32,7 @@
 //! line-by-line walk-through of the [`echo::EchoVerb`] reference
 //! plugin.
 
+pub mod audio_timing;
 pub mod backend;
 pub mod context;
 pub mod conversational;
@@ -45,6 +46,9 @@ pub mod progress;
 pub mod runtime;
 pub mod verb;
 
+pub use audio_timing::{
+    AUDIO_TIMING_VERB_ID, AudioFormat, AudioTimingInputs, AudioTimingMode, AudioTimingVerb,
+};
 pub use backend::{BackendInfo, InferenceBackend};
 pub use context::{PixelData, ReferenceImage, StyleReference, VerbContext, VerbContextBuilder};
 pub use conversational::{CONVERSATIONAL_VERB_ID, ConversationalInputs, ConversationalVerb};
