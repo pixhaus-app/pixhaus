@@ -34,6 +34,7 @@
 
 pub mod backend;
 pub mod context;
+pub mod conversational;
 pub mod descriptor;
 pub mod echo;
 pub mod error;
@@ -46,6 +47,7 @@ pub mod verb;
 
 pub use backend::{BackendInfo, InferenceBackend};
 pub use context::{PixelData, ReferenceImage, StyleReference, VerbContext, VerbContextBuilder};
+pub use conversational::{CONVERSATIONAL_VERB_ID, ConversationalInputs, ConversationalVerb};
 pub use descriptor::{BackendCapabilities, CostEstimate, EffectKind, VerbDescriptor, VerbId};
 pub use echo::{ECHO_VERB_ID, EchoInputs, EchoVerb};
 pub use error::{Result, VerbError};
