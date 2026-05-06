@@ -11,4 +11,5 @@
 //! plugins use their own reverse-DNS namespace; the runtime does not
 //! enforce namespacing but the convention prevents collisions.
 
+pub mod auto_mesh_deformation;
 pub mod variant;
