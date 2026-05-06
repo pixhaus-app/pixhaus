@@ -15,6 +15,7 @@ import {
   isLayerPanelVisible,
   setLayerPanelVisible,
 } from "../layers/layer-state";
+import { isTimelinePanelVisible, setTimelinePanelVisible } from "../timeline/timeline-state";
 import {
   tilemapTool,
   setTilemapTool,
@@ -421,7 +422,7 @@ const COMMANDS: ReadonlyMap<string, CommandEntry> = new Map<string, CommandEntry
       id: "window:toggle-timeline",
       label: "Toggle Timeline",
       category: "Window",
-      handler: stub("window:toggle-timeline"),
+      handler: () => setTimelinePanelVisible(!isTimelinePanelVisible()),
     },
   ],
   [

@@ -97,6 +97,7 @@ pub fn run() -> Result<(), AppError> {
             commands::canvas::canvas_set_viewport,
             commands::canvas::canvas_transform,
             // frames
+            commands::frames::cel_list,
             commands::frames::frame_add,
             commands::frames::frame_delete,
             commands::frames::frame_duplicate,
@@ -105,6 +106,7 @@ pub fn run() -> Result<(), AppError> {
             commands::frames::frame_set_duration,
             commands::frames::frame_tag_create,
             commands::frames::frame_tag_delete,
+            commands::frames::frame_tag_list,
             // layers
             commands::layers::layer_add,
             commands::layers::layer_convert_to_group,
