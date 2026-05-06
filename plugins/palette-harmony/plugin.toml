@@ -1,0 +1,15 @@
+[plugin]
+name = "palette-harmony"
+version = "0.1.0"
+author = "Pixhaus contributors"
+description = "Generate a complementary or triadic color ramp from the foreground color and append it to the active palette."
+entry = "main.lua"
+license = "MIT"
+
+[permissions]
+commands = true
+panels = false
+verbs = false
+formats = false
+tools = false
+fs = []

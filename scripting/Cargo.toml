@@ -10,6 +10,8 @@ description = "Pixhaus Lua scripting runtime via mlua"
 
 [dependencies]
 pixhaus-core = { path = "../core" }
+mlua.workspace = true
+parking_lot.workspace = true
 thiserror.workspace = true
 
 [dev-dependencies]
