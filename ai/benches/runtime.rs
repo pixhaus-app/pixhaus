@@ -110,7 +110,7 @@ impl InferenceBackend for StubBackend {
     fn as_any(&self) -> &dyn Any {
         self
     }
-    fn id(&self) -> &str {
+    fn id(&self) -> &'static str {
         self.id
     }
     fn capabilities(&self) -> BackendCapabilities {

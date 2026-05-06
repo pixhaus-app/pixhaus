@@ -40,6 +40,7 @@ const POLL_INTERVAL: Duration = Duration::from_secs(1);
 const DEFAULT_IMAGE_MODEL: &str = "stability-ai/stable-diffusion-3";
 
 /// Replicate backend adapter.
+#[derive(Debug)]
 pub struct ReplicateBackend {
     client: reqwest::Client,
     api_key: String,
@@ -412,6 +413,228 @@ async fn extract_url_images(output: &serde_json::Value) -> Result<Vec<Vec<u8>>> 
     Ok(images)
 }
 
+// ── Style training ─────────────────────────────────────────────────────────
+
+/// Result of a completed `LoRA` training job.
+#[derive(Debug)]
+pub struct StyleTrainingResult {
+    /// URL to download the trained `LoRA` weights (safetensors).
+    pub weights_url: String,
+    /// Opaque Replicate training ID for reference.
+    pub training_id: String,
+    /// Rough cost in USD cents.
+    pub usd_cents: f32,
+}
+
+/// Parameters for [`ReplicateBackend::run_style_training`].
+pub struct StyleTrainingParams<'a> {
+    /// Fully-qualified Replicate model name (e.g. `"ostris/flux-dev-lora-trainer"`).
+    pub training_model: &'a str,
+    /// `data:application/zip;base64,...` data URI of the training image archive.
+    pub images_uri: String,
+    /// Training step count.
+    pub steps: u32,
+    /// `LoRA` rank.
+    pub lora_rank: u32,
+    /// Human-readable label used as the `LoRA` trigger word.
+    pub label: &'a str,
+}
+
+impl ReplicateBackend {
+    /// Submits a `LoRA` training job using Replicate's training API and
+    /// polls until it completes or is cancelled.
+    ///
+    /// `params.training_model` is the fully-qualified Replicate model name
+    /// (e.g. `"ostris/flux-dev-lora-trainer"`). `params.images_uri` must be a
+    /// `data:application/zip;base64,...` data URI containing a zip archive
+    /// of PNG training images (one file per image, any filename).
+    #[allow(clippy::disallowed_methods)]
+    pub async fn run_style_training(
+        &self,
+        params: StyleTrainingParams<'_>,
+        progress: &VerbProgress,
+        cancel: &CancellationToken,
+    ) -> std::result::Result<StyleTrainingResult, BackendError> {
+        let StyleTrainingParams {
+            training_model,
+            images_uri,
+            steps,
+            lora_rank,
+            label,
+        } = params;
+
+        let (owner, name) = training_model.split_once('/').ok_or_else(|| {
+            BackendError::Other(format!(
+                "training model '{training_model}' is not in owner/name format"
+            ))
+        })?;
+
+        let submit_url = format!("{}/models/{owner}/{name}/trainings", self.base_url);
+
+        let body = serde_json::json!({
+            "input": {
+                "input_images": images_uri,
+                "steps": steps,
+                "lora_rank": lora_rank,
+                "trigger_word": label,
+            }
+        });
+
+        debug!(model = %training_model, steps, lora_rank, "submitting LoRA training job");
+
+        let submit_req = self
+            .client
+            .post(&submit_url)
+            .bearer_auth(&self.api_key)
+            .json(&body)
+            .build()
+            .map_err(BackendError::Network)?;
+
+        let submit_resp = tokio::select! {
+            biased;
+            () = cancel.cancelled() => return Err(BackendError::Cancelled),
+            res = self.client.execute(submit_req) => res.map_err(BackendError::Network)?,
+        };
+
+        let submit_resp = check_http_status(submit_resp).await?;
+        let training: TrainingResponse = submit_resp.json().await.map_err(BackendError::Network)?;
+        let id = training.id;
+
+        progress
+            .send(VerbProgressEvent::Step {
+                fraction: None,
+                message: format!("training job {id} submitted — this may take 15-30 minutes"),
+            })
+            .await;
+
+        let weights_url = self.poll_style_training(&id, progress, cancel).await?;
+        Ok(StyleTrainingResult {
+            weights_url,
+            training_id: id,
+            usd_cents: 0.0,
+        })
+    }
+
+    /// Polls the Replicate training endpoint until the job succeeds, fails,
+    /// or is cancelled. Returns the weights download URL on success.
+    async fn poll_style_training(
+        &self,
+        id: &str,
+        progress: &VerbProgress,
+        cancel: &CancellationToken,
+    ) -> std::result::Result<String, BackendError> {
+        let poll_url = format!("{}/trainings/{}", self.base_url, id);
+        loop {
+            tokio::select! {
+                biased;
+                () = cancel.cancelled() => {
+                    // Best-effort cancel on the server side.
+                    let _ = self
+                        .client
+                        .post(format!("{}/trainings/{}/cancel", self.base_url, id))
+                        .bearer_auth(&self.api_key)
+                        .send()
+                        .await;
+                    return Err(BackendError::Cancelled);
+                }
+                () = tokio::time::sleep(POLL_INTERVAL) => {}
+            }
+
+            let poll_req = self
+                .client
+                .get(&poll_url)
+                .bearer_auth(&self.api_key)
+                .build()
+                .map_err(BackendError::Network)?;
+
+            let poll_resp = tokio::select! {
+                biased;
+                () = cancel.cancelled() => return Err(BackendError::Cancelled),
+                res = self.client.execute(poll_req) => res.map_err(BackendError::Network)?,
+            };
+
+            let poll_resp = check_http_status(poll_resp).await?;
+            let status: TrainingStatus = poll_resp.json().await.map_err(BackendError::Network)?;
+
+            match status.status.as_deref() {
+                Some("succeeded") => {
+                    return status
+                        .output
+                        .as_ref()
+                        .and_then(|o| o.get("weights"))
+                        .and_then(|w| w.as_str())
+                        .map(String::from)
+                        .ok_or_else(|| {
+                            BackendError::InvalidResponse(
+                                "training succeeded but output has no weights URL".into(),
+                            )
+                        });
+                }
+                Some("failed" | "canceled") => {
+                    let err = status.error.unwrap_or_else(|| "unknown error".into());
+                    return Err(BackendError::Other(format!(
+                        "Replicate training failed: {err}"
+                    )));
+                }
+                _ => {
+                    let logs = status.logs.as_deref().unwrap_or("");
+                    if !logs.is_empty() {
+                        progress
+                            .send(VerbProgressEvent::Step {
+                                fraction: None,
+                                message: logs.lines().last().unwrap_or("").to_owned(),
+                            })
+                            .await;
+                    }
+                }
+            }
+        }
+    }
+}
+
+// ── plugin::InferenceBackend bridge ────────────────────────────────────────
+
+// `ReplicateBackend` implements `crate::plugin::backend::InferenceBackend` so
+// it can be registered in the verb runtime's backend registry and injected
+// into `VerbContext::backend`. Verbs that need Replicate-specific calls
+// (like S30) downcast via `as_any()` to the concrete type and call the
+// `backends::InferenceBackend` methods directly.
+impl crate::plugin::backend::InferenceBackend for ReplicateBackend {
+    fn as_any(&self) -> &dyn std::any::Any {
+        self
+    }
+
+    fn id(&self) -> &'static str {
+        "replicate"
+    }
+
+    fn capabilities(&self) -> BackendCapabilities {
+        // Delegate to the S22 InferenceBackend impl.
+        <Self as InferenceBackend>::capabilities(self)
+    }
+
+    fn cost_estimate(
+        &self,
+        required: BackendCapabilities,
+    ) -> crate::plugin::descriptor::CostEstimate {
+        use std::time::Duration;
+        if required.contains(BackendCapabilities::STYLE_TRAINING) {
+            return crate::plugin::descriptor::CostEstimate {
+                typical_latency: Duration::from_secs(900),
+                max_latency: Duration::from_secs(1800),
+                typical_usd_cents: 200.0,
+                max_usd_cents: 500.0,
+            };
+        }
+        CostEstimate {
+            typical_latency: Duration::from_secs(20),
+            max_latency: Duration::from_secs(300),
+            typical_usd_cents: 5.0,
+            max_usd_cents: 50.0,
+        }
+    }
+}
+
 // ── Wire types ─────────────────────────────────────────────────────────────
 
 #[derive(Deserialize)]
@@ -427,10 +650,58 @@ struct PredictionStatus {
     logs: Option<String>,
 }
 
+#[derive(Deserialize)]
+struct TrainingResponse {
+    id: String,
+}
+
+#[derive(Deserialize)]
+struct TrainingStatus {
+    status: Option<String>,
+    output: Option<serde_json::Value>,
+    error: Option<String>,
+    logs: Option<String>,
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::backends::InferenceRequest;
+
+    #[test]
+    fn plugin_backend_id_matches_backend_id() {
+        use crate::plugin::backend::InferenceBackend as PluginBackend;
+        let b = ReplicateBackend::new("k");
+        assert_eq!(<ReplicateBackend as PluginBackend>::id(&b), "replicate");
+    }
+
+    #[test]
+    fn plugin_backend_cost_estimate_style_training_is_expensive() {
+        use crate::plugin::backend::InferenceBackend as PluginBackend;
+        use crate::plugin::descriptor::BackendCapabilities;
+        let b = ReplicateBackend::new("k");
+        let est = <ReplicateBackend as PluginBackend>::cost_estimate(
+            &b,
+            BackendCapabilities::STYLE_TRAINING,
+        );
+        assert!(
+            est.typical_latency.as_secs() > 60,
+            "style training estimate should reflect long training time"
+        );
+    }
+
+    #[test]
+    fn plugin_backend_downcasts_via_as_any() {
+        use crate::plugin::backend::InferenceBackend as PluginBackend;
+        use std::sync::Arc;
+        let concrete = Arc::new(ReplicateBackend::new("k"));
+        let dynamic: Arc<dyn PluginBackend> = concrete.clone();
+        let recovered = dynamic.as_any().downcast_ref::<ReplicateBackend>();
+        assert!(
+            recovered.is_some(),
+            "downcast from plugin backend to ReplicateBackend must succeed"
+        );
+    }
 
     #[test]
     fn capabilities_include_image_and_interpolation() {

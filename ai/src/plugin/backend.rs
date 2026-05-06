@@ -103,7 +103,7 @@ pub trait InferenceBackend: Any + std::fmt::Debug + Send + Sync + 'static {
     /// `"anthropic.claude-sonnet-4-6"`, `"ollama.llama3-8b"`). The
     /// identifier is used in telemetry and in
     /// [`super::progress::VerbProgressEvent::Started::backend`].
-    fn id(&self) -> &str;
+    fn id(&self) -> &'static str;
 
     /// Human-readable name shown in the preferences UI and progress
     /// events. Defaults to `id()`.
@@ -178,7 +178,7 @@ mod tests {
         fn as_any(&self) -> &dyn Any {
             self
         }
-        fn id(&self) -> &str {
+        fn id(&self) -> &'static str {
             self.id
         }
         fn capabilities(&self) -> BackendCapabilities {
