@@ -24,6 +24,7 @@ pub mod inbetween;
 pub mod motion_from_video;
 pub mod project_style_learning;
 pub mod sketch_finishing;
+pub mod tile;
 pub mod variant;
 
 pub use critique::CritiqueVerb;
