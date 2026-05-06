@@ -1,10 +1,18 @@
 //! AI verb invocation commands.
 //!
-//! All commands here are stubbed until bedrock B5 (AI verb plugin protocol)
-//! lands. `verb_list` returns an empty list as a safe default.
+//! `verb_list` returns the descriptors of all registered verbs.
+//! `verb_invoke` runs a verb synchronously and returns its output.
+//! `verb_cancel` is not yet wired (in-flight cancellation requires a
+//! per-session invocation map; tracked for a follow-up stream).
 
 use serde::{Deserialize, Serialize};
 use tauri::State;
+
+use pixhaus_ai::plugin::context::VerbContext;
+use pixhaus_ai::plugin::descriptor::VerbId;
+use pixhaus_ai::plugin::inputs::VerbInputs;
+use pixhaus_ai::plugin::output::VerbOutput;
+use pixhaus_core::project::ProjectMetadata;
 
 use crate::error::{AppCommandError, CommandResult};
 use crate::state::AppState;
@@ -12,74 +20,105 @@ use crate::state::AppState;
 /// Arguments for invoking a verb.
 #[derive(Debug, Deserialize)]
 pub struct VerbInvokeArgs {
-    /// Name of the verb to invoke (e.g. `"pixel_upscale"`).
-    pub name: String,
-    /// Free-form JSON context passed to the verb. Schema is defined per-verb
-    /// in docs/verb-protocol.md once B5 lands.
-    pub context: serde_json::Value,
-}
-
-/// Result returned by a verb invocation.
-#[derive(Debug, Serialize)]
-pub struct VerbResult {
-    /// Opaque handle identifying this invocation for cancellation.
+    /// Stable verb ID (e.g. `"pixhaus.builtin.critique"`).
     pub verb_id: String,
-    /// Current execution status.
-    pub status: VerbStatus,
-}
-
-/// Execution status of a verb invocation.
-#[derive(Debug, Serialize)]
-#[serde(tag = "kind", rename_all = "snake_case")]
-pub enum VerbStatus {
-    /// Verb was accepted and is running asynchronously.
-    Pending,
-    /// Verb completed successfully.
-    Done,
-    /// Verb failed with the given message.
-    Error {
-        /// Human-readable error from the verb.
-        message: String,
-    },
+    /// JSON payload whose schema is defined by the verb's descriptor.
+    pub inputs: serde_json::Value,
 }
 
 /// Metadata about an available verb.
 #[derive(Debug, Serialize)]
 pub struct VerbInfo {
-    /// Unique verb name, used in `verb_invoke`.
-    pub name: String,
+    /// Stable verb ID, used in `verb_invoke`.
+    pub id: String,
     /// One-line description shown in the command palette.
     pub description: String,
+    /// Whether the verb can be cancelled mid-run.
+    pub cancellable: bool,
     /// Backend capabilities required to run this verb.
-    pub required_backends: Vec<String>,
+    pub required_capabilities: u32,
 }
 
-/// Invokes a registered AI verb with the given context.
+/// Lists all verbs registered with the runtime, sorted by ID.
+#[tauri::command(async, rename_all = "snake_case")]
+pub async fn verb_list(state: State<'_, AppState>) -> CommandResult<Vec<VerbInfo>> {
+    let descriptors = state.verb_runtime.list();
+    Ok(descriptors
+        .into_iter()
+        .map(|d| VerbInfo {
+            id: d.id.as_str().to_owned(),
+            description: d.description,
+            cancellable: d.cancellable,
+            required_capabilities: d.required_capabilities.0,
+        })
+        .collect())
+}
+
+/// Invokes a registered verb synchronously and returns its output.
 ///
-/// Requires bedrock B5 (verb plugin protocol). Returns an error until B5 lands.
+/// Builds a [`VerbContext`] from the current document state, dispatches
+/// through the [`pixhaus_ai::plugin::runtime::VerbRuntime`], awaits
+/// completion, and returns the [`VerbOutput`].
+///
+/// Returns an error when:
+/// - the verb ID is not registered,
+/// - the inputs fail schema validation,
+/// - no backend satisfies the verb's required capabilities,
+/// - the verb itself returns an error.
 #[tauri::command(async, rename_all = "snake_case")]
 pub async fn verb_invoke(
-    _args: VerbInvokeArgs,
-    _state: State<'_, AppState>,
-) -> CommandResult<VerbResult> {
-    Err(AppCommandError::Unimplemented {
-        stream: "B5 (verb plugin protocol)".into(),
-    })
-}
+    args: VerbInvokeArgs,
+    state: State<'_, AppState>,
+) -> CommandResult<VerbOutput> {
+    let verb_id = VerbId::new(&args.verb_id);
+    let inputs = VerbInputs::new(args.inputs);
 
-/// Lists all registered verbs. Returns an empty list until B5 lands.
-#[tauri::command(async, rename_all = "snake_case")]
-pub async fn verb_list(_state: State<'_, AppState>) -> CommandResult<Vec<VerbInfo>> {
-    Ok(Vec::new())
+    // Build a minimal VerbContext from the current document state. The
+    // full context (sprite, palette, references) requires a read guard on
+    // the document; we release it before awaiting the verb so we never
+    // hold a lock across an I/O suspension.
+    let ctx = {
+        let doc = state.doc.read().await;
+        let project_meta = doc.project.as_ref().map_or_else(
+            || ProjectMetadata {
+                name: "untitled".into(),
+                description: None,
+                author: None,
+                created_at: 0,
+                updated_at: 0,
+                editor_version: env!("CARGO_PKG_VERSION").into(),
+            },
+            |p| p.metadata.clone(),
+        );
+        VerbContext::empty(project_meta)
+        // doc guard drops here
+    };
+
+    let invocation = state
+        .verb_runtime
+        .invoke(&verb_id, ctx, inputs)
+        .map_err(|e| AppCommandError::VerbError {
+            message: e.to_string(),
+        })?;
+
+    let preview = invocation
+        .finish()
+        .await
+        .map_err(|e| AppCommandError::VerbError {
+            message: e.to_string(),
+        })?;
+
+    Ok(preview.output)
 }
 
 /// Cancels an in-progress verb invocation by its opaque ID.
 ///
-/// Requires bedrock B5 (verb plugin protocol). Returns an error until B5 lands.
+/// Per-session in-flight tracking is not yet wired. This command
+/// returns an error until the invocation map lands.
 #[tauri::command(async, rename_all = "snake_case")]
 pub async fn verb_cancel(_verb_id: String, _state: State<'_, AppState>) -> CommandResult<()> {
     Err(AppCommandError::Unimplemented {
-        stream: "B5 (verb plugin protocol)".into(),
+        stream: "verb cancellation (in-flight invocation map)".into(),
     })
 }
 
@@ -88,11 +127,14 @@ mod tests {
     use super::*;
 
     #[test]
-    fn verb_list_returns_empty_until_b5() {
-        // verb_list is the only verb command that doesn't error — it
-        // returns an empty list as a safe default until B5 populates
-        // the registry.
-        let infos: Vec<VerbInfo> = Vec::new();
-        assert!(infos.is_empty());
+    fn verb_info_fields_are_present() {
+        let info = VerbInfo {
+            id: "pixhaus.builtin.critique".into(),
+            description: "VLM quality analysis".into(),
+            cancellable: true,
+            required_capabilities: 0b10, // VISION_LANGUAGE bit
+        };
+        assert!(!info.id.is_empty());
+        assert!(info.cancellable);
     }
 }

@@ -4,7 +4,10 @@
 //! every command that needs to read or modify the active document.
 
 use std::path::PathBuf;
+use std::sync::Arc;
 
+use pixhaus_ai::plugin::runtime::VerbRuntime;
+use pixhaus_ai::verbs::CritiqueVerb;
 #[cfg(doc)]
 use pixhaus_core::project::PixelBufferId;
 use pixhaus_core::project::Project;
@@ -65,13 +68,27 @@ pub struct AppState {
     /// Document store guarded by a tokio `RwLock`. Lock, work, release
     /// — never hold across an unrelated async suspension.
     pub(crate) doc: tokio::sync::RwLock<DocumentStore>,
+    /// Verb runtime with built-in verbs registered. Shared across all
+    /// IPC command handlers via `Arc` so commands can invoke verbs
+    /// concurrently without holding the doc lock.
+    pub(crate) verb_runtime: Arc<VerbRuntime>,
 }
 
 impl AppState {
     /// Constructs the initial state with no open project.
+    ///
+    /// Registers all built-in verbs with the verb runtime. Backend
+    /// registration happens separately through `verb_runtime` after the
+    /// user configures API keys in the settings panel.
     pub fn new() -> Self {
+        let runtime = VerbRuntime::new();
+        // Registration fails only on a duplicate ID, which cannot happen
+        // with the hardcoded verb set below. Discard the Ok(()) result.
+        let _ = runtime.register(CritiqueVerb::new());
+
         Self {
             doc: tokio::sync::RwLock::new(DocumentStore::default()),
+            verb_runtime: Arc::new(runtime),
         }
     }
 }

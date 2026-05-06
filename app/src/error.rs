@@ -108,6 +108,17 @@ pub enum AppCommandError {
         /// `core::undo::Error`).
         detail: String,
     },
+
+    /// An AI verb invocation failed.
+    ///
+    /// Covers validation errors (bad input schema), capability errors
+    /// (no backend satisfies the verb's requirements), and runtime
+    /// errors returned by the verb itself.
+    #[error("verb error: {message}")]
+    VerbError {
+        /// Human-readable error from the verb runtime.
+        message: String,
+    },
 }
 
 /// Crate-local result alias.

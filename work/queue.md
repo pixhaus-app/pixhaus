@@ -112,7 +112,7 @@ small merge conflicts there as PRs land.
 - [~] CLAIMED:stream-s26:S26 — Verb: Variant (palette swaps, equipment, expressions). Brief: docs/planning/work/streams.md#s26. Blocked by: B5 S21 S22.
 - [ ] UNCLAIMED: S27 — Verb: Cleanup (palette snap, AA removal, pivot fix). Brief: docs/planning/work/streams.md#s27. Blocked by: B5 S21 S22.
 - [ ] UNCLAIMED: S28 — Verb: Tile (autotile generation). Brief: docs/planning/work/streams.md#s28. Blocked by: B5 S21 S22 S06.
-- [ ] UNCLAIMED: S29 — Verb: Mask (segmentation + edge cleanup). Brief: docs/planning/work/streams.md#s29. Blocked by: B5 S21 S22.
+- [~] CLAIMED:stream-s29:S29 — Verb: Critique (VLM visual/quality analysis). Brief: docs/planning/work/streams.md#s29. Blocked by: B5 S21 S22.
 - [ ] UNCLAIMED: S30 — Verb: Repaint (style transfer at fixed geometry). Brief: docs/planning/work/streams.md#s30. Blocked by: B5 S21 S22.
 - [ ] UNCLAIMED: S31 — Verb: Reference (image-to-sprite from photo). Brief: docs/planning/work/streams.md#s31. Blocked by: B5 S21 S22.
 - [ ] UNCLAIMED: S32 — Verb: Style (style match across sprites). Brief: docs/planning/work/streams.md#s32. Blocked by: B5 S21 S22.
