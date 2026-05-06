@@ -1,0 +1,11 @@
+[plugin]
+name        = "Hello Command"
+version     = "0.1.0"
+author      = "Pixhaus contributors"
+description = "The smallest possible Pixhaus plugin. Registers a greeting in the command palette."
+entry       = "main.lua"
+license     = "MIT"
+homepage    = "https://github.com/pixhaus-app/pixhaus/tree/main/examples/plugins/hello-command"
+
+[permissions]
+commands = true
