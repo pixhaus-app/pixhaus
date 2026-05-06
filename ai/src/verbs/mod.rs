@@ -19,6 +19,7 @@
 //! delegates to that adapter's operational `invoke` method.
 
 pub mod auto_mesh_deformation;
+pub mod cleanup;
 pub mod critique;
 pub mod inbetween;
 pub mod motion_from_video;
@@ -27,6 +28,7 @@ pub mod sketch_finishing;
 pub mod tile;
 pub mod variant;
 
+pub use cleanup::CleanupVerb;
 pub use critique::CritiqueVerb;
 
 use tokio_util::sync::CancellationToken;
