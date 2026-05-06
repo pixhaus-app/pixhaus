@@ -9,15 +9,22 @@ import { createSignal } from "solid-js";
 import type { BlendMode, Layer, LayerId, SpriteId } from "../lib/types";
 import {
   layerAdd,
+  layerConvertToGroup,
+  layerConvertToTilemap,
   layerDelete,
+  layerFlattenVisible,
   layerList,
+  layerMergeDown,
+  layerMergeSelected,
   layerRename,
   layerReorder,
   layerSetBlendMode,
   layerSetLocked,
   layerSetOpacity,
+  layerSetParent,
   layerSetVisibility,
 } from "../lib/commands/layers";
+import { tilesetList } from "../lib/commands/tilesets";
 import {
   activeSpriteId,
   activeLayerId,
@@ -243,4 +250,55 @@ export function setLayerBlendMode(spriteId: SpriteId, id: LayerId, blendMode: Bl
   layerSetBlendMode(spriteId, id, blendMode)
     .then(() => refreshLayers())
     .catch((err: unknown) => console.error("[pixhaus] layer_set_blend_mode:", err));
+}
+
+export function reparentLayer(spriteId: SpriteId, id: LayerId, parentId: LayerId | null): void {
+  layerSetParent(spriteId, id, parentId)
+    .then(() => refreshLayers())
+    .catch((err: unknown) => console.error("[pixhaus] layer_set_parent:", err));
+}
+
+export function convertLayerToGroup(spriteId: SpriteId, id: LayerId): void {
+  layerConvertToGroup(spriteId, id)
+    .then(() => refreshLayers())
+    .catch((err: unknown) => console.error("[pixhaus] layer_convert_to_group:", err));
+}
+
+export function convertLayerToTilemap(spriteId: SpriteId, id: LayerId): void {
+  // Fetch tilesets, pick the first available, then convert. Async/await
+  // so the early return on no-tilesets actually short-circuits — the
+  // previous `.then(...).then(refreshLayers)` chain ran refreshLayers
+  // unconditionally even when the conversion was skipped.
+  void (async () => {
+    try {
+      const tilesets = await tilesetList(spriteId);
+      const first = tilesets[0];
+      if (first === undefined) {
+        console.error("[pixhaus] layer_convert_to_tilemap: no tilesets on sprite");
+        return;
+      }
+      await layerConvertToTilemap(spriteId, id, first.id);
+      refreshLayers();
+    } catch (err: unknown) {
+      console.error("[pixhaus] layer_convert_to_tilemap:", err);
+    }
+  })();
+}
+
+export function mergeLayerDown(spriteId: SpriteId, id: LayerId): void {
+  layerMergeDown(spriteId, id)
+    .then(() => refreshLayers())
+    .catch((err: unknown) => console.error("[pixhaus] layer_merge_down:", err));
+}
+
+export function mergeSelectedLayers(spriteId: SpriteId, ids: ReadonlySet<LayerId>): void {
+  layerMergeSelected(spriteId, [...ids])
+    .then(() => refreshLayers())
+    .catch((err: unknown) => console.error("[pixhaus] layer_merge_selected:", err));
+}
+
+export function flattenVisibleLayers(spriteId: SpriteId): void {
+  layerFlattenVisible(spriteId)
+    .then(() => refreshLayers())
+    .catch((err: unknown) => console.error("[pixhaus] layer_flatten_visible:", err));
 }

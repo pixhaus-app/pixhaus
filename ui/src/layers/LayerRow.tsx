@@ -23,6 +23,7 @@ import {
   setLayerVisibility,
   toggleGroupExpanded,
   toggleLayerSelection,
+  reparentLayer,
   reorderLayer,
 } from "./layer-state";
 
@@ -154,6 +155,12 @@ const LayerRow: Component<Props> = (props) => {
       // Bad payload: ignore the drop rather than mutating state.
     }
     if (parsed === null || parsed.index === props.layerIndex) return;
+    // Dropping onto a group row reparents the dragged layer into that group
+    // rather than reordering at the flat index.
+    if (isGroup()) {
+      reparentLayer(props.spriteId, parsed.id, props.layer.id);
+      return;
+    }
     // When dropping onto row 0 from below, the `props.layerIndex - 1`
     // branch yields -1; the backend rejects negative indices so clamp
     // to 0. The same `Math.max(0, …)` covers any future drag math that
@@ -336,7 +343,14 @@ const RenameInput: Component<RenameInputProps> = (props) => {
       value={value()}
       onInput={(e) => setValue(e.currentTarget.value)}
       onKeyDown={handleKeyDown}
-      onBlur={() => commitRename(props.layerId, value())}
+      onBlur={() => {
+        // Guard: if Escape was pressed before blur fires (DOM removal
+        // can still dispatch blur in some browsers), don't re-commit
+        // after the rename was already cancelled.
+        if (renamingLayerId() === props.layerId) {
+          commitRename(props.layerId, value());
+        }
+      }}
       onClick={(e) => e.stopPropagation()}
     />
   );

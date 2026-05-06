@@ -14,7 +14,7 @@ import {
   createSignal,
   onCleanup,
 } from "solid-js";
-import { activeSpriteId } from "../canvas/canvas-state";
+import { activeSpriteId, activeLayerId } from "../canvas/canvas-state";
 import {
   addLayer,
   dragOverIndex,
@@ -28,8 +28,50 @@ import LayerRow from "./LayerRow";
 import LayerContextMenu, { type ContextMenuTarget } from "./LayerContextMenu";
 import type { LayerId } from "../lib/types";
 
-// Row height in px — fixed for the virtual list calculation.
+// Default row height in px for inactive rows.
 const ROW_HEIGHT = 32;
+// Row height for the active (foreground) layer — shows blend mode + opacity strip.
+const ACTIVE_ROW_HEIGHT = 56;
+
+// ── Visible-range search helpers ─────────────────────────────────────────────
+//
+// rowOffsets is a strictly-increasing prefix sum (length n+1, where n is the
+// number of rows). offsets[i] is row i's top edge, offsets[i+1] its bottom.
+// Both helpers return an index in [0, n].
+
+/**
+ * Returns the smallest row index `i` in `[0, n)` whose bottom edge
+ * (`offsets[i + 1]`) is strictly greater than `target`. Used to find the
+ * first row whose bottom is below the overscan-top threshold (i.e. the
+ * first row that's at least partially visible).
+ */
+function lowerBoundOffsetGt(offsets: readonly number[], n: number, target: number): number {
+  let lo = 0;
+  let hi = n;
+  while (lo < hi) {
+    const mid = (lo + hi) >>> 1;
+    if ((offsets[mid + 1] ?? 0) > target) hi = mid;
+    else lo = mid + 1;
+  }
+  return lo;
+}
+
+/**
+ * Returns the smallest row index `i` in `[0, n]` whose top edge
+ * (`offsets[i]`) is at or past `target`. Used to find the first row
+ * whose top is below the overscan-bottom threshold (i.e. the first row
+ * that's no longer visible).
+ */
+function lowerBoundOffsetGte(offsets: readonly number[], n: number, target: number): number {
+  let lo = 0;
+  let hi = n;
+  while (lo < hi) {
+    const mid = (lo + hi) >>> 1;
+    if ((offsets[mid] ?? 0) >= target) hi = mid;
+    else lo = mid + 1;
+  }
+  return lo;
+}
 
 // ── Panel component ──────────────────────────────────────────────────────────
 
@@ -68,14 +110,59 @@ const LayerPanel: Component = () => {
   };
   onCleanup(() => resizeObserver.disconnect());
 
-  const totalHeight = createMemo(() => flatEntries().length * ROW_HEIGHT);
+  // Per-row heights: the active row is 56px; all others are 32px.
+  // Recomputes whenever the active layer or flat entry list changes.
+  const rowHeights = createMemo(() => {
+    const activeId = activeLayerId();
+    return flatEntries().map((e) => (e.layer.id === activeId ? ACTIVE_ROW_HEIGHT : ROW_HEIGHT));
+  });
+
+  // Prefix-sum of row heights: rowOffsets[i] is the top of row i.
+  // Length is flatEntries().length + 1; the last element is totalHeight.
+  const rowOffsets = createMemo(() => {
+    const heights = rowHeights();
+    const offsets = new Array<number>(heights.length + 1);
+    offsets[0] = 0;
+    for (let i = 0; i < heights.length; i++) {
+      offsets[i + 1] = (offsets[i] ?? 0) + (heights[i] ?? ROW_HEIGHT);
+    }
+    return offsets;
+  });
+
+  const totalHeight = createMemo(() => {
+    const offsets = rowOffsets();
+    return offsets[offsets.length - 1] ?? 0;
+  });
 
   const visibleRange = createMemo(() => {
     const st = scrollTop();
     const ch = containerHeight();
-    const start = Math.max(0, Math.floor(st / ROW_HEIGHT) - 2);
-    const end = Math.min(flatEntries().length, Math.ceil((st + ch) / ROW_HEIGHT) + 2);
-    return { start, end };
+    const offsets = rowOffsets();
+    const n = flatEntries().length;
+    // rowOffsets is a strictly-increasing prefix sum (length n+1), so
+    // the first/last visible rows can be located in O(log n) with a
+    // binary search instead of the prior linear scan — relevant once
+    // sprites accumulate hundreds of layers.
+    const overscanTop = Math.max(0, st - ROW_HEIGHT * 2);
+    const overscanBottom = st + ch + ROW_HEIGHT * 2;
+    // Find the first row whose bottom edge is past overscanTop.
+    // offsets[i+1] is row i's bottom, so we want the smallest i with
+    // offsets[i+1] > overscanTop.
+    const start = lowerBoundOffsetGt(offsets, n, overscanTop);
+    // Find the first row whose top edge is at/past overscanBottom.
+    // offsets[i] is row i's top, so we want the smallest i with
+    // offsets[i] >= overscanBottom.
+    const end = lowerBoundOffsetGte(offsets, n, overscanBottom);
+    return { start, end: Math.min(n, end) };
+  });
+
+  // Pairs each visible entry with its visual index in the full list so
+  // that the absolute top position can be looked up in rowOffsets[].
+  const visibleItems = createMemo(() => {
+    const { start, end } = visibleRange();
+    return flatEntries()
+      .slice(start, end)
+      .map((entry, i) => ({ entry, visualIndex: start + i }));
   });
 
   // ── Context menu ───────────────────────────────────────────────────────────
@@ -153,12 +240,12 @@ const LayerPanel: Component = () => {
             {/* Spacer sets the total scrollable height */}
             <div style={{ height: `${totalHeight()}px`, position: "relative" }}>
               {/* Render only the visible slice */}
-              <For each={flatEntries().slice(visibleRange().start, visibleRange().end)}>
-                {(entry) => (
+              <For each={visibleItems()}>
+                {({ entry, visualIndex }) => (
                   <div
                     style={{
                       position: "absolute",
-                      top: `${(visibleRange().start + flatEntries().slice(visibleRange().start, visibleRange().end).indexOf(entry)) * ROW_HEIGHT}px`,
+                      top: `${rowOffsets()[visualIndex] ?? 0}px`,
                       width: "100%",
                     }}
                   >
