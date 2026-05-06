@@ -96,7 +96,7 @@ panels and rarely overlap.
 
 - [x] DONE: S04 — Transform operations (flip, rotate, scale, free-transform commit). Brief: docs/planning/work/streams.md#s04. Blocked by: S03 S05. Shipped: PR #90.
 - [x] DONE: S15 — Brush engine UI (pencil, eraser, fill, line, rectangle, ellipse + per-tool settings). Brief: docs/planning/work/streams.md#s15. Blocked by: S01 S14. Shipped: PR #89.
-- [~] CLAIMED:stream-s16: S16 — Selection and transform UI (marquee/lasso/wand handlers, transform handles). Brief: docs/planning/work/streams.md#s16. Blocked by: S03 S14. PR: #95 (conflicts).
+- [x] DONE: S16 — Selection and transform UI (marquee/lasso/wand handlers, transform handles). Brief: docs/planning/work/streams.md#s16. Blocked by: S03 S14. Shipped: PR #95.
 - [x] DONE: S19 — Timeline panel (frame strip, play/pause, onion skin toggle, frame tags). Brief: docs/planning/work/streams.md#s19. Blocked by: S05 S13. Shipped: PR #79.
 
 ## Streams — AI verbs (B5/S21/S22 unblocked)
@@ -123,7 +123,7 @@ small merge conflicts there as PRs land.
 
 ## Streams — extension surfaces, packaging, content
 
-- [~] CLAIMED:stream-s37: S37 — Plugin loader and public API surface (extism + Lua entry points). Brief: docs/planning/work/streams.md#s37. Blocked by: B5. PR: #96 (conflicts).
+- [x] DONE: S37 — Plugin loader and public API surface (extism + Lua entry points). Brief: docs/planning/work/streams.md#s37. Blocked by: B5. Shipped: PR #96.
 - [x] DONE: S38 — Lua scripting bindings (mlua project/sprite/layer/cel APIs). Brief: docs/planning/work/streams.md#s38. Blocked by: B5 S37. Shipped: PR #81.
 - [x] DONE: S40 — Unity sample project demonstrating importer round-trip. Brief: docs/planning/work/streams.md#s40. Blocked by: S39. Shipped: PR #86.
 - [x] DONE: S42 — Migration guide from Aseprite (docs page + workflow translations). Brief: docs/planning/work/streams.md#s42. Shipped: PR #66.
