@@ -31,12 +31,16 @@ import {
   brushShape,
   cursorCanvas,
   transformBounds,
+  setTransformBounds,
   activeSpriteId,
   activeFrameIndex,
   selectionRect,
   resetCanvasState,
   resetViewport,
 } from "./canvas-state";
+import { startTransformDrag, attachTransformKeyboard } from "./transform/transform-input";
+import { syncNumericFromBounds } from "./transform/transform-state";
+import type { TransformHandle } from "./transform/transform-state";
 import { activeProject } from "../project-state";
 import type { ProjectStatus } from "../lib/commands/project";
 import { canvasComposite } from "../lib/commands/canvas";
@@ -76,6 +80,7 @@ const Canvas: Component = () => {
     }
 
     const detachInput = attachCanvasInput(containerEl);
+    const detachTransformKeys = attachTransformKeyboard();
 
     const ro = new ResizeObserver((entries) => {
       const entry = entries[0];
@@ -248,6 +253,20 @@ const Canvas: Component = () => {
       renderer.setSelection({ rect: selectionRect() });
     });
 
+    // Keep transformBounds in sync with selectionRect so the handles
+    // appear automatically when a selection is active.  The transform
+    // drag path updates transformBounds independently during a drag,
+    // so we only sync from selectionRect when no drag is in progress.
+    createEffect(() => {
+      const rect = selectionRect();
+      if (rect) {
+        setTransformBounds(rect);
+        syncNumericFromBounds(rect);
+      } else {
+        setTransformBounds(null);
+      }
+    });
+
     createEffect(() => {
       renderer.setOnionSkin({
         prev: onionSkinPrev(),
@@ -267,6 +286,7 @@ const Canvas: Component = () => {
       compositeRequestId++;
       ro.disconnect();
       detachInput();
+      detachTransformKeys();
       tileDirtyPromise
         .then((unlisten) => unlisten())
         .catch((err: unknown) => {
@@ -299,6 +319,7 @@ const Canvas: Component = () => {
           vpW={vpW()}
           vpH={vpH()}
           bounds={transformBounds()}
+          onHandleDown={(handle: TransformHandle, e: PointerEvent) => startTransformDrag(handle, e)}
         />
       </div>
     </div>

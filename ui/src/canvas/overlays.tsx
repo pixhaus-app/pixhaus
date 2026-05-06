@@ -1,7 +1,7 @@
 // DOM/SVG overlays drawn on top of the WebGL2 canvas.
 //
 // Two reasons these don't live in a shader pass:
-//   - they're hit-testable (handles will accept pointer events in S16);
+//   - they're hit-testable (handles accept pointer events for S16 transform);
 //   - they're cheap, infrequently redrawn UI chrome whose crispness benefits
 //     from native vector rendering.
 //
@@ -10,6 +10,7 @@
 
 import { For, Show, type Component } from "solid-js";
 import { canvasToScreen } from "./viewport";
+import type { TransformHandle } from "./transform/transform-state";
 
 interface ViewportProps {
   scrollX: number;
@@ -113,12 +114,21 @@ export const BrushCursor: Component<BrushCursorProps> = (props) => {
 interface TransformHandlesProps extends ViewportProps {
   /** Selection or transform-target bounding box in canvas coordinates. */
   bounds: { x: number; y: number; width: number; height: number } | null;
+  /**
+   * Called when the user presses down on a handle or the interior of the
+   * bounding box.  S16 uses this to start a transform drag.
+   */
+  onHandleDown?: (handle: TransformHandle, e: PointerEvent) => void;
 }
 
 /**
  * Eight resize handles plus one rotation handle, drawn at the corners and
- * edge midpoints of `bounds`.  Hit-testing logic belongs to S16; for now the
- * overlay is purely visual so the rest of the viewport can be exercised.
+ * edge midpoints of `bounds`.
+ *
+ * Every handle element has a `data-handle` attribute identifying it
+ * ("nw", "n", "ne", "e", "se", "s", "sw", "w", "rotate").  The body of the
+ * bounding-box border is also pointer-event-enabled as the "body" handle for
+ * drag-to-translate.
  */
 export const TransformHandles: Component<TransformHandlesProps> = (props) => {
   return (
@@ -147,16 +157,21 @@ export const TransformHandles: Component<TransformHandlesProps> = (props) => {
         const handleSize = 8;
         const rotateOffset = 24; // CSS px above the bounding box
 
-        const handles: Array<{ cx: number; cy: number; cursor: string }> = [
-          { cx: sx0, cy: sy0, cursor: "nwse-resize" },
-          { cx: cxMid, cy: sy0, cursor: "ns-resize" },
-          { cx: sx1, cy: sy0, cursor: "nesw-resize" },
-          { cx: sx1, cy: cyMid, cursor: "ew-resize" },
-          { cx: sx1, cy: sy1, cursor: "nwse-resize" },
-          { cx: cxMid, cy: sy1, cursor: "ns-resize" },
-          { cx: sx0, cy: sy1, cursor: "nesw-resize" },
-          { cx: sx0, cy: cyMid, cursor: "ew-resize" },
+        const handles: Array<{ id: TransformHandle; cx: number; cy: number; cursor: string }> = [
+          { id: "nw", cx: sx0, cy: sy0, cursor: "nwse-resize" },
+          { id: "n", cx: cxMid, cy: sy0, cursor: "ns-resize" },
+          { id: "ne", cx: sx1, cy: sy0, cursor: "nesw-resize" },
+          { id: "e", cx: sx1, cy: cyMid, cursor: "ew-resize" },
+          { id: "se", cx: sx1, cy: sy1, cursor: "nwse-resize" },
+          { id: "s", cx: cxMid, cy: sy1, cursor: "ns-resize" },
+          { id: "sw", cx: sx0, cy: sy1, cursor: "nesw-resize" },
+          { id: "w", cx: sx0, cy: cyMid, cursor: "ew-resize" },
         ];
+
+        function fireHandle(id: TransformHandle, e: PointerEvent): void {
+          e.stopPropagation();
+          props.onHandleDown?.(id, e);
+        }
 
         return (
           <svg
@@ -166,15 +181,18 @@ export const TransformHandles: Component<TransformHandlesProps> = (props) => {
             viewBox={`0 0 ${props.vpW} ${props.vpH}`}
             aria-hidden="true"
           >
+            {/* Interior hit zone: drag the body to translate the selection. */}
             <rect
               x={sx0}
               y={sy0}
               width={sx1 - sx0}
               height={sy1 - sy0}
-              fill="none"
+              fill="transparent"
               stroke="#7aa2ff"
               stroke-width="1"
               stroke-dasharray="3 3"
+              style={{ cursor: "move" }}
+              onPointerDown={(e) => fireHandle("body", e)}
             />
             {/* Tether between rotation handle and bounding box. */}
             <line
@@ -184,16 +202,18 @@ export const TransformHandles: Component<TransformHandlesProps> = (props) => {
               y2={sy0 - rotateOffset}
               stroke="#7aa2ff"
               stroke-width="1"
+              pointer-events="none"
             />
             <circle
               cx={cxMid}
               cy={sy0 - rotateOffset}
-              r={handleSize / 2}
+              r={handleSize / 2 + 2}
               fill="#0f0f13"
               stroke="#7aa2ff"
               stroke-width="1.5"
               data-handle="rotate"
               style={{ cursor: "alias" }}
+              onPointerDown={(e) => fireHandle("rotate", e)}
             />
             <For each={handles}>
               {(h) => (
@@ -205,8 +225,9 @@ export const TransformHandles: Component<TransformHandlesProps> = (props) => {
                   fill="#0f0f13"
                   stroke="#7aa2ff"
                   stroke-width="1.5"
-                  data-handle="resize"
+                  data-handle={h.id}
                   style={{ cursor: h.cursor }}
+                  onPointerDown={(e) => fireHandle(h.id, e)}
                 />
               )}
             </For>

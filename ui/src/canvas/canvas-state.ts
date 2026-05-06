@@ -46,6 +46,11 @@ export const [selectionRect, setSelectionRect] = createSignal<{
   height: number;
 } | null>(null);
 
+// Whether the canvas is in selection-tool mode. Input routing checks this
+// before dispatching pointer events to the selection handlers.
+// S16 sets it to true when the user activates any select tool.
+export const [isSelectMode, setIsSelectMode] = createSignal(false);
+
 // ── Brush preview state ───────────────────────────────────────────────────────
 //
 // The canonical tool signals live in tools/tool-state.ts (owned by S15).
@@ -136,6 +141,8 @@ export function resetCanvasState(): void {
   setActiveFrameIndex(0);
   setActiveLayerId(null);
   setSelectionRect(null);
+  setTransformBounds(null);
+  setIsSelectMode(false);
 }
 
 /**

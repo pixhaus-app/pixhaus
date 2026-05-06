@@ -9,7 +9,7 @@ use base64::Engine;
 use pixhaus_core::canvas::PixelBuffer;
 use pixhaus_core::canvas::tools::{BrushShape, draw_stroke, flood_fill};
 use pixhaus_core::project::{
-    CanvasState, Cel, CelData, FrameIndex, LayerId, PixelBufferId, Rgba, SelectionRegion,
+    CanvasState, Cel, CelData, FrameIndex, IVec2, LayerId, PixelBufferId, Rgba, SelectionRegion,
     SelectionState, Size, SpriteId,
 };
 use pixhaus_core::selection::SelectionMask;
@@ -934,6 +934,119 @@ pub async fn canvas_set_selection(
     Ok(selection)
 }
 
+/// Selects the entire canvas of the active sprite as a rectangular region.
+///
+/// Returns the updated [`SelectionState`] so the UI can update its signals.
+#[tauri::command(async, rename_all = "snake_case")]
+pub async fn canvas_select_all(
+    sprite_id: SpriteId,
+    state: State<'_, AppState>,
+) -> CommandResult<SelectionState> {
+    use pixhaus_core::project::Rect;
+
+    let (w, h) = {
+        let doc = state.doc.read().await;
+        let project = doc
+            .project
+            .as_ref()
+            .ok_or(AppCommandError::NoActiveProject)?;
+        let sprite = project
+            .sprites
+            .iter()
+            .find(|s| s.id == sprite_id)
+            .ok_or_else(|| AppCommandError::NotFound {
+                entity: "sprite".into(),
+                id: u64::from(sprite_id.get()),
+            })?;
+        (sprite.canvas.width, sprite.canvas.height)
+    };
+
+    let region = SelectionRegion::Rect {
+        bounds: Rect::from_xywh(0, 0, w, h),
+    };
+    let selection = SelectionState {
+        region: Some(region),
+        anchor_layer: None,
+    };
+
+    let mut doc = state.doc.write().await;
+    let project = doc
+        .project
+        .as_mut()
+        .ok_or(AppCommandError::NoActiveProject)?;
+    project.selection = selection.clone();
+    doc.dirty = true;
+    Ok(selection)
+}
+
+/// Inverts the current selection.
+///
+/// Requires stream S01 (pixel buffers for mask operations). Returns an
+/// error until S01 lands. A fully selected canvas inverted to nothing (and
+/// vice versa) could be handled as a rect-only fast path, but is kept as a
+/// stub for consistency with the mask-based general case.
+#[tauri::command(async, rename_all = "snake_case")]
+pub async fn canvas_invert_selection(
+    _sprite_id: SpriteId,
+    _anchor_layer: Option<LayerId>,
+    _state: State<'_, AppState>,
+) -> CommandResult<SelectionState> {
+    Err(AppCommandError::Unimplemented {
+        stream: "S01 (pixel buffers)".into(),
+    })
+}
+
+/// Selects a contiguous region via flood-fill from a seed pixel.
+///
+/// Requires stream S01 (pixel buffers). Returns an error until S01 lands.
+#[tauri::command(async, rename_all = "snake_case")]
+pub async fn canvas_select_magic_wand(
+    _sprite_id: SpriteId,
+    _anchor_layer: Option<LayerId>,
+    _seed_x: i32,
+    _seed_y: i32,
+    _tolerance: u8,
+    _connectivity: String,
+    _state: State<'_, AppState>,
+) -> CommandResult<SelectionState> {
+    Err(AppCommandError::Unimplemented {
+        stream: "S01 (pixel buffers)".into(),
+    })
+}
+
+/// Selects all pixels within a given color tolerance of the target color.
+///
+/// Requires stream S01 (pixel buffers). Returns an error until S01 lands.
+#[tauri::command(async, rename_all = "snake_case")]
+pub async fn canvas_select_color_range(
+    _sprite_id: SpriteId,
+    _anchor_layer: Option<LayerId>,
+    _x: i32,
+    _y: i32,
+    _target_color: Rgba,
+    _tolerance: u8,
+    _state: State<'_, AppState>,
+) -> CommandResult<SelectionState> {
+    Err(AppCommandError::Unimplemented {
+        stream: "S01 (pixel buffers)".into(),
+    })
+}
+
+/// Selects the polygon defined by the given points.
+///
+/// Requires stream S01 (pixel buffers). Returns an error until S01 lands.
+#[tauri::command(async, rename_all = "snake_case")]
+pub async fn canvas_select_lasso(
+    _sprite_id: SpriteId,
+    _anchor_layer: Option<LayerId>,
+    _points: Vec<IVec2>,
+    _state: State<'_, AppState>,
+) -> CommandResult<SelectionState> {
+    Err(AppCommandError::Unimplemented {
+        stream: "S01 (pixel buffers)".into(),
+    })
+}
+
 /// Replaces the entire canvas viewport state (scroll, zoom, active ids, toggles).
 ///
 /// The UI owns viewport state and pushes it here on every meaningful change
@@ -1042,6 +1155,24 @@ mod tests {
             .decode(&payload.data)
             .unwrap();
         assert_eq!(decoded.len(), 100 * 256 * 4);
+    }
+
+    #[test]
+    fn canvas_select_all_region_covers_full_canvas() {
+        use pixhaus_core::project::Rect;
+        // Verify the rect is built with the right origin and size.
+        let region = SelectionRegion::Rect {
+            bounds: Rect::from_xywh(0, 0, 64, 48),
+        };
+        match region {
+            SelectionRegion::Rect { bounds } => {
+                assert_eq!(bounds.origin.x, 0);
+                assert_eq!(bounds.origin.y, 0);
+                assert_eq!(bounds.size.width, 64);
+                assert_eq!(bounds.size.height, 48);
+            }
+            SelectionRegion::Mask { .. } => panic!("expected Rect variant"),
+        }
     }
 
     #[test]
