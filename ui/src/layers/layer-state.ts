@@ -265,18 +265,24 @@ export function convertLayerToGroup(spriteId: SpriteId, id: LayerId): void {
 }
 
 export function convertLayerToTilemap(spriteId: SpriteId, id: LayerId): void {
-  // Fetch tilesets, pick the first available, then convert.
-  tilesetList(spriteId)
-    .then((tilesets) => {
+  // Fetch tilesets, pick the first available, then convert. Async/await
+  // so the early return on no-tilesets actually short-circuits — the
+  // previous `.then(...).then(refreshLayers)` chain ran refreshLayers
+  // unconditionally even when the conversion was skipped.
+  void (async () => {
+    try {
+      const tilesets = await tilesetList(spriteId);
       const first = tilesets[0];
       if (first === undefined) {
         console.error("[pixhaus] layer_convert_to_tilemap: no tilesets on sprite");
         return;
       }
-      return layerConvertToTilemap(spriteId, id, first.id);
-    })
-    .then(() => refreshLayers())
-    .catch((err: unknown) => console.error("[pixhaus] layer_convert_to_tilemap:", err));
+      await layerConvertToTilemap(spriteId, id, first.id);
+      refreshLayers();
+    } catch (err: unknown) {
+      console.error("[pixhaus] layer_convert_to_tilemap:", err);
+    }
+  })();
 }
 
 export function mergeLayerDown(spriteId: SpriteId, id: LayerId): void {

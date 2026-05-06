@@ -1,7 +1,7 @@
 // Layer CRUD and property commands.
 
 import { invoke } from "@tauri-apps/api/core";
-import type { BlendMode, Layer, LayerId, LayerKind, SpriteId } from "../types";
+import type { BlendMode, Layer, LayerId, LayerKind, SpriteId, TilesetId } from "../types";
 
 // ── argument types ────────────────────────────────────────────────────────────
 
@@ -107,7 +107,7 @@ export function layerConvertToGroup(sprite_id: SpriteId, layer_id: LayerId): Pro
 export function layerConvertToTilemap(
   sprite_id: SpriteId,
   layer_id: LayerId,
-  tileset_id: number,
+  tileset_id: TilesetId,
 ): Promise<void> {
   return invoke<void>("layer_convert_to_tilemap", { sprite_id, layer_id, tileset_id });
 }

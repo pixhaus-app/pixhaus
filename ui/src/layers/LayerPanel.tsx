@@ -33,6 +33,46 @@ const ROW_HEIGHT = 32;
 // Row height for the active (foreground) layer — shows blend mode + opacity strip.
 const ACTIVE_ROW_HEIGHT = 56;
 
+// ── Visible-range search helpers ─────────────────────────────────────────────
+//
+// rowOffsets is a strictly-increasing prefix sum (length n+1, where n is the
+// number of rows). offsets[i] is row i's top edge, offsets[i+1] its bottom.
+// Both helpers return an index in [0, n].
+
+/**
+ * Returns the smallest row index `i` in `[0, n)` whose bottom edge
+ * (`offsets[i + 1]`) is strictly greater than `target`. Used to find the
+ * first row whose bottom is below the overscan-top threshold (i.e. the
+ * first row that's at least partially visible).
+ */
+function lowerBoundOffsetGt(offsets: readonly number[], n: number, target: number): number {
+  let lo = 0;
+  let hi = n;
+  while (lo < hi) {
+    const mid = (lo + hi) >>> 1;
+    if ((offsets[mid + 1] ?? 0) > target) hi = mid;
+    else lo = mid + 1;
+  }
+  return lo;
+}
+
+/**
+ * Returns the smallest row index `i` in `[0, n]` whose top edge
+ * (`offsets[i]`) is at or past `target`. Used to find the first row
+ * whose top is below the overscan-bottom threshold (i.e. the first row
+ * that's no longer visible).
+ */
+function lowerBoundOffsetGte(offsets: readonly number[], n: number, target: number): number {
+  let lo = 0;
+  let hi = n;
+  while (lo < hi) {
+    const mid = (lo + hi) >>> 1;
+    if ((offsets[mid] ?? 0) >= target) hi = mid;
+    else lo = mid + 1;
+  }
+  return lo;
+}
+
 // ── Panel component ──────────────────────────────────────────────────────────
 
 const LayerPanel: Component = () => {
@@ -99,18 +139,20 @@ const LayerPanel: Component = () => {
     const ch = containerHeight();
     const offsets = rowOffsets();
     const n = flatEntries().length;
-    // Find first row whose bottom edge is below the overscan window start.
+    // rowOffsets is a strictly-increasing prefix sum (length n+1), so
+    // the first/last visible rows can be located in O(log n) with a
+    // binary search instead of the prior linear scan — relevant once
+    // sprites accumulate hundreds of layers.
     const overscanTop = Math.max(0, st - ROW_HEIGHT * 2);
-    let start = 0;
-    while (start < n && (offsets[start + 1] ?? 0) <= overscanTop) {
-      start++;
-    }
-    // Find first row whose top edge is past the overscan window end.
     const overscanBottom = st + ch + ROW_HEIGHT * 2;
-    let end = start;
-    while (end < n && (offsets[end] ?? 0) < overscanBottom) {
-      end++;
-    }
+    // Find the first row whose bottom edge is past overscanTop.
+    // offsets[i+1] is row i's bottom, so we want the smallest i with
+    // offsets[i+1] > overscanTop.
+    const start = lowerBoundOffsetGt(offsets, n, overscanTop);
+    // Find the first row whose top edge is at/past overscanBottom.
+    // offsets[i] is row i's top, so we want the smallest i with
+    // offsets[i] >= overscanBottom.
+    const end = lowerBoundOffsetGte(offsets, n, overscanBottom);
     return { start, end: Math.min(n, end) };
   });
 
