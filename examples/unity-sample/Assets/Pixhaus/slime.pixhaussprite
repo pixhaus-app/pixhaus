@@ -1,0 +1,252 @@
+{
+  "frames": [
+    {
+      "filename":         "slime 0",
+      "frame":            { "x":   0, "y":  0, "w": 16, "h": 16 },
+      "rotated":          false,
+      "trimmed":          false,
+      "spriteSourceSize": { "x": 0, "y": 0, "w": 16, "h": 16 },
+      "sourceSize":       { "w": 16, "h": 16 },
+      "duration":         200
+    },
+    {
+      "filename":         "slime 1",
+      "frame":            { "x":  16, "y":  0, "w": 16, "h": 16 },
+      "rotated":          false,
+      "trimmed":          false,
+      "spriteSourceSize": { "x": 0, "y": 0, "w": 16, "h": 16 },
+      "sourceSize":       { "w": 16, "h": 16 },
+      "duration":         200
+    },
+    {
+      "filename":         "slime 2",
+      "frame":            { "x":  32, "y":  0, "w": 16, "h": 16 },
+      "rotated":          false,
+      "trimmed":          false,
+      "spriteSourceSize": { "x": 0, "y": 0, "w": 16, "h": 16 },
+      "sourceSize":       { "w": 16, "h": 16 },
+      "duration":         200
+    },
+    {
+      "filename":         "slime 3",
+      "frame":            { "x":  48, "y":  0, "w": 16, "h": 16 },
+      "rotated":          false,
+      "trimmed":          false,
+      "spriteSourceSize": { "x": 0, "y": 0, "w": 16, "h": 16 },
+      "sourceSize":       { "w": 16, "h": 16 },
+      "duration":         200
+    },
+    {
+      "filename":         "slime 4",
+      "frame":            { "x":  64, "y":  0, "w": 16, "h": 16 },
+      "rotated":          false,
+      "trimmed":          false,
+      "spriteSourceSize": { "x": 0, "y": 0, "w": 16, "h": 16 },
+      "sourceSize":       { "w": 16, "h": 16 },
+      "duration":         100
+    },
+    {
+      "filename":         "slime 5",
+      "frame":            { "x":  80, "y":  0, "w": 16, "h": 16 },
+      "rotated":          false,
+      "trimmed":          false,
+      "spriteSourceSize": { "x": 0, "y": 0, "w": 16, "h": 16 },
+      "sourceSize":       { "w": 16, "h": 16 },
+      "duration":         100
+    },
+    {
+      "filename":         "slime 6",
+      "frame":            { "x":  96, "y":  0, "w": 16, "h": 16 },
+      "rotated":          false,
+      "trimmed":          false,
+      "spriteSourceSize": { "x": 0, "y": 0, "w": 16, "h": 16 },
+      "sourceSize":       { "w": 16, "h": 16 },
+      "duration":         100
+    },
+    {
+      "filename":         "slime 7",
+      "frame":            { "x":   0, "y": 16, "w": 16, "h": 16 },
+      "rotated":          false,
+      "trimmed":          false,
+      "spriteSourceSize": { "x": 0, "y": 0, "w": 16, "h": 16 },
+      "sourceSize":       { "w": 16, "h": 16 },
+      "duration":         100
+    },
+    {
+      "filename":         "slime 8",
+      "frame":            { "x":  16, "y": 16, "w": 16, "h": 16 },
+      "rotated":          false,
+      "trimmed":          false,
+      "spriteSourceSize": { "x": 0, "y": 0, "w": 16, "h": 16 },
+      "sourceSize":       { "w": 16, "h": 16 },
+      "duration":         100
+    },
+    {
+      "filename":         "slime 9",
+      "frame":            { "x":  32, "y": 16, "w": 16, "h": 16 },
+      "rotated":          false,
+      "trimmed":          false,
+      "spriteSourceSize": { "x": 0, "y": 0, "w": 16, "h": 16 },
+      "sourceSize":       { "w": 16, "h": 16 },
+      "duration":         100
+    },
+    {
+      "filename":         "slime 10",
+      "frame":            { "x":  48, "y": 16, "w": 16, "h": 16 },
+      "rotated":          false,
+      "trimmed":          false,
+      "spriteSourceSize": { "x": 0, "y": 0, "w": 16, "h": 16 },
+      "sourceSize":       { "w": 16, "h": 16 },
+      "duration":         120
+    },
+    {
+      "filename":         "slime 11",
+      "frame":            { "x":  64, "y": 16, "w": 16, "h": 16 },
+      "rotated":          false,
+      "trimmed":          false,
+      "spriteSourceSize": { "x": 0, "y": 0, "w": 16, "h": 16 },
+      "sourceSize":       { "w": 16, "h": 16 },
+      "duration":         120
+    },
+    {
+      "filename":         "slime 12",
+      "frame":            { "x":  80, "y": 16, "w": 16, "h": 16 },
+      "rotated":          false,
+      "trimmed":          false,
+      "spriteSourceSize": { "x": 0, "y": 0, "w": 16, "h": 16 },
+      "sourceSize":       { "w": 16, "h": 16 },
+      "duration":         120
+    },
+    {
+      "filename":         "slime 13",
+      "frame":            { "x":  96, "y": 16, "w": 16, "h": 16 },
+      "rotated":          false,
+      "trimmed":          false,
+      "spriteSourceSize": { "x": 0, "y": 0, "w": 16, "h": 16 },
+      "sourceSize":       { "w": 16, "h": 16 },
+      "duration":         100
+    },
+    {
+      "filename":         "slime 14",
+      "frame":            { "x":   0, "y": 32, "w": 16, "h": 16 },
+      "rotated":          false,
+      "trimmed":          false,
+      "spriteSourceSize": { "x": 0, "y": 0, "w": 16, "h": 16 },
+      "sourceSize":       { "w": 16, "h": 16 },
+      "duration":         100
+    },
+    {
+      "filename":         "slime 15",
+      "frame":            { "x":  16, "y": 32, "w": 16, "h": 16 },
+      "rotated":          false,
+      "trimmed":          false,
+      "spriteSourceSize": { "x": 0, "y": 0, "w": 16, "h": 16 },
+      "sourceSize":       { "w": 16, "h": 16 },
+      "duration":         100
+    },
+    {
+      "filename":         "slime 16",
+      "frame":            { "x":  32, "y": 32, "w": 16, "h": 16 },
+      "rotated":          false,
+      "trimmed":          false,
+      "spriteSourceSize": { "x": 0, "y": 0, "w": 16, "h": 16 },
+      "sourceSize":       { "w": 16, "h": 16 },
+      "duration":         100
+    },
+    {
+      "filename":         "slime 17",
+      "frame":            { "x":  48, "y": 32, "w": 16, "h": 16 },
+      "rotated":          false,
+      "trimmed":          false,
+      "spriteSourceSize": { "x": 0, "y": 0, "w": 16, "h": 16 },
+      "sourceSize":       { "w": 16, "h": 16 },
+      "duration":         100
+    },
+    {
+      "filename":         "slime 18",
+      "frame":            { "x":  64, "y": 32, "w": 16, "h": 16 },
+      "rotated":          false,
+      "trimmed":          false,
+      "spriteSourceSize": { "x": 0, "y": 0, "w": 16, "h": 16 },
+      "sourceSize":       { "w": 16, "h": 16 },
+      "duration":         100
+    },
+    {
+      "filename":         "slime 19",
+      "frame":            { "x":  80, "y": 32, "w": 16, "h": 16 },
+      "rotated":          false,
+      "trimmed":          false,
+      "spriteSourceSize": { "x": 0, "y": 0, "w": 16, "h": 16 },
+      "sourceSize":       { "w": 16, "h": 16 },
+      "duration":         100
+    },
+    {
+      "filename":         "slime 20",
+      "frame":            { "x":  96, "y": 32, "w": 16, "h": 16 },
+      "rotated":          false,
+      "trimmed":          false,
+      "spriteSourceSize": { "x": 0, "y": 0, "w": 16, "h": 16 },
+      "sourceSize":       { "w": 16, "h": 16 },
+      "duration":         100
+    }
+  ],
+  "meta": {
+    "app":     "Pixhaus",
+    "version": "1.0",
+    "image":   "slime.png",
+    "format":  "RGBA8888",
+    "size":    { "w": 112, "h": 48 },
+    "scale":   "1",
+    "frameTags": [
+      {
+        "name":      "idle",
+        "from":      0,
+        "to":        3,
+        "direction": "forward",
+        "repeat":    0,
+        "color":     "#6abe30ff"
+      },
+      {
+        "name":      "hop",
+        "from":      4,
+        "to":        9,
+        "direction": "forward",
+        "repeat":    0,
+        "color":     "#5fcde4ff"
+      },
+      {
+        "name":      "hit",
+        "from":     10,
+        "to":       12,
+        "direction": "forward",
+        "repeat":    1,
+        "color":     "#d95763ff"
+      },
+      {
+        "name":      "split",
+        "from":     13,
+        "to":       20,
+        "direction": "forward",
+        "repeat":    1,
+        "color":     "#222034ff"
+      }
+    ],
+    "layers": [
+      { "name": "body",    "opacity": 255, "blendMode": "normal" },
+      { "name": "outline", "opacity": 255, "blendMode": "normal" }
+    ],
+    "slices": [
+      {
+        "name":  "root",
+        "color": "#0000ffff",
+        "keys": [
+          {
+            "frame":  0,
+            "bounds": { "x": 0, "y": 0, "w": 16, "h": 16 },
+            "pivot":  { "x": 8, "y": 15 }
+          }
+        ]
+      }
+    ]
+  }
+}
