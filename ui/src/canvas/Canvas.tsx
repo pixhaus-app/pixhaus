@@ -9,7 +9,7 @@
 //   update → ResizeObserver keeps the GL viewport in sync
 //   unmount → destroy renderer, remove all listeners
 
-import { onMount, onCleanup, createEffect, createSignal, type Component } from "solid-js";
+import { onMount, onCleanup, createEffect, createSignal, untrack, type Component } from "solid-js";
 import { listen } from "@tauri-apps/api/event";
 import { CanvasRenderer } from "./renderer";
 import { attachCanvasInput } from "./input";
@@ -32,9 +32,11 @@ import {
   activeSpriteId,
   activeFrameIndex,
   selectionRect,
+  resetViewport,
 } from "./canvas-state";
 import { activeProject } from "../project-state";
 import { canvasComposite } from "../lib/commands/canvas";
+import { spriteList } from "../lib/commands/project";
 
 // ── Tile-dirty event payload ────────────────────────────────────────────────
 
@@ -112,6 +114,44 @@ const Canvas: Component = () => {
         width: p.width,
         height: p.height,
       });
+    });
+
+    // ── Auto-select first sprite when a project loads ─────────────────────
+    //
+    // Nothing else sets activeSpriteId on project open; without this the
+    // canvas compositor and layer panel never fire their first IPC calls.
+    // Runs once per Canvas mount (the Show in Shell unmounts it on close).
+    let projectSeenNonNull = false;
+    createEffect(() => {
+      const proj = activeProject();
+      if (!proj) {
+        projectSeenNonNull = false;
+        return;
+      }
+      if (projectSeenNonNull) return;
+      projectSeenNonNull = true;
+
+      // Don't overwrite a sprite that was already selected (e.g. restored
+      // from a saved viewport) — only auto-select on a fresh open.
+      if (untrack(activeSpriteId) !== null) return;
+
+      spriteList()
+        .then((sprites) => {
+          const first = sprites[0];
+          if (!first) return;
+          // vpW/vpH are untracked: by the time the async result arrives the
+          // ResizeObserver has already fired its first measurement.
+          resetViewport(
+            first.canvas.width,
+            first.canvas.height,
+            Math.max(untrack(vpW), 1),
+            Math.max(untrack(vpH), 1),
+            first.id,
+          );
+        })
+        .catch((err: unknown) => {
+          console.warn("[pixhaus] sprite_list failed:", err);
+        });
     });
 
     // ── Reactive bridge: push signal changes to the renderer ─────────────
