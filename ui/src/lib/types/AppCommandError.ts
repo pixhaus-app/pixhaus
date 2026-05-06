@@ -49,4 +49,8 @@ detail: string, } } | { "kind": "nothing_to_undo" } | { "kind": "nothing_to_redo
  * command label and the wrapped error from
  * `core::undo::Error`).
  */
-detail: string, } };
+detail: string, } } | { "kind": "verb_error", "message": { 
+/**
+ * Human-readable error from the verb runtime.
+ */
+message: string, } };

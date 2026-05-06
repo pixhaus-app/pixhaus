@@ -53,6 +53,17 @@ pub struct OpenAiBackend {
     image_model: String,
 }
 
+impl std::fmt::Debug for OpenAiBackend {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("OpenAiBackend")
+            .field("base_url", &self.base_url)
+            .field("text_model", &self.text_model)
+            .field("image_model", &self.image_model)
+            .field("api_key", &"[redacted]")
+            .finish_non_exhaustive()
+    }
+}
+
 impl OpenAiBackend {
     /// Constructs an adapter with an explicit API key.
     #[must_use]
@@ -600,6 +611,34 @@ struct ImageData {
 
 // Suppress unused import warning.
 fn _assert_frame_req(_: &FrameInterpolationRequest) {}
+
+// ── VerbRuntime bridge ──────────────────────────────────────────────────────
+
+impl crate::plugin::backend::InferenceBackend for OpenAiBackend {
+    fn as_any(&self) -> &dyn std::any::Any {
+        self
+    }
+
+    fn id(&self) -> &str {
+        self.backend_id()
+    }
+
+    fn capabilities(&self) -> crate::plugin::descriptor::BackendCapabilities {
+        <Self as super::InferenceBackend>::capabilities(self)
+    }
+
+    fn cost_estimate(
+        &self,
+        _required: crate::plugin::descriptor::BackendCapabilities,
+    ) -> crate::plugin::descriptor::CostEstimate {
+        crate::plugin::descriptor::CostEstimate {
+            typical_latency: std::time::Duration::from_secs(5),
+            max_latency: std::time::Duration::from_secs(60),
+            typical_usd_cents: 1.0,
+            max_usd_cents: 10.0,
+        }
+    }
+}
 
 #[cfg(test)]
 mod tests {

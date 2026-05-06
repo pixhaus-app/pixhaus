@@ -61,6 +61,16 @@ pub struct AnthropicBackend {
     default_model: String,
 }
 
+impl std::fmt::Debug for AnthropicBackend {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("AnthropicBackend")
+            .field("base_url", &self.base_url)
+            .field("default_model", &self.default_model)
+            .field("api_key", &"[redacted]")
+            .finish_non_exhaustive()
+    }
+}
+
 impl AnthropicBackend {
     /// Constructs an adapter with an explicit API key.
     #[must_use]
@@ -423,6 +433,41 @@ struct AnthropicRequest {
 // the match arm types.
 fn _assert_image_gen_req_visible(_: &ImageGenRequest) {}
 fn _assert_image_gen_resp_visible(_: &ImageGenResponse) {}
+
+// ── VerbRuntime bridge ──────────────────────────────────────────────────────
+//
+// The VerbRuntime (S21) stores backends as `Arc<dyn
+// plugin::backend::InferenceBackend>` — a thin discovery trait. Adapters
+// also implement the operational `backends::InferenceBackend` with full
+// `invoke` semantics. This bridge impl lets AnthropicBackend be registered
+// in the VerbRuntime while remaining callable from verb code via
+// `as_any().downcast_ref::<AnthropicBackend>()`.
+
+impl crate::plugin::backend::InferenceBackend for AnthropicBackend {
+    fn as_any(&self) -> &dyn std::any::Any {
+        self
+    }
+
+    fn id(&self) -> &str {
+        self.backend_id()
+    }
+
+    fn capabilities(&self) -> BackendCapabilities {
+        <Self as super::InferenceBackend>::capabilities(self)
+    }
+
+    fn cost_estimate(
+        &self,
+        _required: BackendCapabilities,
+    ) -> crate::plugin::descriptor::CostEstimate {
+        crate::plugin::descriptor::CostEstimate {
+            typical_latency: std::time::Duration::from_secs(5),
+            max_latency: std::time::Duration::from_secs(60),
+            typical_usd_cents: 1.0,
+            max_usd_cents: 10.0,
+        }
+    }
+}
 
 #[cfg(test)]
 mod tests {
