@@ -17,6 +17,27 @@ use ts_rs::TS;
 
 use crate::error::{AppCommandError, CommandResult};
 
+/// Literal pubkey value shipped in `app/tauri.conf.json` until release
+/// tooling stamps a real minisign key. Matched at runtime so dev and
+/// fork builds skip the auto-update check instead of spamming an
+/// `ERROR`/`WARN` pair on every launch.
+const UPDATER_PUBKEY_PLACEHOLDER: &str = "REPLACE_WITH_OUTPUT_OF_scripts/gen-updater-key";
+
+/// Returns `true` when the configured updater pubkey is missing or
+/// still the unreplaced build-time placeholder. The auto-update flow
+/// has nothing it can verify against in either case, so the startup
+/// check should short-circuit.
+fn updater_pubkey_is_placeholder(app: &AppHandle) -> bool {
+    let cfg = app.config();
+    let plugins = &cfg.plugins.0;
+    let configured = plugins
+        .get("updater")
+        .and_then(|v| v.get("pubkey"))
+        .and_then(serde_json::Value::as_str)
+        .unwrap_or("");
+    configured.is_empty() || configured == UPDATER_PUBKEY_PLACEHOLDER
+}
+
 /// Metadata returned to the frontend when an update is available.
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
 #[ts(export)]
@@ -116,7 +137,19 @@ pub async fn updater_install(app: AppHandle) -> CommandResult<()> {
 /// Emits `updater:available` if a new version is found. Errors are
 /// logged at `warn` level and silently swallowed — an update check
 /// failing is never user-visible unless the user manually triggers one.
+///
+/// Skipped entirely when the configured updater pubkey is the
+/// build-time placeholder (dev or fork builds). Without this guard the
+/// signature-verification failure surfaces as a noisy `ERROR` + `WARN`
+/// pair on every launch even though there's nothing the user can do.
 pub async fn check_on_startup(app: AppHandle) {
+    if updater_pubkey_is_placeholder(&app) {
+        tracing::debug!(
+            "updater pubkey is the build-time placeholder; \
+             skipping startup update check"
+        );
+        return;
+    }
     let Ok(updater) = app.updater() else {
         return;
     };
