@@ -204,7 +204,19 @@ pub async fn project_import_psd(
         tracing::warn!(path = %path_buf.display(), warning = ?w, "PSD import warning");
     }
 
-    let PixhausArchive { project, buffers } = converted.archive;
+    let mut doc = state.doc.write().await;
+    Ok(install_imported_project(&mut doc, converted.archive))
+}
+
+/// Swaps an imported project into the document store. Like
+/// `install_loaded_project` but without a path (imports require a
+/// follow-up save-as) and with `dirty = true` so the user is prompted to
+/// save before quitting. Resets the undo history for the same reason
+/// `install_new_project` and `install_loaded_project` do — commands
+/// recorded against a previous document can't replay against an
+/// imported one.
+fn install_imported_project(doc: &mut DocumentStore, archive: PixhausArchive) -> ProjectStatus {
+    let PixhausArchive { project, buffers } = archive;
     let next_id = compute_next_id(&project);
     let status = ProjectStatus {
         metadata: project.metadata.clone(),
@@ -212,14 +224,13 @@ pub async fn project_import_psd(
         dirty: true,
         sprite_count: project.sprites.len(),
     };
-
-    let mut doc = state.doc.write().await;
     doc.project = Some(project);
     doc.path = None;
     doc.dirty = true;
     doc.next_id = next_id;
+    doc.history = History::new();
     doc.pixel_buffers = buffers;
-    Ok(status)
+    status
 }
 
 /// Saves the active project to disk.
@@ -261,10 +272,10 @@ pub async fn project_save(path: Option<String>, state: State<'_, AppState>) -> C
     let now_secs = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .map_or(0, |d| i64::try_from(d.as_secs()).unwrap_or(i64::MAX));
-    // Stamp metadata and snapshot both the project and the pixel buffers
-    // before crossing the spawn_blocking boundary. The mutable borrow of
-    // `project` ends after the clone so `doc.pixel_buffers` can be
-    // borrowed immutably on the next line.
+    // Stamp metadata and snapshot the project before crossing the
+    // spawn_blocking boundary. Project::clone is unavoidable here — the
+    // encoder needs an owned value on the blocking thread and we can't
+    // hand it the lock guard.
     let project_snap = {
         let project = doc
             .project
@@ -273,13 +284,24 @@ pub async fn project_save(path: Option<String>, state: State<'_, AppState>) -> C
         stamp_save_metadata(project, now_secs);
         project.clone()
     };
+    // Move the pixel buffers out of the document store rather than
+    // cloning. They're potentially large (one entry per cel × the cel's
+    // pixel byte count), so a clone roughly doubles peak memory during
+    // save. The closure hands them back via the return tuple regardless
+    // of encode success so we can restore them on doc.pixel_buffers
+    // before propagating any encode error. Caveat: if the blocking task
+    // panics or is cancelled, the buffers are dropped with the closure;
+    // doc.pixel_buffers stays empty in that degenerate case (panics
+    // here are not a normal control flow path).
+    let taken_buffers = std::mem::take(&mut doc.pixel_buffers);
     let archive = PixhausArchive {
         project: project_snap,
-        buffers: doc.pixel_buffers.clone(),
+        buffers: taken_buffers,
     };
     let target_for_blocking = target.clone();
-    let encode_result = tokio::task::spawn_blocking(move || {
-        pixhaus_io::pixhaus::encode_to_file(&archive, &target_for_blocking)
+    let (encode_result, returned_buffers) = tokio::task::spawn_blocking(move || {
+        let result = pixhaus_io::pixhaus::encode_to_file(&archive, &target_for_blocking);
+        (result, archive.buffers)
     })
     .await
     .map_err(|join_err| {
@@ -292,6 +314,12 @@ pub async fn project_save(path: Option<String>, state: State<'_, AppState>) -> C
         };
         AppCommandError::Validation { detail }
     })?;
+    // Restore the buffers before propagating any encode error so a
+    // failed save leaves the document store in the same shape it had
+    // pre-save (just with the metadata stamp). Without this, a disk-
+    // full or permission-denied error would silently drop the user's
+    // pixel data on the way back to the UI.
+    doc.pixel_buffers = returned_buffers;
     encode_result?;
 
     doc.path = Some(target);
@@ -533,6 +561,36 @@ mod tests {
             doc.path.as_deref(),
             Some(std::path::Path::new("/tmp/x.pixhaus"))
         );
+    }
+
+    #[test]
+    fn install_imported_project_clears_history_and_stores_buffers() {
+        // Both invariants in one test — they share a fixture and the
+        // bug Copilot caught (history not cleared on PSD import) maps
+        // directly to a missing assertion here.
+        let mut doc = doc_with_history_entry();
+        let entry = PixelBufferEntry {
+            id: 7,
+            width: 4,
+            height: 4,
+            stride: 16,
+            pixels: vec![1u8; 64],
+        };
+        let archive = PixhausArchive {
+            project: Project::new("imported"),
+            buffers: vec![entry.clone()],
+        };
+        let status = install_imported_project(&mut doc, archive);
+        assert_eq!(
+            doc.history.node_count(),
+            0,
+            "project_import_psd must drop the previous session's undo history"
+        );
+        assert!(doc.dirty, "imported project is dirty until first save");
+        assert!(doc.path.is_none(), "imported project has no on-disk path");
+        assert!(status.path.is_none());
+        assert_eq!(doc.pixel_buffers.len(), 1);
+        assert_eq!(doc.pixel_buffers[0].id, entry.id);
     }
 
     #[test]

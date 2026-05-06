@@ -5,6 +5,8 @@
 
 use std::path::PathBuf;
 
+#[cfg(doc)]
+use pixhaus_core::project::PixelBufferId;
 use pixhaus_core::project::Project;
 use pixhaus_core::undo::History;
 use pixhaus_io::pixhaus::PixelBufferEntry;
@@ -24,9 +26,9 @@ pub(crate) struct DocumentStore {
     pub(crate) history: History,
     /// Pixel buffers loaded from or to be written to the `.pixhaus` archive.
     ///
-    /// Cels reference buffers by [`PixelBufferId`](pixhaus_core::project::PixelBufferId);
-    /// the bytes live here. Retained across the decode round-trip so
-    /// `project_save` can write them back without losing content.
+    /// Cels reference buffers by [`PixelBufferId`]; the bytes live here.
+    /// Retained across the decode round-trip so `project_save` can write
+    /// them back without losing content.
     pub(crate) pixel_buffers: Vec<PixelBufferEntry>,
 }
 
