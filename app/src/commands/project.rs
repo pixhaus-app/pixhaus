@@ -4,7 +4,7 @@ use std::path::PathBuf;
 
 use pixhaus_core::project::{ColorMode, Project, ProjectMetadata, Size, Sprite, SpriteId};
 use pixhaus_core::undo::History;
-use pixhaus_io::pixhaus::PixhausArchive;
+use pixhaus_io::pixhaus::{PixelBufferEntry, PixhausArchive};
 use serde::{Deserialize, Serialize};
 use tauri::State;
 use tokio::task::JoinError;
@@ -78,6 +78,7 @@ fn install_new_project(doc: &mut DocumentStore, project: Project) -> ProjectStat
     // session's history (which would walk into commands written
     // against a different sprite set).
     doc.history = History::new();
+    doc.pixel_buffers = Vec::new();
     status
 }
 
@@ -90,10 +91,9 @@ fn install_new_project(doc: &mut DocumentStore, project: Project) -> ProjectStat
 /// store.
 ///
 /// `next_id` is recomputed from the loaded project so subsequent CRUD
-/// minting can't collide with ids that came in from disk. The pixel
-/// buffers in the archive are dropped for now; `DocumentStore` doesn't
-/// have a buffer cache yet, and the canvas-side composite path will
-/// pick them up when that's wired.
+/// minting can't collide with ids that came in from disk. Pixel buffers
+/// from the archive are retained in `DocumentStore::pixel_buffers` so
+/// `project_save` can write them back without losing content.
 #[tauri::command(async, rename_all = "snake_case")]
 pub async fn project_open(
     path: String,
@@ -108,17 +108,23 @@ pub async fn project_open(
     .map_err(|join_err| describe_join_error("pixhaus decode", &join_err))??;
 
     let mut doc = state.doc.write().await;
-    Ok(install_loaded_project(&mut doc, archive.project, path_buf))
+    Ok(install_loaded_project(
+        &mut doc,
+        archive.project,
+        path_buf,
+        archive.buffers,
+    ))
 }
 
-/// Swaps a freshly-decoded project into the document store and resets
-/// per-document state (path, dirty flag, id counter, undo history).
-/// Lifted out of `project_open` so the history-reset and id-recompute
-/// invariants are testable without a tauri `State`.
+/// Swaps a freshly-decoded project and its pixel buffers into the document
+/// store and resets per-document state (path, dirty flag, id counter, undo
+/// history). Lifted out of `project_open` so the history-reset and
+/// id-recompute invariants are testable without a tauri `State`.
 fn install_loaded_project(
     doc: &mut DocumentStore,
     project: Project,
     path: PathBuf,
+    buffers: Vec<PixelBufferEntry>,
 ) -> ProjectStatus {
     let next_id = compute_next_id(&project);
     let status = ProjectStatus {
@@ -134,6 +140,7 @@ fn install_loaded_project(
     // Reset undo so opening a different project doesn't inherit the
     // previous session's command history.
     doc.history = History::new();
+    doc.pixel_buffers = buffers;
     status
 }
 
@@ -197,7 +204,7 @@ pub async fn project_import_psd(
         tracing::warn!(path = %path_buf.display(), warning = ?w, "PSD import warning");
     }
 
-    let project = converted.archive.project;
+    let PixhausArchive { project, buffers } = converted.archive;
     let next_id = compute_next_id(&project);
     let status = ProjectStatus {
         metadata: project.metadata.clone(),
@@ -211,6 +218,7 @@ pub async fn project_import_psd(
     doc.path = None;
     doc.dirty = true;
     doc.next_id = next_id;
+    doc.pixel_buffers = buffers;
     Ok(status)
 }
 
@@ -228,10 +236,8 @@ pub async fn project_import_psd(
 ///   [`AppCommandError::Validation`] so the UI can route to a save-as
 ///   flow.
 ///
-/// `DocumentStore` has no pixel-buffer cache today, so the encoded
-/// archive ships with `buffers: Vec::new()`. Cels carry their
-/// `PixelBufferId` references but the bytes round-trip lossily — the
-/// pixel-buffer-storage stream (`S15-prep`) picks that up.
+/// Pixel buffers from `DocumentStore::pixel_buffers` are included in the
+/// encoded archive so cels round-trip with their pixel data intact.
 #[tauri::command(async, rename_all = "snake_case")]
 pub async fn project_save(path: Option<String>, state: State<'_, AppState>) -> CommandResult<()> {
     // Hold the write guard for the entire save so a concurrent
@@ -255,17 +261,22 @@ pub async fn project_save(path: Option<String>, state: State<'_, AppState>) -> C
     let now_secs = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .map_or(0, |d| i64::try_from(d.as_secs()).unwrap_or(i64::MAX));
-    let project = doc
-        .project
-        .as_mut()
-        .ok_or(AppCommandError::NoActiveProject)?;
-    stamp_save_metadata(project, now_secs);
-
-    // Clone so encode_to_file can run on the blocking pool without
-    // borrowing across .await. The Project is the same value the
-    // round-trip tests already exercise; cloning is the cost of
-    // crossing the spawn_blocking boundary.
-    let archive = PixhausArchive::new(project.clone());
+    // Stamp metadata and snapshot both the project and the pixel buffers
+    // before crossing the spawn_blocking boundary. The mutable borrow of
+    // `project` ends after the clone so `doc.pixel_buffers` can be
+    // borrowed immutably on the next line.
+    let project_snap = {
+        let project = doc
+            .project
+            .as_mut()
+            .ok_or(AppCommandError::NoActiveProject)?;
+        stamp_save_metadata(project, now_secs);
+        project.clone()
+    };
+    let archive = PixhausArchive {
+        project: project_snap,
+        buffers: doc.pixel_buffers.clone(),
+    };
     let target_for_blocking = target.clone();
     let encode_result = tokio::task::spawn_blocking(move || {
         pixhaus_io::pixhaus::encode_to_file(&archive, &target_for_blocking)
@@ -307,6 +318,7 @@ pub async fn project_close(state: State<'_, AppState>) -> CommandResult<()> {
     doc.project = None;
     doc.path = None;
     doc.dirty = false;
+    doc.pixel_buffers = Vec::new();
     Ok(())
 }
 
@@ -389,6 +401,7 @@ pub async fn sprite_list(state: State<'_, AppState>) -> CommandResult<Vec<Sprite
 mod tests {
     use super::*;
     use pixhaus_core::undo::{Command, CommandResult as UndoCommandResult};
+    use pixhaus_io::pixhaus::PixelBufferEntry;
 
     /// No-op `Command` used by the history-reset regression tests. It
     /// pushes nothing onto the project; the history just needs *a* node
@@ -508,6 +521,7 @@ mod tests {
             &mut doc,
             Project::new("loaded"),
             PathBuf::from("/tmp/x.pixhaus"),
+            Vec::new(),
         );
         assert_eq!(
             doc.history.node_count(),
@@ -518,6 +532,46 @@ mod tests {
         assert_eq!(
             doc.path.as_deref(),
             Some(std::path::Path::new("/tmp/x.pixhaus"))
+        );
+    }
+
+    #[test]
+    fn install_loaded_project_stores_buffers() {
+        let entry = PixelBufferEntry {
+            id: 1,
+            width: 4,
+            height: 4,
+            stride: 16,
+            pixels: vec![0u8; 64],
+        };
+        let mut doc = DocumentStore::default();
+        let _ = install_loaded_project(
+            &mut doc,
+            Project::new("buf-test"),
+            PathBuf::from("/tmp/buf.pixhaus"),
+            vec![entry.clone()],
+        );
+        assert_eq!(doc.pixel_buffers.len(), 1);
+        assert_eq!(doc.pixel_buffers[0].id, entry.id);
+        assert_eq!(doc.pixel_buffers[0].pixels.len(), entry.pixels.len());
+    }
+
+    #[test]
+    fn install_new_project_clears_buffers() {
+        let mut doc = DocumentStore {
+            pixel_buffers: vec![PixelBufferEntry {
+                id: 5,
+                width: 2,
+                height: 2,
+                stride: 8,
+                pixels: vec![0u8; 16],
+            }],
+            ..DocumentStore::default()
+        };
+        let _ = install_new_project(&mut doc, Project::new("fresh"));
+        assert!(
+            doc.pixel_buffers.is_empty(),
+            "project_new must discard the previous session's pixel buffers"
         );
     }
 
@@ -581,5 +635,46 @@ mod tests {
             loaded.project.metadata.editor_version,
             env!("CARGO_PKG_VERSION")
         );
+    }
+
+    /// Pixel buffers stored in `DocumentStore::pixel_buffers` survive a
+    /// save/load cycle. Encodes an archive that includes a synthetic buffer
+    /// entry, then decodes it and checks the bytes match.
+    #[test]
+    fn pixel_buffers_round_trip_through_pixhaus_archive() {
+        use pixhaus_io::pixhaus::{decode_from_file, encode_to_file};
+
+        let project = Project::new("buf-round-trip");
+        let pixels: Vec<u8> = (0u8..=255).cycle().take(64).collect();
+        let buffers = vec![PixelBufferEntry {
+            id: 3,
+            width: 4,
+            height: 4,
+            stride: 16,
+            pixels: pixels.clone(),
+        }];
+
+        let nanos = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map_or(0, |d| d.as_nanos());
+        let path = std::env::temp_dir().join(format!(
+            "pixhaus-app-buf-roundtrip-{}-{nanos}.pixhaus",
+            std::process::id(),
+        ));
+
+        let archive = PixhausArchive { project, buffers };
+        encode_to_file(&archive, &path).expect("encode");
+        let loaded = decode_from_file(&path).expect("decode");
+        let _ = std::fs::remove_file(&path);
+
+        assert_eq!(
+            loaded.buffers.len(),
+            1,
+            "buffer count must survive the round-trip"
+        );
+        assert_eq!(loaded.buffers[0].id, 3);
+        assert_eq!(loaded.buffers[0].width, 4);
+        assert_eq!(loaded.buffers[0].height, 4);
+        assert_eq!(loaded.buffers[0].pixels, pixels);
     }
 }

@@ -7,6 +7,7 @@ use std::path::PathBuf;
 
 use pixhaus_core::project::Project;
 use pixhaus_core::undo::History;
+use pixhaus_io::pixhaus::PixelBufferEntry;
 
 /// In-memory document and editor session. Internal to the app crate.
 pub(crate) struct DocumentStore {
@@ -21,6 +22,12 @@ pub(crate) struct DocumentStore {
     pub(crate) dirty: bool,
     /// Undo/redo history for the active document.
     pub(crate) history: History,
+    /// Pixel buffers loaded from or to be written to the `.pixhaus` archive.
+    ///
+    /// Cels reference buffers by [`PixelBufferId`](pixhaus_core::project::PixelBufferId);
+    /// the bytes live here. Retained across the decode round-trip so
+    /// `project_save` can write them back without losing content.
+    pub(crate) pixel_buffers: Vec<PixelBufferEntry>,
 }
 
 impl Default for DocumentStore {
@@ -31,6 +38,7 @@ impl Default for DocumentStore {
             next_id: 1,
             dirty: false,
             history: History::new(),
+            pixel_buffers: Vec::new(),
         }
     }
 }
