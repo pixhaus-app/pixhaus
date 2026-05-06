@@ -1,7 +1,8 @@
 //! Application-level state threaded through Tauri commands.
 //!
 //! [`AppState`] is registered with `.manage()` during startup and received by
-//! every command that needs to read or modify the active document.
+//! every command that needs to read or modify the active document, the verb
+//! runtime, or the plugin registry.
 
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -13,6 +14,8 @@ use pixhaus_core::project::PixelBufferId;
 use pixhaus_core::project::Project;
 use pixhaus_core::undo::History;
 use pixhaus_io::pixhaus::PixelBufferEntry;
+
+use pixhaus_plugins::PluginRegistry;
 
 use crate::pixel_history::PixelHistory;
 
@@ -64,31 +67,46 @@ impl Default for DocumentStore {
 /// (`project_get`, `sprite_list`, `frame_list`, `layer_list`,
 /// `palette_list`) take a shared read guard so they don't block each
 /// other; mutating commands take the write guard.
+///
+/// `verbs` and `plugins` are separate top-level fields (not inside `doc`)
+/// because they are not document state — they persist across project opens
+/// and closes.
 pub struct AppState {
     /// Document store guarded by a tokio `RwLock`. Lock, work, release
     /// — never hold across an unrelated async suspension.
     pub(crate) doc: tokio::sync::RwLock<DocumentStore>,
-    /// Verb runtime with built-in verbs registered. Shared across all
-    /// IPC command handlers via `Arc` so commands can invoke verbs
-    /// concurrently without holding the doc lock.
+    /// Verb runtime with built-in verbs registered. Shared with the plugin
+    /// registry so plugins register their verbs into the same runtime.
+    /// Wrapped in `Arc` so commands can invoke verbs concurrently without
+    /// holding the doc lock.
     pub(crate) verb_runtime: Arc<VerbRuntime>,
+    /// Plugin registry. Populated on startup by scanning
+    /// `~/.pixhaus/plugins` and again on hot-reload events.
+    pub(crate) plugins: Arc<PluginRegistry>,
 }
 
 impl AppState {
-    /// Constructs the initial state with no open project.
+    /// Constructs the initial state with no open project and no loaded plugins.
     ///
-    /// Registers all built-in verbs with the verb runtime. Backend
-    /// registration happens separately through `verb_runtime` after the
-    /// user configures API keys in the settings panel.
+    /// Registers all built-in verbs with the verb runtime, then hands an
+    /// `Arc` of that runtime to the plugin registry so plugin-registered
+    /// verbs land in the same runtime as the built-ins. Backend
+    /// registration happens separately after the user configures API keys
+    /// in the settings panel; the registry's `scan()` is called in the
+    /// Tauri setup closure to load user-installed plugins asynchronously.
     pub fn new() -> Self {
         let runtime = VerbRuntime::new();
         // Registration fails only on a duplicate ID, which cannot happen
         // with the hardcoded verb set below. Discard the Ok(()) result.
         let _ = runtime.register(CritiqueVerb::new());
 
+        let verb_runtime = Arc::new(runtime);
+        let plugins = Arc::new(PluginRegistry::new(verb_runtime.clone()));
+
         Self {
             doc: tokio::sync::RwLock::new(DocumentStore::default()),
-            verb_runtime: Arc::new(runtime),
+            verb_runtime,
+            plugins,
         }
     }
 }

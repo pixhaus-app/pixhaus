@@ -1,0 +1,37 @@
+[package]
+name = "pixhaus-plugins"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Pixhaus plugin loader: scans ~/.pixhaus/plugins, loads WASM and Lua manifests, registers verbs and tools"
+
+[dependencies]
+pixhaus-core = { path = "../core" }
+pixhaus-ai = { path = "../ai" }
+thiserror.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+tokio.workspace = true
+tokio-util.workspace = true
+tracing.workspace = true
+parking_lot.workspace = true
+async-trait.workspace = true
+# Manifest parsing
+toml = "0.8"
+# Plugin-directory path resolution
+dirs = "5"
+# Hot-reload file watching
+notify = "6"
+# WASM plugin host (extism wraps wasmtime)
+extism = "1"
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["rt", "macros"] }
+rstest.workspace = true
+tempfile = "3"
+
+[lints]
+workspace = true

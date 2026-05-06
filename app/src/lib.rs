@@ -23,6 +23,7 @@ pub mod state;
 
 pub use error::{AppCommandError, CommandResult};
 
+use tauri::Manager as _;
 use tracing_subscriber::EnvFilter;
 
 use state::AppState;
@@ -45,6 +46,7 @@ pub fn app_name() -> &'static str {
 ///
 /// # Errors
 /// Returns [`AppError::Tauri`] when the Tauri runtime fails to start.
+#[allow(clippy::too_many_lines)]
 pub fn run() -> Result<(), AppError> {
     tracing_subscriber::fmt()
         .with_env_filter(
@@ -78,6 +80,17 @@ pub fn run() -> Result<(), AppError> {
             let handle = app.handle().clone();
             tauri::async_runtime::spawn(async move {
                 commands::updater::check_on_startup(handle).await;
+            });
+
+            // Scan user-installed plugins asynchronously so startup is not
+            // blocked by WASM compilation or slow storage. Any plugin that
+            // fails to load is logged as a warning and skipped.
+            let plugins = app.state::<AppState>().plugins.clone();
+            tauri::async_runtime::spawn(async move {
+                match plugins.scan().await {
+                    Ok(n) => tracing::info!(count = n, "plugins loaded"),
+                    Err(e) => tracing::warn!(error = %e, "plugin scan failed"),
+                }
             });
 
             Ok(())
@@ -149,6 +162,11 @@ pub fn run() -> Result<(), AppError> {
             commands::tiles::tileset_add,
             commands::tiles::tileset_list,
             commands::tiles::tileset_rename,
+            // plugins
+            commands::plugins::plugin_list,
+            commands::plugins::plugin_reload,
+            commands::plugins::plugin_scan,
+            commands::plugins::plugin_unload,
             // undo/redo
             commands::undo::redo,
             commands::undo::undo,
