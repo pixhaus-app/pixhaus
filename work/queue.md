@@ -106,7 +106,7 @@ docs/planning/work/streams.md#s23-s36. Independent of each other
 except for the shared `ai/src/verbs/mod.rs` registration — expect
 small merge conflicts there as PRs land.
 
-- [ ] UNCLAIMED: S23 — Verb: Inbetween (interpolated key-frame fills). Brief: docs/planning/work/streams.md#s23. Blocked by: B5 S21 S22.
+- [~] CLAIMED:stream-s23: S23 — Verb: Inbetween (interpolated key-frame fills). Brief: docs/planning/work/streams.md#s23. Blocked by: B5 S21 S22.
 - [ ] UNCLAIMED: S24 — Verb: Continue (predict next frames). Brief: docs/planning/work/streams.md#s24. Blocked by: B5 S21 S22.
 - [ ] UNCLAIMED: S25 — Verb: Extend (multi-direction views). Brief: docs/planning/work/streams.md#s25. Blocked by: B5 S21 S22.
 - [~] CLAIMED:stream-s26:S26 — Verb: Variant (palette swaps, equipment, expressions). Brief: docs/planning/work/streams.md#s26. Blocked by: B5 S21 S22.

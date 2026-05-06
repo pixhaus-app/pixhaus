@@ -51,6 +51,7 @@ pub use crate::verbs::auto_mesh_deformation::{
     MESH_RESOLUTION_DEFAULT, MESH_RESOLUTION_MAX, MESH_RESOLUTION_MIN, RigControlPoint, RigData,
     RigRegion,
 };
+pub use crate::verbs::inbetween::{INBETWEEN_VERB_ID, InbetweenInputs, InbetweenVerb};
 pub use audio_timing::{
     AUDIO_TIMING_VERB_ID, AudioFormat, AudioTimingInputs, AudioTimingMode, AudioTimingVerb,
 };
