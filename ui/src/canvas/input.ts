@@ -44,6 +44,7 @@ import {
 } from "../tilemap/tilemap-state";
 import { tilePlace, tileErase, tileAutotileApply } from "../lib/commands/tiles";
 import { canvasDrawStroke, canvasFill } from "../lib/commands/canvas";
+import { ellipsePerimeterPoints, rectPerimeterPoints } from "./tools/shape-points";
 
 // How much the continuous zoom changes per wheel tick (scroll-wheel smooth mode).
 const WHEEL_ZOOM_FACTOR = 1.1;
@@ -185,8 +186,49 @@ function isDrawingTool(): boolean {
   return t === "pencil" || t === "eraser" || t === "line";
 }
 
+function isShapeTool(): boolean {
+  const t = activeTool();
+  return t === "rect" || t === "ellipse";
+}
+
 function isFillTool(): boolean {
   return activeTool() === "fill";
+}
+
+// Anchor point of an in-progress rect/ellipse drag, in canvas pixels.
+let shapeAnchor: [number, number] | null = null;
+
+function dispatchShape(end: [number, number]): void {
+  if (shapeAnchor === null) return;
+  const start = shapeAnchor;
+  shapeAnchor = null;
+
+  const spriteId = activeSpriteId();
+  const layerId = activeLayerId();
+  if (spriteId === null || layerId === null) return;
+
+  const tool = activeTool();
+  const points =
+    tool === "rect"
+      ? rectPerimeterPoints(start[0], start[1], end[0], end[1])
+      : ellipsePerimeterPoints(start[0], start[1], end[0], end[1]);
+  if (points.length === 0) return;
+
+  const color = foregroundColor();
+  canvasDrawStroke({
+    sprite_id: spriteId,
+    layer_id: layerId,
+    frame_index: activeFrameIndex(),
+    points,
+    color: { r: color.r, g: color.g, b: color.b, a: color.a },
+    pressure: points.map(() => 1.0),
+    brush_shape: toolShape(),
+    brush_size: toolSize(),
+    pixel_perfect: pixelPerfect(),
+    erase: false,
+  }).catch((err: unknown) => {
+    console.error("[pixhaus] canvas_draw_stroke (shape):", err);
+  });
 }
 
 function dispatchStroke(): void {
@@ -267,6 +309,8 @@ export function attachCanvasInput(el: HTMLElement): () => void {
   let tilePaintErase = false;
   // Tracks whether a freehand drawing stroke is in progress.
   let drawStrokeActive = false;
+  // Tracks whether a rect/ellipse anchor + drag is in progress.
+  let shapeActive = false;
 
   // Attach the selection input handler. It manages its own listener
   // lifecycle internally; we just hold the cleanup reference.
@@ -402,6 +446,12 @@ export function attachCanvasInput(el: HTMLElement): () => void {
         strokePoints = [canvasPointFromEvent(e, el)];
         return;
       }
+      if (isShapeTool()) {
+        e.preventDefault();
+        shapeActive = true;
+        shapeAnchor = canvasPointFromEvent(e, el);
+        return;
+      }
     }
 
     // Left mouse + spacebar pans.
@@ -458,13 +508,19 @@ export function attachCanvasInput(el: HTMLElement): () => void {
     setCursorCanvas(null);
   }
 
-  function onMouseUp(): void {
+  function onMouseUp(e: MouseEvent): void {
     tilePaintActive = false;
     resetTilePaintStroke();
 
     if (drawStrokeActive) {
       drawStrokeActive = false;
       dispatchStroke();
+    }
+
+    if (shapeActive) {
+      shapeActive = false;
+      const end = canvasPointFromEvent(e, el);
+      dispatchShape(end);
     }
 
     if (pan.active) {

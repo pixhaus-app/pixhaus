@@ -7,6 +7,7 @@ import {
   numericW,
   numericH,
 } from "./transform-state";
+import type { TransformArgs, TransformOp } from "../../lib/commands/canvas";
 
 const BASE = { x: 10, y: 20, width: 100, height: 80 };
 
@@ -83,5 +84,53 @@ describe("syncNumericFromBounds", () => {
     expect(numericY()).toBe(2);
     expect(numericW()).toBe(100);
     expect(numericH()).toBe(40);
+  });
+});
+
+// The Rust TransformArgs uses #[serde(tag = "kind", rename_all = "snake_case")]
+// for its op enum. The JSON produced from the TS shape must therefore carry a
+// `kind` discriminator with snake_case variant names, and shape-specific fields
+// at the same nesting level.
+describe("TransformArgs serialisation", () => {
+  function serialise(op: TransformOp): Record<string, unknown> {
+    const args: TransformArgs = {
+      sprite_id: 1,
+      layer_id: 2,
+      frame_index: 0,
+      ops: [op],
+    };
+    return JSON.parse(JSON.stringify(args)) as Record<string, unknown>;
+  }
+
+  it("serialises translate with kind + dx + dy", () => {
+    const out = serialise({ kind: "translate", dx: 5, dy: -3 });
+    expect(out.ops).toEqual([{ kind: "translate", dx: 5, dy: -3 }]);
+  });
+
+  it("serialises flip variants with no extra fields", () => {
+    expect(serialise({ kind: "flip_horizontal" }).ops).toEqual([{ kind: "flip_horizontal" }]);
+    expect(serialise({ kind: "flip_vertical" }).ops).toEqual([{ kind: "flip_vertical" }]);
+  });
+
+  it("serialises rotate90 variants with no extra fields", () => {
+    expect(serialise({ kind: "rotate90_cw" }).ops).toEqual([{ kind: "rotate90_cw" }]);
+    expect(serialise({ kind: "rotate90_ccw" }).ops).toEqual([{ kind: "rotate90_ccw" }]);
+    expect(serialise({ kind: "rotate180" }).ops).toEqual([{ kind: "rotate180" }]);
+  });
+
+  it("serialises scale_nearest with new dimensions", () => {
+    const out = serialise({ kind: "scale_nearest", new_width: 64, new_height: 32 });
+    expect(out.ops).toEqual([{ kind: "scale_nearest", new_width: 64, new_height: 32 }]);
+  });
+
+  it("preserves the top-level fields the Rust handler reads", () => {
+    const args: TransformArgs = {
+      sprite_id: 7,
+      layer_id: 9,
+      frame_index: 4,
+      ops: [{ kind: "translate", dx: 1, dy: 2 }],
+    };
+    const json = JSON.parse(JSON.stringify(args)) as Record<string, unknown>;
+    expect(Object.keys(json).sort()).toEqual(["frame_index", "layer_id", "ops", "sprite_id"]);
   });
 });
