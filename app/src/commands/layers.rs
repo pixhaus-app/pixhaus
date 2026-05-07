@@ -1476,12 +1476,8 @@ mod tests {
             .push(Sprite::empty(SpriteId::new(1), "main", canvas_size));
         DocumentStore {
             project: Some(project),
-            path: None,
             next_id: 100,
-            dirty: false,
-            history: pixhaus_core::undo::History::new(),
-            pixel_buffers: Vec::new(),
-            pixel_history: crate::pixel_history::PixelHistory::new(),
+            ..DocumentStore::default()
         }
     }
 

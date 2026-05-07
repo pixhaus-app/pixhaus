@@ -110,8 +110,11 @@ pub fn run() -> Result<(), AppError> {
             commands::exports::export_png_sprite_sheet,
             commands::exports::export_tmx,
             // canvas
+            commands::canvas::canvas_begin_stroke,
             commands::canvas::canvas_composite,
             commands::canvas::canvas_draw_stroke,
+            commands::canvas::canvas_end_stroke,
+            commands::canvas::canvas_extend_stroke,
             commands::canvas::canvas_fill,
             commands::canvas::canvas_invert_selection,
             commands::canvas::canvas_select_all,

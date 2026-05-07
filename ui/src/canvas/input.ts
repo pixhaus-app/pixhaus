@@ -43,7 +43,14 @@ import {
   autotileMode,
 } from "../tilemap/tilemap-state";
 import { tilePlace, tileErase, tileAutotileApply } from "../lib/commands/tiles";
-import { canvasDrawStroke, canvasFill } from "../lib/commands/canvas";
+import {
+  canvasBeginStroke,
+  canvasDrawStroke,
+  canvasEndStroke,
+  canvasExtendStroke,
+  canvasFill,
+} from "../lib/commands/canvas";
+import { reportCommandFailure } from "../lib/utils/errors";
 import { ellipsePerimeterPoints, rectPerimeterPoints } from "./tools/shape-points";
 
 // How much the continuous zoom changes per wheel tick (scroll-wheel smooth mode).
@@ -169,9 +176,14 @@ function resetTilePaintStroke(): void {
 }
 
 // ── Freehand stroke state ──────────────────────────────────────────────────
-
-// Points collected during the current stroke (canvas coordinates).
-let strokePoints: Array<[number, number]> = [];
+//
+// Pencil/eraser/line strokes use the begin/extend/end stroke session API
+// so the user sees pixels under the cursor in real time and Ctrl+Z
+// reverts one whole drag (not partial mousemoves).
+//
+// Per-attach state lives in `attachCanvasInput` below — nothing here
+// because there is only one active drawing tool at a time and the
+// session id alone is enough to identify the in-flight stroke.
 
 function canvasPointFromEvent(e: MouseEvent, el: HTMLElement): [number, number] {
   const rect = el.getBoundingClientRect();
@@ -231,37 +243,6 @@ function dispatchShape(end: [number, number]): void {
   });
 }
 
-function dispatchStroke(): void {
-  if (strokePoints.length === 0) return;
-
-  const spriteId = activeSpriteId();
-  const layerId = activeLayerId();
-  if (spriteId === null || layerId === null) {
-    strokePoints = [];
-    return;
-  }
-
-  const erase = activeTool() === "eraser";
-  const color = foregroundColor();
-  const points = strokePoints.slice();
-  strokePoints = [];
-
-  canvasDrawStroke({
-    sprite_id: spriteId,
-    layer_id: layerId,
-    frame_index: activeFrameIndex(),
-    points,
-    color: { r: color.r, g: color.g, b: color.b, a: color.a },
-    pressure: points.map(() => 1.0),
-    brush_shape: toolShape(),
-    brush_size: toolSize(),
-    pixel_perfect: pixelPerfect(),
-    erase,
-  }).catch((err: unknown) => {
-    console.error("[pixhaus] canvas_draw_stroke:", err);
-  });
-}
-
 function dispatchFill(canvasX: number, canvasY: number): void {
   const spriteId = activeSpriteId();
   const layerId = activeLayerId();
@@ -307,10 +288,105 @@ export function attachCanvasInput(el: HTMLElement): () => void {
   // Tracks whether a tile-paint drag stroke is in progress.
   let tilePaintActive = false;
   let tilePaintErase = false;
-  // Tracks whether a freehand drawing stroke is in progress.
-  let drawStrokeActive = false;
   // Tracks whether a rect/ellipse anchor + drag is in progress.
   let shapeActive = false;
+
+  // ── Freehand stroke session state ───────────────────────────────────────
+  //
+  // `drawStrokeActive` is set synchronously on mousedown so mousemove
+  // starts collecting points before the begin IPC resolves.
+  // `strokeSessionId` arrives a moment later when the backend hands us
+  // an id; until then `pendingStrokePoints` buffers and a flush is
+  // attempted on resolve. RAF batches mousemove (60Hz) into one IPC
+  // per frame.
+  let drawStrokeActive = false;
+  let strokeSessionId: number | null = null;
+  let pendingStrokePoints: Array<[number, number]> = [];
+  let strokeRafHandle: number | null = null;
+
+  function scheduleStrokeFlush(): void {
+    if (strokeRafHandle !== null) return;
+    strokeRafHandle = requestAnimationFrame(() => {
+      strokeRafHandle = null;
+      if (strokeSessionId === null) return;
+      if (pendingStrokePoints.length === 0) return;
+      const points = pendingStrokePoints;
+      pendingStrokePoints = [];
+      canvasExtendStroke({ session_id: strokeSessionId, new_points: points }).catch(
+        (err: unknown) => {
+          reportCommandFailure("canvas_extend_stroke", err);
+        },
+      );
+    });
+  }
+
+  function startStroke(firstPoint: [number, number], erase: boolean): void {
+    const spriteId = activeSpriteId();
+    const layerId = activeLayerId();
+    if (spriteId === null || layerId === null) return;
+
+    drawStrokeActive = true;
+    pendingStrokePoints = [];
+    strokeSessionId = null;
+
+    const color = foregroundColor();
+    canvasBeginStroke({
+      sprite_id: spriteId,
+      layer_id: layerId,
+      frame_index: activeFrameIndex(),
+      color: { r: color.r, g: color.g, b: color.b, a: color.a },
+      brush_shape: toolShape(),
+      brush_size: toolSize(),
+      pixel_perfect: pixelPerfect(),
+      erase,
+      first_point: firstPoint,
+    })
+      .then((id: number) => {
+        // The session may have been ended before begin resolved (fast
+        // click + release). In that case `drawStrokeActive` is already
+        // false and `endStroke()` has set up nothing to flush — close
+        // the orphan session right away with whatever points we
+        // collected so we still record an undo entry.
+        if (!drawStrokeActive) {
+          const finalPoints = pendingStrokePoints;
+          pendingStrokePoints = [];
+          canvasEndStroke({ session_id: id, new_points: finalPoints }).catch((err: unknown) => {
+            reportCommandFailure("canvas_end_stroke", err);
+          });
+          return;
+        }
+        strokeSessionId = id;
+        if (pendingStrokePoints.length > 0) scheduleStrokeFlush();
+      })
+      .catch((err: unknown) => {
+        drawStrokeActive = false;
+        pendingStrokePoints = [];
+        reportCommandFailure("canvas_begin_stroke", err);
+      });
+  }
+
+  function endStroke(): void {
+    if (!drawStrokeActive) return;
+    drawStrokeActive = false;
+    if (strokeRafHandle !== null) {
+      cancelAnimationFrame(strokeRafHandle);
+      strokeRafHandle = null;
+    }
+    if (strokeSessionId === null) {
+      // begin_stroke hasn't resolved yet. Keep `pendingStrokePoints`
+      // intact — the begin .then handler detects `!drawStrokeActive`
+      // and forwards the points straight to `canvas_end_stroke` so the
+      // stroke still commits as one undo entry.
+      return;
+    }
+    const session = strokeSessionId;
+    strokeSessionId = null;
+    const finalPoints = pendingStrokePoints;
+    pendingStrokePoints = [];
+    canvasEndStroke({ session_id: session, new_points: finalPoints }).catch((err: unknown) => {
+      reportCommandFailure("canvas_end_stroke", err);
+    });
+  }
 
   // Attach the selection input handler. It manages its own listener
   // lifecycle internally; we just hold the cleanup reference.
@@ -442,8 +518,9 @@ export function attachCanvasInput(el: HTMLElement): () => void {
       }
       if (isDrawingTool()) {
         e.preventDefault();
-        drawStrokeActive = true;
-        strokePoints = [canvasPointFromEvent(e, el)];
+        const point = canvasPointFromEvent(e, el);
+        const erase = activeTool() === "eraser";
+        startStroke(point, erase);
         return;
       }
       if (isShapeTool()) {
@@ -487,9 +564,12 @@ export function attachCanvasInput(el: HTMLElement): () => void {
       dispatchTilePaint(e.clientX, e.clientY, el, tilePaintErase);
     }
 
-    // Accumulate stroke points.
+    // Accumulate stroke points and schedule a RAF flush. The flush
+    // batches mousemove (60Hz) into one extend IPC per frame so the
+    // backend never re-rasterizes more than once per repaint.
     if (drawStrokeActive) {
-      strokePoints.push(canvasPointFromEvent(e, el));
+      pendingStrokePoints.push(canvasPointFromEvent(e, el));
+      scheduleStrokeFlush();
     }
 
     if (!pan.active) return;
@@ -513,8 +593,7 @@ export function attachCanvasInput(el: HTMLElement): () => void {
     resetTilePaintStroke();
 
     if (drawStrokeActive) {
-      drawStrokeActive = false;
-      dispatchStroke();
+      endStroke();
     }
 
     if (shapeActive) {
@@ -579,6 +658,13 @@ export function attachCanvasInput(el: HTMLElement): () => void {
     window.removeEventListener("keyup", onKeyUp);
     el.removeEventListener("contextmenu", onContextMenu);
     el.removeEventListener("mouseleave", onMouseLeave);
+    if (strokeRafHandle !== null) {
+      cancelAnimationFrame(strokeRafHandle);
+      strokeRafHandle = null;
+    }
+    if (drawStrokeActive) {
+      endStroke();
+    }
     detachSelectInput();
   };
 }

@@ -20,7 +20,7 @@ use tauri::{AppHandle, Emitter, State};
 
 use crate::error::{AppCommandError, CommandResult};
 use crate::pixel_history::{PixelOp, PixelOpBatch};
-use crate::state::AppState;
+use crate::state::{AppState, StrokeSession};
 
 /// Tile size used by the canvas renderer, in canvas pixels per side.
 pub const TILE_SIZE: u32 = 256;
@@ -626,6 +626,315 @@ pub async fn canvas_draw_stroke(
     )
 }
 
+// ── Stroke sessions ──────────────────────────────────────────────────────────
+//
+// `canvas_draw_stroke` above is a one-shot path: full point list in, one
+// undo entry out. It is right for shape tools (rect/ellipse) that build
+// the points client-side and have nothing to preview during the drag.
+//
+// Freehand drawing wants real-time feedback. The frontend dispatches
+// begin → extend × N → end so the backend re-paints the layer on every
+// extend (visible immediately) but only records ONE undo entry on end
+// (so Ctrl+Z reverts the whole drag, not partial strokes).
+//
+// Sessions live in `DocumentStore::active_strokes` keyed by `u32`
+// session id. Mid-flight pixels are written straight to the buffer; the
+// session retains a copy of the pre-stroke pixels so each extend can
+// re-rasterize from a clean baseline. If a session is abandoned (browser
+// loses focus, frontend crash) it lingers in the map until the next
+// session begins on the same buffer; that next-begin discards the orphan
+// without committing it. The mid-flight pixels remain on the buffer —
+// no rollback — so the user keeps the visual but loses one undo step.
+
+/// Arguments for `canvas_begin_stroke`.
+#[derive(Debug, Deserialize)]
+pub struct BeginStrokeArgs {
+    /// Target sprite.
+    pub sprite_id: SpriteId,
+    /// Target layer.
+    pub layer_id: LayerId,
+    /// Target frame (0-indexed).
+    pub frame_index: u32,
+    /// Stroke color. Ignored when `erase` is `true`.
+    pub color: Rgba,
+    /// Brush shape: `"pixel"`, `"circle"`, or `"square"`.
+    #[serde(default = "default_brush_shape")]
+    pub brush_shape: String,
+    /// Brush diameter in canvas pixels.
+    #[serde(default = "default_brush_size")]
+    pub brush_size: u32,
+    /// Enable pixel-perfect post-pass.
+    #[serde(default)]
+    pub pixel_perfect: bool,
+    /// Erase mode: paint transparent instead of `color`.
+    #[serde(default)]
+    pub erase: bool,
+    /// Optional first point. Saves a round-trip when the begin and
+    /// first extend would otherwise carry the same single coordinate.
+    #[serde(default)]
+    pub first_point: Option<[f32; 2]>,
+}
+
+/// Arguments for `canvas_extend_stroke`.
+#[derive(Debug, Deserialize)]
+pub struct ExtendStrokeArgs {
+    /// Session id returned by `canvas_begin_stroke`.
+    pub session_id: u32,
+    /// Points appended since the previous extend (or since begin).
+    pub new_points: Vec<[f32; 2]>,
+}
+
+/// Arguments for `canvas_end_stroke`.
+#[derive(Debug, Deserialize)]
+pub struct EndStrokeArgs {
+    /// Session id returned by `canvas_begin_stroke`.
+    pub session_id: u32,
+    /// Final point chunk to apply before the commit.
+    #[serde(default)]
+    pub new_points: Vec<[f32; 2]>,
+}
+
+/// Pure rasterize: produces the post-stroke pixels without mutating
+/// any shared state or emitting events. Extracted so tests can assert
+/// the brush math without standing up a Tauri runtime.
+fn rasterize_session_pixels(
+    session: &StrokeSession,
+    w: u32,
+    h: u32,
+    stride: u32,
+) -> CommandResult<Vec<u8>> {
+    let mut pbuf =
+        PixelBuffer::from_raw(w, h, stride, session.initial_pixels.clone()).map_err(|e| {
+            AppCommandError::Validation {
+                detail: e.to_string(),
+            }
+        })?;
+    let color = if session.erase {
+        Rgba::transparent()
+    } else {
+        session.color
+    };
+    let shape = parse_brush_shape(&session.brush_shape);
+    draw_stroke(
+        &mut pbuf,
+        &session.points,
+        color,
+        shape,
+        session.brush_size,
+        session.pixel_perfect,
+    );
+    Ok(pbuf.as_bytes().to_vec())
+}
+
+/// Re-rasterizes a session into its target buffer and emits tile-dirty
+/// events for the whole buffer area. Does NOT record undo. Returns the
+/// post-paint pixels so callers can use them for subsequent operations
+/// (e.g. `canvas_end_stroke` capturing the after-state for the undo
+/// entry).
+fn rasterize_session(
+    doc: &mut crate::state::DocumentStore,
+    app: &AppHandle,
+    session: &StrokeSession,
+) -> CommandResult<Vec<u8>> {
+    let entry = doc
+        .pixel_buffers
+        .iter_mut()
+        .find(|e| e.id == session.buffer_id.get())
+        .ok_or_else(|| AppCommandError::NotFound {
+            entity: "pixel buffer".into(),
+            id: u64::from(session.buffer_id.get()),
+        })?;
+
+    let (w, h, stride) = (entry.width, entry.height, entry.stride);
+    let pixels = rasterize_session_pixels(session, w, h, stride)?;
+    entry.pixels.clone_from(&pixels);
+
+    emit_buffer_tiles(
+        app,
+        session.sprite_id.get(),
+        session.frame_index,
+        w,
+        h,
+        stride,
+        &pixels,
+    );
+
+    Ok(pixels)
+}
+
+/// Begins a freehand stroke session on a layer cel.
+///
+/// Lazily creates a transparent cel + buffer if none exists for
+/// `(layer, frame)`. Captures the buffer's current pixels as the stroke's
+/// before-state and returns a session id the frontend uses for subsequent
+/// `canvas_extend_stroke` and `canvas_end_stroke` calls.
+///
+/// If a session is already active for the same buffer (the previous
+/// session was abandoned without an end call) it is dropped without
+/// commit. The mid-flight pixels of the orphan stay on the buffer — no
+/// rollback — so the user keeps the visual but loses that one undo step.
+#[tauri::command(async, rename_all = "snake_case")]
+pub async fn canvas_begin_stroke(
+    app: AppHandle,
+    args: BeginStrokeArgs,
+    state: State<'_, AppState>,
+) -> CommandResult<u32> {
+    let mut lock = state.doc.write().await;
+    let doc = &mut *lock;
+
+    let buffer_id = ensure_raster_buffer(doc, args.sprite_id, args.layer_id, args.frame_index)?;
+
+    // Drop any orphan session on this buffer.
+    doc.active_strokes
+        .retain(|_, s| s.buffer_id.get() != buffer_id.get());
+
+    let initial_pixels = {
+        let entry = doc
+            .pixel_buffers
+            .iter()
+            .find(|e| e.id == buffer_id.get())
+            .ok_or_else(|| AppCommandError::NotFound {
+                entity: "pixel buffer".into(),
+                id: u64::from(buffer_id.get()),
+            })?;
+        entry.pixels.clone()
+    };
+
+    let session_id = doc.next_id;
+    doc.next_id += 1;
+
+    let label = if args.erase { "eraser" } else { "stroke" }.to_owned();
+
+    let mut session = StrokeSession {
+        sprite_id: args.sprite_id,
+        layer_id: args.layer_id,
+        frame_index: args.frame_index,
+        buffer_id,
+        initial_pixels,
+        points: Vec::new(),
+        color: args.color,
+        brush_shape: args.brush_shape,
+        brush_size: args.brush_size,
+        pixel_perfect: args.pixel_perfect,
+        erase: args.erase,
+        label,
+    };
+    if let Some(p) = args.first_point {
+        session.points.push(p);
+    }
+
+    // Paint the first point immediately if one was provided so the user
+    // sees the click anchor before the first mousemove. Rasterize from a
+    // local clone before inserting into the map — avoids the borrow-then-
+    // re-fetch dance.
+    if !session.points.is_empty() {
+        let snapshot = session.clone();
+        rasterize_session(doc, &app, &snapshot)?;
+    }
+    doc.active_strokes.insert(session_id, session);
+
+    Ok(session_id)
+}
+
+/// Extends an in-flight stroke with new points and re-paints.
+///
+/// Re-rasterizes the buffer from the session's pre-stroke pixels with
+/// the cumulative point list, writes the result, and emits
+/// `canvas:tile-dirty`. Does not push to `pixel_history` — that happens
+/// once on `canvas_end_stroke`.
+#[tauri::command(async, rename_all = "snake_case")]
+pub async fn canvas_extend_stroke(
+    app: AppHandle,
+    args: ExtendStrokeArgs,
+    state: State<'_, AppState>,
+) -> CommandResult<()> {
+    let mut lock = state.doc.write().await;
+    let doc = &mut *lock;
+
+    let snapshot = {
+        let session = doc
+            .active_strokes
+            .get_mut(&args.session_id)
+            .ok_or_else(|| AppCommandError::NotFound {
+                entity: "stroke session".into(),
+                id: u64::from(args.session_id),
+            })?;
+        session.points.extend_from_slice(&args.new_points);
+        session.clone()
+    };
+    rasterize_session(doc, &app, &snapshot)?;
+    Ok(())
+}
+
+/// Commits an in-flight stroke as one undo entry.
+///
+/// Optionally accepts a final `new_points` chunk (the frontend uses it
+/// to flush points collected after the last RAF tick before mouseup).
+/// Re-paints once more so the persisted pixels match what the user
+/// actually saw, pushes a single `PixelOpBatch` covering
+/// `initial_pixels → final pixels`, and removes the session.
+#[tauri::command(async, rename_all = "snake_case")]
+pub async fn canvas_end_stroke(
+    app: AppHandle,
+    args: EndStrokeArgs,
+    state: State<'_, AppState>,
+) -> CommandResult<()> {
+    let mut lock = state.doc.write().await;
+    let doc = &mut *lock;
+
+    // Validate up front so we never start re-rasterizing for an unknown
+    // id and have to roll back. The clone here is throwaway — the real
+    // session is consumed via `remove` below.
+    let snapshot = {
+        let session = doc
+            .active_strokes
+            .get_mut(&args.session_id)
+            .ok_or_else(|| AppCommandError::NotFound {
+                entity: "stroke session".into(),
+                id: u64::from(args.session_id),
+            })?;
+        session.points.extend_from_slice(&args.new_points);
+        session.clone()
+    };
+    let after_pixels = rasterize_session(doc, &app, &snapshot)?;
+
+    // Move the session out so we own its initial_pixels for the undo
+    // entry without cloning. Existence is guaranteed by the validation
+    // above (no `await` between the two).
+    let session =
+        doc.active_strokes
+            .remove(&args.session_id)
+            .ok_or_else(|| AppCommandError::NotFound {
+                entity: "stroke session".into(),
+                id: u64::from(args.session_id),
+            })?;
+
+    let entry = doc
+        .pixel_buffers
+        .iter()
+        .find(|e| e.id == session.buffer_id.get())
+        .ok_or_else(|| AppCommandError::NotFound {
+            entity: "pixel buffer".into(),
+            id: u64::from(session.buffer_id.get()),
+        })?;
+    let op = PixelOp {
+        buffer_id: entry.id,
+        buf_width: entry.width,
+        buf_height: entry.height,
+        buf_stride: entry.stride,
+        sprite_id: session.sprite_id.get(),
+        frame_index: session.frame_index,
+        before: session.initial_pixels,
+        after: after_pixels,
+    };
+    doc.pixel_history.push(PixelOpBatch {
+        label: session.label,
+        ops: vec![op],
+    });
+    doc.dirty = true;
+    Ok(())
+}
+
 /// Flood-fills a contiguous region on a layer cel.
 ///
 /// Creates a cel + buffer lazily, applies BFS flood-fill, then emits
@@ -1188,5 +1497,104 @@ mod tests {
         assert!(json.contains("\"width\":1"));
         assert!(json.contains("\"height\":1"));
         assert!(json.contains("\"data\":"));
+    }
+
+    // ── Stroke session tests ──────────────────────────────────────────────
+
+    fn opaque_red_session(initial_pixels: Vec<u8>, points: Vec<[f32; 2]>) -> StrokeSession {
+        StrokeSession {
+            sprite_id: SpriteId::new(1),
+            layer_id: LayerId::new(2),
+            frame_index: 0,
+            buffer_id: PixelBufferId::new(3),
+            initial_pixels,
+            points,
+            color: Rgba::opaque(255, 0, 0),
+            brush_shape: "pixel".to_owned(),
+            brush_size: 1,
+            pixel_perfect: false,
+            erase: false,
+            label: "stroke".to_owned(),
+        }
+    }
+
+    #[test]
+    fn rasterize_session_pixels_passthrough_when_empty() {
+        let initial = vec![0u8; 4 * 4 * 4];
+        let session = opaque_red_session(initial.clone(), vec![]);
+        let result = rasterize_session_pixels(&session, 4, 4, 16).unwrap();
+        assert_eq!(result, initial);
+    }
+
+    #[test]
+    fn rasterize_session_pixels_paints_single_point() {
+        let initial = vec![0u8; 4 * 4 * 4];
+        let session = opaque_red_session(initial, vec![[0.0, 0.0]]);
+        let result = rasterize_session_pixels(&session, 4, 4, 16).unwrap();
+        // First pixel = opaque red.
+        assert_eq!(&result[0..4], &[255, 0, 0, 255]);
+        // Second pixel = still transparent.
+        assert_eq!(&result[4..8], &[0, 0, 0, 0]);
+    }
+
+    #[test]
+    fn rasterize_session_pixels_idempotent_for_same_inputs() {
+        // The whole point of session-based drawing is that re-rasterizing
+        // from the captured initial_pixels with the same point list
+        // produces the same output. Without that, partial extends could
+        // accumulate and Ctrl+Z would step through them — which is the
+        // bug this change fixes.
+        let initial = vec![0u8; 4 * 4 * 4];
+        let points = vec![[0.0, 0.0], [1.0, 1.0], [2.0, 2.0]];
+        let session = opaque_red_session(initial, points);
+        let first = rasterize_session_pixels(&session, 4, 4, 16).unwrap();
+        let second = rasterize_session_pixels(&session, 4, 4, 16).unwrap();
+        assert_eq!(first, second);
+    }
+
+    #[test]
+    fn rasterize_session_pixels_eraser_clears_to_transparent() {
+        let initial = vec![255u8; 4 * 4 * 4]; // fully opaque white
+        let mut session = opaque_red_session(initial, vec![[0.0, 0.0]]);
+        session.erase = true;
+        let result = rasterize_session_pixels(&session, 4, 4, 16).unwrap();
+        // First pixel cleared to fully transparent.
+        assert_eq!(&result[0..4], &[0, 0, 0, 0]);
+        // Untouched pixel keeps its original opaque white.
+        assert_eq!(&result[4..8], &[255, 255, 255, 255]);
+    }
+
+    #[test]
+    fn stroke_session_orphan_retain_discards_same_buffer() {
+        // The discard-on-next-begin pattern: `retain` drops every session
+        // whose buffer matches the one the new stroke targets.
+        use std::collections::HashMap;
+
+        let initial = vec![0u8; 4];
+        let mut active: HashMap<u32, StrokeSession> = HashMap::new();
+        active.insert(99, opaque_red_session(initial.clone(), vec![[0.0, 0.0]]));
+        active.insert(
+            100,
+            StrokeSession {
+                sprite_id: SpriteId::new(1),
+                layer_id: LayerId::new(2),
+                frame_index: 0,
+                buffer_id: PixelBufferId::new(7), // different buffer
+                initial_pixels: initial.clone(),
+                points: vec![],
+                color: Rgba::opaque(0, 255, 0),
+                brush_shape: "pixel".to_owned(),
+                brush_size: 1,
+                pixel_perfect: false,
+                erase: false,
+                label: "stroke".to_owned(),
+            },
+        );
+
+        // Mirror the begin_stroke discard step: drop sessions on buffer 3.
+        active.retain(|_, s| s.buffer_id.get() != 3);
+
+        assert!(!active.contains_key(&99));
+        assert!(active.contains_key(&100));
     }
 }
