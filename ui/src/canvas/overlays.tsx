@@ -100,8 +100,8 @@ export const BrushCursor: Component<BrushCursorProps> = (props) => {
           <ellipse
             cx={sx0() + w() / 2}
             cy={sy0() + h() / 2}
-            rx={w() / 2}
-            ry={h() / 2}
+            rx={Math.max(w() / 2, 0.5)}
+            ry={Math.max(h() / 2, 0.5)}
             fill="none"
             stroke="white"
             stroke-width="1"
@@ -140,30 +140,43 @@ interface ShapePreviewProps extends ViewportProps {
  * lines up with the bytes the dispatch will eventually paint.
  */
 export const ShapePreview: Component<ShapePreviewProps> = (props) => {
-  // Convert a canvas-pixel corner to its top-left screen position.
+  // Convert a canvas-pixel coord to its top-left screen position. Always
+  // pass paired (x, y) so we never assume canvasToScreen's axes are
+  // independent — the prior version used `corner(x, 0)` / `corner(0, y)`
+  // which would silently break if the projection ever became
+  // non-axis-aligned.
   const corner = (x: number, y: number): [number, number] =>
     canvasToScreen(x, y, props.scrollX, props.scrollY, props.zoom, props.vpW, props.vpH);
 
   return (
     <Show when={props.preview}>
       {(preview) => {
-        // Re-derive the box on every preview change so each move re-renders.
-        const startCorner = createMemo(() => corner(preview().start[0], preview().start[1]));
-        const endCorner = createMemo(() => corner(preview().end[0], preview().end[1]));
+        const sx = createMemo(() => Math.min(preview().start[0], preview().end[0]));
+        const sy = createMemo(() => Math.min(preview().start[1], preview().end[1]));
+        const ex = createMemo(() => Math.max(preview().start[0], preview().end[0]));
+        const ey = createMemo(() => Math.max(preview().start[1], preview().end[1]));
 
-        // Inclusive box: a 1x1 pixel at (5, 5) covers screen rect (5..6, 5..6).
-        const x0 = createMemo(() => Math.min(startCorner()[0], endCorner()[0]));
-        const y0 = createMemo(() => Math.min(startCorner()[1], endCorner()[1]));
-        const x1 = createMemo(() => {
-          const px = Math.max(preview().start[0], preview().end[0]);
-          return corner(px + 1, 0)[0];
+        // Inclusive box: a 1x1 pixel at (5, 5) covers screen rect (5..6, 5..6),
+        // so the bottom-right corner in screen space is the top-left of the
+        // next cell over.
+        const topLeft = createMemo(() => corner(sx(), sy()));
+        const bottomRight = createMemo(() => corner(ex() + 1, ey() + 1));
+        const x0 = createMemo(() => topLeft()[0]);
+        const y0 = createMemo(() => topLeft()[1]);
+        const w = createMemo(() => bottomRight()[0] - topLeft()[0]);
+        const h = createMemo(() => bottomRight()[1] - topLeft()[1]);
+
+        // Line endpoints in screen space, snapped to cell centres so the
+        // dashed segments line up with where the Bresenham fill will
+        // land.
+        const startCellCentre = createMemo(() => {
+          const [cx, cy] = corner(preview().start[0] + 0.5, preview().start[1] + 0.5);
+          return [cx, cy] as const;
         });
-        const y1 = createMemo(() => {
-          const py = Math.max(preview().start[1], preview().end[1]);
-          return corner(0, py + 1)[1];
+        const endCellCentre = createMemo(() => {
+          const [cx, cy] = corner(preview().end[0] + 0.5, preview().end[1] + 0.5);
+          return [cx, cy] as const;
         });
-        const w = createMemo(() => x1() - x0());
-        const h = createMemo(() => y1() - y0());
 
         return (
           <svg
@@ -174,12 +187,11 @@ export const ShapePreview: Component<ShapePreviewProps> = (props) => {
             aria-hidden="true"
           >
             <Show when={preview().kind === "line"}>
-              {/* Anchor and current cursor in screen-pixel centres of their cells. */}
               <line
-                x1={corner(preview().start[0], 0)[0] + cellCentreOffset(props.zoom)}
-                y1={corner(0, preview().start[1])[1] + cellCentreOffset(props.zoom)}
-                x2={corner(preview().end[0], 0)[0] + cellCentreOffset(props.zoom)}
-                y2={corner(0, preview().end[1])[1] + cellCentreOffset(props.zoom)}
+                x1={startCellCentre()[0]}
+                y1={startCellCentre()[1]}
+                x2={endCellCentre()[0]}
+                y2={endCellCentre()[1]}
                 stroke="white"
                 stroke-width="1"
                 stroke-dasharray="3 3"
@@ -215,11 +227,6 @@ export const ShapePreview: Component<ShapePreviewProps> = (props) => {
     </Show>
   );
 };
-
-/** Half-cell offset in screen pixels at the given zoom. */
-function cellCentreOffset(zoom: number): number {
-  return zoom / 2;
-}
 
 // ── Transform handles overlay ──────────────────────────────────────────────
 

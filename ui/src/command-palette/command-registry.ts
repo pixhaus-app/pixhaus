@@ -848,6 +848,9 @@ const COMMANDS: ReadonlyMap<string, CommandEntry> = new Map<string, CommandEntry
   // Single-letter shortcuts (P/E/G/L/U/O) live in keybinds/defaults.ts.
   // They route through the registry so a "Tools" category shows up in the
   // command palette and the tool keys can be remapped via preferences.
+  // Typed as `[ToolType, string][]` so any drift between this list and the
+  // `ToolType` union shows up as a typecheck error rather than a silent
+  // unknown-id at runtime.
   ...(
     [
       ["pencil", "Pencil"],
@@ -856,7 +859,7 @@ const COMMANDS: ReadonlyMap<string, CommandEntry> = new Map<string, CommandEntry
       ["line", "Line"],
       ["rect", "Rectangle"],
       ["ellipse", "Ellipse"],
-    ] as const
+    ] as const satisfies ReadonlyArray<readonly [ToolType, string]>
   ).map<[string, CommandEntry]>(([id, label]) => [
     `tool:${id}`,
     {
@@ -864,7 +867,7 @@ const COMMANDS: ReadonlyMap<string, CommandEntry> = new Map<string, CommandEntry
       label: `Tool: ${label}`,
       category: "Tools",
       keywords: ["tool", id],
-      handler: () => setActiveTool(id as ToolType),
+      handler: () => setActiveTool(id),
     },
   ]),
 
