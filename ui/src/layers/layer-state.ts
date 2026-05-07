@@ -263,16 +263,21 @@ export function closeTilesetPicker(): void {
  * the highest matching N currently on the sprite. Deletes don't gap-fill —
  * after `Layer 1, Layer 2, Layer 3` and deleting `Layer 2`, the next name
  * is `Layer 4`. Less surprising over a long session than reusing numbers.
+ *
+ * `prefix` is treated as a literal string, so callers can safely pass
+ * names that contain regex metacharacters. Mirrors the Rust
+ * `next_auto_name` in `app/src/commands/layers.rs` — keep the two in
+ * sync.
  */
 export function nextAutoName(all: readonly Layer[], prefix: string): string {
-  const pattern = new RegExp(`^${prefix} (\\d+)$`);
+  const needle = `${prefix} `;
   let max = 0;
   for (const l of all) {
-    const m = l.name.match(pattern);
-    if (m && m[1] !== undefined) {
-      const n = parseInt(m[1], 10);
-      if (Number.isFinite(n) && n > max) max = n;
-    }
+    if (!l.name.startsWith(needle)) continue;
+    const rest = l.name.slice(needle.length);
+    if (!/^\d+$/.test(rest)) continue;
+    const n = parseInt(rest, 10);
+    if (Number.isFinite(n) && n > max) max = n;
   }
   return `${prefix} ${max + 1}`;
 }
@@ -301,6 +306,33 @@ export function deleteLayer(spriteId: SpriteId, id: LayerId): void {
       });
     })
     .catch((err: unknown) => console.error("[pixhaus] layer_delete:", err));
+}
+
+/**
+ * Batch delete: fans out per-id IPCs in parallel, then refreshes once.
+ * `Promise.allSettled` so a single failed delete doesn't strand the UI
+ * with the other (successful) deletes invisible. Each per-layer delete
+ * is still its own undo step on the backend; that trade-off is
+ * documented in the layer-panel-bugs PR.
+ */
+export function deleteLayers(spriteId: SpriteId, ids: readonly LayerId[]): void {
+  if (ids.length === 0) return;
+  void Promise.allSettled(ids.map((id) => layerDelete(spriteId, id))).then((results) => {
+    for (const r of results) {
+      if (r.status === "rejected") {
+        console.error("[pixhaus] layer_delete batch:", r.reason);
+      }
+    }
+    refreshLayers();
+    const idSet = new Set(ids);
+    const active = activeLayerId();
+    if (active !== null && idSet.has(active)) setActiveLayerId(null);
+    setSelectedLayerIds((prev) => {
+      const next = new Set(prev);
+      for (const id of ids) next.delete(id);
+      return next;
+    });
+  });
 }
 
 export function reorderLayer(spriteId: SpriteId, id: LayerId, newIndex: number): void {

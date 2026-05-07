@@ -196,4 +196,17 @@ describe("nextAutoName", () => {
     const list = [raster(1, "Layer abc"), raster(2, "Layer NaN")];
     expect(nextAutoName(list, "Layer")).toBe("Layer 1");
   });
+
+  it("treats the prefix as a literal (regex metacharacters are not specials)", () => {
+    // `(RGB)` would explode if we built a RegExp from the prefix without
+    // escaping; the literal-prefix implementation handles it cleanly.
+    const list = [raster(1, "Image (RGB) 1"), raster(2, "Image (RGB) 4")];
+    expect(nextAutoName(list, "Image (RGB)")).toBe("Image (RGB) 5");
+  });
+
+  it("rejects negative numbers and signs after the prefix", () => {
+    const list = [raster(1, "Layer -3"), raster(2, "Layer +2")];
+    // Neither matches `<prefix> <digits>` strictly.
+    expect(nextAutoName(list, "Layer")).toBe("Layer 1");
+  });
 });

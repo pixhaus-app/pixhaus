@@ -10,7 +10,7 @@ import type { Layer, LayerId, SpriteId } from "../lib/types";
 import {
   addLayer,
   beginRename,
-  deleteLayer,
+  deleteLayers,
   flattenVisibleLayers,
   layers,
   mergeLayerDown,
@@ -218,7 +218,7 @@ const LayerContextMenu: Component<Props> = (props) => {
               kind: "warning",
             }).then((ok) => {
               if (!ok) return;
-              for (const id of ids) deleteLayer(spriteId, id);
+              deleteLayers(spriteId, ids);
             });
           }}
           disabled={!canDelete()}

@@ -23,6 +23,15 @@ const TilesetPickerDialog: Component = () => {
   const [submitting, setSubmitting] = createSignal(false);
   const [error, setError] = createSignal<string | null>(null);
 
+  // Capture the in-flight request's spriteId so a stale response (e.g.
+  // the dialog closed or a different layer triggered the picker before
+  // the IPC settled) can be discarded instead of overwriting state.
+  // Mirrors the refreshToken pattern in layer-state.ts:refreshLayers.
+  function isCurrentRequest(spriteId: number): boolean {
+    const cur = tilesetPickerTarget();
+    return cur !== null && cur.spriteId === spriteId;
+  }
+
   // Load tilesets whenever the dialog opens. If the sprite has none, drop
   // straight into the create form so the user doesn't see an empty list
   // and have to find a button.
@@ -30,8 +39,10 @@ const TilesetPickerDialog: Component = () => {
     const t = target();
     if (t === null) return;
     setError(null);
-    tilesetList(t.spriteId)
+    const requestSpriteId = t.spriteId;
+    tilesetList(requestSpriteId)
       .then((list) => {
+        if (!isCurrentRequest(requestSpriteId)) return;
         setTilesets(list);
         if (list.length === 0) {
           setCreating(true);
@@ -43,6 +54,7 @@ const TilesetPickerDialog: Component = () => {
         }
       })
       .catch((err: unknown) => {
+        if (!isCurrentRequest(requestSpriteId)) return;
         console.error("[pixhaus] tileset_list:", err);
         setError("Failed to load tilesets");
       });
@@ -99,22 +111,27 @@ const TilesetPickerDialog: Component = () => {
     }
     setSubmitting(true);
     setError(null);
+    const requestSpriteId = t.spriteId;
     try {
       const created = await tilesetAdd({
-        sprite_id: t.spriteId,
+        sprite_id: requestSpriteId,
         name,
         tile_width: w,
         tile_height: h,
       });
-      const list = await tilesetList(t.spriteId);
+      const list = await tilesetList(requestSpriteId);
+      // Same stale-response guard as the load path: if the picker
+      // closed or moved to another sprite mid-await, drop the result.
+      if (!isCurrentRequest(requestSpriteId)) return;
       setTilesets(list);
       setSelectedId(created.id);
       setCreating(false);
     } catch (err: unknown) {
+      if (!isCurrentRequest(requestSpriteId)) return;
       console.error("[pixhaus] tileset_add:", err);
       setError("Failed to create tileset");
     } finally {
-      setSubmitting(false);
+      if (isCurrentRequest(requestSpriteId)) setSubmitting(false);
     }
   }
 
