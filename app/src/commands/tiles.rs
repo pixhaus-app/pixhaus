@@ -1,14 +1,55 @@
 //! Tilemap editing commands.
 
 use pixhaus_core::project::{
-    FrameIndex, LayerId, PixelBufferId, Size, SpriteId, TileCell, TileIndex, Tileset, TilesetId,
+    Cel, CelData, FrameIndex, IVec2, Layer, LayerId, LayerKind, PixelBufferId, Project, Size,
+    SpriteId, TileCell, TileFlags, TileIndex, TileProperties, TilemapData, Tileset, TilesetId,
     TilesetSource, UserData,
 };
-use serde::Deserialize;
-use tauri::State;
+use pixhaus_core::tilemap::{AutotileKind, resolve_autotile};
+use pixhaus_core::undo::{
+    Command, CommandError, CommandResult as UndoCommandResult, Error as UndoError,
+};
+use serde::{Deserialize, Serialize};
+use tauri::{AppHandle, Emitter, State};
 
 use crate::error::{AppCommandError, CommandResult};
-use crate::state::AppState;
+use crate::state::{AppState, DocumentStore};
+
+// ── Event payloads ───────────────────────────────────────────────────────────
+
+/// Payload emitted when a single cell on a tilemap layer changes.
+///
+/// One event fires per `tile_place`, `tile_erase`, or per-cell write that the
+/// renderer / panel must reflect. Coordinates are tile cells, not pixels.
+#[derive(Debug, Clone, Serialize)]
+pub struct TilemapCellChangedPayload {
+    /// Sprite owning the layer.
+    pub sprite_id: u32,
+    /// Tilemap layer that changed.
+    pub layer_id: u32,
+    /// Frame whose tilemap cel changed.
+    pub frame_index: u32,
+    /// Column (x) of the changed cell.
+    pub cell_x: u32,
+    /// Row (y) of the changed cell.
+    pub cell_y: u32,
+}
+
+/// Payload emitted when many cells on a tilemap layer change at once.
+///
+/// `tile_autotile_apply` ships one of these instead of N per-cell events so
+/// the renderer can re-upload the cel's tile grid in a single pass.
+#[derive(Debug, Clone, Serialize)]
+pub struct TilemapBulkChangedPayload {
+    /// Sprite owning the layer.
+    pub sprite_id: u32,
+    /// Tilemap layer that changed.
+    pub layer_id: u32,
+    /// Frame whose tilemap cel changed.
+    pub frame_index: u32,
+}
+
+// ── Argument types ───────────────────────────────────────────────────────────
 
 /// Arguments for placing a tile on a tilemap cel.
 #[derive(Debug, Deserialize)]
@@ -51,43 +92,768 @@ pub struct AutotileArgs {
     pub layer_id: LayerId,
     /// Target frame.
     pub frame_index: FrameIndex,
-    /// Autotile rule set to apply (by name, resolved in S06).
+    /// Autotile kind, by tag name. Accepts `"blob47"`, `"corner16"`,
+    /// `"minimal4"`. (Custom rule sets are not yet attached to tilesets;
+    /// the spec calls out that follow-up.)
     pub rule_set: String,
-    /// Tile to use as the "base" for the rule set.
+    /// Tile that the resolver should treat as the "filled" base.
+    /// All cells matching this tile (or any non-empty cell) participate
+    /// in autotile resolution; the `result_tile` is offset from the
+    /// tileset's autotile region using `source_tile` as the anchor.
     pub source_tile: TileIndex,
 }
 
-/// Places a tile cell at a position on a tilemap layer.
-///
-/// Requires stream S06 (tilemap data structures). Returns an error until S06 lands.
-#[tauri::command(async, rename_all = "snake_case")]
-pub async fn tile_place(_args: TilePlaceArgs, _state: State<'_, AppState>) -> CommandResult<()> {
-    Err(AppCommandError::Unimplemented {
-        stream: "S06 (tilemap)".into(),
-    })
+/// Arguments for setting per-tile metadata (collision, animation) on a tileset.
+#[derive(Debug, Deserialize)]
+pub struct TilesetSetTileMetadataArgs {
+    /// Target sprite.
+    pub sprite_id: SpriteId,
+    /// Target tileset.
+    pub tileset_id: TilesetId,
+    /// Index of the tile being annotated.
+    pub tile_index: TileIndex,
+    /// Replacement metadata for the tile.
+    pub metadata: TileProperties,
 }
 
-/// Erases a tile cell at a position on a tilemap layer.
-///
-/// Requires stream S06 (tilemap data structures). Returns an error until S06 lands.
-#[tauri::command(async, rename_all = "snake_case")]
-pub async fn tile_erase(_args: TileEraseArgs, _state: State<'_, AppState>) -> CommandResult<()> {
-    Err(AppCommandError::Unimplemented {
-        stream: "S06 (tilemap)".into(),
-    })
+// ── Undo commands ────────────────────────────────────────────────────────────
+
+/// Maps `core::undo::Error` raised by `History::push` of a tilemap command
+/// onto the typed IPC error contract. Mirrors `palette::map_palette_undo_error`.
+fn map_undo_error(err: UndoError) -> AppCommandError {
+    match err {
+        UndoError::CommandFailed { .. } | UndoError::Poisoned { .. } => {
+            AppCommandError::HistoryCorrupted {
+                detail: err.to_string(),
+            }
+        }
+        other => AppCommandError::Validation {
+            detail: other.to_string(),
+        },
+    }
 }
 
-/// Applies autotile rules to a region of a tilemap layer.
+/// Reversible "set one tilemap cell" command.
+struct TileSetCellCommand {
+    sprite_id: SpriteId,
+    layer_id: LayerId,
+    frame_index: FrameIndex,
+    cell_x: u32,
+    cell_y: u32,
+    new_cell: TileCell,
+    /// Captured on first `apply`.
+    prev_cell: TileCell,
+    label: &'static str,
+}
+
+impl Command for TileSetCellCommand {
+    fn label(&self) -> &str {
+        self.label
+    }
+
+    fn apply(&mut self, project: &mut Project) -> UndoCommandResult {
+        let data = find_tilemap_data_mut(project, self.sprite_id, self.layer_id, self.frame_index)
+            .map_err(CommandError::from_message)?;
+        let idx = cell_index(data, self.cell_x, self.cell_y)
+            .ok_or_else(|| CommandError::from_message("tile cell out of range".to_owned()))?;
+        self.prev_cell = data.cells[idx];
+        data.cells[idx] = self.new_cell;
+        Ok(())
+    }
+
+    fn undo(&mut self, project: &mut Project) -> UndoCommandResult {
+        let data = find_tilemap_data_mut(project, self.sprite_id, self.layer_id, self.frame_index)
+            .map_err(CommandError::from_message)?;
+        let idx = cell_index(data, self.cell_x, self.cell_y)
+            .ok_or_else(|| CommandError::from_message("tile cell out of range".to_owned()))?;
+        data.cells[idx] = self.prev_cell;
+        Ok(())
+    }
+}
+
+/// Reversible "rewrite tilemap cells in bulk" command.
 ///
-/// Requires stream S06 (tilemap data structures). Returns an error until S06 lands.
+/// Used by autotile apply; carries before/after snapshots of every changed
+/// cell so undo restores them exactly. The full grid isn't snapshotted —
+/// only cells whose contents actually changed.
+struct TileBulkCommand {
+    sprite_id: SpriteId,
+    layer_id: LayerId,
+    frame_index: FrameIndex,
+    /// `(cell_x, cell_y, before, after)` for each changed cell.
+    changes: Vec<(u32, u32, TileCell, TileCell)>,
+}
+
+impl Command for TileBulkCommand {
+    fn label(&self) -> &'static str {
+        "autotile apply"
+    }
+
+    fn apply(&mut self, project: &mut Project) -> UndoCommandResult {
+        let data = find_tilemap_data_mut(project, self.sprite_id, self.layer_id, self.frame_index)
+            .map_err(CommandError::from_message)?;
+        for (x, y, _before, after) in &self.changes {
+            let idx = cell_index(data, *x, *y).ok_or_else(|| {
+                CommandError::from_message(
+                    "tile cell out of range during autotile apply".to_owned(),
+                )
+            })?;
+            data.cells[idx] = *after;
+        }
+        Ok(())
+    }
+
+    fn undo(&mut self, project: &mut Project) -> UndoCommandResult {
+        let data = find_tilemap_data_mut(project, self.sprite_id, self.layer_id, self.frame_index)
+            .map_err(CommandError::from_message)?;
+        for (x, y, before, _after) in &self.changes {
+            let idx = cell_index(data, *x, *y).ok_or_else(|| {
+                CommandError::from_message("tile cell out of range during autotile undo".to_owned())
+            })?;
+            data.cells[idx] = *before;
+        }
+        Ok(())
+    }
+
+    fn estimated_size_bytes(&self) -> usize {
+        // 4 bytes x + 4 bytes y + 5 bytes before + 5 bytes after = 18; round to 24.
+        self.changes.len() * 24
+    }
+}
+
+/// Reversible "replace tile metadata at index" command.
+struct TilesetSetTileMetadataCommand {
+    sprite_id: SpriteId,
+    tileset_id: TilesetId,
+    tile_index: TileIndex,
+    new_metadata: TileProperties,
+    /// Snapshot captured on first `apply`. `None` records "the index was
+    /// past the end of `properties` — undo should truncate back to that
+    /// length".
+    prev: Option<TileProperties>,
+    /// Length of `properties` before apply, captured on first `apply`.
+    /// Lets undo distinguish "extended the vec to fit" from "overwrote
+    /// an existing entry".
+    prev_len: usize,
+}
+
+impl Command for TilesetSetTileMetadataCommand {
+    fn label(&self) -> &'static str {
+        "set tile metadata"
+    }
+
+    fn apply(&mut self, project: &mut Project) -> UndoCommandResult {
+        let tileset = find_tileset_mut(project, self.sprite_id, self.tileset_id)
+            .map_err(CommandError::from_message)?;
+        let idx = self.tile_index.get() as usize;
+        let in_range = u32::try_from(idx)
+            .ok()
+            .is_some_and(|i| i < tileset.tile_count);
+        if !in_range {
+            return Err(CommandError::from_message(format!(
+                "tile index {idx} out of range (tileset has {} tiles)",
+                tileset.tile_count
+            )));
+        }
+        self.prev_len = tileset.properties.len();
+        if idx < tileset.properties.len() {
+            self.prev = Some(tileset.properties[idx].clone());
+            tileset.properties[idx] = self.new_metadata.clone();
+        } else {
+            self.prev = None;
+            // Pad with defaults up to (but not including) idx, then push
+            // the new metadata at idx.
+            tileset.properties.resize(idx, TileProperties::default());
+            tileset.properties.push(self.new_metadata.clone());
+        }
+        Ok(())
+    }
+
+    fn undo(&mut self, project: &mut Project) -> UndoCommandResult {
+        let tileset = find_tileset_mut(project, self.sprite_id, self.tileset_id)
+            .map_err(CommandError::from_message)?;
+        let idx = self.tile_index.get() as usize;
+        if let Some(prev) = self.prev.take() {
+            if idx < tileset.properties.len() {
+                tileset.properties[idx] = prev;
+            }
+        } else {
+            // We extended the vec on apply — truncate back.
+            tileset.properties.truncate(self.prev_len);
+        }
+        Ok(())
+    }
+}
+
+// ── Helpers ──────────────────────────────────────────────────────────────────
+
+/// Computes the linear index for `(cell_x, cell_y)` if both are in range.
+fn cell_index(data: &TilemapData, x: u32, y: u32) -> Option<usize> {
+    if x >= data.width || y >= data.height {
+        return None;
+    }
+    Some((y as usize) * (data.width as usize) + (x as usize))
+}
+
+/// Finds the tilemap layer and returns its tileset id, or fails with a
+/// typed error if the layer is missing or not a tilemap.
+fn lookup_tilemap_layer(
+    project: &Project,
+    sprite_id: SpriteId,
+    layer_id: LayerId,
+) -> CommandResult<(&Layer, TilesetId)> {
+    let sprite =
+        project
+            .sprites
+            .iter()
+            .find(|s| s.id == sprite_id)
+            .ok_or(AppCommandError::NotFound {
+                entity: "sprite".into(),
+                id: u64::from(sprite_id.get()),
+            })?;
+    let layer =
+        sprite
+            .layers
+            .iter()
+            .find(|l| l.id == layer_id)
+            .ok_or(AppCommandError::NotFound {
+                entity: "layer".into(),
+                id: u64::from(layer_id.get()),
+            })?;
+    let LayerKind::Tilemap { tileset } = layer.kind else {
+        return Err(AppCommandError::Validation {
+            detail: format!("layer {} is not a tilemap layer", layer_id.get()),
+        });
+    };
+    Ok((layer, tileset))
+}
+
+/// Returns a mutable reference to the tilemap grid for `(sprite, layer, frame)`.
+///
+/// Used by undo command bodies, which receive only `&mut Project` and need to
+/// re-find the cel after the lock has been re-acquired by the caller. Returns
+/// a plain `String` so callers can wrap in their preferred error type
+/// (`CommandError` for undo, `AppCommandError` at the IPC layer).
+fn find_tilemap_data_mut(
+    project: &mut Project,
+    sprite_id: SpriteId,
+    layer_id: LayerId,
+    frame_index: FrameIndex,
+) -> Result<&mut TilemapData, String> {
+    let sprite = project
+        .sprites
+        .iter_mut()
+        .find(|s| s.id == sprite_id)
+        .ok_or_else(|| format!("sprite {} not found", sprite_id.get()))?;
+    let cel = sprite
+        .cels
+        .iter_mut()
+        .find(|c| c.layer_id == layer_id && c.frame_index == frame_index)
+        .ok_or_else(|| {
+            format!(
+                "tilemap cel for layer {} frame {} not found",
+                layer_id.get(),
+                frame_index.get()
+            )
+        })?;
+    let CelData::Tilemap { data } = &mut cel.data else {
+        return Err(format!(
+            "cel for layer {} frame {} is not a tilemap cel",
+            layer_id.get(),
+            frame_index.get()
+        ));
+    };
+    Ok(data)
+}
+
+/// Looks up a tileset by id, returning a String error compatible with
+/// `CommandError::from_message`.
+fn find_tileset_mut(
+    project: &mut Project,
+    sprite_id: SpriteId,
+    tileset_id: TilesetId,
+) -> Result<&mut Tileset, String> {
+    let sprite = project
+        .sprites
+        .iter_mut()
+        .find(|s| s.id == sprite_id)
+        .ok_or_else(|| format!("sprite {} not found", sprite_id.get()))?;
+    sprite
+        .tilesets
+        .iter_mut()
+        .find(|t| t.id == tileset_id)
+        .ok_or_else(|| format!("tileset {} not found", tileset_id.get()))
+}
+
+/// Ensures a tilemap cel exists for `(sprite, layer, frame)`. Returns the
+/// initial dimensions (cols × rows) of the grid; existing grids keep their
+/// shape, freshly-created grids are sized from sprite canvas / tile size.
+///
+/// Mirrors the lazy-cel pattern in `canvas::ensure_raster_buffer` but for
+/// tilemap cels: paint commands shouldn't require a separate "create cel"
+/// IPC, so the first paint at a cell allocates the grid.
+fn ensure_tilemap_cel(
+    doc: &mut DocumentStore,
+    sprite_id: SpriteId,
+    layer_id: LayerId,
+    frame_index: FrameIndex,
+) -> CommandResult<(u32, u32)> {
+    // Phase 1: gather what we need under a shared borrow; check if the
+    // cel already exists.
+    let (canvas_w, canvas_h, tile_size, exists) = {
+        let project = doc
+            .project
+            .as_ref()
+            .ok_or(AppCommandError::NoActiveProject)?;
+        let (_layer, tileset_id) = lookup_tilemap_layer(project, sprite_id, layer_id)?;
+        let sprite = project.sprites.iter().find(|s| s.id == sprite_id).ok_or(
+            AppCommandError::NotFound {
+                entity: "sprite".into(),
+                id: u64::from(sprite_id.get()),
+            },
+        )?;
+        let tileset = sprite.tilesets.iter().find(|t| t.id == tileset_id).ok_or(
+            AppCommandError::NotFound {
+                entity: "tileset".into(),
+                id: u64::from(tileset_id.get()),
+            },
+        )?;
+        let exists = sprite
+            .cels
+            .iter()
+            .any(|c| c.layer_id == layer_id && c.frame_index == frame_index);
+        (
+            sprite.canvas.width,
+            sprite.canvas.height,
+            tileset.tile_size,
+            exists,
+        )
+    };
+
+    if exists {
+        // Cel already there — confirm it's a tilemap cel and return its dims.
+        let project = doc
+            .project
+            .as_ref()
+            .ok_or(AppCommandError::NoActiveProject)?;
+        let sprite = project.sprites.iter().find(|s| s.id == sprite_id).ok_or(
+            AppCommandError::NotFound {
+                entity: "sprite".into(),
+                id: u64::from(sprite_id.get()),
+            },
+        )?;
+        let cel = sprite
+            .cels
+            .iter()
+            .find(|c| c.layer_id == layer_id && c.frame_index == frame_index)
+            .ok_or(AppCommandError::NotFound {
+                entity: "cel".into(),
+                id: u64::from(frame_index.get()),
+            })?;
+        return match &cel.data {
+            CelData::Tilemap { data } => Ok((data.width, data.height)),
+            _ => Err(AppCommandError::Validation {
+                detail: format!(
+                    "cel for layer {} frame {} exists but is not a tilemap cel",
+                    layer_id.get(),
+                    frame_index.get()
+                ),
+            }),
+        };
+    }
+
+    // Allocate the grid sized to cover the sprite canvas. Round up so the
+    // grid always covers the visible area; cells past the sprite edge are
+    // still addressable (the renderer may clip them).
+    if tile_size.width == 0 || tile_size.height == 0 {
+        return Err(AppCommandError::Validation {
+            detail: "tileset tile size must be positive".into(),
+        });
+    }
+    let cols = canvas_w.div_ceil(tile_size.width).max(1);
+    let rows = canvas_h.div_ceil(tile_size.height).max(1);
+
+    let project = doc
+        .project
+        .as_mut()
+        .ok_or(AppCommandError::NoActiveProject)?;
+    let sprite = project
+        .sprites
+        .iter_mut()
+        .find(|s| s.id == sprite_id)
+        .ok_or(AppCommandError::NotFound {
+            entity: "sprite".into(),
+            id: u64::from(sprite_id.get()),
+        })?;
+    sprite.cels.push(Cel {
+        layer_id,
+        frame_index,
+        position: IVec2::zero(),
+        opacity: 255,
+        data: CelData::Tilemap {
+            data: TilemapData::empty(cols, rows),
+        },
+        user_data: UserData::default(),
+    });
+    Ok((cols, rows))
+}
+
+/// Validates that a tile index references a tile in the layer's tileset.
+fn validate_tile_index(
+    project: &Project,
+    sprite_id: SpriteId,
+    tileset_id: TilesetId,
+    cell: TileCell,
+) -> CommandResult<()> {
+    if cell.is_empty() {
+        return Ok(());
+    }
+    let sprite =
+        project
+            .sprites
+            .iter()
+            .find(|s| s.id == sprite_id)
+            .ok_or(AppCommandError::NotFound {
+                entity: "sprite".into(),
+                id: u64::from(sprite_id.get()),
+            })?;
+    let tileset =
+        sprite
+            .tilesets
+            .iter()
+            .find(|t| t.id == tileset_id)
+            .ok_or(AppCommandError::NotFound {
+                entity: "tileset".into(),
+                id: u64::from(tileset_id.get()),
+            })?;
+    if cell.index.get() >= tileset.tile_count {
+        return Err(AppCommandError::Validation {
+            detail: format!(
+                "tile index {} out of range (tileset has {} tiles)",
+                cell.index.get(),
+                tileset.tile_count
+            ),
+        });
+    }
+    Ok(())
+}
+
+/// Resolves a `rule_set` name to an [`AutotileKind`].
+///
+/// The data model doesn't yet attach custom rule sets to tilesets (a
+/// follow-up sketched in S06's wrap-up notes). Until it does, this maps
+/// the four built-in tag names — matching `AutotileKind`'s serde tags —
+/// and rejects anything else with a typed Validation error.
+fn resolve_rule_set(name: &str) -> CommandResult<AutotileKind> {
+    match name {
+        "blob47" => Ok(AutotileKind::Blob47),
+        "corner16" => Ok(AutotileKind::Corner16),
+        "minimal4" => Ok(AutotileKind::Minimal4),
+        other => Err(AppCommandError::Validation {
+            detail: format!(
+                "unknown autotile rule set {other:?} (expected one of: blob47, corner16, minimal4)"
+            ),
+        }),
+    }
+}
+
+// ── IPC commands ─────────────────────────────────────────────────────────────
+
+/// Places a tile cell on a tilemap layer.
+///
+/// Lazily creates the tilemap cel for `(layer, frame)` if one doesn't
+/// exist yet, then writes `args.cell` into the grid and pushes a single
+/// undo entry. Emits `tilemap:cell-changed` so the renderer / panel can
+/// refresh.
+#[tauri::command(async, rename_all = "snake_case")]
+pub async fn tile_place(
+    app: AppHandle,
+    args: TilePlaceArgs,
+    state: State<'_, AppState>,
+) -> CommandResult<()> {
+    let mut lock = state.doc.write().await;
+    let doc = &mut *lock;
+
+    // Validate layer is a tilemap and tile_index is in range.
+    let tileset_id = {
+        let project = doc
+            .project
+            .as_ref()
+            .ok_or(AppCommandError::NoActiveProject)?;
+        let (_layer, tileset_id) = lookup_tilemap_layer(project, args.sprite_id, args.layer_id)?;
+        validate_tile_index(project, args.sprite_id, tileset_id, args.cell)?;
+        tileset_id
+    };
+    let _ = tileset_id;
+
+    // Ensure the tilemap cel exists, then bounds-check the target cell.
+    let (cols, rows) = ensure_tilemap_cel(doc, args.sprite_id, args.layer_id, args.frame_index)?;
+    if args.cell_x >= cols || args.cell_y >= rows {
+        return Err(AppCommandError::OutOfRange {
+            detail: format!(
+                "tile cell ({}, {}) out of range (grid is {}x{})",
+                args.cell_x, args.cell_y, cols, rows
+            ),
+        });
+    }
+
+    let cmd = TileSetCellCommand {
+        sprite_id: args.sprite_id,
+        layer_id: args.layer_id,
+        frame_index: args.frame_index,
+        cell_x: args.cell_x,
+        cell_y: args.cell_y,
+        new_cell: args.cell,
+        prev_cell: TileCell::empty(),
+        label: "place tile",
+    };
+    let project = doc
+        .project
+        .as_mut()
+        .ok_or(AppCommandError::NoActiveProject)?;
+    doc.history
+        .push(Box::new(cmd), project)
+        .map_err(map_undo_error)?;
+    doc.dirty = true;
+
+    emit_cell_changed(
+        &app,
+        args.sprite_id,
+        args.layer_id,
+        args.frame_index,
+        args.cell_x,
+        args.cell_y,
+    );
+    Ok(())
+}
+
+/// Erases a tile cell on a tilemap layer (writes `TileCell::empty()`).
+#[tauri::command(async, rename_all = "snake_case")]
+pub async fn tile_erase(
+    app: AppHandle,
+    args: TileEraseArgs,
+    state: State<'_, AppState>,
+) -> CommandResult<()> {
+    let mut lock = state.doc.write().await;
+    let doc = &mut *lock;
+
+    {
+        let project = doc
+            .project
+            .as_ref()
+            .ok_or(AppCommandError::NoActiveProject)?;
+        let (_layer, _tileset_id) = lookup_tilemap_layer(project, args.sprite_id, args.layer_id)?;
+    }
+
+    let (cols, rows) = ensure_tilemap_cel(doc, args.sprite_id, args.layer_id, args.frame_index)?;
+    if args.cell_x >= cols || args.cell_y >= rows {
+        return Err(AppCommandError::OutOfRange {
+            detail: format!(
+                "tile cell ({}, {}) out of range (grid is {}x{})",
+                args.cell_x, args.cell_y, cols, rows
+            ),
+        });
+    }
+
+    let cmd = TileSetCellCommand {
+        sprite_id: args.sprite_id,
+        layer_id: args.layer_id,
+        frame_index: args.frame_index,
+        cell_x: args.cell_x,
+        cell_y: args.cell_y,
+        new_cell: TileCell::empty(),
+        prev_cell: TileCell::empty(),
+        label: "erase tile",
+    };
+    let project = doc
+        .project
+        .as_mut()
+        .ok_or(AppCommandError::NoActiveProject)?;
+    doc.history
+        .push(Box::new(cmd), project)
+        .map_err(map_undo_error)?;
+    doc.dirty = true;
+
+    emit_cell_changed(
+        &app,
+        args.sprite_id,
+        args.layer_id,
+        args.frame_index,
+        args.cell_x,
+        args.cell_y,
+    );
+    Ok(())
+}
+
+/// Applies an autotile rule set to every empty / source-tile cell on the
+/// layer's grid based on its 8-neighbor pattern.
+///
+/// Cells that already hold an unrelated tile (one that isn't the source
+/// tile and isn't empty) are left alone. The result tile index is offset
+/// from `args.source_tile` so the resolver's `0..N` output lands on the
+/// caller-chosen autotile region in the tileset.
 #[tauri::command(async, rename_all = "snake_case")]
 pub async fn tile_autotile_apply(
-    _args: AutotileArgs,
-    _state: State<'_, AppState>,
+    app: AppHandle,
+    args: AutotileArgs,
+    state: State<'_, AppState>,
 ) -> CommandResult<()> {
-    Err(AppCommandError::Unimplemented {
-        stream: "S06 (tilemap)".into(),
-    })
+    let kind = resolve_rule_set(&args.rule_set)?;
+
+    let mut lock = state.doc.write().await;
+    let doc = &mut *lock;
+
+    {
+        let project = doc
+            .project
+            .as_ref()
+            .ok_or(AppCommandError::NoActiveProject)?;
+        let (_layer, tileset_id) = lookup_tilemap_layer(project, args.sprite_id, args.layer_id)?;
+        // source_tile must exist in the tileset.
+        let probe_cell = TileCell {
+            index: args.source_tile,
+            flags: TileFlags::empty(),
+        };
+        validate_tile_index(project, args.sprite_id, tileset_id, probe_cell)?;
+    }
+
+    let (_cols, _rows) = ensure_tilemap_cel(doc, args.sprite_id, args.layer_id, args.frame_index)?;
+
+    // Compute the changes against an immutable snapshot of the grid so the
+    // resolver sees a consistent neighbor view, then apply them in one undo
+    // entry.
+    let changes = {
+        let project = doc
+            .project
+            .as_ref()
+            .ok_or(AppCommandError::NoActiveProject)?;
+        let sprite = project
+            .sprites
+            .iter()
+            .find(|s| s.id == args.sprite_id)
+            .ok_or(AppCommandError::NotFound {
+                entity: "sprite".into(),
+                id: u64::from(args.sprite_id.get()),
+            })?;
+        let cel = sprite
+            .cels
+            .iter()
+            .find(|c| c.layer_id == args.layer_id && c.frame_index == args.frame_index)
+            .ok_or(AppCommandError::NotFound {
+                entity: "cel".into(),
+                id: u64::from(args.frame_index.get()),
+            })?;
+        let CelData::Tilemap { data } = &cel.data else {
+            return Err(AppCommandError::Validation {
+                detail: format!(
+                    "cel for layer {} frame {} is not a tilemap cel",
+                    args.layer_id.get(),
+                    args.frame_index.get()
+                ),
+            });
+        };
+        compute_autotile_changes(data, &kind, args.source_tile)
+    };
+
+    if changes.is_empty() {
+        return Ok(());
+    }
+
+    let cmd = TileBulkCommand {
+        sprite_id: args.sprite_id,
+        layer_id: args.layer_id,
+        frame_index: args.frame_index,
+        changes,
+    };
+    let project = doc
+        .project
+        .as_mut()
+        .ok_or(AppCommandError::NoActiveProject)?;
+    doc.history
+        .push(Box::new(cmd), project)
+        .map_err(map_undo_error)?;
+    doc.dirty = true;
+
+    let payload = TilemapBulkChangedPayload {
+        sprite_id: args.sprite_id.get(),
+        layer_id: args.layer_id.get(),
+        frame_index: args.frame_index.get(),
+    };
+    if let Err(err) = app.emit("tilemap:bulk-changed", payload) {
+        tracing::warn!("failed to emit tilemap:bulk-changed: {err}");
+    }
+    Ok(())
+}
+
+/// Computes which cells the autotile resolver would change, given the
+/// current grid snapshot. Returns `(x, y, before, after)` for each cell
+/// whose contents would change.
+fn compute_autotile_changes(
+    data: &TilemapData,
+    kind: &AutotileKind,
+    source_tile: TileIndex,
+) -> Vec<(u32, u32, TileCell, TileCell)> {
+    let base = source_tile.get();
+    let mut changes = Vec::new();
+    for y in 0..data.height {
+        for x in 0..data.width {
+            // Skip cells that hold an unrelated tile (not empty, not source).
+            // Cells holding the source tile (or any tile in the autotile
+            // region near it) are eligible to be re-resolved as the
+            // neighbor pattern changes.
+            let current = data.cell(x, y).unwrap_or_else(TileCell::empty);
+            if !current.is_empty() && !is_autotile_member(current.index.get(), base) {
+                continue;
+            }
+            let resolved = resolve_autotile(data, x, y, kind, |c| c.is_some_and(|c| !c.is_empty()));
+            // Apply the source-tile base offset. resolve_autotile returns
+            // a 0..N tile index relative to the autotile region.
+            let target_index = base.saturating_add(resolved.index.get());
+            let target = TileCell {
+                index: TileIndex::new(target_index),
+                flags: resolved.flags,
+            };
+            // Empty source cells stay empty unless the resolver picked a
+            // non-zero offset that the caller wants painted; we treat
+            // empty in / empty out as a no-op.
+            if current.is_empty() && resolved.index.get() == 0 {
+                continue;
+            }
+            if current != target {
+                changes.push((x, y, current, target));
+            }
+        }
+    }
+    changes
+}
+
+/// Returns true if `index` falls in the autotile region anchored at `base`.
+///
+/// Blob47 has 47 tiles, Corner16 has 16, Minimal4 has 4 — bounded above by
+/// 47, so any tile within `[base, base + 47)` counts as "the user previously
+/// painted via autotile" and is fair game for re-resolution.
+fn is_autotile_member(index: u32, base: u32) -> bool {
+    index >= base && index < base.saturating_add(47)
+}
+
+fn emit_cell_changed(
+    app: &AppHandle,
+    sprite_id: SpriteId,
+    layer_id: LayerId,
+    frame_index: FrameIndex,
+    cell_x: u32,
+    cell_y: u32,
+) {
+    let payload = TilemapCellChangedPayload {
+        sprite_id: sprite_id.get(),
+        layer_id: layer_id.get(),
+        frame_index: frame_index.get(),
+        cell_x,
+        cell_y,
+    };
+    if let Err(err) = app.emit("tilemap:cell-changed", payload) {
+        tracing::warn!("failed to emit tilemap:cell-changed: {err}");
+    }
 }
 
 // ── Tileset management ────────────────────────────────────────────────────────
@@ -213,10 +979,382 @@ pub async fn tileset_rename(
     Ok(())
 }
 
+/// Sets per-tile metadata (collision, animation) on a tileset entry.
+///
+/// Pushes a project-level history entry so the change participates in
+/// undo/redo. Returns the updated tileset so the UI can refresh without
+/// a separate round-trip.
+#[tauri::command(async, rename_all = "snake_case")]
+pub async fn tileset_set_tile_metadata(
+    args: TilesetSetTileMetadataArgs,
+    state: State<'_, AppState>,
+) -> CommandResult<Tileset> {
+    let mut lock = state.doc.write().await;
+    let doc = &mut *lock;
+
+    let cmd = TilesetSetTileMetadataCommand {
+        sprite_id: args.sprite_id,
+        tileset_id: args.tileset_id,
+        tile_index: args.tile_index,
+        new_metadata: args.metadata,
+        prev: None,
+        prev_len: 0,
+    };
+    let project = doc
+        .project
+        .as_mut()
+        .ok_or(AppCommandError::NoActiveProject)?;
+    doc.history
+        .push(Box::new(cmd), project)
+        .map_err(map_undo_error)?;
+    doc.dirty = true;
+
+    // Return the updated tileset so the UI can refresh local state without
+    // a follow-up tileset_list round-trip.
+    let project = doc
+        .project
+        .as_ref()
+        .ok_or(AppCommandError::NoActiveProject)?;
+    let sprite = project
+        .sprites
+        .iter()
+        .find(|s| s.id == args.sprite_id)
+        .ok_or(AppCommandError::NotFound {
+            entity: "sprite".into(),
+            id: u64::from(args.sprite_id.get()),
+        })?;
+    let tileset = sprite
+        .tilesets
+        .iter()
+        .find(|t| t.id == args.tileset_id)
+        .ok_or(AppCommandError::NotFound {
+            entity: "tileset".into(),
+            id: u64::from(args.tileset_id.get()),
+        })?;
+    Ok(tileset.clone())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
-    use pixhaus_core::project::TileFlags;
+    use pixhaus_core::project::{BlendMode, CollisionShape, Layer, LayerKind, Project, Sprite};
+    use pixhaus_core::undo::History;
+
+    fn project_with_tilemap_layer() -> (Project, SpriteId, LayerId, TilesetId) {
+        let mut project = Project::new("test");
+        let sprite_id = SpriteId::new(1);
+        let layer_id = LayerId::new(2);
+        let tileset_id = TilesetId::new(3);
+        let mut sprite = Sprite::empty(sprite_id, "main", Size::new(64, 48));
+        sprite.tilesets.push(Tileset {
+            id: tileset_id,
+            name: "dungeon".into(),
+            tile_size: Size::new(16, 16),
+            tile_count: 64,
+            base_index: 1,
+            source: TilesetSource::Inline {
+                buffer: PixelBufferId::new(99),
+            },
+            properties: Vec::new(),
+            user_data: UserData::default(),
+        });
+        sprite.layers.push(Layer {
+            id: layer_id,
+            name: "ground".into(),
+            kind: LayerKind::Tilemap {
+                tileset: tileset_id,
+            },
+            blend_mode: BlendMode::Normal,
+            opacity: 255,
+            visible: true,
+            locked: false,
+            parent: None,
+            user_data: UserData::default(),
+        });
+        // Pre-populate a 4x3 tilemap cel at frame 0.
+        sprite.cels.push(Cel {
+            layer_id,
+            frame_index: FrameIndex::new(0),
+            position: IVec2::zero(),
+            opacity: 255,
+            data: CelData::Tilemap {
+                data: TilemapData::empty(4, 3),
+            },
+            user_data: UserData::default(),
+        });
+        project.sprites.push(sprite);
+        (project, sprite_id, layer_id, tileset_id)
+    }
+
+    #[test]
+    fn tile_set_cell_command_writes_and_reverts() {
+        let (mut project, sprite_id, layer_id, _tileset_id) = project_with_tilemap_layer();
+        let mut history = History::new();
+        let cmd = TileSetCellCommand {
+            sprite_id,
+            layer_id,
+            frame_index: FrameIndex::new(0),
+            cell_x: 1,
+            cell_y: 1,
+            new_cell: TileCell {
+                index: TileIndex::new(5),
+                flags: TileFlags::FLIP_X,
+            },
+            prev_cell: TileCell::empty(),
+            label: "place tile",
+        };
+        history.push(Box::new(cmd), &mut project).unwrap();
+
+        // Cell should now hold the placed tile.
+        let data =
+            find_tilemap_data_mut(&mut project, sprite_id, layer_id, FrameIndex::new(0)).unwrap();
+        assert_eq!(
+            data.cell(1, 1).unwrap(),
+            TileCell {
+                index: TileIndex::new(5),
+                flags: TileFlags::FLIP_X,
+            },
+        );
+
+        history.undo(&mut project).unwrap();
+        let data =
+            find_tilemap_data_mut(&mut project, sprite_id, layer_id, FrameIndex::new(0)).unwrap();
+        assert_eq!(data.cell(1, 1).unwrap(), TileCell::empty());
+    }
+
+    #[test]
+    fn tile_set_cell_command_rejects_out_of_bounds() {
+        let (mut project, sprite_id, layer_id, _tileset_id) = project_with_tilemap_layer();
+        let mut history = History::new();
+        // Grid is 4x3; (5, 5) is out of range.
+        let cmd = TileSetCellCommand {
+            sprite_id,
+            layer_id,
+            frame_index: FrameIndex::new(0),
+            cell_x: 5,
+            cell_y: 5,
+            new_cell: TileCell {
+                index: TileIndex::new(1),
+                flags: TileFlags::empty(),
+            },
+            prev_cell: TileCell::empty(),
+            label: "place tile",
+        };
+        let err = history.push(Box::new(cmd), &mut project).unwrap_err();
+        assert!(
+            matches!(err, UndoError::CommandFailed { .. }),
+            "expected CommandFailed for OOB cell, got {err:?}",
+        );
+    }
+
+    #[test]
+    fn lookup_tilemap_layer_rejects_non_tilemap_layer() {
+        let (mut project, sprite_id, _, _) = project_with_tilemap_layer();
+        // Add a raster layer alongside the tilemap layer.
+        let raster_id = LayerId::new(99);
+        project.sprites[0]
+            .layers
+            .push(Layer::raster(raster_id, "fx"));
+
+        let err = lookup_tilemap_layer(&project, sprite_id, raster_id).unwrap_err();
+        assert!(
+            matches!(err, AppCommandError::Validation { .. }),
+            "non-tilemap layer must reject as Validation, got {err:?}",
+        );
+    }
+
+    #[test]
+    fn lookup_tilemap_layer_returns_tileset_id() {
+        let (project, sprite_id, layer_id, tileset_id) = project_with_tilemap_layer();
+        let (_, ts) = lookup_tilemap_layer(&project, sprite_id, layer_id).unwrap();
+        assert_eq!(ts, tileset_id);
+    }
+
+    #[test]
+    fn validate_tile_index_rejects_out_of_range() {
+        let (project, sprite_id, _, tileset_id) = project_with_tilemap_layer();
+        // Tileset has tile_count=64; index 100 is out of range.
+        let cell = TileCell {
+            index: TileIndex::new(100),
+            flags: TileFlags::empty(),
+        };
+        let err = validate_tile_index(&project, sprite_id, tileset_id, cell).unwrap_err();
+        assert!(matches!(err, AppCommandError::Validation { .. }));
+    }
+
+    #[test]
+    fn validate_tile_index_passes_for_empty_cell() {
+        let (project, sprite_id, _, tileset_id) = project_with_tilemap_layer();
+        validate_tile_index(&project, sprite_id, tileset_id, TileCell::empty()).unwrap();
+    }
+
+    #[test]
+    fn resolve_rule_set_recognises_builtin_names() {
+        assert!(matches!(
+            resolve_rule_set("blob47"),
+            Ok(AutotileKind::Blob47)
+        ));
+        assert!(matches!(
+            resolve_rule_set("corner16"),
+            Ok(AutotileKind::Corner16)
+        ));
+        assert!(matches!(
+            resolve_rule_set("minimal4"),
+            Ok(AutotileKind::Minimal4)
+        ));
+    }
+
+    #[test]
+    fn resolve_rule_set_rejects_unknown() {
+        let err = resolve_rule_set("not-a-rule").unwrap_err();
+        assert!(matches!(err, AppCommandError::Validation { .. }));
+    }
+
+    #[test]
+    fn compute_autotile_changes_paints_minimal4_neighbors() {
+        // Build a 3x3 grid with the center cell holding the source tile;
+        // empty neighbors that touch the filled center get filled with
+        // base+1 (one cardinal connection), the center itself stays at
+        // base (zero cardinals).
+        let mut data = TilemapData::empty(3, 3);
+        data.cells[4] = TileCell {
+            index: TileIndex::new(10),
+            flags: TileFlags::empty(),
+        };
+        let changes = compute_autotile_changes(&data, &AutotileKind::Minimal4, TileIndex::new(10));
+        // The 4 cardinally-adjacent empty cells (N, E, S, W of center)
+        // each have one cardinal neighbor (the center), so they resolve
+        // to index 1 → target 11. The 4 corners and the center see no
+        // cardinal connections, so they stay put.
+        assert_eq!(
+            changes.len(),
+            4,
+            "expected 4 cardinal-adjacent empty cells to be painted",
+        );
+        for (_, _, before, after) in &changes {
+            assert_eq!(before.index.get(), 0);
+            assert_eq!(after.index.get(), 11);
+        }
+
+        // Fill all 9 cells with the source tile.
+        for cell in &mut data.cells {
+            cell.index = TileIndex::new(10);
+        }
+        let changes = compute_autotile_changes(&data, &AutotileKind::Minimal4, TileIndex::new(10));
+        // Center cell now has 4 cardinal neighbors -> index 3, target = 13.
+        let center = changes.iter().find(|(x, y, _, _)| *x == 1 && *y == 1);
+        assert!(
+            center.is_some(),
+            "fully-surrounded center should change with Minimal4",
+        );
+        let (_, _, before, after) = center.unwrap();
+        assert_eq!(before.index.get(), 10);
+        assert_eq!(after.index.get(), 13);
+    }
+
+    #[test]
+    fn is_autotile_member_bounds_check() {
+        // base=10, region [10, 57)
+        assert!(is_autotile_member(10, 10));
+        assert!(is_autotile_member(56, 10));
+        assert!(!is_autotile_member(57, 10));
+        assert!(!is_autotile_member(9, 10));
+    }
+
+    #[test]
+    fn tile_bulk_command_apply_undo_round_trip() {
+        let (mut project, sprite_id, layer_id, _) = project_with_tilemap_layer();
+        let mut history = History::new();
+        let target = TileCell {
+            index: TileIndex::new(7),
+            flags: TileFlags::empty(),
+        };
+        let changes = vec![
+            (0, 0, TileCell::empty(), target),
+            (3, 2, TileCell::empty(), target),
+        ];
+        let cmd = TileBulkCommand {
+            sprite_id,
+            layer_id,
+            frame_index: FrameIndex::new(0),
+            changes,
+        };
+        history.push(Box::new(cmd), &mut project).unwrap();
+        {
+            let data = find_tilemap_data_mut(&mut project, sprite_id, layer_id, FrameIndex::new(0))
+                .unwrap();
+            assert_eq!(data.cell(0, 0).unwrap(), target);
+            assert_eq!(data.cell(3, 2).unwrap(), target);
+        }
+        history.undo(&mut project).unwrap();
+        let data =
+            find_tilemap_data_mut(&mut project, sprite_id, layer_id, FrameIndex::new(0)).unwrap();
+        assert_eq!(data.cell(0, 0).unwrap(), TileCell::empty());
+        assert_eq!(data.cell(3, 2).unwrap(), TileCell::empty());
+    }
+
+    #[test]
+    fn tileset_set_tile_metadata_command_extends_and_undoes() {
+        let (mut project, sprite_id, _, tileset_id) = project_with_tilemap_layer();
+        let mut history = History::new();
+        let new_meta = TileProperties {
+            collision: CollisionShape::Full,
+            animation: None,
+        };
+        let cmd = TilesetSetTileMetadataCommand {
+            sprite_id,
+            tileset_id,
+            tile_index: TileIndex::new(3),
+            new_metadata: new_meta.clone(),
+            prev: None,
+            prev_len: 0,
+        };
+        history.push(Box::new(cmd), &mut project).unwrap();
+        {
+            let tileset = find_tileset_mut(&mut project, sprite_id, tileset_id).unwrap();
+            assert_eq!(tileset.properties.len(), 4);
+            assert_eq!(tileset.properties[3], new_meta);
+            // The pad entries before idx 3 should be defaults.
+            assert_eq!(tileset.properties[0], TileProperties::default());
+        }
+        history.undo(&mut project).unwrap();
+        let tileset = find_tileset_mut(&mut project, sprite_id, tileset_id).unwrap();
+        assert!(tileset.properties.is_empty());
+    }
+
+    #[test]
+    fn tileset_set_tile_metadata_command_overwrites_existing() {
+        let (mut project, sprite_id, _, tileset_id) = project_with_tilemap_layer();
+        // Pre-populate properties[1].
+        {
+            let tileset = find_tileset_mut(&mut project, sprite_id, tileset_id).unwrap();
+            tileset.properties.push(TileProperties::default());
+            tileset.properties.push(TileProperties::default());
+        }
+        let mut history = History::new();
+        let new_meta = TileProperties {
+            collision: CollisionShape::Full,
+            animation: None,
+        };
+        let cmd = TilesetSetTileMetadataCommand {
+            sprite_id,
+            tileset_id,
+            tile_index: TileIndex::new(1),
+            new_metadata: new_meta.clone(),
+            prev: None,
+            prev_len: 0,
+        };
+        history.push(Box::new(cmd), &mut project).unwrap();
+        {
+            let tileset = find_tileset_mut(&mut project, sprite_id, tileset_id).unwrap();
+            assert_eq!(tileset.properties.len(), 2);
+            assert_eq!(tileset.properties[1], new_meta);
+        }
+        history.undo(&mut project).unwrap();
+        let tileset = find_tileset_mut(&mut project, sprite_id, tileset_id).unwrap();
+        assert_eq!(tileset.properties.len(), 2);
+        assert_eq!(tileset.properties[1], TileProperties::default());
+    }
 
     #[test]
     fn tile_place_args_constructs() {
