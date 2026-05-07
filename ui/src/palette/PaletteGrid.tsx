@@ -134,12 +134,11 @@ const PaletteGrid: Component<Props> = (props) => {
       <div class="pgrid" role="listbox" aria-label="Palette swatches" aria-multiselectable="false">
         <For each={palette()?.colors ?? []}>
           {(entry: PaletteEntry, i) => {
-            const index = i();
-            const isFg = () => foregroundIndex() === index;
-            const isBg = () => backgroundIndex() === index;
-            const locked = () => lockedIndices().has(index);
-            const isDragSrc = () => dragFrom() === index;
-            const isDragTarget = () => dragOver() === index;
+            const isFg = () => foregroundIndex() === i();
+            const isBg = () => backgroundIndex() === i();
+            const locked = () => lockedIndices().has(i());
+            const isDragSrc = () => dragFrom() === i();
+            const isDragTarget = () => dragOver() === i();
 
             return (
               <button
@@ -154,15 +153,15 @@ const PaletteGrid: Component<Props> = (props) => {
                 style={{ background: rgbaToCss(entry.color) }}
                 role="option"
                 aria-selected={isFg()}
-                aria-label={entry.name ?? `Swatch ${index}`}
-                title={buildTitle(index, entry.color, entry.name)}
+                aria-label={entry.name ?? `Swatch ${i()}`}
+                title={buildTitle(i(), entry.color, entry.name)}
                 draggable={!locked()}
-                onClick={(e) => handleClick(e, index)}
-                onDblClick={() => handleDblClick(index)}
-                onContextMenu={(e) => handleContextMenu(e, index)}
-                onDragStart={(e) => handleDragStart(e, index)}
-                onDragOver={(e) => handleDragOver(e, index)}
-                onDrop={(e) => handleDrop(e, index)}
+                onClick={(e) => handleClick(e, i())}
+                onDblClick={() => handleDblClick(i())}
+                onContextMenu={(e) => handleContextMenu(e, i())}
+                onDragStart={(e) => handleDragStart(e, i())}
+                onDragOver={(e) => handleDragOver(e, i())}
+                onDrop={(e) => handleDrop(e, i())}
                 onDragEnd={handleDragEnd}
               >
                 <Show when={isFg()}>
