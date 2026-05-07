@@ -1,19 +1,42 @@
-import { open as dialogOpen, save as dialogSave } from "@tauri-apps/plugin-dialog";
+import {
+  open as dialogOpen,
+  save as dialogSave,
+  confirm,
+  message,
+} from "@tauri-apps/plugin-dialog";
 import { isCommandPaletteOpen, openCommandPalette, closeCommandPalette } from "../palette-state";
 import { openPreferences } from "../preferences/preferences-state";
 import { keybindPreset, customKeybinds } from "../preferences/preferences-store";
 import { ASEPRITE_DEFAULTS, PHOTOSHOP_DEFAULTS, defaultCombo } from "../keybinds/defaults";
-import { projectNew, projectOpen, projectSave, projectClose } from "../lib/commands/project";
-import { setActiveProject, pushRecentProject } from "../project-state";
+import {
+  projectNew,
+  projectOpen,
+  projectSave,
+  projectClose,
+  spriteAdd,
+  spriteDelete,
+  spriteList,
+} from "../lib/commands/project";
+import { setActiveProject, pushRecentProject, activeProject } from "../project-state";
 import { extractFilename } from "../lib/utils/path";
 import { reportCommandFailure } from "../lib/utils/errors";
 import {
   activeSpriteId,
+  setActiveSpriteId,
+  activeFrameIndex,
   activeLayerId,
   setIsSelectMode,
   setSelectionRect,
   setTransformBounds,
+  zoom,
+  setZoom,
+  showTileGrid,
+  setShowTileGrid,
+  showPixelGrid,
+  setShowPixelGrid,
+  resetViewport,
 } from "../canvas/canvas-state";
+import { snapZoom } from "../canvas/viewport";
 import { setSelectTool } from "../canvas/select/select-state";
 import { commitDeselect } from "../canvas/select/select-input";
 import {
@@ -22,7 +45,15 @@ import {
   dispatchRotateCw,
   dispatchRotateCcw,
 } from "../canvas/transform/transform-input";
-import { canvasSelectAll, canvasInvertSelection } from "../lib/commands/canvas";
+import {
+  canvasSelectAll,
+  canvasInvertSelection,
+  canvasSetSelection,
+  canvasComposite,
+} from "../lib/commands/canvas";
+import { undo, redo } from "../lib/commands/undo";
+import { frameAdd, frameDelete, frameDuplicate } from "../lib/commands/frames";
+import { appAbout } from "../lib/commands/app_info";
 import { pushToast } from "../lib/toast/toast-state";
 import {
   addLayer,
@@ -31,7 +62,14 @@ import {
   isLayerPanelVisible,
   setLayerPanelVisible,
 } from "../layers/layer-state";
+import { refreshTimeline } from "../timeline/timeline-state";
 import { isTimelinePanelVisible, setTimelinePanelVisible } from "../timeline/timeline-state";
+import {
+  isPalettePanelVisible,
+  setPalettePanelVisible,
+  isTilemapPanelVisible,
+  setTilemapPanelVisible,
+} from "../shell/panel-state";
 import {
   tilemapTool,
   setTilemapTool,
@@ -50,6 +88,13 @@ type CommandEntry = Command & { readonly handler: () => void };
 
 const PIXHAUS_FILTER = [{ name: "Pixhaus Projects", extensions: ["pixhaus"] }];
 
+// Default canvas size for new sprites. Matches the welcome screen's
+// project_new flow, which leaves the initial sprite at this size.
+const DEFAULT_SPRITE_SIZE = 32;
+
+// Documentation URL opened by the help:docs command.
+const DOCS_URL = "https://pixhaus.app/docs";
+
 // Opens a native file-open dialog. Returns the selected path or null.
 async function pickOpenPath(): Promise<string | null> {
   return dialogOpen({ multiple: false as const, filters: PIXHAUS_FILTER });
@@ -61,8 +106,15 @@ async function pickSavePath(): Promise<string | null> {
   return typeof result === "string" ? result : null;
 }
 
-function stub(id: string): () => void {
-  return () => console.warn(`[pixhaus] command "${id}" not yet implemented`);
+// Reads the live viewport size from the canvas container so zoom-fit
+// can pick the correct snap level. Returns null when the canvas isn't
+// mounted (welcome screen, no project open).
+function getCanvasViewportRect(): { width: number; height: number } | null {
+  const el = document.querySelector(".canvas-container");
+  if (!(el instanceof HTMLElement)) return null;
+  const rect = el.getBoundingClientRect();
+  if (rect.width <= 0 || rect.height <= 0) return null;
+  return { width: rect.width, height: rect.height };
 }
 
 const COMMANDS: ReadonlyMap<string, CommandEntry> = new Map<string, CommandEntry>([
@@ -143,13 +195,45 @@ const COMMANDS: ReadonlyMap<string, CommandEntry> = new Map<string, CommandEntry
   ],
 
   // ── Edit ──────────────────────────────────────────────────────────────────
-  ["edit:undo", { id: "edit:undo", label: "Undo", category: "Edit", handler: stub("edit:undo") }],
-  ["edit:redo", { id: "edit:redo", label: "Redo", category: "Edit", handler: stub("edit:redo") }],
-  ["edit:cut", { id: "edit:cut", label: "Cut", category: "Edit", handler: stub("edit:cut") }],
-  ["edit:copy", { id: "edit:copy", label: "Copy", category: "Edit", handler: stub("edit:copy") }],
+  //
+  // edit:cut, edit:copy, edit:paste are intentionally absent. They require
+  // a clipboard pipeline (Tauri clipboard plugin + selection-bounds → pixel
+  // bytes round-trip) that hasn't been wired yet, and the existing IPC
+  // surface can't shape the operation cleanly in isolation. Keybinds in
+  // defaults.ts still reference these IDs; dispatchCommand will log an
+  // unknown-command warning until the clipboard work lands.
   [
-    "edit:paste",
-    { id: "edit:paste", label: "Paste", category: "Edit", handler: stub("edit:paste") },
+    "edit:undo",
+    {
+      id: "edit:undo",
+      label: "Undo",
+      category: "Edit",
+      handler: () => {
+        undo().catch((err: unknown) => {
+          const e = err as { kind?: string };
+          // NothingToUndo is an expected "stack empty" state, not an error
+          // worth a toast — the menu/keybind fires whether or not there's
+          // anything queued. Drop it on the floor.
+          if (e?.kind === "NothingToUndo") return;
+          reportCommandFailure("undo", err);
+        });
+      },
+    },
+  ],
+  [
+    "edit:redo",
+    {
+      id: "edit:redo",
+      label: "Redo",
+      category: "Edit",
+      handler: () => {
+        redo().catch((err: unknown) => {
+          const e = err as { kind?: string };
+          if (e?.kind === "NothingToRedo") return;
+          reportCommandFailure("redo", err);
+        });
+      },
+    },
   ],
   [
     "edit:select-all",
@@ -157,18 +241,84 @@ const COMMANDS: ReadonlyMap<string, CommandEntry> = new Map<string, CommandEntry
       id: "edit:select-all",
       label: "Select All",
       category: "Edit",
-      handler: stub("edit:select-all"),
+      handler: () => {
+        const spriteId = activeSpriteId();
+        if (spriteId === null) return;
+        canvasSelectAll(spriteId)
+          .then((state) => {
+            if (state.region?.kind === "rect") {
+              const b = state.region.bounds;
+              setSelectionRect({
+                x: b.origin.x,
+                y: b.origin.y,
+                width: b.size.width,
+                height: b.size.height,
+              });
+            }
+            setIsSelectMode(true);
+          })
+          .catch((err: unknown) => reportCommandFailure("canvas_select_all", err));
+      },
     },
   ],
   [
     "edit:deselect",
-    { id: "edit:deselect", label: "Deselect", category: "Edit", handler: stub("edit:deselect") },
+    {
+      id: "edit:deselect",
+      label: "Deselect",
+      category: "Edit",
+      handler: () => {
+        canvasSetSelection(null, null)
+          .then(() => {
+            setSelectionRect(null);
+            setIsSelectMode(false);
+            setTransformBounds(null);
+          })
+          .catch((err: unknown) => reportCommandFailure("canvas_set_selection", err));
+      },
+    },
   ],
 
   // ── Sprite ────────────────────────────────────────────────────────────────
   [
     "sprite:new",
-    { id: "sprite:new", label: "New Sprite", category: "Sprite", handler: stub("sprite:new") },
+    {
+      id: "sprite:new",
+      label: "New Sprite",
+      category: "Sprite",
+      handler: () => {
+        if (activeProject() === null) {
+          pushToast({ kind: "info", title: "Open or create a project first." });
+          return;
+        }
+        spriteAdd({
+          name: "Untitled",
+          canvas_width: DEFAULT_SPRITE_SIZE,
+          canvas_height: DEFAULT_SPRITE_SIZE,
+          color_mode: "rgba",
+        })
+          .then((sprite) => {
+            // Sit the new sprite under the cursor: clear any previous
+            // selection, point the canvas at the new id, and reset the
+            // viewport so it appears centred.
+            setSelectionRect(null);
+            setTransformBounds(null);
+            const vp = getCanvasViewportRect();
+            if (vp !== null) {
+              resetViewport(
+                sprite.canvas.width,
+                sprite.canvas.height,
+                vp.width,
+                vp.height,
+                sprite.id,
+              );
+            } else {
+              setActiveSpriteId(sprite.id);
+            }
+          })
+          .catch((err: unknown) => reportCommandFailure("sprite_add", err));
+      },
+    },
   ],
   [
     "sprite:delete",
@@ -176,18 +326,82 @@ const COMMANDS: ReadonlyMap<string, CommandEntry> = new Map<string, CommandEntry
       id: "sprite:delete",
       label: "Delete Sprite",
       category: "Sprite",
-      handler: stub("sprite:delete"),
+      handler: () => {
+        const id = activeSpriteId();
+        if (id === null) {
+          pushToast({ kind: "info", title: "No active sprite to delete." });
+          return;
+        }
+        confirm("Delete the active sprite? This can be undone.", {
+          title: "Delete Sprite",
+          kind: "warning",
+        })
+          .then((ok) => {
+            if (!ok) return;
+            return spriteDelete(id).then(() => {
+              // Pick a remaining sprite (if any) so the canvas doesn't
+              // sit on a dead id.
+              return spriteList().then((sprites) => {
+                const next = sprites[0];
+                if (next === undefined) {
+                  setActiveSpriteId(null);
+                  return;
+                }
+                const vp = getCanvasViewportRect();
+                if (vp !== null) {
+                  resetViewport(
+                    next.canvas.width,
+                    next.canvas.height,
+                    vp.width,
+                    vp.height,
+                    next.id,
+                  );
+                } else {
+                  setActiveSpriteId(next.id);
+                }
+              });
+            });
+          })
+          .catch((err: unknown) => reportCommandFailure("sprite_delete", err));
+      },
     },
   ],
 
   // ── Frame ─────────────────────────────────────────────────────────────────
   [
     "frame:new",
-    { id: "frame:new", label: "Add Frame", category: "Frame", handler: stub("frame:new") },
+    {
+      id: "frame:new",
+      label: "Add Frame",
+      category: "Frame",
+      handler: () => {
+        const spriteId = activeSpriteId();
+        if (spriteId === null) return;
+        // Re-use the duration of the currently-active frame so quick
+        // additions keep the timeline cadence consistent. frame_add
+        // always appends to the end; if the user wants insertion
+        // semantics they can use the timeline panel.
+        frameAdd(spriteId, 100)
+          .then(() => refreshTimeline())
+          .catch((err: unknown) => reportCommandFailure("frame_add", err));
+      },
+    },
   ],
   [
     "frame:delete",
-    { id: "frame:delete", label: "Delete Frame", category: "Frame", handler: stub("frame:delete") },
+    {
+      id: "frame:delete",
+      label: "Delete Frame",
+      category: "Frame",
+      handler: () => {
+        const spriteId = activeSpriteId();
+        if (spriteId === null) return;
+        const idx = activeFrameIndex();
+        frameDelete(spriteId, idx)
+          .then(() => refreshTimeline())
+          .catch((err: unknown) => reportCommandFailure("frame_delete", err));
+      },
+    },
   ],
   [
     "frame:duplicate",
@@ -195,7 +409,14 @@ const COMMANDS: ReadonlyMap<string, CommandEntry> = new Map<string, CommandEntry
       id: "frame:duplicate",
       label: "Duplicate Frame",
       category: "Frame",
-      handler: stub("frame:duplicate"),
+      handler: () => {
+        const spriteId = activeSpriteId();
+        if (spriteId === null) return;
+        const idx = activeFrameIndex();
+        frameDuplicate(spriteId, idx)
+          .then(() => refreshTimeline())
+          .catch((err: unknown) => reportCommandFailure("frame_duplicate", err));
+      },
     },
   ],
 
@@ -488,11 +709,21 @@ const COMMANDS: ReadonlyMap<string, CommandEntry> = new Map<string, CommandEntry
   // ── View ──────────────────────────────────────────────────────────────────
   [
     "view:zoom-in",
-    { id: "view:zoom-in", label: "Zoom In", category: "View", handler: stub("view:zoom-in") },
+    {
+      id: "view:zoom-in",
+      label: "Zoom In",
+      category: "View",
+      handler: () => setZoom(snapZoom(zoom(), 1)),
+    },
   ],
   [
     "view:zoom-out",
-    { id: "view:zoom-out", label: "Zoom Out", category: "View", handler: stub("view:zoom-out") },
+    {
+      id: "view:zoom-out",
+      label: "Zoom Out",
+      category: "View",
+      handler: () => setZoom(snapZoom(zoom(), -1)),
+    },
   ],
   [
     "view:zoom-fit",
@@ -500,12 +731,30 @@ const COMMANDS: ReadonlyMap<string, CommandEntry> = new Map<string, CommandEntry
       id: "view:zoom-fit",
       label: "Fit to Window",
       category: "View",
-      handler: stub("view:zoom-fit"),
+      handler: () => {
+        const spriteId = activeSpriteId();
+        if (spriteId === null) return;
+        const vp = getCanvasViewportRect();
+        if (vp === null) return;
+        // Fetch the sprite's canvas dimensions so resetViewport picks the
+        // right snap level. canvas_composite is cheap (returns metadata
+        // only) and avoids duplicating spriteList here.
+        canvasComposite(spriteId)
+          .then((info) => {
+            resetViewport(info.sprite_width, info.sprite_height, vp.width, vp.height, spriteId);
+          })
+          .catch((err: unknown) => reportCommandFailure("canvas_composite", err));
+      },
     },
   ],
   [
     "view:zoom-100",
-    { id: "view:zoom-100", label: "100%", category: "View", handler: stub("view:zoom-100") },
+    {
+      id: "view:zoom-100",
+      label: "100%",
+      category: "View",
+      handler: () => setZoom(1),
+    },
   ],
   [
     "view:toggle-grid",
@@ -513,7 +762,7 @@ const COMMANDS: ReadonlyMap<string, CommandEntry> = new Map<string, CommandEntry
       id: "view:toggle-grid",
       label: "Toggle Grid",
       category: "View",
-      handler: stub("view:toggle-grid"),
+      handler: () => setShowTileGrid(!showTileGrid()),
     },
   ],
   [
@@ -522,11 +771,13 @@ const COMMANDS: ReadonlyMap<string, CommandEntry> = new Map<string, CommandEntry
       id: "view:toggle-pixel-grid",
       label: "Toggle Pixel Grid",
       category: "View",
-      handler: stub("view:toggle-pixel-grid"),
+      handler: () => setShowPixelGrid(!showPixelGrid()),
     },
   ],
 
   // ── AI ────────────────────────────────────────────────────────────────────
+  // The verb runtime + backend-config flow is a separate effort. Until then
+  // these entries forward to the unified stub so the menu remains discoverable.
   [
     "ai:inbetween",
     {
@@ -611,7 +862,7 @@ const COMMANDS: ReadonlyMap<string, CommandEntry> = new Map<string, CommandEntry
       id: "window:toggle-palette",
       label: "Toggle Color Palette",
       category: "Window",
-      handler: stub("window:toggle-palette"),
+      handler: () => setPalettePanelVisible(!isPalettePanelVisible()),
     },
   ],
   [
@@ -621,20 +872,49 @@ const COMMANDS: ReadonlyMap<string, CommandEntry> = new Map<string, CommandEntry
       label: "Toggle Tilemap Panel",
       category: "Window",
       keywords: ["tiles", "autotile", "tileset"],
-      handler: stub("window:toggle-tilemap"),
+      handler: () => setTilemapPanelVisible(!isTilemapPanelVisible()),
     },
   ],
 
   // ── Help ──────────────────────────────────────────────────────────────────
   [
     "help:docs",
-    { id: "help:docs", label: "Documentation", category: "Help", handler: stub("help:docs") },
+    {
+      id: "help:docs",
+      label: "Documentation",
+      category: "Help",
+      handler: () => {
+        // No shell-open / opener plugin is registered yet, so route through
+        // the browser. The Tauri webview honours window.open with
+        // tauri.conf.json's default permissions; if a future config locks
+        // this down, swap in tauri-plugin-opener.
+        window.open(DOCS_URL, "_blank");
+      },
+    },
   ],
   [
     "help:about",
-    { id: "help:about", label: "About Pixhaus", category: "Help", handler: stub("help:about") },
+    {
+      id: "help:about",
+      label: "About Pixhaus",
+      category: "Help",
+      handler: () => {
+        appAbout()
+          .then((info) => {
+            return message(`${info.name} ${info.version}`, {
+              title: "About Pixhaus",
+              kind: "info",
+            });
+          })
+          .catch((err: unknown) => reportCommandFailure("app_about", err));
+      },
+    },
   ],
 ]);
+
+function stub(id: string): () => void {
+  return () => console.warn(`[pixhaus] command "${id}" not yet implemented`);
+}
 
 // Returns all commands with their current keybind resolved from preferences.
 export function getAllCommands(): ReadonlyArray<Command & { keybind?: string }> {
