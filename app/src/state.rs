@@ -50,6 +50,12 @@ pub(crate) struct DocumentStore {
     /// — they are not persisted in `.pixhaus` and don't survive a project
     /// close.
     pub(crate) active_strokes: HashMap<u32, StrokeSession>,
+    /// Counter for stroke session ids. Separate from `next_id` because
+    /// sessions are ephemeral — they live for the duration of one drag
+    /// and never appear in the project file. Sharing `next_id` would
+    /// inflate it on every stroke and waste id space for layers,
+    /// sprites, palettes, and pixel buffers that DO survive.
+    pub(crate) next_session_id: u32,
 }
 
 /// One in-flight stroke. Lives in `DocumentStore::active_strokes` between
@@ -57,11 +63,12 @@ pub(crate) struct DocumentStore {
 /// pre-stroke pixels and the final commit records exactly one undo entry
 /// for the whole drag.
 ///
-/// `Clone` is implemented because `rasterize_session` needs an owned
-/// snapshot of the session to read while the surrounding `DocumentStore`
-/// is borrowed mutably (the rasterize path mutates `pixel_buffers`).
-/// The clone copies `initial_pixels` (up to canvas-size * 4 bytes), which
-/// is acceptable at one clone per extend.
+/// `Clone` is implemented because the rasterize path needs an owned
+/// snapshot to read after the `DocumentStore` write-lock has been
+/// released. `initial_pixels` is wrapped in `Arc` so each clone is
+/// O(1) regardless of canvas size — at RAF cadence on large canvases
+/// the cost of a per-extend `Vec::clone` of `width * height * 4` bytes
+/// would be prohibitive.
 #[derive(Clone)]
 pub(crate) struct StrokeSession {
     pub(crate) sprite_id: SpriteId,
@@ -71,9 +78,15 @@ pub(crate) struct StrokeSession {
     pub(crate) layer_id: LayerId,
     pub(crate) frame_index: u32,
     pub(crate) buffer_id: PixelBufferId,
+    /// Buffer dimensions captured at begin so the rasterize path can
+    /// run without re-reading the buffer entry under the doc lock.
+    pub(crate) buf_width: u32,
+    pub(crate) buf_height: u32,
+    pub(crate) buf_stride: u32,
     /// Buffer pixels at the moment the stroke began. Re-rasterized from
-    /// on every extend so partial strokes never accumulate.
-    pub(crate) initial_pixels: Vec<u8>,
+    /// on every extend so partial strokes never accumulate. Wrapped in
+    /// `Arc` so cloning the session is constant-time.
+    pub(crate) initial_pixels: Arc<Vec<u8>>,
     /// All points received via begin + extend so far, in order.
     pub(crate) points: Vec<[f32; 2]>,
     pub(crate) color: Rgba,
@@ -99,6 +112,7 @@ impl Default for DocumentStore {
             pixel_buffers: Vec::new(),
             pixel_history: PixelHistory::new(),
             active_strokes: HashMap::new(),
+            next_session_id: 1,
         }
     }
 }

@@ -5,6 +5,8 @@
 //! implemented as of stream S04. Viewport, selection, and composite-info
 //! commands are fully implemented.
 
+use std::sync::Arc;
+
 use base64::Engine;
 use pixhaus_core::canvas::PixelBuffer;
 use pixhaus_core::canvas::tools::{BrushShape, draw_stroke, flood_fill};
@@ -639,12 +641,18 @@ pub async fn canvas_draw_stroke(
 //
 // Sessions live in `DocumentStore::active_strokes` keyed by `u32`
 // session id. Mid-flight pixels are written straight to the buffer; the
-// session retains a copy of the pre-stroke pixels so each extend can
-// re-rasterize from a clean baseline. If a session is abandoned (browser
-// loses focus, frontend crash) it lingers in the map until the next
-// session begins on the same buffer; that next-begin discards the orphan
-// without committing it. The mid-flight pixels remain on the buffer —
-// no rollback — so the user keeps the visual but loses one undo step.
+// session retains a `Arc<Vec<u8>>` of the pre-stroke pixels so each
+// extend can re-rasterize from a clean baseline cheaply. If a session
+// is abandoned (browser loses focus, frontend crash) it lingers in the
+// map until the next session begins on the same buffer; that next-begin
+// discards the orphan without committing it. The mid-flight pixels
+// remain on the buffer — no rollback — so the user keeps the visual but
+// loses one undo step.
+//
+// The frontend promise-queues extend / end calls so they reach the
+// backend strictly in order — without that, an `extend` could land
+// after the `end` that meant to commit it and either drop the points
+// or fail with `NotFound`.
 
 /// Arguments for `canvas_begin_stroke`.
 #[derive(Debug, Deserialize)]
@@ -697,18 +705,16 @@ pub struct EndStrokeArgs {
 /// Pure rasterize: produces the post-stroke pixels without mutating
 /// any shared state or emitting events. Extracted so tests can assert
 /// the brush math without standing up a Tauri runtime.
-fn rasterize_session_pixels(
-    session: &StrokeSession,
-    w: u32,
-    h: u32,
-    stride: u32,
-) -> CommandResult<Vec<u8>> {
-    let mut pbuf =
-        PixelBuffer::from_raw(w, h, stride, session.initial_pixels.clone()).map_err(|e| {
-            AppCommandError::Validation {
-                detail: e.to_string(),
-            }
-        })?;
+fn rasterize_session_pixels(session: &StrokeSession) -> CommandResult<Vec<u8>> {
+    let mut pbuf = PixelBuffer::from_raw(
+        session.buf_width,
+        session.buf_height,
+        session.buf_stride,
+        (*session.initial_pixels).clone(),
+    )
+    .map_err(|e| AppCommandError::Validation {
+        detail: e.to_string(),
+    })?;
     let color = if session.erase {
         Rgba::transparent()
     } else {
@@ -726,16 +732,140 @@ fn rasterize_session_pixels(
     Ok(pbuf.as_bytes().to_vec())
 }
 
+/// Pixel coords above 2^23 round-trip imprecisely through f32 anyway,
+/// and any real canvas is much smaller — clamp to a safely-representable
+/// ±16M window before casting.
+const F32_INT_LIMIT: f32 = 8_388_608.0; // 2^23
+
+/// Range of tiles `tx_min..=tx_max, ty_min..=ty_max` that cover the
+/// pixel-space rectangle painted by `points` with a brush of diameter
+/// `brush_size`. Returns `None` when the rect doesn't intersect the
+/// buffer at all (e.g. all points are off-canvas, or the points slice
+/// is empty, or every coord is non-finite).
+#[allow(
+    clippy::cast_possible_wrap,
+    clippy::cast_possible_truncation,
+    clippy::cast_sign_loss,
+    clippy::similar_names,
+    reason = "intermediate i64 math then clamping to in-range u32; values stay in [0, buf-1]"
+)]
+fn dirty_tile_range(
+    points: &[[f32; 2]],
+    brush_size: u32,
+    buf_w: u32,
+    buf_h: u32,
+) -> Option<(u32, u32, u32, u32)> {
+    if points.is_empty() || buf_w == 0 || buf_h == 0 {
+        return None;
+    }
+    // Brush extends `radius` pixels in each direction from a point. A
+    // single-pixel brush has radius 0 (one pixel painted at the point).
+    let radius = i64::from(brush_size.saturating_sub(1) / 2);
+    let buf_w_i = i64::from(buf_w);
+    let buf_h_i = i64::from(buf_h);
+
+    let mut min_x = i64::MAX;
+    let mut min_y = i64::MAX;
+    let mut max_x = i64::MIN;
+    let mut max_y = i64::MIN;
+    for p in points {
+        let xf = p[0].round();
+        let yf = p[1].round();
+        if !xf.is_finite() || !yf.is_finite() {
+            continue;
+        }
+        let xi = xf.clamp(-F32_INT_LIMIT, F32_INT_LIMIT) as i64;
+        let yi = yf.clamp(-F32_INT_LIMIT, F32_INT_LIMIT) as i64;
+        min_x = min_x.min(xi.saturating_sub(radius));
+        min_y = min_y.min(yi.saturating_sub(radius));
+        max_x = max_x.max(xi.saturating_add(radius));
+        max_y = max_y.max(yi.saturating_add(radius));
+    }
+    if max_x == i64::MIN {
+        // Every point was non-finite.
+        return None;
+    }
+
+    let min_x = min_x.max(0);
+    let min_y = min_y.max(0);
+    let max_x = max_x.min(buf_w_i - 1);
+    let max_y = max_y.min(buf_h_i - 1);
+    if min_x > max_x || min_y > max_y {
+        return None;
+    }
+
+    let tx_min = (min_x as u32) / TILE_SIZE;
+    let ty_min = (min_y as u32) / TILE_SIZE;
+    let tx_max = (max_x as u32) / TILE_SIZE;
+    let ty_max = (max_y as u32) / TILE_SIZE;
+    Some((tx_min, tx_max, ty_min, ty_max))
+}
+
+/// Emits `canvas:tile-dirty` for the tiles that cover the painted
+/// region of `new_points` (plus brush radius). Other tiles are
+/// untouched by this extend and the renderer's tile cache is still
+/// valid for them.
+#[allow(
+    clippy::similar_names,
+    reason = "tx_min/tx_max/ty_min/ty_max convey tile-rect bounds clearly"
+)]
+fn emit_dirty_tiles_for_points(
+    app: &AppHandle,
+    session: &StrokeSession,
+    new_points: &[[f32; 2]],
+    pixels: &[u8],
+) {
+    let Some((tx_min, tx_max, ty_min, ty_max)) = dirty_tile_range(
+        new_points,
+        session.brush_size,
+        session.buf_width,
+        session.buf_height,
+    ) else {
+        return;
+    };
+    for ty in ty_min..=ty_max {
+        for tx in tx_min..=tx_max {
+            let x0 = tx * TILE_SIZE;
+            let y0 = ty * TILE_SIZE;
+            let w = (session.buf_width - x0).min(TILE_SIZE);
+            let h = (session.buf_height - y0).min(TILE_SIZE);
+            let mut tile_bytes = vec![0u8; (w * h * 4) as usize];
+            for row in 0..h {
+                let src = ((y0 + row) as usize * session.buf_stride as usize + x0 as usize * 4)
+                    .min(pixels.len());
+                let dst = row as usize * w as usize * 4;
+                let copy_len = (w as usize * 4).min(pixels.len().saturating_sub(src));
+                tile_bytes[dst..dst + copy_len].copy_from_slice(&pixels[src..src + copy_len]);
+            }
+            let data = base64::engine::general_purpose::STANDARD.encode(&tile_bytes);
+            let payload = TileDirtyPayload {
+                sprite_id: session.sprite_id.get(),
+                frame_index: session.frame_index,
+                tile_x: tx,
+                tile_y: ty,
+                width: w,
+                height: h,
+                data,
+            };
+            if let Err(err) = app.emit("canvas:tile-dirty", payload) {
+                tracing::warn!("failed to emit canvas:tile-dirty tile ({tx},{ty}): {err}");
+            }
+        }
+    }
+}
+
 /// Re-rasterizes a session into its target buffer and emits tile-dirty
-/// events for the whole buffer area. Does NOT record undo. Returns the
-/// post-paint pixels so callers can use them for subsequent operations
-/// (e.g. `canvas_end_stroke` capturing the after-state for the undo
-/// entry).
-fn rasterize_session(
+/// events for the tiles intersecting `new_points`. Does NOT record undo.
+/// Returns the post-paint pixels so callers can use them for subsequent
+/// operations (e.g. `canvas_end_stroke` capturing the after-state for
+/// the undo entry).
+fn rasterize_session_and_emit(
     doc: &mut crate::state::DocumentStore,
     app: &AppHandle,
     session: &StrokeSession,
+    new_points: &[[f32; 2]],
 ) -> CommandResult<Vec<u8>> {
+    let pixels = rasterize_session_pixels(session)?;
     let entry = doc
         .pixel_buffers
         .iter_mut()
@@ -744,21 +874,8 @@ fn rasterize_session(
             entity: "pixel buffer".into(),
             id: u64::from(session.buffer_id.get()),
         })?;
-
-    let (w, h, stride) = (entry.width, entry.height, entry.stride);
-    let pixels = rasterize_session_pixels(session, w, h, stride)?;
     entry.pixels.clone_from(&pixels);
-
-    emit_buffer_tiles(
-        app,
-        session.sprite_id.get(),
-        session.frame_index,
-        w,
-        h,
-        stride,
-        &pixels,
-    );
-
+    emit_dirty_tiles_for_points(app, session, new_points, &pixels);
     Ok(pixels)
 }
 
@@ -788,7 +905,7 @@ pub async fn canvas_begin_stroke(
     doc.active_strokes
         .retain(|_, s| s.buffer_id.get() != buffer_id.get());
 
-    let initial_pixels = {
+    let (initial_pixels, buf_width, buf_height, buf_stride) = {
         let entry = doc
             .pixel_buffers
             .iter()
@@ -797,11 +914,16 @@ pub async fn canvas_begin_stroke(
                 entity: "pixel buffer".into(),
                 id: u64::from(buffer_id.get()),
             })?;
-        entry.pixels.clone()
+        (
+            Arc::new(entry.pixels.clone()),
+            entry.width,
+            entry.height,
+            entry.stride,
+        )
     };
 
-    let session_id = doc.next_id;
-    doc.next_id += 1;
+    let session_id = doc.next_session_id;
+    doc.next_session_id += 1;
 
     let label = if args.erase { "eraser" } else { "stroke" }.to_owned();
 
@@ -810,6 +932,9 @@ pub async fn canvas_begin_stroke(
         layer_id: args.layer_id,
         frame_index: args.frame_index,
         buffer_id,
+        buf_width,
+        buf_height,
+        buf_stride,
         initial_pixels,
         points: Vec::new(),
         color: args.color,
@@ -824,12 +949,12 @@ pub async fn canvas_begin_stroke(
     }
 
     // Paint the first point immediately if one was provided so the user
-    // sees the click anchor before the first mousemove. Rasterize from a
-    // local clone before inserting into the map — avoids the borrow-then-
-    // re-fetch dance.
+    // sees the click anchor before the first mousemove. Clone is O(1)
+    // because `initial_pixels` is `Arc`.
     if !session.points.is_empty() {
         let snapshot = session.clone();
-        rasterize_session(doc, &app, &snapshot)?;
+        let new_points = snapshot.points.clone();
+        rasterize_session_and_emit(doc, &app, &snapshot, &new_points)?;
     }
     doc.active_strokes.insert(session_id, session);
 
@@ -862,7 +987,7 @@ pub async fn canvas_extend_stroke(
         session.points.extend_from_slice(&args.new_points);
         session.clone()
     };
-    rasterize_session(doc, &app, &snapshot)?;
+    rasterize_session_and_emit(doc, &app, &snapshot, &args.new_points)?;
     Ok(())
 }
 
@@ -883,8 +1008,8 @@ pub async fn canvas_end_stroke(
     let doc = &mut *lock;
 
     // Validate up front so we never start re-rasterizing for an unknown
-    // id and have to roll back. The clone here is throwaway — the real
-    // session is consumed via `remove` below.
+    // id and have to roll back. The clone here is O(1) because
+    // `initial_pixels` is `Arc`.
     let snapshot = {
         let session = doc
             .active_strokes
@@ -896,11 +1021,11 @@ pub async fn canvas_end_stroke(
         session.points.extend_from_slice(&args.new_points);
         session.clone()
     };
-    let after_pixels = rasterize_session(doc, &app, &snapshot)?;
+    let after_pixels = rasterize_session_and_emit(doc, &app, &snapshot, &args.new_points)?;
 
     // Move the session out so we own its initial_pixels for the undo
-    // entry without cloning. Existence is guaranteed by the validation
-    // above (no `await` between the two).
+    // entry. Existence is guaranteed by the validation above (no
+    // `await` between the two).
     let session =
         doc.active_strokes
             .remove(&args.session_id)
@@ -909,22 +1034,21 @@ pub async fn canvas_end_stroke(
                 id: u64::from(args.session_id),
             })?;
 
-    let entry = doc
-        .pixel_buffers
-        .iter()
-        .find(|e| e.id == session.buffer_id.get())
-        .ok_or_else(|| AppCommandError::NotFound {
-            entity: "pixel buffer".into(),
-            id: u64::from(session.buffer_id.get()),
-        })?;
+    // The `Arc` started life inside this session and isn't shared with
+    // anything else by end-time (snapshot was discarded above); try to
+    // unwrap to avoid one final clone, fall back if for some reason the
+    // refcount is still > 1.
+    let before_pixels =
+        Arc::try_unwrap(session.initial_pixels).unwrap_or_else(|arc| (*arc).clone());
+
     let op = PixelOp {
-        buffer_id: entry.id,
-        buf_width: entry.width,
-        buf_height: entry.height,
-        buf_stride: entry.stride,
+        buffer_id: session.buffer_id.get(),
+        buf_width: session.buf_width,
+        buf_height: session.buf_height,
+        buf_stride: session.buf_stride,
         sprite_id: session.sprite_id.get(),
         frame_index: session.frame_index,
-        before: session.initial_pixels,
+        before: before_pixels,
         after: after_pixels,
     };
     doc.pixel_history.push(PixelOpBatch {
@@ -1502,12 +1626,16 @@ mod tests {
     // ── Stroke session tests ──────────────────────────────────────────────
 
     fn opaque_red_session(initial_pixels: Vec<u8>, points: Vec<[f32; 2]>) -> StrokeSession {
+        // 4x4 RGBA buffer.
         StrokeSession {
             sprite_id: SpriteId::new(1),
             layer_id: LayerId::new(2),
             frame_index: 0,
             buffer_id: PixelBufferId::new(3),
-            initial_pixels,
+            buf_width: 4,
+            buf_height: 4,
+            buf_stride: 16,
+            initial_pixels: Arc::new(initial_pixels),
             points,
             color: Rgba::opaque(255, 0, 0),
             brush_shape: "pixel".to_owned(),
@@ -1522,7 +1650,7 @@ mod tests {
     fn rasterize_session_pixels_passthrough_when_empty() {
         let initial = vec![0u8; 4 * 4 * 4];
         let session = opaque_red_session(initial.clone(), vec![]);
-        let result = rasterize_session_pixels(&session, 4, 4, 16).unwrap();
+        let result = rasterize_session_pixels(&session).unwrap();
         assert_eq!(result, initial);
     }
 
@@ -1530,7 +1658,7 @@ mod tests {
     fn rasterize_session_pixels_paints_single_point() {
         let initial = vec![0u8; 4 * 4 * 4];
         let session = opaque_red_session(initial, vec![[0.0, 0.0]]);
-        let result = rasterize_session_pixels(&session, 4, 4, 16).unwrap();
+        let result = rasterize_session_pixels(&session).unwrap();
         // First pixel = opaque red.
         assert_eq!(&result[0..4], &[255, 0, 0, 255]);
         // Second pixel = still transparent.
@@ -1547,8 +1675,8 @@ mod tests {
         let initial = vec![0u8; 4 * 4 * 4];
         let points = vec![[0.0, 0.0], [1.0, 1.0], [2.0, 2.0]];
         let session = opaque_red_session(initial, points);
-        let first = rasterize_session_pixels(&session, 4, 4, 16).unwrap();
-        let second = rasterize_session_pixels(&session, 4, 4, 16).unwrap();
+        let first = rasterize_session_pixels(&session).unwrap();
+        let second = rasterize_session_pixels(&session).unwrap();
         assert_eq!(first, second);
     }
 
@@ -1557,7 +1685,7 @@ mod tests {
         let initial = vec![255u8; 4 * 4 * 4]; // fully opaque white
         let mut session = opaque_red_session(initial, vec![[0.0, 0.0]]);
         session.erase = true;
-        let result = rasterize_session_pixels(&session, 4, 4, 16).unwrap();
+        let result = rasterize_session_pixels(&session).unwrap();
         // First pixel cleared to fully transparent.
         assert_eq!(&result[0..4], &[0, 0, 0, 0]);
         // Untouched pixel keeps its original opaque white.
@@ -1580,7 +1708,10 @@ mod tests {
                 layer_id: LayerId::new(2),
                 frame_index: 0,
                 buffer_id: PixelBufferId::new(7), // different buffer
-                initial_pixels: initial.clone(),
+                buf_width: 1,
+                buf_height: 1,
+                buf_stride: 4,
+                initial_pixels: Arc::new(initial.clone()),
                 points: vec![],
                 color: Rgba::opaque(0, 255, 0),
                 brush_shape: "pixel".to_owned(),
@@ -1596,5 +1727,48 @@ mod tests {
 
         assert!(!active.contains_key(&99));
         assert!(active.contains_key(&100));
+    }
+
+    #[test]
+    fn dirty_tile_range_pixel_at_origin() {
+        // 4x4 buffer, brush size 1, single pixel at (0,0). With
+        // TILE_SIZE = 256 that's tile (0,0).
+        let r = dirty_tile_range(&[[0.0, 0.0]], 1, 4, 4).unwrap();
+        assert_eq!(r, (0, 0, 0, 0));
+    }
+
+    #[test]
+    fn dirty_tile_range_off_canvas_returns_none() {
+        // Point well off the buffer — clamping makes the rect empty.
+        let r = dirty_tile_range(&[[100.0, 100.0]], 1, 4, 4);
+        assert_eq!(r, None);
+    }
+
+    #[test]
+    fn dirty_tile_range_brush_radius_widens_rect() {
+        // Brush size 3 = radius 1; point at (5, 5) on a 16x16 buffer
+        // covers (4..=6, 4..=6). Still tile (0,0).
+        let r = dirty_tile_range(&[[5.0, 5.0]], 3, 16, 16).unwrap();
+        assert_eq!(r, (0, 0, 0, 0));
+    }
+
+    #[test]
+    fn dirty_tile_range_spans_multiple_tiles() {
+        // Wide buffer big enough to contain multiple TILE_SIZE columns.
+        // Two points: one in tile column 0, one in tile column 1.
+        let buf_w = TILE_SIZE * 2 + 10;
+        let buf_h = TILE_SIZE + 10;
+        let p0: [f32; 2] = [10.0, 10.0]; // tile (0,0)
+        // f32 with explicit literal — `as f32` from `u32` triggers
+        // clippy's cast_precision_loss; spelling out the float avoids it.
+        let p1: [f32; 2] = [261.0, 261.0]; // TILE_SIZE + 5
+        let r = dirty_tile_range(&[p0, p1], 1, buf_w, buf_h).unwrap();
+        assert_eq!(r, (0, 1, 0, 1));
+    }
+
+    #[test]
+    fn dirty_tile_range_empty_points_returns_none() {
+        let r = dirty_tile_range(&[], 1, 16, 16);
+        assert_eq!(r, None);
     }
 }

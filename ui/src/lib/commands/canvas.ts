@@ -159,7 +159,15 @@ export function canvasBeginStroke(args: BeginStrokeArgs): Promise<number> {
 
 /**
  * Appends new points to an in-flight stroke and re-paints the buffer.
- * Emits `canvas:tile-dirty` for the changed region. Does not record undo.
+ *
+ * Emits `canvas:tile-dirty` only for the tiles that intersect the
+ * bounding box of `new_points` plus brush radius — tiles outside that
+ * region are unchanged since the previous extend, so the renderer's
+ * tile cache stays valid for them. Does not record undo.
+ *
+ * Callers should serialise extends so the backend never sees an
+ * extend land after the matching `canvas_end_stroke`. The frontend's
+ * RAF flush helper chains via a single promise to guarantee this.
  */
 export function canvasExtendStroke(args: ExtendStrokeArgs): Promise<void> {
   return invoke<void>("canvas_extend_stroke", { args });

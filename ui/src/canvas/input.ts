@@ -299,10 +299,19 @@ export function attachCanvasInput(el: HTMLElement): () => void {
   // an id; until then `pendingStrokePoints` buffers and a flush is
   // attempted on resolve. RAF batches mousemove (60Hz) into one IPC
   // per frame.
+  //
+  // `strokeIpcChain` serialises every extend / end call for an
+  // in-flight stroke. Without it, two extends could race on the
+  // backend doc lock and the second one's points might land before
+  // the first; or worse, an `end` could commit before a still-pending
+  // `extend`, dropping those points and triggering a session-not-found
+  // toast on the late extend. Chaining means we never have more than
+  // one stroke IPC in flight at a time.
   let drawStrokeActive = false;
   let strokeSessionId: number | null = null;
   let pendingStrokePoints: Array<[number, number]> = [];
   let strokeRafHandle: number | null = null;
+  let strokeIpcChain: Promise<void> = Promise.resolve();
 
   function scheduleStrokeFlush(): void {
     if (strokeRafHandle !== null) return;
@@ -312,10 +321,11 @@ export function attachCanvasInput(el: HTMLElement): () => void {
       if (pendingStrokePoints.length === 0) return;
       const points = pendingStrokePoints;
       pendingStrokePoints = [];
-      canvasExtendStroke({ session_id: strokeSessionId, new_points: points }).catch(
-        (err: unknown) => {
+      const sid = strokeSessionId;
+      strokeIpcChain = strokeIpcChain.then(() =>
+        canvasExtendStroke({ session_id: sid, new_points: points }).catch((err: unknown) => {
           reportCommandFailure("canvas_extend_stroke", err);
-        },
+        }),
       );
     });
   }
@@ -328,6 +338,8 @@ export function attachCanvasInput(el: HTMLElement): () => void {
     drawStrokeActive = true;
     pendingStrokePoints = [];
     strokeSessionId = null;
+    // Reset the chain — a fresh stroke starts a fresh ordering.
+    strokeIpcChain = Promise.resolve();
 
     const color = foregroundColor();
     canvasBeginStroke({
@@ -344,15 +356,17 @@ export function attachCanvasInput(el: HTMLElement): () => void {
       .then((id: number) => {
         // The session may have been ended before begin resolved (fast
         // click + release). In that case `drawStrokeActive` is already
-        // false and `endStroke()` has set up nothing to flush — close
-        // the orphan session right away with whatever points we
-        // collected so we still record an undo entry.
+        // false and `endStroke()` set up nothing to flush — close the
+        // orphan session right away with whatever points we collected
+        // so we still record an undo entry.
         if (!drawStrokeActive) {
           const finalPoints = pendingStrokePoints;
           pendingStrokePoints = [];
-          canvasEndStroke({ session_id: id, new_points: finalPoints }).catch((err: unknown) => {
-            reportCommandFailure("canvas_end_stroke", err);
-          });
+          strokeIpcChain = strokeIpcChain.then(() =>
+            canvasEndStroke({ session_id: id, new_points: finalPoints }).catch((err: unknown) => {
+              reportCommandFailure("canvas_end_stroke", err);
+            }),
+          );
           return;
         }
         strokeSessionId = id;
@@ -383,9 +397,14 @@ export function attachCanvasInput(el: HTMLElement): () => void {
     strokeSessionId = null;
     const finalPoints = pendingStrokePoints;
     pendingStrokePoints = [];
-    canvasEndStroke({ session_id: session, new_points: finalPoints }).catch((err: unknown) => {
-      reportCommandFailure("canvas_end_stroke", err);
-    });
+    // Chain the end after every queued extend so the backend never
+    // sees an extend land after end (which would drop points + toast
+    // a NotFound).
+    strokeIpcChain = strokeIpcChain.then(() =>
+      canvasEndStroke({ session_id: session, new_points: finalPoints }).catch((err: unknown) => {
+        reportCommandFailure("canvas_end_stroke", err);
+      }),
+    );
   }
 
   // Attach the selection input handler. It manages its own listener
