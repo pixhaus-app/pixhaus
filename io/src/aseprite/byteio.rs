@@ -156,7 +156,7 @@ impl<'a> Cursor<'a> {
     pub fn read_aseprite_string(&mut self) -> Result<String> {
         let len = self.read_u16_le()? as usize;
         let bytes = self.read_slice(len)?;
-        Ok(String::from_utf8_lossy(bytes).into_owned())
+        Ok(String::from_utf8_lossy(bytes).to_string())
     }
 }
 

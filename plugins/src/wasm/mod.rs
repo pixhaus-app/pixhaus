@@ -138,11 +138,10 @@ impl Verb for WasmVerb {
         }
 
         let plugin = self.plugin.clone();
-        let verb_id = self.descriptor.id.as_str().to_owned();
         let plugin_name = self.plugin_name.clone();
 
         let call_input = serde_json::to_string(&DispatchPayload {
-            verb_id: verb_id.clone(),
+            verb_id: self.descriptor.id.as_str().to_owned(),
             inputs: inputs.as_value().clone(),
         })
         .map_err(VerbError::Payload)?;
