@@ -31,6 +31,7 @@ import {
   startEditing,
   isLocked,
 } from "./palette-panel-state";
+import { reportCommandFailure } from "../lib/utils/errors";
 import ColorPicker from "./ColorPicker";
 import FgBgSwatches from "./FgBgSwatches";
 import PaletteGrid from "./PaletteGrid";
@@ -83,7 +84,7 @@ const PalettePanel: Component<Props> = (props) => {
       await paletteSetColor(args);
       await refreshPalettes(sid);
     } catch (err: unknown) {
-      console.error("[pixhaus] palette_set_color failed:", err);
+      reportCommandFailure("palette_set_color", err);
     }
   };
 
@@ -108,7 +109,7 @@ const PalettePanel: Component<Props> = (props) => {
       await paletteRemoveColor(sid, pid, index);
       await refreshPalettes(sid);
     } catch (err: unknown) {
-      console.error("[pixhaus] palette_remove_color failed:", err);
+      reportCommandFailure("palette_remove_color", err);
     }
   };
 
@@ -128,7 +129,7 @@ const PalettePanel: Component<Props> = (props) => {
       await paletteSetColor(args);
       await refreshPalettes(sid);
     } catch (err: unknown) {
-      console.error("[pixhaus] palette_set_color (rename) failed:", err);
+      reportCommandFailure("palette_set_color (rename)", err);
     }
   };
 
@@ -143,7 +144,7 @@ const PalettePanel: Component<Props> = (props) => {
       await paletteAddColor(args);
       await refreshPalettes(sid);
     } catch (err: unknown) {
-      console.error("[pixhaus] palette_add_color failed:", err);
+      reportCommandFailure("palette_add_color", err);
     }
   };
 
@@ -162,7 +163,7 @@ const PalettePanel: Component<Props> = (props) => {
       await refreshPalettes(sid);
       setSubPanel(null);
     } catch (err: unknown) {
-      console.error("[pixhaus] Lospec import failed:", err);
+      reportCommandFailure("Lospec import", err);
     }
   };
 
@@ -189,7 +190,7 @@ const PalettePanel: Component<Props> = (props) => {
       await refreshPalettes(sid);
       setActivePaletteId(p.id);
     } catch (err: unknown) {
-      console.error("[pixhaus] palette_add failed:", err);
+      reportCommandFailure("palette_add", err);
     }
   };
 

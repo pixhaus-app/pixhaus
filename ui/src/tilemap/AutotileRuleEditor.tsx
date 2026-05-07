@@ -21,8 +21,6 @@ import {
 } from "./tilemap-state";
 import { blankRule, conditionLabel, conditionTitle, nextCondition } from "./autotile-helpers";
 
-export { blankRule, conditionLabel, conditionTitle, nextCondition } from "./autotile-helpers";
-
 // ── Neighbor order: NW, N, NE, W, E, SW, S, SE (matches core constants) ──────
 
 const NEIGHBOR_LABELS = ["NW", "N", "NE", "W", "E", "SW", "S", "SE"] as const;

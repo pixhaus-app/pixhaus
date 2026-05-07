@@ -55,7 +55,8 @@ function loadOrCreateUid(): string {
   return uid;
 }
 
-const [theme, setThemeInternal] = createSignal<Theme>(loadTheme());
+const initialTheme = loadTheme();
+const [theme, setThemeInternal] = createSignal<Theme>(initialTheme);
 const [keybindPreset, setKeybindPresetInternal] = createSignal<KeybindPreset>(loadPreset());
 const [customKeybinds, setCustomKeybindsInternal] =
   createSignal<Record<string, string>>(loadCustom());
@@ -64,9 +65,9 @@ const [crashReportingEnabled, setCrashReportingEnabledInternal] =
 const [crashReportingDialogShown, setCrashReportingDialogShownInternal] =
   createSignal<boolean>(loadCrashDialogShown());
 
-// Apply initial theme to DOM immediately on module load (read directly from
-// storage rather than the signal to avoid a reactive-outside-owner warning)
-document.documentElement.dataset["theme"] = loadTheme();
+// Apply initial theme to DOM immediately on module load (the literal value,
+// not the signal, to avoid a reactive-outside-owner warning).
+document.documentElement.dataset["theme"] = initialTheme;
 
 export { theme, keybindPreset, customKeybinds, crashReportingEnabled, crashReportingDialogShown };
 
