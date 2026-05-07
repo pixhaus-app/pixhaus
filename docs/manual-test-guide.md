@@ -18,9 +18,18 @@ The format is therefore terser than prose. Treat each test ID as a stable identi
 
 ## Test ID convention
 
-`T-<area>-<NNN>`. The areas are: `launch`, `project`, `export`, `canvas`, `tools`, `select`, `transform`, `layers`, `palette`, `timeline`, `tilemap`, `cmd` (command palette), `window`, `help`, `keys`. Numbers are stable — never renumber, only append.
+Base form: `T-<area>-<NNN>`. The areas are: `launch`, `project`, `export`, `canvas`, `tools`, `select`, `transform`, `layers`, `palette`, `timeline`, `tilemap`, `cmd` (command palette), `window`, `help`, `keys`. Numbers are stable — never renumber, only append.
+
+Two extensions are explicitly allowed for compactness:
+
+- **Range notation** (`T-window-001..004`) when a small set of tests differ only in which target the same scenario applies to (e.g. one test per panel). Each number in the range is its own test ID; the e2e suite expands them into individual `test('T-window-001: ...')` blocks.
+- **Letter suffix** (`T-cmd-003a`, `T-cmd-003b`, …) when several near-identical commands share a scenario template and a comparison table. The base number names the scenario; the suffix names the variant. Each ID is still unique.
+
+Both shorthands map 1:1 to e2e test names; the range `T-window-001..004` becomes four tests, not one.
 
 ## Per-test format
+
+The full form, used for any scenario with non-trivial steps or assertions:
 
 ```
 ### T-area-NNN: <one-line scenario>
@@ -38,6 +47,13 @@ The bracket prefix on each Expect tells the future automator which kind of check
 - **[VISUAL]** — pixel-diff via the existing `tests/visual/` harness.
 - **[IPC]** — a Tauri command spy in `tests/visual/helpers/tauri-mock.ts`.
 - **[STATE]** — a devtools-readable signal value (Solid signals are inspectable via the project-state module).
+
+Two compact shorthands are allowed when the full form would be repetitive:
+
+- **Inline shorthand**: `### T-area-NNN: <scenario> — <one-sentence steps + expected>.` Used when the scenario is a trivial variant of the previous test (same shape, different target). The automator should expand it back to the full form.
+- **Comparison table**: when several near-identical scenarios fit in a row each, a markdown table headed by an Expected column carries the per-row assertion. Every row's first column is its own test ID. See `T-cmd-003` and the keyboard shortcut sweep (`T-keys-NN`) for examples.
+
+In both shorthands, an automator should still produce one `test('T-...', async () => { ... })` per ID, with the assertion derived from the row / sentence.
 
 ---
 
@@ -106,7 +122,7 @@ Expect:
   - [IPC] one `list_samples` (on welcome mount), one `project_open` against the resolved sample path.
   - [STATE] `recentProjects` now contains an entry for the sample.
 
-Other sample fixtures testable the same way: `enemy-slime`, `level-forest`, `tileset-forest`, `ui-sprites` (all under `examples/samples/`).
+Other sample fixtures are testable the same way: `enemy-slime`, `level-forest`, `tileset-forest`, `ui-sprites` (all under `examples/samples/`).
 
 ### T-project-003: Open an `.aseprite` file via File > Open
 
@@ -213,7 +229,7 @@ Steps:
 Expect:
   - [VISUAL] canvas content moves with the cursor.
   - [STATE] `scrollX` / `scrollY` signals change.
-  - [IPC] no IPC during the drag; one debounced `canvas_set_viewport` ~200ms after release.
+  - [IPC] no IPC during the drag; one `canvas_set_viewport` fires after release once the debounce settles. Don't pin a target latency — the debounce window varies and brittle timeouts make the e2e suite flaky.
 
 ### T-canvas-002: Middle-mouse drag pans
 
@@ -880,7 +896,7 @@ These are deliberate gaps. Do not file bugs against them — file follow-ups ins
 - The Tauri command mock layer is at `tests/visual/helpers/tauri-mock.ts` — extend it with response stubs per IPC. Each `[IPC]` assertion in this guide maps to an entry there.
 - One Playwright test per test ID: `test('T-tools-001: pencil drag paints in real time', async ({ page }) => { ... })`.
 - For visual diffs, the existing baseline directory is `tests/visual/baselines/`. New baselines should be generated on Linux/Chromium to match CI's anti-aliasing.
-- Tauri 2 supports `tauri-driver` for in-process Webdriver; if you wire it instead of the mock, the `[IPC]` assertions become real round-trips through the Rust backend, which is more confidence at higher cost.
+- Tauri 2 supports `tauri-driver` for in-process WebDriver; if you wire it instead of the mock, the `[IPC]` assertions become real round-trips through the Rust backend, which is more confidence at higher cost.
 - Do not consolidate test IDs across reorganisations — keep the IDs stable so commit history references stay valid. Append new IDs; don't renumber.
 
 ## Appendix B: Cross-references
