@@ -5,17 +5,18 @@
 // active sprite are wired through layer-state helpers.
 
 import { type Component, Show, createEffect, onCleanup } from "solid-js";
+import { confirm } from "@tauri-apps/plugin-dialog";
 import type { Layer, LayerId, SpriteId } from "../lib/types";
 import {
   addLayer,
   beginRename,
   convertLayerToGroup,
-  convertLayerToTilemap,
   deleteLayer,
   flattenVisibleLayers,
   layers,
   mergeLayerDown,
   mergeSelectedLayers,
+  openTilesetPicker,
   selectedLayerIds,
 } from "./layer-state";
 
@@ -150,7 +151,10 @@ const LayerContextMenu: Component<Props> = (props) => {
         <button
           class="ctx-menu__item"
           onClick={() => {
-            convertLayerToTilemap(props.spriteId, props.target!.layerId);
+            // Tileset selection is asynchronous (the user may need to
+            // create one), so open the picker dialog and let it call
+            // convertLayerToTilemap once a tileset id is chosen.
+            openTilesetPicker(props.spriteId, props.target!.layerId);
             props.onClose();
           }}
           disabled={isTilemap()}
@@ -164,8 +168,18 @@ const LayerContextMenu: Component<Props> = (props) => {
         <button
           class="ctx-menu__item ctx-menu__item--danger"
           onClick={() => {
-            deleteLayer(props.spriteId, props.target!.layerId);
+            const target = props.target!.layerId;
+            const name = layer()?.name ?? "this layer";
+            const spriteId = props.spriteId;
+            // Close the menu before the dialog opens so the menu doesn't
+            // sit on top of the modal while the user reads it.
             props.onClose();
+            void confirm(`Delete "${name}"? This can be undone.`, {
+              title: "Delete Layer",
+              kind: "warning",
+            }).then((ok) => {
+              if (ok) deleteLayer(spriteId, target);
+            });
           }}
           disabled={layers().length <= 1}
           title={layers().length <= 1 ? "Cannot delete the only layer" : undefined}

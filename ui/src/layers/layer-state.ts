@@ -6,7 +6,7 @@
 // the list via refreshLayers().
 
 import { createSignal } from "solid-js";
-import type { BlendMode, Layer, LayerId, SpriteId } from "../lib/types";
+import type { BlendMode, Layer, LayerId, SpriteId, TilesetId } from "../lib/types";
 import {
   layerAdd,
   layerConvertToGroup,
@@ -24,7 +24,6 @@ import {
   layerSetParent,
   layerSetVisibility,
 } from "../lib/commands/layers";
-import { tilesetList } from "../lib/commands/tilesets";
 import {
   activeSpriteId,
   activeLayerId,
@@ -217,10 +216,66 @@ export function toggleGroupExpanded(id: LayerId): void {
   });
 }
 
+/**
+ * Idempotent expand: drops `id` from the collapsed set if present, leaves
+ * it otherwise. Uses the setter's callback form so the read happens inside
+ * the reactive update and doesn't trip solid/reactivity in a one-shot
+ * Promise callback.
+ */
+export function ensureGroupExpanded(id: LayerId): void {
+  setCollapsedGroups((prev) => {
+    if (!prev.has(id)) return prev;
+    const next = new Set(prev);
+    next.delete(id);
+    return next;
+  });
+}
+
 // ── Drag-to-reorder state ───────────────────────────────────────────────────
 
 // Index (in the flat layers array) where the drop indicator should render.
 export const [dragOverIndex, setDragOverIndex] = createSignal<number | null>(null);
+
+// ── Tileset picker (Convert to Tilemap Layer) ───────────────────────────────
+
+// When non-null, a tileset picker dialog is open and Convert-to-Tilemap is
+// pending the user's tileset choice. Set by the layer context menu, cleared
+// by the dialog on confirm/cancel.
+export type TilesetPickerTarget = {
+  spriteId: SpriteId;
+  layerId: LayerId;
+};
+export const [tilesetPickerTarget, setTilesetPickerTarget] =
+  createSignal<TilesetPickerTarget | null>(null);
+
+export function openTilesetPicker(spriteId: SpriteId, layerId: LayerId): void {
+  setTilesetPickerTarget({ spriteId, layerId });
+}
+
+export function closeTilesetPicker(): void {
+  setTilesetPickerTarget(null);
+}
+
+// ── Auto-name helper ────────────────────────────────────────────────────────
+
+/**
+ * Picks the next name in a `<prefix> N` series, where N is one more than
+ * the highest matching N currently on the sprite. Deletes don't gap-fill —
+ * after `Layer 1, Layer 2, Layer 3` and deleting `Layer 2`, the next name
+ * is `Layer 4`. Less surprising over a long session than reusing numbers.
+ */
+export function nextAutoName(all: readonly Layer[], prefix: string): string {
+  const pattern = new RegExp(`^${prefix} (\\d+)$`);
+  let max = 0;
+  for (const l of all) {
+    const m = l.name.match(pattern);
+    if (m && m[1] !== undefined) {
+      const n = parseInt(m[1], 10);
+      if (Number.isFinite(n) && n > max) max = n;
+    }
+  }
+  return `${prefix} ${max + 1}`;
+}
 
 // ── Mutation helpers ────────────────────────────────────────────────────────
 
@@ -286,29 +341,21 @@ export function reparentLayer(spriteId: SpriteId, id: LayerId, parentId: LayerId
 
 export function convertLayerToGroup(spriteId: SpriteId, id: LayerId): void {
   layerConvertToGroup(spriteId, id)
-    .then(() => refreshLayers())
+    .then((newGroup) => {
+      refreshLayers();
+      // Auto-expand the new group so its single child (the original
+      // layer) is immediately visible — and so the group is a valid
+      // drop target for additional layers without requiring an extra
+      // click on the chevron.
+      ensureGroupExpanded(newGroup.id);
+    })
     .catch((err: unknown) => console.error("[pixhaus] layer_convert_to_group:", err));
 }
 
-export function convertLayerToTilemap(spriteId: SpriteId, id: LayerId): void {
-  // Fetch tilesets, pick the first available, then convert. Async/await
-  // so the early return on no-tilesets actually short-circuits — the
-  // previous `.then(...).then(refreshLayers)` chain ran refreshLayers
-  // unconditionally even when the conversion was skipped.
-  void (async () => {
-    try {
-      const tilesets = await tilesetList(spriteId);
-      const first = tilesets[0];
-      if (first === undefined) {
-        console.error("[pixhaus] layer_convert_to_tilemap: no tilesets on sprite");
-        return;
-      }
-      await layerConvertToTilemap(spriteId, id, first.id);
-      refreshLayers();
-    } catch (err: unknown) {
-      console.error("[pixhaus] layer_convert_to_tilemap:", err);
-    }
-  })();
+export function convertLayerToTilemap(spriteId: SpriteId, id: LayerId, tilesetId: TilesetId): void {
+  layerConvertToTilemap(spriteId, id, tilesetId)
+    .then(() => refreshLayers())
+    .catch((err: unknown) => console.error("[pixhaus] layer_convert_to_tilemap:", err));
 }
 
 export function mergeLayerDown(spriteId: SpriteId, id: LayerId): void {

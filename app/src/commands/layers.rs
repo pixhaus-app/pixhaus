@@ -356,15 +356,94 @@ fn set_layer_parent_in_sprite(
     Ok(())
 }
 
-/// Converts a layer to a group. Removes any cels on the layer.
+/// Wraps a layer in a new group, preserving the layer's pixels and any
+/// cels that point at it. The new group inherits the original's parent so
+/// it sits at the same hierarchy level the original used to occupy; the
+/// original is reparented under the new group.
+///
+/// Within the sprite's layer vec, the new group is inserted at the
+/// original's position (and the original shifts to `pos + 1`). Vec order
+/// drives stack order among siblings, so the new group occupies the
+/// original's old z-order slot among its siblings.
+///
+/// Returns `Validation` if the layer is already a group — the menu item
+/// disables itself in that case, but the backend rejects defensively to
+/// avoid silently nesting groups.
+fn wrap_layer_in_group(
+    sprite: &mut Sprite,
+    layer_id: LayerId,
+    new_group_id: LayerId,
+) -> CommandResult<Layer> {
+    let pos =
+        sprite
+            .layers
+            .iter()
+            .position(|l| l.id == layer_id)
+            .ok_or(AppCommandError::NotFound {
+                entity: "layer".into(),
+                id: u64::from(layer_id.get()),
+            })?;
+
+    if matches!(sprite.layers[pos].kind, LayerKind::Group { .. }) {
+        return Err(AppCommandError::Validation {
+            detail: format!("layer {} is already a group", u64::from(layer_id.get())),
+        });
+    }
+
+    let original_parent = sprite.layers[pos].parent;
+    let new_group = Layer {
+        id: new_group_id,
+        name: next_auto_name(&sprite.layers, "Group"),
+        kind: LayerKind::Group { collapsed: false },
+        blend_mode: BlendMode::Normal,
+        opacity: 255,
+        visible: true,
+        locked: false,
+        parent: original_parent,
+        user_data: UserData::default(),
+    };
+
+    sprite.layers[pos].parent = Some(new_group_id);
+    sprite.layers.insert(pos, new_group.clone());
+
+    Ok(new_group)
+}
+
+/// Picks the next unused name in the `<prefix> N` series on a sprite's
+/// layer list. Mirrors the TypeScript `nextAutoName` in
+/// `ui/src/layers/layer-state.ts` — keep the two in sync if you change
+/// the rule (no gap-fill: max + 1, not the first free integer).
+fn next_auto_name(layers: &[Layer], prefix: &str) -> String {
+    let mut max = 0u32;
+    for layer in layers {
+        let Some(rest) = layer
+            .name
+            .strip_prefix(prefix)
+            .and_then(|r| r.strip_prefix(' '))
+        else {
+            continue;
+        };
+        if let Ok(n) = rest.parse::<u32>() {
+            if n > max {
+                max = n;
+            }
+        }
+    }
+    format!("{prefix} {}", max + 1)
+}
+
+/// Converts a non-group layer into a child of a fresh group. The original
+/// layer's pixels and cels are preserved; the new group sits at the
+/// original's old hierarchy level. Returns the newly created group.
 #[tauri::command(async, rename_all = "snake_case")]
 pub async fn layer_convert_to_group(
     sprite_id: SpriteId,
     layer_id: LayerId,
     state: State<'_, AppState>,
-) -> CommandResult<()> {
+) -> CommandResult<Layer> {
     let mut doc = state.doc.write().await;
-    {
+    let new_id = LayerId::new(doc.next_id);
+    let new_group = {
         let sprite = doc
             .project
             .as_mut()
@@ -376,20 +455,11 @@ pub async fn layer_convert_to_group(
                 entity: "sprite".into(),
                 id: u64::from(sprite_id.get()),
             })?;
-        {
-            let layer = sprite.layers.iter_mut().find(|l| l.id == layer_id).ok_or(
-                AppCommandError::NotFound {
-                    entity: "layer".into(),
-                    id: u64::from(layer_id.get()),
-                },
-            )?;
-            layer.kind = LayerKind::Group { collapsed: false };
-        }
-        // Groups have no cels; drop any that were on this layer.
-        sprite.cels.retain(|c| c.layer_id != layer_id);
-    }
+        wrap_layer_in_group(sprite, layer_id, new_id)?
+    };
+    doc.next_id += 1;
     doc.dirty = true;
-    Ok(())
+    Ok(new_group)
 }
 
 /// Converts a layer to a tilemap layer using the given tileset. Drops
@@ -1458,6 +1528,167 @@ mod tests {
             matches!(err, AppCommandError::Validation { .. }),
             "non-group parent must reject with Validation; got {err:?}"
         );
+    }
+
+    // ── wrap_layer_in_group + next_auto_name ─────────────────────────────
+
+    #[test]
+    fn next_auto_name_starts_at_one_when_no_match() {
+        let layers: Vec<Layer> = vec![];
+        assert_eq!(next_auto_name(&layers, "Layer"), "Layer 1");
+    }
+
+    #[test]
+    fn next_auto_name_picks_max_plus_one_no_gap_fill() {
+        // Simulate `Layer 1`, `Layer 2` deleted, `Layer 3` present:
+        // next should be `Layer 4`, not `Layer 2`.
+        let layers = vec![
+            layer_with(1, None, LayerKind::Raster),
+            layer_with(3, None, LayerKind::Raster),
+        ];
+        // layer_with names them L1, L3; rename to match the prefix scan.
+        let mut layers = layers;
+        layers[0].name = "Layer 1".into();
+        layers[1].name = "Layer 3".into();
+        assert_eq!(next_auto_name(&layers, "Layer"), "Layer 4");
+    }
+
+    #[test]
+    fn next_auto_name_ignores_non_matching_names() {
+        let mut layers = vec![
+            layer_with(1, None, LayerKind::Raster),
+            layer_with(2, None, LayerKind::Raster),
+            layer_with(3, None, LayerKind::Raster),
+        ];
+        layers[0].name = "Layer".into(); // missing number
+        layers[1].name = "Layerfoo 1".into(); // wrong prefix (no space)
+        layers[2].name = "Layer 1 extra".into(); // suffix after number
+        // None match the strict pattern, so next is Layer 1.
+        assert_eq!(next_auto_name(&layers, "Layer"), "Layer 1");
+    }
+
+    #[test]
+    fn wrap_layer_in_group_preserves_kind_and_inserts_group_above() {
+        // Top-level raster layer.
+        let mut sprite = Sprite::empty(SpriteId::new(1), "main", Size::new(8, 8));
+        sprite.layers.push(layer_with(7, None, LayerKind::Raster));
+        // Mint id 100 for the new group (mimics doc.next_id allocation).
+        let new_group_id = LayerId::new(100);
+        let new_group =
+            wrap_layer_in_group(&mut sprite, LayerId::new(7), new_group_id).expect("wrap ok");
+
+        // Group is at the original's old vec position; original shifts up by 1.
+        assert_eq!(sprite.layers.len(), 2, "exactly one new layer added");
+        assert_eq!(sprite.layers[0].id, new_group_id, "group inserted at pos 0");
+        assert_eq!(sprite.layers[1].id, LayerId::new(7), "original is at pos 1");
+
+        // Original layer's kind is unchanged; cels stay attached.
+        assert!(
+            matches!(sprite.layers[1].kind, LayerKind::Raster),
+            "original kind must remain Raster after wrap"
+        );
+
+        // Parent pointers form the wrap relationship.
+        assert_eq!(
+            sprite.layers[1].parent,
+            Some(new_group_id),
+            "original is now a child of the new group"
+        );
+        assert_eq!(
+            sprite.layers[0].parent, None,
+            "new group inherits the original's old parent (None here)"
+        );
+
+        // Returned layer matches the inserted group.
+        assert_eq!(new_group.id, new_group_id);
+        assert!(matches!(
+            new_group.kind,
+            LayerKind::Group { collapsed: false }
+        ));
+    }
+
+    #[test]
+    fn wrap_layer_in_group_inherits_existing_parent() {
+        // Original layer is already inside a group; wrapping should
+        // place the new group as a sibling of the original (under the
+        // outer group), with the original under the new group.
+        let outer_id = LayerId::new(1);
+        let original_id = LayerId::new(2);
+        let mut sprite = Sprite::empty(SpriteId::new(1), "main", Size::new(8, 8));
+        sprite.layers.push(layer_with(
+            outer_id.get(),
+            None,
+            LayerKind::Group { collapsed: false },
+        ));
+        sprite.layers.push(layer_with(
+            original_id.get(),
+            Some(outer_id),
+            LayerKind::Raster,
+        ));
+
+        let new_group_id = LayerId::new(100);
+        wrap_layer_in_group(&mut sprite, original_id, new_group_id).expect("wrap ok");
+
+        let new_group = sprite.layers.iter().find(|l| l.id == new_group_id).unwrap();
+        let original = sprite.layers.iter().find(|l| l.id == original_id).unwrap();
+        assert_eq!(
+            new_group.parent,
+            Some(outer_id),
+            "new group inherits the original's old parent (outer group)"
+        );
+        assert_eq!(
+            original.parent,
+            Some(new_group_id),
+            "original now points at the new group"
+        );
+    }
+
+    #[test]
+    fn wrap_layer_in_group_rejects_already_group() {
+        let mut sprite = Sprite::empty(SpriteId::new(1), "main", Size::new(8, 8));
+        sprite
+            .layers
+            .push(layer_with(1, None, LayerKind::Group { collapsed: false }));
+        let err = wrap_layer_in_group(&mut sprite, LayerId::new(1), LayerId::new(100)).unwrap_err();
+        assert!(
+            matches!(err, AppCommandError::Validation { .. }),
+            "wrapping an existing group must reject with Validation; got {err:?}"
+        );
+        // Sprite is unchanged on the rejection path.
+        assert_eq!(sprite.layers.len(), 1, "no group was inserted");
+    }
+
+    #[test]
+    fn wrap_layer_in_group_picks_unused_group_name() {
+        let mut sprite = Sprite::empty(SpriteId::new(1), "main", Size::new(8, 8));
+        // Pre-existing groups consume `Group 1` and `Group 2`.
+        sprite.layers.push(Layer {
+            id: LayerId::new(1),
+            name: "Group 1".into(),
+            kind: LayerKind::Group { collapsed: false },
+            blend_mode: BlendMode::Normal,
+            opacity: 255,
+            visible: true,
+            locked: false,
+            parent: None,
+            user_data: UserData::default(),
+        });
+        sprite.layers.push(Layer {
+            id: LayerId::new(2),
+            name: "Group 2".into(),
+            kind: LayerKind::Group { collapsed: false },
+            blend_mode: BlendMode::Normal,
+            opacity: 255,
+            visible: true,
+            locked: false,
+            parent: None,
+            user_data: UserData::default(),
+        });
+        sprite.layers.push(layer_with(3, None, LayerKind::Raster));
+
+        let new_group =
+            wrap_layer_in_group(&mut sprite, LayerId::new(3), LayerId::new(100)).expect("wrap ok");
+        assert_eq!(new_group.name, "Group 3");
     }
 
     // ── merge_down / merge_selected / flatten_visible ────────────────────

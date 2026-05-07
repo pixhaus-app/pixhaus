@@ -21,11 +21,13 @@ import {
   flattenLayers,
   isGroupExpanded,
   layers,
+  nextAutoName,
   refreshLayers,
   setLayerPanelVisible,
 } from "./layer-state";
 import LayerRow from "./LayerRow";
 import LayerContextMenu, { type ContextMenuTarget } from "./LayerContextMenu";
+import TilesetPickerDialog from "./TilesetPickerDialog";
 import type { LayerId } from "../lib/types";
 
 // Default row height in px for inactive rows.
@@ -177,7 +179,7 @@ const LayerPanel: Component = () => {
 
   function handleAddLayer(): void {
     const id = spriteId();
-    if (id !== null) addLayer(id, "Layer");
+    if (id !== null) addLayer(id, nextAutoName(layers(), "Layer"));
   }
 
   return (
@@ -273,6 +275,10 @@ const LayerPanel: Component = () => {
         spriteId={spriteId() ?? 0}
         onClose={() => setContextTarget(null)}
       />
+
+      {/* Tileset picker for Convert to Tilemap Layer. The dialog renders
+          itself only when its target signal is set. */}
+      <TilesetPickerDialog />
     </div>
   );
 };

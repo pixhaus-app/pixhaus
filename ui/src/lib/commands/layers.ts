@@ -98,9 +98,12 @@ export function layerSetParent(
   return invoke<void>("layer_set_parent", { sprite_id, layer_id, parent_id });
 }
 
-/** Converts a layer to a group. Removes any cels on the layer. */
-export function layerConvertToGroup(sprite_id: SpriteId, layer_id: LayerId): Promise<void> {
-  return invoke<void>("layer_convert_to_group", { sprite_id, layer_id });
+/**
+ * Wraps a layer in a fresh group, preserving the layer's pixels and cels.
+ * Returns the newly created group `Layer` so the UI can auto-expand it.
+ */
+export function layerConvertToGroup(sprite_id: SpriteId, layer_id: LayerId): Promise<Layer> {
+  return invoke<Layer>("layer_convert_to_group", { sprite_id, layer_id });
 }
 
 /** Converts a layer to a tilemap layer backed by the given tileset. */

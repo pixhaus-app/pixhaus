@@ -674,6 +674,111 @@ body {
   background: var(--accent-hover);
 }
 
+.prefs__btn--ghost {
+  background: transparent;
+  color: var(--text-primary);
+  border: 1px solid var(--border-strong);
+}
+
+.prefs__btn--ghost:hover {
+  background: var(--bg-hover);
+}
+
+.prefs__btn:disabled,
+.prefs__btn--ghost:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+/* ── Tileset picker (Convert to Tilemap Layer) ──────────────────────────── */
+
+.ts-picker {
+  width: 480px;
+}
+
+.ts-picker__list {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  max-height: 280px;
+  overflow-y: auto;
+}
+
+.ts-picker__row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 10px;
+  border-radius: 4px;
+  cursor: pointer;
+  border: 1px solid transparent;
+  transition: background var(--transition-fast);
+}
+
+.ts-picker__row:hover {
+  background: var(--bg-hover);
+}
+
+.ts-picker__row--selected {
+  background: var(--accent-subtle);
+  border-color: var(--accent-border);
+}
+
+.ts-picker__name {
+  flex: 1;
+  font-size: 13px;
+  color: var(--text-primary);
+}
+
+.ts-picker__meta {
+  font-size: 11px;
+  color: var(--text-secondary);
+}
+
+.ts-picker__input {
+  background: var(--bg-active);
+  border: 1px solid var(--border-strong);
+  border-radius: 4px;
+  padding: 4px 8px;
+  color: var(--text-primary);
+  font-size: 13px;
+  min-width: 160px;
+  outline-color: var(--accent);
+}
+
+.ts-picker__input--num {
+  min-width: 64px;
+  width: 64px;
+}
+
+.ts-picker__size {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--text-secondary);
+}
+
+.ts-picker__create-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 16px;
+}
+
+.ts-picker__error {
+  margin: 8px 0 0;
+  font-size: 12px;
+  color: var(--danger, #f48a8a);
+}
+
+.ts-picker__footer {
+  gap: 8px;
+}
+
+.ts-picker__footer-spacer {
+  flex: 1;
+}
+
 /* ── Canvas viewport ──────────────────────────────────────────────────────── */
 
 /*
@@ -2390,6 +2495,9 @@ body {
   transition: background var(--transition-fast);
   position: relative;
   box-sizing: border-box;
+  /* Without this, dragging from the name area selects the text instead
+     of starting a drag — even though the row is draggable. */
+  user-select: none;
 }
 
 .layer-row:hover {
@@ -2398,6 +2506,11 @@ body {
 
 .layer-row--selected {
   background: var(--bg-selection);
+  /* Inset stripe on the leading edge so multi-selected rows read as
+     distinct from hover and from the active row's outline. When a row
+     is both selected and active, the stripe and the active outline
+     compose into a single stronger treatment. */
+  box-shadow: inset 3px 0 0 var(--accent);
 }
 
 .layer-row--active {
