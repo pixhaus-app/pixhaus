@@ -149,7 +149,6 @@ const CommandPalette: Component = () => {
       onClick={(e) => {
         if (e.target === e.currentTarget) closeAndReset();
       }}
-      onKeyDown={onKeyDown}
     >
       <div class="palette" role="dialog" aria-label="Command Palette">
         <div class="palette__input-row">
