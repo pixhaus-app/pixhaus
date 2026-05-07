@@ -45,19 +45,9 @@ import {
   canvasInvertSelection,
 } from "../../lib/commands/canvas";
 import { pushToast } from "../../lib/toast/toast-state";
+import { isUnimplementedError, toastUnimplemented } from "../../lib/utils/errors";
+import { toIpcRect } from "../../lib/utils/geometry";
 import type { Rgba } from "../../lib/types";
-
-// Converts { x, y, width, height } (canvas coords) to the Rect type expected
-// by the IPC layer: { origin: { x, y }, size: { width, height } }.
-function toIpcRect(bounds: { x: number; y: number; width: number; height: number }) {
-  return {
-    origin: { x: Math.round(bounds.x), y: Math.round(bounds.y) },
-    size: {
-      width: Math.max(1, Math.round(bounds.width)),
-      height: Math.max(1, Math.round(bounds.height)),
-    },
-  };
-}
 
 // Gets the canvas coordinate from a raw screen event, accounting for the
 // viewport's current scroll and zoom. el is the container element.
@@ -203,12 +193,8 @@ async function onWandClick(e: MouseEvent, el: HTMLElement): Promise<void> {
       });
     }
   } catch (err: unknown) {
-    const e = err as { kind?: string; stream?: string };
-    if (e?.kind === "unimplemented") {
-      pushToast({
-        title: `Magic wand requires ${e.stream ?? "S01"} — not yet available.`,
-        kind: "info",
-      });
+    if (isUnimplementedError(err)) {
+      toastUnimplemented("Magic wand", err, "S01");
     } else {
       console.error("[pixhaus] canvas_select_magic_wand failed:", err);
     }
@@ -258,12 +244,8 @@ async function onColorRangeClick(e: MouseEvent, el: HTMLElement): Promise<void> 
     }
     setColorRangeTarget(null);
   } catch (err: unknown) {
-    const e = err as { kind?: string; stream?: string };
-    if (e?.kind === "unimplemented") {
-      pushToast({
-        title: `Color range requires ${e.stream ?? "S01"} — not yet available.`,
-        kind: "info",
-      });
+    if (isUnimplementedError(err)) {
+      toastUnimplemented("Color range", err, "S01");
     } else {
       console.error("[pixhaus] canvas_select_color_range failed:", err);
     }
@@ -310,12 +292,8 @@ async function commitLasso(): Promise<void> {
       });
     }
   } catch (err: unknown) {
-    const e = err as { kind?: string; stream?: string };
-    if (e?.kind === "unimplemented") {
-      pushToast({
-        title: `Lasso selection requires ${e.stream ?? "S01"} — not yet available.`,
-        kind: "info",
-      });
+    if (isUnimplementedError(err)) {
+      toastUnimplemented("Lasso selection", err, "S01");
     } else {
       console.error("[pixhaus] canvas_select_lasso failed:", err);
     }

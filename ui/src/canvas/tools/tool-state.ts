@@ -9,6 +9,9 @@ import { createSignal } from "solid-js";
 
 export type ToolType = "pencil" | "eraser" | "fill" | "rect" | "ellipse" | "line";
 
+/** Tools that use the brush options panel (size, shape, pixel-perfect). */
+export const BRUSH_TOOLS: readonly ToolType[] = ["pencil", "eraser", "line", "rect", "ellipse"];
+
 // ── Active tool ───────────────────────────────────────────────────────────────
 
 export const [activeTool, setActiveTool] = createSignal<ToolType>("pencil");

@@ -1,6 +1,6 @@
 # Visual regression tests
 
-Playwright + pixelmatch harness for the editor UI. Runs in CI on Linux Chromium with a fixed 1280×800 viewport.
+Playwright harness for the editor UI. Runs in CI on Linux Chromium with a fixed 1280×800 viewport. Uses `expect(page).toHaveScreenshot()` for diffing.
 
 ## Baselines
 

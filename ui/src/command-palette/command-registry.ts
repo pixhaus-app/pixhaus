@@ -45,7 +45,6 @@ import {
 } from "../canvas/canvas-state";
 import { snapZoom } from "../canvas/viewport";
 import { setSelectTool } from "../canvas/select/select-state";
-import { commitDeselect } from "../canvas/select/select-input";
 import {
   dispatchFlipX,
   dispatchFlipY,
@@ -174,6 +173,38 @@ function activeSpriteIdForExport(): number | null {
   return id;
 }
 
+type ExportSpec = {
+  id: string;
+  label: string;
+  keywords: string[];
+  extension: string;
+  formatLabel: string;
+  operation: string;
+  invoke: (spriteId: number, outputPath: string) => Promise<unknown>;
+};
+
+function buildExportCommand(spec: ExportSpec): [string, CommandEntry] {
+  return [
+    spec.id,
+    {
+      id: spec.id,
+      label: spec.label,
+      category: "File",
+      keywords: spec.keywords,
+      handler: () => {
+        const spriteId = activeSpriteIdForExport();
+        if (spriteId === null) return;
+        pickExportPath(spec.extension, spec.formatLabel)
+          .then((path) => {
+            if (path === null) return;
+            return spec.invoke(spriteId, path);
+          })
+          .catch((err: unknown) => reportCommandFailure(spec.operation, err));
+      },
+    },
+  ];
+}
+
 const COMMANDS: ReadonlyMap<string, CommandEntry> = new Map<string, CommandEntry>([
   // ── File ─────────────────────────────────────────────────────────────────
   [
@@ -242,82 +273,42 @@ const COMMANDS: ReadonlyMap<string, CommandEntry> = new Map<string, CommandEntry
       },
     },
   ],
-  [
-    "file:export-png-sheet",
-    {
-      id: "file:export-png-sheet",
-      label: "Export PNG Sprite Sheet...",
-      category: "File",
-      keywords: ["png", "sheet", "atlas", "sprite"],
-      handler: () => {
-        const spriteId = activeSpriteIdForExport();
-        if (spriteId === null) return;
-        pickExportPath("png", "PNG image")
-          .then((path) => {
-            if (path === null) return;
-            return exportPngSpriteSheet({ sprite_id: spriteId, output_path: path });
-          })
-          .catch((err: unknown) => reportCommandFailure("export_png_sprite_sheet", err));
-      },
-    },
-  ],
-  [
-    "file:export-gif",
-    {
-      id: "file:export-gif",
-      label: "Export Animated GIF...",
-      category: "File",
-      keywords: ["gif", "animation", "export"],
-      handler: () => {
-        const spriteId = activeSpriteIdForExport();
-        if (spriteId === null) return;
-        pickExportPath("gif", "Animated GIF")
-          .then((path) => {
-            if (path === null) return;
-            return exportAnimatedGif({ sprite_id: spriteId, output_path: path });
-          })
-          .catch((err: unknown) => reportCommandFailure("export_animated_gif", err));
-      },
-    },
-  ],
-  [
-    "file:export-webp",
-    {
-      id: "file:export-webp",
-      label: "Export Animated WebP...",
-      category: "File",
-      keywords: ["webp", "animation", "export"],
-      handler: () => {
-        const spriteId = activeSpriteIdForExport();
-        if (spriteId === null) return;
-        pickExportPath("webp", "Animated WebP")
-          .then((path) => {
-            if (path === null) return;
-            return exportAnimatedWebp({ sprite_id: spriteId, output_path: path });
-          })
-          .catch((err: unknown) => reportCommandFailure("export_animated_webp", err));
-      },
-    },
-  ],
-  [
-    "file:export-tmx",
-    {
-      id: "file:export-tmx",
-      label: "Export Tilemap (Tiled .tmx)...",
-      category: "File",
-      keywords: ["tmx", "tiled", "tilemap", "export"],
-      handler: () => {
-        const spriteId = activeSpriteIdForExport();
-        if (spriteId === null) return;
-        pickExportPath("tmx", "Tiled tilemap")
-          .then((path) => {
-            if (path === null) return;
-            return exportTmx({ sprite_id: spriteId, output_path: path });
-          })
-          .catch((err: unknown) => reportCommandFailure("export_tmx", err));
-      },
-    },
-  ],
+  buildExportCommand({
+    id: "file:export-png-sheet",
+    label: "Export PNG Sprite Sheet...",
+    keywords: ["png", "sheet", "atlas", "sprite"],
+    extension: "png",
+    formatLabel: "PNG image",
+    operation: "export_png_sprite_sheet",
+    invoke: (spriteId, output_path) => exportPngSpriteSheet({ sprite_id: spriteId, output_path }),
+  }),
+  buildExportCommand({
+    id: "file:export-gif",
+    label: "Export Animated GIF...",
+    keywords: ["gif", "animation", "export"],
+    extension: "gif",
+    formatLabel: "Animated GIF",
+    operation: "export_animated_gif",
+    invoke: (spriteId, output_path) => exportAnimatedGif({ sprite_id: spriteId, output_path }),
+  }),
+  buildExportCommand({
+    id: "file:export-webp",
+    label: "Export Animated WebP...",
+    keywords: ["webp", "animation", "export"],
+    extension: "webp",
+    formatLabel: "Animated WebP",
+    operation: "export_animated_webp",
+    invoke: (spriteId, output_path) => exportAnimatedWebp({ sprite_id: spriteId, output_path }),
+  }),
+  buildExportCommand({
+    id: "file:export-tmx",
+    label: "Export Tilemap (Tiled .tmx)...",
+    keywords: ["tmx", "tiled", "tilemap", "export"],
+    extension: "tmx",
+    formatLabel: "Tiled tilemap",
+    operation: "export_tmx",
+    invoke: (spriteId, output_path) => exportTmx({ sprite_id: spriteId, output_path }),
+  }),
   [
     "file:close",
     {
@@ -719,46 +710,6 @@ const COMMANDS: ReadonlyMap<string, CommandEntry> = new Map<string, CommandEntry
       handler: () => {
         setSelectTool("color-range");
         setIsSelectMode(true);
-      },
-    },
-  ],
-  [
-    "select:all",
-    {
-      id: "select:all",
-      label: "Select All",
-      category: "Select",
-      handler: () => {
-        const spriteId = activeSpriteId();
-        if (spriteId === null) return;
-        canvasSelectAll(spriteId)
-          .then((state) => {
-            if (state.region?.kind === "rect") {
-              const b = state.region.bounds;
-              setSelectionRect({
-                x: b.origin.x,
-                y: b.origin.y,
-                width: b.size.width,
-                height: b.size.height,
-              });
-            }
-            setIsSelectMode(true);
-          })
-          .catch((err: unknown) => reportCommandFailure("canvas_select_all", err));
-      },
-    },
-  ],
-  [
-    "select:deselect",
-    {
-      id: "select:deselect",
-      label: "Deselect",
-      category: "Select",
-      keywords: ["deselect", "clear", "none"],
-      handler: () => {
-        commitDeselect().catch((err: unknown) => reportCommandFailure("canvas_set_selection", err));
-        setIsSelectMode(false);
-        setTransformBounds(null);
       },
     },
   ],

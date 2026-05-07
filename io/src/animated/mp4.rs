@@ -236,7 +236,7 @@ fn run_ffmpeg(
     })?;
 
     if !output.status.success() {
-        let stderr = String::from_utf8_lossy(&output.stderr).into_owned();
+        let stderr = String::from_utf8_lossy(&output.stderr).to_string();
         return Err(Error::FfmpegFailed {
             code: output.status.code(),
             stderr,

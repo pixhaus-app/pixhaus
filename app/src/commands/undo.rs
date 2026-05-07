@@ -6,36 +6,11 @@
 //! drawing apps present to users: the last action — pixel or structural —
 //! is the first to undo, regardless of which subsystem owns it.
 
-use pixhaus_core::undo::Error as UndoError;
 use tauri::{AppHandle, State};
 
 use crate::commands::canvas::emit_buffer_tiles;
 use crate::error::{AppCommandError, CommandResult};
 use crate::state::AppState;
-
-/// Maps `core::undo::Error` to the typed `AppCommandError` variants the
-/// IPC contract exposes.
-///
-/// `NothingToUndo` / `NothingToRedo` get their own variants so the UI
-/// can disable menu items by switching on `kind`. `CommandFailed` and
-/// `Poisoned` collapse to `HistoryCorrupted` — both indicate the
-/// project state may no longer be trustworthy and the user should
-/// reload. `HistoryFull` is a catastrophic but well-defined failure
-/// surfaced as `Validation` (it should never fire in practice).
-fn map_undo_error(err: UndoError) -> AppCommandError {
-    match err {
-        UndoError::NothingToUndo => AppCommandError::NothingToUndo,
-        UndoError::NothingToRedo => AppCommandError::NothingToRedo,
-        UndoError::CommandFailed { .. } | UndoError::Poisoned { .. } => {
-            AppCommandError::HistoryCorrupted {
-                detail: err.to_string(),
-            }
-        }
-        other => AppCommandError::Validation {
-            detail: other.to_string(),
-        },
-    }
-}
 
 /// Data extracted from a `PixelOpBatch` for buffer restoration and tile emission.
 struct PixelUndoData {
@@ -110,7 +85,7 @@ pub async fn undo(app: AppHandle, state: State<'_, AppState>) -> CommandResult<(
         .project
         .as_mut()
         .ok_or(AppCommandError::NoActiveProject)?;
-    doc.history.undo(project).map_err(map_undo_error)?;
+    doc.history.undo(project)?;
     doc.dirty = true;
     Ok(())
 }
@@ -175,7 +150,7 @@ pub async fn redo(app: AppHandle, state: State<'_, AppState>) -> CommandResult<(
         .project
         .as_mut()
         .ok_or(AppCommandError::NoActiveProject)?;
-    doc.history.redo(project).map_err(map_undo_error)?;
+    doc.history.redo(project)?;
     doc.dirty = true;
     Ok(())
 }

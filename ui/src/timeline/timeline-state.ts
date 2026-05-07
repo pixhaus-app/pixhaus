@@ -28,6 +28,7 @@ import {
   frameTagDelete,
   frameTagList,
 } from "../lib/commands/frames";
+import { reportCommandFailure } from "../lib/utils/errors";
 import {
   activeSpriteId,
   activeFrameIndex,
@@ -130,7 +131,7 @@ export function pasteFrame(spriteId: SpriteId): void {
       refreshTimeline();
       selectFrame(index, false);
     })
-    .catch((err: unknown) => console.error("[pixhaus] frame paste:", err));
+    .catch((err: unknown) => reportCommandFailure("frame paste", err));
 }
 
 // ── Playback ─────────────────────────────────────────────────────────────────
@@ -221,7 +222,7 @@ export function addFrame(spriteId: SpriteId, durationMs = 100): void {
       refreshTimeline();
       selectFrame(index, false);
     })
-    .catch((err: unknown) => console.error("[pixhaus] frame_add:", err));
+    .catch((err: unknown) => reportCommandFailure("frame_add", err));
 }
 
 export function deleteFrames(spriteId: SpriteId, indices: ReadonlySet<FrameIndex>): void {
@@ -256,7 +257,7 @@ export function deleteFrames(spriteId: SpriteId, indices: ReadonlySet<FrameIndex
       }
       setSelectedFrames(new Set<FrameIndex>());
     })
-    .catch((err: unknown) => console.error("[pixhaus] frame_delete:", err));
+    .catch((err: unknown) => reportCommandFailure("frame_delete", err));
 }
 
 export function duplicateFrame(spriteId: SpriteId, index: FrameIndex): void {
@@ -265,13 +266,13 @@ export function duplicateFrame(spriteId: SpriteId, index: FrameIndex): void {
       refreshTimeline();
       selectFrame(newIdx, false);
     })
-    .catch((err: unknown) => console.error("[pixhaus] frame_duplicate:", err));
+    .catch((err: unknown) => reportCommandFailure("frame_duplicate", err));
 }
 
 export function setFrameDuration(spriteId: SpriteId, index: FrameIndex, durationMs: number): void {
   frameSetDuration(spriteId, index, durationMs)
     .then(() => refreshTimeline())
-    .catch((err: unknown) => console.error("[pixhaus] frame_set_duration:", err));
+    .catch((err: unknown) => reportCommandFailure("frame_set_duration", err));
 }
 
 // Swap two frames in-place using two sequential frameReorder calls.
@@ -297,7 +298,7 @@ export function reverseSelectedFrames(spriteId: SpriteId, indices: ReadonlySet<F
       Promise.resolve(),
     )
     .then(() => refreshTimeline())
-    .catch((err: unknown) => console.error("[pixhaus] frame_reverse:", err));
+    .catch((err: unknown) => reportCommandFailure("frame_reverse", err));
 }
 
 export function createTag(
@@ -309,13 +310,13 @@ export function createTag(
 ): void {
   frameTagCreate({ sprite_id: spriteId, name, range, loop_direction: loopDirection, repeat })
     .then(() => refreshTimeline())
-    .catch((err: unknown) => console.error("[pixhaus] frame_tag_create:", err));
+    .catch((err: unknown) => reportCommandFailure("frame_tag_create", err));
 }
 
 export function deleteTag(spriteId: SpriteId, tagName: string): void {
   frameTagDelete(spriteId, tagName)
     .then(() => refreshTimeline())
-    .catch((err: unknown) => console.error("[pixhaus] frame_tag_delete:", err));
+    .catch((err: unknown) => reportCommandFailure("frame_tag_delete", err));
 }
 
 // Pure helper: generates a name from a set of existing names.

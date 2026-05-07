@@ -7,6 +7,7 @@
 import { For, type Component, Match, Switch } from "solid-js";
 import {
   activeTool,
+  BRUSH_TOOLS,
   fillTolerance,
   pixelPerfect,
   setFillTolerance,
@@ -83,16 +84,11 @@ const ToolOptionsPanel: Component = () => {
   return (
     <div class="tool-options-panel">
       <Switch>
-        <Match
-          when={activeTool() === "pencil" || activeTool() === "eraser" || activeTool() === "line"}
-        >
+        <Match when={BRUSH_TOOLS.includes(activeTool())}>
           <BrushOptions />
         </Match>
         <Match when={activeTool() === "fill"}>
           <FillOptions />
-        </Match>
-        <Match when={activeTool() === "rect" || activeTool() === "ellipse"}>
-          <BrushOptions />
         </Match>
       </Switch>
     </div>

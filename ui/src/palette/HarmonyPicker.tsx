@@ -7,7 +7,7 @@
 import { createSignal, For, type Component } from "solid-js";
 import type { Rgba } from "../lib/types";
 import { activePalette, foregroundIndex } from "./palette-panel-state";
-import { harmonyColors, rgbaToCss, contrastColor, type HarmonyKind } from "./color-utils";
+import { harmonyColors, rgbaToCss, rgbToHex, contrastColor, type HarmonyKind } from "./color-utils";
 
 type Props = {
   /** Called when the user clicks a suggested color to append it to the palette. */
@@ -72,8 +72,8 @@ const HarmonyPicker: Component<Props> = (props) => {
             <button
               class="harmony__swatch harmony__swatch--suggestion"
               style={{ background: rgbaToCss(color) }}
-              title={`Add to palette: ${rgbaToHex(color)}`}
-              aria-label={`Add harmony color ${rgbaToHex(color)}`}
+              title={`Add to palette: ${rgbToHex(color.r, color.g, color.b)}`}
+              aria-label={`Add harmony color ${rgbToHex(color.r, color.g, color.b)}`}
               onClick={() => props.onAddColor(color)}
             >
               <span
@@ -90,9 +90,5 @@ const HarmonyPicker: Component<Props> = (props) => {
     </div>
   );
 };
-
-function rgbaToHex(c: Rgba): string {
-  return "#" + [c.r, c.g, c.b].map((x) => x.toString(16).padStart(2, "0")).join("");
-}
 
 export default HarmonyPicker;

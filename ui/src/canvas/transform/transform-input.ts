@@ -28,17 +28,8 @@ import {
 } from "../canvas-state";
 import { canvasSetSelection, canvasTransform, type TransformOp } from "../../lib/commands/canvas";
 import { pushToast } from "../../lib/toast/toast-state";
-
-// Converts a canvas-coordinate bounds object to the IPC Rect type.
-function toIpcRect(bounds: { x: number; y: number; width: number; height: number }) {
-  return {
-    origin: { x: Math.round(bounds.x), y: Math.round(bounds.y) },
-    size: {
-      width: Math.max(1, Math.round(bounds.width)),
-      height: Math.max(1, Math.round(bounds.height)),
-    },
-  };
-}
+import { isUnimplementedError, toastUnimplemented } from "../../lib/utils/errors";
+import { toIpcRect } from "../../lib/utils/geometry";
 
 // Persists the new selection bounds to Rust and updates local signals.
 async function commitBounds(bounds: {
@@ -101,12 +92,8 @@ async function commitBodyTranslate(
       ops: [{ kind: "translate", dx, dy }],
     });
   } catch (err: unknown) {
-    const e = err as { kind?: string; stream?: string };
-    if (e?.kind === "unimplemented") {
-      pushToast({
-        title: `Move requires ${e.stream ?? "S04"} — not yet available.`,
-        kind: "info",
-      });
+    if (isUnimplementedError(err)) {
+      toastUnimplemented("Move", err, "S04");
     } else {
       console.error("[pixhaus] canvas_transform (body translate) failed:", err);
     }
@@ -277,12 +264,8 @@ function dispatchTransformOp(op: TransformOp, label: string): void {
     frame_index: activeFrameIndex(),
     ops: [op],
   }).catch((err: unknown) => {
-    const e = err as { kind?: string; stream?: string };
-    if (e?.kind === "unimplemented") {
-      pushToast({
-        title: `${label} requires ${e.stream ?? "S04"} — not yet available.`,
-        kind: "info",
-      });
+    if (isUnimplementedError(err)) {
+      toastUnimplemented(label, err, "S04");
     } else {
       console.error(`[pixhaus] canvas_transform (${label}) failed:`, err);
     }

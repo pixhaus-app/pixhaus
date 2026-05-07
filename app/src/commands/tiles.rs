@@ -6,9 +6,7 @@ use pixhaus_core::project::{
     TilesetSource, UserData,
 };
 use pixhaus_core::tilemap::{AutotileKind, resolve_autotile};
-use pixhaus_core::undo::{
-    Command, CommandError, CommandResult as UndoCommandResult, Error as UndoError,
-};
+use pixhaus_core::undo::{Command, CommandError, CommandResult as UndoCommandResult};
 use serde::{Deserialize, Serialize};
 use tauri::{AppHandle, Emitter, State};
 
@@ -117,21 +115,6 @@ pub struct TilesetSetTileMetadataArgs {
 }
 
 // ── Undo commands ────────────────────────────────────────────────────────────
-
-/// Maps `core::undo::Error` raised by `History::push` of a tilemap command
-/// onto the typed IPC error contract. Mirrors `palette::map_palette_undo_error`.
-fn map_undo_error(err: UndoError) -> AppCommandError {
-    match err {
-        UndoError::CommandFailed { .. } | UndoError::Poisoned { .. } => {
-            AppCommandError::HistoryCorrupted {
-                detail: err.to_string(),
-            }
-        }
-        other => AppCommandError::Validation {
-            detail: other.to_string(),
-        },
-    }
-}
 
 /// Reversible "set one tilemap cell" command.
 struct TileSetCellCommand {
@@ -611,9 +594,7 @@ pub async fn tile_place(
         .project
         .as_mut()
         .ok_or(AppCommandError::NoActiveProject)?;
-    doc.history
-        .push(Box::new(cmd), project)
-        .map_err(map_undo_error)?;
+    doc.history.push(Box::new(cmd), project)?;
     doc.dirty = true;
 
     emit_cell_changed(
@@ -669,9 +650,7 @@ pub async fn tile_erase(
         .project
         .as_mut()
         .ok_or(AppCommandError::NoActiveProject)?;
-    doc.history
-        .push(Box::new(cmd), project)
-        .map_err(map_undo_error)?;
+    doc.history.push(Box::new(cmd), project)?;
     doc.dirty = true;
 
     emit_cell_changed(
@@ -769,9 +748,7 @@ pub async fn tile_autotile_apply(
         .project
         .as_mut()
         .ok_or(AppCommandError::NoActiveProject)?;
-    doc.history
-        .push(Box::new(cmd), project)
-        .map_err(map_undo_error)?;
+    doc.history.push(Box::new(cmd), project)?;
     doc.dirty = true;
 
     let payload = TilemapBulkChangedPayload {
@@ -1004,9 +981,7 @@ pub async fn tileset_set_tile_metadata(
         .project
         .as_mut()
         .ok_or(AppCommandError::NoActiveProject)?;
-    doc.history
-        .push(Box::new(cmd), project)
-        .map_err(map_undo_error)?;
+    doc.history.push(Box::new(cmd), project)?;
     doc.dirty = true;
 
     // Return the updated tileset so the UI can refresh local state without
@@ -1038,7 +1013,7 @@ pub async fn tileset_set_tile_metadata(
 mod tests {
     use super::*;
     use pixhaus_core::project::{BlendMode, CollisionShape, Layer, LayerKind, Project, Sprite};
-    use pixhaus_core::undo::History;
+    use pixhaus_core::undo::{Error as UndoError, History};
 
     fn project_with_tilemap_layer() -> (Project, SpriteId, LayerId, TilesetId) {
         let mut project = Project::new("test");

@@ -403,9 +403,7 @@ impl Verb for ProjectStyleLearningVerb {
 ///
 /// The returned bytes are a valid zip file. This function is CPU-bound and
 /// should be called via `tokio::task::spawn_blocking`.
-fn encode_training_zip(
-    images: &[PixelData],
-) -> std::result::Result<Vec<u8>, Box<dyn std::error::Error + Send + Sync>> {
+fn encode_training_zip(images: &[PixelData]) -> std::result::Result<Vec<u8>, String> {
     let buf = std::io::Cursor::new(Vec::new());
     let mut zip = zip::ZipWriter::new(buf);
     let options = zip::write::SimpleFileOptions::default()
@@ -413,11 +411,12 @@ fn encode_training_zip(
 
     for (i, pixel_data) in images.iter().enumerate() {
         let png = encode_png(pixel_data)?;
-        zip.start_file(format!("{i:04}.png"), options)?;
-        zip.write_all(&png)?;
+        zip.start_file(format!("{i:04}.png"), options)
+            .map_err(|e| e.to_string())?;
+        zip.write_all(&png).map_err(|e| e.to_string())?;
     }
 
-    let buf = zip.finish()?;
+    let buf = zip.finish().map_err(|e| e.to_string())?;
     Ok(buf.into_inner())
 }
 
@@ -427,9 +426,7 @@ fn encode_training_zip(
 /// to `width * bytes_per_pixel` bytes before passing to the encoder.
 /// Supports `bytes_per_pixel` of 1 (luma), 2 (luma+alpha), 3 (RGB),
 /// and 4 (RGBA).
-fn encode_png(
-    pixel_data: &PixelData,
-) -> std::result::Result<Vec<u8>, Box<dyn std::error::Error + Send + Sync>> {
+fn encode_png(pixel_data: &PixelData) -> std::result::Result<Vec<u8>, String> {
     use image::DynamicImage;
 
     let w = pixel_data.width;
@@ -448,31 +445,34 @@ fn encode_png(
 
     let dyn_image = match bpp {
         1 => {
-            let buf =
-                image::GrayImage::from_raw(w, h, packed).ok_or("luma buffer size mismatch")?;
+            let buf = image::GrayImage::from_raw(w, h, packed)
+                .ok_or_else(|| "luma buffer size mismatch".to_string())?;
             DynamicImage::ImageLuma8(buf)
         }
         2 => {
             let buf = image::GrayAlphaImage::from_raw(w, h, packed)
-                .ok_or("luma-alpha buffer size mismatch")?;
+                .ok_or_else(|| "luma-alpha buffer size mismatch".to_string())?;
             DynamicImage::ImageLumaA8(buf)
         }
         3 => {
-            let buf = image::RgbImage::from_raw(w, h, packed).ok_or("rgb buffer size mismatch")?;
+            let buf = image::RgbImage::from_raw(w, h, packed)
+                .ok_or_else(|| "rgb buffer size mismatch".to_string())?;
             DynamicImage::ImageRgb8(buf)
         }
         4 => {
-            let buf =
-                image::RgbaImage::from_raw(w, h, packed).ok_or("rgba buffer size mismatch")?;
+            let buf = image::RgbaImage::from_raw(w, h, packed)
+                .ok_or_else(|| "rgba buffer size mismatch".to_string())?;
             DynamicImage::ImageRgba8(buf)
         }
         bpp => {
-            return Err(format!("unsupported bytes_per_pixel: {bpp}").into());
+            return Err(format!("unsupported bytes_per_pixel: {bpp}"));
         }
     };
 
     let mut out = Vec::new();
-    dyn_image.write_to(&mut std::io::Cursor::new(&mut out), image::ImageFormat::Png)?;
+    dyn_image
+        .write_to(&mut std::io::Cursor::new(&mut out), image::ImageFormat::Png)
+        .map_err(|e| e.to_string())?;
     Ok(out)
 }
 

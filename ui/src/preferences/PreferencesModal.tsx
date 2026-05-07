@@ -1,4 +1,4 @@
-import { createSignal, For, type Component } from "solid-js";
+import { createMemo, createSignal, For, type Component } from "solid-js";
 import { closePreferences } from "./preferences-state";
 import {
   theme,
@@ -119,7 +119,9 @@ const GeneralTab: Component = () => {
 };
 
 const KeybindsTab: Component = () => {
-  const commands = getAllCommands();
+  // Memoised so the table re-runs when `keybindPreset` or `customKeybinds`
+  // change — getAllCommands() reads both signals.
+  const commands = createMemo(() => getAllCommands());
   const custom = customKeybinds;
 
   return (
@@ -149,7 +151,7 @@ const KeybindsTab: Component = () => {
         <p class="prefs__section-title">Shortcuts</p>
         <table class="prefs__kbd-table">
           <tbody>
-            <For each={commands}>
+            <For each={commands()}>
               {(cmd) => {
                 const override = () => custom()[cmd.id];
                 return (

@@ -1,16 +1,5 @@
 import type { Page } from "@playwright/test";
 
-// ── Seed data ─────────────────────────────────────────────────────────────────
-//
-// Shared between the mock script (injected into the page) and test files that
-// want to reference the same IDs when setting up additional overrides.
-
-/** Sprite ID used in the default mock sprite. */
-export const MOCK_SPRITE_ID = 1;
-
-/** Layer ID used in the default mock layer. */
-export const MOCK_LAYER_ID = 1;
-
 // ── Base mock script ──────────────────────────────────────────────────────────
 //
 // Injected via page.addInitScript before every visual test. Sets up

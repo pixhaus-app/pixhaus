@@ -52,7 +52,7 @@ import {
   canvasExtendStroke,
   canvasFill,
 } from "../lib/commands/canvas";
-import { reportCommandFailure } from "../lib/utils/errors";
+import { isUnimplementedError, reportCommandFailure } from "../lib/utils/errors";
 import { ellipsePerimeterPoints, linePoints, rectPerimeterPoints } from "./tools/shape-points";
 
 // How much the continuous zoom changes per wheel tick (scroll-wheel smooth mode).
@@ -83,13 +83,6 @@ function canvasToTileCell(
 // the stroke is active, dispatchTilePaint suppresses repeats over the
 // same cell to avoid spamming IPC on every mousemove.
 let lastPaintedCell: { x: number; y: number } | null = null;
-
-/** Suppresses an error log when the catch is a known S06 stub. */
-function isUnimplemented(err: unknown): boolean {
-  return (
-    err !== null && typeof err === "object" && (err as { kind?: unknown }).kind === "unimplemented"
-  );
-}
 
 /**
  * Dispatches a tile place or erase IPC call for the given screen position.
@@ -135,7 +128,7 @@ function dispatchTilePaint(
 
   const frameIndex = activeFrameIndex();
   const onErr = (err: unknown): void => {
-    if (!isUnimplemented(err)) {
+    if (!isUnimplementedError(err)) {
       console.error("[pixhaus] tile paint:", err);
     }
   };
@@ -253,7 +246,7 @@ function dispatchShape(end: [number, number]): void {
     pixel_perfect: pixelPerfect(),
     erase: false,
   }).catch((err: unknown) => {
-    console.error("[pixhaus] canvas_draw_stroke (shape):", err);
+    reportCommandFailure("canvas_draw_stroke (shape)", err);
   });
 }
 
@@ -272,7 +265,7 @@ function dispatchFill(canvasX: number, canvasY: number): void {
     color: { r: color.r, g: color.g, b: color.b, a: color.a },
     tolerance: fillTolerance(),
   }).catch((err: unknown) => {
-    console.error("[pixhaus] canvas_fill:", err);
+    reportCommandFailure("canvas_fill", err);
   });
 }
 

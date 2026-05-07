@@ -34,14 +34,11 @@ import { isPalettePanelVisible, isTilemapPanelVisible } from "./panel-state";
 
 const Shell: Component = () => {
   onMount(() => {
-    // Initialise JS-layer crash reporting using the stored preference.
+    // Initialise JS-layer crash reporting and sync the Rust-side gate so
+    // both honour the persisted preference; without the second call the
+    // Rust panic hook drops events until the user re-interacts with the
+    // dialog. Fire-and-forget — setSentryEnabled handles IPC errors.
     initCrashReporting({ enabled: crashReportingEnabled(), uid: crashReportingUid });
-    // Sync the Rust-side ENABLED gate so the panic hook honours the same
-    // persisted preference. Without this, a user who opted in on a
-    // previous session restarts to a state where the JS Sentry client
-    // is initialised but Rust drops every panic in `before_send` until
-    // they interact with the dialog again. setSentryEnabled returns void
-    // and handles its own IPC errors internally — fire-and-forget.
     setSentryEnabled(crashReportingEnabled());
 
     // Forward native menu events to the command dispatcher
@@ -60,15 +57,9 @@ const Shell: Component = () => {
     });
   });
 
-  function handleCrashReportingAccept(): void {
-    setCrashReportingEnabled(true);
-    setSentryEnabled(true);
-    markCrashReportingDialogShown();
-  }
-
-  function handleCrashReportingDecline(): void {
-    setCrashReportingEnabled(false);
-    setSentryEnabled(false);
+  function answerCrashReportingDialog(enabled: boolean): void {
+    setCrashReportingEnabled(enabled);
+    setSentryEnabled(enabled);
     markCrashReportingDialogShown();
   }
 
@@ -118,8 +109,8 @@ const Shell: Component = () => {
 
       <Show when={!crashReportingDialogShown()}>
         <FirstLaunchDialog
-          onAccept={handleCrashReportingAccept}
-          onDecline={handleCrashReportingDecline}
+          onAccept={() => answerCrashReportingDialog(true)}
+          onDecline={() => answerCrashReportingDialog(false)}
         />
       </Show>
     </div>
