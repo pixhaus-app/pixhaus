@@ -50,50 +50,58 @@ const TimelineContextMenu: Component<Props> = (props) => {
     // intentionally consume the active frame (none currently) can fall
     // back to `activeFrameIndex()` explicitly.
     const target = props.target?.frameIndex ?? activeFrameIndex();
-
-    const close =
-      (fn: () => void): (() => void) =>
-      () => {
-        fn();
-        props.onClose();
-      };
+    const close = props.onClose;
 
     return [
       {
         kind: "item",
         label: "Insert frame",
-        handler: close(() => addFrame(id)),
+        handler: () => {
+          addFrame(id);
+          close();
+        },
       },
       {
         kind: "item",
         label: multi ? "Delete frames" : "Delete frame",
-        handler: close(() => deleteFrames(id, eff)),
+        handler: () => {
+          deleteFrames(id, eff);
+          close();
+        },
       },
       {
         kind: "item",
         label: "Duplicate frame",
-        handler: close(() => duplicateFrame(id, target)),
+        handler: () => {
+          duplicateFrame(id, target);
+          close();
+        },
       },
       { kind: "sep" },
       {
         kind: "item",
         label: "Copy",
-        handler: close(() => copyFrame(target)),
+        handler: () => {
+          copyFrame(target);
+          close();
+        },
       },
       {
         kind: "item",
         label: canPaste ? "Paste" : "Paste (empty clipboard)",
-        handler: close(() => {
+        handler: () => {
           if (canPaste) pasteFrame(id);
-        }),
+          close();
+        },
       },
       { kind: "sep" },
       {
         kind: "item",
         label: "Reverse selected",
-        handler: close(() => {
+        handler: () => {
           if (multi) reverseSelectedFrames(id, eff);
-        }),
+          close();
+        },
       },
     ];
   }

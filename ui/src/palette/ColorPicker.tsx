@@ -313,7 +313,7 @@ const CpkSlider: Component<SliderProps> = (props) => {
         value={props.value}
         style={props.trackStyle ? { background: props.trackStyle } : undefined}
         onInput={(e) => props.onChange(parseFloat(e.currentTarget.value))}
-        onChange={props.onCommit}
+        onChange={() => props.onCommit()}
       />
       <input
         class="cpk__slider-num"

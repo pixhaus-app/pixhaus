@@ -57,13 +57,6 @@ const LayerContextMenu: Component<Props> = (props) => {
     });
   });
 
-  function action(fn: () => void): () => void {
-    return () => {
-      fn();
-      props.onClose();
-    };
-  }
-
   const layer = () => targetLayer();
   const isGroup = () => layer()?.kind.kind === "group";
   const isTilemap = () => layer()?.kind.kind === "tilemap";
@@ -88,12 +81,21 @@ const LayerContextMenu: Component<Props> = (props) => {
         }}
         onContextMenu={(e) => e.preventDefault()}
       >
-        <button class="ctx-menu__item" onClick={action(() => beginRename(props.target!.layerId))}>
+        <button
+          class="ctx-menu__item"
+          onClick={() => {
+            beginRename(props.target!.layerId);
+            props.onClose();
+          }}
+        >
           Rename
         </button>
         <button
           class="ctx-menu__item"
-          onClick={action(() => addLayer(props.spriteId, `${layer()!.name} copy`))}
+          onClick={() => {
+            addLayer(props.spriteId, `${layer()!.name} copy`);
+            props.onClose();
+          }}
         >
           Duplicate
         </button>
@@ -102,7 +104,10 @@ const LayerContextMenu: Component<Props> = (props) => {
 
         <button
           class="ctx-menu__item"
-          onClick={action(() => mergeLayerDown(props.spriteId, props.target!.layerId))}
+          onClick={() => {
+            mergeLayerDown(props.spriteId, props.target!.layerId);
+            props.onClose();
+          }}
           disabled={!canMergeDown()}
           title={canMergeDown() ? undefined : "No layer below to merge into"}
         >
@@ -110,13 +115,22 @@ const LayerContextMenu: Component<Props> = (props) => {
         </button>
         <button
           class="ctx-menu__item"
-          onClick={action(() => mergeSelectedLayers(props.spriteId, selectedLayerIds()))}
+          onClick={() => {
+            mergeSelectedLayers(props.spriteId, selectedLayerIds());
+            props.onClose();
+          }}
           disabled={!multiSelected()}
           title={multiSelected() ? undefined : "Select two or more layers to merge"}
         >
           Merge Selected
         </button>
-        <button class="ctx-menu__item" onClick={action(() => flattenVisibleLayers(props.spriteId))}>
+        <button
+          class="ctx-menu__item"
+          onClick={() => {
+            flattenVisibleLayers(props.spriteId);
+            props.onClose();
+          }}
+        >
           Flatten Visible
         </button>
 
@@ -124,7 +138,10 @@ const LayerContextMenu: Component<Props> = (props) => {
 
         <button
           class="ctx-menu__item"
-          onClick={action(() => convertLayerToGroup(props.spriteId, props.target!.layerId))}
+          onClick={() => {
+            convertLayerToGroup(props.spriteId, props.target!.layerId);
+            props.onClose();
+          }}
           disabled={isGroup()}
           title={isGroup() ? "Layer is already a group" : undefined}
         >
@@ -132,7 +149,10 @@ const LayerContextMenu: Component<Props> = (props) => {
         </button>
         <button
           class="ctx-menu__item"
-          onClick={action(() => convertLayerToTilemap(props.spriteId, props.target!.layerId))}
+          onClick={() => {
+            convertLayerToTilemap(props.spriteId, props.target!.layerId);
+            props.onClose();
+          }}
           disabled={isTilemap()}
           title={isTilemap() ? "Layer is already a tilemap layer" : undefined}
         >
@@ -143,7 +163,10 @@ const LayerContextMenu: Component<Props> = (props) => {
 
         <button
           class="ctx-menu__item ctx-menu__item--danger"
-          onClick={action(() => deleteLayer(props.spriteId, props.target!.layerId))}
+          onClick={() => {
+            deleteLayer(props.spriteId, props.target!.layerId);
+            props.onClose();
+          }}
           disabled={layers().length <= 1}
           title={layers().length <= 1 ? "Cannot delete the only layer" : undefined}
         >
