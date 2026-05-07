@@ -5,8 +5,36 @@
 //! as a `shell:menu` event so the TypeScript command dispatcher handles
 //! everything without any per-item wiring in Rust.
 
-use tauri::menu::{Menu, MenuEvent, MenuItemBuilder, PredefinedMenuItem, SubmenuBuilder};
+use tauri::menu::{Menu, MenuEvent, MenuItemBuilder, PredefinedMenuItem, Submenu, SubmenuBuilder};
 use tauri::{AppHandle, Emitter};
+
+/// Builds the File > Export submenu. Each item dispatches a `file:export-*`
+/// command via the same `shell:menu` event channel as every other menu
+/// item; the UI's command dispatcher owns the file-dialog and IPC call.
+fn build_export_submenu(app: &AppHandle) -> tauri::Result<Submenu<tauri::Wry>> {
+    SubmenuBuilder::new(app, "Export")
+        .item(
+            &MenuItemBuilder::new("PNG Sprite Sheet...")
+                .id("file:export-png-sheet")
+                .build(app)?,
+        )
+        .item(
+            &MenuItemBuilder::new("Animated GIF...")
+                .id("file:export-gif")
+                .build(app)?,
+        )
+        .item(
+            &MenuItemBuilder::new("Animated WebP...")
+                .id("file:export-webp")
+                .build(app)?,
+        )
+        .item(
+            &MenuItemBuilder::new("Tilemap (Tiled .tmx)...")
+                .id("file:export-tmx")
+                .build(app)?,
+        )
+        .build()
+}
 
 /// Builds the main application menu for the given handle.
 #[allow(clippy::too_many_lines)] // declarative menu definition; no meaningful way to shorten
@@ -37,6 +65,8 @@ pub fn build(app: &AppHandle) -> tauri::Result<Menu<tauri::Wry>> {
                 .accelerator("CmdOrCtrl+Shift+S")
                 .build(app)?,
         )
+        .separator()
+        .item(&build_export_submenu(app)?)
         .separator()
         .item(
             &MenuItemBuilder::new("Close Project")

@@ -104,6 +104,11 @@ pub fn run() -> Result<(), AppError> {
             // crash reporting
             commands::crash_reporting::crash_reporting_get_enabled,
             commands::crash_reporting::crash_reporting_set_enabled,
+            // exports
+            commands::exports::export_animated_gif,
+            commands::exports::export_animated_webp,
+            commands::exports::export_png_sprite_sheet,
+            commands::exports::export_tmx,
             // canvas
             commands::canvas::canvas_composite,
             commands::canvas::canvas_draw_stroke,
@@ -155,6 +160,7 @@ pub fn run() -> Result<(), AppError> {
             // project
             commands::project::project_close,
             commands::project::project_get,
+            commands::project::project_import_aseprite,
             commands::project::project_import_psd,
             commands::project::project_new,
             commands::project::project_open,
@@ -162,6 +168,8 @@ pub fn run() -> Result<(), AppError> {
             commands::project::sprite_add,
             commands::project::sprite_delete,
             commands::project::sprite_list,
+            // samples
+            commands::samples::list_samples,
             // tiles
             commands::tiles::tile_autotile_apply,
             commands::tiles::tile_erase,

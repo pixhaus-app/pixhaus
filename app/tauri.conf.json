@@ -47,6 +47,9 @@
       "icons/icon.icns",
       "icons/icon.ico"
     ],
+    "resources": {
+      "../examples/samples/*.pixhaus": "examples/samples/"
+    },
     "category": "GraphicsAndDesign",
     "shortDescription": "AI-native pixel art editor",
     "longDescription": "Pixhaus is an open-source AI-native pixel art editor for sprites, animations, and tilemaps."
