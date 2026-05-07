@@ -75,10 +75,10 @@ if ($isRust) {
     catch { $crate = '' }
 
     if ($crate) {
-        Write-Stderr "post-edit: cargo check -p $crate"
-        & cargo check --tests -p $crate 2>&1 | ForEach-Object { Write-Stderr $_ }
+        Write-Stderr "post-edit: cargo clippy --tests -p $crate -- -D warnings"
+        & cargo clippy --tests -p $crate -- -D warnings 2>&1 | ForEach-Object { Write-Stderr $_ }
         if ($LASTEXITCODE -ne 0) {
-            Write-Stderr "post-edit: cargo check failed in crate $crate"
+            Write-Stderr "post-edit: cargo clippy failed in crate $crate"
             exit 0
         }
     }

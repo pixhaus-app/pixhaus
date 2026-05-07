@@ -67,9 +67,9 @@ if $is_rust; then
 
     CRATE="$(bash scripts/find-crate-for-file.sh "$FILE_PATH" 2>/dev/null || true)"
     if [ -n "$CRATE" ]; then
-        echo "post-edit: cargo check -p $CRATE" >&2
-        if ! cargo check --tests -p "$CRATE" 2>&1; then
-            echo "post-edit: cargo check failed in crate $CRATE" >&2
+        echo "post-edit: cargo clippy --tests -p $CRATE -- -D warnings" >&2
+        if ! cargo clippy --tests -p "$CRATE" -- -D warnings 2>&1; then
+            echo "post-edit: cargo clippy failed in crate $CRATE" >&2
             exit 0
         fi
     else

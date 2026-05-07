@@ -177,20 +177,30 @@ prefixes (`post-edit: ...`); PowerShell error wording for the underlying
 
 Common signals:
 
-- `post-edit: cargo check -p pixhaus-core` — the hook found the owning crate
-  and ran a check. If you don't see this for a `.rs` file you edited, the
-  crate-finder failed; check the crate's `Cargo.toml` exists and has a
-  `[package]` section.
-- `error[E0XXX]: ...` followed by code — type error. Fix it before moving on.
-  Don't accumulate errors across multiple edits; the next compile will be
+- `post-edit: cargo clippy --tests -p pixhaus-core -- -D warnings` — the
+  hook found the owning crate and ran clippy with warnings denied. If you
+  don't see this for a `.rs` file you edited, the crate-finder failed;
+  check the crate's `Cargo.toml` exists and has a `[package]` section.
+- `error[E0XXX]: ...` followed by code — type error from rustc (clippy
+  surfaces these the same as `cargo check`). Fix before moving on. Don't
+  accumulate errors across multiple edits; the next compile will be
   noisier and the fix harder.
-- `warning: ...` from clippy — handled in pre-commit, not post-edit, so a
-  warning here is from `cargo check` itself. Address it.
+- `warning: ...` followed by `error: ... could not compile ...
+  due to ... previous error; N warnings emitted` — a clippy lint hit
+  `-D warnings` and was promoted to an error. Read the warning text;
+  either fix it or, if the lint is genuinely wrong here, annotate with a
+  scoped `#[allow(clippy::lint_name)]` and a one-line justification.
 - `post-edit: tsc reported errors` — TypeScript type error. Fix immediately.
-- `post-edit: cargo check failed in crate ...` — non-fatal, the hook always
-  returns 0. The error is in the previous lines; scroll up.
+- `post-edit: cargo clippy failed in crate ...` — non-fatal at the hook
+  level (the hook always returns 0 to avoid blocking edits), but the
+  workspace is in a bad state. The errors are in the previous lines;
+  scroll up.
 
-What `cargo check` errors mean and how to act:
+A separate Stop hook (via conclaude) runs `cargo nextest run --workspace`
+and `pnpm test` when the session ends. If those fail, the session won't
+complete cleanly — fix the failures before declaring done.
+
+What `cargo clippy` / rustc errors mean and how to act:
 
 - **`cannot find type / function`** — missing import, wrong path, or the
   symbol moved. Search the workspace; don't define a duplicate.

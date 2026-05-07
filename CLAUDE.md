@@ -24,6 +24,10 @@ Four skills in `.claude/skills/` define how to write code in this repo:
 
 Load `pixhaus-rust-conventions` for any Rust work. Load `pixhaus-claude-code-workflow` whenever you commit. Stream-triggered skills (image-processing, aseprite-format, verb-protocol, solid-ui, ai-backend-adapter) come online as their streams land.
 
+## Hooks
+
+`.claude/settings.json` invokes `conclaude` (a Rust hook handler — install once per machine from https://github.com/connerohnesorge/conclaude) for PreToolUse guards and Stop validation. The full rule set lives in `.conclaude.yaml`; the `pixhaus-claude-code-workflow` skill explains the agent-facing behavior. PostToolUse on Edit/Write keeps routing through `scripts/post-edit.{sh,ps1}`, which formats and runs `cargo clippy --tests -p <crate> -- -D warnings` per touched Rust crate, and `prettier --write` + `tsc --noEmit` for TS files.
+
 ## Repo layout
 
 ```
