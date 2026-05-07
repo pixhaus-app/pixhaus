@@ -208,6 +208,52 @@ pub async fn project_import_psd(
     Ok(install_imported_project(&mut doc, converted.archive))
 }
 
+/// Imports an `.aseprite` / `.ase` file and makes it the active project.
+///
+/// Decodes the file via [`pixhaus_io::aseprite::decode_from_file`] on the
+/// blocking-thread pool, then translates the document into a
+/// [`PixhausArchive`] via [`pixhaus_io::aseprite::document_to_archive`].
+/// The imported project has no associated filesystem path (the user must
+/// follow up with Save As to write a `.pixhaus` file), so `dirty` is `true`
+/// on return.
+///
+/// The sprite name passed to the converter is derived from the file stem;
+/// callers that want a different display name can rename the sprite after
+/// the import returns.
+///
+/// Non-fatal conversion warnings are logged at the `warn` level. The
+/// `ProjectStatus` shape has no warnings field today; a follow-up cut can
+/// surface them once the UI has a place to display them.
+#[tauri::command(async, rename_all = "snake_case")]
+pub async fn project_import_aseprite(
+    path: String,
+    state: State<'_, AppState>,
+) -> CommandResult<ProjectStatus> {
+    let path_buf = PathBuf::from(&path);
+    let sprite_name = path_buf
+        .file_stem()
+        .and_then(|s| s.to_str())
+        .unwrap_or("imported")
+        .to_owned();
+
+    let converted = tokio::task::spawn_blocking({
+        let path_buf = path_buf.clone();
+        move || -> Result<pixhaus_io::aseprite::ConvertedArchive, pixhaus_io::Error> {
+            let document = pixhaus_io::aseprite::decode_from_file(&path_buf)?;
+            pixhaus_io::aseprite::document_to_archive(&document, sprite_name)
+        }
+    })
+    .await
+    .map_err(|join_err| describe_join_error("aseprite decode", &join_err))??;
+
+    for w in &converted.warnings {
+        tracing::warn!(path = %path_buf.display(), warning = ?w, "Aseprite import warning");
+    }
+
+    let mut doc = state.doc.write().await;
+    Ok(install_imported_project(&mut doc, converted.archive))
+}
+
 /// Swaps an imported project into the document store. Like
 /// `install_loaded_project` but without a path (imports require a
 /// follow-up save-as) and with `dirty = true` so the user is prompted to
@@ -734,5 +780,46 @@ mod tests {
         assert_eq!(loaded.buffers[0].width, 4);
         assert_eq!(loaded.buffers[0].height, 4);
         assert_eq!(loaded.buffers[0].pixels, pixels);
+    }
+
+    // ── aseprite import ───────────────────────────────────────────────────────
+    //
+    // The Tauri command itself takes `State<'_, AppState>` which can't be
+    // constructed from a unit test. Cover the same code path the command
+    // calls: decode → convert → install. A fixture from
+    // `examples/aseprite-roundtrip/` guards the round-trip so a future
+    // decoder regression fails here, not just at runtime.
+
+    #[test]
+    fn import_aseprite_installs_project_with_canvas_and_dirty_flag() {
+        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .parent()
+            .expect("app crate has parent")
+            .join("examples")
+            .join("aseprite-roundtrip")
+            .join("single-frame-rgba.aseprite");
+
+        let document = pixhaus_io::aseprite::decode_from_file(&path)
+            .unwrap_or_else(|e| panic!("decode {}: {e:?}", path.display()));
+        let converted = pixhaus_io::aseprite::document_to_archive(&document, "imported")
+            .unwrap_or_else(|e| panic!("convert {}: {e:?}", path.display()));
+
+        let mut doc = doc_with_history_entry();
+        let status = install_imported_project(&mut doc, converted.archive);
+
+        assert!(
+            doc.history.node_count() == 0,
+            "aseprite import must drop the previous undo history"
+        );
+        assert!(
+            status.path.is_none(),
+            "imported project has no on-disk path"
+        );
+        assert!(doc.dirty, "imported project is dirty until first save");
+        let project = doc.project.as_ref().expect("project installed");
+        assert!(
+            !project.sprites.is_empty(),
+            "imported project should contain at least one sprite"
+        );
     }
 }

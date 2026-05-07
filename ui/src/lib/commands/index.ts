@@ -13,6 +13,7 @@
 export type { AppCommandError } from "../types/AppCommandError";
 
 export * from "./canvas";
+export * from "./exports";
 export * from "./frames";
 export * from "./layers";
 export * from "./palette";

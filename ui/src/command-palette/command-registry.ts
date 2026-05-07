@@ -9,15 +9,22 @@ import { openPreferences } from "../preferences/preferences-state";
 import { keybindPreset, customKeybinds } from "../preferences/preferences-store";
 import { ASEPRITE_DEFAULTS, PHOTOSHOP_DEFAULTS, defaultCombo } from "../keybinds/defaults";
 import {
-  projectNew,
-  projectOpen,
-  projectSave,
+  createNewProject,
+  openProjectByExtension,
   projectClose,
+  projectSave,
+  saveOrSaveAs,
   spriteAdd,
   spriteDelete,
   spriteList,
 } from "../lib/commands/project";
-import { setActiveProject, pushRecentProject, activeProject } from "../project-state";
+import {
+  exportAnimatedGif,
+  exportAnimatedWebp,
+  exportPngSpriteSheet,
+  exportTmx,
+} from "../lib/commands/exports";
+import { activeProject, setActiveProject, pushRecentProject } from "../project-state";
 import { extractFilename } from "../lib/utils/path";
 import { reportCommandFailure } from "../lib/utils/errors";
 import {
@@ -87,6 +94,15 @@ export type Command = {
 type CommandEntry = Command & { readonly handler: () => void };
 
 const PIXHAUS_FILTER = [{ name: "Pixhaus Projects", extensions: ["pixhaus"] }];
+const OPEN_FILTERS = [
+  {
+    name: "All supported files",
+    extensions: ["pixhaus", "psd", "aseprite", "ase"],
+  },
+  { name: "Pixhaus Projects", extensions: ["pixhaus"] },
+  { name: "Aseprite", extensions: ["aseprite", "ase"] },
+  { name: "Photoshop Documents", extensions: ["psd"] },
+];
 
 // Default canvas size for new sprites. Matches the welcome screen's
 // project_new flow, which leaves the initial sprite at this size.
@@ -95,9 +111,10 @@ const DEFAULT_SPRITE_SIZE = 32;
 // Documentation URL opened by the help:docs command.
 const DOCS_URL = "https://pixhaus.app/docs";
 
-// Opens a native file-open dialog. Returns the selected path or null.
+// Opens a native file-open dialog filtered to every readable project
+// format. Returns the selected path or null.
 async function pickOpenPath(): Promise<string | null> {
-  return dialogOpen({ multiple: false as const, filters: PIXHAUS_FILTER });
+  return dialogOpen({ multiple: false as const, filters: OPEN_FILTERS });
 }
 
 // Opens a native file-save dialog. Returns the chosen path or null.
@@ -117,6 +134,45 @@ function getCanvasViewportRect(): { width: number; height: number } | null {
   return { width: rect.width, height: rect.height };
 }
 
+/**
+ * Opens a save dialog filtered to a single export extension and returns
+ * the chosen path. Centralised so every export entry uses the same
+ * dialog shape.
+ */
+async function pickExportPath(extension: string, label: string): Promise<string | null> {
+  const result = await dialogSave({
+    filters: [{ name: label, extensions: [extension] }],
+  });
+  return typeof result === "string" ? result : null;
+}
+
+/** Names the IPC operation a path triggers, for error reporting. */
+function inferOpenOperation(path: string): string {
+  const lower = path.toLowerCase();
+  if (lower.endsWith(".psd")) return "project_import_psd";
+  if (lower.endsWith(".aseprite") || lower.endsWith(".ase")) {
+    return "project_import_aseprite";
+  }
+  return "project_open";
+}
+
+/**
+ * Returns the active sprite id for an export, or null if no project /
+ * sprite is open. Export commands need an active sprite; the menu and
+ * palette items are dispatched without context, so this resolves it on
+ * the fly. The first sprite is a pragmatic default — multi-sprite
+ * projects can wire a sprite picker later.
+ */
+function activeSpriteIdForExport(): number | null {
+  const project = activeProject();
+  if (project === null) return null;
+  // The project-state store doesn't expose the sprite list; fall back
+  // to the canvas's active id which is the editor's current sprite.
+  // `activeSpriteId` is imported from "../canvas/canvas-state" already.
+  const id = activeSpriteId();
+  return id;
+}
+
 const COMMANDS: ReadonlyMap<string, CommandEntry> = new Map<string, CommandEntry>([
   // ── File ─────────────────────────────────────────────────────────────────
   [
@@ -126,7 +182,7 @@ const COMMANDS: ReadonlyMap<string, CommandEntry> = new Map<string, CommandEntry
       label: "New Project",
       category: "File",
       handler: () => {
-        projectNew("Untitled")
+        createNewProject("Untitled")
           .then((status) => {
             setActiveProject(status);
           })
@@ -144,12 +200,14 @@ const COMMANDS: ReadonlyMap<string, CommandEntry> = new Map<string, CommandEntry
         pickOpenPath()
           .then((path) => {
             if (path === null) return;
-            return projectOpen(path).then((status) => {
-              setActiveProject(status);
-              pushRecentProject({ name: extractFilename(path), path });
-            });
+            return openProjectByExtension(path)
+              .then(({ status }) => {
+                setActiveProject(status);
+                pushRecentProject({ name: extractFilename(path), path });
+              })
+              .catch((err: unknown) => reportCommandFailure(inferOpenOperation(path), err));
           })
-          .catch((err: unknown) => reportCommandFailure("project_open", err));
+          .catch((err: unknown) => reportCommandFailure("file_dialog", err));
       },
     },
   ],
@@ -160,7 +218,10 @@ const COMMANDS: ReadonlyMap<string, CommandEntry> = new Map<string, CommandEntry
       label: "Save",
       category: "File",
       handler: () => {
-        projectSave().catch((err: unknown) => reportCommandFailure("project_save", err));
+        // saveOrSaveAs handles the first-save fallback automatically:
+        // if the project has no path yet, it opens the Save As dialog
+        // instead of bubbling the Validation error to a toast.
+        saveOrSaveAs().catch((err: unknown) => reportCommandFailure("project_save", err));
       },
     },
   ],
@@ -177,6 +238,82 @@ const COMMANDS: ReadonlyMap<string, CommandEntry> = new Map<string, CommandEntry
             return projectSave(path);
           })
           .catch((err: unknown) => reportCommandFailure("project_save_as", err));
+      },
+    },
+  ],
+  [
+    "file:export-png-sheet",
+    {
+      id: "file:export-png-sheet",
+      label: "Export PNG Sprite Sheet...",
+      category: "File",
+      keywords: ["png", "sheet", "atlas", "sprite"],
+      handler: () => {
+        const spriteId = activeSpriteIdForExport();
+        if (spriteId === null) return;
+        pickExportPath("png", "PNG image")
+          .then((path) => {
+            if (path === null) return;
+            return exportPngSpriteSheet({ sprite_id: spriteId, output_path: path });
+          })
+          .catch((err: unknown) => reportCommandFailure("export_png_sprite_sheet", err));
+      },
+    },
+  ],
+  [
+    "file:export-gif",
+    {
+      id: "file:export-gif",
+      label: "Export Animated GIF...",
+      category: "File",
+      keywords: ["gif", "animation", "export"],
+      handler: () => {
+        const spriteId = activeSpriteIdForExport();
+        if (spriteId === null) return;
+        pickExportPath("gif", "Animated GIF")
+          .then((path) => {
+            if (path === null) return;
+            return exportAnimatedGif({ sprite_id: spriteId, output_path: path });
+          })
+          .catch((err: unknown) => reportCommandFailure("export_animated_gif", err));
+      },
+    },
+  ],
+  [
+    "file:export-webp",
+    {
+      id: "file:export-webp",
+      label: "Export Animated WebP...",
+      category: "File",
+      keywords: ["webp", "animation", "export"],
+      handler: () => {
+        const spriteId = activeSpriteIdForExport();
+        if (spriteId === null) return;
+        pickExportPath("webp", "Animated WebP")
+          .then((path) => {
+            if (path === null) return;
+            return exportAnimatedWebp({ sprite_id: spriteId, output_path: path });
+          })
+          .catch((err: unknown) => reportCommandFailure("export_animated_webp", err));
+      },
+    },
+  ],
+  [
+    "file:export-tmx",
+    {
+      id: "file:export-tmx",
+      label: "Export Tilemap (Tiled .tmx)...",
+      category: "File",
+      keywords: ["tmx", "tiled", "tilemap", "export"],
+      handler: () => {
+        const spriteId = activeSpriteIdForExport();
+        if (spriteId === null) return;
+        pickExportPath("tmx", "Tiled tilemap")
+          .then((path) => {
+            if (path === null) return;
+            return exportTmx({ sprite_id: spriteId, output_path: path });
+          })
+          .catch((err: unknown) => reportCommandFailure("export_tmx", err));
       },
     },
   ],
