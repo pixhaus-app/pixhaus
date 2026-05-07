@@ -66,6 +66,8 @@ import {
   beginRename,
   deleteLayer,
   isLayerPanelVisible,
+  layers,
+  nextAutoName,
   setLayerPanelVisible,
 } from "../layers/layer-state";
 import { refreshTimeline } from "../timeline/timeline-state";
@@ -558,7 +560,7 @@ const COMMANDS: ReadonlyMap<string, CommandEntry> = new Map<string, CommandEntry
       category: "Layer",
       handler: () => {
         const id = activeSpriteId();
-        if (id !== null) addLayer(id, "Layer");
+        if (id !== null) addLayer(id, nextAutoName(layers(), "Layer"));
       },
     },
   ],

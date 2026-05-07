@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { flattenLayers, type FlatEntry } from "./layer-state";
+import { flattenLayers, nextAutoName, type FlatEntry } from "./layer-state";
 import type { Layer } from "../lib/types";
 
 function at(result: FlatEntry[], i: number): FlatEntry {
@@ -155,5 +155,58 @@ describe("flattenLayers", () => {
     // Top layer first.
     expect(at(result, 0).layer.name).toBe("Layer 2");
     expect(at(result, 1).layer.name).toBe("Layer 1");
+  });
+});
+
+// ── nextAutoName ─────────────────────────────────────────────────────────────
+
+describe("nextAutoName", () => {
+  it("returns `<prefix> 1` when no layers match", () => {
+    expect(nextAutoName([], "Layer")).toBe("Layer 1");
+    expect(nextAutoName([raster(1, "Untitled")], "Layer")).toBe("Layer 1");
+  });
+
+  it("picks max + 1 for matching layers", () => {
+    const list = [raster(1, "Layer 1"), raster(2, "Layer 2"), raster(3, "Layer 3")];
+    expect(nextAutoName(list, "Layer")).toBe("Layer 4");
+  });
+
+  it("does not gap-fill after a delete", () => {
+    // Simulating "Layer 2" was deleted from [1, 2, 3].
+    const list = [raster(1, "Layer 1"), raster(3, "Layer 3")];
+    expect(nextAutoName(list, "Layer")).toBe("Layer 4");
+  });
+
+  it("ignores names that don't match the prefix exactly", () => {
+    const list = [
+      raster(1, "Layer"), // no number
+      raster(2, "Layerfoo 1"), // wrong prefix
+      raster(3, "Layer 1 extra"), // suffix after number
+      raster(4, "Layer 7"),
+    ];
+    expect(nextAutoName(list, "Layer")).toBe("Layer 8");
+  });
+
+  it("works for arbitrary prefixes (e.g. Group)", () => {
+    const list = [group(1, "Group 1"), group(2, "Group 5"), raster(3, "Layer 99")];
+    expect(nextAutoName(list, "Group")).toBe("Group 6");
+  });
+
+  it("ignores non-numeric trailing tokens", () => {
+    const list = [raster(1, "Layer abc"), raster(2, "Layer NaN")];
+    expect(nextAutoName(list, "Layer")).toBe("Layer 1");
+  });
+
+  it("treats the prefix as a literal (regex metacharacters are not specials)", () => {
+    // `(RGB)` would explode if we built a RegExp from the prefix without
+    // escaping; the literal-prefix implementation handles it cleanly.
+    const list = [raster(1, "Image (RGB) 1"), raster(2, "Image (RGB) 4")];
+    expect(nextAutoName(list, "Image (RGB)")).toBe("Image (RGB) 5");
+  });
+
+  it("rejects negative numbers and signs after the prefix", () => {
+    const list = [raster(1, "Layer -3"), raster(2, "Layer +2")];
+    // Neither matches `<prefix> <digits>` strictly.
+    expect(nextAutoName(list, "Layer")).toBe("Layer 1");
   });
 });

@@ -188,7 +188,7 @@ const LayerRow: Component<Props> = (props) => {
         e.preventDefault();
         props.onContextMenu(e, props.layer.id);
       }}
-      draggable
+      draggable={true}
       onDragStart={handleDragStart}
       onDragOver={handleDragOver}
       onDragLeave={handleDragLeave}
