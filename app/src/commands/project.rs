@@ -7,25 +7,9 @@ use pixhaus_core::undo::History;
 use pixhaus_io::pixhaus::{PixelBufferEntry, PixhausArchive};
 use serde::{Deserialize, Serialize};
 use tauri::State;
-use tokio::task::JoinError;
 
-use crate::error::{AppCommandError, CommandResult};
+use crate::error::{AppCommandError, CommandResult, join_error_to_command_error};
 use crate::state::{AppState, DocumentStore};
-
-/// Maps a `tokio::task::JoinError` from a `spawn_blocking` task into a
-/// human-readable validation error. Distinguishes panic from
-/// runtime-initiated cancellation so the UI / log surface reflects what
-/// actually happened (Copilot review of PR #50).
-fn describe_join_error(op: &str, err: &JoinError) -> AppCommandError {
-    let detail = if err.is_panic() {
-        format!("{op} task panicked")
-    } else if err.is_cancelled() {
-        format!("{op} task cancelled (runtime shutdown)")
-    } else {
-        format!("{op} task did not complete: {err}")
-    };
-    AppCommandError::Validation { detail }
-}
 
 /// Status snapshot returned by project-level commands.
 #[derive(Debug, Serialize)]
@@ -105,7 +89,7 @@ pub async fn project_open(
         move || pixhaus_io::pixhaus::decode_from_file(&path_buf)
     })
     .await
-    .map_err(|join_err| describe_join_error("pixhaus decode", &join_err))??;
+    .map_err(|join_err| join_error_to_command_error("pixhaus decode", &join_err))??;
 
     let mut doc = state.doc.write().await;
     Ok(install_loaded_project(
@@ -198,7 +182,7 @@ pub async fn project_import_psd(
         move || pixhaus_io::psd::decode_from_file(&path_buf)
     })
     .await
-    .map_err(|join_err| describe_join_error("PSD decode", &join_err))??;
+    .map_err(|join_err| join_error_to_command_error("PSD decode", &join_err))??;
 
     for w in &converted.warnings {
         tracing::warn!(path = %path_buf.display(), warning = ?w, "PSD import warning");
@@ -244,7 +228,7 @@ pub async fn project_import_aseprite(
         }
     })
     .await
-    .map_err(|join_err| describe_join_error("aseprite decode", &join_err))??;
+    .map_err(|join_err| join_error_to_command_error("aseprite decode", &join_err))??;
 
     for w in &converted.warnings {
         tracing::warn!(path = %path_buf.display(), warning = ?w, "Aseprite import warning");

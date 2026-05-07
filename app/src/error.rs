@@ -14,8 +14,10 @@
 //! diagnostics — UI surfaces should localise off `kind` rather than
 //! string-matching the message.
 
+use pixhaus_core::undo::Error as UndoError;
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
+use tokio::task::JoinError;
 use ts_rs::TS;
 
 /// Errors surfaced by Tauri commands in `pixhaus-app`.
@@ -123,6 +125,43 @@ pub enum AppCommandError {
 
 /// Crate-local result alias.
 pub type CommandResult<T> = std::result::Result<T, AppCommandError>;
+
+/// Maps `core::undo::Error` onto the IPC error contract.
+///
+/// `NothingToUndo` / `NothingToRedo` keep their own kinds so the UI can
+/// disable menu items via `kind`. `CommandFailed` and `Poisoned` collapse
+/// to `HistoryCorrupted` — both indicate the project state may no longer
+/// be trustworthy. Anything else collapses to `Validation`.
+impl From<UndoError> for AppCommandError {
+    fn from(err: UndoError) -> Self {
+        match err {
+            UndoError::NothingToUndo => AppCommandError::NothingToUndo,
+            UndoError::NothingToRedo => AppCommandError::NothingToRedo,
+            UndoError::CommandFailed { .. } | UndoError::Poisoned { .. } => {
+                AppCommandError::HistoryCorrupted {
+                    detail: err.to_string(),
+                }
+            }
+            other => AppCommandError::Validation {
+                detail: other.to_string(),
+            },
+        }
+    }
+}
+
+/// Maps a `tokio::task::JoinError` from a `spawn_blocking` to the IPC
+/// error contract. `op` names the operation for diagnostics.
+#[must_use]
+pub fn join_error_to_command_error(op: &str, err: &JoinError) -> AppCommandError {
+    let detail = if err.is_panic() {
+        format!("{op} task panicked")
+    } else if err.is_cancelled() {
+        format!("{op} task cancelled (runtime shutdown)")
+    } else {
+        format!("{op} task did not complete: {err}")
+    };
+    AppCommandError::Validation { detail }
+}
 
 /// Maps `pixhaus_io::Error` onto the IPC error contract.
 ///

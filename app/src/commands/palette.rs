@@ -1,34 +1,12 @@
 //! Palette CRUD and color management commands.
 
 use pixhaus_core::project::{Palette, PaletteEntry, PaletteId, Project, Rgba, SpriteId, UserData};
-use pixhaus_core::undo::{
-    Command, CommandError, CommandResult as UndoCommandResult, Error as UndoError,
-};
+use pixhaus_core::undo::{Command, CommandError, CommandResult as UndoCommandResult};
 use serde::{Deserialize, Deserializer, Serialize};
 use tauri::State;
 
 use crate::error::{AppCommandError, CommandResult};
 use crate::state::AppState;
-
-/// Maps a `core::undo::Error` raised by `History::push` of a palette
-/// command into the typed IPC error contract.
-///
-/// Mirrors `commands::undo::map_undo_error` but is duplicated here to
-/// keep `commands::undo` private. `CommandFailed` and `Poisoned` both
-/// indicate the project state is suspect; collapse them onto
-/// `HistoryCorrupted` so the UI can show a recovery prompt.
-fn map_palette_undo_error(err: UndoError) -> AppCommandError {
-    match err {
-        UndoError::CommandFailed { .. } | UndoError::Poisoned { .. } => {
-            AppCommandError::HistoryCorrupted {
-                detail: err.to_string(),
-            }
-        }
-        other => AppCommandError::Validation {
-            detail: other.to_string(),
-        },
-    }
-}
 
 // ── command impl: PaletteAddColorCommand ─────────────────────────────────────
 
@@ -248,9 +226,7 @@ pub async fn palette_add_color(
         .project
         .as_mut()
         .ok_or(AppCommandError::NoActiveProject)?;
-    doc.history
-        .push(Box::new(cmd), project)
-        .map_err(map_palette_undo_error)?;
+    doc.history.push(Box::new(cmd), project)?;
 
     doc.dirty = true;
     Ok(next_index)
