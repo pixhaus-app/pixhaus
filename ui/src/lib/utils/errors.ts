@@ -3,21 +3,40 @@
 // (alert() blocks the event loop). Keeps the catch-block at every
 // call-site to one line and keeps the message format consistent.
 import { pushToast } from "../toast/toast-state";
+import type { AppCommandError } from "../types/AppCommandError";
+
+// AppCommandError on the wire is `{ kind, message?: ... }` where struct
+// variants put their fields inside `message` (e.g. `{ kind: "validation",
+// message: { detail: "..." } }`). Pull the most informative string out of
+// whatever shape is there; fall back to String(err) for non-IPC errors.
+function extractDetail(err: unknown): string {
+  if (err === null || typeof err !== "object") return String(err);
+  const e = err as { kind?: unknown; message?: unknown };
+  const message = e.message;
+  if (typeof message === "string") return message;
+  if (message !== null && typeof message === "object") {
+    const m = message as Record<string, unknown>;
+    if (typeof m["detail"] === "string") return m["detail"];
+    if (typeof m["message"] === "string") return m["message"];
+    if (typeof m["stream"] === "string") return `requires ${m["stream"]}`;
+  }
+  if (typeof e.kind === "string") return e.kind;
+  return String(err);
+}
 
 export function reportCommandFailure(operation: string, err: unknown): void {
   console.error(`[pixhaus] ${operation}:`, err);
-  const detail =
-    err !== null && typeof err === "object" && "message" in err
-      ? String((err as { message: unknown }).message)
-      : String(err);
   pushToast({
     kind: "error",
     title: `${operation} failed`,
-    body: detail,
+    body: extractDetail(err),
   });
 }
 
-export type UnimplementedError = { kind: "unimplemented"; stream?: string };
+// `Unimplemented` is the IPC variant for stub commands that wait on a
+// future stream. The wire shape matches the generated AppCommandError
+// type — `stream` lives inside `message`, not at the top level.
+export type UnimplementedError = Extract<AppCommandError, { kind: "unimplemented" }>;
 
 export function isUnimplementedError(err: unknown): err is UnimplementedError {
   return (
@@ -34,8 +53,9 @@ export function toastUnimplemented(
   err: UnimplementedError,
   defaultStream: string,
 ): void {
+  const stream = err.message?.stream ?? defaultStream;
   pushToast({
     kind: "info",
-    title: `${label} requires ${err.stream ?? defaultStream} — not yet available.`,
+    title: `${label} requires ${stream} — not yet available.`,
   });
 }
