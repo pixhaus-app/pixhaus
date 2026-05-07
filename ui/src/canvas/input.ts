@@ -22,6 +22,8 @@ import {
   activeFrameIndex,
   activeLayerId,
   isSelectMode,
+  setShapePreview,
+  type ShapeKind,
 } from "./canvas-state";
 import {
   activeTool,
@@ -51,7 +53,7 @@ import {
   canvasFill,
 } from "../lib/commands/canvas";
 import { reportCommandFailure } from "../lib/utils/errors";
-import { ellipsePerimeterPoints, rectPerimeterPoints } from "./tools/shape-points";
+import { ellipsePerimeterPoints, linePoints, rectPerimeterPoints } from "./tools/shape-points";
 
 // How much the continuous zoom changes per wheel tick (scroll-wheel smooth mode).
 const WHEEL_ZOOM_FACTOR = 1.1;
@@ -185,29 +187,35 @@ function resetTilePaintStroke(): void {
 // because there is only one active drawing tool at a time and the
 // session id alone is enough to identify the in-flight stroke.
 
+// Returns the canvas-pixel under the cursor, snapped to integer
+// coordinates so it lines up with the cell the user sees under the
+// brush-cursor preview. Without the floor here, freehand strokes
+// would round differently from the preview at fractional positions —
+// the preview would show cell (3,3) and the paint would land in (4,4).
 function canvasPointFromEvent(e: MouseEvent, el: HTMLElement): [number, number] {
   const rect = el.getBoundingClientRect();
   const sx = e.clientX - rect.left;
   const sy = e.clientY - rect.top;
   const [cx, cy] = screenToCanvas(sx, sy, scrollX(), scrollY(), zoom(), rect.width, rect.height);
-  return [cx, cy];
+  return [Math.floor(cx), Math.floor(cy)];
 }
 
 function isDrawingTool(): boolean {
   const t = activeTool();
-  return t === "pencil" || t === "eraser" || t === "line";
+  return t === "pencil" || t === "eraser";
 }
 
 function isShapeTool(): boolean {
   const t = activeTool();
-  return t === "rect" || t === "ellipse";
+  return t === "rect" || t === "ellipse" || t === "line";
 }
 
 function isFillTool(): boolean {
   return activeTool() === "fill";
 }
 
-// Anchor point of an in-progress rect/ellipse drag, in canvas pixels.
+// Anchor point of an in-progress shape (line/rect/ellipse) drag, in
+// canvas pixels.
 let shapeAnchor: [number, number] | null = null;
 
 function dispatchShape(end: [number, number]): void {
@@ -220,10 +228,16 @@ function dispatchShape(end: [number, number]): void {
   if (spriteId === null || layerId === null) return;
 
   const tool = activeTool();
-  const points =
-    tool === "rect"
-      ? rectPerimeterPoints(start[0], start[1], end[0], end[1])
-      : ellipsePerimeterPoints(start[0], start[1], end[0], end[1]);
+  let points: Array<[number, number]>;
+  if (tool === "rect") {
+    points = rectPerimeterPoints(start[0], start[1], end[0], end[1]);
+  } else if (tool === "ellipse") {
+    points = ellipsePerimeterPoints(start[0], start[1], end[0], end[1]);
+  } else if (tool === "line") {
+    points = linePoints(start[0], start[1], end[0], end[1]);
+  } else {
+    return;
+  }
   if (points.length === 0) return;
 
   const color = foregroundColor();
@@ -545,7 +559,16 @@ export function attachCanvasInput(el: HTMLElement): () => void {
       if (isShapeTool()) {
         e.preventDefault();
         shapeActive = true;
-        shapeAnchor = canvasPointFromEvent(e, el);
+        const anchor = canvasPointFromEvent(e, el);
+        shapeAnchor = anchor;
+        // Show the preview at the anchor immediately so the user gets
+        // feedback before the first mousemove.
+        const tool = activeTool();
+        const kind: ShapeKind | null =
+          tool === "line" || tool === "rect" || tool === "ellipse" ? tool : null;
+        if (kind !== null) {
+          setShapePreview({ kind, start: anchor, end: anchor });
+        }
         return;
       }
     }
@@ -591,6 +614,19 @@ export function attachCanvasInput(el: HTMLElement): () => void {
       scheduleStrokeFlush();
     }
 
+    // Update the shape preview so the outline tracks the cursor
+    // during a line/rect/ellipse drag. The actual paint still
+    // dispatches on mouseup via dispatchShape.
+    if (shapeActive && shapeAnchor !== null) {
+      const end = canvasPointFromEvent(e, el);
+      const tool = activeTool();
+      const kind: ShapeKind | null =
+        tool === "line" || tool === "rect" || tool === "ellipse" ? tool : null;
+      if (kind !== null) {
+        setShapePreview({ kind, start: shapeAnchor, end });
+      }
+    }
+
     if (!pan.active) return;
     const dx = e.clientX - pan.lastX;
     const dy = e.clientY - pan.lastY;
@@ -618,6 +654,9 @@ export function attachCanvasInput(el: HTMLElement): () => void {
     if (shapeActive) {
       shapeActive = false;
       const end = canvasPointFromEvent(e, el);
+      // Clear the preview before dispatch so the user sees only the
+      // committed pixels (not preview + paint stacked).
+      setShapePreview(null);
       dispatchShape(end);
     }
 

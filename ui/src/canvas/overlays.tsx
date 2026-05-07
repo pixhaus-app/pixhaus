@@ -10,6 +10,7 @@
 
 import { For, Show, createMemo, type Component } from "solid-js";
 import { canvasToScreen } from "./viewport";
+import type { ShapePreviewState } from "./canvas-state";
 import type { TransformHandle } from "./transform/transform-state";
 
 interface ViewportProps {
@@ -122,6 +123,103 @@ export const BrushCursor: Component<BrushCursorProps> = (props) => {
     </Show>
   );
 };
+
+// ── Shape-drag preview overlay ─────────────────────────────────────────────
+
+interface ShapePreviewProps extends ViewportProps {
+  /** Active shape drag, or null when no shape tool is dragging. */
+  preview: ShapePreviewState | null;
+}
+
+/**
+ * Outlines the line / rect / ellipse the user is currently dragging.
+ *
+ * Renders nothing while the shape tool is idle. While a drag is active,
+ * the line / rect / ellipse is drawn against the visible canvas using
+ * the same screen-pixel conversion as the brush cursor so the preview
+ * lines up with the bytes the dispatch will eventually paint.
+ */
+export const ShapePreview: Component<ShapePreviewProps> = (props) => {
+  // Convert a canvas-pixel corner to its top-left screen position.
+  const corner = (x: number, y: number): [number, number] =>
+    canvasToScreen(x, y, props.scrollX, props.scrollY, props.zoom, props.vpW, props.vpH);
+
+  return (
+    <Show when={props.preview}>
+      {(preview) => {
+        // Re-derive the box on every preview change so each move re-renders.
+        const startCorner = createMemo(() => corner(preview().start[0], preview().start[1]));
+        const endCorner = createMemo(() => corner(preview().end[0], preview().end[1]));
+
+        // Inclusive box: a 1x1 pixel at (5, 5) covers screen rect (5..6, 5..6).
+        const x0 = createMemo(() => Math.min(startCorner()[0], endCorner()[0]));
+        const y0 = createMemo(() => Math.min(startCorner()[1], endCorner()[1]));
+        const x1 = createMemo(() => {
+          const px = Math.max(preview().start[0], preview().end[0]);
+          return corner(px + 1, 0)[0];
+        });
+        const y1 = createMemo(() => {
+          const py = Math.max(preview().start[1], preview().end[1]);
+          return corner(0, py + 1)[1];
+        });
+        const w = createMemo(() => x1() - x0());
+        const h = createMemo(() => y1() - y0());
+
+        return (
+          <svg
+            class="canvas-overlay shape-preview-overlay"
+            width={props.vpW}
+            height={props.vpH}
+            viewBox={`0 0 ${props.vpW} ${props.vpH}`}
+            aria-hidden="true"
+          >
+            <Show when={preview().kind === "line"}>
+              {/* Anchor and current cursor in screen-pixel centres of their cells. */}
+              <line
+                x1={corner(preview().start[0], 0)[0] + cellCentreOffset(props.zoom)}
+                y1={corner(0, preview().start[1])[1] + cellCentreOffset(props.zoom)}
+                x2={corner(preview().end[0], 0)[0] + cellCentreOffset(props.zoom)}
+                y2={corner(0, preview().end[1])[1] + cellCentreOffset(props.zoom)}
+                stroke="white"
+                stroke-width="1"
+                stroke-dasharray="3 3"
+              />
+            </Show>
+            <Show when={preview().kind === "rect"}>
+              <rect
+                x={x0()}
+                y={y0()}
+                width={Math.max(w(), 1)}
+                height={Math.max(h(), 1)}
+                fill="none"
+                stroke="white"
+                stroke-width="1"
+                stroke-dasharray="3 3"
+              />
+            </Show>
+            <Show when={preview().kind === "ellipse"}>
+              <ellipse
+                cx={x0() + w() / 2}
+                cy={y0() + h() / 2}
+                rx={Math.max(w() / 2, 0.5)}
+                ry={Math.max(h() / 2, 0.5)}
+                fill="none"
+                stroke="white"
+                stroke-width="1"
+                stroke-dasharray="3 3"
+              />
+            </Show>
+          </svg>
+        );
+      }}
+    </Show>
+  );
+};
+
+/** Half-cell offset in screen pixels at the given zoom. */
+function cellCentreOffset(zoom: number): number {
+  return zoom / 2;
+}
 
 // ── Transform handles overlay ──────────────────────────────────────────────
 

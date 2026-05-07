@@ -13,7 +13,7 @@ import { onMount, onCleanup, createEffect, createSignal, type Component } from "
 import { listen } from "@tauri-apps/api/event";
 import { CanvasRenderer } from "./renderer";
 import { attachCanvasInput } from "./input";
-import { BrushCursor, TransformHandles } from "./overlays";
+import { BrushCursor, ShapePreview, TransformHandles } from "./overlays";
 import Toolbar from "./tools/Toolbar";
 import ToolOptionsPanel from "./tools/ToolOptionsPanel";
 import {
@@ -30,6 +30,7 @@ import {
   brushSize,
   brushShape,
   cursorCanvas,
+  shapePreview,
   transformBounds,
   setTransformBounds,
   activeSpriteId,
@@ -311,6 +312,14 @@ const Canvas: Component = () => {
           cursor={cursorCanvas()}
           size={brushSize()}
           shape={brushShape()}
+        />
+        <ShapePreview
+          scrollX={scrollX()}
+          scrollY={scrollY()}
+          zoom={zoom()}
+          vpW={vpW()}
+          vpH={vpH()}
+          preview={shapePreview()}
         />
         <TransformHandles
           scrollX={scrollX()}

@@ -33,6 +33,50 @@ function normaliseBox(
 }
 
 /**
+ * Emits the pixels along a Bresenham line from `(ax, ay)` to `(bx, by)`.
+ *
+ * The line tool dispatches the result through the same point-list path
+ * the brush uses, so the engine doesn't need a separate "draw line"
+ * code path. Pixels are integer canvas coordinates; degenerate input
+ * (start == end) returns a single pixel.
+ */
+export function linePoints(
+  ax: number,
+  ay: number,
+  bx: number,
+  by: number,
+): Array<[number, number]> {
+  let x0 = Math.round(ax);
+  let y0 = Math.round(ay);
+  const x1 = Math.round(bx);
+  const y1 = Math.round(by);
+
+  const dx = Math.abs(x1 - x0);
+  const dy = -Math.abs(y1 - y0);
+  const sx = x0 < x1 ? 1 : -1;
+  const sy = y0 < y1 ? 1 : -1;
+  let err = dx + dy;
+
+  const out: Array<[number, number]> = [];
+  // Bound the loop so a pathological input can't run away.
+  const cap = (dx - dy) * 2 + 1;
+  for (let i = 0; i < cap; i += 1) {
+    out.push([x0, y0]);
+    if (x0 === x1 && y0 === y1) break;
+    const e2 = 2 * err;
+    if (e2 >= dy) {
+      err += dy;
+      x0 += sx;
+    }
+    if (e2 <= dx) {
+      err += dx;
+      y0 += sy;
+    }
+  }
+  return out;
+}
+
+/**
  * Emits the perimeter pixels of an axis-aligned rectangle.
  *
  * The corners are passed once; the edges are walked top → right → bottom → left

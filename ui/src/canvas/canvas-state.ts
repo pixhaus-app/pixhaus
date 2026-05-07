@@ -63,6 +63,21 @@ export { toolSize as brushSize, toolShape as brushShape } from "./tools/tool-sta
 // Cursor position in canvas coordinates, or null when the pointer is off-canvas.
 export const [cursorCanvas, setCursorCanvas] = createSignal<{ x: number; y: number } | null>(null);
 
+// ── Shape preview ──────────────────────────────────────────────────────────
+//
+// Set by the canvas input handler while a line/rect/ellipse drag is in
+// progress so the overlay can render the outline the user is about to
+// commit. `null` means no shape drag is active. The kind is captured at
+// drag-start so a tool change mid-drag (which the input handler doesn't
+// allow today, but defense-in-depth) can't morph the preview.
+export type ShapeKind = "line" | "rect" | "ellipse";
+export type ShapePreviewState = {
+  kind: ShapeKind;
+  start: [number, number];
+  end: [number, number];
+};
+export const [shapePreview, setShapePreview] = createSignal<ShapePreviewState | null>(null);
+
 // ── Transform target (S16 will own; default null) ──────────────────────────
 
 /**
