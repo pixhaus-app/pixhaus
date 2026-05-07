@@ -9,7 +9,6 @@ import { createSignal } from "solid-js";
 import type { BlendMode, Layer, LayerId, SpriteId, TilesetId } from "../lib/types";
 import {
   layerAdd,
-  layerConvertToGroup,
   layerConvertToTilemap,
   layerDelete,
   layerFlattenVisible,
@@ -23,6 +22,7 @@ import {
   layerSetOpacity,
   layerSetParent,
   layerSetVisibility,
+  layerWrapInGroup,
 } from "../lib/commands/layers";
 import {
   activeSpriteId,
@@ -339,17 +339,17 @@ export function reparentLayer(spriteId: SpriteId, id: LayerId, parentId: LayerId
     .catch((err: unknown) => console.error("[pixhaus] layer_set_parent:", err));
 }
 
-export function convertLayerToGroup(spriteId: SpriteId, id: LayerId): void {
-  layerConvertToGroup(spriteId, id)
+export function wrapLayersInGroup(spriteId: SpriteId, layerIds: readonly LayerId[]): void {
+  if (layerIds.length === 0) return;
+  layerWrapInGroup(spriteId, [...layerIds])
     .then((newGroup) => {
       refreshLayers();
-      // Auto-expand the new group so its single child (the original
-      // layer) is immediately visible — and so the group is a valid
-      // drop target for additional layers without requiring an extra
-      // click on the chevron.
+      // Auto-expand the new group so its children (the wrapped layers)
+      // are immediately visible — and so the group is a valid drop
+      // target for additional layers without an extra chevron click.
       ensureGroupExpanded(newGroup.id);
     })
-    .catch((err: unknown) => console.error("[pixhaus] layer_convert_to_group:", err));
+    .catch((err: unknown) => console.error("[pixhaus] layer_wrap_in_group:", err));
 }
 
 export function convertLayerToTilemap(spriteId: SpriteId, id: LayerId, tilesetId: TilesetId): void {

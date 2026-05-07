@@ -10,7 +10,6 @@ import type { Layer, LayerId, SpriteId } from "../lib/types";
 import {
   addLayer,
   beginRename,
-  convertLayerToGroup,
   deleteLayer,
   flattenVisibleLayers,
   layers,
@@ -18,6 +17,7 @@ import {
   mergeSelectedLayers,
   openTilesetPicker,
   selectedLayerIds,
+  wrapLayersInGroup,
 } from "./layer-state";
 
 export type ContextMenuTarget = {
@@ -70,6 +70,27 @@ const LayerContextMenu: Component<Props> = (props) => {
     return idx > 0;
   };
   const multiSelected = () => selectedLayerIds().size >= 2;
+  // Convert to Group accepts non-group layers; reject if the target or
+  // any other selected layer is already a group (the backend would
+  // reject anyway, but disabling here saves a round-trip).
+  const canConvertToGroup = () => {
+    const sel = selectedLayerIds();
+    const ids = sel.size > 0 ? [...sel] : layer() ? [layer()!.id] : [];
+    if (ids.length === 0) return false;
+    const all = layers();
+    return ids.every((id) => {
+      const l = all.find((x) => x.id === id);
+      return l !== undefined && l.kind.kind !== "group";
+    });
+  };
+  // Delete must leave at least one layer on the sprite. With multi-select
+  // this means the selection cannot cover every layer.
+  const canDelete = () => {
+    const total = layers().length;
+    const sel = selectedLayerIds();
+    const count = sel.size > 0 ? sel.size : 1;
+    return total - count >= 1;
+  };
 
   return (
     <Show when={props.target !== null && layer() !== undefined}>
@@ -140,11 +161,22 @@ const LayerContextMenu: Component<Props> = (props) => {
         <button
           class="ctx-menu__item"
           onClick={() => {
-            convertLayerToGroup(props.spriteId, props.target!.layerId);
+            // After R2-B1 the right-clicked target is always in
+            // selectedLayerIds — operate on the whole selection so
+            // multi-select wraps every selected layer into one group.
+            const sel = selectedLayerIds();
+            const ids = sel.size > 0 ? [...sel] : [props.target!.layerId];
+            wrapLayersInGroup(props.spriteId, ids);
             props.onClose();
           }}
-          disabled={isGroup()}
-          title={isGroup() ? "Layer is already a group" : undefined}
+          disabled={!canConvertToGroup()}
+          title={
+            isGroup()
+              ? "Layer is already a group"
+              : !canConvertToGroup()
+                ? "One or more selected layers are already groups"
+                : undefined
+          }
         >
           Convert to Group
         </button>
@@ -168,21 +200,29 @@ const LayerContextMenu: Component<Props> = (props) => {
         <button
           class="ctx-menu__item ctx-menu__item--danger"
           onClick={() => {
-            const target = props.target!.layerId;
-            const name = layer()?.name ?? "this layer";
+            // After R2-B1 the right-clicked layer is in selectedLayerIds.
+            // Multi-select deletes every selected layer; the single-layer
+            // case keeps the named-layer prompt for clarity.
             const spriteId = props.spriteId;
+            const sel = selectedLayerIds();
+            const ids = sel.size > 0 ? [...sel] : [props.target!.layerId];
+            const message =
+              ids.length > 1
+                ? `Delete ${ids.length} layers? This can be undone.`
+                : `Delete "${layer()?.name ?? "this layer"}"? This can be undone.`;
             // Close the menu before the dialog opens so the menu doesn't
             // sit on top of the modal while the user reads it.
             props.onClose();
-            void confirm(`Delete "${name}"? This can be undone.`, {
-              title: "Delete Layer",
+            void confirm(message, {
+              title: ids.length > 1 ? "Delete Layers" : "Delete Layer",
               kind: "warning",
             }).then((ok) => {
-              if (ok) deleteLayer(spriteId, target);
+              if (!ok) return;
+              for (const id of ids) deleteLayer(spriteId, id);
             });
           }}
-          disabled={layers().length <= 1}
-          title={layers().length <= 1 ? "Cannot delete the only layer" : undefined}
+          disabled={!canDelete()}
+          title={!canDelete() ? "Cannot delete every layer on the sprite" : undefined}
         >
           Delete
         </button>

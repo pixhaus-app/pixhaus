@@ -99,11 +99,12 @@ export function layerSetParent(
 }
 
 /**
- * Wraps a layer in a fresh group, preserving the layer's pixels and cels.
- * Returns the newly created group `Layer` so the UI can auto-expand it.
+ * Wraps one or more layers in a single fresh group, preserving their
+ * pixels and cels. Pass `[layer_id]` for the single-layer case. Returns
+ * the newly created group so the UI can auto-expand it.
  */
-export function layerConvertToGroup(sprite_id: SpriteId, layer_id: LayerId): Promise<Layer> {
-  return invoke<Layer>("layer_convert_to_group", { sprite_id, layer_id });
+export function layerWrapInGroup(sprite_id: SpriteId, layer_ids: LayerId[]): Promise<Layer> {
+  return invoke<Layer>("layer_wrap_in_group", { sprite_id, layer_ids });
 }
 
 /** Converts a layer to a tilemap layer backed by the given tileset. */

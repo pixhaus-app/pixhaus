@@ -137,7 +137,6 @@ pub fn run() -> Result<(), AppError> {
             commands::frames::frame_tag_list,
             // layers
             commands::layers::layer_add,
-            commands::layers::layer_convert_to_group,
             commands::layers::layer_convert_to_tilemap,
             commands::layers::layer_delete,
             commands::layers::layer_flatten_visible,
@@ -151,6 +150,7 @@ pub fn run() -> Result<(), AppError> {
             commands::layers::layer_set_opacity,
             commands::layers::layer_set_parent,
             commands::layers::layer_set_visibility,
+            commands::layers::layer_wrap_in_group,
             // palette
             commands::palette::palette_add,
             commands::palette::palette_add_color,

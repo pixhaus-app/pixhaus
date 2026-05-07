@@ -23,6 +23,8 @@ import {
   layers,
   nextAutoName,
   refreshLayers,
+  selectedLayerIds,
+  selectLayer,
   setLayerPanelVisible,
 } from "./layer-state";
 import LayerRow from "./LayerRow";
@@ -172,6 +174,13 @@ const LayerPanel: Component = () => {
   const [contextTarget, setContextTarget] = createSignal<ContextMenuTarget | null>(null);
 
   function handleContextMenu(e: MouseEvent, layerId: LayerId): void {
+    // Right-click on a row outside the current selection switches the
+    // selection to just that row — matches Photoshop / Aseprite. Right-
+    // click on a row inside the selection leaves the selection alone, so
+    // multi-select operations from the menu hit every selected row.
+    if (!selectedLayerIds().has(layerId)) {
+      selectLayer(layerId, false);
+    }
     setContextTarget({ x: e.clientX, y: e.clientY, layerId });
   }
 
@@ -233,11 +242,20 @@ const LayerPanel: Component = () => {
           when={flatEntries().length > 0}
           fallback={<div class="layer-panel__empty">No layers yet.</div>}
         >
-          {/* Virtual scroll container */}
+          {/* Virtual scroll container.
+              The dragover/drop handlers preventDefault unconditionally so
+              the cursor stays in "move" mode anywhere in the panel — without
+              this, motion through the active row's overflowing blend/opacity
+              strip (which contains a <select> and <input type=range>) trips
+              the browser's default reject and shows the prohibited icon.
+              Per-row handleDragOver still runs via bubbling and updates the
+              drop indicator. */}
           <div
             ref={scrollContainerRef}
             class="layer-panel__scroll"
             onScroll={(e) => setScrollTop(e.currentTarget.scrollTop)}
+            onDragOver={(e) => e.preventDefault()}
+            onDrop={(e) => e.preventDefault()}
           >
             {/* Spacer sets the total scrollable height */}
             <div style={{ height: `${totalHeight()}px`, position: "relative" }}>
@@ -250,6 +268,7 @@ const LayerPanel: Component = () => {
                       top: `${rowOffsets()[visualIndex] ?? 0}px`,
                       width: "100%",
                     }}
+                    onDragOver={(e) => e.preventDefault()}
                   >
                     <Show when={dragOverIndex() === entry.index}>
                       <div class="layer-panel__drop-indicator" />

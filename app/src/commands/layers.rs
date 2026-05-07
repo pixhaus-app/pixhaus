@@ -356,41 +356,61 @@ fn set_layer_parent_in_sprite(
     Ok(())
 }
 
-/// Wraps a layer in a new group, preserving the layer's pixels and any
-/// cels that point at it. The new group inherits the original's parent so
-/// it sits at the same hierarchy level the original used to occupy; the
-/// original is reparented under the new group.
+/// Wraps one or more layers in a single new group, preserving their
+/// pixels and any cels that point at them.
 ///
-/// Within the sprite's layer vec, the new group is inserted at the
-/// original's position (and the original shifts to `pos + 1`). Vec order
-/// drives stack order among siblings, so the new group occupies the
-/// original's old z-order slot among its siblings.
+/// The new group is anchored at the topmost selected layer (the one with
+/// the highest vec position) — it inherits that layer's parent so it
+/// sits at the same hierarchy level the anchor used to occupy, and is
+/// inserted at the anchor's vec position so its z-order slot among
+/// siblings matches what the anchor had. Every layer in `layer_ids` is
+/// reparented under the new group, regardless of their original parents.
 ///
-/// Returns `Validation` if the layer is already a group — the menu item
-/// disables itself in that case, but the backend rejects defensively to
-/// avoid silently nesting groups.
-fn wrap_layer_in_group(
+/// Returns `Validation` if `layer_ids` is empty or any of the listed
+/// layers is already a group — the menu item disables itself for the
+/// already-group case, but the backend rejects defensively to avoid
+/// silently nesting groups.
+fn wrap_layers_in_group(
     sprite: &mut Sprite,
-    layer_id: LayerId,
+    layer_ids: &[LayerId],
     new_group_id: LayerId,
 ) -> CommandResult<Layer> {
-    let pos =
-        sprite
-            .layers
-            .iter()
-            .position(|l| l.id == layer_id)
-            .ok_or(AppCommandError::NotFound {
-                entity: "layer".into(),
-                id: u64::from(layer_id.get()),
-            })?;
-
-    if matches!(sprite.layers[pos].kind, LayerKind::Group { .. }) {
+    if layer_ids.is_empty() {
         return Err(AppCommandError::Validation {
-            detail: format!("layer {} is already a group", u64::from(layer_id.get())),
+            detail: "wrap_layers_in_group requires at least one layer".into(),
         });
     }
 
-    let original_parent = sprite.layers[pos].parent;
+    // Resolve every requested id to a vec position. Bail at the first
+    // missing or already-a-group layer so the sprite isn't half-mutated.
+    // Track the anchor (topmost selected) inline — its parent becomes
+    // the new group's parent and its vec position becomes the group's
+    // insertion slot.
+    let mut anchor_pos: usize = 0;
+    let mut seen_any = false;
+    for id in layer_ids {
+        let pos =
+            sprite
+                .layers
+                .iter()
+                .position(|l| l.id == *id)
+                .ok_or(AppCommandError::NotFound {
+                    entity: "layer".into(),
+                    id: u64::from(id.get()),
+                })?;
+        if matches!(sprite.layers[pos].kind, LayerKind::Group { .. }) {
+            return Err(AppCommandError::Validation {
+                detail: format!("layer {} is already a group", u64::from(id.get())),
+            });
+        }
+        if !seen_any || pos > anchor_pos {
+            anchor_pos = pos;
+            seen_any = true;
+        }
+    }
+
+    let anchor_parent = sprite.layers[anchor_pos].parent;
+
     let new_group = Layer {
         id: new_group_id,
         name: next_auto_name(&sprite.layers, "Group"),
@@ -399,13 +419,19 @@ fn wrap_layer_in_group(
         opacity: 255,
         visible: true,
         locked: false,
-        parent: original_parent,
+        parent: anchor_parent,
         user_data: UserData::default(),
     };
 
-    sprite.layers[pos].parent = Some(new_group_id);
-    sprite.layers.insert(pos, new_group.clone());
+    // Reparent every selected layer to the new group. We do this before
+    // inserting the group so the position lookups above stay valid.
+    for id in layer_ids {
+        if let Some(layer) = sprite.layers.iter_mut().find(|l| l.id == *id) {
+            layer.parent = Some(new_group_id);
+        }
+    }
 
+    sprite.layers.insert(anchor_pos, new_group.clone());
     Ok(new_group)
 }
 
@@ -432,13 +458,13 @@ fn next_auto_name(layers: &[Layer], prefix: &str) -> String {
     format!("{prefix} {}", max + 1)
 }
 
-/// Converts a non-group layer into a child of a fresh group. The original
-/// layer's pixels and cels are preserved; the new group sits at the
-/// original's old hierarchy level. Returns the newly created group.
+/// Wraps the given non-group layers under a single fresh group. Pixels
+/// and cels are preserved. Pass `vec![one]` for the single-layer case.
+/// Returns the newly created group.
 #[tauri::command(async, rename_all = "snake_case")]
-pub async fn layer_convert_to_group(
+pub async fn layer_wrap_in_group(
     sprite_id: SpriteId,
-    layer_id: LayerId,
+    layer_ids: Vec<LayerId>,
     state: State<'_, AppState>,
 ) -> CommandResult<Layer> {
     let mut doc = state.doc.write().await;
@@ -455,7 +481,7 @@ pub async fn layer_convert_to_group(
                 entity: "sprite".into(),
                 id: u64::from(sprite_id.get()),
             })?;
-        wrap_layer_in_group(sprite, layer_id, new_id)?
+        wrap_layers_in_group(sprite, &layer_ids, new_id)?
     };
     doc.next_id += 1;
     doc.dirty = true;
@@ -1530,7 +1556,7 @@ mod tests {
         );
     }
 
-    // ── wrap_layer_in_group + next_auto_name ─────────────────────────────
+    // ── wrap_layers_in_group + next_auto_name ────────────────────────────
 
     #[test]
     fn next_auto_name_starts_at_one_when_no_match() {
@@ -1568,14 +1594,14 @@ mod tests {
     }
 
     #[test]
-    fn wrap_layer_in_group_preserves_kind_and_inserts_group_above() {
+    fn wrap_single_layer_preserves_kind_and_inserts_group_above() {
         // Top-level raster layer.
         let mut sprite = Sprite::empty(SpriteId::new(1), "main", Size::new(8, 8));
         sprite.layers.push(layer_with(7, None, LayerKind::Raster));
         // Mint id 100 for the new group (mimics doc.next_id allocation).
         let new_group_id = LayerId::new(100);
         let new_group =
-            wrap_layer_in_group(&mut sprite, LayerId::new(7), new_group_id).expect("wrap ok");
+            wrap_layers_in_group(&mut sprite, &[LayerId::new(7)], new_group_id).expect("wrap ok");
 
         // Group is at the original's old vec position; original shifts up by 1.
         assert_eq!(sprite.layers.len(), 2, "exactly one new layer added");
@@ -1608,7 +1634,7 @@ mod tests {
     }
 
     #[test]
-    fn wrap_layer_in_group_inherits_existing_parent() {
+    fn wrap_single_layer_inherits_existing_parent() {
         // Original layer is already inside a group; wrapping should
         // place the new group as a sibling of the original (under the
         // outer group), with the original under the new group.
@@ -1627,7 +1653,7 @@ mod tests {
         ));
 
         let new_group_id = LayerId::new(100);
-        wrap_layer_in_group(&mut sprite, original_id, new_group_id).expect("wrap ok");
+        wrap_layers_in_group(&mut sprite, &[original_id], new_group_id).expect("wrap ok");
 
         let new_group = sprite.layers.iter().find(|l| l.id == new_group_id).unwrap();
         let original = sprite.layers.iter().find(|l| l.id == original_id).unwrap();
@@ -1644,12 +1670,13 @@ mod tests {
     }
 
     #[test]
-    fn wrap_layer_in_group_rejects_already_group() {
+    fn wrap_rejects_layer_that_is_already_group() {
         let mut sprite = Sprite::empty(SpriteId::new(1), "main", Size::new(8, 8));
         sprite
             .layers
             .push(layer_with(1, None, LayerKind::Group { collapsed: false }));
-        let err = wrap_layer_in_group(&mut sprite, LayerId::new(1), LayerId::new(100)).unwrap_err();
+        let err =
+            wrap_layers_in_group(&mut sprite, &[LayerId::new(1)], LayerId::new(100)).unwrap_err();
         assert!(
             matches!(err, AppCommandError::Validation { .. }),
             "wrapping an existing group must reject with Validation; got {err:?}"
@@ -1659,7 +1686,7 @@ mod tests {
     }
 
     #[test]
-    fn wrap_layer_in_group_picks_unused_group_name() {
+    fn wrap_picks_unused_group_name() {
         let mut sprite = Sprite::empty(SpriteId::new(1), "main", Size::new(8, 8));
         // Pre-existing groups consume `Group 1` and `Group 2`.
         sprite.layers.push(Layer {
@@ -1686,9 +1713,129 @@ mod tests {
         });
         sprite.layers.push(layer_with(3, None, LayerKind::Raster));
 
-        let new_group =
-            wrap_layer_in_group(&mut sprite, LayerId::new(3), LayerId::new(100)).expect("wrap ok");
+        let new_group = wrap_layers_in_group(&mut sprite, &[LayerId::new(3)], LayerId::new(100))
+            .expect("wrap ok");
         assert_eq!(new_group.name, "Group 3");
+    }
+
+    #[test]
+    fn wrap_rejects_empty_layer_list() {
+        let mut sprite = Sprite::empty(SpriteId::new(1), "main", Size::new(8, 8));
+        sprite.layers.push(layer_with(1, None, LayerKind::Raster));
+        let err = wrap_layers_in_group(&mut sprite, &[], LayerId::new(100)).unwrap_err();
+        assert!(
+            matches!(err, AppCommandError::Validation { .. }),
+            "empty layer_ids must reject with Validation; got {err:?}"
+        );
+        assert_eq!(sprite.layers.len(), 1, "sprite unchanged on empty input");
+    }
+
+    #[test]
+    fn wrap_two_siblings_reparents_both_under_new_group() {
+        // Two top-level raster layers; selecting both should drop both
+        // under one new group anchored at the topmost (highest vec pos).
+        let mut sprite = Sprite::empty(SpriteId::new(1), "main", Size::new(8, 8));
+        sprite.layers.push(layer_with(1, None, LayerKind::Raster)); // bottom
+        sprite.layers.push(layer_with(2, None, LayerKind::Raster)); // top — anchor
+
+        let new_group_id = LayerId::new(100);
+        let new_group = wrap_layers_in_group(
+            &mut sprite,
+            &[LayerId::new(1), LayerId::new(2)],
+            new_group_id,
+        )
+        .expect("wrap ok");
+
+        // Anchor was at pos 1, so the group is inserted at pos 1.
+        // Original layout [1, 2] → after insert [1, group, 2].
+        assert_eq!(sprite.layers.len(), 3);
+        assert_eq!(sprite.layers[1].id, new_group_id, "group at anchor's pos");
+        // Both selected layers point at the new group.
+        for id in [LayerId::new(1), LayerId::new(2)] {
+            let layer = sprite.layers.iter().find(|l| l.id == id).unwrap();
+            assert_eq!(
+                layer.parent,
+                Some(new_group_id),
+                "layer {id:?} reparented under new group"
+            );
+            assert!(
+                matches!(layer.kind, LayerKind::Raster),
+                "kind preserved for {id:?}"
+            );
+        }
+        // New group inherits the anchor's old parent (None at top level).
+        assert_eq!(new_group.parent, None);
+    }
+
+    #[test]
+    fn wrap_layers_from_different_parents_lands_at_anchor_parent() {
+        // Anchor: layer 4, child of group B. Other selected: layer 2, child
+        // of group A. Both should reparent under the new group, which sits
+        // under group B (the anchor's parent).
+        let first_parent = LayerId::new(1);
+        let anchor_parent = LayerId::new(3);
+        let mut sprite = Sprite::empty(SpriteId::new(1), "main", Size::new(8, 8));
+        sprite.layers.push(layer_with(
+            first_parent.get(),
+            None,
+            LayerKind::Group { collapsed: false },
+        ));
+        sprite
+            .layers
+            .push(layer_with(2, Some(first_parent), LayerKind::Raster));
+        sprite.layers.push(layer_with(
+            anchor_parent.get(),
+            None,
+            LayerKind::Group { collapsed: false },
+        ));
+        sprite
+            .layers
+            .push(layer_with(4, Some(anchor_parent), LayerKind::Raster));
+
+        let new_group_id = LayerId::new(100);
+        let new_group = wrap_layers_in_group(
+            &mut sprite,
+            &[LayerId::new(2), LayerId::new(4)],
+            new_group_id,
+        )
+        .expect("wrap ok");
+
+        assert_eq!(
+            new_group.parent,
+            Some(anchor_parent),
+            "new group sits under the anchor's (topmost selected) parent"
+        );
+        for id in [LayerId::new(2), LayerId::new(4)] {
+            let layer = sprite.layers.iter().find(|l| l.id == id).unwrap();
+            assert_eq!(layer.parent, Some(new_group_id));
+        }
+    }
+
+    #[test]
+    fn wrap_rejects_when_any_layer_is_a_group() {
+        // [raster, group, raster]; selecting raster + group must fail
+        // before any mutation.
+        let mut sprite = Sprite::empty(SpriteId::new(1), "main", Size::new(8, 8));
+        sprite.layers.push(layer_with(1, None, LayerKind::Raster));
+        sprite
+            .layers
+            .push(layer_with(2, None, LayerKind::Group { collapsed: false }));
+        sprite.layers.push(layer_with(3, None, LayerKind::Raster));
+
+        let err = wrap_layers_in_group(
+            &mut sprite,
+            &[LayerId::new(1), LayerId::new(2)],
+            LayerId::new(100),
+        )
+        .unwrap_err();
+        assert!(matches!(err, AppCommandError::Validation { .. }));
+        // Sprite is unchanged on the rejection path.
+        assert_eq!(sprite.layers.len(), 3, "no group was inserted");
+        assert_eq!(
+            sprite.layers[0].parent, None,
+            "raster {} still top-level",
+            1
+        );
     }
 
     // ── merge_down / merge_selected / flatten_visible ────────────────────
