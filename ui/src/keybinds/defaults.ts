@@ -37,6 +37,14 @@ export const ASEPRITE_DEFAULTS: KeybindTable = new Map<Combo, CommandId>([
   ["Ctrl+0", "view:zoom-fit"],
   ["Ctrl+1", "view:zoom-100"],
   ["Ctrl+G", "view:toggle-grid"],
+  // Tools — Aseprite-style single-letter switches
+  ["B", "tool:pencil"],
+  ["P", "tool:pencil"],
+  ["E", "tool:eraser"],
+  ["G", "tool:fill"],
+  ["L", "tool:line"],
+  ["U", "tool:rect"],
+  ["O", "tool:ellipse"],
   // Window
   ["Ctrl+K", "window:command-palette"],
   ["Ctrl+Comma", "window:preferences"],
@@ -67,6 +75,14 @@ export const PHOTOSHOP_DEFAULTS: KeybindTable = new Map<Combo, CommandId>([
   ["Ctrl+0", "view:zoom-fit"],
   ["Ctrl+1", "view:zoom-100"],
   ["Ctrl+Quote", "view:toggle-grid"], // PS: Ctrl+' for Show Grid
+  // Tools — Photoshop-style single-letter switches
+  ["B", "tool:pencil"], // PS: B = Brush; mapped to pencil since we don't have brush yet
+  ["P", "tool:pencil"], // alias for Aseprite muscle memory
+  ["E", "tool:eraser"],
+  ["G", "tool:fill"], // PS: G = Gradient/Paint Bucket; we use as fill
+  ["U", "tool:rect"], // PS: U = Shape tool
+  ["L", "tool:line"], // not standard PS; convenience
+  ["O", "tool:ellipse"], // not standard PS; convenience
   // Window
   ["Ctrl+K", "window:command-palette"],
   ["Ctrl+Comma", "window:preferences"],

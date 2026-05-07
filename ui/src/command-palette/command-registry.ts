@@ -83,6 +83,7 @@ import {
   autotileMode,
   setAutotileMode,
 } from "../tilemap/tilemap-state";
+import { setActiveTool, type ToolType } from "../canvas/tools/tool-state";
 
 export type Command = {
   readonly id: string;
@@ -842,6 +843,30 @@ const COMMANDS: ReadonlyMap<string, CommandEntry> = new Map<string, CommandEntry
       handler: () => dispatchRotateCcw(),
     },
   ],
+
+  // ── Tool selection ────────────────────────────────────────────────────────
+  // Single-letter shortcuts (P/E/G/L/U/O) live in keybinds/defaults.ts.
+  // They route through the registry so a "Tools" category shows up in the
+  // command palette and the tool keys can be remapped via preferences.
+  ...(
+    [
+      ["pencil", "Pencil"],
+      ["eraser", "Eraser"],
+      ["fill", "Fill"],
+      ["line", "Line"],
+      ["rect", "Rectangle"],
+      ["ellipse", "Ellipse"],
+    ] as const
+  ).map<[string, CommandEntry]>(([id, label]) => [
+    `tool:${id}`,
+    {
+      id: `tool:${id}`,
+      label: `Tool: ${label}`,
+      category: "Tools",
+      keywords: ["tool", id],
+      handler: () => setActiveTool(id as ToolType),
+    },
+  ]),
 
   // ── View ──────────────────────────────────────────────────────────────────
   [

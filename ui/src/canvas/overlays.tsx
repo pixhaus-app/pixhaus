@@ -8,7 +8,7 @@
 // Both overlays receive viewport state as props and convert canvas coords to
 // CSS pixels via canvasToScreen.
 
-import { For, Show, type Component } from "solid-js";
+import { For, Show, createMemo, type Component } from "solid-js";
 import { canvasToScreen } from "./viewport";
 import type { TransformHandle } from "./transform/transform-state";
 
@@ -33,78 +33,92 @@ interface BrushCursorProps extends ViewportProps {
 
 /**
  * Outlines the brush footprint at the pointer, snapped to the canvas pixel
- * grid.  S15 will own brush state; this overlay is the visualisation half so
- * the renderer feels responsive ahead of that stream.
+ * grid.
+ *
+ * Solid `<Show>` (non-keyed) runs its child function exactly once — so any
+ * derived values computed inside the function body get frozen at first
+ * render. The previous version captured `cx`/`cy`/`x0`/etc. as `const`s
+ * inside the child function and the SVG attributes used those frozen
+ * values, which is why the cursor preview appeared at the first mouse
+ * position and never moved. Wrap every signal-derived value in
+ * `createMemo` so each one tracks its own deps and the JSX re-reads them.
  */
 export const BrushCursor: Component<BrushCursorProps> = (props) => {
+  // Pixel-shape always paints a single canvas pixel, regardless of the size
+  // slider. The preview should reflect that — a fat outlined rect at size
+  // 11 with shape="pixel" would be a lie about what gets painted.
+  const effectiveSize = createMemo(() => (props.shape === "pixel" ? 1 : props.size));
+
+  // Canvas-space top-left of the brush rect, snapped to integer pixels.
+  const x0 = createMemo(() => {
+    const c = props.cursor;
+    if (!c) return 0;
+    const half = effectiveSize() / 2;
+    return Math.floor(c.x) - Math.floor(half);
+  });
+  const y0 = createMemo(() => {
+    const c = props.cursor;
+    if (!c) return 0;
+    const half = effectiveSize() / 2;
+    return Math.floor(c.y) - Math.floor(half);
+  });
+  const x1 = createMemo(() => x0() + effectiveSize());
+  const y1 = createMemo(() => y0() + effectiveSize());
+
+  // Screen-space corners. Each is its own memo so changes to scroll/zoom
+  // re-flow the overlay without forcing the entire SVG to re-render.
+  const sx0 = createMemo(
+    () =>
+      canvasToScreen(x0(), y0(), props.scrollX, props.scrollY, props.zoom, props.vpW, props.vpH)[0],
+  );
+  const sy0 = createMemo(
+    () =>
+      canvasToScreen(x0(), y0(), props.scrollX, props.scrollY, props.zoom, props.vpW, props.vpH)[1],
+  );
+  const sx1 = createMemo(
+    () =>
+      canvasToScreen(x1(), y1(), props.scrollX, props.scrollY, props.zoom, props.vpW, props.vpH)[0],
+  );
+  const sy1 = createMemo(
+    () =>
+      canvasToScreen(x1(), y1(), props.scrollX, props.scrollY, props.zoom, props.vpW, props.vpH)[1],
+  );
+  const w = createMemo(() => sx1() - sx0());
+  const h = createMemo(() => sy1() - sy0());
+
   return (
     <Show when={props.cursor}>
-      {(cursor) => {
-        // Snap to canvas pixel grid.  The brush is centred on the cursor and
-        // odd sizes need a half-pixel offset so the centre lands on a pixel.
-        const half = props.size / 2;
-        const cx = Math.floor(cursor().x);
-        const cy = Math.floor(cursor().y);
-        const x0 = cx - Math.floor(half);
-        const y0 = cy - Math.floor(half);
-        const x1 = x0 + props.size;
-        const y1 = y0 + props.size;
-
-        const [sx0, sy0] = canvasToScreen(
-          x0,
-          y0,
-          props.scrollX,
-          props.scrollY,
-          props.zoom,
-          props.vpW,
-          props.vpH,
-        );
-        const [sx1, sy1] = canvasToScreen(
-          x1,
-          y1,
-          props.scrollX,
-          props.scrollY,
-          props.zoom,
-          props.vpW,
-          props.vpH,
-        );
-        const w = sx1 - sx0;
-        const h = sy1 - sy0;
-
-        return (
-          <svg
-            class="canvas-overlay brush-cursor-overlay"
-            width={props.vpW}
-            height={props.vpH}
-            viewBox={`0 0 ${props.vpW} ${props.vpH}`}
-            aria-hidden="true"
-          >
-            {props.shape === "circle" ? (
-              <ellipse
-                cx={sx0 + w / 2}
-                cy={sy0 + h / 2}
-                rx={w / 2}
-                ry={h / 2}
-                fill="none"
-                stroke="white"
-                stroke-width="1"
-                stroke-dasharray="2 2"
-              />
-            ) : (
-              <rect
-                x={sx0}
-                y={sy0}
-                width={Math.max(w, 1)}
-                height={Math.max(h, 1)}
-                fill="none"
-                stroke="white"
-                stroke-width="1"
-                stroke-dasharray="2 2"
-              />
-            )}
-          </svg>
-        );
-      }}
+      <svg
+        class="canvas-overlay brush-cursor-overlay"
+        width={props.vpW}
+        height={props.vpH}
+        viewBox={`0 0 ${props.vpW} ${props.vpH}`}
+        aria-hidden="true"
+      >
+        {props.shape === "circle" ? (
+          <ellipse
+            cx={sx0() + w() / 2}
+            cy={sy0() + h() / 2}
+            rx={w() / 2}
+            ry={h() / 2}
+            fill="none"
+            stroke="white"
+            stroke-width="1"
+            stroke-dasharray="2 2"
+          />
+        ) : (
+          <rect
+            x={sx0()}
+            y={sy0()}
+            width={Math.max(w(), 1)}
+            height={Math.max(h(), 1)}
+            fill="none"
+            stroke="white"
+            stroke-width="1"
+            stroke-dasharray="2 2"
+          />
+        )}
+      </svg>
     </Show>
   );
 };
