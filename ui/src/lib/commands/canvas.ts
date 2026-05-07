@@ -106,11 +106,81 @@ export function canvasComposite(spriteId: SpriteId): Promise<CanvasComposite> {
 }
 
 /**
- * Paints a freehand stroke on a layer cel.
- * Requires S01 (pixel buffers) — returns an error until S01 lands.
+ * Paints a freehand stroke on a layer cel in one shot.
+ *
+ * Used by shape tools (rect, ellipse) that build the full point list
+ * client-side. For freehand pencil/eraser drawing, use the
+ * begin/extend/end stroke session API below — it gives real-time
+ * feedback and records exactly one undo entry per drag.
  */
 export function canvasDrawStroke(args: DrawStrokeArgs): Promise<void> {
   return invoke<void>("canvas_draw_stroke", { args });
+}
+
+// ── Stroke sessions ──────────────────────────────────────────────────────────
+
+export type BeginStrokeArgs = {
+  sprite_id: SpriteId;
+  layer_id: LayerId;
+  frame_index: FrameIndex;
+  color: Rgba;
+  brush_shape: "pixel" | "circle" | "square";
+  brush_size: number;
+  pixel_perfect: boolean;
+  erase: boolean;
+  /** Optional anchor point so the click registers a pixel before the
+   * first mousemove fires. */
+  first_point?: [number, number];
+};
+
+export type ExtendStrokeArgs = {
+  session_id: number;
+  /** Points appended since the previous extend or begin. */
+  new_points: Array<[number, number]>;
+};
+
+export type EndStrokeArgs = {
+  session_id: number;
+  /** Final point chunk to apply before the commit. Optional. */
+  new_points?: Array<[number, number]>;
+};
+
+/**
+ * Opens a freehand stroke session and returns its id.
+ *
+ * The backend captures the buffer's current pixels as the session's
+ * before-state. Subsequent extends re-paint from that snapshot, so
+ * partial strokes never accumulate. Exactly one undo entry is recorded
+ * on `canvas_end_stroke`.
+ */
+export function canvasBeginStroke(args: BeginStrokeArgs): Promise<number> {
+  return invoke<number>("canvas_begin_stroke", { args });
+}
+
+/**
+ * Appends new points to an in-flight stroke and re-paints the buffer.
+ *
+ * Emits `canvas:tile-dirty` only for the tiles that intersect the
+ * bounding box of `new_points` plus brush radius — tiles outside that
+ * region are unchanged since the previous extend, so the renderer's
+ * tile cache stays valid for them. Does not record undo.
+ *
+ * Callers should serialise extends so the backend never sees an
+ * extend land after the matching `canvas_end_stroke`. The frontend's
+ * RAF flush helper chains via a single promise to guarantee this.
+ */
+export function canvasExtendStroke(args: ExtendStrokeArgs): Promise<void> {
+  return invoke<void>("canvas_extend_stroke", { args });
+}
+
+/**
+ * Commits an in-flight stroke as a single undo entry and removes the
+ * session. Optionally accepts a final point chunk to flush before the
+ * commit (the frontend uses this for points captured between the last
+ * RAF tick and mouseup).
+ */
+export function canvasEndStroke(args: EndStrokeArgs): Promise<void> {
+  return invoke<void>("canvas_end_stroke", { args });
 }
 
 /**

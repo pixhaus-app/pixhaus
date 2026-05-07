@@ -4,14 +4,13 @@
 //! every command that needs to read or modify the active document, the verb
 //! runtime, or the plugin registry.
 
+use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::Arc;
 
 use pixhaus_ai::plugin::runtime::VerbRuntime;
 use pixhaus_ai::verbs::CritiqueVerb;
-#[cfg(doc)]
-use pixhaus_core::project::PixelBufferId;
-use pixhaus_core::project::Project;
+use pixhaus_core::project::{LayerId, PixelBufferId, Project, Rgba, SpriteId};
 use pixhaus_core::undo::History;
 use pixhaus_io::pixhaus::PixelBufferEntry;
 
@@ -44,6 +43,62 @@ pub(crate) struct DocumentStore {
     /// `History` (which only sees `&mut Project`). This parallel stack
     /// stores before/after snapshots so undo/redo can restore them.
     pub(crate) pixel_history: PixelHistory,
+    /// In-flight freehand strokes keyed by session id.
+    ///
+    /// Populated by `canvas_begin_stroke`, mutated by `canvas_extend_stroke`,
+    /// and drained by `canvas_end_stroke`. Sessions live entirely in memory
+    /// — they are not persisted in `.pixhaus` and don't survive a project
+    /// close.
+    pub(crate) active_strokes: HashMap<u32, StrokeSession>,
+    /// Counter for stroke session ids. Separate from `next_id` because
+    /// sessions are ephemeral — they live for the duration of one drag
+    /// and never appear in the project file. Sharing `next_id` would
+    /// inflate it on every stroke and waste id space for layers,
+    /// sprites, palettes, and pixel buffers that DO survive.
+    pub(crate) next_session_id: u32,
+}
+
+/// One in-flight stroke. Lives in `DocumentStore::active_strokes` between
+/// the begin and end IPC calls, so extends can re-rasterize from the
+/// pre-stroke pixels and the final commit records exactly one undo entry
+/// for the whole drag.
+///
+/// `Clone` is implemented because the rasterize path needs an owned
+/// snapshot to read after the `DocumentStore` write-lock has been
+/// released. `initial_pixels` is wrapped in `Arc` so each clone is
+/// O(1) regardless of canvas size — at RAF cadence on large canvases
+/// the cost of a per-extend `Vec::clone` of `width * height * 4` bytes
+/// would be prohibitive.
+#[derive(Clone)]
+pub(crate) struct StrokeSession {
+    pub(crate) sprite_id: SpriteId,
+    /// Captured for diagnostics; the rasterize path resolves the buffer
+    /// via `buffer_id` and never re-derives it from layer + frame.
+    #[allow(dead_code)]
+    pub(crate) layer_id: LayerId,
+    pub(crate) frame_index: u32,
+    pub(crate) buffer_id: PixelBufferId,
+    /// Buffer dimensions captured at begin so the rasterize path can
+    /// run without re-reading the buffer entry under the doc lock.
+    pub(crate) buf_width: u32,
+    pub(crate) buf_height: u32,
+    pub(crate) buf_stride: u32,
+    /// Buffer pixels at the moment the stroke began. Re-rasterized from
+    /// on every extend so partial strokes never accumulate. Wrapped in
+    /// `Arc` so cloning the session is constant-time.
+    pub(crate) initial_pixels: Arc<Vec<u8>>,
+    /// All points received via begin + extend so far, in order.
+    pub(crate) points: Vec<[f32; 2]>,
+    pub(crate) color: Rgba,
+    pub(crate) brush_shape: String,
+    pub(crate) brush_size: u32,
+    pub(crate) pixel_perfect: bool,
+    pub(crate) erase: bool,
+    /// Undo label for the eventual `PixelOpBatch` ("stroke", "eraser",
+    /// etc.). Captured at begin so a tool change mid-stroke (which the
+    /// frontend won't issue but defense-in-depth) can't relabel an
+    /// in-flight session.
+    pub(crate) label: String,
 }
 
 impl Default for DocumentStore {
@@ -56,6 +111,8 @@ impl Default for DocumentStore {
             history: History::new(),
             pixel_buffers: Vec::new(),
             pixel_history: PixelHistory::new(),
+            active_strokes: HashMap::new(),
+            next_session_id: 1,
         }
     }
 }
