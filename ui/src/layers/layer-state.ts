@@ -108,10 +108,36 @@ export function refreshLayers(): void {
     .then((next) => {
       if (myToken !== refreshToken) return; // stale
       setLayers(next);
+      ensureActiveLayer(next);
     })
     .catch((err: unknown) => {
       console.error("[pixhaus] layer_list:", err);
     });
+}
+
+/**
+ * Picks a sensible default for `activeLayerId` when the previous one is
+ * gone (or never set). Without an active layer, every paint / transform /
+ * select-on-layer command silently fails its `if (layerId === null) return`
+ * guard and the user sees "nothing happens." Called from `refreshLayers`
+ * after the new list lands, so the auto-pick lines up with the rendered
+ * panel state.
+ */
+function ensureActiveLayer(list: readonly Layer[]): void {
+  if (list.length === 0) {
+    setActiveLayerId(null);
+    return;
+  }
+  const current = activeLayerId();
+  if (current !== null && list.some((l) => l.id === current)) {
+    return;
+  }
+  // Pick the topmost (last in bottom-to-top order). Mirrors what a user
+  // expects after "New Project" — paints land on the top visible layer.
+  const top = list[list.length - 1];
+  if (top !== undefined) {
+    setActiveLayerId(top.id);
+  }
 }
 
 // ── Selection ───────────────────────────────────────────────────────────────
