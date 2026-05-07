@@ -1150,7 +1150,7 @@ pub async fn canvas_transform(
     // `doc.project` and `doc.pixel_buffers` are separate fields but Rust
     // can't tell that through a shared `&mut doc` borrow, so we extract
     // everything we need from the project before touching pixel_buffers.
-    let (sprite_idx, buf_id, cel_pos, sprite_canvas_w, sprite_canvas_h, selection_region) = {
+    let (sprite_idx, buf_id, cel_pos, selection_region) = {
         let project = doc
             .project
             .as_ref()
@@ -1185,14 +1185,7 @@ pub async fn canvas_transform(
         };
 
         let selection_region = project.selection.region.clone();
-        (
-            sprite_idx,
-            buf_id,
-            cel.position,
-            sprite.canvas.width,
-            sprite.canvas.height,
-            selection_region,
-        )
+        (sprite_idx, buf_id, cel.position, selection_region)
     }; // project borrow released
 
     // ── Phase 2: pixel buffer operations ──────────────────────────────────
@@ -1309,39 +1302,19 @@ pub async fn canvas_transform(
 
     doc.dirty = true;
 
-    // ── Emit tile-dirty events for the affected sprite region ──────────────
-    // The renderer listens for canvas:tile-dirty and re-uploads changed tiles.
-    // We emit the full set of tiles covering the canvas so the renderer refreshes.
-    let tiles_x = sprite_canvas_w.div_ceil(TILE_SIZE);
-    let tiles_y = sprite_canvas_h.div_ceil(TILE_SIZE);
-    let sprite_id_raw = args.sprite_id.get();
-    let frame_idx_raw = args.frame_index;
-
-    for ty in 0..tiles_y {
-        for tx in 0..tiles_x {
-            let x0 = tx * TILE_SIZE;
-            let y0 = ty * TILE_SIZE;
-            let w = (sprite_canvas_w - x0).min(TILE_SIZE);
-            let h = (sprite_canvas_h - y0).min(TILE_SIZE);
-            let pixels = (w as usize) * (h as usize) * 4;
-            let data = base64::engine::general_purpose::STANDARD.encode(vec![0u8; pixels]);
-            let payload = TileDirtyPayload {
-                sprite_id: sprite_id_raw,
-                frame_index: frame_idx_raw,
-                tile_x: tx,
-                tile_y: ty,
-                width: w,
-                height: h,
-                data,
-            };
-            if let Err(err) = app.emit("canvas:tile-dirty", payload) {
-                tracing::warn!(
-                    "failed to emit canvas:tile-dirty for sprite {} tile ({tx},{ty}): {err}",
-                    sprite_id_raw,
-                );
-            }
-        }
-    }
+    // ── Emit tile-dirty events with the transformed pixels ─────────────────
+    // The renderer keys its GPU tile cache on the cel buffer, so we ship
+    // the buffer's actual bytes — extracted stride-aware by the helper.
+    // Emitting all-zero payloads here is what made flips look like a reset.
+    emit_buffer_tiles(
+        &app,
+        args.sprite_id.get(),
+        args.frame_index,
+        new_w,
+        new_h,
+        new_stride,
+        &doc.pixel_buffers[entry_idx].pixels,
+    );
 
     Ok(())
 }
