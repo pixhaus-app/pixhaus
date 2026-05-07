@@ -167,6 +167,7 @@ pub fn run() -> Result<(), AppError> {
             commands::tiles::tileset_add,
             commands::tiles::tileset_list,
             commands::tiles::tileset_rename,
+            commands::tiles::tileset_set_tile_metadata,
             // plugins
             commands::plugins::plugin_list,
             commands::plugins::plugin_reload,

@@ -28,7 +28,8 @@ import {
   setAutotileMode,
   resetTileSelection,
 } from "./tilemap-state";
-import { tilesetList, tilesetAdd, tilesetRename } from "../lib/commands";
+import { tilesetList, tilesetAdd, tilesetRename, tilesetSetTileMetadata } from "../lib/commands";
+import { reportCommandFailure } from "../lib/utils/errors";
 import TilesetPanel from "./TilesetPanel";
 import AutotileRuleEditor from "./AutotileRuleEditor";
 
@@ -222,9 +223,24 @@ const TilemapPanel: Component = () => {
     if (c) resetTileSelection();
   });
 
-  // Placeholder handler — tile property edits are persisted once S06 lands.
-  function onTilePropertiesChange(_tileIndex: number, _props: TileProperties) {
-    // TODO(S06): persist tile property changes to project via IPC
+  // Persists a tile-property change via IPC, then refreshes the active
+  // tilemap context with the updated tileset so the panel reflects the
+  // toggle across re-renders.
+  async function onTilePropertiesChange(tileIndex: number, propsToSave: TileProperties) {
+    const sid = spriteId();
+    const c = ctx();
+    if (sid === null || c === null) return;
+    try {
+      const updated = await tilesetSetTileMetadata({
+        sprite_id: sid,
+        tileset_id: c.tilesetId,
+        tile_index: tileIndex,
+        metadata: propsToSave,
+      });
+      setActiveTilemapCtx({ ...c, tileset: updated });
+    } catch (err) {
+      reportCommandFailure("tile metadata update", err);
+    }
   }
 
   function switchTileset(ts: Tileset) {
