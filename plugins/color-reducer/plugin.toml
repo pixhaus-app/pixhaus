@@ -3,13 +3,7 @@ name = "color-reducer"
 version = "0.1.0"
 author = "Pixhaus contributors"
 description = "Reduce the active sprite's palette to N colors using nearest-color quantization."
-entry = "main.lua"
-license = "MIT"
+entry_point = "main.lua"
 
-[permissions]
-commands = true
-panels = false
-verbs = false
-formats = false
-tools = false
-fs = []
+[plugin.permissions]
+register_commands = true
