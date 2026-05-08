@@ -24,6 +24,7 @@ import {
   setActivePaletteId,
   foregroundIndex,
   editingIndex,
+  setEditingIndex,
   editingColor,
   setEditingColor,
   cancelEditing,
@@ -42,6 +43,12 @@ import LospecBrowser from "./LospecBrowser";
 
 type SubPanel = "harmony" | "ramp" | "lospec" | null;
 
+// "edit" maps the picker to an existing palette entry: slider releases
+// round-trip to palette_set_color. "append" stages a draft color that is
+// only sent (as palette_add_color) when the user clicks "Add to palette" —
+// this is the only path that creates the first color in a fresh palette.
+type PickerMode = "edit" | "append";
+
 type Props = {
   /** The sprite whose palettes are displayed. Null when no project is open. */
   spriteId: SpriteId | null;
@@ -50,6 +57,7 @@ type Props = {
 const PalettePanel: Component<Props> = (props) => {
   const [subPanel, setSubPanel] = createSignal<SubPanel>(null);
   const [pickerOpen, setPickerOpen] = createSignal(false);
+  const [pickerMode, setPickerMode] = createSignal<PickerMode>("edit");
 
   // Reload palettes whenever the active sprite changes.
   createEffect(() => {
@@ -67,6 +75,11 @@ const PalettePanel: Component<Props> = (props) => {
   };
 
   const handlePickerCommit = async (color: Rgba) => {
+    // In append mode the picker stages a draft; slider releases must not
+    // round-trip to the backend (each one would create a new swatch).
+    // The explicit "Add to palette" button is the only commit path.
+    if (pickerMode() === "append") return;
+
     const idx = editingIndex();
     const pid = activePaletteId();
     const sid = props.spriteId;
@@ -89,6 +102,7 @@ const PalettePanel: Component<Props> = (props) => {
   };
 
   const handlePickerOpen = (index: number) => {
+    setPickerMode("edit");
     setPickerOpen(true);
     const entry = activePalette()?.colors[index];
     if (entry) startEditing(index, entry.color);
@@ -96,6 +110,35 @@ const PalettePanel: Component<Props> = (props) => {
 
   const handlePickerClose = () => {
     setPickerOpen(false);
+    setPickerMode("edit");
+    cancelEditing();
+  };
+
+  // Open the picker with no associated swatch index. The chosen color is
+  // appended via paletteAddColor only when the user clicks "Add to palette".
+  const handleAddColorClick = () => {
+    if (props.spriteId === null || activePaletteId() === null) return;
+    const seed = activePalette()?.colors[foregroundIndex()]?.color ?? {
+      r: 0,
+      g: 0,
+      b: 0,
+      a: 255,
+    };
+    setEditingIndex(null);
+    setEditingColor(seed);
+    setPickerMode("append");
+    setPickerOpen(true);
+  };
+
+  const handlePickerAdd = async () => {
+    const color = editingColor();
+    if (!color) return;
+    // Only close and clear the staged draft if the backend accepted the
+    // append; on failure (already toasted by appendColor) keep the picker
+    // open so the user can retry without losing the color they tuned.
+    if (!(await appendColor(color))) return;
+    setPickerOpen(false);
+    setPickerMode("edit");
     cancelEditing();
   };
 
@@ -133,18 +176,24 @@ const PalettePanel: Component<Props> = (props) => {
     }
   };
 
-  // ── Add-color helper (used by harmony and ramp) ───────────────────────────
+  // ── Add-color helper (used by harmony, ramp, picker append) ──────────────
 
-  const appendColor = async (color: Rgba): Promise<void> => {
+  // Returns true if the color was appended and the palette refreshed; false
+  // when there's no active palette/sprite or the IPC call failed (already
+  // surfaced via toast). Callers that need to react to failure (e.g. keep
+  // the picker open so the user can retry) check the boolean.
+  const appendColor = async (color: Rgba): Promise<boolean> => {
     const pid = activePaletteId();
     const sid = props.spriteId;
-    if (pid === null || sid === null) return;
+    if (pid === null || sid === null) return false;
     const args: PaletteAddColorArgs = { sprite_id: sid, palette_id: pid, color };
     try {
       await paletteAddColor(args);
       await refreshPalettes(sid);
+      return true;
     } catch (err: unknown) {
       reportCommandFailure("palette_add_color", err);
+      return false;
     }
   };
 
@@ -242,12 +291,14 @@ const PalettePanel: Component<Props> = (props) => {
         {/* Foreground / background swatches */}
         <FgBgSwatches onPickerOpen={handlePickerOpen} />
 
-        {/* Inline color picker (shown when a swatch is being edited) */}
+        {/* Inline color picker (shown when a swatch is being edited or a new color is being staged) */}
         <Show when={pickerOpen()}>
           <div class="pp__picker-header">
             <span class="pp__picker-label">
-              {activePalette()?.colors[editingIndex() ?? 0]?.name ??
-                `Swatch ${editingIndex() ?? 0}`}
+              {pickerMode() === "append"
+                ? "New color"
+                : (activePalette()?.colors[editingIndex() ?? 0]?.name ??
+                  `Swatch ${editingIndex() ?? 0}`)}
             </span>
             <button
               class="pp__icon-btn"
@@ -263,6 +314,14 @@ const PalettePanel: Component<Props> = (props) => {
             onChange={handlePickerChange}
             onCommit={(color) => void handlePickerCommit(color)}
           />
+          <Show when={pickerMode() === "append"}>
+            <button
+              class="pp__action-btn pp__action-btn--primary"
+              onClick={() => void handlePickerAdd()}
+            >
+              Add to palette
+            </button>
+          </Show>
         </Show>
 
         {/* Palette swatch grid */}
@@ -270,6 +329,15 @@ const PalettePanel: Component<Props> = (props) => {
           <span class="pp__grid-label">
             {activePalette()?.name ?? "—"} ({activePalette()?.colors.length ?? 0})
           </span>
+          <button
+            class="pp__icon-btn"
+            onClick={handleAddColorClick}
+            title="Add color"
+            aria-label="Add color"
+            disabled={activePaletteId() === null}
+          >
+            +
+          </button>
         </div>
         <PaletteGrid
           onPickerOpen={handlePickerOpen}

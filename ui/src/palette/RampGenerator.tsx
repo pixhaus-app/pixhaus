@@ -11,7 +11,7 @@ import { interpolateOklab, rgbaToCss } from "./color-utils";
 
 type Props = {
   /** Called once per generated swatch so the parent can call palette_add_color. */
-  onAddColor: (color: Rgba) => Promise<void>;
+  onAddColor: (color: Rgba) => Promise<unknown>;
 };
 
 const RampGenerator: Component<Props> = (props) => {
