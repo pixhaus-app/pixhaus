@@ -15,6 +15,7 @@ import {
   zoom,
   selectionRect,
   setSelectionRect,
+  setSelectionLayerId,
   activeSpriteId,
   activeLayerId,
   isSelectMode,
@@ -82,6 +83,7 @@ async function commitRectSelection(bounds: {
     const region = { kind: "rect" as const, bounds: toIpcRect(bounds) };
     await canvasSetSelection(region, anchorLayer);
     setSelectionRect({ x: bounds.x, y: bounds.y, width: bounds.width, height: bounds.height });
+    setSelectionLayerId(anchorLayer);
   } catch (err: unknown) {
     console.error("[pixhaus] canvas_set_selection failed:", err);
   }
@@ -92,6 +94,7 @@ async function commitDeselect(): Promise<void> {
   try {
     await canvasSetSelection(null, null);
     setSelectionRect(null);
+    setSelectionLayerId(null);
   } catch (err: unknown) {
     console.error("[pixhaus] canvas_set_selection (deselect) failed:", err);
   }
@@ -126,10 +129,13 @@ function onMarqueeMove(e: MouseEvent, el: HTMLElement): void {
   setMarqueeDrag(updated);
 
   // Preview: update selection rect live so the WebGL marching ants track
-  // the drag. We only update the signal — IPC fires on mouseup.
+  // the drag. We only update the signal — IPC fires on mouseup. Mirror
+  // the in-progress anchor so consumers reading selectionLayerId during
+  // the drag see a consistent (rect, layer) pair.
   if (dragIsNonEmpty(updated)) {
     const b = dragToBounds(updated);
     setSelectionRect(b);
+    setSelectionLayerId(activeLayerId());
   }
 }
 
@@ -191,6 +197,7 @@ async function onWandClick(e: MouseEvent, el: HTMLElement): Promise<void> {
         width: b.size.width,
         height: b.size.height,
       });
+      setSelectionLayerId(anchorLayer);
     }
   } catch (err: unknown) {
     if (isUnimplementedError(err)) {
@@ -241,6 +248,7 @@ async function onColorRangeClick(e: MouseEvent, el: HTMLElement): Promise<void> 
         width: b.size.width,
         height: b.size.height,
       });
+      setSelectionLayerId(anchorLayer);
     }
     setColorRangeTarget(null);
   } catch (err: unknown) {
@@ -290,6 +298,7 @@ async function commitLasso(): Promise<void> {
         width: b.size.width,
         height: b.size.height,
       });
+      setSelectionLayerId(anchorLayer);
     }
   } catch (err: unknown) {
     if (isUnimplementedError(err)) {

@@ -18,7 +18,12 @@ import {
   activeTilemapCtx,
   setActiveTilemapCtx,
 } from "./tilemap-state";
-import { activeFrameIndex, activeSpriteId, selectionRect } from "../canvas/canvas-state";
+import {
+  activeFrameIndex,
+  activeSpriteId,
+  selectionLayerId,
+  selectionRect,
+} from "../canvas/canvas-state";
 import { layers } from "../layers/layer-state";
 import { tilesetAddTile } from "../lib/commands/tilesets";
 import { reportCommandFailure } from "../lib/utils/errors";
@@ -107,6 +112,16 @@ const TilesetPanel: Component<TilesetPanelProps> = (props) => {
 
   // ── Capture-tile button ──────────────────────────────────────────────
 
+  // Resolves the layer the selection was anchored on (set by select-input
+  // when the marquee committed). Capture reads pixels from this layer,
+  // not from "the first raster layer in the sprite" — anchoring keeps
+  // the source consistent with the rectangle the user actually drew.
+  const captureSourceLayer = createMemo(() => {
+    const lid = selectionLayerId();
+    if (lid === null) return null;
+    return layers().find((l) => l.id === lid) ?? null;
+  });
+
   // Returns null when capture is allowed, otherwise a reason string the
   // tooltip surfaces. Keeping the gate here means the button can stay
   // disabled with a clear hint instead of failing on click.
@@ -119,21 +134,27 @@ const TilesetPanel: Component<TilesetPanelProps> = (props) => {
     if (sel.width !== tileW() || sel.height !== tileH()) {
       return `Selection must be ${tileW()}×${tileH()}px (matches tile size)`;
     }
-    const sourceLayer = layers().find((l) => l.kind.kind === "raster");
-    if (!sourceLayer) return "No raster layer in this sprite to capture from";
+    const layer = captureSourceLayer();
+    if (!layer) return "Make a selection on a raster layer first";
+    if (layer.kind.kind !== "raster") {
+      return `Selection is on layer "${layer.name}", which is not a raster layer`;
+    }
+    if (layer.locked) {
+      return `Source layer "${layer.name}" is locked`;
+    }
     return null;
   });
 
   async function onCapture() {
     const sid = activeSpriteId();
     const sel = selectionRect();
-    const sourceLayer = layers().find((l) => l.kind.kind === "raster");
-    if (sid === null || !sel || !sourceLayer) return;
+    const layer = captureSourceLayer();
+    if (sid === null || !sel || !layer) return;
     try {
       const result = await tilesetAddTile({
         sprite_id: sid,
         tileset_id: props.tileset.id,
-        source_layer_id: sourceLayer.id,
+        source_layer_id: layer.id,
         frame_index: activeFrameIndex(),
         source_x: sel.x,
         source_y: sel.y,

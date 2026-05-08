@@ -279,9 +279,10 @@ const AutotileRuleEditor: Component = () => {
 
   function selectKind(k: AutotileKind) {
     setLocalAutotileKind(k);
-    if (k.kind === "custom") {
-      setRules([]);
-    }
+    // Don't clear rules when switching to custom — the hydrate effect
+    // already populated `autotileRules` from the persisted tileset, and
+    // re-clicking the Custom button shouldn't wipe the user's working
+    // rules (the debounced persist would then save the empty array).
     schedulePersist();
   }
 
