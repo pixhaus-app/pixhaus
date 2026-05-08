@@ -53,7 +53,21 @@ import {
   canvasFill,
 } from "../lib/commands/canvas";
 import { isUnimplementedError, reportCommandFailure } from "../lib/utils/errors";
+import { isActiveLayerWritable } from "../layers/layer-state";
+import { pushToast } from "../lib/toast/toast-state";
 import { ellipsePerimeterPoints, linePoints, rectPerimeterPoints } from "./tools/shape-points";
+
+// Toast is the canonical UX for "you can't paint here right now" — we use
+// a single helper so the wording stays consistent across the brush, shape
+// and fill paths.
+function toastLayerLocked(): void {
+  pushToast({
+    kind: "info",
+    title: "Layer is locked",
+    body: "Unlock the layer to paint on it.",
+    durationMs: 3000,
+  });
+}
 
 // How much the continuous zoom changes per wheel tick (scroll-wheel smooth mode).
 const WHEEL_ZOOM_FACTOR = 1.1;
@@ -219,6 +233,10 @@ function dispatchShape(end: [number, number]): void {
   const spriteId = activeSpriteId();
   const layerId = activeLayerId();
   if (spriteId === null || layerId === null) return;
+  if (!isActiveLayerWritable()) {
+    toastLayerLocked();
+    return;
+  }
 
   const tool = activeTool();
   let points: Array<[number, number]>;
@@ -254,6 +272,10 @@ function dispatchFill(canvasX: number, canvasY: number): void {
   const spriteId = activeSpriteId();
   const layerId = activeLayerId();
   if (spriteId === null || layerId === null) return;
+  if (!isActiveLayerWritable()) {
+    toastLayerLocked();
+    return;
+  }
 
   const color = foregroundColor();
   canvasFill({
@@ -341,6 +363,10 @@ export function attachCanvasInput(el: HTMLElement): () => void {
     const spriteId = activeSpriteId();
     const layerId = activeLayerId();
     if (spriteId === null || layerId === null) return;
+    if (!isActiveLayerWritable()) {
+      toastLayerLocked();
+      return;
+    }
 
     drawStrokeActive = true;
     pendingStrokePoints = [];

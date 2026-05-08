@@ -72,9 +72,8 @@ pub(crate) struct DocumentStore {
 #[derive(Clone)]
 pub(crate) struct StrokeSession {
     pub(crate) sprite_id: SpriteId,
-    /// Captured for diagnostics; the rasterize path resolves the buffer
-    /// via `buffer_id` and never re-derives it from layer + frame.
-    #[allow(dead_code)]
+    /// Captured so extend / end can re-verify the lock and so the
+    /// rasterize path can re-locate the cel buffer if needed.
     pub(crate) layer_id: LayerId,
     pub(crate) frame_index: u32,
     pub(crate) buffer_id: PixelBufferId,

@@ -53,4 +53,9 @@ detail: string, } } | { "kind": "verb_error", "message": {
 /**
  * Human-readable error from the verb runtime.
  */
-message: string, } };
+message: string, } } | { "kind": "layer_locked", "message": { 
+/**
+ * The layer the caller targeted. May be a child whose
+ * containing group is locked rather than the layer itself.
+ */
+layer_id: number, } };

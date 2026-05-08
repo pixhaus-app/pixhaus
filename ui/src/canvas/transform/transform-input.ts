@@ -27,9 +27,19 @@ import {
   activeFrameIndex,
 } from "../canvas-state";
 import { canvasSetSelection, canvasTransform, type TransformOp } from "../../lib/commands/canvas";
+import { isActiveLayerWritable } from "../../layers/layer-state";
 import { pushToast } from "../../lib/toast/toast-state";
 import { isUnimplementedError, toastUnimplemented } from "../../lib/utils/errors";
 import { toIpcRect } from "../../lib/utils/geometry";
+
+function toastLayerLocked(): void {
+  pushToast({
+    kind: "info",
+    title: "Layer is locked",
+    body: "Unlock the layer to transform pixels.",
+    durationMs: 3000,
+  });
+}
 
 // Persists the new selection bounds to Rust and updates local signals.
 async function commitBounds(bounds: {
@@ -81,6 +91,14 @@ async function commitBodyTranslate(
   if (spriteId === null || layerId === null) {
     // No active document — fall back to a marquee-only commit.
     void commitBounds(snappedBounds);
+    return;
+  }
+  if (!isActiveLayerWritable()) {
+    toastLayerLocked();
+    // Snap the marquee back so it doesn't drift away from the pixels.
+    setSelectionRect(originalBounds);
+    setTransformBounds(originalBounds);
+    syncNumericFromBounds(originalBounds);
     return;
   }
 

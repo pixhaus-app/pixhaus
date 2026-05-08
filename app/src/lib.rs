@@ -117,6 +117,7 @@ pub fn run() -> Result<(), AppError> {
             commands::canvas::canvas_extend_stroke,
             commands::canvas::canvas_fill,
             commands::canvas::canvas_invert_selection,
+            commands::canvas::canvas_recomposite_frame,
             commands::canvas::canvas_select_all,
             commands::canvas::canvas_select_color_range,
             commands::canvas::canvas_select_lasso,

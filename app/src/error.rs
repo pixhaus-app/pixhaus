@@ -121,6 +121,17 @@ pub enum AppCommandError {
         /// Human-readable error from the verb runtime.
         message: String,
     },
+
+    /// A write operation targeted a locked layer (or a layer whose
+    /// ancestor group is locked). The UI surfaces this with a toast
+    /// rather than a modal — paint attempts on locked layers are
+    /// expected user noise, not exceptional state.
+    #[error("layer {layer_id} is locked")]
+    LayerLocked {
+        /// The layer the caller targeted. May be a child whose
+        /// containing group is locked rather than the layer itself.
+        layer_id: u32,
+    },
 }
 
 /// Crate-local result alias.
@@ -212,5 +223,14 @@ mod tests {
             stream: "S01".into(),
         };
         assert_eq!(err.to_string(), "not yet implemented: requires S01");
+    }
+
+    #[test]
+    fn layer_locked_round_trips() {
+        let err = AppCommandError::LayerLocked { layer_id: 42 };
+        assert_eq!(err.to_string(), "layer 42 is locked");
+        let json = serde_json::to_string(&err).expect("serialize");
+        let back: AppCommandError = serde_json::from_str(&json).expect("deserialize");
+        assert_eq!(back, err);
     }
 }
