@@ -27,7 +27,9 @@ import {
   frameTagCreate,
   frameTagDelete,
   frameTagList,
+  frameTagRename,
 } from "../lib/commands/frames";
+import { canvasRecompositeFrame } from "../lib/commands/canvas";
 import { reportCommandFailure } from "../lib/utils/errors";
 import {
   activeSpriteId,
@@ -130,6 +132,9 @@ export function pasteFrame(spriteId: SpriteId): void {
     .then(({ index }) => {
       refreshTimeline();
       selectFrame(index, false);
+      // Newly materialised frames have no tiles in the renderer's cache;
+      // recomposite so the duplicated cels actually appear instead of a blank.
+      recompositeFrameOrLog(spriteId, index);
     })
     .catch((err: unknown) => reportCommandFailure("frame paste", err));
 }
@@ -265,8 +270,20 @@ export function duplicateFrame(spriteId: SpriteId, index: FrameIndex): void {
     .then(({ index: newIdx }) => {
       refreshTimeline();
       selectFrame(newIdx, false);
+      // Newly materialised frames have no tiles in the renderer's cache;
+      // recomposite so the duplicated cels actually appear instead of a blank.
+      recompositeFrameOrLog(spriteId, newIdx);
     })
     .catch((err: unknown) => reportCommandFailure("frame_duplicate", err));
+}
+
+// Asks the backend to recomposite `frameIndex` and emit tile-dirty events.
+// Used after duplicate/paste, where Rust has new cels but the renderer's
+// per-frame tile cache is empty until something pushes pixels at it.
+function recompositeFrameOrLog(spriteId: SpriteId, frameIndex: FrameIndex): void {
+  canvasRecompositeFrame(spriteId, frameIndex).catch((err: unknown) =>
+    console.error("[pixhaus] canvas_recomposite_frame:", err),
+  );
 }
 
 export function setFrameDuration(spriteId: SpriteId, index: FrameIndex, durationMs: number): void {
@@ -317,6 +334,12 @@ export function deleteTag(spriteId: SpriteId, tagName: string): void {
   frameTagDelete(spriteId, tagName)
     .then(() => refreshTimeline())
     .catch((err: unknown) => reportCommandFailure("frame_tag_delete", err));
+}
+
+export function renameTag(spriteId: SpriteId, oldName: string, newName: string): void {
+  frameTagRename(spriteId, oldName, newName)
+    .then(() => refreshTimeline())
+    .catch((err: unknown) => reportCommandFailure("frame_tag_rename", err));
 }
 
 // Pure helper: generates a name from a set of existing names.

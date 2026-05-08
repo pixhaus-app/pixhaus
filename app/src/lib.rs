@@ -136,6 +136,7 @@ pub fn run() -> Result<(), AppError> {
             commands::frames::frame_tag_create,
             commands::frames::frame_tag_delete,
             commands::frames::frame_tag_list,
+            commands::frames::frame_tag_rename,
             // layers
             commands::layers::layer_add,
             commands::layers::layer_convert_to_tilemap,

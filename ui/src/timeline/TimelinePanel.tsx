@@ -207,6 +207,17 @@ const TimelinePanel: Component = () => {
   // ── Keyboard ──────────────────────────────────────────────────────────────
 
   function handleKeyDown(e: KeyboardEvent): void {
+    // Bail out when focus is on a text editor (duration input, future
+    // tag-rename inputs, etc.). Without this, Backspace inside the
+    // duration field bubbles up and silently deletes the selected frame.
+    const ae = document.activeElement;
+    if (
+      ae instanceof HTMLInputElement ||
+      ae instanceof HTMLTextAreaElement ||
+      (ae instanceof HTMLElement && ae.isContentEditable)
+    ) {
+      return;
+    }
     const id = spriteId();
     if (id === null) return;
     const n = frames().length;
@@ -403,6 +414,11 @@ const TimelinePanel: Component = () => {
                         onInput={(e) => setDurationInput(e.currentTarget.value)}
                         onBlur={() => commitEditDuration(index)}
                         onKeyDown={(e) => {
+                          // Stop bubbling so the panel-level handler doesn't
+                          // see Backspace/Delete and delete the frame from
+                          // under the input. Defence in depth alongside the
+                          // activeElement check in handleKeyDown.
+                          e.stopPropagation();
                           if (e.key === "Enter") commitEditDuration(index);
                           else if (e.key === "Escape") setEditingFrame(null);
                         }}

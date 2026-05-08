@@ -76,6 +76,15 @@ export function frameTagDelete(sprite_id: SpriteId, tag_name: string): Promise<v
   return invoke<void>("frame_tag_delete", { sprite_id, tag_name });
 }
 
+/** Renames a frame tag. Rejects empty names and collisions with existing tags. */
+export function frameTagRename(
+  sprite_id: SpriteId,
+  old_name: string,
+  new_name: string,
+): Promise<void> {
+  return invoke<void>("frame_tag_rename", { sprite_id, old_name, new_name });
+}
+
 /** Returns all frames in a sprite's timeline. */
 export function frameList(sprite_id: SpriteId): Promise<Frame[]> {
   return invoke<Frame[]>("frame_list", { sprite_id });

@@ -1,10 +1,13 @@
 // Tag bar row rendered above the frame column headers.
 //
 // Existing tags appear as coloured ranges. Pointer-drag on empty space
-// creates a new tag; right-click on a tag deletes it; left-click jumps
-// to the tag's first frame.
+// creates a new tag; right-click on a tag opens a context menu (Rename,
+// Delete); left-click jumps to the tag's first frame. An empty-state hint
+// renders inside the bar so the drag-to-create affordance is discoverable
+// before the first tag exists.
 
-import { type Component, For, Show, createMemo } from "solid-js";
+import { type Component, For, Show, createMemo, createSignal } from "solid-js";
+import { Portal } from "solid-js/web";
 import type { FrameIndex, FrameTag, SpriteId } from "../lib/types";
 import {
   activeFrameIndex,
@@ -15,13 +18,17 @@ import {
   createTag,
   deleteTag,
   frameTags,
+  renameTag,
   setTagDragState,
   tagDragState,
   uniqueTagName,
 } from "./timeline-state";
+import ModalInput from "../components/ModalInput";
 
-// Fixed visual constant — must match TimelinePanel.FRAME_WIDTH.
-export const FRAME_WIDTH = 24;
+// Fixed visual constant — must match the `--tl-frame-w` CSS variable in
+// index.css. Virtual-scroll math, scrub-head positioning, tag positioning
+// and frameIndex-from-clientX all derive from this.
+export const FRAME_WIDTH = 36;
 
 // Deterministic colour palette (8 choices, cycling on hash of name).
 const TAG_COLORS = [
@@ -52,13 +59,26 @@ type Props = {
   readonly containerLeft: number;
 };
 
+type ContextMenuState = {
+  readonly x: number;
+  readonly y: number;
+  readonly tagName: string;
+};
+
 const FrameTagBar: Component<Props> = (props) => {
   const drag = tagDragState;
+
+  const [ctxMenu, setCtxMenu] = createSignal<ContextMenuState | null>(null);
+  const [renameTarget, setRenameTarget] = createSignal<string | null>(null);
 
   const visibleTags = createMemo(() => {
     const count = props.frameCount;
     return frameTags().filter((t) => t.range.end >= 0 && t.range.start < count);
   });
+
+  const isEmpty = createMemo(
+    () => visibleTags().length === 0 && drag().kind === "none" && props.frameCount > 0,
+  );
 
   // ── Pointer events for drag-to-create ───────────────────────────────────────
 
@@ -104,8 +124,47 @@ const FrameTagBar: Component<Props> = (props) => {
   function handleTagContextMenu(tag: FrameTag, e: MouseEvent): void {
     e.preventDefault();
     e.stopPropagation();
+    setCtxMenu({ x: e.clientX, y: e.clientY, tagName: tag.name });
+  }
+
+  function closeCtxMenu(): void {
+    setCtxMenu(null);
+  }
+
+  function startRename(): void {
+    const m = ctxMenu();
+    if (m === null) return;
+    setRenameTarget(m.tagName);
+    closeCtxMenu();
+  }
+
+  function commitRename(newName: string): void {
     const id = props.spriteId;
-    if (id !== null) deleteTag(id, tag.name);
+    const oldName = renameTarget();
+    if (id === null || oldName === null) return;
+    const trimmed = newName.trim();
+    if (trimmed === "" || trimmed === oldName) {
+      setRenameTarget(null);
+      return;
+    }
+    renameTag(id, oldName, trimmed);
+    setRenameTarget(null);
+  }
+
+  function deleteFromMenu(): void {
+    const m = ctxMenu();
+    const id = props.spriteId;
+    if (m !== null && id !== null) deleteTag(id, m.tagName);
+    closeCtxMenu();
+  }
+
+  function validateRename(value: string): string | null {
+    const trimmed = value.trim();
+    if (trimmed.length === 0) return "Name is required";
+    const oldName = renameTarget();
+    if (trimmed === oldName) return null;
+    if (frameTags().some((t) => t.name === trimmed)) return "A tag with this name already exists";
+    return null;
   }
 
   const dragPreview = createMemo(() => {
@@ -115,42 +174,75 @@ const FrameTagBar: Component<Props> = (props) => {
   });
 
   return (
-    <div
-      class="tl-tag-bar"
-      onPointerDown={handlePointerDown}
-      onPointerMove={handlePointerMove}
-      onPointerUp={handlePointerUp}
-    >
-      <For each={visibleTags()}>
-        {(tag) => (
-          <div
-            class="tl-tag"
-            style={{
-              left: `${tag.range.start * FRAME_WIDTH}px`,
-              width: `${(tag.range.end - tag.range.start + 1) * FRAME_WIDTH}px`,
-              "background-color": tagColor(tag.name),
-            }}
-            title={`${tag.name} (${tag.loop_direction})`}
-            onClick={[handleTagClick, tag]}
-            onContextMenu={[handleTagContextMenu, tag]}
-          >
-            <span class="tl-tag__label">{tag.name}</span>
-          </div>
-        )}
-      </For>
+    <>
+      <div
+        class="tl-tag-bar"
+        onPointerDown={handlePointerDown}
+        onPointerMove={handlePointerMove}
+        onPointerUp={handlePointerUp}
+      >
+        <Show when={isEmpty()}>
+          <div class="tl-tag-bar__hint">Drag to create a tag</div>
+        </Show>
 
-      <Show when={dragPreview()}>
-        {(preview) => (
-          <div
-            class="tl-tag tl-tag--preview"
-            style={{
-              left: `${preview().lo * FRAME_WIDTH}px`,
-              width: `${(preview().hi - preview().lo + 1) * FRAME_WIDTH}px`,
-            }}
-          />
+        <For each={visibleTags()}>
+          {(tag) => (
+            <div
+              class="tl-tag"
+              style={{
+                left: `${tag.range.start * FRAME_WIDTH}px`,
+                width: `${(tag.range.end - tag.range.start + 1) * FRAME_WIDTH}px`,
+                "background-color": tagColor(tag.name),
+              }}
+              title={`${tag.name} (${tag.loop_direction})`}
+              onClick={[handleTagClick, tag]}
+              onContextMenu={[handleTagContextMenu, tag]}
+            >
+              <span class="tl-tag__label">{tag.name}</span>
+            </div>
+          )}
+        </For>
+
+        <Show when={dragPreview()}>
+          {(preview) => (
+            <div
+              class="tl-tag tl-tag--preview"
+              style={{
+                left: `${preview().lo * FRAME_WIDTH}px`,
+                width: `${(preview().hi - preview().lo + 1) * FRAME_WIDTH}px`,
+              }}
+            />
+          )}
+        </Show>
+      </div>
+
+      <Show when={ctxMenu()}>
+        {(m) => (
+          <Portal>
+            <div class="tl-ctx-backdrop" onClick={closeCtxMenu} />
+            <div class="tl-ctx-menu" style={{ left: `${m().x}px`, top: `${m().y}px` }}>
+              <button class="tl-ctx-menu__item" onClick={startRename}>
+                Rename tag
+              </button>
+              <button class="tl-ctx-menu__item" onClick={deleteFromMenu}>
+                Delete tag
+              </button>
+            </div>
+          </Portal>
         )}
       </Show>
-    </div>
+
+      <ModalInput
+        open={renameTarget() !== null}
+        title="Rename tag"
+        label="Tag name"
+        initialValue={renameTarget() ?? ""}
+        submitLabel="Rename"
+        validate={validateRename}
+        onSubmit={commitRename}
+        onClose={() => setRenameTarget(null)}
+      />
+    </>
   );
 };
 
