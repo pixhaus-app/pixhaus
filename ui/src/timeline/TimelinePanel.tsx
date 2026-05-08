@@ -207,13 +207,20 @@ const TimelinePanel: Component = () => {
   // ── Keyboard ──────────────────────────────────────────────────────────────
 
   function handleKeyDown(e: KeyboardEvent): void {
-    // Bail out when focus is on a text editor (duration input, future
-    // tag-rename inputs, etc.). Without this, Backspace inside the
-    // duration field bubbles up and silently deletes the selected frame.
+    // Bail out when focus is on any form input or contenteditable. Two
+    // motivations, both load-bearing:
+    //   1. The duration input is `<input type="number">` — Backspace there
+    //      must not bubble up and silently delete the selected frame.
+    //   2. The Loop checkbox is `<input type="checkbox">` — Space there must
+    //      toggle the checkbox (native behaviour) and NOT also fire
+    //      togglePlayback, and Backspace there must not delete a frame.
+    // Narrowing this guard to text-entry inputs would re-introduce the
+    // checkbox bug, so the broad check is intentional.
     const ae = document.activeElement;
     if (
       ae instanceof HTMLInputElement ||
       ae instanceof HTMLTextAreaElement ||
+      ae instanceof HTMLSelectElement ||
       (ae instanceof HTMLElement && ae.isContentEditable)
     ) {
       return;
@@ -269,7 +276,7 @@ const TimelinePanel: Component = () => {
               checked={isLooping()}
               onChange={(e) => setIsLooping(e.currentTarget.checked)}
             />
-            Loop
+            <span class="timeline-panel__loop-toggle-label">Loop</span>
           </label>
         </div>
 

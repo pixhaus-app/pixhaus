@@ -3011,7 +3011,9 @@ body {
   accent-color: var(--accent);
 }
 
-.timeline-panel__loop-toggle:has(input:checked) {
+/* Sibling selector keeps the active-state styling working on older
+   WebKitGTK builds that predate `:has()` support. */
+.timeline-panel__loop-toggle input:checked + .timeline-panel__loop-toggle-label {
   color: var(--accent);
 }
 

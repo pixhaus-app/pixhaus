@@ -6,6 +6,7 @@ import { type Component, For, Show } from "solid-js";
 import { Portal } from "solid-js/web";
 import type { FrameIndex, SpriteId } from "../lib/types";
 import { activeFrameIndex } from "../canvas/canvas-state";
+import { clampMenuToViewport } from "../lib/utils/menu-position";
 import {
   addFrame,
   copyFrame,
@@ -111,7 +112,11 @@ const TimelineContextMenu: Component<Props> = (props) => {
       {(t) => (
         <Portal>
           <div class="tl-ctx-backdrop" onClick={props.onClose} />
-          <div class="tl-ctx-menu" style={{ left: `${t().x}px`, top: `${t().y}px` }}>
+          <div
+            class="tl-ctx-menu"
+            ref={clampMenuToViewport(t().x, t().y)}
+            style={{ left: `${t().x}px`, top: `${t().y}px` }}
+          >
             <For each={buildItems()}>
               {(item) =>
                 item.kind === "sep" ? (

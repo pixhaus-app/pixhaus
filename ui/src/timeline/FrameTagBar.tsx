@@ -24,6 +24,7 @@ import {
   uniqueTagName,
 } from "./timeline-state";
 import ModalInput from "../components/ModalInput";
+import { clampMenuToViewport } from "../lib/utils/menu-position";
 
 // Fixed visual constant — must match the `--tl-frame-w` CSS variable in
 // index.css. Virtual-scroll math, scrub-head positioning, tag positioning
@@ -220,7 +221,11 @@ const FrameTagBar: Component<Props> = (props) => {
         {(m) => (
           <Portal>
             <div class="tl-ctx-backdrop" onClick={closeCtxMenu} />
-            <div class="tl-ctx-menu" style={{ left: `${m().x}px`, top: `${m().y}px` }}>
+            <div
+              class="tl-ctx-menu"
+              ref={clampMenuToViewport(m().x, m().y)}
+              style={{ left: `${m().x}px`, top: `${m().y}px` }}
+            >
               <button class="tl-ctx-menu__item" onClick={startRename}>
                 Rename tag
               </button>

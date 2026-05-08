@@ -5,7 +5,14 @@
 // Mirrors the portal+backdrop styling of TilesetPickerDialog so the look
 // stays consistent.
 
-import { type Component, Show, createEffect, createSignal, onCleanup } from "solid-js";
+import {
+  type Component,
+  Show,
+  createEffect,
+  createSignal,
+  createUniqueId,
+  onCleanup,
+} from "solid-js";
 
 type Props = {
   readonly open: boolean;
@@ -23,6 +30,9 @@ type Props = {
 const ModalInput: Component<Props> = (props) => {
   const [value, setValue] = createSignal("");
   const [error, setError] = createSignal<string | null>(null);
+  // Per-instance id so two ModalInputs mounted simultaneously don't collide
+  // on `for`/`id` and break label-input association.
+  const inputId = createUniqueId();
   let inputRef: HTMLInputElement | undefined;
 
   // Reset internal state and focus the input each time the dialog opens.
@@ -91,11 +101,11 @@ const ModalInput: Component<Props> = (props) => {
 
           <div class="prefs__body">
             <div class="modal-input__row">
-              <label class="prefs__label" for="modal-input-field">
+              <label class="prefs__label" for={inputId}>
                 {props.label}
               </label>
               <input
-                id="modal-input-field"
+                id={inputId}
                 ref={inputRef}
                 class="modal-input__field"
                 value={value()}
