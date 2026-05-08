@@ -23,13 +23,13 @@ const APP_URL = "http://tauri.localhost/";
  * presence check is fast.
  */
 export async function bootApp(): Promise<void> {
-  // Tauri auto-loads the app URL on binary startup, but msedgedriver's
-  // session-creation handshake resets the WebView to about:blank. Force
-  // a navigate so every spec lands on a known-good page.
-  const currentUrl = await browser.getUrl().catch(() => "");
-  if (!currentUrl.startsWith(APP_URL)) {
-    await browser.url(APP_URL);
-  }
+  // Always navigate, even if we're already on APP_URL: this triggers a
+  // full page reload which resets every JS-side signal (activeProject,
+  // panel visibility, command palette state). Without the reload, a
+  // previous test that opened a project leaves activeProject() non-null
+  // and the welcome screen never re-mounts. Page reload is cheap (~50ms)
+  // and the only reliable cross-spec reset.
+  await browser.url(APP_URL);
 
   await waitForDebugSurface();
 

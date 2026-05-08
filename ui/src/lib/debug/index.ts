@@ -46,6 +46,27 @@ import {
   crashReportingDialogShown,
   crashReportingEnabled,
 } from "../../preferences/preferences-store";
+import {
+  clearDialogQueue,
+  enqueueConfirm,
+  enqueueMessage,
+  enqueueOpen,
+  enqueueSave,
+} from "../dialog";
+import type { MessageDialogResult } from "@tauri-apps/plugin-dialog";
+
+interface DialogDebug {
+  /** Pre-queue a response to the next `open()` dialog call. */
+  enqueueOpen(value: string | string[] | null): void;
+  /** Pre-queue a response to the next `save()` dialog call. */
+  enqueueSave(value: string | null): void;
+  /** Pre-queue a response to the next `confirm()` dialog call. */
+  enqueueConfirm(value: boolean): void;
+  /** Pre-queue a response to the next `message()` dialog call. */
+  enqueueMessage(value: MessageDialogResult): void;
+  /** Drop every queued response. */
+  clear(): void;
+}
 
 interface IpcDebug {
   /** Returns a snapshot copy of the IPC log. Mutating it does not affect future calls. */
@@ -101,6 +122,8 @@ export interface PixhausDebug {
   getCrashReportingDialogShown(): boolean;
   // ── IPC log ───────────────────────────────────────────────────────────────
   ipc: IpcDebug;
+  // ── Native dialog mock queue ──────────────────────────────────────────────
+  dialog: DialogDebug;
 }
 
 interface TaggedWindow extends Window {
@@ -172,6 +195,14 @@ export function installDebugSurface(): void {
         const log = w.__pixhaus_ipc_log__ ?? [];
         return log[log.length - 1];
       },
+    },
+
+    dialog: {
+      enqueueOpen,
+      enqueueSave,
+      enqueueConfirm,
+      enqueueMessage,
+      clear: clearDialogQueue,
     },
   };
 

@@ -5,7 +5,7 @@
 // active sprite are wired through layer-state helpers.
 
 import { type Component, Show, createEffect, onCleanup } from "solid-js";
-import { confirm } from "@tauri-apps/plugin-dialog";
+import { confirm } from "../lib/dialog";
 import type { Layer, LayerId, SpriteId } from "../lib/types";
 import {
   addLayer,

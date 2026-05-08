@@ -1,9 +1,4 @@
-import {
-  open as dialogOpen,
-  save as dialogSave,
-  confirm,
-  message,
-} from "@tauri-apps/plugin-dialog";
+import { open as dialogOpen, save as dialogSave, confirm, message } from "../lib/dialog";
 import { isCommandPaletteOpen, openCommandPalette, closeCommandPalette } from "../palette-state";
 import { openPreferences } from "../preferences/preferences-state";
 import { keybindPreset, customKeybinds } from "../preferences/preferences-store";

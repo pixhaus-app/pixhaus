@@ -1,5 +1,5 @@
 import { For, createSignal, onMount, type Component } from "solid-js";
-import { open as dialogOpen } from "@tauri-apps/plugin-dialog";
+import { open as dialogOpen } from "../lib/dialog";
 import { recentProjects, setActiveProject, pushRecentProject } from "../project-state";
 import {
   createNewProject,
