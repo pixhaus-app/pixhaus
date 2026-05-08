@@ -555,7 +555,7 @@ Steps:
   1. Right-click → "Convert to Group".
 Expect:
   - [DOM] the row becomes a group/folder; child indent visible.
-  - [IPC] `layer_convert_to_group`.
+  - [IPC] `layer_wrap_in_group` (the menu label still says "Convert to Group" but the IPC dispatched is `layer_wrap_in_group`).
 
 ### T-layers-009: Convert to Tilemap Layer
 

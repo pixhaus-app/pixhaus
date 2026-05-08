@@ -301,8 +301,8 @@ const Canvas: Component = () => {
     <div class="canvas-workspace">
       <Toolbar />
       <ToolOptionsPanel />
-      <div ref={containerEl} class="canvas-container" tabIndex={-1}>
-        <canvas ref={canvasEl} class="canvas-viewport" />
+      <div ref={containerEl} class="canvas-container" data-testid="canvas-container" tabIndex={-1}>
+        <canvas ref={canvasEl} class="canvas-viewport" data-testid="canvas-viewport" />
         <BrushCursor
           scrollX={scrollX()}
           scrollY={scrollY()}

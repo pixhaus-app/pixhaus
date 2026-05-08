@@ -3,3 +3,4 @@ packages:
   - "docs/site"
   - "website"
   - "tests/visual"
+  - "tests/e2e"

@@ -150,11 +150,12 @@ const CommandPalette: Component = () => {
         if (e.target === e.currentTarget) closeAndReset();
       }}
     >
-      <div class="palette" role="dialog" aria-label="Command Palette">
+      <div class="palette" role="dialog" aria-label="Command Palette" data-testid="command-palette">
         <div class="palette__input-row">
           <input
             ref={inputRef}
             class="palette__input"
+            data-testid="command-palette-input"
             type="text"
             placeholder="Type a command..."
             value={query()}
@@ -174,6 +175,7 @@ const CommandPalette: Component = () => {
                 )}
                 <div
                   class="palette__item"
+                  data-testid={`command-palette-item-${cmd.id}`}
                   role="option"
                   aria-selected={index() === selectedIndex()}
                   onClick={() => {
