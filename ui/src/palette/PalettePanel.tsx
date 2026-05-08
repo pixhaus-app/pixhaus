@@ -133,7 +133,10 @@ const PalettePanel: Component<Props> = (props) => {
   const handlePickerAdd = async () => {
     const color = editingColor();
     if (!color) return;
-    await appendColor(color);
+    // Only close and clear the staged draft if the backend accepted the
+    // append; on failure (already toasted by appendColor) keep the picker
+    // open so the user can retry without losing the color they tuned.
+    if (!(await appendColor(color))) return;
     setPickerOpen(false);
     setPickerMode("edit");
     cancelEditing();
@@ -173,18 +176,24 @@ const PalettePanel: Component<Props> = (props) => {
     }
   };
 
-  // ── Add-color helper (used by harmony and ramp) ───────────────────────────
+  // ── Add-color helper (used by harmony, ramp, picker append) ──────────────
 
-  const appendColor = async (color: Rgba): Promise<void> => {
+  // Returns true if the color was appended and the palette refreshed; false
+  // when there's no active palette/sprite or the IPC call failed (already
+  // surfaced via toast). Callers that need to react to failure (e.g. keep
+  // the picker open so the user can retry) check the boolean.
+  const appendColor = async (color: Rgba): Promise<boolean> => {
     const pid = activePaletteId();
     const sid = props.spriteId;
-    if (pid === null || sid === null) return;
+    if (pid === null || sid === null) return false;
     const args: PaletteAddColorArgs = { sprite_id: sid, palette_id: pid, color };
     try {
       await paletteAddColor(args);
       await refreshPalettes(sid);
+      return true;
     } catch (err: unknown) {
       reportCommandFailure("palette_add_color", err);
+      return false;
     }
   };
 
