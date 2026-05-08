@@ -2,6 +2,7 @@
 
 import { invoke } from "@tauri-apps/api/core";
 import type {
+  AutotileKind,
   FrameIndex,
   LayerId,
   SpriteId,
@@ -35,8 +36,9 @@ export type AutotileArgs = {
   sprite_id: SpriteId;
   layer_id: LayerId;
   frame_index: FrameIndex;
-  /** Rule set tag: `"blob47"`, `"corner16"`, or `"minimal4"`. */
-  rule_set: string;
+  /** Autotile algorithm. Standard variants need no extra data; the
+   * `Custom` variant carries its own rules + default tile inline. */
+  kind: AutotileKind;
   source_tile: TileIndex;
 };
 

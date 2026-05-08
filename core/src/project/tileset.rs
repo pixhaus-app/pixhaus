@@ -128,6 +128,11 @@ pub struct Tileset {
     /// beyond the vec length implicitly have `TileProperties::default()`.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub properties: Vec<TileProperties>,
+    /// Autotile rule set bound to this tileset, if any. Standard kinds
+    /// (`Blob47`, `Corner16`, `Minimal4`) need no extra data; the
+    /// `Custom` variant carries its own rules + default tile.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub autotile: Option<crate::tilemap::AutotileKind>,
     /// Free-form user metadata.
     #[serde(skip_serializing_if = "UserData::is_empty", default)]
     pub user_data: UserData,
@@ -190,6 +195,7 @@ mod tests {
                 buffer: PixelBufferId::new(42),
             },
             properties: Vec::new(),
+            autotile: None,
             user_data: UserData::default(),
         }
     }
@@ -214,6 +220,7 @@ mod tests {
                 path: "tilesets/shared.png".into(),
             },
             properties: Vec::new(),
+            autotile: None,
             user_data: UserData::default(),
         };
         let bytes = rmp_serde::to_vec_named(&t).unwrap();
@@ -233,11 +240,40 @@ mod tests {
                 buffer: PixelBufferId::new(7),
             },
             properties: Vec::new(),
+            autotile: None,
             user_data: UserData::default(),
         };
         let bytes = rmp_serde::to_vec_named(&t).unwrap();
         let back: Tileset = rmp_serde::from_slice(&bytes).unwrap();
         assert_eq!(back.base_index, 5);
+    }
+
+    #[test]
+    fn tileset_with_autotile_round_trips() {
+        use crate::tilemap::{AutotileKind, AutotileRule, AutotileRuleSet, NeighborCondition};
+        let t = Tileset {
+            id: TilesetId::new(7),
+            name: "walls".into(),
+            tile_size: Size::new(16, 16),
+            tile_count: 8,
+            base_index: 1,
+            source: TilesetSource::Inline {
+                buffer: PixelBufferId::new(11),
+            },
+            properties: Vec::new(),
+            autotile: Some(AutotileKind::Custom(AutotileRuleSet {
+                rules: vec![AutotileRule {
+                    conditions: [NeighborCondition::Any; 8],
+                    result_tile: TileIndex::new(3),
+                    result_flags: crate::project::tilemap::TileFlags::empty(),
+                }],
+                default_tile: TileIndex::new(1),
+            })),
+            user_data: UserData::default(),
+        };
+        let bytes = rmp_serde::to_vec_named(&t).unwrap();
+        let back: Tileset = rmp_serde::from_slice(&bytes).unwrap();
+        assert_eq!(t, back);
     }
 
     #[test]

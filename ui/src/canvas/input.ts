@@ -5,9 +5,9 @@
 // function in onCleanup.
 //
 // Tile-paint mode activates automatically when `activeTilemapCtx` is non-null.
-// Left-click places the selected tile; right-click erases the cell. Tile
-// commands are forwarded to the IPC layer; until S06 lands they return an
-// Unimplemented error that is silently swallowed.
+// Left-click places the selected tile; right-click erases the cell. With
+// autotile mode on, paints are routed through `tile_autotile_apply` using
+// the kind chosen in the Rules tab (or the kind persisted on the tileset).
 
 import {
   scrollX,
@@ -39,6 +39,7 @@ import { snapZoom, clampZoom, zoomAt, screenToCanvas } from "./viewport";
 import { isEditableTarget } from "../keybinds/keybind-manager";
 import {
   activeTilemapCtx,
+  localAutotileKind,
   selectedTileIndex,
   selectedTileFlags,
   tilemapTool,
@@ -52,7 +53,7 @@ import {
   canvasExtendStroke,
   canvasFill,
 } from "../lib/commands/canvas";
-import { isUnimplementedError, reportCommandFailure } from "../lib/utils/errors";
+import { reportCommandFailure } from "../lib/utils/errors";
 import { isActiveLayerWritable } from "../layers/layer-state";
 import { pushToast } from "../lib/toast/toast-state";
 import { ellipsePerimeterPoints, linePoints, rectPerimeterPoints } from "./tools/shape-points";
@@ -101,10 +102,9 @@ let lastPaintedCell: { x: number; y: number } | null = null;
 /**
  * Dispatches a tile place or erase IPC call for the given screen position.
  *
- * The S06 verb stubs return `Unimplemented{stream:"S06"}`; those are
- * silently dropped so the user can still place the cursor while we wait
- * for that stream to land. Any other error is real and gets logged to
- * the console rather than vanishing.
+ * Errors surface via the toast host so the user sees the validation
+ * detail (e.g. "tile index N out of range" when the tileset is empty)
+ * instead of a silent no-op.
  */
 function dispatchTilePaint(
   screenX: number,
@@ -142,9 +142,7 @@ function dispatchTilePaint(
 
   const frameIndex = activeFrameIndex();
   const onErr = (err: unknown): void => {
-    if (!isUnimplementedError(err)) {
-      console.error("[pixhaus] tile paint:", err);
-    }
+    reportCommandFailure("tile paint", err);
   };
 
   if (erase) {
@@ -159,11 +157,19 @@ function dispatchTilePaint(
   }
 
   if (autotileMode()) {
+    const kind = localAutotileKind() ?? ctx.tileset.autotile;
+    if (kind === null || kind === undefined) {
+      reportCommandFailure(
+        "tile autotile",
+        "no autotile rule set selected (open the Rules tab to pick one)",
+      );
+      return;
+    }
     tileAutotileApply({
       sprite_id: spriteId,
       layer_id: layerId,
       frame_index: frameIndex,
-      rule_set: ctx.tileset.name,
+      kind,
       source_tile: selectedTileIndex(),
     }).catch(onErr);
     return;

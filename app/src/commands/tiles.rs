@@ -90,10 +90,11 @@ pub struct AutotileArgs {
     pub layer_id: LayerId,
     /// Target frame.
     pub frame_index: FrameIndex,
-    /// Autotile kind, by tag name. Accepts `"blob47"`, `"corner16"`,
-    /// `"minimal4"`. (Custom rule sets are not yet attached to tilesets;
-    /// the spec calls out that follow-up.)
-    pub rule_set: String,
+    /// Autotile algorithm to run. Standard variants (`Blob47`, `Corner16`,
+    /// `Minimal4`) need no extra data; the `Custom` variant carries its
+    /// own rules + default tile inline. The frontend usually mirrors the
+    /// kind already persisted on the target tileset (`Tileset.autotile`).
+    pub kind: AutotileKind,
     /// Tile that the resolver should treat as the "filled" base.
     /// All cells matching this tile (or any non-empty cell) participate
     /// in autotile resolution; the `result_tile` is offset from the
@@ -521,25 +522,6 @@ fn validate_tile_index(
     Ok(())
 }
 
-/// Resolves a `rule_set` name to an [`AutotileKind`].
-///
-/// The data model doesn't yet attach custom rule sets to tilesets (a
-/// follow-up sketched in S06's wrap-up notes). Until it does, this maps
-/// the four built-in tag names — matching `AutotileKind`'s serde tags —
-/// and rejects anything else with a typed Validation error.
-fn resolve_rule_set(name: &str) -> CommandResult<AutotileKind> {
-    match name {
-        "blob47" => Ok(AutotileKind::Blob47),
-        "corner16" => Ok(AutotileKind::Corner16),
-        "minimal4" => Ok(AutotileKind::Minimal4),
-        other => Err(AppCommandError::Validation {
-            detail: format!(
-                "unknown autotile rule set {other:?} (expected one of: blob47, corner16, minimal4)"
-            ),
-        }),
-    }
-}
-
 // ── IPC commands ─────────────────────────────────────────────────────────────
 
 /// Places a tile cell on a tilemap layer.
@@ -677,8 +659,6 @@ pub async fn tile_autotile_apply(
     args: AutotileArgs,
     state: State<'_, AppState>,
 ) -> CommandResult<()> {
-    let kind = resolve_rule_set(&args.rule_set)?;
-
     let mut lock = state.doc.write().await;
     let doc = &mut *lock;
 
@@ -731,7 +711,7 @@ pub async fn tile_autotile_apply(
                 ),
             });
         };
-        compute_autotile_changes(data, &kind, args.source_tile)
+        compute_autotile_changes(data, &args.kind, args.source_tile)
     };
 
     if changes.is_empty() {
@@ -914,6 +894,7 @@ pub async fn tileset_add(
             base_index: 1,
             source: TilesetSource::Inline { buffer: buffer_id },
             properties: Vec::new(),
+            autotile: None,
             user_data: UserData::default(),
         };
         sprite.tilesets.push(tileset.clone());
@@ -1009,6 +990,347 @@ pub async fn tileset_set_tile_metadata(
     Ok(tileset.clone())
 }
 
+/// Sets (or clears) the autotile rule set bound to a tileset.
+///
+/// Persists `Tileset.autotile`, marks the document dirty, and returns
+/// the updated tileset so the caller can refresh local state in one
+/// round-trip. Standard variants (`Blob47`, `Corner16`, `Minimal4`) need
+/// no extra data; the `Custom` variant carries its own rules + default
+/// tile inline.
+#[tauri::command(async, rename_all = "snake_case")]
+pub async fn tileset_set_autotile(
+    sprite_id: SpriteId,
+    tileset_id: TilesetId,
+    autotile: Option<AutotileKind>,
+    state: State<'_, AppState>,
+) -> CommandResult<Tileset> {
+    let mut doc = state.doc.write().await;
+    let sprite = doc
+        .project
+        .as_mut()
+        .ok_or(AppCommandError::NoActiveProject)?
+        .sprites
+        .iter_mut()
+        .find(|s| s.id == sprite_id)
+        .ok_or(AppCommandError::NotFound {
+            entity: "sprite".into(),
+            id: u64::from(sprite_id.get()),
+        })?;
+    let tileset = sprite
+        .tilesets
+        .iter_mut()
+        .find(|t| t.id == tileset_id)
+        .ok_or(AppCommandError::NotFound {
+            entity: "tileset".into(),
+            id: u64::from(tileset_id.get()),
+        })?;
+    tileset.autotile = autotile;
+    let updated = tileset.clone();
+    doc.dirty = true;
+    Ok(updated)
+}
+
+/// Arguments for capturing a tile from a raster source layer into a tileset.
+#[derive(Debug, Deserialize)]
+pub struct TilesetAddTileArgs {
+    /// Target sprite.
+    pub sprite_id: SpriteId,
+    /// Tileset that grows by one tile.
+    pub tileset_id: TilesetId,
+    /// Raster layer to read pixels from. Must be a raster layer; tilemap
+    /// and group layers reject with a Validation error.
+    pub source_layer_id: LayerId,
+    /// Frame on the source layer to read from.
+    pub frame_index: FrameIndex,
+    /// Top-left X coordinate of the capture region in the source layer's
+    /// pixel buffer.
+    pub source_x: i32,
+    /// Top-left Y coordinate of the capture region in the source layer's
+    /// pixel buffer.
+    pub source_y: i32,
+}
+
+/// Result of [`tileset_add_tile`]: the updated tileset and the index of
+/// the newly captured tile.
+#[derive(Debug, Serialize, ts_rs::TS)]
+#[ts(export)]
+pub struct TilesetAddTileResult {
+    /// Tileset with `tile_count` incremented and (potentially) a
+    /// freshly-allocated atlas buffer.
+    pub tileset: Tileset,
+    /// Index of the new tile (i.e. previous `tile_count`). Suitable for
+    /// `selectedTileIndex` so the user can immediately paint with it.
+    pub index: TileIndex,
+}
+
+/// Captures a `tile_size`-sized region from a raster layer and appends it
+/// to the tileset's inline atlas as a new tile.
+///
+/// Atlas layout (per `core/src/project/tileset.rs`) is row-major with
+/// tiles laid out left-to-right; growing the buffer means widening it by
+/// one tile-width. Pixels outside the source layer's buffer read as
+/// transparent — matches Aseprite's atlas-build behaviour and lets the
+/// user capture from regions that overhang the canvas.
+///
+/// External tilesets reject with a Validation error: capture only writes
+/// into Inline buffers. Locked source layers reject the same way.
+#[tauri::command(async, rename_all = "snake_case")]
+#[allow(clippy::too_many_lines)] // multi-phase: validate, read, grow, install, mutate
+pub async fn tileset_add_tile(
+    args: TilesetAddTileArgs,
+    state: State<'_, AppState>,
+) -> CommandResult<TilesetAddTileResult> {
+    let mut doc = state.doc.write().await;
+
+    // Phase 1 — resolve everything under a shared borrow.
+    let (atlas_buffer_id, tile_w, tile_h, prev_tile_count, src_buffer_id) = {
+        let project = doc
+            .project
+            .as_ref()
+            .ok_or(AppCommandError::NoActiveProject)?;
+        let sprite = project
+            .sprites
+            .iter()
+            .find(|s| s.id == args.sprite_id)
+            .ok_or(AppCommandError::NotFound {
+                entity: "sprite".into(),
+                id: u64::from(args.sprite_id.get()),
+            })?;
+        let tileset = sprite
+            .tilesets
+            .iter()
+            .find(|t| t.id == args.tileset_id)
+            .ok_or(AppCommandError::NotFound {
+                entity: "tileset".into(),
+                id: u64::from(args.tileset_id.get()),
+            })?;
+        let TilesetSource::Inline { buffer } = tileset.source else {
+            return Err(AppCommandError::Validation {
+                detail: "capture supports only inline tilesets".into(),
+            });
+        };
+        let layer = sprite
+            .layers
+            .iter()
+            .find(|l| l.id == args.source_layer_id)
+            .ok_or(AppCommandError::NotFound {
+                entity: "layer".into(),
+                id: u64::from(args.source_layer_id.get()),
+            })?;
+        if layer.locked {
+            return Err(AppCommandError::LayerLocked {
+                layer_id: args.source_layer_id.get(),
+            });
+        }
+        if !matches!(layer.kind, LayerKind::Raster) {
+            return Err(AppCommandError::Validation {
+                detail: format!(
+                    "source layer {} is not a raster layer",
+                    args.source_layer_id.get()
+                ),
+            });
+        }
+        let cel = sprite
+            .cels
+            .iter()
+            .find(|c| c.layer_id == args.source_layer_id && c.frame_index == args.frame_index)
+            .ok_or(AppCommandError::NotFound {
+                entity: "cel".into(),
+                id: u64::from(args.frame_index.get()),
+            })?;
+        let CelData::Raster {
+            buffer: src_buffer, ..
+        } = cel.data
+        else {
+            return Err(AppCommandError::Validation {
+                detail: format!(
+                    "cel for layer {} frame {} is not a raster cel",
+                    args.source_layer_id.get(),
+                    args.frame_index.get()
+                ),
+            });
+        };
+        (
+            buffer,
+            tileset.tile_size.width,
+            tileset.tile_size.height,
+            tileset.tile_count,
+            src_buffer,
+        )
+    };
+
+    if tile_w == 0 || tile_h == 0 {
+        return Err(AppCommandError::Validation {
+            detail: "tileset tile size must be positive".into(),
+        });
+    }
+
+    // Phase 2 — read tile pixels from the source buffer (out-of-bounds = transparent).
+    let captured = read_tile_pixels(
+        &doc.pixel_buffers,
+        src_buffer_id,
+        args.source_x,
+        args.source_y,
+        tile_w,
+        tile_h,
+    );
+
+    // Phase 3 — grow (or create) the atlas and write the captured tile at
+    // index `prev_tile_count`. Atlas dimensions are
+    // `(tile_w * tile_count, tile_h)`; index 0 is the empty sentinel,
+    // initialised to all-zero on first write.
+    let new_tile_count = prev_tile_count + 1;
+    let new_atlas_w = tile_w * new_tile_count;
+    let bytes_per_pixel: u32 = 4;
+    let new_stride = new_atlas_w * bytes_per_pixel;
+
+    let mut new_pixels = vec![0u8; (new_atlas_w * tile_h * bytes_per_pixel) as usize];
+
+    let atlas_idx = doc
+        .pixel_buffers
+        .iter()
+        .position(|e| e.id == atlas_buffer_id.get());
+    if let Some(idx) = atlas_idx {
+        let entry = &doc.pixel_buffers[idx];
+        // Copy old atlas rows into the wider buffer, preserving every
+        // existing tile.
+        let old_w = entry.width;
+        let old_stride = entry.stride;
+        let copy_w = old_w.min(new_atlas_w) as usize;
+        let copy_bytes = copy_w * bytes_per_pixel as usize;
+        for y in 0..tile_h.min(entry.height) as usize {
+            let src_row_start = y * old_stride as usize;
+            let dst_row_start = y * new_stride as usize;
+            new_pixels[dst_row_start..dst_row_start + copy_bytes]
+                .copy_from_slice(&entry.pixels[src_row_start..src_row_start + copy_bytes]);
+        }
+    }
+
+    // Write the captured tile into the new slot.
+    let dst_x_start = (prev_tile_count * tile_w) as usize;
+    for y in 0..tile_h as usize {
+        let src_row_start = y * (tile_w as usize) * bytes_per_pixel as usize;
+        let dst_row_start = y * new_stride as usize + dst_x_start * bytes_per_pixel as usize;
+        let row_bytes = tile_w as usize * bytes_per_pixel as usize;
+        new_pixels[dst_row_start..dst_row_start + row_bytes]
+            .copy_from_slice(&captured[src_row_start..src_row_start + row_bytes]);
+    }
+
+    // Phase 4 — install the buffer entry.
+    if let Some(idx) = atlas_idx {
+        let entry = &mut doc.pixel_buffers[idx];
+        entry.width = new_atlas_w;
+        entry.height = tile_h;
+        entry.stride = new_stride;
+        entry.pixels = new_pixels;
+    } else {
+        doc.pixel_buffers
+            .push(pixhaus_io::pixhaus::PixelBufferEntry {
+                id: atlas_buffer_id.get(),
+                width: new_atlas_w,
+                height: tile_h,
+                stride: new_stride,
+                pixels: new_pixels,
+            });
+    }
+
+    // Phase 5 — bump tile_count and return the updated tileset.
+    let project = doc
+        .project
+        .as_mut()
+        .ok_or(AppCommandError::NoActiveProject)?;
+    let sprite = project
+        .sprites
+        .iter_mut()
+        .find(|s| s.id == args.sprite_id)
+        .ok_or(AppCommandError::NotFound {
+            entity: "sprite".into(),
+            id: u64::from(args.sprite_id.get()),
+        })?;
+    let tileset = sprite
+        .tilesets
+        .iter_mut()
+        .find(|t| t.id == args.tileset_id)
+        .ok_or(AppCommandError::NotFound {
+            entity: "tileset".into(),
+            id: u64::from(args.tileset_id.get()),
+        })?;
+    tileset.tile_count = new_tile_count;
+    let updated = tileset.clone();
+    doc.dirty = true;
+
+    Ok(TilesetAddTileResult {
+        tileset: updated,
+        index: TileIndex::new(prev_tile_count),
+    })
+}
+
+/// Reads a `tile_w × tile_h` region of RGBA pixels from a source buffer
+/// at `(source_x, source_y)`. Pixels outside the buffer (including
+/// negative coords or coords past the buffer width/height) read as
+/// transparent (all zero).
+fn read_tile_pixels(
+    buffers: &[pixhaus_io::pixhaus::PixelBufferEntry],
+    src_buffer_id: PixelBufferId,
+    source_x: i32,
+    source_y: i32,
+    tile_w: u32,
+    tile_h: u32,
+) -> Vec<u8> {
+    const BYTES_PER_PIXEL: usize = 4;
+    let mut out = vec![0u8; (tile_w as usize) * (tile_h as usize) * BYTES_PER_PIXEL];
+    let Some(entry) = buffers.iter().find(|e| e.id == src_buffer_id.get()) else {
+        return out;
+    };
+    let src_w = entry.width;
+    let src_h = entry.height;
+    let src_stride = entry.stride as usize;
+    // Convert the negative-tolerant source origin into a clipped
+    // (src_x_start, dst_x_start, copy_w) triple so the inner loop only
+    // touches valid u32 indices.
+    let (src_col, dst_col, copy_w) = clip_axis(source_x, src_w, tile_w);
+    let (src_row, dst_row, copy_h) = clip_axis(source_y, src_h, tile_h);
+    if copy_w == 0 || copy_h == 0 {
+        return out;
+    }
+    let row_bytes = copy_w as usize * BYTES_PER_PIXEL;
+    for r in 0..copy_h {
+        let s_row = src_row + r;
+        let d_row = dst_row + r;
+        let src_off = (s_row as usize) * src_stride + (src_col as usize) * BYTES_PER_PIXEL;
+        let dst_off = (d_row as usize) * (tile_w as usize) * BYTES_PER_PIXEL
+            + (dst_col as usize) * BYTES_PER_PIXEL;
+        out[dst_off..dst_off + row_bytes]
+            .copy_from_slice(&entry.pixels[src_off..src_off + row_bytes]);
+    }
+    out
+}
+
+/// Clips a one-dimensional capture range against a source extent.
+///
+/// Returns `(src_start, dst_start, copy_len)` so a negative `source`
+/// origin shifts the destination right while clipping the source to its
+/// valid range. `copy_len == 0` means the capture lies entirely outside
+/// the source.
+fn clip_axis(source: i32, src_extent: u32, tile_extent: u32) -> (u32, u32, u32) {
+    if tile_extent == 0 || src_extent == 0 {
+        return (0, 0, 0);
+    }
+    let (src_start, dst_start) = if source < 0 {
+        let shift = source.unsigned_abs().min(tile_extent);
+        (0, shift)
+    } else {
+        let s = source.unsigned_abs();
+        if s >= src_extent {
+            return (0, 0, 0);
+        }
+        (s, 0)
+    };
+    let remaining_src = src_extent.saturating_sub(src_start);
+    let remaining_dst = tile_extent.saturating_sub(dst_start);
+    (src_start, dst_start, remaining_src.min(remaining_dst))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1031,6 +1353,7 @@ mod tests {
                 buffer: PixelBufferId::new(99),
             },
             properties: Vec::new(),
+            autotile: None,
             user_data: UserData::default(),
         });
         sprite.layers.push(Layer {
@@ -1161,28 +1484,6 @@ mod tests {
     fn validate_tile_index_passes_for_empty_cell() {
         let (project, sprite_id, _, tileset_id) = project_with_tilemap_layer();
         validate_tile_index(&project, sprite_id, tileset_id, TileCell::empty()).unwrap();
-    }
-
-    #[test]
-    fn resolve_rule_set_recognises_builtin_names() {
-        assert!(matches!(
-            resolve_rule_set("blob47"),
-            Ok(AutotileKind::Blob47)
-        ));
-        assert!(matches!(
-            resolve_rule_set("corner16"),
-            Ok(AutotileKind::Corner16)
-        ));
-        assert!(matches!(
-            resolve_rule_set("minimal4"),
-            Ok(AutotileKind::Minimal4)
-        ));
-    }
-
-    #[test]
-    fn resolve_rule_set_rejects_unknown() {
-        let err = resolve_rule_set("not-a-rule").unwrap_err();
-        assert!(matches!(err, AppCommandError::Validation { .. }));
     }
 
     #[test]
@@ -1363,5 +1664,50 @@ mod tests {
     fn tileset_add_uses_default_user_data() {
         let ud = UserData::default();
         assert!(ud.is_empty());
+    }
+
+    #[test]
+    fn read_tile_pixels_in_bounds_copies_region() {
+        // 4×2 source buffer, RGBA. Two distinct pixels at (1, 0) and (2, 1).
+        let mut pixels = vec![0u8; 4 * 2 * 4];
+        // (1, 0) = red
+        pixels[4..8].copy_from_slice(&[255, 0, 0, 255]);
+        // (2, 1) at row=1: row_start = 1 * (4*4) = 16; col 2 offset = 8
+        pixels[16 + 8..16 + 12].copy_from_slice(&[0, 255, 0, 255]);
+        let buffers = vec![pixhaus_io::pixhaus::PixelBufferEntry {
+            id: 42,
+            width: 4,
+            height: 2,
+            stride: 16,
+            pixels,
+        }];
+        let captured = read_tile_pixels(&buffers, PixelBufferId::new(42), 1, 0, 2, 2);
+        // Output is 2×2, RGBA = 16 bytes. (0, 0) maps to source (1, 0) = red;
+        // (1, 1) maps to source (2, 1) = green.
+        assert_eq!(&captured[0..4], &[255, 0, 0, 255]);
+        assert_eq!(&captured[2 * 4 + 4..2 * 4 + 8], &[0, 255, 0, 255]);
+    }
+
+    #[test]
+    fn read_tile_pixels_out_of_bounds_reads_transparent() {
+        let buffers = vec![pixhaus_io::pixhaus::PixelBufferEntry {
+            id: 42,
+            width: 4,
+            height: 2,
+            stride: 16,
+            pixels: vec![0xff; 4 * 2 * 4],
+        }];
+        // source_y = -1 → entire first row of output is OOB and stays 0.
+        let captured = read_tile_pixels(&buffers, PixelBufferId::new(42), 0, -1, 2, 2);
+        assert_eq!(&captured[0..8], &[0; 8]);
+        // Second row (y=0 in source) reads through.
+        assert_eq!(&captured[8..16], &[0xff; 8]);
+    }
+
+    #[test]
+    fn read_tile_pixels_missing_buffer_returns_zeros() {
+        let buffers: Vec<pixhaus_io::pixhaus::PixelBufferEntry> = Vec::new();
+        let captured = read_tile_pixels(&buffers, PixelBufferId::new(42), 0, 0, 2, 2);
+        assert_eq!(captured, vec![0u8; 16]);
     }
 }

@@ -43,7 +43,7 @@ interface TilesetsTabProps {
   spriteId: SpriteId;
   activeId: TilesetId | null;
   onSwitch: (ts: Tileset) => void;
-  onCreated: () => void;
+  onCreated: (ts: Tileset) => void;
   onTilesetRenamed: (ts: Tileset) => void;
 }
 
@@ -63,14 +63,14 @@ const TilesetsTab: Component<TilesetsTabProps> = (props) => {
     e.preventDefault();
     const name = addName().trim();
     if (!name) return;
-    await tilesetAdd({
+    const created = await tilesetAdd({
       sprite_id: props.spriteId,
       name,
       tile_width: addW(),
       tile_height: addH(),
     });
     await refetch();
-    props.onCreated();
+    props.onCreated(created);
     setAdding(false);
     setAddName("");
     setAddW(16);
@@ -250,8 +250,16 @@ const TilemapPanel: Component = () => {
     setActiveTab("tileset");
   }
 
-  function onTilesetCreated() {
-    // Stay on the Tilesets tab so the user sees the updated list.
+  function onTilesetCreated(ts: Tileset) {
+    // When a tilemap layer is already active, treat the just-created
+    // tileset as the new working set: rebind ctx and jump to the
+    // Tileset tab. With no active tilemap layer there's no layerId to
+    // bind to, so leave the user on the Tilesets tab — the new row
+    // shows up highlighted via the activeId prop.
+    const c = ctx();
+    if (c) {
+      switchTileset(ts);
+    }
   }
 
   function onTilesetRenamed(updated: Tileset) {

@@ -59,6 +59,7 @@ export type { TileIndex } from "./TileIndex";
 export type { TileProperties } from "./TileProperties";
 export type { TilemapData } from "./TilemapData";
 export type { Tileset } from "./Tileset";
+export type { TilesetAddTileResult } from "./TilesetAddTileResult";
 export type { TilesetId } from "./TilesetId";
 export type { TilesetSource } from "./TilesetSource";
 export type { UserData } from "./UserData";

@@ -515,6 +515,7 @@ fn tilemap_archive_round_trips_through_aseprite_document() {
             buffer: PixelBufferId::new(20),
         },
         properties: Vec::new(),
+        autotile: None,
         user_data: UserData::default(),
     };
     let mut tilemap = TilemapData::empty(2, 2);

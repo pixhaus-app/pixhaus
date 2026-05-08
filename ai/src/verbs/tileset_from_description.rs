@@ -339,6 +339,7 @@ impl Verb for TilesetFromDescriptionVerb {
                 buffer: PixelBufferId::new(PLACEHOLDER_BUFFER_ID),
             },
             properties: Vec::new(),
+            autotile: None,
             user_data: UserData::default(),
         };
 

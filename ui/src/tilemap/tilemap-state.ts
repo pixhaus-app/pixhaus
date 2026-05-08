@@ -65,14 +65,16 @@ export const [tilemapTool, setTilemapTool] = createSignal<TilemapTool>("pencil")
 export const [autotileMode, setAutotileMode] = createSignal(false);
 
 // ── Local autotile rule state ──────────────────────────────────────────────
-// Autotile kind / rule set for the active tileset.  Persisted to the project
-// once the full tilemap IPC (S06) lands; held in UI state for now.
+// Autotile kind / rule set for the active tileset. The editor mirrors
+// `Tileset.autotile` here so the UI can re-render without round-tripping
+// every keystroke; `tilesetSetAutotile` debounces the persist back to
+// the backend.
 //
 // These signals live at module scope (not inside AutotileRuleEditor) so the
 // rules and default_tile survive the editor unmounting — e.g. when the user
-// switches preferences tabs and back. Solid's <Tabs/> implementation here
-// destroys the inactive panel's components, so any state inside the
-// component is lost on every tab switch.
+// switches tabs. Solid's <Tabs/> implementation here destroys the inactive
+// panel's components, so any state inside the component is lost on every
+// tab switch.
 
 export const [localAutotileKind, setLocalAutotileKind] = createSignal<AutotileKind | null>(null);
 
