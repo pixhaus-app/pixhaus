@@ -25,7 +25,7 @@ CI integration is intentionally deferred. Phase 0 lands locally only; a separate
 
 ## How it works
 
-1. `pnpm tauri:build:debug` produces `target/debug/pixhaus(.exe)` via `cargo tauri build --debug --no-bundle`.
+1. `pnpm tauri:build:debug` produces `target/debug/pixhaus(.exe)` by running the UI build (`pnpm --filter pixhaus-ui build`) then `cargo build -p pixhaus-app`. Bypassing `cargo tauri build` avoids dev/build mode confusion in cargo's incremental cache — `cargo build` always produces a production-mode binary that loads bundled assets via custom-protocol.
 2. `pnpm e2e` runs `wdio run wdio.conf.ts`. The config:
    - Spawns `tauri-driver` on `127.0.0.1:4444`.
    - Hands tauri-driver the binary path through the `tauri:options.application` capability.
