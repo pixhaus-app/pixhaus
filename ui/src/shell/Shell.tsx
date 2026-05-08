@@ -84,14 +84,14 @@ const Shell: Component = () => {
               <div class="editor-layout__canvas-area">
                 <div class="editor-layout__canvas">
                   <Canvas />
-                  <Show when={activeSpriteId() !== null && isTilemapPanelVisible()}>
-                    <TilemapPanel />
-                  </Show>
                 </div>
                 <Show when={isTimelinePanelVisible()}>
                   <TimelinePanel />
                 </Show>
               </div>
+              <Show when={activeSpriteId() !== null && isTilemapPanelVisible()}>
+                <TilemapPanel />
+              </Show>
               <Show when={isLayerPanelVisible()}>
                 <LayerPanel />
               </Show>
