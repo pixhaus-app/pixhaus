@@ -388,6 +388,73 @@ pub async fn frame_tag_create(
     Ok(tag)
 }
 
+/// Renames an existing frame tag on a sprite in place.
+///
+/// Pure helper extracted so the validation logic is unit-testable without
+/// constructing a tauri `State`. Returns `Ok(false)` when the rename was a
+/// no-op (`old == new`); `Ok(true)` when a tag was actually renamed.
+fn rename_tag_in_sprite(
+    sprite: &mut Sprite,
+    old_name: &str,
+    new_name: String,
+) -> CommandResult<bool> {
+    if new_name.is_empty() {
+        return Err(AppCommandError::Validation {
+            detail: "frame tag name must not be empty".into(),
+        });
+    }
+    if old_name == new_name {
+        return Ok(false);
+    }
+    if sprite.frame_tags.iter().any(|t| t.name == new_name) {
+        return Err(AppCommandError::Conflict {
+            detail: format!("frame tag {new_name:?} already exists"),
+        });
+    }
+    let tag = sprite
+        .frame_tags
+        .iter_mut()
+        .find(|t| t.name == old_name)
+        .ok_or_else(|| AppCommandError::NotFoundByName {
+            entity: "frame_tag".into(),
+            name: old_name.to_owned(),
+        })?;
+    tag.name = new_name;
+    Ok(true)
+}
+
+/// Renames an existing frame tag.
+///
+/// Rejects empty new names and collisions with another existing tag.
+/// `old_name == new_name` is a no-op.
+#[tauri::command(async, rename_all = "snake_case")]
+pub async fn frame_tag_rename(
+    sprite_id: SpriteId,
+    old_name: String,
+    new_name: String,
+    state: State<'_, AppState>,
+) -> CommandResult<()> {
+    let mut doc = state.doc.write().await;
+    let changed = {
+        let sprite = doc
+            .project
+            .as_mut()
+            .ok_or(AppCommandError::NoActiveProject)?
+            .sprites
+            .iter_mut()
+            .find(|s| s.id == sprite_id)
+            .ok_or(AppCommandError::NotFound {
+                entity: "sprite".into(),
+                id: u64::from(sprite_id.get()),
+            })?;
+        rename_tag_in_sprite(sprite, &old_name, new_name)?
+    };
+    if changed {
+        doc.dirty = true;
+    }
+    Ok(())
+}
+
 /// Deletes a named frame tag from a sprite.
 #[tauri::command(async, rename_all = "snake_case")]
 pub async fn frame_tag_delete(
@@ -620,5 +687,68 @@ mod tests {
         assert_eq!(r(0), 0);
         assert_eq!(r(1), 1);
         assert_eq!(r(5), 5);
+    }
+
+    // rename_tag_in_sprite ───────────────────────────────────────────────────
+
+    fn sprite_with_tag(name: &str) -> Sprite {
+        let mut s = sprite_with_frames(4);
+        s.frame_tags.push(FrameTag {
+            name: name.into(),
+            range: FrameRange::new(FrameIndex::new(0), FrameIndex::new(1)),
+            loop_direction: LoopDirection::Forward,
+            repeat: 0,
+            user_data: UserData::default(),
+        });
+        s
+    }
+
+    #[test]
+    fn rename_tag_changes_name_and_reports_change() {
+        let mut s = sprite_with_tag("walk");
+        let changed = rename_tag_in_sprite(&mut s, "walk", "run".into()).expect("rename ok");
+        assert!(changed, "rename to a new name reports a change");
+        assert_eq!(s.frame_tags[0].name, "run");
+    }
+
+    #[test]
+    fn rename_tag_to_same_name_is_a_noop() {
+        let mut s = sprite_with_tag("walk");
+        let changed = rename_tag_in_sprite(&mut s, "walk", "walk".into()).expect("noop ok");
+        assert!(!changed, "no-op rename reports no change");
+        assert_eq!(s.frame_tags[0].name, "walk");
+    }
+
+    #[test]
+    fn rename_tag_rejects_empty_new_name() {
+        let mut s = sprite_with_tag("walk");
+        let err = rename_tag_in_sprite(&mut s, "walk", String::new()).expect_err("empty rejected");
+        assert!(matches!(err, AppCommandError::Validation { .. }));
+        assert_eq!(s.frame_tags[0].name, "walk");
+    }
+
+    #[test]
+    fn rename_tag_rejects_collision_with_existing_tag() {
+        let mut s = sprite_with_tag("walk");
+        s.frame_tags.push(FrameTag {
+            name: "run".into(),
+            range: FrameRange::new(FrameIndex::new(2), FrameIndex::new(3)),
+            loop_direction: LoopDirection::Forward,
+            repeat: 0,
+            user_data: UserData::default(),
+        });
+        let err =
+            rename_tag_in_sprite(&mut s, "walk", "run".into()).expect_err("collision rejected");
+        assert!(matches!(err, AppCommandError::Conflict { .. }));
+        assert_eq!(s.frame_tags[0].name, "walk");
+    }
+
+    #[test]
+    fn rename_tag_rejects_unknown_source_name() {
+        let mut s = sprite_with_tag("walk");
+        let err = rename_tag_in_sprite(&mut s, "missing", "run".into())
+            .expect_err("unknown source rejected");
+        assert!(matches!(err, AppCommandError::NotFoundByName { .. }));
+        assert_eq!(s.frame_tags[0].name, "walk");
     }
 }

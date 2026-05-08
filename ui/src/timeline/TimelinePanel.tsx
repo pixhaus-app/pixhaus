@@ -207,6 +207,24 @@ const TimelinePanel: Component = () => {
   // ── Keyboard ──────────────────────────────────────────────────────────────
 
   function handleKeyDown(e: KeyboardEvent): void {
+    // Bail out when focus is on any form input or contenteditable. Two
+    // motivations, both load-bearing:
+    //   1. The duration input is `<input type="number">` — Backspace there
+    //      must not bubble up and silently delete the selected frame.
+    //   2. The Loop checkbox is `<input type="checkbox">` — Space there must
+    //      toggle the checkbox (native behaviour) and NOT also fire
+    //      togglePlayback, and Backspace there must not delete a frame.
+    // Narrowing this guard to text-entry inputs would re-introduce the
+    // checkbox bug, so the broad check is intentional.
+    const ae = document.activeElement;
+    if (
+      ae instanceof HTMLInputElement ||
+      ae instanceof HTMLTextAreaElement ||
+      ae instanceof HTMLSelectElement ||
+      (ae instanceof HTMLElement && ae.isContentEditable)
+    ) {
+      return;
+    }
     const id = spriteId();
     if (id === null) return;
     const n = frames().length;
@@ -252,14 +270,14 @@ const TimelinePanel: Component = () => {
           >
             Stop
           </button>
-          <button
-            class="timeline-panel__pb-btn"
-            classList={{ "timeline-panel__pb-btn--active": isLooping() }}
-            onClick={() => setIsLooping(!isLooping())}
-            title="Toggle loop"
-          >
-            Loop
-          </button>
+          <label class="timeline-panel__loop-toggle" title="Loop playback at last frame">
+            <input
+              type="checkbox"
+              checked={isLooping()}
+              onChange={(e) => setIsLooping(e.currentTarget.checked)}
+            />
+            <span class="timeline-panel__loop-toggle-label">Loop</span>
+          </label>
         </div>
 
         <div class="timeline-panel__onion">
@@ -403,6 +421,11 @@ const TimelinePanel: Component = () => {
                         onInput={(e) => setDurationInput(e.currentTarget.value)}
                         onBlur={() => commitEditDuration(index)}
                         onKeyDown={(e) => {
+                          // Stop bubbling so the panel-level handler doesn't
+                          // see Backspace/Delete and delete the frame from
+                          // under the input. Defence in depth alongside the
+                          // activeElement check in handleKeyDown.
+                          e.stopPropagation();
                           if (e.key === "Enter") commitEditDuration(index);
                           else if (e.key === "Escape") setEditingFrame(null);
                         }}

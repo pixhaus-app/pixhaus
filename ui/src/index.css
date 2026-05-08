@@ -690,6 +690,39 @@ body {
   cursor: not-allowed;
 }
 
+/* ── Modal input (single-field dialog) ──────────────────────────────────── */
+
+.modal-input {
+  width: 360px;
+}
+
+.modal-input__row {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.modal-input__field {
+  width: 100%;
+  padding: 6px 8px;
+  background: var(--bg-app);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  color: var(--text-primary);
+  font-size: 13px;
+}
+
+.modal-input__field:focus {
+  outline: none;
+  border-color: var(--accent);
+}
+
+.modal-input__error {
+  color: var(--accent-danger, #e85f5c);
+  font-size: 12px;
+  margin: 8px 0 0 0;
+}
+
 /* ── Tileset picker (Convert to Tilemap Layer) ──────────────────────────── */
 
 .ts-picker {
@@ -2881,7 +2914,7 @@ body {
   --tl-frame-head-h: 36px;
   --tl-panel-h: 180px;
   --tl-row-h: 24px;
-  --tl-frame-w: 24px;
+  --tl-frame-w: 36px;
 }
 
 .timeline-panel {
@@ -2947,6 +2980,41 @@ body {
 
 .timeline-panel__pb-btn--active:hover {
   background: var(--accent-subtle);
+}
+
+.timeline-panel__loop-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  height: 20px;
+  padding: 0 6px;
+  font-size: 11px;
+  color: var(--text-secondary);
+  border-radius: 3px;
+  cursor: pointer;
+  user-select: none;
+  transition:
+    background var(--transition-fast),
+    color var(--transition-fast);
+}
+
+.timeline-panel__loop-toggle:hover {
+  background: var(--bg-hover);
+  color: var(--text-primary);
+}
+
+.timeline-panel__loop-toggle input[type="checkbox"] {
+  width: 12px;
+  height: 12px;
+  margin: 0;
+  cursor: pointer;
+  accent-color: var(--accent);
+}
+
+/* Sibling selector keeps the active-state styling working on older
+   WebKitGTK builds that predate `:has()` support. */
+.timeline-panel__loop-toggle input:checked + .timeline-panel__loop-toggle-label {
+  color: var(--accent);
 }
 
 .timeline-panel__onion {
@@ -3132,23 +3200,23 @@ body {
 }
 
 .timeline-panel__frame-num {
-  font-size: 9px;
+  font-size: 11px;
   color: var(--text-disabled);
   line-height: 1;
 }
 
 .timeline-panel__frame-dur {
-  font-size: 9px;
+  font-size: 11px;
   color: var(--text-secondary);
   line-height: 1;
   margin-top: 2px;
 }
 
 .timeline-panel__dur-input {
-  width: calc(var(--tl-frame-w, 24px) - 2px);
-  height: 16px;
+  width: calc(var(--tl-frame-w, 36px) - 4px);
+  height: 18px;
   padding: 0 2px;
-  font-size: 9px;
+  font-size: 11px;
   background: var(--bg-app);
   border: 1px solid var(--accent);
   border-radius: 2px;
@@ -3230,6 +3298,22 @@ body {
   height: 100%;
   width: 100%;
   cursor: crosshair;
+  background: var(--bg-app);
+  border-bottom: 1px dashed var(--border);
+}
+
+.tl-tag-bar__hint {
+  position: sticky;
+  left: 8px;
+  top: 0;
+  height: 100%;
+  display: flex;
+  align-items: center;
+  font-size: 10px;
+  font-style: italic;
+  color: var(--text-disabled);
+  pointer-events: none;
+  white-space: nowrap;
 }
 
 .tl-tag {
