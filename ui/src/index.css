@@ -2140,6 +2140,185 @@ body {
   background: none;
 }
 
+/* ── Tileset management tab (tm-manage) ──────────────────────────────────── */
+
+.tm-manage {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 8px;
+}
+
+.tm-manage__loading,
+.tm-manage__empty {
+  font-size: 11px;
+  color: var(--text-disabled);
+  margin: 0;
+  padding: 4px 0;
+}
+
+.tm-manage__list {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.tm-manage__row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 6px;
+  border-radius: 4px;
+  border: 1px solid transparent;
+  background: var(--bg-elevated);
+  min-width: 0;
+}
+
+.tm-manage__row--active {
+  border-color: var(--accent-border);
+  background: var(--accent-subtle);
+}
+
+.tm-manage__ts-name {
+  flex: 1;
+  min-width: 0;
+  text-align: left;
+  font-size: 12px;
+  color: var(--text-primary);
+  background: none;
+  border: none;
+  padding: 0;
+  cursor: pointer;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.tm-manage__ts-name:hover {
+  color: var(--accent-hover);
+}
+
+.tm-manage__ts-size {
+  font-size: 10px;
+  color: var(--text-disabled);
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+
+.tm-manage__rename-input {
+  flex: 1;
+  min-width: 0;
+  font-size: 12px;
+  padding: 2px 4px;
+  border-radius: 3px;
+  border: 1px solid var(--accent-border);
+  background: var(--bg-active);
+  color: var(--text-primary);
+}
+
+.tm-manage__rename-btn {
+  padding: 2px 6px;
+  font-size: 10px;
+  border-radius: 3px;
+  border: 1px solid var(--border-strong);
+  background: var(--bg-elevated);
+  color: var(--text-secondary);
+  cursor: pointer;
+  flex-shrink: 0;
+}
+
+.tm-manage__rename-btn:hover {
+  background: var(--bg-hover);
+  color: var(--text-primary);
+}
+
+.tm-manage__add-btn {
+  padding: 6px 8px;
+  font-size: 11px;
+  border-radius: 4px;
+  border: 1px dashed var(--border-strong);
+  background: transparent;
+  color: var(--text-secondary);
+  cursor: pointer;
+}
+
+.tm-manage__add-btn:hover {
+  background: var(--bg-hover);
+  color: var(--text-primary);
+  border-style: solid;
+}
+
+.tm-manage__add-form {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 8px;
+  border-radius: 4px;
+  border: 1px solid var(--border);
+  background: var(--bg-elevated);
+}
+
+.tm-manage__add-name {
+  width: 100%;
+  font-size: 12px;
+  padding: 4px 6px;
+  border-radius: 3px;
+  border: 1px solid var(--border-strong);
+  background: var(--bg-active);
+  color: var(--text-primary);
+}
+
+.tm-manage__add-size {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 11px;
+  color: var(--text-secondary);
+}
+
+.tm-manage__add-size label {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.tm-manage__add-dim {
+  width: 56px;
+  font-size: 12px;
+  padding: 3px 5px;
+  border-radius: 3px;
+  border: 1px solid var(--border-strong);
+  background: var(--bg-active);
+  color: var(--text-primary);
+}
+
+.tm-manage__add-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 6px;
+}
+
+.tm-manage__add-actions button {
+  padding: 4px 10px;
+  font-size: 11px;
+  border-radius: 3px;
+  border: 1px solid var(--border-strong);
+  background: var(--bg-elevated);
+  color: var(--text-secondary);
+  cursor: pointer;
+}
+
+.tm-manage__add-actions button[type="submit"] {
+  background: var(--accent-subtle);
+  border-color: var(--accent-border);
+  color: var(--accent-hover);
+}
+
+.tm-manage__add-actions button:hover {
+  background: var(--bg-hover);
+  color: var(--text-primary);
+}
+
 /* ── Autotile rule editor (are) ───────────────────────────────────────────── */
 
 .are {
