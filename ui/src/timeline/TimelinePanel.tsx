@@ -263,14 +263,14 @@ const TimelinePanel: Component = () => {
           >
             Stop
           </button>
-          <button
-            class="timeline-panel__pb-btn"
-            classList={{ "timeline-panel__pb-btn--active": isLooping() }}
-            onClick={() => setIsLooping(!isLooping())}
-            title="Toggle loop"
-          >
+          <label class="timeline-panel__loop-toggle" title="Loop playback at last frame">
+            <input
+              type="checkbox"
+              checked={isLooping()}
+              onChange={(e) => setIsLooping(e.currentTarget.checked)}
+            />
             Loop
-          </button>
+          </label>
         </div>
 
         <div class="timeline-panel__onion">
