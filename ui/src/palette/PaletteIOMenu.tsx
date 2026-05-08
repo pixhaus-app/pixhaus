@@ -45,7 +45,10 @@ const EXPORT_EXTENSIONS: Record<ExportFormat, string> = {
 };
 
 const PaletteIOMenu: Component<Props> = (props) => {
-  const [open, setOpen] = createSignal(false);
+  // Pre-expanded so Import/Export controls are visible without hunting for
+  // the toggle. The toggle still collapses the panel for users who want it
+  // out of the way.
+  const [open, setOpen] = createSignal(true);
   const [importFormat, setImportFormat] = createSignal<ImportFormat>("gpl");
   const [exportFormat, setExportFormat] = createSignal<ExportFormat>("gpl");
   const [error, setError] = createSignal<string | null>(null);
