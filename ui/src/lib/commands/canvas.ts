@@ -106,6 +106,20 @@ export function canvasComposite(spriteId: SpriteId): Promise<CanvasComposite> {
 }
 
 /**
+ * Recomposites the named frame and emits tile-dirty events for every tile.
+ *
+ * Call after a layer-state change that has no pixel-mutation IPC of its own
+ * (visibility, opacity, blend mode) so the viewport repaints. Pixel-mutation
+ * commands already emit composited tiles themselves; do not double-call.
+ */
+export function canvasRecompositeFrame(spriteId: SpriteId, frameIndex: FrameIndex): Promise<void> {
+  return invoke<void>("canvas_recomposite_frame", {
+    sprite_id: spriteId,
+    frame_index: frameIndex,
+  });
+}
+
+/**
  * Paints a freehand stroke on a layer cel in one shot.
  *
  * Used by shape tools (rect, ellipse) that build the full point list

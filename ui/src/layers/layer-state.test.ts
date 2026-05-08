@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { flattenLayers, nextAutoName, type FlatEntry } from "./layer-state";
+import { flattenLayers, isLayerWritable, nextAutoName, type FlatEntry } from "./layer-state";
 import type { Layer } from "../lib/types";
 
 function at(result: FlatEntry[], i: number): FlatEntry {
@@ -208,5 +208,44 @@ describe("nextAutoName", () => {
     const list = [raster(1, "Layer -3"), raster(2, "Layer +2")];
     // Neither matches `<prefix> <digits>` strictly.
     expect(nextAutoName(list, "Layer")).toBe("Layer 1");
+  });
+});
+
+// ── isLayerWritable ──────────────────────────────────────────────────────────
+
+describe("isLayerWritable", () => {
+  function locked(l: Layer): Layer {
+    return { ...l, locked: true };
+  }
+
+  it("returns true for an unlocked, parentless layer", () => {
+    expect(isLayerWritable([raster(1, "BG")], 1)).toBe(true);
+  });
+
+  it("returns false for a directly locked layer", () => {
+    expect(isLayerWritable([locked(raster(1, "BG"))], 1)).toBe(false);
+  });
+
+  it("returns false when an ancestor group is locked", () => {
+    const g = locked(group(10, "fx"));
+    const child = raster(11, "leaf", 10);
+    expect(isLayerWritable([g, child], 11)).toBe(false);
+  });
+
+  it("returns false even when only a deep ancestor is locked", () => {
+    const outer = locked(group(10, "outer"));
+    const inner = group(20, "inner", 10);
+    const leaf = raster(21, "leaf", 20);
+    expect(isLayerWritable([outer, inner, leaf], 21)).toBe(false);
+  });
+
+  it("returns true when an unrelated layer is locked", () => {
+    const target = raster(1, "target");
+    const decoration = locked(raster(2, "decoration"));
+    expect(isLayerWritable([target, decoration], 1)).toBe(true);
+  });
+
+  it("treats a missing layer id as writable (the IPC will surface the real error)", () => {
+    expect(isLayerWritable([raster(1, "BG")], 99)).toBe(true);
   });
 });

@@ -8,11 +8,11 @@
 use std::sync::Arc;
 
 use base64::Engine;
-use pixhaus_core::canvas::PixelBuffer;
 use pixhaus_core::canvas::tools::{BrushShape, draw_stroke, flood_fill};
+use pixhaus_core::canvas::{LayerInput, PixelBuffer, composite_onto};
 use pixhaus_core::project::{
-    CanvasState, Cel, CelData, FrameIndex, IVec2, LayerId, PixelBufferId, Rgba, SelectionRegion,
-    SelectionState, Size, SpriteId,
+    CanvasState, Cel, CelData, FrameIndex, IVec2, Layer, LayerId, LayerKind, PixelBufferId, Rgba,
+    SelectionRegion, SelectionState, Size, SpriteId,
 };
 use pixhaus_core::selection::SelectionMask;
 use pixhaus_core::transforms::{self, RotateMode, ScaleMode, TransformSpec};
@@ -386,6 +386,141 @@ fn parse_brush_shape(s: &str) -> BrushShape {
     }
 }
 
+/// Returns `Err(LayerLocked)` if the named layer or any ancestor group
+/// is locked. The check matches Aseprite: a locked group blocks paint on
+/// every layer beneath it, even if those layers' own `locked` is false.
+///
+/// Pure function over `&[Layer]` so unit tests construct the input
+/// directly without spinning up an `AppState`.
+fn check_layer_writable(layers: &[Layer], layer_id: LayerId) -> CommandResult<()> {
+    let lookup = |id: LayerId| -> CommandResult<&Layer> {
+        layers
+            .iter()
+            .find(|l| l.id == id)
+            .ok_or_else(|| AppCommandError::NotFound {
+                entity: "layer".into(),
+                id: u64::from(id.get()),
+            })
+    };
+    let layer = lookup(layer_id)?;
+    if layer.locked {
+        return Err(AppCommandError::LayerLocked {
+            layer_id: layer_id.get(),
+        });
+    }
+    let mut cursor = layer.parent;
+    while let Some(parent_id) = cursor {
+        let parent = lookup(parent_id)?;
+        if parent.locked {
+            return Err(AppCommandError::LayerLocked {
+                layer_id: layer_id.get(),
+            });
+        }
+        cursor = parent.parent;
+    }
+    Ok(())
+}
+
+/// Wrapper around [`check_layer_writable`] that resolves the sprite from
+/// a [`crate::state::DocumentStore`]. Used by mutating canvas commands as
+/// a one-line guard before they touch pixel buffers.
+fn ensure_layer_writable(
+    doc: &crate::state::DocumentStore,
+    sprite_id: SpriteId,
+    layer_id: LayerId,
+) -> CommandResult<()> {
+    let project = doc
+        .project
+        .as_ref()
+        .ok_or(AppCommandError::NoActiveProject)?;
+    let sprite = project
+        .sprites
+        .iter()
+        .find(|s| s.id == sprite_id)
+        .ok_or_else(|| AppCommandError::NotFound {
+            entity: "sprite".into(),
+            id: u64::from(sprite_id.get()),
+        })?;
+    check_layer_writable(&sprite.layers, layer_id)
+}
+
+/// Composites every visible raster layer of `sprite_id` at `frame_index`
+/// into a single canvas-sized [`PixelBuffer`]. Layers are walked
+/// bottom-to-top in `sprite.layers` order, matching Aseprite's stacking.
+///
+/// Group rows contribute no pixels themselves; their children composite
+/// normally because the iteration is flat over `sprite.layers`. Tilemap
+/// and reference layers are skipped — wiring those into the composite
+/// is its own follow-up (the renderer treats them via separate paths).
+///
+/// A raster layer with no cel for this frame contributes nothing
+/// (transparent), and a cel whose buffer dimensions don't match the
+/// sprite canvas is also skipped — that mismatch is a separate bug
+/// surface and silently dropping it here is the conservative choice
+/// while the migration to canvas-sized buffers settles.
+fn composite_frame(
+    doc: &crate::state::DocumentStore,
+    sprite_id: SpriteId,
+    frame_index: u32,
+) -> CommandResult<PixelBuffer> {
+    let project = doc
+        .project
+        .as_ref()
+        .ok_or(AppCommandError::NoActiveProject)?;
+    let sprite = project
+        .sprites
+        .iter()
+        .find(|s| s.id == sprite_id)
+        .ok_or_else(|| AppCommandError::NotFound {
+            entity: "sprite".into(),
+            id: u64::from(sprite_id.get()),
+        })?;
+    let canvas_w = sprite.canvas.width;
+    let canvas_h = sprite.canvas.height;
+    let mut backdrop =
+        PixelBuffer::new(canvas_w, canvas_h).map_err(|e| AppCommandError::Validation {
+            detail: e.to_string(),
+        })?;
+
+    for layer in &sprite.layers {
+        if !matches!(layer.kind, LayerKind::Raster) {
+            continue;
+        }
+        let Some(buf_id) = find_cel_buffer(&sprite.cels, layer.id, frame_index) else {
+            continue;
+        };
+        let Some(entry) = doc.pixel_buffers.iter().find(|e| e.id == buf_id.get()) else {
+            continue;
+        };
+        if entry.width != canvas_w || entry.height != canvas_h {
+            continue;
+        }
+        // `from_raw` requires owning the bytes; cloning here is one
+        // canvas-sized allocation per visible layer per composite call.
+        // For typical sprite sizes this is microseconds even before
+        // rayon kicks in inside `composite_onto`.
+        let pbuf = PixelBuffer::from_raw(
+            entry.width,
+            entry.height,
+            entry.stride,
+            entry.pixels.clone(),
+        )
+        .map_err(|e| AppCommandError::Validation {
+            detail: e.to_string(),
+        })?;
+        let input = LayerInput {
+            buffer: &pbuf,
+            mode: layer.blend_mode,
+            opacity: layer.opacity,
+            visible: layer.visible,
+        };
+        composite_onto(&mut backdrop, &input).map_err(|e| AppCommandError::Validation {
+            detail: e.to_string(),
+        })?;
+    }
+    Ok(backdrop)
+}
+
 /// Finds an existing raster buffer id for `(layer_id, frame_index)` in `sprite.cels`.
 fn find_cel_buffer(cels: &[Cel], layer_id: LayerId, frame_index: u32) -> Option<PixelBufferId> {
     cels.iter().find_map(|c| {
@@ -465,6 +600,12 @@ fn ensure_raster_buffer(
 }
 
 /// Applies a pixel mutation, records an undo op, and emits tile-dirty events.
+///
+/// The emitted tiles carry the COMPOSITED frame, not the just-mutated
+/// layer's raw bytes. Without that, the renderer's flat tile cache —
+/// keyed by `(sprite, frame, tx, ty)` with no layer dimension — would
+/// overwrite other layers' contributions to the same tile coordinates,
+/// making them disappear from the viewport on every stroke.
 #[allow(clippy::too_many_arguments)]
 fn commit_pixel_op(
     doc: &mut crate::state::DocumentStore,
@@ -497,21 +638,21 @@ fn commit_pixel_op(
         before,
         after: entry.pixels.clone(),
     };
-    let (w, h, stride) = (entry.width, entry.height, entry.stride);
-    let emit_pixels = entry.pixels.clone();
 
     doc.pixel_history.push(PixelOpBatch {
         label: label.to_owned(),
         ops: vec![op],
     });
+
+    let composited = composite_frame(doc, sprite_id, frame_index)?;
     emit_buffer_tiles(
         app,
         sprite_id.get(),
         frame_index,
-        w,
-        h,
-        stride,
-        &emit_pixels,
+        composited.width(),
+        composited.height(),
+        composited.stride(),
+        composited.as_bytes(),
     );
     doc.dirty = true;
     Ok(())
@@ -562,6 +703,38 @@ pub async fn canvas_composite(
     })
 }
 
+/// Recomposites the active frame and ships every tile to the renderer.
+///
+/// Called by the UI after layer state changes that have no pixel-mutation
+/// IPC of their own — visibility toggle, opacity slider, blend-mode
+/// dropdown — so the viewport reflects the new composite immediately.
+/// Without this round-trip those toggles would update the layer struct
+/// in Rust but leave the client's tile cache stale.
+///
+/// Locked toggles are deliberately excluded from the UI's call sites
+/// because `locked` has no visual effect; the recomposite cost is non-
+/// trivial enough to skip when the result is identical.
+#[tauri::command(async, rename_all = "snake_case")]
+pub async fn canvas_recomposite_frame(
+    app: AppHandle,
+    sprite_id: SpriteId,
+    frame_index: u32,
+    state: State<'_, AppState>,
+) -> CommandResult<()> {
+    let doc = state.doc.read().await;
+    let composited = composite_frame(&doc, sprite_id, frame_index)?;
+    emit_buffer_tiles(
+        &app,
+        sprite_id.get(),
+        frame_index,
+        composited.width(),
+        composited.height(),
+        composited.stride(),
+        composited.as_bytes(),
+    );
+    Ok(())
+}
+
 /// Paints a freehand stroke on a layer cel.
 ///
 /// Creates a transparent cel + buffer lazily if none exists for the
@@ -575,6 +748,8 @@ pub async fn canvas_draw_stroke(
 ) -> CommandResult<()> {
     let mut lock = state.doc.write().await;
     let doc = &mut *lock;
+
+    ensure_layer_writable(doc, args.sprite_id, args.layer_id)?;
 
     let buffer_id = ensure_raster_buffer(doc, args.sprite_id, args.layer_id, args.frame_index)?;
 
@@ -859,6 +1034,9 @@ fn emit_dirty_tiles_for_points(
 /// Returns the post-paint pixels so callers can use them for subsequent
 /// operations (e.g. `canvas_end_stroke` capturing the after-state for
 /// the undo entry).
+///
+/// The emitted tiles carry the COMPOSITED frame across all visible
+/// layers, not just the active layer. See `commit_pixel_op` for why.
 fn rasterize_session_and_emit(
     doc: &mut crate::state::DocumentStore,
     app: &AppHandle,
@@ -875,7 +1053,9 @@ fn rasterize_session_and_emit(
             id: u64::from(session.buffer_id.get()),
         })?;
     entry.pixels.clone_from(&pixels);
-    emit_dirty_tiles_for_points(app, session, new_points, &pixels);
+
+    let composited = composite_frame(doc, session.sprite_id, session.frame_index)?;
+    emit_dirty_tiles_for_points(app, session, new_points, composited.as_bytes());
     Ok(pixels)
 }
 
@@ -898,6 +1078,8 @@ pub async fn canvas_begin_stroke(
 ) -> CommandResult<u32> {
     let mut lock = state.doc.write().await;
     let doc = &mut *lock;
+
+    ensure_layer_writable(doc, args.sprite_id, args.layer_id)?;
 
     let buffer_id = ensure_raster_buffer(doc, args.sprite_id, args.layer_id, args.frame_index)?;
 
@@ -976,6 +1158,22 @@ pub async fn canvas_extend_stroke(
     let mut lock = state.doc.write().await;
     let doc = &mut *lock;
 
+    // Resolve sprite/layer from the session before re-checking the lock.
+    // The session was lock-checked at begin, but a separate IPC caller (a
+    // plugin or script) could land an extend without a begin, and a UI
+    // toggle could in principle land between begin and extend.
+    let (sprite_id, layer_id) = {
+        let session =
+            doc.active_strokes
+                .get(&args.session_id)
+                .ok_or_else(|| AppCommandError::NotFound {
+                    entity: "stroke session".into(),
+                    id: u64::from(args.session_id),
+                })?;
+        (session.sprite_id, session.layer_id)
+    };
+    ensure_layer_writable(doc, sprite_id, layer_id)?;
+
     let snapshot = {
         let session = doc
             .active_strokes
@@ -1006,6 +1204,18 @@ pub async fn canvas_end_stroke(
 ) -> CommandResult<()> {
     let mut lock = state.doc.write().await;
     let doc = &mut *lock;
+
+    let (sprite_id, layer_id) = {
+        let session =
+            doc.active_strokes
+                .get(&args.session_id)
+                .ok_or_else(|| AppCommandError::NotFound {
+                    entity: "stroke session".into(),
+                    id: u64::from(args.session_id),
+                })?;
+        (session.sprite_id, session.layer_id)
+    };
+    ensure_layer_writable(doc, sprite_id, layer_id)?;
 
     // Validate up front so we never start re-rasterizing for an unknown
     // id and have to roll back. The clone here is O(1) because
@@ -1071,6 +1281,8 @@ pub async fn canvas_fill(
 ) -> CommandResult<()> {
     let mut lock = state.doc.write().await;
     let doc = &mut *lock;
+
+    ensure_layer_writable(doc, args.sprite_id, args.layer_id)?;
 
     let buffer_id = ensure_raster_buffer(doc, args.sprite_id, args.layer_id, args.frame_index)?;
 
@@ -1145,6 +1357,8 @@ pub async fn canvas_transform(
 ) -> CommandResult<()> {
     let mut doc = state.doc.write().await;
     let frame_index = FrameIndex::new(args.frame_index);
+
+    ensure_layer_writable(&doc, args.sprite_id, args.layer_id)?;
 
     // ── Phase 1: read project state, then release the borrow ──────────────
     // `doc.project` and `doc.pixel_buffers` are separate fields but Rust
@@ -1743,5 +1957,263 @@ mod tests {
     fn dirty_tile_range_empty_points_returns_none() {
         let r = dirty_tile_range(&[], 1, 16, 16);
         assert_eq!(r, None);
+    }
+
+    // ── Lock enforcement (Phase A) ────────────────────────────────────────
+
+    fn unlocked_raster(id: u32, name: &str) -> Layer {
+        Layer::raster(LayerId::new(id), name)
+    }
+
+    fn locked_raster(id: u32, name: &str) -> Layer {
+        let mut l = Layer::raster(LayerId::new(id), name);
+        l.locked = true;
+        l
+    }
+
+    fn group(id: u32, name: &str, locked: bool) -> Layer {
+        use pixhaus_core::project::{BlendMode, LayerKind, UserData};
+        Layer {
+            id: LayerId::new(id),
+            name: name.into(),
+            kind: LayerKind::Group { collapsed: false },
+            blend_mode: BlendMode::Normal,
+            opacity: 255,
+            visible: true,
+            locked,
+            parent: None,
+            user_data: UserData::default(),
+        }
+    }
+
+    #[test]
+    fn check_layer_writable_passes_for_unlocked_layer() {
+        let layers = vec![unlocked_raster(1, "background")];
+        assert_eq!(check_layer_writable(&layers, LayerId::new(1)), Ok(()));
+    }
+
+    #[test]
+    fn check_layer_writable_rejects_locked_layer() {
+        let layers = vec![locked_raster(1, "background")];
+        assert_eq!(
+            check_layer_writable(&layers, LayerId::new(1)),
+            Err(AppCommandError::LayerLocked { layer_id: 1 })
+        );
+    }
+
+    #[test]
+    fn check_layer_writable_rejects_when_ancestor_group_is_locked() {
+        // Group 10 is locked; child raster 11 is unlocked but contained.
+        let mut child = unlocked_raster(11, "leaf");
+        child.parent = Some(LayerId::new(10));
+        let layers = vec![group(10, "fx", true), child];
+        assert_eq!(
+            check_layer_writable(&layers, LayerId::new(11)),
+            Err(AppCommandError::LayerLocked { layer_id: 11 })
+        );
+    }
+
+    #[test]
+    fn check_layer_writable_passes_when_unrelated_layer_locked() {
+        // A locked sibling does not block paint on the target.
+        let layers = vec![unlocked_raster(1, "target"), locked_raster(2, "decoration")];
+        assert_eq!(check_layer_writable(&layers, LayerId::new(1)), Ok(()));
+    }
+
+    #[test]
+    fn check_layer_writable_walks_multi_level_group_chain() {
+        // outer (locked) > inner > leaf — leaf inherits the outer lock
+        // through inner, which itself is unlocked.
+        let mut inner = group(20, "inner", false);
+        inner.parent = Some(LayerId::new(10));
+        let mut leaf = unlocked_raster(21, "leaf");
+        leaf.parent = Some(LayerId::new(20));
+        let layers = vec![group(10, "outer", true), inner, leaf];
+        assert_eq!(
+            check_layer_writable(&layers, LayerId::new(21)),
+            Err(AppCommandError::LayerLocked { layer_id: 21 })
+        );
+    }
+
+    #[test]
+    fn check_layer_writable_returns_not_found_for_missing_layer() {
+        let layers = vec![unlocked_raster(1, "background")];
+        assert!(matches!(
+            check_layer_writable(&layers, LayerId::new(99)),
+            Err(AppCommandError::NotFound { .. })
+        ));
+    }
+
+    // ── Composite-on-draw (Phase B) ───────────────────────────────────────
+
+    fn doc_with_two_raster_layers(canvas_w: u32, canvas_h: u32) -> crate::state::DocumentStore {
+        // Layer 1 (id=1, bottom): red pixel at (0, 0).
+        // Layer 2 (id=2, top):    green pixel at (1, 0).
+        // Both layers cover the full canvas with otherwise-transparent
+        // pixels so composite_onto's dimension check passes.
+        let mut doc = crate::state::DocumentStore::default();
+        let mut project = Project::new("test");
+        let mut sprite = Sprite::empty(SpriteId::new(1), "hero", Size::new(canvas_w, canvas_h));
+        sprite.layers.push(Layer::raster(LayerId::new(1), "bottom"));
+        sprite.layers.push(Layer::raster(LayerId::new(2), "top"));
+
+        let stride = canvas_w * 4;
+        let buf_len = (stride * canvas_h) as usize;
+
+        let mut bottom_pixels = vec![0u8; buf_len];
+        // Pixel (0,0) → opaque red.
+        bottom_pixels[0..4].copy_from_slice(&[255, 0, 0, 255]);
+
+        let mut top_pixels = vec![0u8; buf_len];
+        // Pixel (1,0) → opaque green.
+        top_pixels[4..8].copy_from_slice(&[0, 255, 0, 255]);
+
+        doc.pixel_buffers.push(PixelBufferEntry {
+            id: 100,
+            width: canvas_w,
+            height: canvas_h,
+            stride,
+            pixels: bottom_pixels,
+        });
+        doc.pixel_buffers.push(PixelBufferEntry {
+            id: 101,
+            width: canvas_w,
+            height: canvas_h,
+            stride,
+            pixels: top_pixels,
+        });
+        sprite.cels.push(Cel::raster(
+            LayerId::new(1),
+            FrameIndex::new(0),
+            PixelBufferId::new(100),
+            Size::new(canvas_w, canvas_h),
+        ));
+        sprite.cels.push(Cel::raster(
+            LayerId::new(2),
+            FrameIndex::new(0),
+            PixelBufferId::new(101),
+            Size::new(canvas_w, canvas_h),
+        ));
+
+        project.sprites.push(sprite);
+        doc.project = Some(project);
+        doc
+    }
+
+    fn pixel_at(buf: &PixelBuffer, x: u32, y: u32) -> [u8; 4] {
+        let p = buf.pixel(x, y).expect("pixel in bounds");
+        [p.r, p.g, p.b, p.a]
+    }
+
+    #[test]
+    fn composite_frame_includes_pixels_from_both_layers() {
+        // The bug: drawing on layer 2 made layer 1 disappear because
+        // tile-dirty events shipped layer 2's raw bytes. With composite_frame
+        // the tile bytes should carry both layers' contributions.
+        let doc = doc_with_two_raster_layers(4, 4);
+        let composite = composite_frame(&doc, SpriteId::new(1), 0).expect("composite");
+        assert_eq!(pixel_at(&composite, 0, 0), [255, 0, 0, 255]);
+        assert_eq!(pixel_at(&composite, 1, 0), [0, 255, 0, 255]);
+    }
+
+    #[test]
+    fn composite_frame_skips_hidden_layer() {
+        // Hidden layer 1 → composite should not contain its red pixel.
+        let mut doc = doc_with_two_raster_layers(4, 4);
+        if let Some(project) = doc.project.as_mut()
+            && let Some(sprite) = project.sprites.first_mut()
+            && let Some(bottom) = sprite.layers.first_mut()
+        {
+            bottom.visible = false;
+        }
+        let composite = composite_frame(&doc, SpriteId::new(1), 0).expect("composite");
+        // Layer 1 hidden → (0,0) is fully transparent.
+        assert_eq!(pixel_at(&composite, 0, 0), [0, 0, 0, 0]);
+        // Layer 2 still visible → (1,0) green.
+        assert_eq!(pixel_at(&composite, 1, 0), [0, 255, 0, 255]);
+    }
+
+    #[test]
+    fn composite_frame_skips_zero_opacity_layer() {
+        let mut doc = doc_with_two_raster_layers(4, 4);
+        if let Some(project) = doc.project.as_mut()
+            && let Some(sprite) = project.sprites.first_mut()
+            && let Some(top) = sprite.layers.get_mut(1)
+        {
+            top.opacity = 0;
+        }
+        let composite = composite_frame(&doc, SpriteId::new(1), 0).expect("composite");
+        // Layer 1 still opaque → (0,0) red.
+        assert_eq!(pixel_at(&composite, 0, 0), [255, 0, 0, 255]);
+        // Layer 2 zero-opacity → (1,0) transparent.
+        assert_eq!(pixel_at(&composite, 1, 0), [0, 0, 0, 0]);
+    }
+
+    #[test]
+    fn composite_frame_returns_transparent_for_empty_sprite() {
+        let mut doc = crate::state::DocumentStore::default();
+        let mut project = Project::new("test");
+        project
+            .sprites
+            .push(Sprite::empty(SpriteId::new(1), "hero", Size::new(8, 8)));
+        doc.project = Some(project);
+        let composite = composite_frame(&doc, SpriteId::new(1), 0).expect("composite");
+        for y in 0..8 {
+            for x in 0..8 {
+                assert_eq!(pixel_at(&composite, x, y), [0, 0, 0, 0]);
+            }
+        }
+    }
+
+    #[test]
+    fn composite_frame_top_normal_replaces_bottom_at_overlapping_pixel() {
+        // When two layers paint the same pixel and the top is opaque
+        // Normal, the top wins — the standard Aseprite stacking rule.
+        let canvas_w = 4u32;
+        let canvas_h = 4u32;
+        let mut doc = crate::state::DocumentStore::default();
+        let mut project = Project::new("test");
+        let mut sprite = Sprite::empty(SpriteId::new(1), "hero", Size::new(canvas_w, canvas_h));
+        sprite.layers.push(Layer::raster(LayerId::new(1), "bottom"));
+        sprite.layers.push(Layer::raster(LayerId::new(2), "top"));
+
+        let stride = canvas_w * 4;
+        let buf_len = (stride * canvas_h) as usize;
+        let mut bottom_pixels = vec![0u8; buf_len];
+        bottom_pixels[0..4].copy_from_slice(&[255, 0, 0, 255]); // red at (0,0)
+        let mut top_pixels = vec![0u8; buf_len];
+        top_pixels[0..4].copy_from_slice(&[0, 255, 0, 255]); // green at (0,0)
+
+        doc.pixel_buffers.push(PixelBufferEntry {
+            id: 100,
+            width: canvas_w,
+            height: canvas_h,
+            stride,
+            pixels: bottom_pixels,
+        });
+        doc.pixel_buffers.push(PixelBufferEntry {
+            id: 101,
+            width: canvas_w,
+            height: canvas_h,
+            stride,
+            pixels: top_pixels,
+        });
+        sprite.cels.push(Cel::raster(
+            LayerId::new(1),
+            FrameIndex::new(0),
+            PixelBufferId::new(100),
+            Size::new(canvas_w, canvas_h),
+        ));
+        sprite.cels.push(Cel::raster(
+            LayerId::new(2),
+            FrameIndex::new(0),
+            PixelBufferId::new(101),
+            Size::new(canvas_w, canvas_h),
+        ));
+        project.sprites.push(sprite);
+        doc.project = Some(project);
+
+        let composite = composite_frame(&doc, SpriteId::new(1), 0).expect("composite");
+        assert_eq!(pixel_at(&composite, 0, 0), [0, 255, 0, 255]);
     }
 }

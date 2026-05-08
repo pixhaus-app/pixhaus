@@ -24,12 +24,27 @@ import {
   layerSetVisibility,
   layerWrapInGroup,
 } from "../lib/commands/layers";
+import { canvasRecompositeFrame } from "../lib/commands/canvas";
 import {
+  activeFrameIndex,
   activeSpriteId,
   activeLayerId,
   setActiveLayerId,
   scheduleViewportSync,
 } from "../canvas/canvas-state";
+
+/**
+ * Asks the backend to recomposite the active frame and emit tile-dirty
+ * events for every tile so the viewport repaints. Call after any layer
+ * state change with no pixel-mutation IPC of its own (visibility,
+ * opacity, blend mode). Lock toggles are intentionally not in this set —
+ * `locked` has no visual effect.
+ */
+function refreshViewport(spriteId: SpriteId): void {
+  canvasRecompositeFrame(spriteId, activeFrameIndex()).catch((err: unknown) =>
+    console.error("[pixhaus] canvas_recomposite_frame:", err),
+  );
+}
 
 // ── Tree flattening ─────────────────────────────────────────────────────────
 
@@ -343,7 +358,10 @@ export function reorderLayer(spriteId: SpriteId, id: LayerId, newIndex: number):
 
 export function setLayerVisibility(spriteId: SpriteId, id: LayerId, visible: boolean): void {
   layerSetVisibility(spriteId, id, visible)
-    .then(() => refreshLayers())
+    .then(() => {
+      refreshLayers();
+      refreshViewport(spriteId);
+    })
     .catch((err: unknown) => console.error("[pixhaus] layer_set_visibility:", err));
 }
 
@@ -353,15 +371,51 @@ export function setLayerLocked(spriteId: SpriteId, id: LayerId, locked: boolean)
     .catch((err: unknown) => console.error("[pixhaus] layer_set_locked:", err));
 }
 
+/**
+ * Returns false if the layer or any ancestor group is locked. Mirrors the
+ * Rust `check_layer_writable` helper so the UI can refuse paint without a
+ * round-trip; the Rust guard is the authoritative check, this is just for
+ * instant feedback and a clean toast.
+ */
+export function isLayerWritable(all: readonly Layer[], id: LayerId): boolean {
+  const byId = new Map<LayerId, Layer>();
+  for (const l of all) byId.set(l.id, l);
+  let current: Layer | undefined = byId.get(id);
+  if (!current) return true; // missing layer is the IPC's problem to surface
+  while (current) {
+    if (current.locked) return false;
+    if (current.parent === null || current.parent === undefined) break;
+    current = byId.get(current.parent);
+  }
+  return true;
+}
+
+/**
+ * Convenience for canvas input: looks up the active layer in the cached
+ * layer list and runs `isLayerWritable`. Returns true (writable) when no
+ * active layer is set; the caller already early-returns in that case.
+ */
+export function isActiveLayerWritable(): boolean {
+  const id = activeLayerId();
+  if (id === null) return true;
+  return isLayerWritable(layers(), id);
+}
+
 export function setLayerOpacity(spriteId: SpriteId, id: LayerId, opacity: number): void {
   layerSetOpacity(spriteId, id, opacity)
-    .then(() => refreshLayers())
+    .then(() => {
+      refreshLayers();
+      refreshViewport(spriteId);
+    })
     .catch((err: unknown) => console.error("[pixhaus] layer_set_opacity:", err));
 }
 
 export function setLayerBlendMode(spriteId: SpriteId, id: LayerId, blendMode: BlendMode): void {
   layerSetBlendMode(spriteId, id, blendMode)
-    .then(() => refreshLayers())
+    .then(() => {
+      refreshLayers();
+      refreshViewport(spriteId);
+    })
     .catch((err: unknown) => console.error("[pixhaus] layer_set_blend_mode:", err));
 }
 
