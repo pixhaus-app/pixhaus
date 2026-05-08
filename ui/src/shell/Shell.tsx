@@ -31,8 +31,13 @@ import {
 import TimelinePanel from "../timeline/TimelinePanel";
 import { isTimelinePanelVisible } from "../timeline/timeline-state";
 import { isPalettePanelVisible, isTilemapPanelVisible } from "./panel-state";
+import { setupPaletteColorSync } from "../canvas/tools/palette-color-sync";
 
 const Shell: Component = () => {
+  // Bridge palette FG/BG indices to the tool-state RGBA signals so brush
+  // strokes use the selected swatch color instead of the initial black.
+  setupPaletteColorSync();
+
   onMount(() => {
     // Initialise JS-layer crash reporting and sync the Rust-side gate so
     // both honour the persisted preference; without the second call the
