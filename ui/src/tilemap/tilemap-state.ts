@@ -28,8 +28,9 @@ export const TILE_FLIP_DIAGONAL = 1 << 2;
 
 /**
  * Set when a tilemap layer is foregrounded; null otherwise.
- * S17 (layer panel) will call `setActiveTilemapCtx` when the active layer
- * changes. For now the user must call it directly (e.g. from a stub command).
+ * `installTilemapCtxSync` (in tilemap-ctx-sync.ts) keeps this in sync
+ * with the active layer; direct `setActiveTilemapCtx` calls are reserved
+ * for in-panel actions that mutate the same context (rename, switch).
  */
 export type ActiveTilemapCtx = {
   layerId: LayerId;
