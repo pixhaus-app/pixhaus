@@ -12,6 +12,9 @@ on:
       - ".github/workflows/unity.yml"
   workflow_dispatch:
 
+permissions:
+  contents: read
+
 jobs:
   validate-package:
     name: Validate UPM package
@@ -33,6 +36,9 @@ jobs:
     name: Unity tests
     needs: validate-package
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      checks: write
     # Enabled by S39. Requires:
     #   - A full Unity test project at unity/Tests~
     #   - Secrets: UNITY_LICENSE, UNITY_EMAIL, UNITY_PASSWORD
