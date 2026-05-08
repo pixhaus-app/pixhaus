@@ -2,8 +2,8 @@
 //
 // Shows the active tileset as a grid of numbered tile cells.  Click a tile to
 // select it for painting; right-click to edit its collision and animation
-// properties.  Tile pixel previews are not yet rendered — the pixel-buffer
-// pipeline (S01) must land first.  Until then, each cell shows its tile index.
+// properties.  The "+ Capture" button reads a tile-sized region from the
+// first raster layer in the sprite and appends it to the tileset.
 
 import { For, Show, createSignal, createMemo, onCleanup, type Component } from "solid-js";
 import type { CollisionShape, TileProperties, Tileset } from "../lib/types";
@@ -15,7 +15,18 @@ import {
   TILE_FLIP_X,
   TILE_FLIP_Y,
   TILE_FLIP_DIAGONAL,
+  activeTilemapCtx,
+  setActiveTilemapCtx,
 } from "./tilemap-state";
+import {
+  activeFrameIndex,
+  activeSpriteId,
+  selectionLayerId,
+  selectionRect,
+} from "../canvas/canvas-state";
+import { layers } from "../layers/layer-state";
+import { tilesetAddTile } from "../lib/commands/tilesets";
+import { reportCommandFailure } from "../lib/utils/errors";
 
 // ── Context-menu ──────────────────────────────────────────────────────────
 
@@ -99,6 +110,67 @@ const TilesetPanel: Component<TilesetPanelProps> = (props) => {
     return (selectedTileFlags() & flag) !== 0;
   }
 
+  // ── Capture-tile button ──────────────────────────────────────────────
+
+  // Resolves the layer the selection was anchored on (set by select-input
+  // when the marquee committed). Capture reads pixels from this layer,
+  // not from "the first raster layer in the sprite" — anchoring keeps
+  // the source consistent with the rectangle the user actually drew.
+  const captureSourceLayer = createMemo(() => {
+    const lid = selectionLayerId();
+    if (lid === null) return null;
+    return layers().find((l) => l.id === lid) ?? null;
+  });
+
+  // Returns null when capture is allowed, otherwise a reason string the
+  // tooltip surfaces. Keeping the gate here means the button can stay
+  // disabled with a clear hint instead of failing on click.
+  const captureBlocker = createMemo<string | null>(() => {
+    if (props.tileset.source.kind !== "inline") {
+      return "Capture is only supported for inline tilesets";
+    }
+    const sel = selectionRect();
+    if (!sel) return "Make a selection on a raster layer first";
+    if (sel.width !== tileW() || sel.height !== tileH()) {
+      return `Selection must be ${tileW()}×${tileH()}px (matches tile size)`;
+    }
+    const layer = captureSourceLayer();
+    if (!layer) return "Make a selection on a raster layer first";
+    if (layer.kind.kind !== "raster") {
+      return `Selection is on layer "${layer.name}", which is not a raster layer`;
+    }
+    if (layer.locked) {
+      return `Source layer "${layer.name}" is locked`;
+    }
+    return null;
+  });
+
+  async function onCapture() {
+    const sid = activeSpriteId();
+    const sel = selectionRect();
+    const layer = captureSourceLayer();
+    if (sid === null || !sel || !layer) return;
+    try {
+      const result = await tilesetAddTile({
+        sprite_id: sid,
+        tileset_id: props.tileset.id,
+        source_layer_id: layer.id,
+        frame_index: activeFrameIndex(),
+        source_x: sel.x,
+        source_y: sel.y,
+      });
+      // Refresh ctx so the grid re-renders with the new tile_count;
+      // pre-select the new tile so the user can paint immediately.
+      const ctx = activeTilemapCtx();
+      if (ctx && ctx.tilesetId === result.tileset.id) {
+        setActiveTilemapCtx({ ...ctx, tileset: result.tileset });
+      }
+      setSelectedTileIndex(result.index);
+    } catch (err) {
+      reportCommandFailure("capture tile", err);
+    }
+  }
+
   // ── Context-menu actions ──────────────────────────────────────────────
 
   function onToggleCollision() {
@@ -137,6 +209,14 @@ const TilesetPanel: Component<TilesetPanelProps> = (props) => {
           onClick={() => toggleFlag(TILE_FLIP_DIAGONAL)}
         >
           D
+        </button>
+        <button
+          class="ts-panel__capture-btn"
+          disabled={captureBlocker() !== null}
+          title={captureBlocker() ?? "Capture the selection as a new tile"}
+          onClick={onCapture}
+        >
+          + Capture
         </button>
         <span class="ts-panel__tile-size">
           {tileW()}&#xd7;{tileH()}px

@@ -46,6 +46,12 @@ export const [selectionRect, setSelectionRect] = createSignal<{
   height: number;
 } | null>(null);
 
+// Layer the active selection was anchored on. Mirrors the `anchor_layer`
+// the backend stored when `canvas_set_selection` ran (see select-input).
+// Lets non-paint consumers (e.g. tile capture) know which layer's pixels
+// the selection refers to without re-querying the backend.
+export const [selectionLayerId, setSelectionLayerId] = createSignal<LayerId | null>(null);
+
 // Whether the canvas is in selection-tool mode. Input routing checks this
 // before dispatching pointer events to the selection handlers.
 // S16 sets it to true when the user activates any select tool.

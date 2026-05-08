@@ -644,6 +644,7 @@ fn build_forest_tileset() -> PixhausArchive {
             buffer: PixelBufferId::new(100),
         },
         properties,
+        autotile: None,
         user_data: UserData::default(),
     };
 
@@ -1028,6 +1029,7 @@ fn build_forest_level() -> PixhausArchive {
         // water-tile animation. Importers that care about collision or
         // animated tiles need this to match the tileset-forest sample.
         properties: forest_tile_properties(FOREST_TILE_COUNT, forest_water_anim()),
+        autotile: None,
         user_data: UserData::default(),
     };
 

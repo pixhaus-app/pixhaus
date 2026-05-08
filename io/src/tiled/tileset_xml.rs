@@ -156,6 +156,7 @@ mod tests {
                 path: "dungeon.png".into(),
             },
             properties: Vec::new(),
+            autotile: None,
             user_data: UserData::default(),
         }
     }
@@ -280,6 +281,7 @@ mod tests {
                 buffer: PixelBufferId::new(7),
             },
             properties: Vec::new(),
+            autotile: None,
             user_data: UserData::default(),
         };
         let tsx = build_tsx(&ts, "tilesets/forest.png");
@@ -306,6 +308,7 @@ mod tests {
                 path: "empty.png".into(),
             },
             properties: Vec::new(),
+            autotile: None,
             user_data: UserData::default(),
         };
         let tsx = build_tsx(&ts, "empty.png");

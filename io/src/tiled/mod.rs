@@ -451,6 +451,7 @@ mod tests {
                 path: "dungeon.png".into(),
             },
             properties: Vec::new(),
+            autotile: None,
             user_data: UserData::default(),
         }
     }
@@ -600,6 +601,7 @@ mod tests {
                 path: "x.png".into(),
             },
             properties: Vec::new(),
+            autotile: None,
             user_data: UserData::default(),
         };
         let ts1 = mk(3);
@@ -887,6 +889,7 @@ mod tests {
                 path: "a.png".into(),
             },
             properties: Vec::new(),
+            autotile: None,
             user_data: UserData::default(),
         };
         let b = Tileset {
@@ -899,6 +902,7 @@ mod tests {
                 path: "b.png".into(),
             },
             properties: Vec::new(),
+            autotile: None,
             user_data: UserData::default(),
         };
         let inputs = [
@@ -1021,6 +1025,7 @@ mod tests {
                 path: "forest.png".into(),
             },
             properties: Vec::new(),
+            autotile: None,
             user_data: UserData::default(),
         }
     }
@@ -1164,6 +1169,7 @@ mod tests {
                 buffer: PixelBufferId::new(1),
             },
             properties: Vec::new(),
+            autotile: None,
             user_data: UserData::default(),
         };
         let inputs = [TilesetExportInput {

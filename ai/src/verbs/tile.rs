@@ -285,6 +285,7 @@ impl Verb for TileVerb {
             base_index: 1,
             source: TilesetSource::Inline { buffer: buffer_id },
             properties: Vec::new(),
+            autotile: None,
             user_data: UserData::default(),
         };
 

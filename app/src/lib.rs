@@ -180,8 +180,10 @@ pub fn run() -> Result<(), AppError> {
             commands::tiles::tile_erase,
             commands::tiles::tile_place,
             commands::tiles::tileset_add,
+            commands::tiles::tileset_add_tile,
             commands::tiles::tileset_list,
             commands::tiles::tileset_rename,
+            commands::tiles::tileset_set_autotile,
             commands::tiles::tileset_set_tile_metadata,
             // plugins
             commands::plugins::plugin_list,

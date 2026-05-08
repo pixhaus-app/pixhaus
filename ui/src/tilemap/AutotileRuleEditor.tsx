@@ -5,21 +5,27 @@
 // editor exposes a visual 3x3 neighbor grid per rule so the user can define
 // when each tile index should be placed.
 //
-// State is held locally: rule sets are persisted to the project once the full
-// tilemap IPC lands (S06).  Until then changes survive the panel session.
+// Hydrates from `Tileset.autotile` when the active tilemap context arrives
+// or changes; persists edits back via debounced `tilesetSetAutotile` so the
+// rules survive save/reopen.
 
-import { For, Show, createMemo, type Component } from "solid-js";
+import { For, Show, createEffect, createMemo, onCleanup, type Component } from "solid-js";
 import { produce } from "solid-js/store";
 import type { AutotileKind, AutotileRule, TileIndex } from "../lib/types";
 import {
+  activeTilemapCtx,
   autotileDefaultTile,
   autotileRules,
   localAutotileKind,
+  setActiveTilemapCtx,
   setAutotileDefaultTile,
   setAutotileRules,
   setLocalAutotileKind,
 } from "./tilemap-state";
 import { blankRule, conditionLabel, conditionTitle, nextCondition } from "./autotile-helpers";
+import { activeSpriteId } from "../canvas/canvas-state";
+import { tilesetSetAutotile } from "../lib/commands/tilesets";
+import { reportCommandFailure } from "../lib/utils/errors";
 
 // ── Neighbor order: NW, N, NE, W, E, SW, S, SE (matches core constants) ──────
 
@@ -186,6 +192,73 @@ const AutotileRuleEditor: Component = () => {
   const defaultTile = autotileDefaultTile;
   const setDefaultTile = setAutotileDefaultTile;
 
+  // Hydrate UI state from the active tileset's persisted autotile field
+  // whenever the context changes (project open, layer switch, tileset
+  // switch). Without this, the editor would always show the previous
+  // session's choice regardless of what's actually saved.
+  let lastHydratedTilesetId: number | null = null;
+  createEffect(() => {
+    const ctx = activeTilemapCtx();
+    if (!ctx) {
+      lastHydratedTilesetId = null;
+      return;
+    }
+    if (lastHydratedTilesetId === ctx.tilesetId) return;
+    lastHydratedTilesetId = ctx.tilesetId;
+    const persisted = ctx.tileset.autotile ?? null;
+    setLocalAutotileKind(persisted);
+    if (persisted && persisted.kind === "custom") {
+      setAutotileRules(persisted.rules ?? []);
+      setAutotileDefaultTile(persisted.default_tile ?? (0 as TileIndex));
+    } else {
+      setAutotileRules([]);
+      setAutotileDefaultTile(0 as TileIndex);
+    }
+  });
+
+  // Debounced persist. Edits to kind / rules / default_tile schedule
+  // one IPC call after `PERSIST_DEBOUNCE_MS` of quiet, mirroring the
+  // rename-on-blur cadence used elsewhere in the panel.
+  const PERSIST_DEBOUNCE_MS = 200;
+  let persistTimer: ReturnType<typeof setTimeout> | null = null;
+  function schedulePersist() {
+    const ctx = activeTilemapCtx();
+    const sid = activeSpriteId();
+    if (!ctx || sid === null) return;
+    if (persistTimer !== null) clearTimeout(persistTimer);
+    persistTimer = setTimeout(() => {
+      persistTimer = null;
+      const cur = activeTilemapCtx();
+      const sidNow = activeSpriteId();
+      if (!cur || sidNow === null) return;
+      // Build the kind to persist from the current UI state. For
+      // `custom`, snapshot the live rules + default_tile so the
+      // persisted value reflects exactly what's on screen.
+      const liveKind = localAutotileKind();
+      const payload: AutotileKind | null =
+        liveKind === null
+          ? null
+          : liveKind.kind === "custom"
+            ? {
+                kind: "custom",
+                rules: [...autotileRules],
+                default_tile: autotileDefaultTile(),
+              }
+            : { kind: liveKind.kind };
+      tilesetSetAutotile(sidNow, cur.tilesetId, payload)
+        .then((updated) => {
+          const stillCurrent = activeTilemapCtx();
+          if (stillCurrent && stillCurrent.tilesetId === updated.id) {
+            setActiveTilemapCtx({ ...stillCurrent, tileset: updated });
+          }
+        })
+        .catch((err) => reportCommandFailure("autotile persist", err));
+    }, PERSIST_DEBOUNCE_MS);
+  }
+  onCleanup(() => {
+    if (persistTimer !== null) clearTimeout(persistTimer);
+  });
+
   // ── Kind picker ───────────────────────────────────────────────────────
 
   // Builds a fully-typed AutotileKind for a button click. The custom
@@ -206,19 +279,23 @@ const AutotileRuleEditor: Component = () => {
 
   function selectKind(k: AutotileKind) {
     setLocalAutotileKind(k);
-    if (k.kind === "custom") {
-      setRules([]);
-    }
+    // Don't clear rules when switching to custom — the hydrate effect
+    // already populated `autotileRules` from the persisted tileset, and
+    // re-clicking the Custom button shouldn't wipe the user's working
+    // rules (the debounced persist would then save the empty array).
+    schedulePersist();
   }
 
   // ── Custom rule mutations ─────────────────────────────────────────────
 
   function addRule() {
     setRules((prev) => [...prev, blankRule()]);
+    schedulePersist();
   }
 
   function deleteRule(idx: number) {
     setRules((prev) => prev.filter((_, i) => i !== idx));
+    schedulePersist();
   }
 
   function cycleCondition(ruleIdx: number, neighborIdx: number) {
@@ -229,6 +306,7 @@ const AutotileRuleEditor: Component = () => {
         rule.conditions[neighborIdx] = nextCondition(rule.conditions[neighborIdx]!);
       }),
     );
+    schedulePersist();
   }
 
   function setResultTile(ruleIdx: number, value: number) {
@@ -239,6 +317,12 @@ const AutotileRuleEditor: Component = () => {
         rule.result_tile = value as TileIndex;
       }),
     );
+    schedulePersist();
+  }
+
+  function persistDefaultTile(value: number) {
+    setDefaultTile(value as TileIndex);
+    schedulePersist();
   }
 
   const currentKind = createMemo(() => kind());
@@ -312,7 +396,7 @@ const AutotileRuleEditor: Component = () => {
               value={defaultTile()}
               onInput={(e) => {
                 const v = parseInt(e.currentTarget.value, 10);
-                if (!isNaN(v) && v >= 0) setDefaultTile(v as TileIndex);
+                if (!isNaN(v) && v >= 0) persistDefaultTile(v);
               }}
             />
           </div>

@@ -300,6 +300,7 @@ fn tilemap_with_tileset() -> PixhausArchive {
             buffer: PixelBufferId::new(20),
         },
         properties: Vec::new(),
+        autotile: None,
         user_data: UserData::default(),
     };
     let buf = buffer(20, 4, 12, 4, tile_pixels);

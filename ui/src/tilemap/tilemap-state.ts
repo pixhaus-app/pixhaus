@@ -28,8 +28,9 @@ export const TILE_FLIP_DIAGONAL = 1 << 2;
 
 /**
  * Set when a tilemap layer is foregrounded; null otherwise.
- * S17 (layer panel) will call `setActiveTilemapCtx` when the active layer
- * changes. For now the user must call it directly (e.g. from a stub command).
+ * `installTilemapCtxSync` (in tilemap-ctx-sync.ts) keeps this in sync
+ * with the active layer; direct `setActiveTilemapCtx` calls are reserved
+ * for in-panel actions that mutate the same context (rename, switch).
  */
 export type ActiveTilemapCtx = {
   layerId: LayerId;
@@ -64,14 +65,16 @@ export const [tilemapTool, setTilemapTool] = createSignal<TilemapTool>("pencil")
 export const [autotileMode, setAutotileMode] = createSignal(false);
 
 // ── Local autotile rule state ──────────────────────────────────────────────
-// Autotile kind / rule set for the active tileset.  Persisted to the project
-// once the full tilemap IPC (S06) lands; held in UI state for now.
+// Autotile kind / rule set for the active tileset. The editor mirrors
+// `Tileset.autotile` here so the UI can re-render without round-tripping
+// every keystroke; `tilesetSetAutotile` debounces the persist back to
+// the backend.
 //
 // These signals live at module scope (not inside AutotileRuleEditor) so the
 // rules and default_tile survive the editor unmounting — e.g. when the user
-// switches preferences tabs and back. Solid's <Tabs/> implementation here
-// destroys the inactive panel's components, so any state inside the
-// component is lost on every tab switch.
+// switches tabs. Solid's <Tabs/> implementation here destroys the inactive
+// panel's components, so any state inside the component is lost on every
+// tab switch.
 
 export const [localAutotileKind, setLocalAutotileKind] = createSignal<AutotileKind | null>(null);
 

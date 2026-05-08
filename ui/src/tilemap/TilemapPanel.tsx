@@ -43,7 +43,7 @@ interface TilesetsTabProps {
   spriteId: SpriteId;
   activeId: TilesetId | null;
   onSwitch: (ts: Tileset) => void;
-  onCreated: () => void;
+  onCreated: (ts: Tileset) => void;
   onTilesetRenamed: (ts: Tileset) => void;
 }
 
@@ -63,14 +63,14 @@ const TilesetsTab: Component<TilesetsTabProps> = (props) => {
     e.preventDefault();
     const name = addName().trim();
     if (!name) return;
-    await tilesetAdd({
+    const created = await tilesetAdd({
       sprite_id: props.spriteId,
       name,
       tile_width: addW(),
       tile_height: addH(),
     });
     await refetch();
-    props.onCreated();
+    props.onCreated(created);
     setAdding(false);
     setAddName("");
     setAddW(16);
@@ -120,7 +120,12 @@ const TilesetsTab: Component<TilesetsTabProps> = (props) => {
                   fallback={
                     <button
                       class="tm-manage__ts-name"
-                      title="Switch to this tileset"
+                      title={
+                        ts.id === props.activeId
+                          ? "Active tileset"
+                          : "Switching the layer's tileset needs a rebind IPC (coming soon)"
+                      }
+                      disabled={ts.id !== props.activeId}
                       onClick={() => props.onSwitch(ts)}
                     >
                       {ts.name}
@@ -243,15 +248,27 @@ const TilemapPanel: Component = () => {
     }
   }
 
+  // Switches the panel's view to a different tileset. Only safe when the
+  // target tileset is the one the active layer is bound to — otherwise
+  // ctx.tilesetId would drift from `LayerKind::Tilemap.tileset` and the
+  // backend would validate paint commands against the layer's bound
+  // tileset (not what the panel shows). A future `layer_set_tileset` IPC
+  // will let the user actually rebind; until then, this no-ops for any
+  // tileset that isn't already bound.
   function switchTileset(ts: Tileset) {
     const c = ctx();
     if (!c) return;
+    if (c.tilesetId !== ts.id) return;
     setActiveTilemapCtx({ ...c, tilesetId: ts.id, tileset: ts });
     setActiveTab("tileset");
   }
 
-  function onTilesetCreated() {
-    // Stay on the Tilesets tab so the user sees the updated list.
+  function onTilesetCreated(_ts: Tileset) {
+    // Stay on the Tilesets tab so the user sees the updated list. The
+    // active layer is still bound to its original tileset, so the new
+    // row is just visually highlighted via activeId — switching the
+    // layer's tileset is a separate, destructive operation that needs
+    // an IPC we haven't added yet.
   }
 
   function onTilesetRenamed(updated: Tileset) {

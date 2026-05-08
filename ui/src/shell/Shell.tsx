@@ -32,11 +32,15 @@ import TimelinePanel from "../timeline/TimelinePanel";
 import { isTimelinePanelVisible } from "../timeline/timeline-state";
 import { isPalettePanelVisible, isTilemapPanelVisible } from "./panel-state";
 import { setupPaletteColorSync } from "../canvas/tools/palette-color-sync";
+import { installTilemapCtxSync } from "../tilemap/tilemap-ctx-sync";
 
 const Shell: Component = () => {
   // Bridge palette FG/BG indices to the tool-state RGBA signals so brush
   // strokes use the selected swatch color instead of the initial black.
   setupPaletteColorSync();
+  // Bridge active layer -> activeTilemapCtx so the tilemap panel and the
+  // tile-paint code path light up when a tilemap layer is foregrounded.
+  installTilemapCtxSync();
 
   onMount(() => {
     // Initialise JS-layer crash reporting and sync the Rust-side gate so
@@ -80,14 +84,14 @@ const Shell: Component = () => {
               <div class="editor-layout__canvas-area">
                 <div class="editor-layout__canvas">
                   <Canvas />
-                  <Show when={activeSpriteId() !== null && isTilemapPanelVisible()}>
-                    <TilemapPanel />
-                  </Show>
                 </div>
                 <Show when={isTimelinePanelVisible()}>
                   <TimelinePanel />
                 </Show>
               </div>
+              <Show when={activeSpriteId() !== null && isTilemapPanelVisible()}>
+                <TilemapPanel />
+              </Show>
               <Show when={isLayerPanelVisible()}>
                 <LayerPanel />
               </Show>

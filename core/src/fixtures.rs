@@ -166,6 +166,7 @@ pub fn sample_project() -> Project {
             buffer: PixelBufferId::new(2000),
         },
         properties: Vec::new(),
+        autotile: None,
         user_data: UserData::default(),
     };
 

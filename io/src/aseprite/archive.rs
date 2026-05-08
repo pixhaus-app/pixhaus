@@ -846,6 +846,7 @@ fn tileset_from_chunk(
         base_index: c.base_index,
         source,
         properties: Vec::new(),
+        autotile: None,
         user_data: UserData::default(),
     }
 }
