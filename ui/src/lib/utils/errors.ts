@@ -19,6 +19,13 @@ function extractDetail(err: unknown): string {
     if (typeof m["detail"] === "string") return m["detail"];
     if (typeof m["message"] === "string") return m["message"];
     if (typeof m["stream"] === "string") return `requires ${m["stream"]}`;
+    // `LayerLocked { layer_id }` carries no string field; format it
+    // here so race-case fallbacks (mid-stroke lock toggle, plugin
+    // bypass of the UI guard) get a readable toast instead of
+    // "layer_locked".
+    if (e.kind === "layer_locked" && typeof m["layer_id"] === "number") {
+      return `layer ${m["layer_id"]} is locked`;
+    }
   }
   if (typeof e.kind === "string") return e.kind;
   return String(err);

@@ -486,6 +486,13 @@ fn composite_frame(
         if !matches!(layer.kind, LayerKind::Raster) {
             continue;
         }
+        // Skip layers that can't contribute before doing buffer work.
+        // `composite_onto` short-circuits via `LayerInput::contributes`
+        // but only AFTER we've cloned bytes into a temporary buffer,
+        // which is the expensive part on the per-extend hot path.
+        if !layer.visible || layer.opacity == 0 {
+            continue;
+        }
         let Some(buf_id) = find_cel_buffer(&sprite.cels, layer.id, frame_index) else {
             continue;
         };
@@ -988,26 +995,33 @@ fn emit_dirty_tiles_for_points(
     app: &AppHandle,
     session: &StrokeSession,
     new_points: &[[f32; 2]],
-    pixels: &[u8],
+    composited: &PixelBuffer,
 ) {
-    let Some((tx_min, tx_max, ty_min, ty_max)) = dirty_tile_range(
-        new_points,
-        session.brush_size,
-        session.buf_width,
-        session.buf_height,
-    ) else {
+    // Tile slicing pulls dimensions from the composited buffer, not the
+    // session. The two have always matched in practice (both are
+    // `canvas_w * 4`) but coupling the session's stride to a buffer
+    // we're slicing is a latent corruption hazard if the cel buffer
+    // ever ends up with a padded stride (.psd / .aseprite imports,
+    // SIMD-aligned scratch buffers). Use the actual buffer's layout.
+    let buf_w = composited.width();
+    let buf_h = composited.height();
+    let buf_stride = composited.stride() as usize;
+    let pixels = composited.as_bytes();
+
+    let Some((tx_min, tx_max, ty_min, ty_max)) =
+        dirty_tile_range(new_points, session.brush_size, buf_w, buf_h)
+    else {
         return;
     };
     for ty in ty_min..=ty_max {
         for tx in tx_min..=tx_max {
             let x0 = tx * TILE_SIZE;
             let y0 = ty * TILE_SIZE;
-            let w = (session.buf_width - x0).min(TILE_SIZE);
-            let h = (session.buf_height - y0).min(TILE_SIZE);
+            let w = (buf_w - x0).min(TILE_SIZE);
+            let h = (buf_h - y0).min(TILE_SIZE);
             let mut tile_bytes = vec![0u8; (w * h * 4) as usize];
             for row in 0..h {
-                let src = ((y0 + row) as usize * session.buf_stride as usize + x0 as usize * 4)
-                    .min(pixels.len());
+                let src = ((y0 + row) as usize * buf_stride + x0 as usize * 4).min(pixels.len());
                 let dst = row as usize * w as usize * 4;
                 let copy_len = (w as usize * 4).min(pixels.len().saturating_sub(src));
                 tile_bytes[dst..dst + copy_len].copy_from_slice(&pixels[src..src + copy_len]);
@@ -1055,7 +1069,7 @@ fn rasterize_session_and_emit(
     entry.pixels.clone_from(&pixels);
 
     let composited = composite_frame(doc, session.sprite_id, session.frame_index)?;
-    emit_dirty_tiles_for_points(app, session, new_points, composited.as_bytes());
+    emit_dirty_tiles_for_points(app, session, new_points, &composited);
     Ok(pixels)
 }
 
