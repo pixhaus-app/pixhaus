@@ -1,6 +1,6 @@
 // Project lifecycle commands: new, open, save, close, sprite CRUD.
 
-import { invoke } from "@tauri-apps/api/core";
+import { invoke } from "../ipc";
 import { save as dialogSave } from "@tauri-apps/plugin-dialog";
 import type { ColorMode, ProjectMetadata, Sprite, SpriteId } from "../types";
 

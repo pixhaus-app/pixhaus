@@ -1,6 +1,6 @@
 // Undo and redo commands.
 
-import { invoke } from "@tauri-apps/api/core";
+import { invoke } from "../ipc";
 
 /** Undo the most recently applied command. */
 export function undo(): Promise<void> {

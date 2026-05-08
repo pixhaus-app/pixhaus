@@ -4,7 +4,7 @@
 // flow lives in the menu / command-palette dispatcher, not here — these
 // stay focused on the cross-process call.
 
-import { invoke } from "@tauri-apps/api/core";
+import { invoke } from "../ipc";
 import type { SpriteId } from "../types";
 
 export type ExportPngArgs = {

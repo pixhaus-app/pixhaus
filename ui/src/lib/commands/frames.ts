@@ -1,6 +1,6 @@
 // Frame timeline commands: add, delete, duplicate, reorder, tag CRUD.
 
-import { invoke } from "@tauri-apps/api/core";
+import { invoke } from "../ipc";
 import type {
   Cel,
   Frame,

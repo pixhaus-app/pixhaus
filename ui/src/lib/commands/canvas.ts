@@ -1,7 +1,7 @@
 // Canvas operation commands.
 // Pixel-drawing ops (draw_stroke, fill, transform) are stubbed until S01 lands.
 
-import { invoke } from "@tauri-apps/api/core";
+import { invoke } from "../ipc";
 import type {
   CanvasState,
   FrameIndex,

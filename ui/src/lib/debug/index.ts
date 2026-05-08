@@ -11,7 +11,7 @@
 // already visible to anyone with DevTools open; there is no security
 // boundary to cross here.
 
-import { installIpcTap, type IpcLogEntry } from "./ipc-tap";
+import type { IpcLogEntry } from "../ipc";
 import { activeProject, recentProjects } from "../../project-state";
 import {
   activeFrameIndex,
@@ -109,12 +109,12 @@ interface TaggedWindow extends Window {
 }
 
 /**
- * Wires up the IPC tap and registers __pixhaus_debug__ on window.
- * Idempotent. Call once from main.tsx before render().
+ * Registers __pixhaus_debug__ on window. The IPC log is populated by the
+ * wrapped invoke in `../ipc.ts`, which command wrappers import directly —
+ * no runtime monkey-patch needed here. Idempotent. Call once from main.tsx
+ * before render().
  */
 export function installDebugSurface(): void {
-  installIpcTap();
-
   const w = window as TaggedWindow;
   if (w.__pixhaus_debug__ !== undefined) return;
 
@@ -178,4 +178,4 @@ export function installDebugSurface(): void {
   w.__pixhaus_debug__ = surface;
 }
 
-export type { IpcLogEntry } from "./ipc-tap";
+export type { IpcLogEntry } from "../ipc";

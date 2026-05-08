@@ -2,7 +2,7 @@
 // Invoke and cancel are stubbed until B5 (verb plugin protocol) lands.
 // verb_list returns an empty array until B5 populates the registry.
 
-import { invoke } from "@tauri-apps/api/core";
+import { invoke } from "../ipc";
 
 // ── types ─────────────────────────────────────────────────────────────────────
 

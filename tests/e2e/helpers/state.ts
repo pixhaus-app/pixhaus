@@ -10,24 +10,77 @@ import { browser } from "@wdio/globals";
 /**
  * Asserts the debug surface was installed by main.tsx and returns when
  * it's ready. Call once at the top of every spec's `before` hook.
+ *
+ * On timeout, dumps URL, title, and a 800-char body snippet so we can
+ * see whether the WebView is actually on the app page (under tauri-driver
+ * the WebView sometimes gets navigated to about:blank instead of the
+ * Tauri startup URL).
  */
 export async function waitForDebugSurface(timeoutMs = 10000): Promise<void> {
-  await browser.waitUntil(
-    async () => {
-      const present = await browser.execute(() => {
-        return (
-          typeof (window as unknown as { __pixhaus_debug__?: unknown })
-            .__pixhaus_debug__ !== "undefined"
-        );
-      });
-      return present === true;
-    },
-    {
-      timeout: timeoutMs,
-      timeoutMsg:
-        "window.__pixhaus_debug__ never appeared (was main.tsx loaded?)",
-    },
-  );
+  try {
+    await browser.waitUntil(
+      async () => {
+        const present = await browser.execute(() => {
+          return (
+            typeof (window as unknown as { __pixhaus_debug__?: unknown })
+              .__pixhaus_debug__ !== "undefined"
+          );
+        });
+        return present === true;
+      },
+      {
+        timeout: timeoutMs,
+        timeoutMsg: "window.__pixhaus_debug__ never appeared",
+      },
+    );
+  } catch (err) {
+    const diag = await collectPageDiagnostics();
+    throw new Error(
+      `window.__pixhaus_debug__ never appeared (was main.tsx loaded?)\n` +
+        `Diagnostics:\n${diag}\n` +
+        `Underlying: ${(err as Error).message}`,
+    );
+  }
+}
+
+/**
+ * One-shot snapshot of the current page for failure diagnostics.
+ * Best-effort; never throws.
+ */
+async function collectPageDiagnostics(): Promise<string> {
+  try {
+    const url = await browser
+      .getUrl()
+      .catch((e: Error) => `<error: ${e.message}>`);
+    const title = await browser
+      .getTitle()
+      .catch((e: Error) => `<error: ${e.message}>`);
+    const snapshot = await browser
+      .execute(() => {
+        const scripts = Array.from(document.querySelectorAll("script[src]"))
+          .map((s) => (s as HTMLScriptElement).src)
+          .join(", ");
+        const bodyText = document.body?.innerHTML?.slice(0, 800) ?? "<no body>";
+        return {
+          readyState: document.readyState,
+          rootChildren:
+            document.getElementById("root")?.childElementCount ?? -1,
+          hasTauriInternals:
+            typeof (window as unknown as { __TAURI_INTERNALS__?: unknown })
+              .__TAURI_INTERNALS__ !== "undefined",
+          scripts,
+          bodySnippet: bodyText,
+        };
+      })
+      .catch((e: Error) => ({ error: e.message }));
+    return [
+      `  url: ${url}`,
+      `  title: ${title}`,
+      `  snapshot: ${JSON.stringify(snapshot, null, 2)}`,
+    ].join("\n");
+  } catch (err) {
+    return `  <diagnostics collection failed: ${(err as Error).message}>`;
+  }
 }
 
 export async function getActiveProject(): Promise<unknown> {
