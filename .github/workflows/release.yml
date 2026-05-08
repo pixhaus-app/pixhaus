@@ -178,6 +178,7 @@ jobs:
         env:
           GPG_PRIVATE_KEY: ${{ secrets.GPG_PRIVATE_KEY }}
           GPG_KEY_ID: ${{ secrets.GPG_KEY_ID }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           echo "$GPG_PRIVATE_KEY" | gpg --batch --import
           for f in target/release/bundle/appimage/*.AppImage; do
@@ -186,8 +187,6 @@ jobs:
             gh release upload "${{ needs.create-release.outputs.tag }}" \
               "${f}.asc" --clobber
           done
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
   publish:
     name: Publish release
