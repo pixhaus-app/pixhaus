@@ -21,28 +21,63 @@
 //   ui/src/command-palette/command-registry.ts — no palette:* entries.
 //   ui/src/palette/PalettePanel.tsx        — UI surface, no testids.
 
+import { $, browser, expect } from "@wdio/globals";
 import { bootApp } from "../helpers/app.js";
+import { byTestId, testid } from "../helpers/selectors.js";
+import { getActiveProject, isCommandPaletteOpen } from "../helpers/state.js";
+import { clearIpcLog, waitForIpc } from "../helpers/ipc.js";
+
+async function focusBody(): Promise<void> {
+  await browser.execute(() => {
+    (document.activeElement as HTMLElement | null)?.blur?.();
+    document.body.focus();
+  });
+}
+
+async function openNewProjectViaButton(): Promise<void> {
+  await bootApp();
+  const newProject = await $(byTestId(testid.welcome.newProject));
+  await newProject.click();
+  await browser.waitUntil(async () => (await getActiveProject()) !== null, {
+    timeout: 10000,
+    timeoutMsg: "active project never registered",
+  });
+}
+
+async function dispatchViaPalette(query: string): Promise<void> {
+  await focusBody();
+  await browser.keys(["Control", "k"]);
+  await browser.waitUntil(async () => (await isCommandPaletteOpen()) === true, {
+    timeout: 5000,
+    timeoutMsg: "palette never opened",
+  });
+  const input = await $(byTestId(testid.commandPalette.input));
+  await input.setValue(query);
+  await browser.keys(["Enter"]);
+  await browser.waitUntil(async () => !(await isCommandPaletteOpen()), {
+    timeout: 5000,
+    timeoutMsg: "palette did not close",
+  });
+}
 
 describe("Palette panel (manual-test-guide §8)", () => {
-  // Boot once so the suite registers in the test runner; individual
-  // tests don't need this since they're all skipped, but a fresh app
-  // launch keeps the suite shape consistent with cmd.e2e.ts / tools.e2e.ts.
-  before(async () => {
-    await bootApp();
+  it("T-palette-001: New palette", async () => {
+    await openNewProjectViaButton();
+    await clearIpcLog();
+    await dispatchViaPalette("new palette");
+    const entries = await waitForIpc("palette_add", 1, 5000);
+    await expect(entries.length).toBeGreaterThan(0);
   });
 
-  it.skip("T-palette-001: New palette", async () => {
-    // TODO(testid): no `palette:new` command in command-registry.ts and
-    // the `+` header button in PalettePanel.tsx (handleNewPalette) has
-    // no data-testid. Also uses window.prompt() for the name, which
-    // WebDriver can't drive without a mock. Add testid="palette-new"
-    // and replace prompt() with an in-app modal before unskipping.
-  });
-
-  it.skip("T-palette-002: Add a colour", async () => {
-    // TODO(testid): needs colour-picker UI interaction (HSV square +
-    // hue slider) plus an "Add to palette" button testid. No palette:*
-    // command exists; palette_add_color fires only from PalettePanel.tsx.
+  it("T-palette-002: Add a colour", async () => {
+    await openNewProjectViaButton();
+    // Seed an active palette first; createNewProject doesn't include one.
+    await dispatchViaPalette("new palette");
+    await waitForIpc("palette_add", 1, 5000);
+    await clearIpcLog();
+    await dispatchViaPalette("add foreground to palette");
+    const entries = await waitForIpc("palette_add_color", 1, 5000);
+    await expect(entries.length).toBeGreaterThan(0);
   });
 
   it.skip("T-palette-003: Edit a swatch", async () => {

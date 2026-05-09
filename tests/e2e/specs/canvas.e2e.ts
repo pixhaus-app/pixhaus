@@ -353,19 +353,17 @@ describe("Canvas viewport (manual-test-guide §4)", () => {
     });
   });
 
-  // TODO(phase-1-followup): no command-palette entry for "toggle onion
-  // skin" in ui/src/command-palette/command-registry.ts — only the
-  // timeline header button toggles `onionSkin()`, and it has no testid
-  // wired yet. Add either a "view:toggle-onion-skin" palette command or
-  // a data-testid on the timeline toggle before unskipping. The debug
-  // accessor (__pixhaus_debug__.getOnionSkin().enabled) already exists,
-  // so the assert side is ready.
-  it.skip("T-canvas-009: Onion skin toggle", async () => {
-    // Once a palette command or testid'd toggle exists:
-    //   await openProject();
-    //   await dispatchViaPalette("toggle onion skin");  // or click the toggle
-    //   const enabled = await getOnionSkinEnabled();
-    //   await expect(enabled).toBe(true);
-    void getOnionSkinEnabled;
+  it("T-canvas-009: Onion skin toggle", async () => {
+    await openProject();
+    await focusBody();
+    const initial = await getOnionSkinEnabled();
+    await dispatchViaPalette("toggle onion skin");
+    await browser.waitUntil(
+      async () => (await getOnionSkinEnabled()) !== initial,
+      {
+        timeout: 5000,
+        timeoutMsg: "onion skin never toggled",
+      },
+    );
   });
 });
