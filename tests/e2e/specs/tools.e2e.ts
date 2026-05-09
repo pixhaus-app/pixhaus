@@ -178,13 +178,11 @@ interface FillArgsWrapper {
   };
 }
 
-// TODO(phase-2-followup): every test blocks on `getActiveLayerId() !== null`.
-// Even with __pixhaus_debug__.layer.refresh() forcing a layer_list IPC,
-// the layers cache stays empty after createNewProject under tauri-driver.
-// Diagnostic suggests layer_list either isn't firing or returns empty
-// despite Rust having a seed layer. Needs a deeper probe; describe.skip
-// for now so the rest of the suite can land.
-describe.skip("Drawing tools (manual-test-guide §5)", () => {
+// Unblocked: createNewProject now seeds a default raster layer so
+// activeLayerId populates after the auto-pick path runs. waitForActiveLayer
+// uses __pixhaus_debug__.layer.setActiveByIndex(0) as a belt-and-braces
+// fallback in case the layer panel's effect hasn't fired yet.
+describe("Drawing tools (manual-test-guide §5)", () => {
   it("T-tools-001: Pencil drag paints in real time.", async () => {
     await openNewProjectViaButton();
     await waitForActiveLayer();

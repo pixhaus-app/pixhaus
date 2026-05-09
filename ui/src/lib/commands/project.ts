@@ -144,20 +144,31 @@ export async function openProjectByExtension(
 
 /**
  * Creates a new project and seeds it with a default 32x32 RGBA sprite
- * so the canvas is non-empty on first launch. Without this, every
- * "New Project" path leaves the editor with zero sprites and no
- * canvas to draw on.
+ * AND one raster layer so the canvas is non-empty on first launch and
+ * the user can draw immediately. Without the layer seed, the input
+ * handler returns early because activeLayerId stays null — pencil
+ * clicks silently no-op and the manual test guide's "New Project
+ * creates a 32×32 sprite with one layer" expectation fails.
  */
 export async function createNewProject(
   name: string = "Untitled",
   size: { width: number; height: number } = { width: 32, height: 32 },
 ): Promise<ProjectStatus> {
   const status = await projectNew(name);
-  await spriteAdd({
+  const sprite = await spriteAdd({
     name: "Sprite",
     canvas_width: size.width,
     canvas_height: size.height,
     color_mode: "rgba",
+  });
+  // Seed the first raster layer. layer_add is part of the public API
+  // and is what the layer panel's "+" button calls; doing it here means
+  // the user lands on a usable canvas.
+  const { layerAdd } = await import("./layers");
+  await layerAdd({
+    sprite_id: sprite.id,
+    name: "Layer 1",
+    kind: { kind: "raster" },
   });
   // Re-fetch status so sprite_count reflects the seeded sprite.
   const updated = await projectGet();
