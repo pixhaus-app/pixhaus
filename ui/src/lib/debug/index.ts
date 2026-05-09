@@ -36,6 +36,7 @@ import {
   refreshLayers,
   selectedLayerIds,
 } from "../../layers/layer-state";
+import { setActiveLayerId } from "../../canvas/canvas-state";
 import {
   frameTags,
   frames,
@@ -73,6 +74,13 @@ interface LayerDebug {
    * — production code calls refreshLayers via the layer panel's effect.
    * Spec workaround for the layer-panel-mount race after createNewProject. */
   refresh(): void;
+  /** Returns the currently cached layer list (after the most recent
+   * layer_list IPC). Each entry carries id, name, kind, blend mode. */
+  list(): unknown[];
+  /** Sets activeLayerId directly to the layer at flat-index `i` (top-to-
+   * bottom order matches the panel). Use when the auto-pick path fails
+   * to populate activeLayerId after createNewProject. */
+  setActiveByIndex(i: number): boolean;
 }
 
 interface ToolDebug {
@@ -261,6 +269,18 @@ export function installDebugSurface(): void {
 
     layer: {
       refresh: () => refreshLayers(),
+      list: () => layers().slice(),
+      setActiveByIndex: (i: number) => {
+        const ls = layers();
+        // Layers come back bottom-to-top from Rust; the panel reverses
+        // for display. For tests, "index 0 = topmost" is the natural
+        // mapping, so reverse here.
+        const reversed = [...ls].reverse();
+        const target = reversed[i];
+        if (target === undefined) return false;
+        setActiveLayerId(target.id);
+        return true;
+      },
     },
 
     canvas: {

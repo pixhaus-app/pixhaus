@@ -55,25 +55,46 @@ async function focusBody(): Promise<void> {
  * before the seed layer registers is silently dropped (no IPC fires).
  */
 async function waitForActiveLayer(timeoutMs = 15000): Promise<void> {
-  // Step 1: wait for activeSpriteId. Canvas.tsx fires sprite_list which
-  // calls resetViewport(...spriteId) — until that lands, refreshLayers
-  // returns early on null spriteId.
+  // Step 1: wait for activeSpriteId.
   await browser.waitUntil(async () => (await getActiveSpriteId()) !== null, {
     timeout: timeoutMs,
     timeoutMsg: "active sprite never registered after project open",
   });
-  // Step 2: force a layer refresh now that activeSpriteId is set, then
-  // poll for activeLayerId. ensureActiveLayer picks the topmost on
-  // refresh, so this is reliable once the prerequisite is met.
+  // Step 2: trigger refresh, wait for the layers cache to populate, then
+  // force-set the active layer to the topmost via the debug helper. The
+  // production auto-pick path (ensureActiveLayer) should do this, but
+  // doesn't reliably under tauri-driver — this workaround unblocks the
+  // input handler which returns early when activeLayerId is null.
   await browser.execute(() => {
     const w = window as unknown as {
       __pixhaus_debug__?: { layer?: { refresh(): void } };
     };
     w.__pixhaus_debug__?.layer?.refresh();
   });
+  await browser.waitUntil(
+    async () => {
+      const count = await browser.execute(() => {
+        const w = window as unknown as {
+          __pixhaus_debug__?: { layer?: { list(): unknown[] } };
+        };
+        return w.__pixhaus_debug__?.layer?.list().length ?? 0;
+      });
+      return count > 0;
+    },
+    {
+      timeout: timeoutMs,
+      timeoutMsg: "layer list never populated after refresh",
+    },
+  );
+  await browser.execute(() => {
+    const w = window as unknown as {
+      __pixhaus_debug__?: { layer?: { setActiveByIndex(i: number): boolean } };
+    };
+    w.__pixhaus_debug__?.layer?.setActiveByIndex(0);
+  });
   await browser.waitUntil(async () => (await getActiveLayerId()) !== null, {
-    timeout: timeoutMs,
-    timeoutMsg: "active layer never registered after project open",
+    timeout: 5000,
+    timeoutMsg: "active layer never registered after setActiveByIndex",
   });
 }
 
@@ -157,20 +178,12 @@ interface FillArgsWrapper {
   };
 }
 
-// TODO(phase-2-followup): every test in this file blocks on
-// `getActiveLayerId() !== null` because the canvas input handler returns
-// early when no layer is active (transform-input.ts line 278). Even with
-// __pixhaus_debug__.layer.refresh() forcing a layer_list IPC, the
-// activeLayerId signal never populates after createNewProject under
-// tauri-driver. The same blocker is present in cmd.e2e.ts T-cmd-003f and
-// the soft-bail in transform.e2e.ts. Need to either:
-//   1. Investigate why ensureActiveLayer doesn't run setActiveLayerId after
-//      layer_list, OR
-//   2. Expose a debug helper to directly setActiveLayerId(getLayerByIndex(0)).
-// Skipping the entire describe so the suite can land — the IPC contracts
-// for canvas_begin_stroke / canvas_extend_stroke / canvas_end_stroke /
-// canvas_fill / canvas_draw_stroke / undo aren't currently exercised by
-// any e2e test, but the binary tested standalone proves they work.
+// TODO(phase-2-followup): every test blocks on `getActiveLayerId() !== null`.
+// Even with __pixhaus_debug__.layer.refresh() forcing a layer_list IPC,
+// the layers cache stays empty after createNewProject under tauri-driver.
+// Diagnostic suggests layer_list either isn't firing or returns empty
+// despite Rust having a seed layer. Needs a deeper probe; describe.skip
+// for now so the rest of the suite can land.
 describe.skip("Drawing tools (manual-test-guide §5)", () => {
   it("T-tools-001: Pencil drag paints in real time.", async () => {
     await openNewProjectViaButton();
