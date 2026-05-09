@@ -17,24 +17,33 @@
 // Keep the file in tree so the section-10 sweep stays auditable and
 // each test ID has a place to land when its UI affordance arrives.
 
-describe.skip("Tilemap panel (manual-test-guide §10)", () => {
+describe("Tilemap panel (manual-test-guide §10)", () => {
   it("T-tilemap-001: Add a tileset", async () => {
-    // Pre: a sprite is active.
-    // Palette has no "New Tileset" command (command-registry.ts only
-    // exposes tilemap:tool-pencil, tilemap:tool-erase,
-    // tilemap:toggle-autotile, tilemap:toggle-tool — none of which fire
-    // tileset_add). Creation goes through the Tilemap panel → Tilesets
-    // tab → New Tileset form, whose name + tile-size inputs and submit
-    // button lack testids.
-    //
-    // To unblock: either add a `tilemap:new-tileset` palette command
-    // that opens a form with default values and dispatches tileset_add,
-    // OR wire `tilemap-new-tileset-name`, `tilemap-new-tileset-size`,
-    // and `tilemap-new-tileset-submit` testids on the panel form.
-    // TODO(testid): tilemap panel new-tileset form
+    const { $: $$, browser: br } = await import("@wdio/globals");
+    const { bootApp } = await import("../helpers/app.js");
+    const { byTestId, testid } = await import("../helpers/selectors.js");
+    const { getActiveProject } = await import("../helpers/state.js");
+    const { clearIpcLog, waitForIpc } = await import("../helpers/ipc.js");
+
+    await bootApp();
+    const newProject = await $$(byTestId(testid.welcome.newProject));
+    await newProject.click();
+    await br.waitUntil(async () => (await getActiveProject()) !== null, {
+      timeout: 10000,
+      timeoutMsg: "active project never registered",
+    });
+    await clearIpcLog();
+    await br.execute(() => {
+      const w = window as unknown as {
+        __pixhaus_debug__: { command: { dispatch(id: string): void } };
+      };
+      w.__pixhaus_debug__.command.dispatch("tilemap:new-tileset");
+    });
+    const entries = await waitForIpc("tileset_add", 1, 5000);
+    if (entries.length === 0) throw new Error("tileset_add never fired");
   });
 
-  it("T-tilemap-002: Place a tile", async () => {
+  it.skip("T-tilemap-002: Place a tile", async () => {
     // Pre: T-tilemap-001 done; layer is a tilemap layer; tilemap pencil
     // active; a tile is selected from the tileset grid.
     //
@@ -51,7 +60,7 @@ describe.skip("Tilemap panel (manual-test-guide §10)", () => {
     // TODO(testid): tileset list + per-tile picker
   });
 
-  it("T-tilemap-003: Erase a tile", async () => {
+  it.skip("T-tilemap-003: Erase a tile", async () => {
     // Pre: at least one placed tile; tilemap erase tool active.
     // Same blockers as T-tilemap-002 — needs a placed tile to erase, and
     // placement isn't addressable yet. tilemap:tool-erase IS in the
@@ -59,7 +68,7 @@ describe.skip("Tilemap panel (manual-test-guide §10)", () => {
     // TODO(testid): tilemap placement
   });
 
-  it("T-tilemap-004: Autotile mode", async () => {
+  it.skip("T-tilemap-004: Autotile mode", async () => {
     // Pre: a tileset with autotile rules; a source tile selected.
     // tilemap:toggle-autotile is dispatchable via the palette
     // ("toggle autotile mode"), but the assertion ([VISUAL] neighbour
@@ -69,7 +78,7 @@ describe.skip("Tilemap panel (manual-test-guide §10)", () => {
     // TODO(testid): tilemap cell read accessor
   });
 
-  it("T-tilemap-005: Tile property persistence", async () => {
+  it.skip("T-tilemap-005: Tile property persistence", async () => {
     // Pre: a tileset with at least one tile.
     // Tile metadata (collision, custom kv pairs) persists through
     // tileset_set_tile_metadata. The metadata editor lives in the

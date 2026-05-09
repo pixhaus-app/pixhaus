@@ -97,6 +97,7 @@ import {
   paletteAddColor as paletteAddColorCmd,
   paletteDelete as paletteDeleteCmd,
 } from "../lib/commands/palette";
+import { tilesetAdd as tilesetAddCmd } from "../lib/commands/tilesets";
 import { activePalette, palettes, refreshPalettes } from "../palette/palette-panel-state";
 
 export type Command = {
@@ -1030,6 +1031,25 @@ const COMMANDS: ReadonlyMap<string, CommandEntry> = new Map<string, CommandEntry
       category: "View",
       keywords: ["onion", "skin"],
       handler: () => setOnionSkin(!onionSkin()),
+    },
+  ],
+  [
+    "tilemap:new-tileset",
+    {
+      id: "tilemap:new-tileset",
+      label: "New Tileset",
+      category: "Tilemap",
+      keywords: ["tileset", "tilemap", "new"],
+      handler: () => {
+        const spriteId = activeSpriteId();
+        if (spriteId === null) return;
+        tilesetAddCmd({
+          sprite_id: spriteId,
+          name: "Tileset 1",
+          tile_width: 16,
+          tile_height: 16,
+        }).catch((err: unknown) => reportCommandFailure("tileset_add", err));
+      },
     },
   ],
 
