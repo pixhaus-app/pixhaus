@@ -93,12 +93,10 @@ async function ensureProjectOpen(): Promise<void> {
 }
 
 describe("Command palette (T-cmd)", () => {
-  // TODO(phase-1-followup): Ctrl+K from a freshly reloaded welcome page
-  // doesn't reach the keybind manager in this spec, even though identical
-  // chords work in window.e2e.ts and keys.e2e.ts. Likely a focus / timing
-  // edge case specific to the post-bootApp state before any subsequent
-  // user interaction. T-cmd-002+ all work so palette open/dispatch is
-  // covered; this exact toggle flow needs a focus probe to diagnose.
+  // TODO(phase-1-followup): Ctrl+K from welcome (no project open) doesn't
+  // reach the keybind manager. Once a project is open the chord works
+  // (T-cmd-002 onwards exercise it). Coverage of palette toggle is also
+  // present via T-window-001..004.
   it.skip("T-cmd-001: Ctrl+K toggles the palette", async () => {
     await bootApp();
 

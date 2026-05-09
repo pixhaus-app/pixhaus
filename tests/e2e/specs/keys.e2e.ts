@@ -244,11 +244,28 @@ describe("Keyboard shortcuts — Aseprite preset (manual-test-guide §14)", () =
     });
   });
 
-  it.skip("T-keys-014: Toggle grid (Ctrl+G) flips grid visibility", async () => {
-    // No __pixhaus_debug__ accessor exposes grid visibility yet. Add a
-    // getGridVisible() to ui/src/lib/debug/index.ts (and mirror it in
-    // helpers/state.ts) before unskipping.
-    // TODO(testid): grid visibility accessor missing
+  it("T-keys-014: Toggle grid (Ctrl+G) flips grid visibility", async () => {
+    await openNewProjectViaButton();
+    await focusBody();
+    const initial = await browser.execute(() => {
+      const w = window as unknown as {
+        __pixhaus_debug__: { getShowTileGrid(): boolean };
+      };
+      return w.__pixhaus_debug__.getShowTileGrid();
+    });
+    await browser.keys(["Control", "g"]);
+    await browser.waitUntil(
+      async () => {
+        const v = await browser.execute(() => {
+          const w = window as unknown as {
+            __pixhaus_debug__: { getShowTileGrid(): boolean };
+          };
+          return w.__pixhaus_debug__.getShowTileGrid();
+        });
+        return v !== initial;
+      },
+      { timeout: 5000, timeoutMsg: "tile grid never toggled" },
+    );
   });
 
   it.skip("T-keys-015: Command palette (Ctrl+K) opens the palette", async () => {
