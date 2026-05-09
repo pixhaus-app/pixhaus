@@ -175,6 +175,8 @@ const LayerRow: Component<Props> = (props) => {
   return (
     <div
       class="layer-row"
+      data-testid={`layer-row-${props.layerIndex}`}
+      data-layer-id={props.layer.id}
       classList={{
         "layer-row--active": isActive(),
         "layer-row--selected": isSelected(),
