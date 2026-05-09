@@ -170,27 +170,25 @@ describe("Timeline panel (manual-test-guide §9)", () => {
     });
   });
 
-  // TODO(phase-3-followup): getFrameCount() reads the local frames cache
-  // which only refreshes when refreshTimeline() runs. After dispatching
-  // frame_add via palette, the addFrame helper does call refreshTimeline,
-  // but the signal update races our poll. Need a debug.timeline.refresh()
-  // helper or wait on frame_list IPC instead.
-  it.skip("T-timeline-002: Delete frame", async () => {
+  it("T-timeline-002: Delete frame", async () => {
     await openNewProjectViaButton();
     await waitForActiveSpriteAndLayer();
 
-    // Pre: at least 2 frames so deletion has somewhere to land. The
-    // seed project starts with 1 frame; add 1 more before the act phase.
-    await dispatchViaPalette("add frame");
-    await waitForIpc("frame_add", 1, 10000);
-    await browser.waitUntil(async () => (await getFrameCount()) >= 2, {
-      timeout: 5000,
-      timeoutMsg: "frame count never reached 2 before delete",
-    });
+    // Pre: at least 2 frames. The seed project's frame count varies
+    // (0 if no default seeded; 1 if so). Read live and add until >= 2.
+    let count = await getFrameCount();
+    while (count < 2) {
+      await dispatchViaPalette("add frame");
+      await waitForIpc("frame_add", count + 1, 10000);
+      await browser.waitUntil(async () => (await getFrameCount()) > count, {
+        timeout: 5000,
+        timeoutMsg: `frame count never increased above ${count}`,
+      });
+      count = await getFrameCount();
+    }
     const before = await getFrameCount();
     await clearIpcLog();
 
-    // "Delete Frame" is the label on the frame:delete command.
     await dispatchViaPalette("delete frame");
 
     const entries = await waitForIpc("frame_delete", 1, 10000);
@@ -202,13 +200,22 @@ describe("Timeline panel (manual-test-guide §9)", () => {
   });
 
   // TODO(phase-3-followup): same frame-cache race as T-timeline-002.
-  it.skip("T-timeline-003: Duplicate frame", async () => {
+  it("T-timeline-003: Duplicate frame", async () => {
     await openNewProjectViaButton();
     await waitForActiveSpriteAndLayer();
-    const before = await getFrameCount();
+    // Need at least 1 frame to duplicate. Seed if necessary.
+    let before = await getFrameCount();
+    if (before === 0) {
+      await dispatchViaPalette("add frame");
+      await waitForIpc("frame_add", 1, 10000);
+      await browser.waitUntil(async () => (await getFrameCount()) > 0, {
+        timeout: 5000,
+        timeoutMsg: "frame count never reached 1 before duplicate",
+      });
+      before = await getFrameCount();
+    }
     await clearIpcLog();
 
-    // "Duplicate Frame" is the label on the frame:duplicate command.
     await dispatchViaPalette("duplicate frame");
 
     const entries = await waitForIpc("frame_duplicate", 1, 10000);
@@ -244,18 +251,21 @@ describe("Timeline panel (manual-test-guide §9)", () => {
     // TODO(testid): tag context menu
   });
 
-  // TODO(phase-3-followup): play needs >= 2 frames; same setup as T-timeline-002.
-  it.skip("T-timeline-007: Play", async () => {
+  it("T-timeline-007: Play", async () => {
     await openNewProjectViaButton();
     await waitForActiveSpriteAndLayer();
 
     // Pre: ≥2 frames so playback has something to cycle through.
-    await dispatchViaPalette("add frame");
-    await waitForIpc("frame_add", 1, 10000);
-    await browser.waitUntil(async () => (await getFrameCount()) >= 2, {
-      timeout: 5000,
-      timeoutMsg: "frame count never reached 2 before play",
-    });
+    let count = await getFrameCount();
+    while (count < 2) {
+      await dispatchViaPalette("add frame");
+      await waitForIpc("frame_add", count + 1, 10000);
+      await browser.waitUntil(async () => (await getFrameCount()) > count, {
+        timeout: 5000,
+        timeoutMsg: `frame count never increased above ${count}`,
+      });
+      count = await getFrameCount();
+    }
 
     // No palette command for play exists today (command-registry.ts has
     // no timeline:play entry). Drive playback by clicking the play button
@@ -271,18 +281,21 @@ describe("Timeline panel (manual-test-guide §9)", () => {
     });
   });
 
-  // TODO(phase-3-followup): same as T-timeline-007.
-  it.skip("T-timeline-008: Pause", async () => {
+  it("T-timeline-008: Pause", async () => {
     await openNewProjectViaButton();
     await waitForActiveSpriteAndLayer();
 
     // Pre: ≥2 frames + playback running.
-    await dispatchViaPalette("add frame");
-    await waitForIpc("frame_add", 1, 10000);
-    await browser.waitUntil(async () => (await getFrameCount()) >= 2, {
-      timeout: 5000,
-      timeoutMsg: "frame count never reached 2 before play",
-    });
+    let count = await getFrameCount();
+    while (count < 2) {
+      await dispatchViaPalette("add frame");
+      await waitForIpc("frame_add", count + 1, 10000);
+      await browser.waitUntil(async () => (await getFrameCount()) > count, {
+        timeout: 5000,
+        timeoutMsg: `frame count never increased above ${count}`,
+      });
+      count = await getFrameCount();
+    }
 
     const playBtn = await $('button[title^="Play"]');
     await playBtn.waitForDisplayed({ timeout: 5000 });
