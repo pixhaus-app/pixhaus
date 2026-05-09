@@ -60,10 +60,15 @@ import {
   addLayer,
   beginRename,
   deleteLayer,
+  flattenVisibleLayers,
   isLayerPanelVisible,
   layers,
+  mergeLayerDown,
+  mergeSelectedLayers,
   nextAutoName,
+  selectedLayerIds,
   setLayerPanelVisible,
+  wrapLayersInGroup,
 } from "../layers/layer-state";
 import { refreshTimeline } from "../timeline/timeline-state";
 import { isTimelinePanelVisible, setTimelinePanelVisible } from "../timeline/timeline-state";
@@ -590,7 +595,56 @@ const COMMANDS: ReadonlyMap<string, CommandEntry> = new Map<string, CommandEntry
       id: "layer:merge-down",
       label: "Merge Down",
       category: "Layer",
-      handler: stub("layer:merge-down"),
+      handler: () => {
+        const spriteId = activeSpriteId();
+        const layerId = activeLayerId();
+        if (spriteId === null || layerId === null) return;
+        mergeLayerDown(spriteId, layerId);
+      },
+    },
+  ],
+  [
+    "layer:merge-selected",
+    {
+      id: "layer:merge-selected",
+      label: "Merge Selected Layers",
+      category: "Layer",
+      keywords: ["merge", "selected"],
+      handler: () => {
+        const spriteId = activeSpriteId();
+        if (spriteId === null) return;
+        mergeSelectedLayers(spriteId, selectedLayerIds());
+      },
+    },
+  ],
+  [
+    "layer:flatten-visible",
+    {
+      id: "layer:flatten-visible",
+      label: "Flatten Visible Layers",
+      category: "Layer",
+      keywords: ["flatten", "visible"],
+      handler: () => {
+        const spriteId = activeSpriteId();
+        if (spriteId === null) return;
+        flattenVisibleLayers(spriteId);
+      },
+    },
+  ],
+  [
+    "layer:wrap-in-group",
+    {
+      id: "layer:wrap-in-group",
+      label: "Convert to Group",
+      category: "Layer",
+      keywords: ["group", "wrap", "convert"],
+      handler: () => {
+        const spriteId = activeSpriteId();
+        const layerId = activeLayerId();
+        if (spriteId === null || layerId === null) return;
+        const ids = selectedLayerIds().size > 0 ? [...selectedLayerIds()] : [layerId];
+        wrapLayersInGroup(spriteId, ids);
+      },
     },
   ],
   [

@@ -200,11 +200,9 @@ describe("Command palette (T-cmd)", () => {
     await expect(entries.length).toBeGreaterThan(0);
   });
 
-  // TODO(phase-1-followup): dispatchFlipX returns early when activeLayerId
-  // is null, which is the state right after createNewProject. Need a
-  // reliable signal to wait on (e.g. expose activeLayerId in __pixhaus_debug__
-  // and poll until non-null) or click a layer row first to populate it.
-  it.skip("T-cmd-003f: transform:flip-x dispatches canvas_transform with flip_horizontal", async () => {
+  // Unblocked: createNewProject now seeds a default layer so activeLayerId
+  // populates and dispatchFlipX no longer returns early.
+  it("T-cmd-003f: transform:flip-x dispatches canvas_transform with flip_horizontal", async () => {
     await bootApp();
     await ensureProjectOpen();
     // dispatchFlipX returns early if activeLayerId is null (transform-input.ts

@@ -171,37 +171,49 @@ describe("Layer panel (manual-test-guide §7)", () => {
     // Blocked on drag harness support.
   });
 
-  // TODO(palette): command-registry.ts wires "layer:merge-down" to the
-  // stub() handler — it logs a warning and never calls mergeLayerDown,
-  // so dispatchViaPalette("merge down") fires no IPC. Wire the handler
-  // through to mergeLayerDown(activeSpriteId(), activeLayerId()) before
-  // unskipping. Same pattern blocks T-layers-007.
-  it.skip("T-layers-005: Merge Down composites pixels and drops the active layer.", async () => {
-    // Blocked on layer:merge-down palette wiring.
+  it("T-layers-005: Merge Down composites pixels and drops the active layer.", async () => {
+    await openNewProjectViaButton();
+    await waitForActiveLayer();
+    // Add a second layer so we have something to merge.
+    const addBtn = await $(byTestId("layer-add"));
+    await addBtn.click();
+    await waitForIpc("layer_add", 1, 5000);
+    await clearIpcLog();
+    await dispatchViaPalette("merge down");
+    await waitForIpc("layer_merge_down", 1, 5000);
   });
 
-  // TODO(palette): no command-registry entry exists for merge-selected.
-  // The mergeSelectedLayers() helper in layer-state.ts is wired and
-  // dispatches layer_merge_selected, but it's only reachable via the
-  // context menu today. Add a "layer:merge-selected" command and unskip.
-  it.skip("T-layers-006: Merge Selected.", async () => {
-    // Blocked on palette command + multi-select harness.
+  it("T-layers-006: Merge Selected.", async () => {
+    await openNewProjectViaButton();
+    await waitForActiveLayer();
+    // Add 2 more layers so we have 3 total.
+    const addBtn = await $(byTestId("layer-add"));
+    await addBtn.click();
+    await waitForIpc("layer_add", 1, 5000);
+    await addBtn.click();
+    await waitForIpc("layer_add", 2, 5000);
+    await clearIpcLog();
+    await dispatchViaPalette("merge selected");
+    await waitForIpc("layer_merge_selected", 1, 5000);
   });
 
-  // TODO(palette): the registry has "layer:flatten" (Flatten All Layers)
-  // but it's stubbed, and there's no "layer:flatten-visible" entry at
-  // all. flattenVisibleLayers() in layer-state.ts dispatches the IPC
-  // correctly — wire it through a new palette command before unskipping.
-  it.skip("T-layers-007: Flatten Visible.", async () => {
-    // Blocked on layer:flatten-visible palette wiring.
+  it("T-layers-007: Flatten Visible.", async () => {
+    await openNewProjectViaButton();
+    await waitForActiveLayer();
+    const addBtn = await $(byTestId("layer-add"));
+    await addBtn.click();
+    await waitForIpc("layer_add", 1, 5000);
+    await clearIpcLog();
+    await dispatchViaPalette("flatten visible");
+    await waitForIpc("layer_flatten_visible", 1, 5000);
   });
 
-  // TODO(palette): no command-registry entry for convert-to-group.
-  // wrapLayersInGroup() in layer-state.ts dispatches layer_wrap_in_group
-  // correctly; the only consumer is the context menu. Add a
-  // "layer:wrap-in-group" command before unskipping.
-  it.skip("T-layers-008: Convert to Group.", async () => {
-    // Blocked on layer:wrap-in-group palette wiring.
+  it("T-layers-008: Convert to Group.", async () => {
+    await openNewProjectViaButton();
+    await waitForActiveLayer();
+    await clearIpcLog();
+    await dispatchViaPalette("convert to group");
+    await waitForIpc("layer_wrap_in_group", 1, 5000);
   });
 
   // TODO(deps): convert-to-tilemap needs an existing tileset on the sprite
