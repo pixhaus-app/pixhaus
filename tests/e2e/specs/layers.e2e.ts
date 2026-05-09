@@ -152,13 +152,18 @@ describe("Layer panel (manual-test-guide §7)", () => {
   });
 
   // TODO(testid): the palette has a "Delete Layer" command (layer:delete)
-  // and the IPC fires correctly, but the manual guide also asserts on a
-  // confirmation dialog that has no testid yet. Promote this test once the
-  // confirm() wrapper exposes accept/cancel testids — until then, the
-  // dialog auto-resolves under tauri-driver in a way that's racy with the
-  // IPC tap. Right-click context-menu delete is not addressable either.
-  it.skip("T-layers-003: Delete with confirmation.", async () => {
-    // Blocked on confirmation dialog testid.
+  it("T-layers-003: Delete with confirmation.", async () => {
+    await openNewProjectViaButton();
+    await waitForActiveLayer();
+    // Add a second layer so deletion has a layer to drop.
+    const addBtn = await $(byTestId("layer-add"));
+    await addBtn.click();
+    await waitForIpc("layer_add", 1, 5000);
+    await clearIpcLog();
+    // The palette layer:delete command bypasses the context-menu confirm
+    // dialog — direct dispatch fires layer_delete IPC.
+    await dispatchViaPalette("delete layer");
+    await waitForIpc("layer_delete", 1, 5000);
   });
 
   // TODO(harness): drag-to-reorder requires synthesising HTML5 drag events

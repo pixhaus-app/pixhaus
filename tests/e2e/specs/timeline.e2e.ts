@@ -152,6 +152,15 @@ async function getIsPlaying(): Promise<boolean> {
   });
 }
 
+async function getIsLooping(): Promise<boolean> {
+  return browser.execute(() => {
+    const w = window as unknown as {
+      __pixhaus_debug__: { getIsLooping(): boolean };
+    };
+    return w.__pixhaus_debug__.getIsLooping();
+  });
+}
+
 describe("Timeline panel (manual-test-guide §9)", () => {
   it("T-timeline-001: Add frame", async () => {
     await openNewProjectViaButton();
@@ -316,12 +325,15 @@ describe("Timeline panel (manual-test-guide §9)", () => {
     });
   });
 
-  it.skip("T-timeline-009: Loop", async () => {
-    // The loop control is a checkbox in the timeline header without a
-    // testid. Toggling requires either a stable selector or a direct
-    // setIsLooping() debug action. Add `timeline-loop-checkbox` testid
-    // (or expose toggleLoop on __pixhaus_debug__) before unskipping.
-    // TODO(testid): loop checkbox
+  it("T-timeline-009: Loop", async () => {
+    await openNewProjectViaButton();
+    await waitForActiveSpriteAndLayer();
+    const initial = await getIsLooping();
+    await dispatchViaPalette("toggle playback loop");
+    await browser.waitUntil(async () => (await getIsLooping()) !== initial, {
+      timeout: 5000,
+      timeoutMsg: "loop flag never toggled",
+    });
   });
 
   it.skip("T-timeline-010: Onion skin", async () => {

@@ -72,8 +72,13 @@ import {
   setLayerPanelVisible,
   wrapLayersInGroup,
 } from "../layers/layer-state";
-import { refreshTimeline } from "../timeline/timeline-state";
-import { isTimelinePanelVisible, setTimelinePanelVisible } from "../timeline/timeline-state";
+import {
+  isLooping,
+  isTimelinePanelVisible,
+  refreshTimeline,
+  setIsLooping,
+  setTimelinePanelVisible,
+} from "../timeline/timeline-state";
 import {
   isPalettePanelVisible,
   setPalettePanelVisible,
@@ -556,6 +561,16 @@ const COMMANDS: ReadonlyMap<string, CommandEntry> = new Map<string, CommandEntry
           .then(() => refreshTimeline())
           .catch((err: unknown) => reportCommandFailure("frame_duplicate", err));
       },
+    },
+  ],
+  [
+    "timeline:toggle-loop",
+    {
+      id: "timeline:toggle-loop",
+      label: "Toggle Playback Loop",
+      category: "Frame",
+      keywords: ["loop", "playback"],
+      handler: () => setIsLooping(!isLooping()),
     },
   ],
 
