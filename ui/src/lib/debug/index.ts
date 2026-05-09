@@ -60,6 +60,7 @@ import {
   enqueueSave,
 } from "../dialog";
 import type { MessageDialogResult } from "@tauri-apps/plugin-dialog";
+import { dispatchCommand } from "../../command-palette/command-registry";
 import {
   activeTool,
   pixelPerfect,
@@ -102,6 +103,13 @@ interface CanvasDebug {
   getPixelAt(x: number, y: number): { r: number; g: number; b: number; a: number } | null;
   /** Width / height of the canvas backing buffer in CSS pixels. */
   size(): { width: number; height: number } | null;
+}
+
+interface CommandDebug {
+  /** Dispatches a registered command by id. Equivalent to opening the
+   * palette and clicking the item, but bypasses the UI — useful when
+   * the palette filtering or item click is fragile under tauri-driver. */
+  dispatch(id: string): void;
 }
 
 interface DialogDebug {
@@ -173,6 +181,8 @@ export interface PixhausDebug {
   ipc: IpcDebug;
   // ── Native dialog mock queue ──────────────────────────────────────────────
   dialog: DialogDebug;
+  // ── Direct command dispatch ──────────────────────────────────────────────
+  command: CommandDebug;
   // ── Drawing tool state ────────────────────────────────────────────────────
   tool: ToolDebug;
   // ── Canvas pixel sampling ─────────────────────────────────────────────────
@@ -258,6 +268,10 @@ export function installDebugSurface(): void {
       enqueueConfirm,
       enqueueMessage,
       clear: clearDialogQueue,
+    },
+
+    command: {
+      dispatch: (id: string) => dispatchCommand(id),
     },
 
     tool: {

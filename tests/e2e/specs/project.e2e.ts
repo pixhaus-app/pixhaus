@@ -155,9 +155,10 @@ describe("Project lifecycle (manual-test-guide §2)", () => {
   // that breaks the keybind hookup. Ctrl+S coverage exists via T-keys-003;
   // this one needs a deeper focus probe.
   // TODO(phase-1-followup): saveOrSaveAs in this spec doesn't fire
-  // project_save even via palette dispatch. T-keys-003 covers Ctrl+S
-  // → project_save successfully, so the contract is exercised; the
-  // specific Save As fall-through ordering needs deeper diagnosis.
+  // project_save even via debug.command.dispatch("file:save"). T-keys-003
+  // covers Ctrl+S → project_save successfully and exercises the same
+  // handler. The specific Save As fall-through ordering needs a deeper
+  // probe of why this describe block's setup affects the dispatch path.
   it.skip("T-project-004: Save with no path falls through to Save As", async () => {
     // Fresh project: dirty, no on-disk path.
     const newProject = await $(byTestId(testid.welcome.newProject));
@@ -195,14 +196,14 @@ describe("Project lifecycle (manual-test-guide §2)", () => {
       },
       { timeout: 5000, timeoutMsg: "palette never opened" },
     );
-    const paletteInput = await $(byTestId(testid.commandPalette.input));
-    await paletteInput.setValue("save");
-    // Click the file:save item by id rather than relying on Enter +
-    // top-of-list match (Save / Save As / Save palette all have "save"
-    // in their label, so Enter ranking is non-deterministic).
-    const saveItem = await $(byTestId(testid.commandPalette.item("file:save")));
-    await saveItem.waitForDisplayed({ timeout: 5000 });
-    await saveItem.click();
+    // Use direct debug.command.dispatch — palette UI driving here is
+    // unreliable for reasons specific to this describe block.
+    await browser.execute(() => {
+      const w = window as unknown as {
+        __pixhaus_debug__: { command: { dispatch(id: string): void } };
+      };
+      w.__pixhaus_debug__.command.dispatch("file:save");
+    });
 
     // Two project_save entries: first ok:false (validation), second ok:true.
     await waitForIpc("project_save", 2, 10000);
@@ -215,7 +216,7 @@ describe("Project lifecycle (manual-test-guide §2)", () => {
   });
 
   // TODO(phase-1-followup): same Ctrl+S issue as T-project-004 above.
-  // TODO(phase-1-followup): same blocker as T-project-004.
+  // TODO(phase-1-followup): same as T-project-004.
   it.skip("T-project-005: Save updates dirty flag (subsequent save uses existing path)", async () => {
     // Seed: new project + first save (consumes one mocked Save As path).
     const newProject = await $(byTestId(testid.welcome.newProject));
@@ -230,7 +231,12 @@ describe("Project lifecycle (manual-test-guide §2)", () => {
     });
 
     await mockSaveDialog(SAVE_TARGET);
-    await browser.keys(["Control", "s"]);
+    await browser.execute(() => {
+      const w = window as unknown as {
+        __pixhaus_debug__: { command: { dispatch(id: string): void } };
+      };
+      w.__pixhaus_debug__.command.dispatch("file:save");
+    });
     await waitForIpc("project_save", 2, 10000);
 
     // After first save the project should be clean and have a path.
@@ -244,10 +250,11 @@ describe("Project lifecycle (manual-test-guide §2)", () => {
     // existing path.
     await clearIpcLog();
     await browser.execute(() => {
-      (document.activeElement as HTMLElement | null)?.blur?.();
-      document.body.focus();
+      const w = window as unknown as {
+        __pixhaus_debug__: { command: { dispatch(id: string): void } };
+      };
+      w.__pixhaus_debug__.command.dispatch("file:save");
     });
-    await browser.keys(["Control", "s"]);
     await waitForIpc("project_save", 1, 10000);
 
     const saves = await findIpcByCmd("project_save");
