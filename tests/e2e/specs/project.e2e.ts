@@ -154,6 +154,10 @@ describe("Project lifecycle (manual-test-guide §2)", () => {
   // bootApp + clearIpcLog + clearDialogQueue) shifts state in some way
   // that breaks the keybind hookup. Ctrl+S coverage exists via T-keys-003;
   // this one needs a deeper focus probe.
+  // TODO(phase-1-followup): saveOrSaveAs in this spec doesn't fire
+  // project_save even via palette dispatch. T-keys-003 covers Ctrl+S
+  // → project_save successfully, so the contract is exercised; the
+  // specific Save As fall-through ordering needs deeper diagnosis.
   it.skip("T-project-004: Save with no path falls through to Save As", async () => {
     // Fresh project: dirty, no on-disk path.
     const newProject = await $(byTestId(testid.welcome.newProject));
@@ -174,7 +178,31 @@ describe("Project lifecycle (manual-test-guide §2)", () => {
     await mockSaveDialog(SAVE_TARGET);
     await clearIpcLog();
 
-    await browser.keys(["Control", "s"]);
+    // Dispatch via palette — Ctrl+S keypress in this spec is unreliable
+    // (works in keys.e2e.ts T-keys-003 with the same setup; specific
+    // race in this describe still TBD). The palette path exercises the
+    // same file:save command handler.
+    await browser.keys(["Control", "k"]);
+    await browser.waitUntil(
+      async () => {
+        const open = await browser.execute(() => {
+          const w = window as unknown as {
+            __pixhaus_debug__: { isCommandPaletteOpen(): boolean };
+          };
+          return w.__pixhaus_debug__.isCommandPaletteOpen();
+        });
+        return open === true;
+      },
+      { timeout: 5000, timeoutMsg: "palette never opened" },
+    );
+    const paletteInput = await $(byTestId(testid.commandPalette.input));
+    await paletteInput.setValue("save");
+    // Click the file:save item by id rather than relying on Enter +
+    // top-of-list match (Save / Save As / Save palette all have "save"
+    // in their label, so Enter ranking is non-deterministic).
+    const saveItem = await $(byTestId(testid.commandPalette.item("file:save")));
+    await saveItem.waitForDisplayed({ timeout: 5000 });
+    await saveItem.click();
 
     // Two project_save entries: first ok:false (validation), second ok:true.
     await waitForIpc("project_save", 2, 10000);
@@ -187,6 +215,7 @@ describe("Project lifecycle (manual-test-guide §2)", () => {
   });
 
   // TODO(phase-1-followup): same Ctrl+S issue as T-project-004 above.
+  // TODO(phase-1-followup): same blocker as T-project-004.
   it.skip("T-project-005: Save updates dirty flag (subsequent save uses existing path)", async () => {
     // Seed: new project + first save (consumes one mocked Save As path).
     const newProject = await $(byTestId(testid.welcome.newProject));
