@@ -30,7 +30,12 @@ import {
   showTileGrid,
   zoom,
 } from "../../canvas/canvas-state";
-import { isLayerPanelVisible, layers, selectedLayerIds } from "../../layers/layer-state";
+import {
+  isLayerPanelVisible,
+  layers,
+  refreshLayers,
+  selectedLayerIds,
+} from "../../layers/layer-state";
 import {
   frameTags,
   frames,
@@ -54,6 +59,42 @@ import {
   enqueueSave,
 } from "../dialog";
 import type { MessageDialogResult } from "@tauri-apps/plugin-dialog";
+import {
+  activeTool,
+  pixelPerfect,
+  toolShape,
+  toolSize,
+  type BrushShape,
+  type ToolType,
+} from "../../canvas/tools/tool-state";
+
+interface LayerDebug {
+  /** Force a layer-list IPC + refresh of the layers signal. Use sparingly
+   * — production code calls refreshLayers via the layer panel's effect.
+   * Spec workaround for the layer-panel-mount race after createNewProject. */
+  refresh(): void;
+}
+
+interface ToolDebug {
+  /** Active drawing tool. */
+  active(): ToolType;
+  /** Brush diameter in canvas pixels. */
+  size(): number;
+  /** Brush shape: pixel | circle | square. */
+  shape(): BrushShape;
+  /** Whether the pixel-perfect post-process is on. */
+  pixelPerfect(): boolean;
+}
+
+interface CanvasDebug {
+  /** Reads RGBA at a viewport pixel from the canvas element via getImageData.
+   * Returns null if the canvas isn't mounted. Spec coords are
+   * viewport-pixel (CSS), not sprite-pixel — call helpers/canvas.ts to
+   * convert sprite coords. */
+  getPixelAt(x: number, y: number): { r: number; g: number; b: number; a: number } | null;
+  /** Width / height of the canvas backing buffer in CSS pixels. */
+  size(): { width: number; height: number } | null;
+}
 
 interface DialogDebug {
   /** Pre-queue a response to the next `open()` dialog call. */
@@ -124,6 +165,12 @@ export interface PixhausDebug {
   ipc: IpcDebug;
   // ── Native dialog mock queue ──────────────────────────────────────────────
   dialog: DialogDebug;
+  // ── Drawing tool state ────────────────────────────────────────────────────
+  tool: ToolDebug;
+  // ── Canvas pixel sampling ─────────────────────────────────────────────────
+  canvas: CanvasDebug;
+  // ── Layer panel debug actions ─────────────────────────────────────────────
+  layer: LayerDebug;
 }
 
 interface TaggedWindow extends Window {
@@ -203,6 +250,45 @@ export function installDebugSurface(): void {
       enqueueConfirm,
       enqueueMessage,
       clear: clearDialogQueue,
+    },
+
+    tool: {
+      active: () => activeTool(),
+      size: () => toolSize(),
+      shape: () => toolShape(),
+      pixelPerfect: () => pixelPerfect(),
+    },
+
+    layer: {
+      refresh: () => refreshLayers(),
+    },
+
+    canvas: {
+      getPixelAt: (x, y) => {
+        const el = document.querySelector<HTMLCanvasElement>(
+          'canvas[data-testid="canvas-viewport"]',
+        );
+        if (el === null) return null;
+        const ctx = el.getContext("2d");
+        if (ctx === null) return null;
+        try {
+          const data = ctx.getImageData(x, y, 1, 1).data;
+          return { r: data[0] ?? 0, g: data[1] ?? 0, b: data[2] ?? 0, a: data[3] ?? 0 };
+        } catch {
+          // getImageData throws on cross-origin or WebGL canvases. The
+          // Pixhaus canvas uses WebGL2; spec needs a different sampling
+          // strategy (readPixels via the renderer). Return null so the
+          // caller can branch.
+          return null;
+        }
+      },
+      size: () => {
+        const el = document.querySelector<HTMLCanvasElement>(
+          'canvas[data-testid="canvas-viewport"]',
+        );
+        if (el === null) return null;
+        return { width: el.width, height: el.height };
+      },
     },
   };
 

@@ -22,7 +22,7 @@ import {
 const SHAPES: BrushShape[] = ["pixel", "circle", "square"];
 
 const BrushOptions: Component = () => (
-  <div class="tool-options-group">
+  <div class="tool-options-group" data-testid="tool-options-brush">
     <label class="tool-option-label">
       Size
       <input
@@ -32,6 +32,7 @@ const BrushOptions: Component = () => (
         value={toolSize()}
         onInput={(e) => setToolSize(Number(e.currentTarget.value))}
         class="tool-option-range"
+        data-testid="tool-option-size"
       />
       <span class="tool-option-value">{toolSize()}</span>
     </label>
@@ -46,6 +47,7 @@ const BrushOptions: Component = () => (
               value={s}
               checked={toolShape() === s}
               onChange={() => setToolShape(s)}
+              data-testid={`tool-option-shape-${s}`}
             />
             {s}
           </label>
@@ -57,6 +59,7 @@ const BrushOptions: Component = () => (
         type="checkbox"
         checked={pixelPerfect()}
         onChange={(e) => setPixelPerfect(e.currentTarget.checked)}
+        data-testid="tool-option-pixel-perfect"
       />
       Pixel-perfect
     </label>
@@ -64,7 +67,7 @@ const BrushOptions: Component = () => (
 );
 
 const FillOptions: Component = () => (
-  <div class="tool-options-group">
+  <div class="tool-options-group" data-testid="tool-options-fill">
     <label class="tool-option-label">
       Tolerance
       <input
@@ -74,6 +77,7 @@ const FillOptions: Component = () => (
         value={fillTolerance()}
         onInput={(e) => setFillTolerance(Number(e.currentTarget.value))}
         class="tool-option-range"
+        data-testid="tool-option-tolerance"
       />
       <span class="tool-option-value">{fillTolerance()}</span>
     </label>

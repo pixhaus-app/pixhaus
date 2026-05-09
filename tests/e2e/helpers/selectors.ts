@@ -31,6 +31,24 @@ export const testid = {
     input: "command-palette-input",
     item: (commandId: string) => `command-palette-item-${commandId}`,
   },
+  tool: {
+    pencil: "tool-pencil",
+    eraser: "tool-eraser",
+    fill: "tool-fill",
+    line: "tool-line",
+    rect: "tool-rect",
+    ellipse: "tool-ellipse",
+  },
+  toolOption: {
+    brush: "tool-options-brush",
+    fill: "tool-options-fill",
+    size: "tool-option-size",
+    shapePixel: "tool-option-shape-pixel",
+    shapeCircle: "tool-option-shape-circle",
+    shapeSquare: "tool-option-shape-square",
+    pixelPerfect: "tool-option-pixel-perfect",
+    tolerance: "tool-option-tolerance",
+  },
 } as const;
 
 /** CSS selector for an element with the given data-testid. */

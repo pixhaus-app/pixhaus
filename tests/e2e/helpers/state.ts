@@ -180,6 +180,42 @@ export async function isCommandPaletteOpen(): Promise<boolean> {
   });
 }
 
+export async function getActiveTool(): Promise<string> {
+  return browser.execute(() => {
+    const w = window as unknown as {
+      __pixhaus_debug__: { tool: { active(): string } };
+    };
+    return w.__pixhaus_debug__.tool.active();
+  });
+}
+
+export async function getToolSize(): Promise<number> {
+  return browser.execute(() => {
+    const w = window as unknown as {
+      __pixhaus_debug__: { tool: { size(): number } };
+    };
+    return w.__pixhaus_debug__.tool.size();
+  });
+}
+
+export async function getToolShape(): Promise<string> {
+  return browser.execute(() => {
+    const w = window as unknown as {
+      __pixhaus_debug__: { tool: { shape(): string } };
+    };
+    return w.__pixhaus_debug__.tool.shape();
+  });
+}
+
+export async function getPixelPerfect(): Promise<boolean> {
+  return browser.execute(() => {
+    const w = window as unknown as {
+      __pixhaus_debug__: { tool: { pixelPerfect(): boolean } };
+    };
+    return w.__pixhaus_debug__.tool.pixelPerfect();
+  });
+}
+
 export async function getPanelVisibility(): Promise<{
   layers: boolean;
   timeline: boolean;

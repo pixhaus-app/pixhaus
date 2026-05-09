@@ -23,6 +23,7 @@ const Toolbar: Component = () => {
         {(tool) => (
           <button
             class="toolbar-btn"
+            data-testid={`tool-${tool.id}`}
             aria-pressed={activeTool() === tool.id}
             title={`${tool.label} (${tool.shortcut})`}
             onClick={() => setActiveTool(tool.id)}
