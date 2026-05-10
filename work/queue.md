@@ -134,6 +134,27 @@ small merge conflicts there as PRs land.
 - [x] DONE: S50 — Release packaging (installer/dmg/AppImage + auto-update). Brief: docs/planning/work/streams.md#s50. Shipped: PR #72.
 - [x] DONE: S51 — Crash reporting (opt-in Sentry). Brief: docs/planning/work/streams.md#s51. Shipped: PR #71.
 
+## Library and anchor sheets (B9 + B10)
+
+The next major bedrock wave. B9 turns the flat `Vec<Sprite>` into a typed
+library of named entities (Custom / Tileset / Tilemap / Reference) with
+groups, tags, and AI metadata. B10 builds the AI-generated reference-sheet
+system on top — the anchor mechanic that makes every subsequent generation
+visually consistent for an entity. Pre-launch breaking change; no migration
+path. Design: docs/planning/work/b9-project-library.md and
+docs/planning/work/b10-reference-sheets.md.
+
+- [ ] UNCLAIMED: B9.1 — Library data model + fixture rebuild. Brief: docs/planning/work/b9.1-dispatch-brief.md. Blocks: B9.2 B9.3 B9.4 B9.5 B10.*. [OPUS-RECOMMENDED]
+- [ ] UNCLAIMED: B9.2 — IPC commands for library operations. Brief: docs/planning/work/b9-project-library.md#implementation-outline (B9.2). Blocked by: B9.1.
+- [ ] UNCLAIMED: B9.3 — Library panel UI in Solid. Brief: docs/planning/work/b9-project-library.md#implementation-outline (B9.3). Blocked by: B9.1 B9.2.
+- [ ] UNCLAIMED: B9.4 — AI library hooks (auto-tag, cross-entity transfer, project-LoRA wiring). Brief: docs/planning/work/b9-project-library.md#implementation-outline (B9.4). Blocked by: B9.1 B9.2.
+- [ ] UNCLAIMED: B9.5 — Aseprite round-trip for stated entities. Brief: docs/planning/work/b9-project-library.md#implementation-outline (B9.5). Blocked by: B9.1.
+- [ ] UNCLAIMED: B10.1 — `generate-reference-sheet` verb + four composition templates. Brief: docs/planning/work/b10-reference-sheets.md#b101. Blocked by: B9.1.
+- [ ] UNCLAIMED: B10.2 — `iterate-reference-sheet` verb (panel-scoped inpainting). Brief: docs/planning/work/b10-reference-sheets.md#b102. Blocked by: B10.1.
+- [ ] UNCLAIMED: B10.3 — Approval flow + anchor wiring across the 14 existing AI verbs. Brief: docs/planning/work/b10-reference-sheets.md#b103. Blocked by: B10.1. [OPUS-RECOMMENDED]
+- [ ] UNCLAIMED: B10.4 — Sheet UI panel. Brief: docs/planning/work/b10-reference-sheets.md#b104. Blocked by: B10.1.
+- [ ] UNCLAIMED: B10.5 — Per-entity LoRA training (optional; defer if anchor-without-LoRA quality is acceptable). Brief: docs/planning/work/b10-reference-sheets.md#b105. Blocked by: B10.3.
+
 ## Operating notes
 
 - One claim per worktree; the loop stops if the lock dir cannot be acquired
