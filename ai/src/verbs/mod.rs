@@ -1,9 +1,20 @@
 //! Built-in AI verbs (S23–S36).
 //!
-//! Each verb lives in its own submodule and is registered with the
-//! [`crate::plugin::runtime::VerbRuntime`] at startup. The modules are
-//! public so the app crate can instantiate verbs with whatever
+//! Each verb lives in its own submodule. The modules are public so the
+//! app crate can instantiate verbs with whatever
 //! [`crate::backends::BackendRegistry`] the user has configured.
+//!
+//! Most built-ins are registered with the
+//! [`crate::plugin::runtime::VerbRuntime`] at startup in
+//! `app::state::AppState::new`. A handful are intentionally not
+//! registered there — they ship as part of this crate (so plugins,
+//! scripting, and tests can construct them) but require either a
+//! configured backend at construction time or a follow-up refactor
+//! before the runtime can host them. [`ConversationalVerb`] is the
+//! current example: its `::new` takes a concrete `Arc<dyn
+//! InferenceBackend>` rather than the shared `BackendRegistry` other
+//! verbs use, so registration must wait until the backend-config
+//! flow lands or its constructor is reworked.
 //!
 //! # Verb ID namespace
 //!

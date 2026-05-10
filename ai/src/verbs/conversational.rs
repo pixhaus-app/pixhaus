@@ -37,6 +37,9 @@ use tokio::select;
 use tokio_util::sync::CancellationToken;
 use tracing::debug;
 
+use crate::backends::{
+    InferenceBackend, InferenceRequest, InferenceResponse, TextGenRequest, ToolDef,
+};
 use crate::plugin::context::VerbContext;
 use crate::plugin::descriptor::{
     BackendCapabilities, CostEstimate, EffectKind, VerbDescriptor, VerbId,
@@ -46,9 +49,6 @@ use crate::plugin::inputs::VerbInputs;
 use crate::plugin::output::{ActualCost, VerbEffect, VerbOutput};
 use crate::plugin::progress::{VerbProgress, VerbProgressEvent};
 use crate::plugin::verb::Verb;
-use crate::backends::{
-    InferenceBackend, InferenceRequest, InferenceResponse, TextGenRequest, ToolDef,
-};
 
 /// Stable identifier for the conversational editing verb.
 pub const CONVERSATIONAL_VERB_ID: &str = "pixhaus.builtin.conversational";
