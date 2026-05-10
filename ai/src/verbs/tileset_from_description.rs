@@ -19,7 +19,6 @@
 //! The prompt instructs the backend to produce a single sprite sheet
 //! image whose cells map 1-to-1 to the tile slots in the chosen layout.
 
-use std::sync::Arc;
 use std::time::Duration;
 
 use async_trait::async_trait;
@@ -28,7 +27,7 @@ use serde::{Deserialize, Serialize};
 use tokio::select;
 use tokio_util::sync::CancellationToken;
 
-use crate::backends::{BackendRegistry, ImageGenRequest, InferenceRequest, InferenceResponse};
+use crate::backends::{ImageGenRequest, InferenceRequest, InferenceResponse};
 use crate::plugin::context::{PixelData, VerbContext};
 use crate::plugin::descriptor::{
     BackendCapabilities, CostEstimate, EffectKind, VerbDescriptor, VerbId,
@@ -143,11 +142,12 @@ fn default_tile_size() -> u32 {
 /// Generates a full autotile-compatible tileset from a text description.
 ///
 /// Requires a backend with [`BackendCapabilities::IMAGE_GENERATION`].
-/// On accept the host registers the tile sheet as an inline pixel buffer
-/// and adds the tileset to the active sprite.
+/// The runtime selects the backend per invocation; the verb resolves it
+/// through `VerbContext::backend`. On accept the host registers the tile
+/// sheet as an inline pixel buffer and adds the tileset to the active
+/// sprite.
 pub struct TilesetFromDescriptionVerb {
     descriptor: VerbDescriptor,
-    backends: Arc<BackendRegistry>,
 }
 
 impl std::fmt::Debug for TilesetFromDescriptionVerb {
@@ -159,13 +159,15 @@ impl std::fmt::Debug for TilesetFromDescriptionVerb {
 }
 
 impl TilesetFromDescriptionVerb {
-    /// Constructs the verb, binding it to `backends` for inference calls.
+    /// Constructs the verb. Backend resolution happens at invoke time
+    /// from `VerbContext::backend`; the runtime injects the matching
+    /// backend before dispatch.
     #[must_use]
     // serde_json::json! expands to internal helpers that call unwrap on
     // infallible value builders. Exempt the constructor to avoid fighting
     // the workspace-level unwrap_used lint.
     #[allow(clippy::disallowed_methods)]
-    pub fn new(backends: Arc<BackendRegistry>) -> Self {
+    pub fn new() -> Self {
         let input_schema = serde_json::json!({
             "type": "object",
             "properties": {
@@ -220,8 +222,13 @@ impl TilesetFromDescriptionVerb {
                 cancellable: true,
                 documentation_url: None,
             },
-            backends,
         }
+    }
+}
+
+impl Default for TilesetFromDescriptionVerb {
+    fn default() -> Self {
+        Self::new()
     }
 }
 
@@ -258,10 +265,7 @@ impl Verb for TilesetFromDescriptionVerb {
         let inputs: TilesetFromDescriptionInputs = inputs.deserialize_owned()?;
         let sprite_id = ctx.require_sprite_id()?;
 
-        let backend = self
-            .backends
-            .find_for(BackendCapabilities::IMAGE_GENERATION)
-            .ok_or_else(|| VerbError::Backend("no image-generation backend configured".into()))?;
+        let backend = crate::verbs::ctx_fat_backend(&ctx)?;
 
         progress
             .send(VerbProgressEvent::Started {
@@ -423,8 +427,8 @@ fn decode_png_to_rgba8(png_bytes: &[u8], expected_w: u32, expected_h: u32) -> Re
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::backends::bridge::BackendProxy;
     use crate::backends::{BackendError, InferenceRequest};
-    use crate::plugin::backend::InferenceBackend as PluginBackend;
     use crate::plugin::context::VerbContext;
     use crate::plugin::descriptor::{BackendCapabilities, CostEstimate};
     use crate::plugin::error::VerbError;
@@ -433,7 +437,6 @@ mod tests {
     use crate::plugin::runtime::VerbRuntime;
     use crate::plugin::{VerbId, VerbInputs};
     use pixhaus_core::project::{ProjectMetadata, SpriteId};
-    use std::any::Any;
     use std::sync::Arc;
     use tokio_util::sync::CancellationToken;
 
@@ -451,6 +454,13 @@ mod tests {
     }
 
     fn ctx_with_sprite() -> VerbContext {
+        let mut ctx = VerbContext::empty(metadata());
+        ctx.active_sprite = Some(SpriteId::new(1));
+        ctx.backend = Some(Arc::new(BackendProxy::new(MockImageBackend)));
+        ctx
+    }
+
+    fn ctx_with_sprite_no_backend() -> VerbContext {
         let mut ctx = VerbContext::empty(metadata());
         ctx.active_sprite = Some(SpriteId::new(1));
         ctx
@@ -506,9 +516,7 @@ mod tests {
     }
 
     fn verb_with_mock() -> TilesetFromDescriptionVerb {
-        let mut reg = BackendRegistry::new();
-        reg.add(MockImageBackend);
-        TilesetFromDescriptionVerb::new(Arc::new(reg))
+        TilesetFromDescriptionVerb::new()
     }
 
     fn inputs(kind: AutotileKindInput) -> VerbInputs {
@@ -755,11 +763,14 @@ mod tests {
 
     #[tokio::test]
     async fn invoke_fails_without_image_backend() {
-        let empty_reg = BackendRegistry::new();
-        let verb = TilesetFromDescriptionVerb::new(Arc::new(empty_reg));
+        // No backend attached to the context — ctx_fat_backend rejects.
+        // (Through the runtime, the same scenario surfaces as
+        // VerbError::UnsupportedCapability before invoke is ever called;
+        // this direct path tests the verb's own guard.)
+        let verb = TilesetFromDescriptionVerb::new();
         let res = verb
             .invoke(
-                ctx_with_sprite(),
+                ctx_with_sprite_no_backend(),
                 inputs(AutotileKindInput::Blob47),
                 VerbProgress::discard(),
                 CancellationToken::new(),
@@ -770,40 +781,20 @@ mod tests {
 
     // ── Runtime integration ───────────────────────────────────────────────
 
-    /// Thin stub that satisfies the plugin-layer `InferenceBackend` (not the
-    /// backends-layer one) so `VerbRuntime`'s capability pre-flight passes.
-    #[derive(Debug)]
-    struct StubPluginBackend;
-
-    impl PluginBackend for StubPluginBackend {
-        fn as_any(&self) -> &dyn Any {
-            self
-        }
-        fn id(&self) -> &'static str {
-            "stub-image"
-        }
-        fn capabilities(&self) -> BackendCapabilities {
-            BackendCapabilities::IMAGE_GENERATION
-        }
-        fn cost_estimate(&self, _required: BackendCapabilities) -> CostEstimate {
-            CostEstimate::free()
-        }
-    }
-
     #[tokio::test]
     async fn verb_round_trips_through_runtime() {
         let runtime = VerbRuntime::new();
-        runtime.register_backend(StubPluginBackend, 0).unwrap();
+        runtime
+            .register_backend(BackendProxy::new(MockImageBackend), 0)
+            .unwrap();
+        runtime.register(TilesetFromDescriptionVerb::new()).unwrap();
 
-        let mut reg = BackendRegistry::new();
-        reg.add(MockImageBackend);
-        let verb = TilesetFromDescriptionVerb::new(Arc::new(reg));
-        runtime.register(verb).unwrap();
-
+        // Direct-invoke tests preset ctx.backend; the runtime path injects
+        // it from the registered backend, so use a context without one.
         let inv = runtime
             .invoke(
                 &VerbId::new(TILESET_FROM_DESCRIPTION_VERB_ID),
-                ctx_with_sprite(),
+                ctx_with_sprite_no_backend(),
                 inputs(AutotileKindInput::Blob47),
             )
             .unwrap();
