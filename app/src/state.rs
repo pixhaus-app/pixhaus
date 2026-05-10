@@ -8,8 +8,13 @@ use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::Arc;
 
+use pixhaus_ai::backends::BackendRegistry;
 use pixhaus_ai::plugin::runtime::VerbRuntime;
-use pixhaus_ai::verbs::CritiqueVerb;
+use pixhaus_ai::verbs::{
+    AudioTimingVerb, AutoMeshDeformationVerb, CleanupVerb, ContinueVerb, CritiqueVerb, ExtendVerb,
+    InbetweenVerb, MotionFromVideoVerb, ProjectStyleLearningVerb, SketchFinishingVerb, TileVerb,
+    TilesetFromDescriptionVerb, VariantVerb,
+};
 use pixhaus_core::project::{LayerId, PixelBufferId, Project, Rgba, SpriteId};
 use pixhaus_core::undo::History;
 use pixhaus_io::pixhaus::PixelBufferEntry;
@@ -152,9 +157,48 @@ impl AppState {
     /// Tauri setup closure to load user-installed plugins asynchronously.
     pub fn new() -> Self {
         let runtime = VerbRuntime::new();
-        // Registration fails only on a duplicate ID, which cannot happen
-        // with the hardcoded verb set below. Discard the Ok(()) result.
-        let _ = runtime.register(CritiqueVerb::new());
+
+        // The three verbs below hold a clone of this registry so they can
+        // resolve backends at invoke time. The registry starts empty:
+        // `BackendRegistry::add` requires `&mut self`, and these clones
+        // pin it as `Arc<BackendRegistry>`. To install backends after the
+        // user configures API keys, the planned settings flow rebuilds
+        // the registry and reconstructs every verb that depends on it,
+        // then swaps the runtime — interior mutability is intentionally
+        // not used here.
+        let backend_registry = Arc::new(BackendRegistry::new());
+
+        // Duplicate IDs would be a programmer bug — every verb in this
+        // list is distinct by construction. Failures are logged at error
+        // level rather than discarded so a future regression (someone
+        // double-registers, a verb's id constant changes to overlap)
+        // surfaces in logs and the crash-report sink instead of silently
+        // dropping a verb from the runtime. `panic!` would be tighter
+        // but the workspace bans it outside tests.
+        register_builtin(&runtime, AudioTimingVerb::new());
+        register_builtin(&runtime, AutoMeshDeformationVerb::new());
+        register_builtin(&runtime, CleanupVerb::new());
+        register_builtin(&runtime, ContinueVerb::new());
+        register_builtin(&runtime, CritiqueVerb::new());
+        register_builtin(&runtime, ExtendVerb::new());
+        register_builtin(&runtime, InbetweenVerb::new());
+        register_builtin(&runtime, MotionFromVideoVerb::new());
+        register_builtin(&runtime, ProjectStyleLearningVerb::new());
+        register_builtin(&runtime, SketchFinishingVerb::new());
+        register_builtin(&runtime, TileVerb::new(backend_registry.clone()));
+        register_builtin(
+            &runtime,
+            TilesetFromDescriptionVerb::new(backend_registry.clone()),
+        );
+        register_builtin(&runtime, VariantVerb::new(backend_registry.clone()));
+
+        // ConversationalVerb is intentionally NOT registered here.
+        // Its `::new` requires an `Arc<dyn InferenceBackend>` (a single
+        // concrete backend, not a registry), so registration must happen
+        // after the user configures a backend in the settings UI. A
+        // follow-up will either refactor `ConversationalVerb::new` to
+        // accept `Arc<BackendRegistry>` (matching Variant/Tile/etc.) or
+        // expose a `register_after_backend_added` path in `AppState`.
 
         let verb_runtime = Arc::new(runtime);
         let plugins = Arc::new(PluginRegistry::new(verb_runtime.clone()));
@@ -170,5 +214,53 @@ impl AppState {
 impl Default for AppState {
     fn default() -> Self {
         Self::new()
+    }
+}
+
+/// Registers a built-in verb with `runtime` and logs at error level if
+/// registration fails. Failure means a duplicate id, which is a
+/// programmer error rather than a runtime condition; logging keeps the
+/// app booting (without that verb) and surfaces the regression in the
+/// crash-report sink.
+fn register_builtin<V: pixhaus_ai::plugin::verb::Verb>(runtime: &VerbRuntime, verb: V) {
+    let id = verb.descriptor().id.as_str().to_owned();
+    if let Err(err) = runtime.register(verb) {
+        tracing::error!(verb_id = %id, error = %err, "failed to register built-in verb");
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn new_registers_every_built_in_verb() {
+        let state = AppState::new();
+        let descriptors = state.verb_runtime.list();
+        let mut ids: Vec<&str> = descriptors.iter().map(|d| d.id.as_str()).collect();
+        ids.sort_unstable();
+
+        // Verb IDs as advertised by their descriptors. Note the namespace
+        // drift: most verbs use `pixhaus.builtin.*` but `sketch_finishing`
+        // uses `pixhaus.ai.*`. Tracked as a follow-up — left as-is here so
+        // the test reflects the real surface.
+        let mut expected = [
+            "pixhaus.ai.sketch_finishing",
+            "pixhaus.builtin.audio_timing",
+            "pixhaus.builtin.auto-mesh-deformation",
+            "pixhaus.builtin.cleanup",
+            "pixhaus.builtin.continue",
+            "pixhaus.builtin.critique",
+            "pixhaus.builtin.extend",
+            "pixhaus.builtin.inbetween",
+            "pixhaus.builtin.motion_from_video",
+            "pixhaus.builtin.project_style_learning",
+            "pixhaus.builtin.tile",
+            "pixhaus.builtin.tileset_from_description",
+            "pixhaus.builtin.variant",
+        ];
+        expected.sort_unstable();
+
+        assert_eq!(ids, expected);
     }
 }

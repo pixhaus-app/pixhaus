@@ -1,15 +1,31 @@
 //! Built-in AI verbs (S23–S36).
 //!
-//! Each verb lives in its own submodule and is registered with the
-//! [`crate::plugin::runtime::VerbRuntime`] at startup. The modules are
-//! public so the app crate can instantiate verbs with whatever
+//! Each verb lives in its own submodule. The modules are public so the
+//! app crate can instantiate verbs with whatever
 //! [`crate::backends::BackendRegistry`] the user has configured.
+//!
+//! Most built-ins are registered with the
+//! [`crate::plugin::runtime::VerbRuntime`] at startup in
+//! `app::state::AppState::new`. A handful are intentionally not
+//! registered there — they ship as part of this crate (so plugins,
+//! scripting, and tests can construct them) but require either a
+//! configured backend at construction time or a follow-up refactor
+//! before the runtime can host them. [`ConversationalVerb`] is the
+//! current example: its `::new` takes a concrete `Arc<dyn
+//! InferenceBackend>` rather than the shared `BackendRegistry` other
+//! verbs use, so registration must wait until the backend-config
+//! flow lands or its constructor is reworked.
 //!
 //! # Verb ID namespace
 //!
-//! All built-in verbs use the prefix `pixhaus.builtin.`. Third-party
+//! Most built-in verbs use the prefix `pixhaus.builtin.`. Third-party
 //! plugins use their own reverse-DNS namespace; the runtime does not
 //! enforce namespacing but the convention prevents collisions.
+//!
+//! Known drift: [`SketchFinishingVerb`] advertises `pixhaus.ai.sketch_finishing`.
+//! The verb id is part of the public surface (logged, scriptable, plugin-
+//! addressable, baked into stored projects), so it is not renamed here.
+//! Future built-ins should stick to the `pixhaus.builtin.` prefix.
 //!
 //! # Shared helpers
 //!
@@ -18,9 +34,11 @@
 //! [`crate::plugin::context::VerbContext`] to a known concrete adapter and
 //! delegates to that adapter's operational `invoke` method.
 
+pub mod audio_timing;
 pub mod auto_mesh_deformation;
 pub mod cleanup;
 pub mod continue_verb;
+pub mod conversational;
 pub mod critique;
 pub mod extend;
 pub mod inbetween;
@@ -31,8 +49,20 @@ pub mod tile;
 pub mod tileset_from_description;
 pub mod variant;
 
+pub use audio_timing::AudioTimingVerb;
+pub use auto_mesh_deformation::AutoMeshDeformationVerb;
 pub use cleanup::CleanupVerb;
+pub use continue_verb::ContinueVerb;
+pub use conversational::ConversationalVerb;
 pub use critique::CritiqueVerb;
+pub use extend::ExtendVerb;
+pub use inbetween::InbetweenVerb;
+pub use motion_from_video::MotionFromVideoVerb;
+pub use project_style_learning::ProjectStyleLearningVerb;
+pub use sketch_finishing::SketchFinishingVerb;
+pub use tile::TileVerb;
+pub use tileset_from_description::TilesetFromDescriptionVerb;
+pub use variant::VariantVerb;
 
 use tokio_util::sync::CancellationToken;
 

@@ -32,10 +32,8 @@
 //! line-by-line walk-through of the [`echo::EchoVerb`] reference
 //! plugin.
 
-pub mod audio_timing;
 pub mod backend;
 pub mod context;
-pub mod conversational;
 pub mod descriptor;
 pub mod echo;
 pub mod error;
@@ -47,21 +45,23 @@ pub mod runtime;
 pub mod verb;
 pub mod view_synthesis;
 
+pub use crate::verbs::audio_timing::{
+    AUDIO_TIMING_VERB_ID, AudioFormat, AudioTimingInputs, AudioTimingMode, AudioTimingVerb,
+};
 pub use crate::verbs::auto_mesh_deformation::{
     AUTO_MESH_DEFORMATION_VERB_ID, AutoMeshDeformationVerb, AutoMeshInputs,
     MESH_RESOLUTION_DEFAULT, MESH_RESOLUTION_MAX, MESH_RESOLUTION_MIN, RigControlPoint, RigData,
     RigRegion,
 };
+pub use crate::verbs::conversational::{
+    CONVERSATIONAL_VERB_ID, ConversationalInputs, ConversationalVerb,
+};
 pub use crate::verbs::inbetween::{INBETWEEN_VERB_ID, InbetweenInputs, InbetweenVerb};
 pub use crate::verbs::sketch_finishing::{
     SKETCH_FINISHING_VERB_ID, SketchFinishingInputs, SketchFinishingVerb, SketchFrame,
 };
-pub use audio_timing::{
-    AUDIO_TIMING_VERB_ID, AudioFormat, AudioTimingInputs, AudioTimingMode, AudioTimingVerb,
-};
 pub use backend::{BackendInfo, InferenceBackend};
 pub use context::{PixelData, ReferenceImage, StyleReference, VerbContext, VerbContextBuilder};
-pub use conversational::{CONVERSATIONAL_VERB_ID, ConversationalInputs, ConversationalVerb};
 pub use descriptor::{BackendCapabilities, CostEstimate, EffectKind, VerbDescriptor, VerbId};
 pub use echo::{ECHO_VERB_ID, EchoInputs, EchoVerb};
 pub use error::{Result, VerbError};
