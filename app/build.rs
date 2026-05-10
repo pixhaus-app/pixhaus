@@ -2,7 +2,8 @@
 //! expects from `tauri.conf.json`.
 
 use std::fs;
-use std::io::Write;
+use std::fs::OpenOptions;
+use std::io::{ErrorKind, Write};
 use std::path::Path;
 
 fn main() {
@@ -27,8 +28,12 @@ fn ensure_frontend_stub() {
         println!("cargo:warning=create ../ui/dist failed: {err}");
         return;
     }
-    let mut file = match fs::File::create(&index) {
+    // create_new is atomic: if a concurrent `pnpm ui:build` writes the real
+    // bundle between our exists() check above and this open call, we get
+    // AlreadyExists and bail rather than truncating real content with the stub.
+    let mut file = match OpenOptions::new().write(true).create_new(true).open(&index) {
         Ok(f) => f,
+        Err(err) if err.kind() == ErrorKind::AlreadyExists => return,
         Err(err) => {
             println!("cargo:warning=create ../ui/dist/index.html failed: {err}");
             return;
