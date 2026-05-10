@@ -17,7 +17,6 @@
 //! See `docs/verbs/tile.md` for the user-facing reference.
 
 use std::io::Cursor;
-use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use async_trait::async_trait;
@@ -28,8 +27,8 @@ use tokio_util::sync::CancellationToken;
 use pixhaus_core::project::{PixelBufferId, Size, Tileset, TilesetId, TilesetSource, UserData};
 
 use crate::backends::{
-    BackendRegistry, ChatMessage, ChatRole, ContentPart, ImageGenRequest, ImageGenResponse,
-    InferenceBackend, InferenceRequest, InferenceResponse, TextGenRequest, TextGenResponse,
+    ChatMessage, ChatRole, ContentPart, ImageGenRequest, ImageGenResponse, InferenceBackend,
+    InferenceRequest, InferenceResponse, TextGenRequest, TextGenResponse,
 };
 use crate::plugin::progress::LogLevel;
 use crate::plugin::verb::Verb;
@@ -93,33 +92,33 @@ fn default_tile_dim() -> u32 {
 
 /// Generates a 47-tile blob autotile set from style-conditioning examples.
 ///
-/// Construct via [`TileVerb::new`], passing the shared backend registry the
-/// verb calls for inference. Register it with
-/// [`crate::plugin::runtime::VerbRuntime`] once at editor startup.
+/// Construct via [`TileVerb::new`] (no args). Register it with
+/// [`crate::plugin::runtime::VerbRuntime`] once at editor startup; the
+/// runtime selects a capability-matching backend and injects it into
+/// `VerbContext::backend` per invocation.
 ///
 /// ```no_run
-/// use std::sync::Arc;
-/// use pixhaus_ai::backends::BackendRegistry;
 /// use pixhaus_ai::verbs::tile::TileVerb;
 /// use pixhaus_ai::plugin::VerbRuntime;
 ///
-/// let registry = Arc::new(BackendRegistry::new());
 /// let runtime = VerbRuntime::new();
-/// runtime.register(TileVerb::new(registry)).unwrap();
+/// runtime.register(TileVerb::new()).unwrap();
 /// ```
 pub struct TileVerb {
     descriptor: VerbDescriptor,
-    registry: Arc<BackendRegistry>,
 }
 
 impl TileVerb {
-    /// Constructs a tile verb that calls into `registry` for inference.
+    /// Constructs a tile verb. Backend resolution happens at invoke time
+    /// from `VerbContext::backend`, which the runtime injects after
+    /// matching the verb's `required_capabilities` against the registered
+    /// backend pool.
     #[must_use]
     // `serde_json::json!` internally calls `unwrap` on infallible builders;
     // the workspace lint bans `unwrap` but this constructor is exempt so we
     // can express the schema as a JSON literal rather than a `Value::Object`.
     #[allow(clippy::disallowed_methods)]
-    pub fn new(registry: Arc<BackendRegistry>) -> Self {
+    pub fn new() -> Self {
         let input_schema = serde_json::json!({
             "type": "object",
             "properties": {
@@ -167,8 +166,13 @@ impl TileVerb {
                 cancellable: true,
                 documentation_url: Some("docs/verbs/tile.md".into()),
             },
-            registry,
         }
+    }
+}
+
+impl Default for TileVerb {
+    fn default() -> Self {
+        Self::new()
     }
 }
 
@@ -236,11 +240,7 @@ impl Verb for TileVerb {
         let inputs: TileInputs = inputs.deserialize_owned()?;
         let sprite_id = ctx.require_sprite_id()?;
 
-        let backend = self.registry.find_for(REQUIRED_CAPS).ok_or_else(|| {
-            VerbError::Backend(
-                "tile: no backend satisfies IMAGE_GENERATION + VISION_LANGUAGE".into(),
-            )
-        })?;
+        let backend = crate::verbs::ctx_fat_backend(&ctx)?;
 
         progress
             .send(VerbProgressEvent::Started {
@@ -621,6 +621,7 @@ fn extract_tile(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::backends::bridge::BackendProxy;
     use crate::backends::{BackendError, ImageGenResponse, TextGenResponse};
     use crate::plugin::runtime::VerbRuntime;
     use crate::plugin::{PixelData, VerbEffect};
@@ -689,26 +690,6 @@ mod tests {
         buf.into_inner()
     }
 
-    /// A minimal [`crate::plugin::backend::InferenceBackend`] stub for
-    /// registering capability metadata with the [`VerbRuntime`].
-    #[derive(Debug)]
-    struct StubPluginBackend;
-
-    impl crate::plugin::backend::InferenceBackend for StubPluginBackend {
-        fn as_any(&self) -> &dyn std::any::Any {
-            self
-        }
-        fn id(&self) -> &'static str {
-            "mock.image"
-        }
-        fn capabilities(&self) -> BackendCapabilities {
-            REQUIRED_CAPS
-        }
-        fn cost_estimate(&self, _: BackendCapabilities) -> CostEstimate {
-            CostEstimate::free()
-        }
-    }
-
     fn metadata() -> ProjectMetadata {
         ProjectMetadata {
             name: "tile-test".into(),
@@ -744,7 +725,7 @@ mod tests {
 
     #[test]
     fn descriptor_declares_required_capabilities() {
-        let verb = TileVerb::new(Arc::new(BackendRegistry::new()));
+        let verb = TileVerb::new();
         let caps = verb.descriptor().required_capabilities;
         assert!(caps.contains(BackendCapabilities::IMAGE_GENERATION));
         assert!(caps.contains(BackendCapabilities::VISION_LANGUAGE));
@@ -755,7 +736,7 @@ mod tests {
 
     #[test]
     fn descriptor_cost_estimate_is_non_zero() {
-        let verb = TileVerb::new(Arc::new(BackendRegistry::new()));
+        let verb = TileVerb::new();
         let cost = verb.descriptor().cost_estimate;
         assert!(cost.typical_latency > Duration::ZERO);
         assert!(cost.typical_usd_cents > 0.0);
@@ -765,7 +746,7 @@ mod tests {
 
     #[test]
     fn validate_rejects_empty_examples() {
-        let verb = TileVerb::new(Arc::new(BackendRegistry::new()));
+        let verb = TileVerb::new();
         let inputs = VerbInputs::from_struct(&TileInputs {
             examples: vec![],
             ..valid_inputs()
@@ -776,7 +757,7 @@ mod tests {
 
     #[test]
     fn validate_rejects_more_than_three_examples() {
-        let verb = TileVerb::new(Arc::new(BackendRegistry::new()));
+        let verb = TileVerb::new();
         let inputs = VerbInputs::from_struct(&TileInputs {
             examples: vec![
                 single_example(),
@@ -792,7 +773,7 @@ mod tests {
 
     #[test]
     fn validate_rejects_malformed_pixel_data() {
-        let verb = TileVerb::new(Arc::new(BackendRegistry::new()));
+        let verb = TileVerb::new();
         let inputs = VerbInputs::from_struct(&TileInputs {
             examples: vec![PixelData {
                 width: 4,
@@ -809,7 +790,7 @@ mod tests {
 
     #[test]
     fn validate_rejects_non_rgba_examples() {
-        let verb = TileVerb::new(Arc::new(BackendRegistry::new()));
+        let verb = TileVerb::new();
         let inputs = VerbInputs::from_struct(&TileInputs {
             examples: vec![PixelData {
                 width: 4,
@@ -826,7 +807,7 @@ mod tests {
 
     #[test]
     fn validate_rejects_zero_tile_size() {
-        let verb = TileVerb::new(Arc::new(BackendRegistry::new()));
+        let verb = TileVerb::new();
         let inputs = VerbInputs::from_struct(&TileInputs {
             tile_width: 0,
             ..valid_inputs()
@@ -837,7 +818,7 @@ mod tests {
 
     #[test]
     fn validate_rejects_oversized_tile() {
-        let verb = TileVerb::new(Arc::new(BackendRegistry::new()));
+        let verb = TileVerb::new();
         let inputs = VerbInputs::from_struct(&TileInputs {
             tile_width: 512,
             ..valid_inputs()
@@ -848,14 +829,14 @@ mod tests {
 
     #[test]
     fn validate_accepts_valid_inputs() {
-        let verb = TileVerb::new(Arc::new(BackendRegistry::new()));
+        let verb = TileVerb::new();
         let inputs = VerbInputs::from_struct(&valid_inputs()).unwrap();
         assert!(verb.validate(&inputs).is_ok());
     }
 
     #[test]
     fn validate_accepts_three_examples() {
-        let verb = TileVerb::new(Arc::new(BackendRegistry::new()));
+        let verb = TileVerb::new();
         let inputs = VerbInputs::from_struct(&TileInputs {
             examples: vec![single_example(), single_example(), single_example()],
             ..valid_inputs()
@@ -868,12 +849,12 @@ mod tests {
 
     #[tokio::test]
     async fn tile_verb_produces_add_tileset_effect() {
-        let mut registry = BackendRegistry::new();
-        registry.add(MockImageBackend);
-        let verb = TileVerb::new(Arc::new(registry));
+        let verb = TileVerb::new();
 
         let runtime = VerbRuntime::new();
-        runtime.register_backend(StubPluginBackend, 0).unwrap();
+        runtime
+            .register_backend(BackendProxy::new(MockImageBackend), 0)
+            .unwrap();
         runtime.register(verb).unwrap();
 
         let inputs = VerbInputs::from_struct(&valid_inputs()).unwrap();
@@ -908,12 +889,12 @@ mod tests {
 
     #[tokio::test]
     async fn tile_verb_requires_active_sprite() {
-        let mut registry = BackendRegistry::new();
-        registry.add(MockImageBackend);
-        let verb = TileVerb::new(Arc::new(registry));
+        let verb = TileVerb::new();
 
         let runtime = VerbRuntime::new();
-        runtime.register_backend(StubPluginBackend, 0).unwrap();
+        runtime
+            .register_backend(BackendProxy::new(MockImageBackend), 0)
+            .unwrap();
         runtime.register(verb).unwrap();
 
         let inputs = VerbInputs::from_struct(&valid_inputs()).unwrap();
@@ -931,32 +912,30 @@ mod tests {
 
     #[tokio::test]
     async fn tile_verb_fails_when_no_backend_available() {
-        // Empty registry — no backend satisfies REQUIRED_CAPS.
-        let verb = TileVerb::new(Arc::new(BackendRegistry::new()));
-
+        // No backend registered — the runtime's pre-flight rejects the
+        // invocation before it ever reaches the verb body.
+        let verb = TileVerb::new();
         let runtime = VerbRuntime::new();
-        // Register a stub so the runtime's capability pre-flight doesn't block
-        // us before even reaching the verb body. We want the *verb's* registry
-        // to be the one that fails, not the runtime's pre-flight check.
-        runtime.register_backend(StubPluginBackend, 0).unwrap();
         runtime.register(verb).unwrap();
 
         let inputs = VerbInputs::from_struct(&valid_inputs()).unwrap();
-        let inv = runtime
+        let err = runtime
             .invoke(&VerbId::new(TILE_VERB_ID), ctx_with_sprite(), inputs)
-            .unwrap();
-        let err = inv.finish().await.unwrap_err();
-        assert!(matches!(err, VerbError::Backend(_)));
+            .unwrap_err();
+        assert!(matches!(
+            err,
+            VerbError::UnsupportedCapability { .. } | VerbError::BackendUnavailable { .. }
+        ));
     }
 
     #[tokio::test]
     async fn tile_verb_uses_default_tileset_name_when_none_provided() {
-        let mut registry = BackendRegistry::new();
-        registry.add(MockImageBackend);
-        let verb = TileVerb::new(Arc::new(registry));
+        let verb = TileVerb::new();
 
         let runtime = VerbRuntime::new();
-        runtime.register_backend(StubPluginBackend, 0).unwrap();
+        runtime
+            .register_backend(BackendProxy::new(MockImageBackend), 0)
+            .unwrap();
         runtime.register(verb).unwrap();
 
         let inputs = VerbInputs::from_struct(&TileInputs {
