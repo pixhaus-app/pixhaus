@@ -1,14 +1,21 @@
-// Read-only debug surface registered on window.__pixhaus_debug__.
+// Debug surface registered on window.__pixhaus_debug__.
 //
-// Exists so e2e specs (tests/e2e) can assert against UI state without a
-// roundtrip to the Rust backend. Every accessor returns the current value
-// of a Solid signal — the spec calls a function via WebDriver and gets a
-// snapshot back. None of these mutate state; tests drive the UI through
-// real input (keyboard, mouse, IPC), not through this object.
+// Exists so e2e specs (tests/e2e) can assert against UI state and drive
+// test-only mutations without a roundtrip to the Rust backend. The
+// surface mixes two kinds of API:
+//   - Read-only state accessors (getActiveProject, getZoom, panel.*,
+//     ipc.log/findByCmd/last/clear, etc.) — these return snapshots of
+//     Solid signals or recorded IPC entries.
+//   - Test-only mutators (dialog.enqueue*, command.dispatch,
+//     layer.refresh / setActiveByIndex) — these intentionally change
+//     UI state to bypass UI surfaces that aren't yet WebDriver-
+//     addressable (native dialogs, palette edge cases, layer-state
+//     races after createNewProject).
 //
 // Always installed (no DEV gate) so the same harness works against
 // `pnpm tauri build --debug` binaries. The surface only exposes data
-// already visible to anyone with DevTools open; there is no security
+// already visible to anyone with DevTools open and only triggers code
+// paths that the menu/palette already expose; there is no security
 // boundary to cross here.
 
 import type { IpcLogEntry } from "../ipc";
@@ -126,9 +133,13 @@ interface DialogDebug {
 }
 
 interface IpcDebug {
-  /** Returns a snapshot copy of the IPC log. Mutating it does not affect future calls. */
+  /** Returns a shallow copy of the IPC log array. The entries inside are
+   * the same references the tap pushes — mutating an entry's `args` /
+   * `result` will mutate the underlying log. Treat the returned entries
+   * as read-only or call `structuredClone(entry)` before mutating. */
   log(): IpcLogEntry[];
-  /** Empties the IPC log so subsequent assertions see only commands fired after this point. */
+  /** Empties the IPC log in-place so subsequent assertions see only
+   * commands fired after this point. */
   clear(): void;
   /** Returns log entries with a matching cmd, in original order. */
   findByCmd(cmd: string): IpcLogEntry[];
@@ -252,8 +263,12 @@ export function installDebugSurface(): void {
 
     ipc: {
       log: () => (w.__pixhaus_ipc_log__ ?? []).slice(),
+      // Clear in-place (length = 0) so the array reference the IPC tap
+      // captured stays the same one we're reading from. Reassigning would
+      // detach the tap's writes from log()/findByCmd()/last() reads.
       clear: () => {
-        w.__pixhaus_ipc_log__ = [];
+        const log = w.__pixhaus_ipc_log__;
+        if (log !== undefined) log.length = 0;
       },
       findByCmd: (cmd: string) => (w.__pixhaus_ipc_log__ ?? []).filter((e) => e.cmd === cmd),
       last: () => {

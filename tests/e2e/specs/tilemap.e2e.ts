@@ -1,21 +1,19 @@
 // Tilemap panel e2e — covers manual-test-guide section 10
 // (T-tilemap-001..005).
 //
-// Every test in this section is skipped at the time of writing. The
-// command palette exposes tilemap tool toggles (tilemap:tool-pencil,
-// tilemap:tool-erase, tilemap:toggle-autotile) but no entries for
-// creating tilesets or placing/erasing tiles — those flows live in the
-// Tilemap panel form, which has no addressable testids yet.
-//
-// Place / erase / autotile tests additionally need:
-//   - a tile selected from the tileset grid (no testid),
+// T-tilemap-001 (Add a tileset) runs via the tilemap:new-tileset
+// palette command added in this PR. T-tilemap-002..005 stay skipped
+// — they require:
+//   - a tile selected from the tileset grid (no per-tile testid;
+//     the grid renders into a single canvas),
 //   - the active layer converted to a tilemap layer (T-layers-009),
-//   - a click on a specific tilemap-layer cell on the canvas at
-//     tile-grid coordinates.
+//   - a click on a specific tilemap-layer cell at tile-grid coords,
+//   - a debug accessor to read tilemap cell contents (for autotile
+//     verification),
+//   - testids on the tile-metadata editor (collision toggle).
 //
-// describe.skip the whole spec until the panel is wired with testids.
-// Keep the file in tree so the section-10 sweep stays auditable and
-// each test ID has a place to land when its UI affordance arrives.
+// Each skipped test carries an inline TODO citing the specific
+// blocker. Unskip in-place as the underlying UI affordances arrive.
 
 describe("Tilemap panel (manual-test-guide §10)", () => {
   it("T-tilemap-001: Add a tileset", async () => {

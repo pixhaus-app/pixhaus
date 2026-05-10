@@ -16,12 +16,17 @@
 
 import { existsSync } from "node:fs";
 import { homedir } from "node:os";
-import { resolve } from "node:path";
+import { dirname, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
 import { spawn, type ChildProcess } from "node:child_process";
 
 // ── Binary discovery ──────────────────────────────────────────────────────────
 
-const REPO_ROOT = resolve(import.meta.dirname, "..", "..");
+// `import.meta.dirname` requires Node 20.11+ / 21.2+; deriving from
+// `import.meta.url` keeps the config portable for older runtimes and
+// for tooling that loads it through a transformer.
+const HERE = dirname(fileURLToPath(import.meta.url));
+const REPO_ROOT = resolve(HERE, "..", "..");
 const BINARY_PATH = resolve(
   REPO_ROOT,
   "target",

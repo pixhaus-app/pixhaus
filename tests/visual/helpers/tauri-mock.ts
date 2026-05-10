@@ -62,6 +62,33 @@ export const TAURI_MOCK_SCRIPT = `
       visible: true,
       locked: false,
     }],
+    // sprite_add and layer_add are part of the createNewProject chain
+    // (project_new -> sprite_add -> layer_add -> project_get). Returning
+    // a usable Sprite/Layer here keeps the chain alive when the tests
+    // override only project_new.
+    sprite_add: () => ({
+      id: 1,
+      name: 'Sprite',
+      canvas: { width: 32, height: 32 },
+      color_mode: 'rgba',
+      layers: [],
+      frames: [{ duration_ms: 100 }],
+      cels: [],
+      palettes: [],
+      tilesets: [],
+      frame_tags: [],
+      animations: [],
+      slices: [],
+    }),
+    layer_add: () => ({
+      id: 1,
+      name: 'Layer 1',
+      kind: { kind: 'raster' },
+      blend_mode: 'normal',
+      opacity: 255,
+      visible: true,
+      locked: false,
+    }),
     frame_list: () => [{ duration_ms: 100 }],
     canvas_set_selection: () => ({ region: null, anchor_layer: null }),
     project_get: () => null,

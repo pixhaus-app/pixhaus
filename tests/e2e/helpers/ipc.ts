@@ -72,9 +72,14 @@ export async function waitForIpc(
 }
 
 /**
- * Asserts the next N entries (from current log state) match the given
- * cmds in order. Use when the action triggers a deterministic chain
- * (e.g. "New Project" fires project_new → sprite_add → project_get).
+ * Asserts the given cmds appear contiguously somewhere in the IPC log
+ * (in the listed order). The match anchors on the first index where the
+ * full subsequence aligns; other entries before/after are ignored. Use
+ * when the action triggers a deterministic chain (e.g. "New Project"
+ * fires project_new → sprite_add → project_get) and you want to verify
+ * relative ordering without pinning the absolute position.
+ *
+ * Call `clearIpcLog()` first if you want a fresh slate.
  */
 export async function expectIpcSequence(
   expected: readonly string[],

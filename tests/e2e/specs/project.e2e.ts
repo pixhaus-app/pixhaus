@@ -26,12 +26,24 @@ import {
 
 // ── Path constants ────────────────────────────────────────────────────────────
 //
-// Tests run on Windows under tauri-driver; absolute paths must use forward
+// Resolved from process.cwd() so the spec is portable across machines and
+// platforms. The wdio worker runs with `tests/e2e` as its CWD; we walk
+// up two levels to land on the repo root. Absolute paths use forward
 // slashes so JSON-encoded args round-trip cleanly through the IPC log
-// (backslashes would get re-escaped on every comparison). The Rust
-// project_open / project_import_aseprite handlers accept either form.
+// (Windows backslashes would get re-escaped on every comparison). The
+// Rust project_open / project_import_aseprite handlers accept either
+// form, so this normalization is purely an assertion-stability concern.
+//
+// Override with PIXHAUS_E2E_REPO_ROOT if the wdio runner is invoked
+// from a non-default CWD.
 
-const REPO_ROOT = "C:/Users/luism/Documents/GitHub/pixhaus";
+import { resolve } from "node:path";
+
+const REPO_ROOT = (
+  process.env["PIXHAUS_E2E_REPO_ROOT"] ?? resolve(process.cwd(), "..", "..")
+)
+  .split("\\")
+  .join("/");
 const ASEPRITE_FIXTURE = `${REPO_ROOT}/examples/aseprite-roundtrip/single-frame-rgba.aseprite`;
 const SAVE_TARGET = `${REPO_ROOT}/target/test-output/save-test-001.pixhaus`;
 
@@ -45,12 +57,13 @@ type ProjectStatus = {
 };
 
 describe("Project lifecycle (manual-test-guide §2)", () => {
-  // Each test boots fresh, so localStorage state from prior tests doesn't
-  // leak into the welcome screen's recent-projects list. Clear the IPC log
-  // and dialog queue too — every assertion below depends on the log
-  // starting empty after the welcome screen is up.
+  // Each test boots fresh AND clears localStorage so the recent-projects
+  // list, crash-reporting opt-in, and other persisted preferences don't
+  // leak between tests (T-project-007 is order-sensitive on the recent
+  // list; T-project-001 expects an empty welcome). Also clears the IPC
+  // log and dialog queue so each test sees a clean slate.
   beforeEach(async () => {
-    await bootApp();
+    await bootApp({ clearStorage: true });
     await clearIpcLog();
     await clearDialogQueue();
   });

@@ -15,6 +15,18 @@ import { waitForDebugSurface } from "./state.js";
 // from the WebDriver session triggers Tauri's asset handler.
 const APP_URL = "http://tauri.localhost/";
 
+interface BootOptions {
+  /**
+   * Clear localStorage before navigating, so persisted state from prior
+   * tests (recent projects list, theme, crash-reporting opt-in) doesn't
+   * affect this spec. Default false because the navigate-and-reload
+   * path is enough for the JS-side signals; only enable when a spec
+   * needs a "fresh profile" baseline (e.g. T-launch tests, Recent
+   * Projects assertions).
+   */
+  clearStorage?: boolean;
+}
+
 /**
  * Waits for the debug surface and dismisses the first-launch crash
  * dialog if it's showing. Returns when the welcome screen is interactable.
@@ -22,7 +34,7 @@ const APP_URL = "http://tauri.localhost/";
  * Idempotent: safe to call from multiple `before` hooks; the dialog
  * presence check is fast.
  */
-export async function bootApp(): Promise<void> {
+export async function bootApp(opts: BootOptions = {}): Promise<void> {
   // Always navigate, even if we're already on APP_URL: this triggers a
   // full page reload which resets every JS-side signal (activeProject,
   // panel visibility, command palette state). Without the reload, a
@@ -30,6 +42,21 @@ export async function bootApp(): Promise<void> {
   // and the welcome screen never re-mounts. Page reload is cheap (~50ms)
   // and the only reliable cross-spec reset.
   await browser.url(APP_URL);
+
+  if (opts.clearStorage === true) {
+    // Wipe persisted state (recent projects, crash-reporting opt-in,
+    // theme, keybind preset) and reload again so the app reads the
+    // empty state from module load.
+    await browser.execute(() => {
+      try {
+        localStorage.clear();
+      } catch {
+        // localStorage may be unavailable in some test environments;
+        // best-effort. The reload below is what matters.
+      }
+    });
+    await browser.url(APP_URL);
+  }
 
   await waitForDebugSurface();
 

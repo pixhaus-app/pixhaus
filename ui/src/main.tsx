@@ -11,9 +11,10 @@ import "./index.css";
 import { installDebugSurface } from "./lib/debug";
 
 // Install __pixhaus_debug__ + IPC tap before mount so e2e specs can read
-// initial state and observe startup IPCs (e.g. crash_reporting_get_enabled).
-// Wrapped defensively: a thrown exception here would prevent the app from
-// mounting, leaving the user with a black screen.
+// initial state and observe startup IPCs (e.g. crash_reporting_set_enabled
+// fired from Shell.onMount). Wrapped defensively: a thrown exception here
+// would prevent the app from mounting, leaving the user with a black
+// screen.
 try {
   installDebugSurface();
 } catch (err) {

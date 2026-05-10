@@ -1,25 +1,23 @@
 // Palette panel e2e — covers manual-test-guide section 8
 // (T-palette-001..012).
 //
-// Status: every test in this file is skipped. The palette panel's flows
-// (new palette, add/edit/delete swatch, drag-reorder, harmony, ramp,
-// import/export) all require direct UI interaction with elements that
-// don't have testids yet — the `+` header button, individual swatches,
-// the Harmony / Ramp sub-panels, and the Palette I/O Menu. The command
-// registry (ui/src/command-palette/command-registry.ts) exposes no
-// `palette:*` entries either, so dispatchViaPalette() can't reach
-// palette_add / palette_add_color / palette_set_color / etc.
+// Status: T-palette-001 (new palette) and T-palette-002 (add a colour)
+// run via the palette:new and palette:add-color commands wired in
+// command-registry.ts. The remaining 10 tests are skipped — they
+// require direct UI interaction with elements that don't have testids
+// yet (per-swatch handles, Harmony / Ramp sub-panels, Palette I/O
+// Menu, color-picker drag) or behaviours not yet exposed via palette
+// commands (set-color / remove-color / reorder).
 //
-// This file is intentionally a scaffold: it pins the test IDs from the
-// manual guide so coverage gaps are visible, and each `it.skip` carries
-// a TODO line citing the missing testid, helper, or command. As palette
-// testids land, swap the skips for real tests in-place.
+// Each `it.skip` carries a TODO line citing the missing testid, helper,
+// or command. As palette testids land, swap the skips for real tests
+// in-place.
 //
 // References:
 //   docs/manual-test-guide.md §8           — manual flows.
 //   app/src/lib.rs:157-164                 — palette IPC names.
-//   ui/src/command-palette/command-registry.ts — no palette:* entries.
-//   ui/src/palette/PalettePanel.tsx        — UI surface, no testids.
+//   ui/src/command-palette/command-registry.ts — palette:* entries.
+//   ui/src/palette/PalettePanel.tsx        — UI surface, mostly without testids.
 
 import { $, browser, expect } from "@wdio/globals";
 import { bootApp } from "../helpers/app.js";

@@ -38,12 +38,29 @@ CI integration is intentionally deferred. Phase 0 lands locally only; a separate
 tests/e2e/
 ├── wdio.conf.ts          # WebdriverIO config + tauri-driver spawn lifecycle
 ├── helpers/
-│   ├── app.ts            # bootApp() — dismiss first-launch dialog, wait for welcome
+│   ├── app.ts            # bootApp() — navigate, dismiss dialog, wait for welcome
+│   ├── canvas.ts         # clickCanvasAt / dragCanvas (sprite-coord translation)
+│   ├── dialog.ts         # mockOpenDialog / mockSaveDialog / mockConfirmDialog
+│   ├── ipc.ts            # findIpcByCmd / waitForIpc / expectIpcSequence
 │   ├── selectors.ts      # data-testid string registry
-│   ├── state.ts          # typed accessors for window.__pixhaus_debug__
-│   └── ipc.ts            # assertions on window.__pixhaus_ipc_log__
-└── specs/
-    └── smoke.e2e.ts      # Phase 0 — proves the harness boots end-to-end
+│   └── state.ts          # typed accessors for window.__pixhaus_debug__
+└── specs/                # one file per manual-test-guide section
+    ├── smoke.e2e.ts      # harness sanity check (Phase 0)
+    ├── launch.e2e.ts     # T-launch (§1)
+    ├── project.e2e.ts    # T-project (§2)
+    ├── export.e2e.ts     # T-export (§3)
+    ├── canvas.e2e.ts     # T-canvas (§4)
+    ├── tools.e2e.ts      # T-tools (§5)
+    ├── select.e2e.ts     # T-select (§6)
+    ├── transform.e2e.ts  # T-transform (§6)
+    ├── layers.e2e.ts     # T-layers (§7)
+    ├── palette.e2e.ts    # T-palette (§8)
+    ├── timeline.e2e.ts   # T-timeline (§9)
+    ├── tilemap.e2e.ts    # T-tilemap (§10)
+    ├── cmd.e2e.ts        # T-cmd (§11)
+    ├── window.e2e.ts     # T-window (§12)
+    ├── help.e2e.ts       # T-help (§13)
+    └── keys.e2e.ts       # T-keys (§14)
 ```
 
 ## Adding a spec

@@ -21,20 +21,24 @@ import {
   mockSaveDialog,
 } from "../helpers/dialog.js";
 import { isCommandPaletteOpen } from "../helpers/state.js";
+import { resolve } from "node:path";
 
 // Output paths under target/test-output/ to keep export artifacts out of
-// the way of cargo's incremental build cache.
-const PNG_OUT =
-  "C:/Users/luism/Documents/GitHub/pixhaus/target/test-output/sheet.png";
-const GIF_OUT =
-  "C:/Users/luism/Documents/GitHub/pixhaus/target/test-output/anim.gif";
-const WEBP_OUT =
-  "C:/Users/luism/Documents/GitHub/pixhaus/target/test-output/anim.webp";
-const TMX_OUT =
-  "C:/Users/luism/Documents/GitHub/pixhaus/target/test-output/level.tmx";
+// the way of cargo's incremental build cache. Resolved at runtime from
+// process.cwd() (the wdio worker runs with tests/e2e as CWD) so the
+// suite is portable across machines and platforms. Override with
+// PIXHAUS_E2E_REPO_ROOT if the runner is invoked from a non-default CWD.
+const REPO_ROOT = (
+  process.env["PIXHAUS_E2E_REPO_ROOT"] ?? resolve(process.cwd(), "..", "..")
+)
+  .split("\\")
+  .join("/");
+const PNG_OUT = `${REPO_ROOT}/target/test-output/sheet.png`;
+const GIF_OUT = `${REPO_ROOT}/target/test-output/anim.gif`;
+const WEBP_OUT = `${REPO_ROOT}/target/test-output/anim.webp`;
+const TMX_OUT = `${REPO_ROOT}/target/test-output/level.tmx`;
 
-const SAMPLE_LEVEL_FOREST =
-  "C:/Users/luism/Documents/GitHub/pixhaus/examples/samples/level-forest.pixhaus";
+const SAMPLE_LEVEL_FOREST = `${REPO_ROOT}/examples/samples/level-forest.pixhaus`;
 
 async function focusBody(): Promise<void> {
   await browser.execute(() => {

@@ -15,22 +15,25 @@ import { byTestId, testid } from "../helpers/selectors.js";
 import {
   getActiveProject,
   getCrashReportingDialogShown,
-  getCrashReportingEnabled,
 } from "../helpers/state.js";
 import { findIpcByCmd } from "../helpers/ipc.js";
 
 describe("Smoke (Phase 0 harness)", () => {
   it("boots, exposes the debug surface, and renders the welcome screen after dialog dismiss", async () => {
-    await bootApp();
+    // clearStorage so this spec is independent of any prior opt-in to
+    // crash reporting persisted in localStorage from earlier sessions.
+    await bootApp({ clearStorage: true });
 
     // Welcome screen up, no project active.
     const welcome = await $(byTestId(testid.welcome.root));
     await expect(welcome).toBeDisplayed();
     await expect(await getActiveProject()).toBeNull();
 
-    // First-launch dialog dismissed (declined): localStorage flag flipped.
+    // First-launch dialog was visible on bootApp (clearStorage path) and
+    // bootApp dismissed it via the decline button — so the "shown" flag
+    // is now set. We don't assert on the enabled flag here because the
+    // decline path leaves it false; T-launch-002 covers that explicitly.
     await expect(await getCrashReportingDialogShown()).toBe(true);
-    await expect(await getCrashReportingEnabled()).toBe(false);
   });
 
   it("captured at least one crash_reporting_set_enabled IPC during boot", async () => {
