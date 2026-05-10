@@ -68,7 +68,7 @@ pub struct ConversationalInputs {
 /// Construct with [`ConversationalVerb::new`] (no args). The runtime
 /// selects a `VISION_LANGUAGE | TOOL_USE`-capable backend per
 /// invocation and injects it into [`VerbContext::backend`]; the verb
-/// resolves it via [`crate::verbs::ctx_fat_backend`] at invoke time.
+/// resolves it from `ctx.backend` at invoke time.
 pub struct ConversationalVerb {
     descriptor: VerbDescriptor,
 }
