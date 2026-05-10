@@ -10,7 +10,7 @@
 // has not opted in.
 
 import * as Sentry from "@sentry/browser";
-import { invoke } from "@tauri-apps/api/core";
+import { invoke } from "../lib/ipc";
 
 // DSN injected at build time via Vite; undefined in dev or fork builds.
 const DSN = import.meta.env["VITE_SENTRY_DSN"] as string | undefined;

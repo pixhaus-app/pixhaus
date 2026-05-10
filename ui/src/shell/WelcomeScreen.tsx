@@ -1,5 +1,5 @@
 import { For, createSignal, onMount, type Component } from "solid-js";
-import { open as dialogOpen } from "@tauri-apps/plugin-dialog";
+import { open as dialogOpen } from "../lib/dialog";
 import { recentProjects, setActiveProject, pushRecentProject } from "../project-state";
 import {
   createNewProject,
@@ -85,28 +85,36 @@ const WelcomeScreen: Component = () => {
   }
 
   return (
-    <div class="welcome">
+    <div class="welcome" data-testid="welcome">
       <h1 class="welcome__title">Pixhaus</h1>
       <p class="welcome__subtitle">
         AI-native pixel art editor for sprites, animations, and tilemaps
       </p>
 
       <div class="welcome__actions">
-        <button class="welcome__btn welcome__btn--primary" onClick={handleNewProject}>
+        <button
+          class="welcome__btn welcome__btn--primary"
+          data-testid="welcome-new-project"
+          onClick={handleNewProject}
+        >
           New Project
         </button>
-        <button class="welcome__btn" onClick={handleOpenProject}>
+        <button class="welcome__btn" data-testid="welcome-open-project" onClick={handleOpenProject}>
           Open Project...
         </button>
       </div>
 
       {samples().length > 0 && (
-        <div class="welcome__samples">
+        <div class="welcome__samples" data-testid="welcome-samples">
           <p class="welcome__samples-title">Samples</p>
           <div class="welcome__samples-list">
             <For each={samples()}>
               {(sample) => (
-                <button class="welcome__samples-item" onClick={() => handleOpenSample(sample)}>
+                <button
+                  class="welcome__samples-item"
+                  data-testid={`welcome-sample-${sample.name}`}
+                  onClick={() => handleOpenSample(sample)}
+                >
                   <span class="welcome__samples-item__name">{sample.name}</span>
                 </button>
               )}
@@ -116,12 +124,16 @@ const WelcomeScreen: Component = () => {
       )}
 
       {recentProjects().length > 0 && (
-        <div class="welcome__recent">
+        <div class="welcome__recent" data-testid="welcome-recent">
           <p class="welcome__recent-title">Recent</p>
           <div class="welcome__recent-list">
             <For each={recentProjects()}>
-              {(project) => (
-                <button class="welcome__recent-item" onClick={() => handleOpenRecent(project.path)}>
+              {(project, i) => (
+                <button
+                  class="welcome__recent-item"
+                  data-testid={`welcome-recent-${i()}`}
+                  onClick={() => handleOpenRecent(project.path)}
+                >
                   <span class="welcome__recent-item__name">{project.name}</span>
                   <span class="welcome__recent-item__path">{project.path}</span>
                 </button>

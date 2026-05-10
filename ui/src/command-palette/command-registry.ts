@@ -1,9 +1,4 @@
-import {
-  open as dialogOpen,
-  save as dialogSave,
-  confirm,
-  message,
-} from "@tauri-apps/plugin-dialog";
+import { open as dialogOpen, save as dialogSave, confirm, message } from "../lib/dialog";
 import { isCommandPaletteOpen, openCommandPalette, closeCommandPalette } from "../palette-state";
 import { openPreferences } from "../preferences/preferences-state";
 import { keybindPreset, customKeybinds } from "../preferences/preferences-store";
@@ -41,6 +36,8 @@ import {
   setShowTileGrid,
   showPixelGrid,
   setShowPixelGrid,
+  onionSkin,
+  setOnionSkin,
   resetViewport,
 } from "../canvas/canvas-state";
 import { snapZoom } from "../canvas/viewport";
@@ -65,13 +62,23 @@ import {
   addLayer,
   beginRename,
   deleteLayer,
+  flattenVisibleLayers,
   isLayerPanelVisible,
   layers,
+  mergeLayerDown,
+  mergeSelectedLayers,
   nextAutoName,
+  selectedLayerIds,
   setLayerPanelVisible,
+  wrapLayersInGroup,
 } from "../layers/layer-state";
-import { refreshTimeline } from "../timeline/timeline-state";
-import { isTimelinePanelVisible, setTimelinePanelVisible } from "../timeline/timeline-state";
+import {
+  isLooping,
+  isTimelinePanelVisible,
+  refreshTimeline,
+  setIsLooping,
+  setTimelinePanelVisible,
+} from "../timeline/timeline-state";
 import {
   isPalettePanelVisible,
   setPalettePanelVisible,
@@ -84,7 +91,14 @@ import {
   autotileMode,
   setAutotileMode,
 } from "../tilemap/tilemap-state";
-import { setActiveTool, type ToolType } from "../canvas/tools/tool-state";
+import { foregroundColor, setActiveTool, type ToolType } from "../canvas/tools/tool-state";
+import {
+  paletteAdd as paletteAddCmd,
+  paletteAddColor as paletteAddColorCmd,
+  paletteDelete as paletteDeleteCmd,
+} from "../lib/commands/palette";
+import { tilesetAdd as tilesetAddCmd } from "../lib/commands/tilesets";
+import { activePalette, palettes, refreshPalettes } from "../palette/palette-panel-state";
 
 export type Command = {
   readonly id: string;
@@ -550,6 +564,16 @@ const COMMANDS: ReadonlyMap<string, CommandEntry> = new Map<string, CommandEntry
       },
     },
   ],
+  [
+    "timeline:toggle-loop",
+    {
+      id: "timeline:toggle-loop",
+      label: "Toggle Playback Loop",
+      category: "Frame",
+      keywords: ["loop", "playback"],
+      handler: () => setIsLooping(!isLooping()),
+    },
+  ],
 
   // ── Layer ─────────────────────────────────────────────────────────────────
   [
@@ -595,7 +619,56 @@ const COMMANDS: ReadonlyMap<string, CommandEntry> = new Map<string, CommandEntry
       id: "layer:merge-down",
       label: "Merge Down",
       category: "Layer",
-      handler: stub("layer:merge-down"),
+      handler: () => {
+        const spriteId = activeSpriteId();
+        const layerId = activeLayerId();
+        if (spriteId === null || layerId === null) return;
+        mergeLayerDown(spriteId, layerId);
+      },
+    },
+  ],
+  [
+    "layer:merge-selected",
+    {
+      id: "layer:merge-selected",
+      label: "Merge Selected Layers",
+      category: "Layer",
+      keywords: ["merge", "selected"],
+      handler: () => {
+        const spriteId = activeSpriteId();
+        if (spriteId === null) return;
+        mergeSelectedLayers(spriteId, selectedLayerIds());
+      },
+    },
+  ],
+  [
+    "layer:flatten-visible",
+    {
+      id: "layer:flatten-visible",
+      label: "Flatten Visible Layers",
+      category: "Layer",
+      keywords: ["flatten", "visible"],
+      handler: () => {
+        const spriteId = activeSpriteId();
+        if (spriteId === null) return;
+        flattenVisibleLayers(spriteId);
+      },
+    },
+  ],
+  [
+    "layer:wrap-in-group",
+    {
+      id: "layer:wrap-in-group",
+      label: "Convert to Group",
+      category: "Layer",
+      keywords: ["group", "wrap", "convert"],
+      handler: () => {
+        const spriteId = activeSpriteId();
+        const layerId = activeLayerId();
+        if (spriteId === null || layerId === null) return;
+        const ids = selectedLayerIds().size > 0 ? [...selectedLayerIds()] : [layerId];
+        wrapLayersInGroup(spriteId, ids);
+      },
     },
   ],
   [
@@ -605,6 +678,64 @@ const COMMANDS: ReadonlyMap<string, CommandEntry> = new Map<string, CommandEntry
       label: "Flatten All Layers",
       category: "Layer",
       handler: stub("layer:flatten"),
+    },
+  ],
+
+  // ── Palette ───────────────────────────────────────────────────────────────
+  [
+    "palette:new",
+    {
+      id: "palette:new",
+      label: "New Palette",
+      category: "Palette",
+      keywords: ["palette", "new", "create"],
+      handler: () => {
+        const spriteId = activeSpriteId();
+        if (spriteId === null) return;
+        const existing = palettes();
+        const name = `Palette ${existing.length + 1}`;
+        paletteAddCmd(spriteId, name)
+          .then(() => refreshPalettes(spriteId))
+          .catch((err: unknown) => reportCommandFailure("palette_add", err));
+      },
+    },
+  ],
+  [
+    "palette:delete",
+    {
+      id: "palette:delete",
+      label: "Delete Active Palette",
+      category: "Palette",
+      keywords: ["palette", "delete", "remove"],
+      handler: () => {
+        const spriteId = activeSpriteId();
+        const pal = activePalette();
+        if (spriteId === null || pal === null) return;
+        paletteDeleteCmd(spriteId, pal.id)
+          .then(() => refreshPalettes(spriteId))
+          .catch((err: unknown) => reportCommandFailure("palette_delete", err));
+      },
+    },
+  ],
+  [
+    "palette:add-color",
+    {
+      id: "palette:add-color",
+      label: "Add Foreground to Palette",
+      category: "Palette",
+      keywords: ["palette", "add", "color", "swatch"],
+      handler: () => {
+        const spriteId = activeSpriteId();
+        const pal = activePalette();
+        if (spriteId === null || pal === null) return;
+        paletteAddColorCmd({
+          sprite_id: spriteId,
+          palette_id: pal.id,
+          color: foregroundColor(),
+        })
+          .then(() => refreshPalettes(spriteId))
+          .catch((err: unknown) => reportCommandFailure("palette_add_color", err));
+      },
     },
   ],
 
@@ -890,6 +1021,35 @@ const COMMANDS: ReadonlyMap<string, CommandEntry> = new Map<string, CommandEntry
       label: "Toggle Pixel Grid",
       category: "View",
       handler: () => setShowPixelGrid(!showPixelGrid()),
+    },
+  ],
+  [
+    "view:toggle-onion-skin",
+    {
+      id: "view:toggle-onion-skin",
+      label: "Toggle Onion Skin",
+      category: "View",
+      keywords: ["onion", "skin"],
+      handler: () => setOnionSkin(!onionSkin()),
+    },
+  ],
+  [
+    "tilemap:new-tileset",
+    {
+      id: "tilemap:new-tileset",
+      label: "New Tileset",
+      category: "Tilemap",
+      keywords: ["tileset", "tilemap", "new"],
+      handler: () => {
+        const spriteId = activeSpriteId();
+        if (spriteId === null) return;
+        tilesetAddCmd({
+          sprite_id: spriteId,
+          name: "Tileset 1",
+          tile_width: 16,
+          tile_height: 16,
+        }).catch((err: unknown) => reportCommandFailure("tileset_add", err));
+      },
     },
   ],
 

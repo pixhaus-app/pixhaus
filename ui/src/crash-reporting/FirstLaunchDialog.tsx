@@ -42,6 +42,7 @@ const FirstLaunchDialog: Component<Props> = (props) => {
         role="dialog"
         aria-modal="true"
         aria-labelledby="first-launch-title"
+        data-testid="first-launch-dialog"
         onClick={(e) => e.stopPropagation()}
       >
         <h2 id="first-launch-title" class="first-launch-dialog__title">
@@ -55,6 +56,7 @@ const FirstLaunchDialog: Component<Props> = (props) => {
         <div class="first-launch-dialog__actions">
           <button
             class="first-launch-dialog__btn first-launch-dialog__btn--secondary"
+            data-testid="first-launch-dialog-decline"
             onClick={() => props.onDecline()}
           >
             No thanks
@@ -62,6 +64,7 @@ const FirstLaunchDialog: Component<Props> = (props) => {
           <button
             ref={primaryBtn}
             class="first-launch-dialog__btn first-launch-dialog__btn--primary"
+            data-testid="first-launch-dialog-accept"
             onClick={() => props.onAccept()}
           >
             Yes, send crash reports

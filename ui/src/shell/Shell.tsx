@@ -73,14 +73,14 @@ const Shell: Component = () => {
   }
 
   return (
-    <div class="shell">
+    <div class="shell" data-testid="shell">
       <div class="shell-body">
         <div class="shell-main">
           <Show when={activeProject() === null}>
             <WelcomeScreen />
           </Show>
           <Show when={activeProject() !== null}>
-            <div class="editor-layout">
+            <div class="editor-layout" data-testid="editor-layout">
               <div class="editor-layout__canvas-area">
                 <div class="editor-layout__canvas">
                   <Canvas />

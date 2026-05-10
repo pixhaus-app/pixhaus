@@ -8,6 +8,18 @@ import { render } from "solid-js/web";
 
 import App from "./App";
 import "./index.css";
+import { installDebugSurface } from "./lib/debug";
+
+// Install __pixhaus_debug__ + IPC tap before mount so e2e specs can read
+// initial state and observe startup IPCs (e.g. crash_reporting_set_enabled
+// fired from Shell.onMount). Wrapped defensively: a thrown exception here
+// would prevent the app from mounting, leaving the user with a black
+// screen.
+try {
+  installDebugSurface();
+} catch (err) {
+  console.warn("[pixhaus] failed to install debug surface:", err);
+}
 
 const root = document.getElementById("root");
 if (!root) {

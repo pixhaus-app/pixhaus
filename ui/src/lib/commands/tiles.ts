@@ -1,6 +1,6 @@
 // Tilemap editing commands.
 
-import { invoke } from "@tauri-apps/api/core";
+import { invoke } from "../ipc";
 import type {
   AutotileKind,
   FrameIndex,

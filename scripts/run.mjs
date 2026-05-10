@@ -9,7 +9,7 @@
 //                   find-crate-for-file | ralph | install-tools |
 //                   setup-git-hooks | new-worktree | bootstrap | doctor |
 //                   dispatch | fan-out-bedrock | pre-pr | export-icons |
-//                   generate-samples
+//                   generate-samples | setup-e2e
 //
 // Why this exists: .claude/settings.json hooks and .githooks/pre-commit need
 // a single command line that works on every developer OS. Node is already

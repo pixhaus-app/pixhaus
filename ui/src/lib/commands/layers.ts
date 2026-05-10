@@ -1,6 +1,6 @@
 // Layer CRUD and property commands.
 
-import { invoke } from "@tauri-apps/api/core";
+import { invoke } from "../ipc";
 import type { BlendMode, Layer, LayerId, LayerKind, SpriteId, TilesetId } from "../types";
 
 // ── argument types ────────────────────────────────────────────────────────────

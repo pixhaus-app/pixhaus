@@ -192,12 +192,13 @@ const LayerPanel: Component = () => {
   }
 
   return (
-    <div class="layer-panel">
+    <div class="layer-panel" data-testid="layer-panel">
       <div class="layer-panel__header">
         <span class="layer-panel__title">Layers</span>
         <div class="layer-panel__header-actions">
           <button
             class="layer-panel__icon-btn"
+            data-testid="layer-add"
             onClick={handleAddLayer}
             disabled={spriteId() === null}
             title="New raster layer"

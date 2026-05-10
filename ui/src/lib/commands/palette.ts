@@ -1,6 +1,6 @@
 // Palette CRUD and color management commands.
 
-import { invoke } from "@tauri-apps/api/core";
+import { invoke } from "../ipc";
 import type { Palette, PaletteId, Rgba, SpriteId } from "../types";
 
 // ── argument types ────────────────────────────────────────────────────────────
