@@ -1,51 +1,56 @@
 // AI verb invocation commands.
-// Invoke and cancel are stubbed until B5 (verb plugin protocol) lands.
-// verb_list returns an empty array until B5 populates the registry.
+//
+// The Rust handler signatures live in app/src/commands/verbs.rs. Keep these
+// types in sync — any drift surfaces only at the IPC boundary as a serde
+// error, which is hard to debug from the UI side.
+//
+// Once tauri-specta wires up generated bindings for verbs, delete the
+// hand-rolled types here and import the generated ones.
 
 import { invoke } from "../ipc";
 
 // ── types ─────────────────────────────────────────────────────────────────────
 
 export type VerbInvokeArgs = {
-  name: string;
-  /** Free-form JSON context passed to the verb. Schema defined per-verb in docs/verb-protocol.md. */
-  context: unknown;
-};
-
-export type VerbStatus =
-  | { kind: "pending" }
-  | { kind: "done" }
-  | { kind: "error"; message: string };
-
-export type VerbResult = {
+  /** Stable verb ID, e.g. "pixhaus.builtin.critique". */
   verb_id: string;
-  status: VerbStatus;
+  /** Per-verb input payload. Schema defined by the verb's descriptor. */
+  inputs: unknown;
 };
+
+/**
+ * Output of a successful verb invocation. The shape is per-verb; for now
+ * the UI just surfaces it as opaque JSON. A typed VerbOutput will land
+ * with tauri-specta bindings.
+ */
+export type VerbOutput = unknown;
 
 export type VerbInfo = {
-  name: string;
+  /** Stable verb ID. */
+  id: string;
   description: string;
-  required_backends: string[];
+  /** True if the verb supports cancellation mid-run. */
+  cancellable: boolean;
+  /** Bitfield of `BackendCapabilities` required to invoke. */
+  required_capabilities: number;
 };
 
 // ── commands ──────────────────────────────────────────────────────────────────
 
-/**
- * Invokes a registered AI verb with the given context.
- * Requires B5 (verb plugin protocol) — returns an error until B5 lands.
- */
-export function verbInvoke(args: VerbInvokeArgs): Promise<VerbResult> {
-  return invoke<VerbResult>("verb_invoke", { args });
+/** Invokes a registered AI verb. Errors propagate as Promise rejections. */
+export function verbInvoke(args: VerbInvokeArgs): Promise<VerbOutput> {
+  return invoke<VerbOutput>("verb_invoke", { args });
 }
 
-/** Lists all registered verbs. Returns an empty array until B5 lands. */
+/** Lists all registered verbs, sorted by ID. */
 export function verbList(): Promise<VerbInfo[]> {
   return invoke<VerbInfo[]>("verb_list");
 }
 
 /**
- * Cancels an in-progress verb invocation by its opaque ID.
- * Requires B5 (verb plugin protocol) — returns an error until B5 lands.
+ * Cancels an in-progress verb invocation. The Rust handler is a stub
+ * pending an in-flight invocation map; calling this rejects with
+ * AppCommandError::Unimplemented for now.
  */
 export function verbCancel(verb_id: string): Promise<void> {
   return invoke<void>("verb_cancel", { verb_id });
