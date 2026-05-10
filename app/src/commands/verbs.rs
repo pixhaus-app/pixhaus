@@ -2,9 +2,11 @@
 //!
 //! `verb_list` returns the descriptors of all registered verbs, including
 //! plugin-registered verbs (the plugin registry shares the same runtime).
-//! `verb_invoke` runs a verb synchronously and returns its output.
-//! `verb_cancel` is not yet wired (in-flight cancellation requires a
-//! per-session invocation map; tracked for a follow-up stream).
+//! `verb_invoke` runs a verb and returns its output plus an invocation
+//! handle that `verb_cancel` can use to interrupt long-running calls.
+//! In-flight invocations live in `AppState::invocations`, keyed by the
+//! runtime's `PreviewId` (rendered as a string at the IPC boundary so
+//! the JS side never has to think about u64 precision).
 
 use serde::{Deserialize, Serialize};
 use tauri::State;
@@ -27,17 +29,34 @@ pub struct VerbInvokeArgs {
     pub inputs: serde_json::Value,
 }
 
+/// Result of a verb invocation: the output the host commits, plus the
+/// opaque handle the UI hands back to `verb_cancel` if the user
+/// interrupts a still-running invocation.
+#[derive(Debug, Serialize)]
+pub struct VerbInvocationResult {
+    /// Per-invocation handle. Stringified `PreviewId` so the JS side
+    /// doesn't lose precision on values above 2^53.
+    pub invocation_id: String,
+    /// The verb's output, ready for preview / commit.
+    pub output: VerbOutput,
+}
+
 /// Metadata about an available verb.
 #[derive(Debug, Serialize)]
 pub struct VerbInfo {
     /// Stable verb ID, used in `verb_invoke`.
     pub id: String,
+    /// Display name for menus and the command palette.
+    pub display_name: String,
     /// One-line description shown in the command palette.
     pub description: String,
     /// Whether the verb can be cancelled mid-run.
     pub cancellable: bool,
     /// Backend capabilities required to run this verb.
     pub required_capabilities: u32,
+    /// JSON Schema for the verb's input payload — surfaced so the UI
+    /// can render an input form without baking per-verb knowledge.
+    pub input_schema: serde_json::Value,
 }
 
 /// Lists all verbs registered with the runtime, sorted by ID.
@@ -48,9 +67,11 @@ pub async fn verb_list(state: State<'_, AppState>) -> CommandResult<Vec<VerbInfo
         .into_iter()
         .map(|d| VerbInfo {
             id: d.id.as_str().to_owned(),
+            display_name: d.display_name,
             description: d.description,
             cancellable: d.cancellable,
             required_capabilities: d.required_capabilities.0,
+            input_schema: d.input_schema,
         })
         .collect())
 }
@@ -70,7 +91,7 @@ pub async fn verb_list(state: State<'_, AppState>) -> CommandResult<Vec<VerbInfo
 pub async fn verb_invoke(
     args: VerbInvokeArgs,
     state: State<'_, AppState>,
-) -> CommandResult<VerbOutput> {
+) -> CommandResult<VerbInvocationResult> {
     let verb_id = VerbId::new(&args.verb_id);
     let inputs = VerbInputs::new(args.inputs);
 
@@ -102,28 +123,47 @@ pub async fn verb_invoke(
             message: e.to_string(),
         })?;
 
-    let preview = invocation
-        .finish()
-        .await
-        .map_err(|e| AppCommandError::VerbError {
-            message: e.to_string(),
-        })?;
+    // Register the cancel token before awaiting the verb body so a
+    // concurrent `verb_cancel` IPC call can find and fire it.
+    let preview_id = invocation.preview_id().get();
+    state
+        .invocations
+        .insert(preview_id, invocation.cancellation());
 
-    Ok(preview.output)
+    let result = invocation.finish().await;
+
+    // Always remove the entry — successful, cancelled, or errored.
+    state.invocations.remove(&preview_id);
+
+    let preview = result.map_err(|e| AppCommandError::VerbError {
+        message: e.to_string(),
+    })?;
+
+    Ok(VerbInvocationResult {
+        invocation_id: preview_id.to_string(),
+        output: preview.output,
+    })
 }
 
 /// Cancels an in-progress verb invocation by its opaque ID.
 ///
-/// `invocation_id` identifies a specific in-flight call, not a verb
-/// type — multiple concurrent invocations of the same verb each get
-/// their own id. Per-session in-flight tracking is not yet wired,
-/// so this command returns `Unimplemented` until the invocation map
-/// lands.
+/// `invocation_id` is the value returned by `verb_invoke` (a stringified
+/// `PreviewId`). Cancellation is cooperative: the verb observes the
+/// token between expensive operations and returns
+/// [`pixhaus_ai::plugin::error::VerbError::Cancelled`] when it sees the
+/// fire. Idempotent — a missing id (already finished or never seen) is
+/// not an error.
 #[tauri::command(async, rename_all = "snake_case")]
-pub async fn verb_cancel(_invocation_id: String, _state: State<'_, AppState>) -> CommandResult<()> {
-    Err(AppCommandError::Unimplemented {
-        stream: "verb cancellation (in-flight invocation map)".into(),
-    })
+pub async fn verb_cancel(invocation_id: String, state: State<'_, AppState>) -> CommandResult<()> {
+    let id: u64 = invocation_id
+        .parse()
+        .map_err(|_| AppCommandError::Validation {
+            detail: format!("invocation_id is not a valid u64: {invocation_id:?}"),
+        })?;
+    if let Some((_, token)) = state.invocations.remove(&id) {
+        token.cancel();
+    }
+    Ok(())
 }
 
 #[cfg(test)]
@@ -134,9 +174,11 @@ mod tests {
     fn verb_info_fields_are_present() {
         let info = VerbInfo {
             id: "pixhaus.builtin.critique".into(),
+            display_name: "Critique".into(),
             description: "VLM quality analysis".into(),
             cancellable: true,
             required_capabilities: 0b10, // VISION_LANGUAGE bit
+            input_schema: serde_json::json!({"type": "object"}),
         };
         assert!(!info.id.is_empty());
         assert!(info.cancellable);

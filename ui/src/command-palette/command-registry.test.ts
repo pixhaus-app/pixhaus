@@ -77,6 +77,7 @@ import {
   setTilemapPanelVisible,
 } from "../shell/panel-state";
 import { setActiveProject } from "../project-state";
+import { activeVerb, clearVerbCache, setActiveVerb } from "../lib/ai/verb-invoke-state";
 
 const FAKE_PROJECT = {
   metadata: { name: "Test", version: "0.0.0" },
@@ -259,23 +260,46 @@ describe("dispatchCommand — unknown", () => {
 });
 
 describe("dispatchCommand — ai", () => {
-  it("ai:critique invokes verb_invoke with the critique verb id", async () => {
-    invokeMock.mockResolvedValue({ effects: [] });
-    dispatchCommand("ai:critique");
-    // invokeBuiltinVerb pushes a toast then awaits the IPC; flush.
-    await new Promise((r) => setTimeout(r, 0));
-    expect(invokeMock).toHaveBeenCalledWith("verb_invoke", {
-      args: { verb_id: "pixhaus.builtin.critique", inputs: {} },
-    });
+  beforeEach(() => {
+    // The verb-list cache is module-scoped and survives across tests
+    // unless explicitly cleared. Reset so each test sees a fresh fetch.
+    void clearVerbCache();
+    setActiveVerb(null);
   });
 
-  it("ai:inbetween invokes verb_invoke with the inbetween verb id", async () => {
-    invokeMock.mockResolvedValue({ effects: [] });
+  it("ai:critique fetches verb metadata via verb_list and opens the modal", async () => {
+    invokeMock.mockResolvedValue([
+      {
+        id: "pixhaus.builtin.critique",
+        display_name: "Critique",
+        description: "VLM analysis",
+        cancellable: true,
+        required_capabilities: 0,
+        input_schema: { type: "object", properties: {} },
+      },
+    ]);
+    dispatchCommand("ai:critique");
+    // openVerbModal awaits verb_list before setting activeVerb; flush.
+    await new Promise((r) => setTimeout(r, 0));
+    expect(invokeMock).toHaveBeenCalledWith("verb_list", undefined);
+    expect(activeVerb()?.id).toBe("pixhaus.builtin.critique");
+  });
+
+  it("ai:inbetween triggers a verb_list fetch and opens the modal for inbetween", async () => {
+    invokeMock.mockResolvedValue([
+      {
+        id: "pixhaus.builtin.inbetween",
+        display_name: "Inbetween",
+        description: "Frame interpolation",
+        cancellable: true,
+        required_capabilities: 0,
+        input_schema: { type: "object", properties: {} },
+      },
+    ]);
     dispatchCommand("ai:inbetween");
     await new Promise((r) => setTimeout(r, 0));
-    expect(invokeMock).toHaveBeenCalledWith("verb_invoke", {
-      args: { verb_id: "pixhaus.builtin.inbetween", inputs: {} },
-    });
+    expect(invokeMock).toHaveBeenCalledWith("verb_list", undefined);
+    expect(activeVerb()?.id).toBe("pixhaus.builtin.inbetween");
   });
 });
 
