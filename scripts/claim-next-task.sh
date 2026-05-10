@@ -61,7 +61,7 @@ if [ -z "$TASK_LINE_NO" ]; then
 fi
 
 TASK_LINE="$(sed -n "${TASK_LINE_NO}p" "$QUEUE")"
-TASK_ID="$(echo "$TASK_LINE" | sed -E 's/^- \[ \] UNCLAIMED:\s*([A-Za-z0-9_-]+).*/\1/')"
+TASK_ID="$(echo "$TASK_LINE" | sed -E 's/^- \[ \] UNCLAIMED:[[:space:]]*([A-Za-z0-9_.-]+).*/\1/')"
 if [ -z "$TASK_ID" ]; then
     echo "claim: could not parse task id from line: $TASK_LINE" >&2
     exit 1
