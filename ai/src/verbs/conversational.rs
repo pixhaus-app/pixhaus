@@ -37,13 +37,15 @@ use tokio::select;
 use tokio_util::sync::CancellationToken;
 use tracing::debug;
 
-use super::context::VerbContext;
-use super::descriptor::{BackendCapabilities, CostEstimate, EffectKind, VerbDescriptor, VerbId};
-use super::error::{Result, VerbError};
-use super::inputs::VerbInputs;
-use super::output::{ActualCost, VerbEffect, VerbOutput};
-use super::progress::{VerbProgress, VerbProgressEvent};
-use super::verb::Verb;
+use crate::plugin::context::VerbContext;
+use crate::plugin::descriptor::{
+    BackendCapabilities, CostEstimate, EffectKind, VerbDescriptor, VerbId,
+};
+use crate::plugin::error::{Result, VerbError};
+use crate::plugin::inputs::VerbInputs;
+use crate::plugin::output::{ActualCost, VerbEffect, VerbOutput};
+use crate::plugin::progress::{VerbProgress, VerbProgressEvent};
+use crate::plugin::verb::Verb;
 use crate::backends::{
     InferenceBackend, InferenceRequest, InferenceResponse, TextGenRequest, ToolDef,
 };

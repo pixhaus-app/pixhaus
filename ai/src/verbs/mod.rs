@@ -18,9 +18,11 @@
 //! [`crate::plugin::context::VerbContext`] to a known concrete adapter and
 //! delegates to that adapter's operational `invoke` method.
 
+pub mod audio_timing;
 pub mod auto_mesh_deformation;
 pub mod cleanup;
 pub mod continue_verb;
+pub mod conversational;
 pub mod critique;
 pub mod extend;
 pub mod inbetween;
@@ -31,9 +33,11 @@ pub mod tile;
 pub mod tileset_from_description;
 pub mod variant;
 
+pub use audio_timing::AudioTimingVerb;
 pub use auto_mesh_deformation::AutoMeshDeformationVerb;
 pub use cleanup::CleanupVerb;
 pub use continue_verb::ContinueVerb;
+pub use conversational::ConversationalVerb;
 pub use critique::CritiqueVerb;
 pub use extend::ExtendVerb;
 pub use inbetween::InbetweenVerb;

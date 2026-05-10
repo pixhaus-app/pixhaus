@@ -51,13 +51,15 @@ use pixhaus_core::project::{
 use serde::{Deserialize, Serialize};
 use tokio_util::sync::CancellationToken;
 
-use super::context::{PixelData, VerbContext};
-use super::descriptor::{BackendCapabilities, CostEstimate, EffectKind, VerbDescriptor, VerbId};
-use super::error::{Result, VerbError};
-use super::inputs::VerbInputs;
-use super::output::{ActualCost, NewPixelBuffer, VerbEffect, VerbOutput};
-use super::progress::{VerbProgress, VerbProgressEvent};
-use super::verb::Verb;
+use crate::plugin::context::{PixelData, VerbContext};
+use crate::plugin::descriptor::{
+    BackendCapabilities, CostEstimate, EffectKind, VerbDescriptor, VerbId,
+};
+use crate::plugin::error::{Result, VerbError};
+use crate::plugin::inputs::VerbInputs;
+use crate::plugin::output::{ActualCost, NewPixelBuffer, VerbEffect, VerbOutput};
+use crate::plugin::progress::{VerbProgress, VerbProgressEvent};
+use crate::plugin::verb::Verb;
 
 /// Stable identifier for the built-in audio-timing verb.
 pub const AUDIO_TIMING_VERB_ID: &str = "pixhaus.builtin.audio_timing";
@@ -873,8 +875,8 @@ mod tests {
         }
     }
 
-    fn ctx_with_sprite() -> super::super::context::VerbContext {
-        let mut ctx = super::super::context::VerbContext::empty(metadata());
+    fn ctx_with_sprite() -> crate::plugin::context::VerbContext {
+        let mut ctx = crate::plugin::context::VerbContext::empty(metadata());
         ctx.active_sprite = Some(SpriteId::new(1));
         ctx
     }
@@ -1227,7 +1229,7 @@ mod tests {
             .invoke(
                 &VerbId::new(AUDIO_TIMING_VERB_ID),
                 // No active sprite in context.
-                super::super::context::VerbContext::empty(metadata()),
+                crate::plugin::context::VerbContext::empty(metadata()),
                 inputs,
             )
             .unwrap();

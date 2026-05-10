@@ -11,8 +11,8 @@ use std::sync::Arc;
 use pixhaus_ai::backends::BackendRegistry;
 use pixhaus_ai::plugin::runtime::VerbRuntime;
 use pixhaus_ai::verbs::{
-    AutoMeshDeformationVerb, CleanupVerb, ContinueVerb, CritiqueVerb, ExtendVerb, InbetweenVerb,
-    MotionFromVideoVerb, ProjectStyleLearningVerb, SketchFinishingVerb, TileVerb,
+    AudioTimingVerb, AutoMeshDeformationVerb, CleanupVerb, ContinueVerb, CritiqueVerb, ExtendVerb,
+    InbetweenVerb, MotionFromVideoVerb, ProjectStyleLearningVerb, SketchFinishingVerb, TileVerb,
     TilesetFromDescriptionVerb, VariantVerb,
 };
 use pixhaus_core::project::{LayerId, PixelBufferId, Project, Rgba, SpriteId};
@@ -167,6 +167,7 @@ impl AppState {
 
         // Registration fails only on a duplicate ID, which cannot happen
         // with the hardcoded verb set below. Discard the Ok(()) result.
+        let _ = runtime.register(AudioTimingVerb::new());
         let _ = runtime.register(AutoMeshDeformationVerb::new());
         let _ = runtime.register(CleanupVerb::new());
         let _ = runtime.register(ContinueVerb::new());
@@ -179,6 +180,14 @@ impl AppState {
         let _ = runtime.register(TileVerb::new(backend_registry.clone()));
         let _ = runtime.register(TilesetFromDescriptionVerb::new(backend_registry.clone()));
         let _ = runtime.register(VariantVerb::new(backend_registry.clone()));
+
+        // ConversationalVerb is intentionally NOT registered here.
+        // Its `::new` requires an `Arc<dyn InferenceBackend>` (a single
+        // concrete backend, not a registry), so registration must happen
+        // after the user configures a backend in the settings UI. A
+        // follow-up will either refactor `ConversationalVerb::new` to
+        // accept `Arc<BackendRegistry>` (matching Variant/Tile/etc.) or
+        // expose a `register_after_backend_added` path in `AppState`.
 
         let verb_runtime = Arc::new(runtime);
         let plugins = Arc::new(PluginRegistry::new(verb_runtime.clone()));
@@ -214,6 +223,7 @@ mod tests {
         // the test reflects the real surface.
         let mut expected = [
             "pixhaus.ai.sketch_finishing",
+            "pixhaus.builtin.audio_timing",
             "pixhaus.builtin.auto-mesh-deformation",
             "pixhaus.builtin.cleanup",
             "pixhaus.builtin.continue",
