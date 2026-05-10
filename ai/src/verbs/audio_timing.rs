@@ -37,7 +37,7 @@
 //! PCM WAV only (RIFF container, audio-format code `1`). The header is
 //! parsed inline; no external audio crate is needed. 8-bit, 16-bit,
 //! 24-bit, and 32-bit signed PCM are all supported. Passing MP3, OGG,
-//! or FLAC returns [`super::error::VerbError::Schema`] with instructions
+//! or FLAC returns [`crate::plugin::error::VerbError::Schema`] with instructions
 //! to convert to PCM WAV first.
 
 use std::collections::HashSet;
