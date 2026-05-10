@@ -23,7 +23,6 @@
 //! Implements: `docs/planning/work/streams.md#s26`
 
 use std::io::Cursor;
-use std::sync::Arc;
 use std::time::Instant;
 
 use async_trait::async_trait;
@@ -34,7 +33,7 @@ use tokio_util::sync::CancellationToken;
 
 use pixhaus_core::project::{Cel, FrameIndex, Layer, LayerId, PixelBufferId, Rgba, Size, SpriteId};
 
-use crate::backends::{BackendRegistry, ImageEditRequest, InferenceRequest, InferenceResponse};
+use crate::backends::{ImageEditRequest, InferenceRequest, InferenceResponse};
 use crate::plugin::context::{PixelData, VerbContext};
 use crate::plugin::descriptor::{
     BackendCapabilities, CostEstimate, EffectKind, VerbDescriptor, VerbId,
@@ -76,9 +75,10 @@ pub enum VariantMode {
     },
     /// AI-powered variant from a natural-language description.
     ///
-    /// Requires an `IMAGE_EDIT`-capable backend in the
-    /// [`BackendRegistry`]. Returns [`VerbError::Backend`] if no
-    /// matching backend is registered.
+    /// Requires an `IMAGE_EDIT`-capable backend registered with the
+    /// [`crate::plugin::runtime::VerbRuntime`]. Returns
+    /// [`VerbError::Backend`] when no matching backend is attached to
+    /// `VerbContext`.
     TextEdit {
         /// Description of the desired variant, e.g. *"same pose, blue armor
         /// instead of red, identical palette count"*.
@@ -111,19 +111,27 @@ pub struct VariantInputs {
 
 /// AI verb that generates sprite variants.
 ///
-/// Construct with [`VariantVerb::new`], passing a shared
-/// [`BackendRegistry`] so the text-edit path can reach the configured
-/// image-edit backend without coupling the verb to a concrete adapter.
+/// Construct with [`VariantVerb::new`] (no args). The runtime selects an
+/// `IMAGE_EDIT`-capable backend per invocation and injects it into
+/// `VerbContext::backend`.
+///
+/// Both `palette_swap` and `text_edit` modes currently require an
+/// `IMAGE_EDIT` backend to be registered — `palette_swap` is
+/// deterministic and doesn't actually call the backend, but advertising
+/// the capability lets the runtime gate the verb on backend availability
+/// uniformly. Users who want palette-swap-only without a backend should
+/// invoke the core palette-swap helper directly rather than going through
+/// the verb runtime.
 pub struct VariantVerb {
     descriptor: VerbDescriptor,
-    registry: Arc<BackendRegistry>,
 }
 
 impl VariantVerb {
-    /// Constructs the verb with the supplied backend registry.
+    /// Constructs the verb. The runtime injects the matching backend per
+    /// invocation; the verb does not hold one.
     #[must_use]
     #[allow(clippy::disallowed_methods)]
-    pub fn new(registry: Arc<BackendRegistry>) -> Self {
+    pub fn new() -> Self {
         let input_schema = serde_json::json!({
             "type": "object",
             "properties": {
@@ -195,11 +203,11 @@ impl VariantVerb {
                     "Generate sprite variants: palette swaps, equipment overlays, expression sets"
                         .into(),
                 version: env!("CARGO_PKG_VERSION").into(),
-                // No required capabilities: palette-swap path works without
-                // any backend. The text-edit path checks the registry at
-                // invoke time and returns a clear error when no IMAGE_EDIT
-                // backend is available.
-                required_capabilities: BackendCapabilities::empty(),
+                // The text-edit mode needs IMAGE_EDIT; palette-swap mode
+                // technically doesn't, but advertising the capability lets
+                // the runtime route every invocation through a uniform
+                // backend-injection path.
+                required_capabilities: BackendCapabilities::IMAGE_EDIT,
                 input_schema,
                 output_schema: None,
                 output_kinds: vec![EffectKind::AddLayer],
@@ -213,8 +221,13 @@ impl VariantVerb {
                 cancellable: true,
                 documentation_url: Some("docs/verbs/variant.md".into()),
             },
-            registry,
         }
+    }
+}
+
+impl Default for VariantVerb {
+    fn default() -> Self {
+        Self::new()
     }
 }
 
@@ -287,8 +300,8 @@ impl Verb for VariantVerb {
                 invoke_palette_swap(substitutions, ictx, progress, cancel).await
             }
             VariantMode::TextEdit { description, count } => {
-                self.invoke_text_edit(description, count, ictx, progress, cancel)
-                    .await
+                let backend = crate::verbs::ctx_fat_backend(&ctx)?;
+                Self::invoke_text_edit(backend, description, count, ictx, progress, cancel).await
             }
         }
     }
@@ -382,23 +395,13 @@ fn build_text_effects(
 
 impl VariantVerb {
     async fn invoke_text_edit(
-        &self,
+        backend: &dyn crate::backends::InferenceBackend,
         description: String,
         count: u32,
         ictx: InvokeCtx,
         progress: VerbProgress,
         cancel: CancellationToken,
     ) -> Result<VerbOutput> {
-        let backend = self
-            .registry
-            .find_for(BackendCapabilities::IMAGE_EDIT)
-            .ok_or_else(|| {
-                VerbError::Backend(
-                    "no IMAGE_EDIT backend is configured; \
-                     add a backend in preferences"
-                        .into(),
-                )
-            })?;
         let backend_id = backend.backend_id().to_owned();
         progress
             .send(VerbProgressEvent::Started {
@@ -578,7 +581,6 @@ fn make_layer_effect(
 
 #[cfg(test)]
 mod tests {
-    use std::sync::Arc;
     use std::time::Duration;
 
     use async_trait::async_trait;
@@ -586,9 +588,10 @@ mod tests {
 
     use pixhaus_core::project::{FrameIndex, ProjectMetadata, SpriteId};
 
+    use crate::backends::bridge::BackendProxy;
     use crate::backends::{
-        BackendError, BackendRegistry, ImageEditRequest, ImageGenResponse, InferenceBackend,
-        InferenceRequest, InferenceResponse,
+        BackendError, ImageEditRequest, ImageGenResponse, InferenceBackend, InferenceRequest,
+        InferenceResponse,
     };
     use crate::plugin::context::VerbContext;
     use crate::plugin::descriptor::{BackendCapabilities, CostEstimate, VerbId};
@@ -618,10 +621,6 @@ mod tests {
         ctx
     }
 
-    fn empty_registry() -> Arc<BackendRegistry> {
-        Arc::new(BackendRegistry::new())
-    }
-
     /// 2×2 all-red RGBA8 image.
     fn red2x2() -> PixelData {
         PixelData::rgba8(
@@ -636,11 +635,13 @@ mod tests {
     // ── Descriptor ────────────────────────────────────────────────────────────
 
     #[test]
-    fn descriptor_declares_no_required_capabilities() {
-        let verb = VariantVerb::new(empty_registry());
+    fn descriptor_requires_image_edit() {
+        let verb = VariantVerb::new();
         assert!(
-            verb.descriptor().required_capabilities.is_empty(),
-            "palette-swap path must work without a backend"
+            verb.descriptor()
+                .required_capabilities
+                .contains(BackendCapabilities::IMAGE_EDIT),
+            "verb advertises IMAGE_EDIT so the runtime gates dispatch on backend availability"
         );
         assert!(verb.descriptor().cancellable);
         assert!(verb.descriptor().streaming);
@@ -648,7 +649,7 @@ mod tests {
 
     #[test]
     fn verb_id_matches_constant() {
-        let verb = VariantVerb::new(empty_registry());
+        let verb = VariantVerb::new();
         assert_eq!(verb.descriptor().id, VerbId::new(VARIANT_VERB_ID));
     }
 
@@ -656,7 +657,7 @@ mod tests {
 
     #[test]
     fn validate_rejects_malformed_pixels() {
-        let verb = VariantVerb::new(empty_registry());
+        let verb = VariantVerb::new();
         let inputs = VerbInputs::from_struct(&VariantInputs {
             pixels: PixelData {
                 width: 4,
@@ -679,7 +680,7 @@ mod tests {
 
     #[test]
     fn validate_rejects_non_rgba_pixels() {
-        let verb = VariantVerb::new(empty_registry());
+        let verb = VariantVerb::new();
         let inputs = VerbInputs::from_struct(&VariantInputs {
             pixels: PixelData {
                 width: 2,
@@ -702,7 +703,7 @@ mod tests {
 
     #[test]
     fn validate_rejects_empty_substitutions() {
-        let verb = VariantVerb::new(empty_registry());
+        let verb = VariantVerb::new();
         let inputs = VerbInputs::from_struct(&VariantInputs {
             pixels: red2x2(),
             mode: VariantMode::PaletteSwap {
@@ -716,7 +717,7 @@ mod tests {
 
     #[test]
     fn validate_rejects_empty_description() {
-        let verb = VariantVerb::new(empty_registry());
+        let verb = VariantVerb::new();
         let inputs = VerbInputs::from_struct(&VariantInputs {
             pixels: red2x2(),
             mode: VariantMode::TextEdit {
@@ -731,7 +732,7 @@ mod tests {
 
     #[test]
     fn validate_accepts_well_formed_palette_swap() {
-        let verb = VariantVerb::new(empty_registry());
+        let verb = VariantVerb::new();
         let inputs = VerbInputs::from_struct(&VariantInputs {
             pixels: red2x2(),
             mode: VariantMode::PaletteSwap {
@@ -836,9 +837,13 @@ mod tests {
     #[tokio::test]
     async fn palette_swap_round_trips_through_runtime() {
         let runtime = VerbRuntime::new();
+        // Verb advertises IMAGE_EDIT to gate dispatch on backend
+        // availability — even though palette-swap mode doesn't call the
+        // backend itself, the runtime needs one registered to dispatch.
         runtime
-            .register(VariantVerb::new(empty_registry()))
+            .register_backend(BackendProxy::new(GreenStub), 0)
             .unwrap();
+        runtime.register(VariantVerb::new()).unwrap();
 
         let inputs = VerbInputs::from_struct(&VariantInputs {
             pixels: red2x2(),
@@ -880,9 +885,7 @@ mod tests {
     #[tokio::test]
     async fn text_edit_fails_without_backend() {
         let runtime = VerbRuntime::new();
-        runtime
-            .register(VariantVerb::new(empty_registry()))
-            .unwrap();
+        runtime.register(VariantVerb::new()).unwrap();
 
         let inputs = VerbInputs::from_struct(&VariantInputs {
             pixels: red2x2(),
@@ -894,13 +897,17 @@ mod tests {
         })
         .unwrap();
 
-        let inv = runtime
+        // No IMAGE_EDIT backend registered — runtime pre-flight rejects
+        // the dispatch before the verb's invoke is called.
+        let err = runtime
             .invoke(&VerbId::new(VARIANT_VERB_ID), ctx_with_sprite(), inputs)
-            .unwrap();
-        let result = inv.finish().await;
+            .unwrap_err();
         assert!(
-            matches!(result, Err(VerbError::Backend(_))),
-            "expected Backend error when no IMAGE_EDIT backend is registered"
+            matches!(
+                err,
+                VerbError::UnsupportedCapability { .. } | VerbError::BackendUnavailable { .. }
+            ),
+            "expected pre-flight rejection when no IMAGE_EDIT backend is registered, got {err:?}"
         );
     }
 
@@ -965,12 +972,11 @@ mod tests {
 
     #[tokio::test]
     async fn text_edit_produces_layer_with_ai_backend() {
-        let mut reg = BackendRegistry::new();
-        reg.add(GreenStub);
-        let reg = Arc::new(reg);
-
         let runtime = VerbRuntime::new();
-        runtime.register(VariantVerb::new(reg)).unwrap();
+        runtime
+            .register_backend(BackendProxy::new(GreenStub), 0)
+            .unwrap();
+        runtime.register(VariantVerb::new()).unwrap();
 
         let inputs = VerbInputs::from_struct(&VariantInputs {
             pixels: red2x2(),
@@ -1008,12 +1014,11 @@ mod tests {
 
     #[tokio::test]
     async fn text_edit_multi_count_produces_multiple_layers() {
-        let mut reg = BackendRegistry::new();
-        reg.add(GreenStub);
-        let reg = Arc::new(reg);
-
         let runtime = VerbRuntime::new();
-        runtime.register(VariantVerb::new(reg)).unwrap();
+        runtime
+            .register_backend(BackendProxy::new(GreenStub), 0)
+            .unwrap();
+        runtime.register(VariantVerb::new()).unwrap();
 
         let inputs = VerbInputs::from_struct(&VariantInputs {
             pixels: red2x2(),
@@ -1040,7 +1045,7 @@ mod tests {
 
     #[tokio::test]
     async fn cancellation_stops_palette_swap() {
-        let verb = VariantVerb::new(empty_registry());
+        let verb = VariantVerb::new();
         let cancel = CancellationToken::new();
         cancel.cancel();
 
@@ -1066,9 +1071,12 @@ mod tests {
     #[tokio::test]
     async fn palette_swap_requires_active_sprite() {
         let runtime = VerbRuntime::new();
+        // Backend needed to satisfy the runtime's pre-flight even though
+        // palette-swap mode never invokes it.
         runtime
-            .register(VariantVerb::new(empty_registry()))
+            .register_backend(BackendProxy::new(GreenStub), 0)
             .unwrap();
+        runtime.register(VariantVerb::new()).unwrap();
 
         let inputs = VerbInputs::from_struct(&VariantInputs {
             pixels: red2x2(),

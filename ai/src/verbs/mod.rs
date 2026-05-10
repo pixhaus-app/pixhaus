@@ -68,11 +68,55 @@ use tokio_util::sync::CancellationToken;
 
 use crate::backends::{
     InferenceBackend as OpsBackend, InferenceRequest, InferenceResponse, TextGenRequest,
-    TextGenResponse, anthropic::AnthropicBackend, openai::OpenAiBackend,
+    TextGenResponse, anthropic::AnthropicBackend, bridge::BackendProxy, openai::OpenAiBackend,
+    replicate::ReplicateBackend, stability::StabilityBackend,
 };
 use crate::plugin::backend::InferenceBackend as PluginBackend;
+use crate::plugin::context::VerbContext;
 use crate::plugin::error::{Result, VerbError};
 use crate::plugin::progress::VerbProgress;
+
+/// Returns the fat operational backend attached to `ctx`, downcasting
+/// from the thin trait the runtime stores.
+///
+/// The runtime selects a backend matching the verb's `required_capabilities`
+/// and stores it in `ctx.backend` as a `Arc<dyn plugin::backend::InferenceBackend>`.
+/// Verbs that need to make actual inference calls reach the operational
+/// `crate::backends::InferenceBackend` trait through this helper. Add a
+/// new branch when a new concrete adapter lands; verbs themselves don't
+/// need to change.
+///
+/// # Errors
+///
+/// - [`VerbError::Backend`] if `ctx.backend` is `None` (the runtime
+///   skips selection for verbs whose `required_capabilities` are empty
+///   — none of the backend-using verbs hit this in practice) or holds
+///   a backend type this helper doesn't recognise (a future adapter that
+///   forgot to register here, or a test stub that isn't wrapped in
+///   [`BackendProxy`]).
+pub(crate) fn ctx_fat_backend(ctx: &VerbContext) -> Result<&dyn OpsBackend> {
+    let plug = ctx
+        .backend
+        .as_ref()
+        .ok_or_else(|| VerbError::Backend("no backend attached to verb context".into()))?;
+    let any = plug.as_any();
+    if let Some(b) = any.downcast_ref::<AnthropicBackend>() {
+        Ok(b as &dyn OpsBackend)
+    } else if let Some(b) = any.downcast_ref::<OpenAiBackend>() {
+        Ok(b as &dyn OpsBackend)
+    } else if let Some(b) = any.downcast_ref::<ReplicateBackend>() {
+        Ok(b as &dyn OpsBackend)
+    } else if let Some(b) = any.downcast_ref::<StabilityBackend>() {
+        Ok(b as &dyn OpsBackend)
+    } else if let Some(p) = any.downcast_ref::<BackendProxy>() {
+        Ok(p.fat())
+    } else {
+        Err(VerbError::Backend(
+            "ctx.backend type not recognised; register a known adapter or wrap in BackendProxy"
+                .into(),
+        ))
+    }
+}
 
 /// Sends a text-generation (optionally vision-language) request through
 /// whichever concrete backend is attached to the verb context.
@@ -104,6 +148,11 @@ pub(crate) async fn call_text_vlm(
             .map_err(|e| VerbError::Backend(e.to_string()))?
     } else if let Some(b) = backend.as_any().downcast_ref::<OpenAiBackend>() {
         b.invoke(req, progress, cancel)
+            .await
+            .map_err(|e| VerbError::Backend(e.to_string()))?
+    } else if let Some(p) = backend.as_any().downcast_ref::<BackendProxy>() {
+        p.fat()
+            .invoke(req, progress, cancel)
             .await
             .map_err(|e| VerbError::Backend(e.to_string()))?
     } else {

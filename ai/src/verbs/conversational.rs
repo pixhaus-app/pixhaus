@@ -25,7 +25,6 @@
 //! (`pixhaus.builtin.conversational.*`). The host's undo system
 //! interprets these.
 
-use std::sync::Arc;
 use std::time::Instant;
 
 use async_trait::async_trait;
@@ -37,9 +36,7 @@ use tokio::select;
 use tokio_util::sync::CancellationToken;
 use tracing::debug;
 
-use crate::backends::{
-    InferenceBackend, InferenceRequest, InferenceResponse, TextGenRequest, ToolDef,
-};
+use crate::backends::{TextGenRequest, ToolDef};
 use crate::plugin::context::VerbContext;
 use crate::plugin::descriptor::{
     BackendCapabilities, CostEstimate, EffectKind, VerbDescriptor, VerbId,
@@ -68,36 +65,39 @@ pub struct ConversationalInputs {
 
 /// Verb: free-form natural language → multi-step editor command plan.
 ///
-/// Constructed with an `Arc<dyn InferenceBackend>` that satisfies
-/// `VISION_LANGUAGE | TOOL_USE`. The verb owns its backend reference
-/// directly because the `plugin::backend::InferenceBackend` trait (used
-/// by the runtime's backend registry) is not yet bridged to the
-/// concrete adapters in `backends/`. The app layer passes the concrete
-/// adapter at construction time.
+/// Construct with [`ConversationalVerb::new`] (no args). The runtime
+/// selects a `VISION_LANGUAGE | TOOL_USE`-capable backend per
+/// invocation and injects it into [`VerbContext::backend`]; the verb
+/// resolves it via [`crate::verbs::ctx_fat_backend`] at invoke time.
 pub struct ConversationalVerb {
     descriptor: VerbDescriptor,
-    backend: Arc<dyn InferenceBackend>,
 }
 
 impl std::fmt::Debug for ConversationalVerb {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("ConversationalVerb")
             .field("id", &self.descriptor.id)
-            .field("backend", &self.descriptor.required_capabilities)
+            .field(
+                "required_capabilities",
+                &self.descriptor.required_capabilities,
+            )
             .finish()
     }
 }
 
+impl Default for ConversationalVerb {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl ConversationalVerb {
-    /// Constructs the verb with the given inference backend.
-    ///
-    /// The backend should advertise at least `VISION_LANGUAGE` and
-    /// `TOOL_USE` capabilities. The constructor does not validate this;
-    /// mismatches surface as [`VerbError::Backend`] during invocation
-    /// when the backend rejects the tool-use request.
+    /// Constructs the verb. Backend resolution happens at invoke time
+    /// from [`VerbContext::backend`]; the runtime injects a backend
+    /// matching `required_capabilities` before dispatch.
     #[must_use]
     #[allow(clippy::disallowed_methods)]
-    pub fn new(backend: Arc<dyn InferenceBackend>) -> Self {
+    pub fn new() -> Self {
         let input_schema = serde_json::json!({
             "type": "object",
             "properties": {
@@ -139,7 +139,6 @@ impl ConversationalVerb {
                 cancellable: true,
                 documentation_url: Some("docs/verbs/conversational.md".into()),
             },
-            backend,
         }
     }
 
@@ -676,15 +675,20 @@ impl Verb for ConversationalVerb {
         req.max_tokens = Some(2048);
         req.temperature = Some(0.2);
 
+        let plug = ctx.backend.as_ref().ok_or_else(|| {
+            VerbError::Backend("conversational: no backend attached to verb context".into())
+        })?;
+
         let (progress_clone, cancel_clone) = (progress.clone(), cancel.clone());
-        let response = select! {
+        let text_resp = select! {
             biased;
             () = cancel_clone.cancelled() => return Err(VerbError::Cancelled),
-            res = self.backend.invoke(
-                InferenceRequest::Text(req),
+            res = crate::verbs::call_text_vlm(
+                plug.as_ref(),
+                req,
                 progress_clone,
                 cancel.clone(),
-            ) => res.map_err(|e| VerbError::Backend(e.to_string()))?,
+            ) => res?,
         };
 
         if cancel.is_cancelled() {
@@ -692,12 +696,6 @@ impl Verb for ConversationalVerb {
         }
 
         progress.step(Some(0.8), "parsing plan").await;
-
-        let InferenceResponse::Text(text_resp) = response else {
-            return Err(VerbError::Backend(
-                "conversational: backend returned a non-text response".into(),
-            ));
-        };
 
         if text_resp.tool_calls.is_empty() {
             // The VLM responded with text only — it may have asked a
@@ -854,9 +852,11 @@ fn build_summary(effects: &[VerbEffect], notes: &[String], instruction: &str) ->
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::backends::{BackendError, InferenceRequest};
+    use crate::backends::bridge::BackendProxy;
+    use crate::backends::{BackendError, InferenceBackend, InferenceRequest, InferenceResponse};
     use crate::plugin::descriptor::{BackendCapabilities, CostEstimate as BackendCostEstimate};
     use pixhaus_core::project::{FrameRange, ProjectMetadata, Size, Sprite, SpriteId};
+    use std::sync::Arc;
 
     // ── Stub backend ──────────────────────────────────────────────────────
 
@@ -868,12 +868,8 @@ mod tests {
     }
 
     impl StubVlm {
-        fn with_calls(calls: Vec<crate::backends::ToolCall>) -> Arc<Self> {
-            Arc::new(Self { tool_calls: calls })
-        }
-
-        fn empty_response() -> Arc<Self> {
-            Arc::new(Self { tool_calls: vec![] })
+        fn with_calls(calls: Vec<crate::backends::ToolCall>) -> Self {
+            Self { tool_calls: calls }
         }
     }
 
@@ -942,11 +938,17 @@ mod tests {
             .build()
     }
 
+    fn ctx_with_sprite_and_vlm(backend: impl InferenceBackend) -> VerbContext {
+        let mut ctx = ctx_with_sprite();
+        ctx.backend = Some(Arc::new(BackendProxy::new(backend)));
+        ctx
+    }
+
     // ── Descriptor tests ──────────────────────────────────────────────────
 
     #[test]
     fn descriptor_advertises_vlm_and_tool_use() {
-        let verb = ConversationalVerb::new(StubVlm::empty_response());
+        let verb = ConversationalVerb::new();
         let caps = verb.descriptor().required_capabilities;
         assert!(caps.contains(BackendCapabilities::VISION_LANGUAGE));
         assert!(caps.contains(BackendCapabilities::TOOL_USE));
@@ -956,7 +958,7 @@ mod tests {
 
     #[test]
     fn validate_rejects_empty_instruction() {
-        let verb = ConversationalVerb::new(StubVlm::empty_response());
+        let verb = ConversationalVerb::new();
         let inputs = VerbInputs::from_struct(&ConversationalInputs {
             instruction: "   ".into(),
         })
@@ -966,7 +968,7 @@ mod tests {
 
     #[test]
     fn validate_accepts_non_empty_instruction() {
-        let verb = ConversationalVerb::new(StubVlm::empty_response());
+        let verb = ConversationalVerb::new();
         let inputs = VerbInputs::from_struct(&ConversationalInputs {
             instruction: "add a scar layer".into(),
         })
@@ -1180,7 +1182,7 @@ mod tests {
             #[allow(clippy::disallowed_methods)]
             input: serde_json::json!({"name": "Scar", "opacity": 180}),
         }];
-        let verb = ConversationalVerb::new(StubVlm::with_calls(calls));
+        let verb = ConversationalVerb::new();
         let inputs = VerbInputs::from_struct(&ConversationalInputs {
             instruction: "add a scar layer".into(),
         })
@@ -1188,7 +1190,7 @@ mod tests {
         let (progress, _rx) = VerbProgress::channel();
         let output = verb
             .invoke(
-                ctx_with_sprite(),
+                ctx_with_sprite_and_vlm(StubVlm::with_calls(calls)),
                 inputs,
                 progress,
                 CancellationToken::new(),
@@ -1224,7 +1226,7 @@ mod tests {
             },
         ];
 
-        let verb = ConversationalVerb::new(StubVlm::with_calls(calls));
+        let verb = ConversationalVerb::new();
         let inputs = VerbInputs::from_struct(&ConversationalInputs {
             instruction: "make enemy angrier, add scar, slow walk to 8fps".into(),
         })
@@ -1232,7 +1234,7 @@ mod tests {
         let (progress, _rx) = VerbProgress::channel();
         let output = verb
             .invoke(
-                ctx_with_sprite(),
+                ctx_with_sprite_and_vlm(StubVlm::with_calls(calls)),
                 inputs,
                 progress,
                 CancellationToken::new(),
@@ -1248,7 +1250,7 @@ mod tests {
 
     #[tokio::test]
     async fn verb_requires_active_sprite() {
-        let verb = ConversationalVerb::new(StubVlm::empty_response());
+        let verb = ConversationalVerb::new();
         let inputs = VerbInputs::from_struct(&ConversationalInputs {
             instruction: "do something".into(),
         })
@@ -1301,7 +1303,7 @@ mod tests {
             }
         }
 
-        let verb = ConversationalVerb::new(Arc::new(TextOnlyVlm));
+        let verb = ConversationalVerb::new();
         let inputs = VerbInputs::from_struct(&ConversationalInputs {
             instruction: "make it look better".into(),
         })
@@ -1309,7 +1311,7 @@ mod tests {
         let (progress, _rx) = VerbProgress::channel();
         let output = verb
             .invoke(
-                ctx_with_sprite(),
+                ctx_with_sprite_and_vlm(TextOnlyVlm),
                 inputs,
                 progress,
                 CancellationToken::new(),
@@ -1356,7 +1358,7 @@ mod tests {
             }
         }
 
-        let verb = ConversationalVerb::new(Arc::new(NeverReturnsVlm));
+        let verb = ConversationalVerb::new();
         let inputs = VerbInputs::from_struct(&ConversationalInputs {
             instruction: "do something".into(),
         })
@@ -1366,7 +1368,12 @@ mod tests {
         cancel.cancel();
 
         let result = verb
-            .invoke(ctx_with_sprite(), inputs, progress, cancel)
+            .invoke(
+                ctx_with_sprite_and_vlm(NeverReturnsVlm),
+                inputs,
+                progress,
+                cancel,
+            )
             .await;
         assert!(matches!(result, Err(VerbError::Cancelled)));
     }
