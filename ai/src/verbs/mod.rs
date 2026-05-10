@@ -31,8 +31,18 @@ pub mod tile;
 pub mod tileset_from_description;
 pub mod variant;
 
+pub use auto_mesh_deformation::AutoMeshDeformationVerb;
 pub use cleanup::CleanupVerb;
+pub use continue_verb::ContinueVerb;
 pub use critique::CritiqueVerb;
+pub use extend::ExtendVerb;
+pub use inbetween::InbetweenVerb;
+pub use motion_from_video::MotionFromVideoVerb;
+pub use project_style_learning::ProjectStyleLearningVerb;
+pub use sketch_finishing::SketchFinishingVerb;
+pub use tile::TileVerb;
+pub use tileset_from_description::TilesetFromDescriptionVerb;
+pub use variant::VariantVerb;
 
 use tokio_util::sync::CancellationToken;
 

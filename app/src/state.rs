@@ -8,8 +8,13 @@ use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::Arc;
 
+use pixhaus_ai::backends::BackendRegistry;
 use pixhaus_ai::plugin::runtime::VerbRuntime;
-use pixhaus_ai::verbs::CritiqueVerb;
+use pixhaus_ai::verbs::{
+    AutoMeshDeformationVerb, CleanupVerb, ContinueVerb, CritiqueVerb, ExtendVerb, InbetweenVerb,
+    MotionFromVideoVerb, ProjectStyleLearningVerb, SketchFinishingVerb, TileVerb,
+    TilesetFromDescriptionVerb, VariantVerb,
+};
 use pixhaus_core::project::{LayerId, PixelBufferId, Project, Rgba, SpriteId};
 use pixhaus_core::undo::History;
 use pixhaus_io::pixhaus::PixelBufferEntry;
@@ -152,9 +157,28 @@ impl AppState {
     /// Tauri setup closure to load user-installed plugins asynchronously.
     pub fn new() -> Self {
         let runtime = VerbRuntime::new();
+
+        // The three verbs below hold a clone of this registry so they can
+        // resolve backends at invoke time. The registry starts empty;
+        // backend instances will be added by a forthcoming settings command
+        // once the user configures API keys. Wrapping in `Arc` is enough
+        // here — interior mutability comes with that follow-up.
+        let backend_registry = Arc::new(BackendRegistry::new());
+
         // Registration fails only on a duplicate ID, which cannot happen
         // with the hardcoded verb set below. Discard the Ok(()) result.
+        let _ = runtime.register(AutoMeshDeformationVerb::new());
+        let _ = runtime.register(CleanupVerb::new());
+        let _ = runtime.register(ContinueVerb::new());
         let _ = runtime.register(CritiqueVerb::new());
+        let _ = runtime.register(ExtendVerb::new());
+        let _ = runtime.register(InbetweenVerb::new());
+        let _ = runtime.register(MotionFromVideoVerb::new());
+        let _ = runtime.register(ProjectStyleLearningVerb::new());
+        let _ = runtime.register(SketchFinishingVerb::new());
+        let _ = runtime.register(TileVerb::new(backend_registry.clone()));
+        let _ = runtime.register(TilesetFromDescriptionVerb::new(backend_registry.clone()));
+        let _ = runtime.register(VariantVerb::new(backend_registry.clone()));
 
         let verb_runtime = Arc::new(runtime);
         let plugins = Arc::new(PluginRegistry::new(verb_runtime.clone()));
@@ -170,5 +194,40 @@ impl AppState {
 impl Default for AppState {
     fn default() -> Self {
         Self::new()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn new_registers_every_built_in_verb() {
+        let state = AppState::new();
+        let descriptors = state.verb_runtime.list();
+        let mut ids: Vec<&str> = descriptors.iter().map(|d| d.id.as_str()).collect();
+        ids.sort_unstable();
+
+        // Verb IDs as advertised by their descriptors. Note the namespace
+        // drift: most verbs use `pixhaus.builtin.*` but `sketch_finishing`
+        // uses `pixhaus.ai.*`. Tracked as a follow-up — left as-is here so
+        // the test reflects the real surface.
+        let mut expected = [
+            "pixhaus.ai.sketch_finishing",
+            "pixhaus.builtin.auto-mesh-deformation",
+            "pixhaus.builtin.cleanup",
+            "pixhaus.builtin.continue",
+            "pixhaus.builtin.critique",
+            "pixhaus.builtin.extend",
+            "pixhaus.builtin.inbetween",
+            "pixhaus.builtin.motion_from_video",
+            "pixhaus.builtin.project_style_learning",
+            "pixhaus.builtin.tile",
+            "pixhaus.builtin.tileset_from_description",
+            "pixhaus.builtin.variant",
+        ];
+        expected.sort_unstable();
+
+        assert_eq!(ids, expected);
     }
 }
