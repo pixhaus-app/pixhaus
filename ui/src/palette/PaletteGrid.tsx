@@ -27,6 +27,7 @@ import {
   startEditing,
 } from "./palette-panel-state";
 import { rgbaToCss, contrastColor } from "./color-utils";
+import ModalInput from "../components/ModalInput";
 
 type Props = {
   /** Called when the user double-clicks a swatch to open the color picker. */
@@ -47,6 +48,11 @@ const PaletteGrid: Component<Props> = (props) => {
   const [contextMenu, setContextMenu] = createSignal<ContextMenu | null>(null);
   const [dragFrom, setDragFrom] = createSignal<number | null>(null);
   const [dragOver, setDragOver] = createSignal<number | null>(null);
+  // Rename dialog: { index, current } when open, null when closed.
+  const [renameTarget, setRenameTarget] = createSignal<{
+    index: number;
+    current: string;
+  } | null>(null);
 
   const closeMenu = () => setContextMenu(null);
 
@@ -111,9 +117,7 @@ const PaletteGrid: Component<Props> = (props) => {
     closeMenu();
     const p = activePalette();
     const entry = p?.colors[index];
-    const current = entry?.name ?? "";
-    const next = window.prompt("Swatch name:", current);
-    if (next !== null) props.onRename(index, next);
+    setRenameTarget({ index, current: entry?.name ?? "" });
   };
 
   const handleDelete = (index: number) => {
@@ -244,6 +248,19 @@ const PaletteGrid: Component<Props> = (props) => {
           </button>
         </div>
       </Show>
+
+      <ModalInput
+        open={renameTarget() !== null}
+        title="Rename swatch"
+        label="Swatch name"
+        initialValue={renameTarget()?.current ?? ""}
+        onSubmit={(value) => {
+          const target = renameTarget();
+          if (target !== null) props.onRename(target.index, value);
+          setRenameTarget(null);
+        }}
+        onClose={() => setRenameTarget(null)}
+      />
     </>
   );
 };

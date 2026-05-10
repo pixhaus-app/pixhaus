@@ -40,6 +40,7 @@ import HarmonyPicker from "./HarmonyPicker";
 import RampGenerator from "./RampGenerator";
 import PaletteIOMenu from "./PaletteIOMenu";
 import LospecBrowser from "./LospecBrowser";
+import ModalInput from "../components/ModalInput";
 
 type SubPanel = "harmony" | "ramp" | "lospec" | null;
 
@@ -58,6 +59,7 @@ const PalettePanel: Component<Props> = (props) => {
   const [subPanel, setSubPanel] = createSignal<SubPanel>(null);
   const [pickerOpen, setPickerOpen] = createSignal(false);
   const [pickerMode, setPickerMode] = createSignal<PickerMode>("edit");
+  const [newPaletteOpen, setNewPaletteOpen] = createSignal(false);
 
   // Reload palettes whenever the active sprite changes.
   createEffect(() => {
@@ -229,13 +231,19 @@ const PalettePanel: Component<Props> = (props) => {
 
   // ── Palette switcher helpers ───────────────────────────────────────────────
 
-  const handleNewPalette = async () => {
+  const handleNewPalette = () => {
+    if (props.spriteId === null) return;
+    setNewPaletteOpen(true);
+  };
+
+  const submitNewPalette = async (name: string) => {
+    setNewPaletteOpen(false);
     const sid = props.spriteId;
     if (sid === null) return;
-    const name = window.prompt("New palette name:", "Palette");
-    if (!name) return;
+    const trimmed = name.trim();
+    if (trimmed === "") return;
     try {
-      const p = await paletteAdd(sid, name.trim());
+      const p = await paletteAdd(sid, trimmed);
       await refreshPalettes(sid);
       setActivePaletteId(p.id);
     } catch (err: unknown) {
@@ -394,6 +402,17 @@ const PalettePanel: Component<Props> = (props) => {
           <PaletteIOMenu onImport={(colors) => void handleFileImport(colors)} />
         </div>
       </Show>
+
+      <ModalInput
+        open={newPaletteOpen()}
+        title="New palette"
+        label="Palette name"
+        initialValue="Palette"
+        submitLabel="Create"
+        validate={(v) => (v.trim() === "" ? "Name cannot be empty" : null)}
+        onSubmit={(name) => void submitNewPalette(name)}
+        onClose={() => setNewPaletteOpen(false)}
+      />
     </aside>
   );
 };
