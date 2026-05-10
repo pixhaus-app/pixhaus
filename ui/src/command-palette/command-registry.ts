@@ -57,6 +57,7 @@ import {
 import { undo, redo } from "../lib/commands/undo";
 import { frameAdd, frameDelete, frameDuplicate } from "../lib/commands/frames";
 import { appAbout } from "../lib/commands/app_info";
+import { verbInvoke } from "../lib/commands/verbs";
 import { pushToast } from "../lib/toast/toast-state";
 import {
   addLayer,
@@ -671,15 +672,6 @@ const COMMANDS: ReadonlyMap<string, CommandEntry> = new Map<string, CommandEntry
       },
     },
   ],
-  [
-    "layer:flatten",
-    {
-      id: "layer:flatten",
-      label: "Flatten All Layers",
-      category: "Layer",
-      handler: stub("layer:flatten"),
-    },
-  ],
 
   // ── Palette ───────────────────────────────────────────────────────────────
   [
@@ -1054,8 +1046,12 @@ const COMMANDS: ReadonlyMap<string, CommandEntry> = new Map<string, CommandEntry
   ],
 
   // ── AI ────────────────────────────────────────────────────────────────────
-  // The verb runtime + backend-config flow is a separate effort. Until then
-  // these entries forward to the unified stub so the menu remains discoverable.
+  // Each entry forwards to `verb_invoke` with an empty input payload. With
+  // no backend configured (the default state until the settings panel
+  // lands), the runtime returns a `Backend` error and the user sees a
+  // toast — meaningfully different from the silent stub these entries used
+  // to call. A future PR will land per-verb input modals; until then,
+  // power users invoke verbs from the plugin SDK or scripting.
   [
     "ai:inbetween",
     {
@@ -1063,24 +1059,44 @@ const COMMANDS: ReadonlyMap<string, CommandEntry> = new Map<string, CommandEntry
       label: "Inbetween",
       category: "AI",
       keywords: ["tween", "interpolate"],
-      handler: stub("ai:inbetween"),
+      handler: () => invokeBuiltinVerb("Inbetween", "pixhaus.builtin.inbetween"),
     },
   ],
   [
     "ai:continue",
-    { id: "ai:continue", label: "Continue", category: "AI", handler: stub("ai:continue") },
+    {
+      id: "ai:continue",
+      label: "Continue",
+      category: "AI",
+      handler: () => invokeBuiltinVerb("Continue", "pixhaus.builtin.continue"),
+    },
   ],
   [
     "ai:variant",
-    { id: "ai:variant", label: "Variant", category: "AI", handler: stub("ai:variant") },
+    {
+      id: "ai:variant",
+      label: "Variant",
+      category: "AI",
+      handler: () => invokeBuiltinVerb("Variant", "pixhaus.builtin.variant"),
+    },
   ],
   [
     "ai:cleanup",
-    { id: "ai:cleanup", label: "Cleanup", category: "AI", handler: stub("ai:cleanup") },
+    {
+      id: "ai:cleanup",
+      label: "Cleanup",
+      category: "AI",
+      handler: () => invokeBuiltinVerb("Cleanup", "pixhaus.builtin.cleanup"),
+    },
   ],
   [
     "ai:critique",
-    { id: "ai:critique", label: "Critique", category: "AI", handler: stub("ai:critique") },
+    {
+      id: "ai:critique",
+      label: "Critique",
+      category: "AI",
+      handler: () => invokeBuiltinVerb("Critique", "pixhaus.builtin.critique"),
+    },
   ],
   [
     "ai:settings",
@@ -1088,7 +1104,7 @@ const COMMANDS: ReadonlyMap<string, CommandEntry> = new Map<string, CommandEntry
       id: "ai:settings",
       label: "AI Backend Settings",
       category: "AI",
-      handler: stub("ai:settings"),
+      handler: () => openPreferences(),
     },
   ],
 
@@ -1190,8 +1206,18 @@ const COMMANDS: ReadonlyMap<string, CommandEntry> = new Map<string, CommandEntry
   ],
 ]);
 
-function stub(id: string): () => void {
-  return () => console.warn(`[pixhaus] command "${id}" not yet implemented`);
+// Fires a built-in verb with an empty input payload. Surfaces a toast on
+// success or failure naming the verb so the user knows the runtime is wired.
+//
+// This is intentionally a low-affordance shim. A proper UX needs a per-verb
+// input modal that consults the verb's `input_schema` — out of scope here.
+function invokeBuiltinVerb(label: string, verbId: string): void {
+  pushToast({ title: `${label}: invoking…`, kind: "info" });
+  verbInvoke({ verb_id: verbId, inputs: {} })
+    .then(() => {
+      pushToast({ title: `${label}: completed`, kind: "info" });
+    })
+    .catch((err: unknown) => reportCommandFailure(`verb_invoke ${verbId}`, err));
 }
 
 // Returns all commands with their current keybind resolved from preferences.
