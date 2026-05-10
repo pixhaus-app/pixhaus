@@ -159,27 +159,38 @@ impl AppState {
         let runtime = VerbRuntime::new();
 
         // The three verbs below hold a clone of this registry so they can
-        // resolve backends at invoke time. The registry starts empty;
-        // backend instances will be added by a forthcoming settings command
-        // once the user configures API keys. Wrapping in `Arc` is enough
-        // here — interior mutability comes with that follow-up.
+        // resolve backends at invoke time. The registry starts empty:
+        // `BackendRegistry::add` requires `&mut self`, and these clones
+        // pin it as `Arc<BackendRegistry>`. To install backends after the
+        // user configures API keys, the planned settings flow rebuilds
+        // the registry and reconstructs every verb that depends on it,
+        // then swaps the runtime — interior mutability is intentionally
+        // not used here.
         let backend_registry = Arc::new(BackendRegistry::new());
 
-        // Registration fails only on a duplicate ID, which cannot happen
-        // with the hardcoded verb set below. Discard the Ok(()) result.
-        let _ = runtime.register(AudioTimingVerb::new());
-        let _ = runtime.register(AutoMeshDeformationVerb::new());
-        let _ = runtime.register(CleanupVerb::new());
-        let _ = runtime.register(ContinueVerb::new());
-        let _ = runtime.register(CritiqueVerb::new());
-        let _ = runtime.register(ExtendVerb::new());
-        let _ = runtime.register(InbetweenVerb::new());
-        let _ = runtime.register(MotionFromVideoVerb::new());
-        let _ = runtime.register(ProjectStyleLearningVerb::new());
-        let _ = runtime.register(SketchFinishingVerb::new());
-        let _ = runtime.register(TileVerb::new(backend_registry.clone()));
-        let _ = runtime.register(TilesetFromDescriptionVerb::new(backend_registry.clone()));
-        let _ = runtime.register(VariantVerb::new(backend_registry.clone()));
+        // Duplicate IDs would be a programmer bug — every verb in this
+        // list is distinct by construction. Failures are logged at error
+        // level rather than discarded so a future regression (someone
+        // double-registers, a verb's id constant changes to overlap)
+        // surfaces in logs and the crash-report sink instead of silently
+        // dropping a verb from the runtime. `panic!` would be tighter
+        // but the workspace bans it outside tests.
+        register_builtin(&runtime, AudioTimingVerb::new());
+        register_builtin(&runtime, AutoMeshDeformationVerb::new());
+        register_builtin(&runtime, CleanupVerb::new());
+        register_builtin(&runtime, ContinueVerb::new());
+        register_builtin(&runtime, CritiqueVerb::new());
+        register_builtin(&runtime, ExtendVerb::new());
+        register_builtin(&runtime, InbetweenVerb::new());
+        register_builtin(&runtime, MotionFromVideoVerb::new());
+        register_builtin(&runtime, ProjectStyleLearningVerb::new());
+        register_builtin(&runtime, SketchFinishingVerb::new());
+        register_builtin(&runtime, TileVerb::new(backend_registry.clone()));
+        register_builtin(
+            &runtime,
+            TilesetFromDescriptionVerb::new(backend_registry.clone()),
+        );
+        register_builtin(&runtime, VariantVerb::new(backend_registry.clone()));
 
         // ConversationalVerb is intentionally NOT registered here.
         // Its `::new` requires an `Arc<dyn InferenceBackend>` (a single
@@ -203,6 +214,18 @@ impl AppState {
 impl Default for AppState {
     fn default() -> Self {
         Self::new()
+    }
+}
+
+/// Registers a built-in verb with `runtime` and logs at error level if
+/// registration fails. Failure means a duplicate id, which is a
+/// programmer error rather than a runtime condition; logging keeps the
+/// app booting (without that verb) and surfaces the regression in the
+/// crash-report sink.
+fn register_builtin<V: pixhaus_ai::plugin::verb::Verb>(runtime: &VerbRuntime, verb: V) {
+    let id = verb.descriptor().id.as_str().to_owned();
+    if let Err(err) = runtime.register(verb) {
+        tracing::error!(verb_id = %id, error = %err, "failed to register built-in verb");
     }
 }
 
