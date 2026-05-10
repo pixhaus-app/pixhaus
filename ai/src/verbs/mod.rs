@@ -7,9 +7,14 @@
 //!
 //! # Verb ID namespace
 //!
-//! All built-in verbs use the prefix `pixhaus.builtin.`. Third-party
+//! Most built-in verbs use the prefix `pixhaus.builtin.`. Third-party
 //! plugins use their own reverse-DNS namespace; the runtime does not
 //! enforce namespacing but the convention prevents collisions.
+//!
+//! Known drift: [`SketchFinishingVerb`] advertises `pixhaus.ai.sketch_finishing`.
+//! The verb id is part of the public surface (logged, scriptable, plugin-
+//! addressable, baked into stored projects), so it is not renamed here.
+//! Future built-ins should stick to the `pixhaus.builtin.` prefix.
 //!
 //! # Shared helpers
 //!
