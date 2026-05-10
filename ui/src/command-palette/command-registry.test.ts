@@ -257,3 +257,33 @@ describe("dispatchCommand — unknown", () => {
     warn.mockRestore();
   });
 });
+
+describe("dispatchCommand — ai", () => {
+  it("ai:critique invokes verb_invoke with the critique verb id", async () => {
+    invokeMock.mockResolvedValue({ effects: [] });
+    dispatchCommand("ai:critique");
+    // invokeBuiltinVerb pushes a toast then awaits the IPC; flush.
+    await new Promise((r) => setTimeout(r, 0));
+    expect(invokeMock).toHaveBeenCalledWith("verb_invoke", {
+      args: { verb_id: "pixhaus.builtin.critique", inputs: {} },
+    });
+  });
+
+  it("ai:inbetween invokes verb_invoke with the inbetween verb id", async () => {
+    invokeMock.mockResolvedValue({ effects: [] });
+    dispatchCommand("ai:inbetween");
+    await new Promise((r) => setTimeout(r, 0));
+    expect(invokeMock).toHaveBeenCalledWith("verb_invoke", {
+      args: { verb_id: "pixhaus.builtin.inbetween", inputs: {} },
+    });
+  });
+});
+
+describe("dispatchCommand — layer", () => {
+  it("layer:flatten-visible invokes layer_flatten_visible with the active sprite id", async () => {
+    dispatchCommand("layer:flatten-visible");
+    // The handler kicks off a then/catch chain; flush the microtask.
+    await new Promise((r) => setTimeout(r, 0));
+    expect(invokeMock).toHaveBeenCalledWith("layer_flatten_visible", { sprite_id: 1 });
+  });
+});

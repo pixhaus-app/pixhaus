@@ -672,19 +672,6 @@ const COMMANDS: ReadonlyMap<string, CommandEntry> = new Map<string, CommandEntry
       },
     },
   ],
-  [
-    "layer:flatten",
-    {
-      id: "layer:flatten",
-      label: "Flatten All Layers",
-      category: "Layer",
-      handler: () => {
-        const spriteId = activeSpriteId();
-        if (spriteId === null) return;
-        flattenVisibleLayers(spriteId);
-      },
-    },
-  ],
 
   // ── Palette ───────────────────────────────────────────────────────────────
   [

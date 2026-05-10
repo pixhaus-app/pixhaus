@@ -48,10 +48,12 @@ export function verbList(): Promise<VerbInfo[]> {
 }
 
 /**
- * Cancels an in-progress verb invocation. The Rust handler is a stub
- * pending an in-flight invocation map; calling this rejects with
+ * Cancels an in-progress verb invocation by its opaque invocation id
+ * (not the verb id — concurrent invocations of the same verb each get
+ * their own handle). The Rust handler is a stub pending an in-flight
+ * invocation map; calling this rejects with
  * AppCommandError::Unimplemented for now.
  */
-export function verbCancel(verb_id: string): Promise<void> {
-  return invoke<void>("verb_cancel", { verb_id });
+export function verbCancel(invocation_id: string): Promise<void> {
+  return invoke<void>("verb_cancel", { invocation_id });
 }

@@ -114,10 +114,13 @@ pub async fn verb_invoke(
 
 /// Cancels an in-progress verb invocation by its opaque ID.
 ///
-/// Per-session in-flight tracking is not yet wired. This command
-/// returns an error until the invocation map lands.
+/// `invocation_id` identifies a specific in-flight call, not a verb
+/// type — multiple concurrent invocations of the same verb each get
+/// their own id. Per-session in-flight tracking is not yet wired,
+/// so this command returns `Unimplemented` until the invocation map
+/// lands.
 #[tauri::command(async, rename_all = "snake_case")]
-pub async fn verb_cancel(_verb_id: String, _state: State<'_, AppState>) -> CommandResult<()> {
+pub async fn verb_cancel(_invocation_id: String, _state: State<'_, AppState>) -> CommandResult<()> {
     Err(AppCommandError::Unimplemented {
         stream: "verb cancellation (in-flight invocation map)".into(),
     })
