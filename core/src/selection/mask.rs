@@ -9,6 +9,8 @@
 //! operands to have identical dimensions; they return [`Error::SizeMismatch`]
 //! otherwise.
 
+use crate::project::{IVec2, Rect, Size};
+
 use super::error::{Error, Result};
 
 /// Per-pixel selection coverage map.
@@ -154,6 +156,49 @@ impl SelectionMask {
     #[must_use]
     pub fn as_bytes(&self) -> &[u8] {
         &self.data
+    }
+
+    /// Returns the smallest axis-aligned rectangle that encloses every
+    /// pixel with non-zero coverage.
+    ///
+    /// Returns `Rect::from_xywh(0, 0, 0, 0)` for an empty mask (no
+    /// pixels selected). The returned rect is in mask-local coordinates;
+    /// callers that store masks at canvas-scale can use it directly,
+    /// callers that store cel-local masks should offset by the cel
+    /// position.
+    #[must_use]
+    pub fn bounds(&self) -> Rect {
+        // Sentinel-style scan: hold extremes that will be overwritten on
+        // the first hit. If `min_x` is still `u32::MAX` at the end, no
+        // pixel was selected.
+        let mut min_x = u32::MAX;
+        let mut min_y = u32::MAX;
+        let mut max_x = 0u32;
+        let mut max_y = 0u32;
+        for y in 0..self.height {
+            for x in 0..self.width {
+                let idx = (y as usize) * (self.width as usize) + (x as usize);
+                if self.data.get(idx).copied().unwrap_or(0) > 0 {
+                    min_x = min_x.min(x);
+                    min_y = min_y.min(y);
+                    max_x = max_x.max(x);
+                    max_y = max_y.max(y);
+                }
+            }
+        }
+        if min_x == u32::MAX {
+            return Rect::from_xywh(0, 0, 0, 0);
+        }
+        // +1 because max_x/max_y are inclusive pixel indices, but Size is
+        // pixel count. i32::try_from is safe — `width` and `height` are u32
+        // bounded by canvas dimensions, well below i32::MAX in practice.
+        Rect {
+            origin: IVec2::new(
+                i32::try_from(min_x).unwrap_or(0),
+                i32::try_from(min_y).unwrap_or(0),
+            ),
+            size: Size::new(max_x - min_x + 1, max_y - min_y + 1),
+        }
     }
 
     /// Returns a new mask with coverage values inverted (`255 - v`).
@@ -329,6 +374,35 @@ mod tests {
         assert_eq!(m.get(1, 2), Some(128));
         assert!(m.is_selected(1, 2));
         assert!(!m.is_fully_selected(1, 2));
+    }
+
+    #[test]
+    fn bounds_empty_mask_returns_zero_rect() {
+        let m = SelectionMask::new(8, 8).unwrap();
+        assert_eq!(m.bounds(), Rect::from_xywh(0, 0, 0, 0));
+    }
+
+    #[test]
+    fn bounds_full_mask_covers_entire_canvas() {
+        let m = SelectionMask::full(4, 5).unwrap();
+        assert_eq!(m.bounds(), Rect::from_xywh(0, 0, 4, 5));
+    }
+
+    #[test]
+    fn bounds_single_pixel_is_one_by_one() {
+        let mut m = SelectionMask::new(8, 8).unwrap();
+        m.set(3, 5, 255);
+        assert_eq!(m.bounds(), Rect::from_xywh(3, 5, 1, 1));
+    }
+
+    #[test]
+    fn bounds_l_shape_returns_minimum_enclosing_rect() {
+        // Two opposite corners selected: (1, 2) and (5, 6). Bounds should
+        // be the rect that contains both, not anything tighter.
+        let mut m = SelectionMask::new(8, 8).unwrap();
+        m.set(1, 2, 255);
+        m.set(5, 6, 255);
+        assert_eq!(m.bounds(), Rect::from_xywh(1, 2, 5, 5));
     }
 
     #[test]

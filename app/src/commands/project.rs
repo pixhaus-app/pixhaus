@@ -157,6 +157,14 @@ fn compute_next_id(project: &Project) -> u32 {
             }
         }
     }
+    // Selection masks live in `pixel_buffers` too. Without this branch,
+    // `next_id` after a save/load could collide with a live mask buffer
+    // and the next allocation would overwrite the selection.
+    if let Some(pixhaus_core::project::SelectionRegion::Mask { mask, .. }) =
+        &project.selection.region
+    {
+        max = max.max(mask.get());
+    }
     max.saturating_add(1)
 }
 
@@ -548,6 +556,27 @@ mod tests {
         assert!(
             next > 42,
             "next_id must exceed every loaded id; got {next} for max id 42"
+        );
+    }
+
+    /// Selection mask buffers also live in `pixel_buffers` — if
+    /// `compute_next_id` skips them, reopening a saved project leaks the
+    /// next allocation onto the live mask.
+    #[test]
+    fn compute_next_id_passes_selection_mask_id() {
+        use pixhaus_core::project::{PixelBufferId, Rect, SelectionRegion, Size, Sprite, SpriteId};
+        let mut project = Project::new("selection-fixture");
+        let sprite = Sprite::empty(SpriteId::new(2), "main", Size::new(8, 8));
+        project.sprites.push(sprite);
+        project.selection.region = Some(SelectionRegion::Mask {
+            bounds: Rect::from_xywh(0, 0, 8, 8),
+            mask: PixelBufferId::new(99),
+        });
+
+        let next = compute_next_id(&project);
+        assert!(
+            next > 99,
+            "next_id must exceed selection mask id; got {next} for mask id 99"
         );
     }
 
