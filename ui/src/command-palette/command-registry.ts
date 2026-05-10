@@ -57,7 +57,8 @@ import {
 import { undo, redo } from "../lib/commands/undo";
 import { frameAdd, frameDelete, frameDuplicate } from "../lib/commands/frames";
 import { appAbout } from "../lib/commands/app_info";
-import { verbInvoke } from "../lib/commands/verbs";
+import { verbList } from "../lib/commands/verbs";
+import { getCachedVerbList, setActiveVerb } from "../lib/ai/verb-invoke-state";
 import { pushToast } from "../lib/toast/toast-state";
 import {
   addLayer,
@@ -1059,7 +1060,7 @@ const COMMANDS: ReadonlyMap<string, CommandEntry> = new Map<string, CommandEntry
       label: "Inbetween",
       category: "AI",
       keywords: ["tween", "interpolate"],
-      handler: () => invokeBuiltinVerb("Inbetween", "pixhaus.builtin.inbetween"),
+      handler: () => openVerbModal("pixhaus.builtin.inbetween", "Inbetween"),
     },
   ],
   [
@@ -1068,7 +1069,7 @@ const COMMANDS: ReadonlyMap<string, CommandEntry> = new Map<string, CommandEntry
       id: "ai:continue",
       label: "Continue",
       category: "AI",
-      handler: () => invokeBuiltinVerb("Continue", "pixhaus.builtin.continue"),
+      handler: () => openVerbModal("pixhaus.builtin.continue", "Continue"),
     },
   ],
   [
@@ -1077,7 +1078,7 @@ const COMMANDS: ReadonlyMap<string, CommandEntry> = new Map<string, CommandEntry
       id: "ai:variant",
       label: "Variant",
       category: "AI",
-      handler: () => invokeBuiltinVerb("Variant", "pixhaus.builtin.variant"),
+      handler: () => openVerbModal("pixhaus.builtin.variant", "Variant"),
     },
   ],
   [
@@ -1086,7 +1087,7 @@ const COMMANDS: ReadonlyMap<string, CommandEntry> = new Map<string, CommandEntry
       id: "ai:cleanup",
       label: "Cleanup",
       category: "AI",
-      handler: () => invokeBuiltinVerb("Cleanup", "pixhaus.builtin.cleanup"),
+      handler: () => openVerbModal("pixhaus.builtin.cleanup", "Cleanup"),
     },
   ],
   [
@@ -1095,7 +1096,7 @@ const COMMANDS: ReadonlyMap<string, CommandEntry> = new Map<string, CommandEntry
       id: "ai:critique",
       label: "Critique",
       category: "AI",
-      handler: () => invokeBuiltinVerb("Critique", "pixhaus.builtin.critique"),
+      handler: () => openVerbModal("pixhaus.builtin.critique", "Critique"),
     },
   ],
   [
@@ -1206,18 +1207,25 @@ const COMMANDS: ReadonlyMap<string, CommandEntry> = new Map<string, CommandEntry
   ],
 ]);
 
-// Fires a built-in verb with an empty input payload. Surfaces a toast on
-// success or failure naming the verb so the user knows the runtime is wired.
-//
-// This is intentionally a low-affordance shim. A proper UX needs a per-verb
-// input modal that consults the verb's `input_schema` — out of scope here.
-function invokeBuiltinVerb(label: string, verbId: string): void {
-  pushToast({ title: `${label}: invoking…`, kind: "info" });
-  verbInvoke({ verb_id: verbId, inputs: {} })
-    .then(() => {
-      pushToast({ title: `${label}: completed`, kind: "info" });
+// Opens the verb-invocation modal for `verbId`. The modal reads the
+// verb's `input_schema` (memoised across invocations) and renders a
+// form per top-level property; on submit it fires `verb_invoke` and
+// shows a cancel button while the call is in flight. The actual IPC
+// + toast wiring lives in `<VerbInvokeHost>`.
+function openVerbModal(verbId: string, fallbackLabel: string): void {
+  getCachedVerbList(verbList)
+    .then((verbs) => {
+      const v = verbs.find((info) => info.id === verbId);
+      if (v === undefined) {
+        pushToast({
+          title: `${fallbackLabel}: verb "${verbId}" is not registered`,
+          kind: "error",
+        });
+        return;
+      }
+      setActiveVerb(v);
     })
-    .catch((err: unknown) => reportCommandFailure(`verb_invoke ${verbId}`, err));
+    .catch((err: unknown) => reportCommandFailure("verb_list", err));
 }
 
 // Returns all commands with their current keybind resolved from preferences.

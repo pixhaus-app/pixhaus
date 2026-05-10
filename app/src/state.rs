@@ -8,6 +8,7 @@ use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::Arc;
 
+use dashmap::DashMap;
 use pixhaus_ai::plugin::runtime::VerbRuntime;
 use pixhaus_ai::verbs::{
     AudioTimingVerb, AutoMeshDeformationVerb, CleanupVerb, ContinueVerb, ConversationalVerb,
@@ -17,6 +18,7 @@ use pixhaus_ai::verbs::{
 use pixhaus_core::project::{LayerId, PixelBufferId, Project, Rgba, SpriteId};
 use pixhaus_core::undo::History;
 use pixhaus_io::pixhaus::PixelBufferEntry;
+use tokio_util::sync::CancellationToken;
 
 use pixhaus_plugins::PluginRegistry;
 
@@ -140,6 +142,12 @@ pub struct AppState {
     /// Wrapped in `Arc` so commands can invoke verbs concurrently without
     /// holding the doc lock.
     pub(crate) verb_runtime: Arc<VerbRuntime>,
+    /// In-flight verb invocations keyed by [`pixhaus_ai::plugin::preview::PreviewId`]
+    /// (stored as `u64`). `verb_invoke` registers the cancel token before
+    /// awaiting the verb body and removes it on completion; `verb_cancel`
+    /// looks up by id and fires the token. `DashMap` avoids contention on
+    /// the doc lock so concurrent invocations cancel independently.
+    pub(crate) invocations: Arc<DashMap<u64, CancellationToken>>,
     /// Plugin registry. Populated on startup by scanning
     /// `~/.pixhaus/plugins` and again on hot-reload events.
     pub(crate) plugins: Arc<PluginRegistry>,
@@ -191,6 +199,7 @@ impl AppState {
         Self {
             doc: tokio::sync::RwLock::new(DocumentStore::default()),
             verb_runtime,
+            invocations: Arc::new(DashMap::new()),
             plugins,
         }
     }

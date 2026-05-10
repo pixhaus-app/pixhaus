@@ -25,21 +25,39 @@ export type VerbInvokeArgs = {
  */
 export type VerbOutput = unknown;
 
+/**
+ * Result of a verb invocation: the verb's output plus the opaque
+ * handle the UI hands back to `verbCancel` if the user interrupts a
+ * still-running invocation.
+ */
+export type VerbInvocationResult = {
+  /** Per-invocation handle, valid until `finish` returns. */
+  invocation_id: string;
+  output: VerbOutput;
+};
+
 export type VerbInfo = {
   /** Stable verb ID. */
   id: string;
+  /** Display name for menus and the command palette. */
+  display_name: string;
   description: string;
   /** True if the verb supports cancellation mid-run. */
   cancellable: boolean;
   /** Bitfield of `BackendCapabilities` required to invoke. */
   required_capabilities: number;
+  /**
+   * JSON Schema for the verb's input payload. The UI uses this to
+   * render an input form without baking per-verb knowledge.
+   */
+  input_schema: unknown;
 };
 
 // ── commands ──────────────────────────────────────────────────────────────────
 
 /** Invokes a registered AI verb. Errors propagate as Promise rejections. */
-export function verbInvoke(args: VerbInvokeArgs): Promise<VerbOutput> {
-  return invoke<VerbOutput>("verb_invoke", { args });
+export function verbInvoke(args: VerbInvokeArgs): Promise<VerbInvocationResult> {
+  return invoke<VerbInvocationResult>("verb_invoke", { args });
 }
 
 /** Lists all registered verbs, sorted by ID. */
@@ -49,10 +67,9 @@ export function verbList(): Promise<VerbInfo[]> {
 
 /**
  * Cancels an in-progress verb invocation by its opaque invocation id
- * (not the verb id — concurrent invocations of the same verb each get
- * their own handle). The Rust handler is a stub pending an in-flight
- * invocation map; calling this rejects with
- * AppCommandError::Unimplemented for now.
+ * (the value returned by `verbInvoke`). Cancellation is cooperative —
+ * the verb observes the token between expensive operations.
+ * Idempotent — already-completed ids are not an error.
  */
 export function verbCancel(invocation_id: string): Promise<void> {
   return invoke<void>("verb_cancel", { invocation_id });
