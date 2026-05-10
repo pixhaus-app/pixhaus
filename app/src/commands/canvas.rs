@@ -11,10 +11,11 @@ use base64::Engine;
 use pixhaus_core::canvas::tools::{BrushShape, draw_stroke, flood_fill};
 use pixhaus_core::canvas::{LayerInput, PixelBuffer, composite_onto};
 use pixhaus_core::project::{
-    CanvasState, Cel, CelData, FrameIndex, IVec2, Layer, LayerId, LayerKind, PixelBufferId, Rgba,
-    SelectionRegion, SelectionState, Size, SpriteId,
+    CanvasState, Cel, CelData, FrameIndex, IVec2, Layer, LayerId, LayerKind, PixelBufferId, Rect,
+    Rgba, SelectionRegion, SelectionState, Size, SpriteId,
 };
 use pixhaus_core::selection::SelectionMask;
+use pixhaus_core::selection::algorithms::{Connectivity, color_range, magic_wand, select_polygon};
 use pixhaus_core::transforms::{self, RotateMode, ScaleMode, TransformSpec};
 use pixhaus_io::pixhaus::PixelBufferEntry;
 use serde::{Deserialize, Serialize};
@@ -1613,72 +1614,443 @@ pub async fn canvas_select_all(
     Ok(selection)
 }
 
+/// Allocates a fresh `PixelBufferId`, stores `mask` as a 1-byte-per-pixel
+/// buffer, and returns a `SelectionState` whose region points at it.
+///
+/// Selection masks live alongside RGBA pixel buffers in `doc.pixel_buffers`
+/// because they share the storage / save / undo machinery. Masks have stride
+/// equal to width (no padding) and one byte per pixel — distinct from the
+/// `width * 4` stride of an RGBA buffer.
+///
+/// Computes minimum-enclosing-rect bounds from the mask itself so the
+/// returned `SelectionRegion::Mask.bounds` honours its documented
+/// contract. Drops the previous selection's mask buffer (if any) before
+/// pushing the new one — without this, every wand/lasso/invert leaks the
+/// outgoing buffer into `pixel_buffers`, and `project_save` persists every
+/// leak. Cel-referenced buffers are never touched.
+fn commit_mask_selection(
+    doc: &mut crate::state::DocumentStore,
+    mask: &SelectionMask,
+    anchor_layer: Option<LayerId>,
+) -> SelectionState {
+    // GC the outgoing selection mask buffer if there is one. We only drop
+    // entries whose id matches the current selection's mask — never any
+    // entry referenced by a cel.
+    if let Some(project) = doc.project.as_ref() {
+        if let Some(SelectionRegion::Mask { mask: prior_id, .. }) = &project.selection.region {
+            let prior = prior_id.get();
+            doc.pixel_buffers.retain(|e| e.id != prior);
+        }
+    }
+
+    let id = PixelBufferId::new(doc.next_id);
+    doc.next_id += 1;
+    let width = mask.width();
+    let height = mask.height();
+    doc.pixel_buffers.push(PixelBufferEntry {
+        id: id.get(),
+        width,
+        height,
+        stride: width,
+        pixels: mask.as_bytes().to_vec(),
+    });
+    SelectionState {
+        region: Some(SelectionRegion::Mask {
+            bounds: mask.bounds(),
+            mask: id,
+        }),
+        anchor_layer,
+    }
+}
+
+/// Looks up the cel for `(sprite_id, layer_id, frame_index)` and returns
+/// the cel position plus a fully decoded `PixelBuffer`.
+///
+/// Follows `CelData::Linked` to its source frame on the same layer (with
+/// a depth limit to defend against pathological cycles in malformed
+/// projects). Errors when the sprite, layer, cel, or pixel buffer is
+/// missing, when the resolved cel is a tilemap (selection algorithms
+/// don't operate on tile data), or when a link cycle exceeds
+/// `MAX_LINK_DEPTH`.
+fn load_cel_buffer(
+    doc: &crate::state::DocumentStore,
+    sprite_id: SpriteId,
+    layer_id: LayerId,
+    frame_index: FrameIndex,
+) -> Result<(IVec2, PixelBuffer), AppCommandError> {
+    /// Defensive cap on linked-cel chasing. The data model prohibits
+    /// cycles by convention but doesn't enforce it; this keeps a
+    /// malformed project from spinning forever.
+    const MAX_LINK_DEPTH: usize = 32;
+
+    let project = doc
+        .project
+        .as_ref()
+        .ok_or(AppCommandError::NoActiveProject)?;
+    let sprite = project
+        .sprites
+        .iter()
+        .find(|s| s.id == sprite_id)
+        .ok_or_else(|| AppCommandError::NotFound {
+            entity: "sprite".into(),
+            id: u64::from(sprite_id.get()),
+        })?;
+
+    let mut current_frame = frame_index;
+    let mut hops = 0usize;
+    let (cel_pos, buf_id) = loop {
+        if hops > MAX_LINK_DEPTH {
+            return Err(AppCommandError::Validation {
+                detail: format!(
+                    "linked cel chain exceeded depth {MAX_LINK_DEPTH} on layer {}",
+                    layer_id.get()
+                ),
+            });
+        }
+        let cel = sprite
+            .cels
+            .iter()
+            .find(|c| c.layer_id == layer_id && c.frame_index == current_frame)
+            .ok_or_else(|| AppCommandError::NotFound {
+                entity: "cel".into(),
+                id: u64::from(current_frame.get()),
+            })?;
+        match &cel.data {
+            CelData::Raster { buffer, .. } => break (cel.position, *buffer),
+            CelData::Linked { source_frame } => {
+                current_frame = *source_frame;
+                hops += 1;
+            }
+            CelData::Tilemap { .. } => {
+                return Err(AppCommandError::Unimplemented {
+                    stream: "raster cels only (tilemap cels are not yet sampled)".into(),
+                });
+            }
+        }
+    };
+
+    let entry = doc
+        .pixel_buffers
+        .iter()
+        .find(|e| e.id == buf_id.get())
+        .ok_or_else(|| AppCommandError::NotFound {
+            entity: "pixel buffer".into(),
+            id: u64::from(buf_id.get()),
+        })?;
+    let buf = PixelBuffer::from_raw(
+        entry.width,
+        entry.height,
+        entry.stride,
+        entry.pixels.clone(),
+    )
+    .map_err(|e| AppCommandError::Validation {
+        detail: e.to_string(),
+    })?;
+    Ok((cel_pos, buf))
+}
+
+/// Returns the canvas dimensions for `sprite_id`.
+fn sprite_canvas_size(
+    doc: &crate::state::DocumentStore,
+    sprite_id: SpriteId,
+) -> Result<(u32, u32), AppCommandError> {
+    let project = doc
+        .project
+        .as_ref()
+        .ok_or(AppCommandError::NoActiveProject)?;
+    let sprite = project
+        .sprites
+        .iter()
+        .find(|s| s.id == sprite_id)
+        .ok_or_else(|| AppCommandError::NotFound {
+            entity: "sprite".into(),
+            id: u64::from(sprite_id.get()),
+        })?;
+    Ok((sprite.canvas.width, sprite.canvas.height))
+}
+
 /// Inverts the current selection.
 ///
-/// Requires stream S01 (pixel buffers for mask operations). Returns an
-/// error until S01 lands. A fully selected canvas inverted to nothing (and
-/// vice versa) could be handled as a rect-only fast path, but is kept as a
-/// stub for consistency with the mask-based general case.
+/// A `Rect` selection is upgraded to a `Mask` (the inverse of an
+/// axis-aligned rectangle is not a rectangle). An empty selection inverts
+/// to "everything" — a full-canvas rectangle. A full-canvas rectangle
+/// inverts to "nothing" (`region = None`).
 #[tauri::command(async, rename_all = "snake_case")]
 pub async fn canvas_invert_selection(
-    _sprite_id: SpriteId,
-    _anchor_layer: Option<LayerId>,
-    _state: State<'_, AppState>,
+    sprite_id: SpriteId,
+    anchor_layer: Option<LayerId>,
+    state: State<'_, AppState>,
 ) -> CommandResult<SelectionState> {
-    Err(AppCommandError::Unimplemented {
-        stream: "S01 (pixel buffers)".into(),
-    })
+    let mut doc = state.doc.write().await;
+    let (canvas_w, canvas_h) = sprite_canvas_size(&doc, sprite_id)?;
+    let canvas_rect = Rect::from_xywh(0, 0, canvas_w, canvas_h);
+
+    let current_region = doc
+        .project
+        .as_ref()
+        .ok_or(AppCommandError::NoActiveProject)?
+        .selection
+        .region
+        .clone();
+
+    // Reconstruct the current mask in canvas coordinates so we can
+    // invert it. None → empty mask; Rect → fill the rect; Mask → load
+    // the bytes (mask buffers are stored canvas-sized — see
+    // `commit_mask_selection`).
+    let current_mask = match current_region {
+        None => {
+            SelectionMask::new(canvas_w, canvas_h).map_err(|e| AppCommandError::Validation {
+                detail: e.to_string(),
+            })?
+        }
+        Some(SelectionRegion::Rect { bounds }) => pixhaus_core::selection::algorithms::select_rect(
+            canvas_w, canvas_h, bounds,
+        )
+        .map_err(|e| AppCommandError::Validation {
+            detail: e.to_string(),
+        })?,
+        Some(SelectionRegion::Mask { mask: mask_id, .. }) => {
+            let entry = doc
+                .pixel_buffers
+                .iter()
+                .find(|e| e.id == mask_id.get())
+                .ok_or_else(|| AppCommandError::NotFound {
+                    entity: "pixel buffer".into(),
+                    id: u64::from(mask_id.get()),
+                })?;
+            SelectionMask::from_raw(entry.width, entry.height, entry.pixels.clone()).map_err(
+                |e| AppCommandError::Validation {
+                    detail: e.to_string(),
+                },
+            )?
+        }
+    };
+
+    let inverted = current_mask.invert();
+    let selected = inverted.selected_count();
+    let new_state = if selected == 0 {
+        // Inverted selection covers nothing — clear it.
+        SelectionState {
+            region: None,
+            anchor_layer,
+        }
+    } else if selected == canvas_w.saturating_mul(canvas_h) {
+        // Inverted selection covers everything — represent as a rect.
+        SelectionState {
+            region: Some(SelectionRegion::Rect {
+                bounds: canvas_rect,
+            }),
+            anchor_layer,
+        }
+    } else {
+        commit_mask_selection(&mut doc, &inverted, anchor_layer)
+    };
+
+    let project = doc
+        .project
+        .as_mut()
+        .ok_or(AppCommandError::NoActiveProject)?;
+    project.selection = new_state.clone();
+    doc.dirty = true;
+    Ok(new_state)
 }
 
 /// Selects a contiguous region via flood-fill from a seed pixel.
 ///
-/// Requires stream S01 (pixel buffers). Returns an error until S01 lands.
+/// `(seed_x, seed_y)` are canvas-space coordinates. The flood-fill runs
+/// against the anchor layer's pixel buffer at the active frame; the
+/// resulting mask covers the full canvas (zeros outside the cel) so it can
+/// compose with subsequent selection ops.
 #[tauri::command(async, rename_all = "snake_case")]
 pub async fn canvas_select_magic_wand(
-    _sprite_id: SpriteId,
-    _anchor_layer: Option<LayerId>,
-    _seed_x: i32,
-    _seed_y: i32,
-    _tolerance: u8,
-    _connectivity: String,
-    _state: State<'_, AppState>,
+    sprite_id: SpriteId,
+    anchor_layer: Option<LayerId>,
+    seed_x: i32,
+    seed_y: i32,
+    tolerance: u8,
+    connectivity: String,
+    state: State<'_, AppState>,
 ) -> CommandResult<SelectionState> {
-    Err(AppCommandError::Unimplemented {
-        stream: "S01 (pixel buffers)".into(),
-    })
+    let layer_id = anchor_layer.ok_or_else(|| AppCommandError::Validation {
+        detail: "magic wand requires an anchor layer".into(),
+    })?;
+    let mode = match connectivity.as_str() {
+        "four" | "4" => Connectivity::Four,
+        "eight" | "8" => Connectivity::Eight,
+        other => {
+            return Err(AppCommandError::Validation {
+                detail: format!("unknown connectivity {other:?}; expected \"four\" or \"eight\""),
+            });
+        }
+    };
+
+    let mut doc = state.doc.write().await;
+    let (canvas_w, canvas_h) = sprite_canvas_size(&doc, sprite_id)?;
+    let frame_index = doc
+        .project
+        .as_ref()
+        .and_then(|p| p.canvas.active_frame)
+        .unwrap_or(FrameIndex::new(0));
+
+    let (cel_pos, buf) = load_cel_buffer(&doc, sprite_id, layer_id, frame_index)?;
+
+    // Translate canvas-space seed to cel-local coords. `i64` math keeps
+    // the bounds check unambiguous regardless of cel position sign.
+    let local_xi = i64::from(seed_x) - i64::from(cel_pos.x);
+    let local_yj = i64::from(seed_y) - i64::from(cel_pos.y);
+    let in_bounds = local_xi >= 0
+        && local_yj >= 0
+        && local_xi < i64::from(buf.width())
+        && local_yj < i64::from(buf.height());
+    if !in_bounds {
+        // Seed is outside the cel — return an empty selection.
+        let new_state = SelectionState {
+            region: None,
+            anchor_layer: Some(layer_id),
+        };
+        let project = doc
+            .project
+            .as_mut()
+            .ok_or(AppCommandError::NoActiveProject)?;
+        project.selection = new_state.clone();
+        doc.dirty = true;
+        return Ok(new_state);
+    }
+    let local_x = u32::try_from(local_xi).unwrap_or(0);
+    let local_y = u32::try_from(local_yj).unwrap_or(0);
+    let cel_mask = magic_wand(&buf, local_x, local_y, tolerance, mode).map_err(|e| {
+        AppCommandError::Validation {
+            detail: e.to_string(),
+        }
+    })?;
+
+    // Lift the cel-sized mask onto a canvas-sized one at cel_pos.
+    let canvas_mask = lift_mask_to_canvas(&cel_mask, cel_pos, canvas_w, canvas_h)?;
+    let new_state = commit_mask_selection(&mut doc, &canvas_mask, Some(layer_id));
+
+    let project = doc
+        .project
+        .as_mut()
+        .ok_or(AppCommandError::NoActiveProject)?;
+    project.selection = new_state.clone();
+    doc.dirty = true;
+    Ok(new_state)
 }
 
 /// Selects all pixels within a given color tolerance of the target color.
 ///
-/// Requires stream S01 (pixel buffers). Returns an error until S01 lands.
+/// Operates on the anchor layer's pixel buffer at the active frame; the
+/// produced mask is canvas-sized.
 #[tauri::command(async, rename_all = "snake_case")]
 pub async fn canvas_select_color_range(
-    _sprite_id: SpriteId,
-    _anchor_layer: Option<LayerId>,
+    sprite_id: SpriteId,
+    anchor_layer: Option<LayerId>,
     _x: i32,
     _y: i32,
-    _target_color: Rgba,
-    _tolerance: u8,
-    _state: State<'_, AppState>,
+    target_color: Rgba,
+    tolerance: u8,
+    state: State<'_, AppState>,
 ) -> CommandResult<SelectionState> {
-    Err(AppCommandError::Unimplemented {
-        stream: "S01 (pixel buffers)".into(),
-    })
+    let layer_id = anchor_layer.ok_or_else(|| AppCommandError::Validation {
+        detail: "color range requires an anchor layer".into(),
+    })?;
+
+    let mut doc = state.doc.write().await;
+    let (canvas_w, canvas_h) = sprite_canvas_size(&doc, sprite_id)?;
+    let frame_index = doc
+        .project
+        .as_ref()
+        .and_then(|p| p.canvas.active_frame)
+        .unwrap_or(FrameIndex::new(0));
+
+    let (cel_pos, buf) = load_cel_buffer(&doc, sprite_id, layer_id, frame_index)?;
+    let cel_mask =
+        color_range(&buf, target_color, tolerance).map_err(|e| AppCommandError::Validation {
+            detail: e.to_string(),
+        })?;
+
+    let canvas_mask = lift_mask_to_canvas(&cel_mask, cel_pos, canvas_w, canvas_h)?;
+    let new_state = commit_mask_selection(&mut doc, &canvas_mask, Some(layer_id));
+
+    let project = doc
+        .project
+        .as_mut()
+        .ok_or(AppCommandError::NoActiveProject)?;
+    project.selection = new_state.clone();
+    doc.dirty = true;
+    Ok(new_state)
 }
 
-/// Selects the polygon defined by the given points.
+/// Selects the polygon defined by the given canvas-space points.
 ///
-/// Requires stream S01 (pixel buffers). Returns an error until S01 lands.
+/// The polygon is auto-closed; an empty or single-point input produces an
+/// empty selection. The output mask covers the whole canvas.
 #[tauri::command(async, rename_all = "snake_case")]
 pub async fn canvas_select_lasso(
-    _sprite_id: SpriteId,
-    _anchor_layer: Option<LayerId>,
-    _points: Vec<IVec2>,
-    _state: State<'_, AppState>,
+    sprite_id: SpriteId,
+    anchor_layer: Option<LayerId>,
+    points: Vec<IVec2>,
+    state: State<'_, AppState>,
 ) -> CommandResult<SelectionState> {
-    Err(AppCommandError::Unimplemented {
-        stream: "S01 (pixel buffers)".into(),
-    })
+    let mut doc = state.doc.write().await;
+    let (canvas_w, canvas_h) = sprite_canvas_size(&doc, sprite_id)?;
+    let mask =
+        select_polygon(canvas_w, canvas_h, &points).map_err(|e| AppCommandError::Validation {
+            detail: e.to_string(),
+        })?;
+    let new_state = if mask.selected_count() == 0 {
+        SelectionState {
+            region: None,
+            anchor_layer,
+        }
+    } else {
+        commit_mask_selection(&mut doc, &mask, anchor_layer)
+    };
+
+    let project = doc
+        .project
+        .as_mut()
+        .ok_or(AppCommandError::NoActiveProject)?;
+    project.selection = new_state.clone();
+    doc.dirty = true;
+    Ok(new_state)
+}
+
+/// Lifts a cel-local mask onto a canvas-sized mask, placing it at `cel_pos`.
+///
+/// Pixels outside the cel are zero (unselected). The output dimensions are
+/// `(canvas_w, canvas_h)`.
+fn lift_mask_to_canvas(
+    cel_mask: &SelectionMask,
+    cel_pos: IVec2,
+    canvas_w: u32,
+    canvas_h: u32,
+) -> Result<SelectionMask, AppCommandError> {
+    let mut out =
+        SelectionMask::new(canvas_w, canvas_h).map_err(|e| AppCommandError::Validation {
+            detail: e.to_string(),
+        })?;
+    for cy in 0..cel_mask.height() {
+        for cx in 0..cel_mask.width() {
+            let v = cel_mask.get(cx, cy).unwrap_or(0);
+            if v == 0 {
+                continue;
+            }
+            let canvas_x = i64::from(cel_pos.x) + i64::from(cx);
+            let canvas_y = i64::from(cel_pos.y) + i64::from(cy);
+            if canvas_x < 0
+                || canvas_y < 0
+                || canvas_x >= i64::from(canvas_w)
+                || canvas_y >= i64::from(canvas_h)
+            {
+                continue;
+            }
+            let dst_x = u32::try_from(canvas_x).unwrap_or(0);
+            let dst_y = u32::try_from(canvas_y).unwrap_or(0);
+            out.set(dst_x, dst_y, v);
+        }
+    }
+    Ok(out)
 }
 
 /// Replaces the entire canvas viewport state (scroll, zoom, active ids, toggles).
@@ -1704,6 +2076,28 @@ pub async fn canvas_set_viewport(
 mod tests {
     use super::*;
     use pixhaus_core::project::{Project, Size, Sprite};
+
+    #[test]
+    fn lift_mask_places_at_offset_and_clips() {
+        // A 4x4 cel-local mask, fully selected, placed at (2, 1) on a
+        // 6x4 canvas. The lifted mask should have selected pixels in
+        // x ∈ [2, 6) and y ∈ [1, 4) — i.e. the 4x3 intersection of the
+        // cel rect with the canvas rect.
+        let mut cel_mask = SelectionMask::full(4, 4).unwrap();
+        // Knock one pixel out so the test catches a zero-fill bug too.
+        cel_mask.set(0, 0, 0);
+        let lifted = lift_mask_to_canvas(&cel_mask, IVec2 { x: 2, y: 1 }, 6, 4).unwrap();
+        // Pixel (2, 1) is the cel's (0, 0), which we cleared.
+        assert!(!lifted.is_selected(2, 1));
+        // Pixel (3, 1) is the cel's (1, 0), which is selected.
+        assert!(lifted.is_selected(3, 1));
+        // Pixel (5, 3) is the cel's (3, 2), inside both rects.
+        assert!(lifted.is_selected(5, 3));
+        // The cel's (3, 3) lifts to canvas (5, 4) — outside the canvas.
+        // No assertion needed, just shouldn't panic.
+        // Pixel (0, 0) is outside the cel's rect; should remain unselected.
+        assert!(!lifted.is_selected(0, 0));
+    }
 
     #[test]
     fn draw_stroke_args_pressure_and_points_match() {
