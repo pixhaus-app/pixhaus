@@ -1,7 +1,7 @@
 {
   "schema_version": {
     "major": 1,
-    "minor": 0
+    "minor": 1
   },
   "feature_flags": 15,
   "metadata": {
@@ -279,6 +279,397 @@
       ]
     }
   ],
+  "library": {
+    "entities": [
+      {
+        "id": 1,
+        "kind": {
+          "kind": "Custom",
+          "value": "Character"
+        },
+        "name": "Hero",
+        "group_id": 1,
+        "tags": [
+          1
+        ],
+        "defaults": {
+          "canvas_size": {
+            "width": 32,
+            "height": 32
+          },
+          "color_mode": "indexed",
+          "default_palette_id": 1,
+          "default_fps": 12
+        },
+        "content": {
+          "type": "Sprites",
+          "value": {
+            "states": [
+              {
+                "id": 1,
+                "state_name": "idle",
+                "sprite": {
+                  "id": 1,
+                  "name": "hero",
+                  "canvas": {
+                    "width": 32,
+                    "height": 32
+                  },
+                  "color_mode": "indexed",
+                  "transparent_color_index": 0,
+                  "layers": [
+                    {
+                      "id": 1,
+                      "name": "background",
+                      "kind": {
+                        "kind": "raster"
+                      },
+                      "blend_mode": "normal",
+                      "opacity": 255,
+                      "visible": true,
+                      "locked": false
+                    },
+                    {
+                      "id": 2,
+                      "name": "fx",
+                      "kind": {
+                        "kind": "group",
+                        "collapsed": false
+                      },
+                      "blend_mode": "normal",
+                      "opacity": 200,
+                      "visible": true,
+                      "locked": false,
+                      "user_data": {
+                        "text": "non-exported FX",
+                        "color": {
+                          "r": 255,
+                          "g": 200,
+                          "b": 0,
+                          "a": 255
+                        }
+                      }
+                    },
+                    {
+                      "id": 3,
+                      "name": "ground",
+                      "kind": {
+                        "kind": "tilemap",
+                        "tileset": 1
+                      },
+                      "blend_mode": "multiply",
+                      "opacity": 255,
+                      "visible": true,
+                      "locked": false,
+                      "parent": 2
+                    },
+                    {
+                      "id": 4,
+                      "name": "concept",
+                      "kind": {
+                        "kind": "reference",
+                        "image": 1000,
+                        "origin": {
+                          "x": -8,
+                          "y": -8
+                        }
+                      },
+                      "blend_mode": "normal",
+                      "opacity": 128,
+                      "visible": true,
+                      "locked": true
+                    }
+                  ],
+                  "frames": [
+                    {
+                      "duration_ms": 100
+                    },
+                    {
+                      "duration_ms": 100
+                    },
+                    {
+                      "duration_ms": 250,
+                      "user_data": {
+                        "text": "hold"
+                      }
+                    }
+                  ],
+                  "cels": [
+                    {
+                      "layer_id": 1,
+                      "frame_index": 0,
+                      "position": {
+                        "x": 0,
+                        "y": 0
+                      },
+                      "opacity": 255,
+                      "data": {
+                        "kind": "raster",
+                        "buffer": 10,
+                        "size": {
+                          "width": 32,
+                          "height": 32
+                        }
+                      }
+                    },
+                    {
+                      "layer_id": 1,
+                      "frame_index": 1,
+                      "position": {
+                        "x": 0,
+                        "y": 0
+                      },
+                      "opacity": 255,
+                      "data": {
+                        "kind": "linked",
+                        "source_frame": 0
+                      }
+                    },
+                    {
+                      "layer_id": 3,
+                      "frame_index": 0,
+                      "position": {
+                        "x": 0,
+                        "y": 0
+                      },
+                      "opacity": 255,
+                      "data": {
+                        "kind": "tilemap",
+                        "data": {
+                          "width": 2,
+                          "height": 2,
+                          "cells": [
+                            {
+                              "index": 1,
+                              "flags": 0
+                            },
+                            {
+                              "index": 0,
+                              "flags": 0
+                            },
+                            {
+                              "index": 0,
+                              "flags": 0
+                            },
+                            {
+                              "index": 2,
+                              "flags": 5
+                            }
+                          ]
+                        }
+                      }
+                    }
+                  ],
+                  "palettes": [
+                    {
+                      "id": 1,
+                      "name": "default",
+                      "colors": [
+                        {
+                          "color": {
+                            "r": 0,
+                            "g": 0,
+                            "b": 0,
+                            "a": 0
+                          }
+                        },
+                        {
+                          "color": {
+                            "r": 20,
+                            "g": 20,
+                            "b": 30,
+                            "a": 255
+                          },
+                          "name": "shadow"
+                        },
+                        {
+                          "color": {
+                            "r": 220,
+                            "g": 220,
+                            "b": 230,
+                            "a": 255
+                          },
+                          "name": "highlight"
+                        }
+                      ]
+                    }
+                  ],
+                  "tilesets": [
+                    {
+                      "id": 1,
+                      "name": "dungeon",
+                      "tile_size": {
+                        "width": 8,
+                        "height": 8
+                      },
+                      "tile_count": 16,
+                      "base_index": 1,
+                      "source": {
+                        "kind": "inline",
+                        "buffer": 2000
+                      }
+                    }
+                  ],
+                  "frame_tags": [
+                    {
+                      "name": "idle",
+                      "range": {
+                        "start": 0,
+                        "end": 2
+                      },
+                      "loop_direction": "ping_pong",
+                      "repeat": 0
+                    }
+                  ],
+                  "animations": [
+                    {
+                      "id": 1,
+                      "name": "Idle",
+                      "range": {
+                        "start": 0,
+                        "end": 2
+                      },
+                      "loop_direction": "forward",
+                      "speed_multiplier": 0.75
+                    }
+                  ],
+                  "slices": [
+                    {
+                      "id": 1,
+                      "name": "ui_button",
+                      "keys": [
+                        {
+                          "frame": 0,
+                          "bounds": {
+                            "origin": {
+                              "x": 0,
+                              "y": 0
+                            },
+                            "size": {
+                              "width": 32,
+                              "height": 32
+                            }
+                          },
+                          "nine_slice": {
+                            "center": {
+                              "origin": {
+                                "x": 4,
+                                "y": 4
+                              },
+                              "size": {
+                                "width": 24,
+                                "height": 24
+                              }
+                            }
+                          },
+                          "pivot": {
+                            "offset": {
+                              "x": 16,
+                              "y": 16
+                            }
+                          }
+                        }
+                      ]
+                    }
+                  ]
+                },
+                "engine_tags": [
+                  "loopable"
+                ]
+              }
+            ]
+          }
+        },
+        "ai": {
+          "vlm_summary": "A small armoured hero in front-facing pose."
+        },
+        "anchor_reference_id": 3,
+        "created_at": 1700000000,
+        "updated_at": 1700000500
+      },
+      {
+        "id": 2,
+        "kind": {
+          "kind": "Tileset"
+        },
+        "name": "Dungeon",
+        "group_id": 2,
+        "content": {
+          "type": "Tileset",
+          "value": {
+            "tileset": {
+              "id": 2,
+              "name": "dungeon-shared",
+              "tile_size": {
+                "width": 8,
+                "height": 8
+              },
+              "tile_count": 16,
+              "base_index": 1,
+              "source": {
+                "kind": "inline",
+                "buffer": 2100
+              }
+            }
+          }
+        },
+        "created_at": 1700000010,
+        "updated_at": 1700000010
+      },
+      {
+        "id": 3,
+        "kind": {
+          "kind": "Reference"
+        },
+        "name": "Hero model sheet",
+        "content": {
+          "type": "Reference",
+          "value": {
+            "sheet": {
+              "canonical": {
+                "id": 1,
+                "generated_at": 1700000020,
+                "image": {
+                  "bytes": [
+                    137,
+                    80,
+                    78,
+                    71
+                  ],
+                  "mime": "image/png"
+                }
+              }
+            }
+          }
+        },
+        "created_at": 1700000020,
+        "updated_at": 1700000020
+      }
+    ],
+    "groups": [
+      {
+        "id": 1,
+        "name": "Characters"
+      },
+      {
+        "id": 2,
+        "name": "Tilesets"
+      }
+    ],
+    "tags": [
+      {
+        "id": 1,
+        "name": "playable",
+        "color": {
+          "r": 40,
+          "g": 200,
+          "b": 80,
+          "a": 255
+        },
+        "auto_generated": false
+      }
+    ]
+  },
   "canvas": {
     "active_sprite": 1,
     "active_layer": 1,
@@ -311,5 +702,12 @@
       }
     },
     "anchor_layer": 1
+  },
+  "active": {
+    "type": "state",
+    "value": {
+      "entity_id": 1,
+      "state_id": 1
+    }
   }
 }

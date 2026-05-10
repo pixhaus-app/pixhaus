@@ -34,7 +34,11 @@ impl SchemaVersion {
     pub const MAJOR: u16 = 1;
 
     /// Minor version this build of Pixhaus writes.
-    pub const MINOR: u16 = 0;
+    ///
+    /// Bumped from `0` to `1` for B9.1: the `Project` struct gained the
+    /// optional `library` and `active` fields. Both deserialise via
+    /// `serde(default)` so files written at minor `0` continue to load.
+    pub const MINOR: u16 = 1;
 
     /// The version emitted by this build.
     #[must_use]

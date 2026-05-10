@@ -339,9 +339,11 @@ fn structural_archive() -> PixhausArchive {
             editor_version: env!("CARGO_PKG_VERSION").into(),
         },
         sprites: vec![sprite],
+        library: pixhaus_core::project::Library::default(),
         canvas: pixhaus_core::project::CanvasState::default(),
         brush: pixhaus_core::project::BrushState::default(),
         selection: pixhaus_core::project::SelectionState::default(),
+        active: pixhaus_core::project::ActiveTarget::None,
     };
     PixhausArchive { project, buffers }
 }
@@ -588,9 +590,11 @@ fn tilemap_archive_round_trips_through_aseprite_document() {
             editor_version: env!("CARGO_PKG_VERSION").into(),
         },
         sprites: vec![sprite],
+        library: pixhaus_core::project::Library::default(),
         canvas: pixhaus_core::project::CanvasState::default(),
         brush: pixhaus_core::project::BrushState::default(),
         selection: pixhaus_core::project::SelectionState::default(),
+        active: pixhaus_core::project::ActiveTarget::None,
     };
     let archive = PixhausArchive { project, buffers };
 

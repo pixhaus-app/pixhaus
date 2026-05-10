@@ -11,12 +11,15 @@
 //! and IPC streams rely on for snapshot-based assertions.
 
 use crate::project::{
-    Animation, AnimationId, BlendMode, BrushShape, BrushState, CanvasState, Cel, CelData,
-    ColorMode, FeatureFlags, Frame, FrameIndex, FrameRange, FrameTag, IVec2, Layer, LayerId,
-    LayerKind, LoopDirection, NineSlice, Palette, PaletteEntry, PaletteId, Pivot, PixelBufferId,
-    Project, ProjectMetadata, Rect, Rgba, SchemaVersion, SelectionRegion, SelectionState, Size,
-    Slice, SliceId, SliceKey, Sprite, SpriteId, TileCell, TileFlags, TileIndex, TilemapData,
-    Tileset, TilesetId, TilesetSource, UserData,
+    ActiveTarget, AiMetadata, Animation, AnimationId, AssetInfo, BlendMode, BrushShape, BrushState,
+    CanvasState, Cel, CelData, ColorMode, Entity, EntityContent, EntityDefaults, EntityGroup,
+    EntityId, EntityKind, FeatureFlags, Frame, FrameIndex, FrameRange, FrameTag, GroupId, IVec2,
+    Layer, LayerId, LayerKind, Library, LoopDirection, NamedSprite, NineSlice, Palette,
+    PaletteEntry, PaletteId, Pivot, PixelBufferId, Project, ProjectAi, ProjectMetadata, Rect,
+    ReferenceImage, ReferenceSheet, Rgba, SchemaVersion, SelectionRegion, SelectionState,
+    SheetComposition, SheetVariant, SheetVariantId, Size, Slice, SliceId, SliceKey, Sprite,
+    SpriteId, StateId, TagDefinition, TagId, TileCell, TileFlags, TileIndex, TilemapData, Tileset,
+    TilesetId, TilesetSource, UserData,
 };
 
 /// Builds a fully-populated sample project that touches every type in
@@ -224,6 +227,8 @@ pub fn sample_project() -> Project {
         user_data: UserData::default(),
     };
 
+    let library = sample_library(&sprite);
+
     Project {
         schema_version: SchemaVersion::current(),
         feature_flags: FeatureFlags::TILEMAPS
@@ -240,6 +245,7 @@ pub fn sample_project() -> Project {
             editor_version: env!("CARGO_PKG_VERSION").into(),
         },
         sprites: vec![sprite],
+        library,
         canvas: CanvasState {
             active_sprite: Some(SpriteId::new(1)),
             active_layer: Some(LayerId::new(1)),
@@ -263,5 +269,138 @@ pub fn sample_project() -> Project {
             }),
             anchor_layer: Some(LayerId::new(1)),
         },
+        active: ActiveTarget::State {
+            entity_id: EntityId::new(1),
+            state_id: StateId::new(1),
+        },
+    }
+}
+
+/// Builds the [`Library`] half of [`sample_project`]. Splits out so the
+/// long literal in the parent stays scannable while still touching every
+/// new B9 type.
+#[allow(clippy::too_many_lines)]
+fn sample_library(hero_sprite: &Sprite) -> Library {
+    let hero_state = NamedSprite {
+        id: StateId::new(1),
+        state_name: "idle".into(),
+        sprite: hero_sprite.clone(),
+        engine_tags: vec!["loopable".into()],
+    };
+
+    let hero = Entity {
+        id: EntityId::new(1),
+        kind: EntityKind::Custom("Character".into()),
+        name: "Hero".into(),
+        group_id: Some(GroupId::new(1)),
+        tags: vec![TagId::new(1)],
+        defaults: EntityDefaults {
+            canvas_size: Some(Size::new(32, 32)),
+            color_mode: Some(ColorMode::Indexed),
+            default_palette_id: Some(PaletteId::new(1)),
+            default_pivot: None,
+            default_fps: Some(12),
+        },
+        content: EntityContent::Sprites {
+            states: vec![hero_state],
+        },
+        ai: AiMetadata {
+            suggested_tags: Vec::new(),
+            vlm_summary: Some("A small armoured hero in front-facing pose.".into()),
+            embedding: None,
+        },
+        anchor_reference_id: Some(EntityId::new(3)),
+        user_data: UserData::default(),
+        created_at: 1_700_000_000,
+        updated_at: 1_700_000_500,
+    };
+
+    let dungeon_tileset = Tileset {
+        id: TilesetId::new(2),
+        name: "dungeon-shared".into(),
+        tile_size: Size::new(8, 8),
+        tile_count: 16,
+        base_index: 1,
+        source: TilesetSource::Inline {
+            buffer: PixelBufferId::new(2100),
+        },
+        properties: Vec::new(),
+        autotile: None,
+        user_data: UserData::default(),
+    };
+
+    let tileset_entity = Entity {
+        id: EntityId::new(2),
+        kind: EntityKind::Tileset,
+        name: "Dungeon".into(),
+        group_id: Some(GroupId::new(2)),
+        tags: Vec::new(),
+        defaults: EntityDefaults::default(),
+        content: EntityContent::Tileset {
+            tileset: dungeon_tileset,
+        },
+        ai: AiMetadata::default(),
+        anchor_reference_id: None,
+        user_data: UserData::default(),
+        created_at: 1_700_000_010,
+        updated_at: 1_700_000_010,
+    };
+
+    let reference_entity = Entity {
+        id: EntityId::new(3),
+        kind: EntityKind::Reference,
+        name: "Hero model sheet".into(),
+        group_id: None,
+        tags: Vec::new(),
+        defaults: EntityDefaults::default(),
+        content: EntityContent::Reference {
+            sheet: ReferenceSheet {
+                canonical: SheetVariant {
+                    id: SheetVariantId::new(1),
+                    generated_at: 1_700_000_020,
+                    image: ReferenceImage {
+                        bytes: vec![0x89, 0x50, 0x4E, 0x47],
+                        mime: "image/png".into(),
+                    },
+                    composition: SheetComposition::default(),
+                    generation: None,
+                    extracted_palette: Vec::new(),
+                },
+                history: Vec::new(),
+                prompts: Vec::new(),
+                info: AssetInfo::default(),
+            },
+        },
+        ai: AiMetadata::default(),
+        anchor_reference_id: None,
+        user_data: UserData::default(),
+        created_at: 1_700_000_020,
+        updated_at: 1_700_000_020,
+    };
+
+    Library {
+        entities: vec![hero, tileset_entity, reference_entity],
+        groups: vec![
+            EntityGroup {
+                id: GroupId::new(1),
+                name: "Characters".into(),
+                parent_id: None,
+                user_data: UserData::default(),
+            },
+            EntityGroup {
+                id: GroupId::new(2),
+                name: "Tilesets".into(),
+                parent_id: None,
+                user_data: UserData::default(),
+            },
+        ],
+        palettes: Vec::new(),
+        tags: vec![TagDefinition {
+            id: TagId::new(1),
+            name: "playable".into(),
+            color: Some(Rgba::opaque(40, 200, 80)),
+            auto_generated: false,
+        }],
+        ai: ProjectAi::default(),
     }
 }

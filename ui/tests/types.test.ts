@@ -17,7 +17,7 @@ const project = sample as unknown as Project;
 
 describe("Project fixture mirrors the Rust data model", () => {
   it("exposes the current schema version", () => {
-    expect(project.schema_version).toEqual({ major: 1, minor: 0 });
+    expect(project.schema_version).toEqual({ major: 1, minor: 1 });
   });
 
   it("encodes feature flags as a packed bitfield", () => {

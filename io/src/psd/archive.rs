@@ -294,9 +294,11 @@ pub fn document_to_archive(psd: &psd::Psd, name: &str) -> Result<ConvertedArchiv
             editor_version: env!("CARGO_PKG_VERSION").into(),
         },
         sprites: vec![sprite],
+        library: pixhaus_core::project::Library::default(),
         canvas: CanvasState::default(),
         brush: BrushState::default(),
         selection: SelectionState::default(),
+        active: pixhaus_core::project::ActiveTarget::None,
     };
 
     Ok(ConvertedArchive {

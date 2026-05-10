@@ -122,6 +122,53 @@ id_newtype! {
     TileIndex, u32
 }
 
+id_newtype! {
+    /// Identifier of an [`Entity`](super::library::Entity) in the project library.
+    ///
+    /// Stable across renames so cross-entity references (anchor links, group
+    /// membership, tilemap-to-tileset) survive when the user renames an entity.
+    EntityId, u32
+}
+
+id_newtype! {
+    /// Identifier of a state within a Custom-kind entity.
+    ///
+    /// A `Custom("Character")` entity holds named states such as `idle`,
+    /// `walk`, `attack`. The id stays stable across state renames so engine
+    /// handoff metadata and animation references don't break.
+    StateId, u32
+}
+
+id_newtype! {
+    /// Identifier of an [`EntityGroup`](super::library::EntityGroup).
+    ///
+    /// Groups are folder-style containers in the library tree; stable ids let
+    /// a renamed group keep its membership intact.
+    GroupId, u32
+}
+
+id_newtype! {
+    /// Identifier of a [`TagDefinition`](super::library::TagDefinition).
+    TagId, u32
+}
+
+id_newtype! {
+    /// Identifier of a per-project trained `LoRA`.
+    ///
+    /// The data model carries the id; the trained weights live next to the
+    /// project in a sibling file referenced by [`super::library::ProjectAi`].
+    LoraId, u32
+}
+
+id_newtype! {
+    /// Identifier of a [`SheetVariant`](super::library::SheetVariant) within
+    /// a [`ReferenceSheet`](super::library::ReferenceSheet).
+    ///
+    /// Reference sheets keep older variants in their `history`; the id makes
+    /// it possible to point at one specific variant from a generation log.
+    SheetVariantId, u32
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

@@ -31,6 +31,7 @@ pub mod frame;
 pub mod geometry;
 pub mod id;
 pub mod layer;
+pub mod library;
 pub mod palette;
 pub mod schema;
 pub mod selection;
@@ -49,10 +50,16 @@ pub use color::{ColorMode, Rgba};
 pub use frame::{Frame, FrameRange, FrameTag, LoopDirection};
 pub use geometry::{IVec2, Rect, Size};
 pub use id::{
-    AnimationId, FrameIndex, LayerId, PaletteId, PixelBufferId, SliceId, SpriteId, TileIndex,
-    TilesetId,
+    AnimationId, EntityId, FrameIndex, GroupId, LayerId, LoraId, PaletteId, PixelBufferId,
+    SheetVariantId, SliceId, SpriteId, StateId, TagId, TileIndex, TilesetId,
 };
 pub use layer::{Layer, LayerKind};
+pub use library::{
+    ActiveTarget, AiMetadata, AssetInfo, Entity, EntityContent, EntityDefaults, EntityGroup,
+    EntityKind, GenerationProvenance, Library, NamedSprite, ProjectAi, PromptEntry,
+    PromptHistoryEntry, PromptResult, ReferenceImage, ReferenceSheet, SheetComposition, SheetPanel,
+    SheetVariant, TagDefinition, TilemapLayer, TilemapScene, TilesetReference,
+};
 pub use palette::{Palette, PaletteEntry, PaletteFrameOverride};
 pub use schema::{FeatureFlags, SchemaVersion};
 pub use selection::{SelectionRegion, SelectionState};
@@ -102,9 +109,13 @@ pub struct ProjectMetadata {
 
 /// The root of a Pixhaus project.
 ///
-/// One `Project` corresponds to one document on disk. A project may
-/// contain multiple sprites; the editor focuses on one sprite at a
-/// time via [`CanvasState::active_sprite`].
+/// One `Project` corresponds to one document on disk. The library
+/// (B9, additive in this revision) is the canonical home for all named
+/// content — entities, groups, palettes, tags, AI metadata. The
+/// `sprites` and `CanvasState::active_sprite` fields remain so the
+/// existing IPC commands, AI verbs, and aseprite I/O continue to
+/// compile while B9.2-B9.5 migrate consumers off them; the cleanup PR
+/// after B9.5 lands removes both.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, TS)]
 #[ts(export)]
 pub struct Project {
@@ -117,13 +128,32 @@ pub struct Project {
     pub metadata: ProjectMetadata,
     /// Sprites contained in the project. May be empty during the
     /// brief window between "create project" and "add first sprite".
+    ///
+    /// Transitional. New code targets [`Self::library`]; the field
+    /// stays in this PR so existing consumers compile, and the cleanup
+    /// PR after the B9 migration removes it.
     pub sprites: Vec<Sprite>,
+    /// Project library: entities, groups, palettes, tags, AI metadata.
+    ///
+    /// Empty in fixtures written before B9 — the field carries
+    /// [`serde::Deserialize`]'s `default` so older `.pixhaus` archives
+    /// still load. New projects populate it; B9.2 onward routes IPC
+    /// commands through it.
+    #[serde(default, skip_serializing_if = "Library::is_empty")]
+    pub library: Library,
     /// Editor canvas viewport state, persisted across save/load.
     pub canvas: CanvasState,
     /// Editor brush state, persisted across save/load.
     pub brush: BrushState,
     /// Editor selection state, persisted across save/load.
     pub selection: SelectionState,
+    /// What the user is currently editing inside the library.
+    ///
+    /// Replaces [`CanvasState::active_sprite`] going forward; the old
+    /// field stays during the B9 migration so existing consumers
+    /// continue to compile.
+    #[serde(default, skip_serializing_if = "ActiveTarget::is_none")]
+    pub active: ActiveTarget,
 }
 
 impl Project {
@@ -144,9 +174,11 @@ impl Project {
                 editor_version: env!("CARGO_PKG_VERSION").into(),
             },
             sprites: Vec::new(),
+            library: Library::default(),
             canvas: CanvasState::default(),
             brush: BrushState::default(),
             selection: SelectionState::default(),
+            active: ActiveTarget::None,
         }
     }
 }
