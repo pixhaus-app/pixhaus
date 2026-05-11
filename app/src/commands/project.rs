@@ -135,40 +135,97 @@ fn install_loaded_project(
 /// `project`, or `1` if the project is empty. Calling sites that mint
 /// fresh ids monotonically (every `*_add` command) need this to avoid
 /// reusing an id that came in from disk.
+///
+/// All ID types (`EntityId`, `StateId`, `SpriteId`, `LayerId`, `GroupId`,
+/// `TagId`, `PaletteId`, `TilesetId`, `SliceId`, `AnimationId`,
+/// `PixelBufferId`, `SheetVariantId`) draw from the same monotonic counter.
+/// This function must scan every type so a save/load cycle never hands out
+/// a raw value that is already in use by any ID type, regardless of which
+/// type holds it.
 fn compute_next_id(project: &Project) -> u32 {
+    use pixhaus_core::project::{
+        CelData, EntityContent, LayerKind, SelectionRegion, TilesetSource,
+    };
     let mut max = 0u32;
-    for (named, _) in project.sprites_iter() {
-        let sprite = &named.sprite;
-        max = max.max(sprite.id.get());
-        for layer in &sprite.layers {
-            max = max.max(layer.id.get());
-        }
-        for palette in &sprite.palettes {
-            max = max.max(palette.id.get());
-        }
-        for tileset in &sprite.tilesets {
-            max = max.max(tileset.id.get());
-        }
-        for slice in &sprite.slices {
-            max = max.max(slice.id.get());
-        }
-        for animation in &sprite.animations {
-            max = max.max(animation.id.get());
-        }
-        for cel in &sprite.cels {
-            if let pixhaus_core::project::CelData::Raster { buffer, .. } = &cel.data {
-                max = max.max(buffer.get());
+
+    // Walk every library entity and its content.
+    for entity in &project.library.entities {
+        max = max.max(entity.id.get()); // EntityId
+        match &entity.content {
+            EntityContent::Sprites { states } => {
+                for state in states {
+                    max = max.max(state.id.get()); // StateId
+                    let sprite = &state.sprite;
+                    max = max.max(sprite.id.get()); // SpriteId
+                    for layer in &sprite.layers {
+                        max = max.max(layer.id.get()); // LayerId
+                        if let LayerKind::Reference { image, .. } = &layer.kind {
+                            max = max.max(image.get()); // PixelBufferId (reference layer)
+                        }
+                    }
+                    for palette in &sprite.palettes {
+                        max = max.max(palette.id.get());
+                    }
+                    for tileset in &sprite.tilesets {
+                        max = max.max(tileset.id.get());
+                        if let TilesetSource::Inline { buffer } = &tileset.source {
+                            max = max.max(buffer.get());
+                        }
+                    }
+                    for slice in &sprite.slices {
+                        max = max.max(slice.id.get());
+                    }
+                    for animation in &sprite.animations {
+                        max = max.max(animation.id.get());
+                    }
+                    for cel in &sprite.cels {
+                        if let CelData::Raster { buffer, .. } = &cel.data {
+                            max = max.max(buffer.get());
+                        }
+                    }
+                }
+            }
+            EntityContent::Tileset { tileset } => {
+                max = max.max(tileset.id.get()); // TilesetId
+                if let TilesetSource::Inline { buffer } = &tileset.source {
+                    max = max.max(buffer.get()); // PixelBufferId
+                }
+            }
+            EntityContent::Tilemap { scene } => {
+                for layer in &scene.layers {
+                    max = max.max(layer.id.get()); // LayerId
+                }
+                // scene.tilesets[].tileset_entity_id is EntityId already covered
+                // by the outer entity loop — no rescan needed.
+            }
+            EntityContent::Reference { sheet } => {
+                max = max.max(sheet.canonical.id.get()); // SheetVariantId
+                for variant in &sheet.history {
+                    max = max.max(variant.id.get()); // SheetVariantId
+                }
             }
         }
     }
+
+    // Project-wide groups and tags also draw from the same counter.
+    for group in &project.library.groups {
+        max = max.max(group.id.get()); // GroupId
+    }
+    for tag in &project.library.tags {
+        max = max.max(tag.id.get()); // TagId
+    }
+    // Project-wide shared palettes.
+    for palette in &project.library.palettes {
+        max = max.max(palette.id.get());
+    }
+
     // Selection masks live in `pixel_buffers` too. Without this branch,
     // `next_id` after a save/load could collide with a live mask buffer
     // and the next allocation would overwrite the selection.
-    if let Some(pixhaus_core::project::SelectionRegion::Mask { mask, .. }) =
-        &project.selection.region
-    {
+    if let Some(SelectionRegion::Mask { mask, .. }) = &project.selection.region {
         max = max.max(mask.get());
     }
+
     max.saturating_add(1)
 }
 
@@ -635,6 +692,197 @@ mod tests {
         assert!(
             next > 99,
             "next_id must exceed selection mask id; got {next} for mask id 99"
+        );
+    }
+
+    /// Pins the B9.2 fix: entity and state IDs are minted from the same
+    /// counter as sprite IDs, so `compute_next_id` must scan them too.
+    /// Without the fix, a project whose `entity_id` or `state_id` exceeded the
+    /// max sprite/layer/palette id would hand out a colliding id on the
+    /// next save+reload cycle.
+    #[test]
+    fn compute_next_id_includes_entity_and_state_ids() {
+        let mut project = Project::new("entity-id-fixture");
+        // entity_id_raw=100 and state_id_raw=200 both exceed the sprite id
+        // and all sub-entity ids, so the old code (which ignored entity/state
+        // IDs) would have returned 3 (max(sprite_id=2) + 1), not 201.
+        let sprite = Sprite::empty(
+            pixhaus_core::project::SpriteId::new(2),
+            "main",
+            Size::new(8, 8),
+        );
+        install_sprite_as_new_entity(&mut project, sprite, 100, 200);
+        let next = compute_next_id(&project);
+        assert!(
+            next > 200,
+            "next_id must exceed EntityId and StateId; got {next} for max state_id 200"
+        );
+    }
+
+    /// Pins the A2 fix: `LayerKind::Reference` layers carry a `PixelBufferId`
+    /// for the reference image. Without the fix a project with such a layer
+    /// whose buffer id exceeded every other id would hand out a colliding id
+    /// after the next save+reload cycle.
+    #[test]
+    fn compute_next_id_includes_reference_layer_buffer_id() {
+        use pixhaus_core::project::{
+            BlendMode, IVec2, Layer, LayerId, LayerKind, PixelBufferId, Size, Sprite, SpriteId,
+            UserData,
+        };
+        let mut project = Project::new("ref-layer-fixture");
+        let mut sprite = Sprite::empty(SpriteId::new(2), "main", Size::new(8, 8));
+        sprite.layers.push(Layer {
+            id: LayerId::new(5),
+            name: "bg".into(),
+            kind: LayerKind::Raster,
+            blend_mode: BlendMode::Normal,
+            opacity: 255,
+            visible: true,
+            locked: false,
+            parent: None,
+            user_data: UserData::default(),
+        });
+        sprite.layers.push(Layer {
+            id: LayerId::new(6),
+            name: "ref".into(),
+            kind: LayerKind::Reference {
+                image: PixelBufferId::new(99),
+                origin: IVec2 { x: 0, y: 0 },
+            },
+            blend_mode: BlendMode::Normal,
+            opacity: 128,
+            visible: true,
+            locked: true,
+            parent: None,
+            user_data: UserData::default(),
+        });
+        install_sprite_as_new_entity(&mut project, sprite, 10, 11);
+        let next = compute_next_id(&project);
+        assert!(
+            next > 99,
+            "next_id must exceed reference-layer PixelBufferId; got {next}"
+        );
+    }
+
+    /// Pins the A1 fix: `Tilemap`-kind entities carry `LayerId`s on their
+    /// scene layers and `Reference`-kind entities carry `SheetVariantId`s.
+    /// Both were silently skipped before this fix.
+    #[test]
+    fn compute_next_id_covers_tilemap_and_reference_content() {
+        use pixhaus_core::project::{
+            AiMetadata, AssetInfo, Entity, EntityContent, EntityDefaults, EntityId, EntityKind,
+            LayerId, ReferenceImage, ReferenceSheet, SheetComposition, SheetVariant,
+            SheetVariantId, Size, TilemapData, TilemapLayer, TilemapScene, UserData,
+        };
+
+        let mut project = Project::new("tilemap-ref-fixture");
+
+        // Tilemap entity with a layer carrying LayerId=50.
+        project.library.entities.push(Entity {
+            id: EntityId::new(1),
+            kind: EntityKind::Tilemap,
+            name: "Level1".into(),
+            group_id: None,
+            tags: Vec::new(),
+            defaults: EntityDefaults::default(),
+            content: EntityContent::Tilemap {
+                scene: TilemapScene {
+                    size: Size::new(10, 10),
+                    tilesets: Vec::new(),
+                    layers: vec![TilemapLayer {
+                        id: LayerId::new(50),
+                        name: "ground".into(),
+                        data: TilemapData::empty(10, 10),
+                        opacity: 255,
+                        visible: true,
+                    }],
+                    properties: std::collections::BTreeMap::default(),
+                },
+            },
+            ai: AiMetadata::default(),
+            anchor_reference_id: None,
+            user_data: UserData::default(),
+            created_at: 0,
+            updated_at: 0,
+        });
+
+        // Reference entity with canonical id=60 and a history variant id=70.
+        project.library.entities.push(Entity {
+            id: EntityId::new(2),
+            kind: EntityKind::Reference,
+            name: "Sheet".into(),
+            group_id: None,
+            tags: Vec::new(),
+            defaults: EntityDefaults::default(),
+            content: EntityContent::Reference {
+                sheet: Box::new(ReferenceSheet {
+                    canonical: SheetVariant {
+                        id: SheetVariantId::new(60),
+                        generated_at: 0,
+                        image: ReferenceImage {
+                            bytes: vec![1],
+                            mime: "image/png".into(),
+                        },
+                        composition: SheetComposition::default(),
+                        generation: None,
+                        extracted_palette: Vec::new(),
+                    },
+                    history: vec![SheetVariant {
+                        id: SheetVariantId::new(70),
+                        generated_at: 0,
+                        image: ReferenceImage {
+                            bytes: vec![2],
+                            mime: "image/png".into(),
+                        },
+                        composition: SheetComposition::default(),
+                        generation: None,
+                        extracted_palette: Vec::new(),
+                    }],
+                    prompts: Vec::new(),
+                    info: AssetInfo::default(),
+                }),
+            },
+            ai: AiMetadata::default(),
+            anchor_reference_id: None,
+            user_data: UserData::default(),
+            created_at: 0,
+            updated_at: 0,
+        });
+
+        let next = compute_next_id(&project);
+        assert!(
+            next > 70,
+            "next_id must exceed all tilemap LayerIds and Reference SheetVariantIds; got {next}"
+        );
+    }
+
+    /// `GroupId` and `TagId` also draw from `next_id`. If they exceed every
+    /// sprite-side id, `compute_next_id` must still track past them.
+    #[test]
+    fn compute_next_id_includes_group_and_tag_ids() {
+        use pixhaus_core::project::{EntityGroup, GroupId, Rgba, TagDefinition, TagId, UserData};
+        let mut project = Project::new("group-tag-ids-fixture");
+        project.library.groups.push(EntityGroup {
+            id: GroupId::new(50),
+            name: "Characters".into(),
+            parent_id: None,
+            user_data: UserData::default(),
+        });
+        project.library.tags.push(TagDefinition {
+            id: TagId::new(75),
+            name: "hero".into(),
+            color: Some(Rgba {
+                r: 255,
+                g: 0,
+                b: 0,
+                a: 255,
+            }),
+            auto_generated: false,
+        });
+        let next = compute_next_id(&project);
+        assert!(
+            next > 75,
+            "next_id must exceed GroupId and TagId; got {next}"
         );
     }
 

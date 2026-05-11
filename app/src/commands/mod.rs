@@ -10,6 +10,7 @@ pub mod crash_reporting;
 pub mod exports;
 pub mod frames;
 pub mod layers;
+pub mod library;
 pub mod palette;
 pub mod plugins;
 pub mod project;
