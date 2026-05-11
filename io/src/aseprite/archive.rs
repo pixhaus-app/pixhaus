@@ -57,8 +57,9 @@ use crate::error::{Error, Result};
 use crate::pixhaus::{PixelBufferEntry, PixhausArchive};
 
 use super::chunk::{
-    CelChunk, CelChunkData, Chunk, LayerChunk, LayerKindCode, NineSliceWire, PaletteChunk,
-    PaletteEntryWire, PivotWire, SliceChunk, SliceKeyEntry, TagEntry, TagsChunk, TilesetSourceWire,
+    CelChunk, CelChunkData, Chunk, ExternalFileEntry, ExternalFilesChunk, LayerChunk,
+    LayerKindCode, NineSliceWire, PaletteChunk, PaletteEntryWire, PivotWire, SliceChunk,
+    SliceKeyEntry, TagEntry, TagsChunk, TilesetChunk, TilesetSourceWire,
 };
 use super::document::{AsepriteDocument, ColorDepth, DocumentFrame, DocumentHeader};
 use super::spec::{LAYER_FLAG_EDITABLE, LAYER_FLAG_GROUP_COLLAPSED, LAYER_FLAG_VISIBLE};
@@ -88,6 +89,27 @@ pub enum ConversionWarning {
         /// State the frame index resolves to in the merged timeline, or
         /// the same as `from_state` when it cannot be determined.
         to_state: StateId,
+    },
+    /// An Aseprite tag's `from_frame` is >= the document's frame count.
+    /// The tag was skipped; no state was created for it.
+    InvalidTagRange {
+        /// Display name of the skipped tag.
+        tag_name: String,
+        /// `from_frame` value from the tag.
+        from: u16,
+        /// `to_frame` value from the tag.
+        to: u16,
+        /// Number of frames in the document.
+        frame_count: usize,
+    },
+    /// An external tileset chunk references a file ID not present in the
+    /// document's `ExternalFiles` chunk. The tileset was imported with an
+    /// empty path string; the warning lets callers surface the breakage.
+    MissingExternalFileEntry {
+        /// Tileset ID of the affected tileset.
+        tileset_id: u32,
+        /// The `external_file_id` that was not found.
+        external_file_id: u32,
     },
 }
 
@@ -165,6 +187,7 @@ impl ImportCtx {
 /// - [`Error::NoFrames`] when the document has no frames.
 /// - [`Error::UnknownCelLayer`] when a cel references a layer index
 ///   that does not exist in the document's layer list.
+#[allow(clippy::too_many_lines)]
 pub fn document_to_archive(
     doc: &AsepriteDocument,
     sprite_name: impl Into<String>,
@@ -212,7 +235,7 @@ pub fn document_to_archive(
 
     let doc_slices = build_slices(frame0);
 
-    let tilesets = build_tilesets(frame0, doc.header.color_depth, &mut ctx);
+    let tilesets = build_tilesets(frame0, doc.header.color_depth, &mut ctx, &mut warnings);
 
     let transparent_index = matches!(doc.header.color_depth, ColorDepth::Indexed)
         .then_some(doc.header.transparent_index);
@@ -224,13 +247,27 @@ pub fn document_to_archive(
     let state_ranges: Vec<(String, usize, usize)> = if tags.is_empty() {
         vec![("default".into(), 0, frame_count - 1)]
     } else {
-        tags.iter()
-            .map(|t| {
-                let from = t.from_frame as usize;
-                let to = (t.to_frame as usize).min(frame_count - 1);
-                (t.name.clone(), from, to)
-            })
-            .collect()
+        let mut ranges = Vec::with_capacity(tags.len());
+        for t in &tags {
+            let from = t.from_frame as usize;
+            if from >= frame_count {
+                warnings.push(ConversionWarning::InvalidTagRange {
+                    tag_name: t.name.clone(),
+                    from: t.from_frame,
+                    to: t.to_frame,
+                    frame_count,
+                });
+                continue;
+            }
+            let to = (t.to_frame as usize).min(frame_count - 1);
+            ranges.push((t.name.clone(), from, to));
+        }
+        if ranges.is_empty() {
+            // All tags were invalid; fall back to a single default state.
+            vec![("default".into(), 0, frame_count - 1)]
+        } else {
+            ranges
+        }
     };
 
     // ── Build one NamedSprite per state ───────────────────────────────────────
@@ -246,7 +283,8 @@ pub fn document_to_archive(
             })
             .collect();
 
-        let (cels, palette_overrides) = collect_state_cels(doc, *from, *to, &layer_ids, &mut ctx)?;
+        let (cels, palette_overrides) =
+            collect_state_cels(doc, *from, *to, &layer_ids, &mut ctx, &mut warnings)?;
 
         let slices = remap_slices(&doc_slices, *from, *to);
         let state_num = u32::try_from(state_idx + 1).unwrap_or(u32::MAX);
@@ -302,6 +340,7 @@ pub fn document_to_archive(
 ///
 /// - [`Error::NoSpriteEntityForExport`] when no exportable entity is
 ///   found in the library.
+#[allow(clippy::too_many_lines)]
 pub fn archive_to_document(archive: &PixhausArchive) -> Result<AsepriteDocument> {
     let states = find_sprite_states(archive)?;
     let first = &states[0].sprite;
@@ -314,20 +353,34 @@ pub fn archive_to_document(archive: &PixhausArchive) -> Result<AsepriteDocument>
 
     let mut tag_entries: Vec<TagEntry> = Vec::new();
     let mut state_frame_offsets: Vec<u16> = Vec::new();
-    let mut offset: u16 = 0;
+    let mut offset: u32 = 0;
 
     for state in states {
-        state_frame_offsets.push(offset);
-        let count = u16::try_from(state.sprite.frames.len()).unwrap_or(u16::MAX);
+        let offset_u16 =
+            u16::try_from(offset).map_err(|_| Error::FrameCountOverflow { total: offset })?;
+        state_frame_offsets.push(offset_u16);
+
+        let count = u32::try_from(state.sprite.frames.len()).unwrap_or(u32::MAX);
+        let next_offset = offset
+            .checked_add(count)
+            .ok_or(Error::FrameCountOverflow { total: u32::MAX })?;
+        if next_offset > u32::from(u16::MAX) + 1 {
+            return Err(Error::FrameCountOverflow { total: next_offset });
+        }
+
+        let from_u16 = offset_u16;
+        let to_u16 = u16::try_from(offset + count.saturating_sub(1))
+            .map_err(|_| Error::FrameCountOverflow { total: offset + count })?;
+
         tag_entries.push(TagEntry {
-            from_frame: offset,
-            to_frame: offset + count.saturating_sub(1),
+            from_frame: from_u16,
+            to_frame: to_u16,
             loop_direction: 0,
             repeat: 0,
             name: state.state_name.clone(),
             deprecated_color: [0; 3],
         });
-        offset += count;
+        offset = next_offset;
     }
 
     // ── Layer depths from first state ─────────────────────────────────────────
@@ -360,8 +413,20 @@ pub fn archive_to_document(archive: &PixhausArchive) -> Result<AsepriteDocument>
         frame0.chunks.push(palette_chunk_from(pal));
     }
 
-    for slice in &first.slices {
-        frame0.chunks.push(slice_chunk_from(slice));
+    // Slices: merge across all states with per-state frame offsets.
+    let states_ref: Vec<&LibNamedSprite> = states.iter().collect();
+    for sc in merged_slice_chunks(&states_ref, &state_frame_offsets) {
+        frame0.chunks.push(sc);
+    }
+
+    // Tileset chunks: ExternalFiles first, then one Tileset per entry.
+    let (maybe_ef, tileset_chunks) =
+        build_export_tileset_chunks(&first.tilesets, color_depth, archive);
+    if let Some(ef) = maybe_ef {
+        frame0.chunks.push(Chunk::ExternalFiles(ef));
+    }
+    for tc in tileset_chunks {
+        frame0.chunks.push(Chunk::Tileset(tc));
     }
 
     let layer_map_0 = layer_index_map(&first.layers);
@@ -374,11 +439,40 @@ pub fn archive_to_document(archive: &PixhausArchive) -> Result<AsepriteDocument>
         archive,
     );
 
+    // Build the document header with transparent index for indexed sprites.
+    let mut header = DocumentHeader {
+        color_depth,
+        ..DocumentHeader::rgba(canvas_w, canvas_h)
+    };
+    if matches!(color_depth, ColorDepth::Indexed) {
+        header.transparent_index = first
+            .transparent_color_index
+            .unwrap_or(0);
+        header.color_count = u16::try_from(
+            first.palettes.first().map_or(0, |p| p.colors.len()),
+        )
+        .unwrap_or(u16::MAX);
+    }
+
+    // Pre-build per-frame palette override chunks indexed by absolute frame.
+    let mut palette_overrides: HashMap<usize, Vec<Chunk>> = HashMap::new();
+    for (state_idx, state) in states.iter().enumerate() {
+        let abs_base = usize::from(state_frame_offsets[state_idx]);
+        for ov in &state.sprite.palette_frame_overrides {
+            palette_overrides
+                .entry(abs_base + ov.frame as usize)
+                .or_default()
+                .push(palette_chunk_from_entries(&ov.colors));
+        }
+    }
+
+    // Emit any palette overrides that land on frame 0.
+    if let Some(chunks) = palette_overrides.remove(&0) {
+        frame0.chunks.extend(chunks);
+    }
+
     let mut doc = AsepriteDocument {
-        header: DocumentHeader {
-            color_depth,
-            ..DocumentHeader::rgba(canvas_w, canvas_h)
-        },
+        header,
         frames: vec![frame0],
     };
 
@@ -402,6 +496,11 @@ pub fn archive_to_document(archive: &PixhausArchive) -> Result<AsepriteDocument>
                 frame_offset,
                 archive,
             );
+
+            let abs_frame = usize::from(frame_offset) + frame_local;
+            if let Some(chunks) = palette_overrides.remove(&abs_frame) {
+                doc_frame.chunks.extend(chunks);
+            }
 
             doc.frames.push(doc_frame);
         }
@@ -463,6 +562,7 @@ fn collect_state_cels(
     to: usize,
     layer_ids: &[LayerId],
     ctx: &mut ImportCtx,
+    warnings: &mut Vec<ConversionWarning>,
 ) -> Result<(Vec<Cel>, Vec<PaletteFrameOverride>)> {
     let mut cels: Vec<Cel> = Vec::new();
     let mut palette_overrides: Vec<PaletteFrameOverride> = Vec::new();
@@ -483,6 +583,32 @@ fn collect_state_cels(
                             .ok_or(Error::UnknownCelLayer {
                                 layer: cc.layer_index,
                             })?;
+
+                    // Detect cross-state linked cels: source frame outside [from, to].
+                    if let CelChunkData::Linked { frame: src_doc_frame } = &cc.data {
+                        let doc_src = *src_doc_frame as usize;
+                        if doc_src < from || doc_src > to {
+                            warnings.push(ConversionWarning::CrossStateLinkedCel {
+                                from_state: StateId::new(0), // unknown at import time
+                                to_state: StateId::new(0),
+                            });
+                            // Inline the source cel's pixels instead of creating a
+                            // corrupt link. Look up the raster source in the document.
+                            if let Some(inlined) = inline_cross_state_cel(
+                                doc,
+                                cc.layer_index,
+                                doc_src,
+                                layer_id,
+                                frame_index,
+                                doc.header.color_depth,
+                                ctx,
+                            ) {
+                                cels.push(inlined);
+                            }
+                            continue;
+                        }
+                    }
+
                     cels.push(build_cel(
                         cc,
                         layer_id,
@@ -504,6 +630,59 @@ fn collect_state_cels(
     }
 
     Ok((cels, palette_overrides))
+}
+
+/// Resolve a cross-state linked cel by finding the source raster data in the
+/// document and converting it to an inline raster cel.
+///
+/// If the source frame has no raster cel for `layer_index` (e.g. it is itself
+/// a linked cel, or a tilemap cel), returns `None` and the frame is left blank
+/// for that layer.
+fn inline_cross_state_cel(
+    doc: &AsepriteDocument,
+    layer_index: u16,
+    src_doc_frame: usize,
+    layer_id: LayerId,
+    frame_index: FrameIndex,
+    depth: ColorDepth,
+    ctx: &mut ImportCtx,
+) -> Option<Cel> {
+    let src_frame = doc.frames.get(src_doc_frame)?;
+    let src_cel = src_frame.chunks.iter().find_map(|c| {
+        if let Chunk::Cel(cc) = c {
+            if cc.layer_index == layer_index {
+                Some(cc)
+            } else {
+                None
+            }
+        } else {
+            None
+        }
+    })?;
+
+    match &src_cel.data {
+        CelChunkData::Compressed { width, height, pixels }
+        | CelChunkData::Raw { width, height, pixels } => {
+            let w = u32::from(*width);
+            let h = u32::from(*height);
+            let bpp = depth.bytes_per_pixel();
+            let stride = w * bpp;
+            let buf_id = ctx.add_buffer(w, h, stride, pixels.clone());
+            Some(Cel {
+                layer_id,
+                frame_index,
+                position: IVec2::new(i32::from(src_cel.x), i32::from(src_cel.y)),
+                opacity: src_cel.opacity,
+                data: CelData::Raster {
+                    buffer: pixhaus_core::project::PixelBufferId::new(buf_id),
+                    size: Size::new(w, h),
+                },
+                user_data: UserData::default(),
+            })
+        }
+        // Linked or tilemap source: cannot inline; leave the frame blank.
+        _ => None,
+    }
 }
 
 /// Build a `Custom("Sprite")` library entity from a set of named sprites.
@@ -730,7 +909,25 @@ fn build_slices(frame0: &DocumentFrame) -> Vec<Slice> {
     slices
 }
 
-fn build_tilesets(frame0: &DocumentFrame, depth: ColorDepth, ctx: &mut ImportCtx) -> Vec<Tileset> {
+fn build_tilesets(
+    frame0: &DocumentFrame,
+    depth: ColorDepth,
+    ctx: &mut ImportCtx,
+    warnings: &mut Vec<ConversionWarning>,
+) -> Vec<Tileset> {
+    // Build the external-file ID → path mapping from any ExternalFiles chunk.
+    let external_files: HashMap<u32, String> = frame0
+        .chunks
+        .iter()
+        .find_map(|c| {
+            if let Chunk::ExternalFiles(ef) = c {
+                Some(ef.entries.iter().map(|e| (e.id, e.name.clone())).collect())
+            } else {
+                None
+            }
+        })
+        .unwrap_or_default();
+
     let mut tilesets: Vec<Tileset> = Vec::new();
 
     for chunk in &frame0.chunks {
@@ -739,19 +936,54 @@ fn build_tilesets(frame0: &DocumentFrame, depth: ColorDepth, ctx: &mut ImportCtx
                 TilesetSourceWire::Inline { pixels } => {
                     let bpp = depth.bytes_per_pixel();
                     let tile_w = u32::from(tc.tile_width);
-                    // Tiles stacked vertically, one tile per row of tile_height rows
-                    let total_h = u32::from(tc.tile_height) * tc.tile_count;
-                    let stride = tile_w * bpp;
-                    let buf_id = ctx.add_buffer(tile_w, total_h, stride, pixels.clone());
+                    let tile_h = u32::from(tc.tile_height);
+                    let tile_count = tc.tile_count;
+
+                    // Aseprite stores tiles as a vertical strip (width=tile_w,
+                    // height=tile_h*tile_count). Pixhaus uses a horizontal strip
+                    // (width=tile_w*tile_count, height=tile_h). Repack here.
+                    let row_bytes = (tile_w * bpp) as usize;
+                    let src_stride = row_bytes; // vertical strip: one tile wide
+                    let dst_w = tile_w * tile_count;
+                    let dst_stride = (dst_w * bpp) as usize;
+                    let dst_h = tile_h;
+                    let mut dst = vec![0u8; dst_stride * dst_h as usize];
+
+                    for tile_idx in 0..tile_count as usize {
+                        for row in 0..tile_h as usize {
+                            let src_row_start =
+                                (tile_idx * tile_h as usize + row) * src_stride;
+                            let dst_row_start =
+                                row * dst_stride + tile_idx * row_bytes;
+                            dst[dst_row_start..dst_row_start + row_bytes].copy_from_slice(
+                                &pixels[src_row_start..src_row_start + row_bytes],
+                            );
+                        }
+                    }
+
+                    let buf_id = ctx.add_buffer(
+                        dst_w,
+                        dst_h,
+                        u32::try_from(dst_stride).unwrap_or(u32::MAX),
+                        dst,
+                    );
                     CoreTilesetSource::Inline {
                         buffer: pixhaus_core::project::PixelBufferId::new(buf_id),
                     }
                 }
-                TilesetSourceWire::External { .. } => {
-                    // External tileset: placeholder path; the loader resolves it.
-                    CoreTilesetSource::External {
-                        path: String::new(),
-                    }
+                TilesetSourceWire::External {
+                    external_file_id, ..
+                } => {
+                    let path = if let Some(p) = external_files.get(external_file_id) {
+                        p.clone()
+                    } else {
+                        warnings.push(ConversionWarning::MissingExternalFileEntry {
+                            tileset_id: tc.tileset_id,
+                            external_file_id: *external_file_id,
+                        });
+                        String::new()
+                    };
+                    CoreTilesetSource::External { path }
                 }
             };
 
@@ -998,6 +1230,16 @@ fn build_single_state_document(
         frame0.chunks.push(slice_chunk_from(slice));
     }
 
+    // Tileset chunks: ExternalFiles first, then one Tileset per entry.
+    let (maybe_ef, tileset_chunks) =
+        build_export_tileset_chunks(&state.sprite.tilesets, color_depth, archive);
+    if let Some(ef) = maybe_ef {
+        frame0.chunks.push(Chunk::ExternalFiles(ef));
+    }
+    for tc in tileset_chunks {
+        frame0.chunks.push(Chunk::Tileset(tc));
+    }
+
     append_cels_validated(
         &mut frame0.chunks,
         &state.sprite.cels,
@@ -1009,11 +1251,28 @@ fn build_single_state_document(
         warnings,
     );
 
+    // Emit palette overrides that land on frame 0.
+    for ov in &state.sprite.palette_frame_overrides {
+        if ov.frame == 0 {
+            frame0.chunks.push(palette_chunk_from_entries(&ov.colors));
+        }
+    }
+
+    // Build the header with transparent index for indexed sprites.
+    let mut header = DocumentHeader {
+        color_depth,
+        ..DocumentHeader::rgba(canvas_w, canvas_h)
+    };
+    if matches!(color_depth, ColorDepth::Indexed) {
+        header.transparent_index = state.sprite.transparent_color_index.unwrap_or(0);
+        header.color_count = u16::try_from(
+            state.sprite.palettes.first().map_or(0, |p| p.colors.len()),
+        )
+        .unwrap_or(u16::MAX);
+    }
+
     let mut doc = AsepriteDocument {
-        header: DocumentHeader {
-            color_depth,
-            ..DocumentHeader::rgba(canvas_w, canvas_h)
-        },
+        header,
         frames: vec![frame0],
     };
 
@@ -1032,6 +1291,13 @@ fn build_single_state_document(
             archive,
             warnings,
         );
+
+        // Emit palette overrides for this frame.
+        for ov in &state.sprite.palette_frame_overrides {
+            if ov.frame == u32::try_from(frame_local).unwrap_or(u32::MAX) {
+                doc_frame.chunks.push(palette_chunk_from_entries(&ov.colors));
+            }
+        }
 
         doc.frames.push(doc_frame);
     }
@@ -1079,6 +1345,173 @@ fn append_cels_validated(
 }
 
 // ── Export helpers ────────────────────────────────────────────────────────────
+
+/// Build slice chunks for a merged document, merging keys from all states.
+///
+/// Keys from each state are offset by that state's frame offset. When two
+/// states have slices with the same `SliceId`, the first state's name and
+/// flags take precedence and keys from later states are appended. This lets
+/// a slice named "hitbox" track across all states without duplication.
+fn merged_slice_chunks(
+    states: &[&LibNamedSprite],
+    state_frame_offsets: &[u16],
+) -> Vec<Chunk> {
+    // Maintain insertion order separately from the hashmap.
+    let mut order: Vec<SliceId> = Vec::new();
+    let mut chunks: HashMap<SliceId, SliceChunk> = HashMap::new();
+
+    for (state_idx, state) in states.iter().enumerate() {
+        let frame_offset = u32::from(state_frame_offsets[state_idx]);
+        for slice in &state.sprite.slices {
+            let offset_keys: Vec<SliceKeyEntry> = slice
+                .keys
+                .iter()
+                .map(|k| {
+                    let abs_frame = k.frame.get().saturating_add(frame_offset);
+                    SliceKeyEntry {
+                        frame: abs_frame,
+                        x: k.bounds.origin.x,
+                        y: k.bounds.origin.y,
+                        width: k.bounds.size.width,
+                        height: k.bounds.size.height,
+                        nine_slice: k.nine_slice.map(|ns| NineSliceWire {
+                            x: ns.center.origin.x,
+                            y: ns.center.origin.y,
+                            width: ns.center.size.width,
+                            height: ns.center.size.height,
+                        }),
+                        pivot: k.pivot.map(|pv| PivotWire {
+                            x: pv.offset.x,
+                            y: pv.offset.y,
+                        }),
+                    }
+                })
+                .collect();
+
+            let sc = chunks.entry(slice.id).or_insert_with(|| {
+                order.push(slice.id);
+                SliceChunk {
+                    name: slice.name.clone(),
+                    keys: Vec::new(),
+                    has_nine_slice: false,
+                    has_pivot: false,
+                }
+            });
+            sc.keys.extend(offset_keys);
+            sc.has_nine_slice |= slice.keys.iter().any(|k| k.nine_slice.is_some());
+            sc.has_pivot |= slice.keys.iter().any(|k| k.pivot.is_some());
+        }
+    }
+
+    order
+        .into_iter()
+        .filter_map(|id| chunks.remove(&id))
+        .map(Chunk::Slice)
+        .collect()
+}
+
+/// Build the tileset export chunks (`ExternalFiles` + one `Tileset` per tileset).
+///
+/// For inline tilesets, repacks the Pixhaus horizontal strip back into the
+/// Aseprite vertical strip format. For external tilesets, assigns sequential
+/// external-file IDs and emits a single `ExternalFiles` chunk if needed.
+///
+/// Returns `(external_files_chunk, tileset_chunks)`.
+fn build_export_tileset_chunks(
+    tilesets: &[Tileset],
+    color_depth: ColorDepth,
+    archive: &PixhausArchive,
+) -> (Option<ExternalFilesChunk>, Vec<TilesetChunk>) {
+    let bpp = color_depth.bytes_per_pixel();
+    let mut external_entries: Vec<ExternalFileEntry> = Vec::new();
+    let mut tileset_chunks: Vec<TilesetChunk> = Vec::new();
+
+    for tileset in tilesets {
+        let tile_w = tileset.tile_size.width;
+        let tile_h = tileset.tile_size.height;
+        let tile_count = tileset.tile_count;
+
+        let source = match &tileset.source {
+            CoreTilesetSource::Inline { buffer } => {
+                // Horizontal Pixhaus layout → vertical Aseprite layout.
+                let pixels = archive
+                    .buffer(*buffer)
+                    .map_or(&[][..], |b| b.pixels.as_slice());
+
+                let row_bytes = (tile_w * bpp) as usize;
+                let src_stride = (tile_w * tile_count * bpp) as usize;
+                let dst_len = (tile_w * bpp * tile_h * tile_count) as usize;
+                let mut dst = vec![0u8; dst_len];
+
+                for tile_idx in 0..tile_count as usize {
+                    for row in 0..tile_h as usize {
+                        let src_start = row * src_stride + tile_idx * row_bytes;
+                        let dst_start = (tile_idx * tile_h as usize + row) * row_bytes;
+                        if src_start + row_bytes <= pixels.len()
+                            && dst_start + row_bytes <= dst.len()
+                        {
+                            dst[dst_start..dst_start + row_bytes]
+                                .copy_from_slice(&pixels[src_start..src_start + row_bytes]);
+                        }
+                    }
+                }
+
+                TilesetSourceWire::Inline { pixels: dst }
+            }
+            CoreTilesetSource::External { path } => {
+                let external_file_id = u32::try_from(external_entries.len()).unwrap_or(u32::MAX);
+                external_entries.push(ExternalFileEntry {
+                    id: external_file_id,
+                    kind: 1, // tileset
+                    name: path.clone(),
+                });
+                TilesetSourceWire::External {
+                    external_file_id,
+                    external_tileset_id: 0,
+                }
+            }
+        };
+
+        tileset_chunks.push(TilesetChunk {
+            tileset_id: tileset.id.get(),
+            flags: 0,
+            tile_count,
+            tile_width: u16::try_from(tile_w).unwrap_or(u16::MAX),
+            tile_height: u16::try_from(tile_h).unwrap_or(u16::MAX),
+            base_index: tileset.base_index,
+            name: tileset.name.clone(),
+            source,
+        });
+    }
+
+    let ef = if external_entries.is_empty() {
+        None
+    } else {
+        Some(ExternalFilesChunk {
+            entries: external_entries,
+        })
+    };
+
+    (ef, tileset_chunks)
+}
+
+/// Build a palette chunk from a slice of palette entries.
+fn palette_chunk_from_entries(colors: &[PaletteEntry]) -> Chunk {
+    let entries: Vec<PaletteEntryWire> = colors
+        .iter()
+        .map(|e| PaletteEntryWire {
+            color: e.color,
+            name: e.name.clone(),
+        })
+        .collect();
+    let last = u32::try_from(entries.len().saturating_sub(1)).unwrap_or(u32::MAX);
+    Chunk::Palette(PaletteChunk {
+        palette_size: u32::try_from(entries.len()).unwrap_or(u32::MAX),
+        first_index: 0,
+        last_index: last,
+        entries,
+    })
+}
 
 fn color_depth_from_mode(mode: ColorMode) -> ColorDepth {
     match mode {
@@ -1394,18 +1827,33 @@ mod tests {
         f0.chunks.push(Chunk::Cel(compressed_cel(0, 8, 8)));
         doc.frames.push(f0);
 
-        for _ in 0..3 {
-            let mut f = DocumentFrame::new(100);
-            f.chunks.push(Chunk::Cel(CelChunk {
-                layer_index: 0,
-                x: 0,
-                y: 0,
-                opacity: 255,
-                z_index: 0,
-                data: CelChunkData::Linked { frame: 0 },
-            }));
-            doc.frames.push(f);
-        }
+        // idle (0-1): frame 1 links to frame 0 (within idle's range).
+        // walk (2-3): frame 2 is a raster; frame 3 links to frame 2 (within walk's range).
+        let mut f1 = DocumentFrame::new(100);
+        f1.chunks.push(Chunk::Cel(CelChunk {
+            layer_index: 0,
+            x: 0,
+            y: 0,
+            opacity: 255,
+            z_index: 0,
+            data: CelChunkData::Linked { frame: 0 },
+        }));
+        doc.frames.push(f1);
+
+        let mut f2 = DocumentFrame::new(100);
+        f2.chunks.push(Chunk::Cel(compressed_cel(0, 8, 8)));
+        doc.frames.push(f2);
+
+        let mut f3 = DocumentFrame::new(100);
+        f3.chunks.push(Chunk::Cel(CelChunk {
+            layer_index: 0,
+            x: 0,
+            y: 0,
+            opacity: 255,
+            z_index: 0,
+            data: CelChunkData::Linked { frame: 2 }, // walk-internal
+        }));
+        doc.frames.push(f3);
 
         let result = document_to_archive(&doc, "hero").unwrap();
         assert!(result.warnings.is_empty());
