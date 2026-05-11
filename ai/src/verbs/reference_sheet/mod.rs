@@ -298,8 +298,8 @@ impl Verb for GenerateReferenceSheetVerb {
             return Err(VerbError::Cancelled);
         }
 
-        let images = match response {
-            InferenceResponse::Image(r) => r.images,
+        let (images, backend_model) = match response {
+            InferenceResponse::Image(r) => (r.images, r.model),
             InferenceResponse::Text(_) => {
                 return Err(VerbError::Backend(
                     "backend returned text for an image-generation request".into(),
@@ -331,6 +331,7 @@ impl Verb for GenerateReferenceSheetVerb {
             unix_now(),
             images,
             &backend_id,
+            &backend_model,
             &full_prompt,
             &negative,
             inputs.seed,
@@ -399,11 +400,12 @@ fn unix_now() -> i64 {
 }
 
 // i is always 0..=3 (num_variants clamped to 1..=4); the truncation cannot fire.
-#[allow(clippy::cast_possible_truncation)]
+#[allow(clippy::cast_possible_truncation, clippy::too_many_arguments)]
 fn build_variants(
     now: i64,
     images: Vec<Vec<u8>>,
     backend_id: &str,
+    model: &str,
     prompt: &str,
     negative_prompt: &str,
     seed: Option<u64>,
@@ -419,7 +421,7 @@ fn build_variants(
             composition: composition.clone(),
             generation: GenerationProvenance {
                 backend: backend_id.to_owned(),
-                model: "unknown".into(),
+                model: model.to_owned(),
                 prompt: prompt.to_owned(),
                 seed,
                 negative_prompt: Some(negative_prompt.to_owned()),
@@ -874,6 +876,78 @@ mod tests {
             matches!(err, VerbError::Backend(_)),
             "expected Backend error when backend returns zero images, got {err:?}"
         );
+    }
+
+    #[tokio::test]
+    async fn generation_provenance_carries_model_from_backend() {
+        let runtime = VerbRuntime::new();
+        runtime
+            .register_backend(BackendProxy::new(WhiteStub::new(1)), 0)
+            .unwrap();
+        runtime.register(GenerateReferenceSheetVerb::new()).unwrap();
+
+        let inv = runtime
+            .invoke(
+                &VerbId::new(GENERATE_REFERENCE_SHEET_VERB_ID),
+                VerbContext::empty(meta()),
+                inputs_for(CompositionTemplate::Character, 1),
+            )
+            .unwrap();
+        let preview = inv.finish().await.unwrap();
+
+        if let VerbEffect::Custom { payload, .. } = &preview.output.effects[0] {
+            let decoded: GenerateSheetPayload = serde_json::from_value(payload.clone()).unwrap();
+            let prov = &decoded.variants[0].generation;
+            assert_eq!(
+                prov.model, "stub.white",
+                "model must be captured from backend response, not hardcoded"
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn generation_provenance_carries_negative_prompt() {
+        let runtime = VerbRuntime::new();
+        runtime
+            .register_backend(BackendProxy::new(WhiteStub::new(1)), 0)
+            .unwrap();
+        runtime.register(GenerateReferenceSheetVerb::new()).unwrap();
+
+        let inputs = VerbInputs::from_struct(&GenerateReferenceSheetInputs {
+            entity_id: EntityId::new(7),
+            template: CompositionTemplate::Character,
+            prompt: "test subject".into(),
+            negative_prompt: Some("user_neg".into()),
+            num_variants: 1,
+            seed: None,
+        })
+        .unwrap();
+
+        let inv = runtime
+            .invoke(
+                &VerbId::new(GENERATE_REFERENCE_SHEET_VERB_ID),
+                VerbContext::empty(meta()),
+                inputs,
+            )
+            .unwrap();
+        let preview = inv.finish().await.unwrap();
+
+        if let VerbEffect::Custom { payload, .. } = &preview.output.effects[0] {
+            let decoded: GenerateSheetPayload = serde_json::from_value(payload.clone()).unwrap();
+            let prov = &decoded.variants[0].generation;
+            let neg = prov
+                .negative_prompt
+                .as_deref()
+                .expect("negative_prompt must be Some");
+            assert!(
+                neg.contains("user_neg"),
+                "user negative prompt must appear in provenance: {neg}"
+            );
+            assert!(
+                !neg.starts_with(','),
+                "negative prompt must not start with a bare comma"
+            );
+        }
     }
 
     // Ensure WhiteStub image and Duration are visible in this test scope.

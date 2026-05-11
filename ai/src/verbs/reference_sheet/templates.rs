@@ -78,10 +78,12 @@ impl CompositionTemplate {
             Self::Character => format!(
                 "pixel art character model sheet, {user_prompt}. \
                  Layout: five turnaround views in a horizontal strip across \
-                 the top — front view, left side, three-quarter view, right \
-                 side, back view, each 200 pixels wide, 480 pixels tall. \
-                 Below: three facial expression close-ups side by side — \
-                 neutral, happy, angry — each 256 pixels wide, 192 pixels tall. \
+                 the top, left-aligned starting at the left edge — front \
+                 view, left side, three-quarter view, right side, back view, \
+                 each 200 pixels wide, 480 pixels tall. \
+                 Below: three facial expression close-ups side by side, \
+                 left-aligned starting at the left edge — neutral, happy, \
+                 angry — each 256 pixels wide, 192 pixels tall. \
                  Below that: a horizontal palette swatch row showing all \
                  colours used, 1024 pixels wide, 128 pixels tall. \
                  Below that: two detail callout panels side by side, \
@@ -387,7 +389,10 @@ mod tests {
         let comp = CompositionTemplate::Character.composition();
         let outfit = &comp.outfits[0];
         assert_eq!(outfit.label, "outfit-variant");
-        assert_eq!(outfit.region.origin.x, 0, "outfit panel starts at left edge");
+        assert_eq!(
+            outfit.region.origin.x, 0,
+            "outfit panel starts at left edge"
+        );
         assert_eq!(outfit.region.size.width, 256);
         assert_eq!(outfit.region.size.height, 384);
     }
@@ -449,6 +454,15 @@ mod tests {
         assert!(
             prompt.contains("turnaround"),
             "character prompt mentions turnaround views"
+        );
+    }
+
+    #[test]
+    fn character_prompt_requests_left_aligned_rows() {
+        let prompt = CompositionTemplate::Character.build_prompt("test subject");
+        assert!(
+            prompt.contains("left-aligned"),
+            "character prompt must request left-aligned rows to anchor panel coordinates"
         );
     }
 
