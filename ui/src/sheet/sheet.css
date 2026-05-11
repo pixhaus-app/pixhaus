@@ -1,0 +1,495 @@
+/* Sheet view panel — reference sheet display, overlay, history, and info */
+
+:root {
+  --sheet-panel-width: 380px;
+  --sheet-history-thumb-size: 60px;
+}
+
+/* ── Panel shell ──────────────────────────────────────────────────────────── */
+
+.sheet-panel {
+  width: var(--sheet-panel-width);
+  flex-shrink: 0;
+  display: flex;
+  flex-direction: column;
+  background: var(--bg-panel);
+  border-left: 1px solid var(--border);
+  overflow: hidden;
+  user-select: none;
+}
+
+.sheet-panel__header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0 6px 0 10px;
+  height: 28px;
+  border-bottom: 1px solid var(--border);
+  flex-shrink: 0;
+}
+
+.sheet-panel__title {
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--text-disabled);
+  font-weight: 500;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.sheet-panel__header-actions {
+  display: flex;
+  gap: 2px;
+  flex-shrink: 0;
+}
+
+.sheet-panel__icon-btn {
+  width: 22px;
+  height: 22px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 3px;
+  color: var(--text-secondary);
+  font-size: 12px;
+  transition:
+    background var(--transition-fast),
+    color var(--transition-fast);
+  flex-shrink: 0;
+  cursor: pointer;
+}
+
+.sheet-panel__icon-btn:hover {
+  background: var(--bg-hover);
+  color: var(--text-primary);
+}
+
+.sheet-panel__icon-btn--active {
+  color: var(--accent);
+  background: var(--accent-subtle);
+}
+
+.sheet-panel__loading,
+.sheet-panel__error {
+  padding: 16px;
+  font-size: 12px;
+  color: var(--text-secondary);
+}
+
+.sheet-panel__error {
+  color: var(--color-error, #e55);
+}
+
+/* ── Body (image + info side by side at the top) ─────────────────────────── */
+
+.sheet-panel__body {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  overflow: hidden;
+}
+
+.sheet-panel__image-area {
+  flex-shrink: 0;
+  display: flex;
+  justify-content: center;
+  align-items: flex-start;
+  padding: 8px;
+  border-bottom: 1px solid var(--border);
+  background: var(--bg-app);
+  min-height: 140px;
+  max-height: 280px;
+}
+
+.sheet-panel__image-wrap {
+  position: relative;
+  display: inline-flex;
+  max-width: 100%;
+  max-height: 100%;
+}
+
+.sheet-panel__image {
+  display: block;
+  max-width: 100%;
+  max-height: 264px;
+  object-fit: contain;
+  image-rendering: pixelated;
+}
+
+.sheet-panel__image-empty {
+  width: 120px;
+  height: 120px;
+  background: var(--bg-elevated);
+  border: 1px dashed var(--border-strong);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 11px;
+  color: var(--text-disabled);
+}
+
+/* SVG overlay sits on top of the image, sized to match it exactly. */
+.sheet-panel__overlay {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  pointer-events: auto;
+}
+
+.sheet-panel__panel-rect {
+  fill: rgba(100, 150, 255, 0.08);
+  stroke: rgba(100, 150, 255, 0.55);
+  stroke-width: 6;
+  cursor: pointer;
+  transition: fill 0.1s;
+}
+
+.sheet-panel__panel-group:hover .sheet-panel__panel-rect,
+.sheet-panel__panel-group--selected .sheet-panel__panel-rect {
+  fill: rgba(100, 150, 255, 0.2);
+  stroke: rgba(100, 150, 255, 0.9);
+}
+
+.sheet-panel__panel-label {
+  font-size: 24px;
+  fill: rgba(200, 220, 255, 0.9);
+  pointer-events: none;
+  font-family: var(--font-mono, monospace);
+}
+
+/* ── Info area ────────────────────────────────────────────────────────────── */
+
+.sheet-panel__info-area {
+  overflow-y: auto;
+  flex-shrink: 0;
+  border-bottom: 1px solid var(--border);
+}
+
+.sheet-panel__info-area::-webkit-scrollbar {
+  width: 6px;
+}
+
+.sheet-panel__info-area::-webkit-scrollbar-thumb {
+  background: var(--border-strong);
+  border-radius: 3px;
+}
+
+/* ── Action buttons ───────────────────────────────────────────────────────── */
+
+.sheet-panel__actions {
+  display: flex;
+  gap: 6px;
+  padding: 6px 8px;
+  border-bottom: 1px solid var(--border);
+  flex-shrink: 0;
+}
+
+.sheet-panel__action-btn {
+  flex: 1;
+  height: 24px;
+  font-size: 11px;
+  border-radius: 3px;
+  border: 1px solid var(--border-strong);
+  background: var(--bg-elevated);
+  color: var(--text-primary);
+  cursor: pointer;
+  transition:
+    background var(--transition-fast),
+    border-color var(--transition-fast);
+}
+
+.sheet-panel__action-btn:hover:not(:disabled) {
+  background: var(--bg-hover);
+  border-color: var(--accent-border);
+}
+
+.sheet-panel__action-btn:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+
+/* ── Bottom tabs + content ────────────────────────────────────────────────── */
+
+.sheet-panel__bottom {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  overflow: hidden;
+  min-height: 0;
+}
+
+.sheet-panel__tabs {
+  display: flex;
+  border-bottom: 1px solid var(--border);
+  flex-shrink: 0;
+}
+
+.sheet-panel__tab {
+  flex: 1;
+  height: 26px;
+  font-size: 11px;
+  color: var(--text-secondary);
+  border-bottom: 2px solid transparent;
+  cursor: pointer;
+  transition:
+    color var(--transition-fast),
+    border-color var(--transition-fast);
+}
+
+.sheet-panel__tab:hover {
+  color: var(--text-primary);
+}
+
+.sheet-panel__tab--active {
+  color: var(--text-primary);
+  border-bottom-color: var(--accent);
+}
+
+/* ── Asset info panel ─────────────────────────────────────────────────────── */
+
+.sheet-info-panel {
+  padding: 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.sheet-info-panel__fields {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.sheet-info-panel__row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.sheet-info-panel__label {
+  font-size: 11px;
+  color: var(--text-secondary);
+  width: 54px;
+  flex-shrink: 0;
+  text-align: right;
+}
+
+.sheet-info-panel__input {
+  flex: 1;
+  height: 20px;
+  font-size: 11px;
+  padding: 0 4px;
+  border: 1px solid var(--border-strong);
+  background: var(--bg-elevated);
+  color: var(--text-primary);
+  border-radius: 2px;
+  min-width: 0;
+}
+
+.sheet-info-panel__input:focus {
+  outline: none;
+  border-color: var(--accent-border);
+}
+
+.sheet-info-panel__notes-label,
+.sheet-info-panel__extra-label {
+  font-size: 11px;
+  color: var(--text-secondary);
+  margin-bottom: 3px;
+}
+
+.sheet-info-panel__notes {
+  width: 100%;
+  font-size: 11px;
+  padding: 4px;
+  border: 1px solid var(--border-strong);
+  background: var(--bg-elevated);
+  color: var(--text-primary);
+  border-radius: 2px;
+  resize: none;
+  box-sizing: border-box;
+  font-family: inherit;
+}
+
+.sheet-info-panel__notes:focus {
+  outline: none;
+  border-color: var(--accent-border);
+}
+
+.sheet-info-panel__extra-fields {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+/* ── History strip ────────────────────────────────────────────────────────── */
+
+.sheet-history-strip {
+  display: flex;
+  flex-direction: row;
+  gap: 4px;
+  padding: 6px;
+  overflow-x: auto;
+  align-items: flex-start;
+  flex: 1;
+}
+
+.sheet-history-strip::-webkit-scrollbar {
+  height: 6px;
+}
+
+.sheet-history-strip::-webkit-scrollbar-thumb {
+  background: var(--border-strong);
+  border-radius: 3px;
+}
+
+.sheet-history-thumb {
+  position: relative;
+  width: var(--sheet-history-thumb-size);
+  height: var(--sheet-history-thumb-size);
+  border: 2px solid var(--border-strong);
+  border-radius: 3px;
+  background: var(--bg-elevated);
+  cursor: pointer;
+  overflow: hidden;
+  flex-shrink: 0;
+  transition: border-color var(--transition-fast);
+}
+
+.sheet-history-thumb:hover {
+  border-color: var(--accent-border);
+}
+
+.sheet-history-thumb--active {
+  border-color: var(--accent);
+}
+
+.sheet-history-thumb__img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+  image-rendering: pixelated;
+}
+
+.sheet-history-thumb__empty {
+  width: 100%;
+  height: 100%;
+  background: var(--bg-app);
+}
+
+.sheet-history-thumb__badge {
+  position: absolute;
+  bottom: 0;
+  left: 0;
+  right: 0;
+  background: rgba(var(--accent-rgb, 80, 120, 255), 0.85);
+  font-size: 9px;
+  color: white;
+  text-align: center;
+  padding: 1px 0;
+  letter-spacing: 0.02em;
+}
+
+/* Context menu */
+.sheet-history-menu {
+  position: fixed;
+  z-index: 200;
+  min-width: 140px;
+  background: var(--bg-elevated);
+  border: 1px solid var(--border-strong);
+  border-radius: 4px;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
+  padding: 3px 0;
+}
+
+.sheet-history-menu__item {
+  display: block;
+  width: 100%;
+  padding: 5px 10px;
+  text-align: left;
+  font-size: 12px;
+  color: var(--text-primary);
+  cursor: pointer;
+  transition: background var(--transition-fast);
+}
+
+.sheet-history-menu__item:hover {
+  background: var(--bg-hover);
+}
+
+.sheet-history-menu__item--danger {
+  color: var(--color-error, #e55);
+}
+
+/* ── Prompt strip ─────────────────────────────────────────────────────────── */
+
+.sheet-prompt-strip {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 8px;
+  overflow-y: auto;
+  flex: 1;
+}
+
+.sheet-prompt-strip::-webkit-scrollbar {
+  width: 6px;
+}
+
+.sheet-prompt-strip::-webkit-scrollbar-thumb {
+  background: var(--border-strong);
+  border-radius: 3px;
+}
+
+.sheet-prompt-strip__empty {
+  font-size: 11px;
+  color: var(--text-disabled);
+  text-align: center;
+  padding-top: 12px;
+}
+
+.sheet-prompt-strip__entry {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  padding: 6px;
+  border-radius: 3px;
+  background: var(--bg-elevated);
+  border: 1px solid var(--border);
+  position: relative;
+}
+
+.sheet-prompt-strip__text {
+  font-size: 11px;
+  color: var(--text-primary);
+  line-height: 1.4;
+}
+
+.sheet-prompt-strip__meta {
+  font-size: 10px;
+  color: var(--text-disabled);
+}
+
+.sheet-prompt-strip__rerun {
+  position: absolute;
+  top: 6px;
+  right: 6px;
+  height: 18px;
+  padding: 0 6px;
+  font-size: 10px;
+  border-radius: 2px;
+  border: 1px solid var(--border-strong);
+  background: var(--bg-panel);
+  color: var(--text-secondary);
+  cursor: pointer;
+  transition: background var(--transition-fast);
+}
+
+.sheet-prompt-strip__rerun:hover {
+  background: var(--bg-hover);
+  color: var(--text-primary);
+}

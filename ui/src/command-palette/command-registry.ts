@@ -88,6 +88,14 @@ import {
   setTilemapPanelVisible,
 } from "../shell/panel-state";
 import {
+  activeSheetEntityId,
+  closeSheetPanel,
+  isSheetPanelVisible,
+  openSheetPanel,
+  setSheetPanelVisible,
+} from "../sheet/sheet-state";
+import { libraryListEntities } from "../lib/commands/library";
+import {
   tilemapTool,
   setTilemapTool,
   autotileMode,
@@ -1168,6 +1176,40 @@ const COMMANDS: ReadonlyMap<string, CommandEntry> = new Map<string, CommandEntry
       category: "Window",
       keywords: ["tiles", "autotile", "tileset"],
       handler: () => setTilemapPanelVisible(!isTilemapPanelVisible()),
+    },
+  ],
+  [
+    "window:toggle-sheet",
+    {
+      id: "window:toggle-sheet",
+      label: "Toggle Reference Sheet Panel",
+      category: "Window",
+      keywords: ["sheet", "reference", "anchor", "sprite", "character"],
+      handler: () => {
+        if (isSheetPanelVisible()) {
+          closeSheetPanel();
+          return;
+        }
+        if (activeSheetEntityId() !== null) {
+          setSheetPanelVisible(true);
+          return;
+        }
+        // Nothing has set the active entity yet (B9.3 library selection
+        // doesn't wire into this branch). Resolve the first Reference
+        // entity via IPC so the panel opens on something real.
+        libraryListEntities({ kind: "Reference" })
+          .then((entities) => {
+            if (entities.length === 0) {
+              pushToast({
+                title: "No Reference entities yet — create one to use the sheet panel.",
+                kind: "info",
+              });
+              return;
+            }
+            openSheetPanel(entities[0]!.id);
+          })
+          .catch((err: unknown) => reportCommandFailure("library_list_entities", err));
+      },
     },
   ],
 

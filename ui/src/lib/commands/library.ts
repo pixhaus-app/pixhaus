@@ -1,8 +1,14 @@
-// Library entity, group, tag, and search commands.
+// Library entity, group, tag, search, and sheet-variant commands.
+//
+// Covers the B9.2 entity/group/tag catalog (CRUD, states, active target,
+// search) plus the B10.4 reference-sheet variant operations (approve,
+// update asset info, delete history entry). Commands that touch pixel
+// data live in canvas.ts; palette commands live in palette.ts.
 
 import { invoke } from "../ipc";
 import type {
   ActiveTarget,
+  AssetInfo,
   ColorMode,
   Entity,
   EntityGroup,
@@ -11,6 +17,7 @@ import type {
   GroupId,
   NamedSprite,
   Rgba,
+  SheetVariantId,
   TagDefinition,
   TagId,
 } from "../types";
@@ -184,4 +191,43 @@ export function libraryListTags(): Promise<TagDefinition[]> {
 
 export function librarySearch(args: LibrarySearchArgs): Promise<Entity[]> {
   return invoke<Entity[]>("library_search", { args });
+}
+
+// ── sheet variant commands ────────────────────────────────────────────────────
+
+/**
+ * Promotes a history variant to canonical for a `Reference`-kind entity.
+ *
+ * The previous canonical moves to the front of `history`. Returns the
+ * updated entity so callers can refresh their local state without a
+ * separate `libraryGetEntity` round-trip.
+ */
+export function libraryApproveSheetVariant(
+  entity_id: EntityId,
+  variant_id: SheetVariantId,
+): Promise<Entity> {
+  return invoke<Entity>("library_approve_sheet_variant", {
+    args: { entity_id, variant_id },
+  });
+}
+
+/**
+ * Overwrites the asset info (name, age, species, personality notes) for a
+ * `Reference`-kind entity.
+ */
+export function libraryUpdateAssetInfo(entity_id: EntityId, info: AssetInfo): Promise<void> {
+  return invoke<void>("library_update_asset_info", { args: { entity_id, info } });
+}
+
+/**
+ * Deletes a history variant from a `Reference`-kind entity.
+ *
+ * Rejects with `Validation` if `variant_id` is the current canonical —
+ * approve a replacement first.
+ */
+export function libraryDeleteSheetVariant(
+  entity_id: EntityId,
+  variant_id: SheetVariantId,
+): Promise<void> {
+  return invoke<void>("library_delete_sheet_variant", { entity_id, variant_id });
 }
