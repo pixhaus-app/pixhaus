@@ -143,7 +143,9 @@ fn install_loaded_project(
 /// a raw value that is already in use by any ID type, regardless of which
 /// type holds it.
 fn compute_next_id(project: &Project) -> u32 {
-    use pixhaus_core::project::{CelData, EntityContent, LayerKind, SelectionRegion, TilesetSource};
+    use pixhaus_core::project::{
+        CelData, EntityContent, LayerKind, SelectionRegion, TilesetSource,
+    };
     let mut max = 0u32;
 
     // Walk every library entity and its content.
@@ -769,8 +771,8 @@ mod tests {
     fn compute_next_id_covers_tilemap_and_reference_content() {
         use pixhaus_core::project::{
             AiMetadata, AssetInfo, Entity, EntityContent, EntityDefaults, EntityId, EntityKind,
-            LayerId, ReferenceImage, ReferenceSheet, SheetComposition, SheetVariant, SheetVariantId,
-            Size, TilemapData, TilemapLayer, TilemapScene, UserData,
+            LayerId, ReferenceImage, ReferenceSheet, SheetComposition, SheetVariant,
+            SheetVariantId, Size, TilemapData, TilemapLayer, TilemapScene, UserData,
         };
 
         let mut project = Project::new("tilemap-ref-fixture");

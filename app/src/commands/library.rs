@@ -4,6 +4,7 @@
 //! project-crate conventions: async, locked via `AppState::doc`, typed errors,
 //! `dirty` flag set on every mutation.
 
+use std::collections::{HashMap, HashSet};
 use std::time::SystemTime;
 
 use pixhaus_core::project::{
@@ -182,8 +183,9 @@ pub async fn library_create_entity(
                 for sn in names {
                     if sn.trim().is_empty() {
                         return Err(AppCommandError::Validation {
-                            detail: "initial_states must not contain empty or whitespace-only names"
-                                .into(),
+                            detail:
+                                "initial_states must not contain empty or whitespace-only names"
+                                    .into(),
                         });
                     }
                 }
@@ -1115,7 +1117,9 @@ pub async fn library_delete_group(
         }
     } else {
         // Cascade delete: collect member entity ids, then delete them.
-        let to_delete: Vec<EntityId> = project
+        // C1: HashSet so the four membership checks below are O(1) each,
+        // not O(n) Vec::contains. Cascades scale with library size.
+        let to_delete: HashSet<EntityId> = project
             .library
             .entities
             .iter()
@@ -1150,7 +1154,10 @@ pub async fn library_delete_group(
         // A3: Clear anchor_reference_id on surviving entities that pointed at
         // a deleted one. Bump updated_at on each entity whose anchor is cleared.
         for entity in &mut project.library.entities {
-            if entity.anchor_reference_id.is_some_and(|id| to_delete.contains(&id)) {
+            if entity
+                .anchor_reference_id
+                .is_some_and(|id| to_delete.contains(&id))
+            {
                 entity.anchor_reference_id = None;
                 entity.updated_at = ts;
             }
@@ -1417,6 +1424,16 @@ pub async fn library_search(
 
     let query = args.query.to_lowercase();
 
+    // C2: precompute a TagId -> lowercased-name map once. The per-entity
+    // tag match becomes O(tags-on-entity) HashMap lookups instead of
+    // O(tags-on-entity * project-tags) nested linear scans.
+    let lc_tag_names: HashMap<TagId, String> = project
+        .library
+        .tags
+        .iter()
+        .map(|t| (t.id, t.name.to_lowercase()))
+        .collect();
+
     let result = project
         .library
         .entities
@@ -1456,13 +1473,11 @@ pub async fn library_search(
                     return true;
                 }
             }
-            // Match tag names.
-            entity.tags.iter().any(|&tid| {
-                project
-                    .library
-                    .tags
-                    .iter()
-                    .any(|t| t.id == tid && t.name.to_lowercase().contains(&query))
+            // Match tag names — O(tags-on-entity) lookups.
+            entity.tags.iter().any(|tid| {
+                lc_tag_names
+                    .get(tid)
+                    .is_some_and(|name| name.contains(&query))
             })
         })
         .cloned()
@@ -1838,8 +1853,7 @@ mod tests {
         let result: Result<(), AppCommandError> = names.iter().try_for_each(|sn| {
             if sn.trim().is_empty() {
                 Err(AppCommandError::Validation {
-                    detail: "initial_states must not contain empty or whitespace-only names"
-                        .into(),
+                    detail: "initial_states must not contain empty or whitespace-only names".into(),
                 })
             } else {
                 Ok(())
@@ -1857,17 +1871,16 @@ mod tests {
     fn add_state_rejects_zero_canvas() {
         // Mirror the B3 guard in library_add_state after canvas resolution.
         let resolved = Size::new(0u32, 16u32);
-        let result: Result<(), AppCommandError> =
-            if resolved.width == 0 || resolved.height == 0 {
-                Err(AppCommandError::Validation {
-                    detail: format!(
-                        "canvas dimensions must be > 0 (got {}x{})",
-                        resolved.width, resolved.height
-                    ),
-                })
-            } else {
-                Ok(())
-            };
+        let result: Result<(), AppCommandError> = if resolved.width == 0 || resolved.height == 0 {
+            Err(AppCommandError::Validation {
+                detail: format!(
+                    "canvas dimensions must be > 0 (got {}x{})",
+                    resolved.width, resolved.height
+                ),
+            })
+        } else {
+            Ok(())
+        };
         assert!(
             matches!(result, Err(AppCommandError::Validation { .. })),
             "zero-dimension canvas must be rejected"
@@ -1945,7 +1958,10 @@ mod tests {
             .entities
             .retain(|e| !to_delete.contains(&e.id));
         for entity in &mut project.library.entities {
-            if entity.anchor_reference_id.is_some_and(|id| to_delete.contains(&id)) {
+            if entity
+                .anchor_reference_id
+                .is_some_and(|id| to_delete.contains(&id))
+            {
                 entity.anchor_reference_id = None;
                 entity.updated_at = ts;
             }
@@ -1957,7 +1973,10 @@ mod tests {
             .iter()
             .find(|e| e.id == b_id)
             .unwrap();
-        assert!(b.anchor_reference_id.is_none(), "B's anchor must be cleared");
+        assert!(
+            b.anchor_reference_id.is_none(),
+            "B's anchor must be cleared"
+        );
         assert!(b.updated_at > 0, "B's updated_at must be bumped");
     }
 
@@ -1985,7 +2004,11 @@ mod tests {
             .canvas_size
             .map_or((16, 16), |s| (s.width, s.height));
         let canvas = Size::new(dw, dh);
-        assert_eq!(canvas, Size::new(64, 64), "add_state must inherit entity defaults");
+        assert_eq!(
+            canvas,
+            Size::new(64, 64),
+            "add_state must inherit entity defaults"
+        );
     }
 
     // ── B4 — updated_at bumped when anchor cleared by delete_entity ───────
@@ -2105,8 +2128,7 @@ mod tests {
             entity.tags.retain(|&t| t != tag_id);
             let suggested_before = entity.ai.suggested_tags.len();
             entity.ai.suggested_tags.retain(|&t| t != tag_id);
-            if entity.tags.len() < tags_before
-                || entity.ai.suggested_tags.len() < suggested_before
+            if entity.tags.len() < tags_before || entity.ai.suggested_tags.len() < suggested_before
             {
                 entity.updated_at = ts;
             }
