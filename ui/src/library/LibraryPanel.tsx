@@ -333,6 +333,37 @@ const LibraryPanel: Component = () => {
                 </Show>
               )}
             </For>
+            <div
+              class="library-panel__drop-zone-end"
+              onDragOver={(e) => {
+                e.preventDefault();
+                if (e.dataTransfer) e.dataTransfer.dropEffect = "move";
+                setDragOverIndex(treeEntries().length);
+              }}
+              onDragLeave={() => setDragOverIndex(null)}
+              onDrop={(e) => {
+                e.preventDefault();
+                setDragOverIndex(null);
+                const raw = e.dataTransfer?.getData("text/plain") ?? "";
+                let parsed: { id: number; index: number } | null = null;
+                try {
+                  const v = JSON.parse(raw) as unknown;
+                  if (
+                    v !== null &&
+                    typeof v === "object" &&
+                    typeof (v as { id: unknown }).id === "number" &&
+                    typeof (v as { index: unknown }).index === "number"
+                  ) {
+                    parsed = v as { id: number; index: number };
+                  }
+                } catch {
+                  // Bad payload — ignore.
+                }
+                const lastIndex = treeEntries().length - 1;
+                if (parsed === null || parsed.index === lastIndex) return;
+                reorderEntity(parsed.id as EntityId, lastIndex);
+              }}
+            />
             <Show when={dragOverIndex() === treeEntries().length}>
               <div class="library-panel__drop-indicator" />
             </Show>
@@ -770,12 +801,21 @@ const StateRow: Component<StateRowProps> = (props) => {
         menu.style.left = `${e.clientX}px`;
         menu.style.top = `${e.clientY}px`;
 
+        function tearDown(): void {
+          if (document.body.contains(menu)) document.body.removeChild(menu);
+          document.removeEventListener("pointerdown", dismiss, { capture: true });
+        }
+
+        function dismiss(ev: PointerEvent): void {
+          if (!menu.contains(ev.target as Node)) tearDown();
+        }
+
         const renameBtn = document.createElement("button");
         renameBtn.className = "ctx-menu__item";
         renameBtn.textContent = "Rename";
         renameBtn.onclick = () => {
           beginStateRename(props.entityId, props.stateId);
-          document.body.removeChild(menu);
+          tearDown();
         };
         menu.appendChild(renameBtn);
 
@@ -789,17 +829,11 @@ const StateRow: Component<StateRowProps> = (props) => {
           deleteBtn.textContent = "Delete state";
           deleteBtn.onclick = () => {
             deleteState(props.entityId, props.stateId);
-            document.body.removeChild(menu);
+            tearDown();
           };
           menu.appendChild(deleteBtn);
         }
 
-        function dismiss(ev: PointerEvent): void {
-          if (!menu.contains(ev.target as Node)) {
-            if (document.body.contains(menu)) document.body.removeChild(menu);
-            document.removeEventListener("pointerdown", dismiss, { capture: true });
-          }
-        }
         document.addEventListener("pointerdown", dismiss, { capture: true });
         document.body.appendChild(menu);
       }}
@@ -846,6 +880,7 @@ type RenameInputProps = {
 
 const InlineRenameInput: Component<RenameInputProps> = (props) => {
   let inputRef!: HTMLInputElement;
+  let finalized = false;
   const [value, setValue] = createSignal(props.initialName);
 
   createEffect(() => {
@@ -853,22 +888,35 @@ const InlineRenameInput: Component<RenameInputProps> = (props) => {
     inputRef?.select();
   });
 
+  function finalizeCommit(v: string): void {
+    if (finalized) return;
+    finalized = true;
+    props.onCommit(v);
+  }
+
+  function finalizeCancel(): void {
+    if (finalized) return;
+    finalized = true;
+    props.onCancel();
+  }
+
   function handleKeyDown(e: KeyboardEvent): void {
     if (e.key === "Enter") {
       e.preventDefault();
-      props.onCommit(value());
+      finalizeCommit(value());
     } else if (e.key === "Escape") {
       e.preventDefault();
-      props.onCancel();
+      finalizeCancel();
     }
   }
 
   onCleanup(() => {
+    if (finalized) return;
     const v = value().trim();
     if (v.length > 0) {
-      props.onCommit(v);
+      finalizeCommit(v);
     } else {
-      props.onCancel();
+      finalizeCancel();
     }
   });
 
@@ -879,7 +927,7 @@ const InlineRenameInput: Component<RenameInputProps> = (props) => {
       value={value()}
       onInput={(e) => setValue(e.currentTarget.value)}
       onKeyDown={handleKeyDown}
-      onBlur={() => props.onCommit(value())}
+      onBlur={() => finalizeCommit(value())}
       onClick={(e) => e.stopPropagation()}
     />
   );

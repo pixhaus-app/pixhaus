@@ -47,7 +47,7 @@ const LibraryContextMenu: Component<Props> = (props) => {
     if (props.target === null) return;
 
     function handlePointerDown(e: PointerEvent): void {
-      if (menuRef && !menuRef.contains(e.target as Node)) {
+      if (!menuRef.contains(e.target as Node)) {
         props.onClose();
       }
     }

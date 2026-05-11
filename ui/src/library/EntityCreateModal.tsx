@@ -87,6 +87,9 @@ const EntityCreateModal: Component<Props> = (props) => {
       const { convertFileSrc } = await import("@tauri-apps/api/core");
       const src = convertFileSrc(path);
       const resp = await fetch(src);
+      if (!resp.ok) {
+        throw new Error(`failed to read selected file: ${resp.status} ${resp.statusText}`);
+      }
       const arrayBuf = await resp.arrayBuffer();
       const bytes = Array.from(new Uint8Array(arrayBuf));
       const ext = path.split(".").pop()?.toLowerCase() ?? "png";

@@ -3810,6 +3810,10 @@ body {
   pointer-events: none;
 }
 
+.library-panel__drop-zone-end {
+  min-height: 24px;
+}
+
 /* ── Tree rows ── */
 
 .library-row {
