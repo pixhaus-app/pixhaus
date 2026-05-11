@@ -24,7 +24,7 @@ toml = "0.8"
 # Plugin-directory path resolution
 dirs = "5"
 # Hot-reload file watching
-notify = "6"
+notify = "8"
 # WASM plugin host (extism wraps wasmtime)
 extism = "1"
 
