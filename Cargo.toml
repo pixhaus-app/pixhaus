@@ -34,7 +34,7 @@ color_quant = "1"
 gif = "0.13"
 image = { version = "0.25", default-features = false, features = ["png", "gif"] }
 webp = "0.3"
-keyring = "3"
+keyring = "4"
 mlua = { version = "0.10", features = ["lua54", "vendored", "serialize"] }
 parking_lot = "0.12"
 proptest = "1"
