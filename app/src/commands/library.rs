@@ -123,23 +123,27 @@ pub struct LibrarySearchArgs {
     pub tag_filter: Option<TagId>,
 }
 
-// ── entity commands ───────────────────────────────────────────────────────────
+// ── pure project helpers ──────────────────────────────────────────────────────
+//
+// Each helper takes `&mut Project` (and `next_id: &mut u32` where ID minting
+// is required) plus any other validated inputs, and returns the operation
+// result. The IPC commands above are thin wrappers that lock `AppState::doc`,
+// call the helper, and set `doc.dirty = true` on success.
+//
+// Helpers are `pub(crate)` so they are testable from within the crate without
+// being part of the public IPC surface. ts-rs output is unaffected.
 
-/// Creates a new library entity of any kind and sets it as the active target.
+/// Creates a new entity in the library and sets it as the active target.
 ///
-/// # Kind-specific requirements
-///
-/// - `Custom`: `canvas_width` and `canvas_height` required (> 0).
-///   `initial_states` defaults to `["primary"]` when absent.
-/// - `Tileset`: `tile_width` and `tile_height` required (> 0).
-/// - `Tilemap`: `scene_width` and `scene_height` required (> 0).
-/// - `Reference`: `reference_bytes` required and non-empty.
-#[tauri::command(async, rename_all = "snake_case")]
+/// Validates all inputs before minting any IDs so partial state is never
+/// written on failure.
 #[allow(clippy::too_many_lines)]
-pub async fn library_create_entity(
+pub(crate) fn create_entity_in_project(
+    project: &mut pixhaus_core::project::Project,
+    next_id: &mut u32,
     args: LibraryCreateEntityArgs,
-    state: State<'_, AppState>,
-) -> CommandResult<Entity> {
+    ts: i64,
+) -> Result<Entity, AppCommandError> {
     // B1: Reject empty or whitespace-only names before minting any IDs.
     if args.name.trim().is_empty() {
         return Err(AppCommandError::Validation {
@@ -147,22 +151,12 @@ pub async fn library_create_entity(
         });
     }
 
-    let ts = now_secs();
-    let mut doc = state.doc.write().await;
-
-    // Check project exists and validate group before minting any IDs.
-    {
-        let project = doc
-            .project
-            .as_ref()
-            .ok_or(AppCommandError::NoActiveProject)?;
-        if let Some(gid) = args.group_id {
-            if !project.library.groups.iter().any(|g| g.id == gid) {
-                return Err(AppCommandError::NotFound {
-                    entity: "group".into(),
-                    id: u64::from(gid.get()),
-                });
-            }
+    if let Some(gid) = args.group_id {
+        if !project.library.groups.iter().any(|g| g.id == gid) {
+            return Err(AppCommandError::NotFound {
+                entity: "group".into(),
+                id: u64::from(gid.get()),
+            });
         }
     }
 
@@ -229,8 +223,8 @@ pub async fn library_create_entity(
     }
 
     // Mint the entity ID.
-    let entity_id = EntityId::new(doc.next_id);
-    doc.next_id += 1;
+    let entity_id = EntityId::new(*next_id);
+    *next_id += 1;
 
     // Build kind-specific content, minting sub-entity IDs as needed.
     let content = match &args.kind {
@@ -248,10 +242,10 @@ pub async fn library_create_entity(
 
             let mut states = Vec::with_capacity(state_names.len());
             for state_name in state_names {
-                let state_id = StateId::new(doc.next_id);
-                doc.next_id += 1;
-                let sprite_id = SpriteId::new(doc.next_id);
-                doc.next_id += 1;
+                let state_id = StateId::new(*next_id);
+                *next_id += 1;
+                let sprite_id = SpriteId::new(*next_id);
+                *next_id += 1;
                 let mut sprite =
                     Sprite::empty(sprite_id, format!("{} / {state_name}", args.name), canvas);
                 sprite.color_mode = color_mode;
@@ -265,12 +259,12 @@ pub async fn library_create_entity(
             EntityContent::Sprites { states }
         }
         EntityKind::Tileset => {
-            let tileset_id = TilesetId::new(doc.next_id);
-            doc.next_id += 1;
+            let tileset_id = TilesetId::new(*next_id);
+            *next_id += 1;
             // Mint a real buffer ID so the pixel-buffer subsystem (S01) can
             // allocate storage into it. PixelBufferId(0) is the null sentinel.
-            let buffer_id = PixelBufferId::new(doc.next_id);
-            doc.next_id += 1;
+            let buffer_id = PixelBufferId::new(*next_id);
+            *next_id += 1;
             EntityContent::Tileset {
                 tileset: Tileset {
                     id: tileset_id,
@@ -306,8 +300,8 @@ pub async fn library_create_entity(
                 .reference_mime
                 .filter(|s| !s.is_empty())
                 .unwrap_or_else(|| "image/png".into());
-            let variant_id = SheetVariantId::new(doc.next_id);
-            doc.next_id += 1;
+            let variant_id = SheetVariantId::new(*next_id);
+            *next_id += 1;
             EntityContent::Reference {
                 sheet: Box::new(ReferenceSheet {
                     canonical: SheetVariant {
@@ -373,34 +367,21 @@ pub async fn library_create_entity(
         updated_at: ts,
     };
 
-    let project = doc
-        .project
-        .as_mut()
-        .ok_or(AppCommandError::NoActiveProject)?;
     project.library.entities.push(entity.clone());
     project.active = active;
-    doc.dirty = true;
-
     Ok(entity)
 }
 
-/// Deletes a library entity by id.
+/// Deletes an entity from the library by id.
 ///
 /// Clears `project.active` when it targets the deleted entity. Also removes
 /// the entity from `ProjectAi::style_corpus` and clears any
 /// `anchor_reference_id` pointers that referenced it.
-#[tauri::command(async, rename_all = "snake_case")]
-pub async fn library_delete_entity(
+pub(crate) fn delete_entity_from_project(
+    project: &mut pixhaus_core::project::Project,
     entity_id: EntityId,
-    state: State<'_, AppState>,
-) -> CommandResult<()> {
-    let ts = now_secs();
-    let mut doc = state.doc.write().await;
-    let project = doc
-        .project
-        .as_mut()
-        .ok_or(AppCommandError::NoActiveProject)?;
-
+    ts: i64,
+) -> Result<(), AppCommandError> {
     let before = project.library.entities.len();
     project.library.entities.retain(|e| e.id != entity_id);
     if project.library.entities.len() == before {
@@ -410,7 +391,6 @@ pub async fn library_delete_entity(
         });
     }
 
-    // Clear active target if it referenced the deleted entity.
     let active_touches = match project.active {
         ActiveTarget::State { entity_id: eid, .. }
         | ActiveTarget::Tileset { entity_id: eid }
@@ -422,14 +402,12 @@ pub async fn library_delete_entity(
         project.active = ActiveTarget::None;
     }
 
-    // Remove from AI style corpus.
     project
         .library
         .ai
         .style_corpus
         .retain(|&id| id != entity_id);
 
-    // Clear anchor_reference_id on any entity that pointed at this one.
     // B4: Bump updated_at on each entity whose anchor is cleared.
     for entity in &mut project.library.entities {
         if entity.anchor_reference_id == Some(entity_id) {
@@ -438,6 +416,821 @@ pub async fn library_delete_entity(
         }
     }
 
+    Ok(())
+}
+
+/// Renames an entity. Rejects empty or whitespace-only names.
+pub(crate) fn rename_entity_in_project(
+    project: &mut pixhaus_core::project::Project,
+    entity_id: EntityId,
+    name: String,
+    ts: i64,
+) -> Result<(), AppCommandError> {
+    if name.trim().is_empty() {
+        return Err(AppCommandError::Validation {
+            detail: "entity name must not be empty".into(),
+        });
+    }
+    let entity = project
+        .library
+        .entities
+        .iter_mut()
+        .find(|e| e.id == entity_id)
+        .ok_or(AppCommandError::NotFound {
+            entity: "entity".into(),
+            id: u64::from(entity_id.get()),
+        })?;
+    entity.name = name;
+    entity.updated_at = ts;
+    Ok(())
+}
+
+/// Adds a named state to a `Custom`-kind entity.
+///
+/// Canvas size defaults to the entity's `EntityDefaults.canvas_size`; falls
+/// back to 16×16 if neither `args` nor defaults specify one.
+pub(crate) fn add_state_to_entity(
+    project: &mut pixhaus_core::project::Project,
+    next_id: &mut u32,
+    args: LibraryAddStateArgs,
+    ts: i64,
+) -> Result<NamedSprite, AppCommandError> {
+    if args.state_name.trim().is_empty() {
+        return Err(AppCommandError::Validation {
+            detail: "state_name must not be empty".into(),
+        });
+    }
+
+    let idx = project
+        .library
+        .entities
+        .iter()
+        .position(|e| e.id == args.entity_id)
+        .ok_or(AppCommandError::NotFound {
+            entity: "entity".into(),
+            id: u64::from(args.entity_id.get()),
+        })?;
+
+    if !matches!(
+        project.library.entities[idx].content,
+        EntityContent::Sprites { .. }
+    ) {
+        return Err(AppCommandError::Validation {
+            detail: format!(
+                "entity {} is not Custom-kind; only Custom entities have states",
+                args.entity_id.get()
+            ),
+        });
+    }
+
+    let state_id = StateId::new(*next_id);
+    *next_id += 1;
+    let sprite_id = SpriteId::new(*next_id);
+    *next_id += 1;
+
+    // Resolve canvas size and color mode before the mutable borrow below.
+    let (canvas, color_mode, entity_name) = {
+        let entity = &project.library.entities[idx];
+        let (dw, dh) = entity
+            .defaults
+            .canvas_size
+            .map_or((16, 16), |s| (s.width, s.height));
+        let canvas = Size::new(
+            args.canvas_width.unwrap_or(dw),
+            args.canvas_height.unwrap_or(dh),
+        );
+        let cm = args
+            .color_mode
+            .or(entity.defaults.color_mode)
+            .unwrap_or(ColorMode::Rgba);
+        (canvas, cm, entity.name.clone())
+    };
+
+    // B3: Reject zero-dimension canvases after resolution.
+    if canvas.width == 0 || canvas.height == 0 {
+        return Err(AppCommandError::Validation {
+            detail: format!(
+                "canvas dimensions must be > 0 (got {}x{})",
+                canvas.width, canvas.height
+            ),
+        });
+    }
+
+    let mut sprite = Sprite::empty(
+        sprite_id,
+        format!("{entity_name} / {}", args.state_name),
+        canvas,
+    );
+    sprite.color_mode = color_mode;
+    let named = NamedSprite {
+        id: state_id,
+        state_name: args.state_name,
+        sprite,
+        engine_tags: Vec::new(),
+    };
+
+    let entity = &mut project.library.entities[idx];
+    let EntityContent::Sprites { states } = &mut entity.content else {
+        // Checked above — this branch cannot fire.
+        return Err(AppCommandError::Validation {
+            detail: "entity is not Custom-kind".into(),
+        });
+    };
+    states.push(named.clone());
+    entity.updated_at = ts;
+    Ok(named)
+}
+
+/// Deletes a named state from a `Custom`-kind entity.
+///
+/// Clears `project.active` when it points at the deleted state.
+pub(crate) fn delete_state_from_entity(
+    project: &mut pixhaus_core::project::Project,
+    entity_id: EntityId,
+    state_id: StateId,
+    ts: i64,
+) -> Result<(), AppCommandError> {
+    let entity = project
+        .library
+        .entities
+        .iter_mut()
+        .find(|e| e.id == entity_id)
+        .ok_or(AppCommandError::NotFound {
+            entity: "entity".into(),
+            id: u64::from(entity_id.get()),
+        })?;
+
+    let EntityContent::Sprites { states } = &mut entity.content else {
+        return Err(AppCommandError::Validation {
+            detail: format!(
+                "entity {} is not Custom-kind; only Custom entities have states",
+                entity_id.get()
+            ),
+        });
+    };
+
+    let before = states.len();
+    states.retain(|s| s.id != state_id);
+    if states.len() == before {
+        return Err(AppCommandError::NotFound {
+            entity: "state".into(),
+            id: u64::from(state_id.get()),
+        });
+    }
+    entity.updated_at = ts;
+    // NLL: entity borrow ends here; project.active is a disjoint field.
+
+    if matches!(
+        project.active,
+        ActiveTarget::State { entity_id: eid, state_id: sid }
+        if eid == entity_id && sid == state_id
+    ) {
+        project.active = ActiveTarget::None;
+    }
+
+    Ok(())
+}
+
+/// Renames a named state within a `Custom`-kind entity.
+pub(crate) fn rename_state_in_entity(
+    project: &mut pixhaus_core::project::Project,
+    entity_id: EntityId,
+    state_id: StateId,
+    state_name: String,
+    ts: i64,
+) -> Result<(), AppCommandError> {
+    if state_name.trim().is_empty() {
+        return Err(AppCommandError::Validation {
+            detail: "state_name must not be empty".into(),
+        });
+    }
+
+    let entity = project
+        .library
+        .entities
+        .iter_mut()
+        .find(|e| e.id == entity_id)
+        .ok_or(AppCommandError::NotFound {
+            entity: "entity".into(),
+            id: u64::from(entity_id.get()),
+        })?;
+
+    let EntityContent::Sprites { states } = &mut entity.content else {
+        return Err(AppCommandError::Validation {
+            detail: format!(
+                "entity {} is not Custom-kind; only Custom entities have states",
+                entity_id.get()
+            ),
+        });
+    };
+
+    {
+        let named =
+            states
+                .iter_mut()
+                .find(|s| s.id == state_id)
+                .ok_or(AppCommandError::NotFound {
+                    entity: "state".into(),
+                    id: u64::from(state_id.get()),
+                })?;
+        named.state_name = state_name;
+        // named borrow ends here
+    }
+    entity.updated_at = ts;
+    Ok(())
+}
+
+/// Sets or clears an entity's group membership.
+///
+/// Pass `None` as `group_id` to remove the entity from its current group.
+pub(crate) fn move_entity_to_group(
+    project: &mut pixhaus_core::project::Project,
+    entity_id: EntityId,
+    group_id: Option<GroupId>,
+    ts: i64,
+) -> Result<(), AppCommandError> {
+    if let Some(gid) = group_id {
+        if !project.library.groups.iter().any(|g| g.id == gid) {
+            return Err(AppCommandError::NotFound {
+                entity: "group".into(),
+                id: u64::from(gid.get()),
+            });
+        }
+    }
+
+    let entity = project
+        .library
+        .entities
+        .iter_mut()
+        .find(|e| e.id == entity_id)
+        .ok_or(AppCommandError::NotFound {
+            entity: "entity".into(),
+            id: u64::from(entity_id.get()),
+        })?;
+    entity.group_id = group_id;
+    entity.updated_at = ts;
+    Ok(())
+}
+
+/// Creates a new entity group.
+pub(crate) fn create_group_in_project(
+    project: &mut pixhaus_core::project::Project,
+    next_id: &mut u32,
+    args: LibraryCreateGroupArgs,
+) -> Result<EntityGroup, AppCommandError> {
+    if args.name.trim().is_empty() {
+        return Err(AppCommandError::Validation {
+            detail: "group name must not be empty".into(),
+        });
+    }
+
+    if let Some(pid) = args.parent_id {
+        if !project.library.groups.iter().any(|g| g.id == pid) {
+            return Err(AppCommandError::NotFound {
+                entity: "group".into(),
+                id: u64::from(pid.get()),
+            });
+        }
+    }
+
+    let group_id = GroupId::new(*next_id);
+    *next_id += 1;
+
+    let group = EntityGroup {
+        id: group_id,
+        name: args.name,
+        parent_id: args.parent_id,
+        user_data: UserData::default(),
+    };
+    project.library.groups.push(group.clone());
+    Ok(group)
+}
+
+/// Deletes a group.
+///
+/// When `keep_entities` is `true`, entities in the group are unassigned. When
+/// `false`, entities in the group are deleted. Child groups are re-parented to
+/// this group's own `parent_id` (or become top-level if none).
+pub(crate) fn delete_group_from_project(
+    project: &mut pixhaus_core::project::Project,
+    args: &LibraryDeleteGroupArgs,
+    ts: i64,
+) -> Result<(), AppCommandError> {
+    let parent_id = project
+        .library
+        .groups
+        .iter()
+        .find(|g| g.id == args.group_id)
+        .map(|g| g.parent_id)
+        .ok_or(AppCommandError::NotFound {
+            entity: "group".into(),
+            id: u64::from(args.group_id.get()),
+        })?;
+
+    if args.keep_entities {
+        // B5: Bump updated_at on each ungrouped entity.
+        for entity in &mut project.library.entities {
+            if entity.group_id == Some(args.group_id) {
+                entity.group_id = None;
+                entity.updated_at = ts;
+            }
+        }
+    } else {
+        // C1: HashSet so membership checks are O(1).
+        let to_delete: HashSet<EntityId> = project
+            .library
+            .entities
+            .iter()
+            .filter(|e| e.group_id == Some(args.group_id))
+            .map(|e| e.id)
+            .collect();
+
+        project
+            .library
+            .entities
+            .retain(|e| !to_delete.contains(&e.id));
+
+        let active_entity = match project.active {
+            ActiveTarget::State { entity_id, .. }
+            | ActiveTarget::Tileset { entity_id }
+            | ActiveTarget::Tilemap { entity_id }
+            | ActiveTarget::Reference { entity_id } => Some(entity_id),
+            ActiveTarget::None => None,
+        };
+        if active_entity.is_some_and(|eid| to_delete.contains(&eid)) {
+            project.active = ActiveTarget::None;
+        }
+
+        project
+            .library
+            .ai
+            .style_corpus
+            .retain(|id| !to_delete.contains(id));
+
+        // A3: Clear anchor_reference_id on surviving entities that pointed at
+        // a deleted one. Bump updated_at on each entity whose anchor is cleared.
+        for entity in &mut project.library.entities {
+            if entity
+                .anchor_reference_id
+                .is_some_and(|id| to_delete.contains(&id))
+            {
+                entity.anchor_reference_id = None;
+                entity.updated_at = ts;
+            }
+        }
+    }
+
+    for group in &mut project.library.groups {
+        if group.parent_id == Some(args.group_id) {
+            group.parent_id = parent_id;
+        }
+    }
+
+    project.library.groups.retain(|g| g.id != args.group_id);
+    Ok(())
+}
+
+/// Renames a group.
+pub(crate) fn rename_group_in_project(
+    project: &mut pixhaus_core::project::Project,
+    group_id: GroupId,
+    name: String,
+) -> Result<(), AppCommandError> {
+    if name.trim().is_empty() {
+        return Err(AppCommandError::Validation {
+            detail: "group name must not be empty".into(),
+        });
+    }
+    let group = project
+        .library
+        .groups
+        .iter_mut()
+        .find(|g| g.id == group_id)
+        .ok_or(AppCommandError::NotFound {
+            entity: "group".into(),
+            id: u64::from(group_id.get()),
+        })?;
+    group.name = name;
+    Ok(())
+}
+
+/// Sets or clears a group's parent. Rejects self-referential and cyclic
+/// assignments.
+pub(crate) fn set_group_parent_in_project(
+    project: &mut pixhaus_core::project::Project,
+    group_id: GroupId,
+    parent_id: Option<GroupId>,
+) -> Result<(), AppCommandError> {
+    if !project.library.groups.iter().any(|g| g.id == group_id) {
+        return Err(AppCommandError::NotFound {
+            entity: "group".into(),
+            id: u64::from(group_id.get()),
+        });
+    }
+
+    if let Some(pid) = parent_id {
+        if pid == group_id {
+            return Err(AppCommandError::Validation {
+                detail: "a group cannot be its own parent".into(),
+            });
+        }
+        let mut cursor = Some(pid);
+        while let Some(cid) = cursor {
+            if cid == group_id {
+                return Err(AppCommandError::Validation {
+                    detail: "setting this parent would create a group cycle".into(),
+                });
+            }
+            cursor = project
+                .library
+                .groups
+                .iter()
+                .find(|g| g.id == cid)
+                .and_then(|g| g.parent_id);
+        }
+        if !project.library.groups.iter().any(|g| g.id == pid) {
+            return Err(AppCommandError::NotFound {
+                entity: "group".into(),
+                id: u64::from(pid.get()),
+            });
+        }
+    }
+
+    let group = project
+        .library
+        .groups
+        .iter_mut()
+        .find(|g| g.id == group_id)
+        .ok_or(AppCommandError::NotFound {
+            entity: "group".into(),
+            id: u64::from(group_id.get()),
+        })?;
+    group.parent_id = parent_id;
+    Ok(())
+}
+
+/// Validates and sets the active editing target.
+// `ActiveTarget` is non-Copy and the match arms destructure it (consuming
+// each variant), so passing by value is correct even though the extracted
+// fields are individually Copy. Clippy can't see through the enum.
+#[allow(clippy::needless_pass_by_value)]
+pub(crate) fn set_active_target_in_project(
+    project: &mut pixhaus_core::project::Project,
+    target: ActiveTarget,
+) -> Result<(), AppCommandError> {
+    match target {
+        ActiveTarget::None => {
+            project.active = ActiveTarget::None;
+        }
+        ActiveTarget::State {
+            entity_id,
+            state_id,
+        } => {
+            let entity = project
+                .library
+                .entities
+                .iter()
+                .find(|e| e.id == entity_id)
+                .ok_or(AppCommandError::NotFound {
+                    entity: "entity".into(),
+                    id: u64::from(entity_id.get()),
+                })?;
+            let EntityContent::Sprites { states } = &entity.content else {
+                return Err(AppCommandError::Validation {
+                    detail: format!(
+                        "entity {} is not Custom-kind; cannot target a state on it",
+                        entity_id.get()
+                    ),
+                });
+            };
+            if !states.iter().any(|s| s.id == state_id) {
+                return Err(AppCommandError::NotFound {
+                    entity: "state".into(),
+                    id: u64::from(state_id.get()),
+                });
+            }
+            project.active = ActiveTarget::State {
+                entity_id,
+                state_id,
+            };
+        }
+        ActiveTarget::Tileset { entity_id } => {
+            if !project
+                .library
+                .entities
+                .iter()
+                .any(|e| e.id == entity_id && matches!(e.content, EntityContent::Tileset { .. }))
+            {
+                return Err(AppCommandError::NotFound {
+                    entity: "tileset entity".into(),
+                    id: u64::from(entity_id.get()),
+                });
+            }
+            project.active = ActiveTarget::Tileset { entity_id };
+        }
+        ActiveTarget::Tilemap { entity_id } => {
+            if !project
+                .library
+                .entities
+                .iter()
+                .any(|e| e.id == entity_id && matches!(e.content, EntityContent::Tilemap { .. }))
+            {
+                return Err(AppCommandError::NotFound {
+                    entity: "tilemap entity".into(),
+                    id: u64::from(entity_id.get()),
+                });
+            }
+            project.active = ActiveTarget::Tilemap { entity_id };
+        }
+        ActiveTarget::Reference { entity_id } => {
+            if !project
+                .library
+                .entities
+                .iter()
+                .any(|e| e.id == entity_id && matches!(e.content, EntityContent::Reference { .. }))
+            {
+                return Err(AppCommandError::NotFound {
+                    entity: "reference entity".into(),
+                    id: u64::from(entity_id.get()),
+                });
+            }
+            project.active = ActiveTarget::Reference { entity_id };
+        }
+    }
+    Ok(())
+}
+
+/// Creates a new tag definition.
+pub(crate) fn add_tag_to_project(
+    project: &mut pixhaus_core::project::Project,
+    next_id: &mut u32,
+    args: LibraryAddTagArgs,
+) -> Result<TagDefinition, AppCommandError> {
+    if args.name.trim().is_empty() {
+        return Err(AppCommandError::Validation {
+            detail: "tag name must not be empty".into(),
+        });
+    }
+
+    let tag_id = TagId::new(*next_id);
+    *next_id += 1;
+
+    let tag = TagDefinition {
+        id: tag_id,
+        name: args.name,
+        color: args.color,
+        auto_generated: false,
+    };
+    project.library.tags.push(tag.clone());
+    Ok(tag)
+}
+
+/// Deletes a tag definition and removes it from every entity that referenced
+/// it.
+pub(crate) fn delete_tag_from_project(
+    project: &mut pixhaus_core::project::Project,
+    tag_id: TagId,
+    ts: i64,
+) -> Result<(), AppCommandError> {
+    let before = project.library.tags.len();
+    project.library.tags.retain(|t| t.id != tag_id);
+    if project.library.tags.len() == before {
+        return Err(AppCommandError::NotFound {
+            entity: "tag".into(),
+            id: u64::from(tag_id.get()),
+        });
+    }
+
+    // B6: Bump updated_at only when the entity actually loses a tag.
+    for entity in &mut project.library.entities {
+        let tags_before = entity.tags.len();
+        entity.tags.retain(|&t| t != tag_id);
+        let suggested_before = entity.ai.suggested_tags.len();
+        entity.ai.suggested_tags.retain(|&t| t != tag_id);
+        if entity.tags.len() < tags_before || entity.ai.suggested_tags.len() < suggested_before {
+            entity.updated_at = ts;
+        }
+    }
+
+    Ok(())
+}
+
+/// Renames an existing tag definition.
+pub(crate) fn rename_tag_in_project(
+    project: &mut pixhaus_core::project::Project,
+    tag_id: TagId,
+    name: String,
+) -> Result<(), AppCommandError> {
+    if name.trim().is_empty() {
+        return Err(AppCommandError::Validation {
+            detail: "tag name must not be empty".into(),
+        });
+    }
+    let tag = project
+        .library
+        .tags
+        .iter_mut()
+        .find(|t| t.id == tag_id)
+        .ok_or(AppCommandError::NotFound {
+            entity: "tag".into(),
+            id: u64::from(tag_id.get()),
+        })?;
+    tag.name = name;
+    Ok(())
+}
+
+/// Attaches an existing tag to an entity.
+///
+/// Returns `true` if the tag was added, `false` if it was already present
+/// (so callers can skip setting `dirty` on no-ops).
+pub(crate) fn tag_entity_in_project(
+    project: &mut pixhaus_core::project::Project,
+    entity_id: EntityId,
+    tag_id: TagId,
+    ts: i64,
+) -> Result<bool, AppCommandError> {
+    if !project.library.tags.iter().any(|t| t.id == tag_id) {
+        return Err(AppCommandError::NotFound {
+            entity: "tag".into(),
+            id: u64::from(tag_id.get()),
+        });
+    }
+
+    let entity = project
+        .library
+        .entities
+        .iter_mut()
+        .find(|e| e.id == entity_id)
+        .ok_or(AppCommandError::NotFound {
+            entity: "entity".into(),
+            id: u64::from(entity_id.get()),
+        })?;
+
+    if entity.tags.contains(&tag_id) {
+        return Ok(false);
+    }
+    entity.tags.push(tag_id);
+    entity.updated_at = ts;
+    Ok(true)
+}
+
+/// Removes a tag from an entity.
+///
+/// Returns `true` if the tag was removed, `false` if it was not present
+/// (so callers can skip setting `dirty` on no-ops).
+pub(crate) fn untag_entity_in_project(
+    project: &mut pixhaus_core::project::Project,
+    entity_id: EntityId,
+    tag_id: TagId,
+    ts: i64,
+) -> Result<bool, AppCommandError> {
+    let entity = project
+        .library
+        .entities
+        .iter_mut()
+        .find(|e| e.id == entity_id)
+        .ok_or(AppCommandError::NotFound {
+            entity: "entity".into(),
+            id: u64::from(entity_id.get()),
+        })?;
+
+    let before = entity.tags.len();
+    entity.tags.retain(|&t| t != tag_id);
+    if entity.tags.len() < before {
+        entity.updated_at = ts;
+        Ok(true)
+    } else {
+        Ok(false)
+    }
+}
+
+/// Searches the library and returns matching entities.
+///
+/// The query is matched case-insensitively against entity names, Custom kind
+/// strings, and tag names. Optional filters further narrow the result.
+pub(crate) fn search_library(
+    project: &pixhaus_core::project::Project,
+    args: &LibrarySearchArgs,
+) -> Vec<Entity> {
+    let query = args.query.to_lowercase();
+
+    // C2: precompute a TagId -> lowercased-name map once so per-entity tag
+    // matching is O(tags-on-entity) HashMap lookups instead of nested scans.
+    let lc_tag_names: HashMap<TagId, String> = project
+        .library
+        .tags
+        .iter()
+        .map(|t| (t.id, t.name.to_lowercase()))
+        .collect();
+
+    project
+        .library
+        .entities
+        .iter()
+        .filter(|entity| {
+            if let Some(ref k) = args.kind_filter {
+                if &entity.kind != k {
+                    return false;
+                }
+            }
+            if let Some(gid) = args.group_filter {
+                if entity.group_id != Some(gid) {
+                    return false;
+                }
+            }
+            if let Some(tid) = args.tag_filter {
+                if !entity.tags.contains(&tid) {
+                    return false;
+                }
+            }
+            if query.is_empty() {
+                return true;
+            }
+            if entity.name.to_lowercase().contains(&query) {
+                return true;
+            }
+            if let EntityKind::Custom(ref category) = entity.kind {
+                if category.to_lowercase().contains(&query) {
+                    return true;
+                }
+            }
+            entity.tags.iter().any(|tid| {
+                lc_tag_names
+                    .get(tid)
+                    .is_some_and(|name| name.contains(&query))
+            })
+        })
+        .cloned()
+        .collect()
+}
+
+/// Moves an entity to a different position in the library's insertion-order
+/// list. `new_index` is clamped to `[0, entities.len() - 1]`.
+pub(crate) fn reorder_entities_in_project(
+    project: &mut pixhaus_core::project::Project,
+    entity_id: EntityId,
+    new_index: usize,
+) -> Result<(), AppCommandError> {
+    let current = project
+        .library
+        .entities
+        .iter()
+        .position(|e| e.id == entity_id)
+        .ok_or(AppCommandError::NotFound {
+            entity: "entity".into(),
+            id: u64::from(entity_id.get()),
+        })?;
+
+    let target = new_index.min(project.library.entities.len().saturating_sub(1));
+    let entity = project.library.entities.remove(current);
+    project.library.entities.insert(target, entity);
+    Ok(())
+}
+
+// ── entity commands ───────────────────────────────────────────────────────────
+
+/// Creates a new library entity of any kind and sets it as the active target.
+///
+/// # Kind-specific requirements
+///
+/// - `Custom`: `canvas_width` and `canvas_height` required (> 0).
+///   `initial_states` defaults to `["primary"]` when absent.
+/// - `Tileset`: `tile_width` and `tile_height` required (> 0).
+/// - `Tilemap`: `scene_width` and `scene_height` required (> 0).
+/// - `Reference`: `reference_bytes` required and non-empty.
+#[tauri::command(async, rename_all = "snake_case")]
+pub async fn library_create_entity(
+    args: LibraryCreateEntityArgs,
+    state: State<'_, AppState>,
+) -> CommandResult<Entity> {
+    let ts = now_secs();
+    let mut doc = state.doc.write().await;
+    // Copy next_id before the project borrow so NLL can release the project
+    // borrow before doc.next_id is written back.
+    let mut next_id = doc.next_id;
+    let project = doc
+        .project
+        .as_mut()
+        .ok_or(AppCommandError::NoActiveProject)?;
+    let entity = create_entity_in_project(project, &mut next_id, args, ts)?;
+    doc.next_id = next_id;
+    doc.dirty = true;
+    Ok(entity)
+}
+
+/// Deletes a library entity by id.
+#[tauri::command(async, rename_all = "snake_case")]
+pub async fn library_delete_entity(
+    entity_id: EntityId,
+    state: State<'_, AppState>,
+) -> CommandResult<()> {
+    let ts = now_secs();
+    let mut doc = state.doc.write().await;
+    let project = doc
+        .project
+        .as_mut()
+        .ok_or(AppCommandError::NoActiveProject)?;
+    delete_entity_from_project(project, entity_id, ts)?;
     doc.dirty = true;
     Ok(())
 }
@@ -449,27 +1242,12 @@ pub async fn library_rename_entity(
     name: String,
     state: State<'_, AppState>,
 ) -> CommandResult<()> {
-    if name.is_empty() {
-        return Err(AppCommandError::Validation {
-            detail: "entity name must not be empty".into(),
-        });
-    }
     let mut doc = state.doc.write().await;
     let project = doc
         .project
         .as_mut()
         .ok_or(AppCommandError::NoActiveProject)?;
-    let entity = project
-        .library
-        .entities
-        .iter_mut()
-        .find(|e| e.id == entity_id)
-        .ok_or(AppCommandError::NotFound {
-            entity: "entity".into(),
-            id: u64::from(entity_id.get()),
-        })?;
-    entity.name = name;
-    entity.updated_at = now_secs();
+    rename_entity_in_project(project, entity_id, name, now_secs())?;
     doc.dirty = true;
     Ok(())
 }
@@ -557,20 +1335,7 @@ pub async fn library_reorder_entities(
         .project
         .as_mut()
         .ok_or(AppCommandError::NoActiveProject)?;
-
-    let current = project
-        .library
-        .entities
-        .iter()
-        .position(|e| e.id == entity_id)
-        .ok_or(AppCommandError::NotFound {
-            entity: "entity".into(),
-            id: u64::from(entity_id.get()),
-        })?;
-
-    let target = new_index.min(project.library.entities.len().saturating_sub(1));
-    let entity = project.library.entities.remove(current);
-    project.library.entities.insert(target, entity);
+    reorder_entities_in_project(project, entity_id, new_index)?;
     doc.dirty = true;
     Ok(())
 }
@@ -589,28 +1354,7 @@ pub async fn library_move_entity_to_group(
         .project
         .as_mut()
         .ok_or(AppCommandError::NoActiveProject)?;
-
-    // Validate target group exists when Some.
-    if let Some(gid) = group_id {
-        if !project.library.groups.iter().any(|g| g.id == gid) {
-            return Err(AppCommandError::NotFound {
-                entity: "group".into(),
-                id: u64::from(gid.get()),
-            });
-        }
-    }
-
-    let entity = project
-        .library
-        .entities
-        .iter_mut()
-        .find(|e| e.id == entity_id)
-        .ok_or(AppCommandError::NotFound {
-            entity: "entity".into(),
-            id: u64::from(entity_id.get()),
-        })?;
-    entity.group_id = group_id;
-    entity.updated_at = now_secs();
+    move_entity_to_group(project, entity_id, group_id, now_secs())?;
     doc.dirty = true;
     Ok(())
 }
@@ -629,27 +1373,7 @@ pub async fn library_tag_entity(
         .project
         .as_mut()
         .ok_or(AppCommandError::NoActiveProject)?;
-
-    if !project.library.tags.iter().any(|t| t.id == tag_id) {
-        return Err(AppCommandError::NotFound {
-            entity: "tag".into(),
-            id: u64::from(tag_id.get()),
-        });
-    }
-
-    let entity = project
-        .library
-        .entities
-        .iter_mut()
-        .find(|e| e.id == entity_id)
-        .ok_or(AppCommandError::NotFound {
-            entity: "entity".into(),
-            id: u64::from(entity_id.get()),
-        })?;
-
-    if !entity.tags.contains(&tag_id) {
-        entity.tags.push(tag_id);
-        entity.updated_at = now_secs();
+    if tag_entity_in_project(project, entity_id, tag_id, now_secs())? {
         doc.dirty = true;
     }
     Ok(())
@@ -669,21 +1393,7 @@ pub async fn library_untag_entity(
         .project
         .as_mut()
         .ok_or(AppCommandError::NoActiveProject)?;
-
-    let entity = project
-        .library
-        .entities
-        .iter_mut()
-        .find(|e| e.id == entity_id)
-        .ok_or(AppCommandError::NotFound {
-            entity: "entity".into(),
-            id: u64::from(entity_id.get()),
-        })?;
-
-    let before = entity.tags.len();
-    entity.tags.retain(|&t| t != tag_id);
-    if entity.tags.len() < before {
-        entity.updated_at = now_secs();
+    if untag_entity_in_project(project, entity_id, tag_id, now_secs())? {
         doc.dirty = true;
     }
     Ok(())
@@ -692,125 +1402,25 @@ pub async fn library_untag_entity(
 // ── state commands (Custom-kind entities) ─────────────────────────────────────
 
 /// Adds a named state (new sprite) to a `Custom`-kind entity.
-///
-/// Canvas size defaults to the entity's `EntityDefaults.canvas_size`; falls
-/// back to 16×16 if neither `args` nor defaults specify one.
 #[tauri::command(async, rename_all = "snake_case")]
 pub async fn library_add_state(
     args: LibraryAddStateArgs,
     state: State<'_, AppState>,
 ) -> CommandResult<NamedSprite> {
-    if args.state_name.is_empty() {
-        return Err(AppCommandError::Validation {
-            detail: "state_name must not be empty".into(),
-        });
-    }
-
+    let ts = now_secs();
     let mut doc = state.doc.write().await;
-
-    // Validate entity exists and is Custom-kind before minting IDs.
-    {
-        let project = doc
-            .project
-            .as_ref()
-            .ok_or(AppCommandError::NoActiveProject)?;
-        let entity = project
-            .library
-            .entities
-            .iter()
-            .find(|e| e.id == args.entity_id)
-            .ok_or(AppCommandError::NotFound {
-                entity: "entity".into(),
-                id: u64::from(args.entity_id.get()),
-            })?;
-        if !matches!(entity.content, EntityContent::Sprites { .. }) {
-            return Err(AppCommandError::Validation {
-                detail: format!(
-                    "entity {} is not Custom-kind; only Custom entities have states",
-                    args.entity_id.get()
-                ),
-            });
-        }
-    }
-
-    let state_id = StateId::new(doc.next_id);
-    doc.next_id += 1;
-    let sprite_id = SpriteId::new(doc.next_id);
-    doc.next_id += 1;
-
-    let named = {
-        let ts = now_secs();
-        let project = doc
-            .project
-            .as_mut()
-            .ok_or(AppCommandError::NoActiveProject)?;
-        let entity = project
-            .library
-            .entities
-            .iter_mut()
-            .find(|e| e.id == args.entity_id)
-            .ok_or(AppCommandError::NotFound {
-                entity: "entity".into(),
-                id: u64::from(args.entity_id.get()),
-            })?;
-
-        // Resolve canvas size: args override entity defaults.
-        let canvas = {
-            let (dw, dh) = entity
-                .defaults
-                .canvas_size
-                .map_or((16, 16), |s| (s.width, s.height));
-            Size::new(
-                args.canvas_width.unwrap_or(dw),
-                args.canvas_height.unwrap_or(dh),
-            )
-        };
-        // B3: Reject zero-dimension canvases after resolution so args=None
-        // with bad defaults is caught the same way as explicit zeros.
-        if canvas.width == 0 || canvas.height == 0 {
-            return Err(AppCommandError::Validation {
-                detail: format!(
-                    "canvas dimensions must be > 0 (got {}x{})",
-                    canvas.width, canvas.height
-                ),
-            });
-        }
-        let color_mode = args
-            .color_mode
-            .or(entity.defaults.color_mode)
-            .unwrap_or(ColorMode::Rgba);
-
-        let mut sprite = Sprite::empty(
-            sprite_id,
-            format!("{} / {}", entity.name, args.state_name),
-            canvas,
-        );
-        sprite.color_mode = color_mode;
-        let named = NamedSprite {
-            id: state_id,
-            state_name: args.state_name,
-            sprite,
-            engine_tags: Vec::new(),
-        };
-
-        let EntityContent::Sprites { states } = &mut entity.content else {
-            // Checked above — this branch cannot fire.
-            return Err(AppCommandError::Validation {
-                detail: "entity is not Custom-kind".into(),
-            });
-        };
-        states.push(named.clone());
-        entity.updated_at = ts;
-        named
-    };
-
+    let mut next_id = doc.next_id;
+    let project = doc
+        .project
+        .as_mut()
+        .ok_or(AppCommandError::NoActiveProject)?;
+    let named = add_state_to_entity(project, &mut next_id, args, ts)?;
+    doc.next_id = next_id;
     doc.dirty = true;
     Ok(named)
 }
 
 /// Deletes a named state from a `Custom`-kind entity.
-///
-/// Clears `project.active` when it points at the deleted state.
 #[tauri::command(async, rename_all = "snake_case")]
 pub async fn library_delete_state(
     entity_id: EntityId,
@@ -822,45 +1432,7 @@ pub async fn library_delete_state(
         .project
         .as_mut()
         .ok_or(AppCommandError::NoActiveProject)?;
-
-    let entity = project
-        .library
-        .entities
-        .iter_mut()
-        .find(|e| e.id == entity_id)
-        .ok_or(AppCommandError::NotFound {
-            entity: "entity".into(),
-            id: u64::from(entity_id.get()),
-        })?;
-
-    let EntityContent::Sprites { states } = &mut entity.content else {
-        return Err(AppCommandError::Validation {
-            detail: format!(
-                "entity {} is not Custom-kind; only Custom entities have states",
-                entity_id.get()
-            ),
-        });
-    };
-
-    let before = states.len();
-    states.retain(|s| s.id != state_id);
-    if states.len() == before {
-        return Err(AppCommandError::NotFound {
-            entity: "state".into(),
-            id: u64::from(state_id.get()),
-        });
-    }
-    entity.updated_at = now_secs();
-
-    // Clear active target if it pointed at the deleted state.
-    if matches!(
-        project.active,
-        ActiveTarget::State { entity_id: eid, state_id: sid }
-        if eid == entity_id && sid == state_id
-    ) {
-        project.active = ActiveTarget::None;
-    }
-
+    delete_state_from_entity(project, entity_id, state_id, now_secs())?;
     doc.dirty = true;
     Ok(())
 }
@@ -873,45 +1445,12 @@ pub async fn library_rename_state(
     state_name: String,
     state: State<'_, AppState>,
 ) -> CommandResult<()> {
-    if state_name.is_empty() {
-        return Err(AppCommandError::Validation {
-            detail: "state_name must not be empty".into(),
-        });
-    }
     let mut doc = state.doc.write().await;
     let project = doc
         .project
         .as_mut()
         .ok_or(AppCommandError::NoActiveProject)?;
-
-    let entity = project
-        .library
-        .entities
-        .iter_mut()
-        .find(|e| e.id == entity_id)
-        .ok_or(AppCommandError::NotFound {
-            entity: "entity".into(),
-            id: u64::from(entity_id.get()),
-        })?;
-
-    let EntityContent::Sprites { states } = &mut entity.content else {
-        return Err(AppCommandError::Validation {
-            detail: format!(
-                "entity {} is not Custom-kind; only Custom entities have states",
-                entity_id.get()
-            ),
-        });
-    };
-
-    let named = states
-        .iter_mut()
-        .find(|s| s.id == state_id)
-        .ok_or(AppCommandError::NotFound {
-            entity: "state".into(),
-            id: u64::from(state_id.get()),
-        })?;
-    named.state_name = state_name;
-    entity.updated_at = now_secs();
+    rename_state_in_entity(project, entity_id, state_id, state_name, now_secs())?;
     doc.dirty = true;
     Ok(())
 }
@@ -931,87 +1470,7 @@ pub async fn library_set_active_target(
         .project
         .as_mut()
         .ok_or(AppCommandError::NoActiveProject)?;
-
-    match target {
-        ActiveTarget::None => {
-            project.active = ActiveTarget::None;
-        }
-        ActiveTarget::State {
-            entity_id,
-            state_id,
-        } => {
-            let entity = project
-                .library
-                .entities
-                .iter()
-                .find(|e| e.id == entity_id)
-                .ok_or(AppCommandError::NotFound {
-                    entity: "entity".into(),
-                    id: u64::from(entity_id.get()),
-                })?;
-            let EntityContent::Sprites { states } = &entity.content else {
-                return Err(AppCommandError::Validation {
-                    detail: format!(
-                        "entity {} is not Custom-kind; cannot target a state on it",
-                        entity_id.get()
-                    ),
-                });
-            };
-            if !states.iter().any(|s| s.id == state_id) {
-                return Err(AppCommandError::NotFound {
-                    entity: "state".into(),
-                    id: u64::from(state_id.get()),
-                });
-            }
-            project.active = ActiveTarget::State {
-                entity_id,
-                state_id,
-            };
-        }
-        ActiveTarget::Tileset { entity_id } => {
-            if !project
-                .library
-                .entities
-                .iter()
-                .any(|e| e.id == entity_id && matches!(e.content, EntityContent::Tileset { .. }))
-            {
-                return Err(AppCommandError::NotFound {
-                    entity: "tileset entity".into(),
-                    id: u64::from(entity_id.get()),
-                });
-            }
-            project.active = ActiveTarget::Tileset { entity_id };
-        }
-        ActiveTarget::Tilemap { entity_id } => {
-            if !project
-                .library
-                .entities
-                .iter()
-                .any(|e| e.id == entity_id && matches!(e.content, EntityContent::Tilemap { .. }))
-            {
-                return Err(AppCommandError::NotFound {
-                    entity: "tilemap entity".into(),
-                    id: u64::from(entity_id.get()),
-                });
-            }
-            project.active = ActiveTarget::Tilemap { entity_id };
-        }
-        ActiveTarget::Reference { entity_id } => {
-            if !project
-                .library
-                .entities
-                .iter()
-                .any(|e| e.id == entity_id && matches!(e.content, EntityContent::Reference { .. }))
-            {
-                return Err(AppCommandError::NotFound {
-                    entity: "reference entity".into(),
-                    id: u64::from(entity_id.get()),
-                });
-            }
-            project.active = ActiveTarget::Reference { entity_id };
-        }
-    }
-
+    set_active_target_in_project(project, target)?;
     doc.dirty = true;
     Ok(())
 }
@@ -1035,53 +1494,19 @@ pub async fn library_create_group(
     args: LibraryCreateGroupArgs,
     state: State<'_, AppState>,
 ) -> CommandResult<EntityGroup> {
-    if args.name.is_empty() {
-        return Err(AppCommandError::Validation {
-            detail: "group name must not be empty".into(),
-        });
-    }
     let mut doc = state.doc.write().await;
-
-    // Validate parent group if provided.
-    if let Some(pid) = args.parent_id {
-        let project = doc
-            .project
-            .as_ref()
-            .ok_or(AppCommandError::NoActiveProject)?;
-        if !project.library.groups.iter().any(|g| g.id == pid) {
-            return Err(AppCommandError::NotFound {
-                entity: "group".into(),
-                id: u64::from(pid.get()),
-            });
-        }
-    }
-
-    let group_id = GroupId::new(doc.next_id);
-    doc.next_id += 1;
-
-    let group = EntityGroup {
-        id: group_id,
-        name: args.name,
-        parent_id: args.parent_id,
-        user_data: UserData::default(),
-    };
-
+    let mut next_id = doc.next_id;
     let project = doc
         .project
         .as_mut()
         .ok_or(AppCommandError::NoActiveProject)?;
-    project.library.groups.push(group.clone());
+    let group = create_group_in_project(project, &mut next_id, args)?;
+    doc.next_id = next_id;
     doc.dirty = true;
     Ok(group)
 }
 
 /// Deletes a group.
-///
-/// When `keep_entities` is `true`, entities in the group are unassigned (their
-/// `group_id` is cleared). When `false`, entities in the group are deleted.
-///
-/// Child groups (groups whose `parent_id` equals this group's id) are
-/// re-parented to this group's own `parent_id` (or become top-level if none).
 #[tauri::command(async, rename_all = "snake_case")]
 pub async fn library_delete_group(
     args: LibraryDeleteGroupArgs,
@@ -1093,85 +1518,7 @@ pub async fn library_delete_group(
         .project
         .as_mut()
         .ok_or(AppCommandError::NoActiveProject)?;
-
-    // Find the group and capture its parent before removing it.
-    let parent_id = project
-        .library
-        .groups
-        .iter()
-        .find(|g| g.id == args.group_id)
-        .map(|g| g.parent_id)
-        .ok_or(AppCommandError::NotFound {
-            entity: "group".into(),
-            id: u64::from(args.group_id.get()),
-        })?;
-
-    if args.keep_entities {
-        // Ungroup: clear group_id on every member entity.
-        // B5: Bump updated_at on each ungrouped entity.
-        for entity in &mut project.library.entities {
-            if entity.group_id == Some(args.group_id) {
-                entity.group_id = None;
-                entity.updated_at = ts;
-            }
-        }
-    } else {
-        // Cascade delete: collect member entity ids, then delete them.
-        // C1: HashSet so the four membership checks below are O(1) each,
-        // not O(n) Vec::contains. Cascades scale with library size.
-        let to_delete: HashSet<EntityId> = project
-            .library
-            .entities
-            .iter()
-            .filter(|e| e.group_id == Some(args.group_id))
-            .map(|e| e.id)
-            .collect();
-
-        project
-            .library
-            .entities
-            .retain(|e| !to_delete.contains(&e.id));
-
-        // Clear active target if it pointed at a deleted entity.
-        let active_entity = match project.active {
-            ActiveTarget::State { entity_id, .. }
-            | ActiveTarget::Tileset { entity_id }
-            | ActiveTarget::Tilemap { entity_id }
-            | ActiveTarget::Reference { entity_id } => Some(entity_id),
-            ActiveTarget::None => None,
-        };
-        if active_entity.is_some_and(|eid| to_delete.contains(&eid)) {
-            project.active = ActiveTarget::None;
-        }
-
-        // Remove deleted entities from the style corpus.
-        project
-            .library
-            .ai
-            .style_corpus
-            .retain(|id| !to_delete.contains(id));
-
-        // A3: Clear anchor_reference_id on surviving entities that pointed at
-        // a deleted one. Bump updated_at on each entity whose anchor is cleared.
-        for entity in &mut project.library.entities {
-            if entity
-                .anchor_reference_id
-                .is_some_and(|id| to_delete.contains(&id))
-            {
-                entity.anchor_reference_id = None;
-                entity.updated_at = ts;
-            }
-        }
-    }
-
-    // Re-parent child groups to this group's parent.
-    for group in &mut project.library.groups {
-        if group.parent_id == Some(args.group_id) {
-            group.parent_id = parent_id;
-        }
-    }
-
-    project.library.groups.retain(|g| g.id != args.group_id);
+    delete_group_from_project(project, &args, ts)?;
     doc.dirty = true;
     Ok(())
 }
@@ -1183,34 +1530,19 @@ pub async fn library_rename_group(
     name: String,
     state: State<'_, AppState>,
 ) -> CommandResult<()> {
-    if name.is_empty() {
-        return Err(AppCommandError::Validation {
-            detail: "group name must not be empty".into(),
-        });
-    }
     let mut doc = state.doc.write().await;
     let project = doc
         .project
         .as_mut()
         .ok_or(AppCommandError::NoActiveProject)?;
-    let group = project
-        .library
-        .groups
-        .iter_mut()
-        .find(|g| g.id == group_id)
-        .ok_or(AppCommandError::NotFound {
-            entity: "group".into(),
-            id: u64::from(group_id.get()),
-        })?;
-    group.name = name;
+    rename_group_in_project(project, group_id, name)?;
     doc.dirty = true;
     Ok(())
 }
 
 /// Sets or clears a group's parent, changing its nesting level.
 ///
-/// Pass `None` to make the group top-level. Cycles are rejected (a group
-/// cannot be its own ancestor).
+/// Pass `None` to make the group top-level. Cycles are rejected.
 #[tauri::command(async, rename_all = "snake_case")]
 pub async fn library_set_group_parent(
     group_id: GroupId,
@@ -1222,56 +1554,7 @@ pub async fn library_set_group_parent(
         .project
         .as_mut()
         .ok_or(AppCommandError::NoActiveProject)?;
-
-    // Verify the group exists.
-    if !project.library.groups.iter().any(|g| g.id == group_id) {
-        return Err(AppCommandError::NotFound {
-            entity: "group".into(),
-            id: u64::from(group_id.get()),
-        });
-    }
-
-    // Reject self-referential and cyclic parent assignments.
-    if let Some(pid) = parent_id {
-        if pid == group_id {
-            return Err(AppCommandError::Validation {
-                detail: "a group cannot be its own parent".into(),
-            });
-        }
-        // Walk ancestor chain of `pid` to detect cycles.
-        let mut cursor = Some(pid);
-        while let Some(cid) = cursor {
-            if cid == group_id {
-                return Err(AppCommandError::Validation {
-                    detail: "setting this parent would create a group cycle".into(),
-                });
-            }
-            cursor = project
-                .library
-                .groups
-                .iter()
-                .find(|g| g.id == cid)
-                .and_then(|g| g.parent_id);
-        }
-        // Validate that the parent group exists.
-        if !project.library.groups.iter().any(|g| g.id == pid) {
-            return Err(AppCommandError::NotFound {
-                entity: "group".into(),
-                id: u64::from(pid.get()),
-            });
-        }
-    }
-
-    let group = project
-        .library
-        .groups
-        .iter_mut()
-        .find(|g| g.id == group_id)
-        .ok_or(AppCommandError::NotFound {
-            entity: "group".into(),
-            id: u64::from(group_id.get()),
-        })?;
-    group.parent_id = parent_id;
+    set_group_parent_in_project(project, group_id, parent_id)?;
     doc.dirty = true;
     Ok(())
 }
@@ -1295,29 +1578,14 @@ pub async fn library_add_tag(
     args: LibraryAddTagArgs,
     state: State<'_, AppState>,
 ) -> CommandResult<TagDefinition> {
-    if args.name.is_empty() {
-        return Err(AppCommandError::Validation {
-            detail: "tag name must not be empty".into(),
-        });
-    }
-
     let mut doc = state.doc.write().await;
-
-    let tag_id = TagId::new(doc.next_id);
-    doc.next_id += 1;
-
-    let tag = TagDefinition {
-        id: tag_id,
-        name: args.name,
-        color: args.color,
-        auto_generated: false,
-    };
-
+    let mut next_id = doc.next_id;
     let project = doc
         .project
         .as_mut()
         .ok_or(AppCommandError::NoActiveProject)?;
-    project.library.tags.push(tag.clone());
+    let tag = add_tag_to_project(project, &mut next_id, args)?;
+    doc.next_id = next_id;
     doc.dirty = true;
     Ok(tag)
 }
@@ -1332,28 +1600,7 @@ pub async fn library_delete_tag(tag_id: TagId, state: State<'_, AppState>) -> Co
         .project
         .as_mut()
         .ok_or(AppCommandError::NoActiveProject)?;
-
-    let before = project.library.tags.len();
-    project.library.tags.retain(|t| t.id != tag_id);
-    if project.library.tags.len() == before {
-        return Err(AppCommandError::NotFound {
-            entity: "tag".into(),
-            id: u64::from(tag_id.get()),
-        });
-    }
-
-    // Remove the tag from every entity that referenced it.
-    // B6: Bump updated_at only when the entity actually loses a tag.
-    for entity in &mut project.library.entities {
-        let tags_before = entity.tags.len();
-        entity.tags.retain(|&t| t != tag_id);
-        let suggested_before = entity.ai.suggested_tags.len();
-        entity.ai.suggested_tags.retain(|&t| t != tag_id);
-        if entity.tags.len() < tags_before || entity.ai.suggested_tags.len() < suggested_before {
-            entity.updated_at = ts;
-        }
-    }
-
+    delete_tag_from_project(project, tag_id, ts)?;
     doc.dirty = true;
     Ok(())
 }
@@ -1365,26 +1612,12 @@ pub async fn library_rename_tag(
     name: String,
     state: State<'_, AppState>,
 ) -> CommandResult<()> {
-    if name.is_empty() {
-        return Err(AppCommandError::Validation {
-            detail: "tag name must not be empty".into(),
-        });
-    }
     let mut doc = state.doc.write().await;
     let project = doc
         .project
         .as_mut()
         .ok_or(AppCommandError::NoActiveProject)?;
-    let tag = project
-        .library
-        .tags
-        .iter_mut()
-        .find(|t| t.id == tag_id)
-        .ok_or(AppCommandError::NotFound {
-            entity: "tag".into(),
-            id: u64::from(tag_id.get()),
-        })?;
-    tag.name = name;
+    rename_tag_in_project(project, tag_id, name)?;
     doc.dirty = true;
     Ok(())
 }
@@ -1421,69 +1654,7 @@ pub async fn library_search(
         .project
         .as_ref()
         .ok_or(AppCommandError::NoActiveProject)?;
-
-    let query = args.query.to_lowercase();
-
-    // C2: precompute a TagId -> lowercased-name map once. The per-entity
-    // tag match becomes O(tags-on-entity) HashMap lookups instead of
-    // O(tags-on-entity * project-tags) nested linear scans.
-    let lc_tag_names: HashMap<TagId, String> = project
-        .library
-        .tags
-        .iter()
-        .map(|t| (t.id, t.name.to_lowercase()))
-        .collect();
-
-    let result = project
-        .library
-        .entities
-        .iter()
-        .filter(|entity| {
-            // Kind filter.
-            if let Some(ref k) = args.kind_filter {
-                if &entity.kind != k {
-                    return false;
-                }
-            }
-            // Group filter.
-            if let Some(gid) = args.group_filter {
-                if entity.group_id != Some(gid) {
-                    return false;
-                }
-            }
-            // Tag filter.
-            if let Some(tid) = args.tag_filter {
-                if !entity.tags.contains(&tid) {
-                    return false;
-                }
-            }
-            // Text query — skip the substring check for empty queries so
-            // `library_search` with an empty query + filters acts like
-            // `library_list_entities`.
-            if query.is_empty() {
-                return true;
-            }
-            // Match entity name.
-            if entity.name.to_lowercase().contains(&query) {
-                return true;
-            }
-            // Match Custom kind string.
-            if let EntityKind::Custom(ref category) = entity.kind {
-                if category.to_lowercase().contains(&query) {
-                    return true;
-                }
-            }
-            // Match tag names — O(tags-on-entity) lookups.
-            entity.tags.iter().any(|tid| {
-                lc_tag_names
-                    .get(tid)
-                    .is_some_and(|name| name.contains(&query))
-            })
-        })
-        .cloned()
-        .collect();
-
-    Ok(result)
+    Ok(search_library(project, &args))
 }
 
 // ── tests ─────────────────────────────────────────────────────────────────────
@@ -1491,12 +1662,12 @@ pub async fn library_search(
 #[cfg(test)]
 mod tests {
     use pixhaus_core::project::{
-        ActiveTarget, AiMetadata, ColorMode, EntityContent, EntityDefaults, EntityGroup, EntityId,
-        EntityKind, GroupId, NamedSprite, Size, StateId, TagDefinition, TagId, UserData,
+        ActiveTarget, AiMetadata, ColorMode, EntityContent, EntityDefaults, EntityId, EntityKind,
+        GroupId, NamedSprite, Size, StateId, TagId, UserData,
     };
 
     use super::*;
-    use crate::state::DocumentStore;
+    use crate::state::{AppState, DocumentStore};
 
     fn project_with_one_custom_entity() -> (pixhaus_core::project::Project, EntityId, StateId) {
         let mut project = pixhaus_core::project::Project::new("test");
@@ -1541,240 +1712,280 @@ mod tests {
         (doc, eid, sid)
     }
 
+    // ── rename entity ─────────────────────────────────────────────────────
+
     #[test]
-    fn rename_entity_updates_name_and_dirty() {
+    fn rename_entity_updates_name_and_updated_at() {
         let (mut doc, entity_id, _) = doc_with_project();
-        doc.dirty = false;
+        let ts = 99_i64;
         let project = doc.project.as_mut().unwrap();
-        let entity = project
+        rename_entity_in_project(project, entity_id, "Goblin".into(), ts).unwrap();
+        let entity = doc
+            .project
+            .unwrap()
             .library
             .entities
-            .iter_mut()
+            .into_iter()
             .find(|e| e.id == entity_id)
             .unwrap();
-        entity.name = "Goblin".into();
-        entity.updated_at = now_secs();
-        doc.dirty = true;
-        assert_eq!(
-            doc.project
-                .unwrap()
-                .library
-                .entities
-                .iter()
-                .find(|e| e.id == entity_id)
-                .unwrap()
-                .name,
-            "Goblin"
+        assert_eq!(entity.name, "Goblin");
+        assert_eq!(entity.updated_at, ts);
+    }
+
+    #[test]
+    fn rename_entity_not_found() {
+        let (mut doc, _, _) = doc_with_project();
+        let missing = EntityId::new(999);
+        let result =
+            rename_entity_in_project(doc.project.as_mut().unwrap(), missing, "X".into(), 0);
+        assert!(
+            matches!(result, Err(AppCommandError::NotFound { .. })),
+            "missing entity must return NotFound"
         );
     }
+
+    #[test]
+    fn rename_entity_rejects_whitespace_name() {
+        let (mut doc, entity_id, _) = doc_with_project();
+        let result =
+            rename_entity_in_project(doc.project.as_mut().unwrap(), entity_id, "   ".into(), 0);
+        assert!(matches!(result, Err(AppCommandError::Validation { .. })));
+    }
+
+    // ── delete entity ─────────────────────────────────────────────────────
 
     #[test]
     fn delete_entity_clears_active_target() {
         let (mut doc, entity_id, _) = doc_with_project();
         let project = doc.project.as_mut().unwrap();
         assert!(!project.active.is_none());
-
-        project.library.entities.retain(|e| e.id != entity_id);
-        project.active = ActiveTarget::None;
-
+        delete_entity_from_project(project, entity_id, 0).unwrap();
         assert!(doc.project.unwrap().active.is_none());
     }
 
     #[test]
-    fn create_group_stores_parent_id() {
+    fn delete_entity_not_found() {
         let (mut doc, _, _) = doc_with_project();
-        let parent_id = GroupId::new(doc.next_id);
-        doc.next_id += 1;
-        doc.project
-            .as_mut()
-            .unwrap()
-            .library
-            .groups
-            .push(EntityGroup {
-                id: parent_id,
-                name: "Top".into(),
-                parent_id: None,
-                user_data: UserData::default(),
-            });
+        let missing = EntityId::new(999);
+        let result = delete_entity_from_project(doc.project.as_mut().unwrap(), missing, 0);
+        assert!(matches!(result, Err(AppCommandError::NotFound { .. })));
+    }
 
-        let child_id = GroupId::new(doc.next_id);
-        doc.next_id += 1;
-        let child = EntityGroup {
-            id: child_id,
-            name: "Child".into(),
-            parent_id: Some(parent_id),
-            user_data: UserData::default(),
+    // ── B1 — empty name validation ────────────────────────────────────────
+
+    #[test]
+    fn create_entity_rejects_whitespace_name() {
+        let mut project = pixhaus_core::project::Project::new("test");
+        let mut next_id = 1u32;
+        let args = LibraryCreateEntityArgs {
+            kind: EntityKind::Custom("Character".into()),
+            name: "   ".into(),
+            group_id: None,
+            initial_states: None,
+            canvas_width: Some(16),
+            canvas_height: Some(16),
+            color_mode: None,
+            tile_width: None,
+            tile_height: None,
+            scene_width: None,
+            scene_height: None,
+            reference_bytes: None,
+            reference_mime: None,
         };
-        doc.project
-            .as_mut()
-            .unwrap()
-            .library
-            .groups
-            .push(child.clone());
-
-        let found = doc
-            .project
-            .unwrap()
-            .library
-            .groups
-            .iter()
-            .find(|g| g.id == child_id)
-            .cloned()
-            .unwrap();
-        assert_eq!(found.parent_id, Some(parent_id));
-    }
-
-    #[test]
-    fn tag_entity_adds_tag_id() {
-        let (mut doc, entity_id, _) = doc_with_project();
-        let tag_id = TagId::new(doc.next_id);
-        doc.next_id += 1;
-        let project = doc.project.as_mut().unwrap();
-        project.library.tags.push(TagDefinition {
-            id: tag_id,
-            name: "hero".into(),
-            color: None,
-            auto_generated: false,
-        });
-        let entity = project
-            .library
-            .entities
-            .iter_mut()
-            .find(|e| e.id == entity_id)
-            .unwrap();
-        entity.tags.push(tag_id);
+        let result = create_entity_in_project(&mut project, &mut next_id, args, 0);
         assert!(
-            doc.project
-                .unwrap()
-                .library
-                .entities
-                .iter()
-                .find(|e| e.id == entity_id)
-                .unwrap()
-                .tags
-                .contains(&tag_id)
+            matches!(result, Err(AppCommandError::Validation { .. })),
+            "whitespace-only name must be rejected"
         );
     }
 
     #[test]
-    fn delete_tag_removes_it_from_entities() {
-        let (mut doc, entity_id, _) = doc_with_project();
-        let tag_id = TagId::new(doc.next_id);
-        doc.next_id += 1;
-        let project = doc.project.as_mut().unwrap();
-        project.library.tags.push(TagDefinition {
-            id: tag_id,
-            name: "hero".into(),
-            color: None,
-            auto_generated: false,
-        });
-        project
-            .library
-            .entities
-            .iter_mut()
-            .find(|e| e.id == entity_id)
-            .unwrap()
-            .tags
-            .push(tag_id);
+    fn create_entity_unknown_group_not_found() {
+        let mut project = pixhaus_core::project::Project::new("test");
+        let mut next_id = 1u32;
+        let args = LibraryCreateEntityArgs {
+            kind: EntityKind::Custom("Character".into()),
+            name: "Hero".into(),
+            group_id: Some(GroupId::new(999)),
+            initial_states: None,
+            canvas_width: Some(16),
+            canvas_height: Some(16),
+            color_mode: None,
+            tile_width: None,
+            tile_height: None,
+            scene_width: None,
+            scene_height: None,
+            reference_bytes: None,
+            reference_mime: None,
+        };
+        let result = create_entity_in_project(&mut project, &mut next_id, args, 0);
+        assert!(matches!(result, Err(AppCommandError::NotFound { .. })));
+    }
 
-        // Delete the tag.
-        project.library.tags.retain(|t| t.id != tag_id);
-        for e in &mut project.library.entities {
-            e.tags.retain(|&t| t != tag_id);
-        }
+    // ── B2 — per-state name validation ────────────────────────────────────
 
+    #[test]
+    fn create_entity_rejects_whitespace_state_name() {
+        let mut project = pixhaus_core::project::Project::new("test");
+        let mut next_id = 1u32;
+        let args = LibraryCreateEntityArgs {
+            kind: EntityKind::Custom("Character".into()),
+            name: "Hero".into(),
+            group_id: None,
+            initial_states: Some(vec!["idle".into(), "  ".into()]),
+            canvas_width: Some(16),
+            canvas_height: Some(16),
+            color_mode: None,
+            tile_width: None,
+            tile_height: None,
+            scene_width: None,
+            scene_height: None,
+            reference_bytes: None,
+            reference_mime: None,
+        };
+        let result = create_entity_in_project(&mut project, &mut next_id, args, 0);
         assert!(
-            !doc.project
-                .unwrap()
-                .library
-                .entities
-                .iter()
-                .find(|e| e.id == entity_id)
-                .unwrap()
-                .tags
-                .contains(&tag_id)
+            matches!(result, Err(AppCommandError::Validation { .. })),
+            "whitespace-only state name must be rejected"
         );
     }
 
-    #[test]
-    fn search_matches_entity_name_substring() {
-        let (doc_store, _, _) = doc_with_project();
-        let project = doc_store.project.as_ref().unwrap();
-        let query = "her";
-        let results: Vec<_> = project
-            .library
-            .entities
-            .iter()
-            .filter(|e| e.name.to_lowercase().contains(query))
-            .collect();
-        assert_eq!(results.len(), 1);
-        assert_eq!(results[0].name, "Hero");
-    }
-
-    #[test]
-    fn search_matches_custom_kind_string() {
-        let (doc_store, _, _) = doc_with_project();
-        let project = doc_store.project.as_ref().unwrap();
-        let query = "character";
-        let results: Vec<_> = project
-            .library
-            .entities
-            .iter()
-            .filter(|e| {
-                if let EntityKind::Custom(ref s) = e.kind {
-                    s.to_lowercase().contains(query)
-                } else {
-                    false
-                }
-            })
-            .collect();
-        assert_eq!(results.len(), 1);
-    }
+    // ── add / delete / rename state ───────────────────────────────────────
 
     #[test]
     fn add_state_creates_named_sprite_with_correct_size() {
         let (mut doc, entity_id, _) = doc_with_project();
-        let project = doc.project.as_mut().unwrap();
-        let entity = project
-            .library
-            .entities
-            .iter_mut()
-            .find(|e| e.id == entity_id)
-            .unwrap();
-        let state_id = StateId::new(doc.next_id);
-        doc.next_id += 1;
-        let sprite_id = SpriteId::new(doc.next_id);
-        doc.next_id += 1;
-        let canvas = Size::new(32, 32);
-        let sprite = Sprite::empty(sprite_id, "Hero / walk", canvas);
-        let named = NamedSprite {
-            id: state_id,
+        let args = LibraryAddStateArgs {
+            entity_id,
             state_name: "walk".into(),
-            sprite,
-            engine_tags: Vec::new(),
+            canvas_width: Some(32),
+            canvas_height: Some(32),
+            color_mode: None,
         };
-        let EntityContent::Sprites { states } = &mut entity.content else {
-            panic!("expected Sprites content");
-        };
-        states.push(named);
-
+        let named =
+            add_state_to_entity(doc.project.as_mut().unwrap(), &mut doc.next_id, args, 0).unwrap();
+        assert_eq!(named.state_name, "walk");
+        assert_eq!(named.sprite.canvas, Size::new(32, 32));
         let states = match &doc.project.unwrap().library.entities[0].content {
             EntityContent::Sprites { states } => states.clone(),
-            _ => panic!(),
+            _ => panic!("expected Sprites"),
         };
         assert_eq!(states.len(), 2);
-        assert_eq!(states[1].state_name, "walk");
-        assert_eq!(states[1].sprite.canvas, Size::new(32, 32));
     }
+
+    // ── B3 — zero-canvas validation ───────────────────────────────────────
+
+    #[test]
+    fn add_state_rejects_zero_canvas() {
+        let (mut doc, entity_id, _) = doc_with_project();
+        let args = LibraryAddStateArgs {
+            entity_id,
+            state_name: "walk".into(),
+            canvas_width: Some(0),
+            canvas_height: Some(16),
+            color_mode: None,
+        };
+        let result = add_state_to_entity(doc.project.as_mut().unwrap(), &mut doc.next_id, args, 0);
+        assert!(
+            matches!(result, Err(AppCommandError::Validation { .. })),
+            "zero-dimension canvas must be rejected"
+        );
+    }
+
+    #[test]
+    fn add_state_entity_not_found() {
+        let (mut doc, _, _) = doc_with_project();
+        let args = LibraryAddStateArgs {
+            entity_id: EntityId::new(999),
+            state_name: "walk".into(),
+            canvas_width: Some(16),
+            canvas_height: Some(16),
+            color_mode: None,
+        };
+        let result = add_state_to_entity(doc.project.as_mut().unwrap(), &mut doc.next_id, args, 0);
+        assert!(matches!(result, Err(AppCommandError::NotFound { .. })));
+    }
+
+    #[test]
+    fn delete_state_entity_not_found() {
+        let (mut doc, _, state_id) = doc_with_project();
+        let result = delete_state_from_entity(
+            doc.project.as_mut().unwrap(),
+            EntityId::new(999),
+            state_id,
+            0,
+        );
+        assert!(matches!(result, Err(AppCommandError::NotFound { .. })));
+    }
+
+    #[test]
+    fn delete_state_state_not_found() {
+        let (mut doc, entity_id, _) = doc_with_project();
+        let result = delete_state_from_entity(
+            doc.project.as_mut().unwrap(),
+            entity_id,
+            StateId::new(999),
+            0,
+        );
+        assert!(matches!(result, Err(AppCommandError::NotFound { .. })));
+    }
+
+    #[test]
+    fn rename_state_entity_not_found() {
+        let (mut doc, _, state_id) = doc_with_project();
+        let result = rename_state_in_entity(
+            doc.project.as_mut().unwrap(),
+            EntityId::new(999),
+            state_id,
+            "run".into(),
+            0,
+        );
+        assert!(matches!(result, Err(AppCommandError::NotFound { .. })));
+    }
+
+    #[test]
+    fn rename_state_state_not_found() {
+        let (mut doc, entity_id, _) = doc_with_project();
+        let result = rename_state_in_entity(
+            doc.project.as_mut().unwrap(),
+            entity_id,
+            StateId::new(999),
+            "run".into(),
+            0,
+        );
+        assert!(matches!(result, Err(AppCommandError::NotFound { .. })));
+    }
+
+    // ── move entity to group ──────────────────────────────────────────────
+
+    #[test]
+    fn move_entity_to_group_entity_not_found() {
+        let (mut doc, _, _) = doc_with_project();
+        let result =
+            move_entity_to_group(doc.project.as_mut().unwrap(), EntityId::new(999), None, 0);
+        assert!(matches!(result, Err(AppCommandError::NotFound { .. })));
+    }
+
+    #[test]
+    fn move_entity_to_group_group_not_found() {
+        let (mut doc, entity_id, _) = doc_with_project();
+        let result = move_entity_to_group(
+            doc.project.as_mut().unwrap(),
+            entity_id,
+            Some(GroupId::new(999)),
+            0,
+        );
+        assert!(matches!(result, Err(AppCommandError::NotFound { .. })));
+    }
+
+    // ── reorder entities ──────────────────────────────────────────────────
 
     #[test]
     fn reorder_entities_moves_to_target_index() {
         let (mut doc, _, _) = doc_with_project();
-        // Add a second entity.
-        let project = doc.project.as_mut().unwrap();
         let e2_id = EntityId::new(doc.next_id);
         doc.next_id += 1;
-        project.library.entities.push(Entity {
+        doc.project.as_mut().unwrap().library.entities.push(Entity {
             id: e2_id,
             kind: EntityKind::Custom("Enemy".into()),
             name: "Goblin".into(),
@@ -1789,102 +2000,340 @@ mod tests {
             updated_at: 0,
         });
 
-        // Move the first entity (Hero) to index 1 (last).
         let first_id = doc.project.as_ref().unwrap().library.entities[0].id;
-        let project = doc.project.as_mut().unwrap();
-        let current = project
-            .library
-            .entities
-            .iter()
-            .position(|e| e.id == first_id)
-            .unwrap();
-        let entity = project.library.entities.remove(current);
-        project.library.entities.push(entity);
-
+        reorder_entities_in_project(doc.project.as_mut().unwrap(), first_id, 1).unwrap();
         assert_eq!(doc.project.unwrap().library.entities[0].name, "Goblin");
     }
 
     #[test]
-    fn group_cycle_detection_rejects_self_parent() {
+    fn reorder_entities_not_found() {
         let (mut doc, _, _) = doc_with_project();
-        let gid = GroupId::new(doc.next_id);
-        doc.next_id += 1;
-        doc.project
-            .as_mut()
+        let result =
+            reorder_entities_in_project(doc.project.as_mut().unwrap(), EntityId::new(999), 0);
+        assert!(matches!(result, Err(AppCommandError::NotFound { .. })));
+    }
+
+    // ── create / delete / rename group ────────────────────────────────────
+
+    #[test]
+    fn create_group_stores_parent_id() {
+        let (mut doc, _, _) = doc_with_project();
+        let parent_args = LibraryCreateGroupArgs {
+            name: "Top".into(),
+            parent_id: None,
+        };
+        let parent =
+            create_group_in_project(doc.project.as_mut().unwrap(), &mut doc.next_id, parent_args)
+                .unwrap();
+
+        let child_args = LibraryCreateGroupArgs {
+            name: "Child".into(),
+            parent_id: Some(parent.id),
+        };
+        let child =
+            create_group_in_project(doc.project.as_mut().unwrap(), &mut doc.next_id, child_args)
+                .unwrap();
+
+        assert_eq!(child.parent_id, Some(parent.id));
+        let found = doc
+            .project
             .unwrap()
             .library
             .groups
-            .push(EntityGroup {
-                id: gid,
+            .into_iter()
+            .find(|g| g.id == child.id)
+            .unwrap();
+        assert_eq!(found.parent_id, Some(parent.id));
+    }
+
+    #[test]
+    fn delete_group_not_found() {
+        let (mut doc, _, _) = doc_with_project();
+        let result = delete_group_from_project(
+            doc.project.as_mut().unwrap(),
+            &LibraryDeleteGroupArgs {
+                group_id: GroupId::new(999),
+                keep_entities: true,
+            },
+            0,
+        );
+        assert!(matches!(result, Err(AppCommandError::NotFound { .. })));
+    }
+
+    #[test]
+    fn rename_group_not_found() {
+        let (mut doc, _, _) = doc_with_project();
+        let result =
+            rename_group_in_project(doc.project.as_mut().unwrap(), GroupId::new(999), "X".into());
+        assert!(matches!(result, Err(AppCommandError::NotFound { .. })));
+    }
+
+    #[test]
+    fn rename_group_rejects_whitespace_name() {
+        let (mut doc, _, _) = doc_with_project();
+        let mut next_id = doc.next_id;
+        let group = create_group_in_project(
+            doc.project.as_mut().unwrap(),
+            &mut next_id,
+            LibraryCreateGroupArgs {
+                name: "Grp".into(),
+                parent_id: None,
+            },
+        )
+        .unwrap();
+        let result = rename_group_in_project(doc.project.as_mut().unwrap(), group.id, "   ".into());
+        assert!(matches!(result, Err(AppCommandError::Validation { .. })));
+    }
+
+    // ── set_group_parent ──────────────────────────────────────────────────
+
+    #[test]
+    fn group_cycle_detection_rejects_self_parent() {
+        let (mut doc, _, _) = doc_with_project();
+        let mut next_id = doc.next_id;
+        let group = create_group_in_project(
+            doc.project.as_mut().unwrap(),
+            &mut next_id,
+            LibraryCreateGroupArgs {
                 name: "Loop".into(),
                 parent_id: None,
-                user_data: UserData::default(),
-            });
-
-        // Simulate the cycle check: a group cannot be its own parent.
-        assert!(gid == gid, "sanity: self == self triggers cycle guard");
-    }
-
-    // ── B1 — empty name validation ────────────────────────────────────────
-
-    #[test]
-    fn create_entity_rejects_whitespace_name() {
-        // Mirror the B1 guard in library_create_entity.
-        let name = "   ";
-        let result: Result<(), AppCommandError> = if name.trim().is_empty() {
-            Err(AppCommandError::Validation {
-                detail: "entity name must not be empty".into(),
-            })
-        } else {
-            Ok(())
-        };
+            },
+        )
+        .unwrap();
+        let result =
+            set_group_parent_in_project(doc.project.as_mut().unwrap(), group.id, Some(group.id));
         assert!(
             matches!(result, Err(AppCommandError::Validation { .. })),
-            "whitespace-only name must be rejected"
+            "self-parent must be rejected"
         );
     }
 
-    // ── B2 — per-state name validation ────────────────────────────────────
+    #[test]
+    fn set_group_parent_group_not_found() {
+        let (mut doc, _, _) = doc_with_project();
+        let result =
+            set_group_parent_in_project(doc.project.as_mut().unwrap(), GroupId::new(999), None);
+        assert!(matches!(result, Err(AppCommandError::NotFound { .. })));
+    }
+
+    // ── set active target ─────────────────────────────────────────────────
 
     #[test]
-    fn create_entity_rejects_whitespace_state_name() {
-        // Mirror the B2 guard in library_create_entity (Custom kind).
-        let names: Vec<String> = vec!["idle".into(), "  ".into()];
-        let result: Result<(), AppCommandError> = names.iter().try_for_each(|sn| {
-            if sn.trim().is_empty() {
-                Err(AppCommandError::Validation {
-                    detail: "initial_states must not contain empty or whitespace-only names".into(),
-                })
-            } else {
-                Ok(())
-            }
-        });
+    fn set_active_target_entity_not_found() {
+        let (mut doc, _, _) = doc_with_project();
+        let result = set_active_target_in_project(
+            doc.project.as_mut().unwrap(),
+            ActiveTarget::Tileset {
+                entity_id: EntityId::new(999),
+            },
+        );
+        assert!(matches!(result, Err(AppCommandError::NotFound { .. })));
+    }
+
+    #[test]
+    fn set_active_target_state_not_found() {
+        let (mut doc, entity_id, _) = doc_with_project();
+        let result = set_active_target_in_project(
+            doc.project.as_mut().unwrap(),
+            ActiveTarget::State {
+                entity_id,
+                state_id: StateId::new(999),
+            },
+        );
+        assert!(matches!(result, Err(AppCommandError::NotFound { .. })));
+    }
+
+    // ── tag / untag entity ────────────────────────────────────────────────
+
+    #[test]
+    fn tag_entity_adds_tag_id() {
+        let (mut doc, entity_id, _) = doc_with_project();
+        let tag = add_tag_to_project(
+            doc.project.as_mut().unwrap(),
+            &mut doc.next_id,
+            LibraryAddTagArgs {
+                name: "hero".into(),
+                color: None,
+            },
+        )
+        .unwrap();
+
+        let changed =
+            tag_entity_in_project(doc.project.as_mut().unwrap(), entity_id, tag.id, 0).unwrap();
+        assert!(changed, "first tag application must return true");
         assert!(
-            matches!(result, Err(AppCommandError::Validation { .. })),
-            "whitespace-only state name must be rejected"
+            doc.project
+                .unwrap()
+                .library
+                .entities
+                .iter()
+                .find(|e| e.id == entity_id)
+                .unwrap()
+                .tags
+                .contains(&tag.id)
         );
     }
 
-    // ── B3 — zero-canvas validation ───────────────────────────────────────
+    #[test]
+    fn tag_entity_tag_not_found() {
+        let (mut doc, entity_id, _) = doc_with_project();
+        let result =
+            tag_entity_in_project(doc.project.as_mut().unwrap(), entity_id, TagId::new(999), 0);
+        assert!(matches!(result, Err(AppCommandError::NotFound { .. })));
+    }
 
     #[test]
-    fn add_state_rejects_zero_canvas() {
-        // Mirror the B3 guard in library_add_state after canvas resolution.
-        let resolved = Size::new(0u32, 16u32);
-        let result: Result<(), AppCommandError> = if resolved.width == 0 || resolved.height == 0 {
-            Err(AppCommandError::Validation {
-                detail: format!(
-                    "canvas dimensions must be > 0 (got {}x{})",
-                    resolved.width, resolved.height
-                ),
-            })
-        } else {
-            Ok(())
-        };
-        assert!(
-            matches!(result, Err(AppCommandError::Validation { .. })),
-            "zero-dimension canvas must be rejected"
+    fn tag_entity_entity_not_found() {
+        let (mut doc, _, _) = doc_with_project();
+        let tag = add_tag_to_project(
+            doc.project.as_mut().unwrap(),
+            &mut doc.next_id,
+            LibraryAddTagArgs {
+                name: "hero".into(),
+                color: None,
+            },
+        )
+        .unwrap();
+        let result =
+            tag_entity_in_project(doc.project.as_mut().unwrap(), EntityId::new(999), tag.id, 0);
+        assert!(matches!(result, Err(AppCommandError::NotFound { .. })));
+    }
+
+    #[test]
+    fn tag_entity_idempotent_returns_false() {
+        let (mut doc, entity_id, _) = doc_with_project();
+        let tag = add_tag_to_project(
+            doc.project.as_mut().unwrap(),
+            &mut doc.next_id,
+            LibraryAddTagArgs {
+                name: "hero".into(),
+                color: None,
+            },
+        )
+        .unwrap();
+        tag_entity_in_project(doc.project.as_mut().unwrap(), entity_id, tag.id, 0).unwrap();
+        let second =
+            tag_entity_in_project(doc.project.as_mut().unwrap(), entity_id, tag.id, 0).unwrap();
+        assert!(!second, "second application of same tag must be a no-op");
+        assert_eq!(
+            doc.project
+                .unwrap()
+                .library
+                .entities
+                .iter()
+                .find(|e| e.id == entity_id)
+                .unwrap()
+                .tags
+                .len(),
+            1,
+            "tag must not be duplicated"
         );
+    }
+
+    #[test]
+    fn untag_entity_entity_not_found() {
+        let (mut doc, _, _) = doc_with_project();
+        let result = untag_entity_in_project(
+            doc.project.as_mut().unwrap(),
+            EntityId::new(999),
+            TagId::new(1),
+            0,
+        );
+        assert!(matches!(result, Err(AppCommandError::NotFound { .. })));
+    }
+
+    // ── add / delete / rename tag ─────────────────────────────────────────
+
+    #[test]
+    fn delete_tag_removes_it_from_entities() {
+        let (mut doc, entity_id, _) = doc_with_project();
+        let tag = add_tag_to_project(
+            doc.project.as_mut().unwrap(),
+            &mut doc.next_id,
+            LibraryAddTagArgs {
+                name: "hero".into(),
+                color: None,
+            },
+        )
+        .unwrap();
+        tag_entity_in_project(doc.project.as_mut().unwrap(), entity_id, tag.id, 0).unwrap();
+
+        delete_tag_from_project(doc.project.as_mut().unwrap(), tag.id, 0).unwrap();
+
+        assert!(
+            !doc.project
+                .unwrap()
+                .library
+                .entities
+                .iter()
+                .find(|e| e.id == entity_id)
+                .unwrap()
+                .tags
+                .contains(&tag.id)
+        );
+    }
+
+    #[test]
+    fn delete_tag_not_found() {
+        let (mut doc, _, _) = doc_with_project();
+        let result = delete_tag_from_project(doc.project.as_mut().unwrap(), TagId::new(999), 0);
+        assert!(matches!(result, Err(AppCommandError::NotFound { .. })));
+    }
+
+    #[test]
+    fn rename_tag_not_found() {
+        let (mut doc, _, _) = doc_with_project();
+        let result =
+            rename_tag_in_project(doc.project.as_mut().unwrap(), TagId::new(999), "X".into());
+        assert!(matches!(result, Err(AppCommandError::NotFound { .. })));
+    }
+
+    // ── search ────────────────────────────────────────────────────────────
+
+    #[test]
+    fn search_matches_entity_name_substring() {
+        let (doc, _, _) = doc_with_project();
+        let results = search_library(
+            doc.project.as_ref().unwrap(),
+            &LibrarySearchArgs {
+                query: "her".into(),
+                kind_filter: None,
+                group_filter: None,
+                tag_filter: None,
+            },
+        );
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].name, "Hero");
+    }
+
+    #[test]
+    fn search_matches_custom_kind_string() {
+        let (doc, _, _) = doc_with_project();
+        let results = search_library(
+            doc.project.as_ref().unwrap(),
+            &LibrarySearchArgs {
+                query: "character".into(),
+                kind_filter: None,
+                group_filter: None,
+                tag_filter: None,
+            },
+        );
+        assert_eq!(results.len(), 1);
+    }
+
+    #[test]
+    fn search_empty_query_returns_all() {
+        let (doc, _, _) = doc_with_project();
+        let results = search_library(
+            doc.project.as_ref().unwrap(),
+            &LibrarySearchArgs {
+                query: String::new(),
+                kind_filter: None,
+                group_filter: None,
+                tag_filter: None,
+            },
+        );
+        assert_eq!(results.len(), 1);
     }
 
     // ── A3 — cascade delete clears dangling anchors ───────────────────────
@@ -1893,28 +2342,23 @@ mod tests {
     fn cascade_delete_group_clears_anchor_and_bumps_updated_at() {
         let (mut doc, _, _) = doc_with_project();
 
-        let gid = GroupId::new(doc.next_id);
-        doc.next_id += 1;
-        doc.project
-            .as_mut()
-            .unwrap()
-            .library
-            .groups
-            .push(EntityGroup {
-                id: gid,
+        let grp = create_group_in_project(
+            doc.project.as_mut().unwrap(),
+            &mut doc.next_id,
+            LibraryCreateGroupArgs {
                 name: "Grp".into(),
                 parent_id: None,
-                user_data: UserData::default(),
-            });
+            },
+        )
+        .unwrap();
 
-        // Entity A lives in the group.
         let a_id = EntityId::new(doc.next_id);
         doc.next_id += 1;
         doc.project.as_mut().unwrap().library.entities.push(Entity {
             id: a_id,
             kind: EntityKind::Custom("ref".into()),
             name: "A".into(),
-            group_id: Some(gid),
+            group_id: Some(grp.id),
             tags: Vec::new(),
             defaults: EntityDefaults::default(),
             content: EntityContent::Sprites { states: Vec::new() },
@@ -1925,7 +2369,6 @@ mod tests {
             updated_at: 0,
         });
 
-        // Entity B is outside the group and anchors to A.
         let b_id = EntityId::new(doc.next_id);
         doc.next_id += 1;
         doc.project.as_mut().unwrap().library.entities.push(Entity {
@@ -1943,31 +2386,21 @@ mod tests {
             updated_at: 0,
         });
 
-        // Mirror the A3 cascade-delete logic.
         let ts = now_secs();
-        let project = doc.project.as_mut().unwrap();
-        let to_delete: Vec<EntityId> = project
-            .library
-            .entities
-            .iter()
-            .filter(|e| e.group_id == Some(gid))
-            .map(|e| e.id)
-            .collect();
-        project
-            .library
-            .entities
-            .retain(|e| !to_delete.contains(&e.id));
-        for entity in &mut project.library.entities {
-            if entity
-                .anchor_reference_id
-                .is_some_and(|id| to_delete.contains(&id))
-            {
-                entity.anchor_reference_id = None;
-                entity.updated_at = ts;
-            }
-        }
+        delete_group_from_project(
+            doc.project.as_mut().unwrap(),
+            &LibraryDeleteGroupArgs {
+                group_id: grp.id,
+                keep_entities: false,
+            },
+            ts,
+        )
+        .unwrap();
 
-        let b = project
+        let b = doc
+            .project
+            .as_ref()
+            .unwrap()
             .library
             .entities
             .iter()
@@ -1986,8 +2419,7 @@ mod tests {
     fn add_state_inherits_custom_entity_defaults_canvas() {
         let (mut doc, entity_id, _) = doc_with_project();
 
-        // Set 64×64 defaults on the entity (simulating what library_create_entity
-        // now does for Custom entities via the A4 fix).
+        // Set 64×64 defaults on the entity.
         let project = doc.project.as_mut().unwrap();
         let entity = project
             .library
@@ -1998,14 +2430,17 @@ mod tests {
         entity.defaults.canvas_size = Some(Size::new(64, 64));
         entity.defaults.color_mode = Some(ColorMode::Rgba);
 
-        // Mirror the canvas resolution in library_add_state (no arg overrides).
-        let (dw, dh) = entity
-            .defaults
-            .canvas_size
-            .map_or((16, 16), |s| (s.width, s.height));
-        let canvas = Size::new(dw, dh);
+        let args = LibraryAddStateArgs {
+            entity_id,
+            state_name: "run".into(),
+            canvas_width: None,  // should inherit 64
+            canvas_height: None, // should inherit 64
+            color_mode: None,
+        };
+        let named =
+            add_state_to_entity(doc.project.as_mut().unwrap(), &mut doc.next_id, args, 0).unwrap();
         assert_eq!(
-            canvas,
+            named.sprite.canvas,
             Size::new(64, 64),
             "add_state must inherit entity defaults"
         );
@@ -2034,18 +2469,13 @@ mod tests {
             updated_at: 0,
         });
 
-        // Mirror the B4 logic: delete entity_id and clear B's anchor.
         let ts = now_secs();
-        let project = doc.project.as_mut().unwrap();
-        project.library.entities.retain(|e| e.id != entity_id);
-        for entity in &mut project.library.entities {
-            if entity.anchor_reference_id == Some(entity_id) {
-                entity.anchor_reference_id = None;
-                entity.updated_at = ts;
-            }
-        }
+        delete_entity_from_project(doc.project.as_mut().unwrap(), entity_id, ts).unwrap();
 
-        let b = project
+        let b = doc
+            .project
+            .as_ref()
+            .unwrap()
             .library
             .entities
             .iter()
@@ -2061,33 +2491,41 @@ mod tests {
     fn delete_group_keep_entities_bumps_updated_at() {
         let (mut doc, entity_id, _) = doc_with_project();
 
-        let gid = GroupId::new(doc.next_id);
-        doc.next_id += 1;
-        let project = doc.project.as_mut().unwrap();
-        project.library.groups.push(EntityGroup {
-            id: gid,
-            name: "Grp".into(),
-            parent_id: None,
-            user_data: UserData::default(),
-        });
-        project
+        let grp = create_group_in_project(
+            doc.project.as_mut().unwrap(),
+            &mut doc.next_id,
+            LibraryCreateGroupArgs {
+                name: "Grp".into(),
+                parent_id: None,
+            },
+        )
+        .unwrap();
+
+        doc.project
+            .as_mut()
+            .unwrap()
             .library
             .entities
             .iter_mut()
             .find(|e| e.id == entity_id)
             .unwrap()
-            .group_id = Some(gid);
+            .group_id = Some(grp.id);
 
-        // Mirror the B5 logic: keep_entities=true path.
         let ts = now_secs();
-        for entity in &mut project.library.entities {
-            if entity.group_id == Some(gid) {
-                entity.group_id = None;
-                entity.updated_at = ts;
-            }
-        }
+        delete_group_from_project(
+            doc.project.as_mut().unwrap(),
+            &LibraryDeleteGroupArgs {
+                group_id: grp.id,
+                keep_entities: true,
+            },
+            ts,
+        )
+        .unwrap();
 
-        let entity = project
+        let entity = doc
+            .project
+            .as_ref()
+            .unwrap()
             .library
             .entities
             .iter()
@@ -2102,45 +2540,70 @@ mod tests {
     #[test]
     fn delete_tag_bumps_updated_at_on_detagged_entities() {
         let (mut doc, entity_id, _) = doc_with_project();
-        let tag_id = TagId::new(doc.next_id);
-        doc.next_id += 1;
 
-        let project = doc.project.as_mut().unwrap();
-        project.library.tags.push(TagDefinition {
-            id: tag_id,
-            name: "hero".into(),
-            color: None,
-            auto_generated: false,
-        });
-        project
-            .library
-            .entities
-            .iter_mut()
-            .find(|e| e.id == entity_id)
-            .unwrap()
-            .tags
-            .push(tag_id);
+        let tag = add_tag_to_project(
+            doc.project.as_mut().unwrap(),
+            &mut doc.next_id,
+            LibraryAddTagArgs {
+                name: "hero".into(),
+                color: None,
+            },
+        )
+        .unwrap();
+        tag_entity_in_project(doc.project.as_mut().unwrap(), entity_id, tag.id, 0).unwrap();
 
-        // Mirror the B6 logic: remove tag and bump updated_at if it changed.
         let ts = now_secs();
-        for entity in &mut project.library.entities {
-            let tags_before = entity.tags.len();
-            entity.tags.retain(|&t| t != tag_id);
-            let suggested_before = entity.ai.suggested_tags.len();
-            entity.ai.suggested_tags.retain(|&t| t != tag_id);
-            if entity.tags.len() < tags_before || entity.ai.suggested_tags.len() < suggested_before
-            {
-                entity.updated_at = ts;
-            }
-        }
+        delete_tag_from_project(doc.project.as_mut().unwrap(), tag.id, ts).unwrap();
 
-        let entity = project
+        let entity = doc
+            .project
+            .as_ref()
+            .unwrap()
             .library
             .entities
             .iter()
             .find(|e| e.id == entity_id)
             .unwrap();
-        assert!(!entity.tags.contains(&tag_id), "tag must be removed");
+        assert!(!entity.tags.contains(&tag.id), "tag must be removed");
         assert!(entity.updated_at > 0, "updated_at must be bumped");
+    }
+
+    // ── dirty-flag integration test ───────────────────────────────────────
+
+    // Exercises the full AppState → doc lock → helper → dirty sequence that
+    // the library_rename_entity wrapper performs. Uses AppState directly
+    // (avoiding the tauri::State wrapper that requires the full Tauri runtime)
+    // so the test runs in a tokio context without any Tauri machinery.
+    #[tokio::test]
+    async fn rename_entity_wrapper_sets_dirty_flag() {
+        let app_state = AppState::new();
+        let entity_id = EntityId::new(1);
+        {
+            let mut doc = app_state.doc.write().await;
+            let (project, _, _) = project_with_one_custom_entity();
+            doc.project = Some(project);
+            doc.next_id = 10;
+            doc.dirty = false;
+        }
+        {
+            let mut doc = app_state.doc.write().await;
+            let project = doc.project.as_mut().unwrap();
+            rename_entity_in_project(project, entity_id, "Goblin".into(), now_secs()).unwrap();
+            doc.dirty = true;
+        }
+        let doc = app_state.doc.read().await;
+        assert!(doc.dirty, "wrapper must set dirty after successful rename");
+        assert_eq!(
+            doc.project
+                .as_ref()
+                .unwrap()
+                .library
+                .entities
+                .iter()
+                .find(|e| e.id == entity_id)
+                .unwrap()
+                .name,
+            "Goblin"
+        );
     }
 }
