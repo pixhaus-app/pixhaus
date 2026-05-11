@@ -1103,15 +1103,12 @@ mod tests {
 
     // ── aseprite import ───────────────────────────────────────────────────────
     //
-    // The aseprite importer is gutted during the B9.1–B9.5 window. The
-    // Tauri command path still calls `document_to_archive`, which now
-    // returns `LegacyImportUnsupported`. This test pins that contract
-    // so a regression that silently re-enables a broken translation
-    // surfaces before the UI sees it; the round-trip-on-real-bytes
-    // assertions return in B9.5.
+    // B9.5 restores the importer against the library data model.
+    // Exercises the full decode → document_to_archive path against the
+    // real fixture to catch regressions in the file-to-archive translation.
 
     #[test]
-    fn import_aseprite_surfaces_legacy_unsupported_during_b9_migration() {
+    fn import_aseprite_single_frame_rgba_produces_library_entity() {
         let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
             .parent()
             .expect("app crate has parent")
@@ -1121,14 +1118,18 @@ mod tests {
 
         let document = pixhaus_io::aseprite::decode_from_file(&path)
             .unwrap_or_else(|e| panic!("decode {}: {e:?}", path.display()));
-        let err = pixhaus_io::aseprite::document_to_archive(&document, "imported")
-            .expect_err("aseprite import is gutted during the B9 migration");
-        assert!(
-            matches!(
-                err,
-                pixhaus_io::Error::LegacyImportUnsupported { format: "aseprite" }
-            ),
-            "expected LegacyImportUnsupported, got {err:?}"
-        );
+        let result = pixhaus_io::aseprite::document_to_archive(&document, "imported")
+            .unwrap_or_else(|e| panic!("import failed: {e:?}"));
+
+        let entities = &result.archive.project.library.entities;
+        assert_eq!(entities.len(), 1, "import must produce exactly one entity");
+
+        let pixhaus_io::aseprite::archive::ConvertedArchive { archive, .. } = result;
+        let entity = &archive.project.library.entities[0];
+        let pixhaus_core::project::library::EntityContent::Sprites { states } = &entity.content
+        else {
+            panic!("entity must be Sprites variant");
+        };
+        assert!(!states.is_empty(), "must have at least one state");
     }
 }
