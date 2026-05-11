@@ -17,7 +17,7 @@
   "dependencies": {
     "@fontsource/geist": "^5.2.8",
     "@fontsource/geist-mono": "^5.2.7",
-    "@sentry/browser": "^8.0.0",
+    "@sentry/browser": "^10.52.0",
     "@tauri-apps/api": "^2.11.0",
     "@tauri-apps/plugin-dialog": "^2",
     "solid-js": "^1.9.12"
