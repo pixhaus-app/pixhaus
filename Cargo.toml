@@ -31,7 +31,7 @@ criterion = { version = "0.5", default-features = false, features = ["plotters",
 flate2 = "1"
 futures = "0.3"
 color_quant = "1"
-gif = "0.13"
+gif = "0.14"
 image = { version = "0.25", default-features = false, features = ["png", "gif"] }
 webp = "0.3"
 keyring = "3"
