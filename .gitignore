@@ -69,6 +69,7 @@ Desktop.ini
 
 # Unity
 [Ll]ibrary/
+!ui/src/library/
 [Tt]emp/
 [Oo]bj/
 [Bb]uild/
