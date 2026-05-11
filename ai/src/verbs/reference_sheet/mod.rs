@@ -181,11 +181,11 @@ impl GenerateReferenceSheetVerb {
             descriptor: VerbDescriptor {
                 id: VerbId::new(GENERATE_REFERENCE_SHEET_VERB_ID),
                 display_name: "Generate Reference Sheet".into(),
-                description: "Generate 1–4 candidate reference sheets for a Character, Item, \
-                              Tileset, or Custom entity. Each sheet is a structured multi-panel \
-                              composition (turnaround views, expressions, palette swatch) that \
-                              becomes the visual anchor for all subsequent AI generations on \
-                              this entity."
+                description: "Generates 1–4 reference-sheet candidate images for a \
+                              Reference-kind library entity using one of four composition \
+                              templates (Character, Item, Tileset, Custom). Candidates land in \
+                              the entity's history; the user approves one as canonical via the \
+                              B10.3 approval flow."
                     .into(),
                 version: env!("CARGO_PKG_VERSION").into(),
                 required_capabilities: BackendCapabilities::IMAGE_GENERATION,
@@ -318,6 +318,12 @@ impl Verb for GenerateReferenceSheetVerb {
                 ));
             }
         };
+
+        if images.is_empty() {
+            return Err(VerbError::Backend(
+                "backend returned zero images for image generation request".into(),
+            ));
+        }
 
         progress.step(Some(0.9), "encoding variants").await;
 
@@ -843,6 +849,31 @@ mod tests {
                 "output must be a Custom effect"
             );
         }
+    }
+
+    #[tokio::test]
+    async fn empty_images_from_backend_returns_backend_error() {
+        // WhiteStub::new(0) returns an empty image list: num_images=0 causes
+        // count = req.num_images.max(1).min(0) = 0.
+        let runtime = VerbRuntime::new();
+        runtime
+            .register_backend(BackendProxy::new(WhiteStub::new(0)), 0)
+            .unwrap();
+        runtime.register(GenerateReferenceSheetVerb::new()).unwrap();
+
+        let inv = runtime
+            .invoke(
+                &VerbId::new(GENERATE_REFERENCE_SHEET_VERB_ID),
+                VerbContext::empty(meta()),
+                inputs_for(CompositionTemplate::Character, 1),
+            )
+            .unwrap();
+        let err = inv.finish().await.unwrap_err();
+
+        assert!(
+            matches!(err, VerbError::Backend(_)),
+            "expected Backend error when backend returns zero images, got {err:?}"
+        );
     }
 
     // Ensure WhiteStub image and Duration are visible in this test scope.

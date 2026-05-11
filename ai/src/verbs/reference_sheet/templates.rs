@@ -84,8 +84,10 @@ impl CompositionTemplate {
                  neutral, happy, angry — each 256 pixels wide, 192 pixels tall. \
                  Below that: a horizontal palette swatch row showing all \
                  colours used, 1024 pixels wide, 128 pixels tall. \
-                 Bottom section: two detail callout panels side by side, \
-                 each 512 pixels wide. \
+                 Below that: two detail callout panels side by side, \
+                 each 512 pixels wide, 320 pixels tall. \
+                 Bottom left: one outfit-variant panel, 256 pixels wide, \
+                 384 pixels tall, showing an alternate outfit or colour scheme. \
                  White background, clean pixel-art lines, consistent scale \
                  across all views. Professional sprite sheet format."
             ),
@@ -174,7 +176,8 @@ impl CompositionTemplate {
 // y=480..672  : three expression panels, each 256×192
 // y=672..800  : palette swatch, 1024×128
 // y=800..1120 : two detail callouts, each 512×320
-// y=1120..1536: margin / overflow
+// y=1120..1504: one outfit-variant slot, 256×384
+// y=1504..1536: margin
 
 #[allow(clippy::cast_possible_wrap, clippy::cast_possible_truncation)]
 fn character_composition() -> SheetComposition {
@@ -221,11 +224,17 @@ fn character_composition() -> SheetComposition {
         })
         .collect();
 
+    let outfit_y = callout_y + callout_h as i32;
+    let outfits = vec![SheetPanel {
+        region: Rect::from_xywh(0, outfit_y, 256, 384),
+        label: "outfit-variant".into(),
+    }];
+
     SheetComposition {
         views,
         expressions,
         callouts,
-        outfits: Vec::new(),
+        outfits,
         palette_swatch,
     }
 }
@@ -366,10 +375,21 @@ mod tests {
             "character sheet has three expressions"
         );
         assert_eq!(comp.callouts.len(), 2, "character sheet has two callouts");
+        assert_eq!(comp.outfits.len(), 1, "character sheet has one outfit slot");
         assert!(
             comp.palette_swatch.is_some(),
             "character sheet has palette swatch"
         );
+    }
+
+    #[test]
+    fn character_outfit_panel_label_and_position() {
+        let comp = CompositionTemplate::Character.composition();
+        let outfit = &comp.outfits[0];
+        assert_eq!(outfit.label, "outfit-variant");
+        assert_eq!(outfit.region.origin.x, 0, "outfit panel starts at left edge");
+        assert_eq!(outfit.region.size.width, 256);
+        assert_eq!(outfit.region.size.height, 384);
     }
 
     #[test]
