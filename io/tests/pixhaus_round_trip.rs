@@ -323,18 +323,11 @@ fn write_rejects_unknown_feature_flags() {
 #[test]
 fn fs_round_trip_full_archive() {
     let archive = full_archive();
-    // Unique filename under the OS temp dir; clean up at the end.
-    let nanos = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map_or(0, |d| d.as_nanos());
-    let path = std::env::temp_dir().join(format!(
-        "pixhaus-fs-roundtrip-{}-{nanos}.pixhaus",
-        std::process::id(),
-    ));
+    let tmp = tempfile::NamedTempFile::with_suffix(".pixhaus").expect("named temp file");
+    let path = tmp.path();
 
-    encode_to_file(&archive, &path).expect("encode_to_file should succeed");
-    let loaded = decode_from_file(&path).expect("decode_from_file should succeed");
-    let _ = std::fs::remove_file(&path);
+    encode_to_file(&archive, path).expect("encode_to_file should succeed");
+    let loaded = decode_from_file(path).expect("decode_from_file should succeed");
 
     // Same depth as the in-memory round_trip: full structural equality
     // on Project plus per-buffer byte equality. Catches regressions in
