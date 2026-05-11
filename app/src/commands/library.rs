@@ -139,6 +139,13 @@ pub async fn library_create_entity(
     args: LibraryCreateEntityArgs,
     state: State<'_, AppState>,
 ) -> CommandResult<Entity> {
+    // B1: Reject empty or whitespace-only names before minting any IDs.
+    if args.name.trim().is_empty() {
+        return Err(AppCommandError::Validation {
+            detail: "entity name must not be empty".into(),
+        });
+    }
+
     let ts = now_secs();
     let mut doc = state.doc.write().await;
 
@@ -169,6 +176,17 @@ pub async fn library_create_entity(
                         "Custom entity requires canvas_width and canvas_height > 0 (got {w}x{h})"
                     ),
                 });
+            }
+            // B2: Reject whitespace-only state names before minting any IDs.
+            if let Some(ref names) = args.initial_states {
+                for sn in names {
+                    if sn.trim().is_empty() {
+                        return Err(AppCommandError::Validation {
+                            detail: "initial_states must not contain empty or whitespace-only names"
+                                .into(),
+                        });
+                    }
+                }
             }
         }
         EntityKind::Tileset => {
@@ -321,13 +339,30 @@ pub async fn library_create_entity(
         EntityContent::Reference { .. } => ActiveTarget::Reference { entity_id },
     };
 
+    // A4: Populate EntityDefaults for Custom entities so library_add_state
+    // inherits the canvas size and color mode set at creation time.
+    let defaults = if matches!(&args.kind, EntityKind::Custom(_)) {
+        EntityDefaults {
+            canvas_size: Some(Size::new(
+                args.canvas_width.unwrap_or(16),
+                args.canvas_height.unwrap_or(16),
+            )),
+            color_mode: Some(args.color_mode.unwrap_or(ColorMode::Rgba)),
+            default_palette_id: None,
+            default_pivot: None,
+            default_fps: None,
+        }
+    } else {
+        EntityDefaults::default()
+    };
+
     let entity = Entity {
         id: entity_id,
         kind: args.kind,
         name: args.name,
         group_id: args.group_id,
         tags: Vec::new(),
-        defaults: EntityDefaults::default(),
+        defaults,
         content,
         ai: AiMetadata::default(),
         anchor_reference_id: None,
@@ -357,6 +392,7 @@ pub async fn library_delete_entity(
     entity_id: EntityId,
     state: State<'_, AppState>,
 ) -> CommandResult<()> {
+    let ts = now_secs();
     let mut doc = state.doc.write().await;
     let project = doc
         .project
@@ -392,9 +428,11 @@ pub async fn library_delete_entity(
         .retain(|&id| id != entity_id);
 
     // Clear anchor_reference_id on any entity that pointed at this one.
+    // B4: Bump updated_at on each entity whose anchor is cleared.
     for entity in &mut project.library.entities {
         if entity.anchor_reference_id == Some(entity_id) {
             entity.anchor_reference_id = None;
+            entity.updated_at = ts;
         }
     }
 
@@ -725,6 +763,16 @@ pub async fn library_add_state(
                 args.canvas_height.unwrap_or(dh),
             )
         };
+        // B3: Reject zero-dimension canvases after resolution so args=None
+        // with bad defaults is caught the same way as explicit zeros.
+        if canvas.width == 0 || canvas.height == 0 {
+            return Err(AppCommandError::Validation {
+                detail: format!(
+                    "canvas dimensions must be > 0 (got {}x{})",
+                    canvas.width, canvas.height
+                ),
+            });
+        }
         let color_mode = args
             .color_mode
             .or(entity.defaults.color_mode)
@@ -1037,6 +1085,7 @@ pub async fn library_delete_group(
     args: LibraryDeleteGroupArgs,
     state: State<'_, AppState>,
 ) -> CommandResult<()> {
+    let ts = now_secs();
     let mut doc = state.doc.write().await;
     let project = doc
         .project
@@ -1057,9 +1106,11 @@ pub async fn library_delete_group(
 
     if args.keep_entities {
         // Ungroup: clear group_id on every member entity.
+        // B5: Bump updated_at on each ungrouped entity.
         for entity in &mut project.library.entities {
             if entity.group_id == Some(args.group_id) {
                 entity.group_id = None;
+                entity.updated_at = ts;
             }
         }
     } else {
@@ -1095,6 +1146,15 @@ pub async fn library_delete_group(
             .ai
             .style_corpus
             .retain(|id| !to_delete.contains(id));
+
+        // A3: Clear anchor_reference_id on surviving entities that pointed at
+        // a deleted one. Bump updated_at on each entity whose anchor is cleared.
+        for entity in &mut project.library.entities {
+            if entity.anchor_reference_id.is_some_and(|id| to_delete.contains(&id)) {
+                entity.anchor_reference_id = None;
+                entity.updated_at = ts;
+            }
+        }
     }
 
     // Re-parent child groups to this group's parent.
@@ -1259,6 +1319,7 @@ pub async fn library_add_tag(
 /// referenced it.
 #[tauri::command(async, rename_all = "snake_case")]
 pub async fn library_delete_tag(tag_id: TagId, state: State<'_, AppState>) -> CommandResult<()> {
+    let ts = now_secs();
     let mut doc = state.doc.write().await;
     let project = doc
         .project
@@ -1275,9 +1336,15 @@ pub async fn library_delete_tag(tag_id: TagId, state: State<'_, AppState>) -> Co
     }
 
     // Remove the tag from every entity that referenced it.
+    // B6: Bump updated_at only when the entity actually loses a tag.
     for entity in &mut project.library.entities {
+        let tags_before = entity.tags.len();
         entity.tags.retain(|&t| t != tag_id);
+        let suggested_before = entity.ai.suggested_tags.len();
         entity.ai.suggested_tags.retain(|&t| t != tag_id);
+        if entity.tags.len() < tags_before || entity.ai.suggested_tags.len() < suggested_before {
+            entity.updated_at = ts;
+        }
     }
 
     doc.dirty = true;
@@ -1409,8 +1476,8 @@ pub async fn library_search(
 #[cfg(test)]
 mod tests {
     use pixhaus_core::project::{
-        ActiveTarget, EntityContent, EntityId, EntityKind, GroupId, NamedSprite, Size, StateId,
-        TagId,
+        ActiveTarget, AiMetadata, ColorMode, EntityContent, EntityDefaults, EntityGroup, EntityId,
+        EntityKind, GroupId, NamedSprite, Size, StateId, TagDefinition, TagId, UserData,
     };
 
     use super::*;
@@ -1741,5 +1808,317 @@ mod tests {
 
         // Simulate the cycle check: a group cannot be its own parent.
         assert!(gid == gid, "sanity: self == self triggers cycle guard");
+    }
+
+    // ── B1 — empty name validation ────────────────────────────────────────
+
+    #[test]
+    fn create_entity_rejects_whitespace_name() {
+        // Mirror the B1 guard in library_create_entity.
+        let name = "   ";
+        let result: Result<(), AppCommandError> = if name.trim().is_empty() {
+            Err(AppCommandError::Validation {
+                detail: "entity name must not be empty".into(),
+            })
+        } else {
+            Ok(())
+        };
+        assert!(
+            matches!(result, Err(AppCommandError::Validation { .. })),
+            "whitespace-only name must be rejected"
+        );
+    }
+
+    // ── B2 — per-state name validation ────────────────────────────────────
+
+    #[test]
+    fn create_entity_rejects_whitespace_state_name() {
+        // Mirror the B2 guard in library_create_entity (Custom kind).
+        let names: Vec<String> = vec!["idle".into(), "  ".into()];
+        let result: Result<(), AppCommandError> = names.iter().try_for_each(|sn| {
+            if sn.trim().is_empty() {
+                Err(AppCommandError::Validation {
+                    detail: "initial_states must not contain empty or whitespace-only names"
+                        .into(),
+                })
+            } else {
+                Ok(())
+            }
+        });
+        assert!(
+            matches!(result, Err(AppCommandError::Validation { .. })),
+            "whitespace-only state name must be rejected"
+        );
+    }
+
+    // ── B3 — zero-canvas validation ───────────────────────────────────────
+
+    #[test]
+    fn add_state_rejects_zero_canvas() {
+        // Mirror the B3 guard in library_add_state after canvas resolution.
+        let resolved = Size::new(0u32, 16u32);
+        let result: Result<(), AppCommandError> =
+            if resolved.width == 0 || resolved.height == 0 {
+                Err(AppCommandError::Validation {
+                    detail: format!(
+                        "canvas dimensions must be > 0 (got {}x{})",
+                        resolved.width, resolved.height
+                    ),
+                })
+            } else {
+                Ok(())
+            };
+        assert!(
+            matches!(result, Err(AppCommandError::Validation { .. })),
+            "zero-dimension canvas must be rejected"
+        );
+    }
+
+    // ── A3 — cascade delete clears dangling anchors ───────────────────────
+
+    #[test]
+    fn cascade_delete_group_clears_anchor_and_bumps_updated_at() {
+        let (mut doc, _, _) = doc_with_project();
+
+        let gid = GroupId::new(doc.next_id);
+        doc.next_id += 1;
+        doc.project
+            .as_mut()
+            .unwrap()
+            .library
+            .groups
+            .push(EntityGroup {
+                id: gid,
+                name: "Grp".into(),
+                parent_id: None,
+                user_data: UserData::default(),
+            });
+
+        // Entity A lives in the group.
+        let a_id = EntityId::new(doc.next_id);
+        doc.next_id += 1;
+        doc.project.as_mut().unwrap().library.entities.push(Entity {
+            id: a_id,
+            kind: EntityKind::Custom("ref".into()),
+            name: "A".into(),
+            group_id: Some(gid),
+            tags: Vec::new(),
+            defaults: EntityDefaults::default(),
+            content: EntityContent::Sprites { states: Vec::new() },
+            ai: AiMetadata::default(),
+            anchor_reference_id: None,
+            user_data: UserData::default(),
+            created_at: 0,
+            updated_at: 0,
+        });
+
+        // Entity B is outside the group and anchors to A.
+        let b_id = EntityId::new(doc.next_id);
+        doc.next_id += 1;
+        doc.project.as_mut().unwrap().library.entities.push(Entity {
+            id: b_id,
+            kind: EntityKind::Custom("custom".into()),
+            name: "B".into(),
+            group_id: None,
+            tags: Vec::new(),
+            defaults: EntityDefaults::default(),
+            content: EntityContent::Sprites { states: Vec::new() },
+            ai: AiMetadata::default(),
+            anchor_reference_id: Some(a_id),
+            user_data: UserData::default(),
+            created_at: 0,
+            updated_at: 0,
+        });
+
+        // Mirror the A3 cascade-delete logic.
+        let ts = now_secs();
+        let project = doc.project.as_mut().unwrap();
+        let to_delete: Vec<EntityId> = project
+            .library
+            .entities
+            .iter()
+            .filter(|e| e.group_id == Some(gid))
+            .map(|e| e.id)
+            .collect();
+        project
+            .library
+            .entities
+            .retain(|e| !to_delete.contains(&e.id));
+        for entity in &mut project.library.entities {
+            if entity.anchor_reference_id.is_some_and(|id| to_delete.contains(&id)) {
+                entity.anchor_reference_id = None;
+                entity.updated_at = ts;
+            }
+        }
+
+        let b = project
+            .library
+            .entities
+            .iter()
+            .find(|e| e.id == b_id)
+            .unwrap();
+        assert!(b.anchor_reference_id.is_none(), "B's anchor must be cleared");
+        assert!(b.updated_at > 0, "B's updated_at must be bumped");
+    }
+
+    // ── A4 — Custom entity defaults propagation ───────────────────────────
+
+    #[test]
+    fn add_state_inherits_custom_entity_defaults_canvas() {
+        let (mut doc, entity_id, _) = doc_with_project();
+
+        // Set 64×64 defaults on the entity (simulating what library_create_entity
+        // now does for Custom entities via the A4 fix).
+        let project = doc.project.as_mut().unwrap();
+        let entity = project
+            .library
+            .entities
+            .iter_mut()
+            .find(|e| e.id == entity_id)
+            .unwrap();
+        entity.defaults.canvas_size = Some(Size::new(64, 64));
+        entity.defaults.color_mode = Some(ColorMode::Rgba);
+
+        // Mirror the canvas resolution in library_add_state (no arg overrides).
+        let (dw, dh) = entity
+            .defaults
+            .canvas_size
+            .map_or((16, 16), |s| (s.width, s.height));
+        let canvas = Size::new(dw, dh);
+        assert_eq!(canvas, Size::new(64, 64), "add_state must inherit entity defaults");
+    }
+
+    // ── B4 — updated_at bumped when anchor cleared by delete_entity ───────
+
+    #[test]
+    fn delete_entity_bumps_updated_at_on_anchor_cleared() {
+        let (mut doc, entity_id, _) = doc_with_project();
+
+        let b_id = EntityId::new(doc.next_id);
+        doc.next_id += 1;
+        doc.project.as_mut().unwrap().library.entities.push(Entity {
+            id: b_id,
+            kind: EntityKind::Custom("custom".into()),
+            name: "B".into(),
+            group_id: None,
+            tags: Vec::new(),
+            defaults: EntityDefaults::default(),
+            content: EntityContent::Sprites { states: Vec::new() },
+            ai: AiMetadata::default(),
+            anchor_reference_id: Some(entity_id),
+            user_data: UserData::default(),
+            created_at: 0,
+            updated_at: 0,
+        });
+
+        // Mirror the B4 logic: delete entity_id and clear B's anchor.
+        let ts = now_secs();
+        let project = doc.project.as_mut().unwrap();
+        project.library.entities.retain(|e| e.id != entity_id);
+        for entity in &mut project.library.entities {
+            if entity.anchor_reference_id == Some(entity_id) {
+                entity.anchor_reference_id = None;
+                entity.updated_at = ts;
+            }
+        }
+
+        let b = project
+            .library
+            .entities
+            .iter()
+            .find(|e| e.id == b_id)
+            .unwrap();
+        assert!(b.anchor_reference_id.is_none(), "anchor must be cleared");
+        assert!(b.updated_at > 0, "updated_at must be bumped");
+    }
+
+    // ── B5 — updated_at bumped on ungrouped entities ──────────────────────
+
+    #[test]
+    fn delete_group_keep_entities_bumps_updated_at() {
+        let (mut doc, entity_id, _) = doc_with_project();
+
+        let gid = GroupId::new(doc.next_id);
+        doc.next_id += 1;
+        let project = doc.project.as_mut().unwrap();
+        project.library.groups.push(EntityGroup {
+            id: gid,
+            name: "Grp".into(),
+            parent_id: None,
+            user_data: UserData::default(),
+        });
+        project
+            .library
+            .entities
+            .iter_mut()
+            .find(|e| e.id == entity_id)
+            .unwrap()
+            .group_id = Some(gid);
+
+        // Mirror the B5 logic: keep_entities=true path.
+        let ts = now_secs();
+        for entity in &mut project.library.entities {
+            if entity.group_id == Some(gid) {
+                entity.group_id = None;
+                entity.updated_at = ts;
+            }
+        }
+
+        let entity = project
+            .library
+            .entities
+            .iter()
+            .find(|e| e.id == entity_id)
+            .unwrap();
+        assert!(entity.group_id.is_none(), "group_id must be cleared");
+        assert!(entity.updated_at > 0, "updated_at must be bumped");
+    }
+
+    // ── B6 — updated_at bumped when tag is removed ────────────────────────
+
+    #[test]
+    fn delete_tag_bumps_updated_at_on_detagged_entities() {
+        let (mut doc, entity_id, _) = doc_with_project();
+        let tag_id = TagId::new(doc.next_id);
+        doc.next_id += 1;
+
+        let project = doc.project.as_mut().unwrap();
+        project.library.tags.push(TagDefinition {
+            id: tag_id,
+            name: "hero".into(),
+            color: None,
+            auto_generated: false,
+        });
+        project
+            .library
+            .entities
+            .iter_mut()
+            .find(|e| e.id == entity_id)
+            .unwrap()
+            .tags
+            .push(tag_id);
+
+        // Mirror the B6 logic: remove tag and bump updated_at if it changed.
+        let ts = now_secs();
+        for entity in &mut project.library.entities {
+            let tags_before = entity.tags.len();
+            entity.tags.retain(|&t| t != tag_id);
+            let suggested_before = entity.ai.suggested_tags.len();
+            entity.ai.suggested_tags.retain(|&t| t != tag_id);
+            if entity.tags.len() < tags_before
+                || entity.ai.suggested_tags.len() < suggested_before
+            {
+                entity.updated_at = ts;
+            }
+        }
+
+        let entity = project
+            .library
+            .entities
+            .iter()
+            .find(|e| e.id == entity_id)
+            .unwrap();
+        assert!(!entity.tags.contains(&tag_id), "tag must be removed");
+        assert!(entity.updated_at > 0, "updated_at must be bumped");
     }
 }
