@@ -46,8 +46,7 @@ pub const GENERATE_REFERENCE_SHEET_VERB_ID: &str = "pixhaus.builtin.generate_ref
 /// Hosts that apply this effect deserialise [`GenerateSheetPayload`] from
 /// the `payload` field and insert the returned variants into the target
 /// entity's history.
-pub const GENERATE_SHEET_EFFECT_NAME: &str =
-    "pixhaus.builtin.generate_reference_sheet.sheets";
+pub const GENERATE_SHEET_EFFECT_NAME: &str = "pixhaus.builtin.generate_reference_sheet.sheets";
 
 // ── Input types ───────────────────────────────────────────────────────────────
 
@@ -317,15 +316,22 @@ impl Verb for GenerateReferenceSheetVerb {
 
         progress.step(Some(0.9), "encoding variants").await;
 
-        let variants = build_variants(unix_now(), images, &backend_id, &full_prompt, &negative, inputs.seed, &composition);
+        let variants = build_variants(
+            unix_now(),
+            images,
+            &backend_id,
+            &full_prompt,
+            &negative,
+            inputs.seed,
+            &composition,
+        );
         let variant_count = variants.len();
         let payload = GenerateSheetPayload {
             entity_id: inputs.entity_id,
             variants,
         };
-        let payload_json = serde_json::to_value(&payload).map_err(|e| {
-            VerbError::Backend(format!("failed to serialise sheet payload: {e}"))
-        })?;
+        let payload_json = serde_json::to_value(&payload)
+            .map_err(|e| VerbError::Backend(format!("failed to serialise sheet payload: {e}")))?;
 
         let elapsed = started.elapsed();
         let summary = format!(
@@ -463,10 +469,9 @@ mod tests {
 
         fn white_png() -> Vec<u8> {
             // Minimal 1×1 white RGBA PNG.
-            use std::io::Cursor;
             use image::{ImageBuffer, ImageFormat, RgbaImage};
-            let img: RgbaImage =
-                ImageBuffer::from_pixel(1, 1, image::Rgba([255u8, 255, 255, 255]));
+            use std::io::Cursor;
+            let img: RgbaImage = ImageBuffer::from_pixel(1, 1, image::Rgba([255u8, 255, 255, 255]));
             let mut buf = Vec::new();
             img.write_to(&mut Cursor::new(&mut buf), ImageFormat::Png)
                 .expect("encode stub PNG");
@@ -512,10 +517,7 @@ mod tests {
         }
     }
 
-    fn inputs_for(
-        template: CompositionTemplate,
-        num_variants: u32,
-    ) -> VerbInputs {
+    fn inputs_for(template: CompositionTemplate, num_variants: u32) -> VerbInputs {
         VerbInputs::from_struct(&GenerateReferenceSheetInputs {
             entity_id: EntityId::new(42),
             template,
@@ -589,9 +591,10 @@ mod tests {
     #[test]
     fn validate_accepts_well_formed_inputs() {
         let verb = GenerateReferenceSheetVerb::new();
-        assert!(verb
-            .validate(&inputs_for(CompositionTemplate::Character, 2))
-            .is_ok());
+        assert!(
+            verb.validate(&inputs_for(CompositionTemplate::Character, 2))
+                .is_ok()
+        );
     }
 
     // ── Full invocation via runtime ───────────────────────────────────────────
@@ -646,8 +649,7 @@ mod tests {
         let preview = inv.finish().await.unwrap();
 
         if let VerbEffect::Custom { payload, .. } = &preview.output.effects[0] {
-            let decoded: GenerateSheetPayload =
-                serde_json::from_value(payload.clone()).unwrap();
+            let decoded: GenerateSheetPayload = serde_json::from_value(payload.clone()).unwrap();
             let variant = &decoded.variants[0];
             assert_eq!(
                 variant.composition.views.len(),
@@ -684,8 +686,7 @@ mod tests {
         let preview = inv.finish().await.unwrap();
 
         if let VerbEffect::Custom { payload, .. } = &preview.output.effects[0] {
-            let decoded: GenerateSheetPayload =
-                serde_json::from_value(payload.clone()).unwrap();
+            let decoded: GenerateSheetPayload = serde_json::from_value(payload.clone()).unwrap();
             let variant = &decoded.variants[0];
             let bytes = base64::engine::general_purpose::STANDARD
                 .decode(&variant.image_b64)
@@ -729,8 +730,7 @@ mod tests {
         let preview = inv.finish().await.unwrap();
 
         if let VerbEffect::Custom { payload, .. } = &preview.output.effects[0] {
-            let decoded: GenerateSheetPayload =
-                serde_json::from_value(payload.clone()).unwrap();
+            let decoded: GenerateSheetPayload = serde_json::from_value(payload.clone()).unwrap();
             assert!(
                 decoded.variants.len() <= 4,
                 "must not produce more than 4 variants"
@@ -798,8 +798,7 @@ mod tests {
         let preview = inv.finish().await.unwrap();
 
         if let VerbEffect::Custom { payload, .. } = &preview.output.effects[0] {
-            let decoded: GenerateSheetPayload =
-                serde_json::from_value(payload.clone()).unwrap();
+            let decoded: GenerateSheetPayload = serde_json::from_value(payload.clone()).unwrap();
             let prov = &decoded.variants[0].generation;
             assert_eq!(prov.backend, "stub.white");
             assert!(!prov.prompt.is_empty(), "prompt must be non-empty");

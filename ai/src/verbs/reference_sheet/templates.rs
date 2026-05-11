@@ -196,12 +196,7 @@ fn character_composition() -> SheetComposition {
         .into_iter()
         .enumerate()
         .map(|(i, label)| SheetPanel {
-            region: Rect::from_xywh(
-                (i as u32 * expr_w) as i32,
-                expr_y,
-                expr_w,
-                expr_h,
-            ),
+            region: Rect::from_xywh((i as u32 * expr_w) as i32, expr_y, expr_w, expr_h),
             label: label.into(),
         })
         .collect();
@@ -360,10 +355,21 @@ mod tests {
     #[test]
     fn character_composition_has_five_views_and_three_expressions() {
         let comp = CompositionTemplate::Character.composition();
-        assert_eq!(comp.views.len(), 5, "character sheet has five turnaround views");
-        assert_eq!(comp.expressions.len(), 3, "character sheet has three expressions");
+        assert_eq!(
+            comp.views.len(),
+            5,
+            "character sheet has five turnaround views"
+        );
+        assert_eq!(
+            comp.expressions.len(),
+            3,
+            "character sheet has three expressions"
+        );
         assert_eq!(comp.callouts.len(), 2, "character sheet has two callouts");
-        assert!(comp.palette_swatch.is_some(), "character sheet has palette swatch");
+        assert!(
+            comp.palette_swatch.is_some(),
+            "character sheet has palette swatch"
+        );
     }
 
     #[test]
