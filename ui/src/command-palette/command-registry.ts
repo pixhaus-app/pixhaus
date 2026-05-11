@@ -1197,7 +1197,7 @@ const COMMANDS: ReadonlyMap<string, CommandEntry> = new Map<string, CommandEntry
         // Nothing has set the active entity yet (B9.3 library selection
         // doesn't wire into this branch). Resolve the first Reference
         // entity via IPC so the panel opens on something real.
-        libraryListEntities({ kind: { kind: "Reference" } })
+        libraryListEntities({ kind: "Reference" })
           .then((entities) => {
             if (entities.length === 0) {
               pushToast({
