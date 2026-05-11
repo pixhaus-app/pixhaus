@@ -26,43 +26,43 @@ export default defineConfig({
       sidebar: [
         {
           label: "Getting Started",
-          autogenerate: { directory: "getting-started" },
+          items: [{ autogenerate: { directory: "getting-started" } }],
         },
         {
           label: "Editor",
-          autogenerate: { directory: "editor" },
+          items: [{ autogenerate: { directory: "editor" } }],
         },
         {
           label: "Animation",
-          autogenerate: { directory: "animation" },
+          items: [{ autogenerate: { directory: "animation" } }],
         },
         {
           label: "Tilemaps",
-          autogenerate: { directory: "tilemaps" },
+          items: [{ autogenerate: { directory: "tilemaps" } }],
         },
         {
           label: "AI Verbs",
-          autogenerate: { directory: "ai-verbs" },
+          items: [{ autogenerate: { directory: "ai-verbs" } }],
         },
         {
           label: "Scripting",
-          autogenerate: { directory: "scripting" },
+          items: [{ autogenerate: { directory: "scripting" } }],
         },
         {
           label: "Plugins",
-          autogenerate: { directory: "plugins" },
+          items: [{ autogenerate: { directory: "plugins" } }],
         },
         {
           label: "Migration",
-          autogenerate: { directory: "migration" },
+          items: [{ autogenerate: { directory: "migration" } }],
         },
         {
           label: "Reference",
-          autogenerate: { directory: "reference" },
+          items: [{ autogenerate: { directory: "reference" } }],
         },
         {
           label: "FAQ",
-          autogenerate: { directory: "faq" },
+          items: [{ autogenerate: { directory: "faq" } }],
         },
       ],
       customCss: ["./src/styles/custom.css"],
