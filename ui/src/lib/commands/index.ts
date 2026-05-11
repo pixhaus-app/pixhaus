@@ -8,6 +8,7 @@ export * from "./canvas";
 export * from "./exports";
 export * from "./frames";
 export * from "./layers";
+export * from "./library";
 export * from "./palette";
 export * from "./project";
 export * from "./tiles";
