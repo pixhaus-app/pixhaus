@@ -1039,18 +1039,15 @@ mod tests {
         project.metadata.created_at = 0;
         stamp_save_metadata(&mut project, 1_700_000_000);
 
-        let nanos = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .map_or(0, |d| d.as_nanos());
-        let path = std::env::temp_dir().join(format!(
-            "pixhaus-app-save-roundtrip-{}-{nanos}.pixhaus",
-            std::process::id(),
-        ));
+        // encode_to_file does a sibling-tmp + rename. NamedTempFile
+        // would hold the destination open and the rename would fail
+        // on Windows; use a unique dir + non-existent filename instead.
+        let tmp = tempfile::tempdir().expect("temp dir");
+        let path = tmp.path().join("metadata-roundtrip.pixhaus");
 
         let archive = PixhausArchive::new(project);
         encode_to_file(&archive, &path).expect("encode");
         let loaded = decode_from_file(&path).expect("decode");
-        let _ = std::fs::remove_file(&path);
 
         assert_eq!(loaded.project.metadata.created_at, 1_700_000_000);
         assert_eq!(loaded.project.metadata.updated_at, 1_700_000_000);
@@ -1077,18 +1074,14 @@ mod tests {
             pixels: pixels.clone(),
         }];
 
-        let nanos = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .map_or(0, |d| d.as_nanos());
-        let path = std::env::temp_dir().join(format!(
-            "pixhaus-app-buf-roundtrip-{}-{nanos}.pixhaus",
-            std::process::id(),
-        ));
+        // See `metadata_round_trips_through_pixhaus_archive` above for
+        // why this uses tempdir() + join rather than NamedTempFile.
+        let tmp = tempfile::tempdir().expect("temp dir");
+        let path = tmp.path().join("buf-roundtrip.pixhaus");
 
         let archive = PixhausArchive { project, buffers };
         encode_to_file(&archive, &path).expect("encode");
         let loaded = decode_from_file(&path).expect("decode");
-        let _ = std::fs::remove_file(&path);
 
         assert_eq!(
             loaded.buffers.len(),
