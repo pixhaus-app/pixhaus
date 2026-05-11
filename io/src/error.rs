@@ -431,6 +431,19 @@ pub enum Error {
         /// Bits-per-tile field from the tilemap cel header.
         bits: u16,
     },
+
+    // ── Aseprite merged export (B9.5) ──────────────────────────────────────────
+    /// The combined frame count of all states exceeds the Aseprite wire
+    /// limit of `u16::MAX` (65535) frames. A merged export of this entity
+    /// is not possible; use per-state export instead.
+    #[error(
+        "merged frame count {total} exceeds the Aseprite limit of 65535; \
+         use per-state export instead"
+    )]
+    FrameCountOverflow {
+        /// Total merged frame count that exceeded `u16::MAX`.
+        total: u32,
+    },
 }
 
 /// Crate-local result alias.
