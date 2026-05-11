@@ -369,8 +369,11 @@ pub fn archive_to_document(archive: &PixhausArchive) -> Result<AsepriteDocument>
         }
 
         let from_u16 = offset_u16;
-        let to_u16 = u16::try_from(offset + count.saturating_sub(1))
-            .map_err(|_| Error::FrameCountOverflow { total: offset + count })?;
+        let to_u16 = u16::try_from(offset + count.saturating_sub(1)).map_err(|_| {
+            Error::FrameCountOverflow {
+                total: offset + count,
+            }
+        })?;
 
         tag_entries.push(TagEntry {
             from_frame: from_u16,
@@ -445,13 +448,9 @@ pub fn archive_to_document(archive: &PixhausArchive) -> Result<AsepriteDocument>
         ..DocumentHeader::rgba(canvas_w, canvas_h)
     };
     if matches!(color_depth, ColorDepth::Indexed) {
-        header.transparent_index = first
-            .transparent_color_index
-            .unwrap_or(0);
-        header.color_count = u16::try_from(
-            first.palettes.first().map_or(0, |p| p.colors.len()),
-        )
-        .unwrap_or(u16::MAX);
+        header.transparent_index = first.transparent_color_index.unwrap_or(0);
+        header.color_count =
+            u16::try_from(first.palettes.first().map_or(0, |p| p.colors.len())).unwrap_or(u16::MAX);
     }
 
     // Pre-build per-frame palette override chunks indexed by absolute frame.
@@ -585,7 +584,10 @@ fn collect_state_cels(
                             })?;
 
                     // Detect cross-state linked cels: source frame outside [from, to].
-                    if let CelChunkData::Linked { frame: src_doc_frame } = &cc.data {
+                    if let CelChunkData::Linked {
+                        frame: src_doc_frame,
+                    } = &cc.data
+                    {
                         let doc_src = *src_doc_frame as usize;
                         if doc_src < from || doc_src > to {
                             warnings.push(ConversionWarning::CrossStateLinkedCel {
@@ -661,8 +663,16 @@ fn inline_cross_state_cel(
     })?;
 
     match &src_cel.data {
-        CelChunkData::Compressed { width, height, pixels }
-        | CelChunkData::Raw { width, height, pixels } => {
+        CelChunkData::Compressed {
+            width,
+            height,
+            pixels,
+        }
+        | CelChunkData::Raw {
+            width,
+            height,
+            pixels,
+        } => {
             let w = u32::from(*width);
             let h = u32::from(*height);
             let bpp = depth.bytes_per_pixel();
@@ -951,13 +961,10 @@ fn build_tilesets(
 
                     for tile_idx in 0..tile_count as usize {
                         for row in 0..tile_h as usize {
-                            let src_row_start =
-                                (tile_idx * tile_h as usize + row) * src_stride;
-                            let dst_row_start =
-                                row * dst_stride + tile_idx * row_bytes;
-                            dst[dst_row_start..dst_row_start + row_bytes].copy_from_slice(
-                                &pixels[src_row_start..src_row_start + row_bytes],
-                            );
+                            let src_row_start = (tile_idx * tile_h as usize + row) * src_stride;
+                            let dst_row_start = row * dst_stride + tile_idx * row_bytes;
+                            dst[dst_row_start..dst_row_start + row_bytes]
+                                .copy_from_slice(&pixels[src_row_start..src_row_start + row_bytes]);
                         }
                     }
 
@@ -1265,10 +1272,9 @@ fn build_single_state_document(
     };
     if matches!(color_depth, ColorDepth::Indexed) {
         header.transparent_index = state.sprite.transparent_color_index.unwrap_or(0);
-        header.color_count = u16::try_from(
-            state.sprite.palettes.first().map_or(0, |p| p.colors.len()),
-        )
-        .unwrap_or(u16::MAX);
+        header.color_count =
+            u16::try_from(state.sprite.palettes.first().map_or(0, |p| p.colors.len()))
+                .unwrap_or(u16::MAX);
     }
 
     let mut doc = AsepriteDocument {
@@ -1295,7 +1301,9 @@ fn build_single_state_document(
         // Emit palette overrides for this frame.
         for ov in &state.sprite.palette_frame_overrides {
             if ov.frame == u32::try_from(frame_local).unwrap_or(u32::MAX) {
-                doc_frame.chunks.push(palette_chunk_from_entries(&ov.colors));
+                doc_frame
+                    .chunks
+                    .push(palette_chunk_from_entries(&ov.colors));
             }
         }
 
@@ -1352,10 +1360,7 @@ fn append_cels_validated(
 /// states have slices with the same `SliceId`, the first state's name and
 /// flags take precedence and keys from later states are appended. This lets
 /// a slice named "hitbox" track across all states without duplication.
-fn merged_slice_chunks(
-    states: &[&LibNamedSprite],
-    state_frame_offsets: &[u16],
-) -> Vec<Chunk> {
+fn merged_slice_chunks(states: &[&LibNamedSprite], state_frame_offsets: &[u16]) -> Vec<Chunk> {
     // Maintain insertion order separately from the hashmap.
     let mut order: Vec<SliceId> = Vec::new();
     let mut chunks: HashMap<SliceId, SliceChunk> = HashMap::new();

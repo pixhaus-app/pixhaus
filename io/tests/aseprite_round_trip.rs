@@ -771,8 +771,7 @@ fn tag_with_from_frame_out_of_bounds_is_skipped_with_warning() {
         "expected InvalidTagRange warning for 'oob'"
     );
 
-    let EntityContent::Sprites { states } =
-        &result.archive.project.library.entities[0].content
+    let EntityContent::Sprites { states } = &result.archive.project.library.entities[0].content
     else {
         panic!("expected Sprites content");
     };
@@ -901,12 +900,17 @@ fn inline_tileset_import_repacks_to_horizontal_layout() {
         name: "tiles".into(),
         source: TilesetSourceWire::Inline { pixels },
     }));
-    f0.chunks.push(Chunk::Cel(compressed_cel(0, tile_w, tile_h)));
+    f0.chunks
+        .push(Chunk::Cel(compressed_cel(0, tile_w, tile_h)));
     doc.frames.push(f0);
 
     let result = document_to_archive(&doc, "sprite").unwrap();
 
-    assert_eq!(result.archive.buffers.len(), 2, "one buffer for the cel, one for the tileset");
+    assert_eq!(
+        result.archive.buffers.len(),
+        2,
+        "one buffer for the cel, one for the tileset"
+    );
 
     // Tilesets are built before cels, so the tileset buffer has the smaller id.
     let ts_buf = result
@@ -916,12 +920,19 @@ fn inline_tileset_import_repacks_to_horizontal_layout() {
         .min_by_key(|b| b.id)
         .expect("buffers must be non-empty");
 
-    assert_eq!(ts_buf.width, u32::from(tile_w) * tile_count, "horizontal width");
+    assert_eq!(
+        ts_buf.width,
+        u32::from(tile_w) * tile_count,
+        "horizontal width"
+    );
     assert_eq!(ts_buf.height, u32::from(tile_h), "single-row height");
 
     // Row 0 of the horizontal strip: first tile_w*bpp bytes = tile 0 (0xAA),
     // next tile_w*bpp bytes = tile 1 (0xBB).
-    assert_eq!(&ts_buf.pixels[0..row_bytes], vec![0xAAu8; row_bytes].as_slice());
+    assert_eq!(
+        &ts_buf.pixels[0..row_bytes],
+        vec![0xAAu8; row_bytes].as_slice()
+    );
     assert_eq!(
         &ts_buf.pixels[row_bytes..row_bytes * 2],
         vec![0xBBu8; row_bytes].as_slice()
@@ -945,9 +956,7 @@ fn merged_export_emits_tileset_chunks_for_sprite_tilesets() {
         pixels: vec![0xCCu8; 8 * 4 * 4],
     });
 
-    let EntityContent::Sprites { states } =
-        &mut archive.project.library.entities[0].content
-    else {
+    let EntityContent::Sprites { states } = &mut archive.project.library.entities[0].content else {
         panic!()
     };
     states[0].sprite.tilesets.push(Tileset {
@@ -1195,10 +1204,12 @@ fn external_tileset_import_preserves_path() {
 
     let result = document_to_archive(&doc, "sprite").unwrap();
 
-    assert!(result.warnings.is_empty(), "no warnings expected for valid external tileset");
+    assert!(
+        result.warnings.is_empty(),
+        "no warnings expected for valid external tileset"
+    );
 
-    let EntityContent::Sprites { states } =
-        &result.archive.project.library.entities[0].content
+    let EntityContent::Sprites { states } = &result.archive.project.library.entities[0].content
     else {
         panic!()
     };
@@ -1250,8 +1261,7 @@ fn cross_state_linked_cel_is_inlined_with_warning() {
         "expected CrossStateLinkedCel warning on import"
     );
 
-    let EntityContent::Sprites { states } =
-        &result.archive.project.library.entities[0].content
+    let EntityContent::Sprites { states } = &result.archive.project.library.entities[0].content
     else {
         panic!()
     };
@@ -1397,7 +1407,10 @@ fn merged_export_emits_per_frame_palette_overrides_with_offsets() {
         .chunks
         .iter()
         .any(|c| matches!(c, Chunk::Palette(_)));
-    assert!(frame2_has_palette, "frame 2 must carry the palette override");
+    assert!(
+        frame2_has_palette,
+        "frame 2 must carry the palette override"
+    );
 
     // Frames 0 and 1 must not carry palette chunks (no base palette, no override there).
     for (i, frame) in doc.frames[0..2].iter().enumerate() {
