@@ -25,14 +25,16 @@
 //! - One `TagEntry` is emitted per state, covering its contiguous frame
 //!   range in the merged timeline.
 //!
-//! # Aseprite export strategy
+//! # Export — `archive_to_per_state_documents`
 //!
-//! The resolved B9 decision: **per-state files by default** with a
-//! merged-file opt-in. This function implements the merged form (which
-//! the export dialog exposes as the opt-in). Per-state export — one
-//! `AsepriteDocument` per state — is handled by callers that iterate
-//! states and invoke `entity_state_to_document` (TBD in B9.5 follow-up
-//! once the export dialog lands in the UI).
+//! The B9 design default: each state becomes its own `.aseprite` file.
+//! Each returned [`PerStateDocument`] has a `filename_stem` derived from
+//! the state name and a single-state `AsepriteDocument` with no tag
+//! chunk (one state per file makes tags unnecessary).
+//!
+//! Out-of-bounds linked cels (pointing to a frame index beyond the
+//! state's frame count) produce a [`ConversionWarning::CrossStateLinkedCel`]
+//! and are dropped; the affected frame has no cel for that layer.
 
 use std::collections::HashMap;
 
@@ -77,6 +79,37 @@ pub enum ConversionWarning {
         /// The unrecognized wire-level blend-mode code.
         code: u16,
     },
+    /// A linked cel in `from_state` has a `source_frame` that points
+    /// outside the state's frame range. The cel was dropped; the frame
+    /// has no pixel data for that layer rather than a corrupt link.
+    CrossStateLinkedCel {
+        /// State being exported that contains the out-of-bounds link.
+        from_state: StateId,
+        /// State the frame index resolves to in the merged timeline, or
+        /// the same as `from_state` when it cannot be determined.
+        to_state: StateId,
+    },
+}
+
+/// One state's worth of Aseprite content, ready to encode into a
+/// `.aseprite` file.
+///
+/// `filename_stem` is the state name sanitised for disk: ASCII-lowercase,
+/// non-alphanumeric characters replaced with hyphens, consecutive hyphens
+/// collapsed, leading/trailing hyphens trimmed. Falls back to `"state"`
+/// when the result would otherwise be empty.
+#[derive(Debug)]
+pub struct PerStateDocument {
+    /// Identity of the state in the source archive.
+    pub state_id: StateId,
+    /// Original state name, unsanitised.
+    pub state_name: String,
+    /// Filename-safe rendering of `state_name`.
+    pub filename_stem: String,
+    /// The translated Aseprite document for this state.
+    pub document: AsepriteDocument,
+    /// Non-fatal warnings raised while exporting this state.
+    pub warnings: Vec<ConversionWarning>,
 }
 
 /// Result of converting an [`AsepriteDocument`] into a [`PixhausArchive`].
@@ -375,6 +408,50 @@ pub fn archive_to_document(archive: &PixhausArchive) -> Result<AsepriteDocument>
     }
 
     Ok(doc)
+}
+
+/// Export each state in the first Custom-kind library entity as its own
+/// [`AsepriteDocument`]. Returns one document per state, paired with the
+/// state's id and a filename-safe rendering of the state name.
+///
+/// Picks the entity the same way [`archive_to_document`] does: the
+/// active target's entity if it is a Custom-kind, else the first
+/// Custom-kind entity in the library. Errors with
+/// [`Error::NoSpriteEntityForExport`] when no Custom entity exists.
+///
+/// Each returned document is the same shape `archive_to_document` would
+/// produce for that single state, minus the frame-tag metadata (there is
+/// only one state per document, so tags are unnecessary).
+///
+/// Out-of-bounds linked cels — where `source_frame >= state.frames.len()`
+/// — are dropped and recorded as
+/// [`ConversionWarning::CrossStateLinkedCel`] in the per-state document's
+/// `warnings` field.
+///
+/// # Errors
+///
+/// - [`Error::NoSpriteEntityForExport`] when no Custom-kind entity is
+///   present in the library.
+pub fn archive_to_per_state_documents(archive: &PixhausArchive) -> Result<Vec<PerStateDocument>> {
+    let states = find_sprite_states(archive)?;
+
+    let mut result: Vec<PerStateDocument> = Vec::with_capacity(states.len());
+
+    for state in states {
+        let color_depth = color_depth_from_mode(state.sprite.color_mode);
+        let mut warnings: Vec<ConversionWarning> = Vec::new();
+        let document = build_single_state_document(state, color_depth, archive, &mut warnings);
+
+        result.push(PerStateDocument {
+            state_id: state.id,
+            state_name: state.state_name.clone(),
+            filename_stem: sanitize_filename_stem(&state.state_name),
+            document,
+            warnings,
+        });
+    }
+
+    Ok(result)
 }
 
 // ── Shared helpers ────────────────────────────────────────────────────────────
@@ -825,6 +902,180 @@ fn remap_slices(slices: &[Slice], from: usize, to: usize) -> Vec<Slice> {
             }
         })
         .collect()
+}
+
+// ── Per-state export helpers ──────────────────────────────────────────────────
+
+/// Sanitise a state name into a filename-safe stem.
+///
+/// Rules:
+/// - ASCII-lowercase.
+/// - Any character outside `[A-Za-z0-9_-]` is replaced with `-`.
+/// - Consecutive `-` are collapsed into one.
+/// - Leading and trailing `-` are trimmed.
+/// - If the result is empty, returns `"state"`.
+///
+/// Unicode code points that have no ASCII equivalent become `-`; they are
+/// not transliterated.
+fn sanitize_filename_stem(name: &str) -> String {
+    // Replace non-ASCII and non-safe characters with '-'.
+    let mut raw = String::with_capacity(name.len());
+    for c in name.chars() {
+        if c.is_ascii_alphanumeric() || c == '_' {
+            raw.push(c.to_ascii_lowercase());
+        } else {
+            raw.push('-');
+        }
+    }
+
+    // Collapse consecutive hyphens.
+    let mut stem = String::with_capacity(raw.len());
+    let mut prev_dash = false;
+    for c in raw.chars() {
+        if c == '-' {
+            if !prev_dash {
+                stem.push('-');
+            }
+            prev_dash = true;
+        } else {
+            stem.push(c);
+            prev_dash = false;
+        }
+    }
+
+    // Trim leading/trailing hyphens.
+    let trimmed = stem.trim_matches('-');
+
+    if trimmed.is_empty() {
+        "state".into()
+    } else {
+        trimmed.to_owned()
+    }
+}
+
+/// Build a single-state `AsepriteDocument` from one `NamedSprite`.
+///
+/// Produces the same structural layout as `archive_to_document` but for
+/// a single state: frame 0 carries layers, palette, and slices (no tag
+/// chunk); subsequent frames carry cels only. The `state_frame_offset` is
+/// always 0 because there is no merged timeline.
+///
+/// Out-of-bounds linked cels are recorded in `warnings` and dropped.
+fn build_single_state_document(
+    state: &LibNamedSprite,
+    color_depth: ColorDepth,
+    archive: &PixhausArchive,
+    warnings: &mut Vec<ConversionWarning>,
+) -> AsepriteDocument {
+    let canvas_w = u16::try_from(state.sprite.canvas.width).unwrap_or(u16::MAX);
+    let canvas_h = u16::try_from(state.sprite.canvas.height).unwrap_or(u16::MAX);
+    let depths = compute_child_levels(&state.sprite.layers);
+    let layer_map = layer_index_map(&state.sprite.layers);
+    let frame_count = state.sprite.frames.len();
+
+    let first_duration = state
+        .sprite
+        .frames
+        .first()
+        .map_or(100, |f| u16::try_from(f.duration_ms).unwrap_or(u16::MAX));
+
+    let mut frame0 = DocumentFrame::new(first_duration);
+
+    for layer in &state.sprite.layers {
+        let child_level = depths.get(&layer.id).copied().unwrap_or(0);
+        frame0
+            .chunks
+            .push(Chunk::Layer(build_layer_chunk(layer, child_level)));
+    }
+
+    // No tag chunk — one state per document makes tags unnecessary.
+
+    if let Some(pal) = state.sprite.palettes.first() {
+        frame0.chunks.push(palette_chunk_from(pal));
+    }
+
+    for slice in &state.sprite.slices {
+        frame0.chunks.push(slice_chunk_from(slice));
+    }
+
+    append_cels_validated(
+        &mut frame0.chunks,
+        &state.sprite.cels,
+        FrameIndex::new(0),
+        &layer_map,
+        frame_count,
+        state.id,
+        archive,
+        warnings,
+    );
+
+    let mut doc = AsepriteDocument {
+        header: DocumentHeader {
+            color_depth,
+            ..DocumentHeader::rgba(canvas_w, canvas_h)
+        },
+        frames: vec![frame0],
+    };
+
+    for frame_local in 1..state.sprite.frames.len() {
+        let frame = &state.sprite.frames[frame_local];
+        let mut doc_frame =
+            DocumentFrame::new(u16::try_from(frame.duration_ms).unwrap_or(u16::MAX));
+
+        append_cels_validated(
+            &mut doc_frame.chunks,
+            &state.sprite.cels,
+            FrameIndex::new(u32::try_from(frame_local).unwrap_or(u32::MAX)),
+            &layer_map,
+            frame_count,
+            state.id,
+            archive,
+            warnings,
+        );
+
+        doc.frames.push(doc_frame);
+    }
+
+    doc
+}
+
+/// Append cel chunks for a specific frame, validating linked-cel bounds.
+///
+/// When a linked cel's `source_frame` is >= `state_frame_count`, the link
+/// would reference a non-existent frame in the single-state document.
+/// The cel is dropped and a [`ConversionWarning::CrossStateLinkedCel`] is
+/// appended to `warnings` instead.
+#[allow(clippy::too_many_arguments)]
+fn append_cels_validated(
+    chunks: &mut Vec<Chunk>,
+    cels: &[Cel],
+    frame_index: FrameIndex,
+    layer_map: &HashMap<LayerId, u16>,
+    state_frame_count: usize,
+    state_id: StateId,
+    archive: &PixhausArchive,
+    warnings: &mut Vec<ConversionWarning>,
+) {
+    for cel in cels {
+        if cel.frame_index != frame_index {
+            continue;
+        }
+        let Some(&layer_idx) = layer_map.get(&cel.layer_id) else {
+            continue;
+        };
+        if let CelData::Linked { source_frame } = &cel.data {
+            if source_frame.get() as usize >= state_frame_count {
+                warnings.push(ConversionWarning::CrossStateLinkedCel {
+                    from_state: state_id,
+                    // Cannot determine target state in per-state context.
+                    to_state: state_id,
+                });
+                continue;
+            }
+        }
+        // state_frame_offset is 0: single-state documents have no merged timeline.
+        chunks.push(Chunk::Cel(cel_chunk_from(cel, layer_idx, 0, archive)));
+    }
 }
 
 // ── Export helpers ────────────────────────────────────────────────────────────
@@ -1379,6 +1630,47 @@ mod tests {
             archive_to_document(&archive).unwrap_err(),
             Error::NoSpriteEntityForExport
         ));
+    }
+
+    // ── sanitize_filename_stem ─────────────────────────────────────────────
+
+    #[test]
+    fn sanitize_spaces_become_hyphens() {
+        assert_eq!(sanitize_filename_stem("idle walk"), "idle-walk");
+    }
+
+    #[test]
+    fn sanitize_dots_stripped() {
+        assert_eq!(sanitize_filename_stem("run.fast"), "run-fast");
+    }
+
+    #[test]
+    fn sanitize_leading_trailing_hyphens_trimmed() {
+        assert_eq!(sanitize_filename_stem("--idle--"), "idle");
+    }
+
+    #[test]
+    fn sanitize_consecutive_hyphens_collapsed() {
+        assert_eq!(sanitize_filename_stem("a  b"), "a-b");
+    }
+
+    #[test]
+    fn sanitize_empty_falls_back_to_state() {
+        assert_eq!(sanitize_filename_stem(""), "state");
+        assert_eq!(sanitize_filename_stem("   "), "state");
+        assert_eq!(sanitize_filename_stem("..."), "state");
+    }
+
+    #[test]
+    fn sanitize_unicode_dropped() {
+        // Non-ASCII chars are replaced with '-'; consecutive collapse applies.
+        assert_eq!(sanitize_filename_stem("héro"), "h-ro");
+        assert_eq!(sanitize_filename_stem("空白"), "state");
+    }
+
+    #[test]
+    fn sanitize_underscores_preserved() {
+        assert_eq!(sanitize_filename_stem("run_fast"), "run_fast");
     }
 
     #[test]

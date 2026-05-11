@@ -10,7 +10,8 @@
     clippy::expect_used,
     clippy::panic,
     clippy::missing_panics_doc,
-    clippy::disallowed_methods
+    clippy::disallowed_methods,
+    clippy::too_many_lines
 )]
 
 use pixhaus_core::project::library::{
@@ -23,7 +24,9 @@ use pixhaus_core::project::{
 use pixhaus_io::Error;
 use pixhaus_io::aseprite::{
     AsepriteDocument, DocumentFrame,
-    archive::{ConversionWarning, archive_to_document, document_to_archive},
+    archive::{
+        ConversionWarning, archive_to_document, archive_to_per_state_documents, document_to_archive,
+    },
     chunk::{CelChunk, CelChunkData, Chunk, LayerChunk, LayerKindCode, TagEntry, TagsChunk},
 };
 use pixhaus_io::pixhaus::{PixelBufferEntry, PixhausArchive};
@@ -428,4 +431,283 @@ fn round_trip_preserves_state_names() {
 
     let names: Vec<&str> = tags.tags.iter().map(|t| t.name.as_str()).collect();
     assert_eq!(names, ["idle", "walk"]);
+}
+
+// ── Per-state export: archive_to_per_state_documents ──────────────────────────
+
+#[test]
+fn per_state_export_produces_one_document_per_state() {
+    let archive = make_archive_with_states(&["idle", "walk", "run"]);
+    let docs = archive_to_per_state_documents(&archive).unwrap();
+    assert_eq!(docs.len(), 3);
+    assert_eq!(docs[0].state_name, "idle");
+    assert_eq!(docs[1].state_name, "walk");
+    assert_eq!(docs[2].state_name, "run");
+}
+
+#[test]
+fn per_state_export_omits_frame_tags() {
+    let archive = make_archive_with_states(&["idle", "walk"]);
+    let docs = archive_to_per_state_documents(&archive).unwrap();
+    for doc in &docs {
+        let has_tags = doc.document.frames[0]
+            .chunks
+            .iter()
+            .any(|c| matches!(c, Chunk::Tags(_)));
+        assert!(!has_tags, "per-state doc must have no Tags chunk");
+    }
+}
+
+#[test]
+fn per_state_export_preserves_state_names_via_filename_stem() {
+    let archive = make_archive_with_states(&["Idle Walk", "run.fast", "jump!"]);
+    let docs = archive_to_per_state_documents(&archive).unwrap();
+    assert_eq!(docs[0].filename_stem, "idle-walk");
+    assert_eq!(docs[1].filename_stem, "run-fast");
+    assert_eq!(docs[2].filename_stem, "jump");
+}
+
+#[test]
+fn per_state_export_round_trips_each_state() {
+    use pixhaus_io::aseprite::{decode, encode};
+
+    let archive = make_archive_with_states(&["idle", "walk"]);
+    let original_states = match &archive.project.library.entities[0].content {
+        EntityContent::Sprites { states } => states.clone(),
+        _ => panic!(),
+    };
+
+    let docs = archive_to_per_state_documents(&archive).unwrap();
+
+    for (i, per_state) in docs.iter().enumerate() {
+        let bytes = encode(&per_state.document).expect("encode must succeed");
+        let decoded = decode(&bytes).expect("decode must succeed");
+        let re_imported =
+            document_to_archive(&decoded, &per_state.state_name).expect("import must succeed");
+
+        let EntityContent::Sprites { states } =
+            &re_imported.archive.project.library.entities[0].content
+        else {
+            panic!("expected Sprites content");
+        };
+
+        assert_eq!(
+            states.len(),
+            1,
+            "re-imported per-state doc should have one state"
+        );
+        assert_eq!(
+            states[0].sprite.frames.len(),
+            original_states[i].sprite.frames.len()
+        );
+    }
+}
+
+#[test]
+fn per_state_export_empty_library_errors() {
+    let project = pixhaus_core::project::Project::new("empty");
+    let archive = PixhausArchive::new(project);
+    assert!(matches!(
+        archive_to_per_state_documents(&archive).unwrap_err(),
+        Error::NoSpriteEntityForExport
+    ));
+}
+
+#[test]
+fn per_state_export_picks_active_entity() {
+    use pixhaus_core::project::{ActiveTarget, IVec2, PixelBufferId};
+
+    let mut archive = make_archive_with_states(&["idle"]);
+
+    // Push a second entity (id=2) with a distinct state.
+    let second = Entity {
+        id: EntityId::new(2),
+        kind: EntityKind::Custom("Character".into()),
+        name: "second".into(),
+        group_id: None,
+        tags: Vec::new(),
+        defaults: EntityDefaults::default(),
+        content: EntityContent::Sprites {
+            states: vec![NamedSprite {
+                id: StateId::new(10),
+                state_name: "attack".into(),
+                sprite: Sprite {
+                    id: SpriteId::new(10),
+                    name: "second / attack".into(),
+                    canvas: Size::new(8, 8),
+                    color_mode: ColorMode::Rgba,
+                    transparent_color_index: None,
+                    layers: vec![make_layer()],
+                    frames: vec![Frame {
+                        duration_ms: 100,
+                        user_data: UserData::default(),
+                    }],
+                    cels: vec![Cel {
+                        layer_id: pixhaus_core::project::id::LayerId::new(1),
+                        frame_index: FrameIndex::new(0),
+                        position: IVec2::new(0, 0),
+                        opacity: 255,
+                        data: CelData::Raster {
+                            buffer: PixelBufferId::new(99),
+                            size: Size::new(8, 8),
+                        },
+                        user_data: UserData::default(),
+                    }],
+                    palettes: Vec::new(),
+                    palette_frame_overrides: Vec::new(),
+                    tilesets: Vec::new(),
+                    frame_tags: Vec::new(),
+                    animations: Vec::new(),
+                    slices: Vec::new(),
+                    user_data: UserData::default(),
+                },
+                engine_tags: Vec::new(),
+            }],
+        },
+        ai: AiMetadata::default(),
+        anchor_reference_id: None,
+        user_data: UserData::default(),
+        created_at: 0,
+        updated_at: 0,
+    };
+
+    archive.buffers.push(PixelBufferEntry {
+        id: 99,
+        width: 8,
+        height: 8,
+        stride: 32,
+        pixels: vec![0u8; 256],
+    });
+    archive.project.library.entities.push(second);
+    archive.project.active = ActiveTarget::State {
+        entity_id: EntityId::new(2),
+        state_id: StateId::new(10),
+    };
+
+    let docs = archive_to_per_state_documents(&archive).unwrap();
+    assert_eq!(docs.len(), 1, "active entity wins over first entity");
+    assert_eq!(docs[0].state_name, "attack");
+}
+
+// ── M6: cross-state linked-cel validation ─────────────────────────────────────
+
+#[test]
+fn per_state_export_cross_state_link_warns_and_drops_cel() {
+    use pixhaus_core::project::{IVec2, PixelBufferId};
+
+    // Two states, each with 1 frame. "idle" has a valid raster cel.
+    // "walk" has a linked cel with source_frame=5, which is out of bounds
+    // for a 1-frame state and should trigger a CrossStateLinkedCel warning.
+    let layer = make_layer();
+
+    let idle_sprite = make_sprite(
+        1,
+        "hero / idle",
+        layer.clone(),
+        Cel {
+            layer_id: layer.id,
+            frame_index: FrameIndex::new(0),
+            position: IVec2::new(0, 0),
+            opacity: 255,
+            data: CelData::Raster {
+                buffer: PixelBufferId::new(1),
+                size: Size::new(8, 8),
+            },
+            user_data: UserData::default(),
+        },
+    );
+
+    let mut walk_sprite = make_sprite(
+        2,
+        "hero / walk",
+        layer.clone(),
+        // placeholder; will be replaced below
+        Cel {
+            layer_id: layer.id,
+            frame_index: FrameIndex::new(0),
+            position: IVec2::new(0, 0),
+            opacity: 255,
+            data: CelData::Raster {
+                buffer: PixelBufferId::new(1),
+                size: Size::new(8, 8),
+            },
+            user_data: UserData::default(),
+        },
+    );
+    // Replace with the out-of-bounds linked cel.
+    walk_sprite.cels = vec![Cel {
+        layer_id: layer.id,
+        frame_index: FrameIndex::new(0),
+        position: IVec2::new(0, 0),
+        opacity: 255,
+        data: CelData::Linked {
+            source_frame: FrameIndex::new(5), // >= walk's frame count of 1
+        },
+        user_data: UserData::default(),
+    }];
+
+    let entity = Entity {
+        id: EntityId::new(1),
+        kind: EntityKind::Custom("Sprite".into()),
+        name: "hero".into(),
+        group_id: None,
+        tags: Vec::new(),
+        defaults: EntityDefaults::default(),
+        content: EntityContent::Sprites {
+            states: vec![
+                NamedSprite {
+                    id: StateId::new(1),
+                    state_name: "idle".into(),
+                    sprite: idle_sprite,
+                    engine_tags: Vec::new(),
+                },
+                NamedSprite {
+                    id: StateId::new(2),
+                    state_name: "walk".into(),
+                    sprite: walk_sprite,
+                    engine_tags: Vec::new(),
+                },
+            ],
+        },
+        ai: AiMetadata::default(),
+        anchor_reference_id: None,
+        user_data: UserData::default(),
+        created_at: 0,
+        updated_at: 0,
+    };
+
+    let mut project = pixhaus_core::project::Project::new("test");
+    project.library.entities.push(entity);
+    let archive = PixhausArchive {
+        project,
+        buffers: vec![PixelBufferEntry {
+            id: 1,
+            width: 8,
+            height: 8,
+            stride: 32,
+            pixels: vec![0u8; 256],
+        }],
+    };
+
+    let docs = archive_to_per_state_documents(&archive).unwrap();
+    assert_eq!(docs.len(), 2);
+
+    assert!(docs[0].warnings.is_empty(), "idle should have no warnings");
+
+    assert_eq!(docs[1].warnings.len(), 1);
+    assert!(
+        matches!(
+            &docs[1].warnings[0],
+            ConversionWarning::CrossStateLinkedCel { .. }
+        ),
+        "expected CrossStateLinkedCel warning for walk"
+    );
+
+    // The corrupt link must be dropped — no Cel chunk in walk's frame 0.
+    let cel_count = docs[1].document.frames[0]
+        .chunks
+        .iter()
+        .filter(|c| matches!(c, Chunk::Cel(_)))
+        .count();
+    assert_eq!(cel_count, 0, "dropped linked cel must not appear in output");
 }
