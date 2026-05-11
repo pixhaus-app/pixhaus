@@ -135,40 +135,79 @@ fn install_loaded_project(
 /// `project`, or `1` if the project is empty. Calling sites that mint
 /// fresh ids monotonically (every `*_add` command) need this to avoid
 /// reusing an id that came in from disk.
+///
+/// All ID types (`EntityId`, `StateId`, `SpriteId`, `LayerId`, `GroupId`,
+/// `TagId`, `PaletteId`, `TilesetId`, `SliceId`, `AnimationId`,
+/// `PixelBufferId`) draw from the same monotonic counter. This function
+/// must scan every type so a save/load cycle never hands out a raw value
+/// that is already in use by any ID type, regardless of which type holds it.
 fn compute_next_id(project: &Project) -> u32 {
+    use pixhaus_core::project::{CelData, EntityContent, SelectionRegion, TilesetSource};
     let mut max = 0u32;
-    for (named, _) in project.sprites_iter() {
-        let sprite = &named.sprite;
-        max = max.max(sprite.id.get());
-        for layer in &sprite.layers {
-            max = max.max(layer.id.get());
-        }
-        for palette in &sprite.palettes {
-            max = max.max(palette.id.get());
-        }
-        for tileset in &sprite.tilesets {
-            max = max.max(tileset.id.get());
-        }
-        for slice in &sprite.slices {
-            max = max.max(slice.id.get());
-        }
-        for animation in &sprite.animations {
-            max = max.max(animation.id.get());
-        }
-        for cel in &sprite.cels {
-            if let pixhaus_core::project::CelData::Raster { buffer, .. } = &cel.data {
-                max = max.max(buffer.get());
+
+    // Walk every library entity and its content.
+    for entity in &project.library.entities {
+        max = max.max(entity.id.get()); // EntityId
+        match &entity.content {
+            EntityContent::Sprites { states } => {
+                for state in states {
+                    max = max.max(state.id.get()); // StateId
+                    let sprite = &state.sprite;
+                    max = max.max(sprite.id.get()); // SpriteId
+                    for layer in &sprite.layers {
+                        max = max.max(layer.id.get());
+                    }
+                    for palette in &sprite.palettes {
+                        max = max.max(palette.id.get());
+                    }
+                    for tileset in &sprite.tilesets {
+                        max = max.max(tileset.id.get());
+                        if let TilesetSource::Inline { buffer } = &tileset.source {
+                            max = max.max(buffer.get());
+                        }
+                    }
+                    for slice in &sprite.slices {
+                        max = max.max(slice.id.get());
+                    }
+                    for animation in &sprite.animations {
+                        max = max.max(animation.id.get());
+                    }
+                    for cel in &sprite.cels {
+                        if let CelData::Raster { buffer, .. } = &cel.data {
+                            max = max.max(buffer.get());
+                        }
+                    }
+                }
             }
+            EntityContent::Tileset { tileset } => {
+                max = max.max(tileset.id.get()); // TilesetId
+                if let TilesetSource::Inline { buffer } = &tileset.source {
+                    max = max.max(buffer.get()); // PixelBufferId
+                }
+            }
+            EntityContent::Tilemap { .. } | EntityContent::Reference { .. } => {}
         }
     }
+
+    // Project-wide groups and tags also draw from the same counter.
+    for group in &project.library.groups {
+        max = max.max(group.id.get()); // GroupId
+    }
+    for tag in &project.library.tags {
+        max = max.max(tag.id.get()); // TagId
+    }
+    // Project-wide shared palettes.
+    for palette in &project.library.palettes {
+        max = max.max(palette.id.get());
+    }
+
     // Selection masks live in `pixel_buffers` too. Without this branch,
     // `next_id` after a save/load could collide with a live mask buffer
     // and the next allocation would overwrite the selection.
-    if let Some(pixhaus_core::project::SelectionRegion::Mask { mask, .. }) =
-        &project.selection.region
-    {
+    if let Some(SelectionRegion::Mask { mask, .. }) = &project.selection.region {
         max = max.max(mask.get());
     }
+
     max.saturating_add(1)
 }
 
@@ -635,6 +674,60 @@ mod tests {
         assert!(
             next > 99,
             "next_id must exceed selection mask id; got {next} for mask id 99"
+        );
+    }
+
+    /// Pins the B9.2 fix: entity and state IDs are minted from the same
+    /// counter as sprite IDs, so `compute_next_id` must scan them too.
+    /// Without the fix, a project whose `entity_id` or `state_id` exceeded the
+    /// max sprite/layer/palette id would hand out a colliding id on the
+    /// next save+reload cycle.
+    #[test]
+    fn compute_next_id_includes_entity_and_state_ids() {
+        let mut project = Project::new("entity-id-fixture");
+        // entity_id_raw=100 and state_id_raw=200 both exceed the sprite id
+        // and all sub-entity ids, so the old code (which ignored entity/state
+        // IDs) would have returned 3 (max(sprite_id=2) + 1), not 201.
+        let sprite = Sprite::empty(
+            pixhaus_core::project::SpriteId::new(2),
+            "main",
+            Size::new(8, 8),
+        );
+        install_sprite_as_new_entity(&mut project, sprite, 100, 200);
+        let next = compute_next_id(&project);
+        assert!(
+            next > 200,
+            "next_id must exceed EntityId and StateId; got {next} for max state_id 200"
+        );
+    }
+
+    /// `GroupId` and `TagId` also draw from `next_id`. If they exceed every
+    /// sprite-side id, `compute_next_id` must still track past them.
+    #[test]
+    fn compute_next_id_includes_group_and_tag_ids() {
+        use pixhaus_core::project::{EntityGroup, GroupId, Rgba, TagDefinition, TagId, UserData};
+        let mut project = Project::new("group-tag-ids-fixture");
+        project.library.groups.push(EntityGroup {
+            id: GroupId::new(50),
+            name: "Characters".into(),
+            parent_id: None,
+            user_data: UserData::default(),
+        });
+        project.library.tags.push(TagDefinition {
+            id: TagId::new(75),
+            name: "hero".into(),
+            color: Some(Rgba {
+                r: 255,
+                g: 0,
+                b: 0,
+                a: 255,
+            }),
+            auto_generated: false,
+        });
+        let next = compute_next_id(&project);
+        assert!(
+            next > 75,
+            "next_id must exceed GroupId and TagId; got {next}"
         );
     }
 
