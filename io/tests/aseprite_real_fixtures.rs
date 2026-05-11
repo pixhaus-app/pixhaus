@@ -1,22 +1,22 @@
-//! Real-fixture aseprite round-trip coverage.
+//! Real-fixture Aseprite import coverage.
 //!
-//! Paused for the B9.1–B9.5 window: the importer / exporter returns a
-//! typed error rather than translating, so the fixture round-trip
-//! cannot complete. The single test below pins that contract on a real
-//! file on disk so a regression that silently re-enables a broken
-//! translation surfaces immediately.
+//! B9.5 restores the importer. These tests exercise `document_to_archive`
+//! against actual `.aseprite` files on disk to catch regressions that
+//! synthetic in-memory tests cannot reach (e.g., unexpected chunk types,
+//! unusual palette layouts, linked cel chains across frame boundaries).
 
 #![allow(
     clippy::unwrap_used,
     clippy::expect_used,
     clippy::panic,
     clippy::missing_panics_doc,
-    clippy::disallowed_methods
+    clippy::disallowed_methods,
+    clippy::cast_possible_truncation
 )]
 
 use std::path::PathBuf;
 
-use pixhaus_io::Error;
+use pixhaus_core::project::library::EntityContent;
 use pixhaus_io::aseprite::{decode_from_file, document_to_archive};
 
 fn fixture(name: &str) -> PathBuf {
@@ -29,12 +29,27 @@ fn fixture(name: &str) -> PathBuf {
 }
 
 #[test]
-fn legacy_aseprite_import_returns_typed_error() {
+fn single_frame_rgba_imports_to_library_entity() {
     let path = fixture("single-frame-rgba.aseprite");
     let doc = decode_from_file(&path).expect("decode fixture");
-    let err = document_to_archive(&doc, "real-fixture").unwrap_err();
+    let result = document_to_archive(&doc, "real-fixture").expect("import must succeed");
+
+    let entities = &result.archive.project.library.entities;
+    assert_eq!(entities.len(), 1, "must produce exactly one entity");
+
+    let EntityContent::Sprites { states } = &entities[0].content else {
+        panic!("entity content must be Sprites");
+    };
+    assert!(!states.is_empty(), "must have at least one state");
+
+    // A file with no tags gets one 'default' state covering all frames.
+    if states.len() == 1 {
+        assert_eq!(states[0].state_name, "default");
+    }
+
+    // Raster cels must have placed their pixel bytes into the archive buffer list.
     assert!(
-        matches!(err, Error::LegacyImportUnsupported { format: "aseprite" }),
-        "expected LegacyImportUnsupported, got: {err:?}"
+        !result.archive.buffers.is_empty(),
+        "at least one pixel buffer must be populated"
     );
 }

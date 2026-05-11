@@ -28,6 +28,12 @@ pub enum Error {
         format: &'static str,
     },
 
+    /// The project library contains no Custom-kind entity with sprite
+    /// states to export to Aseprite format. Either the project is empty
+    /// or all entities are Tilesets, Tilemaps, or References.
+    #[error("no sprite entity found in the project library for Aseprite export")]
+    NoSpriteEntityForExport,
+
     /// The file's container format major version is higher than this
     /// reader supports. Distinct from
     /// [`Self::UnsupportedSchemaVersion`], which targets the embedded
