@@ -87,6 +87,7 @@ import {
   isTilemapPanelVisible,
   setTilemapPanelVisible,
 } from "../shell/panel-state";
+import { isSheetPanelVisible, setSheetPanelVisible } from "../sheet/sheet-state";
 import {
   tilemapTool,
   setTilemapTool,
@@ -1168,6 +1169,16 @@ const COMMANDS: ReadonlyMap<string, CommandEntry> = new Map<string, CommandEntry
       category: "Window",
       keywords: ["tiles", "autotile", "tileset"],
       handler: () => setTilemapPanelVisible(!isTilemapPanelVisible()),
+    },
+  ],
+  [
+    "window:toggle-sheet",
+    {
+      id: "window:toggle-sheet",
+      label: "Toggle Reference Sheet Panel",
+      category: "Window",
+      keywords: ["sheet", "reference", "anchor", "sprite", "character"],
+      handler: () => setSheetPanelVisible(!isSheetPanelVisible()),
     },
   ],
 

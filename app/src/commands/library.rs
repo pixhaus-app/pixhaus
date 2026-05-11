@@ -1657,13 +1657,216 @@ pub async fn library_search(
     Ok(search_library(project, &args))
 }
 
+// ── sheet commands ────────────────────────────────────────────────────────────
+
+/// Arguments for approving a history variant as canonical.
+#[derive(Debug, Deserialize)]
+pub struct LibraryApproveSheetVariantArgs {
+    /// Target entity. Must be `Reference`-kind.
+    pub entity_id: EntityId,
+    /// The variant to approve. Must be present in the entity's `history`.
+    pub variant_id: SheetVariantId,
+}
+
+/// Arguments for updating a reference entity's asset info.
+#[derive(Debug, Deserialize)]
+pub struct LibraryUpdateAssetInfoArgs {
+    /// Target entity. Must be `Reference`-kind.
+    pub entity_id: EntityId,
+    /// Replacement asset info. Overwrites the existing value.
+    pub info: AssetInfo,
+}
+
+/// Promotes a history variant to canonical for a `Reference`-kind entity.
+///
+/// The approved variant moves from `history` to `canonical`; the previous
+/// canonical is inserted at the front of `history` (newest-first order).
+/// The entity's `updated_at` timestamp is bumped.
+///
+/// B10.3 extends this with palette extraction and anchor-cache invalidation
+/// once that work lands.
+#[tauri::command(async, rename_all = "snake_case")]
+pub async fn library_approve_sheet_variant(
+    args: LibraryApproveSheetVariantArgs,
+    state: State<'_, AppState>,
+) -> CommandResult<Entity> {
+    let ts = now_secs();
+    let mut doc = state.doc.write().await;
+    let project = doc
+        .project
+        .as_mut()
+        .ok_or(AppCommandError::NoActiveProject)?;
+    let entity = approve_sheet_variant_in_project(project, args.entity_id, args.variant_id, ts)?;
+    doc.dirty = true;
+    Ok(entity)
+}
+
+/// Updates the asset info (name, age, species, personality notes) for a
+/// `Reference`-kind entity.
+#[tauri::command(async, rename_all = "snake_case")]
+pub async fn library_update_asset_info(
+    args: LibraryUpdateAssetInfoArgs,
+    state: State<'_, AppState>,
+) -> CommandResult<()> {
+    let ts = now_secs();
+    let mut doc = state.doc.write().await;
+    let project = doc
+        .project
+        .as_mut()
+        .ok_or(AppCommandError::NoActiveProject)?;
+    update_asset_info_in_project(project, args.entity_id, args.info, ts)?;
+    doc.dirty = true;
+    Ok(())
+}
+
+/// Deletes a history variant from a `Reference`-kind entity.
+///
+/// The canonical variant cannot be deleted. Call
+/// `library_approve_sheet_variant` to promote a replacement first, which
+/// demotes the current canonical to history; then delete the demoted entry.
+#[tauri::command(async, rename_all = "snake_case")]
+pub async fn library_delete_sheet_variant(
+    entity_id: EntityId,
+    variant_id: SheetVariantId,
+    state: State<'_, AppState>,
+) -> CommandResult<()> {
+    let ts = now_secs();
+    let mut doc = state.doc.write().await;
+    let project = doc
+        .project
+        .as_mut()
+        .ok_or(AppCommandError::NoActiveProject)?;
+    delete_sheet_variant_in_project(project, entity_id, variant_id, ts)?;
+    doc.dirty = true;
+    Ok(())
+}
+
+// ── sheet helpers ─────────────────────────────────────────────────────────────
+
+pub(crate) fn approve_sheet_variant_in_project(
+    project: &mut pixhaus_core::project::Project,
+    entity_id: EntityId,
+    variant_id: SheetVariantId,
+    ts: i64,
+) -> Result<Entity, AppCommandError> {
+    let entity = project
+        .library
+        .entities
+        .iter_mut()
+        .find(|e| e.id == entity_id)
+        .ok_or_else(|| AppCommandError::NotFound {
+            entity: "entity".into(),
+            id: u64::from(entity_id.get()),
+        })?;
+
+    let sheet = match &mut entity.content {
+        EntityContent::Reference { sheet } => sheet.as_mut(),
+        _ => {
+            return Err(AppCommandError::Validation {
+                detail: "entity is not Reference kind".into(),
+            });
+        }
+    };
+
+    let pos = sheet
+        .history
+        .iter()
+        .position(|v| v.id == variant_id)
+        .ok_or_else(|| AppCommandError::NotFound {
+            entity: "sheet variant".into(),
+            id: u64::from(variant_id.get()),
+        })?;
+
+    let incoming = sheet.history.remove(pos);
+    let outgoing = std::mem::replace(&mut sheet.canonical, incoming);
+    sheet.history.insert(0, outgoing);
+
+    entity.updated_at = ts;
+    Ok(entity.clone())
+}
+
+pub(crate) fn update_asset_info_in_project(
+    project: &mut pixhaus_core::project::Project,
+    entity_id: EntityId,
+    info: AssetInfo,
+    ts: i64,
+) -> Result<(), AppCommandError> {
+    let entity = project
+        .library
+        .entities
+        .iter_mut()
+        .find(|e| e.id == entity_id)
+        .ok_or_else(|| AppCommandError::NotFound {
+            entity: "entity".into(),
+            id: u64::from(entity_id.get()),
+        })?;
+
+    let sheet = match &mut entity.content {
+        EntityContent::Reference { sheet } => sheet.as_mut(),
+        _ => {
+            return Err(AppCommandError::Validation {
+                detail: "entity is not Reference kind".into(),
+            });
+        }
+    };
+
+    sheet.info = info;
+    entity.updated_at = ts;
+    Ok(())
+}
+
+pub(crate) fn delete_sheet_variant_in_project(
+    project: &mut pixhaus_core::project::Project,
+    entity_id: EntityId,
+    variant_id: SheetVariantId,
+    ts: i64,
+) -> Result<(), AppCommandError> {
+    let entity = project
+        .library
+        .entities
+        .iter_mut()
+        .find(|e| e.id == entity_id)
+        .ok_or_else(|| AppCommandError::NotFound {
+            entity: "entity".into(),
+            id: u64::from(entity_id.get()),
+        })?;
+
+    let sheet = match &mut entity.content {
+        EntityContent::Reference { sheet } => sheet.as_mut(),
+        _ => {
+            return Err(AppCommandError::Validation {
+                detail: "entity is not Reference kind".into(),
+            });
+        }
+    };
+
+    if sheet.canonical.id == variant_id {
+        return Err(AppCommandError::Validation {
+            detail: "cannot delete the canonical variant; approve a replacement first".into(),
+        });
+    }
+
+    let before = sheet.history.len();
+    sheet.history.retain(|v| v.id != variant_id);
+    if sheet.history.len() == before {
+        return Err(AppCommandError::NotFound {
+            entity: "sheet variant".into(),
+            id: u64::from(variant_id.get()),
+        });
+    }
+
+    entity.updated_at = ts;
+    Ok(())
+}
+
 // ── tests ─────────────────────────────────────────────────────────────────────
 
 #[cfg(test)]
 mod tests {
     use pixhaus_core::project::{
-        ActiveTarget, AiMetadata, ColorMode, EntityContent, EntityDefaults, EntityId, EntityKind,
-        GroupId, NamedSprite, Size, StateId, TagId, UserData,
+        ActiveTarget, AiMetadata, AssetInfo, ColorMode, EntityContent, EntityDefaults, EntityId,
+        EntityKind, GroupId, NamedSprite, ReferenceImage, ReferenceSheet, SheetComposition,
+        SheetVariant, SheetVariantId, Size, StateId, TagId, UserData,
     };
 
     use super::*;
@@ -2605,5 +2808,180 @@ mod tests {
                 .name,
             "Goblin"
         );
+    }
+
+    // ── sheet helpers ─────────────────────────────────────────────────────────
+
+    fn make_variant(id: u32) -> SheetVariant {
+        SheetVariant {
+            id: SheetVariantId::new(id),
+            generated_at: 0,
+            image: ReferenceImage {
+                bytes: Vec::new(),
+                mime: "image/png".into(),
+            },
+            composition: SheetComposition::default(),
+            generation: None,
+            extracted_palette: Vec::new(),
+        }
+    }
+
+    fn project_with_one_reference_entity() -> (pixhaus_core::project::Project, EntityId) {
+        let mut project = pixhaus_core::project::Project::new("test");
+        let canonical = make_variant(10);
+        let entity_id = EntityId::new(1);
+        project.library.entities.push(Entity {
+            id: entity_id,
+            kind: EntityKind::Reference,
+            name: "Hero Ref".into(),
+            group_id: None,
+            tags: Vec::new(),
+            defaults: EntityDefaults::default(),
+            content: EntityContent::Reference {
+                sheet: Box::new(ReferenceSheet {
+                    canonical,
+                    history: vec![make_variant(20), make_variant(30)],
+                    prompts: Vec::new(),
+                    info: AssetInfo::default(),
+                }),
+            },
+            ai: AiMetadata::default(),
+            anchor_reference_id: None,
+            user_data: UserData::default(),
+            created_at: 0,
+            updated_at: 0,
+        });
+        (project, entity_id)
+    }
+
+    // ── approve_sheet_variant ─────────────────────────────────────────────────
+
+    #[test]
+    fn approve_variant_swaps_canonical_and_pushes_old_to_history() {
+        let (mut project, entity_id) = project_with_one_reference_entity();
+        approve_sheet_variant_in_project(&mut project, entity_id, SheetVariantId::new(20), 99)
+            .unwrap();
+
+        let sheet = match &project
+            .library
+            .entities
+            .iter()
+            .find(|e| e.id == entity_id)
+            .unwrap()
+            .content
+        {
+            EntityContent::Reference { sheet } => sheet.as_ref(),
+            _ => panic!("wrong content kind"),
+        };
+
+        assert_eq!(sheet.canonical.id, SheetVariantId::new(20));
+        assert_eq!(sheet.history[0].id, SheetVariantId::new(10));
+        assert_eq!(sheet.history[1].id, SheetVariantId::new(30));
+    }
+
+    #[test]
+    fn approve_variant_bumps_updated_at() {
+        let (mut project, entity_id) = project_with_one_reference_entity();
+        approve_sheet_variant_in_project(&mut project, entity_id, SheetVariantId::new(20), 77)
+            .unwrap();
+
+        let ts = project
+            .library
+            .entities
+            .iter()
+            .find(|e| e.id == entity_id)
+            .unwrap()
+            .updated_at;
+        assert_eq!(ts, 77);
+    }
+
+    #[test]
+    fn approve_variant_not_found_returns_error() {
+        let (mut project, entity_id) = project_with_one_reference_entity();
+        let result =
+            approve_sheet_variant_in_project(&mut project, entity_id, SheetVariantId::new(999), 0);
+        assert!(matches!(result, Err(AppCommandError::NotFound { .. })));
+    }
+
+    #[test]
+    fn approve_variant_wrong_kind_returns_validation_error() {
+        let (mut doc, entity_id, _) = doc_with_project();
+        let result = approve_sheet_variant_in_project(
+            doc.project.as_mut().unwrap(),
+            entity_id,
+            SheetVariantId::new(1),
+            0,
+        );
+        assert!(matches!(result, Err(AppCommandError::Validation { .. })));
+    }
+
+    // ── update_asset_info ─────────────────────────────────────────────────────
+
+    #[test]
+    fn update_asset_info_replaces_fields_and_bumps_updated_at() {
+        let (mut project, entity_id) = project_with_one_reference_entity();
+        let info = AssetInfo {
+            fields: [("name".into(), "Hero".into()), ("age".into(), "20".into())]
+                .into_iter()
+                .collect(),
+            notes: vec!["brave".into()],
+        };
+        update_asset_info_in_project(&mut project, entity_id, info.clone(), 55).unwrap();
+
+        let entity = project
+            .library
+            .entities
+            .iter()
+            .find(|e| e.id == entity_id)
+            .unwrap();
+        assert_eq!(entity.updated_at, 55);
+        let sheet = match &entity.content {
+            EntityContent::Reference { sheet } => sheet.as_ref(),
+            _ => panic!("wrong kind"),
+        };
+        assert_eq!(
+            sheet.info.fields.get("name").map(String::as_str),
+            Some("Hero")
+        );
+        assert_eq!(sheet.info.notes, vec!["brave"]);
+    }
+
+    // ── delete_sheet_variant ─────────────────────────────────────────────────
+
+    #[test]
+    fn delete_history_variant_removes_it() {
+        let (mut project, entity_id) = project_with_one_reference_entity();
+        delete_sheet_variant_in_project(&mut project, entity_id, SheetVariantId::new(20), 0)
+            .unwrap();
+
+        let sheet = match &project
+            .library
+            .entities
+            .iter()
+            .find(|e| e.id == entity_id)
+            .unwrap()
+            .content
+        {
+            EntityContent::Reference { sheet } => sheet.as_ref(),
+            _ => panic!("wrong kind"),
+        };
+        assert_eq!(sheet.history.len(), 1);
+        assert_eq!(sheet.history[0].id, SheetVariantId::new(30));
+    }
+
+    #[test]
+    fn delete_canonical_variant_returns_validation_error() {
+        let (mut project, entity_id) = project_with_one_reference_entity();
+        let result =
+            delete_sheet_variant_in_project(&mut project, entity_id, SheetVariantId::new(10), 0);
+        assert!(matches!(result, Err(AppCommandError::Validation { .. })));
+    }
+
+    #[test]
+    fn delete_variant_not_found_returns_error() {
+        let (mut project, entity_id) = project_with_one_reference_entity();
+        let result =
+            delete_sheet_variant_in_project(&mut project, entity_id, SheetVariantId::new(999), 0);
+        assert!(matches!(result, Err(AppCommandError::NotFound { .. })));
     }
 }

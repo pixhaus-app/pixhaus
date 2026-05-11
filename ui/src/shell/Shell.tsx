@@ -34,6 +34,8 @@ import { isTimelinePanelVisible } from "../timeline/timeline-state";
 import { isPalettePanelVisible, isTilemapPanelVisible } from "./panel-state";
 import { setupPaletteColorSync } from "../canvas/tools/palette-color-sync";
 import { installTilemapCtxSync } from "../tilemap/tilemap-ctx-sync";
+import SheetView from "../sheet/SheetView";
+import { isSheetPanelVisible } from "../sheet/sheet-state";
 
 const Shell: Component = () => {
   // Bridge palette FG/BG indices to the tool-state RGBA signals so brush
@@ -95,6 +97,9 @@ const Shell: Component = () => {
               </Show>
               <Show when={isLayerPanelVisible()}>
                 <LayerPanel />
+              </Show>
+              <Show when={isSheetPanelVisible()}>
+                <SheetView />
               </Show>
             </div>
           </Show>
