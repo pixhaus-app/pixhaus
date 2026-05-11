@@ -28,8 +28,8 @@ use std::time::Duration;
 use serde::{Deserialize, Serialize};
 
 use pixhaus_core::project::{
-    Cel, Frame, FrameIndex, FrameTag, Layer, LayerId, Palette, PixelBufferId, Rect, Slice,
-    SpriteId, Tileset,
+    Cel, EntityId, Frame, FrameIndex, FrameTag, Layer, LayerId, Palette, PixelBufferId, Rect,
+    Slice, SpriteId, Tileset,
 };
 
 use super::context::PixelData;
@@ -214,6 +214,36 @@ pub enum VerbEffect {
         name: String,
         /// Opaque payload.
         payload: serde_json::Value,
+    },
+    /// Suggest descriptive tags for a library entity.
+    ///
+    /// Produced by the Critique verb in `LibraryAutoTag` mode. The host
+    /// resolves each name against `Library.tags` (matching by name,
+    /// case-insensitive), creates a new `TagDefinition` for any name
+    /// that does not yet exist, and stores the resulting `TagId`s in
+    /// `Entity.ai.suggested_tags`. The UI surfaces them in a
+    /// accept/reject flow; accepted tags are promoted to `Entity.tags`.
+    SuggestEntityTags {
+        /// Entity to annotate.
+        entity_id: EntityId,
+        /// Tag names the VLM suggested. May overlap with existing tags.
+        tag_names: Vec<String>,
+    },
+    /// Update project-level AI metadata.
+    ///
+    /// Produced by the Project Style Learning verb after a successful
+    /// `LoRA` training run. On commit the host:
+    /// - appends `add_corpus_entity_ids` to `ProjectAi.style_corpus`
+    ///   (deduplicating against what is already there),
+    /// - if `lora_path` is `Some`, overwrites `ProjectAi.project_lora_path`.
+    UpdateProjectAi {
+        /// Entity IDs to add to the project style corpus.
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        add_corpus_entity_ids: Vec<EntityId>,
+        /// Path to the trained `LoRA` file relative to the project dir.
+        /// `None` means "do not change the existing path".
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        lora_path: Option<String>,
     },
 }
 

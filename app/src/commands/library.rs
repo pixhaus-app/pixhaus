@@ -7,6 +7,11 @@
 use std::collections::{HashMap, HashSet};
 use std::time::SystemTime;
 
+use pixhaus_ai::plugin::context::VerbContextBuilder;
+use pixhaus_ai::plugin::descriptor::VerbId;
+use pixhaus_ai::plugin::inputs::VerbInputs;
+use pixhaus_ai::plugin::output::VerbEffect;
+use pixhaus_ai::verbs::critique::{CritiqueInputs, CritiqueMode};
 use pixhaus_core::project::{
     ActiveTarget, AiMetadata, AssetInfo, ColorMode, Entity, EntityContent, EntityDefaults,
     EntityGroup, EntityId, EntityKind, GroupId, NamedSprite, PixelBufferId, ReferenceImage,
@@ -1657,6 +1662,262 @@ pub async fn library_search(
     Ok(search_library(project, &args))
 }
 
+// ── AI hooks ──────────────────────────────────────────────────────────────────
+
+/// Resolves an existing [`TagDefinition`] by name (case-insensitive) or mints
+/// a new auto-generated one. Returns the `TagId`.
+fn find_or_create_tag(
+    library: &mut pixhaus_core::project::Library,
+    next_id: &mut u32,
+    name: &str,
+) -> TagId {
+    let normalized = name.to_lowercase();
+    if let Some(existing) = library
+        .tags
+        .iter()
+        .find(|t| t.name.to_lowercase() == normalized)
+    {
+        return existing.id;
+    }
+    let id = TagId::new(*next_id);
+    *next_id += 1;
+    library.tags.push(TagDefinition {
+        id,
+        name: normalized,
+        color: None,
+        auto_generated: true,
+    });
+    id
+}
+
+/// Applies a [`VerbEffect::SuggestEntityTags`] to the project: resolves or
+/// creates [`TagDefinition`]s and adds their IDs to
+/// `entity.ai.suggested_tags`. Returns the updated suggested-tag list so the
+/// caller can surface it to the UI without a second read.
+pub(crate) fn apply_suggest_entity_tags(
+    project: &mut pixhaus_core::project::Project,
+    next_id: &mut u32,
+    entity_id: EntityId,
+    tag_names: Vec<String>,
+) -> Result<Vec<TagDefinition>, AppCommandError> {
+    let entity_idx = project
+        .library
+        .entities
+        .iter()
+        .position(|e| e.id == entity_id)
+        .ok_or_else(|| AppCommandError::NotFound {
+            entity: "entity".into(),
+            id: u64::from(entity_id.get()),
+        })?;
+
+    let mut new_ids = Vec::with_capacity(tag_names.len());
+    for name in tag_names {
+        let trimmed = name.trim().to_owned();
+        if trimmed.is_empty() {
+            continue;
+        }
+        let id = find_or_create_tag(&mut project.library, next_id, &trimmed);
+        new_ids.push(id);
+    }
+
+    // Scope the mutable entity borrow so the immutable tags borrow below compiles.
+    let suggested_ids = {
+        let entity = &mut project.library.entities[entity_idx];
+        for id in new_ids {
+            if !entity.ai.suggested_tags.contains(&id) {
+                entity.ai.suggested_tags.push(id);
+            }
+        }
+        entity.ai.suggested_tags.clone()
+    };
+
+    let definitions = project
+        .library
+        .tags
+        .iter()
+        .filter(|t| suggested_ids.contains(&t.id))
+        .cloned()
+        .collect();
+    Ok(definitions)
+}
+
+/// Applies a [`VerbEffect::UpdateProjectAi`]: deduplicates and appends entity
+/// IDs to `ProjectAi.style_corpus`, and optionally overwrites the `LoRA` path.
+pub(crate) fn apply_update_project_ai(
+    project: &mut pixhaus_core::project::Project,
+    add_entity_ids: Vec<EntityId>,
+    lora_path: Option<String>,
+) {
+    for id in add_entity_ids {
+        if !project.library.ai.style_corpus.contains(&id) {
+            project.library.ai.style_corpus.push(id);
+        }
+    }
+    if let Some(path) = lora_path {
+        project.library.ai.project_lora_path = Some(path);
+    }
+}
+
+/// Invokes the Critique verb in `LibraryAutoTag` mode for the given entity.
+///
+/// Builds a `VerbContext` with `library_entity_id` set, invokes the verb
+/// without holding the document lock, then writes the suggested tags to
+/// `entity.ai.suggested_tags` on completion. Returns the new
+/// [`TagDefinition`]s so the UI can present an accept/reject flow.
+#[tauri::command(async, rename_all = "snake_case")]
+pub async fn library_auto_tag_entity(
+    entity_id: EntityId,
+    state: State<'_, AppState>,
+) -> CommandResult<Vec<TagDefinition>> {
+    // Phase 1: read lock — build context and validate entity exists.
+    let ctx = {
+        let doc = state.doc.read().await;
+        let project = doc
+            .project
+            .as_ref()
+            .ok_or(AppCommandError::NoActiveProject)?;
+        if !project.library.entities.iter().any(|e| e.id == entity_id) {
+            return Err(AppCommandError::NotFound {
+                entity: "entity".into(),
+                id: u64::from(entity_id.get()),
+            });
+        }
+        VerbContextBuilder::new(project.metadata.clone())
+            .with_library_entity(entity_id)
+            .build()
+        // read guard drops here
+    };
+
+    // Phase 2: invoke verb — no document lock held during the async call.
+    let verb_id = VerbId::new("pixhaus.builtin.critique");
+    let inputs = VerbInputs::from_struct(&CritiqueInputs {
+        mode: CritiqueMode::LibraryAutoTag { entity_id },
+        checks: vec![],
+        notes: None,
+    })
+    .map_err(|e| AppCommandError::VerbError {
+        message: e.to_string(),
+    })?;
+
+    let invocation = state
+        .verb_runtime
+        .invoke(&verb_id, ctx, inputs)
+        .map_err(|e| AppCommandError::VerbError {
+            message: e.to_string(),
+        })?;
+
+    let preview_id = invocation.preview_id().get();
+    state
+        .invocations
+        .insert(preview_id, invocation.cancellation());
+
+    let result = invocation.finish().await;
+    state.invocations.remove(&preview_id);
+
+    let preview = result.map_err(|e| AppCommandError::VerbError {
+        message: e.to_string(),
+    })?;
+
+    let tag_names = preview
+        .output
+        .effects
+        .into_iter()
+        .find_map(|e| {
+            if let VerbEffect::SuggestEntityTags { tag_names, .. } = e {
+                Some(tag_names)
+            } else {
+                None
+            }
+        })
+        .unwrap_or_default();
+
+    // Phase 3: write lock — persist suggested tags to the entity.
+    let mut doc = state.doc.write().await;
+    let mut next_id = doc.next_id;
+    let project = doc
+        .project
+        .as_mut()
+        .ok_or(AppCommandError::NoActiveProject)?;
+    let suggestions = apply_suggest_entity_tags(project, &mut next_id, entity_id, tag_names)?;
+    doc.next_id = next_id;
+    doc.dirty = true;
+    Ok(suggestions)
+}
+
+/// Moves a tag from `entity.ai.suggested_tags` to `entity.tags`, confirming
+/// the VLM suggestion.
+#[tauri::command(async, rename_all = "snake_case")]
+pub async fn library_accept_suggested_tag(
+    entity_id: EntityId,
+    tag_id: TagId,
+    state: State<'_, AppState>,
+) -> CommandResult<()> {
+    let mut doc = state.doc.write().await;
+    let project = doc
+        .project
+        .as_mut()
+        .ok_or(AppCommandError::NoActiveProject)?;
+    let entity = project
+        .library
+        .entities
+        .iter_mut()
+        .find(|e| e.id == entity_id)
+        .ok_or_else(|| AppCommandError::NotFound {
+            entity: "entity".into(),
+            id: u64::from(entity_id.get()),
+        })?;
+    entity.ai.suggested_tags.retain(|&id| id != tag_id);
+    if !entity.tags.contains(&tag_id) {
+        entity.tags.push(tag_id);
+    }
+    doc.dirty = true;
+    Ok(())
+}
+
+/// Removes a tag from `entity.ai.suggested_tags`, dismissing the suggestion.
+#[tauri::command(async, rename_all = "snake_case")]
+pub async fn library_reject_suggested_tag(
+    entity_id: EntityId,
+    tag_id: TagId,
+    state: State<'_, AppState>,
+) -> CommandResult<()> {
+    let mut doc = state.doc.write().await;
+    let project = doc
+        .project
+        .as_mut()
+        .ok_or(AppCommandError::NoActiveProject)?;
+    let entity = project
+        .library
+        .entities
+        .iter_mut()
+        .find(|e| e.id == entity_id)
+        .ok_or_else(|| AppCommandError::NotFound {
+            entity: "entity".into(),
+            id: u64::from(entity_id.get()),
+        })?;
+    entity.ai.suggested_tags.retain(|&id| id != tag_id);
+    doc.dirty = true;
+    Ok(())
+}
+
+/// Adds entity IDs to `ProjectAi.style_corpus`, deduplicating against what is
+/// already there. Corpus management is separate from verb invocation — this
+/// command does not trigger training.
+#[tauri::command(async, rename_all = "snake_case")]
+pub async fn library_update_corpus(
+    entity_ids: Vec<EntityId>,
+    state: State<'_, AppState>,
+) -> CommandResult<()> {
+    let mut doc = state.doc.write().await;
+    let project = doc
+        .project
+        .as_mut()
+        .ok_or(AppCommandError::NoActiveProject)?;
+    apply_update_project_ai(project, entity_ids, None);
+    doc.dirty = true;
+    Ok(())
+}
+
 // ── tests ─────────────────────────────────────────────────────────────────────
 
 #[cfg(test)]
@@ -2604,6 +2865,120 @@ mod tests {
                 .unwrap()
                 .name,
             "Goblin"
+        );
+    }
+
+    // ── AI hooks ─────────────────────────────────────────────────────────
+
+    #[test]
+    fn suggest_tags_creates_new_auto_generated_tags() {
+        let (mut doc, entity_id, _) = doc_with_project();
+        let project = doc.project.as_mut().unwrap();
+        let mut next_id = doc.next_id;
+        let tags = apply_suggest_entity_tags(
+            project,
+            &mut next_id,
+            entity_id,
+            vec!["idle".into(), "fantasy".into()],
+        )
+        .unwrap();
+        assert_eq!(tags.len(), 2);
+        assert!(tags.iter().all(|t| t.auto_generated));
+        assert!(tags.iter().any(|t| t.name == "idle"));
+        assert!(tags.iter().any(|t| t.name == "fantasy"));
+    }
+
+    #[test]
+    fn suggest_tags_normalises_to_lowercase() {
+        let (mut doc, entity_id, _) = doc_with_project();
+        let project = doc.project.as_mut().unwrap();
+        let mut next_id = doc.next_id;
+        let tags =
+            apply_suggest_entity_tags(project, &mut next_id, entity_id, vec!["WARRIOR".into()])
+                .unwrap();
+        assert_eq!(tags[0].name, "warrior");
+    }
+
+    #[test]
+    fn suggest_tags_deduplicates_repeated_names() {
+        let (mut doc, entity_id, _) = doc_with_project();
+        let project = doc.project.as_mut().unwrap();
+        let mut next_id = doc.next_id;
+        apply_suggest_entity_tags(project, &mut next_id, entity_id, vec!["idle".into()]).unwrap();
+        // Same name again must not grow suggested_tags.
+        apply_suggest_entity_tags(project, &mut next_id, entity_id, vec!["idle".into()]).unwrap();
+        let entity = project
+            .library
+            .entities
+            .iter()
+            .find(|e| e.id == entity_id)
+            .unwrap();
+        assert_eq!(entity.ai.suggested_tags.len(), 1);
+    }
+
+    #[test]
+    fn suggest_tags_returns_not_found_for_missing_entity() {
+        let (mut doc, _, _) = doc_with_project();
+        let project = doc.project.as_mut().unwrap();
+        let mut next_id = doc.next_id;
+        let result = apply_suggest_entity_tags(
+            project,
+            &mut next_id,
+            EntityId::new(999),
+            vec!["idle".into()],
+        );
+        assert!(matches!(result, Err(AppCommandError::NotFound { .. })));
+    }
+
+    #[test]
+    fn accept_tag_moves_from_suggested_to_confirmed() {
+        let (mut doc, entity_id, _) = doc_with_project();
+        let project = doc.project.as_mut().unwrap();
+        let mut next_id = doc.next_id;
+        let tags =
+            apply_suggest_entity_tags(project, &mut next_id, entity_id, vec!["warrior".into()])
+                .unwrap();
+        let tag_id = tags[0].id;
+
+        // Simulate accept: remove from suggested, add to confirmed.
+        let entity = project
+            .library
+            .entities
+            .iter_mut()
+            .find(|e| e.id == entity_id)
+            .unwrap();
+        entity.ai.suggested_tags.retain(|&id| id != tag_id);
+        entity.tags.push(tag_id);
+
+        let entity = project
+            .library
+            .entities
+            .iter()
+            .find(|e| e.id == entity_id)
+            .unwrap();
+        assert!(entity.ai.suggested_tags.is_empty());
+        assert!(entity.tags.contains(&tag_id));
+    }
+
+    #[test]
+    fn update_corpus_deduplicates_entity_ids() {
+        let (mut doc, entity_id, _) = doc_with_project();
+        let project = doc.project.as_mut().unwrap();
+        apply_update_project_ai(project, vec![entity_id, entity_id], None);
+        assert_eq!(project.library.ai.style_corpus.len(), 1);
+        // Re-adding the same id must not grow the corpus.
+        apply_update_project_ai(project, vec![entity_id], None);
+        assert_eq!(project.library.ai.style_corpus.len(), 1);
+    }
+
+    #[test]
+    fn update_corpus_sets_lora_path() {
+        let (mut doc, _, _) = doc_with_project();
+        let project = doc.project.as_mut().unwrap();
+        apply_update_project_ai(project, vec![], Some("styles/hero.safetensors".into()));
+        assert_eq!(
+            project.library.ai.project_lora_path.as_deref(),
+            Some("styles/hero.safetensors")
         );
     }
 }

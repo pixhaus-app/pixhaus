@@ -147,7 +147,7 @@ docs/planning/work/b10-reference-sheets.md.
 - [ ] UNCLAIMED: B9.1 — Library data model + fixture rebuild. Brief: docs/planning/work/b9.1-dispatch-brief.md. Blocks: B9.2 B9.3 B9.4 B9.5 B10.*. [OPUS-RECOMMENDED]
 - [ ] UNCLAIMED: B9.2 — IPC commands for library operations. Brief: docs/planning/work/b9-project-library.md#implementation-outline (B9.2). Blocked by: B9.1.
 - [ ] UNCLAIMED: B9.3 — Library panel UI in Solid. Brief: docs/planning/work/b9-project-library.md#implementation-outline (B9.3). Blocked by: B9.1 B9.2.
-- [ ] UNCLAIMED: B9.4 — AI library hooks (auto-tag, cross-entity transfer, project-LoRA wiring). Brief: docs/planning/work/b9-project-library.md#implementation-outline (B9.4). Blocked by: B9.1 B9.2.
+- [~] CLAIMED:stream-b9.4:B9.4 — AI library hooks (auto-tag, cross-entity transfer, project-LoRA wiring). Brief: docs/planning/work/b9-project-library.md#implementation-outline (B9.4). Blocked by: B9.1 B9.2.
 - [ ] UNCLAIMED: B9.5 — Aseprite round-trip for stated entities. Brief: docs/planning/work/b9-project-library.md#implementation-outline (B9.5). Blocked by: B9.1.
 - [ ] UNCLAIMED: B10.1 — `generate-reference-sheet` verb + four composition templates. Brief: docs/planning/work/b10-reference-sheets.md#b101. Blocked by: B9.1.
 - [ ] UNCLAIMED: B10.2 — `iterate-reference-sheet` verb (panel-scoped inpainting). Brief: docs/planning/work/b10-reference-sheets.md#b102. Blocked by: B10.1.
