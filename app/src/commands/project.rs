@@ -1039,18 +1039,15 @@ mod tests {
         project.metadata.created_at = 0;
         stamp_save_metadata(&mut project, 1_700_000_000);
 
-        let nanos = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .map_or(0, |d| d.as_nanos());
-        let path = std::env::temp_dir().join(format!(
-            "pixhaus-app-save-roundtrip-{}-{nanos}.pixhaus",
-            std::process::id(),
-        ));
+        // encode_to_file does a sibling-tmp + rename. NamedTempFile
+        // would hold the destination open and the rename would fail
+        // on Windows; use a unique dir + non-existent filename instead.
+        let tmp = tempfile::tempdir().expect("temp dir");
+        let path = tmp.path().join("metadata-roundtrip.pixhaus");
 
         let archive = PixhausArchive::new(project);
         encode_to_file(&archive, &path).expect("encode");
         let loaded = decode_from_file(&path).expect("decode");
-        let _ = std::fs::remove_file(&path);
 
         assert_eq!(loaded.project.metadata.created_at, 1_700_000_000);
         assert_eq!(loaded.project.metadata.updated_at, 1_700_000_000);
@@ -1077,18 +1074,14 @@ mod tests {
             pixels: pixels.clone(),
         }];
 
-        let nanos = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .map_or(0, |d| d.as_nanos());
-        let path = std::env::temp_dir().join(format!(
-            "pixhaus-app-buf-roundtrip-{}-{nanos}.pixhaus",
-            std::process::id(),
-        ));
+        // See `metadata_round_trips_through_pixhaus_archive` above for
+        // why this uses tempdir() + join rather than NamedTempFile.
+        let tmp = tempfile::tempdir().expect("temp dir");
+        let path = tmp.path().join("buf-roundtrip.pixhaus");
 
         let archive = PixhausArchive { project, buffers };
         encode_to_file(&archive, &path).expect("encode");
         let loaded = decode_from_file(&path).expect("decode");
-        let _ = std::fs::remove_file(&path);
 
         assert_eq!(
             loaded.buffers.len(),
@@ -1103,15 +1096,12 @@ mod tests {
 
     // ── aseprite import ───────────────────────────────────────────────────────
     //
-    // The aseprite importer is gutted during the B9.1–B9.5 window. The
-    // Tauri command path still calls `document_to_archive`, which now
-    // returns `LegacyImportUnsupported`. This test pins that contract
-    // so a regression that silently re-enables a broken translation
-    // surfaces before the UI sees it; the round-trip-on-real-bytes
-    // assertions return in B9.5.
+    // B9.5 restores the importer against the library data model.
+    // Exercises the full decode → document_to_archive path against the
+    // real fixture to catch regressions in the file-to-archive translation.
 
     #[test]
-    fn import_aseprite_surfaces_legacy_unsupported_during_b9_migration() {
+    fn import_aseprite_single_frame_rgba_produces_library_entity() {
         let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
             .parent()
             .expect("app crate has parent")
@@ -1121,14 +1111,18 @@ mod tests {
 
         let document = pixhaus_io::aseprite::decode_from_file(&path)
             .unwrap_or_else(|e| panic!("decode {}: {e:?}", path.display()));
-        let err = pixhaus_io::aseprite::document_to_archive(&document, "imported")
-            .expect_err("aseprite import is gutted during the B9 migration");
-        assert!(
-            matches!(
-                err,
-                pixhaus_io::Error::LegacyImportUnsupported { format: "aseprite" }
-            ),
-            "expected LegacyImportUnsupported, got {err:?}"
-        );
+        let result = pixhaus_io::aseprite::document_to_archive(&document, "imported")
+            .unwrap_or_else(|e| panic!("import failed: {e:?}"));
+
+        let entities = &result.archive.project.library.entities;
+        assert_eq!(entities.len(), 1, "import must produce exactly one entity");
+
+        let pixhaus_io::aseprite::archive::ConvertedArchive { archive, .. } = result;
+        let entity = &archive.project.library.entities[0];
+        let pixhaus_core::project::library::EntityContent::Sprites { states } = &entity.content
+        else {
+            panic!("entity must be Sprites variant");
+        };
+        assert!(!states.is_empty(), "must have at least one state");
     }
 }

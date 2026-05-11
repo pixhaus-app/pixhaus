@@ -489,14 +489,8 @@ fn mp4_external_gate_ffprobe_validates_container() {
     let bytes = encode_mp4(&frames, &VideoOptions::default()).unwrap();
 
     // Per-test unique filename so parallel nextest runs don't collide.
-    // Falls back to a process-id + nanos suffix; tempfile crate isn't
-    // a dev-dep so we keep this lightweight.
-    let nanos = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map_or(0, |d| d.as_nanos());
-    let suffix = format!("{}_{}", std::process::id(), nanos);
-    let temp_path = std::env::temp_dir().join(format!("pixhaus_mp4_gate_test_{suffix}.mp4"));
-    std::fs::write(&temp_path, &bytes).unwrap();
+    let temp_file = tempfile::NamedTempFile::with_suffix(".mp4").unwrap();
+    std::fs::write(temp_file.path(), &bytes).unwrap();
 
     let probe = std::process::Command::new("ffprobe")
         .args([
@@ -507,10 +501,8 @@ fn mp4_external_gate_ffprobe_validates_container() {
             "-of",
             "csv=p=0",
         ])
-        .arg(&temp_path)
+        .arg(temp_file.path())
         .output();
-
-    let _ = std::fs::remove_file(&temp_path);
 
     match probe {
         Ok(out) if out.status.success() => {
