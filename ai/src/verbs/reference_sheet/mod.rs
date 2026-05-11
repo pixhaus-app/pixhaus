@@ -271,7 +271,7 @@ impl Verb for GenerateReferenceSheetVerb {
         let req = ImageGenRequest {
             model: None,
             prompt: full_prompt.clone(),
-            negative_prompt: Some(negative),
+            negative_prompt: Some(negative.clone()),
             width: inputs.template.sheet_width(),
             height: inputs.template.sheet_height(),
             steps: None,
@@ -317,7 +317,7 @@ impl Verb for GenerateReferenceSheetVerb {
 
         progress.step(Some(0.9), "encoding variants").await;
 
-        let variants = build_variants(unix_now(), images, &backend_id, &full_prompt, inputs.seed, &composition);
+        let variants = build_variants(unix_now(), images, &backend_id, &full_prompt, &negative, inputs.seed, &composition);
         let variant_count = variants.len();
         let payload = GenerateSheetPayload {
             entity_id: inputs.entity_id,
@@ -388,6 +388,7 @@ fn build_variants(
     images: Vec<Vec<u8>>,
     backend_id: &str,
     prompt: &str,
+    negative_prompt: &str,
     seed: Option<u64>,
     composition: &pixhaus_core::project::SheetComposition,
 ) -> Vec<SheetVariantOutput> {
@@ -404,7 +405,7 @@ fn build_variants(
                 model: "unknown".into(),
                 prompt: prompt.to_owned(),
                 seed,
-                negative_prompt: None,
+                negative_prompt: Some(negative_prompt.to_owned()),
             },
         })
         .collect()
