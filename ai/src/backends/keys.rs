@@ -9,7 +9,7 @@
 //! the stable identifier returned by
 //! [`super::InferenceBackend::backend_id`], e.g. `"pixhaus.anthropic"`.
 
-use keyring::Entry;
+use keyring_core::Entry;
 
 use super::error::{BackendError, Result};
 
@@ -32,7 +32,7 @@ impl ApiKeyStore {
     pub fn get(backend: &str) -> Result<String> {
         let entry = Self::entry(backend)?;
         entry.get_password().map_err(|err| match err {
-            keyring::Error::NoEntry => BackendError::ApiKeyNotFound(backend.to_owned()),
+            keyring_core::Error::NoEntry => BackendError::ApiKeyNotFound(backend.to_owned()),
             other => BackendError::Keychain(other.to_string()),
         })
     }
@@ -53,7 +53,7 @@ impl ApiKeyStore {
     pub fn delete(backend: &str) -> Result<()> {
         let entry = Self::entry(backend)?;
         entry.delete_credential().map_err(|err| match err {
-            keyring::Error::NoEntry => BackendError::ApiKeyNotFound(backend.to_owned()),
+            keyring_core::Error::NoEntry => BackendError::ApiKeyNotFound(backend.to_owned()),
             other => BackendError::Keychain(other.to_string()),
         })
     }
