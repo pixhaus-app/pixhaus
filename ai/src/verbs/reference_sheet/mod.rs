@@ -236,6 +236,11 @@ impl Verb for GenerateReferenceSheetVerb {
         Ok(())
     }
 
+    // Verb invoke is a long state machine: progress events, cancellation
+    // checkpoints, backend dispatch, typed response unpacking, and output
+    // assembly. Refactoring would split the cancel/progress contract across
+    // helpers and obscure the flow.
+    #[allow(clippy::too_many_lines)]
     async fn invoke(
         &self,
         ctx: VerbContext,
