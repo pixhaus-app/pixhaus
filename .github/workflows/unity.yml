@@ -59,7 +59,7 @@ jobs:
 
       - name: Cache Unity Library
         if: steps.prereqs.outputs.run == 'true'
-        uses: actions/cache@v4
+        uses: actions/cache@v5
         with:
           path: unity/Tests~/Library
           key: Unity-${{ runner.os }}-${{ hashFiles('unity/**') }}
