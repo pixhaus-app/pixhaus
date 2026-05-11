@@ -11,11 +11,19 @@ import type { Tileset } from "./Tileset";
  * shape and disambiguates the wrapper from the field name on the TS
  * side.
  *
- * `clippy::large_enum_variant` fires here because [`Sprite`] and
- * [`ReferenceSheet`] are both substantially larger than the unit
- * payloads, but boxing would force an extra allocation on every
- * content access in the hot library-walk paths and changes the TS
- * shape; the size disparity is part of the data model.
+ * `clippy::large_enum_variant` fires here because [`Sprite`] (the
+ * `Sprites` variant inlines a `Vec<NamedSprite>` of full sprites) is
+ * substantially larger than the unit variants. The B9.1-cleanup
+ * regression test (`entity_content_size_is_bounded`) measured
+ * `size_of::<ReferenceSheet>() > size_of::<Sprite>()`, so the
+ * `Reference` variant is boxed: `Reference { sheet: Box<ReferenceSheet> }`.
+ * `Sprites` stays inline because boxing it would force an allocation
+ * on every library walk in the hot read path. The regression test
+ * pins both invariants — flip the boxing decision if `Sprite` ever
+ * outgrows [`ReferenceSheet`], and update both the rustdoc here and
+ * the test in lockstep. The TS mirror unwraps `Box` automatically so
+ * the generated type stays
+ * `{ type: "Reference"; value: { sheet: ReferenceSheet } }`.
  */
 export type EntityContent = { "type": "Sprites", "value": { 
 /**

@@ -68,8 +68,10 @@ pub struct LayerChunk {
     pub blend: BlendMode,
     /// Original blend-mode code if it fell outside the 0–18 spec range.
     /// `None` means [`Self::blend`] is what the file declared; `Some(c)`
-    /// means the reader fell back to `Normal` and the archive layer
-    /// surfaces a [`super::archive::ConversionWarning::UnknownBlendMode`].
+    /// means the reader fell back to `Normal`. B9.1 stubbed the
+    /// archive translator, so the previously-referenced
+    /// `ConversionWarning::UnknownBlendMode` is not currently emitted;
+    /// B9.5 restores it alongside the importer.
     pub unknown_blend_code: Option<u16>,
     /// Layer opacity, valid only when the file header advertises
     /// per-layer opacity.

@@ -23,7 +23,7 @@ use crate::bindings::frame::LuaFrame;
 use crate::bindings::layer::LuaLayer;
 use crate::bindings::palette::LuaPalette;
 use crate::bindings::sprite::LuaSprite;
-use crate::context::ScriptContext;
+use crate::context::{ScriptContext, resolve_active_sprite};
 use crate::output::{CommandDef, PanelDef, ScriptMutation, VerbDef};
 
 /// Shared collectors for the output of a single script run.
@@ -53,56 +53,44 @@ impl OutputCollectors {
 pub fn register(lua: &Lua, ctx: &ScriptContext, collectors: &OutputCollectors) -> LuaResult<()> {
     let app = lua.create_table()?;
 
-    // activeSprite
-    if let Some(project) = &ctx.project {
-        let sprite_idx = ctx.active_sprite_index.unwrap_or(0);
-        if let Some(sprite) = project.sprites.get(sprite_idx) {
-            let lua_sprite = LuaSprite::from_sprite(sprite, &collectors.mutations);
-            app.set("activeSprite", lua.create_userdata(lua_sprite)?)?;
+    // activeSprite / activeLayer / activeFrame / activePalette — all
+    // derived from the active sprite resolved via the library accessor.
+    if let Some(sprite) = resolve_active_sprite(ctx) {
+        let lua_sprite = LuaSprite::from_sprite(sprite, &collectors.mutations);
+        app.set("activeSprite", lua.create_userdata(lua_sprite)?)?;
+
+        let layer_idx = ctx.active_layer_index.unwrap_or(0);
+        if let Some(layer) = sprite.layers.get(layer_idx) {
+            let lua_layer = LuaLayer::from_layer(layer, collectors.mutations.clone());
+            app.set("activeLayer", lua.create_userdata(lua_layer)?)?;
         } else {
-            app.set("activeSprite", LuaValue::Nil)?;
+            app.set("activeLayer", LuaValue::Nil)?;
         }
 
-        // activeLayer
-        let layer_idx = ctx.active_layer_index.unwrap_or(0);
-        if let Some(sprite) = project.sprites.get(sprite_idx) {
-            if let Some(layer) = sprite.layers.get(layer_idx) {
-                let lua_layer = LuaLayer::from_layer(layer, collectors.mutations.clone());
-                app.set("activeLayer", lua.create_userdata(lua_layer)?)?;
+        // activeFrame
+        if let Some(frame_idx) = ctx.active_frame_index {
+            if let Some(frame) = sprite.frames.get(frame_idx.get() as usize) {
+                let lua_frame =
+                    LuaFrame::from_frame(frame, frame_idx, collectors.mutations.clone());
+                app.set("activeFrame", lua.create_userdata(lua_frame)?)?;
             } else {
-                app.set("activeLayer", LuaValue::Nil)?;
+                app.set("activeFrame", LuaValue::Nil)?;
             }
+        } else if let Some(frame) = sprite.frames.first() {
+            // Default to frame 0 when no frame is explicitly focused.
+            let lua_frame =
+                LuaFrame::from_frame(frame, FrameIndex::new(0), collectors.mutations.clone());
+            app.set("activeFrame", lua.create_userdata(lua_frame)?)?;
+        } else {
+            app.set("activeFrame", LuaValue::Nil)?;
+        }
 
-            // activeFrame
-            if let Some(frame_idx) = ctx.active_frame_index {
-                if let Some(frame) = sprite.frames.get(frame_idx.get() as usize) {
-                    let lua_frame =
-                        LuaFrame::from_frame(frame, frame_idx, collectors.mutations.clone());
-                    app.set("activeFrame", lua.create_userdata(lua_frame)?)?;
-                } else {
-                    app.set("activeFrame", LuaValue::Nil)?;
-                }
-            } else {
-                // Default to frame 0 when no frame is explicitly focused
-                if let Some(frame) = sprite.frames.first() {
-                    let lua_frame = LuaFrame::from_frame(
-                        frame,
-                        FrameIndex::new(0),
-                        collectors.mutations.clone(),
-                    );
-                    app.set("activeFrame", lua.create_userdata(lua_frame)?)?;
-                } else {
-                    app.set("activeFrame", LuaValue::Nil)?;
-                }
-            }
-
-            // activePalette (convenience alias, not in Aseprite API but useful)
-            if let Some(palette) = sprite.palettes.first() {
-                let lua_pal = LuaPalette::from_palette(palette, collectors.mutations.clone());
-                app.set("activePalette", lua.create_userdata(lua_pal)?)?;
-            } else {
-                app.set("activePalette", LuaValue::Nil)?;
-            }
+        // activePalette (convenience alias, not in Aseprite API but useful)
+        if let Some(palette) = sprite.palettes.first() {
+            let lua_pal = LuaPalette::from_palette(palette, collectors.mutations.clone());
+            app.set("activePalette", lua.create_userdata(lua_pal)?)?;
+        } else {
+            app.set("activePalette", LuaValue::Nil)?;
         }
     } else {
         app.set("activeSprite", LuaValue::Nil)?;

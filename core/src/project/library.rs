@@ -196,11 +196,19 @@ pub enum EntityKind {
 /// shape and disambiguates the wrapper from the field name on the TS
 /// side.
 ///
-/// `clippy::large_enum_variant` fires here because [`Sprite`] and
-/// [`ReferenceSheet`] are both substantially larger than the unit
-/// payloads, but boxing would force an extra allocation on every
-/// content access in the hot library-walk paths and changes the TS
-/// shape; the size disparity is part of the data model.
+/// `clippy::large_enum_variant` fires here because [`Sprite`] (the
+/// `Sprites` variant inlines a `Vec<NamedSprite>` of full sprites) is
+/// substantially larger than the unit variants. The B9.1-cleanup
+/// regression test (`entity_content_size_is_bounded`) measured
+/// `size_of::<ReferenceSheet>() > size_of::<Sprite>()`, so the
+/// `Reference` variant is boxed: `Reference { sheet: Box<ReferenceSheet> }`.
+/// `Sprites` stays inline because boxing it would force an allocation
+/// on every library walk in the hot read path. The regression test
+/// pins both invariants — flip the boxing decision if `Sprite` ever
+/// outgrows [`ReferenceSheet`], and update both the rustdoc here and
+/// the test in lockstep. The TS mirror unwraps `Box` automatically so
+/// the generated type stays
+/// `{ type: "Reference"; value: { sheet: ReferenceSheet } }`.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, TS)]
 #[ts(export)]
 #[serde(tag = "type", content = "value")]
@@ -237,9 +245,15 @@ pub enum EntityContent {
     /// B9 ships the type with a minimal canonical variant and empty
     /// history/metadata so B10 can fill it in without a schema
     /// migration.
+    ///
+    /// `sheet` is boxed because `ReferenceSheet` is the largest variant
+    /// payload by stack size (`entity_content_size_is_bounded` pins
+    /// the measurement). Boxing keeps `size_of::<EntityContent>()` from
+    /// being dragged up by this comparatively rare variant. `Box<T>` is
+    /// transparent to serde, so the on-disk wire format is unchanged.
     Reference {
         /// The structured reference sheet payload.
-        sheet: ReferenceSheet,
+        sheet: Box<ReferenceSheet>,
     },
 }
 
@@ -791,5 +805,76 @@ mod tests {
         assert!(ProjectAi::default().is_empty());
         assert!(SheetComposition::default().is_empty());
         assert!(AssetInfo::default().is_empty());
+    }
+
+    /// Pins the boxing decision for [`EntityContent`].
+    ///
+    /// Measured sizes on the B9.1-cleanup branch (Rust 1.85, no
+    /// platform-specific layout assumptions):
+    /// - `size_of::<Sprite>()` ≈ 288 bytes
+    /// - `size_of::<ReferenceSheet>()` ≈ 416 bytes (largest variant
+    ///   payload by stack size; boxed inside `EntityContent::Reference`)
+    /// - `size_of::<EntityContent>()` ≈ 1.2× `size_of::<Sprite>()` once
+    ///   the inlined `Vec<NamedSprite>` header and tag are accounted for
+    ///
+    /// The decision rule from the cleanup brief: if
+    /// `size_of::<ReferenceSheet>() > size_of::<Sprite>()`, box the
+    /// Reference variant. That ordering holds today, so `Reference`
+    /// carries `Box<ReferenceSheet>` and the enum's stack footprint is
+    /// driven by `Sprite` plus the `Vec<NamedSprite>` header.
+    ///
+    /// The cap is `1.5 * size_of::<Sprite>()` — generous enough to
+    /// absorb small additions without churning the boxing decision,
+    /// tight enough to fire if a variant payload starts dominating the
+    /// enum again. When the test fires: either box the new offender or
+    /// update both the cap and the rustdoc above `EntityContent` with
+    /// the new measurement.
+    #[test]
+    fn entity_content_size_is_bounded() {
+        use std::mem::size_of;
+
+        let sprite = size_of::<Sprite>();
+        let sheet = size_of::<ReferenceSheet>();
+        let content = size_of::<EntityContent>();
+
+        // ReferenceSheet larger than Sprite → Reference variant boxed.
+        // Once boxed, the variant no longer drives the enum size; the
+        // assertion captures the *measured* ordering so a future shrink
+        // of ReferenceSheet that flips the inequality forces us to
+        // re-examine whether the Box is still earning its allocation.
+        assert!(
+            sheet > sprite,
+            "ReferenceSheet ({sheet} bytes) shrank below Sprite ({sprite} bytes); \
+             consider un-boxing the Reference variant"
+        );
+
+        let cap = sprite + sprite / 2;
+        assert!(
+            content <= cap,
+            "EntityContent grew to {content} bytes; cap is {cap} \
+             (1.5 * size_of::<Sprite>() = 1.5 * {sprite}). Box the \
+             outgrown variant or update the cap with a recorded \
+             measurement."
+        );
+    }
+
+    /// Pins the `MessagePack` wire shape for [`EntityKind::Custom`].
+    ///
+    /// The JSON-side counterpart at `entity_kind_custom_carries_string`
+    /// already covers the human-readable form. `rmp-serde` with
+    /// `to_vec_named` writes a map of string keys to string values;
+    /// decoding back into `BTreeMap<String, String>` and asserting both
+    /// the `"kind"` and `"value"` entries pin the wire format against
+    /// silent serde-attribute drift (`tag` / `content` rename).
+    #[test]
+    fn entity_kind_custom_messagepack_shape() {
+        let k = EntityKind::Custom("Character".into());
+        let bytes = rmp_serde::to_vec_named(&k).expect("encode");
+        let decoded: BTreeMap<String, String> =
+            rmp_serde::from_slice(&bytes).expect("decode generic");
+
+        assert_eq!(decoded.len(), 2);
+        assert_eq!(decoded.get("kind").map(String::as_str), Some("Custom"));
+        assert_eq!(decoded.get("value").map(String::as_str), Some("Character"));
     }
 }

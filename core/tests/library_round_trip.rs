@@ -10,7 +10,8 @@
     clippy::disallowed_methods,
     clippy::cast_possible_truncation,
     clippy::too_many_lines,
-    clippy::doc_markdown
+    clippy::doc_markdown,
+    clippy::approx_constant
 )]
 
 //! Round-trip coverage for the B9.1 library data model.
@@ -33,6 +34,8 @@ use pixhaus_core::project::{
     TagId, TileCell, TileFlags, TileIndex, TilemapData, TilemapLayer, TilemapScene, Tileset,
     TilesetId, TilesetReference, TilesetSource, UserData,
 };
+use proptest::prelude::*;
+use rstest::rstest;
 
 fn round_trip<T>(value: &T) -> T
 where
@@ -46,6 +49,13 @@ fn empty_sprite(id: u32, name: &str) -> Sprite {
     Sprite::empty(SpriteId::new(id), name, Size::new(16, 16))
 }
 
+fn wrap_entity(entity: Entity) -> Library {
+    Library {
+        entities: vec![entity],
+        ..Library::default()
+    }
+}
+
 #[test]
 fn empty_library_round_trips() {
     let l = Library::default();
@@ -54,9 +64,10 @@ fn empty_library_round_trips() {
     assert_eq!(l, back);
 }
 
-#[test]
-fn library_with_one_of_each_kind_round_trips() {
-    let custom = Entity {
+// ── one-of-each-kind round-trip (I7: split god-test) ─────────────────────────
+
+fn custom_entity_fixture() -> Entity {
+    Entity {
         id: EntityId::new(1),
         kind: EntityKind::Custom("Character".into()),
         name: "Hero".into(),
@@ -76,9 +87,11 @@ fn library_with_one_of_each_kind_round_trips() {
         user_data: UserData::default(),
         created_at: 1_700_000_000,
         updated_at: 1_700_000_000,
-    };
+    }
+}
 
-    let tileset = Entity {
+fn tileset_entity_fixture() -> Entity {
+    Entity {
         id: EntityId::new(2),
         kind: EntityKind::Tileset,
         name: "Forest".into(),
@@ -105,14 +118,16 @@ fn library_with_one_of_each_kind_round_trips() {
         user_data: UserData::default(),
         created_at: 1_700_000_001,
         updated_at: 1_700_000_001,
-    };
+    }
+}
 
+fn tilemap_entity_fixture() -> Entity {
     let mut tilemap_data = TilemapData::empty(2, 2);
     tilemap_data.cells[0] = TileCell {
         index: TileIndex::new(1),
         flags: TileFlags::empty(),
     };
-    let tilemap = Entity {
+    Entity {
         id: EntityId::new(3),
         kind: EntityKind::Tilemap,
         name: "Forest-1".into(),
@@ -141,9 +156,11 @@ fn library_with_one_of_each_kind_round_trips() {
         user_data: UserData::default(),
         created_at: 1_700_000_002,
         updated_at: 1_700_000_002,
-    };
+    }
+}
 
-    let reference = Entity {
+fn reference_entity_fixture() -> Entity {
+    Entity {
         id: EntityId::new(4),
         kind: EntityKind::Reference,
         name: "Hero sheet".into(),
@@ -151,7 +168,7 @@ fn library_with_one_of_each_kind_round_trips() {
         tags: Vec::new(),
         defaults: EntityDefaults::default(),
         content: EntityContent::Reference {
-            sheet: ReferenceSheet {
+            sheet: Box::new(ReferenceSheet {
                 canonical: SheetVariant {
                     id: SheetVariantId::new(1),
                     generated_at: 1_700_000_010,
@@ -166,26 +183,28 @@ fn library_with_one_of_each_kind_round_trips() {
                 history: Vec::new(),
                 prompts: Vec::new(),
                 info: AssetInfo::default(),
-            },
+            }),
         },
         ai: AiMetadata::default(),
         anchor_reference_id: None,
         user_data: UserData::default(),
         created_at: 1_700_000_010,
         updated_at: 1_700_000_010,
-    };
+    }
+}
 
-    let library = Library {
-        entities: vec![custom, tileset, tilemap, reference],
-        groups: Vec::new(),
-        palettes: Vec::new(),
-        tags: Vec::new(),
-        ai: ProjectAi::default(),
-    };
-
+#[rstest]
+#[case::custom(custom_entity_fixture())]
+#[case::tileset(tileset_entity_fixture())]
+#[case::tilemap(tilemap_entity_fixture())]
+#[case::reference(reference_entity_fixture())]
+fn entity_kind_round_trips(#[case] entity: Entity) {
+    let library = wrap_entity(entity);
     let back: Library = round_trip(&library);
     assert_eq!(library, back);
 }
+
+// ── state ordering, anchor links, populated references ────────────────────────
 
 #[test]
 fn custom_entity_with_five_states_preserves_order() {
@@ -216,10 +235,7 @@ fn custom_entity_with_five_states_preserves_order() {
         updated_at: 0,
     };
 
-    let library = Library {
-        entities: vec![entity],
-        ..Library::default()
-    };
+    let library = wrap_entity(entity);
 
     let back: Library = round_trip(&library);
     let EntityContent::Sprites {
@@ -255,10 +271,7 @@ fn anchor_reference_id_round_trips_without_resolution() {
         updated_at: 0,
     };
 
-    let library = Library {
-        entities: vec![entity],
-        ..Library::default()
-    };
+    let library = wrap_entity(entity);
 
     let back: Library = round_trip(&library);
     assert_eq!(
@@ -277,7 +290,7 @@ fn reference_entity_with_minimal_sheet_round_trips() {
         tags: Vec::new(),
         defaults: EntityDefaults::default(),
         content: EntityContent::Reference {
-            sheet: ReferenceSheet {
+            sheet: Box::new(ReferenceSheet {
                 canonical: SheetVariant {
                     id: SheetVariantId::new(1),
                     generated_at: 0,
@@ -292,7 +305,7 @@ fn reference_entity_with_minimal_sheet_round_trips() {
                 history: Vec::new(),
                 prompts: Vec::new(),
                 info: AssetInfo::default(),
-            },
+            }),
         },
         ai: AiMetadata::default(),
         anchor_reference_id: None,
@@ -301,10 +314,7 @@ fn reference_entity_with_minimal_sheet_round_trips() {
         updated_at: 0,
     };
 
-    let library = Library {
-        entities: vec![entity],
-        ..Library::default()
-    };
+    let library = wrap_entity(entity);
 
     let back: Library = round_trip(&library);
     assert_eq!(library, back);
@@ -361,7 +371,7 @@ fn reference_entity_with_populated_composition_preserves_rects() {
         tags: Vec::new(),
         defaults: EntityDefaults::default(),
         content: EntityContent::Reference {
-            sheet: ReferenceSheet {
+            sheet: Box::new(ReferenceSheet {
                 canonical: SheetVariant {
                     id: SheetVariantId::new(1),
                     generated_at: 1_700_000_000,
@@ -376,7 +386,7 @@ fn reference_entity_with_populated_composition_preserves_rects() {
                 history: Vec::new(),
                 prompts: vec![prompt_entry],
                 info,
-            },
+            }),
         },
         ai: AiMetadata::default(),
         anchor_reference_id: None,
@@ -385,10 +395,7 @@ fn reference_entity_with_populated_composition_preserves_rects() {
         updated_at: 0,
     };
 
-    let library = Library {
-        entities: vec![entity],
-        ..Library::default()
-    };
+    let library = wrap_entity(entity);
 
     let back: Library = round_trip(&library);
     let EntityContent::Reference { sheet } = &back.entities[0].content else {
@@ -437,10 +444,7 @@ fn tilemap_scene_with_three_tilesets_preserves_first_gid() {
         updated_at: 0,
     };
 
-    let library = Library {
-        entities: vec![entity],
-        ..Library::default()
-    };
+    let library = wrap_entity(entity);
 
     let back: Library = round_trip(&library);
     let EntityContent::Tilemap { scene } = &back.entities[0].content else {
@@ -453,38 +457,80 @@ fn tilemap_scene_with_three_tilesets_preserves_first_gid() {
     }
 }
 
+// ── I6: multi-layer TilemapScene ────────────────────────────────────────────
+
 #[test]
-fn library_with_groups_tags_and_project_ai_round_trips() {
+fn tilemap_scene_preserves_layer_order_opacity_and_visibility() {
+    let layers = vec![
+        TilemapLayer {
+            id: LayerId::new(1),
+            name: "ground".into(),
+            data: TilemapData::empty(4, 4),
+            opacity: 255,
+            visible: true,
+        },
+        TilemapLayer {
+            id: LayerId::new(2),
+            name: "decorations".into(),
+            data: TilemapData::empty(4, 4),
+            opacity: 128,
+            visible: true,
+        },
+        TilemapLayer {
+            id: LayerId::new(3),
+            name: "collision".into(),
+            data: TilemapData::empty(4, 4),
+            opacity: 64,
+            visible: false,
+        },
+    ];
+
+    let entity = Entity {
+        id: EntityId::new(1),
+        kind: EntityKind::Tilemap,
+        name: "Forest-Layered".into(),
+        group_id: None,
+        tags: Vec::new(),
+        defaults: EntityDefaults::default(),
+        content: EntityContent::Tilemap {
+            scene: TilemapScene {
+                size: Size::new(4, 4),
+                tilesets: Vec::new(),
+                layers: layers.clone(),
+                properties: BTreeMap::new(),
+            },
+        },
+        ai: AiMetadata::default(),
+        anchor_reference_id: None,
+        user_data: UserData::default(),
+        created_at: 0,
+        updated_at: 0,
+    };
+
+    let library = wrap_entity(entity);
+
+    let back: Library = round_trip(&library);
+    let EntityContent::Tilemap { scene } = &back.entities[0].content else {
+        panic!("expected Tilemap content");
+    };
+    assert_eq!(scene.layers.len(), layers.len());
+    for (i, (orig, restored)) in layers.iter().zip(scene.layers.iter()).enumerate() {
+        assert_eq!(orig.id, restored.id, "layer order drifted at index {i}");
+        assert_eq!(orig.name, restored.name, "name drift at index {i}");
+        assert_eq!(orig.opacity, restored.opacity, "opacity drift at index {i}");
+        assert_eq!(
+            orig.visible, restored.visible,
+            "visibility drift at index {i}"
+        );
+    }
+}
+
+// ── I7: groups, tags, project AI split out ──────────────────────────────────
+
+#[test]
+fn library_groups_round_trip_with_nested_parents() {
     let library = Library {
-        entities: vec![Entity {
-            id: EntityId::new(1),
-            kind: EntityKind::Custom("Character".into()),
-            name: "Hero".into(),
-            group_id: Some(GroupId::new(1)),
-            tags: vec![TagId::new(1), TagId::new(2)],
-            defaults: EntityDefaults {
-                canvas_size: Some(Size::new(32, 32)),
-                color_mode: Some(ColorMode::Rgba),
-                default_palette_id: Some(PaletteId::new(1)),
-                default_pivot: Some(Pivot {
-                    offset: IVec2::new(16, 16),
-                }),
-                default_fps: Some(12),
-            },
-            content: EntityContent::Sprites { states: Vec::new() },
-            ai: AiMetadata {
-                suggested_tags: vec![TagId::new(3)],
-                vlm_summary: Some("hero".into()),
-                embedding: Some(vec![0.1, 0.2, 0.3]),
-            },
-            anchor_reference_id: None,
-            user_data: UserData {
-                text: Some("playable".into()),
-                color: Some(Rgba::opaque(0, 100, 200)),
-            },
-            created_at: 1,
-            updated_at: 2,
-        }],
+        entities: Vec::new(),
         groups: vec![
             EntityGroup {
                 id: GroupId::new(1),
@@ -500,6 +546,18 @@ fn library_with_groups_tags_and_project_ai_round_trips() {
             },
         ],
         palettes: Vec::new(),
+        tags: Vec::new(),
+        ai: ProjectAi::default(),
+    };
+
+    let back: Library = round_trip(&library);
+    assert_eq!(library, back);
+    assert_eq!(back.groups[1].parent_id, Some(GroupId::new(1)));
+}
+
+#[test]
+fn library_tags_round_trip_including_auto_generated_flag() {
+    let library = Library {
         tags: vec![
             TagDefinition {
                 id: TagId::new(1),
@@ -514,8 +572,21 @@ fn library_with_groups_tags_and_project_ai_round_trips() {
                 auto_generated: true,
             },
         ],
+        ..Library::default()
+    };
+
+    let back: Library = round_trip(&library);
+    assert_eq!(library, back);
+    assert!(back.tags[1].auto_generated);
+    assert!(back.tags[0].color.is_some());
+    assert!(back.tags[1].color.is_none());
+}
+
+#[test]
+fn library_project_ai_round_trips_corpus_lora_and_history() {
+    let library = Library {
         ai: ProjectAi {
-            style_corpus: vec![EntityId::new(1)],
+            style_corpus: vec![EntityId::new(1), EntityId::new(2)],
             project_lora_path: Some("loras/project.safetensors".into()),
             prompt_history: vec![PromptHistoryEntry {
                 verb_name: "variant".into(),
@@ -523,8 +594,46 @@ fn library_with_groups_tags_and_project_ai_round_trips() {
                 timestamp: 1_700_000_000,
             }],
         },
+        ..Library::default()
     };
 
+    let back: Library = round_trip(&library);
+    assert_eq!(library, back);
+}
+
+#[test]
+fn entity_defaults_round_trip_in_full() {
+    let entity = Entity {
+        id: EntityId::new(1),
+        kind: EntityKind::Custom("Character".into()),
+        name: "Hero".into(),
+        group_id: Some(GroupId::new(1)),
+        tags: vec![TagId::new(1), TagId::new(2)],
+        defaults: EntityDefaults {
+            canvas_size: Some(Size::new(32, 32)),
+            color_mode: Some(ColorMode::Rgba),
+            default_palette_id: Some(PaletteId::new(1)),
+            default_pivot: Some(Pivot {
+                offset: IVec2::new(16, 16),
+            }),
+            default_fps: Some(12),
+        },
+        content: EntityContent::Sprites { states: Vec::new() },
+        ai: AiMetadata {
+            suggested_tags: vec![TagId::new(3)],
+            vlm_summary: Some("hero".into()),
+            embedding: Some(vec![0.1, 0.2, 0.3]),
+        },
+        anchor_reference_id: None,
+        user_data: UserData {
+            text: Some("playable".into()),
+            color: Some(Rgba::opaque(0, 100, 200)),
+        },
+        created_at: 1,
+        updated_at: 2,
+    };
+
+    let library = wrap_entity(entity);
     let back: Library = round_trip(&library);
     assert_eq!(library, back);
 }
@@ -549,5 +658,92 @@ fn active_target_variants_round_trip() {
     ] {
         let back: ActiveTarget = round_trip(&target);
         assert_eq!(target, back);
+    }
+}
+
+// ── I3: AiMetadata.embedding boundary values ────────────────────────────────
+
+/// Embeddings serialise as `Vec<f32>`. The brief calls out a handful of
+/// floating-point values that have historically surfaced bugs in the
+/// `f32` serde pipeline: signed zero (which `==` collapses), the
+/// smallest non-zero (`MIN_POSITIVE`), the smallest representable step
+/// (`EPSILON`), and the magnitude extremes (`MIN`, `MAX`). The
+/// comparison uses `to_bits` because `-0.0 == 0.0` would otherwise
+/// silently accept a round-trip that dropped the sign bit. NaN is left
+/// out because `to_bits` makes the comparison platform-dependent.
+#[test]
+fn ai_metadata_embedding_round_trips_boundary_f32_values() {
+    let boundary = vec![
+        0.0_f32,
+        -0.0_f32,
+        f32::MIN,
+        f32::MAX,
+        f32::EPSILON,
+        f32::MIN_POSITIVE,
+    ];
+
+    let metadata = AiMetadata {
+        suggested_tags: Vec::new(),
+        vlm_summary: None,
+        embedding: Some(boundary.clone()),
+    };
+
+    let back: AiMetadata = round_trip(&metadata);
+    let restored = back.embedding.expect("embedding survived round-trip");
+    assert_eq!(restored.len(), boundary.len());
+    for (i, (orig, got)) in boundary.iter().zip(restored.iter()).enumerate() {
+        assert_eq!(
+            orig.to_bits(),
+            got.to_bits(),
+            "f32 boundary value at index {i} drifted: {orig} (bits {:#x}) -> {got} (bits {:#x})",
+            orig.to_bits(),
+            got.to_bits(),
+        );
+    }
+}
+
+// ── I4: i64 timestamp boundary values ───────────────────────────────────────
+
+/// `PromptHistoryEntry.timestamp` is an i64. Pixhaus writes wall-clock
+/// epoch seconds today, but the on-disk type accepts the full range so
+/// future timestamping logic (negative for pre-1970 imports, MAX for
+/// "never expire" sentinels) round-trips without truncation.
+#[rstest]
+#[case(i64::MIN)]
+#[case(-1)]
+#[case(0)]
+#[case(1)]
+#[case(i64::MAX)]
+fn prompt_history_timestamp_round_trips_at_i64_extremes(#[case] value: i64) {
+    let entry = PromptHistoryEntry {
+        verb_name: "x".into(),
+        prompt: "y".into(),
+        timestamp: value,
+    };
+    let back: PromptHistoryEntry = round_trip(&entry);
+    assert_eq!(back, entry);
+}
+
+// ── I5: proptest round-trip property for EntityKind ─────────────────────────
+
+fn entity_kind_strategy() -> impl Strategy<Value = EntityKind> {
+    prop_oneof![
+        Just(EntityKind::Tileset),
+        Just(EntityKind::Tilemap),
+        Just(EntityKind::Reference),
+        "[a-zA-Z0-9 ]{1,32}".prop_map(EntityKind::Custom),
+    ]
+}
+
+proptest! {
+    /// Encode-then-decode must equal input for every `EntityKind`. The
+    /// strategy walks all four variants uniformly; the `Custom` arm
+    /// covers labels of 1–32 alphanumeric (plus space) characters, the
+    /// alphabet the editor accepts for user-typed kind names today.
+    #[test]
+    fn entity_kind_round_trips_via_messagepack(kind in entity_kind_strategy()) {
+        let bytes = rmp_serde::to_vec_named(&kind).expect("encode");
+        let back: EntityKind = rmp_serde::from_slice(&bytes).expect("decode");
+        prop_assert_eq!(kind, back);
     }
 }

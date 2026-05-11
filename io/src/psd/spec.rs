@@ -19,6 +19,12 @@ use pixhaus_core::project::BlendMode;
 /// the input mode has no direct Pixhaus equivalent and fell back to
 /// `BlendMode::Normal`. Approximations (e.g. `LinearBurn` → `ColorBurn`)
 /// also set `had_unknown` so the caller can surface a warning.
+//
+// Used by the PSD importer, currently gutted during the B9 migration.
+// The importer comes back in B9.5 and consumes this directly; tests in
+// the same module exercise the mapping table so the data stays
+// trustworthy across the gap.
+#[allow(dead_code)]
 pub(super) fn blend_mode_from_psd_debug(mode_debug: &str) -> (BlendMode, bool) {
     match mode_debug {
         // Direct mappings

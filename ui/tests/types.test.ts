@@ -1,7 +1,15 @@
 import { describe, expect, it } from "vitest";
 
 import sample from "./fixtures/sample-project.json" with { type: "json" };
-import type { CelData, LayerKind, Project, SelectionRegion, TilesetSource } from "../src/lib/types";
+import type {
+  CelData,
+  EntityContent,
+  LayerKind,
+  Project,
+  SelectionRegion,
+  Sprite,
+  TilesetSource,
+} from "../src/lib/types";
 
 // The fixture is written by `cargo test -p pixhaus-core --test round_trip`.
 // Re-running the Rust test suite refreshes the file.
@@ -15,9 +23,28 @@ import type { CelData, LayerKind, Project, SelectionRegion, TilesetSource } from
 // so a serde rename or missing field surfaces as a test failure.
 const project = sample as unknown as Project;
 
+// The hero sprite lives in `library.entities[i].content.value.states[j].sprite`
+// for the only `Custom`-kind entity in the fixture. Helper hides the
+// nesting from the assertion bodies below.
+//
+// `library` and `entities` are typed `T | undefined` in the generated TS
+// because the matching Rust fields are `skip_serializing_if`-optional;
+// the fallbacks below normalise to empty arrays so the loop is total
+// without an explicit non-null assertion at every read.
+function heroSprite(): Sprite {
+  const entities = project.library?.entities ?? [];
+  for (const entity of entities) {
+    const content = entity.content as EntityContent;
+    if (content.type === "Sprites" && content.value.states.length > 0) {
+      return content.value.states[0]!.sprite;
+    }
+  }
+  throw new Error("fixture must contain at least one Custom-kind entity with a sprite state");
+}
+
 describe("Project fixture mirrors the Rust data model", () => {
   it("exposes the current schema version", () => {
-    expect(project.schema_version).toEqual({ major: 1, minor: 1 });
+    expect(project.schema_version).toEqual({ major: 2, minor: 0 });
   });
 
   it("encodes feature flags as a packed bitfield", () => {
@@ -30,14 +57,13 @@ describe("Project fixture mirrors the Rust data model", () => {
   });
 
   it("includes one sprite with all four layer kinds", () => {
-    expect(project.sprites).toHaveLength(1);
-    const sprite = project.sprites[0]!;
+    const sprite = heroSprite();
     const kinds = sprite.layers.map((l): LayerKind["kind"] => l.kind.kind);
     expect(kinds).toEqual(["raster", "group", "tilemap", "reference"]);
   });
 
   it("stores tilemap cels as embedded grids", () => {
-    const sprite = project.sprites[0]!;
+    const sprite = heroSprite();
     const tilemapCel = sprite.cels.find(
       (c): c is typeof c & { data: Extract<CelData, { kind: "tilemap" }> } =>
         c.data.kind === "tilemap",
@@ -48,7 +74,7 @@ describe("Project fixture mirrors the Rust data model", () => {
   });
 
   it("stores linked cels by source frame index", () => {
-    const sprite = project.sprites[0]!;
+    const sprite = heroSprite();
     const linked = sprite.cels.find(
       (c): c is typeof c & { data: Extract<CelData, { kind: "linked" }> } =>
         c.data.kind === "linked",
@@ -58,14 +84,14 @@ describe("Project fixture mirrors the Rust data model", () => {
   });
 
   it("encodes inline tilesets with a buffer handle", () => {
-    const tileset = project.sprites[0]!.tilesets[0]!;
+    const tileset = heroSprite().tilesets[0]!;
     const source = tileset.source as Extract<TilesetSource, { kind: "inline" }>;
     expect(source.kind).toBe("inline");
     expect(source.buffer).toBe(2000);
   });
 
   it("uses snake_case for blend modes and loop directions", () => {
-    const sprite = project.sprites[0]!;
+    const sprite = heroSprite();
     const tilemapLayer = sprite.layers.find((l) => l.kind.kind === "tilemap")!;
     expect(tilemapLayer.blend_mode).toBe("multiply");
     expect(sprite.frame_tags[0]!.loop_direction).toBe("ping_pong");
@@ -81,7 +107,7 @@ describe("Project fixture mirrors the Rust data model", () => {
   });
 
   it("carries a slice with nine-slice and pivot metadata", () => {
-    const slice = project.sprites[0]!.slices[0]!;
+    const slice = heroSprite().slices[0]!;
     expect(slice.keys[0]!.nine_slice).toEqual({
       center: { origin: { x: 4, y: 4 }, size: { width: 24, height: 24 } },
     });

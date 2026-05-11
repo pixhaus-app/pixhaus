@@ -7,18 +7,20 @@ import type { Library } from "./Library";
 import type { ProjectMetadata } from "./ProjectMetadata";
 import type { SchemaVersion } from "./SchemaVersion";
 import type { SelectionState } from "./SelectionState";
-import type { Sprite } from "./Sprite";
 
 /**
  * The root of a Pixhaus project.
  *
- * One `Project` corresponds to one document on disk. The library
- * (B9, additive in this revision) is the canonical home for all named
- * content — entities, groups, palettes, tags, AI metadata. The
- * `sprites` and `CanvasState::active_sprite` fields remain so the
- * existing IPC commands, AI verbs, and aseprite I/O continue to
- * compile while B9.2-B9.5 migrate consumers off them; the cleanup PR
- * after B9.5 lands removes both.
+ * One `Project` corresponds to one document on disk. The
+ * [`Self::library`] holds every named asset: `Custom`-kind entities
+ * with their sprite states, tilesets, tilemap scenes, and references.
+ * [`Self::active`] tracks what the editor is foregrounding inside the
+ * library.
+ *
+ * Accessor methods ([`Self::sprite`], [`Self::sprite_mut`],
+ * [`Self::sprites_iter`], [`Self::sprites_iter_mut`],
+ * [`Self::active_sprite_id`]) walk the library so call sites don't
+ * have to know about the entity / state nesting.
  */
 export type Project = { 
 /**
@@ -35,21 +37,8 @@ feature_flags: FeatureFlags,
  */
 metadata: ProjectMetadata, 
 /**
- * Sprites contained in the project. May be empty during the
- * brief window between "create project" and "add first sprite".
- *
- * Transitional. New code targets [`Self::library`]; the field
- * stays in this PR so existing consumers compile, and the cleanup
- * PR after the B9 migration removes it.
- */
-sprites: Array<Sprite>, 
-/**
  * Project library: entities, groups, palettes, tags, AI metadata.
- *
- * Empty in fixtures written before B9 — the field carries
- * [`serde::Deserialize`]'s `default` so older `.pixhaus` archives
- * still load. New projects populate it; B9.2 onward routes IPC
- * commands through it.
+ * The canonical home for every named asset.
  */
 library?: Library, 
 /**
@@ -66,9 +55,5 @@ brush: BrushState,
 selection: SelectionState, 
 /**
  * What the user is currently editing inside the library.
- *
- * Replaces [`CanvasState::active_sprite`] going forward; the old
- * field stays during the B9 migration so existing consumers
- * continue to compile.
  */
 active?: ActiveTarget, };

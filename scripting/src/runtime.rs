@@ -181,10 +181,10 @@ mod tests {
         let mut project = Project::new("test");
         let mut sprite = Sprite::empty(SpriteId::new(1), "hero", Size::new(16, 16));
         sprite.layers.push(Layer::raster(LayerId::new(1), "base"));
-        project.sprites.push(sprite);
+        install_test_sprite(&mut project, sprite);
 
         let mut ctx = ScriptContext::with_project(project);
-        ctx.active_sprite_index = Some(0);
+        ctx.active_sprite_id = Some(SpriteId::new(1));
 
         let script = r"
             assert(app.activeSprite ~= nil)
@@ -241,9 +241,9 @@ mod tests {
         let mut project = Project::new("test");
         let mut sprite = Sprite::empty(SpriteId::new(1), "hero", Size::new(16, 16));
         sprite.layers.push(Layer::raster(LayerId::new(1), "base"));
-        project.sprites.push(sprite);
+        install_test_sprite(&mut project, sprite);
         let mut ctx = ScriptContext::with_project(project);
-        ctx.active_sprite_index = Some(0);
+        ctx.active_sprite_id = Some(SpriteId::new(1));
 
         let bad = r#"
             app.activeSprite.name = "renamed-but-rolled-back"
@@ -253,5 +253,46 @@ mod tests {
 
         let out = rt.execute("", &ctx).unwrap();
         assert!(out.mutations.is_empty(), "rolled-back mutations leaked");
+    }
+
+    /// Wraps a sprite into the project library as a `Custom`-kind
+    /// entity so the rest of the test body keeps the same shape after
+    /// the B9.1 cleanup removed `Project.sprites`.
+    fn install_test_sprite(
+        project: &mut pixhaus_core::project::Project,
+        sprite: pixhaus_core::project::Sprite,
+    ) {
+        use pixhaus_core::project::{
+            ActiveTarget, AiMetadata, Entity, EntityContent, EntityDefaults, EntityId, EntityKind,
+            NamedSprite, StateId, UserData,
+        };
+
+        let id = sprite.id;
+        project.library.entities.push(Entity {
+            id: EntityId::new(1),
+            kind: EntityKind::Custom("Test".into()),
+            name: "test".into(),
+            group_id: None,
+            tags: Vec::new(),
+            defaults: EntityDefaults::default(),
+            content: EntityContent::Sprites {
+                states: vec![NamedSprite {
+                    id: StateId::new(1),
+                    state_name: "primary".into(),
+                    sprite,
+                    engine_tags: Vec::new(),
+                }],
+            },
+            ai: AiMetadata::default(),
+            anchor_reference_id: None,
+            user_data: UserData::default(),
+            created_at: 0,
+            updated_at: 0,
+        });
+        project.active = ActiveTarget::State {
+            entity_id: EntityId::new(1),
+            state_id: StateId::new(1),
+        };
+        let _ = id;
     }
 }

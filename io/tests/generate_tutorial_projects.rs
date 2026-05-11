@@ -30,11 +30,49 @@
 use std::path::PathBuf;
 
 use pixhaus_core::project::{
-    AnimationId, BlendMode, BrushShape, BrushState, CanvasState, Cel, ColorMode, FeatureFlags,
-    Frame, FrameIndex, FrameRange, FrameTag, Layer, LayerId, LayerKind, LoopDirection, Palette,
-    PaletteEntry, PaletteId, PixelBufferId, Project, Rgba, Size, Sprite, SpriteId, UserData,
+    ActiveTarget, AiMetadata, AnimationId, BlendMode, BrushShape, BrushState, CanvasState, Cel,
+    ColorMode, Entity, EntityContent, EntityDefaults, EntityId, EntityKind, FeatureFlags, Frame,
+    FrameIndex, FrameRange, FrameTag, Layer, LayerId, LayerKind, LoopDirection, NamedSprite,
+    Palette, PaletteEntry, PaletteId, PixelBufferId, Project, Rgba, Size, Sprite, SpriteId,
+    StateId, UserData,
 };
 use pixhaus_io::pixhaus::{PixelBufferEntry, PixhausArchive, encode_to_file};
+
+/// Wraps a single sprite into the library as a `Custom`-kind entity
+/// with one primary state. Replacement for the removed
+/// `project.sprites = vec![sprite]` shorthand used throughout these
+/// generators. Each project still has at most one sprite, so the
+/// fixed `EntityId::new(1)` / `StateId::new(1)` is fine; the helper
+/// also sets `project.active` so consumers that ask "what's the
+/// editor on" continue to resolve.
+fn install_sprite_as_entity(project: &mut Project, sprite: Sprite, entity_name: &str) {
+    let entity = Entity {
+        id: EntityId::new(1),
+        kind: EntityKind::Custom("Sample".into()),
+        name: entity_name.into(),
+        group_id: None,
+        tags: Vec::new(),
+        defaults: EntityDefaults::default(),
+        content: EntityContent::Sprites {
+            states: vec![NamedSprite {
+                id: StateId::new(1),
+                state_name: "primary".into(),
+                sprite,
+                engine_tags: Vec::new(),
+            }],
+        },
+        ai: AiMetadata::default(),
+        anchor_reference_id: None,
+        user_data: UserData::default(),
+        created_at: 0,
+        updated_at: 0,
+    };
+    project.library.entities.push(entity);
+    project.active = ActiveTarget::State {
+        entity_id: EntityId::new(1),
+        state_id: StateId::new(1),
+    };
+}
 
 const REGEN_ENV: &str = "PIXHAUS_REGEN_TUTORIALS";
 
@@ -232,7 +270,6 @@ fn rcel(layer: u32, frame: u32, buf: u32, w: u32, h: u32) -> Cel {
 
 fn default_canvas(active_frame: u32) -> CanvasState {
     CanvasState {
-        active_sprite: Some(SpriteId::new(1)),
         active_layer: Some(LayerId::new(1)),
         active_frame: Some(FrameIndex::new(active_frame)),
         scroll_x: 0.0,
@@ -283,7 +320,7 @@ fn build_walk_cycle_start() -> PixhausArchive {
     project.metadata.description =
         Some("Walk cycle starter: 2 key frames for the AI inbetween tutorial (S44).".into());
     project.feature_flags = FeatureFlags::ANIMATIONS;
-    project.sprites = vec![sprite];
+    install_sprite_as_entity(&mut project, sprite, "Walk Cycle Start");
     project.canvas = CanvasState {
         onion_skin: true,
         ..default_canvas(0)
@@ -340,7 +377,7 @@ fn build_walk_cycle_finished() -> PixhausArchive {
             .into(),
     );
     project.feature_flags = FeatureFlags::ANIMATIONS;
-    project.sprites = vec![sprite];
+    install_sprite_as_entity(&mut project, sprite, "Walk Cycle Finished");
     project.canvas = default_canvas(0);
     project.brush = default_brush(4);
 
@@ -407,7 +444,7 @@ fn build_export_unity_start() -> PixhausArchive {
         "Unity export starter: idle/walk/attack animations for the export tutorial (S44).".into(),
     );
     project.feature_flags = FeatureFlags::ANIMATIONS;
-    project.sprites = vec![sprite];
+    install_sprite_as_entity(&mut project, sprite, "Export Unity Start");
     project.canvas = default_canvas(0);
     project.brush = default_brush(4);
 
@@ -439,7 +476,7 @@ fn build_lua_palette_start() -> PixhausArchive {
     let mut project = Project::new("lua-palette-start");
     project.metadata.description =
         Some("Lua tutorial starter: 16-color palette in arbitrary order (S44).".into());
-    project.sprites = vec![sprite];
+    install_sprite_as_entity(&mut project, sprite, "Lua Palette Start");
     project.canvas = default_canvas(0);
     project.brush = default_brush(4);
 
@@ -472,7 +509,7 @@ fn build_lua_palette_finished() -> PixhausArchive {
     project.metadata.description = Some(
         "Lua tutorial finished: palette sorted by luminance via the tutorial script (S44).".into(),
     );
-    project.sprites = vec![sprite];
+    install_sprite_as_entity(&mut project, sprite, "Lua Palette Finished");
     project.canvas = default_canvas(0);
     project.brush = default_brush(4);
 

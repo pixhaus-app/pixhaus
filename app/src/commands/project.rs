@@ -2,7 +2,10 @@
 
 use std::path::PathBuf;
 
-use pixhaus_core::project::{ColorMode, Project, ProjectMetadata, Size, Sprite, SpriteId};
+use pixhaus_core::project::{
+    ActiveTarget, AiMetadata, ColorMode, Entity, EntityContent, EntityDefaults, EntityId,
+    EntityKind, NamedSprite, Project, ProjectMetadata, Size, Sprite, SpriteId, StateId, UserData,
+};
 use pixhaus_core::undo::History;
 use pixhaus_io::pixhaus::{PixelBufferEntry, PixhausArchive};
 use serde::{Deserialize, Serialize};
@@ -52,7 +55,7 @@ fn install_new_project(doc: &mut DocumentStore, project: Project) -> ProjectStat
         metadata: project.metadata.clone(),
         path: None,
         dirty: true,
-        sprite_count: project.sprites.len(),
+        sprite_count: project.sprites_iter().count(),
     };
     doc.project = Some(project);
     doc.path = None;
@@ -115,7 +118,7 @@ fn install_loaded_project(
         metadata: project.metadata.clone(),
         path: Some(path.to_string_lossy().into_owned()),
         dirty: false,
-        sprite_count: project.sprites.len(),
+        sprite_count: project.sprites_iter().count(),
     };
     doc.project = Some(project);
     doc.path = Some(path);
@@ -134,7 +137,8 @@ fn install_loaded_project(
 /// reusing an id that came in from disk.
 fn compute_next_id(project: &Project) -> u32 {
     let mut max = 0u32;
-    for sprite in &project.sprites {
+    for (named, _) in project.sprites_iter() {
+        let sprite = &named.sprite;
         max = max.max(sprite.id.get());
         for layer in &sprite.layers {
             max = max.max(layer.id.get());
@@ -260,7 +264,7 @@ fn install_imported_project(doc: &mut DocumentStore, archive: PixhausArchive) ->
         metadata: project.metadata.clone(),
         path: None,
         dirty: true,
-        sprite_count: project.sprites.len(),
+        sprite_count: project.sprites_iter().count(),
     };
     doc.project = Some(project);
     doc.path = None;
@@ -402,7 +406,7 @@ pub async fn project_get(state: State<'_, AppState>) -> CommandResult<Option<Pro
             .as_ref()
             .and_then(|p| p.to_str().map(str::to_owned)),
         dirty: doc.dirty,
-        sprite_count: project.sprites.len(),
+        sprite_count: project.sprites_iter().count(),
     }))
 }
 
@@ -411,6 +415,10 @@ pub async fn project_get(state: State<'_, AppState>) -> CommandResult<Option<Pro
 pub async fn sprite_add(args: SpriteAddArgs, state: State<'_, AppState>) -> CommandResult<Sprite> {
     let mut doc = state.doc.write().await;
     let id = SpriteId::new(doc.next_id);
+    doc.next_id += 1;
+    let entity_id_raw = doc.next_id;
+    doc.next_id += 1;
+    let state_id_raw = doc.next_id;
     doc.next_id += 1;
     let sprite = {
         let project = doc
@@ -423,14 +431,58 @@ pub async fn sprite_add(args: SpriteAddArgs, state: State<'_, AppState>) -> Comm
             Size::new(args.canvas_width, args.canvas_height),
         );
         sprite.color_mode = args.color_mode;
-        project.sprites.push(sprite.clone());
+        install_sprite_as_new_entity(project, sprite.clone(), entity_id_raw, state_id_raw);
         sprite
     };
     doc.dirty = true;
     Ok(sprite)
 }
 
+/// Wraps a sprite into the project library as a fresh `Custom`-kind
+/// entity with one primary state. Marks the new state active so
+/// `project.active` points at it after the call.
+fn install_sprite_as_new_entity(
+    project: &mut Project,
+    sprite: Sprite,
+    entity_id_raw: u32,
+    state_id_raw: u32,
+) -> EntityId {
+    let entity_id = EntityId::new(entity_id_raw);
+    let state_id = StateId::new(state_id_raw);
+    let name = sprite.name.clone();
+    project.library.entities.push(Entity {
+        id: entity_id,
+        kind: EntityKind::Custom("Sprite".into()),
+        name,
+        group_id: None,
+        tags: Vec::new(),
+        defaults: EntityDefaults::default(),
+        content: EntityContent::Sprites {
+            states: vec![NamedSprite {
+                id: state_id,
+                state_name: "primary".into(),
+                sprite,
+                engine_tags: Vec::new(),
+            }],
+        },
+        ai: AiMetadata::default(),
+        anchor_reference_id: None,
+        user_data: UserData::default(),
+        created_at: 0,
+        updated_at: 0,
+    });
+    project.active = ActiveTarget::State {
+        entity_id,
+        state_id,
+    };
+    entity_id
+}
+
 /// Removes a sprite from the active project by ID.
+///
+/// The legacy data model held one sprite per entity, so removing a
+/// sprite from the library means removing the entity that owns the
+/// matching state.
 #[tauri::command(async, rename_all = "snake_case")]
 pub async fn sprite_delete(sprite_id: SpriteId, state: State<'_, AppState>) -> CommandResult<()> {
     let mut doc = state.doc.write().await;
@@ -439,9 +491,12 @@ pub async fn sprite_delete(sprite_id: SpriteId, state: State<'_, AppState>) -> C
             .project
             .as_mut()
             .ok_or(AppCommandError::NoActiveProject)?;
-        let before = project.sprites.len();
-        project.sprites.retain(|s| s.id != sprite_id);
-        if project.sprites.len() == before {
+        let before = project.library.entities.len();
+        project.library.entities.retain(|e| match &e.content {
+            EntityContent::Sprites { states } => !states.iter().any(|s| s.sprite.id == sprite_id),
+            _ => true,
+        });
+        if project.library.entities.len() == before {
             return Err(AppCommandError::NotFound {
                 entity: "sprite".into(),
                 id: u64::from(sprite_id.get()),
@@ -460,7 +515,10 @@ pub async fn sprite_list(state: State<'_, AppState>) -> CommandResult<Vec<Sprite
         .project
         .as_ref()
         .ok_or(AppCommandError::NoActiveProject)?;
-    Ok(project.sprites.clone())
+    Ok(project
+        .sprites_iter()
+        .map(|(named, _)| named.sprite.clone())
+        .collect())
 }
 
 #[cfg(test)]
@@ -506,7 +564,7 @@ mod tests {
             metadata: project.metadata.clone(),
             path: None,
             dirty: true,
-            sprite_count: project.sprites.len(),
+            sprite_count: project.sprites_iter().count(),
         };
         assert_eq!(status.sprite_count, 0);
         assert!(status.dirty);
@@ -550,7 +608,7 @@ mod tests {
             colors: Vec::new(),
             user_data: UserData::default(),
         });
-        project.sprites.push(sprite);
+        install_sprite_as_new_entity(&mut project, sprite, 1_000, 1_001);
 
         let next = compute_next_id(&project);
         assert!(
@@ -567,7 +625,7 @@ mod tests {
         use pixhaus_core::project::{PixelBufferId, Rect, SelectionRegion, Size, Sprite, SpriteId};
         let mut project = Project::new("selection-fixture");
         let sprite = Sprite::empty(SpriteId::new(2), "main", Size::new(8, 8));
-        project.sprites.push(sprite);
+        install_sprite_as_new_entity(&mut project, sprite, 1_000, 1_001);
         project.selection.region = Some(SelectionRegion::Mask {
             bounds: Rect::from_xywh(0, 0, 8, 8),
             mask: PixelBufferId::new(99),
@@ -797,14 +855,15 @@ mod tests {
 
     // ── aseprite import ───────────────────────────────────────────────────────
     //
-    // The Tauri command itself takes `State<'_, AppState>` which can't be
-    // constructed from a unit test. Cover the same code path the command
-    // calls: decode → convert → install. A fixture from
-    // `examples/aseprite-roundtrip/` guards the round-trip so a future
-    // decoder regression fails here, not just at runtime.
+    // The aseprite importer is gutted during the B9.1–B9.5 window. The
+    // Tauri command path still calls `document_to_archive`, which now
+    // returns `LegacyImportUnsupported`. This test pins that contract
+    // so a regression that silently re-enables a broken translation
+    // surfaces before the UI sees it; the round-trip-on-real-bytes
+    // assertions return in B9.5.
 
     #[test]
-    fn import_aseprite_installs_project_with_canvas_and_dirty_flag() {
+    fn import_aseprite_surfaces_legacy_unsupported_during_b9_migration() {
         let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
             .parent()
             .expect("app crate has parent")
@@ -814,25 +873,14 @@ mod tests {
 
         let document = pixhaus_io::aseprite::decode_from_file(&path)
             .unwrap_or_else(|e| panic!("decode {}: {e:?}", path.display()));
-        let converted = pixhaus_io::aseprite::document_to_archive(&document, "imported")
-            .unwrap_or_else(|e| panic!("convert {}: {e:?}", path.display()));
-
-        let mut doc = doc_with_history_entry();
-        let status = install_imported_project(&mut doc, converted.archive);
-
+        let err = pixhaus_io::aseprite::document_to_archive(&document, "imported")
+            .expect_err("aseprite import is gutted during the B9 migration");
         assert!(
-            doc.history.node_count() == 0,
-            "aseprite import must drop the previous undo history"
-        );
-        assert!(
-            status.path.is_none(),
-            "imported project has no on-disk path"
-        );
-        assert!(doc.dirty, "imported project is dirty until first save");
-        let project = doc.project.as_ref().expect("project installed");
-        assert!(
-            !project.sprites.is_empty(),
-            "imported project should contain at least one sprite"
+            matches!(
+                err,
+                pixhaus_io::Error::LegacyImportUnsupported { format: "aseprite" }
+            ),
+            "expected LegacyImportUnsupported, got {err:?}"
         );
     }
 }

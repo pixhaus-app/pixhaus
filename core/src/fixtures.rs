@@ -10,6 +10,8 @@
 //! byte-identical `MessagePack` and JSON output, which the file-format
 //! and IPC streams rely on for snapshot-based assertions.
 
+use std::collections::BTreeMap;
+
 use crate::project::{
     ActiveTarget, AiMetadata, Animation, AnimationId, AssetInfo, BlendMode, BrushShape, BrushState,
     CanvasState, Cel, CelData, ColorMode, Entity, EntityContent, EntityDefaults, EntityGroup,
@@ -18,8 +20,8 @@ use crate::project::{
     PaletteEntry, PaletteId, Pivot, PixelBufferId, Project, ProjectAi, ProjectMetadata, Rect,
     ReferenceImage, ReferenceSheet, Rgba, SchemaVersion, SelectionRegion, SelectionState,
     SheetComposition, SheetVariant, SheetVariantId, Size, Slice, SliceId, SliceKey, Sprite,
-    SpriteId, StateId, TagDefinition, TagId, TileCell, TileFlags, TileIndex, TilemapData, Tileset,
-    TilesetId, TilesetSource, UserData,
+    SpriteId, StateId, TagDefinition, TagId, TileCell, TileFlags, TileIndex, TilemapData,
+    TilemapLayer, TilemapScene, Tileset, TilesetId, TilesetReference, TilesetSource, UserData,
 };
 
 /// Builds a fully-populated sample project that touches every type in
@@ -227,7 +229,7 @@ pub fn sample_project() -> Project {
         user_data: UserData::default(),
     };
 
-    let library = sample_library(&sprite);
+    let library = sample_library(sprite);
 
     Project {
         schema_version: SchemaVersion::current(),
@@ -244,10 +246,8 @@ pub fn sample_project() -> Project {
             updated_at: 1_700_001_000,
             editor_version: env!("CARGO_PKG_VERSION").into(),
         },
-        sprites: vec![sprite],
         library,
         canvas: CanvasState {
-            active_sprite: Some(SpriteId::new(1)),
             active_layer: Some(LayerId::new(1)),
             active_frame: Some(FrameIndex::new(0)),
             scroll_x: 0.0,
@@ -278,13 +278,15 @@ pub fn sample_project() -> Project {
 
 /// Builds the [`Library`] half of [`sample_project`]. Splits out so the
 /// long literal in the parent stays scannable while still touching every
-/// new B9 type.
+/// B9 type. Consumes the hero sprite so the only copy lives inside the
+/// library — `sample_project` no longer needs an external `sprites: Vec`
+/// after the B9.1 cleanup.
 #[allow(clippy::too_many_lines)]
-fn sample_library(hero_sprite: &Sprite) -> Library {
+fn sample_library(hero_sprite: Sprite) -> Library {
     let hero_state = NamedSprite {
         id: StateId::new(1),
         state_name: "idle".into(),
-        sprite: hero_sprite.clone(),
+        sprite: hero_sprite,
         engine_tags: vec!["loopable".into()],
     };
 
@@ -307,7 +309,10 @@ fn sample_library(hero_sprite: &Sprite) -> Library {
         ai: AiMetadata {
             suggested_tags: Vec::new(),
             vlm_summary: Some("A small armoured hero in front-facing pose.".into()),
-            embedding: None,
+            // Populated so downstream snapshots cover the embedding
+            // serde path; round-trip tests assert exact bit equality
+            // via `to_bits` to catch subtle f32 drift.
+            embedding: Some(vec![0.1, 0.2, 0.3]),
         },
         anchor_reference_id: Some(EntityId::new(3)),
         user_data: UserData::default(),
@@ -354,7 +359,7 @@ fn sample_library(hero_sprite: &Sprite) -> Library {
         tags: Vec::new(),
         defaults: EntityDefaults::default(),
         content: EntityContent::Reference {
-            sheet: ReferenceSheet {
+            sheet: Box::new(ReferenceSheet {
                 canonical: SheetVariant {
                     id: SheetVariantId::new(1),
                     generated_at: 1_700_000_020,
@@ -369,7 +374,7 @@ fn sample_library(hero_sprite: &Sprite) -> Library {
                 history: Vec::new(),
                 prompts: Vec::new(),
                 info: AssetInfo::default(),
-            },
+            }),
         },
         ai: AiMetadata::default(),
         anchor_reference_id: None,
@@ -378,8 +383,51 @@ fn sample_library(hero_sprite: &Sprite) -> Library {
         updated_at: 1_700_000_020,
     };
 
+    // Tilemap entity references the tileset entity above by id so the
+    // fixture exercises cross-entity references and the Tiled-style
+    // first_gid model that TilemapScene preserves.
+    let mut tilemap_data = TilemapData::empty(4, 4);
+    tilemap_data.cells[0] = TileCell {
+        index: TileIndex::new(1),
+        flags: TileFlags::empty(),
+    };
+    tilemap_data.cells[5] = TileCell {
+        index: TileIndex::new(2),
+        flags: TileFlags::FLIP_X,
+    };
+    let tilemap_entity = Entity {
+        id: EntityId::new(4),
+        kind: EntityKind::Tilemap,
+        name: "Dungeon-1".into(),
+        group_id: Some(GroupId::new(2)),
+        tags: Vec::new(),
+        defaults: EntityDefaults::default(),
+        content: EntityContent::Tilemap {
+            scene: TilemapScene {
+                size: Size::new(4, 4),
+                tilesets: vec![TilesetReference {
+                    tileset_entity_id: EntityId::new(2),
+                    first_gid: TileIndex::new(1),
+                }],
+                layers: vec![TilemapLayer {
+                    id: LayerId::new(100),
+                    name: "ground".into(),
+                    data: tilemap_data,
+                    opacity: 255,
+                    visible: true,
+                }],
+                properties: BTreeMap::new(),
+            },
+        },
+        ai: AiMetadata::default(),
+        anchor_reference_id: None,
+        user_data: UserData::default(),
+        created_at: 1_700_000_030,
+        updated_at: 1_700_000_030,
+    };
+
     Library {
-        entities: vec![hero, tileset_entity, reference_entity],
+        entities: vec![hero, tileset_entity, reference_entity, tilemap_entity],
         groups: vec![
             EntityGroup {
                 id: GroupId::new(1),

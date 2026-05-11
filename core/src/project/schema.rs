@@ -11,6 +11,7 @@
 //! for how this lands on disk.
 
 use serde::{Deserialize, Serialize};
+use thiserror::Error;
 use ts_rs::TS;
 
 /// Versioned identity of the data model.
@@ -31,14 +32,20 @@ pub struct SchemaVersion {
 
 impl SchemaVersion {
     /// Major version this build of Pixhaus writes.
-    pub const MAJOR: u16 = 1;
+    ///
+    /// Bumped from `1` to `2` for B9.1-cleanup: the transitional
+    /// `Project.sprites` field and `CanvasState::active_sprite` field
+    /// were removed in favour of `Project.library` and `Project.active`.
+    /// Files written at major `1` are pre-release and can no longer be
+    /// loaded; readers surface [`SchemaError::PreReleaseFile`] so the UI
+    /// can guide the user to re-create the project with the current
+    /// build.
+    pub const MAJOR: u16 = 2;
 
     /// Minor version this build of Pixhaus writes.
     ///
-    /// Bumped from `0` to `1` for B9.1: the `Project` struct gained the
-    /// optional `library` and `active` fields. Both deserialise via
-    /// `serde(default)` so files written at minor `0` continue to load.
-    pub const MINOR: u16 = 1;
+    /// Reset to `0` for the major bump.
+    pub const MINOR: u16 = 0;
 
     /// The version emitted by this build.
     #[must_use]
@@ -124,6 +131,28 @@ impl FeatureFlags {
     }
 }
 
+/// Schema-level rejection reasons surfaced by readers in `pixhaus-io`.
+///
+/// Distinct from the io crate's container-format errors: this carries
+/// data-model versioning failures so the UI can render targeted guidance
+/// (re-create a pre-release file, upgrade Pixhaus to load a newer file)
+/// rather than a generic "could not open" string.
+#[derive(Debug, Error, Clone, PartialEq, Eq)]
+pub enum SchemaError {
+    /// File was written by a pre-release Pixhaus (major version below
+    /// the current one). These builds shipped data shapes that the
+    /// stable build can no longer load — the only path forward is to
+    /// re-create the project with the current build.
+    #[error(
+        "This file was created with a pre-release Pixhaus and is not supported. \
+         Re-create it with the current version."
+    )]
+    PreReleaseFile {
+        /// The file's recorded major version, surfaced in error logs.
+        file_major: u16,
+    },
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -138,16 +167,33 @@ mod tests {
 
     #[test]
     fn same_major_is_compatible() {
-        let v = SchemaVersion { major: 1, minor: 5 };
-        let other = SchemaVersion { major: 1, minor: 0 };
+        let v = SchemaVersion { major: 2, minor: 5 };
+        let other = SchemaVersion { major: 2, minor: 0 };
         assert!(v.is_compatible_with(other));
     }
 
     #[test]
     fn newer_major_is_incompatible() {
-        let v = SchemaVersion { major: 1, minor: 0 };
-        let other = SchemaVersion { major: 2, minor: 0 };
+        let v = SchemaVersion { major: 2, minor: 0 };
+        let other = SchemaVersion { major: 3, minor: 0 };
         assert!(!v.is_compatible_with(other));
+    }
+
+    #[test]
+    fn current_major_is_two() {
+        assert_eq!(SchemaVersion::MAJOR, 2);
+        assert_eq!(SchemaVersion::MINOR, 0);
+    }
+
+    #[test]
+    fn pre_release_file_error_carries_major() {
+        let err = SchemaError::PreReleaseFile { file_major: 1 };
+        assert_eq!(
+            err.to_string(),
+            "This file was created with a pre-release Pixhaus and is not supported. \
+             Re-create it with the current version."
+        );
+        assert!(matches!(err, SchemaError::PreReleaseFile { file_major: 1 }));
     }
 
     #[test]

@@ -36,9 +36,7 @@ pub async fn layer_add(args: LayerAddArgs, state: State<'_, AppState>) -> Comman
             .project
             .as_mut()
             .ok_or(AppCommandError::NoActiveProject)?
-            .sprites
-            .iter_mut()
-            .find(|s| s.id == args.sprite_id)
+            .sprite_mut(args.sprite_id)
             .ok_or(AppCommandError::NotFound {
                 entity: "sprite".into(),
                 id: u64::from(args.sprite_id.get()),
@@ -74,9 +72,7 @@ pub async fn layer_delete(
             .project
             .as_mut()
             .ok_or(AppCommandError::NoActiveProject)?
-            .sprites
-            .iter_mut()
-            .find(|s| s.id == sprite_id)
+            .sprite_mut(sprite_id)
             .ok_or(AppCommandError::NotFound {
                 entity: "sprite".into(),
                 id: u64::from(sprite_id.get()),
@@ -112,9 +108,7 @@ pub async fn layer_reorder(
             .project
             .as_mut()
             .ok_or(AppCommandError::NoActiveProject)?
-            .sprites
-            .iter_mut()
-            .find(|s| s.id == sprite_id)
+            .sprite_mut(sprite_id)
             .ok_or(AppCommandError::NotFound {
                 entity: "sprite".into(),
                 id: u64::from(sprite_id.get()),
@@ -212,9 +206,7 @@ pub async fn layer_list(
         .project
         .as_ref()
         .ok_or(AppCommandError::NoActiveProject)?
-        .sprites
-        .iter()
-        .find(|s| s.id == sprite_id)
+        .sprite(sprite_id)
         .ok_or(AppCommandError::NotFound {
             entity: "sprite".into(),
             id: u64::from(sprite_id.get()),
@@ -266,9 +258,7 @@ pub async fn layer_set_parent(
             .project
             .as_mut()
             .ok_or(AppCommandError::NoActiveProject)?
-            .sprites
-            .iter_mut()
-            .find(|s| s.id == sprite_id)
+            .sprite_mut(sprite_id)
             .ok_or(AppCommandError::NotFound {
                 entity: "sprite".into(),
                 id: u64::from(sprite_id.get()),
@@ -474,9 +464,7 @@ pub async fn layer_wrap_in_group(
             .project
             .as_mut()
             .ok_or(AppCommandError::NoActiveProject)?
-            .sprites
-            .iter_mut()
-            .find(|s| s.id == sprite_id)
+            .sprite_mut(sprite_id)
             .ok_or(AppCommandError::NotFound {
                 entity: "sprite".into(),
                 id: u64::from(sprite_id.get()),
@@ -504,9 +492,7 @@ pub async fn layer_convert_to_tilemap(
             .project
             .as_mut()
             .ok_or(AppCommandError::NoActiveProject)?
-            .sprites
-            .iter_mut()
-            .find(|s| s.id == sprite_id)
+            .sprite_mut(sprite_id)
             .ok_or(AppCommandError::NotFound {
                 entity: "sprite".into(),
                 id: u64::from(sprite_id.get()),
@@ -702,9 +688,7 @@ fn find_layer_mut(
     doc.project
         .as_mut()
         .ok_or(AppCommandError::NoActiveProject)?
-        .sprites
-        .iter_mut()
-        .find(|s| s.id == sprite_id)
+        .sprite_mut(sprite_id)
         .ok_or(AppCommandError::NotFound {
             entity: "sprite".into(),
             id: u64::from(sprite_id.get()),
@@ -722,9 +706,7 @@ fn find_sprite(doc: &DocumentStore, sprite_id: SpriteId) -> CommandResult<&Sprit
     doc.project
         .as_ref()
         .ok_or(AppCommandError::NoActiveProject)?
-        .sprites
-        .iter()
-        .find(|s| s.id == sprite_id)
+        .sprite(sprite_id)
         .ok_or(AppCommandError::NotFound {
             entity: "sprite".into(),
             id: u64::from(sprite_id.get()),
@@ -1323,9 +1305,7 @@ fn ensure_canvas_target_buffer(
         .as_mut()
         .ok_or(AppCommandError::NoActiveProject)?;
     let sprite = project
-        .sprites
-        .iter_mut()
-        .find(|s| s.id == sprite_id)
+        .sprite_mut(sprite_id)
         .ok_or(AppCommandError::NotFound {
             entity: "sprite".into(),
             id: u64::from(sprite_id.get()),
@@ -1386,9 +1366,7 @@ fn drop_layer(
         .as_mut()
         .ok_or(AppCommandError::NoActiveProject)?;
     let sprite = project
-        .sprites
-        .iter_mut()
-        .find(|s| s.id == sprite_id)
+        .sprite_mut(sprite_id)
         .ok_or(AppCommandError::NotFound {
             entity: "sprite".into(),
             id: u64::from(sprite_id.get()),
@@ -1841,17 +1819,54 @@ mod tests {
     // ── merge_down / merge_selected / flatten_visible ────────────────────
 
     use pixhaus_core::project::{
-        Cel as CoreCel, FrameIndex as CoreFrameIndex, PixelBufferId as CorePixelBufferId, Project,
+        ActiveTarget, AiMetadata, Cel as CoreCel, Entity, EntityContent, EntityDefaults, EntityId,
+        EntityKind, FrameIndex as CoreFrameIndex, NamedSprite, PixelBufferId as CorePixelBufferId,
+        Project, StateId,
     };
     use pixhaus_io::pixhaus::PixelBufferEntry as CorePixelBufferEntry;
+
+    /// Installs `sprite` as a fresh entity in `project.library` and
+    /// marks its state active. Mirrors the production helper in
+    /// `sprite_add` for the test layer.
+    fn install_sprite(project: &mut Project, sprite: Sprite) {
+        let entity_id = EntityId::new(1);
+        let state_id = StateId::new(1);
+        let name = sprite.name.clone();
+        project.library.entities.push(Entity {
+            id: entity_id,
+            kind: EntityKind::Custom("Sprite".into()),
+            name,
+            group_id: None,
+            tags: Vec::new(),
+            defaults: EntityDefaults::default(),
+            content: EntityContent::Sprites {
+                states: vec![NamedSprite {
+                    id: state_id,
+                    state_name: "primary".into(),
+                    sprite,
+                    engine_tags: Vec::new(),
+                }],
+            },
+            ai: AiMetadata::default(),
+            anchor_reference_id: None,
+            user_data: UserData::default(),
+            created_at: 0,
+            updated_at: 0,
+        });
+        project.active = ActiveTarget::State {
+            entity_id,
+            state_id,
+        };
+    }
 
     /// Builds a `DocumentStore` with one sprite at `canvas_size` and
     /// no layers. Caller adds layers + cels via the helpers below.
     fn fresh_doc(canvas_size: Size) -> DocumentStore {
         let mut project = Project::new("test");
-        project
-            .sprites
-            .push(Sprite::empty(SpriteId::new(1), "main", canvas_size));
+        install_sprite(
+            &mut project,
+            Sprite::empty(SpriteId::new(1), "main", canvas_size),
+        );
         DocumentStore {
             project: Some(project),
             next_id: 100,
@@ -1863,7 +1878,7 @@ mod tests {
     fn add_raster_layer(doc: &mut DocumentStore, id: u32, name: &str) -> LayerId {
         let layer_id = LayerId::new(id);
         let project = doc.project.as_mut().unwrap();
-        let sprite = project.sprites.first_mut().unwrap();
+        let sprite = project.sprite_mut(SpriteId::new(1)).unwrap();
         sprite.layers.push(Layer {
             id: layer_id,
             name: name.into(),
@@ -1889,7 +1904,7 @@ mod tests {
         let buf_id = CorePixelBufferId::new(doc.next_id);
         doc.next_id += 1;
         let project = doc.project.as_ref().unwrap();
-        let canvas = project.sprites.first().unwrap().canvas;
+        let canvas = project.sprite(SpriteId::new(1)).unwrap().canvas;
         let stride = canvas.width * 4;
         let mut pixels = vec![0u8; (stride * canvas.height) as usize];
         for chunk in pixels.chunks_exact_mut(4) {
@@ -1903,7 +1918,7 @@ mod tests {
             pixels,
         });
         let project = doc.project.as_mut().unwrap();
-        let sprite = project.sprites.first_mut().unwrap();
+        let sprite = project.sprite_mut(SpriteId::new(1)).unwrap();
         sprite.cels.push(CoreCel::raster(
             layer_id,
             CoreFrameIndex::new(frame),
@@ -1976,7 +1991,7 @@ mod tests {
         let raster = add_raster_layer(&mut doc, 1, "r");
         // Push a tilemap layer manually.
         let project = doc.project.as_mut().unwrap();
-        let sprite = project.sprites.first_mut().unwrap();
+        let sprite = project.sprite_mut(SpriteId::new(1)).unwrap();
         sprite.layers.push(Layer {
             id: LayerId::new(2),
             name: "tiles".into(),
@@ -2094,7 +2109,7 @@ mod tests {
         // Hide the top layer.
         {
             let project = doc.project.as_mut().unwrap();
-            let sprite = project.sprites.first_mut().unwrap();
+            let sprite = project.sprite_mut(SpriteId::new(1)).unwrap();
             sprite
                 .layers
                 .iter_mut()

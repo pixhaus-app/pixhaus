@@ -1,7 +1,7 @@
 {
   "schema_version": {
-    "major": 1,
-    "minor": 1
+    "major": 2,
+    "minor": 0
   },
   "feature_flags": 15,
   "metadata": {
@@ -12,273 +12,6 @@
     "updated_at": 1700001000,
     "editor_version": "0.1.0"
   },
-  "sprites": [
-    {
-      "id": 1,
-      "name": "hero",
-      "canvas": {
-        "width": 32,
-        "height": 32
-      },
-      "color_mode": "indexed",
-      "transparent_color_index": 0,
-      "layers": [
-        {
-          "id": 1,
-          "name": "background",
-          "kind": {
-            "kind": "raster"
-          },
-          "blend_mode": "normal",
-          "opacity": 255,
-          "visible": true,
-          "locked": false
-        },
-        {
-          "id": 2,
-          "name": "fx",
-          "kind": {
-            "kind": "group",
-            "collapsed": false
-          },
-          "blend_mode": "normal",
-          "opacity": 200,
-          "visible": true,
-          "locked": false,
-          "user_data": {
-            "text": "non-exported FX",
-            "color": {
-              "r": 255,
-              "g": 200,
-              "b": 0,
-              "a": 255
-            }
-          }
-        },
-        {
-          "id": 3,
-          "name": "ground",
-          "kind": {
-            "kind": "tilemap",
-            "tileset": 1
-          },
-          "blend_mode": "multiply",
-          "opacity": 255,
-          "visible": true,
-          "locked": false,
-          "parent": 2
-        },
-        {
-          "id": 4,
-          "name": "concept",
-          "kind": {
-            "kind": "reference",
-            "image": 1000,
-            "origin": {
-              "x": -8,
-              "y": -8
-            }
-          },
-          "blend_mode": "normal",
-          "opacity": 128,
-          "visible": true,
-          "locked": true
-        }
-      ],
-      "frames": [
-        {
-          "duration_ms": 100
-        },
-        {
-          "duration_ms": 100
-        },
-        {
-          "duration_ms": 250,
-          "user_data": {
-            "text": "hold"
-          }
-        }
-      ],
-      "cels": [
-        {
-          "layer_id": 1,
-          "frame_index": 0,
-          "position": {
-            "x": 0,
-            "y": 0
-          },
-          "opacity": 255,
-          "data": {
-            "kind": "raster",
-            "buffer": 10,
-            "size": {
-              "width": 32,
-              "height": 32
-            }
-          }
-        },
-        {
-          "layer_id": 1,
-          "frame_index": 1,
-          "position": {
-            "x": 0,
-            "y": 0
-          },
-          "opacity": 255,
-          "data": {
-            "kind": "linked",
-            "source_frame": 0
-          }
-        },
-        {
-          "layer_id": 3,
-          "frame_index": 0,
-          "position": {
-            "x": 0,
-            "y": 0
-          },
-          "opacity": 255,
-          "data": {
-            "kind": "tilemap",
-            "data": {
-              "width": 2,
-              "height": 2,
-              "cells": [
-                {
-                  "index": 1,
-                  "flags": 0
-                },
-                {
-                  "index": 0,
-                  "flags": 0
-                },
-                {
-                  "index": 0,
-                  "flags": 0
-                },
-                {
-                  "index": 2,
-                  "flags": 5
-                }
-              ]
-            }
-          }
-        }
-      ],
-      "palettes": [
-        {
-          "id": 1,
-          "name": "default",
-          "colors": [
-            {
-              "color": {
-                "r": 0,
-                "g": 0,
-                "b": 0,
-                "a": 0
-              }
-            },
-            {
-              "color": {
-                "r": 20,
-                "g": 20,
-                "b": 30,
-                "a": 255
-              },
-              "name": "shadow"
-            },
-            {
-              "color": {
-                "r": 220,
-                "g": 220,
-                "b": 230,
-                "a": 255
-              },
-              "name": "highlight"
-            }
-          ]
-        }
-      ],
-      "tilesets": [
-        {
-          "id": 1,
-          "name": "dungeon",
-          "tile_size": {
-            "width": 8,
-            "height": 8
-          },
-          "tile_count": 16,
-          "base_index": 1,
-          "source": {
-            "kind": "inline",
-            "buffer": 2000
-          }
-        }
-      ],
-      "frame_tags": [
-        {
-          "name": "idle",
-          "range": {
-            "start": 0,
-            "end": 2
-          },
-          "loop_direction": "ping_pong",
-          "repeat": 0
-        }
-      ],
-      "animations": [
-        {
-          "id": 1,
-          "name": "Idle",
-          "range": {
-            "start": 0,
-            "end": 2
-          },
-          "loop_direction": "forward",
-          "speed_multiplier": 0.75
-        }
-      ],
-      "slices": [
-        {
-          "id": 1,
-          "name": "ui_button",
-          "keys": [
-            {
-              "frame": 0,
-              "bounds": {
-                "origin": {
-                  "x": 0,
-                  "y": 0
-                },
-                "size": {
-                  "width": 32,
-                  "height": 32
-                }
-              },
-              "nine_slice": {
-                "center": {
-                  "origin": {
-                    "x": 4,
-                    "y": 4
-                  },
-                  "size": {
-                    "width": 24,
-                    "height": 24
-                  }
-                }
-              },
-              "pivot": {
-                "offset": {
-                  "x": 16,
-                  "y": 16
-                }
-              }
-            }
-          ]
-        }
-      ]
-    }
-  ],
   "library": {
     "entities": [
       {
@@ -581,7 +314,12 @@
           }
         },
         "ai": {
-          "vlm_summary": "A small armoured hero in front-facing pose."
+          "vlm_summary": "A small armoured hero in front-facing pose.",
+          "embedding": [
+            0.1,
+            0.2,
+            0.3
+          ]
         },
         "anchor_reference_id": 3,
         "created_at": 1700000000,
@@ -644,6 +382,111 @@
         },
         "created_at": 1700000020,
         "updated_at": 1700000020
+      },
+      {
+        "id": 4,
+        "kind": {
+          "kind": "Tilemap"
+        },
+        "name": "Dungeon-1",
+        "group_id": 2,
+        "content": {
+          "type": "Tilemap",
+          "value": {
+            "scene": {
+              "size": {
+                "width": 4,
+                "height": 4
+              },
+              "tilesets": [
+                {
+                  "tileset_entity_id": 2,
+                  "first_gid": 1
+                }
+              ],
+              "layers": [
+                {
+                  "id": 100,
+                  "name": "ground",
+                  "data": {
+                    "width": 4,
+                    "height": 4,
+                    "cells": [
+                      {
+                        "index": 1,
+                        "flags": 0
+                      },
+                      {
+                        "index": 0,
+                        "flags": 0
+                      },
+                      {
+                        "index": 0,
+                        "flags": 0
+                      },
+                      {
+                        "index": 0,
+                        "flags": 0
+                      },
+                      {
+                        "index": 0,
+                        "flags": 0
+                      },
+                      {
+                        "index": 2,
+                        "flags": 1
+                      },
+                      {
+                        "index": 0,
+                        "flags": 0
+                      },
+                      {
+                        "index": 0,
+                        "flags": 0
+                      },
+                      {
+                        "index": 0,
+                        "flags": 0
+                      },
+                      {
+                        "index": 0,
+                        "flags": 0
+                      },
+                      {
+                        "index": 0,
+                        "flags": 0
+                      },
+                      {
+                        "index": 0,
+                        "flags": 0
+                      },
+                      {
+                        "index": 0,
+                        "flags": 0
+                      },
+                      {
+                        "index": 0,
+                        "flags": 0
+                      },
+                      {
+                        "index": 0,
+                        "flags": 0
+                      },
+                      {
+                        "index": 0,
+                        "flags": 0
+                      }
+                    ]
+                  },
+                  "opacity": 255,
+                  "visible": true
+                }
+              ]
+            }
+          }
+        },
+        "created_at": 1700000030,
+        "updated_at": 1700000030
       }
     ],
     "groups": [
@@ -671,7 +514,6 @@
     ]
   },
   "canvas": {
-    "active_sprite": 1,
     "active_layer": 1,
     "active_frame": 0,
     "scroll_x": 0.0,

@@ -1,5 +1,6 @@
 //! Error types for the `pixhaus-io` crate.
 
+use pixhaus_core::project::SchemaError;
 use thiserror::Error;
 
 /// Errors returned by the Pixhaus I/O crate.
@@ -8,6 +9,24 @@ pub enum Error {
     /// Byte sequence at offset 0 does not match the expected `PIXHAUS\0` magic.
     #[error("not a .pixhaus file")]
     InvalidMagic,
+
+    /// File was written by a pre-release Pixhaus and is no longer
+    /// loadable. Wraps [`SchemaError::PreReleaseFile`] so the data-model
+    /// rejection bubbles up through the io error chain.
+    #[error(transparent)]
+    Schema(#[from] SchemaError),
+
+    /// An importer for a legacy format is temporarily disabled while the
+    /// B9 project-library migration completes. Aseprite and PSD import
+    /// land back in B9.5 with library-aware translation.
+    #[error(
+        "Importing {format} files is temporarily unsupported during the B9 migration. \
+         Will be restored in B9.5."
+    )]
+    LegacyImportUnsupported {
+        /// Short format name (`"aseprite"`, `"psd"`).
+        format: &'static str,
+    },
 
     /// The file's container format major version is higher than this
     /// reader supports. Distinct from
