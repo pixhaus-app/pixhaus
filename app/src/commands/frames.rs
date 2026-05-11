@@ -111,9 +111,7 @@ pub async fn frame_add(
             .project
             .as_mut()
             .ok_or(AppCommandError::NoActiveProject)?
-            .sprites
-            .iter_mut()
-            .find(|s| s.id == sprite_id)
+            .sprite_mut(sprite_id)
             .ok_or(AppCommandError::NotFound {
                 entity: "sprite".into(),
                 id: u64::from(sprite_id.get()),
@@ -147,9 +145,7 @@ pub async fn frame_delete(
             .project
             .as_mut()
             .ok_or(AppCommandError::NoActiveProject)?
-            .sprites
-            .iter_mut()
-            .find(|s| s.id == sprite_id)
+            .sprite_mut(sprite_id)
             .ok_or(AppCommandError::NotFound {
                 entity: "sprite".into(),
                 id: u64::from(sprite_id.get()),
@@ -190,9 +186,7 @@ pub async fn frame_duplicate(
             .project
             .as_mut()
             .ok_or(AppCommandError::NoActiveProject)?
-            .sprites
-            .iter_mut()
-            .find(|s| s.id == sprite_id)
+            .sprite_mut(sprite_id)
             .ok_or(AppCommandError::NotFound {
                 entity: "sprite".into(),
                 id: u64::from(sprite_id.get()),
@@ -254,9 +248,7 @@ pub async fn frame_reorder(
             .project
             .as_mut()
             .ok_or(AppCommandError::NoActiveProject)?
-            .sprites
-            .iter_mut()
-            .find(|s| s.id == sprite_id)
+            .sprite_mut(sprite_id)
             .ok_or(AppCommandError::NotFound {
                 entity: "sprite".into(),
                 id: u64::from(sprite_id.get()),
@@ -328,9 +320,7 @@ pub async fn frame_set_duration(
             .project
             .as_mut()
             .ok_or(AppCommandError::NoActiveProject)?
-            .sprites
-            .iter_mut()
-            .find(|s| s.id == sprite_id)
+            .sprite_mut(sprite_id)
             .ok_or(AppCommandError::NotFound {
                 entity: "sprite".into(),
                 id: u64::from(sprite_id.get()),
@@ -362,9 +352,7 @@ pub async fn frame_tag_create(
             .project
             .as_mut()
             .ok_or(AppCommandError::NoActiveProject)?
-            .sprites
-            .iter_mut()
-            .find(|s| s.id == args.sprite_id)
+            .sprite_mut(args.sprite_id)
             .ok_or(AppCommandError::NotFound {
                 entity: "sprite".into(),
                 id: u64::from(args.sprite_id.get()),
@@ -440,9 +428,7 @@ pub async fn frame_tag_rename(
             .project
             .as_mut()
             .ok_or(AppCommandError::NoActiveProject)?
-            .sprites
-            .iter_mut()
-            .find(|s| s.id == sprite_id)
+            .sprite_mut(sprite_id)
             .ok_or(AppCommandError::NotFound {
                 entity: "sprite".into(),
                 id: u64::from(sprite_id.get()),
@@ -468,9 +454,7 @@ pub async fn frame_tag_delete(
             .project
             .as_mut()
             .ok_or(AppCommandError::NoActiveProject)?
-            .sprites
-            .iter_mut()
-            .find(|s| s.id == sprite_id)
+            .sprite_mut(sprite_id)
             .ok_or(AppCommandError::NotFound {
                 entity: "sprite".into(),
                 id: u64::from(sprite_id.get()),
@@ -499,9 +483,7 @@ pub async fn frame_list(
         .project
         .as_ref()
         .ok_or(AppCommandError::NoActiveProject)?
-        .sprites
-        .iter()
-        .find(|s| s.id == sprite_id)
+        .sprite(sprite_id)
         .ok_or(AppCommandError::NotFound {
             entity: "sprite".into(),
             id: u64::from(sprite_id.get()),
@@ -517,9 +499,7 @@ pub async fn cel_list(sprite_id: SpriteId, state: State<'_, AppState>) -> Comman
         .project
         .as_ref()
         .ok_or(AppCommandError::NoActiveProject)?
-        .sprites
-        .iter()
-        .find(|s| s.id == sprite_id)
+        .sprite(sprite_id)
         .ok_or(AppCommandError::NotFound {
             entity: "sprite".into(),
             id: u64::from(sprite_id.get()),
@@ -538,9 +518,7 @@ pub async fn frame_tag_list(
         .project
         .as_ref()
         .ok_or(AppCommandError::NoActiveProject)?
-        .sprites
-        .iter()
-        .find(|s| s.id == sprite_id)
+        .sprite(sprite_id)
         .ok_or(AppCommandError::NotFound {
             entity: "sprite".into(),
             id: u64::from(sprite_id.get()),

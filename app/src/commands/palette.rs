@@ -136,9 +136,7 @@ pub async fn palette_add(
             .project
             .as_mut()
             .ok_or(AppCommandError::NoActiveProject)?
-            .sprites
-            .iter_mut()
-            .find(|s| s.id == sprite_id)
+            .sprite_mut(sprite_id)
             .ok_or(AppCommandError::NotFound {
                 entity: "sprite".into(),
                 id: u64::from(sprite_id.get()),
@@ -169,9 +167,7 @@ pub async fn palette_delete(
             .project
             .as_mut()
             .ok_or(AppCommandError::NoActiveProject)?
-            .sprites
-            .iter_mut()
-            .find(|s| s.id == sprite_id)
+            .sprite_mut(sprite_id)
             .ok_or(AppCommandError::NotFound {
                 entity: "sprite".into(),
                 id: u64::from(sprite_id.get()),
@@ -303,9 +299,7 @@ pub async fn palette_swap(
             .project
             .as_mut()
             .ok_or(AppCommandError::NoActiveProject)?
-            .sprites
-            .iter_mut()
-            .find(|s| s.id == sprite_id)
+            .sprite_mut(sprite_id)
             .ok_or(AppCommandError::NotFound {
                 entity: "sprite".into(),
                 id: u64::from(sprite_id.get()),
@@ -401,9 +395,7 @@ pub async fn palette_list(
         .project
         .as_ref()
         .ok_or(AppCommandError::NoActiveProject)?
-        .sprites
-        .iter()
-        .find(|s| s.id == sprite_id)
+        .sprite(sprite_id)
         .ok_or(AppCommandError::NotFound {
             entity: "sprite".into(),
             id: u64::from(sprite_id.get()),
@@ -421,9 +413,7 @@ fn find_palette_mut(
     doc.project
         .as_mut()
         .ok_or(AppCommandError::NoActiveProject)?
-        .sprites
-        .iter_mut()
-        .find(|s| s.id == sprite_id)
+        .sprite_mut(sprite_id)
         .ok_or(AppCommandError::NotFound {
             entity: "sprite".into(),
             id: u64::from(sprite_id.get()),
@@ -443,9 +433,7 @@ fn find_palette_in_project(
     palette_id: PaletteId,
 ) -> CommandResult<&Palette> {
     project
-        .sprites
-        .iter()
-        .find(|s| s.id == sprite_id)
+        .sprite(sprite_id)
         .ok_or(AppCommandError::NotFound {
             entity: "sprite".into(),
             id: u64::from(sprite_id.get()),
@@ -465,9 +453,7 @@ fn find_palette_in_project_mut(
     palette_id: PaletteId,
 ) -> CommandResult<&mut Palette> {
     project
-        .sprites
-        .iter_mut()
-        .find(|s| s.id == sprite_id)
+        .sprite_mut(sprite_id)
         .ok_or(AppCommandError::NotFound {
             entity: "sprite".into(),
             id: u64::from(sprite_id.get()),
@@ -531,7 +517,10 @@ mod tests {
     // ── PaletteAddColorCommand round-trip ─────────────────────────────────
 
     fn make_project_with_palette() -> (Project, SpriteId, PaletteId) {
-        use pixhaus_core::project::{Size, Sprite};
+        use pixhaus_core::project::{
+            ActiveTarget, AiMetadata, Entity, EntityContent, EntityDefaults, EntityId, EntityKind,
+            NamedSprite, Size, Sprite, StateId,
+        };
 
         let mut project = Project::new("test");
         let sprite_id = SpriteId::new(1);
@@ -550,7 +539,34 @@ mod tests {
             colors: Vec::new(),
             user_data: UserData::default(),
         });
-        project.sprites.push(sprite);
+        let entity_id = EntityId::new(100);
+        let state_id = StateId::new(101);
+        let name = sprite.name.clone();
+        project.library.entities.push(Entity {
+            id: entity_id,
+            kind: EntityKind::Custom("Sprite".into()),
+            name,
+            group_id: None,
+            tags: Vec::new(),
+            defaults: EntityDefaults::default(),
+            content: EntityContent::Sprites {
+                states: vec![NamedSprite {
+                    id: state_id,
+                    state_name: "primary".into(),
+                    sprite,
+                    engine_tags: Vec::new(),
+                }],
+            },
+            ai: AiMetadata::default(),
+            anchor_reference_id: None,
+            user_data: UserData::default(),
+            created_at: 0,
+            updated_at: 0,
+        });
+        project.active = ActiveTarget::State {
+            entity_id,
+            state_id,
+        };
         (project, sprite_id, palette_id)
     }
 
@@ -574,9 +590,7 @@ mod tests {
         history.push(Box::new(cmd), &mut project).unwrap();
 
         let palette = project
-            .sprites
-            .iter()
-            .find(|s| s.id == sprite_id)
+            .sprite(sprite_id)
             .unwrap()
             .palettes
             .iter()
@@ -605,7 +619,9 @@ mod tests {
         };
         history.push(Box::new(cmd), &mut project).unwrap();
         assert_eq!(
-            project.sprites[0]
+            project
+                .sprite(sprite_id)
+                .unwrap()
                 .palettes
                 .iter()
                 .find(|p| p.id == palette_id)
@@ -619,9 +635,7 @@ mod tests {
         history.undo(&mut project).unwrap();
 
         let palette = project
-            .sprites
-            .iter()
-            .find(|s| s.id == sprite_id)
+            .sprite(sprite_id)
             .unwrap()
             .palettes
             .iter()
@@ -731,9 +745,7 @@ mod tests {
         history.redo(&mut project).unwrap();
 
         let palette = project
-            .sprites
-            .iter()
-            .find(|s| s.id == sprite_id)
+            .sprite(sprite_id)
             .unwrap()
             .palettes
             .iter()

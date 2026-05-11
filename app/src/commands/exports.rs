@@ -258,9 +258,7 @@ async fn snapshot_sprite_for_export(
         .as_ref()
         .ok_or(AppCommandError::NoActiveProject)?;
     let sprite = project
-        .sprites
-        .iter()
-        .find(|s| s.id == sprite_id)
+        .sprite(sprite_id)
         .ok_or_else(|| AppCommandError::NotFound {
             entity: "sprite".into(),
             id: u64::from(sprite_id.get()),
@@ -301,9 +299,7 @@ async fn snapshot_sprite_only(
         .as_ref()
         .ok_or(AppCommandError::NoActiveProject)?;
     let sprite = project
-        .sprites
-        .iter()
-        .find(|s| s.id == sprite_id)
+        .sprite(sprite_id)
         .ok_or_else(|| AppCommandError::NotFound {
             entity: "sprite".into(),
             id: u64::from(sprite_id.get()),

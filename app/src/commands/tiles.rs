@@ -286,15 +286,10 @@ fn lookup_tilemap_layer(
     sprite_id: SpriteId,
     layer_id: LayerId,
 ) -> CommandResult<(&Layer, TilesetId)> {
-    let sprite =
-        project
-            .sprites
-            .iter()
-            .find(|s| s.id == sprite_id)
-            .ok_or(AppCommandError::NotFound {
-                entity: "sprite".into(),
-                id: u64::from(sprite_id.get()),
-            })?;
+    let sprite = project.sprite(sprite_id).ok_or(AppCommandError::NotFound {
+        entity: "sprite".into(),
+        id: u64::from(sprite_id.get()),
+    })?;
     let layer =
         sprite
             .layers
@@ -325,9 +320,7 @@ fn find_tilemap_data_mut(
     frame_index: FrameIndex,
 ) -> Result<&mut TilemapData, String> {
     let sprite = project
-        .sprites
-        .iter_mut()
-        .find(|s| s.id == sprite_id)
+        .sprite_mut(sprite_id)
         .ok_or_else(|| format!("sprite {} not found", sprite_id.get()))?;
     let cel = sprite
         .cels
@@ -358,9 +351,7 @@ fn find_tileset_mut(
     tileset_id: TilesetId,
 ) -> Result<&mut Tileset, String> {
     let sprite = project
-        .sprites
-        .iter_mut()
-        .find(|s| s.id == sprite_id)
+        .sprite_mut(sprite_id)
         .ok_or_else(|| format!("sprite {} not found", sprite_id.get()))?;
     sprite
         .tilesets
@@ -390,12 +381,10 @@ fn ensure_tilemap_cel(
             .as_ref()
             .ok_or(AppCommandError::NoActiveProject)?;
         let (_layer, tileset_id) = lookup_tilemap_layer(project, sprite_id, layer_id)?;
-        let sprite = project.sprites.iter().find(|s| s.id == sprite_id).ok_or(
-            AppCommandError::NotFound {
-                entity: "sprite".into(),
-                id: u64::from(sprite_id.get()),
-            },
-        )?;
+        let sprite = project.sprite(sprite_id).ok_or(AppCommandError::NotFound {
+            entity: "sprite".into(),
+            id: u64::from(sprite_id.get()),
+        })?;
         let tileset = sprite.tilesets.iter().find(|t| t.id == tileset_id).ok_or(
             AppCommandError::NotFound {
                 entity: "tileset".into(),
@@ -420,12 +409,10 @@ fn ensure_tilemap_cel(
             .project
             .as_ref()
             .ok_or(AppCommandError::NoActiveProject)?;
-        let sprite = project.sprites.iter().find(|s| s.id == sprite_id).ok_or(
-            AppCommandError::NotFound {
-                entity: "sprite".into(),
-                id: u64::from(sprite_id.get()),
-            },
-        )?;
+        let sprite = project.sprite(sprite_id).ok_or(AppCommandError::NotFound {
+            entity: "sprite".into(),
+            id: u64::from(sprite_id.get()),
+        })?;
         let cel = sprite
             .cels
             .iter()
@@ -462,9 +449,7 @@ fn ensure_tilemap_cel(
         .as_mut()
         .ok_or(AppCommandError::NoActiveProject)?;
     let sprite = project
-        .sprites
-        .iter_mut()
-        .find(|s| s.id == sprite_id)
+        .sprite_mut(sprite_id)
         .ok_or(AppCommandError::NotFound {
             entity: "sprite".into(),
             id: u64::from(sprite_id.get()),
@@ -492,15 +477,10 @@ fn validate_tile_index(
     if cell.is_empty() {
         return Ok(());
     }
-    let sprite =
-        project
-            .sprites
-            .iter()
-            .find(|s| s.id == sprite_id)
-            .ok_or(AppCommandError::NotFound {
-                entity: "sprite".into(),
-                id: u64::from(sprite_id.get()),
-            })?;
+    let sprite = project.sprite(sprite_id).ok_or(AppCommandError::NotFound {
+        entity: "sprite".into(),
+        id: u64::from(sprite_id.get()),
+    })?;
     let tileset =
         sprite
             .tilesets
@@ -687,9 +667,7 @@ pub async fn tile_autotile_apply(
             .as_ref()
             .ok_or(AppCommandError::NoActiveProject)?;
         let sprite = project
-            .sprites
-            .iter()
-            .find(|s| s.id == args.sprite_id)
+            .sprite(args.sprite_id)
             .ok_or(AppCommandError::NotFound {
                 entity: "sprite".into(),
                 id: u64::from(args.sprite_id.get()),
@@ -839,9 +817,7 @@ pub async fn tileset_list(
         .project
         .as_ref()
         .ok_or(AppCommandError::NoActiveProject)?
-        .sprites
-        .iter()
-        .find(|s| s.id == sprite_id)
+        .sprite(sprite_id)
         .ok_or(AppCommandError::NotFound {
             entity: "sprite".into(),
             id: u64::from(sprite_id.get()),
@@ -877,9 +853,7 @@ pub async fn tileset_add(
             .project
             .as_mut()
             .ok_or(AppCommandError::NoActiveProject)?
-            .sprites
-            .iter_mut()
-            .find(|s| s.id == args.sprite_id)
+            .sprite_mut(args.sprite_id)
             .ok_or(AppCommandError::NotFound {
                 entity: "sprite".into(),
                 id: u64::from(args.sprite_id.get()),
@@ -917,9 +891,7 @@ pub async fn tileset_rename(
         .project
         .as_mut()
         .ok_or(AppCommandError::NoActiveProject)?
-        .sprites
-        .iter_mut()
-        .find(|s| s.id == sprite_id)
+        .sprite_mut(sprite_id)
         .ok_or(AppCommandError::NotFound {
             entity: "sprite".into(),
             id: u64::from(sprite_id.get()),
@@ -972,9 +944,7 @@ pub async fn tileset_set_tile_metadata(
         .as_ref()
         .ok_or(AppCommandError::NoActiveProject)?;
     let sprite = project
-        .sprites
-        .iter()
-        .find(|s| s.id == args.sprite_id)
+        .sprite(args.sprite_id)
         .ok_or(AppCommandError::NotFound {
             entity: "sprite".into(),
             id: u64::from(args.sprite_id.get()),
@@ -1009,9 +979,7 @@ pub async fn tileset_set_autotile(
         .project
         .as_mut()
         .ok_or(AppCommandError::NoActiveProject)?
-        .sprites
-        .iter_mut()
-        .find(|s| s.id == sprite_id)
+        .sprite_mut(sprite_id)
         .ok_or(AppCommandError::NotFound {
             entity: "sprite".into(),
             id: u64::from(sprite_id.get()),
@@ -1089,9 +1057,7 @@ pub async fn tileset_add_tile(
             .as_ref()
             .ok_or(AppCommandError::NoActiveProject)?;
         let sprite = project
-            .sprites
-            .iter()
-            .find(|s| s.id == args.sprite_id)
+            .sprite(args.sprite_id)
             .ok_or(AppCommandError::NotFound {
                 entity: "sprite".into(),
                 id: u64::from(args.sprite_id.get()),
@@ -1240,9 +1206,7 @@ pub async fn tileset_add_tile(
         .as_mut()
         .ok_or(AppCommandError::NoActiveProject)?;
     let sprite = project
-        .sprites
-        .iter_mut()
-        .find(|s| s.id == args.sprite_id)
+        .sprite_mut(args.sprite_id)
         .ok_or(AppCommandError::NotFound {
             entity: "sprite".into(),
             id: u64::from(args.sprite_id.get()),
@@ -1334,8 +1298,44 @@ fn clip_axis(source: i32, src_extent: u32, tile_extent: u32) -> (u32, u32, u32) 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use pixhaus_core::project::{BlendMode, CollisionShape, Layer, LayerKind, Project, Sprite};
+    use pixhaus_core::project::{
+        ActiveTarget, AiMetadata, BlendMode, CollisionShape, Entity, EntityContent, EntityDefaults,
+        EntityId, EntityKind, Layer, LayerKind, NamedSprite, Project, Sprite, StateId,
+    };
     use pixhaus_core::undo::{Error as UndoError, History};
+
+    /// Installs `sprite` as a fresh entity in the library and marks its
+    /// state active. Mirrors the production helper in `sprite_add`.
+    fn install_sprite(project: &mut Project, sprite: Sprite) {
+        let entity_id = EntityId::new(1_000);
+        let state_id = StateId::new(1_001);
+        let name = sprite.name.clone();
+        project.library.entities.push(Entity {
+            id: entity_id,
+            kind: EntityKind::Custom("Sprite".into()),
+            name,
+            group_id: None,
+            tags: Vec::new(),
+            defaults: EntityDefaults::default(),
+            content: EntityContent::Sprites {
+                states: vec![NamedSprite {
+                    id: state_id,
+                    state_name: "primary".into(),
+                    sprite,
+                    engine_tags: Vec::new(),
+                }],
+            },
+            ai: AiMetadata::default(),
+            anchor_reference_id: None,
+            user_data: UserData::default(),
+            created_at: 0,
+            updated_at: 0,
+        });
+        project.active = ActiveTarget::State {
+            entity_id,
+            state_id,
+        };
+    }
 
     fn project_with_tilemap_layer() -> (Project, SpriteId, LayerId, TilesetId) {
         let mut project = Project::new("test");
@@ -1380,7 +1380,7 @@ mod tests {
             },
             user_data: UserData::default(),
         });
-        project.sprites.push(sprite);
+        install_sprite(&mut project, sprite);
         (project, sprite_id, layer_id, tileset_id)
     }
 
@@ -1450,7 +1450,9 @@ mod tests {
         let (mut project, sprite_id, _, _) = project_with_tilemap_layer();
         // Add a raster layer alongside the tilemap layer.
         let raster_id = LayerId::new(99);
-        project.sprites[0]
+        project
+            .sprite_mut(sprite_id)
+            .unwrap()
             .layers
             .push(Layer::raster(raster_id, "fx"));
 

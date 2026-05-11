@@ -1,23 +1,21 @@
 //! Canvas viewport state.
 //!
-//! Where the user is in the document: which sprite is active, which
-//! frame, which layer, where the viewport is scrolled, what zoom is
-//! applied. Persists across save/load so the user returns to the same
-//! viewport.
+//! Where the user is in the document: which layer, which frame, where
+//! the viewport is scrolled, what zoom is applied. Persists across
+//! save/load so the user returns to the same viewport. The active
+//! library target lives on [`super::Project::active`] (an
+//! [`super::ActiveTarget`]), not here — the viewport is the
+//! always-present "how" of editing; the library target is the "what".
 
 use serde::{Deserialize, Serialize};
 use ts_rs::TS;
 
-use super::id::{FrameIndex, LayerId, SpriteId};
+use super::id::{FrameIndex, LayerId};
 
 /// Active viewport configuration.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, TS)]
 #[ts(export)]
 pub struct CanvasState {
-    /// Sprite currently being edited. `None` means the project is
-    /// open but no sprite is foregrounded yet.
-    #[serde(skip_serializing_if = "Option::is_none", default)]
-    pub active_sprite: Option<SpriteId>,
     /// Layer currently selected for editing.
     #[serde(skip_serializing_if = "Option::is_none", default)]
     pub active_layer: Option<LayerId>,
@@ -40,7 +38,6 @@ pub struct CanvasState {
 impl Default for CanvasState {
     fn default() -> Self {
         Self {
-            active_sprite: None,
             active_layer: None,
             active_frame: None,
             scroll_x: 0.0,
@@ -64,7 +61,6 @@ mod tests {
     #[test]
     fn canvas_round_trip() {
         let c = CanvasState {
-            active_sprite: Some(SpriteId::new(1)),
             active_layer: Some(LayerId::new(2)),
             active_frame: Some(FrameIndex::new(3)),
             scroll_x: 12.5,

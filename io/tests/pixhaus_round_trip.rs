@@ -15,7 +15,7 @@
 )]
 
 use pixhaus_core::fixtures::sample_project;
-use pixhaus_core::project::{FeatureFlags, PixelBufferId, Project, SchemaVersion};
+use pixhaus_core::project::{FeatureFlags, PixelBufferId, Project, SchemaError, SchemaVersion};
 use pixhaus_io::pixhaus::{
     PixelBufferEntry, PixhausArchive, decode, decode_from_file, encode, encode_to_file,
 };
@@ -282,6 +282,30 @@ fn rejects_incompatible_schema_version() {
     }
 }
 
+/// Pre-B9 files were written by builds whose Project shape no longer
+/// loads. The reader must reject these with `SchemaError::PreReleaseFile`
+/// carrying the file's declared major, so the UI can route to "re-create
+/// with the current version" rather than show a generic decode error.
+#[test]
+fn rejects_pre_release_file_with_typed_error() {
+    let mut project = Project::new("pre-release");
+    // The shape on disk is whatever the current Project writes; only the
+    // schema_version field needs to be back-dated to look like a pre-B9
+    // payload. The reader's gate runs against this field, not against
+    // the surrounding structural drift.
+    project.schema_version = SchemaVersion { major: 1, minor: 1 };
+    let archive = PixhausArchive::new(project);
+    let bytes = encode(&archive).expect("encode failed");
+
+    let err = decode(&bytes).unwrap_err();
+    match err {
+        pixhaus_io::Error::Schema(SchemaError::PreReleaseFile { file_major }) => {
+            assert_eq!(file_major, 1);
+        }
+        other => panic!("expected Schema(PreReleaseFile), got: {other:?}"),
+    }
+}
+
 #[test]
 fn write_rejects_unknown_feature_flags() {
     let mut archive = empty_archive();
@@ -334,10 +358,20 @@ fn linked_cel_round_trips_correctly() {
     use pixhaus_core::project::CelData;
 
     let project = sample_project();
+    let hero_sprite_id = project
+        .sprites_iter()
+        .next()
+        .expect("sample_project must have at least one sprite")
+        .0
+        .sprite
+        .id;
 
     // Capture all needed data (all Copy types) before moving `project`.
     let (layer_id, frame_index, source_frame) = {
-        let linked = project.sprites[0]
+        let hero = project
+            .sprite(hero_sprite_id)
+            .expect("hero sprite resolves via library accessor");
+        let linked = hero
             .cels
             .iter()
             .find(|c| matches!(&c.data, CelData::Linked { .. }))
@@ -353,7 +387,11 @@ fn linked_cel_round_trips_correctly() {
     let encoded = encode(&PixhausArchive::new(project)).unwrap();
     let decoded = decode(&encoded).unwrap();
 
-    let back = decoded.project.sprites[0]
+    let back_hero = decoded
+        .project
+        .sprite(hero_sprite_id)
+        .expect("hero sprite survives the round-trip");
+    let back = back_hero
         .cels
         .iter()
         .find(|c| c.layer_id == layer_id && c.frame_index == frame_index)

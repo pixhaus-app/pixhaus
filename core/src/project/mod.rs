@@ -31,6 +31,7 @@ pub mod frame;
 pub mod geometry;
 pub mod id;
 pub mod layer;
+pub mod library;
 pub mod palette;
 pub mod schema;
 pub mod selection;
@@ -49,12 +50,18 @@ pub use color::{ColorMode, Rgba};
 pub use frame::{Frame, FrameRange, FrameTag, LoopDirection};
 pub use geometry::{IVec2, Rect, Size};
 pub use id::{
-    AnimationId, FrameIndex, LayerId, PaletteId, PixelBufferId, SliceId, SpriteId, TileIndex,
-    TilesetId,
+    AnimationId, EntityId, FrameIndex, GroupId, LayerId, LoraId, PaletteId, PixelBufferId,
+    SheetVariantId, SliceId, SpriteId, StateId, TagId, TileIndex, TilesetId,
 };
 pub use layer::{Layer, LayerKind};
+pub use library::{
+    ActiveTarget, AiMetadata, AssetInfo, Entity, EntityContent, EntityDefaults, EntityGroup,
+    EntityKind, GenerationProvenance, Library, NamedSprite, ProjectAi, PromptEntry,
+    PromptHistoryEntry, PromptResult, ReferenceImage, ReferenceSheet, SheetComposition, SheetPanel,
+    SheetVariant, TagDefinition, TilemapLayer, TilemapScene, TilesetReference,
+};
 pub use palette::{Palette, PaletteEntry, PaletteFrameOverride};
-pub use schema::{FeatureFlags, SchemaVersion};
+pub use schema::{FeatureFlags, SchemaError, SchemaVersion};
 pub use selection::{SelectionRegion, SelectionState};
 pub use slice::{NineSlice, Pivot, Slice, SliceKey};
 pub use sprite::Sprite;
@@ -102,9 +109,16 @@ pub struct ProjectMetadata {
 
 /// The root of a Pixhaus project.
 ///
-/// One `Project` corresponds to one document on disk. A project may
-/// contain multiple sprites; the editor focuses on one sprite at a
-/// time via [`CanvasState::active_sprite`].
+/// One `Project` corresponds to one document on disk. The
+/// [`Self::library`] holds every named asset: `Custom`-kind entities
+/// with their sprite states, tilesets, tilemap scenes, and references.
+/// [`Self::active`] tracks what the editor is foregrounding inside the
+/// library.
+///
+/// Accessor methods ([`Self::sprite`], [`Self::sprite_mut`],
+/// [`Self::sprites_iter`], [`Self::sprites_iter_mut`],
+/// [`Self::active_sprite_id`]) walk the library so call sites don't
+/// have to know about the entity / state nesting.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, TS)]
 #[ts(export)]
 pub struct Project {
@@ -115,15 +129,19 @@ pub struct Project {
     pub feature_flags: FeatureFlags,
     /// Project metadata.
     pub metadata: ProjectMetadata,
-    /// Sprites contained in the project. May be empty during the
-    /// brief window between "create project" and "add first sprite".
-    pub sprites: Vec<Sprite>,
+    /// Project library: entities, groups, palettes, tags, AI metadata.
+    /// The canonical home for every named asset.
+    #[serde(default, skip_serializing_if = "Library::is_empty")]
+    pub library: Library,
     /// Editor canvas viewport state, persisted across save/load.
     pub canvas: CanvasState,
     /// Editor brush state, persisted across save/load.
     pub brush: BrushState,
     /// Editor selection state, persisted across save/load.
     pub selection: SelectionState,
+    /// What the user is currently editing inside the library.
+    #[serde(default, skip_serializing_if = "ActiveTarget::is_none")]
+    pub active: ActiveTarget,
 }
 
 impl Project {
@@ -143,11 +161,87 @@ impl Project {
                 updated_at: 0,
                 editor_version: env!("CARGO_PKG_VERSION").into(),
             },
-            sprites: Vec::new(),
+            library: Library::default(),
             canvas: CanvasState::default(),
             brush: BrushState::default(),
             selection: SelectionState::default(),
+            active: ActiveTarget::None,
         }
+    }
+
+    /// Looks up a sprite by its [`SpriteId`] across every `Custom`-kind
+    /// entity in the library. Returns `None` if no state's sprite
+    /// matches.
+    #[must_use]
+    pub fn sprite(&self, id: SpriteId) -> Option<&Sprite> {
+        self.sprites_iter()
+            .find_map(|(named, _)| (named.sprite.id == id).then_some(&named.sprite))
+    }
+
+    /// Mutable variant of [`Self::sprite`].
+    #[must_use]
+    pub fn sprite_mut(&mut self, id: SpriteId) -> Option<&mut Sprite> {
+        for entity in &mut self.library.entities {
+            if let EntityContent::Sprites { states } = &mut entity.content {
+                for state in states {
+                    if state.sprite.id == id {
+                        return Some(&mut state.sprite);
+                    }
+                }
+            }
+        }
+        None
+    }
+
+    /// Iterates over every sprite in the library, paired with the
+    /// [`EntityId`] of its containing entity. Order is library-entity
+    /// order, then state order within each entity.
+    pub fn sprites_iter(&self) -> impl Iterator<Item = (&NamedSprite, EntityId)> {
+        self.library.entities.iter().flat_map(|entity| {
+            let entity_id = entity.id;
+            let states = match &entity.content {
+                EntityContent::Sprites { states } => states.as_slice(),
+                _ => &[],
+            };
+            states.iter().map(move |state| (state, entity_id))
+        })
+    }
+
+    /// Mutable iterator that yields each [`NamedSprite`] in the library
+    /// paired with its containing [`EntityId`]. Order matches
+    /// [`Self::sprites_iter`].
+    pub fn sprites_iter_mut(&mut self) -> impl Iterator<Item = (&mut NamedSprite, EntityId)> {
+        self.library.entities.iter_mut().flat_map(|entity| {
+            let entity_id = entity.id;
+            let states: &mut [NamedSprite] = match &mut entity.content {
+                EntityContent::Sprites { states } => states.as_mut_slice(),
+                _ => &mut [],
+            };
+            states.iter_mut().map(move |state| (state, entity_id))
+        })
+    }
+
+    /// Returns the currently active sprite's [`SpriteId`] when
+    /// [`Self::active`] points at a state of a `Custom`-kind entity.
+    /// `None` for any other active target (tileset, tilemap, reference,
+    /// or no active target).
+    #[must_use]
+    pub fn active_sprite_id(&self) -> Option<SpriteId> {
+        let ActiveTarget::State {
+            entity_id,
+            state_id,
+        } = self.active
+        else {
+            return None;
+        };
+        let entity = self.library.entities.iter().find(|e| e.id == entity_id)?;
+        let EntityContent::Sprites { states } = &entity.content else {
+            return None;
+        };
+        states
+            .iter()
+            .find(|s| s.id == state_id)
+            .map(|s| s.sprite.id)
     }
 }
 
@@ -161,12 +255,46 @@ impl Default for Project {
 mod tests {
     use super::*;
 
+    use library::EntityContent;
+
+    fn project_with_one_state() -> Project {
+        let mut project = Project::new("with-state");
+        let sprite = Sprite::empty(SpriteId::new(7), "main", Size::new(8, 8));
+        project.library.entities.push(library::Entity {
+            id: EntityId::new(1),
+            kind: library::EntityKind::Custom("Character".into()),
+            name: "Hero".into(),
+            group_id: None,
+            tags: Vec::new(),
+            defaults: library::EntityDefaults::default(),
+            content: EntityContent::Sprites {
+                states: vec![library::NamedSprite {
+                    id: StateId::new(3),
+                    state_name: "idle".into(),
+                    sprite,
+                    engine_tags: Vec::new(),
+                }],
+            },
+            ai: library::AiMetadata::default(),
+            anchor_reference_id: None,
+            user_data: UserData::default(),
+            created_at: 0,
+            updated_at: 0,
+        });
+        project.active = ActiveTarget::State {
+            entity_id: EntityId::new(1),
+            state_id: StateId::new(3),
+        };
+        project
+    }
+
     #[test]
     fn new_project_has_current_schema() {
         let p = Project::new("test");
         assert_eq!(p.schema_version, SchemaVersion::current());
         assert_eq!(p.feature_flags, FeatureFlags::empty());
-        assert!(p.sprites.is_empty());
+        assert!(p.library.is_empty());
+        assert_eq!(p.sprites_iter().count(), 0);
     }
 
     #[test]
@@ -181,5 +309,47 @@ mod tests {
     fn editor_version_matches_crate_version() {
         let p = Project::new("test");
         assert_eq!(p.metadata.editor_version, env!("CARGO_PKG_VERSION"));
+    }
+
+    #[test]
+    fn sprite_accessor_walks_library() {
+        let p = project_with_one_state();
+        let s = p.sprite(SpriteId::new(7)).unwrap();
+        assert_eq!(s.id, SpriteId::new(7));
+        assert!(p.sprite(SpriteId::new(99)).is_none());
+    }
+
+    #[test]
+    fn sprites_iter_pairs_sprite_with_entity() {
+        let p = project_with_one_state();
+        let collected: Vec<_> = p.sprites_iter().collect();
+        assert_eq!(collected.len(), 1);
+        assert_eq!(collected[0].1, EntityId::new(1));
+        assert_eq!(collected[0].0.sprite.id, SpriteId::new(7));
+    }
+
+    #[test]
+    fn active_sprite_id_resolves_state_target() {
+        let p = project_with_one_state();
+        assert_eq!(p.active_sprite_id(), Some(SpriteId::new(7)));
+    }
+
+    #[test]
+    fn active_sprite_id_is_none_for_other_targets() {
+        let mut p = project_with_one_state();
+        p.active = ActiveTarget::Tileset {
+            entity_id: EntityId::new(1),
+        };
+        assert!(p.active_sprite_id().is_none());
+        p.active = ActiveTarget::None;
+        assert!(p.active_sprite_id().is_none());
+    }
+
+    #[test]
+    fn sprite_mut_walks_library() {
+        let mut p = project_with_one_state();
+        let s = p.sprite_mut(SpriteId::new(7)).unwrap();
+        s.name = "renamed".into();
+        assert_eq!(p.sprite(SpriteId::new(7)).unwrap().name, "renamed");
     }
 }

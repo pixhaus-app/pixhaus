@@ -20,22 +20,26 @@
 //!
 //! # Quick start
 //!
-//! ```no_run
-//! use pixhaus_io::aseprite::{
-//!     archive_to_document, decode, document_to_archive, encode,
-//! };
-//! use pixhaus_io::pixhaus::PixhausArchive;
-//! use pixhaus_core::project::Project;
+//! Both [`document_to_archive`] and [`archive_to_document`] are
+//! stubbed during the B9.1–B9.5 window: they return
+//! [`crate::Error::LegacyImportUnsupported`] until B9.5 reinstates the
+//! library-aware translation. [`decode`] / [`encode`] continue to
+//! operate at the document level.
 //!
-//! // Read an .aseprite file into a Pixhaus archive.
+//! ```no_run
+//! use pixhaus_io::aseprite::{decode, document_to_archive, encode};
+//!
 //! let bytes = std::fs::read("hero.aseprite")?;
 //! let document = decode(&bytes)?;
-//! let converted = document_to_archive(&document, "hero")?;
-//! // converted.warnings carries any non-fatal compatibility notes.
+//! // Until B9.5, archive translation surfaces a typed error:
+//! let err = document_to_archive(&document, "hero").unwrap_err();
+//! assert!(matches!(
+//!     err,
+//!     pixhaus_io::Error::LegacyImportUnsupported { format: "aseprite" },
+//! ));
 //!
-//! // Write it back out.
-//! let document_again = archive_to_document(&converted.archive);
-//! let bytes_again = encode(&document_again)?;
+//! // Document-level round-trip is unaffected.
+//! let bytes_again = encode(&document)?;
 //! std::fs::write("hero-roundtrip.aseprite", bytes_again)?;
 //! # Ok::<(), Box<dyn std::error::Error>>(())
 //! ```

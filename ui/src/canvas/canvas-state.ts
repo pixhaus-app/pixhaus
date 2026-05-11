@@ -132,8 +132,11 @@ function pushViewportToRust(): void {
   // `0` is a valid id, which `if (!sprite)` would silently swallow.
   if (sprite === null) return;
 
+  // The Rust CanvasState no longer carries `active_sprite` after the
+  // B9.1 cleanup; library focus now lives on `Project.active`. The IPC
+  // command still needs to know which sprite the viewport belongs to,
+  // but the on-the-wire CanvasState only carries layer/frame/zoom.
   const state: CanvasState = {
-    active_sprite: sprite,
     active_layer: activeLayerId(),
     active_frame: activeFrameIndex(),
     scroll_x: scrollX(),

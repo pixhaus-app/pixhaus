@@ -3,7 +3,7 @@
 use std::io::Read;
 use std::path::Path;
 
-use pixhaus_core::project::SchemaVersion;
+use pixhaus_core::project::{SchemaError, SchemaVersion};
 
 use crate::error::{Error, Result};
 
@@ -60,10 +60,27 @@ fn parse_header(data: &[u8]) -> Result<(u16, u16, &[u8])> {
 ///
 /// Shared by the v1 fast path and the migration path so future format
 /// bumps don't drift from the v1 validation logic.
+///
+/// Three reject cases on the embedded `Project::schema_version`:
+/// - file's MAJOR below current (`< SchemaVersion::MAJOR`): a pre-release
+///   build wrote this file; the stable build cannot load it. Surfaces
+///   [`SchemaError::PreReleaseFile`] so the UI can guide the user to
+///   re-create the project.
+/// - file's MAJOR above current: a newer build wrote this file; this
+///   reader is incompatible. Surfaces
+///   [`Error::UnsupportedSchemaVersion`].
+/// - file's MAJOR matches and MINOR may exceed: forward-compatible;
+///   unknown fields are ignored by `serde(default)`.
 fn deserialize_and_validate(body: &[u8]) -> Result<PixhausArchive> {
     let archive: PixhausArchive = rmp_serde::from_slice(body)?;
     let schema = archive.project.schema_version;
-    if !SchemaVersion::current().is_compatible_with(schema) {
+    let current = SchemaVersion::current();
+    if schema.major < current.major {
+        return Err(Error::Schema(SchemaError::PreReleaseFile {
+            file_major: schema.major,
+        }));
+    }
+    if !current.is_compatible_with(schema) {
         return Err(Error::UnsupportedSchemaVersion {
             major: schema.major,
             minor: schema.minor,

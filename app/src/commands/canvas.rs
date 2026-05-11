@@ -435,9 +435,7 @@ fn ensure_layer_writable(
         .as_ref()
         .ok_or(AppCommandError::NoActiveProject)?;
     let sprite = project
-        .sprites
-        .iter()
-        .find(|s| s.id == sprite_id)
+        .sprite(sprite_id)
         .ok_or_else(|| AppCommandError::NotFound {
             entity: "sprite".into(),
             id: u64::from(sprite_id.get()),
@@ -469,9 +467,7 @@ fn composite_frame(
         .as_ref()
         .ok_or(AppCommandError::NoActiveProject)?;
     let sprite = project
-        .sprites
-        .iter()
-        .find(|s| s.id == sprite_id)
+        .sprite(sprite_id)
         .ok_or_else(|| AppCommandError::NotFound {
             entity: "sprite".into(),
             id: u64::from(sprite_id.get()),
@@ -561,9 +557,7 @@ fn ensure_raster_buffer(
             .as_ref()
             .ok_or(AppCommandError::NoActiveProject)?;
         let sprite = project
-            .sprites
-            .iter()
-            .find(|s| s.id == sprite_id)
+            .sprite(sprite_id)
             .ok_or_else(|| AppCommandError::NotFound {
                 entity: "sprite".into(),
                 id: u64::from(sprite_id.get()),
@@ -591,9 +585,7 @@ fn ensure_raster_buffer(
         .as_mut()
         .ok_or(AppCommandError::NoActiveProject)?;
     let sprite = project
-        .sprites
-        .iter_mut()
-        .find(|s| s.id == sprite_id)
+        .sprite_mut(sprite_id)
         .ok_or_else(|| AppCommandError::NotFound {
             entity: "sprite".into(),
             id: u64::from(sprite_id.get()),
@@ -692,9 +684,7 @@ pub async fn canvas_composite(
             .as_ref()
             .ok_or(AppCommandError::NoActiveProject)?;
         let sprite = project
-            .sprites
-            .iter()
-            .find(|s| s.id == sprite_id)
+            .sprite(sprite_id)
             .ok_or_else(|| AppCommandError::NotFound {
                 entity: "sprite".into(),
                 id: u64::from(sprite_id.get()),
@@ -1379,22 +1369,18 @@ pub async fn canvas_transform(
     // `doc.project` and `doc.pixel_buffers` are separate fields but Rust
     // can't tell that through a shared `&mut doc` borrow, so we extract
     // everything we need from the project before touching pixel_buffers.
-    let (sprite_idx, buf_id, cel_pos, selection_region) = {
+    let (buf_id, cel_pos, selection_region) = {
         let project = doc
             .project
             .as_ref()
             .ok_or(AppCommandError::NoActiveProject)?;
 
-        let sprite_idx = project
-            .sprites
-            .iter()
-            .position(|s| s.id == args.sprite_id)
+        let sprite = project
+            .sprite(args.sprite_id)
             .ok_or_else(|| AppCommandError::NotFound {
                 entity: "sprite".into(),
                 id: u64::from(args.sprite_id.get()),
             })?;
-
-        let sprite = &project.sprites[sprite_idx];
         let cel = sprite
             .cels
             .iter()
@@ -1414,7 +1400,7 @@ pub async fn canvas_transform(
         };
 
         let selection_region = project.selection.region.clone();
-        (sprite_idx, buf_id, cel.position, selection_region)
+        (buf_id, cel.position, selection_region)
     }; // project borrow released
 
     // ── Phase 2: pixel buffer operations ──────────────────────────────────
@@ -1504,7 +1490,13 @@ pub async fn canvas_transform(
             .project
             .as_mut()
             .ok_or(AppCommandError::NoActiveProject)?;
-        let sprite = &mut project.sprites[sprite_idx];
+        let sprite =
+            project
+                .sprite_mut(args.sprite_id)
+                .ok_or_else(|| AppCommandError::NotFound {
+                    entity: "sprite".into(),
+                    id: u64::from(args.sprite_id.get()),
+                })?;
         let orig_size = sprite
             .cels
             .iter()
@@ -1586,9 +1578,7 @@ pub async fn canvas_select_all(
             .as_ref()
             .ok_or(AppCommandError::NoActiveProject)?;
         let sprite = project
-            .sprites
-            .iter()
-            .find(|s| s.id == sprite_id)
+            .sprite(sprite_id)
             .ok_or_else(|| AppCommandError::NotFound {
                 entity: "sprite".into(),
                 id: u64::from(sprite_id.get()),
@@ -1688,9 +1678,7 @@ fn load_cel_buffer(
         .as_ref()
         .ok_or(AppCommandError::NoActiveProject)?;
     let sprite = project
-        .sprites
-        .iter()
-        .find(|s| s.id == sprite_id)
+        .sprite(sprite_id)
         .ok_or_else(|| AppCommandError::NotFound {
             entity: "sprite".into(),
             id: u64::from(sprite_id.get()),
@@ -1759,9 +1747,7 @@ fn sprite_canvas_size(
         .as_ref()
         .ok_or(AppCommandError::NoActiveProject)?;
     let sprite = project
-        .sprites
-        .iter()
-        .find(|s| s.id == sprite_id)
+        .sprite(sprite_id)
         .ok_or_else(|| AppCommandError::NotFound {
             entity: "sprite".into(),
             id: u64::from(sprite_id.get()),
@@ -2075,7 +2061,45 @@ pub async fn canvas_set_viewport(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use pixhaus_core::project::{Project, Size, Sprite};
+    use pixhaus_core::project::{
+        ActiveTarget, AiMetadata, Entity, EntityContent, EntityDefaults, EntityId, EntityKind,
+        NamedSprite, Project, Size, Sprite, StateId, UserData,
+    };
+
+    /// Wraps `sprite` into `project.library` as a fresh `Custom`-kind
+    /// entity with one primary state. Mirrors the production helper in
+    /// `sprite_add`; lives here so tests don't need to walk the same
+    /// id-counter ceremony.
+    fn install_sprite(project: &mut Project, sprite: Sprite) {
+        let entity_id = EntityId::new(1);
+        let state_id = StateId::new(1);
+        let name = sprite.name.clone();
+        project.library.entities.push(Entity {
+            id: entity_id,
+            kind: EntityKind::Custom("Sprite".into()),
+            name,
+            group_id: None,
+            tags: Vec::new(),
+            defaults: EntityDefaults::default(),
+            content: EntityContent::Sprites {
+                states: vec![NamedSprite {
+                    id: state_id,
+                    state_name: "primary".into(),
+                    sprite,
+                    engine_tags: Vec::new(),
+                }],
+            },
+            ai: AiMetadata::default(),
+            anchor_reference_id: None,
+            user_data: UserData::default(),
+            created_at: 0,
+            updated_at: 0,
+        });
+        project.active = ActiveTarget::State {
+            entity_id,
+            state_id,
+        };
+    }
 
     #[test]
     fn lift_mask_places_at_offset_and_clips() {
@@ -2142,9 +2166,10 @@ mod tests {
     fn canvas_composite_metadata_matches_sprite() {
         let mut project = Project::new("test");
         let sprite = Sprite::empty(SpriteId::new(1), "hero", Size::new(64, 48));
-        project.sprites.push(sprite);
+        install_sprite(&mut project, sprite);
 
-        let sprite = project.sprites.first().unwrap();
+        let (named, _) = project.sprites_iter().next().unwrap();
+        let sprite = &named.sprite;
         let composite = CanvasComposite {
             sprite_width: sprite.canvas.width,
             sprite_height: sprite.canvas.height,
@@ -2503,7 +2528,7 @@ mod tests {
             Size::new(canvas_w, canvas_h),
         ));
 
-        project.sprites.push(sprite);
+        install_sprite(&mut project, sprite);
         doc.project = Some(project);
         doc
     }
@@ -2529,8 +2554,8 @@ mod tests {
         // Hidden layer 1 → composite should not contain its red pixel.
         let mut doc = doc_with_two_raster_layers(4, 4);
         if let Some(project) = doc.project.as_mut()
-            && let Some(sprite) = project.sprites.first_mut()
-            && let Some(bottom) = sprite.layers.first_mut()
+            && let Some((named, _)) = project.sprites_iter_mut().next()
+            && let Some(bottom) = named.sprite.layers.first_mut()
         {
             bottom.visible = false;
         }
@@ -2545,8 +2570,8 @@ mod tests {
     fn composite_frame_skips_zero_opacity_layer() {
         let mut doc = doc_with_two_raster_layers(4, 4);
         if let Some(project) = doc.project.as_mut()
-            && let Some(sprite) = project.sprites.first_mut()
-            && let Some(top) = sprite.layers.get_mut(1)
+            && let Some((named, _)) = project.sprites_iter_mut().next()
+            && let Some(top) = named.sprite.layers.get_mut(1)
         {
             top.opacity = 0;
         }
@@ -2561,9 +2586,10 @@ mod tests {
     fn composite_frame_returns_transparent_for_empty_sprite() {
         let mut doc = crate::state::DocumentStore::default();
         let mut project = Project::new("test");
-        project
-            .sprites
-            .push(Sprite::empty(SpriteId::new(1), "hero", Size::new(8, 8)));
+        install_sprite(
+            &mut project,
+            Sprite::empty(SpriteId::new(1), "hero", Size::new(8, 8)),
+        );
         doc.project = Some(project);
         let composite = composite_frame(&doc, SpriteId::new(1), 0).expect("composite");
         for y in 0..8 {
@@ -2618,7 +2644,7 @@ mod tests {
             PixelBufferId::new(101),
             Size::new(canvas_w, canvas_h),
         ));
-        project.sprites.push(sprite);
+        install_sprite(&mut project, sprite);
         doc.project = Some(project);
 
         let composite = composite_frame(&doc, SpriteId::new(1), 0).expect("composite");

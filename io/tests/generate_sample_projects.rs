@@ -40,14 +40,51 @@
 use std::path::PathBuf;
 
 use pixhaus_core::project::{
-    AnimLoopMode, Animation, AnimationId, BlendMode, BrushShape, BrushState, CanvasState, Cel,
-    CelData, CollisionShape, ColorMode, FeatureFlags, Frame, FrameIndex, FrameRange, FrameTag,
-    IVec2, Layer, LayerId, LayerKind, LoopDirection, NineSlice, Palette, PaletteEntry, PaletteId,
-    Pivot, PixelBufferId, Project, Rect, Rgba, Size, Slice, SliceId, SliceKey, Sprite, SpriteId,
-    TileAnimation, TileAnimationFrame, TileCell, TileFlags, TileIndex, TileProperties, TilemapData,
-    Tileset, TilesetId, TilesetSource, UserData,
+    ActiveTarget, AiMetadata, AnimLoopMode, Animation, AnimationId, BlendMode, BrushShape,
+    BrushState, CanvasState, Cel, CelData, CollisionShape, ColorMode, Entity, EntityContent,
+    EntityDefaults, EntityId, EntityKind, FeatureFlags, Frame, FrameIndex, FrameRange, FrameTag,
+    IVec2, Layer, LayerId, LayerKind, LoopDirection, NamedSprite, NineSlice, Palette, PaletteEntry,
+    PaletteId, Pivot, PixelBufferId, Project, Rect, Rgba, Size, Slice, SliceId, SliceKey, Sprite,
+    SpriteId, StateId, TileAnimation, TileAnimationFrame, TileCell, TileFlags, TileIndex,
+    TileProperties, TilemapData, Tileset, TilesetId, TilesetSource, UserData,
 };
 use pixhaus_io::pixhaus::{PixelBufferEntry, PixhausArchive, encode_to_file};
+
+/// Wraps a single sprite into the library as a `Custom`-kind entity
+/// with one primary state. Replacement for the removed
+/// `project.sprites = vec![sprite]` shorthand used throughout these
+/// generators. Each project still has at most one sprite, so the
+/// fixed `EntityId::new(1)` / `StateId::new(1)` is fine; the helper
+/// also sets `project.active` so consumers that ask "what's the
+/// editor on" continue to resolve.
+fn install_sprite_as_entity(project: &mut Project, sprite: Sprite, entity_name: &str) {
+    let entity = Entity {
+        id: EntityId::new(1),
+        kind: EntityKind::Custom("Sample".into()),
+        name: entity_name.into(),
+        group_id: None,
+        tags: Vec::new(),
+        defaults: EntityDefaults::default(),
+        content: EntityContent::Sprites {
+            states: vec![NamedSprite {
+                id: StateId::new(1),
+                state_name: "primary".into(),
+                sprite,
+                engine_tags: Vec::new(),
+            }],
+        },
+        ai: AiMetadata::default(),
+        anchor_reference_id: None,
+        user_data: UserData::default(),
+        created_at: 0,
+        updated_at: 0,
+    };
+    project.library.entities.push(entity);
+    project.active = ActiveTarget::State {
+        entity_id: EntityId::new(1),
+        state_id: StateId::new(1),
+    };
+}
 
 const REGEN_ENV: &str = "PIXHAUS_REGEN_SAMPLES";
 
@@ -500,9 +537,8 @@ fn build_knight() -> PixhausArchive {
         Some("32×32 knight character. Indexed, 16-color palette. S45 sample.".into());
     project.metadata.author = Some("pixhaus".into());
     project.feature_flags = FeatureFlags::ANIMATIONS;
-    project.sprites = vec![sprite];
+    install_sprite_as_entity(&mut project, sprite, "Knight");
     project.canvas = CanvasState {
-        active_sprite: Some(SpriteId::new(1)),
         active_layer: Some(LayerId::new(1)),
         active_frame: Some(FrameIndex::new(0)),
         scroll_x: 0.0,
@@ -668,9 +704,8 @@ fn build_forest_tileset() -> PixhausArchive {
     );
     project.metadata.author = Some("pixhaus".into());
     project.feature_flags = FeatureFlags::TILEMAPS.union(FeatureFlags::ANIMATIONS);
-    project.sprites = vec![sprite];
+    install_sprite_as_entity(&mut project, sprite, "Forest Tileset");
     project.canvas = CanvasState {
-        active_sprite: Some(SpriteId::new(1)),
         active_layer: Some(LayerId::new(1)),
         active_frame: Some(FrameIndex::new(0)),
         scroll_x: 0.0,
@@ -747,9 +782,8 @@ fn build_slime() -> PixhausArchive {
         Some("16×16 slime enemy. Indexed, 10-color palette. S45 sample.".into());
     project.metadata.author = Some("pixhaus".into());
     project.feature_flags = FeatureFlags::ANIMATIONS;
-    project.sprites = vec![sprite];
+    install_sprite_as_entity(&mut project, sprite, "Slime");
     project.canvas = CanvasState {
-        active_sprite: Some(SpriteId::new(1)),
         active_layer: Some(LayerId::new(1)),
         active_frame: Some(FrameIndex::new(0)),
         scroll_x: 0.0,
@@ -917,9 +951,8 @@ fn build_ui_sprites() -> PixhausArchive {
     );
     project.metadata.author = Some("pixhaus".into());
     project.feature_flags = FeatureFlags::SLICES;
-    project.sprites = vec![sprite];
+    install_sprite_as_entity(&mut project, sprite, "UI Sprites");
     project.canvas = CanvasState {
-        active_sprite: Some(SpriteId::new(1)),
         active_layer: Some(LayerId::new(1)),
         active_frame: Some(FrameIndex::new(0)),
         scroll_x: 0.0,
@@ -1051,9 +1084,8 @@ fn build_forest_level() -> PixhausArchive {
         Some("32×16 forest level. Tilemap using inline forest tileset. S45 sample.".into());
     project.metadata.author = Some("pixhaus".into());
     project.feature_flags = FeatureFlags::TILEMAPS;
-    project.sprites = vec![sprite];
+    install_sprite_as_entity(&mut project, sprite, "Forest Level");
     project.canvas = CanvasState {
-        active_sprite: Some(SpriteId::new(1)),
         active_layer: Some(LayerId::new(1)),
         active_frame: Some(FrameIndex::new(0)),
         scroll_x: 0.0,
@@ -1143,7 +1175,10 @@ fn forest_level_round_trips() {
 #[test]
 fn knight_has_correct_frame_count() {
     let archive = build_knight();
-    let sprite = &archive.project.sprites[0];
+    let sprite = archive
+        .project
+        .sprite(SpriteId::new(1))
+        .expect("primary sprite present");
     // idle=4, walk=8×8=64, run=8×8=64, attack=6×4=24, hurt=3, death=8 → 167
     assert_eq!(sprite.frames.len(), 167, "expected 167 frames");
 }
@@ -1151,12 +1186,11 @@ fn knight_has_correct_frame_count() {
 #[test]
 fn knight_has_all_directional_tags() {
     let archive = build_knight();
-    let has_tag = |name: &str| {
-        archive.project.sprites[0]
-            .frame_tags
-            .iter()
-            .any(|t| t.name == name)
-    };
+    let sprite = archive
+        .project
+        .sprite(SpriteId::new(1))
+        .expect("knight sprite");
+    let has_tag = |name: &str| sprite.frame_tags.iter().any(|t| t.name == name);
     for dir in ["s", "sw", "w", "nw", "n", "ne", "e", "se"] {
         assert!(has_tag(&format!("walk-{dir}")), "missing walk-{dir}");
         assert!(has_tag(&format!("run-{dir}")), "missing run-{dir}");
@@ -1171,7 +1205,10 @@ fn knight_has_all_directional_tags() {
 #[test]
 fn forest_tileset_has_water_animation() {
     let archive = build_forest_tileset();
-    let sprite = &archive.project.sprites[0];
+    let sprite = archive
+        .project
+        .sprite(SpriteId::new(1))
+        .expect("forest tileset sprite");
     let tileset = &sprite.tilesets[0];
     assert_eq!(tileset.tile_count, FOREST_TILE_COUNT);
     let water_props = &tileset.properties[13];
@@ -1185,7 +1222,11 @@ fn forest_tileset_has_water_animation() {
 #[test]
 fn forest_level_tilemap_dimensions() {
     let archive = build_forest_level();
-    let cel = &archive.project.sprites[0].cels[0];
+    let cel = &archive
+        .project
+        .sprite(SpriteId::new(1))
+        .expect("forest level sprite")
+        .cels[0];
     let CelData::Tilemap { data } = &cel.data else {
         panic!("expected tilemap cel");
     };
@@ -1197,7 +1238,10 @@ fn forest_level_tilemap_dimensions() {
 #[test]
 fn ui_sprites_has_all_slices() {
     let archive = build_ui_sprites();
-    let sprite = &archive.project.sprites[0];
+    let sprite = archive
+        .project
+        .sprite(SpriteId::new(1))
+        .expect("ui sprites sprite");
     let names: Vec<&str> = sprite.slices.iter().map(|s| s.name.as_str()).collect();
     for expected in [
         "health-bar",
@@ -1231,7 +1275,11 @@ fn ui_sprites_has_all_slices() {
 #[test]
 fn forest_level_tileset_preserves_metadata() {
     let archive = build_forest_level();
-    let tileset = &archive.project.sprites[0].tilesets[0];
+    let tileset = &archive
+        .project
+        .sprite(SpriteId::new(1))
+        .expect("forest level sprite")
+        .tilesets[0];
     assert_eq!(
         tileset.tile_count, FOREST_TILE_COUNT,
         "level tileset tile_count must match forest definition"
@@ -1280,8 +1328,18 @@ fn forest_level_tileset_properties_match_standalone() {
     let level = build_forest_level();
     let standalone = build_forest_tileset();
 
-    let level_props = &level.project.sprites[0].tilesets[0].properties;
-    let standalone_props = &standalone.project.sprites[0].tilesets[0].properties;
+    let level_props = &level
+        .project
+        .sprite(SpriteId::new(1))
+        .expect("level sprite")
+        .tilesets[0]
+        .properties;
+    let standalone_props = &standalone
+        .project
+        .sprite(SpriteId::new(1))
+        .expect("standalone sprite")
+        .tilesets[0]
+        .properties;
 
     assert_eq!(
         level_props, standalone_props,
