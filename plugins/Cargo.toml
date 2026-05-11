@@ -22,7 +22,7 @@ async-trait.workspace = true
 # Manifest parsing
 toml = "0.8"
 # Plugin-directory path resolution
-dirs = "5"
+dirs = "6"
 # Hot-reload file watching
 notify = "6"
 # WASM plugin host (extism wraps wasmtime)
