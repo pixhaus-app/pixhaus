@@ -37,7 +37,11 @@ export function initCrashReporting(options: { enabled: boolean; uid: string }): 
     // No performance tracing — panics and unhandled errors only.
     tracesSampleRate: 0,
     sendDefaultPii: false,
-    autoSessionTracking: false,
+    // Sentry 10 dropped autoSessionTracking. Drop the default session
+    // integration so release-health pings still don't fire without
+    // user consent. beforeSend covers error events.
+    integrations: (defaultIntegrations) =>
+      defaultIntegrations.filter((i) => i.name !== "BrowserSession"),
     beforeSend: (event) => (jsEnabled ? event : null),
   });
 
