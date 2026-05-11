@@ -42,6 +42,9 @@ use crate::verbs::reference_sheet::SheetVariantOutput;
 /// Stable ID for the built-in iterate-reference-sheet verb.
 pub const ITERATE_REFERENCE_SHEET_VERB_ID: &str = "pixhaus.builtin.iterate_reference_sheet";
 
+/// PNG file signature: the first 8 bytes of every well-formed PNG.
+const PNG_MAGIC: &[u8] = b"\x89PNG\r\n\x1a\n";
+
 /// Effect name used in the `VerbEffect::Custom` payload this verb produces.
 ///
 /// Hosts handling this effect deserialise [`IterateSheetPayload`] from the
@@ -84,10 +87,6 @@ pub struct IterateReferenceSheetInputs {
     /// Optional user-supplied negative prompt.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub negative_prompt: Option<String>,
-
-    /// RNG seed for reproducible generation. `None` uses a random seed.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub seed: Option<u64>,
 }
 
 // ── Output payload ────────────────────────────────────────────────────────────
@@ -158,11 +157,6 @@ impl IterateReferenceSheetVerb {
                 "negative_prompt": {
                     "type": ["string", "null"],
                     "description": "Optional user-supplied negative prompt"
-                },
-                "seed": {
-                    "type": ["integer", "null"],
-                    "minimum": 0,
-                    "description": "Optional RNG seed for reproducibility"
                 }
             },
             "required": ["entity_id", "source_variant_id", "sheet_image_b64", "composition", "prompt"]
@@ -271,6 +265,13 @@ impl Verb for IterateReferenceSheetVerb {
                 ))
             })?;
 
+        if !sheet_bytes.starts_with(PNG_MAGIC) {
+            return Err(VerbError::Schema(
+                "iterate-reference-sheet: sheet_image_b64 is not a PNG (magic prefix mismatch)"
+                    .into(),
+            ));
+        }
+
         if cancel.is_cancelled() {
             return Err(VerbError::Cancelled);
         }
@@ -280,12 +281,19 @@ impl Verb for IterateReferenceSheetVerb {
 
         let mask = match &inputs.panel_label {
             Some(label) => {
-                let panel = find_panel_rect(&inputs.composition, label).ok_or_else(|| {
+                let panel = *find_panel_rect(&inputs.composition, label).ok_or_else(|| {
                     VerbError::Schema(format!(
                         "iterate-reference-sheet: panel label {label:?} not found in composition"
                     ))
                 })?;
-                Some(build_panel_mask(&sheet_bytes, panel)?)
+                // PNG decode + per-pixel mask writes + PNG encode are CPU-bound;
+                // self-schedule per docs/verb-protocol.md (Threading).
+                let sheet_for_mask = sheet_bytes.clone();
+                let mask_bytes =
+                    tokio::task::spawn_blocking(move || build_panel_mask(&sheet_for_mask, &panel))
+                        .await
+                        .map_err(|e| VerbError::Aborted(e.to_string()))??;
+                Some(mask_bytes)
             }
             None => None,
         };
@@ -368,7 +376,10 @@ impl Verb for IterateReferenceSheetVerb {
                 backend: backend_id.clone(),
                 model: backend_model,
                 prompt: inputs.prompt.clone(),
-                seed: inputs.seed,
+                // `ImageEditRequest` has no `seed` field, so the iterate verb
+                // can't actually reproduce inpainting runs. Record `None`
+                // rather than claim a contract we don't fulfil.
+                seed: None,
                 negative_prompt: if negative.is_empty() {
                     None
                 } else {
@@ -451,8 +462,8 @@ fn build_panel_mask(sheet_bytes: &[u8], panel: &Rect) -> Result<Vec<u8>> {
     // .max(0) ensures the value is non-negative before the infallible conversion.
     let px = u32::try_from(panel.origin.x.max(0)).unwrap_or(0);
     let py = u32::try_from(panel.origin.y.max(0)).unwrap_or(0);
-    let x_end = (px + panel.size.width).min(width);
-    let y_end = (py + panel.size.height).min(height);
+    let x_end = px.saturating_add(panel.size.width).min(width);
+    let y_end = py.saturating_add(panel.size.height).min(height);
 
     for row in py..y_end {
         for col in px..x_end {
@@ -477,8 +488,6 @@ fn unix_now() -> i64 {
 
 #[cfg(test)]
 mod tests {
-    use std::time::Duration;
-
     use async_trait::async_trait;
     use tokio_util::sync::CancellationToken;
 
@@ -576,7 +585,6 @@ mod tests {
             panel_label: None,
             prompt: prompt.into(),
             negative_prompt: None,
-            seed: None,
         })
         .unwrap()
     }
@@ -590,7 +598,6 @@ mod tests {
             panel_label: Some(label.into()),
             prompt: "make the hair longer".into(),
             negative_prompt: None,
-            seed: None,
         })
         .unwrap()
     }
@@ -650,7 +657,6 @@ mod tests {
             panel_label: None,
             prompt: "   ".into(),
             negative_prompt: None,
-            seed: None,
         })
         .unwrap();
         assert!(matches!(verb.validate(&inputs), Err(VerbError::Schema(_))));
@@ -667,7 +673,6 @@ mod tests {
             panel_label: None,
             prompt: "make the eyes blue".into(),
             negative_prompt: None,
-            seed: None,
         })
         .unwrap();
         assert!(matches!(verb.validate(&inputs), Err(VerbError::Schema(_))));
@@ -821,7 +826,6 @@ mod tests {
             panel_label: Some("does-not-exist".into()),
             prompt: "make it green".into(),
             negative_prompt: None,
-            seed: None,
         })
         .unwrap();
 
@@ -837,6 +841,44 @@ mod tests {
         assert!(
             matches!(err, VerbError::Schema(_)),
             "expected Schema error for unknown panel label, got {err:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn non_png_sheet_bytes_return_schema_error() {
+        // Valid base64 that decodes to "not a png" — backend would otherwise
+        // get garbage bytes; the verb must reject this up-front.
+        let bogus = base64::engine::general_purpose::STANDARD.encode(b"not a png at all");
+
+        let runtime = VerbRuntime::new();
+        runtime
+            .register_backend(BackendProxy::new(InpaintStub), 0)
+            .unwrap();
+        runtime.register(IterateReferenceSheetVerb::new()).unwrap();
+
+        let inputs = VerbInputs::from_struct(&IterateReferenceSheetInputs {
+            entity_id: EntityId::new(1),
+            source_variant_id: SheetVariantId::new(0),
+            sheet_image_b64: bogus,
+            composition: CompositionTemplate::Custom.composition(),
+            panel_label: None,
+            prompt: "make it green".into(),
+            negative_prompt: None,
+        })
+        .unwrap();
+
+        let inv = runtime
+            .invoke(
+                &VerbId::new(ITERATE_REFERENCE_SHEET_VERB_ID),
+                VerbContext::empty(meta()),
+                inputs,
+            )
+            .unwrap();
+        let err = inv.finish().await.unwrap_err();
+
+        assert!(
+            matches!(&err, VerbError::Schema(msg) if msg.contains("not a PNG")),
+            "expected Schema error for non-PNG sheet bytes, got {err:?}"
         );
     }
 
@@ -946,11 +988,5 @@ mod tests {
             result.is_ok(),
             "mask generation must not fail for oversized panel"
         );
-    }
-
-    // Ensure Duration is visible in this scope.
-    #[allow(dead_code)]
-    fn _ensure_imports_visible() -> Duration {
-        Duration::ZERO
     }
 }
