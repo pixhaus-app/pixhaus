@@ -286,6 +286,14 @@ impl Verb for TilesetFromDescriptionVerb {
             return Err(VerbError::Cancelled);
         }
 
+        // Style image precedence: explicit user input first, then the
+        // entity's anchor sheet (B10.3). When neither is present the
+        // backend generates from the prompt alone.
+        let style_image = inputs
+            .style_reference
+            .clone()
+            .or_else(|| crate::verbs::anchor_style_image_bytes(&ctx));
+
         let req = InferenceRequest::ImageGeneration(ImageGenRequest {
             model: None,
             prompt,
@@ -297,7 +305,7 @@ impl Verb for TilesetFromDescriptionVerb {
             steps: None,
             seed: None,
             num_images: 1,
-            style_image: inputs.style_reference,
+            style_image,
         });
 
         let response = select! {

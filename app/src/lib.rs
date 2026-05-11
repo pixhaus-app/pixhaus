@@ -165,6 +165,7 @@ pub fn run() -> Result<(), AppError> {
             // library
             commands::library::library_add_state,
             commands::library::library_add_tag,
+            commands::library::library_approve_sheet_variant,
             commands::library::library_create_entity,
             commands::library::library_create_group,
             commands::library::library_delete_entity,
@@ -172,6 +173,7 @@ pub fn run() -> Result<(), AppError> {
             commands::library::library_delete_state,
             commands::library::library_delete_tag,
             commands::library::library_get_active_target,
+            commands::library::library_get_anchor_payload,
             commands::library::library_get_entity,
             commands::library::library_list_entities,
             commands::library::library_list_groups,
@@ -184,6 +186,7 @@ pub fn run() -> Result<(), AppError> {
             commands::library::library_reorder_entities,
             commands::library::library_search,
             commands::library::library_set_active_target,
+            commands::library::library_set_entity_anchor,
             commands::library::library_set_group_parent,
             commands::library::library_tag_entity,
             commands::library::library_untag_entity,

@@ -7,6 +7,11 @@
 use std::collections::{HashMap, HashSet};
 use std::time::SystemTime;
 
+use pixhaus_ai::plugin::{AnchorPayload, DEFAULT_ANCHOR_STRENGTH};
+use pixhaus_core::color::extraction::ExtractionOptions;
+use pixhaus_core::project::approval::{
+    Approval, ApprovalError, approve_sheet_variant, set_entity_anchor,
+};
 use pixhaus_core::project::{
     ActiveTarget, AiMetadata, AssetInfo, ColorMode, Entity, EntityContent, EntityDefaults,
     EntityGroup, EntityId, EntityKind, GroupId, NamedSprite, PixelBufferId, ReferenceImage,
@@ -18,6 +23,24 @@ use tauri::State;
 
 use crate::error::{AppCommandError, CommandResult};
 use crate::state::AppState;
+
+impl From<ApprovalError> for AppCommandError {
+    fn from(err: ApprovalError) -> Self {
+        match err {
+            ApprovalError::EntityNotFound(id) => AppCommandError::NotFound {
+                entity: "entity".into(),
+                id: u64::from(id),
+            },
+            ApprovalError::NotAReference(id) => AppCommandError::Validation {
+                detail: format!("entity {id} is not a Reference entity"),
+            },
+            ApprovalError::VariantNotFound(vid, eid) => AppCommandError::NotFound {
+                entity: format!("variant on entity {eid}"),
+                id: u64::from(vid),
+            },
+        }
+    }
+}
 
 // ── helpers ───────────────────────────────────────────────────────────────────
 
@@ -1655,6 +1678,127 @@ pub async fn library_search(
         .as_ref()
         .ok_or(AppCommandError::NoActiveProject)?;
     Ok(search_library(project, &args))
+}
+
+// ── anchor sheet flow (B10.3) ─────────────────────────────────────────────────
+
+/// Approves a [`SheetVariant`] as the canonical sheet of a `Reference`-kind
+/// entity (B10.3).
+///
+/// Moves the variant from history into `canonical`, demotes the previous
+/// canonical to `history[0]`, runs eyedropper palette extraction over the
+/// new canonical's image bytes (skipped when the variant already carries
+/// an extracted palette), and invalidates any cached
+/// [`AnchorPayload`] for the entity.
+///
+/// Returns an [`Approval`] receipt the UI can surface in a toast.
+#[tauri::command(async, rename_all = "snake_case")]
+pub async fn library_approve_sheet_variant(
+    entity_id: EntityId,
+    variant_id: SheetVariantId,
+    state: State<'_, AppState>,
+) -> CommandResult<Approval> {
+    let mut doc = state.doc.write().await;
+    let project = doc
+        .project
+        .as_mut()
+        .ok_or(AppCommandError::NoActiveProject)?;
+    let receipt =
+        approve_sheet_variant(project, entity_id, variant_id, ExtractionOptions::default())?;
+    doc.dirty = true;
+    drop(doc);
+
+    state.anchor_cache.remove(&entity_id.get());
+
+    Ok(receipt)
+}
+
+/// Sets or clears the anchor reference for a library entity (B10.3).
+///
+/// Pass `Some(reference_id)` to anchor the entity on a `Reference`-kind
+/// entity's canonical sheet; pass `None` to clear the anchor. Anchored
+/// entities inherit consistency for free in subsequent AI verb runs.
+///
+/// Invalidates any cached anchor payload for both the source entity and
+/// the (previous, current) reference targets.
+#[tauri::command(async, rename_all = "snake_case")]
+pub async fn library_set_entity_anchor(
+    entity_id: EntityId,
+    reference_id: Option<EntityId>,
+    state: State<'_, AppState>,
+) -> CommandResult<()> {
+    let mut doc = state.doc.write().await;
+    let project = doc
+        .project
+        .as_mut()
+        .ok_or(AppCommandError::NoActiveProject)?;
+    set_entity_anchor(project, entity_id, reference_id)?;
+    doc.dirty = true;
+    drop(doc);
+
+    if let Some(rid) = reference_id {
+        state.anchor_cache.remove(&rid.get());
+    }
+    Ok(())
+}
+
+/// Returns the current [`AnchorPayload`] for an entity, building it
+/// lazily and caching the result.
+///
+/// `entity_id` may point at either:
+/// - A `Custom`-kind entity whose `anchor_reference_id` is set: the
+///   payload is built from the *referenced* entity's canonical sheet.
+/// - A `Reference`-kind entity directly: the payload is built from
+///   that entity's own canonical sheet.
+///
+/// Returns `Ok(None)` for entities with no anchor (Custom without an
+/// `anchor_reference_id`, or unrecognised kinds). Returns
+/// [`AppCommandError::NotFound`] when `entity_id` does not exist.
+#[tauri::command(async, rename_all = "snake_case")]
+pub async fn library_get_anchor_payload(
+    entity_id: EntityId,
+    state: State<'_, AppState>,
+) -> CommandResult<Option<AnchorPayload>> {
+    let doc = state.doc.read().await;
+    let project = doc
+        .project
+        .as_ref()
+        .ok_or(AppCommandError::NoActiveProject)?;
+    let entity = project
+        .library
+        .entities
+        .iter()
+        .find(|e| e.id == entity_id)
+        .ok_or(AppCommandError::NotFound {
+            entity: "entity".into(),
+            id: u64::from(entity_id.get()),
+        })?;
+
+    let reference = match entity.content {
+        EntityContent::Reference { .. } => entity,
+        _ => match entity.anchor_reference_id {
+            None => return Ok(None),
+            Some(rid) => {
+                let r = project.library.entities.iter().find(|e| e.id == rid);
+                match r {
+                    Some(r) => r,
+                    None => return Ok(None),
+                }
+            }
+        },
+    };
+
+    let lora_path = project.library.ai.project_lora_path.clone();
+    let payload =
+        AnchorPayload::from_reference_entity(reference, DEFAULT_ANCHOR_STRENGTH, lora_path);
+
+    if let Some(p) = &payload {
+        state
+            .anchor_cache
+            .insert(p.reference_entity_id.get(), p.clone());
+    }
+
+    Ok(payload)
 }
 
 // ── tests ─────────────────────────────────────────────────────────────────────

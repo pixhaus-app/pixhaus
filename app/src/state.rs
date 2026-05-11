@@ -9,6 +9,7 @@ use std::path::PathBuf;
 use std::sync::Arc;
 
 use dashmap::DashMap;
+use pixhaus_ai::plugin::AnchorPayload;
 use pixhaus_ai::plugin::runtime::VerbRuntime;
 use pixhaus_ai::verbs::{
     AudioTimingVerb, AutoMeshDeformationVerb, CleanupVerb, ContinueVerb, ConversationalVerb,
@@ -151,6 +152,17 @@ pub struct AppState {
     /// Plugin registry. Populated on startup by scanning
     /// `~/.pixhaus/plugins` and again on hot-reload events.
     pub(crate) plugins: Arc<PluginRegistry>,
+    /// Anchor-payload cache keyed by `EntityId` of the Reference
+    /// entity (B10.3).
+    ///
+    /// Each entry holds the latest [`AnchorPayload`] built from the
+    /// canonical sheet. On verb dispatch the host checks
+    /// `payload.canonical_hash` against the current canonical bytes; a
+    /// stale entry triggers a rebuild. The approval and set-anchor
+    /// commands invalidate eagerly by removing the entry. Cleared on
+    /// `project_close` / `project_new` / `project_open` so a stale
+    /// payload from a previous project never bleeds into a fresh one.
+    pub(crate) anchor_cache: Arc<DashMap<u32, AnchorPayload>>,
 }
 
 impl AppState {
@@ -201,6 +213,7 @@ impl AppState {
             verb_runtime,
             invocations: Arc::new(DashMap::new()),
             plugins,
+            anchor_cache: Arc::new(DashMap::new()),
         }
     }
 }

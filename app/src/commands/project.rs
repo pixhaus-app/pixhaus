@@ -44,7 +44,10 @@ pub struct SpriteAddArgs {
 #[tauri::command(async, rename_all = "snake_case")]
 pub async fn project_new(name: String, state: State<'_, AppState>) -> CommandResult<ProjectStatus> {
     let mut doc = state.doc.write().await;
-    Ok(install_new_project(&mut doc, Project::new(name)))
+    let status = install_new_project(&mut doc, Project::new(name));
+    drop(doc);
+    state.anchor_cache.clear();
+    Ok(status)
 }
 
 /// Resets the document store to host a brand-new project. Lifted out of
@@ -95,12 +98,10 @@ pub async fn project_open(
     .map_err(|join_err| join_error_to_command_error("pixhaus decode", &join_err))??;
 
     let mut doc = state.doc.write().await;
-    Ok(install_loaded_project(
-        &mut doc,
-        archive.project,
-        path_buf,
-        archive.buffers,
-    ))
+    let status = install_loaded_project(&mut doc, archive.project, path_buf, archive.buffers);
+    drop(doc);
+    state.anchor_cache.clear();
+    Ok(status)
 }
 
 /// Swaps a freshly-decoded project and its pixel buffers into the document
@@ -446,6 +447,8 @@ pub async fn project_close(state: State<'_, AppState>) -> CommandResult<()> {
     doc.path = None;
     doc.dirty = false;
     doc.pixel_buffers = Vec::new();
+    drop(doc);
+    state.anchor_cache.clear();
     Ok(())
 }
 

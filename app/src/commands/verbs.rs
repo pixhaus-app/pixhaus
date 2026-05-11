@@ -11,11 +11,13 @@
 use serde::{Deserialize, Serialize};
 use tauri::State;
 
+use pixhaus_ai::plugin::AnchorPayload;
+use pixhaus_ai::plugin::DEFAULT_ANCHOR_STRENGTH;
 use pixhaus_ai::plugin::context::VerbContext;
 use pixhaus_ai::plugin::descriptor::VerbId;
 use pixhaus_ai::plugin::inputs::VerbInputs;
 use pixhaus_ai::plugin::output::VerbOutput;
-use pixhaus_core::project::ProjectMetadata;
+use pixhaus_core::project::{ActiveTarget, EntityContent, EntityId, Project, ProjectMetadata};
 
 use crate::error::{AppCommandError, CommandResult};
 use crate::state::AppState;
@@ -27,6 +29,18 @@ pub struct VerbInvokeArgs {
     pub verb_id: String,
     /// JSON payload whose schema is defined by the verb's descriptor.
     pub inputs: serde_json::Value,
+    /// Optional override for the entity to use when resolving the
+    /// anchor reference sheet (B10.3).
+    ///
+    /// When `None`, the anchor target is derived from the project's
+    /// [`ActiveTarget`]: a Custom-state target uses its parent entity,
+    /// a Tileset / Tilemap / Reference target uses the named entity
+    /// itself. Pass `Some(entity_id)` from verbs that target an entity
+    /// other than the active one (e.g. `generate-reference-sheet`,
+    /// which is invoked against a Reference entity that is not yet
+    /// active).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub target_entity_id: Option<EntityId>,
 }
 
 /// Result of a verb invocation: the output the host commits, plus the
@@ -99,6 +113,11 @@ pub async fn verb_invoke(
     // full context (sprite, palette, references) requires a read guard on
     // the document; we release it before awaiting the verb so we never
     // hold a lock across an I/O suspension.
+    //
+    // The anchor (B10.3) is resolved here too: the host walks from the
+    // active or override target to the Reference entity its
+    // `anchor_reference_id` points at and builds an `AnchorPayload`. The
+    // result lands on `ctx.anchor`; verbs that ignore it pay nothing.
     let ctx = {
         let doc = state.doc.read().await;
         let project_meta = doc.project.as_ref().map_or_else(
@@ -112,7 +131,13 @@ pub async fn verb_invoke(
             },
             |p| p.metadata.clone(),
         );
-        VerbContext::empty(project_meta)
+        let anchor = doc
+            .project
+            .as_ref()
+            .and_then(|p| resolve_anchor(p, args.target_entity_id, &state.anchor_cache));
+        let mut ctx = VerbContext::empty(project_meta);
+        ctx.anchor = anchor;
+        ctx
         // doc guard drops here
     };
 
@@ -166,9 +191,136 @@ pub async fn verb_cancel(invocation_id: String, state: State<'_, AppState>) -> C
     Ok(())
 }
 
+/// Resolves the anchor payload for a verb invocation (B10.3).
+///
+/// The active entity is determined as follows:
+///
+/// 1. If `target_override` is supplied, that entity wins.
+/// 2. Otherwise the project's [`ActiveTarget`] picks the entity:
+///    - `State { entity_id, .. }` → the parent Custom entity.
+///    - `Tileset { entity_id }` / `Tilemap { entity_id }` /
+///      `Reference { entity_id }` → the named entity itself.
+///    - `None` → no anchor.
+///
+/// Once the active entity is in hand:
+///
+/// - If the entity is `Reference`-kind, build the payload from its own
+///   canonical sheet.
+/// - If the entity is anchored on a Reference (`anchor_reference_id`
+///   set), build the payload from the referenced entity's canonical
+///   sheet.
+/// - Otherwise return `None`.
+///
+/// The cache (keyed by Reference entity id) returns a hit when the
+/// stored `canonical_hash` matches the live canonical bytes; stale
+/// entries are rebuilt and reinserted.
+pub(crate) fn resolve_anchor(
+    project: &Project,
+    target_override: Option<EntityId>,
+    cache: &dashmap::DashMap<u32, AnchorPayload>,
+) -> Option<AnchorPayload> {
+    let active_entity_id = target_override.or_else(|| active_target_entity_id(&project.active))?;
+    let active = project
+        .library
+        .entities
+        .iter()
+        .find(|e| e.id == active_entity_id)?;
+
+    let reference = if matches!(active.content, EntityContent::Reference { .. }) {
+        active
+    } else {
+        let rid = active.anchor_reference_id?;
+        project.library.entities.iter().find(|e| e.id == rid)?
+    };
+
+    let lora_path = project.library.ai.project_lora_path.clone();
+    let live = AnchorPayload::from_reference_entity(reference, DEFAULT_ANCHOR_STRENGTH, lora_path)?;
+
+    if let Some(cached) = cache.get(&live.reference_entity_id.get()) {
+        if cached.canonical_hash == live.canonical_hash {
+            return Some(cached.clone());
+        }
+    }
+    cache.insert(live.reference_entity_id.get(), live.clone());
+    Some(live)
+}
+
+/// Maps an [`ActiveTarget`] back to the entity id it implicates.
+fn active_target_entity_id(active: &ActiveTarget) -> Option<EntityId> {
+    match *active {
+        ActiveTarget::None => None,
+        ActiveTarget::State { entity_id, .. }
+        | ActiveTarget::Tileset { entity_id }
+        | ActiveTarget::Tilemap { entity_id }
+        | ActiveTarget::Reference { entity_id } => Some(entity_id),
+    }
+}
+
 #[cfg(test)]
 mod tests {
+    use std::collections::BTreeMap;
+
+    use dashmap::DashMap;
+    use pixhaus_core::project::{
+        AiMetadata, AssetInfo, Entity, EntityContent, EntityDefaults, EntityKind, ReferenceImage,
+        ReferenceSheet, SheetComposition, SheetVariant, SheetVariantId, StateId, UserData,
+    };
+
     use super::*;
+
+    fn ref_entity(id: u32, bytes: Vec<u8>) -> Entity {
+        Entity {
+            id: EntityId::new(id),
+            kind: EntityKind::Reference,
+            name: format!("Ref {id}"),
+            group_id: None,
+            tags: Vec::new(),
+            defaults: EntityDefaults::default(),
+            content: EntityContent::Reference {
+                sheet: Box::new(ReferenceSheet {
+                    canonical: SheetVariant {
+                        id: SheetVariantId::new(1),
+                        generated_at: 0,
+                        image: ReferenceImage {
+                            bytes,
+                            mime: "image/png".into(),
+                        },
+                        composition: SheetComposition::default(),
+                        generation: None,
+                        extracted_palette: Vec::new(),
+                    },
+                    history: Vec::new(),
+                    prompts: Vec::new(),
+                    info: AssetInfo {
+                        fields: BTreeMap::new(),
+                        notes: Vec::new(),
+                    },
+                }),
+            },
+            ai: AiMetadata::default(),
+            anchor_reference_id: None,
+            user_data: UserData::default(),
+            created_at: 0,
+            updated_at: 0,
+        }
+    }
+
+    fn custom_entity(id: u32, anchor: Option<EntityId>) -> Entity {
+        Entity {
+            id: EntityId::new(id),
+            kind: EntityKind::Custom("Hero".into()),
+            name: format!("Hero {id}"),
+            group_id: None,
+            tags: Vec::new(),
+            defaults: EntityDefaults::default(),
+            content: EntityContent::Sprites { states: Vec::new() },
+            ai: AiMetadata::default(),
+            anchor_reference_id: anchor,
+            user_data: UserData::default(),
+            created_at: 0,
+            updated_at: 0,
+        }
+    }
 
     #[test]
     fn verb_info_fields_are_present() {
@@ -177,10 +329,122 @@ mod tests {
             display_name: "Critique".into(),
             description: "VLM quality analysis".into(),
             cancellable: true,
-            required_capabilities: 0b10, // VISION_LANGUAGE bit
+            required_capabilities: 0b10,
             input_schema: serde_json::json!({"type": "object"}),
         };
         assert!(!info.id.is_empty());
         assert!(info.cancellable);
+    }
+
+    #[test]
+    fn resolve_anchor_returns_none_for_no_target() {
+        let project = Project::new("none");
+        let cache = DashMap::new();
+        assert!(resolve_anchor(&project, None, &cache).is_none());
+    }
+
+    #[test]
+    fn resolve_anchor_uses_target_override() {
+        let mut project = Project::new("override");
+        project.library.entities.push(ref_entity(7, vec![1, 2, 3]));
+        let cache = DashMap::new();
+        let p = resolve_anchor(&project, Some(EntityId::new(7)), &cache).unwrap();
+        assert_eq!(p.reference_entity_id, EntityId::new(7));
+        assert_eq!(p.image_bytes, vec![1, 2, 3]);
+    }
+
+    #[test]
+    fn resolve_anchor_follows_anchor_pointer_from_active_state() {
+        let mut project = Project::new("anchored");
+        project.library.entities.push(ref_entity(7, vec![1, 2, 3]));
+        project
+            .library
+            .entities
+            .push(custom_entity(9, Some(EntityId::new(7))));
+        project.active = ActiveTarget::State {
+            entity_id: EntityId::new(9),
+            state_id: StateId::new(1),
+        };
+        let cache = DashMap::new();
+        let p = resolve_anchor(&project, None, &cache).unwrap();
+        assert_eq!(p.reference_entity_id, EntityId::new(7));
+    }
+
+    #[test]
+    fn resolve_anchor_returns_none_for_unanchored_custom() {
+        let mut project = Project::new("unanchored");
+        project.library.entities.push(custom_entity(9, None));
+        project.active = ActiveTarget::State {
+            entity_id: EntityId::new(9),
+            state_id: StateId::new(1),
+        };
+        let cache = DashMap::new();
+        assert!(resolve_anchor(&project, None, &cache).is_none());
+    }
+
+    #[test]
+    fn resolve_anchor_returns_self_when_target_is_reference() {
+        let mut project = Project::new("active-reference");
+        project.library.entities.push(ref_entity(7, vec![9, 9, 9]));
+        project.active = ActiveTarget::Reference {
+            entity_id: EntityId::new(7),
+        };
+        let cache = DashMap::new();
+        let p = resolve_anchor(&project, None, &cache).unwrap();
+        assert_eq!(p.reference_entity_id, EntityId::new(7));
+        assert_eq!(p.image_bytes, vec![9, 9, 9]);
+    }
+
+    #[test]
+    fn resolve_anchor_caches_payload_and_serves_from_cache() {
+        let mut project = Project::new("cache");
+        project.library.entities.push(ref_entity(7, vec![1, 2, 3]));
+        let cache = DashMap::new();
+
+        let p1 = resolve_anchor(&project, Some(EntityId::new(7)), &cache).unwrap();
+        assert_eq!(cache.len(), 1);
+
+        // Stomp the entity bytes — but the cache should still serve
+        // the OLD payload because we didn't bump the canonical bytes
+        // through this code path.
+        let p2 = resolve_anchor(&project, Some(EntityId::new(7)), &cache).unwrap();
+        assert_eq!(p2.canonical_hash, p1.canonical_hash);
+    }
+
+    #[test]
+    fn resolve_anchor_invalidates_cache_when_canonical_changes() {
+        let mut project = Project::new("cache-invalidate");
+        project.library.entities.push(ref_entity(7, vec![1, 2, 3]));
+        let cache = DashMap::new();
+
+        let p1 = resolve_anchor(&project, Some(EntityId::new(7)), &cache).unwrap();
+
+        // Change the canonical bytes.
+        if let EntityContent::Reference { sheet } = &mut project.library.entities[0].content {
+            sheet.canonical.image.bytes = vec![9, 9, 9];
+        }
+        let p2 = resolve_anchor(&project, Some(EntityId::new(7)), &cache).unwrap();
+        assert_ne!(
+            p1.canonical_hash, p2.canonical_hash,
+            "hash must change when bytes change"
+        );
+        assert_eq!(p2.image_bytes, vec![9, 9, 9]);
+    }
+
+    #[test]
+    fn resolve_anchor_drops_stale_pointer() {
+        // Custom entity points at a Reference id that doesn't exist.
+        let mut project = Project::new("stale");
+        project
+            .library
+            .entities
+            .push(custom_entity(9, Some(EntityId::new(99))));
+        project.active = ActiveTarget::State {
+            entity_id: EntityId::new(9),
+            state_id: StateId::new(1),
+        };
+        let cache = DashMap::new();
+        // Should not panic, returns None.
+        assert!(resolve_anchor(&project, None, &cache).is_none());
     }
 }

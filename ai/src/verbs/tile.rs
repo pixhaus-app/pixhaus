@@ -261,9 +261,20 @@ impl Verb for TileVerb {
 
         progress.step(Some(0.30), "generating autotile atlas").await;
 
-        // Pass 2: full autotile atlas generation.
-        let atlas =
-            generate_atlas(&inputs, &style_desc, backend, progress.clone(), &cancel).await?;
+        // Pass 2: full autotile atlas generation. The anchor sheet, if
+        // any, is the style fallback when no `examples` are supplied —
+        // an anchored tileset entity inherits its parent reference's
+        // look automatically.
+        let anchor_style = crate::verbs::anchor_style_image_bytes(&ctx);
+        let atlas = generate_atlas(
+            &inputs,
+            &style_desc,
+            anchor_style,
+            backend,
+            progress.clone(),
+            &cancel,
+        )
+        .await?;
 
         if cancel.is_cancelled() {
             return Err(VerbError::Cancelled);
@@ -428,6 +439,7 @@ async fn analyze_style(
 async fn generate_atlas(
     inputs: &TileInputs,
     style_desc: &str,
+    anchor_style: Option<Vec<u8>>,
     backend: &dyn InferenceBackend,
     progress: VerbProgress,
     cancel: &CancellationToken,
@@ -445,11 +457,14 @@ async fn generate_atlas(
         th = inputs.tile_height,
     );
 
-    // Encode the first example as a style-reference image if available.
+    // Style image precedence: first user-supplied example, then the
+    // entity's anchor sheet (B10.3). Anchored tilesets inherit their
+    // parent reference's look automatically when no examples are passed.
     let style_image = inputs
         .examples
         .first()
-        .and_then(|ex| encode_pixel_data_as_png(ex).ok());
+        .and_then(|ex| encode_pixel_data_as_png(ex).ok())
+        .or(anchor_style);
 
     let request = InferenceRequest::ImageGeneration(ImageGenRequest {
         model: None,
