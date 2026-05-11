@@ -1039,12 +1039,15 @@ mod tests {
         project.metadata.created_at = 0;
         stamp_save_metadata(&mut project, 1_700_000_000);
 
-        let tmp = tempfile::NamedTempFile::with_suffix(".pixhaus").expect("named temp file");
-        let path = tmp.path();
+        // encode_to_file does a sibling-tmp + rename. NamedTempFile
+        // would hold the destination open and the rename would fail
+        // on Windows; use a unique dir + non-existent filename instead.
+        let tmp = tempfile::tempdir().expect("temp dir");
+        let path = tmp.path().join("metadata-roundtrip.pixhaus");
 
         let archive = PixhausArchive::new(project);
-        encode_to_file(&archive, path).expect("encode");
-        let loaded = decode_from_file(path).expect("decode");
+        encode_to_file(&archive, &path).expect("encode");
+        let loaded = decode_from_file(&path).expect("decode");
 
         assert_eq!(loaded.project.metadata.created_at, 1_700_000_000);
         assert_eq!(loaded.project.metadata.updated_at, 1_700_000_000);
@@ -1071,12 +1074,14 @@ mod tests {
             pixels: pixels.clone(),
         }];
 
-        let tmp = tempfile::NamedTempFile::with_suffix(".pixhaus").expect("named temp file");
-        let path = tmp.path();
+        // See `metadata_round_trips_through_pixhaus_archive` above for
+        // why this uses tempdir() + join rather than NamedTempFile.
+        let tmp = tempfile::tempdir().expect("temp dir");
+        let path = tmp.path().join("buf-roundtrip.pixhaus");
 
         let archive = PixhausArchive { project, buffers };
-        encode_to_file(&archive, path).expect("encode");
-        let loaded = decode_from_file(path).expect("decode");
+        encode_to_file(&archive, &path).expect("encode");
+        let loaded = decode_from_file(&path).expect("decode");
 
         assert_eq!(
             loaded.buffers.len(),

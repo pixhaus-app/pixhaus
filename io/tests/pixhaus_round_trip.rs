@@ -323,11 +323,15 @@ fn write_rejects_unknown_feature_flags() {
 #[test]
 fn fs_round_trip_full_archive() {
     let archive = full_archive();
-    let tmp = tempfile::NamedTempFile::with_suffix(".pixhaus").expect("named temp file");
-    let path = tmp.path();
+    // Use a unique directory + non-existent filename rather than
+    // NamedTempFile: encode_to_file writes a sibling .tmp-<pid> and
+    // renames it onto path, which fails on Windows if another handle
+    // is open on the destination.
+    let tmp = tempfile::tempdir().expect("temp dir");
+    let path = tmp.path().join("fs-roundtrip.pixhaus");
 
-    encode_to_file(&archive, path).expect("encode_to_file should succeed");
-    let loaded = decode_from_file(path).expect("decode_from_file should succeed");
+    encode_to_file(&archive, &path).expect("encode_to_file should succeed");
+    let loaded = decode_from_file(&path).expect("decode_from_file should succeed");
 
     // Same depth as the in-memory round_trip: full structural equality
     // on Project plus per-buffer byte equality. Catches regressions in
