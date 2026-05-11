@@ -20,9 +20,10 @@ import {
   libraryUpdateAssetInfo,
 } from "../lib/commands/library";
 import { verbList } from "../lib/commands/verbs";
-import { getCachedVerbList, setActiveVerb } from "../lib/ai/verb-invoke-state";
+import { getCachedVerbList, setActiveVerb, setPendingPrefill } from "../lib/ai/verb-invoke-state";
 import { pushToast } from "../lib/toast/toast-state";
 import { reportCommandFailure } from "../lib/utils/errors";
+import { useImageObjectUrl } from "../lib/utils/image-object-url";
 import {
   activeSheetEntityId,
   closeSheetPanel,
@@ -41,15 +42,17 @@ const ITERATE_VERB_ID = "pixhaus.builtin.iterate_reference_sheet";
 
 type BottomTab = "history" | "prompts";
 
-// Converts ReferenceImage bytes to a data URL for <img> display.
-function bytesToDataUrl(bytes: number[], mime: string): string {
+// Encodes raw image bytes to a base64 string for IPC pre-fill payloads.
+// Display goes through `useImageObjectUrl` instead — see Fix D in the
+// B10.4 review-fix plan.
+function bytesToBase64(bytes: number[]): string {
   if (bytes.length === 0) return "";
   const u8 = new Uint8Array(bytes);
   let binary = "";
   for (let i = 0; i < u8.length; i++) {
     binary += String.fromCharCode(u8[i]!);
   }
-  return `data:${mime};base64,${btoa(binary)}`;
+  return btoa(binary);
 }
 
 // Extracts the ReferenceSheet from an entity's content. Returns null if the
@@ -67,18 +70,30 @@ const SheetView: Component = () => {
   const [activeTab, setActiveTab] = createSignal<BottomTab>("history");
 
   // Load (or reload) the entity whenever the active sheet ID changes.
+  // Capture the requested id and ignore stale resolutions — fast back-to-back
+  // selections must not let an older fetch clobber a newer one.
   createEffect(
     on(activeSheetEntityId, (entityId) => {
       if (entityId === null) {
         setEntity(null);
         return;
       }
+      const requestId = entityId;
       setLoading(true);
       setPreviewVariant(null);
       libraryGetEntity(entityId)
-        .then((e) => setEntity(e))
-        .catch((err: unknown) => reportCommandFailure("library_get_entity", err))
-        .finally(() => setLoading(false));
+        .then((e) => {
+          if (activeSheetEntityId() !== requestId) return;
+          setEntity(e);
+        })
+        .catch((err: unknown) => {
+          if (activeSheetEntityId() !== requestId) return;
+          reportCommandFailure("library_get_entity", err);
+        })
+        .finally(() => {
+          if (activeSheetEntityId() !== requestId) return;
+          setLoading(false);
+        });
     }),
   );
 
@@ -94,11 +109,7 @@ const SheetView: Component = () => {
     return previewVariant() ?? s.canonical;
   };
 
-  const displayedDataUrl = (): string => {
-    const v = displayedVariant();
-    if (v === null) return "";
-    return bytesToDataUrl(v.image.bytes, v.image.mime);
-  };
+  const displayedDataUrl = useImageObjectUrl(() => displayedVariant()?.image ?? null);
 
   // Determine sheet image natural dimensions from the composition template
   // sizes known from B10.1 (1024×1536 for Character, 1024×1024 for others).
@@ -224,17 +235,34 @@ const SheetView: Component = () => {
   }
 
   function handleRefine(): void {
+    const e = entity();
+    const v = displayedVariant();
+    if (e === null || v === null) {
+      pushToast({ title: "No reference sheet to iterate on yet.", kind: "info" });
+      return;
+    }
+    const region = selectedPanelRegion();
+    const label =
+      region === null
+        ? null
+        : (allPanels().find((p) => p.x === region.origin.x && p.y === region.origin.y)?.label ??
+          null);
+    setPendingPrefill({
+      entity_id: e.id,
+      source_variant_id: v.id,
+      sheet_image_b64: bytesToBase64(v.image.bytes),
+      composition: v.composition,
+      panel_label: label,
+      prompt: "",
+      negative_prompt: null,
+    });
     openVerb(ITERATE_VERB_ID, "Iterate reference sheet");
   }
 
   function handleRerun(prompt: PromptEntry): void {
-    // Re-running a past prompt opens the generate verb modal with that
-    // prompt pre-populated. The VerbInvokeHost form uses the verb's
-    // input_schema to render fields; the user can adjust before submitting.
-    // A future enhancement can pre-fill the form automatically.
-    pushToast({
-      title: `Re-run: "${prompt.prompt.slice(0, 60)}${prompt.prompt.length > 60 ? "…" : ""}" — open Generate to re-run with this prompt.`,
-      kind: "info",
+    setPendingPrefill({
+      prompt: prompt.prompt,
+      negative_prompt: prompt.negative_prompt ?? null,
     });
     openVerb(GENERATE_VERB_ID, "Generate reference sheet");
   }
@@ -248,11 +276,17 @@ const SheetView: Component = () => {
             class="sheet-panel__icon-btn"
             classList={{ "sheet-panel__icon-btn--active": showPanelOverlay() }}
             onClick={() => setShowPanelOverlay(!showPanelOverlay())}
+            aria-label="Toggle panel overlay"
             title="Toggle panel overlay"
           >
             ⊞
           </button>
-          <button class="sheet-panel__icon-btn" onClick={closeSheetPanel} title="Close sheet panel">
+          <button
+            class="sheet-panel__icon-btn"
+            onClick={closeSheetPanel}
+            aria-label="Close sheet panel"
+            title="Close sheet panel"
+          >
             ✕
           </button>
         </div>
@@ -321,11 +355,10 @@ const SheetView: Component = () => {
           </button>
           <button
             class="sheet-panel__action-btn"
-            disabled={selectedPanelRegion() === null}
             onClick={handleRefine}
             title={
               selectedPanelRegion() === null
-                ? "Click a panel in the overlay to enable"
+                ? "No panel selected — Refine will run on the whole sheet. Click a panel in the overlay to scope it."
                 : "Refine the selected panel"
             }
           >

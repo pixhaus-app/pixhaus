@@ -14,14 +14,17 @@ import { verbCancel, verbInvoke } from "../commands/verbs";
 import {
   activeInvocationId,
   activeVerb,
+  pendingPrefill,
   setActiveInvocationId,
   setActiveVerb,
+  setPendingPrefill,
 } from "./verb-invoke-state";
 
 const VerbInvokeHost: Component = () => {
   function close(): void {
     setActiveVerb(null);
     setActiveInvocationId(null);
+    setPendingPrefill(null);
   }
 
   function onSubmit(inputs: Record<string, unknown>): void {
@@ -65,6 +68,7 @@ const VerbInvokeHost: Component = () => {
         title={activeVerb()?.display_name ?? "Verb"}
         schema={activeVerb()?.input_schema ?? {}}
         runningInvocationId={activeInvocationId()}
+        initialValues={pendingPrefill() ?? undefined}
         onSubmit={onSubmit}
         onCancelRunning={onCancelRunning}
         onClose={close}

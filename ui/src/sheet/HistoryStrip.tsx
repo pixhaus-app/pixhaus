@@ -6,17 +6,7 @@
 
 import { type Component, For, Show, createSignal, onCleanup } from "solid-js";
 import type { SheetVariant } from "../lib/types";
-
-// Converts a ReferenceImage byte array to a data URL for display.
-function bytesToDataUrl(bytes: number[], mime: string): string {
-  if (bytes.length === 0) return "";
-  const u8 = new Uint8Array(bytes);
-  let binary = "";
-  for (let i = 0; i < u8.length; i++) {
-    binary += String.fromCharCode(u8[i]!);
-  }
-  return `data:${mime};base64,${btoa(binary)}`;
-}
+import { useImageObjectUrl } from "../lib/utils/image-object-url";
 
 type ContextMenuState = {
   x: number;
@@ -66,7 +56,7 @@ const HistoryStrip: Component<Props> = (props) => {
         {({ variant, isCanonical }) => {
           const isActive = (): boolean =>
             props.previewId === null ? isCanonical : props.previewId === variant.id;
-          const dataUrl = bytesToDataUrl(variant.image.bytes, variant.image.mime);
+          const thumbUrl = useImageObjectUrl(() => variant.image);
 
           return (
             <div
@@ -80,8 +70,8 @@ const HistoryStrip: Component<Props> = (props) => {
                   : new Date(variant.generated_at * 1000).toLocaleString()
               }
             >
-              <Show when={dataUrl !== ""} fallback={<div class="sheet-history-thumb__empty" />}>
-                <img class="sheet-history-thumb__img" src={dataUrl} alt="" />
+              <Show when={thumbUrl() !== ""} fallback={<div class="sheet-history-thumb__empty" />}>
+                <img class="sheet-history-thumb__img" src={thumbUrl()} alt="" />
               </Show>
               <Show when={isCanonical}>
                 <div class="sheet-history-thumb__badge">approved</div>

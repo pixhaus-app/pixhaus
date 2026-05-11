@@ -7,8 +7,9 @@
 import { type Component, For, Show, createEffect, createSignal } from "solid-js";
 import type { AssetInfo } from "../lib/types";
 
-// Fields surfaced in a structured row. The user can still add arbitrary
-// keys via the "Add field" button; these are common enough to pre-label.
+// Fields surfaced as structured rows. The Reference-entity data model
+// supports arbitrary string keys; this list pre-labels the common ones.
+// Adding a free-form key from the UI is a B10.4 follow-up.
 const KNOWN_FIELDS: ReadonlyArray<{ key: string; label: string }> = [
   { key: "name", label: "Name" },
   { key: "age", label: "Age" },
