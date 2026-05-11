@@ -44,6 +44,7 @@ pub mod extend;
 pub mod inbetween;
 pub mod motion_from_video;
 pub mod project_style_learning;
+pub mod reference_sheet;
 pub mod sketch_finishing;
 pub mod tile;
 pub mod tileset_from_description;
@@ -59,6 +60,7 @@ pub use extend::ExtendVerb;
 pub use inbetween::InbetweenVerb;
 pub use motion_from_video::MotionFromVideoVerb;
 pub use project_style_learning::ProjectStyleLearningVerb;
+pub use reference_sheet::GenerateReferenceSheetVerb;
 pub use sketch_finishing::SketchFinishingVerb;
 pub use tile::TileVerb;
 pub use tileset_from_description::TilesetFromDescriptionVerb;
@@ -180,5 +182,14 @@ mod tests {
     fn critique_verb_is_exported() {
         let verb = CritiqueVerb::new();
         assert_eq!(verb.descriptor().id.as_str(), critique::CRITIQUE_VERB_ID);
+    }
+
+    #[test]
+    fn generate_reference_sheet_verb_is_exported() {
+        let verb = GenerateReferenceSheetVerb::new();
+        assert_eq!(
+            verb.descriptor().id.as_str(),
+            reference_sheet::GENERATE_REFERENCE_SHEET_VERB_ID
+        );
     }
 }

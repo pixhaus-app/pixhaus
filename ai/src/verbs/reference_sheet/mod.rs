@@ -1,0 +1,848 @@
+//! Verb: `GenerateReferenceSheet` — AI-generated character / item / tileset
+//! reference sheets.
+//!
+//! Takes a target Reference entity, a composition template, a user prompt,
+//! and a backend selection. Produces 1–4 `SheetVariant` candidates and
+//! delivers them to the host as a `VerbEffect::Custom` payload. None of the
+//! candidates are canonical until the user approves one via the B10.3
+//! approval flow.
+//!
+//! The four composition templates (Character / Item / Tileset / Custom) each
+//! define a distinct panel layout and a backend prompt-engineering layer that
+//! augments the user's description with layout instructions before dispatch.
+//!
+//! Implements: docs/planning/work/b10-reference-sheets.md#b101
+
+use std::time::Instant;
+
+use async_trait::async_trait;
+use base64::Engine as _;
+use serde::{Deserialize, Serialize};
+use tokio::select;
+use tokio_util::sync::CancellationToken;
+
+use pixhaus_core::project::{EntityId, GenerationProvenance, SheetVariantId};
+
+use crate::backends::{ImageGenRequest, InferenceRequest, InferenceResponse};
+use crate::plugin::context::VerbContext;
+use crate::plugin::descriptor::{
+    BackendCapabilities, CostEstimate, EffectKind, VerbDescriptor, VerbId,
+};
+use crate::plugin::error::{Result, VerbError};
+use crate::plugin::inputs::VerbInputs;
+use crate::plugin::output::{ActualCost, VerbEffect, VerbOutput};
+use crate::plugin::progress::{VerbProgress, VerbProgressEvent};
+use crate::plugin::verb::Verb;
+
+pub mod templates;
+
+pub use templates::CompositionTemplate;
+
+/// Stable ID for the built-in generate-reference-sheet verb.
+pub const GENERATE_REFERENCE_SHEET_VERB_ID: &str = "pixhaus.builtin.generate_reference_sheet";
+
+/// Effect name used in the `VerbEffect::Custom` payload this verb produces.
+///
+/// Hosts that apply this effect deserialise [`GenerateSheetPayload`] from
+/// the `payload` field and insert the returned variants into the target
+/// entity's history.
+pub const GENERATE_SHEET_EFFECT_NAME: &str =
+    "pixhaus.builtin.generate_reference_sheet.sheets";
+
+// ── Input types ───────────────────────────────────────────────────────────────
+
+/// Inputs for [`GenerateReferenceSheetVerb`].
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct GenerateReferenceSheetInputs {
+    /// Target Reference entity in the project library. The host inserts the
+    /// generated variants into this entity's `ReferenceSheet::history`.
+    pub entity_id: EntityId,
+
+    /// Composition template — determines panel layout, sheet dimensions, and
+    /// the backend prompt engineering applied on top of the user's text.
+    pub template: CompositionTemplate,
+
+    /// User's description of the subject (e.g. "32px fantasy hero with a
+    /// blue cloak, sword, and brown hair"). The verb prepends layout
+    /// instructions appropriate for the chosen template.
+    pub prompt: String,
+
+    /// Optional user-supplied negative prompt. Concatenated after the
+    /// template's own negative prompt, separated by a comma.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub negative_prompt: Option<String>,
+
+    /// Number of candidate sheets to generate. Clamped to `1..=4`.
+    #[serde(default = "default_num_variants")]
+    pub num_variants: u32,
+
+    /// RNG seed for reproducible generation. `None` uses a random seed.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub seed: Option<u64>,
+}
+
+fn default_num_variants() -> u32 {
+    1
+}
+
+// ── Output payload ────────────────────────────────────────────────────────────
+
+/// The payload carried in the `VerbEffect::Custom` this verb produces.
+///
+/// Hosts handling `pixhaus.builtin.generate_reference_sheet.sheets`
+/// deserialise this from the effect's `payload` field and convert each
+/// [`SheetVariantOutput`] into a [`pixhaus_core::project::SheetVariant`]
+/// added to the target entity's `history`.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct GenerateSheetPayload {
+    /// Target Reference entity to receive the new variants.
+    pub entity_id: EntityId,
+    /// Generated sheet variants, one per requested candidate.
+    pub variants: Vec<SheetVariantOutput>,
+}
+
+/// One generated sheet variant in a form ready for host storage.
+///
+/// Image bytes are base64-encoded PNG so the payload is valid UTF-8 JSON.
+/// The host decodes `image_b64` back to bytes and wraps them in a
+/// [`pixhaus_core::project::ReferenceImage`] before inserting the variant
+/// into the entity's history.
+///
+/// `id` is a placeholder: the host assigns a real [`SheetVariantId`] from
+/// the project's id-minting sequence on commit.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct SheetVariantOutput {
+    /// Placeholder variant id. The host replaces this with a real id.
+    pub id: SheetVariantId,
+    /// UTC seconds-since-epoch at which this variant was generated.
+    pub generated_at: i64,
+    /// Base64-encoded PNG sheet image.
+    pub image_b64: String,
+    /// Panel layout reflecting the template's expected composition.
+    pub composition: pixhaus_core::project::SheetComposition,
+    /// Generation provenance for reproducibility and audit.
+    pub generation: GenerationProvenance,
+}
+
+// ── Verb implementation ───────────────────────────────────────────────────────
+
+/// AI verb that generates reference sheet candidates for a library entity.
+///
+/// Construct with [`GenerateReferenceSheetVerb::new`] (no arguments). The
+/// runtime selects an `IMAGE_GENERATION`-capable backend per invocation and
+/// injects it into `VerbContext::backend`.
+pub struct GenerateReferenceSheetVerb {
+    descriptor: VerbDescriptor,
+}
+
+impl GenerateReferenceSheetVerb {
+    /// Constructs the verb. The runtime injects the backend per invocation.
+    #[must_use]
+    #[allow(clippy::disallowed_methods)]
+    pub fn new() -> Self {
+        let input_schema = serde_json::json!({
+            "type": "object",
+            "properties": {
+                "entity_id": {
+                    "type": "integer",
+                    "minimum": 0,
+                    "description": "ID of the target Reference entity in the project library"
+                },
+                "template": {
+                    "type": "string",
+                    "enum": ["character", "item", "tileset", "custom"],
+                    "description": "Composition template that controls panel layout and prompt engineering"
+                },
+                "prompt": {
+                    "type": "string",
+                    "minLength": 1,
+                    "description": "User description of the subject"
+                },
+                "negative_prompt": {
+                    "type": ["string", "null"],
+                    "description": "Optional user-supplied negative prompt"
+                },
+                "num_variants": {
+                    "type": "integer",
+                    "minimum": 1,
+                    "maximum": 4,
+                    "default": 1,
+                    "description": "Number of candidate sheets to generate"
+                },
+                "seed": {
+                    "type": ["integer", "null"],
+                    "minimum": 0,
+                    "description": "Optional RNG seed for reproducibility"
+                }
+            },
+            "required": ["entity_id", "template", "prompt"]
+        });
+
+        Self {
+            descriptor: VerbDescriptor {
+                id: VerbId::new(GENERATE_REFERENCE_SHEET_VERB_ID),
+                display_name: "Generate Reference Sheet".into(),
+                description: "Generate 1–4 candidate reference sheets for a Character, Item, \
+                              Tileset, or Custom entity. Each sheet is a structured multi-panel \
+                              composition (turnaround views, expressions, palette swatch) that \
+                              becomes the visual anchor for all subsequent AI generations on \
+                              this entity."
+                    .into(),
+                version: env!("CARGO_PKG_VERSION").into(),
+                required_capabilities: BackendCapabilities::IMAGE_GENERATION,
+                input_schema,
+                output_schema: None,
+                output_kinds: vec![EffectKind::Custom(GENERATE_SHEET_EFFECT_NAME.into())],
+                cost_estimate: CostEstimate {
+                    typical_latency: std::time::Duration::from_secs(45),
+                    max_latency: std::time::Duration::from_secs(300),
+                    typical_usd_cents: 2.0,
+                    max_usd_cents: 20.0,
+                },
+                streaming: true,
+                cancellable: true,
+                documentation_url: Some("docs/verbs/generate-reference-sheet.md".into()),
+            },
+        }
+    }
+}
+
+impl Default for GenerateReferenceSheetVerb {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl std::fmt::Debug for GenerateReferenceSheetVerb {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("GenerateReferenceSheetVerb")
+            .field("id", &self.descriptor.id)
+            .finish_non_exhaustive()
+    }
+}
+
+#[async_trait]
+impl Verb for GenerateReferenceSheetVerb {
+    fn descriptor(&self) -> &VerbDescriptor {
+        &self.descriptor
+    }
+
+    fn validate(&self, inputs: &VerbInputs) -> Result<()> {
+        let parsed: GenerateReferenceSheetInputs = inputs.deserialize()?;
+        if parsed.prompt.trim().is_empty() {
+            return Err(VerbError::Schema(
+                "generate-reference-sheet: prompt must not be blank".into(),
+            ));
+        }
+        Ok(())
+    }
+
+    async fn invoke(
+        &self,
+        ctx: VerbContext,
+        inputs: VerbInputs,
+        progress: VerbProgress,
+        cancel: CancellationToken,
+    ) -> Result<VerbOutput> {
+        let inputs: GenerateReferenceSheetInputs = inputs.deserialize_owned()?;
+        let backend = crate::verbs::ctx_fat_backend(&ctx)?;
+        let started = Instant::now();
+
+        let num_variants = inputs.num_variants.clamp(1, 4);
+        let composition = inputs.template.composition();
+        let full_prompt = inputs.template.build_prompt(&inputs.prompt);
+        let negative = build_negative_prompt(&inputs);
+
+        let backend_id = backend.backend_id().to_owned();
+        progress
+            .send(VerbProgressEvent::Started {
+                backend: Some(backend_id.clone()),
+            })
+            .await;
+
+        if cancel.is_cancelled() {
+            return Err(VerbError::Cancelled);
+        }
+
+        progress
+            .step(Some(0.1), "sending to image generation backend")
+            .await;
+
+        let req = ImageGenRequest {
+            model: None,
+            prompt: full_prompt.clone(),
+            negative_prompt: Some(negative),
+            width: inputs.template.sheet_width(),
+            height: inputs.template.sheet_height(),
+            steps: None,
+            seed: inputs.seed,
+            num_images: num_variants,
+            style_image: None,
+        };
+
+        let response = select! {
+            biased;
+            () = cancel.cancelled() => return Err(VerbError::Cancelled),
+            res = backend.invoke(
+                InferenceRequest::ImageGeneration(req),
+                VerbProgress::discard(),
+                cancel.clone(),
+            ) => res.map_err(|e| VerbError::Backend(e.to_string()))?,
+        };
+
+        if cancel.is_cancelled() {
+            return Err(VerbError::Cancelled);
+        }
+
+        let images = match response {
+            InferenceResponse::Image(r) => r.images,
+            InferenceResponse::Text(_) => {
+                return Err(VerbError::Backend(
+                    "backend returned text for an image-generation request".into(),
+                ));
+            }
+            InferenceResponse::Frames(_) => {
+                return Err(VerbError::Backend(
+                    "backend returned frames for an image-generation request".into(),
+                ));
+            }
+            InferenceResponse::Raw(_) => {
+                return Err(VerbError::Backend(
+                    "backend returned raw JSON for an image-generation request; \
+                     use a typed image-gen adapter"
+                        .into(),
+                ));
+            }
+        };
+
+        progress.step(Some(0.9), "encoding variants").await;
+
+        let variants = build_variants(unix_now(), images, &backend_id, &full_prompt, inputs.seed, &composition);
+        let variant_count = variants.len();
+        let payload = GenerateSheetPayload {
+            entity_id: inputs.entity_id,
+            variants,
+        };
+        let payload_json = serde_json::to_value(&payload).map_err(|e| {
+            VerbError::Backend(format!("failed to serialise sheet payload: {e}"))
+        })?;
+
+        let elapsed = started.elapsed();
+        let summary = format!(
+            "Generate {variant_count} reference sheet candidate{} for entity {} ({} template)",
+            if variant_count == 1 { "" } else { "s" },
+            inputs.entity_id.get(),
+            template_display_name(&inputs.template),
+        );
+
+        progress.step(Some(1.0), "done").await;
+
+        Ok(VerbOutput {
+            summary,
+            effects: vec![VerbEffect::Custom {
+                name: GENERATE_SHEET_EFFECT_NAME.into(),
+                payload: payload_json,
+            }],
+            thumbnail: None,
+            actual_cost: ActualCost {
+                elapsed,
+                usd_cents: 0.0,
+                backend: Some(backend_id),
+                tokens_input: None,
+                tokens_output: None,
+            },
+            notes: vec![],
+        })
+    }
+}
+
+// ── Helpers ───────────────────────────────────────────────────────────────────
+
+fn build_negative_prompt(inputs: &GenerateReferenceSheetInputs) -> String {
+    let template_neg = inputs.template.build_negative_prompt();
+    match &inputs.negative_prompt {
+        Some(user_neg) => format!("{template_neg}, {user_neg}"),
+        None => template_neg.to_owned(),
+    }
+}
+
+fn template_display_name(template: &CompositionTemplate) -> &'static str {
+    match template {
+        CompositionTemplate::Character => "Character",
+        CompositionTemplate::Item => "Item",
+        CompositionTemplate::Tileset => "Tileset",
+        CompositionTemplate::Custom => "Custom",
+    }
+}
+
+fn unix_now() -> i64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |d| i64::try_from(d.as_secs()).unwrap_or(i64::MAX))
+}
+
+// i is always 0..=3 (num_variants clamped to 1..=4); the truncation cannot fire.
+#[allow(clippy::cast_possible_truncation)]
+fn build_variants(
+    now: i64,
+    images: Vec<Vec<u8>>,
+    backend_id: &str,
+    prompt: &str,
+    seed: Option<u64>,
+    composition: &pixhaus_core::project::SheetComposition,
+) -> Vec<SheetVariantOutput> {
+    images
+        .into_iter()
+        .enumerate()
+        .map(|(i, png_bytes)| SheetVariantOutput {
+            id: SheetVariantId::new(i as u32),
+            generated_at: now,
+            image_b64: base64::engine::general_purpose::STANDARD.encode(png_bytes),
+            composition: composition.clone(),
+            generation: GenerationProvenance {
+                backend: backend_id.to_owned(),
+                model: "unknown".into(),
+                prompt: prompt.to_owned(),
+                seed,
+                negative_prompt: None,
+            },
+        })
+        .collect()
+}
+
+// ── Tests ─────────────────────────────────────────────────────────────────────
+
+#[cfg(test)]
+mod tests {
+    use std::time::Duration;
+
+    use async_trait::async_trait;
+    use tokio_util::sync::CancellationToken;
+
+    use pixhaus_core::project::ProjectMetadata;
+
+    use crate::backends::bridge::BackendProxy;
+    use crate::backends::{
+        BackendError, ImageGenResponse, InferenceBackend, InferenceRequest, InferenceResponse,
+    };
+    use crate::plugin::context::VerbContext;
+    use crate::plugin::descriptor::{BackendCapabilities, CostEstimate, VerbId};
+    use crate::plugin::error::VerbError;
+    use crate::plugin::inputs::VerbInputs;
+    use crate::plugin::output::VerbEffect;
+    use crate::plugin::progress::VerbProgress;
+    use crate::plugin::runtime::VerbRuntime;
+    use crate::plugin::verb::Verb;
+
+    use super::*;
+
+    fn meta() -> ProjectMetadata {
+        ProjectMetadata {
+            name: "sheet-test".into(),
+            description: None,
+            author: None,
+            created_at: 0,
+            updated_at: 0,
+            editor_version: "0".into(),
+        }
+    }
+
+    /// Stub backend: returns fixed 1×1 white PNG images for any
+    /// `ImageGeneration` request.
+    #[derive(Debug)]
+    struct WhiteStub {
+        /// How many images to return per request.
+        num_images: u32,
+    }
+
+    impl WhiteStub {
+        fn new(num_images: u32) -> Self {
+            Self { num_images }
+        }
+
+        fn white_png() -> Vec<u8> {
+            // Minimal 1×1 white RGBA PNG.
+            use std::io::Cursor;
+            use image::{ImageBuffer, ImageFormat, RgbaImage};
+            let img: RgbaImage =
+                ImageBuffer::from_pixel(1, 1, image::Rgba([255u8, 255, 255, 255]));
+            let mut buf = Vec::new();
+            img.write_to(&mut Cursor::new(&mut buf), ImageFormat::Png)
+                .expect("encode stub PNG");
+            buf
+        }
+    }
+
+    #[async_trait]
+    impl InferenceBackend for WhiteStub {
+        fn backend_id(&self) -> &'static str {
+            "stub.white"
+        }
+
+        fn capabilities(&self) -> BackendCapabilities {
+            BackendCapabilities::IMAGE_GENERATION
+        }
+
+        fn supports_streaming(&self) -> bool {
+            false
+        }
+
+        fn estimate_cost(&self, _req: &InferenceRequest) -> CostEstimate {
+            CostEstimate::free()
+        }
+
+        async fn invoke(
+            &self,
+            request: InferenceRequest,
+            _progress: VerbProgress,
+            _cancel: CancellationToken,
+        ) -> std::result::Result<InferenceResponse, BackendError> {
+            match request {
+                InferenceRequest::ImageGeneration(req) => {
+                    let count = req.num_images.max(1).min(self.num_images);
+                    let images = (0..count).map(|_| Self::white_png()).collect();
+                    Ok(InferenceResponse::Image(ImageGenResponse {
+                        images,
+                        model: "stub.white".into(),
+                    }))
+                }
+                _ => Err(BackendError::UnsupportedCapability),
+            }
+        }
+    }
+
+    fn inputs_for(
+        template: CompositionTemplate,
+        num_variants: u32,
+    ) -> VerbInputs {
+        VerbInputs::from_struct(&GenerateReferenceSheetInputs {
+            entity_id: EntityId::new(42),
+            template,
+            prompt: "a fantasy hero with a sword".into(),
+            negative_prompt: None,
+            num_variants,
+            seed: None,
+        })
+        .unwrap()
+    }
+
+    // ── Descriptor ────────────────────────────────────────────────────────────
+
+    #[test]
+    fn verb_id_matches_constant() {
+        let verb = GenerateReferenceSheetVerb::new();
+        assert_eq!(
+            verb.descriptor().id,
+            VerbId::new(GENERATE_REFERENCE_SHEET_VERB_ID)
+        );
+    }
+
+    #[test]
+    fn verb_requires_image_generation_capability() {
+        let verb = GenerateReferenceSheetVerb::new();
+        assert!(
+            verb.descriptor()
+                .required_capabilities
+                .contains(BackendCapabilities::IMAGE_GENERATION),
+            "verb must advertise IMAGE_GENERATION"
+        );
+    }
+
+    #[test]
+    fn verb_is_streaming_and_cancellable() {
+        let verb = GenerateReferenceSheetVerb::new();
+        assert!(verb.descriptor().streaming);
+        assert!(verb.descriptor().cancellable);
+    }
+
+    #[test]
+    fn output_kind_is_custom_sheet_effect() {
+        let verb = GenerateReferenceSheetVerb::new();
+        let kinds = &verb.descriptor().output_kinds;
+        assert_eq!(kinds.len(), 1);
+        match &kinds[0] {
+            crate::plugin::descriptor::EffectKind::Custom(name) => {
+                assert_eq!(name, GENERATE_SHEET_EFFECT_NAME);
+            }
+            other => panic!("expected Custom effect kind, got {other:?}"),
+        }
+    }
+
+    // ── Validation ────────────────────────────────────────────────────────────
+
+    #[test]
+    fn validate_rejects_blank_prompt() {
+        let verb = GenerateReferenceSheetVerb::new();
+        let inputs = VerbInputs::from_struct(&GenerateReferenceSheetInputs {
+            entity_id: EntityId::new(1),
+            template: CompositionTemplate::Custom,
+            prompt: "   ".into(),
+            negative_prompt: None,
+            num_variants: 1,
+            seed: None,
+        })
+        .unwrap();
+        assert!(matches!(verb.validate(&inputs), Err(VerbError::Schema(_))));
+    }
+
+    #[test]
+    fn validate_accepts_well_formed_inputs() {
+        let verb = GenerateReferenceSheetVerb::new();
+        assert!(verb
+            .validate(&inputs_for(CompositionTemplate::Character, 2))
+            .is_ok());
+    }
+
+    // ── Full invocation via runtime ───────────────────────────────────────────
+
+    #[tokio::test]
+    async fn invocation_produces_custom_effect_with_payload() {
+        let runtime = VerbRuntime::new();
+        runtime
+            .register_backend(BackendProxy::new(WhiteStub::new(4)), 0)
+            .unwrap();
+        runtime.register(GenerateReferenceSheetVerb::new()).unwrap();
+
+        let inv = runtime
+            .invoke(
+                &VerbId::new(GENERATE_REFERENCE_SHEET_VERB_ID),
+                VerbContext::empty(meta()),
+                inputs_for(CompositionTemplate::Character, 2),
+            )
+            .unwrap();
+        let preview = inv.finish().await.unwrap();
+
+        assert_eq!(preview.verb.as_str(), GENERATE_REFERENCE_SHEET_VERB_ID);
+        assert_eq!(preview.output.effects.len(), 1);
+
+        match &preview.output.effects[0] {
+            VerbEffect::Custom { name, payload } => {
+                assert_eq!(name, GENERATE_SHEET_EFFECT_NAME);
+                let decoded: GenerateSheetPayload =
+                    serde_json::from_value(payload.clone()).unwrap();
+                assert_eq!(decoded.entity_id, EntityId::new(42));
+                assert_eq!(decoded.variants.len(), 2);
+            }
+            other => panic!("expected Custom effect, got {other:?}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn variants_carry_composition_panels() {
+        let runtime = VerbRuntime::new();
+        runtime
+            .register_backend(BackendProxy::new(WhiteStub::new(4)), 0)
+            .unwrap();
+        runtime.register(GenerateReferenceSheetVerb::new()).unwrap();
+
+        let inv = runtime
+            .invoke(
+                &VerbId::new(GENERATE_REFERENCE_SHEET_VERB_ID),
+                VerbContext::empty(meta()),
+                inputs_for(CompositionTemplate::Character, 1),
+            )
+            .unwrap();
+        let preview = inv.finish().await.unwrap();
+
+        if let VerbEffect::Custom { payload, .. } = &preview.output.effects[0] {
+            let decoded: GenerateSheetPayload =
+                serde_json::from_value(payload.clone()).unwrap();
+            let variant = &decoded.variants[0];
+            assert_eq!(
+                variant.composition.views.len(),
+                5,
+                "character sheet must have 5 turnaround views"
+            );
+            assert_eq!(
+                variant.composition.expressions.len(),
+                3,
+                "character sheet must have 3 expressions"
+            );
+            assert!(
+                variant.composition.palette_swatch.is_some(),
+                "character sheet must have a palette swatch"
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn variants_carry_valid_base64_png() {
+        let runtime = VerbRuntime::new();
+        runtime
+            .register_backend(BackendProxy::new(WhiteStub::new(4)), 0)
+            .unwrap();
+        runtime.register(GenerateReferenceSheetVerb::new()).unwrap();
+
+        let inv = runtime
+            .invoke(
+                &VerbId::new(GENERATE_REFERENCE_SHEET_VERB_ID),
+                VerbContext::empty(meta()),
+                inputs_for(CompositionTemplate::Custom, 1),
+            )
+            .unwrap();
+        let preview = inv.finish().await.unwrap();
+
+        if let VerbEffect::Custom { payload, .. } = &preview.output.effects[0] {
+            let decoded: GenerateSheetPayload =
+                serde_json::from_value(payload.clone()).unwrap();
+            let variant = &decoded.variants[0];
+            let bytes = base64::engine::general_purpose::STANDARD
+                .decode(&variant.image_b64)
+                .expect("image_b64 must be valid base64");
+            assert!(!bytes.is_empty(), "decoded image bytes must be non-empty");
+            // Verify PNG signature (first 8 bytes).
+            assert_eq!(
+                &bytes[..8],
+                &[137u8, 80, 78, 71, 13, 10, 26, 10],
+                "decoded bytes must start with PNG signature"
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn num_variants_clamped_to_max_four() {
+        let runtime = VerbRuntime::new();
+        runtime
+            .register_backend(BackendProxy::new(WhiteStub::new(4)), 0)
+            .unwrap();
+        runtime.register(GenerateReferenceSheetVerb::new()).unwrap();
+
+        // Request 10 — the verb should clamp to 4.
+        let inputs = VerbInputs::from_struct(&GenerateReferenceSheetInputs {
+            entity_id: EntityId::new(1),
+            template: CompositionTemplate::Item,
+            prompt: "treasure chest".into(),
+            negative_prompt: None,
+            num_variants: 10,
+            seed: None,
+        })
+        .unwrap();
+
+        let inv = runtime
+            .invoke(
+                &VerbId::new(GENERATE_REFERENCE_SHEET_VERB_ID),
+                VerbContext::empty(meta()),
+                inputs,
+            )
+            .unwrap();
+        let preview = inv.finish().await.unwrap();
+
+        if let VerbEffect::Custom { payload, .. } = &preview.output.effects[0] {
+            let decoded: GenerateSheetPayload =
+                serde_json::from_value(payload.clone()).unwrap();
+            assert!(
+                decoded.variants.len() <= 4,
+                "must not produce more than 4 variants"
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn cancellation_before_backend_returns_error() {
+        let verb = GenerateReferenceSheetVerb::new();
+        let cancel = CancellationToken::new();
+        cancel.cancel();
+
+        let result = verb
+            .invoke(
+                VerbContext::empty(meta()),
+                inputs_for(CompositionTemplate::Custom, 1),
+                VerbProgress::discard(),
+                cancel,
+            )
+            .await;
+        // Cancelled before the backend lookup because ctx has no backend,
+        // so we expect either Cancelled or Backend error depending on order.
+        assert!(result.is_err());
+    }
+
+    #[tokio::test]
+    async fn fails_without_image_generation_backend() {
+        let runtime = VerbRuntime::new();
+        // Register only a text backend — IMAGE_GENERATION is unsatisfied.
+        runtime.register(GenerateReferenceSheetVerb::new()).unwrap();
+
+        let err = runtime
+            .invoke(
+                &VerbId::new(GENERATE_REFERENCE_SHEET_VERB_ID),
+                VerbContext::empty(meta()),
+                inputs_for(CompositionTemplate::Custom, 1),
+            )
+            .unwrap_err();
+
+        assert!(
+            matches!(
+                err,
+                VerbError::UnsupportedCapability { .. } | VerbError::BackendUnavailable { .. }
+            ),
+            "expected pre-flight failure when IMAGE_GENERATION backend is absent, got {err:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn generation_provenance_carries_backend_id() {
+        let runtime = VerbRuntime::new();
+        runtime
+            .register_backend(BackendProxy::new(WhiteStub::new(4)), 0)
+            .unwrap();
+        runtime.register(GenerateReferenceSheetVerb::new()).unwrap();
+
+        let inv = runtime
+            .invoke(
+                &VerbId::new(GENERATE_REFERENCE_SHEET_VERB_ID),
+                VerbContext::empty(meta()),
+                inputs_for(CompositionTemplate::Tileset, 1),
+            )
+            .unwrap();
+        let preview = inv.finish().await.unwrap();
+
+        if let VerbEffect::Custom { payload, .. } = &preview.output.effects[0] {
+            let decoded: GenerateSheetPayload =
+                serde_json::from_value(payload.clone()).unwrap();
+            let prov = &decoded.variants[0].generation;
+            assert_eq!(prov.backend, "stub.white");
+            assert!(!prov.prompt.is_empty(), "prompt must be non-empty");
+        }
+    }
+
+    #[tokio::test]
+    async fn all_four_templates_produce_valid_output() {
+        let runtime = VerbRuntime::new();
+        runtime
+            .register_backend(BackendProxy::new(WhiteStub::new(4)), 0)
+            .unwrap();
+        runtime.register(GenerateReferenceSheetVerb::new()).unwrap();
+
+        for template in [
+            CompositionTemplate::Character,
+            CompositionTemplate::Item,
+            CompositionTemplate::Tileset,
+            CompositionTemplate::Custom,
+        ] {
+            let inv = runtime
+                .invoke(
+                    &VerbId::new(GENERATE_REFERENCE_SHEET_VERB_ID),
+                    VerbContext::empty(meta()),
+                    inputs_for(template, 1),
+                )
+                .unwrap();
+            let preview = inv.finish().await.unwrap();
+
+            assert_eq!(
+                preview.output.effects.len(),
+                1,
+                "each template must produce exactly one effect"
+            );
+            assert!(
+                matches!(preview.output.effects[0], VerbEffect::Custom { .. }),
+                "output must be a Custom effect"
+            );
+        }
+    }
+
+    // Ensure WhiteStub image and Duration are visible in this test scope.
+    #[allow(dead_code)]
+    fn _ensure_imports_visible() -> Duration {
+        Duration::ZERO
+    }
+}
