@@ -182,6 +182,7 @@ describe("Keyboard shortcuts — Aseprite preset (manual-test-guide §14)", () =
   // event might land with key="+" + shiftKey=true on some keyboard layouts.
   // Need to probe `key`/`code` from inside the Solid handler to know what
   // chord webdriverio actually delivers.
+  // See: https://github.com/pixhaus-app/pixhaus/issues/172
   it.skip("T-keys-010: Zoom in (Ctrl+=) increases zoom", async () => {
     await openNewProjectViaButton();
     await focusBody();
@@ -211,6 +212,7 @@ describe("Keyboard shortcuts — Aseprite preset (manual-test-guide §14)", () =
   // TODO(phase-1-followup): depends on T-keys-010 working (the test seeds
   // by sending Ctrl+= twice before Ctrl+0). Unblock together once the key-
   // mapping issue is resolved.
+  // See: https://github.com/pixhaus-app/pixhaus/issues/172
   it.skip("T-keys-012: Fit (Ctrl+0) changes zoom to fit viewport", async () => {
     await openNewProjectViaButton();
     await focusBody();
@@ -278,10 +280,37 @@ describe("Keyboard shortcuts — Aseprite preset (manual-test-guide §14)", () =
     // Covered by T-window-005 in the window/preferences spec.
   });
 
-  it.skip("T-keys-017: Tool: pencil (P) selects the pencil tool", async () => {
-    // Tool buttons don't have data-testids yet, and there's no IPC for
-    // tool selection (it's a UI-only signal). Add testids for the toolbar
-    // buttons and a getActiveTool() debug accessor before unskipping.
-    // TODO(testid): tool buttons
+  it("T-keys-017: Tool: pencil (P) selects the pencil tool", async () => {
+    await openNewProjectViaButton();
+    await focusBody();
+    // Move away from pencil first so the assertion proves the key acted.
+    await browser.keys(["e"]);
+    await browser.waitUntil(
+      async () =>
+        browser.execute(() => {
+          const w = window as unknown as {
+            __pixhaus_debug__: { getActiveTool(): string };
+          };
+          return w.__pixhaus_debug__.getActiveTool() !== "pencil";
+        }),
+      {
+        timeout: 3000,
+        timeoutMsg: "tool never changed away from pencil after E",
+      },
+    );
+
+    await focusBody();
+    await browser.keys(["p"]);
+
+    await browser.waitUntil(
+      async () =>
+        browser.execute(() => {
+          const w = window as unknown as {
+            __pixhaus_debug__: { getActiveTool(): string };
+          };
+          return w.__pixhaus_debug__.getActiveTool() === "pencil";
+        }),
+      { timeout: 3000, timeoutMsg: "tool never changed to pencil after P" },
+    );
   });
 });

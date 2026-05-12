@@ -143,6 +143,7 @@ describe("Selection (manual-test-guide §6)", () => {
   // the body-drag handler may need painted pixels to detect a body hit
   // (the marquee spans the empty sprite). Likely needs a paint setup
   // before the drag, or a hit-test fix in transform-input.ts.
+  // See: https://github.com/pixhaus-app/pixhaus/issues/175
   it.skip("T-select-003: Drag selection body translates pixels", async () => {
     await openNewProjectViaButton();
     await focusBody();

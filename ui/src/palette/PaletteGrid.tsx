@@ -147,6 +147,7 @@ const PaletteGrid: Component<Props> = (props) => {
             return (
               <button
                 class="pgrid__swatch"
+                data-testid={`palette-swatch-${i()}`}
                 classList={{
                   "pgrid__swatch--fg": isFg(),
                   "pgrid__swatch--bg": isBg(),
@@ -240,6 +241,7 @@ const PaletteGrid: Component<Props> = (props) => {
           <div class="pgrid__menu-sep" role="separator" />
           <button
             class="pgrid__menu-item pgrid__menu-item--danger"
+            data-testid="palette-swatch-delete"
             role="menuitem"
             disabled={lockedIndices().has(contextMenu()!.index)}
             onClick={() => handleDelete(contextMenu()!.index)}

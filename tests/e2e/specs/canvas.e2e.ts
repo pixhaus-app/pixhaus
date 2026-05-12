@@ -154,6 +154,7 @@ describe("Canvas viewport (manual-test-guide §4)", () => {
   // TODO(phase-2-followup): WebDriver action chain with keyDown(Space) +
   // pointer drag doesn't trigger the panSpace handler under tauri-driver.
   // Pan via middle-mouse (T-canvas-002) covers the same code path.
+  // See: https://github.com/pixhaus-app/pixhaus/issues/171
   it.skip("T-canvas-001: Spacebar + drag pans the canvas", async () => {
     await openProject();
     await focusBody();
@@ -222,6 +223,7 @@ describe("Canvas viewport (manual-test-guide §4)", () => {
 
   // TODO(phase-2-followup): synthetic WheelEvent dispatched via execute
   // doesn't propagate through the canvas wheel handler under tauri-driver.
+  // See: https://github.com/pixhaus-app/pixhaus/issues/171
   it.skip("T-canvas-003: Wheel scroll zooms (smooth)", async () => {
     await openProject();
     await focusBody();
@@ -258,6 +260,7 @@ describe("Canvas viewport (manual-test-guide §4)", () => {
   });
 
   // TODO(phase-2-followup): same root cause as T-canvas-003.
+  // See: https://github.com/pixhaus-app/pixhaus/issues/171
   it.skip("T-canvas-004: Ctrl+wheel snaps zoom to power-of-2 levels", async () => {
     await openProject();
     await focusBody();
@@ -309,6 +312,7 @@ describe("Canvas viewport (manual-test-guide §4)", () => {
   // (skipped, depends on T-keys-010). Ctrl+- and Ctrl+1 are already covered
   // by keys.e2e.ts T-keys-011 and T-keys-013, so re-running them here would
   // duplicate work. Unblock together once the key-mapping issue is resolved.
+  // See: https://github.com/pixhaus-app/pixhaus/issues/172
   it.skip("T-canvas-005: Keyboard zoom shortcuts", async () => {
     // Ctrl+= / Ctrl+0 / Ctrl+1 / Ctrl+- — already exercised by keys.e2e.ts
     // for the chords that work; the rest are blocked on T-keys-010.
@@ -320,6 +324,7 @@ describe("Canvas viewport (manual-test-guide §4)", () => {
   // as drag, but the synthetic WheelEvent in WebKit/Servo (tauri-driver)
   // doesn't always reach the listener with the modifier flag intact.
   // Revisit when the wheel-event path stabilises across drivers.
+  // See: https://github.com/pixhaus-app/pixhaus/issues/171
   it.skip("T-canvas-006: Shift+wheel pans horizontally", async () => {
     // Synthesise WheelEvent with shiftKey:true and assert scroll.x changed
     // while scroll.y stayed put. Skipped until the synthetic-event delivery

@@ -113,6 +113,7 @@ const TilesetsTab: Component<TilesetsTabProps> = (props) => {
             {(ts) => (
               <div
                 class="tm-manage__row"
+                data-testid={`tileset-row-${ts.id}`}
                 classList={{ "tm-manage__row--active": ts.id === props.activeId }}
               >
                 <Show
@@ -162,7 +163,11 @@ const TilesetsTab: Component<TilesetsTabProps> = (props) => {
       <Show
         when={adding()}
         fallback={
-          <button class="tm-manage__add-btn" onClick={() => setAdding(true)}>
+          <button
+            class="tm-manage__add-btn"
+            data-testid="tileset-add-btn"
+            onClick={() => setAdding(true)}
+          >
             + New tileset
           </button>
         }
@@ -170,6 +175,7 @@ const TilesetsTab: Component<TilesetsTabProps> = (props) => {
         <form class="tm-manage__add-form" onSubmit={submitAdd}>
           <input
             class="tm-manage__add-name"
+            data-testid="tileset-add-name"
             placeholder="Name"
             value={addName()}
             onInput={(e) => setAddName(e.currentTarget.value)}

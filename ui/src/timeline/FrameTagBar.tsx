@@ -178,6 +178,7 @@ const FrameTagBar: Component<Props> = (props) => {
     <>
       <div
         class="tl-tag-bar"
+        data-testid="tl-tag-bar"
         onPointerDown={handlePointerDown}
         onPointerMove={handlePointerMove}
         onPointerUp={handlePointerUp}
@@ -190,6 +191,7 @@ const FrameTagBar: Component<Props> = (props) => {
           {(tag) => (
             <div
               class="tl-tag"
+              data-testid={`tl-tag-${tag.name}`}
               style={{
                 left: `${tag.range.start * FRAME_WIDTH}px`,
                 width: `${(tag.range.end - tag.range.start + 1) * FRAME_WIDTH}px`,
@@ -226,10 +228,14 @@ const FrameTagBar: Component<Props> = (props) => {
               ref={clampMenuToViewport(m().x, m().y)}
               style={{ left: `${m().x}px`, top: `${m().y}px` }}
             >
-              <button class="tl-ctx-menu__item" onClick={startRename}>
+              <button class="tl-ctx-menu__item" data-testid="tl-ctx-rename" onClick={startRename}>
                 Rename tag
               </button>
-              <button class="tl-ctx-menu__item" onClick={deleteFromMenu}>
+              <button
+                class="tl-ctx-menu__item"
+                data-testid="tl-ctx-delete"
+                onClick={deleteFromMenu}
+              >
                 Delete tag
               </button>
             </div>

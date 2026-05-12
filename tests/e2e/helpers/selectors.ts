@@ -49,9 +49,59 @@ export const testid = {
     pixelPerfect: "tool-option-pixel-perfect",
     tolerance: "tool-option-tolerance",
   },
+  palette: {
+    ioMenu: "palette-io-menu",
+    ioToggle: "palette-io-toggle",
+    importFormat: "palette-import-format",
+    importBtn: "palette-import-btn",
+    exportFormat: "palette-export-format",
+    exportBtn: "palette-export-btn",
+    harmonyToggle: "palette-harmony-toggle",
+    harmonyType: (id: string) => `palette-harmony-type-${id}`,
+    rampToggle: "palette-ramp-toggle",
+    rampSteps: "palette-ramp-steps",
+    rampGenerate: "palette-ramp-generate",
+    swatch: (index: number) => `palette-swatch-${index}`,
+    swatchDelete: "palette-swatch-delete",
+  },
+  timeline: {
+    frameDuration: (index: number) => `timeline-frame-${index}-duration`,
+    onionPrev: "timeline-onion-prev",
+    onionNext: "timeline-onion-next",
+    tagBar: "tl-tag-bar",
+    tag: (name: string) => `tl-tag-${name}`,
+    tagCtxRename: "tl-ctx-rename",
+    tagCtxDelete: "tl-ctx-delete",
+  },
+  layer: {
+    row: (index: number) => `layer-row-${index}`,
+    contextMenu: {
+      rename: "layer-ctx-rename",
+      duplicate: "layer-ctx-duplicate",
+      mergeDown: "layer-ctx-merge-down",
+      mergeSelected: "layer-ctx-merge-selected",
+      flattenVisible: "layer-ctx-flatten-visible",
+      convertGroup: "layer-ctx-convert-group",
+      convertTilemap: "layer-ctx-convert-tilemap",
+      delete: "layer-ctx-delete",
+    },
+    renameInput: "layer-rename-input",
+  },
+  tilemap: {
+    tilesetRow: (id: number) => `tileset-row-${id}`,
+    tilesetAddBtn: "tileset-add-btn",
+    tilesetAddName: "tileset-add-name",
+  },
 } as const;
 
-/** CSS selector for an element with the given data-testid. */
+/** CSS selector for an element with the given data-testid.
+ *
+ * Escapes `\` and `"` so any user-input-derived id (e.g. a tag name forwarded
+ * through `testid.timeline.tag(name)`) produces a valid CSS attribute
+ * selector. Anything else in the id is taken verbatim — testids are not
+ * intended to carry arbitrary CSS metacharacters.
+ */
 export function byTestId(id: string): string {
-  return `[data-testid="${id}"]`;
+  const escaped = id.replace(/\\/g, "\\\\").replace(/"/g, '\\"');
+  return `[data-testid="${escaped}"]`;
 }

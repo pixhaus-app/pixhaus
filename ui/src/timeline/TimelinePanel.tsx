@@ -294,6 +294,7 @@ const TimelinePanel: Component = () => {
               Prev
               <input
                 class="timeline-panel__onion-input"
+                data-testid="timeline-onion-prev"
                 type="number"
                 min={0}
                 max={8}
@@ -308,6 +309,7 @@ const TimelinePanel: Component = () => {
               Next
               <input
                 class="timeline-panel__onion-input"
+                data-testid="timeline-onion-next"
                 type="number"
                 min={0}
                 max={8}
@@ -407,6 +409,7 @@ const TimelinePanel: Component = () => {
                       fallback={
                         <div
                           class="timeline-panel__frame-dur"
+                          data-testid={`timeline-frame-${index}-duration`}
                           onDblClick={() => beginEditDuration(index, frame.duration_ms)}
                         >
                           {frame.duration_ms}

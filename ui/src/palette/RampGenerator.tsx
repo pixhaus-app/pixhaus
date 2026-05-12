@@ -102,6 +102,7 @@ const RampGenerator: Component<Props> = (props) => {
           Steps
           <input
             class="ramp__index"
+            data-testid="palette-ramp-steps"
             type="number"
             min={3}
             max={32}
@@ -125,7 +126,12 @@ const RampGenerator: Component<Props> = (props) => {
         perceptual (Oklab).
       </p>
 
-      <button class="ramp__btn" disabled={busy() || preview().length < 3} onClick={handleGenerate}>
+      <button
+        class="ramp__btn"
+        data-testid="palette-ramp-generate"
+        disabled={busy() || preview().length < 3}
+        onClick={handleGenerate}
+      >
         {busy() ? "Adding…" : "Add to palette"}
       </button>
     </div>

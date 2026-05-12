@@ -143,12 +143,29 @@ describe("Layer panel (manual-test-guide §7)", () => {
     });
   });
 
-  // TODO(testid): the per-row context menu (Rename, Delete, Merge Down,
-  // Convert to Group, Convert to Tilemap) doesn't expose any data-testids
-  // yet, and there's no palette command that triggers the inline rename
-  // flow. Add testids to LayerRow's context menu items before unskipping.
-  it.skip("T-layers-002: Rename via context menu.", async () => {
-    // Blocked on context-menu testids.
+  it("T-layers-002: Rename via context menu.", async () => {
+    await openNewProjectViaButton();
+    await waitForActiveLayer();
+    await clearIpcLog();
+
+    // Right-click the first layer row to open the custom context menu.
+    const row = await $(byTestId(testid.layer.row(0)));
+    await row.waitForDisplayed({ timeout: 5000 });
+    await row.click({ button: "right" });
+
+    // Click "Rename" from the context menu.
+    const renameItem = await $(byTestId(testid.layer.contextMenu.rename));
+    await renameItem.waitForDisplayed({ timeout: 3000 });
+    await renameItem.click();
+
+    // The rename input is rendered inline inside the row.
+    const renameInput = await $(byTestId(testid.layer.renameInput));
+    await renameInput.waitForDisplayed({ timeout: 3000 });
+    await renameInput.setValue("RenamedLayer");
+    await browser.keys(["Enter"]);
+
+    const entries = await waitForIpc("layer_rename", 1, 5000);
+    await expect(entries.length).toBeGreaterThan(0);
   });
 
   // TODO(testid): the palette has a "Delete Layer" command (layer:delete)
@@ -166,14 +183,15 @@ describe("Layer panel (manual-test-guide §7)", () => {
     await waitForIpc("layer_delete", 1, 5000);
   });
 
-  // TODO(harness): drag-to-reorder requires synthesising HTML5 drag events
+  // TODO(#177): drag-to-reorder requires synthesising HTML5 drag events
   // (dragstart/dragover/drop) which webdriverio's pointer action API does
   // not generate. Layer rows depend on the native drag protocol, not the
   // pointer-events drag flow exercised by canvas drag tests. Add a
   // reorderByIndex(i, j) helper to __pixhaus_debug__.layer or a custom
   // drag-event dispatcher before unskipping.
+  // See: https://github.com/pixhaus-app/pixhaus/issues/177
   it.skip("T-layers-004: Drag to reorder.", async () => {
-    // Blocked on drag harness support.
+    // Blocked on HTML5 drag harness — see GH issue linked above.
   });
 
   it("T-layers-005: Merge Down composites pixels and drops the active layer.", async () => {
@@ -223,8 +241,10 @@ describe("Layer panel (manual-test-guide §7)", () => {
 
   // TODO(deps): convert-to-tilemap needs an existing tileset on the sprite
   // (T-tilemap-001 covers tileset creation) and routes through a tileset
-  // picker dialog. Both prerequisites are absent from the e2e harness.
+  // picker dialog. The context-menu item now has testid="layer-ctx-convert-tilemap"
+  // and the picker has testid="tileset-row-N" / testid="tileset-add-btn".
+  // Unskip once a test-fixture tileset can be seeded before the convert.
   it.skip("T-layers-009: Convert to Tilemap Layer.", async () => {
-    // Blocked on tileset fixture + picker dialog testids.
+    // Blocked on tileset fixture — testids are wired.
   });
 });
