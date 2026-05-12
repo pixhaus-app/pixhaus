@@ -245,6 +245,30 @@ pub enum VerbEffect {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         lora_path: Option<String>,
     },
+    /// Update per-entity AI metadata.
+    ///
+    /// Produced by the B10.5 train-entity-lora verb after a successful
+    /// per-entity `LoRA` training run against a Reference entity's
+    /// canonical sheet. On commit the host overwrites
+    /// `Entity.ai.lora_path` when `lora_path` is `Some` and invalidates
+    /// the anchor cache so subsequent verb invocations rebuild their
+    /// payload with the new per-entity weights.
+    ///
+    /// The verb itself returns `lora_path: None` because the safetensors
+    /// file lives on Replicate's CDN until the host downloads it; the
+    /// host fills the path after writing the file under the project
+    /// directory.
+    UpdateEntityAi {
+        /// Entity whose `AiMetadata` to update.
+        entity_id: EntityId,
+        /// Per-entity `LoRA` reference to write into
+        /// `AiMetadata.lora_path`. Currently the Replicate weights URL
+        /// stored verbatim; a future host-side download will replace it
+        /// with a project-relative path. `None` means "do not change the
+        /// existing value".
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        lora_path: Option<String>,
+    },
 }
 
 /// Cost actually incurred by an invocation.

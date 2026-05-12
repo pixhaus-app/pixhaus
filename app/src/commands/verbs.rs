@@ -249,10 +249,28 @@ pub(crate) fn resolve_anchor(
         }
     }
 
-    let lora_path = project.library.ai.project_lora_path.clone();
+    let lora_path = resolve_lora_path(reference, project.library.ai.project_lora_path.as_deref());
     let live = AnchorPayload::from_reference_entity(reference, DEFAULT_ANCHOR_STRENGTH, lora_path)?;
     cache.insert(live.reference_entity_id.get(), live.clone());
     Some(live)
+}
+
+/// Returns the `LoRA` path to thread through the anchor payload.
+///
+/// Per-entity weights (`Entity.ai.lora_path`, populated by the B10.5
+/// train-entity-lora verb) override the project-wide weights when both
+/// are present — generations against this entity should be conditioned
+/// on the entity's own sheet rather than the broader project style.
+/// Falls back to the project-wide path when the entity has none.
+pub(crate) fn resolve_lora_path(
+    reference: &pixhaus_core::project::Entity,
+    project_lora_path: Option<&str>,
+) -> Option<String> {
+    reference
+        .ai
+        .lora_path
+        .clone()
+        .or_else(|| project_lora_path.map(ToOwned::to_owned))
 }
 
 /// Maps an [`ActiveTarget`] back to the entity id it implicates.

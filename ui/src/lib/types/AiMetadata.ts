@@ -18,4 +18,16 @@ vlm_summary?: string | null,
  * Embedding for similarity search. Optional and computed lazily —
  * the entity is fully usable without one.
  */
-embedding?: Array<number> | null, };
+embedding?: Array<number> | null, 
+/**
+ * Per-entity `LoRA` reference. Populated by the B10.5
+ * train-entity-lora verb after a successful training run against
+ * this entity's canonical reference sheet. **Currently the Replicate
+ * weights URL written verbatim by the IPC layer; a future host-side
+ * download will replace it with a project-relative path.** When
+ * present, anchor payloads built for this entity carry it through to
+ * backends, overriding any project-wide `LoRA` for the duration of
+ * generations against this entity. `None` means "fall back to the
+ * project-wide `LoRA`, if any."
+ */
+lora_path?: string | null, };

@@ -231,3 +231,52 @@ export function libraryDeleteSheetVariant(
 ): Promise<void> {
   return invoke<void>("library_delete_sheet_variant", { entity_id, variant_id });
 }
+
+// ── B10.5: per-entity LoRA training ───────────────────────────────────────────
+
+export type TrainEntityLoraOptions = {
+  lora_rank?: number | null;
+  steps?: number | null;
+  label?: string | null;
+  model?: string | null;
+};
+
+export type LibraryTrainEntityLoraResult = {
+  entity_id: EntityId;
+  /**
+   * The `LoRA` path now stored on `Entity.ai.lora_path`. Currently the
+   * Replicate weights URL — downloading the safetensors into the
+   * project directory is a follow-up shared with the project-wide
+   * style training flow.
+   */
+  lora_path: string;
+  label: string;
+  training_id: string;
+  invocation_id: string;
+};
+
+/**
+ * Trains a per-entity `LoRA` from a Reference entity's canonical sheet
+ * and persists the weights URL on `Entity.ai.lora_path`.
+ *
+ * Takes 15-30 minutes against Replicate. The returned promise only
+ * resolves once the job completes; the `invocation_id` carried on the
+ * result is intended for audit traces and after-the-fact correlation.
+ *
+ * **Cancellation during the in-flight run is not currently exposed by
+ * this IPC.** The verb itself respects cooperative cancel checkpoints,
+ * but the host has not yet wired a side channel that hands the active
+ * `invocation_id` to the UI mid-run. Tracking work for that (and for
+ * downloading the safetensors to the project directory so
+ * `lora_path` becomes a real path) is filed as a follow-up issue
+ * against this PR.
+ */
+export function libraryTrainEntityLora(
+  entity_id: EntityId,
+  options?: TrainEntityLoraOptions,
+): Promise<LibraryTrainEntityLoraResult> {
+  return invoke<LibraryTrainEntityLoraResult>("library_train_entity_lora", {
+    entity_id,
+    options: options ?? null,
+  });
+}

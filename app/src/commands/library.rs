@@ -1828,7 +1828,10 @@ pub async fn library_get_anchor_payload(
         }
     }
 
-    let lora_path = project.library.ai.project_lora_path.clone();
+    let lora_path = crate::commands::verbs::resolve_lora_path(
+        reference,
+        project.library.ai.project_lora_path.as_deref(),
+    );
     let payload =
         AnchorPayload::from_reference_entity(reference, DEFAULT_ANCHOR_STRENGTH, lora_path);
 
@@ -2062,6 +2065,37 @@ pub(crate) fn apply_update_project_ai(
     }
 }
 
+/// Applies a [`VerbEffect::UpdateEntityAi`]: overwrites
+/// `Entity.ai.lora_path` for the named entity and bumps `updated_at`.
+///
+/// Returns `true` when the entity was found and updated, `false` when
+/// the entity id is unknown (silently dropped — same invariant as
+/// [`apply_update_project_ai`], unknown ids would be a stale write).
+///
+/// `None` for `lora_path` is a no-op: the verb returns `None` until
+/// the host downloads the safetensors and supplies the real path.
+pub(crate) fn apply_update_entity_ai(
+    project: &mut pixhaus_core::project::Project,
+    entity_id: EntityId,
+    lora_path: Option<String>,
+    ts: i64,
+) -> bool {
+    let Some(path) = lora_path else {
+        return project.library.entities.iter().any(|e| e.id == entity_id);
+    };
+    let Some(entity) = project
+        .library
+        .entities
+        .iter_mut()
+        .find(|e| e.id == entity_id)
+    else {
+        return false;
+    };
+    entity.ai.lora_path = Some(path);
+    entity.updated_at = ts;
+    true
+}
+
 /// Renders an entity's name, kind, and existing tag names into a short
 /// plaintext block the auto-tag VLM can use as grounding when no sprite
 /// reference is attached.
@@ -2272,6 +2306,238 @@ pub async fn library_update_corpus(
     apply_update_project_ai(project, entity_ids, None);
     doc.dirty = true;
     Ok(())
+}
+
+// ── B10.5: per-entity LoRA training ───────────────────────────────────────────
+
+/// Inputs surfaced to the UI for [`library_train_entity_lora`].
+///
+/// Mirrors the verb's parameters minus the training images — the IPC
+/// command extracts those from the entity's canonical sheet so the UI
+/// never has to ship the bytes back to Rust.
+#[derive(Debug, Deserialize)]
+pub struct TrainEntityLoraOptions {
+    /// `LoRA` rank (4-32). `None` falls back to the verb default.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub lora_rank: Option<u32>,
+    /// Training step count (200-2000). `None` falls back to the verb
+    /// default.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub steps: Option<u32>,
+    /// Trigger word / label. `None` lets the verb derive one from the
+    /// entity name.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub label: Option<String>,
+    /// Override Replicate model. `None` uses the verb default.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub model: Option<String>,
+}
+
+/// Result returned by [`library_train_entity_lora`] on a successful train.
+#[derive(Debug, serde::Serialize)]
+pub struct LibraryTrainEntityLoraResult {
+    /// Entity the weights are bound to.
+    pub entity_id: EntityId,
+    /// The `LoRA` path now stored on `Entity.ai.lora_path`. Currently
+    /// the Replicate weights URL — downloading the safetensors into
+    /// the project directory is a follow-up shared with the
+    /// project-wide style training flow.
+    pub lora_path: String,
+    /// Trigger word the trainer used.
+    pub label: String,
+    /// Replicate training job ID, retained so the UI can surface it
+    /// in audit traces.
+    pub training_id: String,
+    /// Per-invocation handle. Stringified `PreviewId` so the JS side
+    /// doesn't lose precision on values above 2^53.
+    pub invocation_id: String,
+}
+
+/// Decodes a PNG byte buffer into a tightly-packed RGBA8
+/// [`pixhaus_ai::plugin::context::PixelData`].
+///
+/// The reference sheet ships as `image/png` (B10.1); this helper sits in
+/// front of the verb's `PixelData`-typed inputs so the host never moves
+/// PNG bytes through the protocol unnecessarily.
+fn decode_reference_sheet_png(
+    bytes: &[u8],
+) -> Result<pixhaus_ai::plugin::context::PixelData, AppCommandError> {
+    use image::ImageReader;
+    use std::io::Cursor;
+
+    let dyn_image = ImageReader::new(Cursor::new(bytes))
+        .with_guessed_format()
+        .map_err(|e| AppCommandError::Validation {
+            detail: format!("failed to read reference sheet image header: {e}"),
+        })?
+        .decode()
+        .map_err(|e| AppCommandError::Validation {
+            detail: format!("failed to decode reference sheet image: {e}"),
+        })?;
+    let rgba = dyn_image.to_rgba8();
+    let (w, h) = rgba.dimensions();
+    Ok(pixhaus_ai::plugin::context::PixelData::rgba8(
+        w,
+        h,
+        rgba.into_raw(),
+    ))
+}
+
+/// Prepares the verb context and the decoded canonical sheet image for
+/// [`library_train_entity_lora`]. Holds the read lock only for the brief
+/// window needed to clone what the verb invocation will consume.
+async fn build_train_entity_lora_context(
+    entity_id: EntityId,
+    state: &AppState,
+) -> CommandResult<(
+    pixhaus_ai::plugin::context::VerbContext,
+    pixhaus_ai::plugin::context::PixelData,
+    String,
+)> {
+    let doc = state.doc.read().await;
+    let project = doc
+        .project
+        .as_ref()
+        .ok_or(AppCommandError::NoActiveProject)?;
+    let entity = project
+        .library
+        .entities
+        .iter()
+        .find(|e| e.id == entity_id)
+        .ok_or_else(|| AppCommandError::NotFound {
+            entity: "entity".into(),
+            id: u64::from(entity_id.get()),
+        })?;
+    let sheet = match &entity.content {
+        EntityContent::Reference { sheet } => sheet.as_ref(),
+        _ => {
+            return Err(AppCommandError::Validation {
+                detail: format!(
+                    "entity {} is not Reference-kind; train_entity_lora requires a reference sheet",
+                    entity_id.get(),
+                ),
+            });
+        }
+    };
+    let decoded = decode_reference_sheet_png(&sheet.canonical.image.bytes)?;
+    let ctx = VerbContextBuilder::new(project.metadata.clone())
+        .with_library_entity(entity_id)
+        .build();
+    Ok((ctx, decoded, entity.name.clone()))
+}
+
+/// Trains a per-entity `LoRA` from a Reference entity's canonical sheet
+/// and persists the weights URL on `Entity.ai.lora_path`.
+///
+/// Three-phase flow:
+///
+/// 1. Read lock: extract the canonical sheet bytes and decode to
+///    [`pixhaus_ai::plugin::context::PixelData`].
+/// 2. No lock held: dispatch the
+///    `pixhaus.builtin.train_entity_lora` verb via the runtime. The
+///    cancel token is registered with the in-flight invocation table on
+///    `AppState` so `verb_cancel` can interrupt the 15-30 minute
+///    training run.
+/// 3. Write lock: apply the
+///    [`pixhaus_ai::plugin::output::VerbEffect::UpdateEntityAi`] effect
+///    using the verb's `weights_url`, invalidate the anchor cache for
+///    the entity, and bump `entity.updated_at`.
+#[tauri::command(async, rename_all = "snake_case")]
+pub async fn library_train_entity_lora(
+    entity_id: EntityId,
+    options: Option<TrainEntityLoraOptions>,
+    state: State<'_, AppState>,
+) -> CommandResult<LibraryTrainEntityLoraResult> {
+    use pixhaus_ai::verbs::train_entity_lora::{
+        EntityLoraResult, TRAIN_ENTITY_LORA_EFFECT_NAME, TRAIN_ENTITY_LORA_VERB_ID,
+        TrainEntityLoraInputs,
+    };
+
+    let opts = options.unwrap_or(TrainEntityLoraOptions {
+        lora_rank: None,
+        steps: None,
+        label: None,
+        model: None,
+    });
+
+    let (ctx, decoded, entity_label) = build_train_entity_lora_context(entity_id, &state).await?;
+
+    let label = opts.label.clone().unwrap_or(entity_label);
+    let inputs = VerbInputs::from_struct(&TrainEntityLoraInputs {
+        entity_id,
+        training_images: vec![decoded],
+        lora_rank: opts.lora_rank,
+        steps: opts.steps,
+        label: Some(label.clone()),
+        model: opts.model,
+    })
+    .map_err(|e| AppCommandError::VerbError {
+        message: format!("failed to build train_entity_lora inputs: {e}"),
+    })?;
+
+    let verb_id = VerbId::new(TRAIN_ENTITY_LORA_VERB_ID);
+    let invocation = state
+        .verb_runtime
+        .invoke(&verb_id, ctx, inputs)
+        .map_err(|e| AppCommandError::VerbError {
+            message: e.to_string(),
+        })?;
+
+    let preview_id = invocation.preview_id().get();
+    state
+        .invocations
+        .insert(preview_id, invocation.cancellation());
+    let result = invocation.finish().await;
+    state.invocations.remove(&preview_id);
+
+    let preview = result.map_err(|e| AppCommandError::VerbError {
+        message: e.to_string(),
+    })?;
+    let lora_result = preview
+        .output
+        .effects
+        .iter()
+        .find_map(|e| match e {
+            VerbEffect::Custom { name, payload } if name == TRAIN_ENTITY_LORA_EFFECT_NAME => {
+                serde_json::from_value::<EntityLoraResult>(payload.clone()).ok()
+            }
+            _ => None,
+        })
+        .ok_or_else(|| AppCommandError::VerbError {
+            message: format!(
+                "train_entity_lora verb did not return a {TRAIN_ENTITY_LORA_EFFECT_NAME} effect"
+            ),
+        })?;
+
+    {
+        let mut doc = state.doc.write().await;
+        let project = doc
+            .project
+            .as_mut()
+            .ok_or(AppCommandError::NoActiveProject)?;
+        let applied = apply_update_entity_ai(
+            project,
+            entity_id,
+            Some(lora_result.weights_url.clone()),
+            now_secs(),
+        );
+        if !applied {
+            return Err(AppCommandError::NotFound {
+                entity: "entity".into(),
+                id: u64::from(entity_id.get()),
+            });
+        }
+        doc.dirty = true;
+    }
+    state.anchor_cache.remove(&entity_id.get());
+
+    Ok(LibraryTrainEntityLoraResult {
+        entity_id,
+        lora_path: lora_result.weights_url,
+        label: lora_result.label,
+        training_id: lora_result.training_id,
+        invocation_id: preview_id.to_string(),
+    })
 }
 
 // ── tests ─────────────────────────────────────────────────────────────────────
@@ -3465,6 +3731,110 @@ mod tests {
         assert_eq!(
             project.library.ai.project_lora_path.as_deref(),
             Some("styles/hero.safetensors")
+        );
+    }
+
+    // ── B10.5: per-entity LoRA wiring ─────────────────────────────────────────
+
+    #[test]
+    fn apply_update_entity_ai_sets_lora_path_and_bumps_updated_at() {
+        let (mut doc, entity_id, _) = doc_with_project();
+        let project = doc.project.as_mut().unwrap();
+        // Snapshot the prior timestamp so we can assert the bump.
+        let before = project
+            .library
+            .entities
+            .iter()
+            .find(|e| e.id == entity_id)
+            .unwrap()
+            .updated_at;
+
+        let applied = apply_update_entity_ai(
+            project,
+            entity_id,
+            Some("https://replicate.delivery/abc/hero.safetensors".into()),
+            before + 100,
+        );
+        assert!(applied);
+
+        let entity = project
+            .library
+            .entities
+            .iter()
+            .find(|e| e.id == entity_id)
+            .unwrap();
+        assert_eq!(
+            entity.ai.lora_path.as_deref(),
+            Some("https://replicate.delivery/abc/hero.safetensors")
+        );
+        assert_eq!(entity.updated_at, before + 100);
+    }
+
+    #[test]
+    fn apply_update_entity_ai_skips_unknown_entity() {
+        let (mut doc, _, _) = doc_with_project();
+        let project = doc.project.as_mut().unwrap();
+        let applied = apply_update_entity_ai(
+            project,
+            EntityId::new(9_999),
+            Some("ignored.safetensors".into()),
+            123,
+        );
+        assert!(!applied);
+    }
+
+    #[test]
+    fn apply_update_entity_ai_none_is_no_op_but_reports_presence() {
+        let (mut doc, entity_id, _) = doc_with_project();
+        let project = doc.project.as_mut().unwrap();
+        // Seed an existing path so we can prove it isn't clobbered.
+        apply_update_entity_ai(project, entity_id, Some("existing.safetensors".into()), 1);
+        let known = apply_update_entity_ai(project, entity_id, None, 2);
+        assert!(known);
+        let unknown = apply_update_entity_ai(project, EntityId::new(9_999), None, 2);
+        assert!(!unknown);
+        let entity = project
+            .library
+            .entities
+            .iter()
+            .find(|e| e.id == entity_id)
+            .unwrap();
+        assert_eq!(entity.ai.lora_path.as_deref(), Some("existing.safetensors"));
+    }
+
+    #[test]
+    fn resolve_lora_path_prefers_per_entity_over_project_wide() {
+        use crate::commands::verbs::resolve_lora_path;
+
+        let mut entity = Entity {
+            id: EntityId::new(1),
+            kind: EntityKind::Reference,
+            name: "Hero".into(),
+            group_id: None,
+            tags: Vec::new(),
+            defaults: EntityDefaults::default(),
+            content: EntityContent::Sprites { states: Vec::new() },
+            ai: AiMetadata::default(),
+            anchor_reference_id: None,
+            user_data: UserData::default(),
+            created_at: 0,
+            updated_at: 0,
+        };
+
+        assert_eq!(resolve_lora_path(&entity, None), None);
+        assert_eq!(
+            resolve_lora_path(&entity, Some("project.safetensors")),
+            Some("project.safetensors".into())
+        );
+
+        entity.ai.lora_path = Some("entity.safetensors".into());
+        assert_eq!(
+            resolve_lora_path(&entity, Some("project.safetensors")),
+            Some("entity.safetensors".into()),
+        );
+        assert_eq!(
+            resolve_lora_path(&entity, None),
+            Some("entity.safetensors".into())
         );
     }
 }

@@ -623,6 +623,7 @@ fn entity_defaults_round_trip_in_full() {
             suggested_tags: vec![TagId::new(3)],
             vlm_summary: Some("hero".into()),
             embedding: Some(vec![0.1, 0.2, 0.3]),
+            lora_path: Some("_lora/hero.safetensors".into()),
         },
         anchor_reference_id: None,
         user_data: UserData {
@@ -686,6 +687,7 @@ fn ai_metadata_embedding_round_trips_boundary_f32_values() {
         suggested_tags: Vec::new(),
         vlm_summary: None,
         embedding: Some(boundary.clone()),
+        lora_path: None,
     };
 
     let back: AiMetadata = round_trip(&metadata);

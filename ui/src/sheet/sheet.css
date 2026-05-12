@@ -211,6 +211,21 @@
   cursor: default;
 }
 
+.sheet-panel__action-btn--busy {
+  font-style: italic;
+}
+
+.sheet-panel__lora-status {
+  align-self: center;
+  padding: 2px 8px;
+  font-size: 10px;
+  border-radius: 999px;
+  border: 1px solid var(--accent-border);
+  background: var(--bg-elevated);
+  color: var(--text-primary);
+  letter-spacing: 0.04em;
+}
+
 /* ── Bottom tabs + content ────────────────────────────────────────────────── */
 
 .sheet-panel__bottom {
