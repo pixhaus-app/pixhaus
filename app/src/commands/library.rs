@@ -7,7 +7,12 @@
 use std::collections::{HashMap, HashSet};
 use std::time::SystemTime;
 
+use pixhaus_ai::plugin::context::VerbContextBuilder;
+use pixhaus_ai::plugin::descriptor::VerbId;
+use pixhaus_ai::plugin::inputs::VerbInputs;
+use pixhaus_ai::plugin::output::VerbEffect;
 use pixhaus_ai::plugin::{AnchorPayload, DEFAULT_ANCHOR_STRENGTH};
+use pixhaus_ai::verbs::critique::{CritiqueInputs, CritiqueMode};
 use pixhaus_core::color::extraction::ExtractionOptions;
 use pixhaus_core::project::approval::{ApprovalError, approve_sheet_variant, set_entity_anchor};
 use pixhaus_core::project::{
@@ -1753,15 +1758,7 @@ pub async fn library_approve_sheet_variant(
 /// Sets or clears the anchor reference for a library entity (B10.3).
 ///
 /// Pass `Some(reference_id)` to anchor the entity on a `Reference`-kind
-/// entity's canonical sheet; pass `None` to clear the anchor. Anchored
-/// entities inherit consistency for free in subsequent AI verb runs.
-///
-/// Invalidates any cached anchor payload for the newly-pointed-at
-/// reference so the next [`library_get_anchor_payload`] call rebuilds it
-/// from the live canonical bytes. Does not pre-invalidate the previously-
-/// pointed-at reference — its cache entry stays warm and is keyed by
-/// reference id, so it remains valid for any other source entity that
-/// still anchors to it.
+/// entity's canonical sheet; pass `None` to clear the anchor.
 #[tauri::command(async, rename_all = "snake_case")]
 pub async fn library_set_entity_anchor(
     entity_id: EntityId,
@@ -1783,18 +1780,8 @@ pub async fn library_set_entity_anchor(
     Ok(())
 }
 
-/// Returns the current [`AnchorPayload`] for an entity, building it
-/// lazily and caching the result.
-///
-/// `entity_id` may point at either:
-/// - A `Custom`-kind entity whose `anchor_reference_id` is set: the
-///   payload is built from the *referenced* entity's canonical sheet.
-/// - A `Reference`-kind entity directly: the payload is built from
-///   that entity's own canonical sheet.
-///
-/// Returns `Ok(None)` for entities with no anchor (Custom without an
-/// `anchor_reference_id`, or unrecognised kinds). Returns
-/// [`AppCommandError::NotFound`] when `entity_id` does not exist.
+/// Returns the current [`AnchorPayload`] for an entity, building it lazily
+/// and caching the result.
 #[tauri::command(async, rename_all = "snake_case")]
 pub async fn library_get_anchor_payload(
     entity_id: EntityId,
@@ -1829,10 +1816,6 @@ pub async fn library_get_anchor_payload(
         },
     };
 
-    // Cache-first: hash the live canonical bytes (cheap) and short-
-    // circuit on a hash match. Without this, every UI poll of this
-    // command rebuilds the AnchorPayload including a base64 encode of
-    // the canonical bytes.
     let sheet = match &reference.content {
         EntityContent::Reference { sheet } => sheet.as_ref(),
         _ => return Ok(None),
@@ -1877,10 +1860,6 @@ pub async fn library_update_asset_info(
 }
 
 /// Deletes a history variant from a `Reference`-kind entity.
-///
-/// The canonical variant cannot be deleted. Call
-/// `library_approve_sheet_variant` to promote a replacement first, which
-/// demotes the current canonical to history; then delete the demoted entry.
 #[tauri::command(async, rename_all = "snake_case")]
 pub async fn library_delete_sheet_variant(
     entity_id: EntityId,
@@ -1971,6 +1950,327 @@ pub(crate) fn delete_sheet_variant_in_project(
     }
 
     entity.updated_at = ts;
+    Ok(())
+}
+
+// ── AI hooks (B9.4) ───────────────────────────────────────────────────────────
+
+/// Resolves an existing [`TagDefinition`] by name (case-insensitive) or mints
+/// a new auto-generated one. Returns the `TagId`.
+fn find_or_create_tag(
+    library: &mut pixhaus_core::project::Library,
+    next_id: &mut u32,
+    name: &str,
+) -> TagId {
+    let normalized = name.to_lowercase();
+    if let Some(existing) = library
+        .tags
+        .iter()
+        .find(|t| t.name.to_lowercase() == normalized)
+    {
+        return existing.id;
+    }
+    let id = TagId::new(*next_id);
+    *next_id += 1;
+    library.tags.push(TagDefinition {
+        id,
+        name: normalized,
+        color: None,
+        auto_generated: true,
+    });
+    id
+}
+
+/// Applies a [`VerbEffect::SuggestEntityTags`] to the project: resolves or
+/// creates [`TagDefinition`]s and adds their IDs to
+/// `entity.ai.suggested_tags`. Returns the updated suggested-tag list so the
+/// caller can surface it to the UI without a second read.
+pub(crate) fn apply_suggest_entity_tags(
+    project: &mut pixhaus_core::project::Project,
+    next_id: &mut u32,
+    entity_id: EntityId,
+    tag_names: Vec<String>,
+    ts: i64,
+) -> Result<Vec<TagDefinition>, AppCommandError> {
+    let entity_idx = project
+        .library
+        .entities
+        .iter()
+        .position(|e| e.id == entity_id)
+        .ok_or_else(|| AppCommandError::NotFound {
+            entity: "entity".into(),
+            id: u64::from(entity_id.get()),
+        })?;
+
+    let mut new_ids = Vec::with_capacity(tag_names.len());
+    for name in tag_names {
+        let trimmed = name.trim().to_owned();
+        if trimmed.is_empty() {
+            continue;
+        }
+        let id = find_or_create_tag(&mut project.library, next_id, &trimmed);
+        new_ids.push(id);
+    }
+
+    // Scope the mutable entity borrow so the immutable tags borrow below compiles.
+    let suggested_ids = {
+        let entity = &mut project.library.entities[entity_idx];
+        for id in new_ids {
+            if !entity.ai.suggested_tags.contains(&id) {
+                entity.ai.suggested_tags.push(id);
+            }
+        }
+        entity.updated_at = ts;
+        entity.ai.suggested_tags.clone()
+    };
+
+    let definitions = project
+        .library
+        .tags
+        .iter()
+        .filter(|t| suggested_ids.contains(&t.id))
+        .cloned()
+        .collect();
+    Ok(definitions)
+}
+
+/// Applies a [`VerbEffect::UpdateProjectAi`]: deduplicates and appends entity
+/// IDs to `ProjectAi.style_corpus`, and optionally overwrites the `LoRA` path.
+///
+/// IDs that don't currently exist in the project library are silently
+/// dropped. Stale references in `style_corpus` would force every later
+/// corpus consumer to defend against them; filtering at the write boundary
+/// keeps the invariant local.
+pub(crate) fn apply_update_project_ai(
+    project: &mut pixhaus_core::project::Project,
+    add_entity_ids: Vec<EntityId>,
+    lora_path: Option<String>,
+) {
+    // Collect known entity ids once so the inner loop is O(n + m).
+    let known: HashSet<EntityId> = project.library.entities.iter().map(|e| e.id).collect();
+
+    for id in add_entity_ids {
+        if !known.contains(&id) {
+            continue; // skip unknown
+        }
+        if !project.library.ai.style_corpus.contains(&id) {
+            project.library.ai.style_corpus.push(id);
+        }
+    }
+    if let Some(path) = lora_path {
+        project.library.ai.project_lora_path = Some(path);
+    }
+}
+
+/// Renders an entity's name, kind, and existing tag names into a short
+/// plaintext block the auto-tag VLM can use as grounding when no sprite
+/// reference is attached.
+fn build_auto_tag_metadata(entity: &Entity, tags: &[TagDefinition]) -> String {
+    let kind = match &entity.kind {
+        EntityKind::Tileset => "Tileset".to_owned(),
+        EntityKind::Tilemap => "Tilemap".to_owned(),
+        EntityKind::Reference => "Reference".to_owned(),
+        EntityKind::Custom(category) => format!("Custom({category})"),
+    };
+    let existing: Vec<&str> = entity
+        .tags
+        .iter()
+        .filter_map(|tid| tags.iter().find(|t| t.id == *tid).map(|t| t.name.as_str()))
+        .collect();
+    let existing_str = if existing.is_empty() {
+        "none".to_owned()
+    } else {
+        existing.join(", ")
+    };
+    format!(
+        "Entity name: {}\nKind: {kind}\nExisting tags: {existing_str}",
+        entity.name
+    )
+}
+
+/// Invokes the Critique verb in `LibraryAutoTag` mode for the given entity.
+#[tauri::command(async, rename_all = "snake_case")]
+pub async fn library_auto_tag_entity(
+    entity_id: EntityId,
+    state: State<'_, AppState>,
+) -> CommandResult<Vec<TagDefinition>> {
+    // Phase 1: read lock — build context, validate entity exists, and
+    // construct the metadata summary the VLM will see (since we don't
+    // attach a sprite reference today, the metadata is the only
+    // grounding the model has).
+    let (ctx, entity_metadata) = {
+        let doc = state.doc.read().await;
+        let project = doc
+            .project
+            .as_ref()
+            .ok_or(AppCommandError::NoActiveProject)?;
+        let entity = project
+            .library
+            .entities
+            .iter()
+            .find(|e| e.id == entity_id)
+            .ok_or_else(|| AppCommandError::NotFound {
+                entity: "entity".into(),
+                id: u64::from(entity_id.get()),
+            })?;
+        let metadata = build_auto_tag_metadata(entity, &project.library.tags);
+        let ctx = VerbContextBuilder::new(project.metadata.clone())
+            .with_library_entity(entity_id)
+            .build();
+        (ctx, metadata)
+        // read guard drops here
+    };
+
+    // Phase 2: invoke verb — no document lock held during the async call.
+    let verb_id = VerbId::new("pixhaus.builtin.critique");
+    let inputs = VerbInputs::from_struct(&CritiqueInputs {
+        mode: CritiqueMode::LibraryAutoTag {
+            entity_id,
+            entity_metadata: Some(entity_metadata),
+        },
+        checks: vec![],
+        notes: None,
+    })
+    .map_err(|e| AppCommandError::VerbError {
+        message: e.to_string(),
+    })?;
+
+    let invocation = state
+        .verb_runtime
+        .invoke(&verb_id, ctx, inputs)
+        .map_err(|e| AppCommandError::VerbError {
+            message: e.to_string(),
+        })?;
+
+    let preview_id = invocation.preview_id().get();
+    state
+        .invocations
+        .insert(preview_id, invocation.cancellation());
+
+    let result = invocation.finish().await;
+    state.invocations.remove(&preview_id);
+
+    let preview = result.map_err(|e| AppCommandError::VerbError {
+        message: e.to_string(),
+    })?;
+
+    let tag_names = preview
+        .output
+        .effects
+        .into_iter()
+        .find_map(|e| {
+            if let VerbEffect::SuggestEntityTags { tag_names, .. } = e {
+                Some(tag_names)
+            } else {
+                None
+            }
+        })
+        .unwrap_or_default();
+
+    // Phase 3: write lock — persist suggested tags to the entity.
+    let mut doc = state.doc.write().await;
+    let mut next_id = doc.next_id;
+    let project = doc
+        .project
+        .as_mut()
+        .ok_or(AppCommandError::NoActiveProject)?;
+    let suggestions =
+        apply_suggest_entity_tags(project, &mut next_id, entity_id, tag_names, now_secs())?;
+    doc.next_id = next_id;
+    doc.dirty = true;
+    Ok(suggestions)
+}
+
+/// Moves a tag from `entity.ai.suggested_tags` to `entity.tags`, confirming
+/// the VLM suggestion.
+#[tauri::command(async, rename_all = "snake_case")]
+pub async fn library_accept_suggested_tag(
+    entity_id: EntityId,
+    tag_id: TagId,
+    state: State<'_, AppState>,
+) -> CommandResult<()> {
+    let ts = now_secs();
+    let mut doc = state.doc.write().await;
+    let project = doc
+        .project
+        .as_mut()
+        .ok_or(AppCommandError::NoActiveProject)?;
+
+    // Validate: the tag must currently be in the entity's suggested set —
+    // accepting an arbitrary tag id (one nobody suggested, or one that
+    // doesn't even exist) would silently corrupt entity.tags.
+    let entity = project
+        .library
+        .entities
+        .iter_mut()
+        .find(|e| e.id == entity_id)
+        .ok_or_else(|| AppCommandError::NotFound {
+            entity: "entity".into(),
+            id: u64::from(entity_id.get()),
+        })?;
+    if !entity.ai.suggested_tags.contains(&tag_id) {
+        return Err(AppCommandError::Validation {
+            detail: format!(
+                "tag {} is not in entity {}'s suggested_tags",
+                tag_id.get(),
+                entity_id.get(),
+            ),
+        });
+    }
+    entity.ai.suggested_tags.retain(|&id| id != tag_id);
+
+    // Canonical attach path: validates the tag definition exists and
+    // bumps `updated_at`. Returns `Ok(false)` if the tag was already on
+    // the entity — fine, we want idempotence on the accept.
+    tag_entity_in_project(project, entity_id, tag_id, ts)?;
+
+    doc.dirty = true;
+    Ok(())
+}
+
+/// Removes a tag from `entity.ai.suggested_tags`, dismissing the suggestion.
+#[tauri::command(async, rename_all = "snake_case")]
+pub async fn library_reject_suggested_tag(
+    entity_id: EntityId,
+    tag_id: TagId,
+    state: State<'_, AppState>,
+) -> CommandResult<()> {
+    let ts = now_secs();
+    let mut doc = state.doc.write().await;
+    let project = doc
+        .project
+        .as_mut()
+        .ok_or(AppCommandError::NoActiveProject)?;
+    let entity = project
+        .library
+        .entities
+        .iter_mut()
+        .find(|e| e.id == entity_id)
+        .ok_or_else(|| AppCommandError::NotFound {
+            entity: "entity".into(),
+            id: u64::from(entity_id.get()),
+        })?;
+    entity.ai.suggested_tags.retain(|&id| id != tag_id);
+    entity.updated_at = ts;
+    doc.dirty = true;
+    Ok(())
+}
+
+/// Adds entity IDs to `ProjectAi.style_corpus`, deduplicating against what is
+/// already there. Corpus management is separate from verb invocation — this
+/// command does not trigger training.
+#[tauri::command(async, rename_all = "snake_case")]
+pub async fn library_update_corpus(
+    entity_ids: Vec<EntityId>,
+    state: State<'_, AppState>,
+) -> CommandResult<()> {
+    let mut doc = state.doc.write().await;
+    let project = doc
+        .project
+        .as_mut()
+        .ok_or(AppCommandError::NoActiveProject)?;
+    apply_update_project_ai(project, entity_ids, None);
+    doc.dirty = true;
     Ok(())
 }
 
@@ -3048,5 +3348,123 @@ mod tests {
         let result =
             delete_sheet_variant_in_project(&mut project, entity_id, SheetVariantId::new(999), 0);
         assert!(matches!(result, Err(AppCommandError::NotFound { .. })));
+    }
+
+    // ── AI hooks (B9.4) ───────────────────────────────────────────────────
+
+    #[test]
+    fn suggest_tags_creates_new_auto_generated_tags() {
+        let (mut doc, entity_id, _) = doc_with_project();
+        let project = doc.project.as_mut().unwrap();
+        let mut next_id = doc.next_id;
+        let tags = apply_suggest_entity_tags(
+            project,
+            &mut next_id,
+            entity_id,
+            vec!["idle".into(), "fantasy".into()],
+            0,
+        )
+        .unwrap();
+        assert_eq!(tags.len(), 2);
+        assert!(tags.iter().all(|t| t.auto_generated));
+        assert!(tags.iter().any(|t| t.name == "idle"));
+        assert!(tags.iter().any(|t| t.name == "fantasy"));
+    }
+
+    #[test]
+    fn suggest_tags_normalises_to_lowercase() {
+        let (mut doc, entity_id, _) = doc_with_project();
+        let project = doc.project.as_mut().unwrap();
+        let mut next_id = doc.next_id;
+        let tags =
+            apply_suggest_entity_tags(project, &mut next_id, entity_id, vec!["WARRIOR".into()], 0)
+                .unwrap();
+        assert_eq!(tags[0].name, "warrior");
+    }
+
+    #[test]
+    fn suggest_tags_deduplicates_repeated_names() {
+        let (mut doc, entity_id, _) = doc_with_project();
+        let project = doc.project.as_mut().unwrap();
+        let mut next_id = doc.next_id;
+        apply_suggest_entity_tags(project, &mut next_id, entity_id, vec!["idle".into()], 0)
+            .unwrap();
+        // Same name again must not grow suggested_tags.
+        apply_suggest_entity_tags(project, &mut next_id, entity_id, vec!["idle".into()], 0)
+            .unwrap();
+        let entity = project
+            .library
+            .entities
+            .iter()
+            .find(|e| e.id == entity_id)
+            .unwrap();
+        assert_eq!(entity.ai.suggested_tags.len(), 1);
+    }
+
+    #[test]
+    fn suggest_tags_returns_not_found_for_missing_entity() {
+        let (mut doc, _, _) = doc_with_project();
+        let project = doc.project.as_mut().unwrap();
+        let mut next_id = doc.next_id;
+        let result = apply_suggest_entity_tags(
+            project,
+            &mut next_id,
+            EntityId::new(999),
+            vec!["idle".into()],
+            0,
+        );
+        assert!(matches!(result, Err(AppCommandError::NotFound { .. })));
+    }
+
+    #[test]
+    fn accept_tag_moves_from_suggested_to_confirmed() {
+        let (mut doc, entity_id, _) = doc_with_project();
+        let project = doc.project.as_mut().unwrap();
+        let mut next_id = doc.next_id;
+        let tags =
+            apply_suggest_entity_tags(project, &mut next_id, entity_id, vec!["warrior".into()], 0)
+                .unwrap();
+        let tag_id = tags[0].id;
+
+        // Simulate accept: remove from suggested, add to confirmed.
+        let entity = project
+            .library
+            .entities
+            .iter_mut()
+            .find(|e| e.id == entity_id)
+            .unwrap();
+        entity.ai.suggested_tags.retain(|&id| id != tag_id);
+        entity.tags.push(tag_id);
+
+        let entity = project
+            .library
+            .entities
+            .iter()
+            .find(|e| e.id == entity_id)
+            .unwrap();
+        assert!(entity.ai.suggested_tags.is_empty());
+        assert!(entity.tags.contains(&tag_id));
+    }
+
+    #[test]
+    fn update_corpus_deduplicates_entity_ids() {
+        let (mut doc, entity_id, _) = doc_with_project();
+        let project = doc.project.as_mut().unwrap();
+        apply_update_project_ai(project, vec![entity_id, entity_id], None);
+        assert_eq!(project.library.ai.style_corpus.len(), 1);
+        // Re-adding the same id must not grow the corpus.
+        apply_update_project_ai(project, vec![entity_id], None);
+        assert_eq!(project.library.ai.style_corpus.len(), 1);
+    }
+
+    #[test]
+    fn update_corpus_sets_lora_path() {
+        let (mut doc, _, _) = doc_with_project();
+        let project = doc.project.as_mut().unwrap();
+        apply_update_project_ai(project, vec![], Some("styles/hero.safetensors".into()));
+        assert_eq!(
+            project.library.ai.project_lora_path.as_deref(),
+            Some("styles/hero.safetensors")
+        );
     }
 }

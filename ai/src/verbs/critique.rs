@@ -8,9 +8,22 @@
 //! # Protocol contract
 //!
 //! - **Required capability:** `VISION_LANGUAGE`
-//! - **Output kind:** `Critique` (read-only; no commit to the undo stack)
-//! - **Inputs:** [`CritiqueInputs`] — which checks to run, optional notes
-//! - **Output:** [`VerbOutput`] with one `VerbEffect::Critique { findings }`
+//! - **Output kind:** `Critique` (quality analysis) or `SuggestEntityTags` (library auto-tag)
+//! - **Inputs:** [`CritiqueInputs`] — mode, which checks to run, optional notes
+//! - **Output:** [`VerbOutput`] with one `VerbEffect::Critique { findings }` or
+//!   one `VerbEffect::SuggestEntityTags { entity_id, tag_names }`
+//!
+//! # Operating modes
+//!
+//! `CritiqueInputs::mode` selects between two behaviors:
+//!
+//! - **`QualityAnalysis`** (default): returns structured sprite quality findings.
+//!   Same behavior as before B9.4.
+//! - **`LibraryAutoTag`**: returns descriptive tag suggestions for a library
+//!   entity. The VLM reads the reference images attached by the host (composited
+//!   from the entity's primary state) and produces a flat list of descriptive tag
+//!   names (style, subject, color, mood). The host creates `TagDefinition` entries
+//!   and populates `Entity.ai.suggested_tags`.
 //!
 //! # Image supply
 //!
@@ -18,8 +31,7 @@
 //! (app IPC command) is responsible for compositing the active sprite's
 //! visible layers into PNG bytes and attaching them as `ReferenceImage`
 //! entries before invoking the verb. If no reference images are present,
-//! the verb produces a metadata-only critique based on the structural
-//! data in `VerbContext::sprite`.
+//! the verb produces a metadata-only analysis.
 
 use std::time::{Duration, Instant};
 
@@ -28,7 +40,7 @@ use serde::{Deserialize, Serialize};
 use tokio_util::sync::CancellationToken;
 use tracing::instrument;
 
-use pixhaus_core::project::{FrameIndex, LayerId};
+use pixhaus_core::project::{EntityId, FrameIndex, LayerId};
 
 use crate::plugin::context::VerbContext;
 use crate::plugin::descriptor::{
@@ -46,6 +58,39 @@ use super::call_text_vlm;
 
 /// Stable identifier for the built-in critique verb.
 pub const CRITIQUE_VERB_ID: &str = "pixhaus.builtin.critique";
+
+/// Operating mode for the Critique verb.
+///
+/// Defaults to [`QualityAnalysis`] (the pre-B9.4 behavior) when absent from
+/// the input payload so existing callers do not need to be updated.
+///
+/// [`QualityAnalysis`]: CritiqueMode::QualityAnalysis
+#[derive(Clone, Debug, Default, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum CritiqueMode {
+    /// Standard sprite quality analysis. Returns `VerbEffect::Critique`.
+    /// This is the default mode and the only one that uses `checks`.
+    #[default]
+    QualityAnalysis,
+    /// Library auto-tagging. Returns `VerbEffect::SuggestEntityTags`.
+    ///
+    /// The host composites the entity's primary state into PNG bytes,
+    /// attaches them as `VerbContext::references`, and sets
+    /// `VerbContext::library_entity_id` before invoking. The verb asks
+    /// the VLM for a flat list of descriptive tags and returns them so
+    /// the host can populate `Entity.ai.suggested_tags`.
+    LibraryAutoTag {
+        /// Entity to tag. Must match `VerbContext::library_entity_id`.
+        entity_id: EntityId,
+        /// Free-form summary the host attaches when no sprite reference
+        /// is available — entity name, kind, existing tags. Anything
+        /// useful for grounding the VLM. Optional; when present and
+        /// `ctx.references` is empty, the verb feeds this into the
+        /// user prompt instead of asking the model to tag blind.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        entity_metadata: Option<String>,
+    },
+}
 
 /// Which quality checks the verb should perform.
 ///
@@ -68,7 +113,11 @@ pub enum CritiqueCheck {
 /// Inputs accepted by [`CritiqueVerb`].
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct CritiqueInputs {
-    /// Categories to check. Empty means all five categories.
+    /// Operating mode. Defaults to `QualityAnalysis` when absent.
+    #[serde(default)]
+    pub mode: CritiqueMode,
+    /// Categories to check. Applies only in `QualityAnalysis` mode.
+    /// Empty means all five categories.
     #[serde(default)]
     pub checks: Vec<CritiqueCheck>,
     /// Optional context or guidance for the VLM (max ~500 chars).
@@ -76,7 +125,7 @@ pub struct CritiqueInputs {
     pub notes: Option<String>,
 }
 
-/// VLM response shape — private wire format parsed from the model's JSON output.
+/// VLM response shape for `QualityAnalysis` mode.
 #[derive(Deserialize)]
 struct RawFinding {
     category: String,
@@ -86,6 +135,12 @@ struct RawFinding {
     frame: Option<u32>,
     #[serde(default)]
     layer: Option<u32>,
+}
+
+/// VLM response shape for `LibraryAutoTag` mode.
+#[derive(Deserialize)]
+struct RawTagResponse {
+    tags: Vec<String>,
 }
 
 /// Built-in critique verb.
@@ -107,6 +162,19 @@ impl CritiqueVerb {
         let input_schema = serde_json::json!({
             "type": "object",
             "properties": {
+                "mode": {
+                    "oneOf": [
+                        { "type": "object", "properties": { "kind": { "const": "quality_analysis" } }, "required": ["kind"] },
+                        {
+                            "type": "object",
+                            "properties": {
+                                "kind": { "const": "library_auto_tag" },
+                                "entity_id": { "type": "integer", "minimum": 0 }
+                            },
+                            "required": ["kind", "entity_id"]
+                        }
+                    ]
+                },
                 "checks": {
                     "type": "array",
                     "items": {
@@ -131,14 +199,15 @@ impl CritiqueVerb {
             descriptor: VerbDescriptor {
                 id: VerbId::new(CRITIQUE_VERB_ID),
                 display_name: "Critique".into(),
-                description: "Visual quality analysis: pose continuity, palette violations, \
-                              missing frames, pivot drift, and style inconsistency"
-                    .into(),
+                description: "Visual quality analysis and library auto-tagging via VLM".into(),
                 version: env!("CARGO_PKG_VERSION").into(),
                 required_capabilities: BackendCapabilities::VISION_LANGUAGE,
                 input_schema,
                 output_schema: None,
-                output_kinds: vec![EffectKind::Critique],
+                output_kinds: vec![
+                    EffectKind::Critique,
+                    EffectKind::Custom("pixhaus.builtin.critique.suggest_tags".into()),
+                ],
                 cost_estimate: CostEstimate {
                     typical_latency: Duration::from_secs(10),
                     max_latency: Duration::from_secs(60),
@@ -177,73 +246,189 @@ impl Verb for CritiqueVerb {
         progress: VerbProgress,
         cancel: CancellationToken,
     ) -> Result<VerbOutput> {
-        let started = Instant::now();
         let inputs: CritiqueInputs = inputs.deserialize_owned()?;
-
-        // The runtime guarantees ctx.backend is Some when required_capabilities
-        // is non-empty; unwrap here is safe by protocol contract.
-        let backend = ctx
-            .backend
-            .as_ref()
-            .ok_or(VerbError::MissingContext("VLM backend"))?;
-
-        progress
-            .send(VerbProgressEvent::Started {
-                backend: Some(backend.id().into()),
-            })
-            .await;
-        progress.step(Some(0.1), "building analysis prompt").await;
-
-        if cancel.is_cancelled() {
-            return Err(VerbError::Cancelled);
+        match inputs.mode.clone() {
+            CritiqueMode::QualityAnalysis => {
+                invoke_quality_analysis(ctx, inputs, progress, cancel).await
+            }
+            CritiqueMode::LibraryAutoTag {
+                entity_id,
+                entity_metadata,
+            } => {
+                invoke_library_auto_tag(entity_id, entity_metadata, ctx, inputs, progress, cancel)
+                    .await
+            }
         }
-
-        let request = build_request(&ctx, &inputs);
-
-        progress.step(Some(0.2), "sending to VLM").await;
-
-        if cancel.is_cancelled() {
-            return Err(VerbError::Cancelled);
-        }
-
-        let response =
-            call_text_vlm(backend.as_ref(), request, progress.clone(), cancel.clone()).await?;
-
-        progress.step(Some(0.9), "parsing findings").await;
-
-        if cancel.is_cancelled() {
-            return Err(VerbError::Cancelled);
-        }
-
-        let findings = parse_findings(&response.content)?;
-        let count = findings.len();
-
-        progress.step(Some(1.0), "done").await;
-
-        let elapsed = started.elapsed();
-        let summary = if count == 0 {
-            "No issues found".into()
-        } else {
-            format!("{count} finding{}", if count == 1 { "" } else { "s" })
-        };
-
-        Ok(VerbOutput {
-            summary,
-            effects: vec![VerbEffect::Critique { findings }],
-            thumbnail: None,
-            actual_cost: ActualCost {
-                elapsed,
-                #[allow(clippy::cast_possible_truncation)]
-                usd_cents: (f64::from(response.input_tokens) * (3.0 / 1_000_000.0 * 100.0)
-                    + f64::from(response.output_tokens) * (15.0 / 1_000_000.0 * 100.0))
-                    as f32,
-                backend: Some(response.model),
-                tokens_input: Some(response.input_tokens),
-                tokens_output: Some(response.output_tokens),
-            },
-            notes: vec![],
-        })
     }
+}
+
+// ── Mode dispatch ────────────────────────────────────────────────────────────
+
+async fn invoke_quality_analysis(
+    ctx: VerbContext,
+    inputs: CritiqueInputs,
+    progress: VerbProgress,
+    cancel: CancellationToken,
+) -> Result<VerbOutput> {
+    let started = Instant::now();
+
+    let backend = ctx
+        .backend
+        .as_ref()
+        .ok_or(VerbError::MissingContext("VLM backend"))?;
+
+    progress
+        .send(VerbProgressEvent::Started {
+            backend: Some(backend.id().into()),
+        })
+        .await;
+    progress.step(Some(0.1), "building analysis prompt").await;
+
+    if cancel.is_cancelled() {
+        return Err(VerbError::Cancelled);
+    }
+
+    let request = build_request(&ctx, &inputs);
+
+    progress.step(Some(0.2), "sending to VLM").await;
+
+    if cancel.is_cancelled() {
+        return Err(VerbError::Cancelled);
+    }
+
+    let response =
+        call_text_vlm(backend.as_ref(), request, progress.clone(), cancel.clone()).await?;
+
+    progress.step(Some(0.9), "parsing findings").await;
+
+    if cancel.is_cancelled() {
+        return Err(VerbError::Cancelled);
+    }
+
+    let findings = parse_findings(&response.content)?;
+    let count = findings.len();
+
+    progress.step(Some(1.0), "done").await;
+
+    let elapsed = started.elapsed();
+    let summary = if count == 0 {
+        "No issues found".into()
+    } else {
+        format!("{count} finding{}", if count == 1 { "" } else { "s" })
+    };
+
+    Ok(VerbOutput {
+        summary,
+        effects: vec![VerbEffect::Critique { findings }],
+        thumbnail: None,
+        actual_cost: ActualCost {
+            elapsed,
+            #[allow(clippy::cast_possible_truncation)]
+            usd_cents: (f64::from(response.input_tokens) * (3.0 / 1_000_000.0 * 100.0)
+                + f64::from(response.output_tokens) * (15.0 / 1_000_000.0 * 100.0))
+                as f32,
+            backend: Some(response.model),
+            tokens_input: Some(response.input_tokens),
+            tokens_output: Some(response.output_tokens),
+        },
+        notes: vec![],
+    })
+}
+
+async fn invoke_library_auto_tag(
+    entity_id: EntityId,
+    entity_metadata: Option<String>,
+    ctx: VerbContext,
+    inputs: CritiqueInputs,
+    progress: VerbProgress,
+    cancel: CancellationToken,
+) -> Result<VerbOutput> {
+    if ctx.library_entity_id != Some(entity_id) {
+        return Err(VerbError::Schema(format!(
+            "library_auto_tag: ctx.library_entity_id ({:?}) does not match \
+             inputs.entity_id ({})",
+            ctx.library_entity_id,
+            entity_id.get(),
+        )));
+    }
+    // The VLM needs *something* to ground its suggestions: either a
+    // sprite reference image or a metadata summary. Both empty means
+    // the host called us with no context, which would produce
+    // hallucinated tags — fail-fast so the caller can fix the call.
+    if ctx.references.is_empty() && entity_metadata.is_none() {
+        return Err(VerbError::Schema(
+            "library_auto_tag: needs either a sprite reference image \
+             (ctx.references) or `entity_metadata`; both are empty"
+                .into(),
+        ));
+    }
+    let started = Instant::now();
+
+    let backend = ctx
+        .backend
+        .as_ref()
+        .ok_or(VerbError::MissingContext("VLM backend"))?;
+
+    progress
+        .send(VerbProgressEvent::Started {
+            backend: Some(backend.id().into()),
+        })
+        .await;
+    progress
+        .step(Some(0.1), "building tag-suggestion prompt")
+        .await;
+
+    if cancel.is_cancelled() {
+        return Err(VerbError::Cancelled);
+    }
+
+    let request = build_auto_tag_request(&ctx, &inputs, entity_metadata.as_deref());
+
+    progress.step(Some(0.2), "sending to VLM").await;
+
+    if cancel.is_cancelled() {
+        return Err(VerbError::Cancelled);
+    }
+
+    let response =
+        call_text_vlm(backend.as_ref(), request, progress.clone(), cancel.clone()).await?;
+
+    progress.step(Some(0.9), "parsing tags").await;
+
+    if cancel.is_cancelled() {
+        return Err(VerbError::Cancelled);
+    }
+
+    let tag_names = parse_tag_response(&response.content)?;
+    let count = tag_names.len();
+
+    progress.step(Some(1.0), "done").await;
+
+    let elapsed = started.elapsed();
+    Ok(VerbOutput {
+        summary: format!(
+            "{count} tag suggestion{} for entity",
+            if count == 1 { "" } else { "s" }
+        ),
+        effects: vec![VerbEffect::SuggestEntityTags {
+            entity_id,
+            tag_names,
+        }],
+        thumbnail: None,
+        actual_cost: ActualCost {
+            elapsed,
+            #[allow(clippy::cast_possible_truncation)]
+            usd_cents: (f64::from(response.input_tokens) * (3.0 / 1_000_000.0 * 100.0)
+                + f64::from(response.output_tokens) * (15.0 / 1_000_000.0 * 100.0))
+                as f32,
+            backend: Some(response.model),
+            tokens_input: Some(response.input_tokens),
+            tokens_output: Some(response.output_tokens),
+        },
+        notes: vec![
+            "Suggested tags are stored in Entity.ai.suggested_tags pending user review.".into(),
+        ],
+    })
 }
 
 // ── Prompt construction ─────────────────────────────────────────────────────
@@ -390,6 +575,105 @@ fn build_user_text(ctx: &VerbContext, inputs: &CritiqueInputs) -> String {
     out
 }
 
+fn build_auto_tag_request(
+    ctx: &VerbContext,
+    inputs: &CritiqueInputs,
+    entity_metadata: Option<&str>,
+) -> crate::backends::TextGenRequest {
+    use crate::backends::{ChatMessage, ContentPart, TextGenRequest};
+
+    let system = "You are a pixel art cataloguer. Analyze the provided sprite image and \
+                  return a JSON object with a single key \"tags\" whose value is an array \
+                  of descriptive strings. Focus on: visual style (e.g. \"fantasy\", \
+                  \"sci-fi\"), subject (e.g. \"character\", \"animal\", \"vehicle\"), \
+                  color palette mood (e.g. \"warm\", \"dark\", \"pastel\"), animation \
+                  state (e.g. \"idle\", \"walk\", \"attack\"), and other artist-useful \
+                  descriptors. Produce 5–15 tags. Use lowercase, single words or short \
+                  hyphenated phrases. Return ONLY the JSON object, no prose."
+        .into();
+
+    let mut user_content = Vec::new();
+
+    if ctx.references.is_empty() {
+        // The invoke-side guard ensures `entity_metadata` is Some when
+        // references are empty; treat the unwrap as a contract check.
+        let metadata = entity_metadata.unwrap_or("(no metadata supplied)");
+        user_content.push(ContentPart::text(format!(
+            "No image is available. Return tags based on this entity metadata:\n\n{metadata}"
+        )));
+    } else {
+        user_content.push(ContentPart::text(
+            "Analyze the sprite image below and return descriptive tags as JSON.".to_owned(),
+        ));
+        for reference in &ctx.references {
+            let bytes = encode_pixel_data_as_png(&reference.pixels);
+            user_content.push(ContentPart::png(bytes));
+        }
+        if let Some(metadata) = entity_metadata {
+            user_content.push(ContentPart::text(format!(
+                "Entity metadata for additional context:\n\n{metadata}"
+            )));
+        }
+    }
+
+    if let Some(notes) = &inputs.notes {
+        user_content.push(ContentPart::text(format!(
+            "Additional context from artist: {notes}"
+        )));
+    }
+
+    TextGenRequest {
+        model: None,
+        system: Some(system),
+        messages: vec![ChatMessage {
+            role: crate::backends::ChatRole::User,
+            content: user_content,
+        }],
+        max_tokens: Some(256),
+        temperature: Some(0.3),
+        tools: Vec::new(),
+        stop: Vec::new(),
+    }
+}
+
+/// Parses the VLM's `{"tags": [...]}` response into a `Vec<String>`.
+///
+/// Tolerates markdown fences and leading/trailing prose. Returns an empty
+/// vec (not an error) when the VLM returns a valid but empty tag list.
+fn parse_tag_response(raw: &str) -> Result<Vec<String>> {
+    let raw = raw.trim();
+    // Strip optional ```json / ``` fences.
+    let raw = if let Some(inner) = raw
+        .strip_prefix("```json")
+        .or_else(|| raw.strip_prefix("```"))
+    {
+        inner.trim_start()
+    } else {
+        raw
+    };
+    let raw = raw.trim_end_matches("```").trim_end();
+
+    // Find the outermost `{...}` object.
+    let raw = match (raw.find('{'), raw.rfind('}')) {
+        (Some(start), Some(end)) if end >= start => &raw[start..=end],
+        _ => raw,
+    };
+
+    let parsed: RawTagResponse = serde_json::from_str(raw).map_err(|e| {
+        VerbError::Schema(format!(
+            "VLM auto-tag response is not valid JSON: {e}. Raw: {raw}"
+        ))
+    })?;
+
+    // Normalise: lowercase, trim whitespace, drop empties.
+    Ok(parsed
+        .tags
+        .into_iter()
+        .map(|t| t.trim().to_lowercase())
+        .filter(|t| !t.is_empty())
+        .collect())
+}
+
 /// Converts raw RGBA8 `PixelData` to a PNG byte stream for VLM consumption.
 ///
 /// Falls back to a 1×1 transparent PNG sentinel when the pixel data is not
@@ -509,7 +793,7 @@ mod tests {
     use super::*;
     use crate::plugin::context::PixelData;
     use crate::plugin::runtime::VerbRuntime;
-    use pixhaus_core::project::{ProjectMetadata, SpriteId};
+    use pixhaus_core::project::{EntityId, ProjectMetadata, SpriteId};
 
     fn metadata() -> ProjectMetadata {
         ProjectMetadata {
@@ -529,13 +813,33 @@ mod tests {
         assert!(caps.contains(BackendCapabilities::VISION_LANGUAGE));
         assert!(verb.descriptor().cancellable);
         assert!(verb.descriptor().streaming);
-        assert_eq!(verb.descriptor().output_kinds, vec![EffectKind::Critique]);
+        assert!(
+            verb.descriptor()
+                .output_kinds
+                .contains(&EffectKind::Critique)
+        );
     }
 
     #[test]
     fn validate_accepts_empty_inputs() {
         let verb = CritiqueVerb::new();
         let inputs = VerbInputs::from_struct(&CritiqueInputs {
+            mode: CritiqueMode::QualityAnalysis,
+            checks: vec![],
+            notes: None,
+        })
+        .unwrap();
+        assert!(verb.validate(&inputs).is_ok());
+    }
+
+    #[test]
+    fn validate_accepts_library_auto_tag_inputs() {
+        let verb = CritiqueVerb::new();
+        let inputs = VerbInputs::from_struct(&CritiqueInputs {
+            mode: CritiqueMode::LibraryAutoTag {
+                entity_id: EntityId::new(42),
+                entity_metadata: None,
+            },
             checks: vec![],
             notes: None,
         })
@@ -546,6 +850,7 @@ mod tests {
     #[test]
     fn validate_rejects_malformed_json() {
         let verb = CritiqueVerb::new();
+        // checks must be an array; a string is invalid.
         let inputs = VerbInputs::new(serde_json::json!({"checks": "not-an-array"}));
         assert!(verb.validate(&inputs).is_err());
     }
@@ -608,8 +913,69 @@ mod tests {
     }
 
     #[test]
+    fn parse_tag_response_returns_tags() {
+        let json = r#"{"tags":["fantasy","character","blue","armored","pixel-art"]}"#;
+        let tags = parse_tag_response(json).unwrap();
+        assert_eq!(
+            tags,
+            vec!["fantasy", "character", "blue", "armored", "pixel-art"]
+        );
+    }
+
+    #[test]
+    fn parse_tag_response_strips_fences() {
+        let wrapped = "```json\n{\"tags\":[\"hero\",\"idle\"]}\n```";
+        let tags = parse_tag_response(wrapped).unwrap();
+        assert_eq!(tags, vec!["hero", "idle"]);
+    }
+
+    #[test]
+    fn parse_tag_response_normalises_to_lowercase() {
+        let json = r#"{"tags":["Fantasy","HERO","Pixel Art"]}"#;
+        let tags = parse_tag_response(json).unwrap();
+        assert_eq!(tags, vec!["fantasy", "hero", "pixel art"]);
+    }
+
+    #[test]
+    fn parse_tag_response_drops_empty_tags() {
+        let json = r#"{"tags":["hero","","  ","idle"]}"#;
+        let tags = parse_tag_response(json).unwrap();
+        assert_eq!(tags, vec!["hero", "idle"]);
+    }
+
+    #[test]
+    fn parse_tag_response_invalid_json_is_schema_error() {
+        let err = parse_tag_response("not json").unwrap_err();
+        assert!(matches!(err, VerbError::Schema(_)));
+    }
+
+    #[test]
+    fn critique_mode_defaults_to_quality_analysis() {
+        // When mode is absent from the JSON, it should deserialise as QualityAnalysis.
+        let json = r#"{"checks":[]}"#;
+        let inputs: CritiqueInputs = serde_json::from_str(json).unwrap();
+        assert_eq!(inputs.mode, CritiqueMode::QualityAnalysis);
+    }
+
+    #[test]
+    fn critique_mode_library_auto_tag_round_trips() {
+        let inputs = CritiqueInputs {
+            mode: CritiqueMode::LibraryAutoTag {
+                entity_id: EntityId::new(7),
+                entity_metadata: Some("Entity name: Hero\nKind: Custom(Hero)".into()),
+            },
+            checks: vec![],
+            notes: None,
+        };
+        let json = serde_json::to_string(&inputs).unwrap();
+        let back: CritiqueInputs = serde_json::from_str(&json).unwrap();
+        assert_eq!(back.mode, inputs.mode);
+    }
+
+    #[test]
     fn system_prompt_names_all_checks_when_empty() {
         let inputs = CritiqueInputs {
+            mode: CritiqueMode::QualityAnalysis,
             checks: vec![],
             notes: None,
         };
@@ -620,6 +986,7 @@ mod tests {
     #[test]
     fn system_prompt_lists_selected_checks() {
         let inputs = CritiqueInputs {
+            mode: CritiqueMode::QualityAnalysis,
             checks: vec![CritiqueCheck::PaletteViolations, CritiqueCheck::PivotDrift],
             notes: None,
         };
@@ -646,6 +1013,7 @@ mod tests {
         let verb = CritiqueVerb::new();
         let ctx = VerbContext::empty(metadata());
         let inputs = VerbInputs::from_struct(&CritiqueInputs {
+            mode: CritiqueMode::QualityAnalysis,
             checks: vec![],
             notes: None,
         })
@@ -658,6 +1026,7 @@ mod tests {
             tokio_util::sync::CancellationToken::new(),
         ));
 
+        // QualityAnalysis mode hits the backend check first.
         assert!(matches!(result, Err(VerbError::MissingContext(_))));
     }
 
@@ -672,6 +1041,7 @@ mod tests {
         ctx.active_sprite = Some(SpriteId::new(1));
 
         let inputs = VerbInputs::from_struct(&CritiqueInputs {
+            mode: CritiqueMode::QualityAnalysis,
             checks: vec![],
             notes: None,
         })

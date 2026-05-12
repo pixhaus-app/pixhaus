@@ -39,6 +39,8 @@ use serde::{Deserialize, Serialize};
 use tokio_util::sync::CancellationToken;
 use tracing::{debug, instrument};
 
+use pixhaus_core::project::EntityId;
+
 use crate::backends::replicate::ReplicateBackend;
 use crate::plugin::context::{PixelData, VerbContext};
 use crate::plugin::descriptor::{
@@ -104,6 +106,14 @@ pub struct StyleLearningInputs {
     /// `"ostris/flux-dev-lora-trainer"`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub model: Option<String>,
+
+    /// Library entity IDs whose pixel data the `training_images` were
+    /// extracted from. When provided, the verb returns an
+    /// `UpdateProjectAi` effect that merges these IDs into
+    /// `ProjectAi.style_corpus` on commit. Omit when calling the verb
+    /// outside a library context.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub corpus_entity_ids: Vec<EntityId>,
 }
 
 /// Metadata carried in the [`VerbEffect::Custom`] payload on success.
@@ -178,7 +188,12 @@ impl ProjectStyleLearningVerb {
                     "maximum": STEPS_MAX
                 },
                 "label":  {"type": ["string", "null"]},
-                "model":  {"type": ["string", "null"]}
+                "model":  {"type": ["string", "null"]},
+                "corpus_entity_ids": {
+                    "type": "array",
+                    "items": {"type": "integer", "minimum": 0},
+                    "default": []
+                }
             },
             "required": ["training_images"]
         });
@@ -376,14 +391,27 @@ impl Verb for ProjectStyleLearningVerb {
 
         let payload = serde_json::to_value(&model_ref)?;
 
+        let mut effects = vec![VerbEffect::Custom {
+            name: "pixhaus.builtin.project_style_learning.model".into(),
+            payload,
+        }];
+
+        // When corpus entity IDs were supplied, append an UpdateProjectAi
+        // effect so the host can persist the corpus membership on commit.
+        // The lora_path is left None here — the host sets it after it has
+        // downloaded the weights and written them to the project directory.
+        if !inputs.corpus_entity_ids.is_empty() {
+            effects.push(VerbEffect::UpdateProjectAi {
+                add_corpus_entity_ids: inputs.corpus_entity_ids,
+                lora_path: None,
+            });
+        }
+
         Ok(VerbOutput {
             summary: format!(
                 "Trained project style model '{label}' ({image_count} images, {steps} steps)"
             ),
-            effects: vec![VerbEffect::Custom {
-                name: "pixhaus.builtin.project_style_learning.model".into(),
-                payload,
-            }],
+            effects,
             thumbnail: None,
             actual_cost: ActualCost {
                 elapsed,
@@ -540,6 +568,7 @@ mod tests {
             steps: None,
             label: None,
             model: None,
+            corpus_entity_ids: vec![],
         })
         .unwrap();
         let err = v.validate(&inputs).unwrap_err();
@@ -562,6 +591,7 @@ mod tests {
             steps: None,
             label: None,
             model: None,
+            corpus_entity_ids: vec![],
         })
         .unwrap();
         let err = v.validate(&inputs).unwrap_err();
@@ -577,6 +607,7 @@ mod tests {
             steps: None,
             label: None,
             model: None,
+            corpus_entity_ids: vec![],
         })
         .unwrap();
         let err = v.validate(&inputs).unwrap_err();
@@ -592,6 +623,7 @@ mod tests {
             steps: Some(100), // too few
             label: None,
             model: None,
+            corpus_entity_ids: vec![],
         })
         .unwrap();
         let err = v.validate(&inputs).unwrap_err();
@@ -607,6 +639,7 @@ mod tests {
             steps: Some(500),
             label: Some("My Style".into()),
             model: None,
+            corpus_entity_ids: vec![],
         })
         .unwrap();
         v.validate(&inputs).unwrap();
@@ -653,6 +686,37 @@ mod tests {
         let zip_bytes = encode_training_zip(&images).unwrap();
         // The zip local file header signature is 0x04034b50.
         assert_eq!(&zip_bytes[0..4], b"PK\x03\x04");
+    }
+
+    #[test]
+    fn corpus_entity_ids_round_trips() {
+        use pixhaus_core::project::EntityId;
+        let inputs = StyleLearningInputs {
+            training_images: vec![small_rgba_image()],
+            lora_rank: None,
+            steps: None,
+            label: None,
+            model: None,
+            corpus_entity_ids: vec![EntityId::new(1), EntityId::new(2)],
+        };
+        let json = serde_json::to_string(&inputs).unwrap();
+        let back: StyleLearningInputs = serde_json::from_str(&json).unwrap();
+        assert_eq!(back.corpus_entity_ids.len(), 2);
+    }
+
+    #[test]
+    fn corpus_entity_ids_absent_when_empty() {
+        let inputs = StyleLearningInputs {
+            training_images: vec![small_rgba_image()],
+            lora_rank: None,
+            steps: None,
+            label: None,
+            model: None,
+            corpus_entity_ids: vec![],
+        };
+        let json = serde_json::to_string(&inputs).unwrap();
+        // skip_serializing_if = Vec::is_empty — field should not appear.
+        assert!(!json.contains("corpus_entity_ids"));
     }
 
     #[test]
@@ -712,6 +776,7 @@ mod tests {
             steps: Some(200),   // minimal steps for the integration test
             label: Some("integration-test-style".into()),
             model: None,
+            corpus_entity_ids: vec![],
         })
         .unwrap();
 

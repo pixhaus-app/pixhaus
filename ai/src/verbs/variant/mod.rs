@@ -302,7 +302,16 @@ impl Verb for VariantVerb {
             }
             VariantMode::TextEdit { description, count } => {
                 let backend = crate::verbs::ctx_fat_backend(&ctx)?;
-                Self::invoke_text_edit(backend, description, count, ictx, progress, cancel).await
+                // Enrich the description with anchor context when the host
+                // resolved an anchor reference for the target entity. B9.4
+                // wires anchor as a TEXT-prompt prefix only — the anchor's
+                // label, not pixel bytes. B10.3 introduced a proper
+                // `ImageEditRequest::style_image` slot (consumed via
+                // `ctx.anchor`); a B9.4-followup should swap this
+                // prompt-only enrichment for true style-image conditioning
+                // and retire the duplicate `ctx.anchor_reference` field.
+                let enriched = enrich_description_with_anchor(&description, &ctx);
+                Self::invoke_text_edit(backend, enriched, count, ictx, progress, cancel).await
             }
         }
     }
@@ -497,6 +506,28 @@ impl VariantVerb {
 }
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
+
+/// Enriches a text-edit description with anchor-reference context.
+///
+/// When the host has resolved an anchor reference for the target entity
+/// (from `Entity.anchor_reference_id`), it attaches it as
+/// `VerbContext::anchor_reference`. This function prepends a style-anchor
+/// note to the description so the backend is told to match the anchor's
+/// visual style — color palette, line weight, shading approach — while
+/// applying the user's requested changes.
+///
+/// When no anchor reference is present the description is returned
+/// unchanged, preserving the pre-B9.4 behavior for non-library callers.
+fn enrich_description_with_anchor(description: &str, ctx: &VerbContext) -> String {
+    match &ctx.anchor_reference {
+        None => description.to_owned(),
+        Some(anchor) => format!(
+            "Using '{}' as the style anchor (match its color palette, line weight, and \
+             shading style exactly): {}",
+            anchor.label, description
+        ),
+    }
+}
 
 /// Applies a palette swap to `pixels`, returning a new `PixelData`.
 ///
@@ -1077,6 +1108,30 @@ mod tests {
             .invoke(ctx, inputs, VerbProgress::discard(), cancel)
             .await;
         assert!(matches!(result, Err(VerbError::Cancelled)));
+    }
+
+    #[test]
+    fn enrich_description_no_anchor_is_passthrough() {
+        let ctx = ctx_with_sprite();
+        let result = enrich_description_with_anchor("make it green", &ctx);
+        assert_eq!(result, "make it green");
+    }
+
+    #[test]
+    fn enrich_description_with_anchor_prepends_style_note() {
+        use crate::plugin::context::ReferenceImage;
+        use pixhaus_core::project::IVec2;
+
+        let mut ctx = ctx_with_sprite();
+        ctx.anchor_reference = Some(ReferenceImage {
+            origin: IVec2::new(0, 0),
+            pixels: red2x2(),
+            label: "Hero Reference".into(),
+        });
+        let result = enrich_description_with_anchor("same but green", &ctx);
+        assert!(result.contains("Hero Reference"));
+        assert!(result.contains("same but green"));
+        assert!(result.contains("style anchor"));
     }
 
     #[tokio::test]

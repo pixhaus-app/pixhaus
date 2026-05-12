@@ -16,7 +16,7 @@ use std::sync::Arc;
 use serde::{Deserialize, Serialize};
 
 use pixhaus_core::project::{
-    FrameIndex, IVec2, LayerId, Palette, ProjectMetadata, Rect, Size, Sprite, SpriteId,
+    EntityId, FrameIndex, IVec2, LayerId, Palette, ProjectMetadata, Rect, Size, Sprite, SpriteId,
 };
 
 use super::anchor::AnchorPayload;
@@ -186,6 +186,29 @@ pub struct VerbContext {
     /// Project-level style references the user (or a prior style-
     /// learning verb) configured.
     pub style_refs: Vec<StyleReference>,
+    /// Library entity this invocation targets, if operating in library mode.
+    ///
+    /// The host sets this when invoking a verb on behalf of a specific library
+    /// entity (e.g. auto-tag, cross-entity variant). Verbs that operate at the
+    /// sprite level leave this `None`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub library_entity_id: Option<EntityId>,
+
+    /// Style-anchor reference image for the target entity (B9.4).
+    ///
+    /// Resolved by the host from `Entity.anchor_reference_id` before
+    /// invocation: the canonical `SheetVariant.image` from the linked Reference
+    /// entity is attached here so verbs can condition their output on it without
+    /// needing to walk the library themselves. `None` when the entity has no
+    /// anchor or the verb is not operating in library mode.
+    ///
+    /// Note: B10.3 introduced a richer [`Self::anchor`] field carrying
+    /// the same upstream data plus palette, `LoRA` path, strength, and
+    /// canonical hash. Both fields will coexist until a follow-up
+    /// migrates B9.4's consumers (Variant text-edit) onto `anchor`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub anchor_reference: Option<ReferenceImage>,
+
     /// Reference-sheet anchor for the entity being acted on, if the
     /// entity carries one (B10.3).
     ///
@@ -245,6 +268,8 @@ impl PartialEq for VerbContext {
             && self.selection == other.selection
             && self.references == other.references
             && self.style_refs == other.style_refs
+            && self.library_entity_id == other.library_entity_id
+            && self.anchor_reference == other.anchor_reference
             && self.anchor == other.anchor
     }
 }
@@ -267,6 +292,8 @@ impl VerbContext {
             selection: None,
             references: Vec::new(),
             style_refs: Vec::new(),
+            library_entity_id: None,
+            anchor_reference: None,
             anchor: None,
             backend: None,
         }
@@ -411,7 +438,21 @@ impl VerbContextBuilder {
         self
     }
 
-    /// Sets the reference-sheet anchor for this invocation.
+    /// Sets the library entity this invocation targets.
+    #[must_use]
+    pub fn with_library_entity(mut self, entity_id: EntityId) -> Self {
+        self.ctx.library_entity_id = Some(entity_id);
+        self
+    }
+
+    /// Sets the style-anchor reference image for the target entity (B9.4).
+    #[must_use]
+    pub fn with_anchor_reference(mut self, reference: ReferenceImage) -> Self {
+        self.ctx.anchor_reference = Some(reference);
+        self
+    }
+
+    /// Sets the reference-sheet anchor for this invocation (B10.3).
     ///
     /// Hosts call this when the active entity's
     /// [`pixhaus_core::project::Entity::anchor_reference_id`] resolves

@@ -192,6 +192,11 @@ pub fn run() -> Result<(), AppError> {
             commands::library::library_tag_entity,
             commands::library::library_untag_entity,
             commands::library::library_update_asset_info,
+            // library AI hooks (B9.4)
+            commands::library::library_accept_suggested_tag,
+            commands::library::library_auto_tag_entity,
+            commands::library::library_reject_suggested_tag,
+            commands::library::library_update_corpus,
             // project
             commands::project::project_close,
             commands::project::project_get,
