@@ -1748,7 +1748,10 @@ mod tests {
     use pixhaus_core::project::library::EntityContent;
     use pixhaus_core::project::{BlendMode, EntityId, FrameIndex, SpriteId, StateId};
 
-    use crate::aseprite::chunk::{CelChunkData, LayerChunk, LayerKindCode, TagEntry, TagsChunk};
+    use crate::aseprite::chunk::{
+        CelChunk, CelChunkData, LayerChunk, LayerKindCode, TagEntry, TagsChunk, TilesetChunk,
+        TilesetSourceWire,
+    };
     use crate::aseprite::document::DocumentFrame;
     use crate::aseprite::spec::{LAYER_FLAG_EDITABLE, LAYER_FLAG_VISIBLE};
     use crate::pixhaus::PixhausArchive;
@@ -2156,5 +2159,193 @@ mod tests {
         assert_eq!(layers[0].name, "bg");
         assert!(layers[0].flags & LAYER_FLAG_VISIBLE != 0);
         assert_eq!(layers[0].child_level, 0);
+    }
+
+    // ── Tilemap re-association ─────────────────────────────────────────────
+
+    // Build a tileset chunk with RGBA inline pixels (Aseprite vertical-strip layout).
+    // tile_count tiles, each tile_w x tile_h pixels.
+    fn inline_tileset_chunk(
+        tileset_id: u32,
+        tile_count: u32,
+        tile_w: u16,
+        tile_h: u16,
+    ) -> TilesetChunk {
+        let bpp: usize = 4; // RGBA
+        let strip_len = tile_w as usize * tile_h as usize * tile_count as usize * bpp;
+        // Fill with a pattern so different tiles have distinct bytes.
+        let pixels: Vec<u8> = (0..strip_len).map(|i| (i & 0xFF) as u8).collect();
+        TilesetChunk {
+            tileset_id,
+            flags: 0,
+            tile_count,
+            tile_width: tile_w,
+            tile_height: tile_h,
+            base_index: 1,
+            name: format!("tileset-{tileset_id}"),
+            source: TilesetSourceWire::Inline { pixels },
+        }
+    }
+
+    // Build a tilemap layer chunk referencing `tileset_id`.
+    fn tilemap_layer_chunk(name: &str, tileset_index: u32) -> LayerChunk {
+        LayerChunk {
+            flags: LAYER_FLAG_VISIBLE | LAYER_FLAG_EDITABLE,
+            kind: LayerKindCode::Tilemap,
+            child_level: 0,
+            blend: BlendMode::Normal,
+            unknown_blend_code: None,
+            opacity: 255,
+            name: name.into(),
+            tileset_index,
+            uuid: None,
+        }
+    }
+
+    // Build a tilemap cel chunk with an explicit tile-index list.
+    fn tilemap_cel_chunk(
+        layer_index: u16,
+        grid_w: u16,
+        grid_h: u16,
+        tile_indices: Vec<u32>,
+    ) -> CelChunk {
+        CelChunk {
+            layer_index,
+            x: 0,
+            y: 0,
+            opacity: 255,
+            z_index: 0,
+            data: CelChunkData::Tilemap {
+                width: grid_w,
+                height: grid_h,
+                bits_per_tile: 32,
+                tile_id_mask: 0x1FFF_FFFF,
+                x_flip_mask: 0x0800_0000,
+                y_flip_mask: 0x0400_0000,
+                diagonal_flip_mask: 0x0200_0000,
+                tiles: tile_indices,
+            },
+        }
+    }
+
+    /// After `document_to_archive`, the tilemap layer's `tileset` ID must resolve
+    /// to an entry in `sprite.tilesets`, and the tile cell indices must match
+    /// what the document encoded. After a second `archive_to_document` →
+    /// `document_to_archive` pass, both invariants must still hold and the tile
+    /// indices must be identical to the first pass — this is the re-association
+    /// that was previously un-exercised.
+    #[test]
+    fn tilemap_layer_references_imported_tileset_and_survives_round_trip() {
+        // Construct a minimal document: one tileset (3 tiles, 2×2 px, RGBA),
+        // one tilemap layer that references it, one frame with a 2×1 tilemap cel
+        // whose cells use tile indices 1 and 2.
+        const TILESET_ID: u32 = 0;
+        const TILE_W: u16 = 2;
+        const TILE_H: u16 = 2;
+        const TILE_COUNT: u32 = 3; // empty tile (0) + two real tiles (1, 2)
+
+        let mut doc = AsepriteDocument::empty(4, 2); // canvas: 2 tiles × 2 px wide, 1 tile × 2 px tall
+        let mut f0 = DocumentFrame::new(100);
+        f0.chunks.push(Chunk::Tileset(inline_tileset_chunk(
+            TILESET_ID, TILE_COUNT, TILE_W, TILE_H,
+        )));
+        f0.chunks
+            .push(Chunk::Layer(tilemap_layer_chunk("tiles", TILESET_ID)));
+        f0.chunks
+            .push(Chunk::Cel(tilemap_cel_chunk(0, 2, 1, vec![1, 2])));
+        doc.frames.push(f0);
+
+        // ── First import ──────────────────────────────────────────────────────
+        let result1 = document_to_archive(&doc, "tilemap-test").unwrap();
+        let EntityContent::Sprites { states: s1 } =
+            &result1.archive.project.library.entities[0].content
+        else {
+            panic!("expected Sprites");
+        };
+        let sprite1 = &s1[0].sprite;
+
+        // Tileset must be imported.
+        assert_eq!(
+            sprite1.tilesets.len(),
+            1,
+            "first import must have one tileset"
+        );
+        let tileset_id_1 = sprite1.tilesets[0].id;
+
+        // Tilemap layer must reference an existing tileset.
+        let layer1 = sprite1
+            .layers
+            .iter()
+            .find(|l| matches!(&l.kind, LayerKind::Tilemap { .. }))
+            .expect("first import must have a tilemap layer");
+        let LayerKind::Tilemap { tileset: ref_id_1 } = &layer1.kind else {
+            panic!("expected Tilemap kind");
+        };
+        assert_eq!(
+            *ref_id_1, tileset_id_1,
+            "tilemap layer must reference the imported tileset after first import"
+        );
+
+        // Tile indices must be [1, 2] as encoded.
+        let cel1 = sprite1
+            .cels
+            .iter()
+            .find(|c| matches!(&c.data, CelData::Tilemap { .. }))
+            .expect("first import must have a tilemap cel");
+        let CelData::Tilemap { data: td1 } = &cel1.data else {
+            panic!("expected Tilemap cel data on first import");
+        };
+        assert_eq!(td1.cells[0].index.get(), 1, "first cell index must be 1");
+        assert_eq!(td1.cells[1].index.get(), 2, "second cell index must be 2");
+
+        // ── Round-trip: archive → document → re-import ────────────────────────
+        let doc2 = archive_to_document(&result1.archive).unwrap();
+        let result2 = document_to_archive(&doc2, "tilemap-test").unwrap();
+        let EntityContent::Sprites { states: s2 } =
+            &result2.archive.project.library.entities[0].content
+        else {
+            panic!("expected Sprites after round-trip");
+        };
+        let sprite2 = &s2[0].sprite;
+
+        // Tileset count must be preserved.
+        assert_eq!(
+            sprite1.tilesets.len(),
+            sprite2.tilesets.len(),
+            "tileset count must survive round-trip"
+        );
+
+        // Tilemap layer after round-trip must reference a tileset that exists in the sprite.
+        let layer2 = sprite2
+            .layers
+            .iter()
+            .find(|l| matches!(&l.kind, LayerKind::Tilemap { .. }))
+            .expect("round-trip must preserve the tilemap layer");
+        let LayerKind::Tilemap { tileset: ref_id_2 } = &layer2.kind else {
+            panic!("expected Tilemap kind after round-trip");
+        };
+        let tileset_exists = sprite2.tilesets.iter().any(|ts| ts.id == *ref_id_2);
+        assert!(
+            tileset_exists,
+            "tilemap layer must reference a tileset that exists in sprite.tilesets after round-trip"
+        );
+
+        // Tile indices must be identical after the round-trip.
+        let cel2 = sprite2
+            .cels
+            .iter()
+            .find(|c| matches!(&c.data, CelData::Tilemap { .. }))
+            .expect("round-trip must preserve the tilemap cel");
+        let CelData::Tilemap { data: td2 } = &cel2.data else {
+            panic!("expected Tilemap cel data after round-trip");
+        };
+        assert_eq!(
+            td1.cells[0].index, td2.cells[0].index,
+            "first tile index must be identical after round-trip"
+        );
+        assert_eq!(
+            td1.cells[1].index, td2.cells[1].index,
+            "second tile index must be identical after round-trip"
+        );
     }
 }
