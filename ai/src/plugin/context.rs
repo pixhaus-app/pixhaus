@@ -203,7 +203,7 @@ pub struct VerbContext {
     /// anchor or the verb is not operating in library mode.
     ///
     /// Note: B10.3 introduced a richer [`Self::anchor`] field carrying
-    /// the same upstream data plus palette, LoRA path, strength, and
+    /// the same upstream data plus palette, `LoRA` path, strength, and
     /// canonical hash. Both fields will coexist until a follow-up
     /// migrates B9.4's consumers (Variant text-edit) onto `anchor`.
     #[serde(default, skip_serializing_if = "Option::is_none")]

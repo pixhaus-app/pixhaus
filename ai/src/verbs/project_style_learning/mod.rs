@@ -188,7 +188,12 @@ impl ProjectStyleLearningVerb {
                     "maximum": STEPS_MAX
                 },
                 "label":  {"type": ["string", "null"]},
-                "model":  {"type": ["string", "null"]}
+                "model":  {"type": ["string", "null"]},
+                "corpus_entity_ids": {
+                    "type": "array",
+                    "items": {"type": "integer", "minimum": 0},
+                    "default": []
+                }
             },
             "required": ["training_images"]
         });

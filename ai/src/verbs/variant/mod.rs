@@ -303,9 +303,13 @@ impl Verb for VariantVerb {
             VariantMode::TextEdit { description, count } => {
                 let backend = crate::verbs::ctx_fat_backend(&ctx)?;
                 // Enrich the description with anchor context when the host
-                // resolved an anchor reference for the target entity. The
-                // backend sees both the source pixels and an anchor PNG in
-                // the ImageEditRequest's prompt.
+                // resolved an anchor reference for the target entity. B9.4
+                // wires anchor as a TEXT-prompt prefix only — the anchor's
+                // label, not pixel bytes. B10.3 introduced a proper
+                // `ImageEditRequest::style_image` slot (consumed via
+                // `ctx.anchor`); a B9.4-followup should swap this
+                // prompt-only enrichment for true style-image conditioning
+                // and retire the duplicate `ctx.anchor_reference` field.
                 let enriched = enrich_description_with_anchor(&description, &ctx);
                 Self::invoke_text_edit(backend, enriched, count, ictx, progress, cancel).await
             }

@@ -82,6 +82,13 @@ pub enum CritiqueMode {
     LibraryAutoTag {
         /// Entity to tag. Must match `VerbContext::library_entity_id`.
         entity_id: EntityId,
+        /// Free-form summary the host attaches when no sprite reference
+        /// is available — entity name, kind, existing tags. Anything
+        /// useful for grounding the VLM. Optional; when present and
+        /// `ctx.references` is empty, the verb feeds this into the
+        /// user prompt instead of asking the model to tag blind.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        entity_metadata: Option<String>,
     },
 }
 
@@ -244,8 +251,12 @@ impl Verb for CritiqueVerb {
             CritiqueMode::QualityAnalysis => {
                 invoke_quality_analysis(ctx, inputs, progress, cancel).await
             }
-            CritiqueMode::LibraryAutoTag { entity_id } => {
-                invoke_library_auto_tag(entity_id, ctx, inputs, progress, cancel).await
+            CritiqueMode::LibraryAutoTag {
+                entity_id,
+                entity_metadata,
+            } => {
+                invoke_library_auto_tag(entity_id, entity_metadata, ctx, inputs, progress, cancel)
+                    .await
             }
         }
     }
@@ -326,11 +337,31 @@ async fn invoke_quality_analysis(
 
 async fn invoke_library_auto_tag(
     entity_id: EntityId,
+    entity_metadata: Option<String>,
     ctx: VerbContext,
     inputs: CritiqueInputs,
     progress: VerbProgress,
     cancel: CancellationToken,
 ) -> Result<VerbOutput> {
+    if ctx.library_entity_id != Some(entity_id) {
+        return Err(VerbError::Schema(format!(
+            "library_auto_tag: ctx.library_entity_id ({:?}) does not match \
+             inputs.entity_id ({})",
+            ctx.library_entity_id,
+            entity_id.get(),
+        )));
+    }
+    // The VLM needs *something* to ground its suggestions: either a
+    // sprite reference image or a metadata summary. Both empty means
+    // the host called us with no context, which would produce
+    // hallucinated tags — fail-fast so the caller can fix the call.
+    if ctx.references.is_empty() && entity_metadata.is_none() {
+        return Err(VerbError::Schema(
+            "library_auto_tag: needs either a sprite reference image \
+             (ctx.references) or `entity_metadata`; both are empty"
+                .into(),
+        ));
+    }
     let started = Instant::now();
 
     let backend = ctx
@@ -351,7 +382,7 @@ async fn invoke_library_auto_tag(
         return Err(VerbError::Cancelled);
     }
 
-    let request = build_auto_tag_request(&ctx, &inputs);
+    let request = build_auto_tag_request(&ctx, &inputs, entity_metadata.as_deref());
 
     progress.step(Some(0.2), "sending to VLM").await;
 
@@ -547,6 +578,7 @@ fn build_user_text(ctx: &VerbContext, inputs: &CritiqueInputs) -> String {
 fn build_auto_tag_request(
     ctx: &VerbContext,
     inputs: &CritiqueInputs,
+    entity_metadata: Option<&str>,
 ) -> crate::backends::TextGenRequest {
     use crate::backends::{ChatMessage, ContentPart, TextGenRequest};
 
@@ -563,9 +595,12 @@ fn build_auto_tag_request(
     let mut user_content = Vec::new();
 
     if ctx.references.is_empty() {
-        user_content.push(ContentPart::text(
-            "No image provided. Return tags based on entity metadata only.".to_owned(),
-        ));
+        // The invoke-side guard ensures `entity_metadata` is Some when
+        // references are empty; treat the unwrap as a contract check.
+        let metadata = entity_metadata.unwrap_or("(no metadata supplied)");
+        user_content.push(ContentPart::text(format!(
+            "No image is available. Return tags based on this entity metadata:\n\n{metadata}"
+        )));
     } else {
         user_content.push(ContentPart::text(
             "Analyze the sprite image below and return descriptive tags as JSON.".to_owned(),
@@ -573,6 +608,11 @@ fn build_auto_tag_request(
         for reference in &ctx.references {
             let bytes = encode_pixel_data_as_png(&reference.pixels);
             user_content.push(ContentPart::png(bytes));
+        }
+        if let Some(metadata) = entity_metadata {
+            user_content.push(ContentPart::text(format!(
+                "Entity metadata for additional context:\n\n{metadata}"
+            )));
         }
     }
 
@@ -798,6 +838,7 @@ mod tests {
         let inputs = VerbInputs::from_struct(&CritiqueInputs {
             mode: CritiqueMode::LibraryAutoTag {
                 entity_id: EntityId::new(42),
+                entity_metadata: None,
             },
             checks: vec![],
             notes: None,
@@ -921,6 +962,7 @@ mod tests {
         let inputs = CritiqueInputs {
             mode: CritiqueMode::LibraryAutoTag {
                 entity_id: EntityId::new(7),
+                entity_metadata: Some("Entity name: Hero\nKind: Custom(Hero)".into()),
             },
             checks: vec![],
             notes: None,
