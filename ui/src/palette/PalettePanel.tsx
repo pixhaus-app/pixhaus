@@ -357,6 +357,7 @@ const PalettePanel: Component<Props> = (props) => {
         <div class="pp__actions">
           <button
             class="pp__action-btn"
+            data-testid="palette-harmony-toggle"
             classList={{ "pp__action-btn--active": subPanel() === "harmony" }}
             onClick={() => toggleSub("harmony")}
           >
@@ -364,6 +365,7 @@ const PalettePanel: Component<Props> = (props) => {
           </button>
           <button
             class="pp__action-btn"
+            data-testid="palette-ramp-toggle"
             classList={{ "pp__action-btn--active": subPanel() === "ramp" }}
             onClick={() => toggleSub("ramp")}
           >

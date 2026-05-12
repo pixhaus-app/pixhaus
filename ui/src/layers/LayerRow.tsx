@@ -342,6 +342,7 @@ const RenameInput: Component<RenameInputProps> = (props) => {
     <input
       ref={inputRef}
       class="layer-row__rename-input"
+      data-testid="layer-rename-input"
       value={value()}
       onInput={(e) => setValue(e.currentTarget.value)}
       onKeyDown={handleKeyDown}

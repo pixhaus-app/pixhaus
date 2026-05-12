@@ -45,6 +45,7 @@ const HarmonyPicker: Component<Props> = (props) => {
             <button
               role="tab"
               class="harmony__tab"
+              data-testid={`palette-harmony-type-${id}`}
               aria-selected={kind() === id}
               onClick={() => setKind(id)}
             >

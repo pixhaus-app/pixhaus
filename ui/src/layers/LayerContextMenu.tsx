@@ -105,6 +105,7 @@ const LayerContextMenu: Component<Props> = (props) => {
       >
         <button
           class="ctx-menu__item"
+          data-testid="layer-ctx-rename"
           onClick={() => {
             beginRename(props.target!.layerId);
             props.onClose();
@@ -114,6 +115,7 @@ const LayerContextMenu: Component<Props> = (props) => {
         </button>
         <button
           class="ctx-menu__item"
+          data-testid="layer-ctx-duplicate"
           onClick={() => {
             addLayer(props.spriteId, `${layer()!.name} copy`);
             props.onClose();
@@ -126,6 +128,7 @@ const LayerContextMenu: Component<Props> = (props) => {
 
         <button
           class="ctx-menu__item"
+          data-testid="layer-ctx-merge-down"
           onClick={() => {
             mergeLayerDown(props.spriteId, props.target!.layerId);
             props.onClose();
@@ -137,6 +140,7 @@ const LayerContextMenu: Component<Props> = (props) => {
         </button>
         <button
           class="ctx-menu__item"
+          data-testid="layer-ctx-merge-selected"
           onClick={() => {
             mergeSelectedLayers(props.spriteId, selectedLayerIds());
             props.onClose();
@@ -148,6 +152,7 @@ const LayerContextMenu: Component<Props> = (props) => {
         </button>
         <button
           class="ctx-menu__item"
+          data-testid="layer-ctx-flatten-visible"
           onClick={() => {
             flattenVisibleLayers(props.spriteId);
             props.onClose();
@@ -160,6 +165,7 @@ const LayerContextMenu: Component<Props> = (props) => {
 
         <button
           class="ctx-menu__item"
+          data-testid="layer-ctx-convert-group"
           onClick={() => {
             // After R2-B1 the right-clicked target is always in
             // selectedLayerIds — operate on the whole selection so
@@ -182,6 +188,7 @@ const LayerContextMenu: Component<Props> = (props) => {
         </button>
         <button
           class="ctx-menu__item"
+          data-testid="layer-ctx-convert-tilemap"
           onClick={() => {
             // Tileset selection is asynchronous (the user may need to
             // create one), so open the picker dialog and let it call
@@ -199,6 +206,7 @@ const LayerContextMenu: Component<Props> = (props) => {
 
         <button
           class="ctx-menu__item ctx-menu__item--danger"
+          data-testid="layer-ctx-delete"
           onClick={() => {
             // After R2-B1 the right-clicked layer is in selectedLayerIds.
             // Multi-select deletes every selected layer; the single-layer

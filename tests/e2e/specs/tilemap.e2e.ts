@@ -42,46 +42,31 @@ describe("Tilemap panel (manual-test-guide §10)", () => {
   });
 
   it.skip("T-tilemap-002: Place a tile", async () => {
-    // Pre: T-tilemap-001 done; layer is a tilemap layer; tilemap pencil
-    // active; a tile is selected from the tileset grid.
-    //
-    // Multi-step UI dependency:
-    //   1. Tileset selection (no testid on the tileset list rows).
-    //   2. Tile-grid cell click to pick the source tile (no per-tile
-    //      testid; the grid renders into a single canvas).
-    //   3. Layer conversion to tilemap (T-layers-009 — covered there).
-    //   4. Canvas click on a tilemap-layer cell at tile-grid coords.
-    //
-    // Step 4 is feasible with helpers/canvas.ts but the upstream picks
-    // need testids first. Unskip once T-tilemap-001 lands and the
-    // tile-picker exposes per-tile selectors.
+    // testid="tileset-row-N" is now wired on the tileset management rows
+    // and testid="tileset-add-btn" on the create button (TilemapPanel.tsx).
+    // The per-tile picker grid renders into a single <canvas>; there is no
+    // per-tile DOM element to address. Blocked on tile-picker DOM exposure.
     // TODO(testid): tileset list + per-tile picker
   });
 
   it.skip("T-tilemap-003: Erase a tile", async () => {
-    // Pre: at least one placed tile; tilemap erase tool active.
-    // Same blockers as T-tilemap-002 — needs a placed tile to erase, and
-    // placement isn't addressable yet. tilemap:tool-erase IS in the
-    // palette, so step "switch to erase" works; the rest doesn't.
+    // Same blocker as T-tilemap-002 — needs a placed tile, which requires
+    // a per-tile picker selector. tilemap:tool-erase is palette-dispatchable.
     // TODO(testid): tilemap placement
   });
 
   it.skip("T-tilemap-004: Autotile mode", async () => {
-    // Pre: a tileset with autotile rules; a source tile selected.
-    // tilemap:toggle-autotile is dispatchable via the palette
-    // ("toggle autotile mode"), but the assertion ([VISUAL] neighbour
-    // tiles re-fit when the autotile bit flips) needs a way to read the
-    // tilemap layer's cell contents, which is not exposed on the debug
-    // surface. Add a `getTilemapCellAt(x, y)` accessor before unskipping.
+    // tilemap:toggle-autotile is palette-dispatchable. The assertion needs
+    // a `getTilemapCellAt(x, y)` debug accessor to read cell contents, which
+    // is not yet on the debug surface (__pixhaus_debug__ in debug/index.ts).
     // TODO(testid): tilemap cell read accessor
   });
 
   it.skip("T-tilemap-005: Tile property persistence", async () => {
-    // Pre: a tileset with at least one tile.
-    // Tile metadata (collision, custom kv pairs) persists through
-    // tileset_set_tile_metadata. The metadata editor lives in the
-    // Tilemap panel without testids and isn't reachable from the
-    // palette. Unskip alongside T-tilemap-001's panel-testid work.
+    // testid="tileset-add-btn" and testid="tileset-add-name" are now wired
+    // in TilemapPanel.tsx. The tile metadata editor (collision toggle) lives
+    // in TilesetPanel.tsx and still has no per-tile testids. Add
+    // testids to TilesetPanel's tile property editor before unskipping.
     // TODO(testid): tile metadata editor
   });
 });

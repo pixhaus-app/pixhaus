@@ -172,6 +172,7 @@ describe("Project lifecycle (manual-test-guide §2)", () => {
   // covers Ctrl+S → project_save successfully and exercises the same
   // handler. The specific Save As fall-through ordering needs a deeper
   // probe of why this describe block's setup affects the dispatch path.
+  // See: https://github.com/pixhausdev/pixhaus/issues/173
   it.skip("T-project-004: Save with no path falls through to Save As", async () => {
     // Fresh project: dirty, no on-disk path.
     const newProject = await $(byTestId(testid.welcome.newProject));
@@ -230,6 +231,7 @@ describe("Project lifecycle (manual-test-guide §2)", () => {
 
   // TODO(phase-1-followup): same Ctrl+S issue as T-project-004 above.
   // TODO(phase-1-followup): same as T-project-004.
+  // See: https://github.com/pixhausdev/pixhaus/issues/173
   it.skip("T-project-005: Save updates dirty flag (subsequent save uses existing path)", async () => {
     // Seed: new project + first save (consumes one mocked Save As path).
     const newProject = await $(byTestId(testid.welcome.newProject));

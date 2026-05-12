@@ -161,6 +161,8 @@ export interface PixhausDebug {
   getActiveSpriteId(): number | null;
   getActiveLayerId(): number | null;
   getActiveFrameIndex(): number;
+  // ── Active drawing tool (flat accessor) ───────────────────────────────────
+  getActiveTool(): ToolType;
   // ── Viewport ──────────────────────────────────────────────────────────────
   getZoom(): number;
   getScroll(): { x: number; y: number };
@@ -223,6 +225,7 @@ export function installDebugSurface(): void {
     getActiveSpriteId: () => activeSpriteId(),
     getActiveLayerId: () => activeLayerId(),
     getActiveFrameIndex: () => activeFrameIndex(),
+    getActiveTool: () => activeTool(),
 
     getZoom: () => zoom(),
     getScroll: () => ({ x: scrollX(), y: scrollY() }),

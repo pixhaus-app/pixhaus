@@ -142,8 +142,13 @@ const PaletteIOMenu: Component<Props> = (props) => {
   };
 
   return (
-    <div class="pio">
-      <button class="pio__toggle" onClick={() => setOpen((v) => !v)} aria-expanded={open()}>
+    <div class="pio" data-testid="palette-io-menu">
+      <button
+        class="pio__toggle"
+        data-testid="palette-io-toggle"
+        onClick={() => setOpen((v) => !v)}
+        aria-expanded={open()}
+      >
         Import / Export
       </button>
 
@@ -155,15 +160,24 @@ const PaletteIOMenu: Component<Props> = (props) => {
             <div class="pio__row">
               <select
                 class="pio__select"
+                data-testid="palette-import-format"
                 value={importFormat()}
                 onChange={(e) => setImportFormat(e.currentTarget.value as ImportFormat)}
               >
-                <option value="gpl">GIMP Palette (.gpl)</option>
-                <option value="hex">Lospec Hex (.hex)</option>
-                <option value="pal">JASC-PAL (.pal)</option>
-                <option value="aco">Photoshop Swatches (.aco)</option>
+                <option value="gpl" data-testid="palette-import-gpl">
+                  GIMP Palette (.gpl)
+                </option>
+                <option value="hex" data-testid="palette-import-hex">
+                  Lospec Hex (.hex)
+                </option>
+                <option value="pal" data-testid="palette-import-pal">
+                  JASC-PAL (.pal)
+                </option>
+                <option value="aco" data-testid="palette-import-aco">
+                  Photoshop Swatches (.aco)
+                </option>
               </select>
-              <button class="pio__btn" onClick={handleImportClick}>
+              <button class="pio__btn" data-testid="palette-import-btn" onClick={handleImportClick}>
                 Choose file…
               </button>
             </div>
@@ -180,14 +194,26 @@ const PaletteIOMenu: Component<Props> = (props) => {
             <div class="pio__row">
               <select
                 class="pio__select"
+                data-testid="palette-export-format"
                 value={exportFormat()}
                 onChange={(e) => setExportFormat(e.currentTarget.value as ExportFormat)}
               >
-                <option value="gpl">GIMP Palette (.gpl)</option>
-                <option value="hex">Lospec Hex (.hex)</option>
-                <option value="pal">JASC-PAL (.pal)</option>
+                <option value="gpl" data-testid="palette-export-gpl">
+                  GIMP Palette (.gpl)
+                </option>
+                <option value="hex" data-testid="palette-export-hex">
+                  Lospec Hex (.hex)
+                </option>
+                <option value="pal" data-testid="palette-export-pal">
+                  JASC-PAL (.pal)
+                </option>
               </select>
-              <button class="pio__btn" onClick={handleExport} disabled={activePalette() === null}>
+              <button
+                class="pio__btn"
+                data-testid="palette-export-btn"
+                onClick={handleExport}
+                disabled={activePalette() === null}
+              >
                 Export
               </button>
             </div>

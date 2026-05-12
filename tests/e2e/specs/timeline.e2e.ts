@@ -235,29 +235,53 @@ describe("Timeline panel (manual-test-guide §9)", () => {
     });
   });
 
-  it.skip("T-timeline-004: Set frame duration", async () => {
-    // The duration input is a per-frame cell on the timeline panel and
-    // has no data-testid yet. Editing it requires locating the specific
-    // frame's input by index, which webdriverio can't address reliably
-    // without an addressable selector. Add a per-frame testid (e.g.
-    // `timeline-frame-${index}-duration`) before unskipping.
-    // TODO(testid): per-frame duration input
+  it("T-timeline-004: Set frame duration", async () => {
+    await openNewProjectViaButton();
+    await waitForActiveSpriteAndLayer();
+
+    // Pre: at least one frame. Seed one if the project starts empty.
+    let count = await getFrameCount();
+    if (count === 0) {
+      await dispatchViaPalette("add frame");
+      await waitForIpc("frame_add", 1, 10000);
+      await browser.waitUntil(async () => (await getFrameCount()) > 0, {
+        timeout: 5000,
+        timeoutMsg: "frame count never reached 1 before duration edit",
+      });
+    }
+    await clearIpcLog();
+
+    // Double-click the duration display for frame 0 to enter edit mode.
+    const durDisplay = await $(byTestId(testid.timeline.frameDuration(0)));
+    await durDisplay.waitForDisplayed({ timeout: 5000 });
+    await durDisplay.doubleClick();
+
+    // Type a new duration and commit with Enter.
+    const durInput = await $(".timeline-panel__dur-input");
+    await durInput.waitForDisplayed({ timeout: 3000 });
+    await durInput.setValue("200");
+    await browser.keys(["Enter"]);
+
+    const entries = await waitForIpc("frame_set_duration", 1, 5000);
+    await expect(entries.length).toBeGreaterThan(0);
   });
 
   it.skip("T-timeline-005: Create a frame tag", async () => {
-    // Tag creation is a drag interaction across the tag bar above the
-    // frame columns. There's no palette command and the tag bar has no
-    // testids for the drag-source / drag-target cells. Wire testids on
-    // the tag bar header before unskipping.
-    // TODO(testid): tag bar drag targets
+    // testid="tl-tag-bar" is now wired on the tag bar container.
+    // Tag creation requires a pointer drag across the tag bar — the bar
+    // uses onPointerDown/onPointerMove/onPointerUp (not HTML5 drag events),
+    // so WebDriver's action chain should work in principle. However, the
+    // drag must land on exact frame-column positions derived from
+    // FRAME_WIDTH (36px), and tauri-driver's synthetic pointer events
+    // haven't been validated for this path under CI yet.
+    // See: https://github.com/pixhausdev/pixhaus/issues/171
   });
 
   it.skip("T-timeline-006: Rename / delete tag", async () => {
-    // Rename / delete are context-menu actions on a tag swatch, mirroring
-    // the layer rename/delete shape. WebDriver doesn't trigger native
-    // contextmenu reliably under tauri-driver, and the menu items lack
-    // testids. Unskip alongside T-timeline-005 once the tag bar is wired.
-    // TODO(testid): tag context menu
+    // testid="tl-tag-${name}" on tag elements and testid="tl-ctx-rename" /
+    // testid="tl-ctx-delete" on the context menu items are now wired.
+    // Blocked on T-timeline-005 (no tags to right-click without creation).
+    // See: https://github.com/pixhausdev/pixhaus/issues/171
   });
 
   it("T-timeline-007: Play", async () => {
@@ -336,10 +360,58 @@ describe("Timeline panel (manual-test-guide §9)", () => {
     });
   });
 
-  it.skip("T-timeline-010: Onion skin", async () => {
-    // Same shape as T-canvas-009 — the onion skin neighbours and opacity
-    // are sliders in the canvas options panel without palette commands
-    // and without testids. Covered (when unblocked) by the canvas spec.
-    // TODO(testid): onion skin sliders
+  it("T-timeline-010: Onion skin", async () => {
+    await openNewProjectViaButton();
+    await waitForActiveSpriteAndLayer();
+
+    const initial = await browser.execute(() => {
+      const w = window as unknown as {
+        __pixhaus_debug__: { getOnionSkin(): { enabled: boolean; prev: number; next: number } };
+      };
+      return w.__pixhaus_debug__.getOnionSkin();
+    });
+
+    // Enable onion skin if it's off so the sliders are rendered.
+    if (!initial.enabled) {
+      await dispatchViaPalette("toggle onion skin");
+      await browser.waitUntil(
+        async () =>
+          browser.execute(() => {
+            const w = window as unknown as {
+              __pixhaus_debug__: { getOnionSkin(): { enabled: boolean } };
+            };
+            return w.__pixhaus_debug__.getOnionSkin().enabled;
+          }),
+        { timeout: 3000, timeoutMsg: "onion skin never enabled" },
+      );
+    }
+
+    const prevInput = await $(byTestId(testid.timeline.onionPrev));
+    await prevInput.waitForDisplayed({ timeout: 3000 });
+    // Set prev frames to 2 and confirm the signal updated.
+    await prevInput.setValue("2");
+    // Blur to trigger onInput handler.
+    await browser.execute(() => {
+      (document.activeElement as HTMLElement | null)?.blur?.();
+    });
+
+    await browser.waitUntil(
+      async () =>
+        browser.execute(() => {
+          const w = window as unknown as {
+            __pixhaus_debug__: { getOnionSkin(): { prev: number } };
+          };
+          return w.__pixhaus_debug__.getOnionSkin().prev;
+        }),
+      { timeout: 3000, timeoutMsg: "onion prev never updated" },
+    );
+
+    const afterPrev = await browser.execute(() => {
+      const w = window as unknown as {
+        __pixhaus_debug__: { getOnionSkin(): { prev: number } };
+      };
+      return w.__pixhaus_debug__.getOnionSkin().prev;
+    });
+    await expect(afterPrev).toBe(2);
   });
 });
