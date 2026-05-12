@@ -28,6 +28,12 @@ pub enum Error {
         format: &'static str,
     },
 
+    /// The project library contains no Custom-kind entity with sprite
+    /// states to export to Aseprite format. Either the project is empty
+    /// or all entities are Tilesets, Tilemaps, or References.
+    #[error("no sprite entity found in the project library for Aseprite export")]
+    NoSpriteEntityForExport,
+
     /// The file's container format major version is higher than this
     /// reader supports. Distinct from
     /// [`Self::UnsupportedSchemaVersion`], which targets the embedded
@@ -424,6 +430,19 @@ pub enum Error {
     UnsupportedTileBitWidth {
         /// Bits-per-tile field from the tilemap cel header.
         bits: u16,
+    },
+
+    // ── Aseprite merged export (B9.5) ──────────────────────────────────────────
+    /// The combined frame count of all states exceeds the Aseprite wire
+    /// limit of `u16::MAX` (65535) frames. A merged export of this entity
+    /// is not possible; use per-state export instead.
+    #[error(
+        "merged frame count {total} exceeds the Aseprite limit of 65535; \
+         use per-state export instead"
+    )]
+    FrameCountOverflow {
+        /// Total merged frame count that exceeded `u16::MAX`.
+        total: u32,
     },
 }
 

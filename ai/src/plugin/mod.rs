@@ -32,6 +32,7 @@
 //! line-by-line walk-through of the [`echo::EchoVerb`] reference
 //! plugin.
 
+pub mod anchor;
 pub mod backend;
 pub mod context;
 pub mod descriptor;
@@ -60,6 +61,7 @@ pub use crate::verbs::inbetween::{INBETWEEN_VERB_ID, InbetweenInputs, InbetweenV
 pub use crate::verbs::sketch_finishing::{
     SKETCH_FINISHING_VERB_ID, SketchFinishingInputs, SketchFinishingVerb, SketchFrame,
 };
+pub use anchor::{AnchorPayload, DEFAULT_ANCHOR_STRENGTH};
 pub use backend::{BackendInfo, InferenceBackend};
 pub use context::{PixelData, ReferenceImage, StyleReference, VerbContext, VerbContextBuilder};
 pub use descriptor::{BackendCapabilities, CostEstimate, EffectKind, VerbDescriptor, VerbId};

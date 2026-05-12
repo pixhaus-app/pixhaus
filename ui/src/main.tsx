@@ -8,6 +8,7 @@ import { render } from "solid-js/web";
 
 import App from "./App";
 import "./index.css";
+import "./sheet/sheet.css";
 import { installDebugSurface } from "./lib/debug";
 
 // Install __pixhaus_debug__ + IPC tap before mount so e2e specs can read

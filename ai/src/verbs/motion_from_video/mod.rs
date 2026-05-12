@@ -258,6 +258,9 @@ impl Verb for MotionFromVideoVerb {
         progress: VerbProgress,
         cancel: CancellationToken,
     ) -> Result<VerbOutput> {
+        // B10.3 anchor: this verb intentionally ignores `ctx.anchor`.
+        // Pure CPU compute (motion extraction + silhouette generation);
+        // no backend invocation.
         let started = Instant::now();
         // Consume the payload: frames carry large pixel byte vectors that
         // would otherwise be cloned by the borrowed deserialiser.

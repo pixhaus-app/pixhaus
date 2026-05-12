@@ -42,6 +42,7 @@ pub mod conversational;
 pub mod critique;
 pub mod extend;
 pub mod inbetween;
+pub mod iterate_reference_sheet;
 pub mod motion_from_video;
 pub mod project_style_learning;
 pub mod reference_sheet;
@@ -58,6 +59,7 @@ pub use conversational::ConversationalVerb;
 pub use critique::CritiqueVerb;
 pub use extend::ExtendVerb;
 pub use inbetween::InbetweenVerb;
+pub use iterate_reference_sheet::IterateReferenceSheetVerb;
 pub use motion_from_video::MotionFromVideoVerb;
 pub use project_style_learning::ProjectStyleLearningVerb;
 pub use reference_sheet::GenerateReferenceSheetVerb;
@@ -77,6 +79,27 @@ use crate::plugin::backend::InferenceBackend as PluginBackend;
 use crate::plugin::context::VerbContext;
 use crate::plugin::error::{Result, VerbError};
 use crate::plugin::progress::VerbProgress;
+
+/// Returns the anchor sheet's image bytes for an `ImageGenRequest`'s
+/// `style_image` slot, or `None` when the active entity has no anchor.
+///
+/// Use this from image-generation verbs that already have a user-
+/// supplied `style_image: Option<Vec<u8>>` input — the anchor is the
+/// fallback when the user doesn't override:
+///
+/// ```ignore
+/// let style_image = inputs.style_image.or_else(|| anchor_style_image_bytes(&ctx));
+/// ```
+///
+/// Verbs that don't run image generation (Critique, Conversational,
+/// Audio-driven, ...) can still reach the anchor via `ctx.anchor`
+/// directly; this helper is just the common path.
+#[must_use]
+pub(crate) fn anchor_style_image_bytes(ctx: &VerbContext) -> Option<Vec<u8>> {
+    ctx.anchor
+        .as_ref()
+        .and_then(crate::plugin::anchor::AnchorPayload::style_image_bytes)
+}
 
 /// Returns the fat operational backend attached to `ctx`, downcasting
 /// from the thin trait the runtime stores.
@@ -190,6 +213,90 @@ mod tests {
         assert_eq!(
             verb.descriptor().id.as_str(),
             reference_sheet::GENERATE_REFERENCE_SHEET_VERB_ID
+        );
+    }
+
+    #[test]
+    fn anchor_style_image_bytes_returns_none_without_anchor() {
+        use pixhaus_core::project::ProjectMetadata;
+
+        let ctx = VerbContext::empty(ProjectMetadata {
+            name: "no-anchor".into(),
+            description: None,
+            author: None,
+            created_at: 0,
+            updated_at: 0,
+            editor_version: "0".into(),
+        });
+        assert!(anchor_style_image_bytes(&ctx).is_none());
+    }
+
+    #[test]
+    fn anchor_style_image_bytes_returns_image_when_anchor_set() {
+        use pixhaus_core::project::{
+            AiMetadata, AssetInfo, Entity, EntityContent, EntityDefaults, EntityId, EntityKind,
+            ProjectMetadata, ReferenceImage, ReferenceSheet, SheetComposition, SheetVariant,
+            SheetVariantId, UserData,
+        };
+        use std::collections::BTreeMap;
+
+        let entity = Entity {
+            id: EntityId::new(1),
+            kind: EntityKind::Reference,
+            name: "Hero ref".into(),
+            group_id: None,
+            tags: Vec::new(),
+            defaults: EntityDefaults::default(),
+            content: EntityContent::Reference {
+                sheet: Box::new(ReferenceSheet {
+                    canonical: SheetVariant {
+                        id: SheetVariantId::new(1),
+                        generated_at: 0,
+                        image: ReferenceImage {
+                            bytes: vec![1, 2, 3, 4, 5],
+                            mime: "image/png".into(),
+                        },
+                        composition: SheetComposition::default(),
+                        generation: None,
+                        extracted_palette: Vec::new(),
+                    },
+                    history: Vec::new(),
+                    prompts: Vec::new(),
+                    info: AssetInfo {
+                        fields: BTreeMap::new(),
+                        notes: Vec::new(),
+                    },
+                }),
+            },
+            ai: AiMetadata::default(),
+            anchor_reference_id: None,
+            user_data: UserData::default(),
+            created_at: 0,
+            updated_at: 0,
+        };
+        let anchor =
+            crate::plugin::anchor::AnchorPayload::from_reference_entity(&entity, 0.7, None)
+                .unwrap();
+
+        let mut ctx = VerbContext::empty(ProjectMetadata {
+            name: "anchored".into(),
+            description: None,
+            author: None,
+            created_at: 0,
+            updated_at: 0,
+            editor_version: "0".into(),
+        });
+        ctx.anchor = Some(anchor);
+
+        assert_eq!(anchor_style_image_bytes(&ctx), Some(vec![1, 2, 3, 4, 5]));
+    }
+
+    #[test]
+    fn iterate_reference_sheet_verb_is_exported() {
+        let verb = IterateReferenceSheetVerb::new();
+        assert_eq!(
+            verb.descriptor().id.as_str(),
+            iterate_reference_sheet::ITERATE_REFERENCE_SHEET_VERB_ID
         );
     }
 }

@@ -14,10 +14,10 @@
 //! This avoids passing large pixel blobs through a pipe and lets ffmpeg
 //! choose the I/O strategy for its own codec buffers.
 
-use std::path::PathBuf;
 use std::process::Command;
 
 use pixhaus_core::canvas::PixelBuffer;
+use tempfile::TempDir;
 
 use crate::error::{Error, Result};
 
@@ -95,19 +95,20 @@ pub fn encode_mp4(frames: &[(PixelBuffer, u32)], options: &VideoOptions) -> Resu
     // Verify ffmpeg is available before writing any temp files.
     verify_ffmpeg()?;
 
-    // Write frames to a temp directory.
-    let temp_dir = TempDir::create()?;
-    write_frames_as_png(&temp_dir, frames)?;
+    // Write frames to a temp directory. `tempfile::TempDir` allocates a
+    // unique path under the OS temp root and removes it on drop.
+    let temp_dir = TempDir::new().map_err(Error::Io)?;
+    write_frames_as_png(temp_dir.path(), frames)?;
 
     // Compute average framerate from per-frame durations.
     let fps = compute_fps(frames);
 
     // Run ffmpeg.
-    let output_path = temp_dir.path.join("output.mp4");
-    run_ffmpeg(&temp_dir.path, frames.len(), fps, &output_path, options)?;
+    let output_path = temp_dir.path().join("output.mp4");
+    run_ffmpeg(temp_dir.path(), frames.len(), fps, &output_path, options)?;
 
     // Read the output file back into memory.
-    let bytes = std::fs::read(&output_path)?;
+    let bytes = std::fs::read(&output_path).map_err(Error::Io)?;
 
     Ok(bytes)
     // `temp_dir` is dropped here, cleaning up the temporary directory.
@@ -136,7 +137,7 @@ fn verify_ffmpeg() -> Result<()> {
 
 // ── Frame writing ─────────────────────────────────────────────────────────────
 
-fn write_frames_as_png(temp_dir: &TempDir, frames: &[(PixelBuffer, u32)]) -> Result<()> {
+fn write_frames_as_png(temp_dir: &std::path::Path, frames: &[(PixelBuffer, u32)]) -> Result<()> {
     use image::{ImageFormat, RgbaImage};
 
     for (i, (buf, _)) in frames.iter().enumerate() {
@@ -157,8 +158,8 @@ fn write_frames_as_png(temp_dir: &TempDir, frames: &[(PixelBuffer, u32)]) -> Res
             ))
         })?;
 
-        let path = temp_dir.path.join(format!("frame{i:06}.png"));
-        let mut file = std::fs::File::create(&path)?;
+        let path = temp_dir.join(format!("frame{i:06}.png"));
+        let mut file = std::fs::File::create(&path).map_err(Error::Io)?;
         img.write_to(&mut std::io::BufWriter::new(&mut file), ImageFormat::Png)
             .map_err(|e| Error::Io(std::io::Error::other(e.to_string())))?;
     }
@@ -257,59 +258,6 @@ fn needs_even_dims(pix_fmt: &str) -> bool {
     )
 }
 
-// ── Temp directory RAII guard ─────────────────────────────────────────────────
-
-struct TempDir {
-    path: PathBuf,
-}
-
-impl TempDir {
-    fn create() -> Result<Self> {
-        // The previous implementation used SystemTime::subsec_nanos() which
-        // repeats every second; two concurrent encodes in the same second
-        // would land in the same dir and create_dir_all silently reuses an
-        // existing one, leaking PNGs across runs.
-        //
-        // Combine pid + monotonic-ish nanos + an in-process counter so
-        // collisions inside the same process are impossible and across
-        // processes are vanishingly rare. Use create_dir (not _all) so the
-        // call fails if the path is already taken; retry with a fresh
-        // suffix until success or we hit the retry cap.
-        use std::sync::atomic::{AtomicU64, Ordering};
-        use std::time::{SystemTime, UNIX_EPOCH};
-
-        static COUNTER: AtomicU64 = AtomicU64::new(0);
-
-        let pid = std::process::id();
-        let base = std::env::temp_dir();
-
-        for attempt in 0..32 {
-            let nanos = SystemTime::now().duration_since(UNIX_EPOCH).map_or(0, |d| {
-                d.as_secs()
-                    .saturating_mul(1_000_000_000)
-                    .saturating_add(u64::from(d.subsec_nanos()))
-            });
-            let count = COUNTER.fetch_add(1, Ordering::Relaxed);
-            let path = base.join(format!("pixhaus_mp4_{pid}_{nanos}_{count}_{attempt}"));
-            match std::fs::create_dir(&path) {
-                Ok(()) => return Ok(Self { path }),
-                Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => {}
-                Err(e) => return Err(Error::Io(e)),
-            }
-        }
-        Err(Error::Io(std::io::Error::other(
-            "could not allocate a unique temp directory after 32 attempts",
-        )))
-    }
-}
-
-impl Drop for TempDir {
-    fn drop(&mut self) {
-        // Best-effort cleanup; ignore errors so the caller is not impacted.
-        let _ = std::fs::remove_dir_all(&self.path);
-    }
-}
-
 // ── Tests ─────────────────────────────────────────────────────────────────────
 
 #[cfg(test)]
@@ -371,8 +319,8 @@ mod tests {
     #[test]
     fn temp_dir_cleanup_on_drop() {
         let path = {
-            let td = TempDir::create().unwrap();
-            let p = td.path.clone();
+            let td = TempDir::new().unwrap();
+            let p = td.path().to_path_buf();
             assert!(p.exists());
             p
         };

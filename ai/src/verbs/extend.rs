@@ -328,6 +328,11 @@ impl Verb for ExtendVerb {
         progress: VerbProgress,
         cancel: CancellationToken,
     ) -> Result<VerbOutput> {
+        // B10.3 anchor: this verb intentionally ignores `ctx.anchor`.
+        // `DirectionalViewRequest` is its own request type for the
+        // directional-view backend; adding a style condition would
+        // require a backend protocol change separate from the B10.3
+        // anchor mechanic.
         let started = std::time::Instant::now();
         let inputs: ExtendInputs = inputs.deserialize_owned()?;
         let sprite_id = ctx.require_sprite_id()?;

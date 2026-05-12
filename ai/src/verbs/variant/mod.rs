@@ -294,6 +294,7 @@ impl Verb for VariantVerb {
             started: Instant::now(),
             pixels: inputs.pixels,
             layer_name: inputs.layer_name,
+            anchor_style_image: crate::verbs::anchor_style_image_bytes(&ctx),
         };
         match inputs.mode {
             VariantMode::PaletteSwap { substitutions } => {
@@ -321,6 +322,10 @@ struct InvokeCtx {
     started: Instant,
     pixels: PixelData,
     layer_name: Option<String>,
+    /// B10.3 anchor — captured from `VerbContext::anchor` at the top of
+    /// `invoke` so the downstream helpers don't need to thread the full
+    /// context through. `None` when the active entity has no anchor.
+    anchor_style_image: Option<Vec<u8>>,
 }
 
 async fn invoke_palette_swap(
@@ -421,6 +426,11 @@ impl VariantVerb {
         if cancel.is_cancelled() {
             return Err(VerbError::Cancelled);
         }
+        // B10.3 anchor: feed the active entity's anchor sheet (if any)
+        // into the request as a style condition. Variant has no user-
+        // supplied style reference today, so the anchor is the only
+        // source — anchored Custom entities inherit visual consistency
+        // for free across text-edit variant runs.
         let req = ImageEditRequest {
             model: None,
             image: png_bytes,
@@ -428,6 +438,7 @@ impl VariantVerb {
             prompt: description.clone(),
             negative_prompt: None,
             num_images: count.max(1),
+            style_image: ictx.anchor_style_image.clone(),
         };
         progress
             .step(Some(0.2), "sending to inference backend")
