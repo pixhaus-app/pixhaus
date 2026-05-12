@@ -275,12 +275,7 @@ fn tilemap_with_tileset_imports() {
 }
 
 #[test]
-#[ignore = "tilemap cel round-trip not yet implemented; tracked for B9.5-followup-2"]
 fn tilemap_with_tileset_merged_round_trip() {
-    // Tilemap layers cannot currently be fully round-tripped because the
-    // export path encodes tilemap cels but the re-import path reads them
-    // back as-is without re-associating tile indices with tileset entries.
-    // Mark ignored with an explicit reason rather than skipping the file.
     let result = import_fixture("tilemap-with-tileset.aseprite", 1);
     let doc_out = archive_to_document(&result.archive).expect("export must succeed");
     let bytes = encode(&doc_out).expect("encode must succeed");
