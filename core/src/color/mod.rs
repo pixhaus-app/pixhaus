@@ -22,7 +22,7 @@ pub mod space;
 // don't have to reach into sub-modules for day-to-day use.
 pub use extraction::{
     DEFAULT_MAX_COLORS, DEFAULT_QUANTIZE_BITS, ExtractionError, ExtractionOptions,
-    extract_palette_from_png_bytes, extract_palette_from_rgba8,
+    extract_palette_from_image_bytes, extract_palette_from_rgba8,
 };
 pub use harmony::{
     analogous, analogous_standard, complement, monochromatic, split_complement, tetrad, triad,

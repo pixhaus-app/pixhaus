@@ -233,14 +233,24 @@ pub(crate) fn resolve_anchor(
         project.library.entities.iter().find(|e| e.id == rid)?
     };
 
-    let lora_path = project.library.ai.project_lora_path.clone();
-    let live = AnchorPayload::from_reference_entity(reference, DEFAULT_ANCHOR_STRENGTH, lora_path)?;
+    // Cheap hash of the live canonical bytes — no base64 alloc.
+    // Cache hits skip the AnchorPayload::from_reference_entity build
+    // entirely, which would otherwise clone the bytes and base64-encode
+    // a ~megabyte payload on every verb invocation.
+    let sheet = match &reference.content {
+        EntityContent::Reference { sheet } => sheet.as_ref(),
+        _ => return None,
+    };
+    let live_hash = pixhaus_ai::plugin::anchor::stable_hash(&sheet.canonical.image.bytes);
 
-    if let Some(cached) = cache.get(&live.reference_entity_id.get()) {
-        if cached.canonical_hash == live.canonical_hash {
+    if let Some(cached) = cache.get(&reference.id.get()) {
+        if cached.canonical_hash == live_hash {
             return Some(cached.clone());
         }
     }
+
+    let lora_path = project.library.ai.project_lora_path.clone();
+    let live = AnchorPayload::from_reference_entity(reference, DEFAULT_ANCHOR_STRENGTH, lora_path)?;
     cache.insert(live.reference_entity_id.get(), live.clone());
     Some(live)
 }
@@ -404,9 +414,10 @@ mod tests {
         let p1 = resolve_anchor(&project, Some(EntityId::new(7)), &cache).unwrap();
         assert_eq!(cache.len(), 1);
 
-        // Stomp the entity bytes — but the cache should still serve
-        // the OLD payload because we didn't bump the canonical bytes
-        // through this code path.
+        // Second call with the same unchanged project: the cache hit
+        // path returns the same payload (same hash). The companion
+        // `resolve_anchor_invalidates_cache_when_canonical_changes`
+        // test below exercises the mutation case.
         let p2 = resolve_anchor(&project, Some(EntityId::new(7)), &cache).unwrap();
         assert_eq!(p2.canonical_hash, p1.canonical_hash);
     }

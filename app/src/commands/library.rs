@@ -38,6 +38,11 @@ impl From<ApprovalError> for AppCommandError {
                 entity: format!("variant on entity {eid}"),
                 id: u64::from(vid),
             },
+            ApprovalError::AnchorNotAllowedForKind(id) => AppCommandError::Validation {
+                detail: format!(
+                    "entity {id} is not Custom-kind; anchor_reference_id is only meaningful on Custom entities"
+                ),
+            },
         }
     }
 }
@@ -1825,6 +1830,22 @@ pub async fn library_get_anchor_payload(
             }
         },
     };
+
+    // Cache-first: hash the live canonical bytes (cheap) and short-
+    // circuit on a hash match. Without this, every UI poll of this
+    // command rebuilds the AnchorPayload including a base64 encode of
+    // the canonical bytes.
+    let sheet = match &reference.content {
+        EntityContent::Reference { sheet } => sheet.as_ref(),
+        _ => return Ok(None),
+    };
+    let live_hash = pixhaus_ai::plugin::anchor::stable_hash(&sheet.canonical.image.bytes);
+
+    if let Some(cached) = state.anchor_cache.get(&reference.id.get()) {
+        if cached.canonical_hash == live_hash {
+            return Ok(Some(cached.clone()));
+        }
+    }
 
     let lora_path = project.library.ai.project_lora_path.clone();
     let payload =

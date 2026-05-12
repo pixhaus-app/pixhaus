@@ -200,11 +200,11 @@ pub struct VerbContext {
     /// entity is active (a generic palette generation, for instance).
     ///
     /// Image-generation verbs read `ctx.anchor.as_ref()` to derive
-    /// `style_image`, palette constraints, optional per-entity `LoRA`
-    /// path, and IP-Adapter strength. Verbs that don't naturally use
-    /// anchors (Critique, Conversational) ignore this field; the
-    /// presence of an anchor never changes a verb's invocation
-    /// requirements.
+    /// `style_image`, palette constraints, the project-level `LoRA`
+    /// path (B10.5 will introduce per-entity LoRAs), and IP-Adapter
+    /// strength. Verbs that don't naturally use anchors (Critique,
+    /// Conversational) ignore this field; the presence of an anchor
+    /// never changes a verb's invocation requirements.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub anchor: Option<AnchorPayload>,
     /// Backend selected by the runtime for this invocation.

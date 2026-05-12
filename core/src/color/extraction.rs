@@ -50,13 +50,15 @@ pub const DEFAULT_QUANTIZE_BITS: u8 = 5;
 /// threshold; the rest of the image is opaque.
 pub const MIN_OPAQUE_ALPHA: u8 = 128;
 
-/// Tunable knobs for [`extract_palette_from_png_bytes`] and
+/// Tunable knobs for [`extract_palette_from_image_bytes`] and
 /// [`extract_palette_from_rgba8`].
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct ExtractionOptions {
     /// Maximum number of swatches to return.
     pub max_colors: usize,
     /// Bits per channel kept during quantisation. `8` disables it.
+    /// Values are clamped to `1..=8` at use — `0` previously collapsed
+    /// every swatch to black, which was never the intended behaviour.
     pub quantize_bits: u8,
     /// Minimum alpha to count a pixel.
     pub min_opaque_alpha: u8,
@@ -90,7 +92,7 @@ pub enum ExtractionError {
 ///
 /// Returns [`ExtractionError::Decode`] when `image::load_from_memory`
 /// rejects the bytes.
-pub fn extract_palette_from_png_bytes(
+pub fn extract_palette_from_image_bytes(
     bytes: &[u8],
     options: ExtractionOptions,
 ) -> Result<Vec<PaletteEntry>, ExtractionError> {
@@ -118,7 +120,7 @@ pub fn extract_palette_from_rgba8(
         return Vec::new();
     }
 
-    let quantize_bits = options.quantize_bits.min(8);
+    let quantize_bits = options.quantize_bits.clamp(1, 8);
     let min_alpha = options.min_opaque_alpha;
 
     // Insertion order so ties break by "first seen".
@@ -286,6 +288,29 @@ mod tests {
     }
 
     #[test]
+    fn quantize_bits_zero_does_not_collapse_to_black() {
+        // `quantize_bits: 0` previously masked every channel to 0 and
+        // produced an all-black palette. The clamp to 1..=8 means it
+        // behaves the same as `quantize_bits: 1` now — coarse but not
+        // catastrophic.
+        let bytes = rgba8(2, 1, &[(200, 50, 50, 255), (255, 240, 240, 255)]);
+        let pal = extract_palette_from_rgba8(
+            &bytes,
+            2,
+            1,
+            ExtractionOptions {
+                quantize_bits: 0,
+                ..Default::default()
+            },
+        );
+        assert!(!pal.is_empty(), "must not produce empty palette");
+        assert!(
+            pal.iter().any(|p| p.color.r > 0 || p.color.g > 0 || p.color.b > 0),
+            "must not collapse every swatch to black"
+        );
+    }
+
+    #[test]
     fn max_colors_caps_output() {
         let mut pixels = Vec::with_capacity(16);
         for i in 0..16u8 {
@@ -337,7 +362,7 @@ mod tests {
         img.write_to(&mut Cursor::new(&mut buf), ImageFormat::Png)
             .unwrap();
 
-        let pal = extract_palette_from_png_bytes(
+        let pal = extract_palette_from_image_bytes(
             &buf,
             ExtractionOptions {
                 quantize_bits: 8,
@@ -352,7 +377,7 @@ mod tests {
 
     #[test]
     fn extract_from_png_bytes_rejects_garbage() {
-        let err = extract_palette_from_png_bytes(b"not a png", ExtractionOptions::default());
+        let err = extract_palette_from_image_bytes(b"not a png", ExtractionOptions::default());
         assert!(err.is_err());
     }
 }

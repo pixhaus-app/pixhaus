@@ -75,8 +75,10 @@ pub struct AnchorPayload {
     /// flow) read the rectangles here.
     pub composition: SheetComposition,
 
-    /// Optional path to a per-entity `LoRA`. `None` for entities the
-    /// project has not trained a `LoRA` for (B10.5).
+    /// Project-level `LoRA` path threaded through from
+    /// `ProjectAi::project_lora_path`. Per-entity LoRA training is a
+    /// B10.5 follow-up; until that lands, every anchor for the same
+    /// project carries the same `lora_path` value (or `None`).
     pub lora_path: Option<String>,
 
     /// Anchor strength in `0.0..=1.0`. Default `0.7` per the brief —
@@ -165,15 +167,19 @@ impl AnchorPayload {
 
 /// Stable, deterministic hash for the cache key.
 ///
-/// `std::hash::DefaultHasher` is `RandomState` by default in some
-/// environments. We use the FxHash-style multiply-mix that the
-/// `siphasher` crate ships for short keys; for our purposes a single
-/// folded `u64` over the bytes is plenty — the key only has to detect
-/// "the canonical bytes changed" with very high probability inside one
-/// process lifetime.
-fn stable_hash(bytes: &[u8]) -> u64 {
-    // FNV-1a over the bytes. Cheap, deterministic, sufficient for a
-    // change-detection cache key.
+/// FNV-1a over the bytes. Cheap and deterministic; collision rate is
+/// acceptable for a change-detection cache key — we only need to
+/// distinguish equal vs. not-equal byte sequences, not survive an
+/// adversary. `std::hash::DefaultHasher` is `RandomState` by default
+/// in some environments, which is why we don't use it. Switch to a
+/// stronger hash only if a future cache implementation needs
+/// cryptographic collision resistance.
+///
+/// Exposed publicly so the app-side anchor cache (in
+/// `app/src/commands/verbs.rs` and `library.rs`) can compute the same
+/// hash without going through `AnchorPayload::from_reference_entity`,
+/// avoiding the base64-encode cost on cache hits.
+pub fn stable_hash(bytes: &[u8]) -> u64 {
     const FNV_OFFSET: u64 = 0xcbf2_9ce4_8422_2325;
     const FNV_PRIME: u64 = 0x0000_0100_0000_01b3;
     let mut h = FNV_OFFSET;

@@ -14,14 +14,15 @@
 //! which case this module preserves what the generator produced.
 //!
 //! No I/O happens here. The function takes a `&mut Project`, runs in
-//! constant time relative to history size (one swap, one push), and
+//! O(history.len()) (one `Vec::remove` + one `Vec::insert(0, _)` over
+//! the variant history — bounded to ~10–100 entries per brief), and
 //! returns the [`Approval`] receipt the caller can hand back through
 //! the IPC bridge.
 
 use serde::{Deserialize, Serialize};
 use ts_rs::TS;
 
-use crate::color::extraction::{ExtractionOptions, extract_palette_from_png_bytes};
+use crate::color::extraction::{ExtractionOptions, extract_palette_from_image_bytes};
 use crate::project::id::{EntityId, SheetVariantId};
 use crate::project::library::{EntityContent, ReferenceSheet, SheetVariant};
 
@@ -43,6 +44,12 @@ pub enum ApprovalError {
     /// canonical slot.
     #[error("variant {0} is not present on entity {1}'s sheet")]
     VariantNotFound(u32, u32),
+
+    /// `set_entity_anchor` was called with an entity whose kind is not
+    /// `Custom` (Reference / Tileset / Tilemap). Only Custom entities
+    /// carry a meaningful `anchor_reference_id`.
+    #[error("entity {0} is not Custom-kind; anchor_reference_id is meaningless on it")]
+    AnchorNotAllowedForKind(u32),
 }
 
 /// Receipt returned by a successful approval.
@@ -81,7 +88,7 @@ pub struct Approval {
 ///   so the UI doesn't have to special-case "already canonical".
 /// - Otherwise locate the variant in `history`, swap it into
 ///   `canonical`, and prepend the displaced canonical to `history`.
-/// - Run [`extract_palette_from_png_bytes`] over the new canonical's
+/// - Run [`extract_palette_from_image_bytes`] over the new canonical's
 ///   image bytes. If the variant's `extracted_palette` is non-empty
 ///   already, leave it alone.
 ///
@@ -159,7 +166,7 @@ fn ensure_extracted_palette(variant: &mut SheetVariant, options: ExtractionOptio
         return variant.extracted_palette.len();
     }
 
-    let pal = extract_palette_from_png_bytes(&variant.image.bytes, options).unwrap_or_default();
+    let pal = extract_palette_from_image_bytes(&variant.image.bytes, options).unwrap_or_default();
     variant.extracted_palette = pal;
     variant.extracted_palette.len()
 }
@@ -200,6 +207,15 @@ pub fn set_entity_anchor(
         .iter_mut()
         .find(|e| e.id == entity_id)
         .ok_or(ApprovalError::EntityNotFound(entity_id.get()))?;
+
+    // The data model only meaningfully carries `anchor_reference_id` on
+    // Custom-kind entities (those whose content is `EntityContent::Sprites`).
+    // Reference / Tileset / Tilemap kinds either are the anchor themselves
+    // or don't take part in the anchor mechanic. Reject those up-front so
+    // the field can't be left in a nonsensical state.
+    if !matches!(entity.content, EntityContent::Sprites { .. }) {
+        return Err(ApprovalError::AnchorNotAllowedForKind(entity_id.get()));
+    }
 
     entity.anchor_reference_id = reference_id;
     Ok(())
@@ -536,5 +552,20 @@ mod tests {
         let err =
             set_entity_anchor(&mut project, EntityId::new(1), Some(EntityId::new(2))).unwrap_err();
         assert_eq!(err, ApprovalError::NotAReference(2));
+    }
+
+    #[test]
+    fn set_entity_anchor_rejects_non_custom_source() {
+        // Reference / Tileset / Tilemap entities don't carry a meaningful
+        // `anchor_reference_id`. Anchoring those should fail.
+        //
+        // Reuse the Reference-entity fixture and try to anchor the
+        // Reference itself (its content is `EntityContent::Reference`,
+        // not `Sprites`, so the new kind check fires). `reference_id`
+        // is `None` to skip the target-kind check and isolate this one.
+        let mut project = build_project_with_reference(10, &[]);
+        let source = project.library.entities[0].id;
+        let err = set_entity_anchor(&mut project, source, None).unwrap_err();
+        assert_eq!(err, ApprovalError::AnchorNotAllowedForKind(source.get()));
     }
 }
