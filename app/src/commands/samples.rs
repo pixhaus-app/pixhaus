@@ -150,20 +150,13 @@ mod tests {
 
     #[test]
     fn collect_samples_skips_non_pixhaus_files() {
-        let tmp = std::env::temp_dir().join(format!(
-            "pixhaus-list-samples-test-{}-{}",
-            std::process::id(),
-            std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .map_or(0, |d| d.as_nanos()),
-        ));
-        std::fs::create_dir_all(&tmp).expect("create temp dir");
-        std::fs::write(tmp.join("a.pixhaus"), b"x").expect("write a");
-        std::fs::write(tmp.join("README.md"), b"x").expect("write readme");
-        std::fs::write(tmp.join("b.aseprite"), b"x").expect("write b");
+        let tmp = tempfile::tempdir().expect("create temp dir");
+        let tmp_path = tmp.path();
+        std::fs::write(tmp_path.join("a.pixhaus"), b"x").expect("write a");
+        std::fs::write(tmp_path.join("README.md"), b"x").expect("write readme");
+        std::fs::write(tmp_path.join("b.aseprite"), b"x").expect("write b");
 
-        let entries = collect_samples(&tmp);
-        let _ = std::fs::remove_dir_all(&tmp);
+        let entries = collect_samples(tmp_path);
 
         assert_eq!(entries.len(), 1, "only the .pixhaus file should be listed");
         assert_eq!(entries[0].name, "a");
@@ -171,13 +164,13 @@ mod tests {
 
     #[test]
     fn collect_samples_returns_empty_when_dir_missing() {
-        let missing = std::env::temp_dir().join(format!(
-            "pixhaus-list-samples-missing-{}-{}",
-            std::process::id(),
-            std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .map_or(0, |d| d.as_nanos()),
-        ));
+        // tempdir() gives a directory that exists; drop it before passing
+        // the (now-removed) path to collect_samples to exercise the missing
+        // branch without synthesising a path from env vars.
+        let missing = {
+            let tmp = tempfile::tempdir().expect("create temp dir");
+            tmp.path().to_path_buf()
+        };
         let entries = collect_samples(&missing);
         assert!(entries.is_empty());
     }

@@ -52,7 +52,10 @@ pub mod read;
 pub mod spec;
 pub mod write;
 
-pub use archive::{ConversionWarning, ConvertedArchive, archive_to_document, document_to_archive};
+pub use archive::{
+    ConversionWarning, ConvertedArchive, PerStateDocument, archive_to_document,
+    archive_to_per_state_documents, document_to_archive,
+};
 pub use chunk::{
     CelChunk, CelChunkData, Chunk, ColorProfileChunk, ExternalFileEntry, ExternalFilesChunk,
     LayerChunk, LayerKindCode, NineSliceWire, OldPaletteChunk, PaletteChunk, PaletteEntryWire,

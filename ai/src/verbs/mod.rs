@@ -42,6 +42,7 @@ pub mod conversational;
 pub mod critique;
 pub mod extend;
 pub mod inbetween;
+pub mod iterate_reference_sheet;
 pub mod motion_from_video;
 pub mod project_style_learning;
 pub mod reference_sheet;
@@ -58,6 +59,7 @@ pub use conversational::ConversationalVerb;
 pub use critique::CritiqueVerb;
 pub use extend::ExtendVerb;
 pub use inbetween::InbetweenVerb;
+pub use iterate_reference_sheet::IterateReferenceSheetVerb;
 pub use motion_from_video::MotionFromVideoVerb;
 pub use project_style_learning::ProjectStyleLearningVerb;
 pub use reference_sheet::GenerateReferenceSheetVerb;
@@ -287,5 +289,14 @@ mod tests {
         ctx.anchor = Some(anchor);
 
         assert_eq!(anchor_style_image_bytes(&ctx), Some(vec![1, 2, 3, 4, 5]));
+    }
+
+    #[test]
+    fn iterate_reference_sheet_verb_is_exported() {
+        let verb = IterateReferenceSheetVerb::new();
+        assert_eq!(
+            verb.descriptor().id.as_str(),
+            iterate_reference_sheet::ITERATE_REFERENCE_SHEET_VERB_ID
+        );
     }
 }

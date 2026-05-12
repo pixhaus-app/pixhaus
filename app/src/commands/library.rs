@@ -10,7 +10,7 @@ use std::time::SystemTime;
 use pixhaus_ai::plugin::{AnchorPayload, DEFAULT_ANCHOR_STRENGTH};
 use pixhaus_core::color::extraction::ExtractionOptions;
 use pixhaus_core::project::approval::{
-    Approval, ApprovalError, approve_sheet_variant, set_entity_anchor,
+    ApprovalError, approve_sheet_variant, set_entity_anchor,
 };
 use pixhaus_core::project::{
     ActiveTarget, AiMetadata, AssetInfo, ColorMode, Entity, EntityContent, EntityDefaults,
@@ -1680,37 +1680,71 @@ pub async fn library_search(
     Ok(search_library(project, &args))
 }
 
-// ── anchor sheet flow (B10.3) ─────────────────────────────────────────────────
+// ── sheet commands (B10.3 approval + anchor flow, B10.4 asset info) ──────────
+
+/// Arguments for approving a history variant as canonical.
+#[derive(Debug, Deserialize)]
+pub struct LibraryApproveSheetVariantArgs {
+    /// Target entity. Must be `Reference`-kind.
+    pub entity_id: EntityId,
+    /// The variant to approve. Must be present in the entity's `history`.
+    pub variant_id: SheetVariantId,
+}
+
+/// Arguments for updating a reference entity's asset info.
+#[derive(Debug, Deserialize)]
+pub struct LibraryUpdateAssetInfoArgs {
+    /// Target entity. Must be `Reference`-kind.
+    pub entity_id: EntityId,
+    /// Replacement asset info. Overwrites the existing value.
+    pub info: AssetInfo,
+}
 
 /// Approves a [`SheetVariant`] as the canonical sheet of a `Reference`-kind
 /// entity (B10.3).
 ///
-/// Moves the variant from history into `canonical`, demotes the previous
+/// Moves the variant from `history` into `canonical`, demotes the previous
 /// canonical to `history[0]`, runs eyedropper palette extraction over the
 /// new canonical's image bytes (skipped when the variant already carries
-/// an extracted palette), and invalidates any cached
-/// [`AnchorPayload`] for the entity.
-///
-/// Returns an [`Approval`] receipt the UI can surface in a toast.
+/// an extracted palette), bumps `updated_at`, and invalidates any cached
+/// [`AnchorPayload`] for the entity. Returns the updated entity so the UI
+/// can refresh local state without a separate `library_get_entity`.
 #[tauri::command(async, rename_all = "snake_case")]
 pub async fn library_approve_sheet_variant(
-    entity_id: EntityId,
-    variant_id: SheetVariantId,
+    args: LibraryApproveSheetVariantArgs,
     state: State<'_, AppState>,
-) -> CommandResult<Approval> {
+) -> CommandResult<Entity> {
+    let ts = now_secs();
     let mut doc = state.doc.write().await;
     let project = doc
         .project
         .as_mut()
         .ok_or(AppCommandError::NoActiveProject)?;
-    let receipt =
-        approve_sheet_variant(project, entity_id, variant_id, ExtractionOptions::default())?;
+    // Run the full B10.3 approval flow (variant swap + palette extraction).
+    approve_sheet_variant(
+        project,
+        args.entity_id,
+        args.variant_id,
+        ExtractionOptions::default(),
+    )?;
+    // Bump `updated_at` so the UI refresh observes the entity as changed.
+    let entity = project
+        .library
+        .entities
+        .iter_mut()
+        .find(|e| e.id == args.entity_id)
+        .ok_or_else(|| AppCommandError::NotFound {
+            entity: "entity".into(),
+            id: u64::from(args.entity_id.get()),
+        })?;
+    entity.updated_at = ts;
+    let updated = entity.clone();
     doc.dirty = true;
     drop(doc);
 
-    state.anchor_cache.remove(&entity_id.get());
+    state.anchor_cache.remove(&args.entity_id.get());
 
-    Ok(receipt)
+    Ok(updated)
 }
 
 /// Sets or clears the anchor reference for a library entity (B10.3).
@@ -1719,8 +1753,12 @@ pub async fn library_approve_sheet_variant(
 /// entity's canonical sheet; pass `None` to clear the anchor. Anchored
 /// entities inherit consistency for free in subsequent AI verb runs.
 ///
-/// Invalidates any cached anchor payload for both the source entity and
-/// the (previous, current) reference targets.
+/// Invalidates any cached anchor payload for the newly-pointed-at
+/// reference so the next [`library_get_anchor_payload`] call rebuilds it
+/// from the live canonical bytes. Does not pre-invalidate the previously-
+/// pointed-at reference — its cache entry stays warm and is keyed by
+/// reference id, so it remains valid for any other source entity that
+/// still anchors to it.
 #[tauri::command(async, rename_all = "snake_case")]
 pub async fn library_set_entity_anchor(
     entity_id: EntityId,
@@ -1801,13 +1839,130 @@ pub async fn library_get_anchor_payload(
     Ok(payload)
 }
 
+/// Updates the asset info (name, age, species, personality notes) for a
+/// `Reference`-kind entity.
+#[tauri::command(async, rename_all = "snake_case")]
+pub async fn library_update_asset_info(
+    args: LibraryUpdateAssetInfoArgs,
+    state: State<'_, AppState>,
+) -> CommandResult<()> {
+    let ts = now_secs();
+    let mut doc = state.doc.write().await;
+    let project = doc
+        .project
+        .as_mut()
+        .ok_or(AppCommandError::NoActiveProject)?;
+    update_asset_info_in_project(project, args.entity_id, args.info, ts)?;
+    doc.dirty = true;
+    Ok(())
+}
+
+/// Deletes a history variant from a `Reference`-kind entity.
+///
+/// The canonical variant cannot be deleted. Call
+/// `library_approve_sheet_variant` to promote a replacement first, which
+/// demotes the current canonical to history; then delete the demoted entry.
+#[tauri::command(async, rename_all = "snake_case")]
+pub async fn library_delete_sheet_variant(
+    entity_id: EntityId,
+    variant_id: SheetVariantId,
+    state: State<'_, AppState>,
+) -> CommandResult<()> {
+    let ts = now_secs();
+    let mut doc = state.doc.write().await;
+    let project = doc
+        .project
+        .as_mut()
+        .ok_or(AppCommandError::NoActiveProject)?;
+    delete_sheet_variant_in_project(project, entity_id, variant_id, ts)?;
+    doc.dirty = true;
+    Ok(())
+}
+
+// ── sheet helpers ─────────────────────────────────────────────────────────────
+
+pub(crate) fn update_asset_info_in_project(
+    project: &mut pixhaus_core::project::Project,
+    entity_id: EntityId,
+    info: AssetInfo,
+    ts: i64,
+) -> Result<(), AppCommandError> {
+    let entity = project
+        .library
+        .entities
+        .iter_mut()
+        .find(|e| e.id == entity_id)
+        .ok_or_else(|| AppCommandError::NotFound {
+            entity: "entity".into(),
+            id: u64::from(entity_id.get()),
+        })?;
+
+    let sheet = match &mut entity.content {
+        EntityContent::Reference { sheet } => sheet.as_mut(),
+        _ => {
+            return Err(AppCommandError::Validation {
+                detail: "entity is not Reference kind".into(),
+            });
+        }
+    };
+
+    sheet.info = info;
+    entity.updated_at = ts;
+    Ok(())
+}
+
+pub(crate) fn delete_sheet_variant_in_project(
+    project: &mut pixhaus_core::project::Project,
+    entity_id: EntityId,
+    variant_id: SheetVariantId,
+    ts: i64,
+) -> Result<(), AppCommandError> {
+    let entity = project
+        .library
+        .entities
+        .iter_mut()
+        .find(|e| e.id == entity_id)
+        .ok_or_else(|| AppCommandError::NotFound {
+            entity: "entity".into(),
+            id: u64::from(entity_id.get()),
+        })?;
+
+    let sheet = match &mut entity.content {
+        EntityContent::Reference { sheet } => sheet.as_mut(),
+        _ => {
+            return Err(AppCommandError::Validation {
+                detail: "entity is not Reference kind".into(),
+            });
+        }
+    };
+
+    if sheet.canonical.id == variant_id {
+        return Err(AppCommandError::Validation {
+            detail: "cannot delete the canonical variant; approve a replacement first".into(),
+        });
+    }
+
+    let before = sheet.history.len();
+    sheet.history.retain(|v| v.id != variant_id);
+    if sheet.history.len() == before {
+        return Err(AppCommandError::NotFound {
+            entity: "sheet variant".into(),
+            id: u64::from(variant_id.get()),
+        });
+    }
+
+    entity.updated_at = ts;
+    Ok(())
+}
+
 // ── tests ─────────────────────────────────────────────────────────────────────
 
 #[cfg(test)]
 mod tests {
     use pixhaus_core::project::{
-        ActiveTarget, AiMetadata, ColorMode, EntityContent, EntityDefaults, EntityId, EntityKind,
-        GroupId, NamedSprite, Size, StateId, TagId, UserData,
+        ActiveTarget, AiMetadata, AssetInfo, ColorMode, EntityContent, EntityDefaults, EntityId,
+        EntityKind, GroupId, NamedSprite, ReferenceImage, ReferenceSheet, SheetComposition,
+        SheetVariant, SheetVariantId, Size, StateId, TagId, UserData,
     };
 
     use super::*;
@@ -2749,5 +2904,130 @@ mod tests {
                 .name,
             "Goblin"
         );
+    }
+
+    // ── sheet helpers ─────────────────────────────────────────────────────────
+
+    fn make_variant(id: u32) -> SheetVariant {
+        SheetVariant {
+            id: SheetVariantId::new(id),
+            generated_at: 0,
+            image: ReferenceImage {
+                bytes: Vec::new(),
+                mime: "image/png".into(),
+            },
+            composition: SheetComposition::default(),
+            generation: None,
+            extracted_palette: Vec::new(),
+        }
+    }
+
+    fn project_with_one_reference_entity() -> (pixhaus_core::project::Project, EntityId) {
+        let mut project = pixhaus_core::project::Project::new("test");
+        let canonical = make_variant(10);
+        let entity_id = EntityId::new(1);
+        project.library.entities.push(Entity {
+            id: entity_id,
+            kind: EntityKind::Reference,
+            name: "Hero Ref".into(),
+            group_id: None,
+            tags: Vec::new(),
+            defaults: EntityDefaults::default(),
+            content: EntityContent::Reference {
+                sheet: Box::new(ReferenceSheet {
+                    canonical,
+                    history: vec![make_variant(20), make_variant(30)],
+                    prompts: Vec::new(),
+                    info: AssetInfo::default(),
+                }),
+            },
+            ai: AiMetadata::default(),
+            anchor_reference_id: None,
+            user_data: UserData::default(),
+            created_at: 0,
+            updated_at: 0,
+        });
+        (project, entity_id)
+    }
+
+    // ── approve_sheet_variant ─────────────────────────────────────────────────
+    //
+    // The B10.4 fixture tests for `approve_sheet_variant_in_project` were
+    // dropped in the merge with B10.3: that helper is now subsumed by
+    // `pixhaus_core::project::approval::approve_sheet_variant`, which carries
+    // its own test suite covering swap/demote, idempotence, palette
+    // extraction, kind validation, and not-found paths. The IPC command
+    // (`library_approve_sheet_variant`) just calls that core helper, bumps
+    // `updated_at`, clones the entity, and invalidates the anchor cache —
+    // all behaviour either tested at the core layer or trivial.
+
+    // ── update_asset_info ─────────────────────────────────────────────────────
+
+    #[test]
+    fn update_asset_info_replaces_fields_and_bumps_updated_at() {
+        let (mut project, entity_id) = project_with_one_reference_entity();
+        let info = AssetInfo {
+            fields: [("name".into(), "Hero".into()), ("age".into(), "20".into())]
+                .into_iter()
+                .collect(),
+            notes: vec!["brave".into()],
+        };
+        update_asset_info_in_project(&mut project, entity_id, info.clone(), 55).unwrap();
+
+        let entity = project
+            .library
+            .entities
+            .iter()
+            .find(|e| e.id == entity_id)
+            .unwrap();
+        assert_eq!(entity.updated_at, 55);
+        let sheet = match &entity.content {
+            EntityContent::Reference { sheet } => sheet.as_ref(),
+            _ => panic!("wrong kind"),
+        };
+        assert_eq!(
+            sheet.info.fields.get("name").map(String::as_str),
+            Some("Hero")
+        );
+        assert_eq!(sheet.info.notes, vec!["brave"]);
+    }
+
+    // ── delete_sheet_variant ─────────────────────────────────────────────────
+
+    #[test]
+    fn delete_history_variant_removes_it() {
+        let (mut project, entity_id) = project_with_one_reference_entity();
+        delete_sheet_variant_in_project(&mut project, entity_id, SheetVariantId::new(20), 0)
+            .unwrap();
+
+        let sheet = match &project
+            .library
+            .entities
+            .iter()
+            .find(|e| e.id == entity_id)
+            .unwrap()
+            .content
+        {
+            EntityContent::Reference { sheet } => sheet.as_ref(),
+            _ => panic!("wrong kind"),
+        };
+        assert_eq!(sheet.history.len(), 1);
+        assert_eq!(sheet.history[0].id, SheetVariantId::new(30));
+    }
+
+    #[test]
+    fn delete_canonical_variant_returns_validation_error() {
+        let (mut project, entity_id) = project_with_one_reference_entity();
+        let result =
+            delete_sheet_variant_in_project(&mut project, entity_id, SheetVariantId::new(10), 0);
+        assert!(matches!(result, Err(AppCommandError::Validation { .. })));
+    }
+
+    #[test]
+    fn delete_variant_not_found_returns_error() {
+        let (mut project, entity_id) = project_with_one_reference_entity();
+        let result =
+            delete_sheet_variant_in_project(&mut project, entity_id, SheetVariantId::new(999), 0);
+        assert!(matches!(result, Err(AppCommandError::NotFound { .. })));
     }
 }

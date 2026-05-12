@@ -15,6 +15,15 @@ const [activeVerb, setActiveVerb] = createSignal<VerbInfo | null>(null);
 const [activeInvocationId, setActiveInvocationId] = createSignal<string | null>(null);
 
 /**
+ * Caller-supplied prefill for the next modal open. Read by `VerbInvokeHost`
+ * and threaded into `ModalForm`'s `initialValues`. Cleared on modal close.
+ * Set this before calling `setActiveVerb()` so the modal opens with seeded
+ * inputs (used by sheet-panel Refine to pass `panel_label` and by Re-run
+ * to pass `prompt`).
+ */
+const [pendingPrefill, setPendingPrefill] = createSignal<Record<string, unknown> | null>(null);
+
+/**
  * Memoised verb list — populated lazily on first open. The runtime's
  * verb set is fixed at startup, so a single fetch is enough; if a
  * future plugin-hot-reload feature changes the set, call
@@ -22,7 +31,14 @@ const [activeInvocationId, setActiveInvocationId] = createSignal<string | null>(
  */
 let verbsCache: Promise<VerbInfo[]> | null = null;
 
-export { activeVerb, setActiveVerb, activeInvocationId, setActiveInvocationId };
+export {
+  activeVerb,
+  setActiveVerb,
+  activeInvocationId,
+  setActiveInvocationId,
+  pendingPrefill,
+  setPendingPrefill,
+};
 
 export function getCachedVerbList(load: () => Promise<VerbInfo[]>): Promise<VerbInfo[]> {
   if (verbsCache === null) {

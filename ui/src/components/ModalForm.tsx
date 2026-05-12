@@ -51,6 +51,12 @@ type Props = {
   readonly schema: unknown;
   /** Invocation handle while a verb is running; null when idle. */
   readonly runningInvocationId: string | null;
+  /**
+   * Optional caller-supplied seed values. In field mode these are merged
+   * over schema defaults; in raw-JSON mode they're serialized into the
+   * textarea. Used by sheet-panel Refine/Re-run to pre-fill the form.
+   */
+  readonly initialValues?: Record<string, unknown> | undefined;
   /** Called with the form values once the user clicks Submit. */
   readonly onSubmit: (inputs: Record<string, unknown>) => void;
   /**
@@ -80,9 +86,12 @@ const ModalForm: Component<Props> = (props) => {
       for (const f of fields()) {
         if (f.defaultValue !== undefined) defaults[f.name] = f.defaultValue;
       }
-      setValues(defaults);
+      const merged = { ...defaults, ...(props.initialValues ?? {}) };
+      setValues(merged);
       setErrors({});
-      setRawJson("{}");
+      setRawJson(
+        props.initialValues !== undefined ? JSON.stringify(props.initialValues, null, 2) : "{}",
+      );
       setRawJsonError(null);
     }
   });

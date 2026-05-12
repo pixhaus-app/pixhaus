@@ -170,6 +170,7 @@ pub fn run() -> Result<(), AppError> {
             commands::library::library_create_group,
             commands::library::library_delete_entity,
             commands::library::library_delete_group,
+            commands::library::library_delete_sheet_variant,
             commands::library::library_delete_state,
             commands::library::library_delete_tag,
             commands::library::library_get_active_target,
@@ -190,6 +191,7 @@ pub fn run() -> Result<(), AppError> {
             commands::library::library_set_group_parent,
             commands::library::library_tag_entity,
             commands::library::library_untag_entity,
+            commands::library::library_update_asset_info,
             // project
             commands::project::project_close,
             commands::project::project_get,
