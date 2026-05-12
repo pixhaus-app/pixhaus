@@ -261,8 +261,11 @@ pub enum VerbEffect {
     UpdateEntityAi {
         /// Entity whose `AiMetadata` to update.
         entity_id: EntityId,
-        /// Per-entity `LoRA` path, relative to the project directory.
-        /// `None` means "do not change the existing path".
+        /// Per-entity `LoRA` reference to write into
+        /// `AiMetadata.lora_path`. Currently the Replicate weights URL
+        /// stored verbatim; a future host-side download will replace it
+        /// with a project-relative path. `None` means "do not change the
+        /// existing value".
         #[serde(default, skip_serializing_if = "Option::is_none")]
         lora_path: Option<String>,
     },

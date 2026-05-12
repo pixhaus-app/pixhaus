@@ -104,8 +104,12 @@ pub struct TrainEntityLoraInputs {
     pub steps: Option<u32>,
 
     /// Human-readable label and trigger word for the trained `LoRA`.
-    /// Defaults to a slug derived from the entity name when omitted by
-    /// the host.
+    ///
+    /// Defaults to `entity-{id}` inside the verb when omitted. The host
+    /// wrapper (`library_train_entity_lora` in `app/`) substitutes a slug
+    /// derived from the entity name before invocation, so end-user
+    /// trainings get a friendlier label; non-host callers (tests, direct
+    /// invocation) get the id-based fallback.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub label: Option<String>,
 
@@ -281,7 +285,7 @@ impl Verb for TrainEntityLoraVerb {
         // It PRODUCES the per-entity LoRA that subsequent anchors carry;
         // reading the anchor here would be circular.
         let started = std::time::Instant::now();
-        let inputs: TrainEntityLoraInputs = inputs.deserialize_owned()?;
+        let mut inputs: TrainEntityLoraInputs = inputs.deserialize_owned()?;
 
         let label = inputs
             .label
@@ -330,7 +334,9 @@ impl Verb for TrainEntityLoraVerb {
             .await;
 
         // Zip + PNG encoding is CPU-bound — move it off the runtime.
-        let images = inputs.training_images.clone();
+        // Move (don't clone) the training images: they're multi-MB RGBA
+        // buffers and `inputs.training_images` isn't read again after this.
+        let images = std::mem::take(&mut inputs.training_images);
         let zip_data = tokio::task::spawn_blocking(move || encode_training_zip(&images))
             .await
             .map_err(|e| VerbError::Backend(format!("zip encoding task panicked: {e}")))?

@@ -90,9 +90,20 @@ name `"replicate"`. Set it in **Preferences → AI backends → Replicate**.
 
 ## Cancellation
 
-Cooperative through the standard `verb_cancel` IPC. Polls Replicate at
-1-second intervals; on cancel the host sends a best-effort cancel
-request. Partial GPU charges may still be incurred for in-flight steps.
+The verb itself respects cooperative cancellation: it checks
+`cancel.is_cancelled()` at every progress checkpoint and forwards
+`verb_cancel` to Replicate when it lands. The Replicate polling runs at
+1-second intervals; partial GPU charges may still be incurred for
+in-flight steps.
+
+**Cancellation during the in-flight run is not currently exposed
+through the user-facing IPC**, however. `library_train_entity_lora`
+returns the `invocation_id` only after the promise resolves, so a
+mid-run cancel button has nothing to cancel against. Wiring an
+event-side channel that hands the active `invocation_id` to the UI as
+soon as the verb starts (and downloading the safetensors to the project
+directory so `lora_path` ends up as a real path) is tracked as a
+follow-up issue against PR #179.
 
 ## Tips
 

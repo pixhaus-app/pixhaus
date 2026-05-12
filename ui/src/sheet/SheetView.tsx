@@ -9,6 +9,7 @@ import { type Component, For, Show, createEffect, createSignal, on } from "solid
 import type {
   Entity,
   EntityContent,
+  EntityId,
   PromptEntry,
   ReferenceSheet,
   SheetVariant,
@@ -70,9 +71,14 @@ const SheetView: Component = () => {
   const [previewVariant, setPreviewVariant] = createSignal<SheetVariant | null>(null);
   const [activeTab, setActiveTab] = createSignal<BottomTab>("history");
   // B10.5: per-entity LoRA training is a long (15-30 min) Replicate call.
-  // Tracking state lets the UI disable the button while a job is in flight
-  // and surface the status indicator next to the canonical sheet header.
-  const [trainingLora, setTrainingLora] = createSignal(false);
+  // Track the entity currently training (not just a boolean) so navigating
+  // to a different sheet mid-run doesn't disable that sheet's Train button.
+  // Cleared in the .finally() of the originating call.
+  const [trainingLoraEntity, setTrainingLoraEntity] = createSignal<EntityId | null>(null);
+  const isTrainingThisLora = (): boolean => {
+    const e = entity();
+    return e !== null && trainingLoraEntity() === e.id;
+  };
 
   // Load (or reload) the entity whenever the active sheet ID changes.
   // Capture the requested id and ignore stale resolutions — fast back-to-back
@@ -278,11 +284,11 @@ const SheetView: Component = () => {
   function handleTrainLora(): void {
     const e = entity();
     if (e === null) return;
-    if (trainingLora()) {
+    if (trainingLoraEntity() === e.id) {
       pushToast({ title: "Training already in progress for this sheet.", kind: "info" });
       return;
     }
-    setTrainingLora(true);
+    setTrainingLoraEntity(e.id);
     pushToast({
       title: "Training consistency LoRA — this takes 15-30 minutes.",
       kind: "info",
@@ -304,7 +310,14 @@ const SheetView: Component = () => {
         }
       })
       .catch((err: unknown) => reportCommandFailure("library_train_entity_lora", err))
-      .finally(() => setTrainingLora(false));
+      .finally(() => {
+        // Only clear if this entity is still the one we marked busy.
+        // Guards against a stale settle from an earlier run wiping the
+        // state of a different in-flight training on the same entity.
+        if (trainingLoraEntity() === e.id) {
+          setTrainingLoraEntity(null);
+        }
+      });
   }
 
   // True when the entity carries a non-empty `lora_path`. Drives the
@@ -418,18 +431,18 @@ const SheetView: Component = () => {
           </button>
           <button
             class="sheet-panel__action-btn"
-            classList={{ "sheet-panel__action-btn--busy": trainingLora() }}
+            classList={{ "sheet-panel__action-btn--busy": isTrainingThisLora() }}
             onClick={handleTrainLora}
-            disabled={trainingLora()}
+            disabled={isTrainingThisLora()}
             title={
-              trainingLora()
+              isTrainingThisLora()
                 ? "Training is in progress (15-30 min)."
                 : hasTrainedLora()
                   ? "Retrain the consistency LoRA from this sheet. The new weights replace the existing per-entity LoRA on completion."
                   : "Train a consistency LoRA from this sheet. Takes 15-30 min on Replicate; subsequent generations against this entity use the resulting per-entity weights."
             }
           >
-            {trainingLora() ? "Training…" : hasTrainedLora() ? "Retrain LoRA" : "Train LoRA"}
+            {isTrainingThisLora() ? "Training…" : hasTrainedLora() ? "Retrain LoRA" : "Train LoRA"}
           </button>
           <Show when={hasTrainedLora()}>
             <span

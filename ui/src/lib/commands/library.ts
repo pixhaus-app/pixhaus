@@ -259,12 +259,17 @@ export type LibraryTrainEntityLoraResult = {
  * Trains a per-entity `LoRA` from a Reference entity's canonical sheet
  * and persists the weights URL on `Entity.ai.lora_path`.
  *
- * Takes 15-30 minutes against Replicate. The promise resolves when the
- * job completes; in the meantime `verb_cancel(invocation_id)` can
- * abort the run. The returned `invocation_id` becomes addressable
- * once the promise resolves, but a side channel — `verb_cancel` keyed
- * on the active invocation id surfaced via training-state — is the
- * usual cancel path.
+ * Takes 15-30 minutes against Replicate. The returned promise only
+ * resolves once the job completes; the `invocation_id` carried on the
+ * result is intended for audit traces and after-the-fact correlation.
+ *
+ * **Cancellation during the in-flight run is not currently exposed by
+ * this IPC.** The verb itself respects cooperative cancel checkpoints,
+ * but the host has not yet wired a side channel that hands the active
+ * `invocation_id` to the UI mid-run. Tracking work for that (and for
+ * downloading the safetensors to the project directory so
+ * `lora_path` becomes a real path) is filed as a follow-up issue
+ * against this PR.
  */
 export function libraryTrainEntityLora(
   entity_id: EntityId,

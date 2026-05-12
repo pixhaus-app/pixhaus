@@ -414,13 +414,15 @@ pub struct AiMetadata {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub embedding: Option<Vec<f32>>,
 
-    /// Path to the per-entity `LoRA` file relative to the project
-    /// directory. Populated by the B10.5 train-entity-lora verb after a
-    /// successful training run against this entity's canonical reference
-    /// sheet. When present, anchor payloads built for this entity carry
-    /// it through to backends, overriding any project-wide `LoRA` for the
-    /// duration of generations against this entity. `None` means "fall
-    /// back to the project-wide `LoRA`, if any."
+    /// Per-entity `LoRA` reference. Populated by the B10.5
+    /// train-entity-lora verb after a successful training run against
+    /// this entity's canonical reference sheet. **Currently the Replicate
+    /// weights URL written verbatim by the IPC layer; a future host-side
+    /// download will replace it with a project-relative path.** When
+    /// present, anchor payloads built for this entity carry it through to
+    /// backends, overriding any project-wide `LoRA` for the duration of
+    /// generations against this entity. `None` means "fall back to the
+    /// project-wide `LoRA`, if any."
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub lora_path: Option<String>,
 }
