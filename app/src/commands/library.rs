@@ -9,9 +9,7 @@ use std::time::SystemTime;
 
 use pixhaus_ai::plugin::{AnchorPayload, DEFAULT_ANCHOR_STRENGTH};
 use pixhaus_core::color::extraction::ExtractionOptions;
-use pixhaus_core::project::approval::{
-    ApprovalError, approve_sheet_variant, set_entity_anchor,
-};
+use pixhaus_core::project::approval::{ApprovalError, approve_sheet_variant, set_entity_anchor};
 use pixhaus_core::project::{
     ActiveTarget, AiMetadata, AssetInfo, ColorMode, Entity, EntityContent, EntityDefaults,
     EntityGroup, EntityId, EntityKind, GroupId, NamedSprite, PixelBufferId, ReferenceImage,

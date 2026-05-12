@@ -76,7 +76,7 @@ pub struct AnchorPayload {
     pub composition: SheetComposition,
 
     /// Project-level `LoRA` path threaded through from
-    /// `ProjectAi::project_lora_path`. Per-entity LoRA training is a
+    /// `ProjectAi::project_lora_path`. Per-entity `LoRA` training is a
     /// B10.5 follow-up; until that lands, every anchor for the same
     /// project carries the same `lora_path` value (or `None`).
     pub lora_path: Option<String>,

@@ -209,6 +209,11 @@ impl Verb for InbetweenVerb {
         progress: VerbProgress,
         cancel: CancellationToken,
     ) -> Result<VerbOutput> {
+        // B10.3 anchor: this verb intentionally ignores `ctx.anchor`.
+        // `FrameInterpolationRequest` has no style slot — the
+        // interpolation backend uses the two keyframes as both content
+        // and style sources; an external style condition would conflict
+        // with their per-pixel constraint.
         let started = Instant::now();
         let inputs: InbetweenInputs = inputs.deserialize_owned()?;
 

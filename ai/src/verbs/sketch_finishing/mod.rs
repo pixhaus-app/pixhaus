@@ -226,6 +226,9 @@ impl Verb for SketchFinishingVerb {
                 .await;
 
             let sketch_png = encode_png(&sketch.pixels)?;
+            // B10.3 anchor: pass through the active entity's anchor
+            // sheet (if any) as a style condition so the finished
+            // sketch inherits the Reference's look.
             let req = ImageEditRequest {
                 model: None,
                 image: sketch_png,
@@ -233,6 +236,7 @@ impl Verb for SketchFinishingVerb {
                 prompt: base_prompt.clone(),
                 negative_prompt: Some("blurry, noisy, sketch lines, rough edges, artifacts".into()),
                 num_images: 1,
+                style_image: crate::verbs::anchor_style_image_bytes(&ctx),
             };
 
             let images = call_image_edit(backend, req, progress.clone(), cancel.clone()).await?;

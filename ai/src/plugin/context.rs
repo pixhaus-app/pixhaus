@@ -201,7 +201,7 @@ pub struct VerbContext {
     ///
     /// Image-generation verbs read `ctx.anchor.as_ref()` to derive
     /// `style_image`, palette constraints, the project-level `LoRA`
-    /// path (B10.5 will introduce per-entity LoRAs), and IP-Adapter
+    /// path (B10.5 will introduce per-entity `LoRA`s), and IP-Adapter
     /// strength. Verbs that don't naturally use anchors (Critique,
     /// Conversational) ignore this field; the presence of an anchor
     /// never changes a verb's invocation requirements.

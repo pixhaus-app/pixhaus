@@ -305,7 +305,8 @@ mod tests {
         );
         assert!(!pal.is_empty(), "must not produce empty palette");
         assert!(
-            pal.iter().any(|p| p.color.r > 0 || p.color.g > 0 || p.color.b > 0),
+            pal.iter()
+                .any(|p| p.color.r > 0 || p.color.g > 0 || p.color.b > 0),
             "must not collapse every swatch to black"
         );
     }
