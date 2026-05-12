@@ -182,7 +182,7 @@ describe("Keyboard shortcuts — Aseprite preset (manual-test-guide §14)", () =
   // event might land with key="+" + shiftKey=true on some keyboard layouts.
   // Need to probe `key`/`code` from inside the Solid handler to know what
   // chord webdriverio actually delivers.
-  // See: https://github.com/pixhausdev/pixhaus/issues/172
+  // See: https://github.com/pixhaus-app/pixhaus/issues/172
   it.skip("T-keys-010: Zoom in (Ctrl+=) increases zoom", async () => {
     await openNewProjectViaButton();
     await focusBody();
@@ -212,7 +212,7 @@ describe("Keyboard shortcuts — Aseprite preset (manual-test-guide §14)", () =
   // TODO(phase-1-followup): depends on T-keys-010 working (the test seeds
   // by sending Ctrl+= twice before Ctrl+0). Unblock together once the key-
   // mapping issue is resolved.
-  // See: https://github.com/pixhausdev/pixhaus/issues/172
+  // See: https://github.com/pixhaus-app/pixhaus/issues/172
   it.skip("T-keys-012: Fit (Ctrl+0) changes zoom to fit viewport", async () => {
     await openNewProjectViaButton();
     await focusBody();
@@ -293,7 +293,10 @@ describe("Keyboard shortcuts — Aseprite preset (manual-test-guide §14)", () =
           };
           return w.__pixhaus_debug__.getActiveTool() !== "pencil";
         }),
-      { timeout: 3000, timeoutMsg: "tool never changed away from pencil after E" },
+      {
+        timeout: 3000,
+        timeoutMsg: "tool never changed away from pencil after E",
+      },
     );
 
     await focusBody();

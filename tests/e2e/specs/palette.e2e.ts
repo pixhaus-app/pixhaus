@@ -136,7 +136,7 @@ describe("Palette panel (manual-test-guide §8)", () => {
     // testid="palette-swatch-N" is now wired. Drag-to-reorder is blocked
     // by the HTML5 drag protocol: PaletteGrid uses draggable=true /
     // DragEvent, which WebDriver pointer actions do not trigger.
-    // See: https://github.com/pixhausdev/pixhaus/issues/170
+    // See: https://github.com/pixhaus-app/pixhaus/issues/177
   });
 
   it("T-palette-006: Harmony generator", async () => {

@@ -74,6 +74,7 @@ export const testid = {
     tagCtxDelete: "tl-ctx-delete",
   },
   layer: {
+    row: (index: number) => `layer-row-${index}`,
     contextMenu: {
       rename: "layer-ctx-rename",
       duplicate: "layer-ctx-duplicate",
@@ -93,7 +94,14 @@ export const testid = {
   },
 } as const;
 
-/** CSS selector for an element with the given data-testid. */
+/** CSS selector for an element with the given data-testid.
+ *
+ * Escapes `\` and `"` so any user-input-derived id (e.g. a tag name forwarded
+ * through `testid.timeline.tag(name)`) produces a valid CSS attribute
+ * selector. Anything else in the id is taken verbatim — testids are not
+ * intended to carry arbitrary CSS metacharacters.
+ */
 export function byTestId(id: string): string {
-  return `[data-testid="${id}"]`;
+  const escaped = id.replace(/\\/g, "\\\\").replace(/"/g, '\\"');
+  return `[data-testid="${escaped}"]`;
 }

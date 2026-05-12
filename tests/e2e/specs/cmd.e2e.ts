@@ -97,7 +97,7 @@ describe("Command palette (T-cmd)", () => {
   // reach the keybind manager. Once a project is open the chord works
   // (T-cmd-002 onwards exercise it). Coverage of palette toggle is also
   // present via T-window-001..004.
-  // See: https://github.com/pixhausdev/pixhaus/issues/174
+  // See: https://github.com/pixhaus-app/pixhaus/issues/174
   it.skip("T-cmd-001: Ctrl+K toggles the palette", async () => {
     await bootApp();
 

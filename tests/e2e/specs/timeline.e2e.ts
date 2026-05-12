@@ -274,14 +274,14 @@ describe("Timeline panel (manual-test-guide §9)", () => {
     // drag must land on exact frame-column positions derived from
     // FRAME_WIDTH (36px), and tauri-driver's synthetic pointer events
     // haven't been validated for this path under CI yet.
-    // See: https://github.com/pixhausdev/pixhaus/issues/171
+    // See: https://github.com/pixhaus-app/pixhaus/issues/171
   });
 
   it.skip("T-timeline-006: Rename / delete tag", async () => {
     // testid="tl-tag-${name}" on tag elements and testid="tl-ctx-rename" /
     // testid="tl-ctx-delete" on the context menu items are now wired.
     // Blocked on T-timeline-005 (no tags to right-click without creation).
-    // See: https://github.com/pixhausdev/pixhaus/issues/171
+    // See: https://github.com/pixhaus-app/pixhaus/issues/171
   });
 
   it("T-timeline-007: Play", async () => {
@@ -366,7 +366,9 @@ describe("Timeline panel (manual-test-guide §9)", () => {
 
     const initial = await browser.execute(() => {
       const w = window as unknown as {
-        __pixhaus_debug__: { getOnionSkin(): { enabled: boolean; prev: number; next: number } };
+        __pixhaus_debug__: {
+          getOnionSkin(): { enabled: boolean; prev: number; next: number };
+        };
       };
       return w.__pixhaus_debug__.getOnionSkin();
     });
@@ -401,7 +403,7 @@ describe("Timeline panel (manual-test-guide §9)", () => {
           const w = window as unknown as {
             __pixhaus_debug__: { getOnionSkin(): { prev: number } };
           };
-          return w.__pixhaus_debug__.getOnionSkin().prev;
+          return w.__pixhaus_debug__.getOnionSkin().prev === 2;
         }),
       { timeout: 3000, timeoutMsg: "onion prev never updated" },
     );

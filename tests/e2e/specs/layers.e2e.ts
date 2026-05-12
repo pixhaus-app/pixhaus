@@ -149,7 +149,7 @@ describe("Layer panel (manual-test-guide §7)", () => {
     await clearIpcLog();
 
     // Right-click the first layer row to open the custom context menu.
-    const row = await $(byTestId("layer-row-0"));
+    const row = await $(byTestId(testid.layer.row(0)));
     await row.waitForDisplayed({ timeout: 5000 });
     await row.click({ button: "right" });
 
@@ -183,13 +183,13 @@ describe("Layer panel (manual-test-guide §7)", () => {
     await waitForIpc("layer_delete", 1, 5000);
   });
 
-  // TODO(#172): drag-to-reorder requires synthesising HTML5 drag events
+  // TODO(#177): drag-to-reorder requires synthesising HTML5 drag events
   // (dragstart/dragover/drop) which webdriverio's pointer action API does
   // not generate. Layer rows depend on the native drag protocol, not the
   // pointer-events drag flow exercised by canvas drag tests. Add a
   // reorderByIndex(i, j) helper to __pixhaus_debug__.layer or a custom
   // drag-event dispatcher before unskipping.
-  // See: https://github.com/pixhausdev/pixhaus/issues/172
+  // See: https://github.com/pixhaus-app/pixhaus/issues/177
   it.skip("T-layers-004: Drag to reorder.", async () => {
     // Blocked on HTML5 drag harness — see GH issue linked above.
   });
