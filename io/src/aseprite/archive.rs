@@ -2278,11 +2278,11 @@ mod tests {
             .iter()
             .find(|l| matches!(&l.kind, LayerKind::Tilemap { .. }))
             .expect("first import must have a tilemap layer");
-        let LayerKind::Tilemap { tileset: ref_id_1 } = layer1.kind else {
+        let LayerKind::Tilemap { tileset: ref_id_1 } = &layer1.kind else {
             panic!("expected Tilemap kind");
         };
         assert_eq!(
-            ref_id_1, tileset_id_1,
+            *ref_id_1, tileset_id_1,
             "tilemap layer must reference the imported tileset after first import"
         );
 
@@ -2293,7 +2293,7 @@ mod tests {
             .find(|c| matches!(&c.data, CelData::Tilemap { .. }))
             .expect("first import must have a tilemap cel");
         let CelData::Tilemap { data: td1 } = &cel1.data else {
-            panic!();
+            panic!("expected Tilemap cel data on first import");
         };
         assert_eq!(td1.cells[0].index.get(), 1, "first cell index must be 1");
         assert_eq!(td1.cells[1].index.get(), 2, "second cell index must be 2");
@@ -2321,10 +2321,10 @@ mod tests {
             .iter()
             .find(|l| matches!(&l.kind, LayerKind::Tilemap { .. }))
             .expect("round-trip must preserve the tilemap layer");
-        let LayerKind::Tilemap { tileset: ref_id_2 } = layer2.kind else {
+        let LayerKind::Tilemap { tileset: ref_id_2 } = &layer2.kind else {
             panic!("expected Tilemap kind after round-trip");
         };
-        let tileset_exists = sprite2.tilesets.iter().any(|ts| ts.id == ref_id_2);
+        let tileset_exists = sprite2.tilesets.iter().any(|ts| ts.id == *ref_id_2);
         assert!(
             tileset_exists,
             "tilemap layer must reference a tileset that exists in sprite.tilesets after round-trip"
@@ -2337,7 +2337,7 @@ mod tests {
             .find(|c| matches!(&c.data, CelData::Tilemap { .. }))
             .expect("round-trip must preserve the tilemap cel");
         let CelData::Tilemap { data: td2 } = &cel2.data else {
-            panic!();
+            panic!("expected Tilemap cel data after round-trip");
         };
         assert_eq!(
             td1.cells[0].index, td2.cells[0].index,
