@@ -313,6 +313,7 @@ fn sample_library(hero_sprite: Sprite) -> Library {
             // serde path; round-trip tests assert exact bit equality
             // via `to_bits` to catch subtle f32 drift.
             embedding: Some(vec![0.1, 0.2, 0.3]),
+            lora_path: None,
         },
         anchor_reference_id: Some(EntityId::new(3)),
         user_data: UserData::default(),

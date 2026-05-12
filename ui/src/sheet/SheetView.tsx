@@ -17,6 +17,7 @@ import {
   libraryApproveSheetVariant,
   libraryDeleteSheetVariant,
   libraryGetEntity,
+  libraryTrainEntityLora,
   libraryUpdateAssetInfo,
 } from "../lib/commands/library";
 import { verbList } from "../lib/commands/verbs";
@@ -68,6 +69,10 @@ const SheetView: Component = () => {
   const [loading, setLoading] = createSignal(false);
   const [previewVariant, setPreviewVariant] = createSignal<SheetVariant | null>(null);
   const [activeTab, setActiveTab] = createSignal<BottomTab>("history");
+  // B10.5: per-entity LoRA training is a long (15-30 min) Replicate call.
+  // Tracking state lets the UI disable the button while a job is in flight
+  // and surface the status indicator next to the canonical sheet header.
+  const [trainingLora, setTrainingLora] = createSignal(false);
 
   // Load (or reload) the entity whenever the active sheet ID changes.
   // Capture the requested id and ignore stale resolutions — fast back-to-back
@@ -267,6 +272,53 @@ const SheetView: Component = () => {
     openVerb(GENERATE_VERB_ID, "Generate reference sheet");
   }
 
+  // B10.5: kicks off the long Replicate train-entity-lora flow. Returns
+  // synchronously after the IPC promise is queued so the caller doesn't
+  // wait; the toast surface reports completion or cancellation.
+  function handleTrainLora(): void {
+    const e = entity();
+    if (e === null) return;
+    if (trainingLora()) {
+      pushToast({ title: "Training already in progress for this sheet.", kind: "info" });
+      return;
+    }
+    setTrainingLora(true);
+    pushToast({
+      title: "Training consistency LoRA — this takes 15-30 minutes.",
+      kind: "info",
+    });
+    libraryTrainEntityLora(e.id)
+      .then((result) => {
+        pushToast({
+          title: `Trained consistency LoRA "${result.label}"`,
+          kind: "info",
+        });
+        return libraryGetEntity(e.id);
+      })
+      .then((refreshed) => {
+        // Only update if the active sheet hasn't changed since the
+        // request was issued — long training runs may outlive the
+        // user's navigation.
+        if (activeSheetEntityId() === e.id) {
+          setEntity(refreshed);
+        }
+      })
+      .catch((err: unknown) => reportCommandFailure("library_train_entity_lora", err))
+      .finally(() => setTrainingLora(false));
+  }
+
+  // True when the entity carries a non-empty `lora_path`. Drives the
+  // training-status pill so users can tell at a glance whether the
+  // anchor will ship a per-entity LoRA.
+  const loraPath = (): string | null => {
+    const e = entity();
+    if (e === null) return null;
+    const path = e.ai?.lora_path;
+    return typeof path === "string" && path.length > 0 ? path : null;
+  };
+
+  const hasTrainedLora = (): boolean => loraPath() !== null;
+
   return (
     <div class="sheet-panel">
       <div class="sheet-panel__header">
@@ -364,6 +416,29 @@ const SheetView: Component = () => {
           >
             Refine selection
           </button>
+          <button
+            class="sheet-panel__action-btn"
+            classList={{ "sheet-panel__action-btn--busy": trainingLora() }}
+            onClick={handleTrainLora}
+            disabled={trainingLora()}
+            title={
+              trainingLora()
+                ? "Training is in progress (15-30 min)."
+                : hasTrainedLora()
+                  ? "Retrain the consistency LoRA from this sheet. The new weights replace the existing per-entity LoRA on completion."
+                  : "Train a consistency LoRA from this sheet. Takes 15-30 min on Replicate; subsequent generations against this entity use the resulting per-entity weights."
+            }
+          >
+            {trainingLora() ? "Training…" : hasTrainedLora() ? "Retrain LoRA" : "Train LoRA"}
+          </button>
+          <Show when={hasTrainedLora()}>
+            <span
+              class="sheet-panel__lora-status"
+              title={`Per-entity LoRA active: ${loraPath() ?? ""}`}
+            >
+              LoRA trained
+            </span>
+          </Show>
         </div>
 
         <div class="sheet-panel__bottom">

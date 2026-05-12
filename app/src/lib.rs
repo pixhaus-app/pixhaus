@@ -196,6 +196,7 @@ pub fn run() -> Result<(), AppError> {
             commands::library::library_accept_suggested_tag,
             commands::library::library_auto_tag_entity,
             commands::library::library_reject_suggested_tag,
+            commands::library::library_train_entity_lora,
             commands::library::library_update_corpus,
             // project
             commands::project::project_close,

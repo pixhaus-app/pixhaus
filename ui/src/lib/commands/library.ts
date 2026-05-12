@@ -231,3 +231,47 @@ export function libraryDeleteSheetVariant(
 ): Promise<void> {
   return invoke<void>("library_delete_sheet_variant", { entity_id, variant_id });
 }
+
+// ── B10.5: per-entity LoRA training ───────────────────────────────────────────
+
+export type TrainEntityLoraOptions = {
+  lora_rank?: number | null;
+  steps?: number | null;
+  label?: string | null;
+  model?: string | null;
+};
+
+export type LibraryTrainEntityLoraResult = {
+  entity_id: EntityId;
+  /**
+   * The `LoRA` path now stored on `Entity.ai.lora_path`. Currently the
+   * Replicate weights URL — downloading the safetensors into the
+   * project directory is a follow-up shared with the project-wide
+   * style training flow.
+   */
+  lora_path: string;
+  label: string;
+  training_id: string;
+  invocation_id: string;
+};
+
+/**
+ * Trains a per-entity `LoRA` from a Reference entity's canonical sheet
+ * and persists the weights URL on `Entity.ai.lora_path`.
+ *
+ * Takes 15-30 minutes against Replicate. The promise resolves when the
+ * job completes; in the meantime `verb_cancel(invocation_id)` can
+ * abort the run. The returned `invocation_id` becomes addressable
+ * once the promise resolves, but a side channel — `verb_cancel` keyed
+ * on the active invocation id surfaced via training-state — is the
+ * usual cancel path.
+ */
+export function libraryTrainEntityLora(
+  entity_id: EntityId,
+  options?: TrainEntityLoraOptions,
+): Promise<LibraryTrainEntityLoraResult> {
+  return invoke<LibraryTrainEntityLoraResult>("library_train_entity_lora", {
+    entity_id,
+    options: options ?? null,
+  });
+}

@@ -14,7 +14,7 @@ use pixhaus_ai::plugin::runtime::VerbRuntime;
 use pixhaus_ai::verbs::{
     AudioTimingVerb, AutoMeshDeformationVerb, CleanupVerb, ContinueVerb, ConversationalVerb,
     CritiqueVerb, ExtendVerb, InbetweenVerb, MotionFromVideoVerb, ProjectStyleLearningVerb,
-    SketchFinishingVerb, TileVerb, TilesetFromDescriptionVerb, VariantVerb,
+    SketchFinishingVerb, TileVerb, TilesetFromDescriptionVerb, TrainEntityLoraVerb, VariantVerb,
 };
 use pixhaus_core::project::{LayerId, PixelBufferId, Project, Rgba, SpriteId};
 use pixhaus_core::undo::History;
@@ -203,6 +203,7 @@ impl AppState {
         register_builtin(&runtime, SketchFinishingVerb::new());
         register_builtin(&runtime, TileVerb::new());
         register_builtin(&runtime, TilesetFromDescriptionVerb::new());
+        register_builtin(&runtime, TrainEntityLoraVerb::new());
         register_builtin(&runtime, VariantVerb::new());
 
         let verb_runtime = Arc::new(runtime);
@@ -263,6 +264,7 @@ mod tests {
             "pixhaus.builtin.inbetween",
             "pixhaus.builtin.motion_from_video",
             "pixhaus.builtin.project_style_learning",
+            "pixhaus.builtin.train_entity_lora",
             "pixhaus.builtin.tile",
             "pixhaus.builtin.tileset_from_description",
             "pixhaus.builtin.variant",

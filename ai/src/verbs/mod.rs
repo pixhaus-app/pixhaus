@@ -49,6 +49,7 @@ pub mod reference_sheet;
 pub mod sketch_finishing;
 pub mod tile;
 pub mod tileset_from_description;
+pub mod train_entity_lora;
 pub mod variant;
 
 pub use audio_timing::AudioTimingVerb;
@@ -66,6 +67,7 @@ pub use reference_sheet::GenerateReferenceSheetVerb;
 pub use sketch_finishing::SketchFinishingVerb;
 pub use tile::TileVerb;
 pub use tileset_from_description::TilesetFromDescriptionVerb;
+pub use train_entity_lora::TrainEntityLoraVerb;
 pub use variant::VariantVerb;
 
 use tokio_util::sync::CancellationToken;

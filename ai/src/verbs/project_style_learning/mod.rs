@@ -435,7 +435,10 @@ impl Verb for ProjectStyleLearningVerb {
 ///
 /// The returned bytes are a valid zip file. This function is CPU-bound and
 /// should be called via `tokio::task::spawn_blocking`.
-fn encode_training_zip(images: &[PixelData]) -> std::result::Result<Vec<u8>, String> {
+///
+/// Shared with the B10.5 train-entity-lora verb; both pipe their training
+/// images through the same encoder so the corpus format is identical.
+pub(crate) fn encode_training_zip(images: &[PixelData]) -> std::result::Result<Vec<u8>, String> {
     let buf = std::io::Cursor::new(Vec::new());
     let mut zip = zip::ZipWriter::new(buf);
     let options = zip::write::SimpleFileOptions::default()
