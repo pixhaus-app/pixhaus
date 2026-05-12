@@ -22,6 +22,7 @@
 //!   `tag`, `skip_serializing_if`) drive the TypeScript output too.
 
 pub mod animation;
+pub mod approval;
 pub mod blend;
 pub mod brush;
 pub mod canvas;
@@ -42,6 +43,7 @@ pub mod tileset;
 pub mod user_data;
 
 pub use animation::Animation;
+pub use approval::{Approval, ApprovalError, approve_sheet_variant, set_entity_anchor};
 pub use blend::BlendMode;
 pub use brush::{BrushShape, BrushState};
 pub use canvas::CanvasState;

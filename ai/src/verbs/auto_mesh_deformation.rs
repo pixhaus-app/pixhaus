@@ -247,6 +247,9 @@ impl Verb for AutoMeshDeformationVerb {
         progress: VerbProgress,
         cancel: CancellationToken,
     ) -> Result<VerbOutput> {
+        // B10.3 anchor: this verb intentionally ignores `ctx.anchor`.
+        // Pure CPU compute (grid segmentation + mesh build); no backend
+        // invocation.
         let started = std::time::Instant::now();
 
         let inputs: AutoMeshInputs = inputs.deserialize_owned()?;

@@ -19,6 +19,7 @@ use pixhaus_core::project::{
     FrameIndex, IVec2, LayerId, Palette, ProjectMetadata, Rect, Size, Sprite, SpriteId,
 };
 
+use super::anchor::AnchorPayload;
 use super::backend::InferenceBackend;
 
 /// Raw pixel bytes carried in or out of a verb.
@@ -185,6 +186,27 @@ pub struct VerbContext {
     /// Project-level style references the user (or a prior style-
     /// learning verb) configured.
     pub style_refs: Vec<StyleReference>,
+    /// Reference-sheet anchor for the entity being acted on, if the
+    /// entity carries one (B10.3).
+    ///
+    /// Resolved by the host when packaging the context: the host looks
+    /// up the active entity, follows its
+    /// [`pixhaus_core::project::Entity::anchor_reference_id`] pointer,
+    /// builds an [`AnchorPayload`] from the referenced
+    /// `Reference`-kind entity's canonical sheet, and drops it here.
+    /// `None` means "no anchor" — either the entity has no
+    /// `anchor_reference_id`, the pointed-at entity is missing or the
+    /// wrong kind, or the verb is being invoked in a context where no
+    /// entity is active (a generic palette generation, for instance).
+    ///
+    /// Image-generation verbs read `ctx.anchor.as_ref()` to derive
+    /// `style_image`, palette constraints, the project-level `LoRA`
+    /// path (B10.5 will introduce per-entity `LoRA`s), and IP-Adapter
+    /// strength. Verbs that don't naturally use anchors (Critique,
+    /// Conversational) ignore this field; the presence of an anchor
+    /// never changes a verb's invocation requirements.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub anchor: Option<AnchorPayload>,
     /// Backend selected by the runtime for this invocation.
     ///
     /// Contract enforced by [`super::runtime::VerbRuntime::invoke`]:
@@ -223,6 +245,7 @@ impl PartialEq for VerbContext {
             && self.selection == other.selection
             && self.references == other.references
             && self.style_refs == other.style_refs
+            && self.anchor == other.anchor
     }
 }
 
@@ -244,6 +267,7 @@ impl VerbContext {
             selection: None,
             references: Vec::new(),
             style_refs: Vec::new(),
+            anchor: None,
             backend: None,
         }
     }
@@ -384,6 +408,18 @@ impl VerbContextBuilder {
     #[must_use]
     pub fn add_style_ref(mut self, style_ref: StyleReference) -> Self {
         self.ctx.style_refs.push(style_ref);
+        self
+    }
+
+    /// Sets the reference-sheet anchor for this invocation.
+    ///
+    /// Hosts call this when the active entity's
+    /// [`pixhaus_core::project::Entity::anchor_reference_id`] resolves
+    /// to a `Reference`-kind entity; pass the [`AnchorPayload`] the
+    /// host built from that entity's canonical sheet.
+    #[must_use]
+    pub fn with_anchor(mut self, anchor: AnchorPayload) -> Self {
+        self.ctx.anchor = Some(anchor);
         self
     }
 

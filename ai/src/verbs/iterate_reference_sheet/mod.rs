@@ -319,6 +319,11 @@ impl Verb for IterateReferenceSheetVerb {
                 Some(negative.clone())
             },
             num_images: 1,
+            // B10.3 anchor: this verb operates ON the reference sheet
+            // itself (refining one of its panels). The sheet IS the
+            // style condition — pulling it in again as `style_image`
+            // would be circular, so leave this empty.
+            style_image: None,
         };
 
         progress

@@ -265,6 +265,14 @@ pub struct ImageEditRequest {
     pub negative_prompt: Option<String>,
     /// Number of images to return.
     pub num_images: u32,
+    /// Optional style reference image (raw PNG). Used by `ImageEdit`
+    /// verbs that participate in the B10.3 anchor mechanic to inherit
+    /// a Reference entity's canonical sheet as a style condition.
+    /// Backends without a corresponding API parameter destructure-and-
+    /// ignore this field — same posture they take toward
+    /// `ImageGenRequest::style_image` today.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub style_image: Option<Vec<u8>>,
 }
 
 /// Frame interpolation request (`FRAME_INTERPOLATION` capability).

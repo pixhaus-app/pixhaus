@@ -198,6 +198,11 @@ impl Verb for CleanupVerb {
         progress: VerbProgress,
         cancel: CancellationToken,
     ) -> Result<VerbOutput> {
+        // B10.3 anchor: this verb intentionally ignores `ctx.anchor`.
+        // Pure CPU compute (palette snap + AA removal + pivot fix); no
+        // backend invocation. Anchor participation would need to happen
+        // at the palette level via the anchor's `palette` field, which
+        // is consumed by host post-processing rather than verb logic.
         let started = std::time::Instant::now();
         let inputs: CleanupInputs = inputs.deserialize_owned()?;
 

@@ -1,0 +1,571 @@
+//! Reference sheet approval flow (B10.3).
+//!
+//! When a user clicks "Approve as canonical" on a [`SheetVariant`] in
+//! the history strip, the editor:
+//!
+//! 1. Moves the chosen variant from `history` into `canonical`.
+//! 2. Demotes the previous canonical variant to `history[0]`.
+//! 3. Extracts a palette from the new canonical's image bytes (the
+//!    [`crate::color::extraction`] module does the work) and writes it
+//!    to the new canonical's [`SheetVariant::extracted_palette`].
+//!
+//! Step 3 only runs when the variant didn't already carry an extracted
+//! palette: B10.1 generators may pre-populate it during synthesis, in
+//! which case this module preserves what the generator produced.
+//!
+//! No I/O happens here. The function takes a `&mut Project`, runs in
+//! O(history.len()) (one `Vec::remove` + one `Vec::insert(0, _)` over
+//! the variant history — bounded to ~10–100 entries per brief), and
+//! returns the [`Approval`] receipt the caller can hand back through
+//! the IPC bridge.
+
+use serde::{Deserialize, Serialize};
+use ts_rs::TS;
+
+use crate::color::extraction::{ExtractionOptions, extract_palette_from_image_bytes};
+use crate::project::id::{EntityId, SheetVariantId};
+use crate::project::library::{EntityContent, ReferenceSheet, SheetVariant};
+
+use super::Project;
+
+/// Errors produced by [`approve_sheet_variant`].
+#[derive(Debug, thiserror::Error, PartialEq, Eq)]
+pub enum ApprovalError {
+    /// The named entity was not found in the project library.
+    #[error("entity {0} not found in project library")]
+    EntityNotFound(u32),
+
+    /// The entity exists but is not a `Reference` kind, so it has no
+    /// sheet to approve.
+    #[error("entity {0} is not a Reference entity (no sheet to approve)")]
+    NotAReference(u32),
+
+    /// The variant id wasn't in the reference sheet's history *or* the
+    /// canonical slot.
+    #[error("variant {0} is not present on entity {1}'s sheet")]
+    VariantNotFound(u32, u32),
+
+    /// `set_entity_anchor` was called with an entity whose kind is not
+    /// `Custom` (Reference / Tileset / Tilemap). Only Custom entities
+    /// carry a meaningful `anchor_reference_id`.
+    #[error("entity {0} is not Custom-kind; anchor_reference_id is meaningless on it")]
+    AnchorNotAllowedForKind(u32),
+}
+
+/// Receipt returned by a successful approval.
+///
+/// The shape is small and serializable so the IPC layer can return it
+/// to the UI without re-wrapping. The new canonical variant id and the
+/// number of palette swatches extracted are the two facts the UI cares
+/// about — both feed the toast / status indicator.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[ts(export)]
+pub struct Approval {
+    /// The entity whose sheet was approved.
+    pub entity_id: EntityId,
+    /// The variant now sitting in `canonical`.
+    pub canonical_id: SheetVariantId,
+    /// The previous canonical variant id, if there was one. Will be
+    /// `None` only on first approval of a freshly imported entity that
+    /// somehow had no prior canonical (the data model always provides
+    /// one, so in practice this is `Some`).
+    pub previous_canonical_id: Option<SheetVariantId>,
+    /// Number of swatches the extractor produced for the new canonical.
+    /// Zero when the variant already carried an extracted palette
+    /// (preserved from the generator) or when extraction failed.
+    pub palette_size: usize,
+}
+
+/// Approves a [`SheetVariant`] as the canonical sheet of a
+/// `Reference`-kind entity.
+///
+/// The approval workflow:
+///
+/// - Find the entity by `entity_id`. If it isn't a Reference, return
+///   [`ApprovalError::NotAReference`].
+/// - If `variant_id` is already canonical, just (re-)extract the palette
+///   and return the no-op receipt. This makes the operation idempotent
+///   so the UI doesn't have to special-case "already canonical".
+/// - Otherwise locate the variant in `history`, swap it into
+///   `canonical`, and prepend the displaced canonical to `history`.
+/// - Run [`extract_palette_from_image_bytes`] over the new canonical's
+///   image bytes. If the variant's `extracted_palette` is non-empty
+///   already, leave it alone.
+///
+/// # Errors
+///
+/// - [`ApprovalError::EntityNotFound`] — no entity with that id.
+/// - [`ApprovalError::NotAReference`] — entity is the wrong kind.
+/// - [`ApprovalError::VariantNotFound`] — neither the canonical nor any
+///   history entry carries `variant_id`.
+pub fn approve_sheet_variant(
+    project: &mut Project,
+    entity_id: EntityId,
+    variant_id: SheetVariantId,
+    options: ExtractionOptions,
+) -> Result<Approval, ApprovalError> {
+    let entity = project
+        .library
+        .entities
+        .iter_mut()
+        .find(|e| e.id == entity_id)
+        .ok_or(ApprovalError::EntityNotFound(entity_id.get()))?;
+
+    let sheet = match &mut entity.content {
+        EntityContent::Reference { sheet } => sheet.as_mut(),
+        _ => return Err(ApprovalError::NotAReference(entity_id.get())),
+    };
+
+    let previous_canonical_id = Some(sheet.canonical.id);
+
+    if sheet.canonical.id == variant_id {
+        let palette_size = ensure_extracted_palette(&mut sheet.canonical, options);
+        return Ok(Approval {
+            entity_id,
+            canonical_id: variant_id,
+            previous_canonical_id,
+            palette_size,
+        });
+    }
+
+    let pos = sheet
+        .history
+        .iter()
+        .position(|v| v.id == variant_id)
+        .ok_or_else(|| ApprovalError::VariantNotFound(variant_id.get(), entity_id.get()))?;
+
+    promote_history_to_canonical(sheet, pos);
+
+    let palette_size = ensure_extracted_palette(&mut sheet.canonical, options);
+
+    Ok(Approval {
+        entity_id,
+        canonical_id: variant_id,
+        previous_canonical_id,
+        palette_size,
+    })
+}
+
+/// Swaps `history[pos]` with the canonical variant; the previous
+/// canonical lands at `history[0]` (newest first).
+fn promote_history_to_canonical(sheet: &mut ReferenceSheet, pos: usize) {
+    let new_canonical = sheet.history.remove(pos);
+    let old_canonical = std::mem::replace(&mut sheet.canonical, new_canonical);
+    sheet.history.insert(0, old_canonical);
+}
+
+/// Runs the eyedropper extractor on the variant's image bytes if the
+/// `extracted_palette` field is empty.
+///
+/// Returns the number of swatches now stored on the variant. A decode
+/// failure (corrupt bytes) falls back to `0` rather than surfacing the
+/// error: the approval should still succeed because the rest of the
+/// workflow (the canonical move) is what matters for consistency.
+fn ensure_extracted_palette(variant: &mut SheetVariant, options: ExtractionOptions) -> usize {
+    if !variant.extracted_palette.is_empty() {
+        return variant.extracted_palette.len();
+    }
+
+    let pal = extract_palette_from_image_bytes(&variant.image.bytes, options).unwrap_or_default();
+    variant.extracted_palette = pal;
+    variant.extracted_palette.len()
+}
+
+/// Sets the `anchor_reference_id` on a `Custom`-kind entity to point at
+/// a `Reference`-kind entity.
+///
+/// Pass `None` as `reference_id` to clear the anchor. This is the data
+/// half of the UX flow "use this Reference as the consistency anchor
+/// for that Custom entity"; the cache invalidation half lives in the
+/// `app` crate where the anchor cache is held.
+///
+/// # Errors
+///
+/// - [`ApprovalError::EntityNotFound`] — `entity_id` does not exist.
+/// - [`ApprovalError::NotAReference`] — `reference_id` is `Some(_)` but
+///   the target entity is not a `Reference` kind.
+pub fn set_entity_anchor(
+    project: &mut Project,
+    entity_id: EntityId,
+    reference_id: Option<EntityId>,
+) -> Result<(), ApprovalError> {
+    if let Some(rid) = reference_id {
+        let target = project
+            .library
+            .entities
+            .iter()
+            .find(|e| e.id == rid)
+            .ok_or(ApprovalError::EntityNotFound(rid.get()))?;
+        if !matches!(target.content, EntityContent::Reference { .. }) {
+            return Err(ApprovalError::NotAReference(rid.get()));
+        }
+    }
+
+    let entity = project
+        .library
+        .entities
+        .iter_mut()
+        .find(|e| e.id == entity_id)
+        .ok_or(ApprovalError::EntityNotFound(entity_id.get()))?;
+
+    // The data model only meaningfully carries `anchor_reference_id` on
+    // Custom-kind entities (those whose content is `EntityContent::Sprites`).
+    // Reference / Tileset / Tilemap kinds either are the anchor themselves
+    // or don't take part in the anchor mechanic. Reject those up-front so
+    // the field can't be left in a nonsensical state.
+    if !matches!(entity.content, EntityContent::Sprites { .. }) {
+        return Err(ApprovalError::AnchorNotAllowedForKind(entity_id.get()));
+    }
+
+    entity.anchor_reference_id = reference_id;
+    Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use std::collections::BTreeMap;
+
+    use image::{ImageBuffer, ImageFormat, RgbaImage};
+
+    use crate::project::library::{
+        AiMetadata, AssetInfo, Entity, EntityContent, EntityDefaults, EntityKind, ReferenceImage,
+        SheetComposition,
+    };
+    use crate::project::user_data::UserData;
+
+    use super::*;
+
+    fn solid_png(r: u8, g: u8, b: u8) -> Vec<u8> {
+        let img: RgbaImage = ImageBuffer::from_pixel(2, 2, image::Rgba([r, g, b, 255]));
+        let mut buf = Vec::new();
+        img.write_to(&mut std::io::Cursor::new(&mut buf), ImageFormat::Png)
+            .unwrap();
+        buf
+    }
+
+    fn variant(id: u32, png: Vec<u8>) -> SheetVariant {
+        SheetVariant {
+            id: SheetVariantId::new(id),
+            generated_at: 0,
+            image: ReferenceImage {
+                bytes: png,
+                mime: "image/png".into(),
+            },
+            composition: SheetComposition::default(),
+            generation: None,
+            extracted_palette: Vec::new(),
+        }
+    }
+
+    fn build_project_with_reference(canonical_id: u32, history_ids: &[u32]) -> Project {
+        let mut project = Project::new("approval-test");
+        let canonical = variant(canonical_id, solid_png(255, 0, 0));
+        let history: Vec<SheetVariant> = history_ids
+            .iter()
+            .copied()
+            .map(|i| variant(i, solid_png(0, u8::try_from(i & 0xFF).unwrap_or(0), 0)))
+            .collect();
+        let entity = Entity {
+            id: EntityId::new(1),
+            kind: EntityKind::Reference,
+            name: "Hero Reference".into(),
+            group_id: None,
+            tags: Vec::new(),
+            defaults: EntityDefaults::default(),
+            content: EntityContent::Reference {
+                sheet: Box::new(ReferenceSheet {
+                    canonical,
+                    history,
+                    prompts: Vec::new(),
+                    info: AssetInfo {
+                        fields: BTreeMap::new(),
+                        notes: Vec::new(),
+                    },
+                }),
+            },
+            ai: AiMetadata::default(),
+            anchor_reference_id: None,
+            user_data: UserData::default(),
+            created_at: 0,
+            updated_at: 0,
+        };
+        project.library.entities.push(entity);
+        project
+    }
+
+    #[test]
+    fn promotes_history_variant_to_canonical() {
+        let mut project = build_project_with_reference(10, &[20, 30, 40]);
+
+        let receipt = approve_sheet_variant(
+            &mut project,
+            EntityId::new(1),
+            SheetVariantId::new(30),
+            ExtractionOptions::default(),
+        )
+        .unwrap();
+
+        assert_eq!(receipt.canonical_id, SheetVariantId::new(30));
+        assert_eq!(receipt.previous_canonical_id, Some(SheetVariantId::new(10)));
+
+        let entity = &project.library.entities[0];
+        let EntityContent::Reference { sheet } = &entity.content else {
+            panic!("expected Reference content");
+        };
+        assert_eq!(sheet.canonical.id, SheetVariantId::new(30));
+        // Previous canonical is now first in history (newest first).
+        assert_eq!(sheet.history[0].id, SheetVariantId::new(10));
+        // Other history entries kept their order.
+        assert_eq!(sheet.history[1].id, SheetVariantId::new(20));
+        assert_eq!(sheet.history[2].id, SheetVariantId::new(40));
+    }
+
+    #[test]
+    fn extracts_palette_when_variant_has_none() {
+        let mut project = build_project_with_reference(1, &[2]);
+        let receipt = approve_sheet_variant(
+            &mut project,
+            EntityId::new(1),
+            SheetVariantId::new(2),
+            ExtractionOptions::default(),
+        )
+        .unwrap();
+        assert!(receipt.palette_size >= 1, "palette should have one swatch");
+
+        let entity = &project.library.entities[0];
+        let EntityContent::Reference { sheet } = &entity.content else {
+            panic!("expected Reference");
+        };
+        assert!(!sheet.canonical.extracted_palette.is_empty());
+    }
+
+    #[test]
+    fn preserves_existing_extracted_palette() {
+        use crate::project::Rgba;
+        use crate::project::palette::PaletteEntry;
+
+        let mut project = build_project_with_reference(1, &[2]);
+        // Pre-populate the to-be-canonical variant's palette.
+        if let EntityContent::Reference { sheet } = &mut project.library.entities[0].content {
+            sheet.history[0].extracted_palette = vec![PaletteEntry::new(Rgba::opaque(7, 7, 7))];
+        }
+
+        let receipt = approve_sheet_variant(
+            &mut project,
+            EntityId::new(1),
+            SheetVariantId::new(2),
+            ExtractionOptions::default(),
+        )
+        .unwrap();
+
+        let entity = &project.library.entities[0];
+        let EntityContent::Reference { sheet } = &entity.content else {
+            panic!("expected Reference");
+        };
+        assert_eq!(receipt.palette_size, 1);
+        assert_eq!(
+            sheet.canonical.extracted_palette[0].color,
+            Rgba::opaque(7, 7, 7),
+            "pre-existing palette must be preserved"
+        );
+    }
+
+    #[test]
+    fn approving_already_canonical_variant_is_idempotent() {
+        let mut project = build_project_with_reference(1, &[2]);
+        let receipt = approve_sheet_variant(
+            &mut project,
+            EntityId::new(1),
+            SheetVariantId::new(1),
+            ExtractionOptions::default(),
+        )
+        .unwrap();
+        assert_eq!(receipt.canonical_id, SheetVariantId::new(1));
+
+        let entity = &project.library.entities[0];
+        let EntityContent::Reference { sheet } = &entity.content else {
+            panic!("expected Reference");
+        };
+        assert_eq!(sheet.canonical.id, SheetVariantId::new(1));
+        assert_eq!(sheet.history.len(), 1);
+        assert_eq!(sheet.history[0].id, SheetVariantId::new(2));
+    }
+
+    #[test]
+    fn missing_entity_is_an_error() {
+        let mut project = Project::new("empty");
+        let err = approve_sheet_variant(
+            &mut project,
+            EntityId::new(99),
+            SheetVariantId::new(1),
+            ExtractionOptions::default(),
+        )
+        .unwrap_err();
+        assert_eq!(err, ApprovalError::EntityNotFound(99));
+    }
+
+    #[test]
+    fn non_reference_entity_is_an_error() {
+        let mut project = Project::new("non-ref");
+        project.library.entities.push(Entity {
+            id: EntityId::new(5),
+            kind: EntityKind::Custom("Hero".into()),
+            name: "Hero".into(),
+            group_id: None,
+            tags: Vec::new(),
+            defaults: EntityDefaults::default(),
+            content: EntityContent::Sprites { states: Vec::new() },
+            ai: AiMetadata::default(),
+            anchor_reference_id: None,
+            user_data: UserData::default(),
+            created_at: 0,
+            updated_at: 0,
+        });
+        let err = approve_sheet_variant(
+            &mut project,
+            EntityId::new(5),
+            SheetVariantId::new(1),
+            ExtractionOptions::default(),
+        )
+        .unwrap_err();
+        assert_eq!(err, ApprovalError::NotAReference(5));
+    }
+
+    #[test]
+    fn unknown_variant_id_is_an_error() {
+        let mut project = build_project_with_reference(1, &[2]);
+        let err = approve_sheet_variant(
+            &mut project,
+            EntityId::new(1),
+            SheetVariantId::new(99),
+            ExtractionOptions::default(),
+        )
+        .unwrap_err();
+        assert_eq!(err, ApprovalError::VariantNotFound(99, 1));
+    }
+
+    #[test]
+    fn corrupt_image_bytes_yield_zero_swatches_but_no_error() {
+        let mut project = build_project_with_reference(1, &[2]);
+        // Stomp the to-be-canonical's image bytes with garbage.
+        if let EntityContent::Reference { sheet } = &mut project.library.entities[0].content {
+            sheet.history[0].image.bytes = b"not a png".to_vec();
+        }
+        let receipt = approve_sheet_variant(
+            &mut project,
+            EntityId::new(1),
+            SheetVariantId::new(2),
+            ExtractionOptions::default(),
+        )
+        .unwrap();
+        assert_eq!(receipt.palette_size, 0);
+    }
+
+    #[test]
+    fn set_entity_anchor_assigns_pointer() {
+        let mut project = build_project_with_reference(1, &[]);
+        // Add a Custom entity that will get the anchor.
+        project.library.entities.push(Entity {
+            id: EntityId::new(2),
+            kind: EntityKind::Custom("Hero".into()),
+            name: "Hero".into(),
+            group_id: None,
+            tags: Vec::new(),
+            defaults: EntityDefaults::default(),
+            content: EntityContent::Sprites { states: Vec::new() },
+            ai: AiMetadata::default(),
+            anchor_reference_id: None,
+            user_data: UserData::default(),
+            created_at: 0,
+            updated_at: 0,
+        });
+
+        set_entity_anchor(&mut project, EntityId::new(2), Some(EntityId::new(1))).unwrap();
+        let hero = project
+            .library
+            .entities
+            .iter()
+            .find(|e| e.id == EntityId::new(2))
+            .unwrap();
+        assert_eq!(hero.anchor_reference_id, Some(EntityId::new(1)));
+    }
+
+    #[test]
+    fn set_entity_anchor_clears_when_none() {
+        let mut project = build_project_with_reference(1, &[]);
+        project.library.entities.push(Entity {
+            id: EntityId::new(2),
+            kind: EntityKind::Custom("Hero".into()),
+            name: "Hero".into(),
+            group_id: None,
+            tags: Vec::new(),
+            defaults: EntityDefaults::default(),
+            content: EntityContent::Sprites { states: Vec::new() },
+            ai: AiMetadata::default(),
+            anchor_reference_id: Some(EntityId::new(1)),
+            user_data: UserData::default(),
+            created_at: 0,
+            updated_at: 0,
+        });
+        set_entity_anchor(&mut project, EntityId::new(2), None).unwrap();
+        let hero = project
+            .library
+            .entities
+            .iter()
+            .find(|e| e.id == EntityId::new(2))
+            .unwrap();
+        assert_eq!(hero.anchor_reference_id, None);
+    }
+
+    #[test]
+    fn set_entity_anchor_rejects_non_reference_target() {
+        let mut project = Project::new("set-anchor");
+        project.library.entities.push(Entity {
+            id: EntityId::new(1),
+            kind: EntityKind::Custom("Hero".into()),
+            name: "Hero".into(),
+            group_id: None,
+            tags: Vec::new(),
+            defaults: EntityDefaults::default(),
+            content: EntityContent::Sprites { states: Vec::new() },
+            ai: AiMetadata::default(),
+            anchor_reference_id: None,
+            user_data: UserData::default(),
+            created_at: 0,
+            updated_at: 0,
+        });
+        // Make a non-reference target.
+        project.library.entities.push(Entity {
+            id: EntityId::new(2),
+            kind: EntityKind::Custom("Other".into()),
+            name: "Other".into(),
+            group_id: None,
+            tags: Vec::new(),
+            defaults: EntityDefaults::default(),
+            content: EntityContent::Sprites { states: Vec::new() },
+            ai: AiMetadata::default(),
+            anchor_reference_id: None,
+            user_data: UserData::default(),
+            created_at: 0,
+            updated_at: 0,
+        });
+        let err =
+            set_entity_anchor(&mut project, EntityId::new(1), Some(EntityId::new(2))).unwrap_err();
+        assert_eq!(err, ApprovalError::NotAReference(2));
+    }
+
+    #[test]
+    fn set_entity_anchor_rejects_non_custom_source() {
+        // Reference / Tileset / Tilemap entities don't carry a meaningful
+        // `anchor_reference_id`. Anchoring those should fail.
+        //
+        // Reuse the Reference-entity fixture and try to anchor the
+        // Reference itself (its content is `EntityContent::Reference`,
+        // not `Sprites`, so the new kind check fires). `reference_id`
+        // is `None` to skip the target-kind check and isolate this one.
+        let mut project = build_project_with_reference(10, &[]);
+        let source = project.library.entities[0].id;
+        let err = set_entity_anchor(&mut project, source, None).unwrap_err();
+        assert_eq!(err, ApprovalError::AnchorNotAllowedForKind(source.get()));
+    }
+}

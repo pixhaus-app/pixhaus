@@ -263,6 +263,10 @@ impl Verb for ProjectStyleLearningVerb {
         progress: VerbProgress,
         cancel: CancellationToken,
     ) -> Result<VerbOutput> {
+        // B10.3 anchor: this verb intentionally ignores `ctx.anchor`.
+        // This verb PRODUCES the project LoRA that anchors then consume.
+        // Reading `ctx.anchor` here would be circular — the anchor's
+        // `lora_path` is the eventual output of this verb.
         let started = std::time::Instant::now();
         let inputs: StyleLearningInputs = inputs.deserialize_owned()?;
 
