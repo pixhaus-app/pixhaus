@@ -347,7 +347,13 @@ export function libraryTrainEntityLora(
  */
 export type AnchorPayload = {
   reference_entity_id: EntityId;
-  canonical_hash: number;
+  // `canonical_hash` is intentionally omitted from this type. It exists
+  // on the Rust side as a u64 FNV-1a (ai/src/plugin/anchor.rs:46) used
+  // by the host's anchor cache. u64 values past 2^53 - 1 lose precision
+  // when serde routes them through a JS number, so exposing the field
+  // here would mislead any consumer that relied on its exact value. If
+  // UI code ever needs the hash, re-add it as a `string` and pair with
+  // a matching `serialize_with` on the Rust struct.
   mime: string;
   image_bytes: number[];
   image_b64: string;

@@ -876,6 +876,16 @@ const AnchorBadge: Component<AnchorBadgeProps> = (props) => {
   const [showPopover, setShowPopover] = createSignal(false);
   const [payload, setPayload] = createSignal<AnchorPayload | null>(null);
   let hoverTimer: ReturnType<typeof setTimeout> | null = null;
+  // Stale-resolve guard: bumped on every hover transition and on cleanup.
+  // The mouse-leave handler clears the debounce timer but can't cancel an
+  // already-in-flight IPC, so a late `.then` would otherwise show a ghost
+  // tooltip with no cursor nearby. Matches the refreshToken pattern at
+  // library-state.ts:121-133.
+  let hoverToken = 0;
+
+  function invalidateHover(): void {
+    hoverToken += 1;
+  }
 
   function clearTimer(): void {
     if (hoverTimer !== null) {
@@ -886,6 +896,8 @@ const AnchorBadge: Component<AnchorBadgeProps> = (props) => {
 
   function handleMouseEnter(): void {
     clearTimer();
+    invalidateHover();
+    const myToken = hoverToken;
     // Snapshot the entity id before the debounce; the row could be
     // re-keyed under us if the list reorders during the 250ms window
     // and we don't want a late resolve to clobber the wrong tooltip.
@@ -893,6 +905,7 @@ const AnchorBadge: Component<AnchorBadgeProps> = (props) => {
     hoverTimer = setTimeout(() => {
       libraryGetAnchorPayload(entityId)
         .then((p) => {
+          if (myToken !== hoverToken) return;
           setPayload(p);
           setShowPopover(true);
         })
@@ -902,10 +915,14 @@ const AnchorBadge: Component<AnchorBadgeProps> = (props) => {
 
   function handleMouseLeave(): void {
     clearTimer();
+    invalidateHover();
     setShowPopover(false);
   }
 
-  onCleanup(() => clearTimer());
+  onCleanup(() => {
+    clearTimer();
+    invalidateHover();
+  });
 
   return (
     <Show when={isVisible()}>

@@ -16,11 +16,7 @@ vi.mock("../ipc", () => ({
   invoke: (cmd: string, args?: unknown) => invokeMock(cmd, args),
 }));
 
-import {
-  libraryGetAnchorPayload,
-  librarySetEntityAnchor,
-  type AnchorPayload,
-} from "./library";
+import { libraryGetAnchorPayload, librarySetEntityAnchor, type AnchorPayload } from "./library";
 import type { EntityId } from "../types";
 
 const ENTITY: EntityId = 42 as unknown as EntityId;
@@ -54,7 +50,9 @@ describe("libraryGetAnchorPayload", () => {
   it("sends entity_id and returns the resolved payload", async () => {
     const payload: AnchorPayload = {
       reference_entity_id: REFERENCE,
-      canonical_hash: 0xdeadbeef,
+      // canonical_hash is intentionally not declared on AnchorPayload; the
+      // Rust u64 doesn't survive JS-number precision. See the type comment
+      // in library.ts.
       mime: "image/png",
       image_bytes: [0, 1, 2, 3],
       image_b64: "AAECAw==",
