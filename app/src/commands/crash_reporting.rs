@@ -44,7 +44,7 @@ mod tests {
     fn get_enabled_returns_current_state() {
         let _lock = crash_reporting::TEST_LOCK
             .lock()
-            .unwrap_or_else(|p| p.into_inner());
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         let _guard = EnabledGuard(crash_reporting::is_enabled());
         crash_reporting::set_enabled(false);
         assert!(!crash_reporting_get_enabled());
@@ -54,7 +54,7 @@ mod tests {
     fn set_enabled_round_trips() {
         let _lock = crash_reporting::TEST_LOCK
             .lock()
-            .unwrap_or_else(|p| p.into_inner());
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         let _guard = EnabledGuard(crash_reporting::is_enabled());
         crash_reporting::set_enabled(false);
         crash_reporting_set_enabled(true);

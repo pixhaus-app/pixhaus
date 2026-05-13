@@ -304,7 +304,9 @@ mod tests {
 
     #[test]
     fn is_enabled_reflects_set_enabled() {
-        let _lock = TEST_LOCK.lock().unwrap_or_else(|p| p.into_inner());
+        let _lock = TEST_LOCK
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         // Save the prior state to restore after the test.
         let prior = is_enabled();
         set_enabled(true);
