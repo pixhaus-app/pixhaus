@@ -78,6 +78,7 @@ Expect:
   - [DOM] dialog closes.
   - [STATE] `crashReportingEnabled` signal is `false`.
   - [STATE] `crashReportingDialogShown` is `true` (dialog won't reappear next launch).
+  - [IPC] one `crash_reporting_set_enabled { enabled: false }` writes the choice to the backend file. Symmetric on "Yes, send crash reports" (`enabled: true`).
 
 ### T-launch-003: Welcome screen renders with all sections
 
@@ -89,6 +90,36 @@ Expect:
   - [DOM] two primary buttons: "New Project" and "Open Project...".
   - [DOM] a "Samples" section listing the 5 bundled samples (see section 2).
   - [DOM] a "Recent" section appears only if recent projects exist (empty on fresh profile).
+
+### T-launch-004: Crash-reporting consent persists across launches (PR #183)
+
+The Rust side is the source of truth: the answer is written to `<config-dir>/pixhaus/crash_reporting.txt` and re-read at boot via `crash_reporting::init()`. localStorage is a write-through cache, not the persistence layer — wiping it must not resurrect the dialog.
+
+Pre: T-launch-002 has been completed on this profile (consent declined). Identify the config dir for your platform — `~/Library/Application Support/pixhaus/` on macOS, `~/.config/pixhaus/` on Linux, `%APPDATA%\pixhaus\` on Windows.
+Steps:
+  1. Quit the app.
+  2. In devtools (or via the OS), delete the localStorage keys `pixhaus:crash-reporting-enabled` and `pixhaus:crash-reporting-dialog-shown`. Leave `crash_reporting.txt` in place.
+  3. `pnpm dev`.
+Expect:
+  - [DOM] the first-launch consent dialog does NOT reappear.
+  - [STATE] `crashReportingEnabled` is `false`, hydrated from the backend file before Sentry initialises.
+  - [IPC] one `crash_reporting_get_enabled` fires during boot, before `initCrashReporting` / `setSentryEnabled` run (the boot order in `ui/src/shell/Shell.tsx` is `hydrateCrashReportingFromBackend()` → `initCrashReporting` → `setSentryEnabled`; reversing this re-introduces the bug PR #183 fixed).
+  - The file `<config-dir>/pixhaus/crash_reporting.txt` exists and contains the persisted value.
+
+> **Regression guard:** before PR #183 the in-memory `AtomicBool` defaulted to `false` every boot and localStorage was the only persistent record. If wiping localStorage causes the dialog to reappear, the backend has stopped persisting.
+
+### T-launch-005: User toggle during the hydration window wins (PR #183)
+
+The `crashReportingUserTouched` race guard in `preferences-store.ts` ensures that a Preferences toggle fired before the boot IPC resolves is not clobbered by the late-arriving hydrated value.
+
+Pre: project open. CPU throttle enabled in devtools (4× or slower) so hydration is observably in flight.
+Steps:
+  1. Reload the window.
+  2. Open Preferences → Privacy.
+  3. Flip the toggle before the hydrated value lands.
+Expect:
+  - [STATE] final `crashReportingEnabled` matches the click, not the value returned by `crash_reporting_get_enabled`.
+  - [IPC] one `crash_reporting_set_enabled` fires with the user's chosen value; the late-resolving `crash_reporting_get_enabled` is discarded by the hydrator.
 
 ---
 
@@ -1129,10 +1160,10 @@ The live e2e harness binds these IDs in `tests/e2e/specs/window.e2e.ts:99-115`. 
 Steps:
   1. Command palette → "Preferences" or `Ctrl+,`.
 Expect:
-  - [DOM] preferences modal opens. Tabs: General, Keybinds, etc.
+  - [DOM] preferences modal opens (`role="dialog"`, `aria-label="Preferences"`). Tab strip in order: **General**, **Keybinds**, **AI Backend**, **Plugins**, **Privacy**.
   - Closing via Escape or close button restores the editor focus.
 
-(Matches `tests/e2e/specs/window.e2e.ts:115`.)
+(Matches `tests/e2e/specs/window.e2e.ts:115`.) The Plugins tab gets its own scenario in T-window-008; T-window-005 stays the generic open/close smoke.
 
 ### T-window-006: Toggle the reference sheet panel
 
@@ -1156,6 +1187,28 @@ Expect:
   - [STATE] step 3: `setLibraryPanelVisible(false)` runs (`LibraryPanel.tsx:173-189`). The panel disappears.
   - **Once hidden, there is no in-app way to re-show the library panel.** Reopening requires either a code change or `setLibraryPanelVisible(true)` from devtools. Tracked as a stub in section 17.
 
+### T-window-008: Preferences > Plugins tab (PR #184)
+
+The Plugins tab wraps the four `plugin_*` IPCs and lists every plugin discovered at startup. The PluginInfo wire shape is exactly `{ name, version, description?, author?, dir, verb_count }` (`plugins/src/registry.rs:49-65`) — `capabilities` and `source_path` are not on the wire.
+
+Pre: project open. At least one plugin discoverable in the plugins directory (the bundled samples under `plugins/` work, or the e2e fixture).
+Steps:
+  1. Command palette → "Preferences" → click the **Plugins** tab.
+  2. Click **Rescan plugins**.
+  3. Click **Reload** on a plugin row.
+  4. Click **Unload** on the same row → an inline "Confirm unload?" prompt with **Yes** / **Cancel** replaces the row's button strip. Click **Yes**.
+  5. Re-open Preferences → Plugins → click **Unload** on another row → click **Cancel** on the confirm strip.
+Expect:
+  - [DOM] each row renders `<strong>{name}</strong> v{version}`, the absolute `dir` path beneath it, and a line `{verb_count} verb(s) — {description}` when description is present (the dash and description are omitted when description is absent).
+  - [IPC] step 1 fires one `plugin_list` on tab mount.
+  - [IPC] step 2 fires one `plugin_scan` then one `plugin_list`; an info toast titled "Plugins rescanned" with body `${count} loaded` surfaces.
+  - [IPC] step 3 fires one `plugin_reload { name }` then one `plugin_list`; an info toast titled "Plugin reloaded" / body `<name>` surfaces.
+  - [IPC] step 4 fires one `plugin_unload { name }` then one `plugin_list`; an info toast titled "Plugin unloaded" / body `<name>` surfaces; the row disappears.
+  - [IPC] step 5 fires no IPC. Cancel returns the row to the Reload/Unload buttons; row state untouched.
+  - [DOM] every action button is `disabled` while any in-flight call is running (the busy signal gates all rows, not just the active one).
+
+> **Failure surface:** backend `Validation` errors are routed through `reportCommandFailure`, so the toast carries the structured `detail` field unchanged. If a row's Unload returns a Tauri error and the toast contains a generic stringified error rather than the backend's `detail`, the error-handling wiring regressed.
+
 ---
 
 ## 15. Help
@@ -1176,6 +1229,26 @@ Expect:
   - A browser tab opens at `https://pixhaus.app/docs`.
 
 Note: in dev builds without the `tauri-plugin-shell`, this falls back to `window.open`. Either path is acceptable for the test.
+
+### T-help-003: Help > Check for updates (PR #186)
+
+Wraps `updater_check` and `updater_install`. The UI surface is the `UpdateAvailableModal` mounted from `Shell.tsx`; the routing lives at command-registry id `help:check-updates`. The native Help menu wires the same id (`app/src/menu.rs:311-322`). The `UpdateInfo` wire shape is `{ version, body?, date? }` (`app/src/commands/updater.rs:44-51`).
+
+Pre: project open.
+Steps:
+  1. Trigger the check via either Help menu → **Check for Updates...** (native menu, fires `shell:menu` event with payload `help:check-updates`) or command palette → "Check for Updates...".
+  2. Wait for the verb to resolve.
+  3. (Update available only) Click **Install and restart**.
+Expect:
+  - [IPC] step 1 fires exactly one `updater_check`.
+  - When the feed reports no update: a single toast (no modal). The matching `[STATE]` is `showUpdateModal === false` throughout.
+  - When the feed reports an update:
+    - [DOM] `data-testid="update-modal-backdrop"` + `data-testid="update-modal"` mount. Title reads `Pixhaus <version> is available`. Release notes render in a `<pre>` when `body` is present; "Released <date>" appears when `date` is present.
+    - [DOM] footer contains **Remind me later** and `data-testid="update-modal-install"` (label "Install and restart").
+    - [IPC] step 3 fires one `updater_install`. On platforms where install completes without auto-restart (Linux AppImage, some Windows MSI flows) the modal closes and a sticky success toast titled "Update staged" / body "Restart Pixhaus to finish installing." surfaces.
+    - Escape closes the modal while idle; both Escape and the **x** button are disabled while `installing()` is true (the user cannot cancel an in-flight install).
+
+> **Manual sweep note:** hitting the real feed requires an actual release on the configured updater endpoint. The e2e harness should mock `updater_check` via the existing `tests/e2e/helpers/ipc.ts` capture-and-respond surface to drive both the "no update" and "update available" branches deterministically.
 
 ---
 
