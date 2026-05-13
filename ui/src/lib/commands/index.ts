@@ -5,6 +5,7 @@
 // rejects with `AppCommandError` from `../types`.
 
 export * from "./canvas";
+export * from "./crash-reporting";
 export * from "./exports";
 export * from "./frames";
 export * from "./layers";

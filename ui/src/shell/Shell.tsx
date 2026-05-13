@@ -22,6 +22,7 @@ import {
   crashReportingDialogShown,
   crashReportingEnabled,
   crashReportingUid,
+  hydrateCrashReportingFromBackend,
   setCrashReportingEnabled,
   markCrashReportingDialogShown,
 } from "../preferences/preferences-store";
@@ -48,12 +49,30 @@ const Shell: Component = () => {
   installTilemapCtxSync();
 
   onMount(() => {
-    // Initialise JS-layer crash reporting and sync the Rust-side gate so
-    // both honour the persisted preference; without the second call the
-    // Rust panic hook drops events until the user re-interacts with the
-    // dialog. Fire-and-forget — setSentryEnabled handles IPC errors.
-    initCrashReporting({ enabled: crashReportingEnabled(), uid: crashReportingUid });
-    setSentryEnabled(crashReportingEnabled());
+    // Resolve the authoritative crash-reporting value from the backend
+    // before initialising Sentry. The backend persists the choice to disk
+    // (`app/src/crash_reporting.rs`), so this read returns the user's real
+    // preference across restarts rather than the in-memory Rust default.
+    // localStorage is just a cache — it might disagree with the backend
+    // if it was cleared, copied between machines, etc.
+    //
+    // Sentry isn't capturing during the IPC window (~10ms). The menu
+    // listener and keybinds below register synchronously so user input is
+    // never lost.
+    hydrateCrashReportingFromBackend()
+      .then((resolved) => {
+        initCrashReporting({ enabled: resolved, uid: crashReportingUid });
+        setSentryEnabled(resolved);
+      })
+      .catch((err: unknown) => {
+        // Hydrator already falls back to localStorage and logs the
+        // failure, so this catch is unreachable in practice. Belt-and-
+        // braces: init Sentry from the localStorage-seeded signal so the
+        // panic hook is wired up regardless of IPC health.
+        console.error("[pixhaus] crash-reporting boot failed:", err);
+        initCrashReporting({ enabled: crashReportingEnabled(), uid: crashReportingUid });
+        setSentryEnabled(crashReportingEnabled());
+      });
 
     // Forward native menu events to the command dispatcher
     const menuListenerPromise = listen<string>("shell:menu", (event) => {
