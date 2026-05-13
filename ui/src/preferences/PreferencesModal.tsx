@@ -1,5 +1,6 @@
 import { createMemo, createSignal, For, type Component } from "solid-js";
 import { closePreferences } from "./preferences-state";
+import PluginsTab from "./PluginsTab";
 import {
   theme,
   setTheme,
@@ -15,7 +16,7 @@ import {
 import { setCrashReportingEnabled as setSentryEnabled } from "../crash-reporting/crash-reporting";
 import { getAllCommands } from "../command-palette/command-registry";
 
-type Tab = "general" | "keybinds" | "ai" | "privacy";
+type Tab = "general" | "keybinds" | "ai" | "plugins" | "privacy";
 
 const PreferencesModal: Component = () => {
   const [activeTab, setActiveTab] = createSignal<Tab>("general");
@@ -71,6 +72,14 @@ const PreferencesModal: Component = () => {
           <button
             class="prefs__tab"
             role="tab"
+            aria-selected={activeTab() === "plugins"}
+            onClick={() => setActiveTab("plugins")}
+          >
+            Plugins
+          </button>
+          <button
+            class="prefs__tab"
+            role="tab"
             aria-selected={activeTab() === "privacy"}
             onClick={() => setActiveTab("privacy")}
           >
@@ -82,6 +91,7 @@ const PreferencesModal: Component = () => {
           {activeTab() === "general" && <GeneralTab />}
           {activeTab() === "keybinds" && <KeybindsTab />}
           {activeTab() === "ai" && <AiTab />}
+          {activeTab() === "plugins" && <PluginsTab />}
           {activeTab() === "privacy" && <PrivacyTab />}
         </div>
 

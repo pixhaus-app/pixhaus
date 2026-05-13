@@ -11,6 +11,7 @@ export * from "./frames";
 export * from "./layers";
 export * from "./library";
 export * from "./palette";
+export * from "./plugins";
 export * from "./project";
 export * from "./tiles";
 export * from "./tilesets";
