@@ -14,4 +14,5 @@ export * from "./project";
 export * from "./tiles";
 export * from "./tilesets";
 export * from "./undo";
+export * from "./updater";
 export * from "./verbs";

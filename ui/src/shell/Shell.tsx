@@ -9,6 +9,7 @@ import { setupKeybindManager } from "../keybinds/keybind-manager";
 import CommandPalette from "../command-palette/CommandPalette";
 import PreferencesModal from "../preferences/PreferencesModal";
 import ToastHost from "../lib/toast/ToastHost";
+import UpdateAvailableModal from "./UpdateAvailableModal";
 import VerbInvokeHost from "../lib/ai/VerbInvokeHost";
 import StatusBar from "./StatusBar";
 import WelcomeScreen from "./WelcomeScreen";
@@ -124,6 +125,8 @@ const Shell: Component = () => {
       <Show when={isPreferencesOpen()}>
         <PreferencesModal />
       </Show>
+
+      <UpdateAvailableModal />
 
       <VerbInvokeHost />
       <ToastHost />
