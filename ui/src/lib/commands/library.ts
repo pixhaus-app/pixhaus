@@ -16,7 +16,9 @@ import type {
   EntityKind,
   GroupId,
   NamedSprite,
+  PaletteEntry,
   Rgba,
+  SheetComposition,
   SheetVariantId,
   TagDefinition,
   TagId,
@@ -327,4 +329,69 @@ export function libraryTrainEntityLora(
     entity_id,
     options: options ?? null,
   });
+}
+
+// ── B10.3: entity anchor wiring ───────────────────────────────────────────────
+
+/**
+ * Resolved anchor payload returned by [`libraryGetAnchorPayload`].
+ *
+ * Mirrors the Rust `pixhaus_ai::plugin::anchor::AnchorPayload` shape. The
+ * `image_bytes` field is a `Vec<u8>` on the Rust side and arrives as a
+ * `number[]` over the Tauri IPC bridge; UI code that wants to render the
+ * image generally prefers the pre-encoded `image_b64` string.
+ *
+ * Defined here rather than under `lib/types/` because the `pixhaus-ai`
+ * crate does not currently emit ts-rs bindings; if it ever does, swap
+ * this declaration for the generated barrel re-export in one step.
+ */
+export type AnchorPayload = {
+  reference_entity_id: EntityId;
+  // `canonical_hash` is intentionally omitted from this type. It exists
+  // on the Rust side as a u64 FNV-1a (ai/src/plugin/anchor.rs:46) used
+  // by the host's anchor cache. u64 values past 2^53 - 1 lose precision
+  // when serde routes them through a JS number, so exposing the field
+  // here would mislead any consumer that relied on its exact value. If
+  // UI code ever needs the hash, re-add it as a `string` and pair with
+  // a matching `serialize_with` on the Rust struct.
+  mime: string;
+  image_bytes: number[];
+  image_b64: string;
+  palette: PaletteEntry[];
+  composition: SheetComposition;
+  lora_path: string | null;
+  strength: number;
+};
+
+/**
+ * Sets or clears the anchor reference on an entity.
+ *
+ * Pass a `Reference`-kind entity id to anchor `entity_id` on it, or pass
+ * `null` to clear the existing anchor. The host evicts the cached
+ * `AnchorPayload` for the affected reference; the next
+ * [`libraryGetAnchorPayload`] call rebuilds it.
+ *
+ * The IPC accepts the call against any entity kind, but only `Custom`
+ * entities are expected to carry an anchor in practice — `Reference`
+ * entities are themselves the anchor source.
+ */
+export function librarySetEntityAnchor(
+  entity_id: EntityId,
+  reference_id: EntityId | null,
+): Promise<void> {
+  return invoke<void>("library_set_entity_anchor", { entity_id, reference_id });
+}
+
+/**
+ * Returns the resolved [`AnchorPayload`] for an entity, or `null` when
+ * the entity has no anchor.
+ *
+ * For `Custom` entities the host follows `entity.anchor_reference_id`
+ * to the underlying `Reference` and resolves its canonical sheet. For
+ * `Reference` entities the host returns the entity's own canonical
+ * sheet directly. Cache hits are decided by the canonical-sheet hash;
+ * the wrapper itself does no client-side caching.
+ */
+export function libraryGetAnchorPayload(entity_id: EntityId): Promise<AnchorPayload | null> {
+  return invoke<AnchorPayload | null>("library_get_anchor_payload", { entity_id });
 }

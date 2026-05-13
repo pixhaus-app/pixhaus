@@ -4021,6 +4021,38 @@ body {
   color: var(--danger, var(--accent));
 }
 
+.library-row__anchor-badge {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 14px;
+  height: 14px;
+  flex-shrink: 0;
+  color: var(--accent);
+  cursor: help;
+}
+
+.library-row__anchor-tooltip {
+  position: absolute;
+  top: 18px;
+  left: 0;
+  z-index: 10;
+  padding: 4px;
+  background: var(--bg-elevated, var(--bg-base));
+  border: 1px solid var(--accent-border);
+  border-radius: 4px;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
+  pointer-events: none;
+}
+
+.library-row__anchor-tooltip-img {
+  display: block;
+  max-width: 160px;
+  max-height: 160px;
+  image-rendering: pixelated;
+}
+
 .library-row__rename-input {
   flex: 1;
   min-width: 0;

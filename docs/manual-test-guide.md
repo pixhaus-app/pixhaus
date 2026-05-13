@@ -917,14 +917,25 @@ Expect:
 
 > **Out of scope for this scenario:** manual tag CRUD (add tag, delete tag, untag entity from the row) is filed against a future Category B PR. T-library-006 covers only the auto-tag accept/reject and corpus-refresh surface.
 
-### T-library-007: Anchor wiring — DEFERRED
+### T-library-007: Anchor wiring (B10.3)
 
-`library_set_entity_anchor` and `library_get_anchor_payload` exist as
-IPCs but no UI affordance sets or surfaces an anchor today. The AI verb
-runtime resolves anchors server-side via stored entity metadata, not via
-a user-driven UI flow. Tracked as a stub in section 17. ID reserved — do
-not reassign; rewrite this entry when a "Set anchor reference" control
-ships.
+Pre: at least one Reference entity (`hero-sheet`) with an approved canonical sheet and one Custom entity (`hero`) in the library. Both are visible in the library tree.
+Steps:
+  1. Right-click the Custom entity row → context menu shows "Set as anchor reference". Click it.
+  2. In the "Set anchor reference" modal, the `<select>` lists every Reference entity. Pick `hero-sheet` and confirm.
+  3. The entity row redraws with a small anchor badge before the kind icon.
+  4. Hover the badge (hold for ~250ms) → a small tooltip-style popover renders the resolved canonical sheet image.
+  5. Right-click the same row → the menu item now reads "Clear anchor reference". Click it.
+  6. The badge disappears.
+Expect:
+  - [DOM] step 1 shows the menu item with `data-testid="ctx-menu-set-anchor"`.
+  - [DOM] step 3 renders `data-testid="library-row-anchor-<entity-id>"` before the kind icon on the Custom row. The same badge is always visible on Reference rows (they are themselves the anchor source).
+  - [DOM] step 4 mounts `data-testid="library-row-anchor-tooltip-<entity-id>"` containing an `<img>` with a `data:` URL built from the IPC payload.
+  - [IPC] step 2 fires `library_set_entity_anchor { entity_id: <custom-id>, reference_id: <reference-id> }` followed by the standard `library_list_entities` refresh.
+  - [IPC] step 4 fires `library_get_anchor_payload { entity_id: <custom-id> }`. Repeat hovers within the same session reuse the backend's anchor cache (no payload re-encoding).
+  - [IPC] step 5 fires `library_set_entity_anchor { entity_id: <custom-id>, reference_id: null }`.
+
+> **Out of scope:** picking the anchor via drag-and-drop, setting anchor strength from the UI, and surfacing the per-entity LoRA path on the tooltip are filed against follow-up PRs. The picker modal uses a flat `<select>` and is intentionally minimal — the IPC contract is what this PR validates.
 
 ### T-library-008: Aseprite round-trip preserves library metadata (B9.5)
 
@@ -1217,7 +1228,6 @@ These are deliberate gaps. Do not file bugs against them — file follow-ups ins
 - **Env-driven verb mock toggle**: there is NO `PIXHAUS_AI_MOCK` or equivalent environment variable wired into `ai/src/runtime/` today. The only mock infrastructure is `window.__PIXHAUS_MOCK__` in `tests/visual/helpers/tauri-mock.ts`, which is scoped to the visual-test harness — not usable for manual `pnpm dev` sessions. Follow-up: wire an env-driven short-circuit that returns deterministic mock output for every built-in verb so manual sweeps of T-refsheet-* and T-cmd-005 don't require a real backend.
 - **`window:toggle-library` palette command**: every other panel (layers, timeline, palette, tilemap, sheet) registers a `window:toggle-*` id in `ui/src/command-palette/command-registry.ts`. The library does not, and the native Window menu (`app/src/menu.rs:293-303`) only toggles layers/timeline/palette. Once the panel's close button fires `setLibraryPanelVisible(false)` there is no in-app way to re-show it. Follow-up: register `window:toggle-library` AND add a Window-menu entry.
 - **Manual tag CRUD UI**: the IPCs `library_add_tag` and `library_delete_tag` (and `library_untag_entity` from the row chip) are registered but unused — there is no "Add tag" input or chip-untag affordance on the library row. The auto-tag accept/reject surface is wired (T-library-006); manual tag management is filed for a follow-up Category B PR.
-- **Library anchor wiring UI**: `library_set_entity_anchor` and `library_get_anchor_payload` are registered but unused in `ui/src/`. There is no "Set anchor reference" context-menu item; the AI verb runtime resolves anchors server-side via stored entity metadata. T-library-007 is reserved.
 - **`ai:generate-reference-sheet` palette command**: the verb itself works, but it has no command-palette entry. It is reachable only via the "Generate variant" button in the reference sheet panel (T-refsheet-002). Follow-up: register the palette command so verb sweeps can use the same `T-cmd-005`-style flow as `ai:cleanup`.
 - **Per-entity LoRA training latency**: a real training run (Replicate) takes 15–30 minutes per entity. T-refsheet-005 is impractical for routine manual sweeps without the env-driven mock toggle above.
 - **Line tool real-time preview**: the line currently only paints on release. Real-time preview needs a separate "anchor + cursor" pipeline — out of scope for PR #104.

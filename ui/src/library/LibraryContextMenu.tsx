@@ -4,7 +4,7 @@
 
 import { type Component, Show, createEffect, onCleanup } from "solid-js";
 import { confirm } from "../lib/dialog";
-import { libraryAutoTagEntity } from "../lib/commands/library";
+import { libraryAutoTagEntity, librarySetEntityAnchor } from "../lib/commands/library";
 import { pushToast } from "../lib/toast/toast-state";
 import { reportCommandFailure } from "../lib/utils/errors";
 import type { Entity, EntityGroup, EntityId, GroupId } from "../lib/types";
@@ -43,6 +43,7 @@ type Props = {
   onAddState: (entityId: EntityId) => void;
   onMoveToGroup: (entityId: EntityId) => void;
   onCreateGroup: () => void;
+  onPickAnchor: (entityId: EntityId) => void;
 };
 
 const LibraryContextMenu: Component<Props> = (props) => {
@@ -89,6 +90,26 @@ const LibraryContextMenu: Component<Props> = (props) => {
     const k = targetEntity()?.kind.kind;
     return k === "Custom" || k === "Reference";
   };
+
+  // The anchor IPC stores a `Custom`-entity → `Reference`-entity pointer.
+  // We surface the action on Custom rows only — a Reference entity is
+  // itself the anchor source and the IPC against it is a no-op in
+  // practice. Tilesets and Tilemaps are out of scope per B10.3.
+  const isAnchorable = () => targetEntity()?.kind.kind === "Custom";
+  const hasAnchor = () => {
+    const e = targetEntity();
+    if (!e) return false;
+    return e.anchor_reference_id !== null && e.anchor_reference_id !== undefined;
+  };
+
+  function handleClearAnchor(entityId: EntityId): void {
+    librarySetEntityAnchor(entityId, null)
+      .then(() => {
+        refreshLibrary();
+        pushToast({ kind: "success", title: "Anchor reference cleared." });
+      })
+      .catch((err: unknown) => reportCommandFailure("library_set_entity_anchor", err));
+  }
 
   function handleSuggestTags(entityId: EntityId): void {
     pushToast({ kind: "info", title: "Auto-tagging…" });
@@ -190,6 +211,24 @@ const LibraryContextMenu: Component<Props> = (props) => {
               }}
             >
               Suggest tags
+            </button>
+          </Show>
+
+          <Show when={isAnchorable()}>
+            <button
+              class="ctx-menu__item"
+              data-testid="ctx-menu-set-anchor"
+              onClick={() => {
+                const t = props.target as EntityContextTarget;
+                if (hasAnchor()) {
+                  handleClearAnchor(t.entityId);
+                } else {
+                  props.onPickAnchor(t.entityId);
+                }
+                props.onClose();
+              }}
+            >
+              {hasAnchor() ? "Clear anchor reference" : "Set as anchor reference"}
             </button>
           </Show>
 
