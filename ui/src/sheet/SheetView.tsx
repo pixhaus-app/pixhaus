@@ -15,12 +15,12 @@ import type {
   SheetVariant,
 } from "../lib/types";
 import {
-  libraryApproveSheetVariant,
   libraryDeleteSheetVariant,
   libraryGetEntity,
   libraryTrainEntityLora,
   libraryUpdateAssetInfo,
 } from "../lib/commands/library";
+import { approveSheetVariantAndRefreshCorpus } from "../library/library-state";
 import { verbList } from "../lib/commands/verbs";
 import { getCachedVerbList, setActiveVerb, setPendingPrefill } from "../lib/ai/verb-invoke-state";
 import { pushToast } from "../lib/toast/toast-state";
@@ -194,7 +194,7 @@ const SheetView: Component = () => {
   function handleApprove(variant: SheetVariant): void {
     const e = entity();
     if (e === null) return;
-    libraryApproveSheetVariant(e.id, variant.id)
+    approveSheetVariantAndRefreshCorpus(e.id, variant.id)
       .then((updated) => {
         setEntity(updated);
         setPreviewVariant(null);

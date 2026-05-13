@@ -15,7 +15,9 @@ import {
   createSignal,
   onCleanup,
 } from "solid-js";
-import type { Entity, EntityId, GroupId, StateId } from "../lib/types";
+import type { Entity, EntityId, GroupId, StateId, TagDefinition, TagId } from "../lib/types";
+import { libraryAcceptSuggestedTag, libraryRejectSuggestedTag } from "../lib/commands/library";
+import { reportCommandFailure } from "../lib/utils/errors";
 import {
   addStateToEntity,
   beginEntityRename,
@@ -35,7 +37,9 @@ import {
   isGroupExpanded,
   kindFilter,
   moveEntityToGroup,
+  pendingTagSuggestions,
   refreshLibrary,
+  removePendingSuggestion,
   renamingTarget,
   reorderEntity,
   searchQuery,
@@ -736,6 +740,7 @@ const EntityRow: Component<EntityRowProps> = (props) => {
               {(props.entry.entity.kind as { kind: "Custom"; value: string }).value}
             </span>
           </Show>
+          <TagChips entity={props.entry.entity} />
         </Show>
       </div>
 
@@ -754,6 +759,116 @@ const EntityRow: Component<EntityRowProps> = (props) => {
         </For>
       </Show>
     </>
+  );
+};
+
+// ── Tag chip strip ───────────────────────────────────────────────────────────
+
+type TagChipsProps = {
+  entity: Entity;
+};
+
+// Renders confirmed tags inline with the entity name and any pending VLM
+// suggestions with ✓ / ✗ buttons. Confirmed chips are read-only at this
+// layer — full tag management (rename, color, untag) is a future Category B
+// PR; we deliberately avoid wiring untag here so the surface stays focused
+// on the auto-tag accept/reject flow.
+const TagChips: Component<TagChipsProps> = (props) => {
+  const allTags = (): TagDefinition[] => tags();
+
+  const confirmedTagDefs = (): TagDefinition[] => {
+    const ids = props.entity.tags ?? [];
+    if (ids.length === 0) return [];
+    const lookup = allTags();
+    const out: TagDefinition[] = [];
+    for (const id of ids) {
+      const def = lookup.find((t) => t.id === id);
+      if (def !== undefined) out.push(def);
+    }
+    return out;
+  };
+
+  const pendingTagDefs = (): TagDefinition[] => {
+    const pending = pendingTagSuggestions().get(props.entity.id) ?? [];
+    if (pending.length === 0) return [];
+    const lookup = allTags();
+    const confirmed = new Set(props.entity.tags ?? []);
+    const out: TagDefinition[] = [];
+    for (const id of pending) {
+      // Drop suggestions that have since been confirmed via accept; the
+      // entity refresh promotes them into `entity.tags` and the ✓ click
+      // already removed the pending entry.
+      if (confirmed.has(id)) continue;
+      const def = lookup.find((t) => t.id === id);
+      if (def !== undefined) out.push(def);
+    }
+    return out;
+  };
+
+  function handleAccept(e: MouseEvent, tagId: TagId): void {
+    e.stopPropagation();
+    const entityId = props.entity.id;
+    libraryAcceptSuggestedTag(entityId, tagId)
+      .then(() => {
+        removePendingSuggestion(entityId, tagId);
+        refreshLibrary();
+      })
+      .catch((err: unknown) => reportCommandFailure("library_accept_suggested_tag", err));
+  }
+
+  function handleReject(e: MouseEvent, tagId: TagId): void {
+    e.stopPropagation();
+    const entityId = props.entity.id;
+    libraryRejectSuggestedTag(entityId, tagId)
+      .then(() => {
+        removePendingSuggestion(entityId, tagId);
+        refreshLibrary();
+      })
+      .catch((err: unknown) => reportCommandFailure("library_reject_suggested_tag", err));
+  }
+
+  return (
+    <Show when={confirmedTagDefs().length > 0 || pendingTagDefs().length > 0}>
+      <div
+        class="library-row__tag-chips"
+        data-testid={`library-row-tag-chips-${props.entity.id}`}
+        onClick={(e) => e.stopPropagation()}
+      >
+        <For each={confirmedTagDefs()}>
+          {(tag) => (
+            <span class="library-row__tag-chip" title={tag.name}>
+              {tag.name}
+            </span>
+          )}
+        </For>
+        <For each={pendingTagDefs()}>
+          {(tag) => (
+            <span
+              class="library-row__tag-chip library-row__tag-chip--pending"
+              title={`Suggested: ${tag.name}`}
+            >
+              <span class="library-row__tag-chip-label">{tag.name}</span>
+              <button
+                class="library-row__tag-chip-action library-row__tag-chip-action--accept"
+                onClick={(e) => handleAccept(e, tag.id)}
+                title="Accept suggestion"
+                aria-label={`Accept tag ${tag.name}`}
+              >
+                ✓
+              </button>
+              <button
+                class="library-row__tag-chip-action library-row__tag-chip-action--reject"
+                onClick={(e) => handleReject(e, tag.id)}
+                title="Reject suggestion"
+                aria-label={`Reject tag ${tag.name}`}
+              >
+                ✗
+              </button>
+            </span>
+          )}
+        </For>
+      </div>
+    </Show>
   );
 };
 

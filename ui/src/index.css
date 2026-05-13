@@ -3923,6 +3923,77 @@ body {
   white-space: nowrap;
 }
 
+.library-row__tag-chips {
+  display: flex;
+  align-items: center;
+  gap: 3px;
+  flex-shrink: 1;
+  min-width: 0;
+  overflow: hidden;
+  margin-left: 4px;
+}
+
+.library-row__tag-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  font-size: 9px;
+  padding: 1px 5px;
+  border-radius: 8px;
+  background: var(--bg-active);
+  color: var(--text-secondary);
+  line-height: 1.4;
+  flex-shrink: 0;
+  max-width: 80px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  letter-spacing: 0.02em;
+}
+
+.library-row__tag-chip--pending {
+  background: var(--accent-subtle);
+  color: var(--accent);
+  border: 1px dashed var(--accent-border);
+  padding: 0 3px 0 5px;
+}
+
+.library-row__tag-chip-label {
+  max-width: 60px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.library-row__tag-chip-action {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  font-size: 9px;
+  line-height: 1;
+  background: transparent;
+  color: var(--accent);
+  cursor: pointer;
+  padding: 0;
+  border: none;
+  transition: background var(--transition-fast);
+}
+
+.library-row__tag-chip-action:hover {
+  background: var(--bg-hover);
+}
+
+.library-row__tag-chip-action--accept:hover {
+  color: var(--success, var(--accent));
+}
+
+.library-row__tag-chip-action--reject:hover {
+  color: var(--danger, var(--accent));
+}
+
 .library-row__rename-input {
   flex: 1;
   min-width: 0;
