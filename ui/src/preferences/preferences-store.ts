@@ -1,4 +1,5 @@
 import { createSignal } from "solid-js";
+import { crashReportingGetEnabled } from "../lib/commands/crash-reporting";
 import { loadStorageJSON } from "../lib/utils/storage";
 
 export type Theme = "dark" | "light" | "pixhaus";
@@ -110,4 +111,26 @@ export function setCrashReportingEnabled(enabled: boolean): void {
 export function markCrashReportingDialogShown(): void {
   setCrashReportingDialogShownInternal(true);
   localStorage.setItem(CRASH_DIALOG_SHOWN_KEY, "1");
+}
+
+/**
+ * Reseed the crash-reporting signal from the backend.
+ *
+ * The backend's atomic gate is the source of truth; localStorage is a
+ * write-through cache so the toggle has a value to display before the
+ * first IPC round-trip resolves. Call on app start. On backend failure,
+ * we leave the localStorage-seeded value untouched.
+ *
+ * Returns the value now in the signal.
+ */
+export async function hydrateCrashReportingFromBackend(): Promise<boolean> {
+  try {
+    const backendValue = await crashReportingGetEnabled();
+    setCrashReportingEnabledInternal(backendValue);
+    localStorage.setItem(CRASH_ENABLED_KEY, backendValue ? "1" : "0");
+    return backendValue;
+  } catch (err: unknown) {
+    console.error("[pixhaus] crash_reporting_get_enabled failed, falling back to localStorage:", err);
+    return crashReportingEnabled();
+  }
 }

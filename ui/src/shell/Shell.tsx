@@ -22,6 +22,7 @@ import {
   crashReportingDialogShown,
   crashReportingEnabled,
   crashReportingUid,
+  hydrateCrashReportingFromBackend,
   setCrashReportingEnabled,
   markCrashReportingDialogShown,
 } from "../preferences/preferences-store";
@@ -48,12 +49,19 @@ const Shell: Component = () => {
   installTilemapCtxSync();
 
   onMount(() => {
-    // Initialise JS-layer crash reporting and sync the Rust-side gate so
-    // both honour the persisted preference; without the second call the
-    // Rust panic hook drops events until the user re-interacts with the
-    // dialog. Fire-and-forget — setSentryEnabled handles IPC errors.
+    // Initialise JS-layer crash reporting against the localStorage-seeded
+    // value so Sentry gets configured immediately, then reseed both the
+    // signal and the JS gate from the backend (the source of truth). The
+    // setSentryEnabled call after init covers the case where Sentry was
+    // initialised disabled but the backend says enabled (and vice versa).
     initCrashReporting({ enabled: crashReportingEnabled(), uid: crashReportingUid });
     setSentryEnabled(crashReportingEnabled());
+    hydrateCrashReportingFromBackend()
+      .then((value) => setSentryEnabled(value))
+      .catch((err: unknown) =>
+        // Already logged inside the hydrator; this catch is belt-and-braces.
+        console.error("[pixhaus] crash-reporting hydration failed:", err),
+      );
 
     // Forward native menu events to the command dispatcher
     const menuListenerPromise = listen<string>("shell:menu", (event) => {
