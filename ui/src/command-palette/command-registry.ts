@@ -109,6 +109,8 @@ import {
 } from "../lib/commands/palette";
 import { tilesetAdd as tilesetAddCmd } from "../lib/commands/tilesets";
 import { activePalette, palettes, refreshPalettes } from "../palette/palette-panel-state";
+import { updaterCheck } from "../lib/commands/updater";
+import { openUpdateModal } from "../shell/update-modal-state";
 
 export type Command = {
   readonly id: string;
@@ -1226,6 +1228,26 @@ const COMMANDS: ReadonlyMap<string, CommandEntry> = new Map<string, CommandEntry
         // tauri.conf.json's default permissions; if a future config locks
         // this down, swap in tauri-plugin-opener.
         window.open(DOCS_URL, "_blank");
+      },
+    },
+  ],
+  [
+    "help:check-updates",
+    {
+      id: "help:check-updates",
+      label: "Check for Updates...",
+      category: "Help",
+      keywords: ["update", "upgrade", "release"],
+      handler: () => {
+        updaterCheck()
+          .then((info) => {
+            if (info === null) {
+              pushToast({ kind: "info", title: "Pixhaus is up to date" });
+              return;
+            }
+            openUpdateModal(info);
+          })
+          .catch((err: unknown) => reportCommandFailure("updater_check", err));
       },
     },
   ],

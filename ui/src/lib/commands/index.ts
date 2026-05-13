@@ -5,13 +5,16 @@
 // rejects with `AppCommandError` from `../types`.
 
 export * from "./canvas";
+export * from "./crash-reporting";
 export * from "./exports";
 export * from "./frames";
 export * from "./layers";
 export * from "./library";
 export * from "./palette";
+export * from "./plugins";
 export * from "./project";
 export * from "./tiles";
 export * from "./tilesets";
 export * from "./undo";
+export * from "./updater";
 export * from "./verbs";

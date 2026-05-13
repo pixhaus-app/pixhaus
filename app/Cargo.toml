@@ -32,6 +32,7 @@ tauri-plugin-updater = "2"
 tauri-plugin-window-state = "2"
 anyhow.workspace = true
 dashmap = "6"
+dirs = "5"
 image.workspace = true
 tokio-util.workspace = true
 base64.workspace = true

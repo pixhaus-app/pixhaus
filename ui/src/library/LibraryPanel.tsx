@@ -58,6 +58,7 @@ import {
   setSearchQuery,
   setSelectedEntityId,
   tags,
+  tagsById,
   toggleGroupExpanded,
 } from "./library-state";
 import LibraryContextMenu, { type LibraryContextTarget } from "./LibraryContextMenu";
@@ -979,24 +980,26 @@ type TagChipsProps = {
 // PR; we deliberately avoid wiring untag here so the surface stays focused
 // on the auto-tag accept/reject flow.
 const TagChips: Component<TagChipsProps> = (props) => {
-  const allTags = (): TagDefinition[] => tags();
-
-  const confirmedTagDefs = (): TagDefinition[] => {
+  // Lookup goes through the shared `tagsById` map (rebuilt once per
+  // library refresh) so each chip-strip render is O(entity.tags) instead
+  // of O(entity.tags * tags()). createMemo also re-runs only when its
+  // tracked sources change, not on every parent re-render.
+  const confirmedTagDefs = createMemo<TagDefinition[]>(() => {
     const ids = props.entity.tags ?? [];
     if (ids.length === 0) return [];
-    const lookup = allTags();
+    const lookup = tagsById();
     const out: TagDefinition[] = [];
     for (const id of ids) {
-      const def = lookup.find((t) => t.id === id);
+      const def = lookup.get(id);
       if (def !== undefined) out.push(def);
     }
     return out;
-  };
+  });
 
-  const pendingTagDefs = (): TagDefinition[] => {
+  const pendingTagDefs = createMemo<TagDefinition[]>(() => {
     const pending = pendingTagSuggestions().get(props.entity.id) ?? [];
     if (pending.length === 0) return [];
-    const lookup = allTags();
+    const lookup = tagsById();
     const confirmed = new Set(props.entity.tags ?? []);
     const out: TagDefinition[] = [];
     for (const id of pending) {
@@ -1004,11 +1007,11 @@ const TagChips: Component<TagChipsProps> = (props) => {
       // entity refresh promotes them into `entity.tags` and the ✓ click
       // already removed the pending entry.
       if (confirmed.has(id)) continue;
-      const def = lookup.find((t) => t.id === id);
+      const def = lookup.get(id);
       if (def !== undefined) out.push(def);
     }
     return out;
-  };
+  });
 
   function handleAccept(e: MouseEvent, tagId: TagId): void {
     e.stopPropagation();

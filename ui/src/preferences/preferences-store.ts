@@ -1,4 +1,5 @@
 import { createSignal } from "solid-js";
+import { crashReportingGetEnabled } from "../lib/commands/crash-reporting";
 import { loadStorageJSON } from "../lib/utils/storage";
 
 export type Theme = "dark" | "light" | "pixhaus";
@@ -64,6 +65,12 @@ const [crashReportingEnabled, setCrashReportingEnabledInternal] =
   createSignal<boolean>(loadCrashEnabled());
 const [crashReportingDialogShown, setCrashReportingDialogShownInternal] =
   createSignal<boolean>(loadCrashDialogShown());
+// Flips on the first user-initiated toggle (Preferences UI, first-launch
+// dialog, etc). The hydrator reads this to bail out if the user changed
+// the preference between the IPC starting and the response landing — the
+// user's newer choice wins. Internal-only; not exported.
+const [crashReportingUserTouched, setCrashReportingUserTouchedInternal] =
+  createSignal<boolean>(false);
 
 // Apply initial theme to DOM immediately on module load (the literal value,
 // not the signal, to avoid a reactive-outside-owner warning).
@@ -103,6 +110,9 @@ export function clearCustomKeybind(commandId: string): void {
 }
 
 export function setCrashReportingEnabled(enabled: boolean): void {
+  // Mark the preference as user-touched so a late-arriving hydrator
+  // response from app start can't clobber the choice we're recording here.
+  setCrashReportingUserTouchedInternal(true);
   setCrashReportingEnabledInternal(enabled);
   localStorage.setItem(CRASH_ENABLED_KEY, enabled ? "1" : "0");
 }
@@ -110,4 +120,40 @@ export function setCrashReportingEnabled(enabled: boolean): void {
 export function markCrashReportingDialogShown(): void {
   setCrashReportingDialogShownInternal(true);
   localStorage.setItem(CRASH_DIALOG_SHOWN_KEY, "1");
+}
+
+/**
+ * Reseed the crash-reporting signal from the backend.
+ *
+ * The backend's atomic gate is the source of truth — it's persisted to
+ * `<config>/pixhaus/crash_reporting.txt` and read at process start. Call
+ * this on app start before initialising Sentry so the gate starts at the
+ * user's real choice rather than the localStorage cache.
+ *
+ * If the user has already touched the preference (Preferences toggle or
+ * first-launch dialog) between this call's start and its resolution, the
+ * user's choice wins and we discard the (now-stale) backend value. On
+ * backend failure we keep the localStorage-seeded signal.
+ *
+ * Returns the value now in the signal.
+ */
+export async function hydrateCrashReportingFromBackend(): Promise<boolean> {
+  try {
+    const backendValue = await crashReportingGetEnabled();
+    if (crashReportingUserTouched()) {
+      // The user flipped the toggle while the IPC was in flight; the
+      // newer choice is already in the signal and persisted to the
+      // backend via setCrashReportingEnabled. Don't apply the stale read.
+      return crashReportingEnabled();
+    }
+    setCrashReportingEnabledInternal(backendValue);
+    localStorage.setItem(CRASH_ENABLED_KEY, backendValue ? "1" : "0");
+    return backendValue;
+  } catch (err: unknown) {
+    console.error(
+      "[pixhaus] crash_reporting_get_enabled failed, falling back to localStorage:",
+      err,
+    );
+    return crashReportingEnabled();
+  }
 }

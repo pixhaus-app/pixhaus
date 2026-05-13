@@ -14,6 +14,7 @@
 //! events behind the runtime preference flag so opting out drops
 //! events at the client rather than skipping the install entirely.
 
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 
@@ -25,6 +26,9 @@ static ENABLED: AtomicBool = AtomicBool::new(false);
 /// The Sentry DSN compiled in at build time. Set via `PIXHAUS_SENTRY_DSN`
 /// during `cargo build` or `pnpm tauri build`.
 const DSN: Option<&str> = option_env!("PIXHAUS_SENTRY_DSN");
+
+/// Persistence file name within the pixhaus config dir.
+const CONFIG_FILE: &str = "crash_reporting.txt";
 
 /// Holds the Sentry client transport open for the process lifetime.
 ///
@@ -39,9 +43,15 @@ pub struct Guard {
 /// Initialise the crash-reporting subsystem.
 ///
 /// Must be called once before any async work starts so the panic hook is
-/// installed early. Returns a [`Guard`] that must be held for the full
-/// lifetime of the process.
+/// installed early. Seeds the in-process gate from the persisted config
+/// file (if any) so the user's preference survives restarts. Returns a
+/// [`Guard`] that must be held for the full lifetime of the process.
 pub fn init() -> Guard {
+    // Seed the atomic from disk before anything else so the panic hook —
+    // and any panic that fires during early startup — honours the user's
+    // choice even before the UI has wired itself up.
+    ENABLED.store(read_persisted(), Ordering::Relaxed);
+
     let dsn = match DSN {
         Some(s) if !s.is_empty() => s,
         _ => return Guard { _inner: None },
@@ -66,10 +76,12 @@ pub fn init() -> Guard {
 /// Enable or disable event forwarding at runtime.
 ///
 /// The Sentry client remains initialized; `before_send` gates all events
-/// while the flag is `false`. Callers are responsible for persisting the
-/// preference (the UI owns persistence via `localStorage`).
+/// while the flag is `false`. Writes the new value to the persistence
+/// file so the choice survives a restart; the UI's `localStorage` mirror
+/// is now a cache rather than the source of truth.
 pub fn set_enabled(enabled: bool) {
     ENABLED.store(enabled, Ordering::Relaxed);
+    write_persisted(enabled);
     tracing::debug!(
         "crash reporting {}",
         if enabled { "enabled" } else { "disabled" }
@@ -136,6 +148,84 @@ fn home_prefix() -> Option<String> {
     #[allow(deprecated)]
     std::env::home_dir().map(|p| p.to_string_lossy().into_owned())
 }
+
+/// Resolves the path to the crash-reporting persistence file under the
+/// OS config directory. Returns `None` on platforms where the config dir
+/// cannot be determined, in which case persistence degrades to in-memory
+/// only (the user's choice still works in-session but is lost on quit).
+fn config_path() -> Option<PathBuf> {
+    dirs::config_dir().map(|d| d.join("pixhaus").join(CONFIG_FILE))
+}
+
+/// Reads the persisted opt-in value from the resolved config path. Any
+/// failure — missing file, garbage contents, I/O error — falls back to
+/// `false`. Errors other than "not found" are logged at warn level so a
+/// filesystem regression is visible.
+fn read_persisted() -> bool {
+    let Some(path) = config_path() else {
+        return false;
+    };
+    read_persisted_from(&path)
+}
+
+/// Path-injected variant for tests. Same semantics as [`read_persisted`].
+fn read_persisted_from(path: &Path) -> bool {
+    match std::fs::read_to_string(path) {
+        Ok(s) => matches!(s.trim(), "true" | "1"),
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => false,
+        Err(err) => {
+            tracing::warn!(
+                path = %path.display(),
+                error = %err,
+                "crash-reporting config read failed",
+            );
+            false
+        }
+    }
+}
+
+/// Writes the opt-in value to the resolved config path. Failure is logged
+/// and swallowed — the in-memory atomic remains authoritative for the
+/// current session, only the across-restart persistence is lost.
+fn write_persisted(enabled: bool) {
+    let Some(path) = config_path() else {
+        return;
+    };
+    write_persisted_to(&path, enabled);
+}
+
+/// Path-injected variant for tests. Same semantics as [`write_persisted`].
+fn write_persisted_to(path: &Path, enabled: bool) {
+    if let Some(parent) = path.parent() {
+        if let Err(err) = std::fs::create_dir_all(parent) {
+            tracing::warn!(
+                path = %parent.display(),
+                error = %err,
+                "crash-reporting config dir create failed",
+            );
+            return;
+        }
+    }
+    let body = if enabled { "true" } else { "false" };
+    if let Err(err) = std::fs::write(path, body) {
+        tracing::warn!(
+            path = %path.display(),
+            error = %err,
+            "crash-reporting config write failed",
+        );
+    }
+}
+
+/// Serialises tests across this crate that mutate the global `ENABLED`
+/// atomic. `cargo test --lib` runs tests in parallel threads inside a
+/// single process; without this lock, one test's `set_enabled(false)`
+/// can race a parallel test's `set_enabled(true)` between the
+/// set-and-assert window. Nextest sidesteps the race by giving each
+/// test its own process, but CI uses `cargo test`. Tests use
+/// `.unwrap_or_else(|p| p.into_inner())` so a panic-poisoned mutex
+/// doesn't cascade into spurious failures on later tests.
+#[cfg(test)]
+pub(crate) static TEST_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
 #[cfg(test)]
 mod tests {
@@ -214,6 +304,9 @@ mod tests {
 
     #[test]
     fn is_enabled_reflects_set_enabled() {
+        let _lock = TEST_LOCK
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         // Save the prior state to restore after the test.
         let prior = is_enabled();
         set_enabled(true);
@@ -222,5 +315,48 @@ mod tests {
         assert!(!is_enabled());
         // Restore so parallel tests see a consistent baseline.
         set_enabled(prior);
+    }
+
+    #[test]
+    fn read_persisted_returns_false_when_missing() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("pixhaus").join(CONFIG_FILE);
+        assert!(!read_persisted_from(&path));
+    }
+
+    #[test]
+    fn write_then_read_round_trips_true() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("pixhaus").join(CONFIG_FILE);
+        write_persisted_to(&path, true);
+        assert!(read_persisted_from(&path));
+    }
+
+    #[test]
+    fn write_then_read_round_trips_false() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("pixhaus").join(CONFIG_FILE);
+        // Write true first so the file exists and is non-trivial.
+        write_persisted_to(&path, true);
+        write_persisted_to(&path, false);
+        assert!(!read_persisted_from(&path));
+    }
+
+    #[test]
+    fn read_persisted_returns_false_on_garbage() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("pixhaus").join(CONFIG_FILE);
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        std::fs::write(&path, "banana").unwrap();
+        assert!(!read_persisted_from(&path));
+    }
+
+    #[test]
+    fn read_persisted_accepts_one_as_truthy() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("pixhaus").join(CONFIG_FILE);
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        std::fs::write(&path, "1\n").unwrap();
+        assert!(read_persisted_from(&path));
     }
 }

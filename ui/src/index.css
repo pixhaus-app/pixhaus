@@ -639,6 +639,33 @@ body {
   text-align: right;
 }
 
+.prefs__plugins-table {
+  width: 100%;
+  border-collapse: collapse;
+}
+
+.prefs__plugins-table td {
+  padding: 8px 0;
+  font-size: 12px;
+  vertical-align: top;
+  border-bottom: 1px solid var(--bg-active);
+}
+
+.prefs__plugins-table tr:last-child td {
+  border-bottom: none;
+}
+
+.prefs__plugins-table td:first-child {
+  padding-right: 16px;
+  overflow-wrap: anywhere;
+  word-break: break-word;
+}
+
+.prefs__plugins-table td:last-child {
+  text-align: right;
+  white-space: nowrap;
+}
+
 .prefs__kbd {
   font-size: 11px;
   color: var(--text-secondary);
