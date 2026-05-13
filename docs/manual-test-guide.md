@@ -22,10 +22,10 @@ Base form: `T-<area>-<NNN>`. The areas are: `launch`, `project`, `export`, `canv
 
 Two extensions are explicitly allowed for compactness:
 
-- **Range notation** (`T-window-001..005`) when a small set of tests differ only in which target the same scenario applies to (e.g. one test per panel). Each number in the range is its own test ID; the e2e suite expands them into individual `test('T-window-001: ...')` blocks.
+- **Range notation** (`T-window-001..004`) when a small set of tests differ only in which target the same scenario applies to (e.g. one test per panel). The range is a docs-only shorthand — the e2e harness does not expand ranges programmatically. The author of each spec hand-writes one `it('T-...')` per ID (see `tests/e2e/specs/window.e2e.ts` for the existing four).
 - **Letter suffix** (`T-cmd-003a`, `T-cmd-003b`, …) when several near-identical commands share a scenario template and a comparison table. The base number names the scenario; the suffix names the variant. Each ID is still unique.
 
-Both shorthands map 1:1 to e2e test names; the range `T-window-001..005` becomes five tests, not one.
+Both shorthands map 1:1 to e2e test names; the range `T-window-001..004` covers four hand-written tests, not one.
 
 ## Per-test format
 
@@ -597,13 +597,15 @@ Expect:
 
 Pre: project open, palette panel visible.
 Steps:
-  1. Click `+` in the palette header. A `ModalInput` (NOT a native `window.prompt`) appears titled "New palette". Type a name → click OK or press Enter.
+  1. Click `+` in the palette header. A `ModalInput` (NOT a native `window.prompt`) appears titled "New palette". Type a name → click Create or press Enter.
 Expect:
   - [DOM] dropdown switches to the new palette; grid is empty.
-  - [DOM] the modal has explicit "Cancel" / "OK" buttons; Escape closes without creating.
+  - [DOM] the modal has explicit "Cancel" / "Create" buttons; Escape closes without creating.
   - [IPC] `palette_add`.
 
 > **Regression guard:** PR #132 replaced `window.prompt` calls across palette flows with the in-app `ModalInput` component. If a native browser prompt appears, the regression is live.
+
+> **Submit-label note:** `ModalInput` accepts a `submitLabel` prop and the call sites vary — "New palette" uses "Create", swatch rename uses the default "OK", and timeline tag rename uses "Rename". Test scenarios quote the literal label per call site.
 
 ### T-palette-002: Add a colour
 
@@ -867,21 +869,23 @@ Steps:
   1. Right-click the entity row → context menu appears with: Rename, Add state (Custom only), Move to group…, Delete.
   2. Click each action in turn on separate entities.
 Expect:
-  - Rename → `ModalInput` titled "Rename entity"; submitting fires `library_rename_entity`.
-  - Add state → `ModalInput` for state name; submitting fires `library_add_state`.
-  - Move to group → submenu listing existing groups; selecting fires `library_move_entity_to_group`.
-  - Delete → confirmation; confirming fires `library_delete_entity`.
+  - Rename → an `InlineRenameInput` replaces the row label in place (the same flow fires on double-click of the row). Type, press Enter to commit → [IPC] `library_rename_entity`. Escape cancels. NOT a `ModalInput`.
+  - Add state → opens a modal for the new state name; submitting fires `library_add_state`.
+  - Move to group → opens a **modal dialog** with a `<select>` dropdown listing existing groups (not a context-menu submenu). Pick a group → click confirm → [IPC] `library_move_entity_to_group`.
+  - Delete → confirmation dialog; confirming fires `library_delete_entity`.
 
-### T-library-004: Groups — create, populate, expand
+### T-library-004: Groups — create, rename, populate, expand
 
 Pre: at least one entity exists.
 Steps:
-  1. Click `library-add-group`. Name "characters". Confirm.
-  2. Drag an entity row onto the group row.
+  1. Click `library-add-group`. A new group row appears **immediately** with the default name `Group {n+1}` (no naming modal). [IPC] `library_create_group { name: "Group N" }`.
+  2. Rename: double-click the group's label → `InlineRenameInput` opens in place. Type "characters" → Enter. [IPC] `library_rename_group`.
+  3. Drag an entity row onto the group row.
 Expect:
-  - [DOM] a `group-row-{id}` with chevron toggle appears.
+  - [DOM] a `group-row-{id}` with chevron toggle appears at step 1.
+  - [DOM] inline rename commits the new label at step 2.
   - [DOM] dragging the entity onto the group nests it (indent visible when expanded).
-  - [IPC] `library_create_group` on creation, `library_set_group_parent` (or `library_move_entity_to_group`) on the drag drop.
+  - [IPC] **entity onto group** → `library_move_entity_to_group { entity_id, group_id }`. **Group onto group** (nesting groups) → `library_set_group_parent { child_group_id, parent_group_id }`. The two IPCs are distinct; the drop target's kind determines which fires.
 
 ### T-library-005: Search filters the tree
 
@@ -893,29 +897,23 @@ Expect:
   - [IPC] `library_search` fires (debounced; latency unspecified — do not assert a timeout).
   - Clearing the search via the `×` button (visible only when the input has text) restores the full tree.
 
-### T-library-006: Tag management and AI auto-tag suggestions
+### T-library-006: Tag management and AI auto-tag suggestions — DEFERRED
 
-Pre: an entity is selected; library panel shows the tag bar for that entity.
-Steps:
-  1. Add a tag via the tag input. Remove one via its `×`.
-  2. (If a backend is configured) Invoke the AI auto-tag hook via the command palette → "Auto-tag entity", OR programmatically via the `library_auto_tag_entity` IPC. Wait for suggestions to land as chips.
-  3. Click ✓ on a suggested tag to accept; click ✗ to reject.
-Expect:
-  - [IPC] manual: `library_add_tag` / `library_delete_tag`.
-  - [IPC] AI: `library_auto_tag_entity` runs the VLM analysis; suggestions surface as tags with `auto_generated = true`.
-  - [IPC] accept / reject: `library_accept_suggested_tag` / `library_reject_suggested_tag`.
+Tag management has no UI surface today. The IPCs (`library_add_tag`,
+`library_delete_tag`, `library_auto_tag_entity`,
+`library_accept_suggested_tag`, `library_reject_suggested_tag`) are
+registered in `app/src/lib.rs` but have zero callers under `ui/src/`.
+The scenario is tracked as a stub in section 17. ID reserved — do not
+reassign; rewrite this entry when the tag bar lands.
 
-> **Stub note:** the auto-tag flow requires a configured VLM backend (Preferences → AI). With no backend, the IPC errors out; the panel surfaces a toast but does not crash. See section 17.
+### T-library-007: Anchor wiring — DEFERRED
 
-### T-library-007: Anchor wiring inherits payload into AI verbs
-
-Pre: an entity exists; at least one `Reference`-kind entity exists.
-Steps:
-  1. Right-click the entity → "Set anchor reference…" → pick a Reference entity.
-  2. Invoke an AI verb that consumes anchors (e.g. `pixhaus.builtin.generate_reference_sheet` via the command palette).
-Expect:
-  - [IPC] `library_set_entity_anchor` on selection.
-  - [IPC] when the verb runs, `library_get_anchor_payload` resolves the linked Reference's image + palette + (if trained) LoRA path; the verb input modal shows these in its preview, not as a "missing anchor" error.
+`library_set_entity_anchor` and `library_get_anchor_payload` exist as
+IPCs but no UI affordance sets or surfaces an anchor today. The AI verb
+runtime resolves anchors server-side via stored entity metadata, not via
+a user-driven UI flow. Tracked as a stub in section 17. ID reserved — do
+not reassign; rewrite this entry when a "Set anchor reference" control
+ships.
 
 ### T-library-008: Aseprite round-trip preserves library metadata (B9.5)
 
@@ -952,7 +950,7 @@ Expect:
 
 ### T-refsheet-002: Generate a reference sheet variant
 
-Pre: T-refsheet-001 done; a backend that supports `pixhaus.builtin.generate_reference_sheet` is configured (Preferences → AI). For manual testing without a real backend, set `PIXHAUS_AI_MOCK=1` before `pnpm dev`.
+Pre: T-refsheet-001 done; a backend that supports `pixhaus.builtin.generate_reference_sheet` is configured (Preferences → AI). Without a configured backend the verb invocation aborts with a toast — the modal flow (open, fill, submit, cancel) is still exercisable, only the network call fails. No env-driven mock toggle exists today (tracked in section 17).
 Steps:
   1. Click "Generate variant".
   2. The verb modal opens. Pick a composition template: Character / Item / Tileset / Custom. Type a prompt. Optional: negative prompt, num_variants (1–4), seed. Click Submit.
@@ -988,14 +986,16 @@ Expect:
 
 ### T-refsheet-005: Train per-entity LoRA from approved sheets
 
-Pre: entity has at least one approved variant; an AI backend that supports LoRA training is configured (e.g. Replicate). For manual testing without a real backend, set `PIXHAUS_AI_MOCK=1` to short-circuit training.
+Pre: entity has at least one approved variant; an AI backend that supports LoRA training is configured (e.g. Replicate). Without a configured backend, this test verifies only the button-state transitions and the outbound IPC — the actual training never completes.
 Steps:
   1. Click "Train LoRA".
 Expect:
   - [DOM] button label transitions: "Train LoRA" → "Training…" (disabled while in flight).
   - [IPC] `library_train_entity_lora { entity_id }` fires.
-  - On completion (real backend: 15–30 min; mock: immediate): a toast surfaces "Trained consistency LoRA…"; button label becomes "Retrain LoRA"; a "LoRA trained" pill appears below the button.
+  - On completion against a real backend (Replicate: ~15–30 minutes): a toast surfaces "Trained consistency LoRA…"; button label becomes "Retrain LoRA"; a "LoRA trained" pill appears below the button.
   - [STATE] `Entity.ai.lora_path` is now non-empty; future verb calls on this entity inherit the LoRA via `library_get_anchor_payload`.
+
+> The 15–30 minute round-trip makes this test impractical for routine manual sweeps. Tracked in section 17 alongside the missing env-driven mock toggle.
 
 ### T-refsheet-006: Cancel an in-flight verb invocation
 
@@ -1048,7 +1048,7 @@ Spot-check (full sweep is the e2e suite's job). Pick one from each category:
 | `view:zoom-fit` | (no IPC; mutates `zoom` signal) | T-cmd-003h |
 | `window:toggle-layers` | (no IPC; mutates `isLayerPanelVisible`) | T-cmd-003i |
 | `window:toggle-sheet` | (no IPC; mutates `isSheetPanelVisible`) | T-cmd-003j |
-| `ai:generate-reference-sheet` | verb invocation `pixhaus.builtin.generate_reference_sheet` (opens input modal) | T-cmd-003k |
+| `ai:cleanup` | verb invocation `pixhaus.builtin.cleanup` (opens schema-driven input modal) | T-cmd-003k |
 | `help:about` | `app_about` | T-cmd-003l |
 
 For each: open palette, type a partial query, press Enter on the match, observe the listed IPC fires.
@@ -1067,12 +1067,14 @@ Expect:
 
 Pre: command palette open; at least one AI verb is registered (all built-ins are by default, per PR #126).
 Steps:
-  1. Type `generate reference` → first match is the generate-reference-sheet verb. Press Enter.
+  1. Type `cleanup` → first match is the `ai:cleanup` command. Press Enter.
 Expect:
   - [DOM] palette closes; the verb input modal (`ModalForm` from `VerbInvokeHost`) opens.
-  - [DOM] the modal renders schema-driven fields (per PR #133) — for generate-reference-sheet: template enum, prompt textarea, optional negative_prompt, num_variants number, seed number.
+  - [DOM] the modal renders schema-driven fields (per PR #133) — for cleanup: palette-snap toggle, AA-removal toggle, pivot-drift threshold, etc., per the verb's input schema.
   - [DOM] explicit "Cancel" and Submit buttons at the bottom.
   - [STATE] `activeVerb` signal is set.
+
+> **Registered AI palette commands (verify against `ui/src/command-palette/command-registry.ts`):** `ai:inbetween`, `ai:continue`, `ai:variant`, `ai:cleanup`, `ai:critique`, `ai:settings`. The generate-reference-sheet verb has NO palette command today — it is reached via the "Generate variant" button in the reference sheet panel (T-refsheet-002). Tracked as a stub in section 17.
 
 ### T-cmd-006: Verb cancellation closes the modal cleanly
 
@@ -1089,33 +1091,48 @@ Expect:
 
 ## 14. Window / panels
 
-### T-window-001..005: Toggle each panel via the command palette
+### T-window-001..004: Toggle each of the four originally-toggleable panels
 
-For each of layers (`window:toggle-layers`), timeline (`window:toggle-timeline`), palette (`window:toggle-palette`), tilemap (`window:toggle-tilemap`), reference sheet (`window:toggle-sheet`):
+For each of layers (`window:toggle-layers`), timeline (`window:toggle-timeline`), palette (`window:toggle-palette`), tilemap (`window:toggle-tilemap`):
 Steps:
   1. Command palette → "Toggle <Panel> Panel", OR keybind where mapped (e.g. `Ctrl+Shift+L` for layers).
 Expect:
   - [DOM] panel disappears / reappears.
-  - [STATE] the matching `is*PanelVisible` signal flips (`isLayerPanelVisible`, `isTimelinePanelVisible`, `isPalettePanelVisible`, `isTilemapPanelVisible`, `isSheetPanelVisible`).
+  - [STATE] the matching `is*PanelVisible` signal flips (`isLayerPanelVisible`, `isTimelinePanelVisible`, `isPalettePanelVisible`, `isTilemapPanelVisible`).
 
-### T-window-006: Library panel has no palette toggle
+The live e2e harness binds these IDs in `tests/e2e/specs/window.e2e.ts:99-115`. Per the doc's never-renumber rule, IDs `001..005` are stable. New panel toggles append starting at `006`.
 
-Pre: command palette open.
-Steps:
-  1. Type `toggle library`.
-Expect:
-  - [DOM] no entry appears for the library panel.
-  - The panel is open by default (`isLibraryPanelVisible() === true`). It can be hidden / shown via the editor's window menu and via direct calls to `setLibraryPanelVisible`, but no command-palette toggle exists.
-
-> **Known gap:** a `window:toggle-library` command should land alongside the other five — tracked in section 17.
-
-### T-window-007: Preferences modal
+### T-window-005: Preferences modal
 
 Steps:
   1. Command palette → "Preferences" or `Ctrl+,`.
 Expect:
   - [DOM] preferences modal opens. Tabs: General, Keybinds, etc.
   - Closing via Escape or close button restores the editor focus.
+
+(Matches `tests/e2e/specs/window.e2e.ts:115`.)
+
+### T-window-006: Toggle the reference sheet panel
+
+Pre: project open.
+Steps:
+  1. Command palette → "Toggle Reference Sheet Panel" (id `window:toggle-sheet`).
+Expect:
+  - [DOM] sheet panel mounts / unmounts.
+  - [STATE] `isSheetPanelVisible` flips.
+
+### T-window-007: Library panel has no palette toggle (tracked gap)
+
+Pre: project open.
+Steps:
+  1. Open the command palette. Type `toggle library`.
+  2. Open the native Window menu.
+  3. From the library panel's header, click the close button.
+Expect:
+  - [DOM] step 1: no palette entry matches. Confirmed by `ui/src/command-palette/command-registry.ts` — no `window:toggle-library` id is registered.
+  - [DOM] step 2: the Window menu (`app/src/menu.rs:293-303`) lists toggles for layers, timeline, and palette only. No library entry.
+  - [STATE] step 3: `setLibraryPanelVisible(false)` runs (`LibraryPanel.tsx:173-189`). The panel disappears.
+  - **Once hidden, there is no in-app way to re-show the library panel.** Reopening requires either a code change or `setLibraryPanelVisible(true)` from devtools. Tracked as a stub in section 17.
 
 ---
 
@@ -1161,22 +1178,22 @@ Verify each shortcut dispatches the expected action. Switch presets in Preferenc
 | 100% | Ctrl+1 | Ctrl+1 | T-canvas-005 |
 | Toggle grid | Ctrl+G | Ctrl+' | T-canvas-008 |
 | Command palette | Ctrl+K | Ctrl+K | T-cmd-001 |
-| Preferences | Ctrl+, | Ctrl+, | T-window-007 |
+| Preferences | Ctrl+, | Ctrl+, | T-window-005 |
 | Toggle reference sheet panel | (none by default) | (none by default) | `window:toggle-sheet`; verify via palette |
-| Tools | P/E/G/L/U/O | P/E/G/L/U/O | tool selector switches |
+| Tools | B/P, E, G, L, U, O | B/P, E, G, L, U, O | tool selector switches |
 
-Tool key mapping (both presets share these as of `ui/src/keybinds/defaults.ts`):
+Tool key mapping (both presets share these as of `ui/src/keybinds/defaults.ts:41-42, 79-80`):
 
-| Key | Tool |
+| Tool | Key(s) |
 |---|---|
-| P | Pencil |
-| E | Eraser |
-| G | Fill (bucket) |
-| L | Line |
-| U | Rectangle |
-| O | Ellipse |
+| Pencil | B, P |
+| Eraser | E |
+| Fill (bucket) | G |
+| Line | L |
+| Rectangle | U |
+| Ellipse | O |
 
-> The Aseprite and Photoshop presets currently agree on every tool keybind. The doc previously claimed `F` for fill (Aseprite) and `U`/`U` for rect/ellipse (Photoshop) — those mappings were never correct and have been removed. If the presets diverge in the future, split this row back out.
+> `B` is the Photoshop "brush" muscle-memory alias for pencil; `P` is the Aseprite default. Both bind to `tool:pencil` in both presets — no separate brush tool exists yet. The Aseprite and Photoshop presets currently agree on every tool keybind. The doc previously claimed `F` for fill (Aseprite) and `U`/`U` for rect/ellipse (Photoshop) — those mappings were never correct and have been removed. If the presets diverge in the future, split this row back out.
 
 ---
 
@@ -1185,9 +1202,13 @@ Tool key mapping (both presets share these as of `ui/src/keybinds/defaults.ts`):
 These are deliberate gaps. Do not file bugs against them — file follow-ups instead.
 
 - **Edit > Cut / Copy / Paste**: not in the palette; menu items exist but are dropped from the palette per PR #100 (no clipboard pipeline yet).
-- **AI backend configuration**: the verb runtime, the input modal, and verb cancellation all work. What's still gated is per-backend setup — API keys are entered via Preferences → AI (Anthropic, OpenAI, Replicate, Ollama, ComfyUI, Stability). Verbs targeting an unconfigured backend surface a toast and abort. For manual testing without a real backend, set `PIXHAUS_AI_MOCK=1` before `pnpm dev` to short-circuit all verb invocations with deterministic mock output.
-- **Library panel toggle**: every other panel (layers, timeline, palette, tilemap, sheet) exposes a `window:toggle-*` palette command. The library does not — open / close via the window menu or direct state mutation. Follow-up: add `window:toggle-library` to `command-registry.ts`.
-- **Per-entity LoRA training latency**: the real training run (Replicate) takes 15–30 minutes per entity. Use `PIXHAUS_AI_MOCK=1` for manual UI testing of T-refsheet-005; the mock returns immediately with a deterministic `lora_path`.
+- **AI backend configuration**: the verb runtime, the input modal, and verb cancellation all work. What's still gated is per-backend setup — API keys are entered via Preferences → AI (Anthropic, OpenAI, Replicate, Ollama, ComfyUI, Stability). Verbs targeting an unconfigured backend surface a toast and abort.
+- **Env-driven verb mock toggle**: there is NO `PIXHAUS_AI_MOCK` or equivalent environment variable wired into `ai/src/runtime/` today. The only mock infrastructure is `window.__PIXHAUS_MOCK__` in `tests/visual/helpers/tauri-mock.ts`, which is scoped to the visual-test harness — not usable for manual `pnpm dev` sessions. Follow-up: wire an env-driven short-circuit that returns deterministic mock output for every built-in verb so manual sweeps of T-refsheet-* and T-cmd-005 don't require a real backend.
+- **`window:toggle-library` palette command**: every other panel (layers, timeline, palette, tilemap, sheet) registers a `window:toggle-*` id in `ui/src/command-palette/command-registry.ts`. The library does not, and the native Window menu (`app/src/menu.rs:293-303`) only toggles layers/timeline/palette. Once the panel's close button fires `setLibraryPanelVisible(false)` there is no in-app way to re-show it. Follow-up: register `window:toggle-library` AND add a Window-menu entry.
+- **Library tag UI**: the IPCs `library_add_tag`, `library_delete_tag`, `library_auto_tag_entity`, `library_accept_suggested_tag`, `library_reject_suggested_tag` are registered in `app/src/lib.rs` but have zero callers under `ui/src/`. The library panel has no tag input, no chip strip, and no auto-tag suggestion surface. T-library-006 is reserved for this scenario.
+- **Library anchor wiring UI**: `library_set_entity_anchor` and `library_get_anchor_payload` are registered but unused in `ui/src/`. There is no "Set anchor reference" context-menu item; the AI verb runtime resolves anchors server-side via stored entity metadata. T-library-007 is reserved.
+- **`ai:generate-reference-sheet` palette command**: the verb itself works, but it has no command-palette entry. It is reachable only via the "Generate variant" button in the reference sheet panel (T-refsheet-002). Follow-up: register the palette command so verb sweeps can use the same `T-cmd-005`-style flow as `ai:cleanup`.
+- **Per-entity LoRA training latency**: a real training run (Replicate) takes 15–30 minutes per entity. T-refsheet-005 is impractical for routine manual sweeps without the env-driven mock toggle above.
 - **Line tool real-time preview**: the line currently only paints on release. Real-time preview needs a separate "anchor + cursor" pipeline — out of scope for PR #104.
 - **Rect / ellipse drag-time preview**: same as line — paints on release only.
 - **Layer-drop undo**: pixel undo works (one entry per stroke / per merge). Resurrecting a dropped-by-merge layer via Ctrl+Z does NOT yet work — requires project-level history support that's not landed.
@@ -1250,7 +1271,11 @@ pnpm e2e                  # full sweep
 pnpm e2e -- --spec tests/e2e/specs/tools.e2e.ts   # one file
 ```
 
-Both commands assume `tauri-driver` is installed and on `PATH`. On macOS, `webkit2gtk-driver` is bundled by Tauri; on Linux, install `tauri-driver` separately per the Tauri 2 docs.
+**Platform support** (per `tests/e2e/wdio.conf.ts:12` and `tests/e2e/README.md:22`):
+
+- **Linux**: install `webkit2gtk-driver` from your package manager (`apt install webkit2gtk-driver` on Debian/Ubuntu), plus `tauri-driver` via `cargo install tauri-driver`.
+- **Windows**: install `msedgedriver` matching your Edge version, plus `tauri-driver`.
+- **macOS**: **not supported** by tauri-driver. Tauri's docs are explicit that macOS lacks a WebKit WebDriver tool, so the e2e suite can only run on Linux or Windows. The `scripts/setup-e2e.{sh,ps1}` helpers reflect this.
 
 ## Appendix B: Cross-references
 
