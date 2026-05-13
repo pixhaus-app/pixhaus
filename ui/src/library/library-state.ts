@@ -13,12 +13,14 @@ import type {
   EntityId,
   EntityKind,
   GroupId,
+  SheetVariantId,
   StateId,
   TagDefinition,
   TagId,
 } from "../lib/types";
 import {
   libraryAddState,
+  libraryApproveSheetVariant,
   libraryCreateEntity,
   libraryCreateGroup,
   libraryDeleteEntity,
@@ -33,9 +35,11 @@ import {
   libraryRenameState,
   libraryReorderEntities,
   librarySetActiveTarget,
+  libraryUpdateCorpus,
   type LibraryCreateEntityArgs,
   type LibraryAddStateArgs,
 } from "../lib/commands/library";
+import { reportCommandFailure } from "../lib/utils/errors";
 
 export type { LibraryCreateEntityArgs, LibraryAddStateArgs };
 
@@ -114,6 +118,11 @@ export const [entities, setEntities] = createSignal<Entity[]>([]);
 export const [groups, setGroups] = createSignal<EntityGroup[]>([]);
 export const [tags, setTags] = createSignal<TagDefinition[]>([]);
 
+// Lookup from TagId to its definition. Recomputed once per refreshLibrary()
+// so chip rendering can hit the map by id in O(1) instead of running a
+// linear `tags().find(...)` per chip per row.
+export const [tagsById, setTagsById] = createSignal<ReadonlyMap<TagId, TagDefinition>>(new Map());
+
 // Stale-request guard: incremented on every refreshLibrary() call. Async
 // IPC responses from a superseded refresh are dropped on arrival.
 let refreshToken = 0;
@@ -128,8 +137,94 @@ export function refreshLibrary(): void {
       setEntities(newEntities);
       setGroups(newGroups);
       setTags(newTags);
+
+      // Rebuild the id lookup so chip rendering doesn't pay linear search
+      // costs per row.
+      const byId = new Map<TagId, TagDefinition>();
+      for (const tag of newTags) byId.set(tag.id, tag);
+      setTagsById(byId);
+
+      // Drop pending suggestions for entities that no longer exist. Without
+      // this, switching projects (or deleting an entity then creating a new
+      // one that reuses its id) would surface stale chips against the new
+      // entity. Refreshing on the same entity list is a no-op.
+      const liveIds = new Set(newEntities.map((e) => e.id));
+      setPendingTagSuggestions((prev) => {
+        let removed = false;
+        const next = new Map<EntityId, ReadonlyArray<TagId>>();
+        for (const [id, sugg] of prev) {
+          if (liveIds.has(id)) {
+            next.set(id, sugg);
+          } else {
+            removed = true;
+          }
+        }
+        return removed ? next : prev;
+      });
     })
     .catch((err: unknown) => console.error("[pixhaus] refreshLibrary:", err));
+}
+
+// ── AI tag suggestions (B9.4) ───────────────────────────────────────────────
+
+// Pending VLM suggestions per entity, keyed by EntityId. Tags only land in
+// `entity.tags` once the user accepts them; until then they live here so the
+// row can render a chip strip with accept/reject buttons. The Map is replaced
+// (not mutated) on every update so the Solid signal fires.
+export const [pendingTagSuggestions, setPendingTagSuggestions] = createSignal<
+  ReadonlyMap<EntityId, ReadonlyArray<TagId>>
+>(new Map());
+
+export function addPendingSuggestions(entityId: EntityId, tagIds: TagId[]): void {
+  setPendingTagSuggestions((prev) => {
+    const next = new Map(prev);
+    const existing = next.get(entityId) ?? [];
+    // Dedupe: a re-run of auto-tag against the same entity shouldn't double
+    // up the pending list.
+    const merged = [...existing];
+    for (const id of tagIds) {
+      if (!merged.includes(id)) merged.push(id);
+    }
+    next.set(entityId, merged);
+    return next;
+  });
+}
+
+export function removePendingSuggestion(entityId: EntityId, tagId: TagId): void {
+  setPendingTagSuggestions((prev) => {
+    const existing = prev.get(entityId);
+    if (existing === undefined) return prev;
+    const filtered = existing.filter((id) => id !== tagId);
+    const next = new Map(prev);
+    if (filtered.length === 0) {
+      next.delete(entityId);
+    } else {
+      next.set(entityId, filtered);
+    }
+    return next;
+  });
+}
+
+export function clearPendingSuggestions(entityId: EntityId): void {
+  setPendingTagSuggestions((prev) => {
+    if (!prev.has(entityId)) return prev;
+    const next = new Map(prev);
+    next.delete(entityId);
+    return next;
+  });
+}
+
+/**
+ * Background-refreshes the project AI corpus to include the given entity.
+ *
+ * Fire-and-forget — the caller proceeds even if the corpus update fails;
+ * the toast surface notifies the user and the next mutation gets a fresh
+ * chance to push the corpus state forward.
+ */
+export function refreshCorpusFor(entityId: EntityId): void {
+  libraryUpdateCorpus([entityId]).catch((err: unknown) =>
+    reportCommandFailure("library_update_corpus", err),
+  );
 }
 
 // ── Selection ───────────────────────────────────────────────────────────────
@@ -320,8 +415,31 @@ export function deleteGroup(groupId: GroupId, keepEntities: boolean): void {
 
 export function addStateToEntity(args: LibraryAddStateArgs): void {
   libraryAddState(args)
-    .then(() => refreshLibrary())
+    .then(() => {
+      refreshLibrary();
+      // The new state is meaningful library content — refresh the AI
+      // style corpus so subsequent verb runs see it.
+      refreshCorpusFor(args.entity_id);
+    })
     .catch((err: unknown) => console.error("[pixhaus] library_add_state:", err));
+}
+
+/**
+ * Promotes a sheet variant to canonical, returns the updated entity, and
+ * fires a background corpus refresh so the new canonical sheet is part of
+ * the AI style context for subsequent verb runs.
+ *
+ * Sheet panels call this instead of `libraryApproveSheetVariant` directly so
+ * the corpus update lives next to the mutation that triggers it.
+ */
+export function approveSheetVariantAndRefreshCorpus(
+  entityId: EntityId,
+  variantId: SheetVariantId,
+): Promise<Entity> {
+  return libraryApproveSheetVariant(entityId, variantId).then((updated) => {
+    refreshCorpusFor(entityId);
+    return updated;
+  });
 }
 
 export function deleteState(entityId: EntityId, stateId: StateId): void {

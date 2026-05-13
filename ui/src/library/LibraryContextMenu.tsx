@@ -4,14 +4,19 @@
 
 import { type Component, Show, createEffect, onCleanup } from "solid-js";
 import { confirm } from "../lib/dialog";
+import { libraryAutoTagEntity } from "../lib/commands/library";
+import { pushToast } from "../lib/toast/toast-state";
+import { reportCommandFailure } from "../lib/utils/errors";
 import type { Entity, EntityGroup, EntityId, GroupId } from "../lib/types";
 import {
+  addPendingSuggestions,
   beginEntityRename,
   beginGroupRename,
   deleteEntity,
   deleteGroup,
   entities,
   groups,
+  refreshLibrary,
 } from "./library-state";
 
 // ── target types ─────────────────────────────────────────────────────────────
@@ -77,6 +82,37 @@ const LibraryContextMenu: Component<Props> = (props) => {
 
   const isCustomEntity = () => targetEntity()?.kind.kind === "Custom";
 
+  // The auto-tag verb is grounded against entity name + existing tags only —
+  // Tilesets and Tilemaps don't carry the kind of semantic content the VLM
+  // can usefully tag, so we hide the action for them.
+  const isAutoTaggable = () => {
+    const k = targetEntity()?.kind.kind;
+    return k === "Custom" || k === "Reference";
+  };
+
+  function handleSuggestTags(entityId: EntityId): void {
+    pushToast({ kind: "info", title: "Auto-tagging…" });
+    libraryAutoTagEntity(entityId)
+      .then((suggestions) => {
+        const ids = suggestions.map((t) => t.id);
+        if (ids.length > 0) {
+          addPendingSuggestions(entityId, ids);
+        }
+        // The Rust command persists the suggestions onto the entity and
+        // adds any newly-named tags to the project tag list — refresh so
+        // the row's chip strip can resolve names from the cached `tags()`.
+        refreshLibrary();
+        pushToast({
+          kind: "success",
+          title:
+            ids.length === 0
+              ? "No new tag suggestions."
+              : `Suggested ${ids.length} tag${ids.length === 1 ? "" : "s"}.`,
+        });
+      })
+      .catch((err: unknown) => reportCommandFailure("library_auto_tag_entity", err));
+  }
+
   function handleEntityDelete(): void {
     const entity = targetEntity();
     if (!entity) return;
@@ -140,6 +176,20 @@ const LibraryContextMenu: Component<Props> = (props) => {
               }}
             >
               Add state
+            </button>
+          </Show>
+
+          <Show when={isAutoTaggable()}>
+            <button
+              class="ctx-menu__item"
+              data-testid="ctx-menu-suggest-tags"
+              onClick={() => {
+                const t = props.target as EntityContextTarget;
+                handleSuggestTags(t.entityId);
+                props.onClose();
+              }}
+            >
+              Suggest tags
             </button>
           </Show>
 

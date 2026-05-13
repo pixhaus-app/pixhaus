@@ -897,14 +897,25 @@ Expect:
   - [IPC] `library_search` fires (debounced; latency unspecified — do not assert a timeout).
   - Clearing the search via the `×` button (visible only when the input has text) restores the full tree.
 
-### T-library-006: Tag management and AI auto-tag suggestions — DEFERRED
+### T-library-006: AI auto-tag suggestions
 
-Tag management has no UI surface today. The IPCs (`library_add_tag`,
-`library_delete_tag`, `library_auto_tag_entity`,
-`library_accept_suggested_tag`, `library_reject_suggested_tag`) are
-registered in `app/src/lib.rs` but have zero callers under `ui/src/`.
-The scenario is tracked as a stub in section 17. ID reserved — do not
-reassign; rewrite this entry when the tag bar lands.
+Pre: a `Custom` or `Reference` entity exists (T-library-002). A backend that supports `pixhaus.builtin.critique` is configured (Preferences → AI). Without a configured backend the verb invocation aborts with a toast and no chips appear.
+Steps:
+  1. Right-click a `Custom` or `Reference` entity row → context menu shows a "Suggest tags" item between "Add state" and "Move to group…". The item is hidden for `Tileset` and `Tilemap` entities (the verb has no useful grounding for them today).
+  2. Click "Suggest tags". An "Auto-tagging…" info toast surfaces while the verb runs.
+  3. When the verb resolves, a success toast reports the suggestion count (or "No new tag suggestions." when the VLM returns nothing) and pending chips appear inline on the entity row, styled with a dashed accent border and ✓ / ✗ buttons.
+  4. Click ✓ on one pending chip → the chip migrates from the pending strip into the confirmed strip (plain background, no buttons).
+  5. Click ✗ on another pending chip → the chip vanishes.
+  6. Add a state to the same entity (T-library-003 → "Add state") OR approve a sheet variant on a `Reference` entity (T-refsheet-004) to verify the corpus refresh path.
+Expect:
+  - [DOM] context menu carries `data-testid="ctx-menu-suggest-tags"` only when the right-clicked entity is `Custom` or `Reference`.
+  - [DOM] pending chips render with `library-row__tag-chip--pending`; confirmed chips render with `library-row__tag-chip` only.
+  - [IPC] step 2 fires `library_auto_tag_entity { entity_id }`. The returned tag IDs land in the panel's pending-suggestions cache; the call is followed by `library_list_entities` + `library_list_tags` + `library_list_groups` so the chip strip can resolve names for any newly-created tags.
+  - [IPC] step 4 fires `library_accept_suggested_tag { entity_id, tag_id }` followed by a `library_list_entities` / `library_list_tags` refresh.
+  - [IPC] step 5 fires `library_reject_suggested_tag { entity_id, tag_id }` followed by the same refresh.
+  - [IPC] step 6 fires `library_add_state` (or `library_approve_sheet_variant`) and then a fire-and-forget `library_update_corpus { entity_ids: [<entity>] }`. The corpus refresh failing surfaces a toast but does not abort the originating mutation.
+
+> **Out of scope for this scenario:** manual tag CRUD (add tag, delete tag, untag entity from the row) is filed against a future Category B PR. T-library-006 covers only the auto-tag accept/reject and corpus-refresh surface.
 
 ### T-library-007: Anchor wiring — DEFERRED
 
@@ -1205,7 +1216,7 @@ These are deliberate gaps. Do not file bugs against them — file follow-ups ins
 - **AI backend configuration**: the verb runtime, the input modal, and verb cancellation all work. What's still gated is per-backend setup — API keys are entered via Preferences → AI (Anthropic, OpenAI, Replicate, Ollama, ComfyUI, Stability). Verbs targeting an unconfigured backend surface a toast and abort.
 - **Env-driven verb mock toggle**: there is NO `PIXHAUS_AI_MOCK` or equivalent environment variable wired into `ai/src/runtime/` today. The only mock infrastructure is `window.__PIXHAUS_MOCK__` in `tests/visual/helpers/tauri-mock.ts`, which is scoped to the visual-test harness — not usable for manual `pnpm dev` sessions. Follow-up: wire an env-driven short-circuit that returns deterministic mock output for every built-in verb so manual sweeps of T-refsheet-* and T-cmd-005 don't require a real backend.
 - **`window:toggle-library` palette command**: every other panel (layers, timeline, palette, tilemap, sheet) registers a `window:toggle-*` id in `ui/src/command-palette/command-registry.ts`. The library does not, and the native Window menu (`app/src/menu.rs:293-303`) only toggles layers/timeline/palette. Once the panel's close button fires `setLibraryPanelVisible(false)` there is no in-app way to re-show it. Follow-up: register `window:toggle-library` AND add a Window-menu entry.
-- **Library tag UI**: the IPCs `library_add_tag`, `library_delete_tag`, `library_auto_tag_entity`, `library_accept_suggested_tag`, `library_reject_suggested_tag` are registered in `app/src/lib.rs` but have zero callers under `ui/src/`. The library panel has no tag input, no chip strip, and no auto-tag suggestion surface. T-library-006 is reserved for this scenario.
+- **Manual tag CRUD UI**: the IPCs `library_add_tag` and `library_delete_tag` (and `library_untag_entity` from the row chip) are registered but unused — there is no "Add tag" input or chip-untag affordance on the library row. The auto-tag accept/reject surface is wired (T-library-006); manual tag management is filed for a follow-up Category B PR.
 - **Library anchor wiring UI**: `library_set_entity_anchor` and `library_get_anchor_payload` are registered but unused in `ui/src/`. There is no "Set anchor reference" context-menu item; the AI verb runtime resolves anchors server-side via stored entity metadata. T-library-007 is reserved.
 - **`ai:generate-reference-sheet` palette command**: the verb itself works, but it has no command-palette entry. It is reachable only via the "Generate variant" button in the reference sheet panel (T-refsheet-002). Follow-up: register the palette command so verb sweeps can use the same `T-cmd-005`-style flow as `ai:cleanup`.
 - **Per-entity LoRA training latency**: a real training run (Replicate) takes 15–30 minutes per entity. T-refsheet-005 is impractical for routine manual sweeps without the env-driven mock toggle above.

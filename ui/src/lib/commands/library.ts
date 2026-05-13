@@ -232,6 +232,54 @@ export function libraryDeleteSheetVariant(
   return invoke<void>("library_delete_sheet_variant", { entity_id, variant_id });
 }
 
+// ── B9.4: library AI hooks ────────────────────────────────────────────────────
+
+/**
+ * Runs the Critique verb in `LibraryAutoTag` mode against the given entity.
+ *
+ * Resolves with the `TagDefinition`s the VLM suggested; the same list also
+ * lives on `entity.ai.suggested_tags` server-side, so the caller can either
+ * use the return value directly or refresh the entity via `libraryGetEntity`.
+ * The suggestions are persisted but pending — `libraryAcceptSuggestedTag`
+ * promotes one to `entity.tags`, `libraryRejectSuggestedTag` drops it.
+ *
+ * Suitable only for `Custom` and `Reference` entities. The verb may need a
+ * configured VLM backend; failure propagates as a rejected promise.
+ */
+export function libraryAutoTagEntity(entity_id: EntityId): Promise<TagDefinition[]> {
+  return invoke<TagDefinition[]>("library_auto_tag_entity", { entity_id });
+}
+
+/**
+ * Promotes a pending suggested tag to a confirmed tag on the entity.
+ *
+ * Rejects with `Validation` if `tag_id` is not in `entity.ai.suggested_tags`;
+ * the wrapper never silently corrupts entity state by adding an arbitrary tag.
+ */
+export function libraryAcceptSuggestedTag(entity_id: EntityId, tag_id: TagId): Promise<void> {
+  return invoke<void>("library_accept_suggested_tag", { entity_id, tag_id });
+}
+
+/**
+ * Drops a pending suggested tag without confirming it.
+ *
+ * Idempotent: rejecting a tag that was already removed is a no-op.
+ */
+export function libraryRejectSuggestedTag(entity_id: EntityId, tag_id: TagId): Promise<void> {
+  return invoke<void>("library_reject_suggested_tag", { entity_id, tag_id });
+}
+
+/**
+ * Refreshes the project's AI style corpus by adding the given entity ids.
+ *
+ * Deduplicates against the existing corpus — passing an already-tracked
+ * entity is harmless. Does not train; corpus management is decoupled from
+ * verb invocation.
+ */
+export function libraryUpdateCorpus(entity_ids: EntityId[]): Promise<void> {
+  return invoke<void>("library_update_corpus", { entity_ids });
+}
+
 // ── B10.5: per-entity LoRA training ───────────────────────────────────────────
 
 export type TrainEntityLoraOptions = {
