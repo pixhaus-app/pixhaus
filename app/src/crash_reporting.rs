@@ -216,6 +216,17 @@ fn write_persisted_to(path: &Path, enabled: bool) {
     }
 }
 
+/// Serialises tests across this crate that mutate the global `ENABLED`
+/// atomic. `cargo test --lib` runs tests in parallel threads inside a
+/// single process; without this lock, one test's `set_enabled(false)`
+/// can race a parallel test's `set_enabled(true)` between the
+/// set-and-assert window. Nextest sidesteps the race by giving each
+/// test its own process, but CI uses `cargo test`. Tests use
+/// `.unwrap_or_else(|p| p.into_inner())` so a panic-poisoned mutex
+/// doesn't cascade into spurious failures on later tests.
+#[cfg(test)]
+pub(crate) static TEST_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -293,6 +304,7 @@ mod tests {
 
     #[test]
     fn is_enabled_reflects_set_enabled() {
+        let _lock = TEST_LOCK.lock().unwrap_or_else(|p| p.into_inner());
         // Save the prior state to restore after the test.
         let prior = is_enabled();
         set_enabled(true);
