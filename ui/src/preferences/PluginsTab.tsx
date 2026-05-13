@@ -92,8 +92,8 @@ const PluginsTab: Component = () => {
         <div>
           <div class="prefs__label">Loaded plugins</div>
           <div class="prefs__sublabel">
-            Plugins discovered in the plugin directory at startup. Drop a new plugin
-            folder in and click Rescan to pick it up without restarting.
+            Plugins discovered in the plugin directory at startup. Drop a new plugin folder in and
+            click Rescan to pick it up without restarting.
           </div>
         </div>
         <button
@@ -121,7 +121,7 @@ const PluginsTab: Component = () => {
             </div>
           }
         >
-          <table class="prefs__kbd-table">
+          <table class="prefs__plugins-table">
             <tbody>
               <For each={plugins()}>
                 {(plugin) => (
