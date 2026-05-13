@@ -92,4 +92,7 @@ export type { TilesetAddTileResult } from "./TilesetAddTileResult";
 export type { TilesetId } from "./TilesetId";
 export type { TilesetReference } from "./TilesetReference";
 export type { TilesetSource } from "./TilesetSource";
+export type { UpdateAvailablePayload } from "./UpdateAvailablePayload";
+export type { UpdateInfo } from "./UpdateInfo";
+export type { UpdateProgressPayload } from "./UpdateProgressPayload";
 export type { UserData } from "./UserData";

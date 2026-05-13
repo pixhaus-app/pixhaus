@@ -313,6 +313,11 @@ pub fn build(app: &AppHandle) -> tauri::Result<Menu<tauri::Wry>> {
         )
         .separator()
         .item(
+            &MenuItemBuilder::new("Check for Updates...")
+                .id("help:check-updates")
+                .build(app)?,
+        )
+        .item(
             &MenuItemBuilder::new("About Pixhaus")
                 .id("help:about")
                 .build(app)?,
