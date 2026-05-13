@@ -16,7 +16,14 @@ import {
   onCleanup,
 } from "solid-js";
 import type { Entity, EntityId, GroupId, StateId, TagDefinition, TagId } from "../lib/types";
-import { libraryAcceptSuggestedTag, libraryRejectSuggestedTag } from "../lib/commands/library";
+import {
+  libraryAcceptSuggestedTag,
+  libraryGetAnchorPayload,
+  libraryRejectSuggestedTag,
+  librarySetEntityAnchor,
+  type AnchorPayload,
+} from "../lib/commands/library";
+import { pushToast } from "../lib/toast/toast-state";
 import { reportCommandFailure } from "../lib/utils/errors";
 import {
   addStateToEntity,
@@ -106,6 +113,40 @@ const LibraryPanel: Component = () => {
     moveEntityToGroup(id, moveGroupDest());
     setMoveGroupTarget(null);
     setMoveGroupDest(null);
+  }
+
+  // ── Pick anchor reference modal ───────────────────────────────────────────
+
+  const [pickAnchorTarget, setPickAnchorTarget] = createSignal<EntityId | null>(null);
+  const [pickAnchorDest, setPickAnchorDest] = createSignal<EntityId | null>(null);
+
+  const referenceEntities = createMemo(() => entities().filter((e) => e.kind.kind === "Reference"));
+
+  function handlePickAnchor(entityId: EntityId): void {
+    if (referenceEntities().length === 0) {
+      pushToast({
+        kind: "info",
+        title: "No reference entities available.",
+        body: "Create a Reference entity first; anchor wiring needs a canonical sheet to point at.",
+      });
+      return;
+    }
+    setPickAnchorTarget(entityId);
+    setPickAnchorDest(referenceEntities()[0]?.id ?? null);
+  }
+
+  function handlePickAnchorConfirm(): void {
+    const entityId = pickAnchorTarget();
+    const refId = pickAnchorDest();
+    if (entityId === null || refId === null) return;
+    librarySetEntityAnchor(entityId, refId)
+      .then(() => {
+        refreshLibrary();
+        pushToast({ kind: "success", title: "Anchor reference set." });
+      })
+      .catch((err: unknown) => reportCommandFailure("library_set_entity_anchor", err));
+    setPickAnchorTarget(null);
+    setPickAnchorDest(null);
   }
 
   // ── Create entity modal ───────────────────────────────────────────────────
@@ -394,6 +435,7 @@ const LibraryPanel: Component = () => {
             createGroup(`Group ${groups().length + 1}`);
           }
         }}
+        onPickAnchor={handlePickAnchor}
       />
 
       {/* ── Create entity modal ── */}
@@ -475,6 +517,53 @@ const LibraryPanel: Component = () => {
               </button>
               <button class="modal__btn modal__btn--primary" onClick={handleMoveGroupConfirm}>
                 Move
+              </button>
+            </div>
+          </div>
+        </div>
+      </Show>
+
+      {/* ── Pick anchor reference dialog ── */}
+      <Show when={pickAnchorTarget() !== null}>
+        <div class="modal-backdrop">
+          <div class="modal" role="dialog" aria-label="Set anchor reference">
+            <div class="modal__header">
+              <span class="modal__title">Set anchor reference</span>
+            </div>
+            <div class="modal__body">
+              <div class="modal__field">
+                <label class="modal__label">Reference entity</label>
+                <select
+                  class="modal__select"
+                  data-testid="anchor-picker-select"
+                  value={pickAnchorDest() ?? ""}
+                  onChange={(e) => {
+                    const v = e.currentTarget.value;
+                    setPickAnchorDest(v === "" ? null : (parseInt(v, 10) as EntityId));
+                  }}
+                >
+                  <For each={referenceEntities()}>
+                    {(r) => <option value={r.id}>{r.name}</option>}
+                  </For>
+                </select>
+              </div>
+            </div>
+            <div class="modal__footer">
+              <button
+                class="modal__btn modal__btn--ghost"
+                onClick={() => {
+                  setPickAnchorTarget(null);
+                  setPickAnchorDest(null);
+                }}
+              >
+                Cancel
+              </button>
+              <button
+                class="modal__btn modal__btn--primary"
+                data-testid="anchor-picker-confirm"
+                onClick={handlePickAnchorConfirm}
+              >
+                Set anchor
               </button>
             </div>
           </div>
@@ -720,6 +809,10 @@ const EntityRow: Component<EntityRowProps> = (props) => {
           </button>
         </Show>
 
+        {/* Anchor badge (before kind icon — Custom entities with an anchor */}
+        {/* and Reference entities, which are themselves anchor sources) */}
+        <AnchorBadge entity={props.entry.entity} />
+
         {/* Kind icon */}
         <EntityKindIcon kind={props.entry.entity.kind} />
 
@@ -759,6 +852,101 @@ const EntityRow: Component<EntityRowProps> = (props) => {
         </For>
       </Show>
     </>
+  );
+};
+
+// ── Anchor badge ─────────────────────────────────────────────────────────────
+
+type AnchorBadgeProps = {
+  entity: Entity;
+};
+
+// Shown on Custom entities with an anchor and on Reference entities (which
+// are themselves the anchor source). The popover lazy-loads the resolved
+// payload via `library_get_anchor_payload` on hover with a 250ms debounce,
+// so passive scrolling past a long entity list doesn't fire dozens of
+// resolves. Backend payload caching keeps repeat hovers cheap.
+const AnchorBadge: Component<AnchorBadgeProps> = (props) => {
+  const isVisible = (): boolean => {
+    const e = props.entity;
+    if (e.kind.kind === "Reference") return true;
+    return e.anchor_reference_id !== null && e.anchor_reference_id !== undefined;
+  };
+
+  const [showPopover, setShowPopover] = createSignal(false);
+  const [payload, setPayload] = createSignal<AnchorPayload | null>(null);
+  let hoverTimer: ReturnType<typeof setTimeout> | null = null;
+
+  function clearTimer(): void {
+    if (hoverTimer !== null) {
+      clearTimeout(hoverTimer);
+      hoverTimer = null;
+    }
+  }
+
+  function handleMouseEnter(): void {
+    clearTimer();
+    // Snapshot the entity id before the debounce; the row could be
+    // re-keyed under us if the list reorders during the 250ms window
+    // and we don't want a late resolve to clobber the wrong tooltip.
+    const entityId = props.entity.id;
+    hoverTimer = setTimeout(() => {
+      libraryGetAnchorPayload(entityId)
+        .then((p) => {
+          setPayload(p);
+          setShowPopover(true);
+        })
+        .catch((err: unknown) => reportCommandFailure("library_get_anchor_payload", err));
+    }, 250);
+  }
+
+  function handleMouseLeave(): void {
+    clearTimer();
+    setShowPopover(false);
+  }
+
+  onCleanup(() => clearTimer());
+
+  return (
+    <Show when={isVisible()}>
+      <span
+        class="library-row__anchor-badge"
+        data-testid={`library-row-anchor-${props.entity.id}`}
+        onMouseEnter={handleMouseEnter}
+        onMouseLeave={handleMouseLeave}
+        title="Anchor reference"
+      >
+        <svg
+          width="12"
+          height="12"
+          viewBox="0 0 12 12"
+          fill="none"
+          stroke="currentColor"
+          stroke-width="1.3"
+          stroke-linecap="round"
+          stroke-linejoin="round"
+          aria-hidden="true"
+        >
+          <circle cx="6" cy="3" r="1.5" />
+          <path d="M6 4.5 V10" />
+          <path d="M3 8 Q6 11 9 8" />
+          <path d="M2.5 7 H4 M8 7 H9.5" />
+        </svg>
+        <Show when={showPopover() && payload() !== null}>
+          <div
+            class="library-row__anchor-tooltip"
+            role="tooltip"
+            data-testid={`library-row-anchor-tooltip-${props.entity.id}`}
+          >
+            <img
+              class="library-row__anchor-tooltip-img"
+              src={`data:${payload()!.mime};base64,${payload()!.image_b64}`}
+              alt="Anchor reference preview"
+            />
+          </div>
+        </Show>
+      </span>
+    </Show>
   );
 };
 
