@@ -910,7 +910,7 @@ Steps:
 Expect:
   - [DOM] context menu carries `data-testid="ctx-menu-suggest-tags"` only when the right-clicked entity is `Custom` or `Reference`.
   - [DOM] pending chips render with `library-row__tag-chip--pending`; confirmed chips render with `library-row__tag-chip` only.
-  - [IPC] step 2 fires `library_auto_tag_entity { entity_id }`; the resolved `TagDefinition[]` is mirrored into the panel's pending-suggestions cache so the chips render without a separate refresh round-trip.
+  - [IPC] step 2 fires `library_auto_tag_entity { entity_id }`. The returned tag IDs land in the panel's pending-suggestions cache; the call is followed by `library_list_entities` + `library_list_tags` + `library_list_groups` so the chip strip can resolve names for any newly-created tags.
   - [IPC] step 4 fires `library_accept_suggested_tag { entity_id, tag_id }` followed by a `library_list_entities` / `library_list_tags` refresh.
   - [IPC] step 5 fires `library_reject_suggested_tag { entity_id, tag_id }` followed by the same refresh.
   - [IPC] step 6 fires `library_add_state` (or `library_approve_sheet_variant`) and then a fire-and-forget `library_update_corpus { entity_ids: [<entity>] }`. The corpus refresh failing surfaces a toast but does not abort the originating mutation.

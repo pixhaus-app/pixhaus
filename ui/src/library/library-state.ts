@@ -118,6 +118,11 @@ export const [entities, setEntities] = createSignal<Entity[]>([]);
 export const [groups, setGroups] = createSignal<EntityGroup[]>([]);
 export const [tags, setTags] = createSignal<TagDefinition[]>([]);
 
+// Lookup from TagId to its definition. Recomputed once per refreshLibrary()
+// so chip rendering can hit the map by id in O(1) instead of running a
+// linear `tags().find(...)` per chip per row.
+export const [tagsById, setTagsById] = createSignal<ReadonlyMap<TagId, TagDefinition>>(new Map());
+
 // Stale-request guard: incremented on every refreshLibrary() call. Async
 // IPC responses from a superseded refresh are dropped on arrival.
 let refreshToken = 0;
@@ -132,6 +137,30 @@ export function refreshLibrary(): void {
       setEntities(newEntities);
       setGroups(newGroups);
       setTags(newTags);
+
+      // Rebuild the id lookup so chip rendering doesn't pay linear search
+      // costs per row.
+      const byId = new Map<TagId, TagDefinition>();
+      for (const tag of newTags) byId.set(tag.id, tag);
+      setTagsById(byId);
+
+      // Drop pending suggestions for entities that no longer exist. Without
+      // this, switching projects (or deleting an entity then creating a new
+      // one that reuses its id) would surface stale chips against the new
+      // entity. Refreshing on the same entity list is a no-op.
+      const liveIds = new Set(newEntities.map((e) => e.id));
+      setPendingTagSuggestions((prev) => {
+        let removed = false;
+        const next = new Map<EntityId, ReadonlyArray<TagId>>();
+        for (const [id, sugg] of prev) {
+          if (liveIds.has(id)) {
+            next.set(id, sugg);
+          } else {
+            removed = true;
+          }
+        }
+        return removed ? next : prev;
+      });
     })
     .catch((err: unknown) => console.error("[pixhaus] refreshLibrary:", err));
 }
