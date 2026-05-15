@@ -303,6 +303,12 @@ pub fn build(app: &AppHandle) -> tauri::Result<Menu<tauri::Wry>> {
                 .id("window:toggle-palette")
                 .build(app)?,
         )
+        .separator()
+        .item(
+            &MenuItemBuilder::new("Reset Layout")
+                .id("window:reset-layout")
+                .build(app)?,
+        )
         .build()?;
 
     let help = SubmenuBuilder::new(app, "Help")

@@ -95,6 +95,7 @@ import {
   setSheetPanelVisible,
 } from "../sheet/sheet-state";
 import { libraryListEntities } from "../lib/commands/library";
+import { setLibraryPanelVisible } from "../library/library-state";
 import {
   tilemapTool,
   setTilemapTool,
@@ -1148,6 +1149,23 @@ const COMMANDS: ReadonlyMap<string, CommandEntry> = new Map<string, CommandEntry
       category: "Window",
       keywords: ["settings", "theme", "keybinds"],
       handler: () => openPreferences(),
+    },
+  ],
+  [
+    "window:reset-layout",
+    {
+      id: "window:reset-layout",
+      label: "Reset Layout",
+      category: "Window",
+      keywords: ["panels", "restore", "default"],
+      handler: () => {
+        setLayerPanelVisible(true);
+        setTimelinePanelVisible(true);
+        setPalettePanelVisible(true);
+        setTilemapPanelVisible(true);
+        setLibraryPanelVisible(true);
+        closeSheetPanel();
+      },
     },
   ],
   [

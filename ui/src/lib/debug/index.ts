@@ -53,6 +53,8 @@ import {
   selectedFrames,
 } from "../../timeline/timeline-state";
 import { isPalettePanelVisible, isTilemapPanelVisible } from "../../shell/panel-state";
+import { isLibraryPanelVisible } from "../../library/library-state";
+import { isSheetPanelVisible } from "../../sheet/sheet-state";
 import { isCommandPaletteOpen } from "../../palette-state";
 import { isPreferencesOpen } from "../../preferences/preferences-state";
 import {
@@ -152,6 +154,8 @@ interface PanelDebug {
   timeline(): boolean;
   palette(): boolean;
   tilemap(): boolean;
+  library(): boolean;
+  sheet(): boolean;
 }
 
 export interface PixhausDebug {
@@ -259,6 +263,8 @@ export function installDebugSurface(): void {
       timeline: () => isTimelinePanelVisible(),
       palette: () => isPalettePanelVisible(),
       tilemap: () => isTilemapPanelVisible(),
+      library: () => isLibraryPanelVisible(),
+      sheet: () => isSheetPanelVisible(),
     },
 
     getCrashReportingEnabled: () => crashReportingEnabled(),

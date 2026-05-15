@@ -1,5 +1,5 @@
-// Window / panels e2e — covers manual-test-guide section 12
-// (T-window-001..005).
+// Window / panels e2e — covers manual-test-guide section 14
+// (T-window-001..005 plus appended reset-layout coverage).
 //
 // Each panel toggle test boots the app, opens a project (so the panels
 // have something to attach to), and drives the corresponding palette
@@ -113,6 +113,57 @@ describe("Window / panels (T-window)", () => {
 
   it("T-window-004: Toggle Tilemap panel flips isTilemapPanelVisible", async () => {
     await exerciseToggle("tilemap", "toggle tilemap panel");
+  });
+
+  it("T-window-008: Reset Layout restores default panel visibility", async () => {
+    await bootApp();
+    await ensureProjectOpen();
+
+    await dispatchViaPalette("toggle layer panel");
+    await dispatchViaPalette("toggle timeline");
+    await dispatchViaPalette("toggle color palette");
+    await dispatchViaPalette("toggle tilemap panel");
+
+    const closeLibrary = await $('button[title="Close library panel"]');
+    await closeLibrary.waitForClickable({ timeout: 5000 });
+    await closeLibrary.click();
+
+    await browser.waitUntil(
+      async () => {
+        const vis = await getPanelVisibility();
+        return (
+          !vis.layers &&
+          !vis.timeline &&
+          !vis.palette &&
+          !vis.tilemap &&
+          !vis.library
+        );
+      },
+      {
+        timeout: 5000,
+        timeoutMsg: "panels did not reach hidden state before reset",
+      },
+    );
+
+    await dispatchViaPalette("reset layout");
+
+    await browser.waitUntil(
+      async () => {
+        const vis = await getPanelVisibility();
+        return (
+          vis.layers &&
+          vis.timeline &&
+          vis.palette &&
+          vis.tilemap &&
+          vis.library &&
+          !vis.sheet
+        );
+      },
+      {
+        timeout: 5000,
+        timeoutMsg: "reset layout did not restore panel defaults",
+      },
+    );
   });
 
   it("T-window-005: Preferences modal opens via Ctrl+, and closes via close button", async () => {
