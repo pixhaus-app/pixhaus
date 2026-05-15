@@ -406,6 +406,13 @@ body {
   gap: 12px;
 }
 
+.dialog__message {
+  margin: 0;
+  font-size: 13px;
+  line-height: 1.5;
+  color: var(--text-primary);
+}
+
 .dialog__footer {
   display: flex;
   align-items: center;

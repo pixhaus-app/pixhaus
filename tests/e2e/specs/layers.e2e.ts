@@ -21,7 +21,7 @@ import {
   getLayerCount,
   isCommandPaletteOpen,
 } from "../helpers/state.js";
-import { clearIpcLog, waitForIpc } from "../helpers/ipc.js";
+import { clearIpcLog, findIpcByCmd, waitForIpc } from "../helpers/ipc.js";
 
 /**
  * Boots the app and clicks the welcome "New project" button, waiting until
@@ -171,7 +171,6 @@ describe("Layer panel (manual-test-guide §7)", () => {
     await expect(entries.length).toBeGreaterThan(0);
   });
 
-  // TODO(testid): the palette has a "Delete Layer" command (layer:delete)
   it("T-layers-003: Delete with confirmation.", async () => {
     await openNewProjectViaButton();
     await waitForActiveLayer();
@@ -179,10 +178,37 @@ describe("Layer panel (manual-test-guide §7)", () => {
     const addBtn = await $(byTestId("layer-add"));
     await addBtn.click();
     await waitForIpc("layer_add", 1, 5000);
+    await browser.waitUntil(async () => (await getLayerCount()) === 2, {
+      timeout: 5000,
+      timeoutMsg: "layer count never reached 2 before delete confirmation test",
+    });
+
     await clearIpcLog();
-    // The palette layer:delete command bypasses the context-menu confirm
-    // dialog — direct dispatch fires layer_delete IPC.
-    await dispatchViaPalette("delete layer");
+
+    const openDeleteDialog = async () => {
+      const row = await $(byTestId(testid.layer.row(0)));
+      await row.waitForDisplayed({ timeout: 5000 });
+      await row.click({ button: "right" });
+      const deleteItem = await $(byTestId(testid.layer.contextMenu.delete));
+      await deleteItem.waitForDisplayed({ timeout: 3000 });
+      await deleteItem.click();
+      const dialog = await $(byTestId(testid.layer.deleteConfirm));
+      await dialog.waitForDisplayed({ timeout: 3000 });
+      return dialog;
+    };
+
+    const cancelDialog = await openDeleteDialog();
+    const cancelBtn = await $(byTestId(testid.layer.deleteConfirmCancel));
+    await cancelBtn.waitForClickable({ timeout: 3000 });
+    await cancelBtn.click();
+    await cancelDialog.waitForDisplayed({ reverse: true, timeout: 3000 });
+    await expect((await findIpcByCmd("layer_delete")).length).toBe(0);
+    await expect(await getLayerCount()).toBe(2);
+
+    await openDeleteDialog();
+    const confirmBtn = await $(byTestId(testid.layer.deleteConfirmConfirm));
+    await confirmBtn.waitForClickable({ timeout: 3000 });
+    await confirmBtn.click();
     await waitForIpc("layer_delete", 1, 5000);
   });
 
