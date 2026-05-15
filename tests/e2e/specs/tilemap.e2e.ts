@@ -26,6 +26,9 @@ describe("Tilemap panel (manual-test-guide §10)", () => {
     await bootApp();
     const newProject = await $$(byTestId(testid.welcome.newProject));
     await newProject.click();
+    const createBtn = await $$(byTestId(testid.canvasSizeDialog.create));
+    await createBtn.waitForDisplayed({ timeout: 5000 });
+    await createBtn.click();
     await br.waitUntil(async () => (await getActiveProject()) !== null, {
       timeout: 10000,
       timeoutMsg: "active project never registered",

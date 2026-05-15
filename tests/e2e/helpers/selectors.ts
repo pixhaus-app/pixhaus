@@ -26,6 +26,14 @@ export const testid = {
     recent: "welcome-recent",
     recentItem: (index: number) => `welcome-recent-${index}`,
   },
+  canvasSizeDialog: {
+    width: "canvas-size-width",
+    height: "canvas-size-height",
+    name: "canvas-size-name",
+    cancel: "canvas-size-cancel",
+    create: "canvas-size-create",
+    preset: (size: number) => `canvas-size-preset-${size}`,
+  },
   commandPalette: {
     root: "command-palette",
     input: "command-palette-input",

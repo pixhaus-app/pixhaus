@@ -26,6 +26,9 @@ async function openProject(): Promise<void> {
   const newProject = await $(byTestId(testid.welcome.newProject));
   await newProject.waitForDisplayed({ timeout: 5000 });
   await newProject.click();
+  const createBtn = await $(byTestId(testid.canvasSizeDialog.create));
+  await createBtn.waitForDisplayed({ timeout: 5000 });
+  await createBtn.click();
   await browser.waitUntil(async () => (await getActiveProject()) !== null, {
     timeout: 10000,
     timeoutMsg: "active project never set",

@@ -71,6 +71,9 @@ describe("Project lifecycle (manual-test-guide §2)", () => {
   it("T-project-001: New Project creates a 32×32 sprite with one layer and one frame", async () => {
     const newProject = await $(byTestId(testid.welcome.newProject));
     await newProject.click();
+    const createBtn = await $(byTestId(testid.canvasSizeDialog.create));
+    await createBtn.waitForDisplayed({ timeout: 5000 });
+    await createBtn.click();
 
     // Welcome unmounts, editor shell mounts.
     const editor = await $(byTestId(testid.editorLayout));
@@ -177,6 +180,9 @@ describe("Project lifecycle (manual-test-guide §2)", () => {
     // Fresh project: dirty, no on-disk path.
     const newProject = await $(byTestId(testid.welcome.newProject));
     await newProject.click();
+    const createBtn = await $(byTestId(testid.canvasSizeDialog.create));
+    await createBtn.waitForDisplayed({ timeout: 5000 });
+    await createBtn.click();
     // Wait for activeProject to register so the keybind manager is wired
     // (matches keys.e2e.ts pattern; editor.waitForDisplayed alone races).
     await browser.waitUntil(async () => (await getActiveProject()) !== null, {
@@ -236,6 +242,9 @@ describe("Project lifecycle (manual-test-guide §2)", () => {
     // Seed: new project + first save (consumes one mocked Save As path).
     const newProject = await $(byTestId(testid.welcome.newProject));
     await newProject.click();
+    const createBtn = await $(byTestId(testid.canvasSizeDialog.create));
+    await createBtn.waitForDisplayed({ timeout: 5000 });
+    await createBtn.click();
     await browser.waitUntil(async () => (await getActiveProject()) !== null, {
       timeout: 10000,
       timeoutMsg: "active project never registered",
@@ -292,6 +301,9 @@ describe("Project lifecycle (manual-test-guide §2)", () => {
   it("T-project-006: Close Project returns to welcome", async () => {
     const newProject = await $(byTestId(testid.welcome.newProject));
     await newProject.click();
+    const createBtn = await $(byTestId(testid.canvasSizeDialog.create));
+    await createBtn.waitForDisplayed({ timeout: 5000 });
+    await createBtn.click();
     const editor = await $(byTestId(testid.editorLayout));
     await editor.waitForDisplayed({ timeout: 10000 });
 

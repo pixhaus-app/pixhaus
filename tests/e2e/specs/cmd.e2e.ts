@@ -86,6 +86,9 @@ async function ensureProjectOpen(): Promise<void> {
   const newProjectBtn = await $(byTestId(testid.welcome.newProject));
   await newProjectBtn.waitForClickable({ timeout: 5000 });
   await newProjectBtn.click();
+  const createBtn = await $(byTestId(testid.canvasSizeDialog.create));
+  await createBtn.waitForDisplayed({ timeout: 5000 });
+  await createBtn.click();
   await browser.waitUntil(async () => (await getActiveProject()) !== null, {
     timeout: 10000,
     timeoutMsg: "active project never populated after New Project click",

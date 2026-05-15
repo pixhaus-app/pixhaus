@@ -40,14 +40,21 @@ test.beforeEach(async ({ page }) => {
 });
 
 // Opens the project and waits for the canvas element to be visible.
-// The ResizeObserver fires synchronously on mount so by the time
-// toBeVisible() resolves the canvas.width has already been set.
-async function openProjectAndWaitForCanvas(page: import("@playwright/test").Page) {
+// "New Project" now opens a canvas-size dialog rather than dispatching
+// project_new directly; the helper accepts the default size by clicking
+// Create. The ResizeObserver fires synchronously on mount so by the
+// time toBeVisible() resolves the canvas.width has already been set.
+async function openProjectAndWaitForCanvas(
+  page: import("@playwright/test").Page,
+) {
   await page.getByRole("button", { name: "New Project" }).click();
+  await page.getByTestId("canvas-size-create").click();
   await expect(page.locator(".canvas-container canvas")).toBeVisible();
 }
 
-test("canvas mounts and renders checkerboard after project_new resolves", async ({ page }) => {
+test("canvas mounts and renders checkerboard after project_new resolves", async ({
+  page,
+}) => {
   await openProjectAndWaitForCanvas(page);
   await expect(page.locator(".welcome")).not.toBeVisible();
   await expect(page).toHaveScreenshot("canvas-with-project.png");
@@ -55,8 +62,13 @@ test("canvas mounts and renders checkerboard after project_new resolves", async 
 
 test("status bar reflects the open project name", async ({ page }) => {
   await page.getByRole("button", { name: "New Project" }).click();
-  await expect(page.locator(".status-bar")).toContainText("Visual Test Project");
-  await expect(page.locator(".status-bar")).toHaveScreenshot("status-bar-with-project.png");
+  await page.getByTestId("canvas-size-create").click();
+  await expect(page.locator(".status-bar")).toContainText(
+    "Visual Test Project",
+  );
+  await expect(page.locator(".status-bar")).toHaveScreenshot(
+    "status-bar-with-project.png",
+  );
 });
 
 test("canvas element is present and sized in the DOM", async ({ page }) => {
