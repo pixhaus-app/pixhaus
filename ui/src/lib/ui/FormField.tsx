@@ -2,7 +2,8 @@ import { Show, type JSX } from "solid-js";
 
 interface FormFieldProps {
   label: string;
-  htmlFor: string;
+  // Property name `for` matches Solid's JSX attribute (vs React's `htmlFor`).
+  for: string;
   sublabel?: string;
   error?: string;
   children: JSX.Element;
@@ -11,7 +12,7 @@ interface FormFieldProps {
 export function FormField(props: FormFieldProps) {
   return (
     <div class="form-field">
-      <label class="form-field__label" for={props.htmlFor}>
+      <label class="form-field__label" for={props.for}>
         {props.label}
       </label>
       {props.children}

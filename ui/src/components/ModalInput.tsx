@@ -23,11 +23,17 @@ const ModalInput: Component<Props> = (props) => {
   const [value, setValue] = createSignal("");
   const [error, setError] = createSignal<string | null>(null);
   const inputId = createUniqueId();
+  let inputRef: HTMLInputElement | undefined;
 
   createEffect(() => {
     if (props.open) {
       setValue(props.initialValue);
       setError(null);
+      // Dialog focuses the input on open; queue a microtask after that to
+      // select its contents so rename flows ("Rename swatch", "Rename tag",
+      // "New palette") can be replaced by just typing — without this the
+      // caret lands at the end and the user has to manually select-all.
+      queueMicrotask(() => inputRef?.select());
     }
   });
 
@@ -60,6 +66,7 @@ const ModalInput: Component<Props> = (props) => {
           </label>
           <input
             id={inputId}
+            ref={inputRef}
             class="modal-input__field"
             value={value()}
             placeholder={props.placeholder}

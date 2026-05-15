@@ -11,6 +11,9 @@ interface Props {
 }
 
 const FirstLaunchDialog: Component<Props> = (props) => {
+  // onClose handles both backdrop click and Escape; both dismiss as decline
+  // (the conservative path for a consent dialog). Changing this contract
+  // would change the consent semantics for crash-reporting opt-in.
   return (
     <Dialog
       open={true}

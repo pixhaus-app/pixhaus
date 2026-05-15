@@ -89,10 +89,22 @@ export function Dialog(props: DialogProps) {
     });
   });
 
+  // Pair mousedown + click so a text-selection drag that starts inside the
+  // dialog body and releases on the backdrop doesn't dismiss the dialog
+  // (and the inverse — drag started on backdrop, released on panel — also
+  // doesn't dismiss). The previous one-shot mousedown handler dismissed
+  // on either mismatched path.
+  let mouseDownOnBackdrop = false;
+
   const onBackdropMouseDown = (e: MouseEvent) => {
-    if (e.target === e.currentTarget && (props.closeOnBackdrop ?? true)) {
-      props.onClose();
-    }
+    mouseDownOnBackdrop = e.target === e.currentTarget;
+  };
+
+  const onBackdropClick = (e: MouseEvent) => {
+    const dismiss =
+      mouseDownOnBackdrop && e.target === e.currentTarget && (props.closeOnBackdrop ?? true);
+    mouseDownOnBackdrop = false;
+    if (dismiss) props.onClose();
   };
 
   const sizeClass = () => `dialog--${props.size ?? "md"}`;
@@ -100,7 +112,7 @@ export function Dialog(props: DialogProps) {
   return (
     <Show when={props.open}>
       <Portal>
-        <div class="dialog__backdrop" onMouseDown={onBackdropMouseDown}>
+        <div class="dialog__backdrop" onMouseDown={onBackdropMouseDown} onClick={onBackdropClick}>
           <div
             ref={panelRef}
             class={`dialog ${sizeClass()}`}
@@ -113,14 +125,16 @@ export function Dialog(props: DialogProps) {
               <h2 class="dialog__title" id={titleId}>
                 {props.title}
               </h2>
-              <button
-                type="button"
-                class="dialog__close"
-                aria-label="Close"
-                onClick={() => props.onClose()}
-              >
-                ×
-              </button>
+              <Show when={(props.closeOnEscape ?? true) || (props.closeOnBackdrop ?? true)}>
+                <button
+                  type="button"
+                  class="dialog__close"
+                  aria-label="Close"
+                  onClick={() => props.onClose()}
+                >
+                  ×
+                </button>
+              </Show>
             </header>
             {props.children}
           </div>

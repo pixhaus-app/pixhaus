@@ -7,6 +7,7 @@
 import { type Component, For, Show, createEffect, createSignal } from "solid-js";
 import { Button } from "../lib/ui/Button";
 import { Dialog } from "../lib/ui/Dialog";
+import { FormField } from "../lib/ui/FormField";
 import {
   canvasSizeRequest,
   closeCanvasSizeDialog,
@@ -95,17 +96,15 @@ const CanvasSizeDialog: Component = () => {
       <form onSubmit={submit}>
         <Dialog.Body>
           <Show when={canvasSizeRequest()?.mode === "project"}>
-            <div class="prefs__row">
-              <div>
-                <div class="prefs__label">Name</div>
-              </div>
+            <FormField label="Name" for="canvas-size-name-input">
               <input
+                id="canvas-size-name-input"
                 class="ts-picker__input"
                 data-testid="canvas-size-name"
                 value={name()}
                 onInput={(e) => setName(e.currentTarget.value)}
               />
-            </div>
+            </FormField>
           </Show>
 
           <p class="prefs__section-title">Presets</p>
