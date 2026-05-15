@@ -1,4 +1,6 @@
 import { createMemo, createSignal, For, type Component } from "solid-js";
+import { Button } from "../lib/ui/Button";
+import { Dialog } from "../lib/ui/Dialog";
 import { closePreferences } from "./preferences-state";
 import PluginsTab from "./PluginsTab";
 import {
@@ -21,87 +23,63 @@ type Tab = "general" | "keybinds" | "ai" | "plugins" | "privacy";
 const PreferencesModal: Component = () => {
   const [activeTab, setActiveTab] = createSignal<Tab>("general");
 
-  let dialogRef: HTMLDivElement | undefined;
-
-  function onBackdropClick(e: MouseEvent): void {
-    if (e.target === e.currentTarget) closePreferences();
-  }
-
-  function onKeyDown(e: KeyboardEvent): void {
-    if (e.key === "Escape") {
-      e.preventDefault();
-      closePreferences();
-    }
-  }
-
   return (
-    <div class="prefs-backdrop" onClick={onBackdropClick} onKeyDown={onKeyDown}>
-      <div ref={dialogRef} class="prefs" role="dialog" aria-label="Preferences" aria-modal="true">
-        <div class="prefs__header">
-          <h2 class="prefs__title">Preferences</h2>
-          <button class="prefs__close" onClick={closePreferences} aria-label="Close Preferences">
-            ✕
-          </button>
-        </div>
-
-        <div class="prefs__tabs" role="tablist">
-          <button
-            class="prefs__tab"
-            role="tab"
-            aria-selected={activeTab() === "general"}
-            onClick={() => setActiveTab("general")}
-          >
-            General
-          </button>
-          <button
-            class="prefs__tab"
-            role="tab"
-            aria-selected={activeTab() === "keybinds"}
-            onClick={() => setActiveTab("keybinds")}
-          >
-            Keybinds
-          </button>
-          <button
-            class="prefs__tab"
-            role="tab"
-            aria-selected={activeTab() === "ai"}
-            onClick={() => setActiveTab("ai")}
-          >
-            AI Backend
-          </button>
-          <button
-            class="prefs__tab"
-            role="tab"
-            aria-selected={activeTab() === "plugins"}
-            onClick={() => setActiveTab("plugins")}
-          >
-            Plugins
-          </button>
-          <button
-            class="prefs__tab"
-            role="tab"
-            aria-selected={activeTab() === "privacy"}
-            onClick={() => setActiveTab("privacy")}
-          >
-            Privacy
-          </button>
-        </div>
-
-        <div class="prefs__body">
-          {activeTab() === "general" && <GeneralTab />}
-          {activeTab() === "keybinds" && <KeybindsTab />}
-          {activeTab() === "ai" && <AiTab />}
-          {activeTab() === "plugins" && <PluginsTab />}
-          {activeTab() === "privacy" && <PrivacyTab />}
-        </div>
-
-        <div class="prefs__footer">
-          <button class="prefs__btn" onClick={closePreferences}>
-            Close
-          </button>
-        </div>
+    <Dialog open={true} title="Preferences" onClose={closePreferences} size="lg">
+      <div class="prefs__tabs" role="tablist">
+        <button
+          class="prefs__tab"
+          role="tab"
+          aria-selected={activeTab() === "general"}
+          onClick={() => setActiveTab("general")}
+        >
+          General
+        </button>
+        <button
+          class="prefs__tab"
+          role="tab"
+          aria-selected={activeTab() === "keybinds"}
+          onClick={() => setActiveTab("keybinds")}
+        >
+          Keybinds
+        </button>
+        <button
+          class="prefs__tab"
+          role="tab"
+          aria-selected={activeTab() === "ai"}
+          onClick={() => setActiveTab("ai")}
+        >
+          AI Backend
+        </button>
+        <button
+          class="prefs__tab"
+          role="tab"
+          aria-selected={activeTab() === "plugins"}
+          onClick={() => setActiveTab("plugins")}
+        >
+          Plugins
+        </button>
+        <button
+          class="prefs__tab"
+          role="tab"
+          aria-selected={activeTab() === "privacy"}
+          onClick={() => setActiveTab("privacy")}
+        >
+          Privacy
+        </button>
       </div>
-    </div>
+
+      <Dialog.Body>
+        {activeTab() === "general" && <GeneralTab />}
+        {activeTab() === "keybinds" && <KeybindsTab />}
+        {activeTab() === "ai" && <AiTab />}
+        {activeTab() === "plugins" && <PluginsTab />}
+        {activeTab() === "privacy" && <PrivacyTab />}
+      </Dialog.Body>
+
+      <Dialog.Footer>
+        <Button onClick={closePreferences}>Close</Button>
+      </Dialog.Footer>
+    </Dialog>
   );
 };
 
@@ -129,8 +107,6 @@ const GeneralTab: Component = () => {
 };
 
 const KeybindsTab: Component = () => {
-  // Memoised so the table re-runs when `keybindPreset` or `customKeybinds`
-  // change — getAllCommands() reads both signals.
   const commands = createMemo(() => getAllCommands());
   const custom = customKeybinds;
 
@@ -173,21 +149,19 @@ const KeybindsTab: Component = () => {
                       {override() !== undefined ? (
                         <span>
                           <kbd class="prefs__kbd">{override()}</kbd>{" "}
-                          <button
-                            style={{
-                              "font-size": "10px",
-                              color: "var(--text-disabled)",
-                              cursor: "pointer",
-                            }}
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            class="prefs__kbd-reset"
                             onClick={() => clearCustomKeybind(cmd.id)}
                           >
                             reset
-                          </button>
+                          </Button>
                         </span>
                       ) : cmd.keybind !== undefined ? (
                         <kbd class="prefs__kbd">{cmd.keybind}</kbd>
                       ) : (
-                        <span style={{ color: "var(--text-disabled)" }}>—</span>
+                        <span class="prefs__kbd-empty">—</span>
                       )}
                     </td>
                   </tr>
@@ -234,7 +208,7 @@ const PrivacyTab: Component = () => {
               href="https://pixhaus.app/privacy"
               target="_blank"
               rel="noopener noreferrer"
-              style={{ color: "var(--accent)" }}
+              class="prefs__link"
             >
               privacy policy
             </a>{" "}

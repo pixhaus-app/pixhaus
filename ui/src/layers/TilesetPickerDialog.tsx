@@ -4,8 +4,10 @@
 // create one inline without leaving the dialog. On confirm, calls
 // convertLayerToTilemap with the chosen tileset id.
 
-import { type Component, For, Show, createEffect, createSignal, onCleanup } from "solid-js";
+import { type Component, For, Show, createEffect, createSignal } from "solid-js";
 import type { Tileset, TilesetId } from "../lib/types";
+import { Button } from "../lib/ui/Button";
+import { Dialog } from "../lib/ui/Dialog";
 import { tilesetAdd, tilesetList } from "../lib/commands/tilesets";
 import { closeTilesetPicker, convertLayerToTilemap, tilesetPickerTarget } from "./layer-state";
 
@@ -23,18 +25,11 @@ const TilesetPickerDialog: Component = () => {
   const [submitting, setSubmitting] = createSignal(false);
   const [error, setError] = createSignal<string | null>(null);
 
-  // Capture the in-flight request's spriteId so a stale response (e.g.
-  // the dialog closed or a different layer triggered the picker before
-  // the IPC settled) can be discarded instead of overwriting state.
-  // Mirrors the refreshToken pattern in layer-state.ts:refreshLayers.
   function isCurrentRequest(spriteId: number): boolean {
     const cur = tilesetPickerTarget();
     return cur !== null && cur.spriteId === spriteId;
   }
 
-  // Load tilesets whenever the dialog opens. If the sprite has none, drop
-  // straight into the create form so the user doesn't see an empty list
-  // and have to find a button.
   createEffect(() => {
     const t = target();
     if (t === null) return;
@@ -49,7 +44,6 @@ const TilesetPickerDialog: Component = () => {
           setNewName("Tileset 1");
         } else {
           setCreating(false);
-          // Pre-select the first tileset so Convert is enabled by default.
           setSelectedId(list[0]?.id ?? null);
         }
       })
@@ -60,30 +54,12 @@ const TilesetPickerDialog: Component = () => {
       });
   });
 
-  // Escape closes the dialog. Mounted via createEffect so the listener is
-  // installed only while the dialog is open.
-  createEffect(() => {
-    if (target() === null) return;
-    function onKeyDown(e: KeyboardEvent): void {
-      if (e.key === "Escape") {
-        e.preventDefault();
-        cancel();
-      }
-    }
-    document.addEventListener("keydown", onKeyDown);
-    onCleanup(() => document.removeEventListener("keydown", onKeyDown));
-  });
-
   function cancel(): void {
     setCreating(false);
     setNewName("");
     setSelectedId(null);
     setError(null);
     closeTilesetPicker();
-  }
-
-  function onBackdropClick(e: MouseEvent): void {
-    if (e.target === e.currentTarget) cancel();
   }
 
   function confirm(): void {
@@ -120,8 +96,6 @@ const TilesetPickerDialog: Component = () => {
         tile_height: h,
       });
       const list = await tilesetList(requestSpriteId);
-      // Same stale-response guard as the load path: if the picker
-      // closed or moved to another sprite mid-await, drop the result.
       if (!isCurrentRequest(requestSpriteId)) return;
       setTilesets(list);
       setSelectedId(created.id);
@@ -136,139 +110,127 @@ const TilesetPickerDialog: Component = () => {
   }
 
   return (
-    <Show when={target() !== null}>
-      <div class="prefs-backdrop" onClick={onBackdropClick}>
-        <div class="prefs ts-picker" role="dialog" aria-label="Choose Tileset" aria-modal="true">
-          <div class="prefs__header">
-            <h2 class="prefs__title">Convert to Tilemap Layer</h2>
-            <button class="prefs__close" onClick={cancel} aria-label="Close">
-              ✕
-            </button>
-          </div>
-
-          <div class="prefs__body">
+    <Dialog open={target() !== null} title="Convert to tilemap layer" onClose={cancel} size="md">
+      <Dialog.Body>
+        <Show
+          when={creating()}
+          fallback={
             <Show
-              when={creating()}
-              fallback={
-                <Show
-                  when={tilesets().length > 0}
-                  fallback={<p class="prefs__sublabel">No tilesets yet. Create one below.</p>}
-                >
-                  <p class="prefs__section-title">Pick a tileset</p>
-                  <div class="ts-picker__list" role="radiogroup">
-                    <For each={tilesets()}>
-                      {(ts) => (
-                        <label
-                          class="ts-picker__row"
-                          classList={{ "ts-picker__row--selected": selectedId() === ts.id }}
-                        >
-                          <input
-                            type="radio"
-                            name="ts-picker"
-                            checked={selectedId() === ts.id}
-                            onChange={() => setSelectedId(ts.id)}
-                          />
-                          <span class="ts-picker__name">{ts.name}</span>
-                          <span class="ts-picker__meta">
-                            {ts.tile_size.width}×{ts.tile_size.height}, {ts.tile_count} tiles
-                          </span>
-                        </label>
-                      )}
-                    </For>
-                  </div>
-                </Show>
-              }
+              when={tilesets().length > 0}
+              fallback={<p class="prefs__sublabel">No tilesets yet. Create one below.</p>}
             >
-              <p class="prefs__section-title">Create a new tileset</p>
-              <form onSubmit={submitCreate}>
-                <div class="prefs__row">
-                  <div>
-                    <div class="prefs__label">Name</div>
-                  </div>
-                  <input
-                    class="ts-picker__input"
-                    value={newName()}
-                    onInput={(e) => setNewName(e.currentTarget.value)}
-                    placeholder="Tileset 1"
-                    autofocus
-                  />
-                </div>
-                <div class="prefs__row">
-                  <div>
-                    <div class="prefs__label">Tile size</div>
-                    <div class="prefs__sublabel">Width × height in pixels</div>
-                  </div>
-                  <div class="ts-picker__size">
-                    <input
-                      class="ts-picker__input ts-picker__input--num"
-                      type="number"
-                      min="1"
-                      value={newTileWidth()}
-                      onInput={(e) => setNewTileWidth(parseInt(e.currentTarget.value, 10) || 0)}
-                    />
-                    <span aria-hidden="true">×</span>
-                    <input
-                      class="ts-picker__input ts-picker__input--num"
-                      type="number"
-                      min="1"
-                      value={newTileHeight()}
-                      onInput={(e) => setNewTileHeight(parseInt(e.currentTarget.value, 10) || 0)}
-                    />
-                  </div>
-                </div>
-                <Show when={error() !== null}>
-                  <p class="ts-picker__error">{error()}</p>
-                </Show>
-                <div class="ts-picker__create-actions">
-                  <Show when={tilesets().length > 0}>
-                    <button
-                      type="button"
-                      class="prefs__btn prefs__btn--ghost"
-                      onClick={() => {
-                        setCreating(false);
-                        setError(null);
-                      }}
+              <p class="prefs__section-title">Pick a tileset</p>
+              <div class="ts-picker__list" role="radiogroup">
+                <For each={tilesets()}>
+                  {(ts) => (
+                    <label
+                      class="ts-picker__row"
+                      classList={{ "ts-picker__row--selected": selectedId() === ts.id }}
                     >
-                      Back to list
-                    </button>
-                  </Show>
-                  <button type="submit" class="prefs__btn" disabled={submitting()}>
-                    {submitting() ? "Creating…" : "Create"}
-                  </button>
-                </div>
-              </form>
+                      <input
+                        type="radio"
+                        name="ts-picker"
+                        checked={selectedId() === ts.id}
+                        onChange={() => setSelectedId(ts.id)}
+                      />
+                      <span class="ts-picker__name">{ts.name}</span>
+                      <span class="ts-picker__meta">
+                        {ts.tile_size.width}×{ts.tile_size.height}, {ts.tile_count} tiles
+                      </span>
+                    </label>
+                  )}
+                </For>
+              </div>
             </Show>
-          </div>
-
-          <Show when={!creating()}>
-            <div class="prefs__footer ts-picker__footer">
-              <button
-                class="prefs__btn prefs__btn--ghost"
-                onClick={() => {
-                  setError(null);
-                  setNewName(`Tileset ${tilesets().length + 1}`);
-                  setCreating(true);
-                }}
-              >
-                Create new tileset…
-              </button>
-              <div class="ts-picker__footer-spacer" />
-              <button class="prefs__btn prefs__btn--ghost" onClick={cancel}>
-                Cancel
-              </button>
-              <button
-                class="prefs__btn"
-                onClick={confirm}
-                disabled={selectedId() === null}
-                title={selectedId() === null ? "Pick a tileset first" : undefined}
-              >
-                Convert
-              </button>
+          }
+        >
+          <p class="prefs__section-title">Create a new tileset</p>
+          <form onSubmit={submitCreate}>
+            <div class="prefs__row">
+              <div>
+                <div class="prefs__label">Name</div>
+              </div>
+              <input
+                class="ts-picker__input"
+                value={newName()}
+                onInput={(e) => setNewName(e.currentTarget.value)}
+                placeholder="Tileset 1"
+              />
             </div>
-          </Show>
-        </div>
-      </div>
-    </Show>
+            <div class="prefs__row">
+              <div>
+                <div class="prefs__label">Tile size</div>
+                <div class="prefs__sublabel">Width × height in pixels</div>
+              </div>
+              <div class="ts-picker__size">
+                <input
+                  class="ts-picker__input ts-picker__input--num"
+                  type="number"
+                  min="1"
+                  value={newTileWidth()}
+                  onInput={(e) => setNewTileWidth(parseInt(e.currentTarget.value, 10) || 0)}
+                />
+                <span aria-hidden="true">×</span>
+                <input
+                  class="ts-picker__input ts-picker__input--num"
+                  type="number"
+                  min="1"
+                  value={newTileHeight()}
+                  onInput={(e) => setNewTileHeight(parseInt(e.currentTarget.value, 10) || 0)}
+                />
+              </div>
+            </div>
+            <Show when={error() !== null}>
+              <p class="form-field__error" role="alert">
+                {error()}
+              </p>
+            </Show>
+            <div class="ts-picker__create-actions">
+              <Show when={tilesets().length > 0}>
+                <Button
+                  variant="ghost"
+                  onClick={() => {
+                    setCreating(false);
+                    setError(null);
+                  }}
+                >
+                  Back to list
+                </Button>
+              </Show>
+              <Button type="submit" loading={submitting()}>
+                {submitting() ? "Creating" : "Create"}
+              </Button>
+            </div>
+          </form>
+        </Show>
+      </Dialog.Body>
+
+      <Show when={!creating()}>
+        <Dialog.Footer>
+          <Button
+            variant="ghost"
+            onClick={() => {
+              setError(null);
+              setNewName(`Tileset ${tilesets().length + 1}`);
+              setCreating(true);
+            }}
+            class="ts-picker__new-btn"
+          >
+            New tileset
+          </Button>
+          <Button variant="ghost" onClick={cancel}>
+            Cancel
+          </Button>
+          <Button
+            onClick={confirm}
+            disabled={selectedId() === null}
+            title={selectedId() === null ? "Pick a tileset first" : undefined}
+          >
+            Convert to tileset
+          </Button>
+        </Dialog.Footer>
+      </Show>
+    </Dialog>
   );
 };
 

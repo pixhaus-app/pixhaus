@@ -139,7 +139,7 @@ const LibraryContextMenu: Component<Props> = (props) => {
     if (!entity) return;
     props.onClose();
     void confirm(`Delete "${entity.name}"? This cannot be undone.`, {
-      title: "Delete Entity",
+      title: "Delete entity",
       kind: "warning",
     }).then((ok) => {
       if (!ok) return;
@@ -154,7 +154,7 @@ const LibraryContextMenu: Component<Props> = (props) => {
     void confirm(
       `Delete group "${group.name}"?\nChoose "OK" to keep entities ungrouped, or cancel to abort.`,
       {
-        title: "Delete Group",
+        title: "Delete group",
         kind: "warning",
       },
     ).then((ok) => {

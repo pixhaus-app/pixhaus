@@ -8,6 +8,7 @@
 // when something looks off.
 
 import { createSignal, For, onMount, Show, type Component } from "solid-js";
+import { Button } from "../lib/ui/Button";
 import { pluginList, pluginReload, pluginScan, pluginUnload } from "../lib/commands/plugins";
 import type { PluginInfo } from "../lib/commands/plugins";
 import { pushToast } from "../lib/toast/toast-state";
@@ -96,13 +97,14 @@ const PluginsTab: Component = () => {
             click Rescan to pick it up without restarting.
           </div>
         </div>
-        <button
-          class="prefs__btn prefs__btn--ghost"
+        <Button
+          variant="ghost"
+          size="sm"
           onClick={() => void handleRescan()}
           disabled={busy() !== null}
         >
           Rescan plugins
-        </button>
+        </Button>
       </div>
 
       <Show
@@ -130,10 +132,8 @@ const PluginsTab: Component = () => {
                       <div>
                         <strong>{plugin.name}</strong> <span>v{plugin.version}</span>
                       </div>
-                      <div style={{ "font-size": "11px", color: "var(--text-disabled)" }}>
-                        {plugin.dir}
-                      </div>
-                      <div style={{ "font-size": "11px", color: "var(--text-secondary)" }}>
+                      <div class="prefs__plugins-dir">{plugin.dir}</div>
+                      <div class="prefs__plugins-meta">
                         {plugin.verb_count} verb{plugin.verb_count === 1 ? "" : "s"}
                         {plugin.description !== undefined ? ` — ${plugin.description}` : ""}
                       </div>
@@ -142,50 +142,44 @@ const PluginsTab: Component = () => {
                       <Show
                         when={confirmUnload() === plugin.name}
                         fallback={
-                          <span>
-                            <button
-                              class="prefs__btn prefs__btn--ghost"
-                              style={{ "margin-right": "6px" }}
+                          <span class="prefs__plugins-actions">
+                            <Button
+                              variant="ghost"
+                              size="sm"
                               onClick={() => void handleReload(plugin.name)}
                               disabled={busy() !== null}
                             >
                               Reload
-                            </button>
-                            <button
-                              class="prefs__btn prefs__btn--ghost"
+                            </Button>
+                            <Button
+                              variant="ghost"
+                              size="sm"
                               onClick={() => setConfirmUnload(plugin.name)}
                               disabled={busy() !== null}
                             >
                               Unload
-                            </button>
+                            </Button>
                           </span>
                         }
                       >
-                        <span>
-                          <span
-                            style={{
-                              "font-size": "11px",
-                              color: "var(--text-secondary)",
-                              "margin-right": "8px",
-                            }}
-                          >
-                            Confirm unload?
-                          </span>
-                          <button
-                            class="prefs__btn"
-                            style={{ "margin-right": "6px" }}
+                        <span class="prefs__plugins-actions">
+                          <span class="prefs__plugins-confirm-label">Confirm unload?</span>
+                          <Button
+                            variant="danger"
+                            size="sm"
                             onClick={() => void handleUnload(plugin.name)}
                             disabled={busy() !== null}
                           >
                             Yes
-                          </button>
-                          <button
-                            class="prefs__btn prefs__btn--ghost"
+                          </Button>
+                          <Button
+                            variant="ghost"
+                            size="sm"
                             onClick={() => setConfirmUnload(null)}
                             disabled={busy() !== null}
                           >
                             Cancel
-                          </button>
+                          </Button>
                         </span>
                       </Show>
                     </td>

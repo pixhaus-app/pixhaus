@@ -222,7 +222,7 @@ const LayerContextMenu: Component<Props> = (props) => {
             // sit on top of the modal while the user reads it.
             props.onClose();
             void confirm(message, {
-              title: ids.length > 1 ? "Delete Layers" : "Delete Layer",
+              title: ids.length > 1 ? "Delete layers" : "Delete layer",
               kind: "warning",
             }).then((ok) => {
               if (!ok) return;

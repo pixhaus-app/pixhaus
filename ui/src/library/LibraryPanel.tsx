@@ -25,6 +25,9 @@ import {
 } from "../lib/commands/library";
 import { pushToast } from "../lib/toast/toast-state";
 import { reportCommandFailure } from "../lib/utils/errors";
+import { Button } from "../lib/ui/Button";
+import { Dialog } from "../lib/ui/Dialog";
+import { openAnchorPicker } from "./anchor-picker-state";
 import {
   addStateToEntity,
   beginEntityRename,
@@ -62,7 +65,7 @@ import {
   toggleGroupExpanded,
 } from "./library-state";
 import LibraryContextMenu, { type LibraryContextTarget } from "./LibraryContextMenu";
-import EntityCreateModal from "./EntityCreateModal";
+import { openEntityCreate } from "./entity-create-state";
 import type { LibraryTreeEntry } from "./library-state";
 
 // ── Panel component ──────────────────────────────────────────────────────────
@@ -116,15 +119,13 @@ const LibraryPanel: Component = () => {
     setMoveGroupDest(null);
   }
 
-  // ── Pick anchor reference modal ───────────────────────────────────────────
-
-  const [pickAnchorTarget, setPickAnchorTarget] = createSignal<EntityId | null>(null);
-  const [pickAnchorDest, setPickAnchorDest] = createSignal<EntityId | null>(null);
+  // ── Pick anchor reference ─────────────────────────────────────────────────
 
   const referenceEntities = createMemo(() => entities().filter((e) => e.kind.kind === "Reference"));
 
   function handlePickAnchor(entityId: EntityId): void {
-    if (referenceEntities().length === 0) {
+    const refs = referenceEntities();
+    if (refs.length === 0) {
       pushToast({
         kind: "info",
         title: "No reference entities available.",
@@ -132,27 +133,19 @@ const LibraryPanel: Component = () => {
       });
       return;
     }
-    setPickAnchorTarget(entityId);
-    setPickAnchorDest(referenceEntities()[0]?.id ?? null);
+    openAnchorPicker({
+      entityId,
+      references: refs.map((r) => ({ id: r.id, name: r.name })),
+      onConfirm: (refId) => {
+        librarySetEntityAnchor(entityId, refId)
+          .then(() => {
+            refreshLibrary();
+            pushToast({ kind: "success", title: "Anchor reference set." });
+          })
+          .catch((err: unknown) => reportCommandFailure("library_set_entity_anchor", err));
+      },
+    });
   }
-
-  function handlePickAnchorConfirm(): void {
-    const entityId = pickAnchorTarget();
-    const refId = pickAnchorDest();
-    if (entityId === null || refId === null) return;
-    librarySetEntityAnchor(entityId, refId)
-      .then(() => {
-        refreshLibrary();
-        pushToast({ kind: "success", title: "Anchor reference set." });
-      })
-      .catch((err: unknown) => reportCommandFailure("library_set_entity_anchor", err));
-    setPickAnchorTarget(null);
-    setPickAnchorDest(null);
-  }
-
-  // ── Create entity modal ───────────────────────────────────────────────────
-
-  const [createModalOpen, setCreateModalOpen] = createSignal(false);
 
   // ── Drag-to-reorder ───────────────────────────────────────────────────────
 
@@ -178,7 +171,7 @@ const LibraryPanel: Component = () => {
           <button
             class="library-panel__icon-btn"
             data-testid="library-add-entity"
-            onClick={() => setCreateModalOpen(true)}
+            onClick={() => openEntityCreate()}
             title="New entity"
           >
             <svg
@@ -341,7 +334,7 @@ const LibraryPanel: Component = () => {
         fallback={
           <div class="library-panel__empty">
             <span>No entities yet.</span>
-            <button class="library-panel__empty-cta" onClick={() => setCreateModalOpen(true)}>
+            <button class="library-panel__empty-cta" onClick={() => openEntityCreate()}>
               Create your first entity
             </button>
           </div>
@@ -439,137 +432,75 @@ const LibraryPanel: Component = () => {
         onPickAnchor={handlePickAnchor}
       />
 
-      {/* ── Create entity modal ── */}
-      <Show when={createModalOpen()}>
-        <EntityCreateModal onClose={() => setCreateModalOpen(false)} />
-      </Show>
-
       {/* ── Add state dialog ── */}
-      <Show when={addStateTarget() !== null}>
-        <div class="modal-backdrop">
-          <div class="modal" role="dialog" aria-label="Add state">
-            <div class="modal__header">
-              <span class="modal__title">Add state</span>
-            </div>
-            <div class="modal__body">
-              <div class="modal__field">
-                <label class="modal__label">State name</label>
-                <input
-                  class="modal__input"
-                  list="state-suggestions-add"
-                  value={addStateName()}
-                  onInput={(e) => setAddStateName(e.currentTarget.value)}
-                  onKeyDown={(e) => {
-                    if (e.key === "Enter") handleAddStateConfirm();
-                    if (e.key === "Escape") setAddStateTarget(null);
-                  }}
-                  autofocus
-                />
-                <datalist id="state-suggestions-add">
-                  <option value="idle" />
-                  <option value="walk" />
-                  <option value="run" />
-                  <option value="jump" />
-                  <option value="attack" />
-                  <option value="hurt" />
-                  <option value="death" />
-                  <option value="victory" />
-                </datalist>
-              </div>
-            </div>
-            <div class="modal__footer">
-              <button class="modal__btn modal__btn--ghost" onClick={() => setAddStateTarget(null)}>
-                Cancel
-              </button>
-              <button class="modal__btn modal__btn--primary" onClick={handleAddStateConfirm}>
-                Add
-              </button>
-            </div>
+      <Dialog
+        open={addStateTarget() !== null}
+        title="Add state"
+        onClose={() => setAddStateTarget(null)}
+        size="sm"
+      >
+        <Dialog.Body>
+          <div class="modal__field">
+            <label class="modal__label">State name</label>
+            <input
+              class="modal__input"
+              list="state-suggestions-add"
+              value={addStateName()}
+              onInput={(e) => setAddStateName(e.currentTarget.value)}
+              onKeyDown={(e) => {
+                if (e.key === "Enter") handleAddStateConfirm();
+              }}
+            />
+            <datalist id="state-suggestions-add">
+              <option value="idle" />
+              <option value="walk" />
+              <option value="run" />
+              <option value="jump" />
+              <option value="attack" />
+              <option value="hurt" />
+              <option value="death" />
+              <option value="victory" />
+            </datalist>
           </div>
-        </div>
-      </Show>
+        </Dialog.Body>
+        <Dialog.Footer>
+          <Button variant="ghost" onClick={() => setAddStateTarget(null)}>
+            Cancel
+          </Button>
+          <Button onClick={handleAddStateConfirm}>Add</Button>
+        </Dialog.Footer>
+      </Dialog>
 
       {/* ── Move to group dialog ── */}
-      <Show when={moveGroupTarget() !== null}>
-        <div class="modal-backdrop">
-          <div class="modal" role="dialog" aria-label="Move to group">
-            <div class="modal__header">
-              <span class="modal__title">Move to group</span>
-            </div>
-            <div class="modal__body">
-              <div class="modal__field">
-                <label class="modal__label">Group</label>
-                <select
-                  class="modal__select"
-                  value={moveGroupDest() ?? ""}
-                  onChange={(e) => {
-                    const v = e.currentTarget.value;
-                    setMoveGroupDest(v === "" ? null : (parseInt(v, 10) as GroupId));
-                  }}
-                >
-                  <option value="">None (ungrouped)</option>
-                  <For each={groups()}>{(g) => <option value={g.id}>{g.name}</option>}</For>
-                </select>
-              </div>
-            </div>
-            <div class="modal__footer">
-              <button class="modal__btn modal__btn--ghost" onClick={() => setMoveGroupTarget(null)}>
-                Cancel
-              </button>
-              <button class="modal__btn modal__btn--primary" onClick={handleMoveGroupConfirm}>
-                Move
-              </button>
-            </div>
+      <Dialog
+        open={moveGroupTarget() !== null}
+        title="Move to group"
+        onClose={() => setMoveGroupTarget(null)}
+        size="sm"
+      >
+        <Dialog.Body>
+          <div class="modal__field">
+            <label class="modal__label">Group</label>
+            <select
+              class="modal__select"
+              value={moveGroupDest() ?? ""}
+              onChange={(e) => {
+                const v = e.currentTarget.value;
+                setMoveGroupDest(v === "" ? null : (parseInt(v, 10) as GroupId));
+              }}
+            >
+              <option value="">None (ungrouped)</option>
+              <For each={groups()}>{(g) => <option value={g.id}>{g.name}</option>}</For>
+            </select>
           </div>
-        </div>
-      </Show>
-
-      {/* ── Pick anchor reference dialog ── */}
-      <Show when={pickAnchorTarget() !== null}>
-        <div class="modal-backdrop">
-          <div class="modal" role="dialog" aria-label="Set anchor reference">
-            <div class="modal__header">
-              <span class="modal__title">Set anchor reference</span>
-            </div>
-            <div class="modal__body">
-              <div class="modal__field">
-                <label class="modal__label">Reference entity</label>
-                <select
-                  class="modal__select"
-                  data-testid="anchor-picker-select"
-                  value={pickAnchorDest() ?? ""}
-                  onChange={(e) => {
-                    const v = e.currentTarget.value;
-                    setPickAnchorDest(v === "" ? null : (parseInt(v, 10) as EntityId));
-                  }}
-                >
-                  <For each={referenceEntities()}>
-                    {(r) => <option value={r.id}>{r.name}</option>}
-                  </For>
-                </select>
-              </div>
-            </div>
-            <div class="modal__footer">
-              <button
-                class="modal__btn modal__btn--ghost"
-                onClick={() => {
-                  setPickAnchorTarget(null);
-                  setPickAnchorDest(null);
-                }}
-              >
-                Cancel
-              </button>
-              <button
-                class="modal__btn modal__btn--primary"
-                data-testid="anchor-picker-confirm"
-                onClick={handlePickAnchorConfirm}
-              >
-                Set anchor
-              </button>
-            </div>
-          </div>
-        </div>
-      </Show>
+        </Dialog.Body>
+        <Dialog.Footer>
+          <Button variant="ghost" onClick={() => setMoveGroupTarget(null)}>
+            Cancel
+          </Button>
+          <Button onClick={handleMoveGroupConfirm}>Move</Button>
+        </Dialog.Footer>
+      </Dialog>
     </div>
   );
 };
