@@ -20,6 +20,7 @@ const TilesetPickerDialog: Component = () => {
   const [selectedId, setSelectedId] = createSignal<TilesetId | null>(null);
   const [creating, setCreating] = createSignal(false);
   const [newName, setNewName] = createSignal("");
+  let newNameInputRef: HTMLInputElement | undefined;
   const [newTileWidth, setNewTileWidth] = createSignal(DEFAULT_TILE_SIZE);
   const [newTileHeight, setNewTileHeight] = createSignal(DEFAULT_TILE_SIZE);
   const [submitting, setSubmitting] = createSignal(false);
@@ -52,6 +53,18 @@ const TilesetPickerDialog: Component = () => {
         console.error("[pixhaus] tileset_list:", err);
         setError("Failed to load tilesets");
       });
+  });
+
+  // Dialog's initialFocus only fires on open. When the user clicks "New
+  // tileset" in the footer to enter create mode, the create form mounts
+  // mid-dialog; nothing focuses the Name input. Track creating() and
+  // focus + select once the input is in the DOM.
+  createEffect(() => {
+    if (!creating()) return;
+    queueMicrotask(() => {
+      newNameInputRef?.focus();
+      newNameInputRef?.select();
+    });
   });
 
   function cancel(): void {
@@ -151,6 +164,7 @@ const TilesetPickerDialog: Component = () => {
                 <div class="prefs__label">Name</div>
               </div>
               <input
+                ref={newNameInputRef}
                 class="ts-picker__input"
                 value={newName()}
                 onInput={(e) => setNewName(e.currentTarget.value)}

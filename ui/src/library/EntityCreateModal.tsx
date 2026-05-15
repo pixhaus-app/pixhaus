@@ -9,6 +9,7 @@ import { open as dialogOpen } from "../lib/dialog";
 import type { EntityKind, GroupId } from "../lib/types";
 import { Button } from "../lib/ui/Button";
 import { Dialog } from "../lib/ui/Dialog";
+import { FormField } from "../lib/ui/FormField";
 import { groups, createEntity } from "./library-state";
 import { closeEntityCreate, entityCreateRequest } from "./entity-create-state";
 
@@ -212,10 +213,22 @@ const EntityCreateModal: Component = () => {
             </div>
           </div>
 
+          {/* Name first so Dialog.initialFocus="first-input" lands here
+              for every kind, not on the Custom-only Category combobox. */}
+          <FormField label="Name" for="entity-create-name">
+            <input
+              id="entity-create-name"
+              class="modal__input"
+              value={name()}
+              onInput={(e) => setName(e.currentTarget.value)}
+              placeholder={kindTag() === "Custom" ? "Hero, Goblin..." : "Forest, Level-1..."}
+            />
+          </FormField>
+
           <Show when={kindTag() === "Custom"}>
-            <div class="modal__field">
-              <label class="modal__label">Category</label>
+            <FormField label="Category" for="entity-create-category">
               <input
+                id="entity-create-category"
                 class="modal__input"
                 list="category-suggestions"
                 value={category()}
@@ -225,18 +238,8 @@ const EntityCreateModal: Component = () => {
               <datalist id="category-suggestions">
                 <For each={CATEGORY_SUGGESTIONS}>{(s) => <option value={s} />}</For>
               </datalist>
-            </div>
+            </FormField>
           </Show>
-
-          <div class="modal__field">
-            <label class="modal__label">Name</label>
-            <input
-              class="modal__input"
-              value={name()}
-              onInput={(e) => setName(e.currentTarget.value)}
-              placeholder={kindTag() === "Custom" ? "Hero, Goblin..." : "Forest, Level-1..."}
-            />
-          </div>
 
           <Show when={groups().length > 0}>
             <div class="modal__field">
