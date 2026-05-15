@@ -221,21 +221,35 @@ describe("dispatchCommand — window", () => {
 });
 
 describe("dispatchCommand — sprite", () => {
-  it("sprite:new invokes sprite_add with default 32x32 RGBA canvas", () => {
-    invokeMock.mockResolvedValue({ id: 2, canvas: { width: 32, height: 32 } });
+  it("sprite:new opens the canvas-size dialog instead of dispatching sprite_add directly", async () => {
+    invokeMock.mockResolvedValue({ id: 2, canvas: { width: 64, height: 64 } });
+    const { canvasSizeRequest, closeCanvasSizeDialog } =
+      await import("../shell/canvas-size-dialog-state");
+    closeCanvasSizeDialog();
+
     dispatchCommand("sprite:new");
-    // sprite_add is the first call. The follow-up viewport sync may
-    // not run synchronously in jsdom-less node; assert on the trigger.
+
+    // The handler must defer to the dialog rather than fire sprite_add.
+    expect(invokeMock.mock.calls.find(([cmd]) => cmd === "sprite_add")).toBeUndefined();
+    const req = canvasSizeRequest();
+    expect(req).not.toBeNull();
+    expect(req?.mode).toBe("sprite");
+
+    // Invoking the dialog's onConfirm callback should dispatch sprite_add
+    // with the chosen dimensions.
+    req?.onConfirm({ width: 64, height: 48 });
     const call = invokeMock.mock.calls.find(([cmd]) => cmd === "sprite_add");
     expect(call).toBeDefined();
     expect(call?.[1]).toEqual({
       args: {
         name: "Untitled",
-        canvas_width: 32,
-        canvas_height: 32,
+        canvas_width: 64,
+        canvas_height: 48,
         color_mode: "rgba",
       },
     });
+
+    closeCanvasSizeDialog();
   });
 });
 

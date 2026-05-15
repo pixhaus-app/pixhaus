@@ -839,6 +839,31 @@ body {
   flex: 1;
 }
 
+/* ── Canvas size dialog (New Project / New Sprite) ──────────────────────── */
+
+.canvas-size-dialog {
+  width: 440px;
+}
+
+.canvas-size-dialog__presets {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-bottom: 16px;
+}
+
+.canvas-size-dialog__preset {
+  padding: 4px 10px;
+  font-size: 12px;
+  font-weight: 500;
+}
+
+.canvas-size-dialog__preset--active {
+  background: var(--accent-subtle);
+  border-color: var(--accent-border);
+  color: var(--text-primary);
+}
+
 /* ── Canvas viewport ──────────────────────────────────────────────────────── */
 
 /*

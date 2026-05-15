@@ -10,6 +10,7 @@ import CommandPalette from "../command-palette/CommandPalette";
 import PreferencesModal from "../preferences/PreferencesModal";
 import ToastHost from "../lib/toast/ToastHost";
 import UpdateAvailableModal from "./UpdateAvailableModal";
+import CanvasSizeDialog from "./CanvasSizeDialog";
 import VerbInvokeHost from "../lib/ai/VerbInvokeHost";
 import StatusBar from "./StatusBar";
 import WelcomeScreen from "./WelcomeScreen";
@@ -146,6 +147,8 @@ const Shell: Component = () => {
       </Show>
 
       <UpdateAvailableModal />
+
+      <CanvasSizeDialog />
 
       <VerbInvokeHost />
       <ToastHost />

@@ -9,6 +9,7 @@ import {
 } from "../lib/commands/project";
 import { extractFilename } from "../lib/utils/path";
 import { reportCommandFailure } from "../lib/utils/errors";
+import { openCanvasSizeDialog } from "./canvas-size-dialog-state";
 
 const OPEN_FILTERS = [
   {
@@ -38,9 +39,14 @@ const WelcomeScreen: Component = () => {
   });
 
   function handleNewProject(): void {
-    createNewProject("Untitled")
-      .then((status) => setActiveProject(status))
-      .catch((err: unknown) => reportCommandFailure("project_new", err));
+    openCanvasSizeDialog({
+      mode: "project",
+      onConfirm: ({ name, width, height }) => {
+        createNewProject(name ?? "Untitled", { width, height })
+          .then((status) => setActiveProject(status))
+          .catch((err: unknown) => reportCommandFailure("project_new", err));
+      },
+    });
   }
 
   function handleOpenProject(): void {

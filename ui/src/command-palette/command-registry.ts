@@ -111,6 +111,7 @@ import { tilesetAdd as tilesetAddCmd } from "../lib/commands/tilesets";
 import { activePalette, palettes, refreshPalettes } from "../palette/palette-panel-state";
 import { updaterCheck } from "../lib/commands/updater";
 import { openUpdateModal } from "../shell/update-modal-state";
+import { openCanvasSizeDialog } from "../shell/canvas-size-dialog-state";
 
 export type Command = {
   readonly id: string;
@@ -131,10 +132,6 @@ const OPEN_FILTERS = [
   { name: "Aseprite", extensions: ["aseprite", "ase"] },
   { name: "Photoshop Documents", extensions: ["psd"] },
 ];
-
-// Default canvas size for new sprites. Matches the welcome screen's
-// project_new flow, which leaves the initial sprite at this size.
-const DEFAULT_SPRITE_SIZE = 32;
 
 // Documentation URL opened by the help:docs command.
 const DOCS_URL = "https://pixhaus.app/docs";
@@ -242,11 +239,16 @@ const COMMANDS: ReadonlyMap<string, CommandEntry> = new Map<string, CommandEntry
       label: "New Project",
       category: "File",
       handler: () => {
-        createNewProject("Untitled")
-          .then((status) => {
-            setActiveProject(status);
-          })
-          .catch((err: unknown) => reportCommandFailure("project_new", err));
+        openCanvasSizeDialog({
+          mode: "project",
+          onConfirm: ({ name, width, height }) => {
+            createNewProject(name ?? "Untitled", { width, height })
+              .then((status) => {
+                setActiveProject(status);
+              })
+              .catch((err: unknown) => reportCommandFailure("project_new", err));
+          },
+        });
       },
     },
   ],
@@ -448,32 +450,37 @@ const COMMANDS: ReadonlyMap<string, CommandEntry> = new Map<string, CommandEntry
           pushToast({ kind: "info", title: "Open or create a project first." });
           return;
         }
-        spriteAdd({
-          name: "Untitled",
-          canvas_width: DEFAULT_SPRITE_SIZE,
-          canvas_height: DEFAULT_SPRITE_SIZE,
-          color_mode: "rgba",
-        })
-          .then((sprite) => {
-            // Sit the new sprite under the cursor: clear any previous
-            // selection, point the canvas at the new id, and reset the
-            // viewport so it appears centred.
-            setSelectionRect(null);
-            setTransformBounds(null);
-            const vp = getCanvasViewportRect();
-            if (vp !== null) {
-              resetViewport(
-                sprite.canvas.width,
-                sprite.canvas.height,
-                vp.width,
-                vp.height,
-                sprite.id,
-              );
-            } else {
-              setActiveSpriteId(sprite.id);
-            }
-          })
-          .catch((err: unknown) => reportCommandFailure("sprite_add", err));
+        openCanvasSizeDialog({
+          mode: "sprite",
+          onConfirm: ({ width, height }) => {
+            spriteAdd({
+              name: "Untitled",
+              canvas_width: width,
+              canvas_height: height,
+              color_mode: "rgba",
+            })
+              .then((sprite) => {
+                // Sit the new sprite under the cursor: clear any previous
+                // selection, point the canvas at the new id, and reset the
+                // viewport so it appears centred.
+                setSelectionRect(null);
+                setTransformBounds(null);
+                const vp = getCanvasViewportRect();
+                if (vp !== null) {
+                  resetViewport(
+                    sprite.canvas.width,
+                    sprite.canvas.height,
+                    vp.width,
+                    vp.height,
+                    sprite.id,
+                  );
+                } else {
+                  setActiveSpriteId(sprite.id);
+                }
+              })
+              .catch((err: unknown) => reportCommandFailure("sprite_add", err));
+          },
+        });
       },
     },
   ],
