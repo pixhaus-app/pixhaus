@@ -1,4 +1,6 @@
-import { createEffect, createSignal, onCleanup, Show, type Component } from "solid-js";
+import { createSignal, Show, type Component } from "solid-js";
+import { Button } from "../lib/ui/Button";
+import { Dialog } from "../lib/ui/Dialog";
 import { closeUpdateModal, showUpdateModal, updateInfo } from "./update-modal-state";
 import { updaterInstall } from "../lib/commands/updater";
 import { reportCommandFailure } from "../lib/utils/errors";
@@ -6,28 +8,6 @@ import { pushToast } from "../lib/toast/toast-state";
 
 const UpdateAvailableModal: Component = () => {
   const [installing, setInstalling] = createSignal(false);
-
-  // Document-level Escape handler — bound only while the modal is open.
-  // The previous local onKeyDown on the backdrop required focus to land
-  // on (or inside) the backdrop element, which doesn't happen when the
-  // modal opens from a menu click — focus stays on the editor behind it.
-  createEffect(() => {
-    if (!showUpdateModal()) return;
-    function onKeyDown(e: KeyboardEvent): void {
-      if (installing()) return;
-      if (e.key === "Escape") {
-        e.preventDefault();
-        closeUpdateModal();
-      }
-    }
-    document.addEventListener("keydown", onKeyDown);
-    onCleanup(() => document.removeEventListener("keydown", onKeyDown));
-  });
-
-  function onBackdropClick(e: MouseEvent): void {
-    if (installing()) return;
-    if (e.target === e.currentTarget) closeUpdateModal();
-  }
 
   function onInstall(): void {
     setInstalling(true);
@@ -55,85 +35,46 @@ const UpdateAvailableModal: Component = () => {
       });
   }
 
+  const title = () => {
+    const info = updateInfo();
+    return info ? `Pixhaus ${info.version} is available` : "Update available";
+  };
+
   return (
-    <Show when={showUpdateModal()}>
-      <div class="prefs-backdrop" onClick={onBackdropClick} data-testid="update-modal-backdrop">
-        <div
-          class="prefs"
-          role="dialog"
-          aria-label="Update available"
-          aria-modal="true"
-          data-testid="update-modal"
+    <Dialog
+      open={showUpdateModal()}
+      title={title()}
+      onClose={closeUpdateModal}
+      size="lg"
+      closeOnBackdrop={!installing()}
+      closeOnEscape={!installing()}
+    >
+      <Dialog.Body>
+        <Show
+          when={updateInfo()?.body}
+          fallback={<p class="prefs__sublabel">No release notes were included with this update.</p>}
         >
-          <div class="prefs__header">
-            <h2 class="prefs__title">
-              <Show when={updateInfo()} fallback="Update available">
-                {(info) => <>Pixhaus {info().version} is available</>}
-              </Show>
-            </h2>
-            <button
-              class="prefs__close"
-              onClick={closeUpdateModal}
-              disabled={installing()}
-              aria-label="Close"
-            >
-              x
-            </button>
-          </div>
+          {(body) => (
+            <div class="prefs__section">
+              <p class="prefs__section-title">Release notes</p>
+              <pre class="update-modal__release-notes">{body()}</pre>
+            </div>
+          )}
+        </Show>
+        <Show when={updateInfo()?.date}>
+          {(date) => <p class="prefs__sublabel update-modal__date">Released {date()}</p>}
+        </Show>
+      </Dialog.Body>
 
-          <div class="prefs__body">
-            <Show
-              when={updateInfo()?.body}
-              fallback={
-                <p class="prefs__sublabel">No release notes were included with this update.</p>
-              }
-            >
-              {(body) => (
-                <div class="prefs__section">
-                  <p class="prefs__section-title">Release notes</p>
-                  <pre
-                    style={{
-                      "white-space": "pre-wrap",
-                      "font-family": "inherit",
-                      "font-size": "13px",
-                      color: "var(--text-primary)",
-                      margin: "0",
-                    }}
-                  >
-                    {body()}
-                  </pre>
-                </div>
-              )}
-            </Show>
-            <Show when={updateInfo()?.date}>
-              {(date) => (
-                <p class="prefs__sublabel" style={{ "margin-top": "12px" }}>
-                  Released {date()}
-                </p>
-              )}
-            </Show>
-          </div>
-
-          <div class="prefs__footer" style={{ gap: "8px" }}>
-            <button
-              class="prefs__btn prefs__btn--ghost"
-              onClick={closeUpdateModal}
-              disabled={installing()}
-            >
-              Remind me later
-            </button>
-            <button
-              class="prefs__btn"
-              onClick={onInstall}
-              disabled={installing()}
-              data-testid="update-modal-install"
-            >
-              {installing() ? "Installing..." : "Install and restart"}
-            </button>
-          </div>
-        </div>
-      </div>
-    </Show>
+      <Dialog.Footer>
+        <Button variant="ghost" onClick={closeUpdateModal} disabled={installing()}>
+          Remind me later
+        </Button>
+        <Button onClick={onInstall} loading={installing()} data-testid="update-modal-install">
+          {installing() ? "Installing" : "Install and restart"}
+        </Button>
+      </Dialog.Footer>
+    </Dialog>
   );
 };
 

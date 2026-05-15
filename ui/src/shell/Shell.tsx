@@ -37,6 +37,8 @@ import { isTimelinePanelVisible } from "../timeline/timeline-state";
 import { isPalettePanelVisible, isTilemapPanelVisible } from "./panel-state";
 import LibraryPanel from "../library/LibraryPanel";
 import { isLibraryPanelVisible } from "../library/library-state";
+import AnchorPickerDialog from "../library/AnchorPickerDialog";
+import EntityCreateModal from "../library/EntityCreateModal";
 import { setupPaletteColorSync } from "../canvas/tools/palette-color-sync";
 import { installTilemapCtxSync } from "../tilemap/tilemap-ctx-sync";
 import SheetView from "../sheet/SheetView";
@@ -149,6 +151,10 @@ const Shell: Component = () => {
       <UpdateAvailableModal />
 
       <CanvasSizeDialog />
+
+      <AnchorPickerDialog />
+
+      <EntityCreateModal />
 
       <VerbInvokeHost />
       <ToastHost />

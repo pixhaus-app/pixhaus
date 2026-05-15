@@ -14,15 +14,9 @@
 // `ModalInput`/`TilesetPickerDialog` so the look stays consistent with
 // the rest of the app.
 
-import {
-  type Component,
-  type JSX,
-  For,
-  Show,
-  createEffect,
-  createSignal,
-  onCleanup,
-} from "solid-js";
+import { type Component, type JSX, For, Show, createEffect, createSignal } from "solid-js";
+import { Button } from "../lib/ui/Button";
+import { Dialog } from "../lib/ui/Dialog";
 
 // JSON Schema is intentionally typed as `unknown` at the IPC boundary
 // (`ui/src/lib/commands/verbs.ts::VerbInfo.input_schema`). Callers
@@ -96,23 +90,6 @@ const ModalForm: Component<Props> = (props) => {
     }
   });
 
-  // Escape closes — bound only while open.
-  createEffect(() => {
-    if (!props.open) return;
-    function onKeyDown(e: KeyboardEvent): void {
-      if (e.key === "Escape") {
-        e.preventDefault();
-        props.onClose();
-      }
-    }
-    document.addEventListener("keydown", onKeyDown);
-    onCleanup(() => document.removeEventListener("keydown", onKeyDown));
-  });
-
-  function backdropClick(e: MouseEvent): void {
-    if (e.target === e.currentTarget) props.onClose();
-  }
-
   function setField(name: string, value: unknown): void {
     setValues((prev) => ({ ...prev, [name]: value }));
     setErrors((prev) => {
@@ -169,7 +146,9 @@ const ModalForm: Component<Props> = (props) => {
         </Show>
         {renderInput(f, fieldId)}
         <Show when={errors()[f.name] !== undefined}>
-          <p class="modal-form__error">{errors()[f.name]}</p>
+          <p class="form-field__error" role="alert">
+            {errors()[f.name]}
+          </p>
         </Show>
       </div>
     );
@@ -269,78 +248,62 @@ const ModalForm: Component<Props> = (props) => {
   }
 
   return (
-    <Show when={props.open}>
-      <div class="prefs-backdrop" onClick={backdropClick}>
-        <div
-          class="prefs modal-input modal-form"
-          role="dialog"
-          aria-modal="true"
-          aria-label={props.title}
+    <Dialog open={props.open} title={props.title} onClose={props.onClose} size="md">
+      <Dialog.Body>
+        <Show
+          when={!isRawSchema()}
+          fallback={
+            <div class="modal-form__row">
+              <label class="prefs__label" for="mf-raw">
+                Raw JSON
+              </label>
+              <p class="modal-form__hint">
+                Verb input schema is too complex for the auto-form. Edit JSON directly.
+              </p>
+              <textarea
+                id="mf-raw"
+                class="modal-input__field"
+                rows={8}
+                value={rawJson()}
+                onInput={(e) => {
+                  setRawJson(e.currentTarget.value);
+                  setRawJsonError(null);
+                }}
+              />
+              <Show when={rawJsonError() !== null}>
+                <p class="form-field__error" role="alert">
+                  {rawJsonError()}
+                </p>
+              </Show>
+            </div>
+          }
         >
-          <div class="prefs__header">
-            <h2 class="prefs__title">{props.title}</h2>
-            <button class="prefs__close" onClick={() => props.onClose()} aria-label="Close">
-              ✕
-            </button>
-          </div>
+          <For each={fields()}>{(f) => renderField(f)}</For>
+        </Show>
+      </Dialog.Body>
 
-          <div class="prefs__body">
-            <Show
-              when={!isRawSchema()}
-              fallback={
-                <div class="modal-form__row">
-                  <label class="prefs__label" for="mf-raw">
-                    Raw JSON
-                  </label>
-                  <p class="modal-form__hint">
-                    Verb input schema is too complex for the auto-form. Edit JSON directly.
-                  </p>
-                  <textarea
-                    id="mf-raw"
-                    class="modal-input__field"
-                    rows={8}
-                    value={rawJson()}
-                    onInput={(e) => {
-                      setRawJson(e.currentTarget.value);
-                      setRawJsonError(null);
-                    }}
-                  />
-                  <Show when={rawJsonError() !== null}>
-                    <p class="modal-form__error">{rawJsonError()}</p>
-                  </Show>
-                </div>
-              }
+      <Dialog.Footer>
+        <Show
+          when={props.runningInvocationId === null}
+          fallback={
+            <Button
+              variant="ghost"
+              onClick={() => {
+                const id = props.runningInvocationId;
+                if (id !== null) props.onCancelRunning(id);
+              }}
             >
-              <For each={fields()}>{(f) => renderField(f)}</For>
-            </Show>
-          </div>
-
-          <div class="prefs__footer">
-            <Show
-              when={props.runningInvocationId === null}
-              fallback={
-                <button
-                  class="prefs__btn prefs__btn--ghost"
-                  onClick={() => {
-                    const id = props.runningInvocationId;
-                    if (id !== null) props.onCancelRunning(id);
-                  }}
-                >
-                  Cancel running invocation
-                </button>
-              }
-            >
-              <button class="prefs__btn prefs__btn--ghost" onClick={() => props.onClose()}>
-                Cancel
-              </button>
-              <button class="prefs__btn" onClick={submit}>
-                Run
-              </button>
-            </Show>
-          </div>
-        </div>
-      </div>
-    </Show>
+              Cancel running invocation
+            </Button>
+          }
+        >
+          <Button variant="ghost" onClick={props.onClose}>
+            Cancel
+          </Button>
+          <Button onClick={submit}>Run</Button>
+        </Show>
+      </Dialog.Footer>
+    </Dialog>
   );
 };
 

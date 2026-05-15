@@ -497,7 +497,7 @@ const COMMANDS: ReadonlyMap<string, CommandEntry> = new Map<string, CommandEntry
           return;
         }
         confirm("Delete the active sprite? This can be undone.", {
-          title: "Delete Sprite",
+          title: "Delete sprite",
           kind: "warning",
         })
           .then((ok) => {

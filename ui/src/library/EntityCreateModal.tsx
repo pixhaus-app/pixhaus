@@ -4,12 +4,14 @@
 // require dimension inputs; Custom entities require a category and canvas
 // size; Reference entities require an image file.
 
-import { type Component, Show, createSignal, For } from "solid-js";
+import { type Component, Show, createEffect, createSignal, For } from "solid-js";
 import { open as dialogOpen } from "../lib/dialog";
 import type { EntityKind, GroupId } from "../lib/types";
+import { Button } from "../lib/ui/Button";
+import { Dialog } from "../lib/ui/Dialog";
 import { groups, createEntity } from "./library-state";
+import { closeEntityCreate, entityCreateRequest } from "./entity-create-state";
 
-// Common category suggestions for Custom entities. Free-form is still valid.
 const CATEGORY_SUGGESTIONS = [
   "Character",
   "Enemy",
@@ -24,41 +26,52 @@ const CATEGORY_SUGGESTIONS = [
   "Item",
 ];
 
-// Conventional initial state names for Custom entities.
 const STATE_SUGGESTIONS = ["idle", "walk", "run", "jump", "attack", "hurt", "death"];
 
-type Props = {
-  onClose: () => void;
-  initialGroupId?: GroupId | null;
-};
-
-const EntityCreateModal: Component<Props> = (props) => {
+const EntityCreateModal: Component = () => {
   const [kindTag, setKindTag] = createSignal<"Tileset" | "Tilemap" | "Reference" | "Custom">(
     "Custom",
   );
   const [name, setName] = createSignal("");
   const [category, setCategory] = createSignal("Character");
-  const [groupId, setGroupId] = createSignal<GroupId | null>(props.initialGroupId ?? null);
+  const [groupId, setGroupId] = createSignal<GroupId | null>(null);
 
-  // Custom fields
   const [canvasWidth, setCanvasWidth] = createSignal(32);
   const [canvasHeight, setCanvasHeight] = createSignal(32);
   const [stateList, setStateList] = createSignal("idle");
 
-  // Tileset fields
   const [tileWidth, setTileWidth] = createSignal(16);
   const [tileHeight, setTileHeight] = createSignal(16);
 
-  // Tilemap fields
   const [sceneWidth, setSceneWidth] = createSignal(20);
   const [sceneHeight, setSceneHeight] = createSignal(15);
 
-  // Reference fields — we store file bytes after loading
   const [refBytes, setRefBytes] = createSignal<number[] | null>(null);
   const [refMime, setRefMime] = createSignal("image/png");
   const [refFileName, setRefFileName] = createSignal<string | null>(null);
 
   const [error, setError] = createSignal<string | null>(null);
+
+  // Reset form when a new request comes in.
+  createEffect(() => {
+    const req = entityCreateRequest();
+    if (req === null) return;
+    setKindTag("Custom");
+    setName("");
+    setCategory("Character");
+    setGroupId(req.initialGroupId);
+    setCanvasWidth(32);
+    setCanvasHeight(32);
+    setStateList("idle");
+    setTileWidth(16);
+    setTileHeight(16);
+    setSceneWidth(20);
+    setSceneHeight(15);
+    setRefBytes(null);
+    setRefMime("image/png");
+    setRefFileName(null);
+    setError(null);
+  });
 
   function buildKind(): EntityKind {
     const k = kindTag();
@@ -81,8 +94,6 @@ const EntityCreateModal: Component<Props> = (props) => {
     const path = typeof result === "string" ? result : null;
     if (!path) return;
 
-    // Read the file via fetch (Tauri exposes local files via the asset
-    // protocol; use convertFileSrc for the local path).
     try {
       const { convertFileSrc } = await import("@tauri-apps/api/core");
       const src = convertFileSrc(path);
@@ -166,36 +177,23 @@ const EntityCreateModal: Component<Props> = (props) => {
       });
     }
 
-    props.onClose();
+    closeEntityCreate();
   }
 
   function handleKeyDown(e: KeyboardEvent): void {
-    if (e.key === "Escape") props.onClose();
     if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) handleSubmit();
   }
 
   return (
-    <div class="modal-backdrop" onKeyDown={handleKeyDown}>
-      <div class="modal" role="dialog" aria-label="Create entity" data-testid="entity-create-modal">
-        <div class="modal__header">
-          <span class="modal__title">New entity</span>
-          <button class="modal__close-btn" onClick={props.onClose} title="Close">
-            <svg
-              width="10"
-              height="10"
-              viewBox="0 0 10 10"
-              fill="none"
-              stroke="currentColor"
-              stroke-width="1.5"
-              stroke-linecap="round"
-            >
-              <path d="M1 1 L9 9 M9 1 L1 9" />
-            </svg>
-          </button>
-        </div>
-
-        <div class="modal__body">
-          {/* Kind selector */}
+    <Dialog
+      open={entityCreateRequest() !== null}
+      title="New entity"
+      onClose={closeEntityCreate}
+      size="sm"
+      testId="entity-create-modal"
+    >
+      <div onKeyDown={handleKeyDown}>
+        <Dialog.Body>
           <div class="modal__field">
             <label class="modal__label">Kind</label>
             <div class="modal__kind-tabs">
@@ -214,7 +212,6 @@ const EntityCreateModal: Component<Props> = (props) => {
             </div>
           </div>
 
-          {/* Category (Custom only) */}
           <Show when={kindTag() === "Custom"}>
             <div class="modal__field">
               <label class="modal__label">Category</label>
@@ -231,7 +228,6 @@ const EntityCreateModal: Component<Props> = (props) => {
             </div>
           </Show>
 
-          {/* Name */}
           <div class="modal__field">
             <label class="modal__label">Name</label>
             <input
@@ -239,11 +235,9 @@ const EntityCreateModal: Component<Props> = (props) => {
               value={name()}
               onInput={(e) => setName(e.currentTarget.value)}
               placeholder={kindTag() === "Custom" ? "Hero, Goblin..." : "Forest, Level-1..."}
-              autofocus
             />
           </div>
 
-          {/* Group */}
           <Show when={groups().length > 0}>
             <div class="modal__field">
               <label class="modal__label">Group</label>
@@ -261,7 +255,6 @@ const EntityCreateModal: Component<Props> = (props) => {
             </div>
           </Show>
 
-          {/* Custom: canvas size + states */}
           <Show when={kindTag() === "Custom"}>
             <div class="modal__field modal__field--row">
               <div class="modal__field modal__field--grow">
@@ -304,7 +297,6 @@ const EntityCreateModal: Component<Props> = (props) => {
             </div>
           </Show>
 
-          {/* Tileset: tile size */}
           <Show when={kindTag() === "Tileset"}>
             <div class="modal__field modal__field--row">
               <div class="modal__field modal__field--grow">
@@ -332,7 +324,6 @@ const EntityCreateModal: Component<Props> = (props) => {
             </div>
           </Show>
 
-          {/* Tilemap: scene size */}
           <Show when={kindTag() === "Tilemap"}>
             <div class="modal__field modal__field--row">
               <div class="modal__field modal__field--grow">
@@ -360,14 +351,13 @@ const EntityCreateModal: Component<Props> = (props) => {
             </div>
           </Show>
 
-          {/* Reference: file picker */}
           <Show when={kindTag() === "Reference"}>
             <div class="modal__field">
               <label class="modal__label">Source image</label>
               <div class="modal__file-row">
-                <button class="modal__file-btn" type="button" onClick={handlePickRef}>
-                  Choose file...
-                </button>
+                <Button variant="ghost" size="sm" onClick={handlePickRef}>
+                  Choose file…
+                </Button>
                 <Show when={refFileName() !== null}>
                   <span class="modal__file-name">{refFileName()}</span>
                 </Show>
@@ -375,22 +365,21 @@ const EntityCreateModal: Component<Props> = (props) => {
             </div>
           </Show>
 
-          {/* Error */}
           <Show when={error() !== null}>
-            <p class="modal__error">{error()}</p>
+            <p class="form-field__error" role="alert">
+              {error()}
+            </p>
           </Show>
-        </div>
+        </Dialog.Body>
 
-        <div class="modal__footer">
-          <button class="modal__btn modal__btn--ghost" type="button" onClick={props.onClose}>
+        <Dialog.Footer>
+          <Button variant="ghost" onClick={closeEntityCreate}>
             Cancel
-          </button>
-          <button class="modal__btn modal__btn--primary" type="button" onClick={handleSubmit}>
-            Create
-          </button>
-        </div>
+          </Button>
+          <Button onClick={handleSubmit}>Create entity</Button>
+        </Dialog.Footer>
       </div>
-    </div>
+    </Dialog>
   );
 };
 

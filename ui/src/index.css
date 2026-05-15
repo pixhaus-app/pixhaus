@@ -219,6 +219,203 @@ body {
   position: relative;
 }
 
+/* ── Primitives: Button ───────────────────────────────────────────────────── */
+
+.btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 6px 16px;
+  border-radius: 5px;
+  font-size: 13px;
+  font-weight: 500;
+  line-height: 1.2;
+  border: 1px solid transparent;
+  cursor: pointer;
+  transition:
+    background var(--transition-fast),
+    color var(--transition-fast),
+    border-color var(--transition-fast),
+    filter var(--transition-fast);
+  white-space: nowrap;
+}
+
+.btn:focus-visible {
+  outline: 2px solid var(--accent-border);
+  outline-offset: 1px;
+}
+
+.btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.btn--primary {
+  background: var(--accent);
+  color: var(--text-on-accent);
+}
+
+.btn--primary:hover:not(:disabled) {
+  background: var(--accent-hover);
+}
+
+.btn--ghost {
+  background: transparent;
+  color: var(--text-primary);
+  border-color: var(--border-strong);
+}
+
+.btn--ghost:hover:not(:disabled) {
+  background: var(--bg-hover);
+}
+
+.btn--danger {
+  background: var(--error);
+  color: #fff;
+}
+
+.btn--danger:hover:not(:disabled) {
+  filter: brightness(1.1);
+}
+
+.btn--sm {
+  padding: 3px 10px;
+  font-size: 12px;
+  border-radius: 4px;
+}
+
+.btn--lg {
+  padding: 8px 22px;
+  font-size: 14px;
+  border-radius: 6px;
+}
+
+.btn--loading::after {
+  content: "…";
+  margin-left: 4px;
+}
+
+/* ── Primitives: FormField ────────────────────────────────────────────────── */
+
+.form-field {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.form-field__label {
+  font-size: 11px;
+  font-weight: 500;
+  color: var(--text-secondary);
+}
+
+.form-field__sublabel {
+  font-size: 10px;
+  color: var(--text-disabled);
+  margin: 2px 0 0;
+}
+
+.form-field__error {
+  font-size: 11px;
+  color: var(--error);
+  padding: 4px 8px;
+  background: rgba(224, 82, 82, 0.1);
+  border: 1px solid rgba(224, 82, 82, 0.2);
+  border-radius: 3px;
+  margin: 0;
+}
+
+/* ── Primitives: Dialog ───────────────────────────────────────────────────── */
+
+.dialog__backdrop {
+  position: fixed;
+  inset: 0;
+  background: var(--palette-backdrop);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 1000;
+}
+
+.dialog {
+  background: var(--bg-elevated);
+  border: 1px solid var(--border-strong);
+  border-radius: 8px;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  max-height: calc(100vh - 64px);
+  max-width: calc(100vw - 32px);
+  box-shadow:
+    0 12px 32px rgba(0, 0, 0, 0.4),
+    0 2px 8px rgba(0, 0, 0, 0.2);
+}
+
+.dialog--sm {
+  width: 340px;
+}
+
+.dialog--md {
+  width: 440px;
+}
+
+.dialog--lg {
+  width: 640px;
+}
+
+.dialog__header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 14px 18px;
+  border-bottom: 1px solid var(--border);
+  flex-shrink: 0;
+}
+
+.dialog__title {
+  font-size: 14px;
+  font-weight: 600;
+  margin: 0;
+  color: var(--text-primary);
+}
+
+.dialog__close {
+  width: 22px;
+  height: 22px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 4px;
+  color: var(--text-secondary);
+  font-size: 16px;
+  line-height: 1;
+  transition: background var(--transition-fast);
+}
+
+.dialog__close:hover {
+  background: var(--bg-hover);
+  color: var(--text-primary);
+}
+
+.dialog__body {
+  flex: 1 1 auto;
+  overflow-y: auto;
+  padding: 16px 18px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.dialog__footer {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+  padding: 12px 18px;
+  border-top: 1px solid var(--border);
+  flex-shrink: 0;
+}
+
 /* ── Status bar ───────────────────────────────────────────────────────────── */
 
 .status-bar {
@@ -485,63 +682,6 @@ body {
 
 /* ── Preferences modal ────────────────────────────────────────────────────── */
 
-.prefs-backdrop {
-  position: fixed;
-  inset: 0;
-  background: var(--palette-backdrop);
-  z-index: 900;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-}
-
-.prefs {
-  width: 640px;
-  max-width: calc(100vw - 32px);
-  max-height: calc(100vh - 64px);
-  background: var(--bg-elevated);
-  border: 1px solid var(--border-strong);
-  border-radius: 8px;
-  overflow: hidden;
-  display: flex;
-  flex-direction: column;
-  box-shadow:
-    0 12px 32px rgba(0, 0, 0, 0.4),
-    0 2px 8px rgba(0, 0, 0, 0.2);
-}
-
-.prefs__header {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  padding: 16px 20px;
-  border-bottom: 1px solid var(--border);
-  flex-shrink: 0;
-}
-
-.prefs__title {
-  font-size: 15px;
-  font-weight: 600;
-  margin: 0;
-  color: var(--text-primary);
-}
-
-.prefs__close {
-  width: 24px;
-  height: 24px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  border-radius: 4px;
-  color: var(--text-secondary);
-  transition: background var(--transition-fast);
-}
-
-.prefs__close:hover {
-  background: var(--bg-hover);
-  color: var(--text-primary);
-}
-
 .prefs__tabs {
   display: flex;
   padding: 0 20px;
@@ -567,12 +707,6 @@ body {
 .prefs__tab[aria-selected="true"] {
   color: var(--text-primary);
   border-bottom-color: var(--accent);
-}
-
-.prefs__body {
-  flex: 1;
-  overflow-y: auto;
-  padding: 20px;
 }
 
 .prefs__section {
@@ -666,6 +800,27 @@ body {
   white-space: nowrap;
 }
 
+.prefs__plugins-dir {
+  font-size: 11px;
+  color: var(--text-disabled);
+}
+
+.prefs__plugins-meta {
+  font-size: 11px;
+  color: var(--text-secondary);
+}
+
+.prefs__plugins-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.prefs__plugins-confirm-label {
+  font-size: 11px;
+  color: var(--text-secondary);
+}
+
 .prefs__kbd {
   font-size: 11px;
   color: var(--text-secondary);
@@ -676,52 +831,22 @@ body {
   white-space: nowrap;
 }
 
-.prefs__footer {
-  display: flex;
-  align-items: center;
-  justify-content: flex-end;
-  padding: 12px 20px;
-  border-top: 1px solid var(--border);
-  flex-shrink: 0;
+.prefs__kbd-reset {
+  padding: 1px 6px;
+  font-size: 10px;
+  border-radius: 3px;
+  color: var(--text-disabled);
 }
 
-.prefs__btn {
-  padding: 6px 16px;
-  border-radius: 5px;
-  font-size: 13px;
-  font-weight: 500;
-  background: var(--accent);
-  color: var(--text-on-accent);
-  transition: background var(--transition-fast);
-  cursor: pointer;
-  border: none;
+.prefs__kbd-empty {
+  color: var(--text-disabled);
 }
 
-.prefs__btn:hover {
-  background: var(--accent-hover);
-}
-
-.prefs__btn--ghost {
-  background: transparent;
-  color: var(--text-primary);
-  border: 1px solid var(--border-strong);
-}
-
-.prefs__btn--ghost:hover {
-  background: var(--bg-hover);
-}
-
-.prefs__btn:disabled,
-.prefs__btn--ghost:disabled {
-  opacity: 0.5;
-  cursor: not-allowed;
+.prefs__link {
+  color: var(--accent);
 }
 
 /* ── Modal input (single-field dialog) ──────────────────────────────────── */
-
-.modal-input {
-  width: 360px;
-}
 
 .modal-input__row {
   display: flex;
@@ -744,17 +869,7 @@ body {
   border-color: var(--accent);
 }
 
-.modal-input__error {
-  color: var(--accent-danger, #e85f5c);
-  font-size: 12px;
-  margin: 8px 0 0 0;
-}
-
 /* ── Tileset picker (Convert to Tilemap Layer) ──────────────────────────── */
-
-.ts-picker {
-  width: 480px;
-}
 
 .ts-picker__list {
   display: flex;
@@ -825,25 +940,11 @@ body {
   margin-top: 16px;
 }
 
-.ts-picker__error {
-  margin: 8px 0 0;
-  font-size: 12px;
-  color: var(--danger, #f48a8a);
-}
-
-.ts-picker__footer {
-  gap: 8px;
-}
-
-.ts-picker__footer-spacer {
-  flex: 1;
+.ts-picker__new-btn {
+  margin-right: auto;
 }
 
 /* ── Canvas size dialog (New Project / New Sprite) ──────────────────────── */
-
-.canvas-size-dialog {
-  width: 440px;
-}
 
 .canvas-size-dialog__presets {
   display: flex;
@@ -3089,38 +3190,6 @@ body {
 
 /* ── First-launch consent dialog ─────────────────────────────────────────── */
 
-.first-launch-backdrop {
-  position: fixed;
-  inset: 0;
-  background: var(--palette-backdrop);
-  z-index: 950;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-}
-
-.first-launch-dialog {
-  width: 440px;
-  max-width: calc(100vw - 32px);
-  background: var(--bg-elevated);
-  border: 1px solid var(--border-strong);
-  border-radius: 8px;
-  padding: 28px 28px 24px;
-  display: flex;
-  flex-direction: column;
-  gap: 16px;
-  box-shadow:
-    0 12px 32px rgba(0, 0, 0, 0.4),
-    0 2px 8px rgba(0, 0, 0, 0.2);
-}
-
-.first-launch-dialog__title {
-  font-size: 16px;
-  font-weight: 600;
-  margin: 0;
-  color: var(--text-primary);
-}
-
 .first-launch-dialog__body {
   font-size: 13px;
   line-height: 1.6;
@@ -3128,41 +3197,6 @@ body {
   margin: 0;
 }
 
-.first-launch-dialog__actions {
-  display: flex;
-  gap: 8px;
-  justify-content: flex-end;
-  margin-top: 4px;
-}
-
-.first-launch-dialog__btn {
-  padding: 7px 18px;
-  border-radius: 5px;
-  font-size: 13px;
-  font-weight: 500;
-  cursor: pointer;
-  border: none;
-  transition: background var(--transition-fast);
-}
-
-.first-launch-dialog__btn--secondary {
-  background: var(--bg-elevated);
-  color: var(--text-primary);
-  border: 1px solid var(--border);
-}
-
-.first-launch-dialog__btn--secondary:hover {
-  background: var(--bg-active);
-}
-
-.first-launch-dialog__btn--primary {
-  background: var(--accent);
-  color: var(--text-on-accent);
-}
-
-.first-launch-dialog__btn--primary:hover {
-  background: var(--accent-hover);
-}
 /* ── Timeline panel ───────────────────────────────────────────────────────── */
 
 :root {
@@ -4091,77 +4125,7 @@ body {
   outline: none;
 }
 
-/* ── Modal (shared with EntityCreateModal / inline dialogs) ── */
-
-.modal-backdrop {
-  position: fixed;
-  inset: 0;
-  background: rgba(0, 0, 0, 0.5);
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  z-index: 3000;
-}
-
-.modal {
-  background: var(--bg-elevated);
-  border: 1px solid var(--border-strong);
-  border-radius: 6px;
-  width: 340px;
-  max-width: calc(100vw - 32px);
-  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.5);
-  display: flex;
-  flex-direction: column;
-  overflow: hidden;
-}
-
-.modal__header {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  padding: 10px 14px 8px;
-  border-bottom: 1px solid var(--border);
-}
-
-.modal__title {
-  font-size: 13px;
-  font-weight: 600;
-  color: var(--text-primary);
-}
-
-.modal__close-btn {
-  width: 20px;
-  height: 20px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  border-radius: 3px;
-  color: var(--text-secondary);
-  cursor: pointer;
-  transition: background var(--transition-fast);
-}
-
-.modal__close-btn:hover {
-  background: var(--bg-hover);
-  color: var(--text-primary);
-}
-
-.modal__body {
-  padding: 12px 14px;
-  display: flex;
-  flex-direction: column;
-  gap: 10px;
-  max-height: 60vh;
-  overflow-y: auto;
-}
-
-.modal__footer {
-  padding: 8px 14px 12px;
-  display: flex;
-  justify-content: flex-end;
-  gap: 6px;
-  border-top: 1px solid var(--border);
-}
+/* ── Modal form fields (used inside Dialog primitive) ── */
 
 .modal__field {
   display: flex;
@@ -4209,15 +4173,6 @@ body {
   color: var(--text-disabled);
 }
 
-.modal__error {
-  font-size: 11px;
-  color: var(--error);
-  padding: 4px 8px;
-  background: rgba(224, 82, 82, 0.1);
-  border-radius: 3px;
-  border: 1px solid rgba(224, 82, 82, 0.2);
-}
-
 .modal__kind-tabs {
   display: flex;
   gap: 2px;
@@ -4256,23 +4211,6 @@ body {
   gap: 8px;
 }
 
-.modal__file-btn {
-  height: 28px;
-  padding: 0 10px;
-  font-size: 11px;
-  background: var(--bg-active);
-  border: 1px solid var(--border);
-  border-radius: 3px;
-  color: var(--text-primary);
-  cursor: pointer;
-  transition: background var(--transition-fast);
-  flex-shrink: 0;
-}
-
-.modal__file-btn:hover {
-  background: var(--bg-hover);
-}
-
 .modal__file-name {
   font-size: 11px;
   color: var(--text-secondary);
@@ -4282,34 +4220,16 @@ body {
   min-width: 0;
 }
 
-.modal__btn {
-  height: 28px;
-  padding: 0 14px;
-  font-size: 12px;
-  border-radius: 3px;
-  cursor: pointer;
-  transition:
-    background var(--transition-fast),
-    color var(--transition-fast);
-}
+/* ── Update available modal ──────────────────────────────────────────────── */
 
-.modal__btn--ghost {
-  background: transparent;
-  border: 1px solid var(--border);
-  color: var(--text-secondary);
-}
-
-.modal__btn--ghost:hover {
-  background: var(--bg-hover);
+.update-modal__release-notes {
+  white-space: pre-wrap;
+  font-family: inherit;
+  font-size: 13px;
   color: var(--text-primary);
+  margin: 0;
 }
 
-.modal__btn--primary {
-  background: var(--accent);
-  border: 1px solid transparent;
-  color: #fff;
-}
-
-.modal__btn--primary:hover {
-  background: var(--accent-hover);
+.update-modal__date {
+  margin-top: 12px;
 }
