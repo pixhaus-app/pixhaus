@@ -192,13 +192,13 @@ describe("Layer panel (manual-test-guide §7)", () => {
       const deleteItem = await $(byTestId(testid.layer.contextMenu.delete));
       await deleteItem.waitForDisplayed({ timeout: 3000 });
       await deleteItem.click();
-      const dialog = await $(byTestId(testid.layer.deleteConfirm));
+      const dialog = await $(byTestId(testid.layer.deleteConfirmDialog.root));
       await dialog.waitForDisplayed({ timeout: 3000 });
       return dialog;
     };
 
     const cancelDialog = await openDeleteDialog();
-    const cancelBtn = await $(byTestId(testid.layer.deleteConfirmCancel));
+    const cancelBtn = await $(byTestId(testid.layer.deleteConfirmDialog.cancel));
     await cancelBtn.waitForClickable({ timeout: 3000 });
     await cancelBtn.click();
     await cancelDialog.waitForDisplayed({ reverse: true, timeout: 3000 });
@@ -206,7 +206,7 @@ describe("Layer panel (manual-test-guide §7)", () => {
     await expect(await getLayerCount()).toBe(2);
 
     await openDeleteDialog();
-    const confirmBtn = await $(byTestId(testid.layer.deleteConfirmConfirm));
+    const confirmBtn = await $(byTestId(testid.layer.deleteConfirmDialog.confirm));
     await confirmBtn.waitForClickable({ timeout: 3000 });
     await confirmBtn.click();
     await waitForIpc("layer_delete", 1, 5000);

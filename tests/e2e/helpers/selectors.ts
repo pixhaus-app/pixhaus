@@ -93,9 +93,11 @@ export const testid = {
       convertTilemap: "layer-ctx-convert-tilemap",
       delete: "layer-ctx-delete",
     },
-    deleteConfirm: "layer-delete-confirm",
-    deleteConfirmCancel: "layer-delete-confirm-cancel",
-    deleteConfirmConfirm: "layer-delete-confirm-confirm",
+    deleteConfirmDialog: {
+      root: "layer-delete-confirm",
+      cancel: "layer-delete-confirm-cancel",
+      confirm: "layer-delete-confirm-confirm",
+    },
     renameInput: "layer-rename-input",
   },
   tilemap: {

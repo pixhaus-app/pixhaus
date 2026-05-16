@@ -37,6 +37,7 @@ type PendingDelete = {
   ids: LayerId[];
   title: string;
   message: string;
+  confirmLabel: string;
 };
 
 const LayerContextMenu: Component<Props> = (props) => {
@@ -100,20 +101,10 @@ const LayerContextMenu: Component<Props> = (props) => {
     return total - count >= 1;
   };
 
-  /**
-   * Cancel any pending layer delete confirmation.
-   *
-   * Clears the internal pending-delete state so the confirmation dialog is closed.
-   */
   function cancelDelete(): void {
     setPendingDelete(null);
   }
 
-  /**
-   * Confirm and execute a pending layer deletion.
-   *
-   * If a pending delete exists, clears the pending delete state and deletes the specified layers from the associated sprite.
-   */
   function confirmDelete(): void {
     const pending = pendingDelete();
     if (pending === null) return;
@@ -256,6 +247,7 @@ const LayerContextMenu: Component<Props> = (props) => {
                 ids,
                 title: ids.length > 1 ? "Delete layers" : "Delete layer",
                 message,
+                confirmLabel: ids.length > 1 ? "Delete layers" : "Delete",
               });
             }}
             disabled={!canDelete()}
@@ -270,11 +262,11 @@ const LayerContextMenu: Component<Props> = (props) => {
         open={pendingDelete() !== null}
         title={pendingDelete()?.title ?? "Delete layer"}
         message={pendingDelete()?.message ?? ""}
-        confirmLabel={pendingDelete()?.ids.length === 1 ? "Delete" : "Delete layers"}
+        confirmLabel={pendingDelete()?.confirmLabel ?? "Delete"}
         onConfirm={confirmDelete}
         onCancel={cancelDelete}
         testId="layer-delete-confirm"
-      />
+
     </>
   );
 };
