@@ -13,6 +13,12 @@ type ConfirmDialogProps = {
   testId?: string;
 };
 
+/**
+ * Render a confirmation dialog showing a message and configurable confirm and cancel actions.
+ *
+ * @param props - Configuration for the dialog. `cancelLabel` defaults to `"Cancel"`. When `testId` is provided, `data-testid` attributes are added to the dialog and the confirm/cancel buttons.
+ * @returns The rendered dialog element.
+ */
 export function ConfirmDialog(props: ConfirmDialogProps) {
   return (
     <Dialog

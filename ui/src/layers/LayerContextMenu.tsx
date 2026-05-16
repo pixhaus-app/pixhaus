@@ -100,10 +100,20 @@ const LayerContextMenu: Component<Props> = (props) => {
     return total - count >= 1;
   };
 
+  /**
+   * Cancel any pending layer delete confirmation.
+   *
+   * Clears the internal pending-delete state so the confirmation dialog is closed.
+   */
   function cancelDelete(): void {
     setPendingDelete(null);
   }
 
+  /**
+   * Confirm and execute a pending layer deletion.
+   *
+   * If a pending delete exists, clears the pending delete state and deletes the specified layers from the associated sprite.
+   */
   function confirmDelete(): void {
     const pending = pendingDelete();
     if (pending === null) return;
