@@ -221,6 +221,8 @@ export async function getPanelVisibility(): Promise<{
   timeline: boolean;
   palette: boolean;
   tilemap: boolean;
+  library: boolean;
+  sheet: boolean;
 }> {
   return browser.execute(() => {
     const w = window as unknown as {
@@ -230,6 +232,8 @@ export async function getPanelVisibility(): Promise<{
           timeline(): boolean;
           palette(): boolean;
           tilemap(): boolean;
+          library(): boolean;
+          sheet(): boolean;
         };
       };
     };
@@ -238,6 +242,23 @@ export async function getPanelVisibility(): Promise<{
       timeline: w.__pixhaus_debug__.panel.timeline(),
       palette: w.__pixhaus_debug__.panel.palette(),
       tilemap: w.__pixhaus_debug__.panel.tilemap(),
+      library: w.__pixhaus_debug__.panel.library(),
+      sheet: w.__pixhaus_debug__.panel.sheet(),
     };
   });
+}
+
+export async function setSheetPanelVisibleForTest(
+  visible: boolean,
+): Promise<void> {
+  await browser.execute((nextVisible: boolean) => {
+    const w = window as unknown as {
+      __pixhaus_debug__: {
+        panel: {
+          setSheetVisible(visible: boolean): void;
+        };
+      };
+    };
+    w.__pixhaus_debug__.panel.setSheetVisible(nextVisible);
+  }, visible);
 }

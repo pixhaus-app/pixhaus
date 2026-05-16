@@ -76,6 +76,10 @@ import {
   isTilemapPanelVisible,
   setTilemapPanelVisible,
 } from "../shell/panel-state";
+import { isLayerPanelVisible, setLayerPanelVisible } from "../layers/layer-state";
+import { isTimelinePanelVisible, setTimelinePanelVisible } from "../timeline/timeline-state";
+import { isLibraryPanelVisible, setLibraryPanelVisible } from "../library/library-state";
+import { closeSheetPanel, isSheetPanelVisible, openSheetPanel } from "../sheet/sheet-state";
 import { setActiveProject } from "../project-state";
 import { activeVerb, clearVerbCache, setActiveVerb } from "../lib/ai/verb-invoke-state";
 
@@ -94,13 +98,18 @@ beforeEach(() => {
   setZoom(1);
   setShowTileGrid(false);
   setShowPixelGrid(true);
+  setLayerPanelVisible(true);
+  setTimelinePanelVisible(true);
   setPalettePanelVisible(true);
   setTilemapPanelVisible(true);
+  setLibraryPanelVisible(true);
+  closeSheetPanel();
   setActiveProject(FAKE_PROJECT);
 });
 
 afterEach(() => {
   setActiveSpriteId(null);
+  closeSheetPanel();
   setActiveProject(null);
 });
 
@@ -217,6 +226,24 @@ describe("dispatchCommand — window", () => {
     setTilemapPanelVisible(true);
     dispatchCommand("window:toggle-tilemap");
     expect(isTilemapPanelVisible()).toBe(false);
+  });
+
+  it("window:reset-layout restores panel defaults and closes the sheet panel", () => {
+    setLayerPanelVisible(false);
+    setTimelinePanelVisible(false);
+    setPalettePanelVisible(false);
+    setTilemapPanelVisible(false);
+    setLibraryPanelVisible(false);
+    openSheetPanel(99);
+
+    dispatchCommand("window:reset-layout");
+
+    expect(isLayerPanelVisible()).toBe(true);
+    expect(isTimelinePanelVisible()).toBe(true);
+    expect(isPalettePanelVisible()).toBe(true);
+    expect(isTilemapPanelVisible()).toBe(true);
+    expect(isLibraryPanelVisible()).toBe(true);
+    expect(isSheetPanelVisible()).toBe(false);
   });
 });
 
