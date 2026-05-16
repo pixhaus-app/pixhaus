@@ -266,7 +266,7 @@ const LayerContextMenu: Component<Props> = (props) => {
         onConfirm={confirmDelete}
         onCancel={cancelDelete}
         testId="layer-delete-confirm"
-
+      />
     </>
   );
 };
