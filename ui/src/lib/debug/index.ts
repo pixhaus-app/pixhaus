@@ -54,7 +54,11 @@ import {
 } from "../../timeline/timeline-state";
 import { isPalettePanelVisible, isTilemapPanelVisible } from "../../shell/panel-state";
 import { isLibraryPanelVisible } from "../../library/library-state";
-import { isSheetPanelVisible } from "../../sheet/sheet-state";
+import {
+  closeSheetPanel,
+  isSheetPanelVisible,
+  setSheetPanelVisible,
+} from "../../sheet/sheet-state";
 import { isCommandPaletteOpen } from "../../palette-state";
 import { isPreferencesOpen } from "../../preferences/preferences-state";
 import {
@@ -156,6 +160,7 @@ interface PanelDebug {
   tilemap(): boolean;
   library(): boolean;
   sheet(): boolean;
+  setSheetVisible(visible: boolean): void;
 }
 
 export interface PixhausDebug {
@@ -265,6 +270,13 @@ export function installDebugSurface(): void {
       tilemap: () => isTilemapPanelVisible(),
       library: () => isLibraryPanelVisible(),
       sheet: () => isSheetPanelVisible(),
+      setSheetVisible: (visible: boolean) => {
+        if (visible) {
+          setSheetPanelVisible(true);
+        } else {
+          closeSheetPanel();
+        }
+      },
     },
 
     getCrashReportingEnabled: () => crashReportingEnabled(),

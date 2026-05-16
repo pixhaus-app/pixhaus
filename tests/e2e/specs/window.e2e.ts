@@ -13,6 +13,7 @@ import {
   getActiveProject,
   getPanelVisibility,
   isCommandPaletteOpen,
+  setSheetPanelVisibleForTest,
 } from "../helpers/state.js";
 
 /**
@@ -144,6 +145,12 @@ describe("Window / panels (T-window)", () => {
         timeoutMsg: "panels did not reach hidden state before reset",
       },
     );
+
+    await setSheetPanelVisibleForTest(true);
+    await browser.waitUntil(async () => (await getPanelVisibility()).sheet, {
+      timeout: 5000,
+      timeoutMsg: "sheet panel did not open before reset",
+    });
 
     await dispatchViaPalette("reset layout");
 

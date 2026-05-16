@@ -247,3 +247,18 @@ export async function getPanelVisibility(): Promise<{
     };
   });
 }
+
+export async function setSheetPanelVisibleForTest(
+  visible: boolean,
+): Promise<void> {
+  await browser.execute((nextVisible: boolean) => {
+    const w = window as unknown as {
+      __pixhaus_debug__: {
+        panel: {
+          setSheetVisible(visible: boolean): void;
+        };
+      };
+    };
+    w.__pixhaus_debug__.panel.setSheetVisible(nextVisible);
+  }, visible);
+}
