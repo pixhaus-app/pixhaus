@@ -4,7 +4,8 @@ use std::path::PathBuf;
 
 use pixhaus_core::project::{
     ActiveTarget, AiMetadata, ColorMode, Entity, EntityContent, EntityDefaults, EntityId,
-    EntityKind, NamedSprite, Project, ProjectMetadata, Size, Sprite, SpriteId, StateId, UserData,
+    EntityKind, NamedSprite, Project, ProjectMetadata, ReferenceSheet, SheetVariantId, Size,
+    Sprite, SpriteId, StateId, UserData,
 };
 use pixhaus_core::undo::History;
 use pixhaus_io::pixhaus::{PixelBufferEntry, PixhausArchive};
@@ -38,6 +39,11 @@ pub struct SpriteAddArgs {
     pub canvas_height: u32,
     /// Authoring color mode.
     pub color_mode: ColorMode,
+    /// Optional image bytes for the sprite's canonical reference sheet.
+    pub reference_bytes: Option<Vec<u8>>,
+    /// MIME type for `reference_bytes`. Defaults to `image/png` when
+    /// bytes are provided and this is absent.
+    pub reference_mime: Option<String>,
 }
 
 /// Creates a new empty project, replacing any currently open document.
@@ -153,7 +159,10 @@ fn compute_next_id(project: &Project) -> u32 {
     for entity in &project.library.entities {
         max = max.max(entity.id.get()); // EntityId
         match &entity.content {
-            EntityContent::Sprites { states } => {
+            EntityContent::Sprites {
+                states,
+                reference_sheet,
+            } => {
                 for state in states {
                     max = max.max(state.id.get()); // StateId
                     let sprite = &state.sprite;
@@ -185,6 +194,12 @@ fn compute_next_id(project: &Project) -> u32 {
                         }
                     }
                 }
+                if let Some(sheet) = reference_sheet {
+                    max = max.max(sheet.canonical.id.get()); // SheetVariantId
+                    for variant in &sheet.history {
+                        max = max.max(variant.id.get()); // SheetVariantId
+                    }
+                }
             }
             EntityContent::Tileset { tileset } => {
                 max = max.max(tileset.id.get()); // TilesetId
@@ -198,12 +213,6 @@ fn compute_next_id(project: &Project) -> u32 {
                 }
                 // scene.tilesets[].tileset_entity_id is EntityId already covered
                 // by the outer entity loop — no rescan needed.
-            }
-            EntityContent::Reference { sheet } => {
-                max = max.max(sheet.canonical.id.get()); // SheetVariantId
-                for variant in &sheet.history {
-                    max = max.max(variant.id.get()); // SheetVariantId
-                }
             }
         }
     }
@@ -472,14 +481,38 @@ pub async fn project_get(state: State<'_, AppState>) -> CommandResult<Option<Pro
 
 /// Adds a new empty sprite to the active project.
 #[tauri::command(async, rename_all = "snake_case")]
-pub async fn sprite_add(args: SpriteAddArgs, state: State<'_, AppState>) -> CommandResult<Sprite> {
+pub async fn sprite_add(
+    mut args: SpriteAddArgs,
+    state: State<'_, AppState>,
+) -> CommandResult<Sprite> {
     let mut doc = state.doc.write().await;
+    if args
+        .reference_bytes
+        .as_ref()
+        .is_some_and(std::vec::Vec::is_empty)
+    {
+        return Err(AppCommandError::Validation {
+            detail: "reference_bytes must be non-empty when provided".into(),
+        });
+    }
     let id = SpriteId::new(doc.next_id);
     doc.next_id += 1;
     let entity_id_raw = doc.next_id;
     doc.next_id += 1;
     let state_id_raw = doc.next_id;
     doc.next_id += 1;
+    let reference_sheet = args.reference_bytes.take().map(|bytes| {
+        let mime = args
+            .reference_mime
+            .take()
+            .filter(|s| !s.is_empty())
+            .unwrap_or_else(|| "image/png".into());
+        let variant_id = SheetVariantId::new(doc.next_id);
+        doc.next_id += 1;
+        Box::new(crate::commands::library::reference_sheet_from_image(
+            bytes, mime, variant_id, 0,
+        ))
+    });
     let sprite = {
         let project = doc
             .project
@@ -491,7 +524,13 @@ pub async fn sprite_add(args: SpriteAddArgs, state: State<'_, AppState>) -> Comm
             Size::new(args.canvas_width, args.canvas_height),
         );
         sprite.color_mode = args.color_mode;
-        install_sprite_as_new_entity(project, sprite.clone(), entity_id_raw, state_id_raw);
+        install_sprite_as_new_entity(
+            project,
+            sprite.clone(),
+            entity_id_raw,
+            state_id_raw,
+            reference_sheet,
+        );
         sprite
     };
     doc.dirty = true;
@@ -506,6 +545,7 @@ fn install_sprite_as_new_entity(
     sprite: Sprite,
     entity_id_raw: u32,
     state_id_raw: u32,
+    reference_sheet: Option<Box<ReferenceSheet>>,
 ) -> EntityId {
     let entity_id = EntityId::new(entity_id_raw);
     let state_id = StateId::new(state_id_raw);
@@ -524,9 +564,9 @@ fn install_sprite_as_new_entity(
                 sprite,
                 engine_tags: Vec::new(),
             }],
+            reference_sheet,
         },
         ai: AiMetadata::default(),
-        anchor_reference_id: None,
         user_data: UserData::default(),
         created_at: 0,
         updated_at: 0,
@@ -553,7 +593,9 @@ pub async fn sprite_delete(sprite_id: SpriteId, state: State<'_, AppState>) -> C
             .ok_or(AppCommandError::NoActiveProject)?;
         let before = project.library.entities.len();
         project.library.entities.retain(|e| match &e.content {
-            EntityContent::Sprites { states } => !states.iter().any(|s| s.sprite.id == sprite_id),
+            EntityContent::Sprites { states, .. } => {
+                !states.iter().any(|s| s.sprite.id == sprite_id)
+            }
             _ => true,
         });
         if project.library.entities.len() == before {
@@ -635,6 +677,47 @@ mod tests {
         assert_eq!(compute_next_id(&Project::new("empty")), 1);
     }
 
+    #[test]
+    fn install_sprite_as_new_entity_leaves_reference_sheet_empty_when_absent() {
+        let mut project = Project::new("sprite-without-sheet");
+        let sprite = Sprite::empty(SpriteId::new(1), "main", Size::new(16, 16));
+
+        install_sprite_as_new_entity(&mut project, sprite, 10, 11, None);
+
+        let EntityContent::Sprites {
+            reference_sheet, ..
+        } = &project.library.entities[0].content
+        else {
+            panic!("expected sprite entity content");
+        };
+        assert!(reference_sheet.is_none());
+    }
+
+    #[test]
+    fn install_sprite_as_new_entity_embeds_reference_sheet_when_provided() {
+        let mut project = Project::new("sprite-with-sheet");
+        let sprite = Sprite::empty(SpriteId::new(1), "main", Size::new(16, 16));
+        let sheet = crate::commands::library::reference_sheet_from_image(
+            vec![1, 2, 3],
+            "image/png".into(),
+            SheetVariantId::new(12),
+            123,
+        );
+
+        install_sprite_as_new_entity(&mut project, sprite, 10, 11, Some(Box::new(sheet)));
+
+        let EntityContent::Sprites {
+            reference_sheet, ..
+        } = &project.library.entities[0].content
+        else {
+            panic!("expected sprite entity content");
+        };
+        let sheet = reference_sheet.as_ref().expect("reference sheet");
+        assert_eq!(sheet.canonical.id, SheetVariantId::new(12));
+        assert_eq!(sheet.canonical.image.bytes, vec![1, 2, 3]);
+        assert_eq!(sheet.canonical.generated_at, 123);
+    }
+
     /// Round-trip: build a project in memory, encode it to a temp file,
     /// then load it back through `decode_from_file` and verify
     /// `compute_next_id` is past every loaded entity.
@@ -668,7 +751,7 @@ mod tests {
             colors: Vec::new(),
             user_data: UserData::default(),
         });
-        install_sprite_as_new_entity(&mut project, sprite, 1_000, 1_001);
+        install_sprite_as_new_entity(&mut project, sprite, 1_000, 1_001, None);
 
         let next = compute_next_id(&project);
         assert!(
@@ -685,7 +768,7 @@ mod tests {
         use pixhaus_core::project::{PixelBufferId, Rect, SelectionRegion, Size, Sprite, SpriteId};
         let mut project = Project::new("selection-fixture");
         let sprite = Sprite::empty(SpriteId::new(2), "main", Size::new(8, 8));
-        install_sprite_as_new_entity(&mut project, sprite, 1_000, 1_001);
+        install_sprite_as_new_entity(&mut project, sprite, 1_000, 1_001, None);
         project.selection.region = Some(SelectionRegion::Mask {
             bounds: Rect::from_xywh(0, 0, 8, 8),
             mask: PixelBufferId::new(99),
@@ -714,7 +797,7 @@ mod tests {
             "main",
             Size::new(8, 8),
         );
-        install_sprite_as_new_entity(&mut project, sprite, 100, 200);
+        install_sprite_as_new_entity(&mut project, sprite, 100, 200, None);
         let next = compute_next_id(&project);
         assert!(
             next > 200,
@@ -759,7 +842,7 @@ mod tests {
             parent: None,
             user_data: UserData::default(),
         });
-        install_sprite_as_new_entity(&mut project, sprite, 10, 11);
+        install_sprite_as_new_entity(&mut project, sprite, 10, 11, None);
         let next = compute_next_id(&project);
         assert!(
             next > 99,
@@ -768,10 +851,11 @@ mod tests {
     }
 
     /// Pins the A1 fix: `Tilemap`-kind entities carry `LayerId`s on their
-    /// scene layers and `Reference`-kind entities carry `SheetVariantId`s.
+    /// scene layers and sprite entities may carry `SheetVariantId`s in
+    /// their embedded reference sheets.
     /// Both were silently skipped before this fix.
     #[test]
-    fn compute_next_id_covers_tilemap_and_reference_content() {
+    fn compute_next_id_covers_tilemap_and_sprite_reference_content() {
         use pixhaus_core::project::{
             AiMetadata, AssetInfo, Entity, EntityContent, EntityDefaults, EntityId, EntityKind,
             LayerId, ReferenceImage, ReferenceSheet, SheetComposition, SheetVariant,
@@ -803,22 +887,22 @@ mod tests {
                 },
             },
             ai: AiMetadata::default(),
-            anchor_reference_id: None,
             user_data: UserData::default(),
             created_at: 0,
             updated_at: 0,
         });
 
-        // Reference entity with canonical id=60 and a history variant id=70.
+        // Sprite entity with canonical id=60 and a history variant id=70.
         project.library.entities.push(Entity {
             id: EntityId::new(2),
-            kind: EntityKind::Reference,
+            kind: EntityKind::Custom("Character".into()),
             name: "Sheet".into(),
             group_id: None,
             tags: Vec::new(),
             defaults: EntityDefaults::default(),
-            content: EntityContent::Reference {
-                sheet: Box::new(ReferenceSheet {
+            content: EntityContent::Sprites {
+                states: Vec::new(),
+                reference_sheet: Some(Box::new(ReferenceSheet {
                     canonical: SheetVariant {
                         id: SheetVariantId::new(60),
                         generated_at: 0,
@@ -843,10 +927,9 @@ mod tests {
                     }],
                     prompts: Vec::new(),
                     info: AssetInfo::default(),
-                }),
+                })),
             },
             ai: AiMetadata::default(),
-            anchor_reference_id: None,
             user_data: UserData::default(),
             created_at: 0,
             updated_at: 0,
@@ -855,7 +938,7 @@ mod tests {
         let next = compute_next_id(&project);
         assert!(
             next > 70,
-            "next_id must exceed all tilemap LayerIds and Reference SheetVariantIds; got {next}"
+            "next_id must exceed all tilemap LayerIds and sprite reference SheetVariantIds; got {next}"
         );
     }
 
@@ -1122,7 +1205,7 @@ mod tests {
 
         let pixhaus_io::aseprite::archive::ConvertedArchive { archive, .. } = result;
         let entity = &archive.project.library.entities[0];
-        let pixhaus_core::project::library::EntityContent::Sprites { states } = &entity.content
+        let pixhaus_core::project::library::EntityContent::Sprites { states, .. } = &entity.content
         else {
             panic!("entity must be Sprites variant");
         };

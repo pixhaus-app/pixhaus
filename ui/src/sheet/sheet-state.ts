@@ -1,6 +1,6 @@
 // Sheet view panel state.
 //
-// Tracks which Reference entity is open in the sheet panel, which panel
+// Tracks which sprite entity is open in the sheet panel, which panel
 // region the user last clicked (for scoped inpainting in B10.2), and
 // whether the panel overlay of labelled rectangles is visible.
 
@@ -8,7 +8,7 @@ import { createSignal } from "solid-js";
 import type { EntityId } from "../lib/types/EntityId";
 import type { Rect } from "../lib/types/Rect";
 
-/** The Reference entity currently shown in the sheet panel. `null` when closed. */
+/** The sprite entity currently shown in the sheet panel. `null` when closed. */
 export const [activeSheetEntityId, setActiveSheetEntityId] = createSignal<EntityId | null>(null);
 
 /**
@@ -24,7 +24,7 @@ export const [showPanelOverlay, setShowPanelOverlay] = createSignal(true);
 /** Whether the sheet panel is mounted in the editor layout. */
 export const [isSheetPanelVisible, setSheetPanelVisible] = createSignal(false);
 
-/** Opens the sheet panel for the given Reference entity and makes the panel visible. */
+/** Opens the sheet panel for the given sprite entity and makes the panel visible. */
 export function openSheetPanel(entityId: EntityId): void {
   setActiveSheetEntityId(entityId);
   setSelectedPanelRegion(null);

@@ -1,4 +1,4 @@
-// Side panel for editing a Reference entity's asset info.
+// Side panel for editing an embedded reference sheet's asset info.
 //
 // Renders a key-value field list (name, age, species, era, faction) and
 // a personality-notes text area. Changes are committed on blur so each
@@ -7,7 +7,7 @@
 import { type Component, For, Show, createEffect, createSignal } from "solid-js";
 import type { AssetInfo } from "../lib/types";
 
-// Fields surfaced as structured rows. The Reference-entity data model
+// Fields surfaced as structured rows. The reference-sheet data model
 // supports arbitrary string keys; this list pre-labels the common ones.
 // Adding a free-form key from the UI is a B10.4 follow-up.
 const KNOWN_FIELDS: ReadonlyArray<{ key: string; label: string }> = [

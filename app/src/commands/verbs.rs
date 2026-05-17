@@ -30,15 +30,13 @@ pub struct VerbInvokeArgs {
     /// JSON payload whose schema is defined by the verb's descriptor.
     pub inputs: serde_json::Value,
     /// Optional override for the entity to use when resolving the
-    /// anchor reference sheet (B10.3).
+    /// embedded reference sheet.
     ///
     /// When `None`, the anchor target is derived from the project's
     /// [`ActiveTarget`]: a Custom-state target uses its parent entity,
-    /// a Tileset / Tilemap / Reference target uses the named entity
-    /// itself. Pass `Some(entity_id)` from verbs that target an entity
-    /// other than the active one (e.g. `generate-reference-sheet`,
-    /// which is invoked against a Reference entity that is not yet
-    /// active).
+    /// and a Tileset / Tilemap target uses the named entity itself. Pass
+    /// `Some(entity_id)` from verbs that target an entity other than the
+    /// active one.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub target_entity_id: Option<EntityId>,
 }
@@ -114,10 +112,10 @@ pub async fn verb_invoke(
     // the document; we release it before awaiting the verb so we never
     // hold a lock across an I/O suspension.
     //
-    // The anchor (B10.3) is resolved here too: the host walks from the
-    // active or override target to the Reference entity its
-    // `anchor_reference_id` points at and builds an `AnchorPayload`. The
-    // result lands on `ctx.anchor`; verbs that ignore it pay nothing.
+    // The anchor is resolved here too: the host looks at the active or
+    // override sprite entity's embedded reference sheet and builds an
+    // `AnchorPayload`. The result lands on `ctx.anchor`; verbs that
+    // ignore it pay nothing.
     let ctx = {
         let doc = state.doc.read().await;
         let project_meta = doc.project.as_ref().map_or_else(
@@ -191,29 +189,24 @@ pub async fn verb_cancel(invocation_id: String, state: State<'_, AppState>) -> C
     Ok(())
 }
 
-/// Resolves the anchor payload for a verb invocation (B10.3).
+/// Resolves the anchor payload for a verb invocation.
 ///
 /// The active entity is determined as follows:
 ///
 /// 1. If `target_override` is supplied, that entity wins.
 /// 2. Otherwise the project's [`ActiveTarget`] picks the entity:
 ///    - `State { entity_id, .. }` → the parent Custom entity.
-///    - `Tileset { entity_id }` / `Tilemap { entity_id }` /
-///      `Reference { entity_id }` → the named entity itself.
+///    - `Tileset { entity_id }` / `Tilemap { entity_id }` → the named
+///      entity itself.
 ///    - `None` → no anchor.
 ///
-/// Once the active entity is in hand:
+/// Once the active entity is in hand, build the payload from its
+/// embedded sprite reference sheet. Entities without a sheet return
+/// `None`.
 ///
-/// - If the entity is `Reference`-kind, build the payload from its own
-///   canonical sheet.
-/// - If the entity is anchored on a Reference (`anchor_reference_id`
-///   set), build the payload from the referenced entity's canonical
-///   sheet.
-/// - Otherwise return `None`.
-///
-/// The cache (keyed by Reference entity id) returns a hit when the
-/// stored `canonical_hash` matches the live canonical bytes; stale
-/// entries are rebuilt and reinserted.
+/// The cache (keyed by sprite entity id) returns a hit when the stored
+/// `canonical_hash` and resolved `LoRA` path both match the live project
+/// state; stale entries are rebuilt and reinserted.
 pub(crate) fn resolve_anchor(
     project: &Project,
     target_override: Option<EntityId>,
@@ -226,31 +219,27 @@ pub(crate) fn resolve_anchor(
         .iter()
         .find(|e| e.id == active_entity_id)?;
 
-    let reference = if matches!(active.content, EntityContent::Reference { .. }) {
-        active
-    } else {
-        let rid = active.anchor_reference_id?;
-        project.library.entities.iter().find(|e| e.id == rid)?
-    };
-
     // Cheap hash of the live canonical bytes — no base64 alloc.
-    // Cache hits skip the AnchorPayload::from_reference_entity build
+    // Cache hits skip the AnchorPayload::from_sprite_entity build
     // entirely, which would otherwise clone the bytes and base64-encode
     // a ~megabyte payload on every verb invocation.
-    let sheet = match &reference.content {
-        EntityContent::Reference { sheet } => sheet.as_ref(),
+    let sheet = match &active.content {
+        EntityContent::Sprites {
+            reference_sheet: Some(sheet),
+            ..
+        } => sheet.as_ref(),
         _ => return None,
     };
     let live_hash = pixhaus_ai::plugin::anchor::stable_hash(&sheet.canonical.image.bytes);
+    let lora_path = resolve_lora_path(active, project.library.ai.project_lora_path.as_deref());
 
-    if let Some(cached) = cache.get(&reference.id.get()) {
-        if cached.canonical_hash == live_hash {
+    if let Some(cached) = cache.get(&active.id.get()) {
+        if cached.canonical_hash == live_hash && cached.lora_path == lora_path {
             return Some(cached.clone());
         }
     }
 
-    let lora_path = resolve_lora_path(reference, project.library.ai.project_lora_path.as_deref());
-    let live = AnchorPayload::from_reference_entity(reference, DEFAULT_ANCHOR_STRENGTH, lora_path)?;
+    let live = AnchorPayload::from_sprite_entity(active, DEFAULT_ANCHOR_STRENGTH, lora_path)?;
     cache.insert(live.reference_entity_id.get(), live.clone());
     Some(live)
 }
@@ -279,8 +268,7 @@ fn active_target_entity_id(active: &ActiveTarget) -> Option<EntityId> {
         ActiveTarget::None => None,
         ActiveTarget::State { entity_id, .. }
         | ActiveTarget::Tileset { entity_id }
-        | ActiveTarget::Tilemap { entity_id }
-        | ActiveTarget::Reference { entity_id } => Some(entity_id),
+        | ActiveTarget::Tilemap { entity_id } => Some(entity_id),
     }
 }
 
@@ -296,44 +284,28 @@ mod tests {
 
     use super::*;
 
-    fn ref_entity(id: u32, bytes: Vec<u8>) -> Entity {
-        Entity {
-            id: EntityId::new(id),
-            kind: EntityKind::Reference,
-            name: format!("Ref {id}"),
-            group_id: None,
-            tags: Vec::new(),
-            defaults: EntityDefaults::default(),
-            content: EntityContent::Reference {
-                sheet: Box::new(ReferenceSheet {
-                    canonical: SheetVariant {
-                        id: SheetVariantId::new(1),
-                        generated_at: 0,
-                        image: ReferenceImage {
-                            bytes,
-                            mime: "image/png".into(),
-                        },
-                        composition: SheetComposition::default(),
-                        generation: None,
-                        extracted_palette: Vec::new(),
+    fn sprite_entity(id: u32, bytes: Option<Vec<u8>>) -> Entity {
+        let reference_sheet = bytes.map(|bytes| {
+            Box::new(ReferenceSheet {
+                canonical: SheetVariant {
+                    id: SheetVariantId::new(1),
+                    generated_at: 0,
+                    image: ReferenceImage {
+                        bytes,
+                        mime: "image/png".into(),
                     },
-                    history: Vec::new(),
-                    prompts: Vec::new(),
-                    info: AssetInfo {
-                        fields: BTreeMap::new(),
-                        notes: Vec::new(),
-                    },
-                }),
-            },
-            ai: AiMetadata::default(),
-            anchor_reference_id: None,
-            user_data: UserData::default(),
-            created_at: 0,
-            updated_at: 0,
-        }
-    }
-
-    fn custom_entity(id: u32, anchor: Option<EntityId>) -> Entity {
+                    composition: SheetComposition::default(),
+                    generation: None,
+                    extracted_palette: Vec::new(),
+                },
+                history: Vec::new(),
+                prompts: Vec::new(),
+                info: AssetInfo {
+                    fields: BTreeMap::new(),
+                    notes: Vec::new(),
+                },
+            })
+        });
         Entity {
             id: EntityId::new(id),
             kind: EntityKind::Custom("Hero".into()),
@@ -341,9 +313,11 @@ mod tests {
             group_id: None,
             tags: Vec::new(),
             defaults: EntityDefaults::default(),
-            content: EntityContent::Sprites { states: Vec::new() },
+            content: EntityContent::Sprites {
+                states: Vec::new(),
+                reference_sheet,
+            },
             ai: AiMetadata::default(),
-            anchor_reference_id: anchor,
             user_data: UserData::default(),
             created_at: 0,
             updated_at: 0,
@@ -374,7 +348,10 @@ mod tests {
     #[test]
     fn resolve_anchor_uses_target_override() {
         let mut project = Project::new("override");
-        project.library.entities.push(ref_entity(7, vec![1, 2, 3]));
+        project
+            .library
+            .entities
+            .push(sprite_entity(7, Some(vec![1, 2, 3])));
         let cache = DashMap::new();
         let p = resolve_anchor(&project, Some(EntityId::new(7)), &cache).unwrap();
         assert_eq!(p.reference_entity_id, EntityId::new(7));
@@ -382,26 +359,25 @@ mod tests {
     }
 
     #[test]
-    fn resolve_anchor_follows_anchor_pointer_from_active_state() {
+    fn resolve_anchor_uses_active_state_entity_sheet() {
         let mut project = Project::new("anchored");
-        project.library.entities.push(ref_entity(7, vec![1, 2, 3]));
         project
             .library
             .entities
-            .push(custom_entity(9, Some(EntityId::new(7))));
+            .push(sprite_entity(9, Some(vec![1, 2, 3])));
         project.active = ActiveTarget::State {
             entity_id: EntityId::new(9),
             state_id: StateId::new(1),
         };
         let cache = DashMap::new();
         let p = resolve_anchor(&project, None, &cache).unwrap();
-        assert_eq!(p.reference_entity_id, EntityId::new(7));
+        assert_eq!(p.reference_entity_id, EntityId::new(9));
     }
 
     #[test]
     fn resolve_anchor_returns_none_for_unanchored_custom() {
         let mut project = Project::new("unanchored");
-        project.library.entities.push(custom_entity(9, None));
+        project.library.entities.push(sprite_entity(9, None));
         project.active = ActiveTarget::State {
             entity_id: EntityId::new(9),
             state_id: StateId::new(1),
@@ -411,22 +387,12 @@ mod tests {
     }
 
     #[test]
-    fn resolve_anchor_returns_self_when_target_is_reference() {
-        let mut project = Project::new("active-reference");
-        project.library.entities.push(ref_entity(7, vec![9, 9, 9]));
-        project.active = ActiveTarget::Reference {
-            entity_id: EntityId::new(7),
-        };
-        let cache = DashMap::new();
-        let p = resolve_anchor(&project, None, &cache).unwrap();
-        assert_eq!(p.reference_entity_id, EntityId::new(7));
-        assert_eq!(p.image_bytes, vec![9, 9, 9]);
-    }
-
-    #[test]
     fn resolve_anchor_caches_payload_and_serves_from_cache() {
         let mut project = Project::new("cache");
-        project.library.entities.push(ref_entity(7, vec![1, 2, 3]));
+        project
+            .library
+            .entities
+            .push(sprite_entity(7, Some(vec![1, 2, 3])));
         let cache = DashMap::new();
 
         let p1 = resolve_anchor(&project, Some(EntityId::new(7)), &cache).unwrap();
@@ -443,13 +409,20 @@ mod tests {
     #[test]
     fn resolve_anchor_invalidates_cache_when_canonical_changes() {
         let mut project = Project::new("cache-invalidate");
-        project.library.entities.push(ref_entity(7, vec![1, 2, 3]));
+        project
+            .library
+            .entities
+            .push(sprite_entity(7, Some(vec![1, 2, 3])));
         let cache = DashMap::new();
 
         let p1 = resolve_anchor(&project, Some(EntityId::new(7)), &cache).unwrap();
 
         // Change the canonical bytes.
-        if let EntityContent::Reference { sheet } = &mut project.library.entities[0].content {
+        if let EntityContent::Sprites {
+            reference_sheet: Some(sheet),
+            ..
+        } = &mut project.library.entities[0].content
+        {
             sheet.canonical.image.bytes = vec![9, 9, 9];
         }
         let p2 = resolve_anchor(&project, Some(EntityId::new(7)), &cache).unwrap();
@@ -461,19 +434,52 @@ mod tests {
     }
 
     #[test]
-    fn resolve_anchor_drops_stale_pointer() {
-        // Custom entity points at a Reference id that doesn't exist.
-        let mut project = Project::new("stale");
+    fn resolve_anchor_invalidates_cache_when_entity_lora_changes() {
+        let mut project = Project::new("cache-lora");
         project
             .library
             .entities
-            .push(custom_entity(9, Some(EntityId::new(99))));
+            .push(sprite_entity(7, Some(vec![1, 2, 3])));
+        let cache = DashMap::new();
+
+        let p1 = resolve_anchor(&project, Some(EntityId::new(7)), &cache).unwrap();
+        assert_eq!(p1.lora_path, None);
+
+        project.library.entities[0].ai.lora_path = Some("entity.safetensors".into());
+        let p2 = resolve_anchor(&project, Some(EntityId::new(7)), &cache).unwrap();
+        assert_eq!(p2.canonical_hash, p1.canonical_hash);
+        assert_eq!(p2.lora_path.as_deref(), Some("entity.safetensors"));
+    }
+
+    #[test]
+    fn resolve_anchor_invalidates_cache_when_project_lora_changes() {
+        let mut project = Project::new("cache-project-lora");
+        project
+            .library
+            .entities
+            .push(sprite_entity(7, Some(vec![1, 2, 3])));
+        project.library.ai.project_lora_path = Some("project-a.safetensors".into());
+        let cache = DashMap::new();
+
+        let p1 = resolve_anchor(&project, Some(EntityId::new(7)), &cache).unwrap();
+        assert_eq!(p1.lora_path.as_deref(), Some("project-a.safetensors"));
+
+        project.library.ai.project_lora_path = Some("project-b.safetensors".into());
+        let p2 = resolve_anchor(&project, Some(EntityId::new(7)), &cache).unwrap();
+        assert_eq!(p2.canonical_hash, p1.canonical_hash);
+        assert_eq!(p2.lora_path.as_deref(), Some("project-b.safetensors"));
+    }
+
+    #[test]
+    fn resolve_anchor_returns_none_for_missing_override() {
+        let mut project = Project::new("stale");
+        project.library.entities.push(sprite_entity(9, None));
         project.active = ActiveTarget::State {
             entity_id: EntityId::new(9),
             state_id: StateId::new(1),
         };
         let cache = DashMap::new();
         // Should not panic, returns None.
-        assert!(resolve_anchor(&project, None, &cache).is_none());
+        assert!(resolve_anchor(&project, Some(EntityId::new(99)), &cache).is_none());
     }
 }

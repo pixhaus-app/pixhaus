@@ -891,7 +891,7 @@ Expect:
   - [IPC] `library_create_entity` then one `library_add_state` per initial state.
   - [STATE] the new entity is the active target (`library_get_active_target` returns it).
 
-Variants: click the Tileset / Tilemap / Reference tabs and submit the corresponding fields. Each kind triggers `library_create_entity` with the matching `EntityKind` (Tileset, Tilemap, Reference). Reference kind requires picking a source image via "Choose file…".
+Variants: click the Tileset / Tilemap tabs and submit the corresponding fields. Each kind triggers `library_create_entity` with the matching `EntityKind` (Tileset, Tilemap). For Custom entities, "Reference sheet" is optional; choosing a source image sends `reference_bytes` / `reference_mime` on `library_create_entity`, while skipping it leaves `content.Sprites.reference_sheet` empty.
 
 ### T-library-003: Entity context menu actions
 
@@ -930,16 +930,16 @@ Expect:
 
 ### T-library-006: AI auto-tag suggestions
 
-Pre: a `Custom` or `Reference` entity exists (T-library-002). A backend that supports `pixhaus.builtin.critique` is configured (Preferences → AI). Without a configured backend the verb invocation aborts with a toast and no chips appear.
+Pre: a `Custom` entity exists (T-library-002). A backend that supports `pixhaus.builtin.critique` is configured (Preferences → AI). Without a configured backend the verb invocation aborts with a toast and no chips appear.
 Steps:
-  1. Right-click a `Custom` or `Reference` entity row → context menu shows a "Suggest tags" item between "Add state" and "Move to group…". The item is hidden for `Tileset` and `Tilemap` entities (the verb has no useful grounding for them today).
+  1. Right-click a `Custom` entity row → context menu shows a "Suggest tags" item between "Add state" and "Move to group…". The item is hidden for `Tileset` and `Tilemap` entities (the verb has no useful grounding for them today).
   2. Click "Suggest tags". An "Auto-tagging…" info toast surfaces while the verb runs.
   3. When the verb resolves, a success toast reports the suggestion count (or "No new tag suggestions." when the VLM returns nothing) and pending chips appear inline on the entity row, styled with a dashed accent border and ✓ / ✗ buttons.
   4. Click ✓ on one pending chip → the chip migrates from the pending strip into the confirmed strip (plain background, no buttons).
   5. Click ✗ on another pending chip → the chip vanishes.
-  6. Add a state to the same entity (T-library-003 → "Add state") OR approve a sheet variant on a `Reference` entity (T-refsheet-004) to verify the corpus refresh path.
+  6. Add a state to the same entity (T-library-003 → "Add state") OR approve an embedded sheet variant on the entity (T-refsheet-004) to verify the corpus refresh path.
 Expect:
-  - [DOM] context menu carries `data-testid="ctx-menu-suggest-tags"` only when the right-clicked entity is `Custom` or `Reference`.
+  - [DOM] context menu carries `data-testid="ctx-menu-suggest-tags"` only when the right-clicked entity is `Custom`.
   - [DOM] pending chips render with `library-row__tag-chip--pending`; confirmed chips render with `library-row__tag-chip` only.
   - [IPC] step 2 fires `library_auto_tag_entity { entity_id }`. The returned tag IDs land in the panel's pending-suggestions cache; the call is followed by `library_list_entities` + `library_list_tags` + `library_list_groups` so the chip strip can resolve names for any newly-created tags.
   - [IPC] step 4 fires `library_accept_suggested_tag { entity_id, tag_id }` followed by a `library_list_entities` / `library_list_tags` refresh.
@@ -948,25 +948,20 @@ Expect:
 
 > **Out of scope for this scenario:** manual tag CRUD (add tag, delete tag, untag entity from the row) is filed against a future Category B PR. T-library-006 covers only the auto-tag accept/reject and corpus-refresh surface.
 
-### T-library-007: Anchor wiring (B10.3)
+### T-library-007: Embedded reference sheet anchor
 
-Pre: at least one Reference entity (`hero-sheet`) with an approved canonical sheet and one Custom entity (`hero`) in the library. Both are visible in the library tree.
+Pre: at least one Custom entity (`hero`) was created with a reference sheet image.
 Steps:
-  1. Right-click the Custom entity row → context menu shows "Set as anchor reference". Click it.
-  2. In the "Set anchor reference" modal, the `<select>` lists every Reference entity. Pick `hero-sheet` and confirm.
-  3. The entity row redraws with a small anchor badge before the kind icon.
-  4. Hover the badge (hold for ~250ms) → a small tooltip-style popover renders the resolved canonical sheet image.
-  5. Right-click the same row → the menu item now reads "Clear anchor reference". Click it.
-  6. The badge disappears.
+  1. Observe the Custom entity row.
+  2. Hover the small reference-sheet badge before the kind icon (hold for ~250ms).
 Expect:
-  - [DOM] step 1 shows the menu item with `data-testid="ctx-menu-set-anchor"`.
-  - [DOM] step 3 renders `data-testid="library-row-anchor-<entity-id>"` before the kind icon on the Custom row. The same badge is always visible on Reference rows (they are themselves the anchor source).
-  - [DOM] step 4 mounts `data-testid="library-row-anchor-tooltip-<entity-id>"` containing an `<img>` with a `data:` URL built from the IPC payload.
-  - [IPC] step 2 fires `library_set_entity_anchor { entity_id: <custom-id>, reference_id: <reference-id> }` followed by the standard `library_list_entities` refresh.
-  - [IPC] step 4 fires `library_get_anchor_payload { entity_id: <custom-id> }`. Repeat hovers within the same session reuse the backend's anchor cache (no payload re-encoding).
-  - [IPC] step 5 fires `library_set_entity_anchor { entity_id: <custom-id>, reference_id: null }`.
+  - [DOM] the Library create modal does not offer a Reference tab.
+  - [DOM] the context menu does not offer "Set as anchor reference" or "Clear anchor reference".
+  - [DOM] step 1 renders `data-testid="library-row-anchor-<entity-id>"` before the kind icon only when `content.Sprites.reference_sheet` is present.
+  - [DOM] step 2 mounts `data-testid="library-row-anchor-tooltip-<entity-id>"` containing an `<img>` with a `data:` URL built from the IPC payload.
+  - [IPC] step 2 fires `library_get_anchor_payload { entity_id: <custom-id> }`. Repeat hovers within the same session reuse the backend's anchor cache (no payload re-encoding).
 
-> **Out of scope:** picking the anchor via drag-and-drop, setting anchor strength from the UI, and surfacing the per-entity LoRA path on the tooltip are filed against follow-up PRs. The picker modal uses a flat `<select>` and is intentionally minimal — the IPC contract is what this PR validates.
+> **Out of scope:** editing, replacing, or generating the embedded sheet after creation; setting anchor strength from the UI; and surfacing the per-entity LoRA path on the tooltip are follow-ups.
 
 ### T-library-008: Aseprite round-trip preserves library metadata (B9.5)
 
@@ -986,44 +981,39 @@ Expect:
 
 ## 12. Reference sheets
 
-Introduced in bedrock arc B10 (PRs #160, #165, #167, #168, #179). The reference sheet view panel displays a canonical sheet image for an entity, lets the user generate new variants via composition templates, refine specific panels via panel-scoped inpainting, approve a variant as canonical, and train a per-entity LoRA from the approved sheets.
+Introduced in bedrock arc B10 (PRs #160, #165, #167, #168, #179). The reference sheet view panel displays a canonical sheet image embedded in a sprite entity, lets the user approve existing variants as canonical, and train a per-entity LoRA from the approved sheet. Generate/refine persistence is a follow-up after the embedded model move.
 
 **Locations & selectors:** panel component `ui/src/sheet/SheetView.tsx`. Visibility signal `isSheetPanelVisible` (default `false`). Toggle command id `window:toggle-sheet`, palette label "Toggle Reference Sheet Panel", palette keywords: `sheet`, `reference`, `anchor`, `character`. Verb input modal is `ModalForm` hosted by `VerbInvokeHost` (`ui/src/lib/ai/VerbInvokeHost.tsx`).
 
 ### T-refsheet-001: Open the reference sheet panel
 
-Pre: at least one entity has an approved reference sheet variant, OR right-click an entity in the library to open the panel on a fresh entity.
+Pre: at least one sprite entity has an embedded reference sheet.
 Steps:
-  1. Command palette → "Toggle Reference Sheet Panel", OR right-click an entity in the library → open sheet panel.
+  1. Command palette → "Toggle Reference Sheet Panel".
 Expect:
   - [STATE] `isSheetPanelVisible() === true`.
   - [DOM] the panel mounts to the right of the canvas. Title shows the entity name, or "Reference sheet" when no entity is active.
   - [DOM] for an entity with an approved variant: the canonical sheet image renders fit-to-window with an SVG panel overlay.
   - [DOM] history strip and prompt history strip are visible below.
 
-### T-refsheet-002: Generate a reference sheet variant
+### T-refsheet-002: Generation and refinement controls are deferred
 
-Pre: T-refsheet-001 done; a backend that supports `pixhaus.builtin.generate_reference_sheet` is configured (Preferences → AI). Without a configured backend the verb invocation aborts with a toast — the modal flow (open, fill, submit, cancel) is still exercisable, only the network call fails. No env-driven mock toggle exists today (tracked in section 17).
+Pre: T-refsheet-001 done.
 Steps:
-  1. Click "Generate variant".
-  2. The verb modal opens. Pick a composition template: Character / Item / Tileset / Custom. Type a prompt. Optional: negative prompt, num_variants (1–4), seed. Click Submit.
+  1. Inspect the sheet panel action row.
 Expect:
-  - [DOM] modal closes; a progress indicator surfaces until the verb resolves.
-  - [DOM] new variant thumbnail lands in the history strip.
-  - [IPC] one verb invocation of `pixhaus.builtin.generate_reference_sheet`; the request carries `entity_id`, `template`, `prompt`, and optional fields.
-  - [STATE] entity's variant list grows by one.
+  - [DOM] no "Generate variant" or "Refine selection" buttons are present in this slice.
+  - [IPC] no `pixhaus.builtin.generate_reference_sheet` or `pixhaus.builtin.iterate_reference_sheet` invocation is triggered from the sheet panel.
 
-### T-refsheet-003: Refine selection via panel-scoped inpainting
+### T-refsheet-003: Panel overlay selection
 
-Pre: an entity with at least one variant rendered in the sheet panel (T-refsheet-002).
+Pre: an entity with at least one variant rendered in the sheet panel (T-refsheet-001).
 Steps:
-  1. Click on a labelled panel region in the SVG overlay (e.g. "front", "side", "back"). The panel highlights and the "Refine selection" button becomes enabled.
-  2. Click "Refine selection" → the verb modal for `pixhaus.builtin.iterate_reference_sheet` opens with `panel_label` pre-filled.
-  3. Type a refinement prompt. Submit.
+  1. Click on a labelled panel region in the SVG overlay (e.g. "front", "side", "back").
 Expect:
   - [STATE] `selectedPanelRegion` carries the clicked panel's rect.
-  - [IPC] the iterate verb runs with `source_variant_id`, `sheet_image_b64`, `panel_label`, and the prompt.
-  - [DOM] when the verb resolves, the new variant lands in the history strip; the scoped region is the only area that changed visually.
+  - [DOM] the clicked panel highlights.
+  - [IPC] no iterate verb runs from this action.
 
 ### T-refsheet-004: Approve a variant as canonical
 
@@ -1050,9 +1040,9 @@ Expect:
 
 > The 15–30 minute round-trip makes this test impractical for routine manual sweeps. Tracked in section 17 alongside the missing env-driven mock toggle.
 
-### T-refsheet-006: Cancel an in-flight verb invocation
+### T-refsheet-006: Cancel an in-flight sheet verb invocation (deferred)
 
-Pre: T-refsheet-002 or T-refsheet-003 — the verb modal is open and either has just been submitted (running) or has not yet been submitted (idle).
+Pre: deferred with the sheet generation/refinement controls. Do not run this case as part of the embedded-reference slice. When those controls return, open a cancellable sheet verb modal and either leave it idle or submit it so it is running.
 Steps:
   1. Idle: click "Cancel" → modal closes, no IPC fires.
   2. Running: click "Cancel running invocation" → modal stays mounted while cancellation propagates; on settle, the modal returns to idle / closes.

@@ -43,7 +43,7 @@ pub mod tileset;
 pub mod user_data;
 
 pub use animation::Animation;
-pub use approval::{Approval, ApprovalError, approve_sheet_variant, set_entity_anchor};
+pub use approval::{Approval, ApprovalError, approve_sheet_variant};
 pub use blend::BlendMode;
 pub use brush::{BrushShape, BrushState};
 pub use canvas::CanvasState;
@@ -184,7 +184,7 @@ impl Project {
     #[must_use]
     pub fn sprite_mut(&mut self, id: SpriteId) -> Option<&mut Sprite> {
         for entity in &mut self.library.entities {
-            if let EntityContent::Sprites { states } = &mut entity.content {
+            if let EntityContent::Sprites { states, .. } = &mut entity.content {
                 for state in states {
                     if state.sprite.id == id {
                         return Some(&mut state.sprite);
@@ -202,7 +202,7 @@ impl Project {
         self.library.entities.iter().flat_map(|entity| {
             let entity_id = entity.id;
             let states = match &entity.content {
-                EntityContent::Sprites { states } => states.as_slice(),
+                EntityContent::Sprites { states, .. } => states.as_slice(),
                 _ => &[],
             };
             states.iter().map(move |state| (state, entity_id))
@@ -216,7 +216,7 @@ impl Project {
         self.library.entities.iter_mut().flat_map(|entity| {
             let entity_id = entity.id;
             let states: &mut [NamedSprite] = match &mut entity.content {
-                EntityContent::Sprites { states } => states.as_mut_slice(),
+                EntityContent::Sprites { states, .. } => states.as_mut_slice(),
                 _ => &mut [],
             };
             states.iter_mut().map(move |state| (state, entity_id))
@@ -225,8 +225,8 @@ impl Project {
 
     /// Returns the currently active sprite's [`SpriteId`] when
     /// [`Self::active`] points at a state of a `Custom`-kind entity.
-    /// `None` for any other active target (tileset, tilemap, reference,
-    /// or no active target).
+    /// `None` for any other active target (tileset, tilemap, or no
+    /// active target).
     #[must_use]
     pub fn active_sprite_id(&self) -> Option<SpriteId> {
         let ActiveTarget::State {
@@ -237,7 +237,7 @@ impl Project {
             return None;
         };
         let entity = self.library.entities.iter().find(|e| e.id == entity_id)?;
-        let EntityContent::Sprites { states } = &entity.content else {
+        let EntityContent::Sprites { states, .. } = &entity.content else {
             return None;
         };
         states
@@ -276,9 +276,9 @@ mod tests {
                     sprite,
                     engine_tags: Vec::new(),
                 }],
+                reference_sheet: None,
             },
             ai: library::AiMetadata::default(),
-            anchor_reference_id: None,
             user_data: UserData::default(),
             created_at: 0,
             updated_at: 0,

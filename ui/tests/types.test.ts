@@ -44,7 +44,7 @@ function heroSprite(): Sprite {
 
 describe("Project fixture mirrors the Rust data model", () => {
   it("exposes the current schema version", () => {
-    expect(project.schema_version).toEqual({ major: 2, minor: 0 });
+    expect(project.schema_version).toEqual({ major: 3, minor: 0 });
   });
 
   it("encodes feature flags as a packed bitfield", () => {
@@ -60,6 +60,17 @@ describe("Project fixture mirrors the Rust data model", () => {
     const sprite = heroSprite();
     const kinds = sprite.layers.map((l): LayerKind["kind"] => l.kind.kind);
     expect(kinds).toEqual(["raster", "group", "tilemap", "reference"]);
+  });
+
+  it("stores the reference sheet on the sprite entity", () => {
+    const entities = project.library?.entities ?? [];
+    expect(entities.some((entity) => (entity.kind as { kind: string }).kind === "Reference")).toBe(
+      false,
+    );
+    const spriteEntity = entities.find((entity) => entity.content.type === "Sprites");
+    expect(spriteEntity?.content.type).toBe("Sprites");
+    if (spriteEntity?.content.type !== "Sprites") throw new Error("expected sprite entity");
+    expect(spriteEntity.content.value.reference_sheet?.canonical.image.mime).toBe("image/png");
   });
 
   it("stores tilemap cels as embedded grids", () => {

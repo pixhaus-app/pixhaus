@@ -3,7 +3,8 @@
 /**
  * Identifier of an [`Entity`](super::library::Entity) in the project library.
  *
- * Stable across renames so cross-entity references (anchor links, group
- * membership, tilemap-to-tileset) survive when the user renames an entity.
+ * Stable across renames so cross-entity references (group membership,
+ * tilemap-to-tileset) and per-entity AI metadata survive when the user
+ * renames an entity.
  */
 export type EntityId = number;

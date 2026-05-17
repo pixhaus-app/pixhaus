@@ -6,9 +6,8 @@
 **Estimated cost:** $2-5 USD (Replicate GPU time)
 **B10 sub-task:** [B10.5](../planning/work/b10-reference-sheets.md#b105--per-entity-lora-training-optional-defer-able)
 
-Trains a per-entity LoRA against a Reference entity's canonical sheet so
-subsequent AI verbs invoked against that entity (or any Custom entity
-anchored on it) condition their output on those weights. Companion to
+Trains a per-entity LoRA against a sprite entity's canonical reference sheet so
+subsequent AI verbs invoked against that entity condition their output on those weights. Companion to
 [Project style learning](./project_style_learning.md): the project verb
 trains a broad style across all visible raster layers; this one trains
 tight identity from a single sheet.
@@ -22,7 +21,7 @@ identity-critical assets stabilize; defer until then.
 
 ## When to use
 
-After approving a Reference sheet you intend to keep. The training is a
+After approving a reference sheet you intend to keep. The training is a
 one-shot per entity: re-run only when the canonical sheet changes
 substantially (a re-skin, a re-design). For sheets that are still
 iterating, leave the per-entity LoRA untrained — running it on a
@@ -32,7 +31,7 @@ half-finished sheet wastes the GPU budget.
 
 | Field | Type | Default | Description |
 |---|---|---|---|
-| `entity_id` | integer | — | **Required.** Reference entity to train against. The IPC command (`library_train_entity_lora`) reads this entity's canonical sheet image and packages it for the verb. |
+| `entity_id` | integer | — | **Required.** Sprite entity to train against. The IPC command (`library_train_entity_lora`) reads this entity's canonical reference sheet image and packages it for the verb. |
 | `training_images` | array of pixel buffers | — | **Required.** Decoded sheet image(s). The host typically passes just the canonical sheet; pass archive variants too when the entity has approved alternates. |
 | `lora_rank` | integer 4-32 | 16 | LoRA adapter dimension. Lower trains faster; higher captures more detail. |
 | `steps` | integer 200-2000 | 1000 | Training step count. |

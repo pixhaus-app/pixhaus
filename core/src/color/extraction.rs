@@ -8,7 +8,7 @@
 //!
 //! The algorithm is the literal reading of the brief:
 //!
-//! > The Reference entity's `extracted_palette` runs (eyedropper extraction
+//! > The embedded reference sheet's `extracted_palette` runs (eyedropper extraction
 //! > across the sheet image, deduplicated, ordered by frequency).
 //!
 //! - Decode the bytes through the `image` crate.

@@ -1,18 +1,18 @@
 # Generate reference sheet
 
-Generates 1–4 candidate reference-sheet images for a Reference-kind library entity.
+Generates 1–4 candidate reference-sheet images for a sprite library entity.
 
 ## What it does
 
-You point the verb at a Reference entity in the project library and provide a text description of the subject. The verb builds a structured backend prompt from the chosen composition template and dispatches an image-generation request. Each returned image is wrapped in a `SheetVariant` with panel layout metadata and generation provenance, then delivered to the host as candidates in the entity's history.
+You point the verb at a sprite entity in the project library and provide a text description of the subject. The verb builds a structured backend prompt from the chosen composition template and dispatches an image-generation request. Each returned image is wrapped in a `SheetVariant` with panel layout metadata and generation provenance, then delivered to the host as candidates in the entity's embedded reference-sheet history.
 
-None of the candidates become canonical automatically. The user reviews them and approves one via the B10.3 approval flow. Once approved, the sheet becomes the anchor image for all subsequent AI verb invocations on entities that reference this entity via `anchor_reference_id`.
+None of the candidates become canonical automatically. The user reviews them and approves one. Once approved, the sheet becomes the anchor image for subsequent AI verb invocations on that sprite entity.
 
 ## Inputs
 
 | Field | Type | Required | Default | Description |
 |---|---|---|---|---|
-| `entity_id` | integer (≥ 0) | yes | — | ID of the target Reference entity in the project library |
+| `entity_id` | integer (≥ 0) | yes | — | ID of the target sprite entity in the project library |
 | `template` | `"character"` \| `"item"` \| `"tileset"` \| `"custom"` | yes | — | Composition template controlling panel layout and prompt engineering |
 | `prompt` | string (non-empty) | yes | — | User description of the subject (e.g. "32px fantasy hero with a blue cloak") |
 | `negative_prompt` | string | no | `null` | Optional user-supplied negative prompt, appended after the template's own negative clauses |
@@ -23,13 +23,13 @@ None of the candidates become canonical automatically. The user reviews them and
 
 A single `pixhaus.builtin.generate_reference_sheet.sheets` custom effect carrying a `GenerateSheetPayload`:
 
-- `entity_id` — the target Reference entity
+- `entity_id` — the target sprite entity
 - `variants` — array of 1–4 `SheetVariantOutput` objects, each with:
   - `image_b64` — base64-encoded PNG sheet image
   - `composition` — panel layout (views, expressions, callouts, outfits, palette swatch) with pixel-coordinate `Rect`s
   - `generation` — provenance record (backend, model, prompt, negative\_prompt, seed)
 
-The host inserts each variant into the Reference entity's `history`. Variant IDs are placeholders; the host assigns real IDs when committing.
+The host inserts each variant into the sprite entity's embedded reference-sheet `history`. Variant IDs are placeholders; the host assigns real IDs when committing.
 
 ## Composition templates
 
@@ -58,7 +58,7 @@ Estimates depend heavily on the backend, model, and number of variants requested
 
 ## Approval flow
 
-Approving a candidate is a separate flow (B10.3, not yet shipped). Until approval, generated variants accumulate in the Reference entity's `history` with no canonical sheet set. The existing AI verbs continue to work against entities without an anchor — consistency features simply don't activate until a sheet is approved.
+Approving a candidate is a separate flow. Until approval, generated variants accumulate in the embedded sheet `history` with no canonical sheet change. The existing AI verbs continue to work against entities without a sheet — consistency features simply don't activate until a sheet is present.
 
 ## Related verbs
 

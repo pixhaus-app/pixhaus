@@ -194,13 +194,11 @@ pub struct VerbContext {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub library_entity_id: Option<EntityId>,
 
-    /// Style-anchor reference image for the target entity (B9.4).
+    /// Style-anchor reference image for the target entity.
     ///
-    /// Resolved by the host from `Entity.anchor_reference_id` before
-    /// invocation: the canonical `SheetVariant.image` from the linked Reference
-    /// entity is attached here so verbs can condition their output on it without
-    /// needing to walk the library themselves. `None` when the entity has no
-    /// anchor or the verb is not operating in library mode.
+    /// Resolved by the host from the target sprite entity's embedded reference
+    /// sheet before invocation. `None` when the entity has no sheet or the verb
+    /// is not operating in library mode.
     ///
     /// Note: B10.3 introduced a richer [`Self::anchor`] field carrying
     /// the same upstream data plus palette, `LoRA` path, strength, and
@@ -210,17 +208,14 @@ pub struct VerbContext {
     pub anchor_reference: Option<ReferenceImage>,
 
     /// Reference-sheet anchor for the entity being acted on, if the
-    /// entity carries one (B10.3).
+    /// entity carries one.
     ///
     /// Resolved by the host when packaging the context: the host looks
-    /// up the active entity, follows its
-    /// [`pixhaus_core::project::Entity::anchor_reference_id`] pointer,
-    /// builds an [`AnchorPayload`] from the referenced
-    /// `Reference`-kind entity's canonical sheet, and drops it here.
-    /// `None` means "no anchor" — either the entity has no
-    /// `anchor_reference_id`, the pointed-at entity is missing or the
-    /// wrong kind, or the verb is being invoked in a context where no
-    /// entity is active (a generic palette generation, for instance).
+    /// up the active sprite entity, builds an [`AnchorPayload`] from its
+    /// embedded canonical reference sheet, and drops it here. `None`
+    /// means "no anchor" — either the entity has no reference sheet or
+    /// the verb is being invoked in a context where no entity is active
+    /// (a generic palette generation, for instance).
     ///
     /// Image-generation verbs read `ctx.anchor.as_ref()` to derive
     /// `style_image`, palette constraints, the project-level `LoRA`
@@ -445,19 +440,18 @@ impl VerbContextBuilder {
         self
     }
 
-    /// Sets the style-anchor reference image for the target entity (B9.4).
+    /// Sets the style-anchor reference image for the target entity.
     #[must_use]
     pub fn with_anchor_reference(mut self, reference: ReferenceImage) -> Self {
         self.ctx.anchor_reference = Some(reference);
         self
     }
 
-    /// Sets the reference-sheet anchor for this invocation (B10.3).
+    /// Sets the reference-sheet anchor for this invocation.
     ///
-    /// Hosts call this when the active entity's
-    /// [`pixhaus_core::project::Entity::anchor_reference_id`] resolves
-    /// to a `Reference`-kind entity; pass the [`AnchorPayload`] the
-    /// host built from that entity's canonical sheet.
+    /// Hosts call this when the active sprite entity has an embedded
+    /// canonical reference sheet; pass the [`AnchorPayload`] built from
+    /// that sheet.
     #[must_use]
     pub fn with_anchor(mut self, anchor: AnchorPayload) -> Self {
         self.ctx.anchor = Some(anchor);

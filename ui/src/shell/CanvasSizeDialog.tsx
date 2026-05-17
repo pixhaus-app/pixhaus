@@ -5,6 +5,7 @@
 // 32x32 every time.
 
 import { type Component, For, Show, createEffect, createSignal } from "solid-js";
+import { open as dialogOpen } from "../lib/dialog";
 import { Button } from "../lib/ui/Button";
 import { Dialog } from "../lib/ui/Dialog";
 import { FormField } from "../lib/ui/FormField";
@@ -26,6 +27,9 @@ const CanvasSizeDialog: Component = () => {
   const [widthInput, setWidthInput] = createSignal("32");
   const [heightInput, setHeightInput] = createSignal("32");
   const [name, setName] = createSignal(DEFAULT_PROJECT_NAME);
+  const [refBytes, setRefBytes] = createSignal<number[] | null>(null);
+  const [refMime, setRefMime] = createSignal("image/png");
+  const [refFileName, setRefFileName] = createSignal<string | null>(null);
   const [error, setError] = createSignal<string | null>(null);
 
   createEffect(() => {
@@ -35,6 +39,9 @@ const CanvasSizeDialog: Component = () => {
     setWidthInput(String(last.width));
     setHeightInput(String(last.height));
     setName(DEFAULT_PROJECT_NAME);
+    setRefBytes(null);
+    setRefMime("image/png");
+    setRefFileName(null);
     setError(null);
   });
 
@@ -49,6 +56,35 @@ const CanvasSizeDialog: Component = () => {
     const h = parseCanvasDim(heightInput());
     if (w === null || h === null || w !== h) return null;
     return PRESETS.includes(w) ? w : null;
+  }
+
+  async function handlePickRef(): Promise<void> {
+    const result = await dialogOpen({
+      filters: [{ name: "Images", extensions: ["png", "jpg", "jpeg", "webp", "bmp", "gif"] }],
+      multiple: false,
+    });
+    const path = typeof result === "string" ? result : null;
+    if (!path) return;
+
+    try {
+      const { convertFileSrc } = await import("@tauri-apps/api/core");
+      const src = convertFileSrc(path);
+      const resp = await fetch(src);
+      if (!resp.ok) {
+        throw new Error(`failed to read selected file: ${resp.status} ${resp.statusText}`);
+      }
+      const arrayBuf = await resp.arrayBuffer();
+      const bytes = Array.from(new Uint8Array(arrayBuf));
+      const ext = path.split(".").pop()?.toLowerCase() ?? "png";
+      const mime = ext === "jpg" || ext === "jpeg" ? "image/jpeg" : `image/${ext}`;
+      setRefBytes(bytes);
+      setRefMime(mime);
+      setRefFileName(path.split(/[\\/]/).pop() ?? path);
+      setError(null);
+    } catch (err) {
+      setError("Failed to read image file.");
+      console.error("[pixhaus] sprite reference sheet read:", err);
+    }
   }
 
   function submit(e: SubmitEvent): void {
@@ -70,10 +106,17 @@ const CanvasSizeDialog: Component = () => {
     const width = w as number;
     const height = h as number;
     saveLastCanvasSize({ width, height });
+    const referenceBytes = refBytes();
     const result =
       req.mode === "project"
         ? { name: name().trim() || DEFAULT_PROJECT_NAME, width, height }
-        : { width, height };
+        : {
+            width,
+            height,
+            ...(referenceBytes === null
+              ? {}
+              : { reference_bytes: referenceBytes, reference_mime: refMime() }),
+          };
     closeCanvasSizeDialog();
     req.onConfirm(result);
   }
@@ -165,6 +208,33 @@ const CanvasSizeDialog: Component = () => {
               />
             </div>
           </div>
+
+          <Show when={canvasSizeRequest()?.mode === "sprite"}>
+            <div class="prefs__row">
+              <div>
+                <div class="prefs__label">Reference sheet</div>
+              </div>
+              <div class="modal__file-row">
+                <Button variant="ghost" size="sm" onClick={handlePickRef}>
+                  Choose file…
+                </Button>
+                <Show when={refFileName() !== null}>
+                  <span class="modal__file-name">{refFileName()}</span>
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    onClick={() => {
+                      setRefBytes(null);
+                      setRefMime("image/png");
+                      setRefFileName(null);
+                    }}
+                  >
+                    Clear
+                  </Button>
+                </Show>
+              </div>
+            </div>
+          </Show>
 
           <Show when={error() !== null}>
             <p class="form-field__error" data-testid="canvas-size-error" role="alert">

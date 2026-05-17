@@ -266,8 +266,8 @@ pub struct ImageEditRequest {
     /// Number of images to return.
     pub num_images: u32,
     /// Optional style reference image (raw PNG). Used by `ImageEdit`
-    /// verbs that participate in the B10.3 anchor mechanic to inherit
-    /// a Reference entity's canonical sheet as a style condition.
+    /// verbs that participate in the anchor mechanic to inherit a sprite
+    /// entity's canonical reference sheet as a style condition.
     /// Backends without a corresponding API parameter destructure-and-
     /// ignore this field — same posture they take toward
     /// `ImageGenRequest::style_image` today.

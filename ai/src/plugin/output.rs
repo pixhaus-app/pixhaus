@@ -247,9 +247,9 @@ pub enum VerbEffect {
     },
     /// Update per-entity AI metadata.
     ///
-    /// Produced by the B10.5 train-entity-lora verb after a successful
-    /// per-entity `LoRA` training run against a Reference entity's
-    /// canonical sheet. On commit the host overwrites
+    /// Produced by the train-entity-lora verb after a successful
+    /// per-entity `LoRA` training run against a sprite entity's
+    /// canonical reference sheet. On commit the host overwrites
     /// `Entity.ai.lora_path` when `lora_path` is `Some` and invalidates
     /// the anchor cache so subsequent verb invocations rebuild their
     /// payload with the new per-entity weights.

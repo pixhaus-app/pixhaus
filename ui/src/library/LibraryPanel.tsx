@@ -20,14 +20,11 @@ import {
   libraryAcceptSuggestedTag,
   libraryGetAnchorPayload,
   libraryRejectSuggestedTag,
-  librarySetEntityAnchor,
   type AnchorPayload,
 } from "../lib/commands/library";
-import { pushToast } from "../lib/toast/toast-state";
 import { reportCommandFailure } from "../lib/utils/errors";
 import { Button } from "../lib/ui/Button";
 import { Dialog } from "../lib/ui/Dialog";
-import { openAnchorPicker } from "./anchor-picker-state";
 import {
   addStateToEntity,
   beginEntityRename,
@@ -117,34 +114,6 @@ const LibraryPanel: Component = () => {
     moveEntityToGroup(id, moveGroupDest());
     setMoveGroupTarget(null);
     setMoveGroupDest(null);
-  }
-
-  // ── Pick anchor reference ─────────────────────────────────────────────────
-
-  const referenceEntities = createMemo(() => entities().filter((e) => e.kind.kind === "Reference"));
-
-  function handlePickAnchor(entityId: EntityId): void {
-    const refs = referenceEntities();
-    if (refs.length === 0) {
-      pushToast({
-        kind: "info",
-        title: "No reference entities available.",
-        body: "Create a Reference entity first; anchor wiring needs a canonical sheet to point at.",
-      });
-      return;
-    }
-    openAnchorPicker({
-      entityId,
-      references: refs.map((r) => ({ id: r.id, name: r.name })),
-      onConfirm: (refId) => {
-        librarySetEntityAnchor(entityId, refId)
-          .then(() => {
-            refreshLibrary();
-            pushToast({ kind: "success", title: "Anchor reference set." });
-          })
-          .catch((err: unknown) => reportCommandFailure("library_set_entity_anchor", err));
-      },
-    });
   }
 
   // ── Drag-to-reorder ───────────────────────────────────────────────────────
@@ -299,17 +268,6 @@ const LibraryPanel: Component = () => {
               Tilemaps
             </button>
           </Show>
-          <Show when={entities().some((e) => e.kind.kind === "Reference")}>
-            <button
-              class="library-panel__chip"
-              classList={{
-                "library-panel__chip--active": kindFilter()?.kind === "Reference",
-              }}
-              onClick={() => setKindFilter({ kind: "Reference" })}
-            >
-              References
-            </button>
-          </Show>
           <For each={customCategories()}>
             {(cat) => (
               <button
@@ -429,7 +387,6 @@ const LibraryPanel: Component = () => {
             createGroup(`Group ${groups().length + 1}`);
           }
         }}
-        onPickAnchor={handlePickAnchor}
       />
 
       {/* ── Add state dialog ── */}
@@ -631,8 +588,6 @@ const EntityRow: Component<EntityRowProps> = (props) => {
       setActiveTarget({ type: "tileset", value: { entity_id: e.id } });
     } else if (e.content.type === "Tilemap") {
       setActiveTarget({ type: "tilemap", value: { entity_id: e.id } });
-    } else if (e.content.type === "Reference") {
-      setActiveTarget({ type: "reference", value: { entity_id: e.id } });
     }
   }
 
@@ -741,8 +696,7 @@ const EntityRow: Component<EntityRowProps> = (props) => {
           </button>
         </Show>
 
-        {/* Anchor badge (before kind icon — Custom entities with an anchor */}
-        {/* and Reference entities, which are themselves anchor sources) */}
+        {/* Reference-sheet badge before the kind icon. */}
         <AnchorBadge entity={props.entry.entity} />
 
         {/* Kind icon */}
@@ -793,16 +747,19 @@ type AnchorBadgeProps = {
   entity: Entity;
 };
 
-// Shown on Custom entities with an anchor and on Reference entities (which
-// are themselves the anchor source). The popover lazy-loads the resolved
-// payload via `library_get_anchor_payload` on hover with a 250ms debounce,
+// Shown on sprite entities with an embedded reference sheet. The popover
+// lazy-loads the resolved payload via `library_get_anchor_payload` on hover
+// with a 250ms debounce,
 // so passive scrolling past a long entity list doesn't fire dozens of
 // resolves. Backend payload caching keeps repeat hovers cheap.
 const AnchorBadge: Component<AnchorBadgeProps> = (props) => {
   const isVisible = (): boolean => {
-    const e = props.entity;
-    if (e.kind.kind === "Reference") return true;
-    return e.anchor_reference_id !== null && e.anchor_reference_id !== undefined;
+    const content = props.entity.content;
+    return (
+      content.type === "Sprites" &&
+      content.value.reference_sheet !== null &&
+      content.value.reference_sheet !== undefined
+    );
   };
 
   const [showPopover, setShowPopover] = createSignal(false);
@@ -863,7 +820,7 @@ const AnchorBadge: Component<AnchorBadgeProps> = (props) => {
         data-testid={`library-row-anchor-${props.entity.id}`}
         onMouseEnter={handleMouseEnter}
         onMouseLeave={handleMouseLeave}
-        title="Anchor reference"
+        title="Reference sheet"
       >
         <svg
           width="12"
@@ -890,7 +847,7 @@ const AnchorBadge: Component<AnchorBadgeProps> = (props) => {
             <img
               class="library-row__anchor-tooltip-img"
               src={`data:${payload()!.mime};base64,${payload()!.image_b64}`}
-              alt="Anchor reference preview"
+              alt="Reference sheet preview"
             />
           </div>
         </Show>
@@ -1200,8 +1157,6 @@ const EntityKindIcon: Component<KindIconProps> = (props) => {
         return "var(--success)";
       case "Tilemap":
         return "var(--info)";
-      case "Reference":
-        return "var(--warning)";
       default:
         return "var(--accent)";
     }
@@ -1228,11 +1183,6 @@ const EntityKindIcon: Component<KindIconProps> = (props) => {
       <Show when={props.kind.kind === "Tilemap"}>
         <rect x="2" y="4" width="12" height="9" rx="1" />
         <path d="M2 7 H14 M2 10 H14 M6 4 V13 M10 4 V13" />
-      </Show>
-      <Show when={props.kind.kind === "Reference"}>
-        <rect x="2" y="3" width="12" height="10" rx="1" />
-        <path d="M2 10 L5.5 6.5 L8 9 L10.5 6.5 L14 10" />
-        <circle cx="6" cy="6" r="1.2" />
       </Show>
       <Show when={props.kind.kind === "Custom"}>
         <rect x="2" y="2" width="12" height="12" rx="2" fill={color()} fill-opacity="0.15" />

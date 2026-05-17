@@ -187,7 +187,6 @@ pub fn run() -> Result<(), AppError> {
             commands::library::library_reorder_entities,
             commands::library::library_search,
             commands::library::library_set_active_target,
-            commands::library::library_set_entity_anchor,
             commands::library::library_set_group_parent,
             commands::library::library_tag_entity,
             commands::library::library_untag_entity,

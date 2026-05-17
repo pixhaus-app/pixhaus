@@ -244,13 +244,14 @@ mod tests {
 
         let entity = Entity {
             id: EntityId::new(1),
-            kind: EntityKind::Reference,
-            name: "Hero ref".into(),
+            kind: EntityKind::Custom("Character".into()),
+            name: "Hero".into(),
             group_id: None,
             tags: Vec::new(),
             defaults: EntityDefaults::default(),
-            content: EntityContent::Reference {
-                sheet: Box::new(ReferenceSheet {
+            content: EntityContent::Sprites {
+                states: Vec::new(),
+                reference_sheet: Some(Box::new(ReferenceSheet {
                     canonical: SheetVariant {
                         id: SheetVariantId::new(1),
                         generated_at: 0,
@@ -268,17 +269,15 @@ mod tests {
                         fields: BTreeMap::new(),
                         notes: Vec::new(),
                     },
-                }),
+                })),
             },
             ai: AiMetadata::default(),
-            anchor_reference_id: None,
             user_data: UserData::default(),
             created_at: 0,
             updated_at: 0,
         };
         let anchor =
-            crate::plugin::anchor::AnchorPayload::from_reference_entity(&entity, 0.7, None)
-                .unwrap();
+            crate::plugin::anchor::AnchorPayload::from_sprite_entity(&entity, 0.7, None).unwrap();
 
         let mut ctx = VerbContext::empty(ProjectMetadata {
             name: "anchored".into(),

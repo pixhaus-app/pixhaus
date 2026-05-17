@@ -14,7 +14,7 @@ use pixhaus_ai::plugin::output::VerbEffect;
 use pixhaus_ai::plugin::{AnchorPayload, DEFAULT_ANCHOR_STRENGTH};
 use pixhaus_ai::verbs::critique::{CritiqueInputs, CritiqueMode};
 use pixhaus_core::color::extraction::ExtractionOptions;
-use pixhaus_core::project::approval::{ApprovalError, approve_sheet_variant, set_entity_anchor};
+use pixhaus_core::project::approval::{ApprovalError, approve_sheet_variant};
 use pixhaus_core::project::{
     ActiveTarget, AiMetadata, AssetInfo, ColorMode, Entity, EntityContent, EntityDefaults,
     EntityGroup, EntityId, EntityKind, GroupId, NamedSprite, PixelBufferId, ReferenceImage,
@@ -34,17 +34,12 @@ impl From<ApprovalError> for AppCommandError {
                 entity: "entity".into(),
                 id: u64::from(id),
             },
-            ApprovalError::NotAReference(id) => AppCommandError::Validation {
-                detail: format!("entity {id} is not a Reference entity"),
+            ApprovalError::NoReferenceSheet(id) => AppCommandError::Validation {
+                detail: format!("entity {id} has no sprite reference sheet"),
             },
             ApprovalError::VariantNotFound(vid, eid) => AppCommandError::NotFound {
                 entity: format!("variant on entity {eid}"),
                 id: u64::from(vid),
-            },
-            ApprovalError::AnchorNotAllowedForKind(id) => AppCommandError::Validation {
-                detail: format!(
-                    "entity {id} is not Custom-kind; anchor_reference_id is only meaningful on Custom entities"
-                ),
             },
         }
     }
@@ -56,6 +51,27 @@ fn now_secs() -> i64 {
     SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .map_or(0, |d| i64::try_from(d.as_secs()).unwrap_or(i64::MAX))
+}
+
+pub(crate) fn reference_sheet_from_image(
+    bytes: Vec<u8>,
+    mime: String,
+    variant_id: SheetVariantId,
+    ts: i64,
+) -> ReferenceSheet {
+    ReferenceSheet {
+        canonical: SheetVariant {
+            id: variant_id,
+            generated_at: ts,
+            image: ReferenceImage { bytes, mime },
+            composition: SheetComposition::default(),
+            generation: None,
+            extracted_palette: Vec::new(),
+        },
+        history: Vec::new(),
+        prompts: Vec::new(),
+        info: AssetInfo::default(),
+    }
 }
 
 // ── arg types ─────────────────────────────────────────────────────────────────
@@ -88,10 +104,11 @@ pub struct LibraryCreateEntityArgs {
     pub scene_width: Option<u32>,
     /// Scene height in tile cells. Required for `Tilemap`.
     pub scene_height: Option<u32>,
-    // Reference-kind fields
-    /// Image bytes for the canonical reference sheet. Required for `Reference`.
+    // Optional Custom-kind reference sheet fields
+    /// Image bytes for the canonical sprite reference sheet.
     pub reference_bytes: Option<Vec<u8>>,
-    /// MIME type for the reference image. Defaults to `"image/png"` when absent.
+    /// MIME type for the reference image. Defaults to `"image/png"` when
+    /// `reference_bytes` is present and this is absent.
     pub reference_mime: Option<String>,
 }
 
@@ -172,7 +189,7 @@ pub struct LibrarySearchArgs {
 pub(crate) fn create_entity_in_project(
     project: &mut pixhaus_core::project::Project,
     next_id: &mut u32,
-    args: LibraryCreateEntityArgs,
+    mut args: LibraryCreateEntityArgs,
     ts: i64,
 ) -> Result<Entity, AppCommandError> {
     // B1: Reject empty or whitespace-only names before minting any IDs.
@@ -215,6 +232,13 @@ pub(crate) fn create_entity_in_project(
                     }
                 }
             }
+            if let Some(bytes) = &args.reference_bytes {
+                if bytes.is_empty() {
+                    return Err(AppCommandError::Validation {
+                        detail: "reference_bytes must be non-empty when provided".into(),
+                    });
+                }
+            }
         }
         EntityKind::Tileset => {
             let w = args.tile_width.unwrap_or(0);
@@ -238,19 +262,6 @@ pub(crate) fn create_entity_in_project(
                 });
             }
         }
-        EntityKind::Reference => match &args.reference_bytes {
-            None => {
-                return Err(AppCommandError::Validation {
-                    detail: "Reference entity requires reference_bytes".into(),
-                });
-            }
-            Some(b) if b.is_empty() => {
-                return Err(AppCommandError::Validation {
-                    detail: "reference_bytes must be non-empty".into(),
-                });
-            }
-            _ => {}
-        },
     }
 
     // Mint the entity ID.
@@ -287,7 +298,20 @@ pub(crate) fn create_entity_in_project(
                     engine_tags: Vec::new(),
                 });
             }
-            EntityContent::Sprites { states }
+            let reference_sheet = args.reference_bytes.take().map(|bytes| {
+                let mime = args
+                    .reference_mime
+                    .take()
+                    .filter(|s| !s.is_empty())
+                    .unwrap_or_else(|| "image/png".into());
+                let variant_id = SheetVariantId::new(*next_id);
+                *next_id += 1;
+                Box::new(reference_sheet_from_image(bytes, mime, variant_id, ts))
+            });
+            EntityContent::Sprites {
+                states,
+                reference_sheet,
+            }
         }
         EntityKind::Tileset => {
             let tileset_id = TilesetId::new(*next_id);
@@ -325,35 +349,11 @@ pub(crate) fn create_entity_in_project(
                 properties: std::collections::BTreeMap::default(),
             },
         },
-        EntityKind::Reference => {
-            let bytes = args.reference_bytes.unwrap_or_default();
-            let mime = args
-                .reference_mime
-                .filter(|s| !s.is_empty())
-                .unwrap_or_else(|| "image/png".into());
-            let variant_id = SheetVariantId::new(*next_id);
-            *next_id += 1;
-            EntityContent::Reference {
-                sheet: Box::new(ReferenceSheet {
-                    canonical: SheetVariant {
-                        id: variant_id,
-                        generated_at: ts,
-                        image: ReferenceImage { bytes, mime },
-                        composition: SheetComposition::default(),
-                        generation: None,
-                        extracted_palette: Vec::new(),
-                    },
-                    history: Vec::new(),
-                    prompts: Vec::new(),
-                    info: AssetInfo::default(),
-                }),
-            }
-        }
     };
 
     // Determine the initial active target from the content shape.
     let active = match &content {
-        EntityContent::Sprites { states } => {
+        EntityContent::Sprites { states, .. } => {
             states
                 .first()
                 .map_or(ActiveTarget::None, |s| ActiveTarget::State {
@@ -363,7 +363,6 @@ pub(crate) fn create_entity_in_project(
         }
         EntityContent::Tileset { .. } => ActiveTarget::Tileset { entity_id },
         EntityContent::Tilemap { .. } => ActiveTarget::Tilemap { entity_id },
-        EntityContent::Reference { .. } => ActiveTarget::Reference { entity_id },
     };
 
     // A4: Populate EntityDefaults for Custom entities so library_add_state
@@ -392,7 +391,6 @@ pub(crate) fn create_entity_in_project(
         defaults,
         content,
         ai: AiMetadata::default(),
-        anchor_reference_id: None,
         user_data: UserData::default(),
         created_at: ts,
         updated_at: ts,
@@ -406,12 +404,11 @@ pub(crate) fn create_entity_in_project(
 /// Deletes an entity from the library by id.
 ///
 /// Clears `project.active` when it targets the deleted entity. Also removes
-/// the entity from `ProjectAi::style_corpus` and clears any
-/// `anchor_reference_id` pointers that referenced it.
+/// the entity from `ProjectAi::style_corpus`.
 pub(crate) fn delete_entity_from_project(
     project: &mut pixhaus_core::project::Project,
     entity_id: EntityId,
-    ts: i64,
+    _ts: i64,
 ) -> Result<(), AppCommandError> {
     let before = project.library.entities.len();
     project.library.entities.retain(|e| e.id != entity_id);
@@ -425,8 +422,7 @@ pub(crate) fn delete_entity_from_project(
     let active_touches = match project.active {
         ActiveTarget::State { entity_id: eid, .. }
         | ActiveTarget::Tileset { entity_id: eid }
-        | ActiveTarget::Tilemap { entity_id: eid }
-        | ActiveTarget::Reference { entity_id: eid } => eid == entity_id,
+        | ActiveTarget::Tilemap { entity_id: eid } => eid == entity_id,
         ActiveTarget::None => false,
     };
     if active_touches {
@@ -438,14 +434,6 @@ pub(crate) fn delete_entity_from_project(
         .ai
         .style_corpus
         .retain(|&id| id != entity_id);
-
-    // B4: Bump updated_at on each entity whose anchor is cleared.
-    for entity in &mut project.library.entities {
-        if entity.anchor_reference_id == Some(entity_id) {
-            entity.anchor_reference_id = None;
-            entity.updated_at = ts;
-        }
-    }
 
     Ok(())
 }
@@ -561,7 +549,7 @@ pub(crate) fn add_state_to_entity(
     };
 
     let entity = &mut project.library.entities[idx];
-    let EntityContent::Sprites { states } = &mut entity.content else {
+    let EntityContent::Sprites { states, .. } = &mut entity.content else {
         // Checked above — this branch cannot fire.
         return Err(AppCommandError::Validation {
             detail: "entity is not Custom-kind".into(),
@@ -591,7 +579,7 @@ pub(crate) fn delete_state_from_entity(
             id: u64::from(entity_id.get()),
         })?;
 
-    let EntityContent::Sprites { states } = &mut entity.content else {
+    let EntityContent::Sprites { states, .. } = &mut entity.content else {
         return Err(AppCommandError::Validation {
             detail: format!(
                 "entity {} is not Custom-kind; only Custom entities have states",
@@ -646,7 +634,7 @@ pub(crate) fn rename_state_in_entity(
             id: u64::from(entity_id.get()),
         })?;
 
-    let EntityContent::Sprites { states } = &mut entity.content else {
+    let EntityContent::Sprites { states, .. } = &mut entity.content else {
         return Err(AppCommandError::Validation {
             detail: format!(
                 "entity {} is not Custom-kind; only Custom entities have states",
@@ -784,8 +772,7 @@ pub(crate) fn delete_group_from_project(
         let active_entity = match project.active {
             ActiveTarget::State { entity_id, .. }
             | ActiveTarget::Tileset { entity_id }
-            | ActiveTarget::Tilemap { entity_id }
-            | ActiveTarget::Reference { entity_id } => Some(entity_id),
+            | ActiveTarget::Tilemap { entity_id } => Some(entity_id),
             ActiveTarget::None => None,
         };
         if active_entity.is_some_and(|eid| to_delete.contains(&eid)) {
@@ -797,18 +784,6 @@ pub(crate) fn delete_group_from_project(
             .ai
             .style_corpus
             .retain(|id| !to_delete.contains(id));
-
-        // A3: Clear anchor_reference_id on surviving entities that pointed at
-        // a deleted one. Bump updated_at on each entity whose anchor is cleared.
-        for entity in &mut project.library.entities {
-            if entity
-                .anchor_reference_id
-                .is_some_and(|id| to_delete.contains(&id))
-            {
-                entity.anchor_reference_id = None;
-                entity.updated_at = ts;
-            }
-        }
     }
 
     for group in &mut project.library.groups {
@@ -926,7 +901,7 @@ pub(crate) fn set_active_target_in_project(
                     entity: "entity".into(),
                     id: u64::from(entity_id.get()),
                 })?;
-            let EntityContent::Sprites { states } = &entity.content else {
+            let EntityContent::Sprites { states, .. } = &entity.content else {
                 return Err(AppCommandError::Validation {
                     detail: format!(
                         "entity {} is not Custom-kind; cannot target a state on it",
@@ -972,20 +947,6 @@ pub(crate) fn set_active_target_in_project(
                 });
             }
             project.active = ActiveTarget::Tilemap { entity_id };
-        }
-        ActiveTarget::Reference { entity_id } => {
-            if !project
-                .library
-                .entities
-                .iter()
-                .any(|e| e.id == entity_id && matches!(e.content, EntityContent::Reference { .. }))
-            {
-                return Err(AppCommandError::NotFound {
-                    entity: "reference entity".into(),
-                    id: u64::from(entity_id.get()),
-                });
-            }
-            project.active = ActiveTarget::Reference { entity_id };
         }
     }
     Ok(())
@@ -1226,9 +1187,10 @@ pub(crate) fn reorder_entities_in_project(
 ///
 /// - `Custom`: `canvas_width` and `canvas_height` required (> 0).
 ///   `initial_states` defaults to `["primary"]` when absent.
+///   `reference_bytes` may be provided to initialize the embedded
+///   reference sheet.
 /// - `Tileset`: `tile_width` and `tile_height` required (> 0).
 /// - `Tilemap`: `scene_width` and `scene_height` required (> 0).
-/// - `Reference`: `reference_bytes` required and non-empty.
 #[tauri::command(async, rename_all = "snake_case")]
 pub async fn library_create_entity(
     args: LibraryCreateEntityArgs,
@@ -1688,28 +1650,28 @@ pub async fn library_search(
     Ok(search_library(project, &args))
 }
 
-// ── sheet commands (B10.3 approval + anchor flow, B10.4 asset info) ──────────
+// ── embedded reference sheet commands ────────────────────────────────────────
 
 /// Arguments for approving a history variant as canonical.
 #[derive(Debug, Deserialize)]
 pub struct LibraryApproveSheetVariantArgs {
-    /// Target entity. Must be `Reference`-kind.
+    /// Target sprite entity. Must own an embedded reference sheet.
     pub entity_id: EntityId,
     /// The variant to approve. Must be present in the entity's `history`.
     pub variant_id: SheetVariantId,
 }
 
-/// Arguments for updating a reference entity's asset info.
+/// Arguments for updating a sprite entity's embedded reference-sheet info.
 #[derive(Debug, Deserialize)]
 pub struct LibraryUpdateAssetInfoArgs {
-    /// Target entity. Must be `Reference`-kind.
+    /// Target sprite entity. Must own an embedded reference sheet.
     pub entity_id: EntityId,
     /// Replacement asset info. Overwrites the existing value.
     pub info: AssetInfo,
 }
 
-/// Approves a [`SheetVariant`] as the canonical sheet of a `Reference`-kind
-/// entity (B10.3).
+/// Approves a [`SheetVariant`] as the canonical embedded reference sheet of
+/// a sprite entity.
 ///
 /// Moves the variant from `history` into `canonical`, demotes the previous
 /// canonical to `history[0]`, runs eyedropper palette extraction over the
@@ -1755,31 +1717,6 @@ pub async fn library_approve_sheet_variant(
     Ok(updated)
 }
 
-/// Sets or clears the anchor reference for a library entity (B10.3).
-///
-/// Pass `Some(reference_id)` to anchor the entity on a `Reference`-kind
-/// entity's canonical sheet; pass `None` to clear the anchor.
-#[tauri::command(async, rename_all = "snake_case")]
-pub async fn library_set_entity_anchor(
-    entity_id: EntityId,
-    reference_id: Option<EntityId>,
-    state: State<'_, AppState>,
-) -> CommandResult<()> {
-    let mut doc = state.doc.write().await;
-    let project = doc
-        .project
-        .as_mut()
-        .ok_or(AppCommandError::NoActiveProject)?;
-    set_entity_anchor(project, entity_id, reference_id)?;
-    doc.dirty = true;
-    drop(doc);
-
-    if let Some(rid) = reference_id {
-        state.anchor_cache.remove(&rid.get());
-    }
-    Ok(())
-}
-
 /// Returns the current [`AnchorPayload`] for an entity, building it lazily
 /// and caching the result.
 #[tauri::command(async, rename_all = "snake_case")]
@@ -1802,38 +1739,26 @@ pub async fn library_get_anchor_payload(
             id: u64::from(entity_id.get()),
         })?;
 
-    let reference = match entity.content {
-        EntityContent::Reference { .. } => entity,
-        _ => match entity.anchor_reference_id {
-            None => return Ok(None),
-            Some(rid) => {
-                let r = project.library.entities.iter().find(|e| e.id == rid);
-                match r {
-                    Some(r) => r,
-                    None => return Ok(None),
-                }
-            }
-        },
-    };
-
-    let sheet = match &reference.content {
-        EntityContent::Reference { sheet } => sheet.as_ref(),
+    let sheet = match &entity.content {
+        EntityContent::Sprites {
+            reference_sheet: Some(sheet),
+            ..
+        } => sheet.as_ref(),
         _ => return Ok(None),
     };
     let live_hash = pixhaus_ai::plugin::anchor::stable_hash(&sheet.canonical.image.bytes);
+    let lora_path = crate::commands::verbs::resolve_lora_path(
+        entity,
+        project.library.ai.project_lora_path.as_deref(),
+    );
 
-    if let Some(cached) = state.anchor_cache.get(&reference.id.get()) {
-        if cached.canonical_hash == live_hash {
+    if let Some(cached) = state.anchor_cache.get(&entity.id.get()) {
+        if cached.canonical_hash == live_hash && cached.lora_path == lora_path {
             return Ok(Some(cached.clone()));
         }
     }
 
-    let lora_path = crate::commands::verbs::resolve_lora_path(
-        reference,
-        project.library.ai.project_lora_path.as_deref(),
-    );
-    let payload =
-        AnchorPayload::from_reference_entity(reference, DEFAULT_ANCHOR_STRENGTH, lora_path);
+    let payload = AnchorPayload::from_sprite_entity(entity, DEFAULT_ANCHOR_STRENGTH, lora_path);
 
     if let Some(p) = &payload {
         state
@@ -1845,7 +1770,7 @@ pub async fn library_get_anchor_payload(
 }
 
 /// Updates the asset info (name, age, species, personality notes) for a
-/// `Reference`-kind entity.
+/// sprite entity's embedded reference sheet.
 #[tauri::command(async, rename_all = "snake_case")]
 pub async fn library_update_asset_info(
     args: LibraryUpdateAssetInfoArgs,
@@ -1862,7 +1787,7 @@ pub async fn library_update_asset_info(
     Ok(())
 }
 
-/// Deletes a history variant from a `Reference`-kind entity.
+/// Deletes a history variant from a sprite entity's embedded reference sheet.
 #[tauri::command(async, rename_all = "snake_case")]
 pub async fn library_delete_sheet_variant(
     entity_id: EntityId,
@@ -1898,14 +1823,7 @@ pub(crate) fn update_asset_info_in_project(
             id: u64::from(entity_id.get()),
         })?;
 
-    let sheet = match &mut entity.content {
-        EntityContent::Reference { sheet } => sheet.as_mut(),
-        _ => {
-            return Err(AppCommandError::Validation {
-                detail: "entity is not Reference kind".into(),
-            });
-        }
-    };
+    let sheet = embedded_reference_sheet_mut(entity)?;
 
     sheet.info = info;
     entity.updated_at = ts;
@@ -1928,14 +1846,7 @@ pub(crate) fn delete_sheet_variant_in_project(
             id: u64::from(entity_id.get()),
         })?;
 
-    let sheet = match &mut entity.content {
-        EntityContent::Reference { sheet } => sheet.as_mut(),
-        _ => {
-            return Err(AppCommandError::Validation {
-                detail: "entity is not Reference kind".into(),
-            });
-        }
-    };
+    let sheet = embedded_reference_sheet_mut(entity)?;
 
     if sheet.canonical.id == variant_id {
         return Err(AppCommandError::Validation {
@@ -1954,6 +1865,20 @@ pub(crate) fn delete_sheet_variant_in_project(
 
     entity.updated_at = ts;
     Ok(())
+}
+
+fn embedded_reference_sheet_mut(
+    entity: &mut Entity,
+) -> Result<&mut ReferenceSheet, AppCommandError> {
+    match &mut entity.content {
+        EntityContent::Sprites {
+            reference_sheet: Some(sheet),
+            ..
+        } => Ok(sheet.as_mut()),
+        _ => Err(AppCommandError::Validation {
+            detail: "entity has no sprite reference sheet".into(),
+        }),
+    }
 }
 
 // ── AI hooks (B9.4) ───────────────────────────────────────────────────────────
@@ -2103,7 +2028,6 @@ fn build_auto_tag_metadata(entity: &Entity, tags: &[TagDefinition]) -> String {
     let kind = match &entity.kind {
         EntityKind::Tileset => "Tileset".to_owned(),
         EntityKind::Tilemap => "Tilemap".to_owned(),
-        EntityKind::Reference => "Reference".to_owned(),
         EntityKind::Custom(category) => format!("Custom({category})"),
     };
     let existing: Vec<&str> = entity
@@ -2409,11 +2333,14 @@ async fn build_train_entity_lora_context(
             id: u64::from(entity_id.get()),
         })?;
     let sheet = match &entity.content {
-        EntityContent::Reference { sheet } => sheet.as_ref(),
+        EntityContent::Sprites {
+            reference_sheet: Some(sheet),
+            ..
+        } => sheet.as_ref(),
         _ => {
             return Err(AppCommandError::Validation {
                 detail: format!(
-                    "entity {} is not Reference-kind; train_entity_lora requires a reference sheet",
+                    "entity {} has no sprite reference sheet; train_entity_lora requires one",
                     entity_id.get(),
                 ),
             });
@@ -2426,7 +2353,7 @@ async fn build_train_entity_lora_context(
     Ok((ctx, decoded, entity.name.clone()))
 }
 
-/// Trains a per-entity `LoRA` from a Reference entity's canonical sheet
+/// Trains a per-entity `LoRA` from a sprite entity's canonical reference sheet
 /// and persists the weights URL on `Entity.ai.lora_path`.
 ///
 /// Three-phase flow:
@@ -2572,9 +2499,9 @@ mod tests {
                     sprite,
                     engine_tags: Vec::new(),
                 }],
+                reference_sheet: None,
             },
             ai: AiMetadata::default(),
-            anchor_reference_id: None,
             user_data: UserData::default(),
             created_at: 0,
             updated_at: 0,
@@ -2751,7 +2678,7 @@ mod tests {
         assert_eq!(named.state_name, "walk");
         assert_eq!(named.sprite.canvas, Size::new(32, 32));
         let states = match &doc.project.unwrap().library.entities[0].content {
-            EntityContent::Sprites { states } => states.clone(),
+            EntityContent::Sprites { states, .. } => states.clone(),
             _ => panic!("expected Sprites"),
         };
         assert_eq!(states.len(), 2);
@@ -2876,9 +2803,11 @@ mod tests {
             group_id: None,
             tags: Vec::new(),
             defaults: EntityDefaults::default(),
-            content: EntityContent::Sprites { states: Vec::new() },
+            content: EntityContent::Sprites {
+                states: Vec::new(),
+                reference_sheet: None,
+            },
             ai: AiMetadata::default(),
-            anchor_reference_id: None,
             user_data: UserData::default(),
             created_at: 0,
             updated_at: 0,
@@ -3220,83 +3149,6 @@ mod tests {
         assert_eq!(results.len(), 1);
     }
 
-    // ── A3 — cascade delete clears dangling anchors ───────────────────────
-
-    #[test]
-    fn cascade_delete_group_clears_anchor_and_bumps_updated_at() {
-        let (mut doc, _, _) = doc_with_project();
-
-        let grp = create_group_in_project(
-            doc.project.as_mut().unwrap(),
-            &mut doc.next_id,
-            LibraryCreateGroupArgs {
-                name: "Grp".into(),
-                parent_id: None,
-            },
-        )
-        .unwrap();
-
-        let a_id = EntityId::new(doc.next_id);
-        doc.next_id += 1;
-        doc.project.as_mut().unwrap().library.entities.push(Entity {
-            id: a_id,
-            kind: EntityKind::Custom("ref".into()),
-            name: "A".into(),
-            group_id: Some(grp.id),
-            tags: Vec::new(),
-            defaults: EntityDefaults::default(),
-            content: EntityContent::Sprites { states: Vec::new() },
-            ai: AiMetadata::default(),
-            anchor_reference_id: None,
-            user_data: UserData::default(),
-            created_at: 0,
-            updated_at: 0,
-        });
-
-        let b_id = EntityId::new(doc.next_id);
-        doc.next_id += 1;
-        doc.project.as_mut().unwrap().library.entities.push(Entity {
-            id: b_id,
-            kind: EntityKind::Custom("custom".into()),
-            name: "B".into(),
-            group_id: None,
-            tags: Vec::new(),
-            defaults: EntityDefaults::default(),
-            content: EntityContent::Sprites { states: Vec::new() },
-            ai: AiMetadata::default(),
-            anchor_reference_id: Some(a_id),
-            user_data: UserData::default(),
-            created_at: 0,
-            updated_at: 0,
-        });
-
-        let ts = now_secs();
-        delete_group_from_project(
-            doc.project.as_mut().unwrap(),
-            &LibraryDeleteGroupArgs {
-                group_id: grp.id,
-                keep_entities: false,
-            },
-            ts,
-        )
-        .unwrap();
-
-        let b = doc
-            .project
-            .as_ref()
-            .unwrap()
-            .library
-            .entities
-            .iter()
-            .find(|e| e.id == b_id)
-            .unwrap();
-        assert!(
-            b.anchor_reference_id.is_none(),
-            "B's anchor must be cleared"
-        );
-        assert!(b.updated_at > 0, "B's updated_at must be bumped");
-    }
-
     // ── A4 — Custom entity defaults propagation ───────────────────────────
 
     #[test]
@@ -3328,45 +3180,6 @@ mod tests {
             Size::new(64, 64),
             "add_state must inherit entity defaults"
         );
-    }
-
-    // ── B4 — updated_at bumped when anchor cleared by delete_entity ───────
-
-    #[test]
-    fn delete_entity_bumps_updated_at_on_anchor_cleared() {
-        let (mut doc, entity_id, _) = doc_with_project();
-
-        let b_id = EntityId::new(doc.next_id);
-        doc.next_id += 1;
-        doc.project.as_mut().unwrap().library.entities.push(Entity {
-            id: b_id,
-            kind: EntityKind::Custom("custom".into()),
-            name: "B".into(),
-            group_id: None,
-            tags: Vec::new(),
-            defaults: EntityDefaults::default(),
-            content: EntityContent::Sprites { states: Vec::new() },
-            ai: AiMetadata::default(),
-            anchor_reference_id: Some(entity_id),
-            user_data: UserData::default(),
-            created_at: 0,
-            updated_at: 0,
-        });
-
-        let ts = now_secs();
-        delete_entity_from_project(doc.project.as_mut().unwrap(), entity_id, ts).unwrap();
-
-        let b = doc
-            .project
-            .as_ref()
-            .unwrap()
-            .library
-            .entities
-            .iter()
-            .find(|e| e.id == b_id)
-            .unwrap();
-        assert!(b.anchor_reference_id.is_none(), "anchor must be cleared");
-        assert!(b.updated_at > 0, "updated_at must be bumped");
     }
 
     // ── B5 — updated_at bumped on ungrouped entities ──────────────────────
@@ -3507,27 +3320,27 @@ mod tests {
         }
     }
 
-    fn project_with_one_reference_entity() -> (pixhaus_core::project::Project, EntityId) {
+    fn project_with_one_sprite_reference() -> (pixhaus_core::project::Project, EntityId) {
         let mut project = pixhaus_core::project::Project::new("test");
         let canonical = make_variant(10);
         let entity_id = EntityId::new(1);
         project.library.entities.push(Entity {
             id: entity_id,
-            kind: EntityKind::Reference,
-            name: "Hero Ref".into(),
+            kind: EntityKind::Custom("Character".into()),
+            name: "Hero".into(),
             group_id: None,
             tags: Vec::new(),
             defaults: EntityDefaults::default(),
-            content: EntityContent::Reference {
-                sheet: Box::new(ReferenceSheet {
+            content: EntityContent::Sprites {
+                states: Vec::new(),
+                reference_sheet: Some(Box::new(ReferenceSheet {
                     canonical,
                     history: vec![make_variant(20), make_variant(30)],
                     prompts: Vec::new(),
                     info: AssetInfo::default(),
-                }),
+                })),
             },
             ai: AiMetadata::default(),
-            anchor_reference_id: None,
             user_data: UserData::default(),
             created_at: 0,
             updated_at: 0,
@@ -3550,7 +3363,7 @@ mod tests {
 
     #[test]
     fn update_asset_info_replaces_fields_and_bumps_updated_at() {
-        let (mut project, entity_id) = project_with_one_reference_entity();
+        let (mut project, entity_id) = project_with_one_sprite_reference();
         let info = AssetInfo {
             fields: [("name".into(), "Hero".into()), ("age".into(), "20".into())]
                 .into_iter()
@@ -3567,7 +3380,10 @@ mod tests {
             .unwrap();
         assert_eq!(entity.updated_at, 55);
         let sheet = match &entity.content {
-            EntityContent::Reference { sheet } => sheet.as_ref(),
+            EntityContent::Sprites {
+                reference_sheet: Some(sheet),
+                ..
+            } => sheet.as_ref(),
             _ => panic!("wrong kind"),
         };
         assert_eq!(
@@ -3581,7 +3397,7 @@ mod tests {
 
     #[test]
     fn delete_history_variant_removes_it() {
-        let (mut project, entity_id) = project_with_one_reference_entity();
+        let (mut project, entity_id) = project_with_one_sprite_reference();
         delete_sheet_variant_in_project(&mut project, entity_id, SheetVariantId::new(20), 0)
             .unwrap();
 
@@ -3593,7 +3409,10 @@ mod tests {
             .unwrap()
             .content
         {
-            EntityContent::Reference { sheet } => sheet.as_ref(),
+            EntityContent::Sprites {
+                reference_sheet: Some(sheet),
+                ..
+            } => sheet.as_ref(),
             _ => panic!("wrong kind"),
         };
         assert_eq!(sheet.history.len(), 1);
@@ -3602,7 +3421,7 @@ mod tests {
 
     #[test]
     fn delete_canonical_variant_returns_validation_error() {
-        let (mut project, entity_id) = project_with_one_reference_entity();
+        let (mut project, entity_id) = project_with_one_sprite_reference();
         let result =
             delete_sheet_variant_in_project(&mut project, entity_id, SheetVariantId::new(10), 0);
         assert!(matches!(result, Err(AppCommandError::Validation { .. })));
@@ -3610,7 +3429,7 @@ mod tests {
 
     #[test]
     fn delete_variant_not_found_returns_error() {
-        let (mut project, entity_id) = project_with_one_reference_entity();
+        let (mut project, entity_id) = project_with_one_sprite_reference();
         let result =
             delete_sheet_variant_in_project(&mut project, entity_id, SheetVariantId::new(999), 0);
         assert!(matches!(result, Err(AppCommandError::NotFound { .. })));
@@ -3808,14 +3627,16 @@ mod tests {
 
         let mut entity = Entity {
             id: EntityId::new(1),
-            kind: EntityKind::Reference,
+            kind: EntityKind::Custom("Character".into()),
             name: "Hero".into(),
             group_id: None,
             tags: Vec::new(),
             defaults: EntityDefaults::default(),
-            content: EntityContent::Sprites { states: Vec::new() },
+            content: EntityContent::Sprites {
+                states: Vec::new(),
+                reference_sheet: None,
+            },
             ai: AiMetadata::default(),
-            anchor_reference_id: None,
             user_data: UserData::default(),
             created_at: 0,
             updated_at: 0,

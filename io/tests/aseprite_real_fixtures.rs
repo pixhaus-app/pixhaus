@@ -38,7 +38,7 @@ fn import_fixture(name: &str, min_states: usize) -> ConvertedArchive {
     let doc = decode_from_file(&path).expect("decode fixture");
     let result = document_to_archive(&doc, name).expect("import must succeed");
 
-    let EntityContent::Sprites { states } = &result.archive.project.library.entities[0].content
+    let EntityContent::Sprites { states, .. } = &result.archive.project.library.entities[0].content
     else {
         panic!("entity content must be Sprites");
     };
@@ -65,7 +65,7 @@ fn single_frame_rgba_imports_to_library_entity() {
     let entities = &result.archive.project.library.entities;
     assert_eq!(entities.len(), 1, "must produce exactly one entity");
 
-    let EntityContent::Sprites { states } = &entities[0].content else {
+    let EntityContent::Sprites { states, .. } = &entities[0].content else {
         panic!("entity content must be Sprites");
     };
     assert!(!states.is_empty(), "must have at least one state");
@@ -87,7 +87,7 @@ fn single_frame_rgba_imports_to_library_entity() {
 #[test]
 fn group_multiply_imports() {
     let result = import_fixture("group-multiply.aseprite", 1);
-    let EntityContent::Sprites { states } = &result.archive.project.library.entities[0].content
+    let EntityContent::Sprites { states, .. } = &result.archive.project.library.entities[0].content
     else {
         panic!()
     };
@@ -107,11 +107,12 @@ fn group_multiply_merged_round_trip() {
     let doc_in = decode(&bytes).expect("decode must succeed");
     let result2 = document_to_archive(&doc_in, "group-multiply").expect("re-import must succeed");
 
-    let EntityContent::Sprites { states: s1 } = &result.archive.project.library.entities[0].content
+    let EntityContent::Sprites { states: s1, .. } =
+        &result.archive.project.library.entities[0].content
     else {
         panic!()
     };
-    let EntityContent::Sprites { states: s2 } =
+    let EntityContent::Sprites { states: s2, .. } =
         &result2.archive.project.library.entities[0].content
     else {
         panic!()
@@ -129,7 +130,7 @@ fn group_multiply_merged_round_trip() {
 #[test]
 fn indexed_with_palette_imports() {
     let result = import_fixture("indexed-with-palette.aseprite", 1);
-    let EntityContent::Sprites { states } = &result.archive.project.library.entities[0].content
+    let EntityContent::Sprites { states, .. } = &result.archive.project.library.entities[0].content
     else {
         panic!()
     };
@@ -149,11 +150,12 @@ fn indexed_with_palette_merged_round_trip() {
     let result2 =
         document_to_archive(&doc_in, "indexed-with-palette").expect("re-import must succeed");
 
-    let EntityContent::Sprites { states: s1 } = &result.archive.project.library.entities[0].content
+    let EntityContent::Sprites { states: s1, .. } =
+        &result.archive.project.library.entities[0].content
     else {
         panic!()
     };
-    let EntityContent::Sprites { states: s2 } =
+    let EntityContent::Sprites { states: s2, .. } =
         &result2.archive.project.library.entities[0].content
     else {
         panic!()
@@ -171,7 +173,7 @@ fn indexed_with_palette_merged_round_trip() {
 #[test]
 fn multi_frame_tags_imports() {
     let result = import_fixture("multi-frame-tags.aseprite", 1);
-    let EntityContent::Sprites { states } = &result.archive.project.library.entities[0].content
+    let EntityContent::Sprites { states, .. } = &result.archive.project.library.entities[0].content
     else {
         panic!()
     };
@@ -192,11 +194,12 @@ fn multi_frame_tags_merged_round_trip() {
     let doc_in = decode(&bytes).expect("decode must succeed");
     let result2 = document_to_archive(&doc_in, "multi-frame-tags").expect("re-import must succeed");
 
-    let EntityContent::Sprites { states: s1 } = &result.archive.project.library.entities[0].content
+    let EntityContent::Sprites { states: s1, .. } =
+        &result.archive.project.library.entities[0].content
     else {
         panic!()
     };
-    let EntityContent::Sprites { states: s2 } =
+    let EntityContent::Sprites { states: s2, .. } =
         &result2.archive.project.library.entities[0].content
     else {
         panic!()
@@ -210,6 +213,7 @@ fn multi_frame_tags_per_state_round_trip() {
     let result = import_fixture("multi-frame-tags.aseprite", 1);
     let EntityContent::Sprites {
         states: original_states,
+        ..
     } = &result.archive.project.library.entities[0].content
     else {
         panic!()
@@ -239,6 +243,7 @@ fn multi_frame_tags_per_state_round_trip() {
 
         let EntityContent::Sprites {
             states: reimported_states,
+            ..
         } = &re_imported.archive.project.library.entities[0].content
         else {
             panic!("expected Sprites content after re-import");
@@ -263,7 +268,7 @@ fn multi_frame_tags_per_state_round_trip() {
 #[test]
 fn tilemap_with_tileset_imports() {
     let result = import_fixture("tilemap-with-tileset.aseprite", 1);
-    let EntityContent::Sprites { states } = &result.archive.project.library.entities[0].content
+    let EntityContent::Sprites { states, .. } = &result.archive.project.library.entities[0].content
     else {
         panic!()
     };
@@ -283,11 +288,12 @@ fn tilemap_with_tileset_merged_round_trip() {
     let result2 =
         document_to_archive(&doc_in, "tilemap-with-tileset").expect("re-import must succeed");
 
-    let EntityContent::Sprites { states: s1 } = &result.archive.project.library.entities[0].content
+    let EntityContent::Sprites { states: s1, .. } =
+        &result.archive.project.library.entities[0].content
     else {
         panic!()
     };
-    let EntityContent::Sprites { states: s2 } =
+    let EntityContent::Sprites { states: s2, .. } =
         &result2.archive.project.library.entities[0].content
     else {
         panic!()

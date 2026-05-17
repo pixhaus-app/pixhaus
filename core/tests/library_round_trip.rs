@@ -56,6 +56,25 @@ fn wrap_entity(entity: Entity) -> Library {
     }
 }
 
+fn reference_sheet_fixture(bytes: Vec<u8>) -> ReferenceSheet {
+    ReferenceSheet {
+        canonical: SheetVariant {
+            id: SheetVariantId::new(1),
+            generated_at: 1_700_000_010,
+            image: ReferenceImage {
+                bytes,
+                mime: "image/png".into(),
+            },
+            composition: SheetComposition::default(),
+            generation: None,
+            extracted_palette: Vec::new(),
+        },
+        history: Vec::new(),
+        prompts: Vec::new(),
+        info: AssetInfo::default(),
+    }
+}
+
 #[test]
 fn empty_library_round_trips() {
     let l = Library::default();
@@ -81,9 +100,9 @@ fn custom_entity_fixture() -> Entity {
                 sprite: empty_sprite(1, "Hero / idle"),
                 engine_tags: Vec::new(),
             }],
+            reference_sheet: None,
         },
         ai: AiMetadata::default(),
-        anchor_reference_id: None,
         user_data: UserData::default(),
         created_at: 1_700_000_000,
         updated_at: 1_700_000_000,
@@ -114,7 +133,6 @@ fn tileset_entity_fixture() -> Entity {
             },
         },
         ai: AiMetadata::default(),
-        anchor_reference_id: None,
         user_data: UserData::default(),
         created_at: 1_700_000_001,
         updated_at: 1_700_000_001,
@@ -152,41 +170,25 @@ fn tilemap_entity_fixture() -> Entity {
             },
         },
         ai: AiMetadata::default(),
-        anchor_reference_id: None,
         user_data: UserData::default(),
         created_at: 1_700_000_002,
         updated_at: 1_700_000_002,
     }
 }
 
-fn reference_entity_fixture() -> Entity {
+fn sprite_entity_with_reference_sheet_fixture() -> Entity {
     Entity {
         id: EntityId::new(4),
-        kind: EntityKind::Reference,
-        name: "Hero sheet".into(),
+        kind: EntityKind::Custom("Character".into()),
+        name: "Hero".into(),
         group_id: None,
         tags: Vec::new(),
         defaults: EntityDefaults::default(),
-        content: EntityContent::Reference {
-            sheet: Box::new(ReferenceSheet {
-                canonical: SheetVariant {
-                    id: SheetVariantId::new(1),
-                    generated_at: 1_700_000_010,
-                    image: ReferenceImage {
-                        bytes: vec![1, 2, 3, 4],
-                        mime: "image/png".into(),
-                    },
-                    composition: SheetComposition::default(),
-                    generation: None,
-                    extracted_palette: Vec::new(),
-                },
-                history: Vec::new(),
-                prompts: Vec::new(),
-                info: AssetInfo::default(),
-            }),
+        content: EntityContent::Sprites {
+            states: Vec::new(),
+            reference_sheet: Some(Box::new(reference_sheet_fixture(vec![1, 2, 3, 4]))),
         },
         ai: AiMetadata::default(),
-        anchor_reference_id: None,
         user_data: UserData::default(),
         created_at: 1_700_000_010,
         updated_at: 1_700_000_010,
@@ -197,14 +199,14 @@ fn reference_entity_fixture() -> Entity {
 #[case::custom(custom_entity_fixture())]
 #[case::tileset(tileset_entity_fixture())]
 #[case::tilemap(tilemap_entity_fixture())]
-#[case::reference(reference_entity_fixture())]
+#[case::custom_with_reference_sheet(sprite_entity_with_reference_sheet_fixture())]
 fn entity_kind_round_trips(#[case] entity: Entity) {
     let library = wrap_entity(entity);
     let back: Library = round_trip(&library);
     assert_eq!(library, back);
 }
 
-// ── state ordering, anchor links, populated references ────────────────────────
+// ── state ordering and populated sprite references ───────────────────────────
 
 #[test]
 fn custom_entity_with_five_states_preserves_order() {
@@ -227,9 +229,11 @@ fn custom_entity_with_five_states_preserves_order() {
         group_id: None,
         tags: Vec::new(),
         defaults: EntityDefaults::default(),
-        content: EntityContent::Sprites { states },
+        content: EntityContent::Sprites {
+            states,
+            reference_sheet: None,
+        },
         ai: AiMetadata::default(),
-        anchor_reference_id: None,
         user_data: UserData::default(),
         created_at: 0,
         updated_at: 0,
@@ -240,6 +244,7 @@ fn custom_entity_with_five_states_preserves_order() {
     let back: Library = round_trip(&library);
     let EntityContent::Sprites {
         states: back_states,
+        ..
     } = &back.entities[0].content
     else {
         panic!("expected Sprites content");
@@ -252,7 +257,7 @@ fn custom_entity_with_five_states_preserves_order() {
 }
 
 #[test]
-fn anchor_reference_id_round_trips_without_resolution() {
+fn sprite_entity_without_reference_sheet_round_trips() {
     let entity = Entity {
         id: EntityId::new(1),
         kind: EntityKind::Custom("Character".into()),
@@ -260,12 +265,11 @@ fn anchor_reference_id_round_trips_without_resolution() {
         group_id: None,
         tags: Vec::new(),
         defaults: EntityDefaults::default(),
-        content: EntityContent::Sprites { states: Vec::new() },
+        content: EntityContent::Sprites {
+            states: Vec::new(),
+            reference_sheet: None,
+        },
         ai: AiMetadata::default(),
-        // Points at an entity that does not exist in this library on
-        // purpose. The data model carries the id; the resolver is
-        // someone else's problem.
-        anchor_reference_id: Some(EntityId::new(999)),
         user_data: UserData::default(),
         created_at: 0,
         updated_at: 0,
@@ -274,41 +278,29 @@ fn anchor_reference_id_round_trips_without_resolution() {
     let library = wrap_entity(entity);
 
     let back: Library = round_trip(&library);
-    assert_eq!(
-        back.entities[0].anchor_reference_id,
-        Some(EntityId::new(999))
-    );
+    let EntityContent::Sprites {
+        reference_sheet, ..
+    } = &back.entities[0].content
+    else {
+        panic!("expected Sprites content");
+    };
+    assert!(reference_sheet.is_none());
 }
 
 #[test]
-fn reference_entity_with_minimal_sheet_round_trips() {
+fn sprite_entity_with_minimal_reference_sheet_round_trips() {
     let entity = Entity {
         id: EntityId::new(1),
-        kind: EntityKind::Reference,
-        name: "Hero sheet".into(),
+        kind: EntityKind::Custom("Character".into()),
+        name: "Hero".into(),
         group_id: None,
         tags: Vec::new(),
         defaults: EntityDefaults::default(),
-        content: EntityContent::Reference {
-            sheet: Box::new(ReferenceSheet {
-                canonical: SheetVariant {
-                    id: SheetVariantId::new(1),
-                    generated_at: 0,
-                    image: ReferenceImage {
-                        bytes: Vec::new(),
-                        mime: "image/png".into(),
-                    },
-                    composition: SheetComposition::default(),
-                    generation: None,
-                    extracted_palette: Vec::new(),
-                },
-                history: Vec::new(),
-                prompts: Vec::new(),
-                info: AssetInfo::default(),
-            }),
+        content: EntityContent::Sprites {
+            states: Vec::new(),
+            reference_sheet: Some(Box::new(reference_sheet_fixture(Vec::new()))),
         },
         ai: AiMetadata::default(),
-        anchor_reference_id: None,
         user_data: UserData::default(),
         created_at: 0,
         updated_at: 0,
@@ -321,7 +313,7 @@ fn reference_entity_with_minimal_sheet_round_trips() {
 }
 
 #[test]
-fn reference_entity_with_populated_composition_preserves_rects() {
+fn sprite_reference_sheet_with_populated_composition_preserves_rects() {
     let composition = SheetComposition {
         views: vec![SheetPanel {
             region: Rect::from_xywh(0, 0, 64, 64),
@@ -365,13 +357,14 @@ fn reference_entity_with_populated_composition_preserves_rects() {
 
     let entity = Entity {
         id: EntityId::new(1),
-        kind: EntityKind::Reference,
-        name: "Hero sheet".into(),
+        kind: EntityKind::Custom("Character".into()),
+        name: "Hero".into(),
         group_id: None,
         tags: Vec::new(),
         defaults: EntityDefaults::default(),
-        content: EntityContent::Reference {
-            sheet: Box::new(ReferenceSheet {
+        content: EntityContent::Sprites {
+            states: Vec::new(),
+            reference_sheet: Some(Box::new(ReferenceSheet {
                 canonical: SheetVariant {
                     id: SheetVariantId::new(1),
                     generated_at: 1_700_000_000,
@@ -386,10 +379,9 @@ fn reference_entity_with_populated_composition_preserves_rects() {
                 history: Vec::new(),
                 prompts: vec![prompt_entry],
                 info,
-            }),
+            })),
         },
         ai: AiMetadata::default(),
-        anchor_reference_id: None,
         user_data: UserData::default(),
         created_at: 0,
         updated_at: 0,
@@ -398,8 +390,12 @@ fn reference_entity_with_populated_composition_preserves_rects() {
     let library = wrap_entity(entity);
 
     let back: Library = round_trip(&library);
-    let EntityContent::Reference { sheet } = &back.entities[0].content else {
-        panic!("expected Reference content");
+    let EntityContent::Sprites {
+        reference_sheet: Some(sheet),
+        ..
+    } = &back.entities[0].content
+    else {
+        panic!("expected embedded reference sheet");
     };
     assert_eq!(sheet.canonical.composition, composition);
     assert_eq!(sheet.canonical.generation.as_ref(), Some(&provenance));
@@ -438,7 +434,6 @@ fn tilemap_scene_with_three_tilesets_preserves_first_gid() {
             },
         },
         ai: AiMetadata::default(),
-        anchor_reference_id: None,
         user_data: UserData::default(),
         created_at: 0,
         updated_at: 0,
@@ -501,7 +496,6 @@ fn tilemap_scene_preserves_layer_order_opacity_and_visibility() {
             },
         },
         ai: AiMetadata::default(),
-        anchor_reference_id: None,
         user_data: UserData::default(),
         created_at: 0,
         updated_at: 0,
@@ -618,14 +612,16 @@ fn entity_defaults_round_trip_in_full() {
             }),
             default_fps: Some(12),
         },
-        content: EntityContent::Sprites { states: Vec::new() },
+        content: EntityContent::Sprites {
+            states: Vec::new(),
+            reference_sheet: None,
+        },
         ai: AiMetadata {
             suggested_tags: vec![TagId::new(3)],
             vlm_summary: Some("hero".into()),
             embedding: Some(vec![0.1, 0.2, 0.3]),
             lora_path: Some("_lora/hero.safetensors".into()),
         },
-        anchor_reference_id: None,
         user_data: UserData {
             text: Some("playable".into()),
             color: Some(Rgba::opaque(0, 100, 200)),
@@ -652,9 +648,6 @@ fn active_target_variants_round_trip() {
         },
         ActiveTarget::Tilemap {
             entity_id: EntityId::new(4),
-        },
-        ActiveTarget::Reference {
-            entity_id: EntityId::new(5),
         },
     ] {
         let back: ActiveTarget = round_trip(&target);
@@ -732,14 +725,13 @@ fn entity_kind_strategy() -> impl Strategy<Value = EntityKind> {
     prop_oneof![
         Just(EntityKind::Tileset),
         Just(EntityKind::Tilemap),
-        Just(EntityKind::Reference),
         "[a-zA-Z0-9 ]{1,32}".prop_map(EntityKind::Custom),
     ]
 }
 
 proptest! {
     /// Encode-then-decode must equal input for every `EntityKind`. The
-    /// strategy walks all four variants uniformly; the `Custom` arm
+    /// strategy walks all variants uniformly; the `Custom` arm
     /// covers labels of 1–32 alphanumeric (plus space) characters, the
     /// alphabet the editor accepts for user-typed kind names today.
     #[test]
