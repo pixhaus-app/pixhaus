@@ -212,8 +212,7 @@ const ReferenceSheetEditor: Component = () => {
   const [selectedVariantId, setSelectedVariantId] = createSignal<number | null>(null);
   const [activeView, setActiveView] = createSignal<EditorView>("generate");
   const [templates, setTemplates] = createSignal<ReferenceSheetTemplateDefinition[]>([]);
-  const [templateId, setTemplateId] =
-    createSignal<ReferenceSheetTemplateId>("turnaround4_view");
+  const [templateId, setTemplateId] = createSignal<ReferenceSheetTemplateId>("turnaround4_view");
   const [dimensionValue, setDimensionValue] = createSignal("2048x1024");
   const [chromaHex, setChromaHex] = createSignal("#FF00FF");
   const [model, setModel] = createSignal<ModelId>("auto");
@@ -229,7 +228,9 @@ const ReferenceSheetEditor: Component = () => {
   const [additionalReferenceSlots, setAdditionalReferenceSlots] = createSignal<ReferenceSlot[]>([]);
   const [regionReferenceSlots, setRegionReferenceSlots] = createSignal<ReferenceSlot[]>([]);
   const [activeRequests, setActiveRequests] = createSignal<ActiveSheetRequest[]>([]);
-  const [assetTab, setAssetTab] = createSignal<"references" | "cards" | "styles" | "loras" | "notes">("references");
+  const [assetTab, setAssetTab] = createSignal<
+    "references" | "cards" | "styles" | "loras" | "notes"
+  >("references");
   const [regionDrafts, setRegionDrafts] = createSignal<RegionDraft[]>([]);
   const [loraName, setLoraName] = createSignal("");
   const [loraTrigger, setLoraTrigger] = createSignal("");
@@ -260,38 +261,44 @@ const ReferenceSheetEditor: Component = () => {
       .then(setAssets)
       .catch((err: unknown) => reportCommandFailure("library_browse_assets", err));
 
-    const progressListener = listen<SheetRequestProgressPayload>("SheetRequestProgress", (event) => {
-      setActiveRequests((rows) =>
-        rows.map((row) =>
-          row.id === event.payload.request_id
-            ? {
-                ...row,
-                status: "running",
-                streamIndex: event.payload.stream_index,
-                candidateIndex: event.payload.candidate_index,
-                partialIndex: event.payload.partial_index,
-                partialImage: event.payload.partial_image ?? row.partialImage,
-                elapsedMs: event.payload.elapsed_ms,
-              }
-            : row,
-        ),
-      );
-    });
-    const completeListener = listen<SheetRequestCompletePayload>("SheetRequestComplete", (event) => {
-      const activeId = activeSheetEditorEntityId();
-      if (activeId === null || event.payload.entity_id !== activeId) return;
-      refreshEntity(event.payload.sprite);
-      setGenerating(false);
-      setBusy(false);
-      setActiveRequests((rows) =>
-        rows.map((row) =>
-          row.id === event.payload.request_id ? { ...row, status: "complete" } : row,
-        ),
-      );
-      const firstDraft = referenceSheet(event.payload.sprite)?.variants?.[0] ?? null;
-      setSelectedVariantId(firstDraft?.id ?? selectedVariantId());
-      pushToast({ kind: "success", title: "Reference sheet request complete." });
-    });
+    const progressListener = listen<SheetRequestProgressPayload>(
+      "SheetRequestProgress",
+      (event) => {
+        setActiveRequests((rows) =>
+          rows.map((row) =>
+            row.id === event.payload.request_id
+              ? {
+                  ...row,
+                  status: "running",
+                  streamIndex: event.payload.stream_index,
+                  candidateIndex: event.payload.candidate_index,
+                  partialIndex: event.payload.partial_index,
+                  partialImage: event.payload.partial_image ?? row.partialImage,
+                  elapsedMs: event.payload.elapsed_ms,
+                }
+              : row,
+          ),
+        );
+      },
+    );
+    const completeListener = listen<SheetRequestCompletePayload>(
+      "SheetRequestComplete",
+      (event) => {
+        const activeId = activeSheetEditorEntityId();
+        if (activeId === null || event.payload.entity_id !== activeId) return;
+        refreshEntity(event.payload.sprite);
+        setGenerating(false);
+        setBusy(false);
+        setActiveRequests((rows) =>
+          rows.map((row) =>
+            row.id === event.payload.request_id ? { ...row, status: "complete" } : row,
+          ),
+        );
+        const firstDraft = referenceSheet(event.payload.sprite)?.variants?.[0] ?? null;
+        setSelectedVariantId(firstDraft?.id ?? selectedVariantId());
+        pushToast({ kind: "success", title: "Reference sheet request complete." });
+      },
+    );
     const errorListener = listen<SheetRequestErrorPayload>("SheetRequestError", (event) => {
       setGenerating(false);
       setBusy(false);
@@ -301,23 +308,24 @@ const ReferenceSheetEditor: Component = () => {
           : "Reference sheet request failed.";
       setActiveRequests((rows) =>
         rows.map((row) =>
-          row.id === event.payload.request_id
-            ? { ...row, status: "error", error: message }
-            : row,
+          row.id === event.payload.request_id ? { ...row, status: "error", error: message } : row,
         ),
       );
       pushToast({ kind: "error", title: message });
     });
-    const cancelListener = listen<SheetRequestCancelledPayload>("SheetRequestCancelled", (event) => {
-      setGenerating(false);
-      setBusy(false);
-      setActiveRequests((rows) =>
-        rows.map((row) =>
-          row.id === event.payload.request_id ? { ...row, status: "cancelled" } : row,
-        ),
-      );
-      pushToast({ kind: "info", title: "Reference sheet request cancelled." });
-    });
+    const cancelListener = listen<SheetRequestCancelledPayload>(
+      "SheetRequestCancelled",
+      (event) => {
+        setGenerating(false);
+        setBusy(false);
+        setActiveRequests((rows) =>
+          rows.map((row) =>
+            row.id === event.payload.request_id ? { ...row, status: "cancelled" } : row,
+          ),
+        );
+        pushToast({ kind: "info", title: "Reference sheet request cancelled." });
+      },
+    );
     onCleanup(() => {
       void progressListener.then((unlisten) => unlisten());
       void completeListener.then((unlisten) => unlisten());
@@ -362,7 +370,9 @@ const ReferenceSheetEditor: Component = () => {
     templates().find((def) => def.id === templateId()) ?? null;
   const dimensionOptions = () => templateDefinition()?.allowed_dimensions ?? [];
   const selectedDimensions = (): { width: number; height: number } => {
-    const parts = dimensionValue().split("x").map((value) => Number(value));
+    const parts = dimensionValue()
+      .split("x")
+      .map((value) => Number(value));
     const width = parts[0];
     const height = parts[1];
     return {
@@ -481,7 +491,10 @@ const ReferenceSheetEditor: Component = () => {
     }
   }
 
-  function addReferenceSlot(slot: ReferenceSlot, target: "generate" | "refine" | "region" = "generate"): void {
+  function addReferenceSlot(
+    slot: ReferenceSlot,
+    target: "generate" | "refine" | "region" = "generate",
+  ): void {
     const setter =
       target === "refine"
         ? setAdditionalReferenceSlots
@@ -515,7 +528,11 @@ const ReferenceSheetEditor: Component = () => {
     setter((rows) => rows.filter((_, i) => i !== index));
   }
 
-  function moveSlot(index: number, direction: -1 | 1, target: "generate" | "refine" | "region" = "generate"): void {
+  function moveSlot(
+    index: number,
+    direction: -1 | 1,
+    target: "generate" | "refine" | "region" = "generate",
+  ): void {
     const setter =
       target === "refine"
         ? setAdditionalReferenceSlots
@@ -535,7 +552,10 @@ const ReferenceSheetEditor: Component = () => {
     });
   }
 
-  async function handleReferenceDrop(event: DragEvent, target: "generate" | "refine" | "region" = "generate"): Promise<void> {
+  async function handleReferenceDrop(
+    event: DragEvent,
+    target: "generate" | "refine" | "region" = "generate",
+  ): Promise<void> {
     event.preventDefault();
     const assetPayload = event.dataTransfer?.getData("application/x-pixhaus-reference");
     if (assetPayload) {
@@ -681,7 +701,10 @@ const ReferenceSheetEditor: Component = () => {
     return [Math.min(...xs), Math.min(...ys), Math.max(...xs), Math.max(...ys)];
   }
 
-  function rectsOverlap(a: [number, number, number, number], b: [number, number, number, number]): boolean {
+  function rectsOverlap(
+    a: [number, number, number, number],
+    b: [number, number, number, number],
+  ): boolean {
     return a[0] < b[2] && a[2] > b[0] && a[1] < b[3] && a[3] > b[1];
   }
 
@@ -728,7 +751,9 @@ const ReferenceSheetEditor: Component = () => {
     try {
       await action();
       await refreshActiveEntity();
-      await libraryBrowseAssets().then(setAssets).catch(() => undefined);
+      await libraryBrowseAssets()
+        .then(setAssets)
+        .catch(() => undefined);
       pushToast({ kind: "success", title: label });
     } catch (err) {
       reportCommandFailure(label, err);
@@ -979,7 +1004,13 @@ const ReferenceSheetEditor: Component = () => {
               >
                 <img class="sheet-editor__image" src={displayedUrl()} alt="Reference sheet" />
               </Show>
-              <Show when={activeView() === "refine" && refineMode() === "masked" && selectedVariant() !== null}>
+              <Show
+                when={
+                  activeView() === "refine" &&
+                  refineMode() === "masked" &&
+                  selectedVariant() !== null
+                }
+              >
                 <canvas
                   ref={maskCanvas}
                   class="sheet-editor__mask-canvas"
@@ -1022,7 +1053,13 @@ const ReferenceSheetEditor: Component = () => {
                   </For>
                 </svg>
               </Show>
-              <Show when={activeView() === "refine" && refineMode() === "regional" && regionDrafts().length > 0}>
+              <Show
+                when={
+                  activeView() === "refine" &&
+                  refineMode() === "regional" &&
+                  regionDrafts().length > 0
+                }
+              >
                 <svg
                   class="sheet-editor__overlay sheet-editor__overlay--regions"
                   viewBox={`0 0 ${sheetWidth()} ${sheetHeight()}`}
@@ -1173,7 +1210,9 @@ const ReferenceSheetEditor: Component = () => {
                 <input
                   type="checkbox"
                   checked={realWorldGrounding()}
-                  disabled={!["google_nano_banana_pro", "google_gemini_flash_image"].includes(model())}
+                  disabled={
+                    !["google_nano_banana_pro", "google_gemini_flash_image"].includes(model())
+                  }
                   onChange={(event) => setRealWorldGrounding(event.currentTarget.checked)}
                 />
                 <span>Real-world grounding</span>
@@ -1188,7 +1227,9 @@ const ReferenceSheetEditor: Component = () => {
                       value={selectedLoraId() ?? ""}
                       onChange={(event) =>
                         setSelectedLoraId(
-                          event.currentTarget.value === "" ? null : Number(event.currentTarget.value),
+                          event.currentTarget.value === ""
+                            ? null
+                            : Number(event.currentTarget.value),
                         )
                       }
                     >
@@ -1326,7 +1367,11 @@ const ReferenceSheetEditor: Component = () => {
                       classList={{ "sheet-editor__segment--active": refineMode() === mode }}
                       onClick={() => setRefineMode(mode)}
                     >
-                      {mode === "prompt_only" ? "Prompt" : mode === "masked" ? "Masked" : "Regional"}
+                      {mode === "prompt_only"
+                        ? "Prompt"
+                        : mode === "masked"
+                          ? "Masked"
+                          : "Regional"}
                     </button>
                   )}
                 </For>
@@ -1443,14 +1488,22 @@ const ReferenceSheetEditor: Component = () => {
                         <select
                           value={slot.role}
                           onChange={(event) =>
-                            updateSlot(index(), { role: event.currentTarget.value as ReferenceRole }, "region")
+                            updateSlot(
+                              index(),
+                              { role: event.currentTarget.value as ReferenceRole },
+                              "region",
+                            )
                           }
                         >
                           <For each={ROLE_OPTIONS}>
                             {(option) => <option value={option.value}>{option.label}</option>}
                           </For>
                         </select>
-                        <Button variant="ghost" size="sm" onClick={() => removeSlot(index(), "region")}>
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          onClick={() => removeSlot(index(), "region")}
+                        >
                           Remove
                         </Button>
                       </div>
@@ -1472,14 +1525,22 @@ const ReferenceSheetEditor: Component = () => {
                       <select
                         value={slot.role}
                         onChange={(event) =>
-                          updateSlot(index(), { role: event.currentTarget.value as ReferenceRole }, "refine")
+                          updateSlot(
+                            index(),
+                            { role: event.currentTarget.value as ReferenceRole },
+                            "refine",
+                          )
                         }
                       >
                         <For each={ROLE_OPTIONS}>
                           {(option) => <option value={option.value}>{option.label}</option>}
                         </For>
                       </select>
-                      <Button variant="ghost" size="sm" onClick={() => removeSlot(index(), "refine")}>
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        onClick={() => removeSlot(index(), "refine")}
+                      >
                         Remove
                       </Button>
                     </div>
@@ -1659,8 +1720,12 @@ const ReferenceSheetEditor: Component = () => {
                         name: loraName().trim(),
                         kind: "character",
                         target_model: "fal_flux_dev",
-                        trigger_word: loraTrigger().trim() || loraName().trim().toLowerCase().replace(/\s+/g, "_"),
-                        training_data: (assets()?.references ?? []).slice(0, 20).map((asset) => asset.id),
+                        trigger_word:
+                          loraTrigger().trim() ||
+                          loraName().trim().toLowerCase().replace(/\s+/g, "_"),
+                        training_data: (assets()?.references ?? [])
+                          .slice(0, 20)
+                          .map((asset) => asset.id),
                       }),
                     )
                   }
@@ -1670,7 +1735,10 @@ const ReferenceSheetEditor: Component = () => {
                 <div class="sheet-editor__asset-list">
                   <For each={assets()?.loras ?? []}>
                     {(lora) => (
-                      <button class="sheet-editor__asset-row" onClick={() => setSelectedLoraId(lora.id)}>
+                      <button
+                        class="sheet-editor__asset-row"
+                        onClick={() => setSelectedLoraId(lora.id)}
+                      >
                         {lora.name} · {lora.trigger_word}
                       </button>
                     )}
@@ -1678,7 +1746,9 @@ const ReferenceSheetEditor: Component = () => {
                 </div>
               </Show>
               <Show when={assetTab() === "notes"}>
-                <div class="sheet-editor__meta">Project style notes are edited in Preferences &gt; AI.</div>
+                <div class="sheet-editor__meta">
+                  Project style notes are edited in Preferences &gt; AI.
+                </div>
               </Show>
             </Show>
 

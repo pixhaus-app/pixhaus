@@ -16,12 +16,12 @@ use pixhaus_ai::backends::fal::FalBackend;
 use pixhaus_ai::backends::{
     ImageEditRequest, ImageGenRequest, ImageQuality, InferenceRequest, InferenceResponse,
 };
+use pixhaus_ai::plugin::context::PixelData;
 use pixhaus_ai::plugin::context::VerbContextBuilder;
 use pixhaus_ai::plugin::descriptor::BackendCapabilities;
 use pixhaus_ai::plugin::descriptor::VerbId;
 use pixhaus_ai::plugin::inputs::VerbInputs;
 use pixhaus_ai::plugin::output::VerbEffect;
-use pixhaus_ai::plugin::context::PixelData;
 use pixhaus_ai::plugin::progress::{VerbProgress, VerbProgressEvent};
 use pixhaus_ai::plugin::runtime::VerbRuntime;
 use pixhaus_ai::plugin::{AnchorPayload, DEFAULT_ANCHOR_STRENGTH};
@@ -2355,9 +2355,9 @@ fn emit_sheet_cancelled(app: &AppHandle, request_id: RequestId) {
 }
 
 fn elapsed_ms_since(started: SystemTime) -> u32 {
-    started
-        .elapsed()
-        .map_or(0, |elapsed| u32::try_from(elapsed.as_millis()).unwrap_or(u32::MAX))
+    started.elapsed().map_or(0, |elapsed| {
+        u32::try_from(elapsed.as_millis()).unwrap_or(u32::MAX)
+    })
 }
 
 fn pixel_data_to_reference_image(pixels: &PixelData) -> Option<ReferenceImage> {
@@ -2375,7 +2375,8 @@ fn pixel_data_to_reference_image(pixels: &PixelData) -> Option<ReferenceImage> {
         let end = start.checked_add(row_len)?;
         packed.extend_from_slice(pixels.bytes.get(start..end)?);
     }
-    let image = ImageBuffer::<ImageRgba<u8>, Vec<u8>>::from_raw(pixels.width, pixels.height, packed)?;
+    let image =
+        ImageBuffer::<ImageRgba<u8>, Vec<u8>>::from_raw(pixels.width, pixels.height, packed)?;
     let bytes = encode_rgba_png(&image).ok()?;
     Some(ReferenceImage {
         bytes,

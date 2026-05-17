@@ -228,7 +228,8 @@ impl FalBackend {
             res = self.client.execute(submit_req) => res.map_err(BackendError::Network)?,
         };
         let submit_resp = check_http_status(submit_resp).await?;
-        let raw: FalQueueSubmitResponse = submit_resp.json().await.map_err(BackendError::Network)?;
+        let raw: FalQueueSubmitResponse =
+            submit_resp.json().await.map_err(BackendError::Network)?;
         let request_id = raw.request_id;
         let status_url = raw.status_url.unwrap_or_else(|| {
             format!(
@@ -237,10 +238,16 @@ impl FalBackend {
             )
         });
         let result_url = raw.response_url.unwrap_or_else(|| {
-            format!("{}/{}/requests/{}", self.queue_base_url, endpoint, request_id)
+            format!(
+                "{}/{}/requests/{}",
+                self.queue_base_url, endpoint, request_id
+            )
         });
         let cancel_url = raw.cancel_url.unwrap_or_else(|| {
-            format!("{}/{}/requests/{}", self.queue_base_url, endpoint, request_id)
+            format!(
+                "{}/{}/requests/{}",
+                self.queue_base_url, endpoint, request_id
+            )
         });
 
         let status_req = self
@@ -838,7 +845,10 @@ mod tests {
         .await
         .unwrap();
         assert!(done);
-        assert!(matches!(rx.recv().await, Some(VerbProgressEvent::Step { .. })));
+        assert!(matches!(
+            rx.recv().await,
+            Some(VerbProgressEvent::Step { .. })
+        ));
         assert!(matches!(
             rx.recv().await,
             Some(VerbProgressEvent::Log { .. })
@@ -868,8 +878,11 @@ mod tests {
     fn one_pixel_png() -> Vec<u8> {
         let img = image::RgbaImage::from_pixel(1, 1, image::Rgba([0, 255, 0, 255]));
         let mut bytes = Vec::new();
-        img.write_to(&mut std::io::Cursor::new(&mut bytes), image::ImageFormat::Png)
-            .unwrap();
+        img.write_to(
+            &mut std::io::Cursor::new(&mut bytes),
+            image::ImageFormat::Png,
+        )
+        .unwrap();
         bytes
     }
 }

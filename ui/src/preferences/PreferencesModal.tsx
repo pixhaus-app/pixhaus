@@ -307,141 +307,143 @@ const AiTab: Component = () => {
 
   return (
     <>
-    <div class="prefs__section">
-      <p class="prefs__section-title">Providers</p>
-      <div class="prefs__row">
-        <div>
-          <div class="prefs__label">OpenAI</div>
-          <div class="prefs__sublabel">
-            {status()?.configured ? "Configured" : "Not configured"} ·{" "}
-            Image model: {status()?.model ?? "gpt-image-2"}
-            {status()?.registered ? " · backend ready" : ""}
+      <div class="prefs__section">
+        <p class="prefs__section-title">Providers</p>
+        <div class="prefs__row">
+          <div>
+            <div class="prefs__label">OpenAI</div>
+            <div class="prefs__sublabel">
+              {status()?.configured ? "Configured" : "Not configured"} · Image model:{" "}
+              {status()?.model ?? "gpt-image-2"}
+              {status()?.registered ? " · backend ready" : ""}
+            </div>
           </div>
         </div>
+        <div class="prefs__row">
+          <div>
+            <div class="prefs__label">API key</div>
+            <input
+              class="prefs__select"
+              type="password"
+              autocomplete="off"
+              value={apiKey()}
+              placeholder={status()?.configured ? "Saved key is hidden" : "sk-..."}
+              onInput={(event) => setApiKey(event.currentTarget.value)}
+              onKeyDown={(event) => {
+                if (event.key === "Enter") handleSave();
+              }}
+            />
+          </div>
+          <div class="prefs__row-actions">
+            <Button onClick={handleSave} disabled={saving() || apiKey().trim().length === 0}>
+              {saving() ? "Saving…" : "Save"}
+            </Button>
+            <Button
+              variant="ghost"
+              onClick={handleClear}
+              disabled={saving() || !status()?.configured}
+            >
+              Clear
+            </Button>
+          </div>
+        </div>
+        <ProviderKeyRow
+          label="Google AI Studio"
+          placeholder="AIza..."
+          status={providerStatus("google_ai")}
+          value={googleKey()}
+          onInput={setGoogleKey}
+          onSave={() => handleProviderSave("google_ai")}
+          onClear={() => handleProviderClear("google_ai")}
+          saving={saving()}
+        />
+        <ProviderKeyRow
+          label="fal.ai"
+          placeholder="fal-key..."
+          status={providerStatus("fal")}
+          value={falKey()}
+          onInput={setFalKey}
+          onSave={() => handleProviderSave("fal")}
+          onClear={() => handleProviderClear("fal")}
+          saving={saving()}
+        />
       </div>
-      <div class="prefs__row">
-        <div>
-          <div class="prefs__label">API key</div>
+      <div class="prefs__section">
+        <p class="prefs__section-title">Project AI defaults</p>
+        <label class="prefs__row">
+          <div>
+            <div class="prefs__label">Style notes</div>
+            <textarea
+              class="prefs__select"
+              value={styleNotes()}
+              onInput={(event) => setStyleNotes(event.currentTarget.value)}
+            />
+          </div>
+        </label>
+        <div class="prefs__row">
+          <select
+            class="prefs__select"
+            value={defaultQuality()}
+            onChange={(event) => setDefaultQuality(event.currentTarget.value as Quality)}
+          >
+            <option value="auto">Auto</option>
+            <option value="low">Low</option>
+            <option value="medium">Medium</option>
+            <option value="high">High</option>
+          </select>
           <input
             class="prefs__select"
-            type="password"
-            autocomplete="off"
-            value={apiKey()}
-            placeholder={status()?.configured ? "Saved key is hidden" : "sk-..."}
-            onInput={(event) => setApiKey(event.currentTarget.value)}
-            onKeyDown={(event) => {
-              if (event.key === "Enter") handleSave();
-            }}
+            type="number"
+            min="1"
+            max="4"
+            value={defaultCandidateCount()}
+            onInput={(event) => setDefaultCandidateCount(Number(event.currentTarget.value))}
           />
+          <Button onClick={handleSaveProjectDefaults}>Save defaults</Button>
         </div>
-        <div class="prefs__row-actions">
-          <Button onClick={handleSave} disabled={saving() || apiKey().trim().length === 0}>
-            {saving() ? "Saving…" : "Save"}
-          </Button>
+      </div>
+      <div class="prefs__section">
+        <p class="prefs__section-title">Per-operation model preference</p>
+        <div class="prefs__row">
+          <select
+            class="prefs__select"
+            value={prefOperation()}
+            onChange={(event) => setPrefOperation(event.currentTarget.value as OperationKind)}
+          >
+            <option value="fresh_generation">Fresh generation</option>
+            <option value="masked_refinement">Masked refinement</option>
+            <option value="prompt_only_refinement">Prompt-only refinement</option>
+            <option value="regional_refinement">Regional refinement</option>
+            <option value="chat_turn">Chat turn</option>
+            <option value="promotion">Promotion</option>
+          </select>
+          <select
+            class="prefs__select"
+            value={prefModel()}
+            onChange={(event) => setPrefModel(event.currentTarget.value as ModelId)}
+          >
+            <option value="auto">Auto</option>
+            <option value="open_ai_gpt_image2">OpenAI gpt-image-2</option>
+            <option value="google_nano_banana_pro">Nano Banana Pro</option>
+            <option value="google_gemini_flash_image">Gemini Flash Image</option>
+            <option value="fal_flux_kontext">fal Flux Kontext</option>
+            <option value="fal_flux_dev">fal Flux.1 dev</option>
+          </select>
+          <Button onClick={handleSaveOperationPref}>Save</Button>
           <Button
             variant="ghost"
-            onClick={handleClear}
-            disabled={saving() || !status()?.configured}
+            onClick={() =>
+              projectClearOperationModelPrefs()
+                .then(() => pushToast({ kind: "info", title: "Operation preferences cleared." }))
+                .catch((err: unknown) =>
+                  reportCommandFailure("project_clear_operation_model_prefs", err),
+                )
+            }
           >
-            Clear
+            Clear all
           </Button>
         </div>
       </div>
-      <ProviderKeyRow
-        label="Google AI Studio"
-        placeholder="AIza..."
-        status={providerStatus("google_ai")}
-        value={googleKey()}
-        onInput={setGoogleKey}
-        onSave={() => handleProviderSave("google_ai")}
-        onClear={() => handleProviderClear("google_ai")}
-        saving={saving()}
-      />
-      <ProviderKeyRow
-        label="fal.ai"
-        placeholder="fal-key..."
-        status={providerStatus("fal")}
-        value={falKey()}
-        onInput={setFalKey}
-        onSave={() => handleProviderSave("fal")}
-        onClear={() => handleProviderClear("fal")}
-        saving={saving()}
-      />
-    </div>
-    <div class="prefs__section">
-      <p class="prefs__section-title">Project AI defaults</p>
-      <label class="prefs__row">
-        <div>
-          <div class="prefs__label">Style notes</div>
-          <textarea
-            class="prefs__select"
-            value={styleNotes()}
-            onInput={(event) => setStyleNotes(event.currentTarget.value)}
-          />
-        </div>
-      </label>
-      <div class="prefs__row">
-        <select
-          class="prefs__select"
-          value={defaultQuality()}
-          onChange={(event) => setDefaultQuality(event.currentTarget.value as Quality)}
-        >
-          <option value="auto">Auto</option>
-          <option value="low">Low</option>
-          <option value="medium">Medium</option>
-          <option value="high">High</option>
-        </select>
-        <input
-          class="prefs__select"
-          type="number"
-          min="1"
-          max="4"
-          value={defaultCandidateCount()}
-          onInput={(event) => setDefaultCandidateCount(Number(event.currentTarget.value))}
-        />
-        <Button onClick={handleSaveProjectDefaults}>Save defaults</Button>
-      </div>
-    </div>
-    <div class="prefs__section">
-      <p class="prefs__section-title">Per-operation model preference</p>
-      <div class="prefs__row">
-        <select
-          class="prefs__select"
-          value={prefOperation()}
-          onChange={(event) => setPrefOperation(event.currentTarget.value as OperationKind)}
-        >
-          <option value="fresh_generation">Fresh generation</option>
-          <option value="masked_refinement">Masked refinement</option>
-          <option value="prompt_only_refinement">Prompt-only refinement</option>
-          <option value="regional_refinement">Regional refinement</option>
-          <option value="chat_turn">Chat turn</option>
-          <option value="promotion">Promotion</option>
-        </select>
-        <select
-          class="prefs__select"
-          value={prefModel()}
-          onChange={(event) => setPrefModel(event.currentTarget.value as ModelId)}
-        >
-          <option value="auto">Auto</option>
-          <option value="open_ai_gpt_image2">OpenAI gpt-image-2</option>
-          <option value="google_nano_banana_pro">Nano Banana Pro</option>
-          <option value="google_gemini_flash_image">Gemini Flash Image</option>
-          <option value="fal_flux_kontext">fal Flux Kontext</option>
-          <option value="fal_flux_dev">fal Flux.1 dev</option>
-        </select>
-        <Button onClick={handleSaveOperationPref}>Save</Button>
-        <Button
-          variant="ghost"
-          onClick={() =>
-            projectClearOperationModelPrefs()
-              .then(() => pushToast({ kind: "info", title: "Operation preferences cleared." }))
-              .catch((err: unknown) => reportCommandFailure("project_clear_operation_model_prefs", err))
-          }
-        >
-          Clear all
-        </Button>
-      </div>
-    </div>
     </>
   );
 };
@@ -476,7 +478,11 @@ const ProviderKeyRow: Component<{
       <Button onClick={props.onSave} disabled={props.saving || props.value.trim().length === 0}>
         Save
       </Button>
-      <Button variant="ghost" onClick={props.onClear} disabled={props.saving || !props.status?.configured}>
+      <Button
+        variant="ghost"
+        onClick={props.onClear}
+        disabled={props.saving || !props.status?.configured}
+      >
         Clear
       </Button>
     </div>
