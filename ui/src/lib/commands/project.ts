@@ -20,6 +20,8 @@ export type SpriteAddArgs = {
   canvas_width: number;
   canvas_height: number;
   color_mode: ColorMode;
+  reference_bytes?: number[];
+  reference_mime?: string;
 };
 
 // ── commands ──────────────────────────────────────────────────────────────────

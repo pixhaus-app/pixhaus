@@ -8,13 +8,13 @@ You point the verb at an existing `SheetVariant` (typically one a user picked fr
 
 A `panel_label` scopes the edit to one named panel from the variant's `SheetComposition` (e.g. one of the views, expressions, callouts, outfits, or the palette swatch). The verb constructs a greyscale PNG mask sized to the sheet — white inside the panel rectangle, black everywhere else — and hands it to the backend. Without a `panel_label`, the backend edits the whole sheet from the prompt alone.
 
-The new variant lands in the Reference entity's `history` alongside the source. The host wires lineage via `source_variant_id` so the Sheet view can display the iteration chain. Approval (B10.3) chooses which variant becomes canonical.
+The new variant lands in the sprite entity's embedded reference-sheet `history` alongside the source. The host wires lineage via `source_variant_id` so the Sheet view can display the iteration chain. Approval chooses which variant becomes canonical.
 
 ## Inputs
 
 | Field | Type | Required | Default | Description |
 |---|---|---|---|---|
-| `entity_id` | integer (≥ 0) | yes | — | ID of the target Reference entity |
+| `entity_id` | integer (≥ 0) | yes | — | ID of the target sprite entity |
 | `source_variant_id` | integer (≥ 0) | yes | — | ID of the variant being refined |
 | `sheet_image_b64` | string (PNG, base64) | yes | — | Full sheet image of the source variant |
 | `composition` | `SheetComposition` | yes | — | Panel layout from the source variant, used to resolve `panel_label` |
@@ -30,7 +30,7 @@ The `sheet_image_b64` payload is validated as a PNG before the backend call; non
 
 A single `pixhaus.builtin.iterate_reference_sheet.variant` custom effect carrying an `IterateSheetPayload`:
 
-- `entity_id` — the target Reference entity
+- `entity_id` — the target sprite entity
 - `source_variant_id` — the variant this iteration was derived from (for history-strip lineage)
 - `variant` — a new `SheetVariantOutput` with:
   - `image_b64` — base64-encoded PNG of the inpainted sheet

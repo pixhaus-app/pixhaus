@@ -57,8 +57,8 @@ pub const ITERATE_SHEET_EFFECT_NAME: &str = "pixhaus.builtin.iterate_reference_s
 /// Inputs for [`IterateReferenceSheetVerb`].
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct IterateReferenceSheetInputs {
-    /// Target Reference entity in the project library. The host inserts the
-    /// returned variant into this entity's history.
+    /// Target sprite entity in the project library. The host inserts the
+    /// returned variant into this entity's embedded sheet history.
     pub entity_id: EntityId,
 
     /// ID of the source variant being refined. Stored in provenance so the
@@ -99,7 +99,7 @@ pub struct IterateReferenceSheetInputs {
 /// added to the target entity's history.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct IterateSheetPayload {
-    /// Target Reference entity to receive the new variant.
+    /// Target sprite entity to receive the new variant.
     pub entity_id: EntityId,
     /// ID of the source variant this was derived from. Enables the host to
     /// display the iteration lineage in the Sheet view history strip.
@@ -130,7 +130,7 @@ impl IterateReferenceSheetVerb {
                 "entity_id": {
                     "type": "integer",
                     "minimum": 0,
-                    "description": "ID of the target Reference entity in the project library"
+                    "description": "ID of the target sprite entity in the project library"
                 },
                 "source_variant_id": {
                     "type": "integer",

@@ -452,12 +452,15 @@ const COMMANDS: ReadonlyMap<string, CommandEntry> = new Map<string, CommandEntry
         }
         openCanvasSizeDialog({
           mode: "sprite",
-          onConfirm: ({ width, height }) => {
+          onConfirm: ({ width, height, reference_bytes, reference_mime }) => {
             spriteAdd({
               name: "Untitled",
               canvas_width: width,
               canvas_height: height,
               color_mode: "rgba",
+              ...(reference_bytes === undefined
+                ? {}
+                : { reference_bytes, reference_mime: reference_mime ?? "image/png" }),
             })
               .then((sprite) => {
                 // Sit the new sprite under the cursor: clear any previous
@@ -1203,19 +1206,25 @@ const COMMANDS: ReadonlyMap<string, CommandEntry> = new Map<string, CommandEntry
           setSheetPanelVisible(true);
           return;
         }
-        // Nothing has set the active entity yet (B9.3 library selection
-        // doesn't wire into this branch). Resolve the first Reference
-        // entity via IPC so the panel opens on something real.
-        libraryListEntities({ kind: "Reference" })
+        // Nothing has set the active entity yet. Resolve the first sprite
+        // entity with an embedded reference sheet so the panel opens on
+        // something real.
+        libraryListEntities()
           .then((entities) => {
-            if (entities.length === 0) {
+            const firstWithSheet = entities.find(
+              (entity) =>
+                entity.content.type === "Sprites" &&
+                entity.content.value.reference_sheet !== null &&
+                entity.content.value.reference_sheet !== undefined,
+            );
+            if (firstWithSheet === undefined) {
               pushToast({
-                title: "No Reference entities yet — create one to use the sheet panel.",
+                title: "No sprite reference sheets yet.",
                 kind: "info",
               });
               return;
             }
-            openSheetPanel(entities[0]!.id);
+            openSheetPanel(firstWithSheet.id);
           })
           .catch((err: unknown) => reportCommandFailure("library_list_entities", err));
       },

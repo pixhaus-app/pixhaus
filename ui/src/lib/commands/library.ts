@@ -1,9 +1,9 @@
 // Library entity, group, tag, search, and sheet-variant commands.
 //
 // Covers the B9.2 entity/group/tag catalog (CRUD, states, active target,
-// search) plus the B10.4 reference-sheet variant operations (approve,
-// update asset info, delete history entry). Commands that touch pixel
-// data live in canvas.ts; palette commands live in palette.ts.
+// search) plus reference-sheet variant operations embedded on sprite
+// entities (approve, update asset info, delete history entry). Commands
+// that touch pixel data live in canvas.ts; palette commands live in palette.ts.
 
 import { invoke } from "../ipc";
 import type {
@@ -41,7 +41,7 @@ export type LibraryCreateEntityArgs = {
   // Tilemap-kind
   scene_width?: number;
   scene_height?: number;
-  // Reference-kind
+  // Custom-kind optional embedded reference sheet
   reference_bytes?: number[];
   reference_mime?: string;
 };
@@ -198,7 +198,8 @@ export function librarySearch(args: LibrarySearchArgs): Promise<Entity[]> {
 // ── sheet variant commands ────────────────────────────────────────────────────
 
 /**
- * Promotes a history variant to canonical for a `Reference`-kind entity.
+ * Promotes a history variant to canonical for a sprite entity's embedded
+ * reference sheet.
  *
  * The previous canonical moves to the front of `history`. Returns the
  * updated entity so callers can refresh their local state without a
@@ -215,14 +216,14 @@ export function libraryApproveSheetVariant(
 
 /**
  * Overwrites the asset info (name, age, species, personality notes) for a
- * `Reference`-kind entity.
+ * sprite entity's embedded reference sheet.
  */
 export function libraryUpdateAssetInfo(entity_id: EntityId, info: AssetInfo): Promise<void> {
   return invoke<void>("library_update_asset_info", { args: { entity_id, info } });
 }
 
 /**
- * Deletes a history variant from a `Reference`-kind entity.
+ * Deletes a history variant from a sprite entity's embedded reference sheet.
  *
  * Rejects with `Validation` if `variant_id` is the current canonical —
  * approve a replacement first.
@@ -245,8 +246,8 @@ export function libraryDeleteSheetVariant(
  * The suggestions are persisted but pending — `libraryAcceptSuggestedTag`
  * promotes one to `entity.tags`, `libraryRejectSuggestedTag` drops it.
  *
- * Suitable only for `Custom` and `Reference` entities. The verb may need a
- * configured VLM backend; failure propagates as a rejected promise.
+ * Suitable only for `Custom` entities. The verb may need a configured VLM
+ * backend; failure propagates as a rejected promise.
  */
 export function libraryAutoTagEntity(entity_id: EntityId): Promise<TagDefinition[]> {
   return invoke<TagDefinition[]>("library_auto_tag_entity", { entity_id });
@@ -306,7 +307,7 @@ export type LibraryTrainEntityLoraResult = {
 };
 
 /**
- * Trains a per-entity `LoRA` from a Reference entity's canonical sheet
+ * Trains a per-entity `LoRA` from a sprite entity's canonical reference sheet
  * and persists the weights URL on `Entity.ai.lora_path`.
  *
  * Takes 15-30 minutes against Replicate. The returned promise only
@@ -331,7 +332,7 @@ export function libraryTrainEntityLora(
   });
 }
 
-// ── B10.3: entity anchor wiring ───────────────────────────────────────────────
+// ── entity anchor payload ─────────────────────────────────────────────────────
 
 /**
  * Resolved anchor payload returned by [`libraryGetAnchorPayload`].
@@ -346,6 +347,12 @@ export function libraryTrainEntityLora(
  * this declaration for the generated barrel re-export in one step.
  */
 export type AnchorPayload = {
+  /**
+   * Sprite entity id for the entity that owns the embedded reference sheet.
+   *
+   * The field name is kept for compatibility with existing AI payload
+   * consumers; it no longer points to a standalone Reference entity.
+   */
   reference_entity_id: EntityId;
   // `canonical_hash` is intentionally omitted from this type. It exists
   // on the Rust side as a u64 FNV-1a (ai/src/plugin/anchor.rs:46) used
@@ -364,33 +371,11 @@ export type AnchorPayload = {
 };
 
 /**
- * Sets or clears the anchor reference on an entity.
- *
- * Pass a `Reference`-kind entity id to anchor `entity_id` on it, or pass
- * `null` to clear the existing anchor. The host evicts the cached
- * `AnchorPayload` for the affected reference; the next
- * [`libraryGetAnchorPayload`] call rebuilds it.
- *
- * The IPC accepts the call against any entity kind, but only `Custom`
- * entities are expected to carry an anchor in practice — `Reference`
- * entities are themselves the anchor source.
- */
-export function librarySetEntityAnchor(
-  entity_id: EntityId,
-  reference_id: EntityId | null,
-): Promise<void> {
-  return invoke<void>("library_set_entity_anchor", { entity_id, reference_id });
-}
-
-/**
  * Returns the resolved [`AnchorPayload`] for an entity, or `null` when
- * the entity has no anchor.
+ * the sprite entity has no embedded reference sheet.
  *
- * For `Custom` entities the host follows `entity.anchor_reference_id`
- * to the underlying `Reference` and resolves its canonical sheet. For
- * `Reference` entities the host returns the entity's own canonical
- * sheet directly. Cache hits are decided by the canonical-sheet hash;
- * the wrapper itself does no client-side caching.
+ * Cache hits are decided by the canonical-sheet hash; the wrapper itself
+ * does no client-side caching.
  */
 export function libraryGetAnchorPayload(entity_id: EntityId): Promise<AnchorPayload | null> {
   return invoke<AnchorPayload | null>("library_get_anchor_payload", { entity_id });

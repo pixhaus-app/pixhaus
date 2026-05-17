@@ -7,7 +7,7 @@ import type { StateId } from "./StateId";
  *
  * Replaces the old `CanvasState::active_sprite` model where the focus
  * was always a sprite. With the library, the focus can be a state
- * inside a `Custom`-kind entity, a Tileset, a Tilemap, or a Reference.
+ * inside a `Custom`-kind entity, a Tileset, or a Tilemap.
  * `None` is valid — empty libraries and the brief window between
  * "create project" and "create first entity" both produce it.
  */
@@ -24,10 +24,6 @@ state_id: StateId, } } | { "type": "tileset", "value": {
  * The targeted entity.
  */
 entity_id: EntityId, } } | { "type": "tilemap", "value": { 
-/**
- * The targeted entity.
- */
-entity_id: EntityId, } } | { "type": "reference", "value": { 
 /**
  * The targeted entity.
  */

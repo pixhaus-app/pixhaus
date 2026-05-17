@@ -1,19 +1,10 @@
-// Sheet view panel — the main surface for reference sheet generation and management.
+// Sheet view panel — the main surface for embedded reference sheet management.
 //
-// Opens when a Reference entity is the active target. Shows the canonical sheet
-// image, panel overlays, asset info, history, and prompt history. Action buttons
-// fire the generate-reference-sheet (B10.1) and iterate-reference-sheet (B10.2)
-// verbs via the existing VerbInvokeHost flow.
+// Opens for sprite entities that own a reference sheet. Shows the canonical
+// sheet image, panel overlays, asset info, history, and prompt history.
 
 import { type Component, For, Show, createEffect, createSignal, on } from "solid-js";
-import type {
-  Entity,
-  EntityContent,
-  EntityId,
-  PromptEntry,
-  ReferenceSheet,
-  SheetVariant,
-} from "../lib/types";
+import type { Entity, EntityContent, EntityId, ReferenceSheet, SheetVariant } from "../lib/types";
 import {
   libraryDeleteSheetVariant,
   libraryGetEntity,
@@ -21,8 +12,6 @@ import {
   libraryUpdateAssetInfo,
 } from "../lib/commands/library";
 import { approveSheetVariantAndRefreshCorpus } from "../library/library-state";
-import { verbList } from "../lib/commands/verbs";
-import { getCachedVerbList, setActiveVerb, setPendingPrefill } from "../lib/ai/verb-invoke-state";
 import { pushToast } from "../lib/toast/toast-state";
 import { reportCommandFailure } from "../lib/utils/errors";
 import { useImageObjectUrl } from "../lib/utils/image-object-url";
@@ -38,31 +27,14 @@ import AssetInfoPanel from "./AssetInfoPanel";
 import HistoryStrip from "./HistoryStrip";
 import PromptStrip from "./PromptStrip";
 
-// Verb IDs for the reference sheet verbs (B10.1 and B10.2).
-const GENERATE_VERB_ID = "pixhaus.builtin.generate_reference_sheet";
-const ITERATE_VERB_ID = "pixhaus.builtin.iterate_reference_sheet";
-
 type BottomTab = "history" | "prompts";
 
-// Encodes raw image bytes to a base64 string for IPC pre-fill payloads.
-// Display goes through `useImageObjectUrl` instead — see Fix D in the
-// B10.4 review-fix plan.
-function bytesToBase64(bytes: number[]): string {
-  if (bytes.length === 0) return "";
-  const u8 = new Uint8Array(bytes);
-  let binary = "";
-  for (let i = 0; i < u8.length; i++) {
-    binary += String.fromCharCode(u8[i]!);
-  }
-  return btoa(binary);
-}
-
-// Extracts the ReferenceSheet from an entity's content. Returns null if the
-// entity is not Reference-kind (guards against stale state after navigation).
+// Extracts the ReferenceSheet from an entity's sprite content. Returns null
+// when the entity has no embedded sheet.
 function referenceSheet(entity: Entity): ReferenceSheet | null {
   const content = entity.content as EntityContent;
-  if (content.type !== "Reference") return null;
-  return content.value.sheet;
+  if (content.type !== "Sprites") return null;
+  return content.value.reference_sheet ?? null;
 }
 
 const SheetView: Component = () => {
@@ -225,59 +197,6 @@ const SheetView: Component = () => {
       .catch((err: unknown) => reportCommandFailure("library_update_asset_info", err));
   }
 
-  function openVerb(verbId: string, fallbackLabel: string): void {
-    getCachedVerbList(verbList)
-      .then((verbs) => {
-        const v = verbs.find((info) => info.id === verbId);
-        if (v === undefined) {
-          pushToast({
-            title: `${fallbackLabel}: verb "${verbId}" is not registered — check that B10.1 has landed.`,
-            kind: "error",
-          });
-          return;
-        }
-        setActiveVerb(v);
-      })
-      .catch((err: unknown) => reportCommandFailure("verb_list", err));
-  }
-
-  function handleGenerate(): void {
-    openVerb(GENERATE_VERB_ID, "Generate reference sheet");
-  }
-
-  function handleRefine(): void {
-    const e = entity();
-    const v = displayedVariant();
-    if (e === null || v === null) {
-      pushToast({ title: "No reference sheet to iterate on yet.", kind: "info" });
-      return;
-    }
-    const region = selectedPanelRegion();
-    const label =
-      region === null
-        ? null
-        : (allPanels().find((p) => p.x === region.origin.x && p.y === region.origin.y)?.label ??
-          null);
-    setPendingPrefill({
-      entity_id: e.id,
-      source_variant_id: v.id,
-      sheet_image_b64: bytesToBase64(v.image.bytes),
-      composition: v.composition,
-      panel_label: label,
-      prompt: "",
-      negative_prompt: null,
-    });
-    openVerb(ITERATE_VERB_ID, "Iterate reference sheet");
-  }
-
-  function handleRerun(prompt: PromptEntry): void {
-    setPendingPrefill({
-      prompt: prompt.prompt,
-      negative_prompt: prompt.negative_prompt ?? null,
-    });
-    openVerb(GENERATE_VERB_ID, "Generate reference sheet");
-  }
-
   // B10.5: kicks off the long Replicate train-entity-lora flow. Returns
   // synchronously after the IPC promise is queued so the caller doesn't
   // wait; the toast surface reports completion or cancellation.
@@ -362,7 +281,7 @@ const SheetView: Component = () => {
       </Show>
 
       <Show when={!loading() && sheet() === null && activeSheetEntityId() !== null}>
-        <div class="sheet-panel__error">Entity not found or not a Reference kind.</div>
+        <div class="sheet-panel__error">Entity not found or has no reference sheet.</div>
       </Show>
 
       <Show when={!loading() && sheet() !== null}>
@@ -415,20 +334,6 @@ const SheetView: Component = () => {
         </div>
 
         <div class="sheet-panel__actions">
-          <button class="sheet-panel__action-btn" onClick={handleGenerate}>
-            Generate variant
-          </button>
-          <button
-            class="sheet-panel__action-btn"
-            onClick={handleRefine}
-            title={
-              selectedPanelRegion() === null
-                ? "No panel selected — Refine will run on the whole sheet. Click a panel in the overlay to scope it."
-                : "Refine the selected panel"
-            }
-          >
-            Refine selection
-          </button>
           <button
             class="sheet-panel__action-btn"
             classList={{ "sheet-panel__action-btn--busy": isTrainingThisLora() }}
@@ -484,7 +389,7 @@ const SheetView: Component = () => {
           </Show>
 
           <Show when={activeTab() === "prompts"}>
-            <PromptStrip prompts={sheet()?.prompts ?? []} onRerun={handleRerun} />
+            <PromptStrip prompts={sheet()?.prompts ?? []} />
           </Show>
         </div>
       </Show>

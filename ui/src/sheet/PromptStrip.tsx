@@ -1,14 +1,10 @@
 // Prompt history strip — chronological list of prompts run against the sheet.
-//
-// Each entry shows the prompt text, issue timestamp, and a re-run button
-// that fires the generate verb with that prompt pre-filled.
 
 import { type Component, For, Show } from "solid-js";
 import type { PromptEntry } from "../lib/types";
 
 type Props = {
   prompts: PromptEntry[];
-  onRerun: (prompt: PromptEntry) => void;
 };
 
 const PromptStrip: Component<Props> = (props) => {
@@ -16,11 +12,7 @@ const PromptStrip: Component<Props> = (props) => {
     <div class="sheet-prompt-strip">
       <Show
         when={props.prompts.length > 0}
-        fallback={
-          <p class="sheet-prompt-strip__empty">
-            No prompts yet — click Generate to create the first variant.
-          </p>
-        }
+        fallback={<p class="sheet-prompt-strip__empty">No prompts yet.</p>}
       >
         <For each={[...props.prompts].reverse()}>
           {(entry) => (
@@ -33,13 +25,6 @@ const PromptStrip: Component<Props> = (props) => {
                   · negative: {entry.negative_prompt}
                 </Show>
               </div>
-              <button
-                class="sheet-prompt-strip__rerun"
-                onClick={() => props.onRerun(entry)}
-                title="Re-run this prompt"
-              >
-                Re-run
-              </button>
             </div>
           )}
         </For>

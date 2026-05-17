@@ -14,6 +14,9 @@ export type CanvasSizeResult = {
   name?: string;
   width: number;
   height: number;
+  /** Optional embedded reference sheet for sprite creation. */
+  reference_bytes?: number[];
+  reference_mime?: string;
 };
 
 export type CanvasSizeRequest = {

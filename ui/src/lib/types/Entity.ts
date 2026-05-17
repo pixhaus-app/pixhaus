@@ -11,10 +11,10 @@ import type { UserData } from "./UserData";
 /**
  * A named entity in the project library.
  *
- * The unit of organization for everything in a project: a Hero, a
- * Goblin, a Forest tileset, a Forest-1 level. Stable ids let renames
- * happen without breaking cross-entity references (anchor links,
- * tilemap-to-tileset, group membership).
+ * The unit of organization for everything in a project: a Hero, an
+ * Enemy, a Forest tileset, a Forest-1 level. Stable ids let renames
+ * happen without breaking cross-entity references (tilemap-to-tileset,
+ * group membership) or per-entity AI metadata.
  */
 export type Entity = { 
 /**
@@ -50,15 +50,6 @@ content: EntityContent,
  * part of the style reference corpus, prompt history.
  */
 ai?: AiMetadata, 
-/**
- * Optional anchor reference. Points at a `Reference`-kind entity
- * whose [`ReferenceSheet`] is used as the consistency anchor for
- * every AI verb invocation that targets this entity. Set on
- * `Custom`-kind entities once the user approves a sheet; left
- * `None` for Tilesets, Tilemaps, and References themselves. B10
- * wires the existing AI verbs to consume this anchor.
- */
-anchor_reference_id?: EntityId | null, 
 /**
  * Free-form user data (text + tint), reusing existing
  * [`UserData`].

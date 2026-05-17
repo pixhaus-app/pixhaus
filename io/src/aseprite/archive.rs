@@ -704,9 +704,11 @@ fn assemble_entity(name: String, states: Vec<LibNamedSprite>) -> Entity {
         group_id: None,
         tags: Vec::new(),
         defaults: LibEntityDefaults::default(),
-        content: LibEntityContent::Sprites { states },
+        content: LibEntityContent::Sprites {
+            states,
+            reference_sheet: None,
+        },
         ai: LibAiMetadata::default(),
-        anchor_reference_id: None,
         user_data: UserData::default(),
         created_at: 0,
         updated_at: 0,
@@ -742,7 +744,7 @@ fn find_sprite_states(archive: &PixhausArchive) -> Result<&[LibNamedSprite]> {
         })
         .ok_or(Error::NoSpriteEntityForExport)?;
 
-    let LibEntityContent::Sprites { states } = &entity.content else {
+    let LibEntityContent::Sprites { states, .. } = &entity.content else {
         return Err(Error::NoSpriteEntityForExport);
     };
 
@@ -757,7 +759,7 @@ fn find_sprite_states(archive: &PixhausArchive) -> Result<&[LibNamedSprite]> {
 
 fn is_sprite_entity(e: &Entity) -> bool {
     matches!(e.kind, LibEntityKind::Custom(_))
-        && matches!(&e.content, LibEntityContent::Sprites { states } if !states.is_empty())
+        && matches!(&e.content, LibEntityContent::Sprites { states, .. } if !states.is_empty())
 }
 
 fn color_mode_from_depth(depth: ColorDepth) -> ColorMode {
@@ -1798,7 +1800,7 @@ mod tests {
         let result = document_to_archive(&doc, "sprite").unwrap();
         let entities = &result.archive.project.library.entities;
         assert_eq!(entities.len(), 1);
-        let EntityContent::Sprites { states } = &entities[0].content else {
+        let EntityContent::Sprites { states, .. } = &entities[0].content else {
             panic!()
         };
         assert_eq!(states.len(), 1);
@@ -1867,7 +1869,7 @@ mod tests {
         assert!(result.warnings.is_empty());
         let entities = &result.archive.project.library.entities;
         assert_eq!(entities[0].name, "hero");
-        let EntityContent::Sprites { states } = &entities[0].content else {
+        let EntityContent::Sprites { states, .. } = &entities[0].content else {
             panic!()
         };
         assert_eq!(states.len(), 2);
@@ -1934,7 +1936,8 @@ mod tests {
         doc.frames.push(f2);
 
         let result = document_to_archive(&doc, "hero").unwrap();
-        let EntityContent::Sprites { states } = &result.archive.project.library.entities[0].content
+        let EntityContent::Sprites { states, .. } =
+            &result.archive.project.library.entities[0].content
         else {
             panic!()
         };
@@ -1969,7 +1972,8 @@ mod tests {
             &result.warnings[0],
             ConversionWarning::UnknownBlendMode { code: 99, .. }
         ));
-        let EntityContent::Sprites { states } = &result.archive.project.library.entities[0].content
+        let EntityContent::Sprites { states, .. } =
+            &result.archive.project.library.entities[0].content
         else {
             panic!()
         };
@@ -2025,9 +2029,9 @@ mod tests {
             defaults: LibEntityDefaults::default(),
             content: LibEntityContent::Sprites {
                 states: vec![make_state("idle", 1, 1), make_state("walk", 2, 2)],
+                reference_sheet: None,
             },
             ai: LibAiMetadata::default(),
-            anchor_reference_id: None,
             user_data: UserData::default(),
             created_at: 0,
             updated_at: 0,
@@ -2257,7 +2261,7 @@ mod tests {
 
         // ── First import ──────────────────────────────────────────────────────
         let result1 = document_to_archive(&doc, "tilemap-test").unwrap();
-        let EntityContent::Sprites { states: s1 } =
+        let EntityContent::Sprites { states: s1, .. } =
             &result1.archive.project.library.entities[0].content
         else {
             panic!("expected Sprites");
@@ -2301,7 +2305,7 @@ mod tests {
         // ── Round-trip: archive → document → re-import ────────────────────────
         let doc2 = archive_to_document(&result1.archive).unwrap();
         let result2 = document_to_archive(&doc2, "tilemap-test").unwrap();
-        let EntityContent::Sprites { states: s2 } =
+        let EntityContent::Sprites { states: s2, .. } =
             &result2.archive.project.library.entities[0].content
         else {
             panic!("expected Sprites after round-trip");

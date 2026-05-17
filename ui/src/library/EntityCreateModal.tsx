@@ -2,7 +2,7 @@
 //
 // Adapts its form fields to the selected kind. Tileset and Tilemap entities
 // require dimension inputs; Custom entities require a category and canvas
-// size; Reference entities require an image file.
+// size and can optionally attach a reference sheet image.
 
 import { type Component, Show, createEffect, createSignal, For } from "solid-js";
 import { open as dialogOpen } from "../lib/dialog";
@@ -30,9 +30,7 @@ const CATEGORY_SUGGESTIONS = [
 const STATE_SUGGESTIONS = ["idle", "walk", "run", "jump", "attack", "hurt", "death"];
 
 const EntityCreateModal: Component = () => {
-  const [kindTag, setKindTag] = createSignal<"Tileset" | "Tilemap" | "Reference" | "Custom">(
-    "Custom",
-  );
+  const [kindTag, setKindTag] = createSignal<"Tileset" | "Tilemap" | "Custom">("Custom");
   const [name, setName] = createSignal("");
   const [category, setCategory] = createSignal("Character");
   const [groupId, setGroupId] = createSignal<GroupId | null>(null);
@@ -131,9 +129,6 @@ const EntityCreateModal: Component = () => {
     if (k === "Tilemap") {
       if (sceneWidth() <= 0 || sceneHeight() <= 0) return "Scene size must be greater than 0.";
     }
-    if (k === "Reference") {
-      if (!refBytes()) return "Select an image file.";
-    }
     return null;
   }
 
@@ -152,11 +147,15 @@ const EntityCreateModal: Component = () => {
     };
 
     if (k === "Custom") {
+      const referenceBytes = refBytes();
       createEntity({
         ...base,
         canvas_width: canvasWidth(),
         canvas_height: canvasHeight(),
         initial_states: parseStates(),
+        ...(referenceBytes === null
+          ? {}
+          : { reference_bytes: referenceBytes, reference_mime: refMime() }),
       });
     } else if (k === "Tileset") {
       createEntity({
@@ -169,12 +168,6 @@ const EntityCreateModal: Component = () => {
         ...base,
         scene_width: sceneWidth(),
         scene_height: sceneHeight(),
-      });
-    } else if (k === "Reference") {
-      createEntity({
-        ...base,
-        reference_bytes: refBytes()!,
-        reference_mime: refMime(),
       });
     }
 
@@ -198,7 +191,7 @@ const EntityCreateModal: Component = () => {
           <div class="modal__field">
             <label class="modal__label">Kind</label>
             <div class="modal__kind-tabs">
-              <For each={["Custom", "Tileset", "Tilemap", "Reference"] as const}>
+              <For each={["Custom", "Tileset", "Tilemap"] as const}>
                 {(k) => (
                   <button
                     class="modal__kind-tab"
@@ -298,6 +291,29 @@ const EntityCreateModal: Component = () => {
               </datalist>
               <span class="modal__hint">Comma-separated list</span>
             </div>
+
+            <div class="modal__field">
+              <label class="modal__label">Reference sheet</label>
+              <div class="modal__file-row">
+                <Button variant="ghost" size="sm" onClick={handlePickRef}>
+                  Choose file…
+                </Button>
+                <Show when={refFileName() !== null}>
+                  <span class="modal__file-name">{refFileName()}</span>
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    onClick={() => {
+                      setRefBytes(null);
+                      setRefMime("image/png");
+                      setRefFileName(null);
+                    }}
+                  >
+                    Clear
+                  </Button>
+                </Show>
+              </div>
+            </div>
           </Show>
 
           <Show when={kindTag() === "Tileset"}>
@@ -350,20 +366,6 @@ const EntityCreateModal: Component = () => {
                   value={sceneHeight()}
                   onInput={(e) => setSceneHeight(parseInt(e.currentTarget.value, 10) || 15)}
                 />
-              </div>
-            </div>
-          </Show>
-
-          <Show when={kindTag() === "Reference"}>
-            <div class="modal__field">
-              <label class="modal__label">Source image</label>
-              <div class="modal__file-row">
-                <Button variant="ghost" size="sm" onClick={handlePickRef}>
-                  Choose file…
-                </Button>
-                <Show when={refFileName() !== null}>
-                  <span class="modal__file-name">{refFileName()}</span>
-                </Show>
               </div>
             </div>
           </Show>

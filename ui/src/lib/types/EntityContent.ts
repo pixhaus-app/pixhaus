@@ -13,33 +13,29 @@ import type { Tileset } from "./Tileset";
  *
  * `clippy::large_enum_variant` fires here because [`Sprite`] (the
  * `Sprites` variant inlines a `Vec<NamedSprite>` of full sprites) is
- * substantially larger than the unit variants. The B9.1-cleanup
- * regression test (`entity_content_size_is_bounded`) measured
- * `size_of::<ReferenceSheet>() > size_of::<Sprite>()`, so the
- * `Reference` variant is boxed: `Reference { sheet: Box<ReferenceSheet> }`.
- * `Sprites` stays inline because boxing it would force an allocation
- * on every library walk in the hot read path. The regression test
- * pins both invariants — flip the boxing decision if `Sprite` ever
- * outgrows [`ReferenceSheet`], and update both the rustdoc here and
- * the test in lockstep. The TS mirror unwraps `Box` automatically so
- * the generated type stays
- * `{ type: "Reference"; value: { sheet: ReferenceSheet } }`.
+ * substantially larger than the unit variants. The optional
+ * [`ReferenceSheet`] in `Sprites` is boxed because it is comparatively
+ * large and absent on many sprite entities. `Sprites` itself stays
+ * inline because boxing it would force an allocation on every library
+ * walk in the hot read path.
  */
-export type EntityContent = { "type": "Sprites", "value": { 
+export type EntityContent = { "type": "Sprites", "value": {
 /**
  * Ordered states. The first entry is the primary/default state
  * for thumbnails and the editor open-on-create flow.
  */
-states: Array<NamedSprite>, } } | { "type": "Tileset", "value": { 
+states: Array<NamedSprite>,
+/**
+ * Optional reference sheet shared by every state in this
+ * logical sprite entity. When present, AI generation uses the
+ * canonical sheet as the entity's visual-consistency anchor.
+ */
+reference_sheet?: ReferenceSheet | null, } } | { "type": "Tileset", "value": {
 /**
  * The tileset payload.
  */
-tileset: Tileset, } } | { "type": "Tilemap", "value": { 
+tileset: Tileset, } } | { "type": "Tilemap", "value": {
 /**
  * The scene payload.
  */
-scene: TilemapScene, } } | { "type": "Reference", "value": { 
-/**
- * The structured reference sheet payload.
- */
-sheet: ReferenceSheet, } };
+scene: TilemapScene, } };

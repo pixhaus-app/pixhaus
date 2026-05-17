@@ -3,15 +3,15 @@
 //! A Pixhaus project is a [`Library`] of named [`Entity`] values. The
 //! kind of an entity determines its content shape: a `Tileset` entity
 //! holds a single tileset, a `Tilemap` entity holds a level scene that
-//! references one or more tilesets, a `Reference` entity holds a
-//! structured asset sheet that AI verbs use as a consistency anchor,
-//! and a `Custom` entity is the user's free-form kind (Hero, Goblin,
-//! Treasure-Chest, Vehicle, ...) and holds named states each backed by
-//! a [`Sprite`].
+//! references one or more tilesets, and a `Custom` entity is the user's
+//! free-form kind (Hero, Goblin, Treasure-Chest, Vehicle, ...) and holds
+//! named states each backed by a [`Sprite`]. Custom entities may also
+//! carry a structured reference sheet that AI verbs use as the sprite's
+//! consistency anchor.
 //!
 //! # Design notes
 //!
-//! - The kind enum is exactly four variants. The data model deliberately
+//! - The kind enum is exactly three variants. The data model deliberately
 //!   does not bake game-genre taxonomy — "Character", "Enemy", "Hero" all
 //!   live in the user-typed string carried by `EntityKind::Custom`.
 //! - Groups are optional and never auto-created. A pristine project has
@@ -19,12 +19,9 @@
 //! - Tilesets are project-level so a single Forest tileset can back
 //!   multiple Forest-1, Forest-2, Boss-Arena tilemap scenes (the Tiled
 //!   `firstgid` model).
-//! - References ship in B9 as a single image per entity wrapped in a
-//!   [`ReferenceSheet`]; the structured generation/iteration workflow
-//!   lands in B10.
-//! - Custom-kind entities may carry an optional [`Entity::anchor_reference_id`]
-//!   pointing at a `Reference`-kind entity. B10 wires AI verbs to consume
-//!   the anchored sheet for visual consistency.
+//! - Custom-kind entities carry an optional [`ReferenceSheet`] inside
+//!   [`EntityContent::Sprites`]. When present, that sheet is the AI
+//!   generation anchor for every state in the entity.
 
 use std::collections::BTreeMap;
 
@@ -96,10 +93,10 @@ impl Library {
 
 /// A named entity in the project library.
 ///
-/// The unit of organization for everything in a project: a Hero, a
-/// Goblin, a Forest tileset, a Forest-1 level. Stable ids let renames
-/// happen without breaking cross-entity references (anchor links,
-/// tilemap-to-tileset, group membership).
+/// The unit of organization for everything in a project: a Hero, an
+/// Enemy, a Forest tileset, a Forest-1 level. Stable ids let renames
+/// happen without breaking cross-entity references (tilemap-to-tileset,
+/// group membership) or per-entity AI metadata.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, TS)]
 #[ts(export)]
 pub struct Entity {
@@ -132,15 +129,6 @@ pub struct Entity {
     #[serde(default, skip_serializing_if = "AiMetadata::is_empty")]
     pub ai: AiMetadata,
 
-    /// Optional anchor reference. Points at a `Reference`-kind entity
-    /// whose [`ReferenceSheet`] is used as the consistency anchor for
-    /// every AI verb invocation that targets this entity. Set on
-    /// `Custom`-kind entities once the user approves a sheet; left
-    /// `None` for Tilesets, Tilemaps, and References themselves. B10
-    /// wires the existing AI verbs to consume this anchor.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub anchor_reference_id: Option<EntityId>,
-
     /// Free-form user data (text + tint), reusing existing
     /// [`UserData`].
     #[serde(default, skip_serializing_if = "UserData::is_empty")]
@@ -157,7 +145,7 @@ pub struct Entity {
     pub updated_at: i64,
 }
 
-/// Kinds of entity. Three system kinds plus one user-defined kind.
+/// Kinds of entity. Two system kinds plus one user-defined kind.
 ///
 /// The data model deliberately does not bake game-genre taxonomy.
 /// "Character", "Enemy", "Hero", "Boss" — none of those are kinds. They
@@ -178,10 +166,6 @@ pub enum EntityKind {
     /// entities. Multi-tileset is a first-class case (Tiled `firstgid`
     /// model).
     Tilemap,
-    /// An input image used by AI verbs (style reference, photo
-    /// reference). One image per `Reference` for B9; mood-board grouping
-    /// is a follow-up.
-    Reference,
     /// User-defined entity. The string is the user's free-form category
     /// — typically "Character", "Enemy", "NPC", "Prop", "Vehicle", "UI",
     /// "Effect", or anything else they type. Autocomplete suggestions
@@ -198,17 +182,11 @@ pub enum EntityKind {
 ///
 /// `clippy::large_enum_variant` fires here because [`Sprite`] (the
 /// `Sprites` variant inlines a `Vec<NamedSprite>` of full sprites) is
-/// substantially larger than the unit variants. The B9.1-cleanup
-/// regression test (`entity_content_size_is_bounded`) measured
-/// `size_of::<ReferenceSheet>() > size_of::<Sprite>()`, so the
-/// `Reference` variant is boxed: `Reference { sheet: Box<ReferenceSheet> }`.
-/// `Sprites` stays inline because boxing it would force an allocation
-/// on every library walk in the hot read path. The regression test
-/// pins both invariants — flip the boxing decision if `Sprite` ever
-/// outgrows [`ReferenceSheet`], and update both the rustdoc here and
-/// the test in lockstep. The TS mirror unwraps `Box` automatically so
-/// the generated type stays
-/// `{ type: "Reference"; value: { sheet: ReferenceSheet } }`.
+/// substantially larger than the unit variants. The optional
+/// [`ReferenceSheet`] in `Sprites` is boxed because it is comparatively
+/// large and absent on many sprite entities. `Sprites` itself stays
+/// inline because boxing it would force an allocation on every library
+/// walk in the hot read path.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, TS)]
 #[ts(export)]
 #[serde(tag = "type", content = "value")]
@@ -222,6 +200,11 @@ pub enum EntityContent {
         /// Ordered states. The first entry is the primary/default state
         /// for thumbnails and the editor open-on-create flow.
         states: Vec<NamedSprite>,
+        /// Optional reference sheet shared by every state in this
+        /// logical sprite entity. When present, AI generation uses the
+        /// canonical sheet as the entity's visual-consistency anchor.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        reference_sheet: Option<Box<ReferenceSheet>>,
     },
 
     /// `Tileset`-kind entity: holds a single tileset (the tile primitives
@@ -237,23 +220,6 @@ pub enum EntityContent {
     Tilemap {
         /// The scene payload.
         scene: TilemapScene,
-    },
-
-    /// `Reference`-kind entity: structured asset sheet (character /
-    /// item / tileset model sheet) used by AI verbs as the consistency
-    /// anchor. The full generation and iteration workflow lives in B10;
-    /// B9 ships the type with a minimal canonical variant and empty
-    /// history/metadata so B10 can fill it in without a schema
-    /// migration.
-    ///
-    /// `sheet` is boxed because `ReferenceSheet` is the largest variant
-    /// payload by stack size (`entity_content_size_is_bounded` pins
-    /// the measurement). Boxing keeps `size_of::<EntityContent>()` from
-    /// being dragged up by this comparatively rare variant. `Box<T>` is
-    /// transparent to serde, so the on-disk wire format is unchanged.
-    Reference {
-        /// The structured reference sheet payload.
-        sheet: Box<ReferenceSheet>,
     },
 }
 
@@ -720,7 +686,7 @@ pub enum PromptResult {
 ///
 /// Replaces the old `CanvasState::active_sprite` model where the focus
 /// was always a sprite. With the library, the focus can be a state
-/// inside a `Custom`-kind entity, a Tileset, a Tilemap, or a Reference.
+/// inside a `Custom`-kind entity, a Tileset, or a Tilemap.
 /// `None` is valid — empty libraries and the brief window between
 /// "create project" and "create first entity" both produce it.
 #[derive(Clone, Debug, Default, PartialEq, Eq, Hash, Serialize, Deserialize, TS)]
@@ -744,11 +710,6 @@ pub enum ActiveTarget {
     },
     /// Editing a `Tilemap` entity.
     Tilemap {
-        /// The targeted entity.
-        entity_id: EntityId,
-    },
-    /// Viewing a `Reference` entity (not editable in B9).
-    Reference {
         /// The targeted entity.
         entity_id: EntityId,
     },
@@ -824,19 +785,9 @@ mod tests {
 
     /// Pins the boxing decision for [`EntityContent`].
     ///
-    /// Measured sizes on the B9.1-cleanup branch (Rust 1.85, no
-    /// platform-specific layout assumptions):
-    /// - `size_of::<Sprite>()` ≈ 288 bytes
-    /// - `size_of::<ReferenceSheet>()` ≈ 416 bytes (largest variant
-    ///   payload by stack size; boxed inside `EntityContent::Reference`)
-    /// - `size_of::<EntityContent>()` ≈ 1.2× `size_of::<Sprite>()` once
-    ///   the inlined `Vec<NamedSprite>` header and tag are accounted for
-    ///
-    /// The decision rule from the cleanup brief: if
-    /// `size_of::<ReferenceSheet>() > size_of::<Sprite>()`, box the
-    /// Reference variant. That ordering holds today, so `Reference`
-    /// carries `Box<ReferenceSheet>` and the enum's stack footprint is
-    /// driven by `Sprite` plus the `Vec<NamedSprite>` header.
+    /// `ReferenceSheet` is boxed inside `EntityContent::Sprites` so
+    /// embedding optional reference sheets does not drag the enum's
+    /// stack footprint up to the full sheet size.
     ///
     /// The cap is `1.5 * size_of::<Sprite>()` — generous enough to
     /// absorb small additions without churning the boxing decision,
@@ -852,15 +803,12 @@ mod tests {
         let sheet = size_of::<ReferenceSheet>();
         let content = size_of::<EntityContent>();
 
-        // ReferenceSheet larger than Sprite → Reference variant boxed.
-        // Once boxed, the variant no longer drives the enum size; the
-        // assertion captures the *measured* ordering so a future shrink
-        // of ReferenceSheet that flips the inequality forces us to
-        // re-examine whether the Box is still earning its allocation.
+        // ReferenceSheet larger than Sprite -> keep it boxed inside
+        // the Sprites variant's optional reference slot.
         assert!(
             sheet > sprite,
             "ReferenceSheet ({sheet} bytes) shrank below Sprite ({sprite} bytes); \
-             consider un-boxing the Reference variant"
+             consider un-boxing the embedded reference_sheet"
         );
 
         let cap = sprite + sprite / 2;

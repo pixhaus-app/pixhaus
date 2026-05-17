@@ -1,7 +1,7 @@
-//! B10.5: Verb — Train per-entity `LoRA` from a Reference sheet.
+//! B10.5: Verb — Train per-entity `LoRA` from an embedded reference sheet.
 //!
 //! Extends the Project Style Learning pipeline (S30) so the same Replicate
-//! `flux-dev-lora-trainer` flow can target a single Reference entity rather
+//! `flux-dev-lora-trainer` flow can target a single sprite entity rather
 //! than the project corpus. The trained safetensors becomes
 //! `Entity.ai.lora_path`; anchor payloads built for that entity prefer it
 //! over the project-wide `LoRA`, so generations against the anchor get
@@ -9,7 +9,7 @@
 //!
 //! # Flow
 //!
-//! 1. The host reads the Reference entity's canonical sheet (plus any
+//! 1. The host reads the sprite entity's canonical reference sheet (plus any
 //!    archive variants the user opted into), decodes each PNG to a
 //!    [`PixelData`], and passes the bundle in [`TrainEntityLoraInputs`].
 //! 2. The verb encodes the images as PNGs and packs them into a zip
@@ -79,7 +79,7 @@ const STEPS_MAX: u32 = 2000;
 /// Inputs for [`TrainEntityLoraVerb`].
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct TrainEntityLoraInputs {
-    /// Target Reference entity. The trained `LoRA` lands on
+    /// Target sprite entity. The trained `LoRA` lands on
     /// `Entity.ai.lora_path` of this entity.
     pub entity_id: EntityId,
 
@@ -147,8 +147,8 @@ pub struct EntityLoraResult {
 
 // ── Verb implementation ─────────────────────────────────────────────────────
 
-/// Trains a `LoRA` against a Reference entity's canonical sheet and binds
-/// the result to the entity via [`VerbEffect::UpdateEntityAi`].
+/// Trains a `LoRA` against a sprite entity's canonical reference sheet and
+/// binds the result to the entity via [`VerbEffect::UpdateEntityAi`].
 #[derive(Debug)]
 pub struct TrainEntityLoraVerb {
     descriptor: VerbDescriptor,
@@ -167,7 +167,7 @@ impl TrainEntityLoraVerb {
                 "entity_id": {
                     "type": "integer",
                     "minimum": 0,
-                    "description": "ID of the Reference entity to train against"
+                    "description": "ID of the sprite entity to train against"
                 },
                 "training_images": {
                     "type": "array",
@@ -205,7 +205,7 @@ impl TrainEntityLoraVerb {
                 id: VerbId::new(TRAIN_ENTITY_LORA_VERB_ID),
                 display_name: "Train Consistency LoRA".into(),
                 description:
-                    "Train a per-entity LoRA from a Reference sheet and bind the weights to the entity so anchor payloads carry them through to subsequent generations"
+                    "Train a per-entity LoRA from an embedded reference sheet and bind the weights to the entity so anchor payloads carry them through to subsequent generations"
                         .into(),
                 version: env!("CARGO_PKG_VERSION").into(),
                 required_capabilities: BackendCapabilities::STYLE_TRAINING,

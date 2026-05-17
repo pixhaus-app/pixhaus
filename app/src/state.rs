@@ -152,14 +152,14 @@ pub struct AppState {
     /// Plugin registry. Populated on startup by scanning
     /// `~/.pixhaus/plugins` and again on hot-reload events.
     pub(crate) plugins: Arc<PluginRegistry>,
-    /// Anchor-payload cache keyed by `EntityId` of the Reference
-    /// entity (B10.3).
+    /// Anchor-payload cache keyed by `EntityId` of the sprite entity
+    /// that owns the embedded reference sheet.
     ///
     /// Each entry holds the latest [`AnchorPayload`] built from the
     /// canonical sheet. On verb dispatch the host checks
     /// `payload.canonical_hash` against the current canonical bytes; a
-    /// stale entry triggers a rebuild. The approval and set-anchor
-    /// commands invalidate eagerly by removing the entry. Cleared on
+    /// stale entry triggers a rebuild. Sheet mutations invalidate
+    /// eagerly by removing the entry. Cleared on
     /// `project_close` / `project_new` / `project_open` so a stale
     /// payload from a previous project never bleeds into a fresh one.
     pub(crate) anchor_cache: Arc<DashMap<u32, AnchorPayload>>,

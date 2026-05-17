@@ -1,6 +1,6 @@
 {
   "schema_version": {
-    "major": 2,
+    "major": 3,
     "minor": 0
   },
   "feature_flags": 15,
@@ -310,7 +310,22 @@
                   "loopable"
                 ]
               }
-            ]
+            ],
+            "reference_sheet": {
+              "canonical": {
+                "id": 3,
+                "generated_at": 1700000020,
+                "image": {
+                  "bytes": [
+                    137,
+                    80,
+                    78,
+                    71
+                  ],
+                  "mime": "image/png"
+                }
+              }
+            }
           }
         },
         "ai": {
@@ -321,7 +336,6 @@
             0.3
           ]
         },
-        "anchor_reference_id": 3,
         "created_at": 1700000000,
         "updated_at": 1700000500
       },
@@ -353,35 +367,6 @@
         },
         "created_at": 1700000010,
         "updated_at": 1700000010
-      },
-      {
-        "id": 3,
-        "kind": {
-          "kind": "Reference"
-        },
-        "name": "Hero model sheet",
-        "content": {
-          "type": "Reference",
-          "value": {
-            "sheet": {
-              "canonical": {
-                "id": 1,
-                "generated_at": 1700000020,
-                "image": {
-                  "bytes": [
-                    137,
-                    80,
-                    78,
-                    71
-                  ],
-                  "mime": "image/png"
-                }
-              }
-            }
-          }
-        },
-        "created_at": 1700000020,
-        "updated_at": 1700000020
       },
       {
         "id": 4,

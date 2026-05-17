@@ -305,6 +305,22 @@ fn sample_library(hero_sprite: Sprite) -> Library {
         },
         content: EntityContent::Sprites {
             states: vec![hero_state],
+            reference_sheet: Some(Box::new(ReferenceSheet {
+                canonical: SheetVariant {
+                    id: SheetVariantId::new(3),
+                    generated_at: 1_700_000_020,
+                    image: ReferenceImage {
+                        bytes: vec![0x89, 0x50, 0x4E, 0x47],
+                        mime: "image/png".into(),
+                    },
+                    composition: SheetComposition::default(),
+                    generation: None,
+                    extracted_palette: Vec::new(),
+                },
+                history: Vec::new(),
+                prompts: Vec::new(),
+                info: AssetInfo::default(),
+            })),
         },
         ai: AiMetadata {
             suggested_tags: Vec::new(),
@@ -315,7 +331,6 @@ fn sample_library(hero_sprite: Sprite) -> Library {
             embedding: Some(vec![0.1, 0.2, 0.3]),
             lora_path: None,
         },
-        anchor_reference_id: Some(EntityId::new(3)),
         user_data: UserData::default(),
         created_at: 1_700_000_000,
         updated_at: 1_700_000_500,
@@ -346,42 +361,9 @@ fn sample_library(hero_sprite: Sprite) -> Library {
             tileset: dungeon_tileset,
         },
         ai: AiMetadata::default(),
-        anchor_reference_id: None,
         user_data: UserData::default(),
         created_at: 1_700_000_010,
         updated_at: 1_700_000_010,
-    };
-
-    let reference_entity = Entity {
-        id: EntityId::new(3),
-        kind: EntityKind::Reference,
-        name: "Hero model sheet".into(),
-        group_id: None,
-        tags: Vec::new(),
-        defaults: EntityDefaults::default(),
-        content: EntityContent::Reference {
-            sheet: Box::new(ReferenceSheet {
-                canonical: SheetVariant {
-                    id: SheetVariantId::new(1),
-                    generated_at: 1_700_000_020,
-                    image: ReferenceImage {
-                        bytes: vec![0x89, 0x50, 0x4E, 0x47],
-                        mime: "image/png".into(),
-                    },
-                    composition: SheetComposition::default(),
-                    generation: None,
-                    extracted_palette: Vec::new(),
-                },
-                history: Vec::new(),
-                prompts: Vec::new(),
-                info: AssetInfo::default(),
-            }),
-        },
-        ai: AiMetadata::default(),
-        anchor_reference_id: None,
-        user_data: UserData::default(),
-        created_at: 1_700_000_020,
-        updated_at: 1_700_000_020,
     };
 
     // Tilemap entity references the tileset entity above by id so the
@@ -421,14 +403,13 @@ fn sample_library(hero_sprite: Sprite) -> Library {
             },
         },
         ai: AiMetadata::default(),
-        anchor_reference_id: None,
         user_data: UserData::default(),
         created_at: 1_700_000_030,
         updated_at: 1_700_000_030,
     };
 
     Library {
-        entities: vec![hero, tileset_entity, reference_entity, tilemap_entity],
+        entities: vec![hero, tileset_entity, tilemap_entity],
         groups: vec![
             EntityGroup {
                 id: GroupId::new(1),

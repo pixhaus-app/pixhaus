@@ -510,7 +510,7 @@ impl VariantVerb {
 /// Enriches a text-edit description with anchor-reference context.
 ///
 /// When the host has resolved an anchor reference for the target entity
-/// (from `Entity.anchor_reference_id`), it attaches it as
+/// from its embedded reference sheet, it attaches it as
 /// `VerbContext::anchor_reference`. This function prepends a style-anchor
 /// note to the description so the backend is told to match the anchor's
 /// visual style — color palette, line weight, shading approach — while

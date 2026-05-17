@@ -1,11 +1,10 @@
 //! Verb: `GenerateReferenceSheet` — AI-generated character / item / tileset
 //! reference sheets.
 //!
-//! Takes a target Reference entity, a composition template, a user prompt,
+//! Takes a target sprite entity, a composition template, a user prompt,
 //! and a backend selection. Produces 1–4 `SheetVariant` candidates and
 //! delivers them to the host as a `VerbEffect::Custom` payload. None of the
-//! candidates are canonical until the user approves one via the B10.3
-//! approval flow.
+//! candidates are canonical until the user approves one.
 //!
 //! The four composition templates (Character / Item / Tileset / Custom) each
 //! define a distinct panel layout and a backend prompt-engineering layer that
@@ -53,8 +52,8 @@ pub const GENERATE_SHEET_EFFECT_NAME: &str = "pixhaus.builtin.generate_reference
 /// Inputs for [`GenerateReferenceSheetVerb`].
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct GenerateReferenceSheetInputs {
-    /// Target Reference entity in the project library. The host inserts the
-    /// generated variants into this entity's `ReferenceSheet::history`.
+    /// Target sprite entity in the project library. The host inserts the
+    /// generated variants into this entity's embedded `ReferenceSheet::history`.
     pub entity_id: EntityId,
 
     /// Composition template — determines panel layout, sheet dimensions, and
@@ -94,7 +93,7 @@ fn default_num_variants() -> u32 {
 /// added to the target entity's `history`.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct GenerateSheetPayload {
-    /// Target Reference entity to receive the new variants.
+    /// Target sprite entity to receive the new variants.
     pub entity_id: EntityId,
     /// Generated sheet variants, one per requested candidate.
     pub variants: Vec<SheetVariantOutput>,
@@ -145,7 +144,7 @@ impl GenerateReferenceSheetVerb {
                 "entity_id": {
                     "type": "integer",
                     "minimum": 0,
-                    "description": "ID of the target Reference entity in the project library"
+                    "description": "ID of the target sprite entity in the project library"
                 },
                 "template": {
                     "type": "string",
@@ -182,10 +181,10 @@ impl GenerateReferenceSheetVerb {
                 id: VerbId::new(GENERATE_REFERENCE_SHEET_VERB_ID),
                 display_name: "Generate Reference Sheet".into(),
                 description: "Generates 1–4 reference-sheet candidate images for a \
-                              Reference-kind library entity using one of four composition \
+                              sprite library entity using one of four composition \
                               templates (Character, Item, Tileset, Custom). Candidates land in \
-                              the entity's history; the user approves one as canonical via the \
-                              B10.3 approval flow."
+                              the entity's embedded sheet history; the user approves one as \
+                              canonical."
                     .into(),
                 version: env!("CARGO_PKG_VERSION").into(),
                 required_capabilities: BackendCapabilities::IMAGE_GENERATION,

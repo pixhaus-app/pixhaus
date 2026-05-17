@@ -149,9 +149,11 @@ fn make_archive_with_states(state_names: &[&str]) -> PixhausArchive {
         group_id: None,
         tags: Vec::new(),
         defaults: EntityDefaults::default(),
-        content: EntityContent::Sprites { states },
+        content: EntityContent::Sprites {
+            states,
+            reference_sheet: None,
+        },
         ai: AiMetadata::default(),
-        anchor_reference_id: None,
         user_data: UserData::default(),
         created_at: 0,
         updated_at: 0,
@@ -190,7 +192,7 @@ fn import_no_tags_creates_default_state() {
     assert_eq!(entities.len(), 1);
     assert_eq!(entities[0].name, "sprite");
 
-    let EntityContent::Sprites { states } = &entities[0].content else {
+    let EntityContent::Sprites { states, .. } = &entities[0].content else {
         panic!()
     };
     assert_eq!(states.len(), 1);
@@ -241,7 +243,7 @@ fn import_tags_become_states() {
 
     let result = document_to_archive(&doc, "hero").unwrap();
     assert!(result.warnings.is_empty());
-    let EntityContent::Sprites { states } = &result.archive.project.library.entities[0].content
+    let EntityContent::Sprites { states, .. } = &result.archive.project.library.entities[0].content
     else {
         panic!()
     };
@@ -289,7 +291,7 @@ fn import_linked_cel_remapped_within_state() {
     doc.frames.push(f2);
 
     let result = document_to_archive(&doc, "hero").unwrap();
-    let EntityContent::Sprites { states } = &result.archive.project.library.entities[0].content
+    let EntityContent::Sprites { states, .. } = &result.archive.project.library.entities[0].content
     else {
         panic!()
     };
@@ -324,7 +326,7 @@ fn import_unknown_blend_mode_warns() {
         &result.warnings[0],
         ConversionWarning::UnknownBlendMode { code: 99, .. }
     ));
-    let EntityContent::Sprites { states } = &result.archive.project.library.entities[0].content
+    let EntityContent::Sprites { states, .. } = &result.archive.project.library.entities[0].content
     else {
         panic!()
     };
@@ -494,7 +496,7 @@ fn per_state_export_round_trips_each_state() {
 
     let archive = make_archive_with_states(&["idle", "walk"]);
     let original_states = match &archive.project.library.entities[0].content {
-        EntityContent::Sprites { states } => states.clone(),
+        EntityContent::Sprites { states, .. } => states.clone(),
         _ => panic!(),
     };
 
@@ -506,7 +508,7 @@ fn per_state_export_round_trips_each_state() {
         let re_imported =
             document_to_archive(&decoded, &per_state.state_name).expect("import must succeed");
 
-        let EntityContent::Sprites { states } =
+        let EntityContent::Sprites { states, .. } =
             &re_imported.archive.project.library.entities[0].content
         else {
             panic!("expected Sprites content");
@@ -584,9 +586,9 @@ fn per_state_export_picks_active_entity() {
                 },
                 engine_tags: Vec::new(),
             }],
+            reference_sheet: None,
         },
         ai: AiMetadata::default(),
-        anchor_reference_id: None,
         user_data: UserData::default(),
         created_at: 0,
         updated_at: 0,
@@ -689,9 +691,9 @@ fn per_state_export_cross_state_link_warns_and_drops_cel() {
                     engine_tags: Vec::new(),
                 },
             ],
+            reference_sheet: None,
         },
         ai: AiMetadata::default(),
-        anchor_reference_id: None,
         user_data: UserData::default(),
         created_at: 0,
         updated_at: 0,
@@ -771,7 +773,7 @@ fn tag_with_from_frame_out_of_bounds_is_skipped_with_warning() {
         "expected InvalidTagRange warning for 'oob'"
     );
 
-    let EntityContent::Sprites { states } = &result.archive.project.library.entities[0].content
+    let EntityContent::Sprites { states, .. } = &result.archive.project.library.entities[0].content
     else {
         panic!("expected Sprites content");
     };
@@ -836,9 +838,9 @@ fn merged_export_overflowing_total_frames_returns_typed_error() {
         defaults: EntityDefaults::default(),
         content: EntityContent::Sprites {
             states: vec![make_state(1, 40_000), make_state(2, 40_000)],
+            reference_sheet: None,
         },
         ai: AiMetadata::default(),
-        anchor_reference_id: None,
         user_data: UserData::default(),
         created_at: 0,
         updated_at: 0,
@@ -956,7 +958,8 @@ fn merged_export_emits_tileset_chunks_for_sprite_tilesets() {
         pixels: vec![0xCCu8; 8 * 4 * 4],
     });
 
-    let EntityContent::Sprites { states } = &mut archive.project.library.entities[0].content else {
+    let EntityContent::Sprites { states, .. } = &mut archive.project.library.entities[0].content
+    else {
         panic!()
     };
     states[0].sprite.tilesets.push(Tileset {
@@ -1024,9 +1027,9 @@ fn merged_export_preserves_indexed_transparent_index() {
                 sprite,
                 engine_tags: Vec::new(),
             }],
+            reference_sheet: None,
         },
         ai: AiMetadata::default(),
-        anchor_reference_id: None,
         user_data: UserData::default(),
         created_at: 0,
         updated_at: 0,
@@ -1122,9 +1125,9 @@ fn merged_export_merges_slices_across_states_with_offset() {
         defaults: EntityDefaults::default(),
         content: EntityContent::Sprites {
             states: vec![make_state(1), make_state(2)],
+            reference_sheet: None,
         },
         ai: AiMetadata::default(),
-        anchor_reference_id: None,
         user_data: UserData::default(),
         created_at: 0,
         updated_at: 0,
@@ -1209,7 +1212,7 @@ fn external_tileset_import_preserves_path() {
         "no warnings expected for valid external tileset"
     );
 
-    let EntityContent::Sprites { states } = &result.archive.project.library.entities[0].content
+    let EntityContent::Sprites { states, .. } = &result.archive.project.library.entities[0].content
     else {
         panic!()
     };
@@ -1261,7 +1264,7 @@ fn cross_state_linked_cel_is_inlined_with_warning() {
         "expected CrossStateLinkedCel warning on import"
     );
 
-    let EntityContent::Sprites { states } = &result.archive.project.library.entities[0].content
+    let EntityContent::Sprites { states, .. } = &result.archive.project.library.entities[0].content
     else {
         panic!()
     };
@@ -1367,9 +1370,9 @@ fn merged_export_emits_per_frame_palette_overrides_with_offsets() {
         defaults: EntityDefaults::default(),
         content: EntityContent::Sprites {
             states: vec![state1, state2],
+            reference_sheet: None,
         },
         ai: AiMetadata::default(),
-        anchor_reference_id: None,
         user_data: UserData::default(),
         created_at: 0,
         updated_at: 0,
