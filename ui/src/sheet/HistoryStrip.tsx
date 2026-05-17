@@ -73,7 +73,7 @@ const HistoryStrip: Component<Props> = (props) => {
                 title={
                   isCanonical
                     ? "Canonical — currently approved"
-                    : new Date(variant.generated_at * 1000).toLocaleString()
+                    : new Date(variant.created_at * 1000).toLocaleString()
                 }
               >
                 <Show

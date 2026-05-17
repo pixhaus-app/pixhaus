@@ -34,6 +34,8 @@ pub mod anthropic;
 pub mod bridge;
 pub mod comfyui;
 pub mod error;
+pub mod fal;
+pub mod google;
 pub mod keys;
 pub mod ollama;
 pub mod openai;
@@ -248,6 +250,9 @@ pub struct ImageGenRequest {
     /// Reference image for style conditioning (raw PNG bytes).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub style_image: Option<Vec<u8>>,
+    /// Ordered reference images for multi-reference generation.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub reference_images: Vec<Vec<u8>>,
 }
 
 /// Quality hint for image generation backends.
@@ -304,6 +309,9 @@ pub struct ImageEditRequest {
     /// `ImageGenRequest::style_image` today.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub style_image: Option<Vec<u8>>,
+    /// Ordered additional references for image edits.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub reference_images: Vec<Vec<u8>>,
 }
 
 /// Frame interpolation request (`FRAME_INTERPOLATION` capability).

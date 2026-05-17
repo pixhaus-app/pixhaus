@@ -55,6 +55,44 @@
   grid-template-columns: minmax(0, 1fr) 320px;
 }
 
+.sheet-editor__request-strip {
+  border-bottom: 1px solid var(--border);
+  background: var(--bg-panel);
+  padding: 6px 10px;
+  display: flex;
+  gap: 8px;
+  overflow-x: auto;
+}
+
+.sheet-editor__request {
+  min-width: 260px;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  background: var(--bg-input);
+  padding: 6px;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 6px;
+  align-items: center;
+}
+
+.sheet-editor__request-main {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  font-size: 11px;
+  color: var(--text-secondary);
+}
+
+.sheet-editor__request-preview {
+  width: 48px;
+  height: 48px;
+  object-fit: cover;
+  border: 1px solid var(--border);
+  border-radius: 3px;
+  grid-column: 1 / -1;
+}
+
 .sheet-editor__preview {
   min-width: 0;
   min-height: 0;
@@ -98,6 +136,28 @@
   pointer-events: auto;
 }
 
+.sheet-editor__mask-canvas {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  cursor: crosshair;
+  opacity: 0.45;
+  mix-blend-mode: screen;
+  touch-action: none;
+}
+
+.sheet-editor__overlay--regions {
+  pointer-events: none;
+}
+
+.sheet-editor__overlay--regions rect {
+  fill: rgba(255, 180, 0, 0.18);
+  stroke: rgba(255, 180, 0, 0.9);
+  stroke-width: 2;
+  vector-effect: non-scaling-stroke;
+}
+
 .sheet-editor__panel rect {
   fill: rgba(66, 153, 225, 0.12);
   stroke: var(--accent);
@@ -138,6 +198,7 @@
 }
 
 .sheet-editor__textarea,
+.sheet-editor__input,
 .sheet-editor__select {
   width: 100%;
   border: 1px solid var(--border);
@@ -159,16 +220,94 @@
   padding: 0 7px;
 }
 
+.sheet-editor__input {
+  min-height: 30px;
+  padding: 0 7px;
+}
+
+.sheet-editor__input[type="color"] {
+  padding: 2px;
+}
+
 .sheet-editor__grid {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: 8px;
 }
 
+.sheet-editor__tabs,
+.sheet-editor__segmented {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+
+.sheet-editor__tab,
+.sheet-editor__segment {
+  min-height: 28px;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  background: var(--bg-input);
+  color: var(--text-secondary);
+  font-size: 11px;
+  padding: 0 8px;
+  cursor: pointer;
+}
+
+.sheet-editor__tab:hover,
+.sheet-editor__segment:hover,
+.sheet-editor__tab--active,
+.sheet-editor__segment--active {
+  border-color: var(--accent);
+  color: var(--text-primary);
+}
+
 .sheet-editor__actions {
   display: flex;
   gap: 8px;
   flex-wrap: wrap;
+}
+
+.sheet-editor__tool-row {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.sheet-editor__toggle {
+  flex-direction: row;
+  align-items: center;
+}
+
+.sheet-editor__dropzone {
+  border: 1px dashed var(--border-strong);
+  border-radius: 4px;
+  background: var(--bg-input);
+  padding: 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  font-size: 11px;
+  color: var(--text-secondary);
+}
+
+.sheet-editor__ref-slot {
+  min-height: 34px;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  background: var(--bg-panel);
+  padding: 4px;
+  display: grid;
+  grid-template-columns: 32px minmax(0, 1fr) minmax(64px, auto) auto auto auto;
+  gap: 4px;
+  align-items: center;
+}
+
+.sheet-editor__ref-slot img {
+  width: 32px;
+  height: 32px;
+  object-fit: cover;
+  border-radius: 3px;
 }
 
 .sheet-editor__variants {
@@ -204,6 +343,69 @@
   display: flex;
   align-items: center;
   color: var(--text-disabled);
+}
+
+.sheet-editor__meta,
+.sheet-editor__asset-counts,
+.sheet-editor__provenance {
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  background: var(--bg-input);
+  color: var(--text-secondary);
+  font-size: 11px;
+  padding: 8px;
+}
+
+.sheet-editor__asset-counts {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 6px;
+}
+
+.sheet-editor__asset-grid,
+.sheet-editor__asset-list {
+  display: grid;
+  gap: 6px;
+}
+
+.sheet-editor__asset-grid {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.sheet-editor__asset-card,
+.sheet-editor__asset-row {
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  background: var(--bg-input);
+  color: var(--text-secondary);
+  font-size: 11px;
+  text-align: left;
+  padding: 6px;
+}
+
+.sheet-editor__asset-card {
+  display: grid;
+  gap: 4px;
+}
+
+.sheet-editor__asset-card img {
+  width: 100%;
+  aspect-ratio: 1;
+  object-fit: cover;
+  border-radius: 3px;
+}
+
+.sheet-editor__provenance {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  line-height: 1.35;
+}
+
+.sheet-editor__prompt {
+  color: var(--text-primary);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
 }
 
 @media (max-width: 900px) {

@@ -606,6 +606,7 @@ mod tests {
             num_images: 1,
             quality: None,
             style_image: None,
+            reference_images: Vec::new(),
         });
         let (progress, _rx) = VerbProgress::channel();
         let cancel = CancellationToken::new();

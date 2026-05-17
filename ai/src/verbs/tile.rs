@@ -479,6 +479,7 @@ async fn generate_atlas(
         num_images: 1,
         quality: None,
         style_image,
+        reference_images: Vec::new(),
     });
 
     let response = backend

@@ -401,6 +401,7 @@ mod tests {
             num_images: 2,
             quality: None,
             style_image: None,
+            reference_images: Vec::new(),
         });
         let est = b.estimate_cost(&req);
         // 2 images at sd3-medium price.
@@ -426,6 +427,7 @@ mod tests {
             num_images: 1,
             quality: None,
             style_image: None,
+            reference_images: Vec::new(),
         });
         let (progress, _rx) = VerbProgress::channel();
         let cancel = CancellationToken::new();

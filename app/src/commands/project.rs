@@ -198,7 +198,7 @@ fn compute_next_id(project: &Project) -> u32 {
                     if let Some(canonical) = &sheet.canonical {
                         max = max.max(canonical.id.get()); // SheetVariantId
                     }
-                    for variant in &sheet.history {
+                    for variant in &sheet.variants {
                         max = max.max(variant.id.get()); // SheetVariantId
                     }
                 }
@@ -718,7 +718,7 @@ mod tests {
         let canonical = sheet.canonical.as_ref().expect("canonical");
         assert_eq!(canonical.id, SheetVariantId::new(12));
         assert_eq!(canonical.image.bytes, vec![1, 2, 3]);
-        assert_eq!(canonical.generated_at, 123);
+        assert_eq!(canonical.created_at, 123);
     }
 
     /// Round-trip: build a project in memory, encode it to a temp file,
@@ -861,8 +861,8 @@ mod tests {
     fn compute_next_id_covers_tilemap_and_sprite_reference_content() {
         use pixhaus_core::project::{
             AiMetadata, AssetInfo, Entity, EntityContent, EntityDefaults, EntityId, EntityKind,
-            LayerId, ReferenceImage, ReferenceSheet, SheetComposition, SheetVariant,
-            SheetVariantId, Size, TilemapData, TilemapLayer, TilemapScene, UserData,
+            LayerId, ReferenceImage, ReferenceSheet, SheetVariant, SheetVariantId, Size,
+            TilemapData, TilemapLayer, TilemapScene, UserData,
         };
 
         let mut project = Project::new("tilemap-ref-fixture");
@@ -906,28 +906,22 @@ mod tests {
             content: EntityContent::Sprites {
                 states: Vec::new(),
                 reference_sheet: Some(Box::new(ReferenceSheet {
-                    canonical: Some(SheetVariant {
-                        id: SheetVariantId::new(60),
-                        generated_at: 0,
-                        image: ReferenceImage {
+                    canonical: Some(SheetVariant::from_image(
+                        SheetVariantId::new(60),
+                        0,
+                        ReferenceImage {
                             bytes: vec![1],
                             mime: "image/png".into(),
                         },
-                        composition: SheetComposition::default(),
-                        generation: None,
-                        extracted_palette: Vec::new(),
-                    }),
-                    history: vec![SheetVariant {
-                        id: SheetVariantId::new(70),
-                        generated_at: 0,
-                        image: ReferenceImage {
+                    )),
+                    variants: vec![SheetVariant::from_image(
+                        SheetVariantId::new(70),
+                        0,
+                        ReferenceImage {
                             bytes: vec![2],
                             mime: "image/png".into(),
                         },
-                        composition: SheetComposition::default(),
-                        generation: None,
-                        extracted_palette: Vec::new(),
-                    }],
+                    )],
                     prompts: Vec::new(),
                     info: AssetInfo::default(),
                 })),

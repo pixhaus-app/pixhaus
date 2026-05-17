@@ -33,10 +33,10 @@ pub struct SchemaVersion {
 impl SchemaVersion {
     /// Major version this build of Pixhaus writes.
     ///
-    /// Bumped from `2` to `3` when standalone `Reference` entities and
-    /// `Entity.anchor_reference_id` were removed. Sprite reference
-    /// sheets now live directly inside `EntityContent::Sprites`.
-    pub const MAJOR: u16 = 3;
+    /// Bumped from `3` to `4` for the full v1 AI reference-sheet model:
+    /// variants, provenance, project assets, provider prefs, LoRA jobs,
+    /// and vector outputs are stored directly in the project file.
+    pub const MAJOR: u16 = 4;
 
     /// Minor version this build of Pixhaus writes.
     ///
@@ -163,21 +163,21 @@ mod tests {
 
     #[test]
     fn same_major_is_compatible() {
-        let v = SchemaVersion { major: 3, minor: 5 };
-        let other = SchemaVersion { major: 3, minor: 0 };
+        let v = SchemaVersion { major: 4, minor: 5 };
+        let other = SchemaVersion { major: 4, minor: 0 };
         assert!(v.is_compatible_with(other));
     }
 
     #[test]
     fn newer_major_is_incompatible() {
-        let v = SchemaVersion { major: 3, minor: 0 };
-        let other = SchemaVersion { major: 4, minor: 0 };
+        let v = SchemaVersion { major: 4, minor: 0 };
+        let other = SchemaVersion { major: 5, minor: 0 };
         assert!(!v.is_compatible_with(other));
     }
 
     #[test]
-    fn current_major_is_three() {
-        assert_eq!(SchemaVersion::MAJOR, 3);
+    fn current_major_is_four() {
+        assert_eq!(SchemaVersion::MAJOR, 4);
         assert_eq!(SchemaVersion::MINOR, 0);
     }
 

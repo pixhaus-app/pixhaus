@@ -4,7 +4,15 @@
 // sheet image, panel overlays, asset info, history, and prompt history.
 
 import { type Component, For, Show, createEffect, createSignal, on } from "solid-js";
-import type { Entity, EntityContent, EntityId, ReferenceSheet, SheetVariant } from "../lib/types";
+import type {
+  AssetInfo,
+  Entity,
+  EntityContent,
+  EntityId,
+  PromptEntry,
+  ReferenceSheet,
+  SheetVariant,
+} from "../lib/types";
 import {
   libraryDeleteSheetVariant,
   libraryGetEntity,
@@ -28,6 +36,12 @@ import HistoryStrip from "./HistoryStrip";
 import PromptStrip from "./PromptStrip";
 
 type BottomTab = "history" | "prompts";
+
+type LegacySheetExtras = {
+  info?: AssetInfo;
+  prompts?: PromptEntry[];
+  history?: SheetVariant[];
+};
 
 // Extracts the ReferenceSheet from an entity's sprite content. Returns null
 // when the entity has no embedded sheet.
@@ -84,13 +98,26 @@ const SheetView: Component = () => {
     const e = entity();
     return e !== null ? referenceSheet(e) : null;
   };
+  const variants = (): SheetVariant[] => {
+    const s = sheet();
+    if (s === null) return [];
+    return s.variants ?? (s as ReferenceSheet & LegacySheetExtras).history ?? [];
+  };
+  const legacyInfo = (): AssetInfo => {
+    const s = sheet() as (ReferenceSheet & LegacySheetExtras) | null;
+    return s?.info ?? { fields: {}, notes: [] };
+  };
+  const legacyPrompts = (): PromptEntry[] => {
+    const s = sheet() as (ReferenceSheet & LegacySheetExtras) | null;
+    return s?.prompts ?? [];
+  };
 
   // The image currently shown: the previewed history variant, canonical,
   // or first draft candidate when no canonical has been approved yet.
   const displayedVariant = (): SheetVariant | null => {
     const s = sheet();
     if (s === null) return null;
-    return previewVariant() ?? s.canonical ?? s.history?.[0] ?? null;
+    return previewVariant() ?? s.canonical ?? variants()[0] ?? null;
   };
 
   const displayedDataUrl = useImageObjectUrl(() => displayedVariant()?.image ?? null);
@@ -327,10 +354,7 @@ const SheetView: Component = () => {
           </div>
 
           <div class="sheet-panel__info-area">
-            <AssetInfoPanel
-              info={sheet()?.info ?? { fields: {}, notes: [] }}
-              onSave={handleSaveInfo}
-            />
+            <AssetInfoPanel info={legacyInfo()} onSave={handleSaveInfo} />
           </div>
         </div>
 
@@ -381,7 +405,7 @@ const SheetView: Component = () => {
           <Show when={activeTab() === "history"}>
             <HistoryStrip
               canonical={sheet()!.canonical}
-              history={sheet()?.history ?? []}
+              history={variants()}
               previewId={previewVariant()?.id ?? null}
               onPreview={(v) => setPreviewVariant(v)}
               onApprove={handleApprove}
@@ -390,7 +414,7 @@ const SheetView: Component = () => {
           </Show>
 
           <Show when={activeTab() === "prompts"}>
-            <PromptStrip prompts={sheet()?.prompts ?? []} />
+            <PromptStrip prompts={legacyPrompts()} />
           </Show>
         </div>
       </Show>

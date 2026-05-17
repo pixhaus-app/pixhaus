@@ -8,20 +8,37 @@
 import { invoke } from "../ipc";
 import type {
   ActiveTarget,
+  AssetId,
+  AssetLibrary,
   AssetInfo,
+  CharacterCard,
   ColorMode,
   Entity,
   EntityGroup,
   EntityId,
   EntityKind,
   GroupId,
+  LoraKind,
+  ModelId,
   NamedSprite,
+  OperationKind,
   PaletteEntry,
+  Quality,
+  ReferenceAsset,
+  ReferenceImage,
+  ReferenceRole,
+  ReferenceSheetTemplateDefinition,
+  ReferenceSheetTemplateId,
+  ReferenceSlot,
+  RefinementKind,
   Rgba,
   SheetComposition,
   SheetVariantId,
+  StyleSwatch,
   TagDefinition,
   TagId,
+  TrainingJob,
+  TrainingJobId,
 } from "../types";
 
 // ── arg types ─────────────────────────────────────────────────────────────────
@@ -60,15 +77,94 @@ export type ImageQuality = "auto" | "low" | "medium" | "high";
 export type LibraryGenerateReferenceSheetArgs = {
   entity_id: EntityId;
   prompt: string;
-  template: ReferenceSheetTemplate;
-  quality?: ImageQuality | null;
+  template: ReferenceSheetTemplateId;
+  width: number;
+  height: number;
+  chroma_color: Rgba;
+  quality: Quality;
   candidate_count: number;
+  model?: ModelId | null;
+  references?: ReferenceSlot[];
+  real_world_grounding?: boolean;
+  applied_lora?: AssetId | null;
+  lora_weight?: number;
 };
 
 export type LibraryImportReferenceSheetArgs = {
   entity_id: EntityId;
   bytes: number[];
   mime?: string | null;
+};
+
+export type RequestId = number;
+
+export type ModelQualityPair = {
+  model: ModelId;
+  quality: Quality;
+};
+
+export type LibraryRefineReferenceSheetVariantArgs = {
+  entity_id: EntityId;
+  parent_variant_id: SheetVariantId;
+  refinement: RefinementKind;
+  prompt: string;
+  quality: Quality;
+  candidate_count: number;
+  model?: ModelId | null;
+  additional_references?: ReferenceSlot[];
+};
+
+export type LibrarySubmitChatTurnArgs = {
+  entity_id: EntityId;
+  variant_id: SheetVariantId;
+  user_message: string;
+  mask?: ReferenceImage | null;
+  model?: ModelId | null;
+};
+
+export type LibraryPromoteVariantToFinalArgs = {
+  entity_id: EntityId;
+  source_variant_id: SheetVariantId;
+  target_quality: Quality;
+  target_model?: ModelId | null;
+};
+
+export type LibraryStartCrossModelGridArgs = {
+  entity_id: EntityId;
+  prompt: string;
+  template: ReferenceSheetTemplateId;
+  width: number;
+  height: number;
+  chroma_color: Rgba;
+  references?: ReferenceSlot[];
+  combinations: ModelQualityPair[];
+  candidate_count_per_combo: number;
+};
+
+export type LibrarySaveReferenceToLibraryArgs = {
+  image: ReferenceImage;
+  role?: ReferenceRole;
+  tags?: string[];
+};
+
+export type LibrarySaveVariantCardArgs = {
+  entity_id: EntityId;
+  variant_id: SheetVariantId;
+  name: string;
+  style_notes?: string;
+};
+
+export type LibraryTrainLoraArgs = {
+  name: string;
+  kind: LoraKind;
+  target_model: ModelId;
+  trigger_word: string;
+  training_data: AssetId[];
+};
+
+export type ProjectSetOperationModelPrefArgs = {
+  operation: OperationKind;
+  model: ModelId;
 };
 
 export type LibraryCreateGroupArgs = {
@@ -257,8 +353,8 @@ export function libraryDeleteSheetVariant(
  */
 export function libraryGenerateReferenceSheet(
   args: LibraryGenerateReferenceSheetArgs,
-): Promise<Entity> {
-  return invoke<Entity>("library_generate_reference_sheet", { args });
+): Promise<RequestId> {
+  return invoke<RequestId>("library_generate_reference_sheet", { args });
 }
 
 /**
@@ -281,6 +377,125 @@ export function libraryRemoveReferenceSheetVariant(
   return invoke<Entity>("library_remove_reference_sheet_variant", {
     args: { entity_id, variant_id },
   });
+}
+
+export function libraryListReferenceSheetTemplates(): Promise<ReferenceSheetTemplateDefinition[]> {
+  return invoke<ReferenceSheetTemplateDefinition[]>("library_list_reference_sheet_templates");
+}
+
+export function libraryCancelReferenceSheetRequest(request_id: RequestId): Promise<void> {
+  return invoke<void>("library_cancel_reference_sheet_request", { request_id });
+}
+
+export function libraryRefineReferenceSheetVariant(
+  args: LibraryRefineReferenceSheetVariantArgs,
+): Promise<RequestId> {
+  return invoke<RequestId>("library_refine_reference_sheet_variant", { args });
+}
+
+export function librarySubmitChatTurn(args: LibrarySubmitChatTurnArgs): Promise<RequestId> {
+  return invoke<RequestId>("library_submit_chat_turn", { args });
+}
+
+export function libraryPromoteVariantToFinal(
+  args: LibraryPromoteVariantToFinalArgs,
+): Promise<RequestId> {
+  return invoke<RequestId>("library_promote_variant_to_final", { args });
+}
+
+export function libraryStartCrossModelGrid(
+  args: LibraryStartCrossModelGridArgs,
+): Promise<RequestId> {
+  return invoke<RequestId>("library_start_cross_model_grid", { args });
+}
+
+export function libraryExportVariantAsVector(
+  entity_id: EntityId,
+  variant_id: SheetVariantId,
+): Promise<RequestId> {
+  return invoke<RequestId>("library_export_variant_as_vector", {
+    args: { entity_id, variant_id },
+  });
+}
+
+export function librarySaveReferenceToLibrary(
+  args: LibrarySaveReferenceToLibraryArgs,
+): Promise<ReferenceAsset> {
+  return invoke<ReferenceAsset>("library_save_reference_to_library", { args });
+}
+
+export function librarySaveVariantAsCharacterCard(
+  args: LibrarySaveVariantCardArgs,
+): Promise<CharacterCard> {
+  return invoke<CharacterCard>("library_save_variant_as_character_card", { args });
+}
+
+export function librarySaveVariantAsStyleSwatch(
+  args: LibrarySaveVariantCardArgs,
+): Promise<StyleSwatch> {
+  return invoke<StyleSwatch>("library_save_variant_as_style_swatch", { args });
+}
+
+export function libraryBrowseAssets(filters?: unknown): Promise<AssetLibrary> {
+  return invoke<AssetLibrary>("library_browse_assets", { filters: filters ?? null });
+}
+
+export function libraryGetAsset(asset_id: AssetId): Promise<unknown> {
+  return invoke<unknown>("library_get_asset", { asset_id });
+}
+
+export function libraryRemoveAsset(asset_id: AssetId): Promise<void> {
+  return invoke<void>("library_remove_asset", { asset_id });
+}
+
+export function libraryUpdateAssetTags(asset_id: AssetId, tags: string[]): Promise<void> {
+  return invoke<void>("library_update_asset_tags", { args: { asset_id, tags } });
+}
+
+export function libraryTrainLora(args: LibraryTrainLoraArgs): Promise<TrainingJobId> {
+  return invoke<TrainingJobId>("library_train_lora", { args });
+}
+
+export function libraryGetTrainingJobStatus(job_id: TrainingJobId): Promise<TrainingJob> {
+  return invoke<TrainingJob>("library_get_training_job_status", { job_id });
+}
+
+export function libraryListTrainingJobs(): Promise<TrainingJob[]> {
+  return invoke<TrainingJob[]>("library_list_training_jobs");
+}
+
+export function libraryCancelTrainingJob(job_id: TrainingJobId): Promise<void> {
+  return invoke<void>("library_cancel_training_job", { job_id });
+}
+
+export function projectGetStyleNotes(): Promise<string> {
+  return invoke<string>("project_get_style_notes");
+}
+
+export function projectSetStyleNotes(notes: string): Promise<void> {
+  return invoke<void>("project_set_style_notes", { notes });
+}
+
+export function projectSetOperationModelPref(
+  args: ProjectSetOperationModelPrefArgs,
+): Promise<void> {
+  return invoke<void>("project_set_operation_model_pref", { args });
+}
+
+export function projectClearOperationModelPrefs(): Promise<void> {
+  return invoke<void>("project_clear_operation_model_prefs");
+}
+
+export function projectSetDefaultChroma(color: Rgba): Promise<void> {
+  return invoke<void>("project_set_default_chroma", { color });
+}
+
+export function projectSetDefaultQuality(quality: Quality): Promise<void> {
+  return invoke<void>("project_set_default_quality", { quality });
+}
+
+export function projectSetDefaultCandidateCount(n: number): Promise<void> {
+  return invoke<void>("project_set_default_candidate_count", { n });
 }
 
 // ── B9.4: library AI hooks ────────────────────────────────────────────────────

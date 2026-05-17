@@ -296,6 +296,30 @@ impl VerbRuntime {
         })
     }
 
+    /// Selects a specific available backend by id and verifies that it
+    /// satisfies the requested capabilities.
+    pub fn select_backend_by_id(
+        &self,
+        id: &str,
+        required: BackendCapabilities,
+        verb: &VerbId,
+    ) -> Result<Arc<dyn InferenceBackend>> {
+        let backends = self.backends.read();
+        let Some(entry) = backends.iter().find(|entry| entry.backend.id() == id) else {
+            return Err(VerbError::BackendNotFound(id.to_owned()));
+        };
+        if !entry.backend.capabilities().contains(required) {
+            return Err(VerbError::UnsupportedCapability {
+                verb: verb.clone(),
+                required,
+            });
+        }
+        if !entry.backend.is_available() {
+            return Err(VerbError::BackendUnavailable { id: id.to_owned() });
+        }
+        Ok(entry.backend.clone())
+    }
+
     // ── Dispatch ────────────────────────────────────────────────────────────
 
     /// Starts an invocation. Returns a [`VerbInvocation`] the caller

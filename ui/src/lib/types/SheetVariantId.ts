@@ -4,7 +4,7 @@
  * Identifier of a [`SheetVariant`](super::library::SheetVariant) within
  * a [`ReferenceSheet`](super::library::ReferenceSheet).
  *
- * Reference sheets keep older variants in their `history`; the id makes
+ * Reference sheets keep older variants in their `variants`; the id makes
  * it possible to point at one specific variant from a generation log.
  */
 export type SheetVariantId = number;

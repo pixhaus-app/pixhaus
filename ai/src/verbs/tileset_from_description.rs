@@ -307,6 +307,7 @@ impl Verb for TilesetFromDescriptionVerb {
             num_images: 1,
             quality: None,
             style_image,
+            reference_images: Vec::new(),
         });
 
         let response = select! {

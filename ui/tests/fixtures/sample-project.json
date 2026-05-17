@@ -1,6 +1,6 @@
 {
   "schema_version": {
-    "major": 3,
+    "major": 4,
     "minor": 0
   },
   "feature_flags": 15,
@@ -314,7 +314,17 @@
             "reference_sheet": {
               "canonical": {
                 "id": 3,
-                "generated_at": 1700000020,
+                "created_at": 1700000020,
+                "template": "custom",
+                "width": 2048,
+                "height": 1024,
+                "chroma_color": {
+                  "r": 255,
+                  "g": 0,
+                  "b": 255,
+                  "a": 255
+                },
+                "real_world_grounding": false,
                 "image": {
                   "bytes": [
                     137,
@@ -323,7 +333,11 @@
                     71
                   ],
                   "mime": "image/png"
-                }
+                },
+                "model": "auto",
+                "quality": "medium",
+                "origin": "manual_import",
+                "promotion": false
               }
             }
           }

@@ -19,10 +19,25 @@ import { setCrashReportingEnabled as setSentryEnabled } from "../crash-reporting
 import { getAllCommands } from "../command-palette/command-registry";
 import {
   aiClearOpenAiApiKey,
+  aiClearFalApiKey,
+  aiClearGoogleAiApiKey,
+  aiGetProviderOverview,
   aiGetOpenAiStatus,
+  aiSetFalApiKey,
+  aiSetGoogleAiApiKey,
   aiSetOpenAiApiKey,
   type OpenAiStatus,
+  type ProviderStatus,
 } from "../lib/commands/ai";
+import {
+  projectClearOperationModelPrefs,
+  projectGetStyleNotes,
+  projectSetDefaultCandidateCount,
+  projectSetDefaultQuality,
+  projectSetOperationModelPref,
+  projectSetStyleNotes,
+} from "../lib/commands/library";
+import type { ModelId, OperationKind, Quality } from "../lib/types";
 import { pushToast } from "../lib/toast/toast-state";
 import { reportCommandFailure } from "../lib/utils/errors";
 
@@ -185,14 +200,32 @@ const KeybindsTab: Component = () => {
 
 const AiTab: Component = () => {
   const [status, setStatus] = createSignal<OpenAiStatus | null>(null);
+  const [providers, setProviders] = createSignal<ProviderStatus[]>([]);
   const [apiKey, setApiKey] = createSignal("");
+  const [googleKey, setGoogleKey] = createSignal("");
+  const [falKey, setFalKey] = createSignal("");
+  const [styleNotes, setStyleNotes] = createSignal("");
+  const [prefOperation, setPrefOperation] = createSignal<OperationKind>("fresh_generation");
+  const [prefModel, setPrefModel] = createSignal<ModelId>("auto");
+  const [defaultQuality, setDefaultQuality] = createSignal<Quality>("medium");
+  const [defaultCandidateCount, setDefaultCandidateCount] = createSignal(2);
   const [saving, setSaving] = createSignal(false);
 
   onMount(() => {
+    refreshAiStatus();
+    projectGetStyleNotes()
+      .then(setStyleNotes)
+      .catch((err: unknown) => reportCommandFailure("project_get_style_notes", err));
+  });
+
+  function refreshAiStatus(): void {
     aiGetOpenAiStatus()
       .then(setStatus)
       .catch((err: unknown) => reportCommandFailure("ai_get_openai_status", err));
-  });
+    aiGetProviderOverview()
+      .then(setProviders)
+      .catch((err: unknown) => reportCommandFailure("ai_get_provider_overview", err));
+  }
 
   function handleSave(): void {
     const key = apiKey().trim();
@@ -202,6 +235,7 @@ const AiTab: Component = () => {
       .then((next) => {
         setStatus(next);
         setApiKey("");
+        refreshAiStatus();
         pushToast({ kind: "success", title: "OpenAI API key saved." });
       })
       .catch((err: unknown) => reportCommandFailure("ai_set_openai_api_key", err))
@@ -215,21 +249,71 @@ const AiTab: Component = () => {
       .then((next) => {
         setStatus(next);
         setApiKey("");
+        refreshAiStatus();
         pushToast({ kind: "info", title: "OpenAI API key cleared." });
       })
       .catch((err: unknown) => reportCommandFailure("ai_clear_openai_api_key", err))
       .finally(() => setSaving(false));
   }
 
+  function handleProviderSave(provider: "google_ai" | "fal"): void {
+    const key = provider === "google_ai" ? googleKey().trim() : falKey().trim();
+    if (key.length === 0 || saving()) return;
+    setSaving(true);
+    const save = provider === "google_ai" ? aiSetGoogleAiApiKey : aiSetFalApiKey;
+    save(key)
+      .then(() => {
+        if (provider === "google_ai") setGoogleKey("");
+        else setFalKey("");
+        refreshAiStatus();
+        pushToast({ kind: "success", title: "API key saved." });
+      })
+      .catch((err: unknown) => reportCommandFailure("ai_set_provider_api_key", err))
+      .finally(() => setSaving(false));
+  }
+
+  function handleProviderClear(provider: "google_ai" | "fal"): void {
+    if (saving()) return;
+    setSaving(true);
+    const clear = provider === "google_ai" ? aiClearGoogleAiApiKey : aiClearFalApiKey;
+    clear()
+      .then(() => {
+        refreshAiStatus();
+        pushToast({ kind: "info", title: "API key cleared." });
+      })
+      .catch((err: unknown) => reportCommandFailure("ai_clear_provider_api_key", err))
+      .finally(() => setSaving(false));
+  }
+
+  function providerStatus(provider: "google_ai" | "fal"): ProviderStatus | null {
+    return providers().find((item) => item.provider === provider) ?? null;
+  }
+
+  function handleSaveProjectDefaults(): void {
+    Promise.all([
+      projectSetStyleNotes(styleNotes()),
+      projectSetDefaultQuality(defaultQuality()),
+      projectSetDefaultCandidateCount(defaultCandidateCount()),
+    ])
+      .then(() => pushToast({ kind: "success", title: "AI defaults saved." }))
+      .catch((err: unknown) => reportCommandFailure("project_set_ai_defaults", err));
+  }
+
+  function handleSaveOperationPref(): void {
+    projectSetOperationModelPref({ operation: prefOperation(), model: prefModel() })
+      .then(() => pushToast({ kind: "success", title: "Operation preference saved." }))
+      .catch((err: unknown) => reportCommandFailure("project_set_operation_model_pref", err));
+  }
+
   return (
+    <>
     <div class="prefs__section">
-      <p class="prefs__section-title">OpenAI</p>
+      <p class="prefs__section-title">Providers</p>
       <div class="prefs__row">
         <div>
-          <div class="prefs__label">
-            {status()?.configured ? "API key saved" : "API key missing"}
-          </div>
+          <div class="prefs__label">OpenAI</div>
           <div class="prefs__sublabel">
+            {status()?.configured ? "Configured" : "Not configured"} ·{" "}
             Image model: {status()?.model ?? "gpt-image-2"}
             {status()?.registered ? " · backend ready" : ""}
           </div>
@@ -263,9 +347,141 @@ const AiTab: Component = () => {
           </Button>
         </div>
       </div>
+      <ProviderKeyRow
+        label="Google AI Studio"
+        placeholder="AIza..."
+        status={providerStatus("google_ai")}
+        value={googleKey()}
+        onInput={setGoogleKey}
+        onSave={() => handleProviderSave("google_ai")}
+        onClear={() => handleProviderClear("google_ai")}
+        saving={saving()}
+      />
+      <ProviderKeyRow
+        label="fal.ai"
+        placeholder="fal-key..."
+        status={providerStatus("fal")}
+        value={falKey()}
+        onInput={setFalKey}
+        onSave={() => handleProviderSave("fal")}
+        onClear={() => handleProviderClear("fal")}
+        saving={saving()}
+      />
     </div>
+    <div class="prefs__section">
+      <p class="prefs__section-title">Project AI defaults</p>
+      <label class="prefs__row">
+        <div>
+          <div class="prefs__label">Style notes</div>
+          <textarea
+            class="prefs__select"
+            value={styleNotes()}
+            onInput={(event) => setStyleNotes(event.currentTarget.value)}
+          />
+        </div>
+      </label>
+      <div class="prefs__row">
+        <select
+          class="prefs__select"
+          value={defaultQuality()}
+          onChange={(event) => setDefaultQuality(event.currentTarget.value as Quality)}
+        >
+          <option value="auto">Auto</option>
+          <option value="low">Low</option>
+          <option value="medium">Medium</option>
+          <option value="high">High</option>
+        </select>
+        <input
+          class="prefs__select"
+          type="number"
+          min="1"
+          max="4"
+          value={defaultCandidateCount()}
+          onInput={(event) => setDefaultCandidateCount(Number(event.currentTarget.value))}
+        />
+        <Button onClick={handleSaveProjectDefaults}>Save defaults</Button>
+      </div>
+    </div>
+    <div class="prefs__section">
+      <p class="prefs__section-title">Per-operation model preference</p>
+      <div class="prefs__row">
+        <select
+          class="prefs__select"
+          value={prefOperation()}
+          onChange={(event) => setPrefOperation(event.currentTarget.value as OperationKind)}
+        >
+          <option value="fresh_generation">Fresh generation</option>
+          <option value="masked_refinement">Masked refinement</option>
+          <option value="prompt_only_refinement">Prompt-only refinement</option>
+          <option value="regional_refinement">Regional refinement</option>
+          <option value="chat_turn">Chat turn</option>
+          <option value="promotion">Promotion</option>
+        </select>
+        <select
+          class="prefs__select"
+          value={prefModel()}
+          onChange={(event) => setPrefModel(event.currentTarget.value as ModelId)}
+        >
+          <option value="auto">Auto</option>
+          <option value="open_ai_gpt_image2">OpenAI gpt-image-2</option>
+          <option value="google_nano_banana_pro">Nano Banana Pro</option>
+          <option value="google_gemini_flash_image">Gemini Flash Image</option>
+          <option value="fal_flux_kontext">fal Flux Kontext</option>
+          <option value="fal_flux_dev">fal Flux.1 dev</option>
+        </select>
+        <Button onClick={handleSaveOperationPref}>Save</Button>
+        <Button
+          variant="ghost"
+          onClick={() =>
+            projectClearOperationModelPrefs()
+              .then(() => pushToast({ kind: "info", title: "Operation preferences cleared." }))
+              .catch((err: unknown) => reportCommandFailure("project_clear_operation_model_prefs", err))
+          }
+        >
+          Clear all
+        </Button>
+      </div>
+    </div>
+    </>
   );
 };
+
+const ProviderKeyRow: Component<{
+  label: string;
+  placeholder: string;
+  status: ProviderStatus | null;
+  value: string;
+  onInput: (value: string) => void;
+  onSave: () => void;
+  onClear: () => void;
+  saving: boolean;
+}> = (props) => (
+  <div class="prefs__row">
+    <div>
+      <div class="prefs__label">{props.label}</div>
+      <div class="prefs__sublabel">
+        {props.status?.state ?? "not_configured"}
+        {props.status?.registered ? " · backend ready" : ""}
+      </div>
+      <input
+        class="prefs__select"
+        type="password"
+        autocomplete="off"
+        value={props.value}
+        placeholder={props.status?.configured ? "Saved key is hidden" : props.placeholder}
+        onInput={(event) => props.onInput(event.currentTarget.value)}
+      />
+    </div>
+    <div class="prefs__row-actions">
+      <Button onClick={props.onSave} disabled={props.saving || props.value.trim().length === 0}>
+        Save
+      </Button>
+      <Button variant="ghost" onClick={props.onClear} disabled={props.saving || !props.status?.configured}>
+        Clear
+      </Button>
+    </div>
+  </div>
+);
 
 const PrivacyTab: Component = () => {
   function handleToggle(e: Event): void {

@@ -554,6 +554,7 @@ mod tests {
             num_images: 1,
             quality: None,
             style_image: None,
+            reference_images: Vec::new(),
         });
         let est = b.estimate_cost(&req);
         assert_eq!(est.typical_usd_cents, 0.0);
@@ -572,6 +573,7 @@ mod tests {
             num_images: 1,
             quality: None,
             style_image: None,
+            reference_images: Vec::new(),
         };
         let wf = ComfyUiBackend::txt2img_workflow(&req);
         let positive_text = wf["6"]["inputs"]["text"].as_str().unwrap();
@@ -592,6 +594,7 @@ mod tests {
             num_images: 4,
             quality: None,
             style_image: None,
+            reference_images: Vec::new(),
         };
         let wf = ComfyUiBackend::txt2img_workflow(&req);
         assert_eq!(wf["5"]["inputs"]["batch_size"], 4);
@@ -610,6 +613,7 @@ mod tests {
             num_images: 0,
             quality: None,
             style_image: None,
+            reference_images: Vec::new(),
         };
         let wf = ComfyUiBackend::txt2img_workflow(&req);
         // ComfyUI rejects batch_size = 0; clamp keeps the workflow runnable.
@@ -664,6 +668,7 @@ mod tests {
             num_images: 1,
             quality: None,
             style_image: None,
+            reference_images: Vec::new(),
         });
         let (progress, _rx) = VerbProgress::channel();
         let cancel = CancellationToken::new();

@@ -443,6 +443,7 @@ impl VariantVerb {
             negative_prompt: None,
             num_images: count.max(1),
             style_image: ictx.anchor_style_image.clone(),
+            reference_images: Vec::new(),
         };
         progress
             .step(Some(0.2), "sending to inference backend")
