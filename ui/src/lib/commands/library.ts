@@ -494,8 +494,16 @@ export function projectSetDefaultQuality(quality: Quality): Promise<void> {
   return invoke<void>("project_set_default_quality", { quality });
 }
 
+export function projectGetDefaultQuality(): Promise<Quality> {
+  return invoke<Quality>("project_get_default_quality");
+}
+
 export function projectSetDefaultCandidateCount(n: number): Promise<void> {
   return invoke<void>("project_set_default_candidate_count", { n });
+}
+
+export function projectGetDefaultCandidateCount(): Promise<number> {
+  return invoke<number>("project_get_default_candidate_count");
 }
 
 // ── B9.4: library AI hooks ────────────────────────────────────────────────────

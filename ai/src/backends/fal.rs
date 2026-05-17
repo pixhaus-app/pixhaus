@@ -330,6 +330,7 @@ impl InferenceBackend for FalBackend {
         BackendCapabilities::IMAGE_GENERATION
             .union(BackendCapabilities::IMAGE_EDIT)
             .union(BackendCapabilities::IMAGE_INPAINT)
+            .union(BackendCapabilities::STYLE_TRAINING)
     }
 
     fn supports_streaming(&self) -> bool {
@@ -833,6 +834,12 @@ mod tests {
                 .unwrap_or_default()
                 .starts_with("data:application/zip;base64,")
         );
+    }
+
+    #[test]
+    fn fal_backend_advertises_lora_training() {
+        let caps = FalBackend::new("key").capabilities();
+        assert!(caps.contains(BackendCapabilities::STYLE_TRAINING));
     }
 
     #[tokio::test]

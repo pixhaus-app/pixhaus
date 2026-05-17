@@ -4702,6 +4702,17 @@ pub async fn project_set_default_chroma(
     Ok(())
 }
 
+/// Gets the default quality.
+#[tauri::command(async, rename_all = "snake_case")]
+pub async fn project_get_default_quality(state: State<'_, AppState>) -> CommandResult<Quality> {
+    let doc = state.doc.read().await;
+    let project = doc
+        .project
+        .as_ref()
+        .ok_or(AppCommandError::NoActiveProject)?;
+    Ok(project.library.ai.default_quality)
+}
+
 /// Sets the default quality.
 #[tauri::command(async, rename_all = "snake_case")]
 pub async fn project_set_default_quality(
@@ -4716,6 +4727,17 @@ pub async fn project_set_default_quality(
     project.library.ai.default_quality = quality;
     doc.dirty = true;
     Ok(())
+}
+
+/// Gets the default candidate count.
+#[tauri::command(async, rename_all = "snake_case")]
+pub async fn project_get_default_candidate_count(state: State<'_, AppState>) -> CommandResult<u8> {
+    let doc = state.doc.read().await;
+    let project = doc
+        .project
+        .as_ref()
+        .ok_or(AppCommandError::NoActiveProject)?;
+    Ok(project.library.ai.default_candidate_count)
 }
 
 /// Sets the default candidate count.

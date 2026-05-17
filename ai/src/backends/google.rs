@@ -119,10 +119,7 @@ impl InferenceBackend for GoogleAiBackend {
     }
 
     fn capabilities(&self) -> BackendCapabilities {
-        BackendCapabilities::IMAGE_GENERATION
-            .union(BackendCapabilities::IMAGE_EDIT)
-            .union(BackendCapabilities::IMAGE_INPAINT)
-            .union(BackendCapabilities::VISION_LANGUAGE)
+        BackendCapabilities::IMAGE_GENERATION.union(BackendCapabilities::IMAGE_EDIT)
     }
 
     fn supports_streaming(&self) -> bool {
@@ -166,7 +163,7 @@ impl InferenceBackend for GoogleAiBackend {
                     .await?;
                 Ok(InferenceResponse::Image(resp))
             }
-            InferenceRequest::ImageEdit(req) | InferenceRequest::ImageInpaint(req) => {
+            InferenceRequest::ImageEdit(req) => {
                 let mut images = vec![(req.image.as_slice(), "image/png")];
                 if let Some(mask) = req.mask.as_deref() {
                     images.push((mask, "image/png"));
@@ -303,6 +300,15 @@ mod tests {
             "image/png"
         );
         assert_eq!(body["generationConfig"]["responseModalities"][0], "IMAGE");
+    }
+
+    #[test]
+    fn capabilities_match_implemented_request_paths() {
+        let caps = GoogleAiBackend::new("key").capabilities();
+        assert!(caps.contains(BackendCapabilities::IMAGE_GENERATION));
+        assert!(caps.contains(BackendCapabilities::IMAGE_EDIT));
+        assert!(!caps.contains(BackendCapabilities::IMAGE_INPAINT));
+        assert!(!caps.contains(BackendCapabilities::VISION_LANGUAGE));
     }
 
     #[test]

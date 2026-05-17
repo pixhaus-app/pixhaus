@@ -104,6 +104,7 @@ pub async fn ai_get_provider_overview(
             "OpenAI",
             openai_key_configured()?,
             openai_registered(&state),
+            openai_available(&state),
             &[DEFAULT_IMAGE_MODEL],
         ),
         provider_status(
@@ -111,6 +112,7 @@ pub async fn ai_get_provider_overview(
             "Google AI Studio",
             provider_key_configured("google_ai")?,
             provider_registered(&state, "google_ai"),
+            provider_available(&state, "google_ai"),
             GOOGLE_IMAGE_MODELS,
         ),
         provider_status(
@@ -118,6 +120,7 @@ pub async fn ai_get_provider_overview(
             "fal.ai",
             provider_key_configured("fal")?,
             provider_registered(&state, "fal"),
+            provider_available(&state, "fal"),
             FAL_IMAGE_MODELS,
         ),
     ])
@@ -131,6 +134,7 @@ pub async fn ai_get_google_ai_status(state: State<'_, AppState>) -> CommandResul
         "Google AI Studio",
         provider_key_configured("google_ai")?,
         provider_registered(&state, "google_ai"),
+        provider_available(&state, "google_ai"),
         GOOGLE_IMAGE_MODELS,
     ))
 }
@@ -156,6 +160,7 @@ pub async fn ai_set_google_ai_api_key(
         "Google AI Studio",
         true,
         true,
+        true,
         GOOGLE_IMAGE_MODELS,
     ))
 }
@@ -172,6 +177,7 @@ pub async fn ai_clear_google_ai_api_key(
         "Google AI Studio",
         false,
         false,
+        false,
         GOOGLE_IMAGE_MODELS,
     ))
 }
@@ -184,6 +190,7 @@ pub async fn ai_get_fal_status(state: State<'_, AppState>) -> CommandResult<Prov
         "fal.ai",
         provider_key_configured("fal")?,
         provider_registered(&state, "fal"),
+        provider_available(&state, "fal"),
         FAL_IMAGE_MODELS,
     ))
 }
@@ -209,6 +216,7 @@ pub async fn ai_set_fal_api_key(
         "fal.ai",
         true,
         true,
+        true,
         FAL_IMAGE_MODELS,
     ))
 }
@@ -221,6 +229,7 @@ pub async fn ai_clear_fal_api_key(state: State<'_, AppState>) -> CommandResult<P
     Ok(provider_status(
         "fal",
         "fal.ai",
+        false,
         false,
         false,
         FAL_IMAGE_MODELS,
@@ -243,12 +252,25 @@ fn openai_registered(state: &AppState) -> bool {
     provider_registered(state, "openai")
 }
 
+fn openai_available(state: &AppState) -> bool {
+    provider_available(state, "openai")
+}
+
 fn provider_registered(state: &AppState, provider: &str) -> bool {
+    provider_presence(state, provider).0
+}
+
+fn provider_available(state: &AppState, provider: &str) -> bool {
+    provider_presence(state, provider).1
+}
+
+fn provider_presence(state: &AppState, provider: &str) -> (bool, bool) {
     state
         .verb_runtime
         .list_backends()
         .iter()
-        .any(|backend| backend.id == provider && backend.available)
+        .find(|backend| backend.id == provider)
+        .map_or((false, false), |backend| (true, backend.available))
 }
 
 fn provider_status(
@@ -256,6 +278,7 @@ fn provider_status(
     label: &'static str,
     configured: bool,
     registered: bool,
+    available: bool,
     models: &'static [&'static str],
 ) -> ProviderStatus {
     ProviderStatus {
@@ -263,10 +286,12 @@ fn provider_status(
         label,
         configured,
         registered,
-        state: if configured {
+        state: if !configured {
+            "not_configured"
+        } else if registered && available {
             "configured"
         } else {
-            "not_configured"
+            "invalid"
         },
         models,
     }

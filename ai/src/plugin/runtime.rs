@@ -1096,6 +1096,94 @@ mod tests {
         );
     }
 
+    #[test]
+    fn select_backend_by_id_returns_named_backend() {
+        let rt = VerbRuntime::new();
+        rt.register_backend(
+            caps_backend("google", BackendCapabilities::IMAGE_GENERATION),
+            0,
+        )
+        .unwrap();
+
+        let backend = rt
+            .select_backend_by_id(
+                "google",
+                BackendCapabilities::IMAGE_GENERATION,
+                &VerbId::new("v"),
+            )
+            .unwrap();
+
+        assert_eq!(backend.id(), "google");
+    }
+
+    #[test]
+    fn select_backend_by_id_rejects_unknown_id() {
+        let rt = VerbRuntime::new();
+
+        let err = rt
+            .select_backend_by_id(
+                "missing",
+                BackendCapabilities::IMAGE_GENERATION,
+                &VerbId::new("v"),
+            )
+            .unwrap_err();
+
+        assert!(
+            matches!(&err, VerbError::BackendNotFound(id) if id == "missing"),
+            "expected BackendNotFound, got {err:?}"
+        );
+    }
+
+    #[test]
+    fn select_backend_by_id_checks_capabilities() {
+        let rt = VerbRuntime::new();
+        rt.register_backend(
+            caps_backend("text-only", BackendCapabilities::TEXT_GENERATION),
+            0,
+        )
+        .unwrap();
+
+        let err = rt
+            .select_backend_by_id(
+                "text-only",
+                BackendCapabilities::IMAGE_GENERATION,
+                &VerbId::new("v"),
+            )
+            .unwrap_err();
+
+        assert!(
+            matches!(err, VerbError::UnsupportedCapability { .. }),
+            "expected UnsupportedCapability, got {err:?}"
+        );
+    }
+
+    #[test]
+    fn select_backend_by_id_reports_unavailable_backend() {
+        let rt = VerbRuntime::new();
+        rt.register_backend(
+            StubBackend {
+                id: "down",
+                caps: BackendCapabilities::IMAGE_GENERATION,
+                available: false,
+            },
+            0,
+        )
+        .unwrap();
+
+        let err = rt
+            .select_backend_by_id(
+                "down",
+                BackendCapabilities::IMAGE_GENERATION,
+                &VerbId::new("v"),
+            )
+            .unwrap_err();
+
+        assert!(
+            matches!(&err, VerbError::BackendUnavailable { id } if id == "down"),
+            "expected BackendUnavailable, got {err:?}"
+        );
+    }
+
     #[tokio::test]
     async fn invoke_injects_backend_into_ctx() {
         // A verb that requires TEXT_GENERATION; its invoke records which

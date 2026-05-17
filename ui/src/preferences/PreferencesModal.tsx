@@ -31,6 +31,8 @@ import {
 } from "../lib/commands/ai";
 import {
   projectClearOperationModelPrefs,
+  projectGetDefaultCandidateCount,
+  projectGetDefaultQuality,
   projectGetStyleNotes,
   projectSetDefaultCandidateCount,
   projectSetDefaultQuality,
@@ -42,6 +44,11 @@ import { pushToast } from "../lib/toast/toast-state";
 import { reportCommandFailure } from "../lib/utils/errors";
 
 type Tab = "general" | "keybinds" | "ai" | "plugins" | "privacy";
+
+function clampCandidateCount(value: number): number {
+  if (!Number.isFinite(value)) return 1;
+  return Math.max(1, Math.min(4, Math.trunc(value)));
+}
 
 const PreferencesModal: Component = () => {
   const [activeTab, setActiveTab] = createSignal<Tab>("general");
@@ -216,6 +223,12 @@ const AiTab: Component = () => {
     projectGetStyleNotes()
       .then(setStyleNotes)
       .catch((err: unknown) => reportCommandFailure("project_get_style_notes", err));
+    projectGetDefaultQuality()
+      .then(setDefaultQuality)
+      .catch((err: unknown) => reportCommandFailure("project_get_default_quality", err));
+    projectGetDefaultCandidateCount()
+      .then((n) => setDefaultCandidateCount(clampCandidateCount(n)))
+      .catch((err: unknown) => reportCommandFailure("project_get_default_candidate_count", err));
   });
 
   function refreshAiStatus(): void {
@@ -290,10 +303,12 @@ const AiTab: Component = () => {
   }
 
   function handleSaveProjectDefaults(): void {
+    const safeCandidateCount = clampCandidateCount(defaultCandidateCount());
+    setDefaultCandidateCount(safeCandidateCount);
     Promise.all([
       projectSetStyleNotes(styleNotes()),
       projectSetDefaultQuality(defaultQuality()),
-      projectSetDefaultCandidateCount(defaultCandidateCount()),
+      projectSetDefaultCandidateCount(safeCandidateCount),
     ])
       .then(() => pushToast({ kind: "success", title: "AI defaults saved." }))
       .catch((err: unknown) => reportCommandFailure("project_set_ai_defaults", err));
@@ -397,7 +412,9 @@ const AiTab: Component = () => {
             min="1"
             max="4"
             value={defaultCandidateCount()}
-            onInput={(event) => setDefaultCandidateCount(Number(event.currentTarget.value))}
+            onInput={(event) =>
+              setDefaultCandidateCount(clampCandidateCount(Number(event.currentTarget.value)))
+            }
           />
           <Button onClick={handleSaveProjectDefaults}>Save defaults</Button>
         </div>

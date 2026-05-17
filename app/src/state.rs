@@ -9,7 +9,7 @@ use std::path::PathBuf;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 
-use dashmap::DashMap;
+use dashmap::{DashMap, mapref::entry::Entry};
 use pixhaus_ai::backends::fal::FalBackend;
 use pixhaus_ai::backends::google::GoogleAiBackend;
 use pixhaus_ai::backends::openai::OpenAiBackend;
@@ -202,23 +202,31 @@ impl ReferenceSheetRequestManager {
         chat_variant_id: Option<u32>,
     ) -> Result<(u64, CancellationToken), &'static str> {
         let _ = counts_toward_sprite_cap;
-        if let Some(variant_id) = chat_variant_id {
-            if self
-                .active_chat_variants
-                .contains_key(&(entity_id, variant_id))
-            {
-                return Err("this variant already has a chat turn in flight");
-            }
-        }
-
         let id = self.next_id.fetch_add(1, Ordering::Relaxed);
         let token = CancellationToken::new();
         self.cancellations.insert(id, token.clone());
         if let Some(variant_id) = chat_variant_id {
-            self.active_chat_variants
-                .insert((entity_id, variant_id), id);
+            match self.active_chat_variants.entry((entity_id, variant_id)) {
+                Entry::Occupied(_) => {
+                    self.cancellations.remove(&id);
+                    return Err("this variant already has a chat turn in flight");
+                }
+                Entry::Vacant(entry) => {
+                    entry.insert(id);
+                }
+            }
         }
         Ok((id, token))
+    }
+
+    pub(crate) fn reset(&self) {
+        self.cancellations
+            .iter()
+            .for_each(|entry| entry.value().cancel());
+        self.cancellations.clear();
+        self.sprite_semaphores.clear();
+        self.active_chat_variants.clear();
+        self.next_id.store(1, Ordering::Relaxed);
     }
 
     pub(crate) async fn acquire_sprite_permit(
@@ -422,5 +430,30 @@ mod tests {
         expected.sort_unstable();
 
         assert_eq!(ids, expected);
+    }
+
+    #[test]
+    fn reference_sheet_manager_rejects_duplicate_chat_turns() {
+        let manager = ReferenceSheetRequestManager::new();
+        let first = manager.start(1, true, Some(7)).expect("first chat");
+        let second = manager.start(1, true, Some(7));
+
+        assert!(second.is_err());
+        manager.finish(first.0, 1, true, Some(7));
+        assert!(manager.start(1, true, Some(7)).is_ok());
+    }
+
+    #[test]
+    fn reference_sheet_manager_reset_cancels_and_clears_state() {
+        let manager = ReferenceSheetRequestManager::new();
+        let (_, token) = manager.start(1, true, Some(7)).expect("request");
+
+        manager.reset();
+
+        assert!(token.is_cancelled());
+        assert!(manager.cancellations.is_empty());
+        assert!(manager.sprite_semaphores.is_empty());
+        assert!(manager.active_chat_variants.is_empty());
+        assert!(manager.start(1, true, Some(7)).is_ok());
     }
 }

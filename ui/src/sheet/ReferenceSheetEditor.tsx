@@ -207,7 +207,7 @@ const ReferenceSheetEditor: Component = () => {
   const [generating, setGenerating] = createSignal(false);
   const [prompt, setPrompt] = createSignal("");
   const [template, setTemplate] = createSignal<ReferenceSheetTemplate>("character");
-  const [quality, setQuality] = createSignal<ImageQuality>("auto");
+  const [quality, setQuality] = createSignal<ImageQuality>("medium");
   const [candidateCount, setCandidateCount] = createSignal(2);
   const [selectedVariantId, setSelectedVariantId] = createSignal<number | null>(null);
   const [activeView, setActiveView] = createSignal<EditorView>("generate");
@@ -559,7 +559,13 @@ const ReferenceSheetEditor: Component = () => {
     event.preventDefault();
     const assetPayload = event.dataTransfer?.getData("application/x-pixhaus-reference");
     if (assetPayload) {
-      const asset = JSON.parse(assetPayload) as ReferenceAsset;
+      let asset: ReferenceAsset;
+      try {
+        asset = JSON.parse(assetPayload) as ReferenceAsset;
+      } catch {
+        pushToast({ kind: "error", title: "Invalid reference payload." });
+        return;
+      }
       addReferenceSlot(
         {
           image: asset.image,
@@ -588,13 +594,13 @@ const ReferenceSheetEditor: Component = () => {
   }
 
   function clearMask(): void {
-    if (maskCanvas === undefined) return;
+    if (!maskCanvas) return;
     const ctx = maskCanvas.getContext("2d");
     ctx?.clearRect(0, 0, maskCanvas.width, maskCanvas.height);
   }
 
   function fillMask(): void {
-    if (maskCanvas === undefined) return;
+    if (!maskCanvas) return;
     const ctx = maskCanvas.getContext("2d");
     if (ctx === null) return;
     ctx.fillStyle = "rgba(255,255,255,1)";
@@ -602,7 +608,7 @@ const ReferenceSheetEditor: Component = () => {
   }
 
   function drawMaskAt(event: PointerEvent): void {
-    if (maskCanvas === undefined) return;
+    if (!maskCanvas) return;
     const rect = maskCanvas.getBoundingClientRect();
     const ctx = maskCanvas.getContext("2d");
     if (ctx === null) return;
@@ -617,7 +623,7 @@ const ReferenceSheetEditor: Component = () => {
 
   function maskImage(): ReferenceImage {
     const source = selectedVariant();
-    if (maskCanvas === undefined || source === null) return { bytes: [], mime: "image/png" };
+    if (!maskCanvas || source === null) return { bytes: [], mime: "image/png" };
     const base = document.createElement("canvas");
     base.width = source.width;
     base.height = source.height;

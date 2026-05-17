@@ -238,6 +238,8 @@ pub fn run() -> Result<(), AppError> {
             commands::project::project_open,
             commands::project::project_save,
             commands::library::project_clear_operation_model_prefs,
+            commands::library::project_get_default_candidate_count,
+            commands::library::project_get_default_quality,
             commands::library::project_get_style_notes,
             commands::library::project_set_default_candidate_count,
             commands::library::project_set_default_chroma,

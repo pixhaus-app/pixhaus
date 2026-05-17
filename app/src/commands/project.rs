@@ -53,6 +53,7 @@ pub async fn project_new(name: String, state: State<'_, AppState>) -> CommandRes
     let status = install_new_project(&mut doc, Project::new(name));
     drop(doc);
     state.anchor_cache.clear();
+    state.reference_sheet_requests.reset();
     Ok(status)
 }
 
@@ -107,6 +108,7 @@ pub async fn project_open(
     let status = install_loaded_project(&mut doc, archive.project, path_buf, archive.buffers);
     drop(doc);
     state.anchor_cache.clear();
+    state.reference_sheet_requests.reset();
     Ok(status)
 }
 
@@ -460,6 +462,7 @@ pub async fn project_close(state: State<'_, AppState>) -> CommandResult<()> {
     doc.pixel_buffers = Vec::new();
     drop(doc);
     state.anchor_cache.clear();
+    state.reference_sheet_requests.reset();
     Ok(())
 }
 

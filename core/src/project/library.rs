@@ -1518,6 +1518,55 @@ mod tests {
         assert!(AssetInfo::default().is_empty());
     }
 
+    #[test]
+    fn default_reference_chroma_is_magenta() {
+        assert_eq!(default_reference_chroma(), Rgba::opaque(255, 0, 255));
+    }
+
+    #[test]
+    fn built_in_templates_include_expected_turnaround_defaults() {
+        let templates = built_in_reference_sheet_templates();
+        let turnaround = templates
+            .iter()
+            .find(|template| template.id == ReferenceSheetTemplateId::Turnaround4View)
+            .expect("turnaround template");
+
+        assert_eq!(
+            turnaround.default_dimensions,
+            SheetDimensions {
+                width: 2048,
+                height: 1024,
+            }
+        );
+        assert_eq!(turnaround.default_chroma, default_reference_chroma());
+        assert!(!turnaround.benefits_from_text_labels);
+        assert!(
+            turnaround
+                .allowed_dimensions
+                .contains(&turnaround.default_dimensions)
+        );
+    }
+
+    #[test]
+    fn sheet_variant_from_image_uses_manual_import_defaults() {
+        let image = ReferenceImage {
+            bytes: vec![1, 2, 3],
+            mime: "image/png".into(),
+        };
+        let variant = SheetVariant::from_image(SheetVariantId::new(7), 123, image.clone());
+
+        assert_eq!(variant.id, SheetVariantId::new(7));
+        assert_eq!(variant.created_at, 123);
+        assert_eq!(variant.image, image);
+        assert_eq!(variant.template, ReferenceSheetTemplateId::Custom);
+        assert_eq!(variant.chroma_color, default_reference_chroma());
+        assert_eq!(variant.model, ModelId::Auto);
+        assert_eq!(variant.quality, Quality::Medium);
+        assert_eq!(variant.origin, VariantOrigin::ManualImport);
+        assert!(variant.references.is_empty());
+        assert!(!variant.promotion);
+    }
+
     /// Pins the boxing decision for [`EntityContent`].
     ///
     /// `ReferenceSheet` is boxed inside `EntityContent::Sprites` so
