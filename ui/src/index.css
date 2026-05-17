@@ -736,6 +736,12 @@ body {
   gap: 16px;
 }
 
+.prefs__row-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
 .prefs__label {
   font-size: 13px;
   color: var(--text-primary);
@@ -4092,11 +4098,18 @@ body {
   display: inline-flex;
   align-items: center;
   justify-content: center;
+  border: 0;
+  background: transparent;
+  padding: 0;
   width: 14px;
   height: 14px;
   flex-shrink: 0;
   color: var(--accent);
   cursor: help;
+}
+
+button.library-row__anchor-badge {
+  cursor: pointer;
 }
 
 .library-row__anchor-tooltip {

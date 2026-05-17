@@ -16,6 +16,7 @@ None of the candidates become canonical automatically. The user reviews them and
 | `template` | `"character"` \| `"item"` \| `"tileset"` \| `"custom"` | yes | — | Composition template controlling panel layout and prompt engineering |
 | `prompt` | string (non-empty) | yes | — | User description of the subject (e.g. "32px fantasy hero with a blue cloak") |
 | `negative_prompt` | string | no | `null` | Optional user-supplied negative prompt, appended after the template's own negative clauses |
+| `quality` | `"auto"` \| `"low"` \| `"medium"` \| `"high"` | no | `auto` | Image-generation quality hint. The OpenAI adapter forwards this to `gpt-image-2`. |
 | `num_variants` | integer, 1–4 | no | `1` | Number of candidate sheets to generate |
 | `seed` | integer | no | `null` | RNG seed for reproducible generation |
 
@@ -41,11 +42,11 @@ The host inserts each variant into the sprite entity's embedded reference-sheet 
 
 **Custom** — single centred full-body view and palette swatch. The simplest template; use when no other template fits or when you want maximum compositional freedom. Sheet dimensions: 1024×1024 px.
 
-Each template adds layout instructions and negative-prompt clauses on top of the user's description before sending the request to the backend. See `docs/planning/work/b10-reference-sheets.md#b101` for the full spec.
+Each template adds layout instructions and negative-prompt clauses on top of the user's description before sending the request to the backend. Template dimensions control output size independently from the sprite canvas/timeline. See `docs/planning/work/b10-reference-sheets.md#b101` for the full spec.
 
 ## Backend requirements
 
-Requires a backend with `IMAGE_GENERATION` capability. The verb runtime selects the highest-priority configured backend that satisfies this. If none is registered, the verb fails before invoking.
+Requires a backend with `IMAGE_GENERATION` capability. The app-level OpenAI settings register the OpenAI backend with `gpt-image-2` for this workflow when a key is stored. The runtime selects the highest-priority configured backend that satisfies the capability. If none is registered, the verb fails before invoking.
 
 ## Cost estimate
 

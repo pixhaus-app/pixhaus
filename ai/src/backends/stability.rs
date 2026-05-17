@@ -399,6 +399,7 @@ mod tests {
             steps: None,
             seed: None,
             num_images: 2,
+            quality: None,
             style_image: None,
         });
         let est = b.estimate_cost(&req);
@@ -423,6 +424,7 @@ mod tests {
             steps: None,
             seed: Some(42),
             num_images: 1,
+            quality: None,
             style_image: None,
         });
         let (progress, _rx) = VerbProgress::channel();

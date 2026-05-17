@@ -54,6 +54,23 @@ export type LibraryAddStateArgs = {
   color_mode?: ColorMode;
 };
 
+export type ReferenceSheetTemplate = "character" | "item" | "tileset" | "custom";
+export type ImageQuality = "auto" | "low" | "medium" | "high";
+
+export type LibraryGenerateReferenceSheetArgs = {
+  entity_id: EntityId;
+  prompt: string;
+  template: ReferenceSheetTemplate;
+  quality?: ImageQuality | null;
+  candidate_count: number;
+};
+
+export type LibraryImportReferenceSheetArgs = {
+  entity_id: EntityId;
+  bytes: number[];
+  mime?: string | null;
+};
+
 export type LibraryCreateGroupArgs = {
   name: string;
   parent_id?: GroupId | null;
@@ -233,6 +250,37 @@ export function libraryDeleteSheetVariant(
   variant_id: SheetVariantId,
 ): Promise<void> {
   return invoke<void>("library_delete_sheet_variant", { entity_id, variant_id });
+}
+
+/**
+ * Generates unapproved reference-sheet draft candidates on a sprite entity.
+ */
+export function libraryGenerateReferenceSheet(
+  args: LibraryGenerateReferenceSheetArgs,
+): Promise<Entity> {
+  return invoke<Entity>("library_generate_reference_sheet", { args });
+}
+
+/**
+ * Imports a reference-sheet image as an unapproved draft candidate.
+ */
+export function libraryImportReferenceSheet(
+  args: LibraryImportReferenceSheetArgs,
+): Promise<Entity> {
+  return invoke<Entity>("library_import_reference_sheet", { args });
+}
+
+/**
+ * Removes a non-canonical reference-sheet draft/history variant and returns
+ * the updated entity.
+ */
+export function libraryRemoveReferenceSheetVariant(
+  entity_id: EntityId,
+  variant_id: SheetVariantId,
+): Promise<Entity> {
+  return invoke<Entity>("library_remove_reference_sheet_variant", {
+    args: { entity_id, variant_id },
+  });
 }
 
 // ── B9.4: library AI hooks ────────────────────────────────────────────────────

@@ -41,7 +41,8 @@ import EntityCreateModal from "../library/EntityCreateModal";
 import { setupPaletteColorSync } from "../canvas/tools/palette-color-sync";
 import { installTilemapCtxSync } from "../tilemap/tilemap-ctx-sync";
 import SheetView from "../sheet/SheetView";
-import { isSheetPanelVisible } from "../sheet/sheet-state";
+import ReferenceSheetEditor from "../sheet/ReferenceSheetEditor";
+import { isSheetEditorOpen, isSheetPanelVisible } from "../sheet/sheet-state";
 
 const Shell: Component = () => {
   // Bridge palette FG/BG indices to the tool-state RGBA signals so brush
@@ -112,11 +113,13 @@ const Shell: Component = () => {
                 <LibraryPanel />
               </Show>
               <div class="editor-layout__canvas-area">
-                <div class="editor-layout__canvas">
-                  <Canvas />
-                </div>
-                <Show when={isTimelinePanelVisible()}>
-                  <TimelinePanel />
+                <Show when={!isSheetEditorOpen()} fallback={<ReferenceSheetEditor />}>
+                  <div class="editor-layout__canvas">
+                    <Canvas />
+                  </div>
+                  <Show when={isTimelinePanelVisible()}>
+                    <TimelinePanel />
+                  </Show>
                 </Show>
               </div>
               <Show when={activeSpriteId() !== null && isTilemapPanelVisible()}>

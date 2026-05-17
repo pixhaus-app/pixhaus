@@ -477,6 +477,7 @@ async fn generate_atlas(
         steps: None,
         seed: None,
         num_images: 1,
+        quality: None,
         style_image,
     });
 

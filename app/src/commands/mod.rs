@@ -4,6 +4,7 @@
 //! `invoke_handler` list in `crate::run` is the canonical sorted
 //! catalog. Add commands there when adding them to a module.
 
+pub mod ai;
 pub mod app_info;
 pub mod canvas;
 pub mod crash_reporting;

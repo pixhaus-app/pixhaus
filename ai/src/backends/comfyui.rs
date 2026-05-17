@@ -552,6 +552,7 @@ mod tests {
             steps: None,
             seed: None,
             num_images: 1,
+            quality: None,
             style_image: None,
         });
         let est = b.estimate_cost(&req);
@@ -569,6 +570,7 @@ mod tests {
             steps: Some(20),
             seed: Some(1),
             num_images: 1,
+            quality: None,
             style_image: None,
         };
         let wf = ComfyUiBackend::txt2img_workflow(&req);
@@ -588,6 +590,7 @@ mod tests {
             steps: None,
             seed: None,
             num_images: 4,
+            quality: None,
             style_image: None,
         };
         let wf = ComfyUiBackend::txt2img_workflow(&req);
@@ -605,6 +608,7 @@ mod tests {
             steps: None,
             seed: None,
             num_images: 0,
+            quality: None,
             style_image: None,
         };
         let wf = ComfyUiBackend::txt2img_workflow(&req);
@@ -658,6 +662,7 @@ mod tests {
             steps: Some(10),
             seed: Some(42),
             num_images: 1,
+            quality: None,
             style_image: None,
         });
         let (progress, _rx) = VerbProgress::channel();

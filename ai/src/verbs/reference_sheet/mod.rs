@@ -22,7 +22,7 @@ use tokio_util::sync::CancellationToken;
 
 use pixhaus_core::project::{EntityId, GenerationProvenance, SheetVariantId};
 
-use crate::backends::{ImageGenRequest, InferenceRequest, InferenceResponse};
+use crate::backends::{ImageGenRequest, ImageQuality, InferenceRequest, InferenceResponse};
 use crate::plugin::context::VerbContext;
 use crate::plugin::descriptor::{
     BackendCapabilities, CostEstimate, EffectKind, VerbDescriptor, VerbId,
@@ -74,6 +74,10 @@ pub struct GenerateReferenceSheetInputs {
     #[serde(default = "default_num_variants")]
     pub num_variants: u32,
 
+    /// Optional quality hint for providers that support it.
+    #[serde(default = "default_quality", skip_serializing_if = "Option::is_none")]
+    pub quality: Option<ImageQuality>,
+
     /// RNG seed for reproducible generation. `None` uses a random seed.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub seed: Option<u64>,
@@ -81,6 +85,11 @@ pub struct GenerateReferenceSheetInputs {
 
 fn default_num_variants() -> u32 {
     1
+}
+
+#[allow(clippy::unnecessary_wraps)]
+fn default_quality() -> Option<ImageQuality> {
+    Some(ImageQuality::Auto)
 }
 
 // ── Output payload ────────────────────────────────────────────────────────────
@@ -166,6 +175,12 @@ impl GenerateReferenceSheetVerb {
                     "maximum": 4,
                     "default": 1,
                     "description": "Number of candidate sheets to generate"
+                },
+                "quality": {
+                    "type": ["string", "null"],
+                    "enum": ["auto", "low", "medium", "high", null],
+                    "default": "auto",
+                    "description": "Image quality for GPT image backends"
                 },
                 "seed": {
                     "type": ["integer", "null"],
@@ -253,8 +268,8 @@ impl Verb for GenerateReferenceSheetVerb {
 
         let num_variants = inputs.num_variants.clamp(1, 4);
         let composition = inputs.template.composition();
-        let full_prompt = inputs.template.build_prompt(&inputs.prompt);
         let negative = build_negative_prompt(&inputs);
+        let full_prompt = build_reference_prompt(&inputs, &negative);
 
         let backend_id = backend.backend_id().to_owned();
         progress
@@ -280,6 +295,7 @@ impl Verb for GenerateReferenceSheetVerb {
             steps: None,
             seed: inputs.seed,
             num_images: num_variants,
+            quality: inputs.quality,
             style_image: None,
         };
 
@@ -380,6 +396,15 @@ fn build_negative_prompt(inputs: &GenerateReferenceSheetInputs) -> String {
     match &inputs.negative_prompt {
         Some(user_neg) => format!("{template_neg}, {user_neg}"),
         None => template_neg.to_owned(),
+    }
+}
+
+fn build_reference_prompt(inputs: &GenerateReferenceSheetInputs, negative_prompt: &str) -> String {
+    let prompt = inputs.template.build_prompt(&inputs.prompt);
+    if negative_prompt.trim().is_empty() {
+        prompt
+    } else {
+        format!("{prompt}\n\nAvoid: {negative_prompt}")
     }
 }
 
@@ -536,6 +561,7 @@ mod tests {
             prompt: "a fantasy hero with a sword".into(),
             negative_prompt: None,
             num_variants,
+            quality: None,
             seed: None,
         })
         .unwrap()
@@ -594,6 +620,7 @@ mod tests {
             prompt: "   ".into(),
             negative_prompt: None,
             num_variants: 1,
+            quality: None,
             seed: None,
         })
         .unwrap();
@@ -607,6 +634,18 @@ mod tests {
             verb.validate(&inputs_for(CompositionTemplate::Character, 2))
                 .is_ok()
         );
+    }
+
+    #[test]
+    fn omitted_quality_defaults_to_auto() {
+        let inputs: GenerateReferenceSheetInputs = serde_json::from_value(serde_json::json!({
+            "entity_id": 1,
+            "template": "character",
+            "prompt": "a fantasy hero"
+        }))
+        .unwrap();
+
+        assert_eq!(inputs.quality, Some(ImageQuality::Auto));
     }
 
     // ── Full invocation via runtime ───────────────────────────────────────────
@@ -728,6 +767,7 @@ mod tests {
             prompt: "treasure chest".into(),
             negative_prompt: None,
             num_variants: 10,
+            quality: None,
             seed: None,
         })
         .unwrap();
@@ -918,6 +958,7 @@ mod tests {
             prompt: "test subject".into(),
             negative_prompt: Some("user_neg".into()),
             num_variants: 1,
+            quality: None,
             seed: None,
         })
         .unwrap();

@@ -306,7 +306,7 @@ fn sample_library(hero_sprite: Sprite) -> Library {
         content: EntityContent::Sprites {
             states: vec![hero_state],
             reference_sheet: Some(Box::new(ReferenceSheet {
-                canonical: SheetVariant {
+                canonical: Some(SheetVariant {
                     id: SheetVariantId::new(3),
                     generated_at: 1_700_000_020,
                     image: ReferenceImage {
@@ -316,7 +316,7 @@ fn sample_library(hero_sprite: Sprite) -> Library {
                     composition: SheetComposition::default(),
                     generation: None,
                     extracted_palette: Vec::new(),
-                },
+                }),
                 history: Vec::new(),
                 prompts: Vec::new(),
                 info: AssetInfo::default(),

@@ -10,14 +10,14 @@
 //! # Models
 //!
 //! - Text / vision: `gpt-4o` (default); override per-request.
-//! - Image generation: `dall-e-3` (default).
-//! - Image edit/inpaint: `dall-e-3`.
+//! - Image generation: `gpt-image-2` (default).
+//! - Image edit/inpaint: `gpt-image-1.5`.
 //!
 //! # Pricing (May 2026 estimates)
 //!
 //! - GPT-4o input: $2.50 / `MTok`
 //! - GPT-4o output: $10.00 / `MTok`
-//! - DALL-E 3 HD 1024×1024: $0.080 per image
+//! - GPT image generation varies by output size and quality.
 
 use std::time::Duration;
 
@@ -38,11 +38,13 @@ use crate::plugin::progress::{CostUpdate, VerbProgressEvent};
 
 const BASE_URL: &str = "https://api.openai.com/v1";
 const DEFAULT_TEXT_MODEL: &str = "gpt-4o";
-const DEFAULT_IMAGE_MODEL: &str = "dall-e-3";
+/// Default `OpenAI` image model for Pixhaus image generation.
+pub const DEFAULT_IMAGE_MODEL: &str = "gpt-image-2";
+const DEFAULT_IMAGE_EDIT_MODEL: &str = "gpt-image-1.5";
 
 const INPUT_PRICE_PER_TOKEN: f64 = 2.50 / 1_000_000.0;
 const OUTPUT_PRICE_PER_TOKEN: f64 = 10.00 / 1_000_000.0;
-const IMAGE_PRICE_CENTS: f32 = 8.0; // DALL-E 3 HD 1024×1024 ≈ $0.08 = 8 cents
+const IMAGE_PRICE_CENTS: f32 = 8.0; // Placeholder estimate; provider pricing varies by model/size/quality.
 
 /// `OpenAI` backend adapter.
 pub struct OpenAiBackend {
@@ -51,6 +53,7 @@ pub struct OpenAiBackend {
     base_url: String,
     text_model: String,
     image_model: String,
+    image_edit_model: String,
 }
 
 impl std::fmt::Debug for OpenAiBackend {
@@ -59,6 +62,7 @@ impl std::fmt::Debug for OpenAiBackend {
             .field("base_url", &self.base_url)
             .field("text_model", &self.text_model)
             .field("image_model", &self.image_model)
+            .field("image_edit_model", &self.image_edit_model)
             .field("api_key", &"[redacted]")
             .finish_non_exhaustive()
     }
@@ -77,6 +81,7 @@ impl OpenAiBackend {
             base_url: BASE_URL.into(),
             text_model: DEFAULT_TEXT_MODEL.into(),
             image_model: DEFAULT_IMAGE_MODEL.into(),
+            image_edit_model: DEFAULT_IMAGE_EDIT_MODEL.into(),
         }
     }
 
@@ -93,10 +98,17 @@ impl OpenAiBackend {
         self
     }
 
-    /// Overrides the default image model.
+    /// Overrides the default image generation model.
     #[must_use]
     pub fn with_image_model(mut self, model: impl Into<String>) -> Self {
         self.image_model = model.into();
+        self
+    }
+
+    /// Overrides the default image edit/inpaint model.
+    #[must_use]
+    pub fn with_image_edit_model(mut self, model: impl Into<String>) -> Self {
+        self.image_edit_model = model.into();
         self
     }
 
@@ -189,15 +201,9 @@ impl OpenAiBackend {
             .unwrap_or(self.image_model.as_str())
             .to_owned();
 
-        debug!(model = %model, "sending DALL-E image generation request");
+        debug!(model = %model, "sending OpenAI image generation request");
 
-        let body = serde_json::json!({
-            "model": model,
-            "prompt": req.prompt,
-            "n": req.num_images,
-            "size": format!("{}x{}", req.width, req.height),
-            "response_format": "b64_json",
-        });
+        let body = build_image_generation_body(req, &model);
 
         let http_req = self
             .client
@@ -239,24 +245,32 @@ impl OpenAiBackend {
         let model = req
             .model
             .as_deref()
-            .unwrap_or(self.image_model.as_str())
+            .unwrap_or(self.image_edit_model.as_str())
             .to_owned();
 
-        debug!(model = %model, "sending DALL-E image edit request");
+        debug!(model = %model, "sending OpenAI image edit request");
 
-        // DALL-E edit endpoint uses multipart/form-data.
+        // Image edits use multipart/form-data. GPT image models return
+        // base64 by default and do not accept the legacy
+        // `response_format` field.
+        let is_gpt_image = is_gpt_image_model(&model);
+        let image_field = if is_gpt_image { "image[]" } else { "image" };
         let mut form = reqwest::multipart::Form::new()
             .text("prompt", req.prompt.clone())
             .text("n", req.num_images.to_string())
-            .text("response_format", "b64_json")
             .text("model", model.clone())
             .part(
-                "image",
+                image_field,
                 reqwest::multipart::Part::bytes(req.image.clone())
                     .file_name("image.png")
                     .mime_str("image/png")
                     .map_err(|e| BackendError::Other(e.to_string()))?,
             );
+        if is_gpt_image {
+            form = form.text("output_format", "png");
+        } else {
+            form = form.text("response_format", "b64_json");
+        }
 
         if let Some(mask) = &req.mask {
             form = form.part(
@@ -568,6 +582,31 @@ fn build_chat_body(req: &TextGenRequest, model: &str) -> serde_json::Value {
     body
 }
 
+#[allow(clippy::disallowed_methods)]
+fn build_image_generation_body(req: &ImageGenRequest, model: &str) -> serde_json::Value {
+    let mut body = serde_json::json!({
+        "model": model,
+        "prompt": req.prompt,
+        "n": req.num_images,
+        "size": format!("{}x{}", req.width, req.height),
+    });
+
+    if is_gpt_image_model(model) {
+        body["output_format"] = serde_json::json!("png");
+        if let Some(quality) = req.quality {
+            body["quality"] = serde_json::json!(quality.as_openai());
+        }
+    } else {
+        body["response_format"] = serde_json::json!("b64_json");
+    }
+
+    body
+}
+
+fn is_gpt_image_model(model: &str) -> bool {
+    model.starts_with("gpt-image-") || model == "chatgpt-image-latest"
+}
+
 /// Converts one wire-level tool call into the public [`ToolCall`].
 ///
 /// Returns [`BackendError::InvalidResponse`] when the model produced an
@@ -658,6 +697,8 @@ fn _assert_frame_req(_: &FrameInterpolationRequest) {}
 
 #[cfg(test)]
 mod tests {
+    use crate::backends::ImageQuality;
+
     use super::*;
 
     #[test]
@@ -748,10 +789,59 @@ mod tests {
             steps: None,
             seed: None,
             num_images: 1,
+            quality: None,
             style_image: None,
         });
         let est = b.estimate_cost(&req);
         assert!(est.typical_usd_cents > 0.0);
+    }
+
+    #[test]
+    fn gpt_image_generation_body_omits_legacy_response_format() {
+        let req = ImageGenRequest {
+            model: None,
+            prompt: "a reference sheet".into(),
+            negative_prompt: Some("blurry".into()),
+            width: 1024,
+            height: 1536,
+            steps: None,
+            seed: None,
+            num_images: 2,
+            quality: Some(ImageQuality::Medium),
+            style_image: None,
+        };
+
+        let body = build_image_generation_body(&req, "gpt-image-2");
+
+        assert_eq!(body["model"], "gpt-image-2");
+        assert_eq!(body["size"], "1024x1536");
+        assert_eq!(body["quality"], "medium");
+        assert_eq!(body["output_format"], "png");
+        assert!(body.get("response_format").is_none());
+        assert!(body.get("background").is_none());
+        assert!(body.get("negative_prompt").is_none());
+    }
+
+    #[test]
+    fn dall_e_generation_body_keeps_b64_response_format() {
+        let req = ImageGenRequest {
+            model: None,
+            prompt: "a cat".into(),
+            negative_prompt: None,
+            width: 1024,
+            height: 1024,
+            steps: None,
+            seed: None,
+            num_images: 1,
+            quality: Some(ImageQuality::High),
+            style_image: None,
+        };
+
+        let body = build_image_generation_body(&req, "dall-e-3");
+
+        assert_eq!(body["response_format"], "b64_json");
+        assert!(body.get("output_format").is_none());
+        assert!(body.get("quality").is_none());
     }
 
     #[test]

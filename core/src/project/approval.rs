@@ -4,7 +4,8 @@
 //! the history strip, the editor:
 //!
 //! 1. Moves the chosen variant from `history` into `canonical`.
-//! 2. Demotes the previous canonical variant to `history[0]`.
+//! 2. Demotes the previous canonical variant to `history[0]`, when
+//!    one exists.
 //! 3. Extracts a palette from the new canonical's image bytes (the
 //!    [`crate::color::extraction`] module does the work) and writes it
 //!    to the new canonical's [`SheetVariant::extracted_palette`].
@@ -19,8 +20,10 @@
 //! returns the [`Approval`] receipt the caller can hand back through
 //! the IPC bridge.
 
+use std::path::PathBuf;
+
 use serde::{Deserialize, Serialize};
-use ts_rs::TS;
+use ts_rs::{Config, TS, TypeVisitor};
 
 use crate::color::extraction::{ExtractionOptions, extract_palette_from_image_bytes};
 use crate::project::id::{EntityId, SheetVariantId};
@@ -52,22 +55,58 @@ pub enum ApprovalError {
 /// to the UI without re-wrapping. The new canonical variant id and the
 /// number of palette swatches extracted are the two facts the UI cares
 /// about — both feed the toast / status indicator.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, TS)]
-#[ts(export)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Approval {
     /// The entity whose sheet was approved.
     pub entity_id: EntityId,
     /// The variant now sitting in `canonical`.
     pub canonical_id: SheetVariantId,
-    /// The previous canonical variant id, if there was one. Will be
-    /// `None` only on first approval of a freshly imported entity that
-    /// somehow had no prior canonical (the data model always provides
-    /// one, so in practice this is `Some`).
+    /// The previous canonical variant id, if there was one. `None` is
+    /// the normal first-approval path for draft-only generated sheets.
     pub previous_canonical_id: Option<SheetVariantId>,
     /// Number of swatches the extractor produced for the new canonical.
     /// Zero when the variant already carried an extracted palette
     /// (preserved from the generator) or when extraction failed.
     pub palette_size: usize,
+}
+
+impl TS for Approval {
+    type WithoutGenerics = Self;
+    type OptionInnerType = Self;
+
+    fn name(_: &Config) -> String {
+        "Approval".into()
+    }
+
+    fn inline(_: &Config) -> String {
+        r"{
+entity_id: EntityId,
+canonical_id: SheetVariantId,
+previous_canonical_id: SheetVariantId | null,
+palette_size: number,
+}"
+        .into()
+    }
+
+    fn decl(cfg: &Config) -> String {
+        format!("type {} = {};", Self::name(cfg), Self::inline(cfg))
+    }
+
+    fn decl_concrete(cfg: &Config) -> String {
+        Self::decl(cfg)
+    }
+
+    fn visit_dependencies(v: &mut impl TypeVisitor)
+    where
+        Self: 'static,
+    {
+        v.visit::<EntityId>();
+        v.visit::<SheetVariantId>();
+    }
+
+    fn output_path() -> Option<PathBuf> {
+        Some(PathBuf::from("Approval.ts"))
+    }
 }
 
 /// Approves a [`SheetVariant`] as the canonical reference sheet of a
@@ -80,8 +119,9 @@ pub struct Approval {
 /// - If `variant_id` is already canonical, just (re-)extract the palette
 ///   and return the no-op receipt. This makes the operation idempotent
 ///   so the UI doesn't have to special-case "already canonical".
-/// - Otherwise locate the variant in `history`, swap it into
-///   `canonical`, and prepend the displaced canonical to `history`.
+/// - Otherwise locate the variant in `history`, move it into
+///   `canonical`, and prepend the displaced canonical to `history`
+///   when one existed.
 /// - Run [`extract_palette_from_image_bytes`] over the new canonical's
 ///   image bytes. If the variant's `extracted_palette` is non-empty
 ///   already, leave it alone.
@@ -90,8 +130,8 @@ pub struct Approval {
 ///
 /// - [`ApprovalError::EntityNotFound`] — no entity with that id.
 /// - [`ApprovalError::NoReferenceSheet`] — entity has no embedded sheet.
-/// - [`ApprovalError::VariantNotFound`] — neither the canonical nor any
-///   history entry carries `variant_id`.
+/// - [`ApprovalError::VariantNotFound`] — neither the optional canonical
+///   nor any history entry carries `variant_id`.
 pub fn approve_sheet_variant(
     project: &mut Project,
     entity_id: EntityId,
@@ -108,16 +148,18 @@ pub fn approve_sheet_variant(
     let sheet = embedded_sheet_mut(&mut entity.content)
         .ok_or(ApprovalError::NoReferenceSheet(entity_id.get()))?;
 
-    let previous_canonical_id = Some(sheet.canonical.id);
+    let previous_canonical_id = sheet.canonical.as_ref().map(|variant| variant.id);
 
-    if sheet.canonical.id == variant_id {
-        let palette_size = ensure_extracted_palette(&mut sheet.canonical, options);
-        return Ok(Approval {
-            entity_id,
-            canonical_id: variant_id,
-            previous_canonical_id,
-            palette_size,
-        });
+    if let Some(canonical) = &mut sheet.canonical {
+        if canonical.id == variant_id {
+            let palette_size = ensure_extracted_palette(canonical, options);
+            return Ok(Approval {
+                entity_id,
+                canonical_id: variant_id,
+                previous_canonical_id,
+                palette_size,
+            });
+        }
     }
 
     let pos = sheet
@@ -128,7 +170,10 @@ pub fn approve_sheet_variant(
 
     promote_history_to_canonical(sheet, pos);
 
-    let palette_size = ensure_extracted_palette(&mut sheet.canonical, options);
+    let palette_size = sheet
+        .canonical
+        .as_mut()
+        .map_or(0, |variant| ensure_extracted_palette(variant, options));
 
     Ok(Approval {
         entity_id,
@@ -138,12 +183,13 @@ pub fn approve_sheet_variant(
     })
 }
 
-/// Swaps `history[pos]` with the canonical variant; the previous
-/// canonical lands at `history[0]` (newest first).
+/// Moves `history[pos]` into the canonical slot; the previous canonical,
+/// when present, lands at `history[0]` (newest first).
 fn promote_history_to_canonical(sheet: &mut ReferenceSheet, pos: usize) {
     let new_canonical = sheet.history.remove(pos);
-    let old_canonical = std::mem::replace(&mut sheet.canonical, new_canonical);
-    sheet.history.insert(0, old_canonical);
+    if let Some(old_canonical) = sheet.canonical.replace(new_canonical) {
+        sheet.history.insert(0, old_canonical);
+    }
 }
 
 /// Runs the eyedropper extractor on the variant's image bytes if the
@@ -187,6 +233,11 @@ mod tests {
 
     use super::*;
 
+    #[test]
+    fn export_bindings_approval() {
+        Approval::export_all(&Config::from_env()).expect("export Approval binding");
+    }
+
     fn solid_png(r: u8, g: u8, b: u8) -> Vec<u8> {
         let img: RgbaImage = ImageBuffer::from_pixel(2, 2, image::Rgba([r, g, b, 255]));
         let mut buf = Vec::new();
@@ -227,7 +278,7 @@ mod tests {
             content: EntityContent::Sprites {
                 states: Vec::new(),
                 reference_sheet: Some(Box::new(ReferenceSheet {
-                    canonical,
+                    canonical: Some(canonical),
                     history,
                     prompts: Vec::new(),
                     info: AssetInfo {
@@ -268,12 +319,51 @@ mod tests {
         else {
             panic!("expected embedded reference sheet");
         };
-        assert_eq!(sheet.canonical.id, SheetVariantId::new(30));
+        assert_eq!(
+            sheet.canonical.as_ref().map(|variant| variant.id),
+            Some(SheetVariantId::new(30))
+        );
         // Previous canonical is now first in history (newest first).
         assert_eq!(sheet.history[0].id, SheetVariantId::new(10));
         // Other history entries kept their order.
         assert_eq!(sheet.history[1].id, SheetVariantId::new(20));
         assert_eq!(sheet.history[2].id, SheetVariantId::new(40));
+    }
+
+    #[test]
+    fn promotes_first_draft_without_previous_canonical() {
+        let mut project = build_project_with_sheet(10, &[20]);
+        if let EntityContent::Sprites {
+            reference_sheet: Some(sheet),
+            ..
+        } = &mut project.library.entities[0].content
+        {
+            sheet.canonical = None;
+        }
+
+        let receipt = approve_sheet_variant(
+            &mut project,
+            EntityId::new(1),
+            SheetVariantId::new(20),
+            ExtractionOptions::default(),
+        )
+        .unwrap();
+
+        assert_eq!(receipt.canonical_id, SheetVariantId::new(20));
+        assert_eq!(receipt.previous_canonical_id, None);
+
+        let EntityContent::Sprites {
+            reference_sheet: Some(sheet),
+            ..
+        } = &project.library.entities[0].content
+        else {
+            panic!("expected embedded reference sheet");
+        };
+        assert_eq!(
+            sheet.canonical.as_ref().map(|variant| variant.id),
+            Some(SheetVariantId::new(20))
+        );
+        assert!(sheet.history.is_empty());
     }
 
     #[test]
@@ -296,7 +386,12 @@ mod tests {
         else {
             panic!("expected embedded reference sheet");
         };
-        assert!(!sheet.canonical.extracted_palette.is_empty());
+        assert!(
+            sheet
+                .canonical
+                .as_ref()
+                .is_some_and(|variant| !variant.extracted_palette.is_empty())
+        );
     }
 
     #[test]
@@ -332,8 +427,12 @@ mod tests {
         };
         assert_eq!(receipt.palette_size, 1);
         assert_eq!(
-            sheet.canonical.extracted_palette[0].color,
-            Rgba::opaque(7, 7, 7),
+            sheet
+                .canonical
+                .as_ref()
+                .and_then(|variant| variant.extracted_palette.first())
+                .map(|entry| entry.color),
+            Some(Rgba::opaque(7, 7, 7)),
             "pre-existing palette must be preserved"
         );
     }
@@ -358,7 +457,10 @@ mod tests {
         else {
             panic!("expected embedded reference sheet");
         };
-        assert_eq!(sheet.canonical.id, SheetVariantId::new(1));
+        assert_eq!(
+            sheet.canonical.as_ref().map(|variant| variant.id),
+            Some(SheetVariantId::new(1))
+        );
         assert_eq!(sheet.history.len(), 1);
         assert_eq!(sheet.history[0].id, SheetVariantId::new(2));
     }

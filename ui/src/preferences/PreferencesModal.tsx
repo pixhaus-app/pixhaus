@@ -1,4 +1,4 @@
-import { createMemo, createSignal, For, type Component } from "solid-js";
+import { createMemo, createSignal, For, onMount, type Component } from "solid-js";
 import { Button } from "../lib/ui/Button";
 import { Dialog } from "../lib/ui/Dialog";
 import { closePreferences } from "./preferences-state";
@@ -17,6 +17,14 @@ import {
 } from "./preferences-store";
 import { setCrashReportingEnabled as setSentryEnabled } from "../crash-reporting/crash-reporting";
 import { getAllCommands } from "../command-palette/command-registry";
+import {
+  aiClearOpenAiApiKey,
+  aiGetOpenAiStatus,
+  aiSetOpenAiApiKey,
+  type OpenAiStatus,
+} from "../lib/commands/ai";
+import { pushToast } from "../lib/toast/toast-state";
+import { reportCommandFailure } from "../lib/utils/errors";
 
 type Tab = "general" | "keybinds" | "ai" | "plugins" | "privacy";
 
@@ -176,12 +184,83 @@ const KeybindsTab: Component = () => {
 };
 
 const AiTab: Component = () => {
+  const [status, setStatus] = createSignal<OpenAiStatus | null>(null);
+  const [apiKey, setApiKey] = createSignal("");
+  const [saving, setSaving] = createSignal(false);
+
+  onMount(() => {
+    aiGetOpenAiStatus()
+      .then(setStatus)
+      .catch((err: unknown) => reportCommandFailure("ai_get_openai_status", err));
+  });
+
+  function handleSave(): void {
+    const key = apiKey().trim();
+    if (key.length === 0 || saving()) return;
+    setSaving(true);
+    aiSetOpenAiApiKey(key)
+      .then((next) => {
+        setStatus(next);
+        setApiKey("");
+        pushToast({ kind: "success", title: "OpenAI API key saved." });
+      })
+      .catch((err: unknown) => reportCommandFailure("ai_set_openai_api_key", err))
+      .finally(() => setSaving(false));
+  }
+
+  function handleClear(): void {
+    if (saving()) return;
+    setSaving(true);
+    aiClearOpenAiApiKey()
+      .then((next) => {
+        setStatus(next);
+        setApiKey("");
+        pushToast({ kind: "info", title: "OpenAI API key cleared." });
+      })
+      .catch((err: unknown) => reportCommandFailure("ai_clear_openai_api_key", err))
+      .finally(() => setSaving(false));
+  }
+
   return (
     <div class="prefs__section">
-      <p class="prefs__section-title">AI Backend</p>
+      <p class="prefs__section-title">OpenAI</p>
       <div class="prefs__row">
-        <div class="prefs__label">
-          AI backend configuration will be available once the AI verb runtime (B5) lands.
+        <div>
+          <div class="prefs__label">
+            {status()?.configured ? "API key saved" : "API key missing"}
+          </div>
+          <div class="prefs__sublabel">
+            Image model: {status()?.model ?? "gpt-image-2"}
+            {status()?.registered ? " · backend ready" : ""}
+          </div>
+        </div>
+      </div>
+      <div class="prefs__row">
+        <div>
+          <div class="prefs__label">API key</div>
+          <input
+            class="prefs__select"
+            type="password"
+            autocomplete="off"
+            value={apiKey()}
+            placeholder={status()?.configured ? "Saved key is hidden" : "sk-..."}
+            onInput={(event) => setApiKey(event.currentTarget.value)}
+            onKeyDown={(event) => {
+              if (event.key === "Enter") handleSave();
+            }}
+          />
+        </div>
+        <div class="prefs__row-actions">
+          <Button onClick={handleSave} disabled={saving() || apiKey().trim().length === 0}>
+            {saving() ? "Saving…" : "Save"}
+          </Button>
+          <Button
+            variant="ghost"
+            onClick={handleClear}
+            disabled={saving() || !status()?.configured}
+          >
+            Clear
+          </Button>
         </div>
       </div>
     </div>

@@ -9,12 +9,15 @@ use std::path::PathBuf;
 use std::sync::Arc;
 
 use dashmap::DashMap;
+use pixhaus_ai::backends::openai::OpenAiBackend;
+use pixhaus_ai::backends::{BackendError, BackendProxy};
 use pixhaus_ai::plugin::AnchorPayload;
 use pixhaus_ai::plugin::runtime::VerbRuntime;
 use pixhaus_ai::verbs::{
     AudioTimingVerb, AutoMeshDeformationVerb, CleanupVerb, ContinueVerb, ConversationalVerb,
-    CritiqueVerb, ExtendVerb, InbetweenVerb, MotionFromVideoVerb, ProjectStyleLearningVerb,
-    SketchFinishingVerb, TileVerb, TilesetFromDescriptionVerb, TrainEntityLoraVerb, VariantVerb,
+    CritiqueVerb, ExtendVerb, GenerateReferenceSheetVerb, InbetweenVerb, MotionFromVideoVerb,
+    ProjectStyleLearningVerb, SketchFinishingVerb, TileVerb, TilesetFromDescriptionVerb,
+    TrainEntityLoraVerb, VariantVerb,
 };
 use pixhaus_core::project::{LayerId, PixelBufferId, Project, Rgba, SpriteId};
 use pixhaus_core::undo::History;
@@ -197,6 +200,7 @@ impl AppState {
         register_builtin(&runtime, ConversationalVerb::new());
         register_builtin(&runtime, CritiqueVerb::new());
         register_builtin(&runtime, ExtendVerb::new());
+        register_builtin(&runtime, GenerateReferenceSheetVerb::new());
         register_builtin(&runtime, InbetweenVerb::new());
         register_builtin(&runtime, MotionFromVideoVerb::new());
         register_builtin(&runtime, ProjectStyleLearningVerb::new());
@@ -205,6 +209,7 @@ impl AppState {
         register_builtin(&runtime, TilesetFromDescriptionVerb::new());
         register_builtin(&runtime, TrainEntityLoraVerb::new());
         register_builtin(&runtime, VariantVerb::new());
+        register_openai_from_keychain(&runtime);
 
         let verb_runtime = Arc::new(runtime);
         let plugins = Arc::new(PluginRegistry::new(verb_runtime.clone()));
@@ -237,6 +242,20 @@ fn register_builtin<V: pixhaus_ai::plugin::verb::Verb>(runtime: &VerbRuntime, ve
     }
 }
 
+fn register_openai_from_keychain(runtime: &VerbRuntime) {
+    match OpenAiBackend::from_keychain() {
+        Ok(backend) => {
+            if let Err(err) = runtime.register_backend(BackendProxy::new(backend), 0) {
+                tracing::warn!(error = %err, "failed to register OpenAI backend from keychain");
+            }
+        }
+        Err(BackendError::ApiKeyNotFound(_)) => {}
+        Err(err) => {
+            tracing::warn!(error = %err, "failed to read OpenAI API key from keychain");
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -261,6 +280,7 @@ mod tests {
             "pixhaus.builtin.conversational",
             "pixhaus.builtin.critique",
             "pixhaus.builtin.extend",
+            "pixhaus.builtin.generate_reference_sheet",
             "pixhaus.builtin.inbetween",
             "pixhaus.builtin.motion_from_video",
             "pixhaus.builtin.project_style_learning",

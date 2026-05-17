@@ -252,7 +252,7 @@ mod tests {
             content: EntityContent::Sprites {
                 states: Vec::new(),
                 reference_sheet: Some(Box::new(ReferenceSheet {
-                    canonical: SheetVariant {
+                    canonical: Some(SheetVariant {
                         id: SheetVariantId::new(1),
                         generated_at: 0,
                         image: ReferenceImage {
@@ -262,7 +262,7 @@ mod tests {
                         composition: SheetComposition::default(),
                         generation: None,
                         extracted_palette: Vec::new(),
-                    },
+                    }),
                     history: Vec::new(),
                     prompts: Vec::new(),
                     info: AssetInfo {

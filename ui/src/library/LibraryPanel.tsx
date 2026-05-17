@@ -64,6 +64,7 @@ import {
 import LibraryContextMenu, { type LibraryContextTarget } from "./LibraryContextMenu";
 import { openEntityCreate } from "./entity-create-state";
 import type { LibraryTreeEntry } from "./library-state";
+import { openSheetEditor } from "../sheet/sheet-state";
 
 // ── Panel component ──────────────────────────────────────────────────────────
 
@@ -697,6 +698,7 @@ const EntityRow: Component<EntityRowProps> = (props) => {
         </Show>
 
         {/* Reference-sheet badge before the kind icon. */}
+        <SheetEditorButton entity={props.entry.entity} />
         <AnchorBadge entity={props.entry.entity} />
 
         {/* Kind icon */}
@@ -742,6 +744,31 @@ const EntityRow: Component<EntityRowProps> = (props) => {
 };
 
 // ── Anchor badge ─────────────────────────────────────────────────────────────
+
+type SheetEditorButtonProps = {
+  entity: Entity;
+};
+
+const SheetEditorButton: Component<SheetEditorButtonProps> = (props) => {
+  const isSpriteEntity = (): boolean => props.entity.content.type === "Sprites";
+
+  return (
+    <Show when={isSpriteEntity()}>
+      <button
+        class="library-row__anchor-badge"
+        data-testid={`library-row-sheet-editor-${props.entity.id}`}
+        title="Open reference sheet editor"
+        aria-label="Open reference sheet editor"
+        onClick={(event) => {
+          event.stopPropagation();
+          openSheetEditor(props.entity.id);
+        }}
+      >
+        ✦
+      </button>
+    </Show>
+  );
+};
 
 type AnchorBadgeProps = {
   entity: Entity;

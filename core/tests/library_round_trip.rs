@@ -58,7 +58,7 @@ fn wrap_entity(entity: Entity) -> Library {
 
 fn reference_sheet_fixture(bytes: Vec<u8>) -> ReferenceSheet {
     ReferenceSheet {
-        canonical: SheetVariant {
+        canonical: Some(SheetVariant {
             id: SheetVariantId::new(1),
             generated_at: 1_700_000_010,
             image: ReferenceImage {
@@ -68,7 +68,7 @@ fn reference_sheet_fixture(bytes: Vec<u8>) -> ReferenceSheet {
             composition: SheetComposition::default(),
             generation: None,
             extracted_palette: Vec::new(),
-        },
+        }),
         history: Vec::new(),
         prompts: Vec::new(),
         info: AssetInfo::default(),
@@ -313,6 +313,42 @@ fn sprite_entity_with_minimal_reference_sheet_round_trips() {
 }
 
 #[test]
+fn sprite_entity_with_draft_only_reference_sheet_round_trips() {
+    let mut sheet = reference_sheet_fixture(vec![1, 2, 3]);
+    let draft = sheet.canonical.take().expect("fixture canonical");
+    sheet.history.push(draft);
+    let entity = Entity {
+        id: EntityId::new(1),
+        kind: EntityKind::Custom("Character".into()),
+        name: "Hero".into(),
+        group_id: None,
+        tags: Vec::new(),
+        defaults: EntityDefaults::default(),
+        content: EntityContent::Sprites {
+            states: Vec::new(),
+            reference_sheet: Some(Box::new(sheet)),
+        },
+        ai: AiMetadata::default(),
+        user_data: UserData::default(),
+        created_at: 0,
+        updated_at: 0,
+    };
+
+    let library = wrap_entity(entity);
+
+    let back: Library = round_trip(&library);
+    let EntityContent::Sprites {
+        reference_sheet: Some(sheet),
+        ..
+    } = &back.entities[0].content
+    else {
+        panic!("expected embedded reference sheet");
+    };
+    assert!(sheet.canonical.is_none());
+    assert_eq!(sheet.history.len(), 1);
+}
+
+#[test]
 fn sprite_reference_sheet_with_populated_composition_preserves_rects() {
     let composition = SheetComposition {
         views: vec![SheetPanel {
@@ -365,7 +401,7 @@ fn sprite_reference_sheet_with_populated_composition_preserves_rects() {
         content: EntityContent::Sprites {
             states: Vec::new(),
             reference_sheet: Some(Box::new(ReferenceSheet {
-                canonical: SheetVariant {
+                canonical: Some(SheetVariant {
                     id: SheetVariantId::new(1),
                     generated_at: 1_700_000_000,
                     image: ReferenceImage {
@@ -375,7 +411,7 @@ fn sprite_reference_sheet_with_populated_composition_preserves_rects() {
                     composition: composition.clone(),
                     generation: Some(provenance.clone()),
                     extracted_palette: vec![PaletteEntry::new(Rgba::opaque(10, 20, 30))],
-                },
+                }),
                 history: Vec::new(),
                 prompts: vec![prompt_entry],
                 info,
@@ -397,8 +433,9 @@ fn sprite_reference_sheet_with_populated_composition_preserves_rects() {
     else {
         panic!("expected embedded reference sheet");
     };
-    assert_eq!(sheet.canonical.composition, composition);
-    assert_eq!(sheet.canonical.generation.as_ref(), Some(&provenance));
+    let canonical = sheet.canonical.as_ref().expect("canonical sheet");
+    assert_eq!(canonical.composition, composition);
+    assert_eq!(canonical.generation.as_ref(), Some(&provenance));
 }
 
 #[test]

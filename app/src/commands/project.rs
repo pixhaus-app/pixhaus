@@ -195,7 +195,9 @@ fn compute_next_id(project: &Project) -> u32 {
                     }
                 }
                 if let Some(sheet) = reference_sheet {
-                    max = max.max(sheet.canonical.id.get()); // SheetVariantId
+                    if let Some(canonical) = &sheet.canonical {
+                        max = max.max(canonical.id.get()); // SheetVariantId
+                    }
                     for variant in &sheet.history {
                         max = max.max(variant.id.get()); // SheetVariantId
                     }
@@ -713,9 +715,10 @@ mod tests {
             panic!("expected sprite entity content");
         };
         let sheet = reference_sheet.as_ref().expect("reference sheet");
-        assert_eq!(sheet.canonical.id, SheetVariantId::new(12));
-        assert_eq!(sheet.canonical.image.bytes, vec![1, 2, 3]);
-        assert_eq!(sheet.canonical.generated_at, 123);
+        let canonical = sheet.canonical.as_ref().expect("canonical");
+        assert_eq!(canonical.id, SheetVariantId::new(12));
+        assert_eq!(canonical.image.bytes, vec![1, 2, 3]);
+        assert_eq!(canonical.generated_at, 123);
     }
 
     /// Round-trip: build a project in memory, encode it to a temp file,
@@ -903,7 +906,7 @@ mod tests {
             content: EntityContent::Sprites {
                 states: Vec::new(),
                 reference_sheet: Some(Box::new(ReferenceSheet {
-                    canonical: SheetVariant {
+                    canonical: Some(SheetVariant {
                         id: SheetVariantId::new(60),
                         generated_at: 0,
                         image: ReferenceImage {
@@ -913,7 +916,7 @@ mod tests {
                         composition: SheetComposition::default(),
                         generation: None,
                         extracted_palette: Vec::new(),
-                    },
+                    }),
                     history: vec![SheetVariant {
                         id: SheetVariantId::new(70),
                         generated_at: 0,
