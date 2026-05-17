@@ -79,12 +79,12 @@ impl TS for Approval {
     }
 
     fn inline(_: &Config) -> String {
-        r#"{
+        r"{
 entity_id: EntityId,
 canonical_id: SheetVariantId,
 previous_canonical_id: SheetVariantId | null,
 palette_size: number,
-}"#
+}"
         .into()
     }
 

@@ -265,7 +265,7 @@ pub enum ImageQuality {
 }
 
 impl ImageQuality {
-    /// Returns the OpenAI wire value.
+    /// Returns the `OpenAI` wire value.
     #[must_use]
     pub fn as_openai(self) -> &'static str {
         match self {

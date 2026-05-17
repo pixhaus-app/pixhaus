@@ -578,12 +578,12 @@ impl TS for ReferenceSheet {
     }
 
     fn inline(_: &Config) -> String {
-        r#"{
+        r"{
 canonical: SheetVariant | null,
 history?: Array<SheetVariant>,
 prompts?: Array<PromptEntry>,
 info?: AssetInfo,
-}"#
+}"
         .into()
     }
 

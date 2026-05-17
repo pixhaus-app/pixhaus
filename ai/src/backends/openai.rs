@@ -38,7 +38,7 @@ use crate::plugin::progress::{CostUpdate, VerbProgressEvent};
 
 const BASE_URL: &str = "https://api.openai.com/v1";
 const DEFAULT_TEXT_MODEL: &str = "gpt-4o";
-/// Default OpenAI image model for Pixhaus image generation.
+/// Default `OpenAI` image model for Pixhaus image generation.
 pub const DEFAULT_IMAGE_MODEL: &str = "gpt-image-2";
 const DEFAULT_IMAGE_EDIT_MODEL: &str = "gpt-image-1.5";
 
