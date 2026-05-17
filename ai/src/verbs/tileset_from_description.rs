@@ -254,6 +254,7 @@ impl Verb for TilesetFromDescriptionVerb {
         Ok(())
     }
 
+    #[allow(clippy::too_many_lines)]
     async fn invoke(
         &self,
         ctx: VerbContext,
@@ -307,6 +308,7 @@ impl Verb for TilesetFromDescriptionVerb {
             num_images: 1,
             quality: None,
             style_image,
+            reference_images: Vec::new(),
         });
 
         let response = select! {

@@ -162,10 +162,22 @@ id_newtype! {
 }
 
 id_newtype! {
+    /// Identifier of a project-scoped AI asset in
+    /// [`AssetLibrary`](super::library::AssetLibrary).
+    AssetId, u32
+}
+
+id_newtype! {
+    /// Identifier of an async `LoRA` training job tracked by
+    /// [`TrainingJob`](super::library::TrainingJob).
+    TrainingJobId, u32
+}
+
+id_newtype! {
     /// Identifier of a [`SheetVariant`](super::library::SheetVariant) within
     /// a [`ReferenceSheet`](super::library::ReferenceSheet).
     ///
-    /// Reference sheets keep older variants in their `history`; the id makes
+    /// Reference sheets keep older variants in their `variants`; the id makes
     /// it possible to point at one specific variant from a generation log.
     SheetVariantId, u32
 }

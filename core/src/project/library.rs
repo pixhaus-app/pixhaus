@@ -30,8 +30,11 @@ use serde::{Deserialize, Serialize};
 use ts_rs::{Config, TS, TypeVisitor};
 
 use super::color::Rgba;
-use super::geometry::{Rect, Size};
-use super::id::{EntityId, GroupId, LayerId, PaletteId, SheetVariantId, StateId, TagId, TileIndex};
+use super::geometry::{IVec2, Rect, Size};
+use super::id::{
+    AssetId, EntityId, GroupId, LayerId, PaletteId, SheetVariantId, StateId, TagId, TileIndex,
+    TrainingJobId,
+};
 use super::palette::{Palette, PaletteEntry};
 use super::slice::Pivot;
 use super::sprite::Sprite;
@@ -373,14 +376,53 @@ pub struct TagDefinition {
     pub auto_generated: bool,
 }
 
-/// Project-level AI memory.
+/// Project-level AI memory and defaults.
 ///
 /// Per-entity AI metadata lives on [`Entity::ai`]; this struct collects
-/// the project-wide pieces — the style learning corpus, the trained
-/// `LoRA`, recent prompt history.
-#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize, TS)]
+/// the project-wide pieces used by the v1 reference-sheet workflow:
+/// prompt style notes, reusable assets, provider-routing preferences,
+/// project defaults, and asynchronous `LoRA` training jobs.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, TS)]
 #[ts(export)]
 pub struct ProjectAi {
+    /// Project-level notes prepended to every AI prompt composition.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub style_notes: String,
+
+    /// Browseable project-scoped AI asset library.
+    #[serde(default, skip_serializing_if = "AssetLibrary::is_empty")]
+    pub asset_library: AssetLibrary,
+
+    /// Per-operation model overrides. If absent, the router uses its
+    /// operation defaults and configured-provider fallback.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub per_operation_model_prefs: BTreeMap<OperationKind, ModelId>,
+
+    /// Default chroma-key color for new sheet generations.
+    #[serde(
+        default = "default_reference_chroma",
+        skip_serializing_if = "is_default_reference_chroma"
+    )]
+    pub default_chroma: Rgba,
+
+    /// Default quality tier for new generation forms.
+    #[serde(
+        default = "default_project_quality",
+        skip_serializing_if = "Quality::is_medium"
+    )]
+    pub default_quality: Quality,
+
+    /// Default candidate count for new generation forms.
+    #[serde(
+        default = "default_candidate_count",
+        skip_serializing_if = "is_default_candidate_count"
+    )]
+    pub default_candidate_count: u8,
+
+    /// `LoRA` training jobs, including completed and failed jobs.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub training_jobs: Vec<TrainingJob>,
+
     /// Entity ids included in the project's style reference corpus. The
     /// Project Style Learning verb (S30) trains a `LoRA` from these.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
@@ -397,14 +439,62 @@ pub struct ProjectAi {
     pub prompt_history: Vec<PromptHistoryEntry>,
 }
 
+impl Default for ProjectAi {
+    fn default() -> Self {
+        Self {
+            style_notes: String::new(),
+            asset_library: AssetLibrary::default(),
+            per_operation_model_prefs: BTreeMap::new(),
+            default_chroma: default_reference_chroma(),
+            default_quality: Quality::Medium,
+            default_candidate_count: default_candidate_count(),
+            training_jobs: Vec::new(),
+            style_corpus: Vec::new(),
+            project_lora_path: None,
+            prompt_history: Vec::new(),
+        }
+    }
+}
+
 impl ProjectAi {
     /// Returns `true` when no project-level AI memory is set.
     #[must_use]
     pub fn is_empty(&self) -> bool {
-        self.style_corpus.is_empty()
+        self.style_notes.is_empty()
+            && self.asset_library.is_empty()
+            && self.per_operation_model_prefs.is_empty()
+            && is_default_reference_chroma(&self.default_chroma)
+            && self.default_quality.is_medium()
+            && is_default_candidate_count(&self.default_candidate_count)
+            && self.training_jobs.is_empty()
+            && self.style_corpus.is_empty()
             && self.project_lora_path.is_none()
             && self.prompt_history.is_empty()
     }
+}
+
+/// Default chroma-key background for AI-generated reference sheets.
+#[must_use]
+pub const fn default_reference_chroma() -> Rgba {
+    Rgba::opaque(255, 0, 255)
+}
+
+#[allow(clippy::trivially_copy_pass_by_ref)]
+fn is_default_reference_chroma(color: &Rgba) -> bool {
+    *color == default_reference_chroma()
+}
+
+fn default_project_quality() -> Quality {
+    Quality::Medium
+}
+
+fn default_candidate_count() -> u8 {
+    2
+}
+
+#[allow(clippy::trivially_copy_pass_by_ref)]
+fn is_default_candidate_count(n: &u8) -> bool {
+    *n == default_candidate_count()
 }
 
 /// Per-entity AI metadata.
@@ -533,12 +623,476 @@ pub struct ReferenceImage {
     pub mime: String,
 }
 
-/// A structured asset reference sheet — the anchor for every subsequent
-/// AI generation for the linked entity.
+/// High-level quality tier exposed by the reference-sheet editor.
+#[derive(
+    Copy, Clone, Debug, Default, Eq, PartialEq, Ord, PartialOrd, Hash, Serialize, Deserialize, TS,
+)]
+#[serde(rename_all = "snake_case")]
+#[ts(export)]
+pub enum Quality {
+    /// Let the router/provider choose the quality tier.
+    Auto,
+    /// Cheapest / fastest tier.
+    Low,
+    /// Balanced default tier.
+    #[default]
+    Medium,
+    /// Final/promoted output tier.
+    High,
+}
+
+impl Quality {
+    #[allow(clippy::trivially_copy_pass_by_ref)]
+    fn is_medium(&self) -> bool {
+        matches!(self, Self::Medium)
+    }
+}
+
+/// Stable Pixhaus model labels. Provider-specific endpoint IDs live in
+/// `pixhaus-ai`; the project file stores these product-facing identifiers.
+#[derive(
+    Copy, Clone, Debug, Default, Eq, PartialEq, Ord, PartialOrd, Hash, Serialize, Deserialize, TS,
+)]
+#[serde(rename_all = "snake_case")]
+#[ts(export)]
+pub enum ModelId {
+    /// Let the router pick by operation type and provider availability.
+    #[default]
+    Auto,
+    /// `OpenAI` image model label for `gpt-image-2`.
+    OpenAiGptImage2,
+    /// Google AI Studio Nano Banana Pro image model label.
+    GoogleNanoBananaPro,
+    /// Google AI Studio Flash image model label.
+    GoogleGeminiFlashImage,
+    /// fal Flux Kontext image/edit model.
+    FalFluxKontext,
+    /// fal Flux.1 dev with extensions such as `LoRA`/IP-Adapter.
+    FalFluxDev,
+    /// fal Recraft vectorize endpoint.
+    FalRecraftVectorize,
+    /// fal Real-ESRGAN upscaler.
+    FalRealEsrgan,
+}
+
+/// Reference-sheet operation used by model routing and project prefs.
+#[allow(missing_docs)]
+#[derive(Copy, Clone, Debug, Eq, PartialEq, Ord, PartialOrd, Hash, Serialize, Deserialize, TS)]
+#[serde(rename_all = "snake_case")]
+#[ts(export)]
+pub enum OperationKind {
+    FreshGeneration,
+    MaskedRefinement,
+    PromptOnlyRefinement,
+    RegionalRefinement,
+    ChatTurn,
+    Promotion,
+    CrossModelGrid,
+    VectorExport,
+    Upscale,
+    LoraTraining,
+}
+
+/// Built-in reference-sheet templates exposed by core/UI.
+#[derive(
+    Copy, Clone, Debug, Default, Eq, PartialEq, Ord, PartialOrd, Hash, Serialize, Deserialize, TS,
+)]
+#[serde(rename_all = "snake_case")]
+#[ts(export)]
+pub enum ReferenceSheetTemplateId {
+    /// Four-view turnaround for character sheets.
+    #[default]
+    Turnaround4View,
+    /// Eight-direction top-down turnaround.
+    Turnaround8Direction,
+    /// Facial expression sheet.
+    ExpressionSheet,
+    /// Action pose sheet.
+    ActionPoses,
+    /// Labeled turnaround for text-heavy outputs.
+    TypographicTurnaround,
+    /// Legacy character template identifier.
+    Character,
+    /// Legacy item template identifier.
+    Item,
+    /// Legacy tileset template identifier.
+    Tileset,
+    /// User-authored/custom template.
+    Custom,
+}
+
+/// Width/height pair for template-controlled sheet output sizes.
+#[allow(missing_docs)]
+#[derive(Copy, Clone, Debug, Eq, PartialEq, Hash, Serialize, Deserialize, TS)]
+#[ts(export)]
+pub struct SheetDimensions {
+    pub width: u32,
+    pub height: u32,
+}
+
+/// Core/UI-facing template definition. Backend-only prompt fragments stay
+/// in `pixhaus-ai`.
+#[allow(missing_docs)]
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize, TS)]
+#[ts(export)]
+pub struct ReferenceSheetTemplateDefinition {
+    pub id: ReferenceSheetTemplateId,
+    pub label: String,
+    pub allowed_dimensions: Vec<SheetDimensions>,
+    pub default_dimensions: SheetDimensions,
+    pub default_chroma: Rgba,
+    pub benefits_from_text_labels: bool,
+}
+
+/// Returns the built-in reference-sheet template definitions.
+#[must_use]
+pub fn built_in_reference_sheet_templates() -> Vec<ReferenceSheetTemplateDefinition> {
+    use ReferenceSheetTemplateId::{
+        ActionPoses, ExpressionSheet, Turnaround4View, Turnaround8Direction, TypographicTurnaround,
+    };
+
+    vec![
+        template_definition(
+            Turnaround4View,
+            "Turnaround (4-view)",
+            &[(2048, 1024), (1024, 512), (2560, 1280), (1536, 1024)],
+            0,
+            false,
+        ),
+        template_definition(
+            Turnaround8Direction,
+            "Turnaround (8-direction)",
+            &[(2048, 1024), (1024, 512), (3072, 1024)],
+            0,
+            false,
+        ),
+        template_definition(
+            ExpressionSheet,
+            "Expression sheet",
+            &[(1024, 1024), (1536, 1024), (2048, 2048)],
+            0,
+            false,
+        ),
+        template_definition(
+            ActionPoses,
+            "Action poses",
+            &[(2048, 1024), (1024, 512), (3072, 1024)],
+            0,
+            false,
+        ),
+        template_definition(
+            TypographicTurnaround,
+            "Typographic turnaround",
+            &[(2048, 1024), (1536, 1024), (2560, 1280)],
+            0,
+            true,
+        ),
+    ]
+}
+
+fn template_definition(
+    id: ReferenceSheetTemplateId,
+    label: &str,
+    dims: &[(u32, u32)],
+    default_index: usize,
+    benefits_from_text_labels: bool,
+) -> ReferenceSheetTemplateDefinition {
+    let allowed_dimensions = dims
+        .iter()
+        .map(|&(width, height)| SheetDimensions { width, height })
+        .collect::<Vec<_>>();
+    let default_dimensions =
+        allowed_dimensions
+            .get(default_index)
+            .copied()
+            .unwrap_or(SheetDimensions {
+                width: 2048,
+                height: 1024,
+            });
+    ReferenceSheetTemplateDefinition {
+        id,
+        label: label.into(),
+        allowed_dimensions,
+        default_dimensions,
+        default_chroma: default_reference_chroma(),
+        benefits_from_text_labels,
+    }
+}
+
+fn default_reference_template() -> ReferenceSheetTemplateId {
+    ReferenceSheetTemplateId::Turnaround4View
+}
+
+fn default_sheet_width() -> u32 {
+    2048
+}
+
+fn default_sheet_height() -> u32 {
+    1024
+}
+
+fn default_lora_weight() -> f32 {
+    1.0
+}
+
+#[allow(clippy::trivially_copy_pass_by_ref)]
+fn is_default_lora_weight(weight: &f32) -> bool {
+    (*weight - 1.0).abs() < f32::EPSILON
+}
+
+/// Role hint for one reference image slot.
+#[allow(missing_docs)]
+#[derive(
+    Copy, Clone, Debug, Default, Eq, PartialEq, Ord, PartialOrd, Hash, Serialize, Deserialize, TS,
+)]
+#[serde(rename_all = "snake_case")]
+#[ts(export)]
+pub enum ReferenceRole {
+    Subject,
+    Style,
+    Pose,
+    Outfit,
+    Context,
+    #[default]
+    Generic,
+}
+
+/// One ordered reference image supplied to a generation/refinement request.
+#[allow(missing_docs)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, TS)]
+#[ts(export)]
+pub struct ReferenceSlot {
+    pub image: ReferenceImage,
+    #[serde(default)]
+    pub role: ReferenceRole,
+    #[serde(default = "default_lora_weight")]
+    pub weight: f32,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub source_asset_id: Option<AssetId>,
+}
+
+/// Source operation that produced a sheet variant.
+#[allow(missing_docs)]
+#[derive(
+    Copy, Clone, Debug, Default, Eq, PartialEq, Ord, PartialOrd, Hash, Serialize, Deserialize, TS,
+)]
+#[serde(rename_all = "snake_case")]
+#[ts(export)]
+pub enum VariantOrigin {
+    #[default]
+    FreshGeneration,
+    Refinement,
+    ChatTurn,
+    Promotion,
+    CrossModelGrid,
+    ManualImport,
+}
+
+/// Region used by regional reference refinement.
+#[allow(missing_docs)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, TS)]
+#[ts(export)]
+pub struct RegionDefinition {
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub polygon: Vec<IVec2>,
+    pub prompt: String,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub region_references: Vec<ReferenceSlot>,
+}
+
+/// Refinement metadata stored on variants produced by refinement.
+#[allow(missing_docs)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, TS)]
+#[serde(tag = "kind", content = "value", rename_all = "snake_case")]
+#[ts(export)]
+pub enum RefinementKind {
+    Masked { mask_png: ReferenceImage },
+    PromptOnly,
+    Regional { regions: Vec<RegionDefinition> },
+}
+
+/// Full chat transcript stored for conversational variant provenance.
+#[allow(missing_docs)]
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize, TS)]
+#[ts(export)]
+pub struct ChatTranscript {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub summary: Option<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub turns: Vec<ChatTurn>,
+}
+
+/// One conversational editing turn and the variant it produced.
+#[allow(missing_docs)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, TS)]
+#[ts(export)]
+pub struct ChatTurn {
+    #[ts(type = "number")]
+    pub timestamp: i64,
+    pub user_message: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub mask: Option<ReferenceImage>,
+    pub resulting_variant_id: SheetVariantId,
+}
+
+/// Project-scoped reusable assets for reference-sheet workflows.
+#[allow(missing_docs)]
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize, TS)]
+#[ts(export)]
+pub struct AssetLibrary {
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub references: Vec<ReferenceAsset>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub character_cards: Vec<CharacterCard>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub style_swatches: Vec<StyleSwatch>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub loras: Vec<LoraAsset>,
+}
+
+impl AssetLibrary {
+    #[allow(missing_docs)]
+    #[must_use]
+    pub fn is_empty(&self) -> bool {
+        self.references.is_empty()
+            && self.character_cards.is_empty()
+            && self.style_swatches.is_empty()
+            && self.loras.is_empty()
+    }
+}
+
+/// Single image saved to the project asset library.
+#[allow(missing_docs)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, TS)]
+#[ts(export)]
+pub struct ReferenceAsset {
+    pub id: AssetId,
+    pub image: ReferenceImage,
+    #[serde(default)]
+    pub default_role: ReferenceRole,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub tags: Vec<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub source_variant_id: Option<SheetVariantId>,
+    #[ts(type = "number")]
+    pub created_at: i64,
+}
+
+/// Bundle of references and style notes representing one character.
+#[allow(missing_docs)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, TS)]
+#[ts(export)]
+pub struct CharacterCard {
+    pub id: AssetId,
+    pub name: String,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub references: Vec<AssetId>,
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub style_notes: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub associated_lora: Option<AssetId>,
+    #[ts(type = "number")]
+    pub created_at: i64,
+}
+
+/// Bundle of references and style notes representing a visual style.
+#[allow(missing_docs)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, TS)]
+#[ts(export)]
+pub struct StyleSwatch {
+    pub id: AssetId,
+    pub name: String,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub references: Vec<AssetId>,
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub style_notes: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub associated_lora: Option<AssetId>,
+    #[ts(type = "number")]
+    pub created_at: i64,
+}
+
+/// Kind of `LoRA` training asset.
+#[allow(missing_docs)]
+#[derive(
+    Copy, Clone, Debug, Default, Eq, PartialEq, Ord, PartialOrd, Hash, Serialize, Deserialize, TS,
+)]
+#[serde(rename_all = "snake_case")]
+#[ts(export)]
+pub enum LoraKind {
+    Style,
+    #[default]
+    Character,
+    KontextPair,
+}
+
+/// Trained `LoRA` registered in the project asset library.
+#[allow(missing_docs)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, TS)]
+#[ts(export)]
+pub struct LoraAsset {
+    pub id: AssetId,
+    pub name: String,
+    #[serde(default)]
+    pub kind: LoraKind,
+    pub trigger_word: String,
+    pub target_model: ModelId,
+    pub fal_lora_url: String,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub training_data_thumbnails: Vec<ReferenceImage>,
+    #[ts(type = "number")]
+    pub created_at: i64,
+}
+
+/// State of a fal `LoRA` training job.
+#[allow(missing_docs)]
+#[derive(
+    Copy, Clone, Debug, Default, Eq, PartialEq, Ord, PartialOrd, Hash, Serialize, Deserialize, TS,
+)]
+#[serde(rename_all = "snake_case")]
+#[ts(export)]
+pub enum TrainingStatus {
+    #[default]
+    Queued,
+    Running,
+    Completed,
+    Failed,
+    Cancelled,
+}
+
+/// Async `LoRA` training job record.
+#[allow(missing_docs)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, TS)]
+#[ts(export)]
+pub struct TrainingJob {
+    pub id: TrainingJobId,
+    pub asset_name: String,
+    #[serde(default)]
+    pub kind: LoraKind,
+    pub target_model: ModelId,
+    pub trigger_word: String,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub training_data: Vec<AssetId>,
+    pub fal_job_id: String,
+    #[serde(default)]
+    pub status: TrainingStatus,
+    #[ts(type = "number")]
+    pub created_at: i64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(type = "number | null")]
+    pub completed_at: Option<i64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub result_lora_id: Option<AssetId>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub error: Option<String>,
+}
+
+/// A structured asset reference sheet: the canonical AI anchor and all
+/// drafts/history for one sprite entity.
 ///
 /// Draft-only sheets are valid: `canonical` is `None` until the user
 /// approves a generated or imported variant. AI verbs only use approved
-/// canonical sheets as anchors; variants in `history` are retained as
+/// canonical sheets as anchors; variants in `variants` are retained as
 /// candidates/history and never anchor generation on their own.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct ReferenceSheet {
@@ -548,23 +1102,18 @@ pub struct ReferenceSheet {
     #[serde(default)]
     pub canonical: Option<SheetVariant>,
 
-    /// Older or rejected variants the user generated and decided not to
-    /// canonicalise, plus draft candidates waiting for first approval.
-    /// Newest first. Capped by [`ProjectAi`] settings when the cap
-    /// mechanism lands in B10.
+    /// Drafts and previous canonicals, newest first. The canonical
+    /// variant is stored only in `canonical`, not duplicated here.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub history: Vec<SheetVariant>,
+    pub variants: Vec<SheetVariant>,
 
-    /// Generation prompts run against this sheet, ordered oldest to
-    /// newest. The last entry is what produced `canonical`. Empty in
-    /// B9; populated by the sheet generation verbs in B10.
+    /// Legacy prompt log retained for pre-v1 command compatibility. New
+    /// provenance lives directly on [`SheetVariant`].
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub prompts: Vec<PromptEntry>,
 
-    /// Structured metadata: name, age, species, personality notes,
-    /// outfit variations. Free-form keyed map. The new-entity flow in
-    /// B9 prompts for a few common fields; B10 extends this with
-    /// AI-suggested fields based on the generated sheet.
+    /// Legacy structured metadata retained for existing project commands.
+    /// New reusable metadata belongs in [`AssetLibrary`].
     #[serde(default, skip_serializing_if = "AssetInfo::is_empty")]
     pub info: AssetInfo,
 }
@@ -580,9 +1129,7 @@ impl TS for ReferenceSheet {
     fn inline(_: &Config) -> String {
         r"{
 canonical: SheetVariant | null,
-history?: Array<SheetVariant>,
-prompts?: Array<PromptEntry>,
-info?: AssetInfo,
+variants?: Array<SheetVariant>,
 }"
         .into()
     }
@@ -599,8 +1146,6 @@ info?: AssetInfo,
     where
         Self: 'static,
     {
-        v.visit::<AssetInfo>();
-        v.visit::<PromptEntry>();
         v.visit::<SheetVariant>();
     }
 
@@ -609,12 +1154,10 @@ info?: AssetInfo,
     }
 }
 
-/// One generated version of a reference sheet.
+/// One generated/imported/refined version of a reference sheet.
 ///
-/// The sheet is one composite image with optional panel rectangles
-/// describing the turnaround views, expressions, callouts, and outfit
-/// variants inside it. B9 ships the type; B10 populates `composition`
-/// with real panel data.
+/// The raster image is always embedded. Optional vector output is stored
+/// as another [`ReferenceImage`] with `mime = "image/svg+xml"`.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, TS)]
 #[ts(export)]
 pub struct SheetVariant {
@@ -623,9 +1166,70 @@ pub struct SheetVariant {
     /// UTC seconds-since-epoch at which this variant was generated or
     /// imported.
     #[ts(type = "number")]
-    pub generated_at: i64,
+    pub created_at: i64,
+    /// Layout template used to generate this sheet.
+    #[serde(default = "default_reference_template")]
+    pub template: ReferenceSheetTemplateId,
+    /// Output raster width.
+    #[serde(default = "default_sheet_width")]
+    pub width: u32,
+    /// Output raster height.
+    #[serde(default = "default_sheet_height")]
+    pub height: u32,
+    /// Flat chroma-key background color requested for the model.
+    #[serde(default = "default_reference_chroma")]
+    pub chroma_color: Rgba,
+    /// User-typed prompt for this operation.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub user_prompt: String,
+    /// Full composed prompt after style notes/template/reference hints.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub composed_prompt: String,
+    /// Ordered generation references with role hints.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub references: Vec<ReferenceSlot>,
+    /// Whether Google Search grounding was requested.
+    #[serde(default)]
+    pub real_world_grounding: bool,
+    /// Applied `LoRA` asset, Flux-only.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub applied_lora: Option<AssetId>,
+    /// Applied `LoRA` strength for Flux requests.
+    #[serde(
+        default = "default_lora_weight",
+        skip_serializing_if = "is_default_lora_weight"
+    )]
+    pub lora_weight: f32,
     /// The composite sheet image.
     pub image: ReferenceImage,
+    /// Optional vectorized SVG output.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub vector_image: Option<ReferenceImage>,
+    /// Model that produced this variant.
+    #[serde(default)]
+    pub model: ModelId,
+    /// Quality tier used for the run.
+    #[serde(default)]
+    pub quality: Quality,
+    /// Parent/source variant for refinements, chat turns, promotions, and
+    /// cross-model comparisons.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub parent_variant_id: Option<SheetVariantId>,
+    /// Operation origin.
+    #[serde(default)]
+    pub origin: VariantOrigin,
+    /// Refinement-specific metadata.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub refinement: Option<RefinementKind>,
+    /// Full chat transcript for chat-generated variants.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub chat_transcript: Option<ChatTranscript>,
+    /// True when produced by "Promote to final".
+    #[serde(default)]
+    pub promotion: bool,
+    /// Actual cost recorded after completion, if known.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cost_usd: Option<f64>,
     /// What's in the sheet, panel by panel. Empty in B9; B10 fills it.
     #[serde(default, skip_serializing_if = "SheetComposition::is_empty")]
     pub composition: SheetComposition,
@@ -637,6 +1241,40 @@ pub struct SheetVariant {
     /// generator runs eyedropper extraction at sheet-creation time.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub extracted_palette: Vec<PaletteEntry>,
+}
+
+impl SheetVariant {
+    /// Builds a variant with PRD v1 defaults from an embedded image.
+    #[must_use]
+    pub fn from_image(id: SheetVariantId, created_at: i64, image: ReferenceImage) -> Self {
+        Self {
+            id,
+            created_at,
+            template: ReferenceSheetTemplateId::Custom,
+            width: default_sheet_width(),
+            height: default_sheet_height(),
+            chroma_color: default_reference_chroma(),
+            user_prompt: String::new(),
+            composed_prompt: String::new(),
+            references: Vec::new(),
+            real_world_grounding: false,
+            applied_lora: None,
+            lora_weight: default_lora_weight(),
+            image,
+            vector_image: None,
+            model: ModelId::Auto,
+            quality: Quality::Medium,
+            parent_variant_id: None,
+            origin: VariantOrigin::ManualImport,
+            refinement: None,
+            chat_transcript: None,
+            promotion: false,
+            cost_usd: None,
+            composition: SheetComposition::default(),
+            generation: None,
+            extracted_palette: Vec::new(),
+        }
+    }
 }
 
 /// Panel rectangles within a sheet image, labelled by what they show.
@@ -763,7 +1401,7 @@ pub struct PromptEntry {
 pub enum PromptResult {
     /// The prompt produced a sheet variant; the id refers to a variant
     /// stored in the parent [`ReferenceSheet::canonical`] or
-    /// [`ReferenceSheet::history`].
+    /// [`ReferenceSheet::variants`].
     Variant(SheetVariantId),
     /// The prompt failed; the string is the user-facing error message.
     Error(String),
@@ -878,6 +1516,55 @@ mod tests {
         assert!(ProjectAi::default().is_empty());
         assert!(SheetComposition::default().is_empty());
         assert!(AssetInfo::default().is_empty());
+    }
+
+    #[test]
+    fn default_reference_chroma_is_magenta() {
+        assert_eq!(default_reference_chroma(), Rgba::opaque(255, 0, 255));
+    }
+
+    #[test]
+    fn built_in_templates_include_expected_turnaround_defaults() {
+        let templates = built_in_reference_sheet_templates();
+        let turnaround = templates
+            .iter()
+            .find(|template| template.id == ReferenceSheetTemplateId::Turnaround4View)
+            .expect("turnaround template");
+
+        assert_eq!(
+            turnaround.default_dimensions,
+            SheetDimensions {
+                width: 2048,
+                height: 1024,
+            }
+        );
+        assert_eq!(turnaround.default_chroma, default_reference_chroma());
+        assert!(!turnaround.benefits_from_text_labels);
+        assert!(
+            turnaround
+                .allowed_dimensions
+                .contains(&turnaround.default_dimensions)
+        );
+    }
+
+    #[test]
+    fn sheet_variant_from_image_uses_manual_import_defaults() {
+        let image = ReferenceImage {
+            bytes: vec![1, 2, 3],
+            mime: "image/png".into(),
+        };
+        let variant = SheetVariant::from_image(SheetVariantId::new(7), 123, image.clone());
+
+        assert_eq!(variant.id, SheetVariantId::new(7));
+        assert_eq!(variant.created_at, 123);
+        assert_eq!(variant.image, image);
+        assert_eq!(variant.template, ReferenceSheetTemplateId::Custom);
+        assert_eq!(variant.chroma_color, default_reference_chroma());
+        assert_eq!(variant.model, ModelId::Auto);
+        assert_eq!(variant.quality, Quality::Medium);
+        assert_eq!(variant.origin, VariantOrigin::ManualImport);
+        assert!(variant.references.is_empty());
+        assert!(!variant.promotion);
     }
 
     /// Pins the boxing decision for [`EntityContent`].

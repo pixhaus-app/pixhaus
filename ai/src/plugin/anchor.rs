@@ -196,8 +196,7 @@ mod tests {
     use pixhaus_core::project::PaletteEntry;
     use pixhaus_core::project::{
         AiMetadata, AssetInfo, Entity, EntityContent, EntityDefaults, EntityKind, NamedSprite,
-        ReferenceImage, ReferenceSheet, Rgba, SheetComposition, SheetVariant, SheetVariantId,
-        UserData,
+        ReferenceImage, ReferenceSheet, Rgba, SheetVariant, SheetVariantId, UserData,
     };
 
     use super::*;
@@ -214,17 +213,17 @@ mod tests {
                 states: Vec::new(),
                 reference_sheet: Some(Box::new(ReferenceSheet {
                     canonical: Some(SheetVariant {
-                        id: SheetVariantId::new(1),
-                        generated_at: 0,
-                        image: ReferenceImage {
-                            bytes,
-                            mime: "image/png".into(),
-                        },
-                        composition: SheetComposition::default(),
-                        generation: None,
                         extracted_palette: vec![PaletteEntry::new(Rgba::opaque(1, 2, 3))],
+                        ..SheetVariant::from_image(
+                            SheetVariantId::new(1),
+                            0,
+                            ReferenceImage {
+                                bytes,
+                                mime: "image/png".into(),
+                            },
+                        )
                     }),
-                    history: Vec::new(),
+                    variants: Vec::new(),
                     prompts: Vec::new(),
                     info: AssetInfo {
                         fields: BTreeMap::new(),
@@ -281,7 +280,7 @@ mod tests {
         } = &mut entity.content
         {
             let canonical = sheet.canonical.take().unwrap();
-            sheet.history.push(canonical);
+            sheet.variants.push(canonical);
         }
         assert!(AnchorPayload::from_sprite_entity(&entity, 0.7, None).is_none());
     }

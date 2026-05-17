@@ -11,7 +11,7 @@
 //!
 //! - Text / vision: `gpt-4o` (default); override per-request.
 //! - Image generation: `gpt-image-2` (default).
-//! - Image edit/inpaint: `gpt-image-1.5`.
+//! - Image edit/inpaint: `gpt-image-2`.
 //!
 //! # Pricing (May 2026 estimates)
 //!
@@ -23,6 +23,7 @@ use std::time::Duration;
 
 use async_trait::async_trait;
 use base64::Engine as _;
+use futures::StreamExt;
 use serde::Deserialize;
 use tokio::select;
 use tokio_util::sync::CancellationToken;
@@ -33,6 +34,7 @@ use super::{
     ImageGenRequest, ImageGenResponse, InferenceBackend, InferenceRequest, InferenceResponse,
     Result, TextGenRequest, TextGenResponse, ToolCall, VerbProgress, check_http_status,
 };
+use crate::plugin::context::PixelData;
 use crate::plugin::descriptor::{BackendCapabilities, CostEstimate};
 use crate::plugin::progress::{CostUpdate, VerbProgressEvent};
 
@@ -40,7 +42,7 @@ const BASE_URL: &str = "https://api.openai.com/v1";
 const DEFAULT_TEXT_MODEL: &str = "gpt-4o";
 /// Default `OpenAI` image model for Pixhaus image generation.
 pub const DEFAULT_IMAGE_MODEL: &str = "gpt-image-2";
-const DEFAULT_IMAGE_EDIT_MODEL: &str = "gpt-image-1.5";
+const DEFAULT_IMAGE_EDIT_MODEL: &str = "gpt-image-2";
 
 const INPUT_PRICE_PER_TOKEN: f64 = 2.50 / 1_000_000.0;
 const OUTPUT_PRICE_PER_TOKEN: f64 = 10.00 / 1_000_000.0;
@@ -203,6 +205,12 @@ impl OpenAiBackend {
 
         debug!(model = %model, "sending OpenAI image generation request");
 
+        if !req.reference_images.is_empty() {
+            return self
+                .generate_image_with_references(req, &model, progress, cancel)
+                .await;
+        }
+
         let body = build_image_generation_body(req, &model);
 
         let http_req = self
@@ -220,6 +228,17 @@ impl OpenAiBackend {
         };
 
         let http_resp = check_http_status(http_resp).await?;
+        if is_gpt_image_model(&model) {
+            let images = parse_openai_image_stream(http_resp, progress, cancel).await?;
+            progress
+                .send(VerbProgressEvent::Cost(CostUpdate {
+                    usd_cents: IMAGE_PRICE_CENTS * req.num_images as f32,
+                    tokens_input: None,
+                    tokens_output: None,
+                }))
+                .await;
+            return Ok(ImageGenResponse { images, model });
+        }
         let raw: OpenAiImageResponse = http_resp.json().await.map_err(BackendError::Network)?;
 
         let images = decode_image_data(raw.data)?;
@@ -233,6 +252,86 @@ impl OpenAiBackend {
             .await;
 
         Ok(ImageGenResponse { images, model })
+    }
+
+    #[allow(clippy::cast_precision_loss)]
+    async fn generate_image_with_references(
+        &self,
+        req: &ImageGenRequest,
+        model: &str,
+        progress: &VerbProgress,
+        cancel: &CancellationToken,
+    ) -> Result<ImageGenResponse> {
+        let image_field = if is_gpt_image_model(model) {
+            "image[]"
+        } else {
+            "image"
+        };
+        let mut form = reqwest::multipart::Form::new()
+            .text("prompt", req.prompt.clone())
+            .text("n", req.num_images.to_string())
+            .text("model", model.to_owned())
+            .text("size", format!("{}x{}", req.width, req.height));
+        if is_gpt_image_model(model) {
+            form = form.text("output_format", "png");
+            form = form.text("stream", "true");
+            form = form.text("partial_images", "2");
+            if let Some(quality) = req.quality {
+                form = form.text("quality", quality.as_openai());
+            }
+        } else {
+            form = form.text("response_format", "b64_json");
+        }
+        for (index, image) in req.reference_images.iter().enumerate() {
+            form = form.part(
+                image_field,
+                reqwest::multipart::Part::bytes(image.clone())
+                    .file_name(format!("reference-{index}.png"))
+                    .mime_str("image/png")
+                    .map_err(|e| BackendError::Other(e.to_string()))?,
+            );
+        }
+
+        let http_req = self
+            .client
+            .post(format!("{}/images/edits", self.base_url))
+            .bearer_auth(&self.api_key)
+            .multipart(form)
+            .build()
+            .map_err(BackendError::Network)?;
+        let http_resp = select! {
+            biased;
+            () = cancel.cancelled() => return Err(BackendError::Cancelled),
+            res = self.client.execute(http_req) => res.map_err(BackendError::Network)?,
+        };
+        let http_resp = check_http_status(http_resp).await?;
+        if is_gpt_image_model(model) {
+            let images = parse_openai_image_stream(http_resp, progress, cancel).await?;
+            progress
+                .send(VerbProgressEvent::Cost(CostUpdate {
+                    usd_cents: IMAGE_PRICE_CENTS * req.num_images as f32,
+                    tokens_input: None,
+                    tokens_output: None,
+                }))
+                .await;
+            return Ok(ImageGenResponse {
+                images,
+                model: model.to_owned(),
+            });
+        }
+        let raw: OpenAiImageResponse = http_resp.json().await.map_err(BackendError::Network)?;
+        let images = decode_image_data(raw.data)?;
+        progress
+            .send(VerbProgressEvent::Cost(CostUpdate {
+                usd_cents: IMAGE_PRICE_CENTS * req.num_images as f32,
+                tokens_input: None,
+                tokens_output: None,
+            }))
+            .await;
+        Ok(ImageGenResponse {
+            images,
+            model: model.to_owned(),
+        })
     }
 
     #[allow(clippy::cast_precision_loss)]
@@ -268,6 +367,8 @@ impl OpenAiBackend {
             );
         if is_gpt_image {
             form = form.text("output_format", "png");
+            form = form.text("stream", "true");
+            form = form.text("partial_images", "2");
         } else {
             form = form.text("response_format", "b64_json");
         }
@@ -277,6 +378,15 @@ impl OpenAiBackend {
                 "mask",
                 reqwest::multipart::Part::bytes(mask.clone())
                     .file_name("mask.png")
+                    .mime_str("image/png")
+                    .map_err(|e| BackendError::Other(e.to_string()))?,
+            );
+        }
+        for (index, image) in req.reference_images.iter().enumerate() {
+            form = form.part(
+                image_field,
+                reqwest::multipart::Part::bytes(image.clone())
+                    .file_name(format!("reference-{index}.png"))
                     .mime_str("image/png")
                     .map_err(|e| BackendError::Other(e.to_string()))?,
             );
@@ -297,6 +407,17 @@ impl OpenAiBackend {
         };
 
         let http_resp = check_http_status(http_resp).await?;
+        if is_gpt_image {
+            let images = parse_openai_image_stream(http_resp, progress, cancel).await?;
+            progress
+                .send(VerbProgressEvent::Cost(CostUpdate {
+                    usd_cents: IMAGE_PRICE_CENTS * req.num_images as f32,
+                    tokens_input: None,
+                    tokens_output: None,
+                }))
+                .await;
+            return Ok(ImageGenResponse { images, model });
+        }
         let raw: OpenAiImageResponse = http_resp.json().await.map_err(BackendError::Network)?;
         let images = decode_image_data(raw.data)?;
 
@@ -593,6 +714,8 @@ fn build_image_generation_body(req: &ImageGenRequest, model: &str) -> serde_json
 
     if is_gpt_image_model(model) {
         body["output_format"] = serde_json::json!("png");
+        body["stream"] = serde_json::json!(true);
+        body["partial_images"] = serde_json::json!(2);
         if let Some(quality) = req.quality {
             body["quality"] = serde_json::json!(quality.as_openai());
         }
@@ -641,6 +764,109 @@ fn decode_image_data(data: Vec<ImageData>) -> Result<Vec<Vec<u8>>> {
             }
         })
         .collect()
+}
+
+async fn parse_openai_image_stream(
+    response: reqwest::Response,
+    progress: &VerbProgress,
+    cancel: &CancellationToken,
+) -> Result<Vec<Vec<u8>>> {
+    let mut stream = response.bytes_stream();
+    let mut buffer = String::new();
+    let mut final_images = Vec::new();
+    while let Some(chunk) = select! {
+        biased;
+        () = cancel.cancelled() => return Err(BackendError::Cancelled),
+        next = stream.next() => next,
+    } {
+        let chunk = chunk.map_err(BackendError::Network)?;
+        buffer.push_str(&String::from_utf8_lossy(&chunk));
+        while let Some(index) = buffer.find("\n\n") {
+            let frame = buffer[..index].to_owned();
+            buffer.drain(..index + 2);
+            handle_openai_sse_frame(&frame, progress, &mut final_images).await?;
+        }
+    }
+    if !buffer.trim().is_empty() {
+        handle_openai_sse_frame(&buffer, progress, &mut final_images).await?;
+    }
+    if final_images.is_empty() {
+        return Err(BackendError::InvalidResponse(
+            "OpenAI image stream ended without a final image".into(),
+        ));
+    }
+    Ok(final_images)
+}
+
+async fn handle_openai_sse_frame(
+    frame: &str,
+    progress: &VerbProgress,
+    final_images: &mut Vec<Vec<u8>>,
+) -> Result<()> {
+    let data = frame
+        .lines()
+        .filter_map(|line| line.strip_prefix("data:"))
+        .map(str::trim)
+        .collect::<Vec<_>>()
+        .join("\n");
+    if data.is_empty() || data == "[DONE]" {
+        return Ok(());
+    }
+    let value: serde_json::Value = serde_json::from_str(&data)?;
+    let event_type = value
+        .get("type")
+        .and_then(serde_json::Value::as_str)
+        .unwrap_or_default();
+    let mut images = Vec::new();
+    collect_base64_images(&value, &mut images);
+    if images.is_empty() {
+        return Ok(());
+    }
+    if event_type.contains("partial") {
+        for (index, image) in images.into_iter().enumerate() {
+            if let Some(pixels) = image_bytes_to_pixel_data(&image) {
+                progress
+                    .send(VerbProgressEvent::PartialPixels {
+                        effect_index: u32::try_from(index).unwrap_or(u32::MAX),
+                        pixels,
+                    })
+                    .await;
+            }
+        }
+    } else {
+        final_images.extend(images);
+    }
+    Ok(())
+}
+
+fn collect_base64_images(value: &serde_json::Value, images: &mut Vec<Vec<u8>>) {
+    match value {
+        serde_json::Value::Object(map) => {
+            for (key, value) in map {
+                if key.contains("b64")
+                    && let Some(encoded) = value.as_str()
+                    && let Ok(bytes) =
+                        base64::engine::general_purpose::STANDARD.decode(encoded.as_bytes())
+                {
+                    images.push(bytes);
+                    continue;
+                }
+                collect_base64_images(value, images);
+            }
+        }
+        serde_json::Value::Array(values) => {
+            for value in values {
+                collect_base64_images(value, images);
+            }
+        }
+        _ => {}
+    }
+}
+
+fn image_bytes_to_pixel_data(bytes: &[u8]) -> Option<PixelData> {
+    let image = image::load_from_memory(bytes).ok()?.to_rgba8();
+    let (width, height) = image.dimensions();
+    Some(PixelData::rgba8(width, height, image.into_raw()))
 }
 
 // ── Wire types ─────────────────────────────────────────────────────────────
@@ -791,6 +1017,7 @@ mod tests {
             num_images: 1,
             quality: None,
             style_image: None,
+            reference_images: Vec::new(),
         });
         let est = b.estimate_cost(&req);
         assert!(est.typical_usd_cents > 0.0);
@@ -809,6 +1036,7 @@ mod tests {
             num_images: 2,
             quality: Some(ImageQuality::Medium),
             style_image: None,
+            reference_images: Vec::new(),
         };
 
         let body = build_image_generation_body(&req, "gpt-image-2");
@@ -817,9 +1045,50 @@ mod tests {
         assert_eq!(body["size"], "1024x1536");
         assert_eq!(body["quality"], "medium");
         assert_eq!(body["output_format"], "png");
+        assert_eq!(body["stream"], true);
+        assert_eq!(body["partial_images"], 2);
         assert!(body.get("response_format").is_none());
         assert!(body.get("background").is_none());
         assert!(body.get("negative_prompt").is_none());
+    }
+
+    #[tokio::test]
+    async fn openai_image_stream_frame_separates_partial_from_final() {
+        let (progress, mut rx) = VerbProgress::channel();
+        let png = one_pixel_png();
+        let encoded = base64::engine::general_purpose::STANDARD.encode(&png);
+        let mut finals = Vec::new();
+        handle_openai_sse_frame(
+            &format!("data: {{\"type\":\"image_generation.partial_image\",\"b64_json\":\"{encoded}\"}}\n\n"),
+            &progress,
+            &mut finals,
+        )
+        .await
+        .unwrap();
+        assert!(finals.is_empty());
+        assert!(matches!(
+            rx.recv().await,
+            Some(VerbProgressEvent::PartialPixels { .. })
+        ));
+        handle_openai_sse_frame(
+            &format!("data: {{\"type\":\"image_generation.completed\",\"data\":[{{\"b64_json\":\"{encoded}\"}}]}}\n\n"),
+            &progress,
+            &mut finals,
+        )
+        .await
+        .unwrap();
+        assert_eq!(finals, vec![png]);
+    }
+
+    fn one_pixel_png() -> Vec<u8> {
+        let img = image::RgbaImage::from_pixel(1, 1, image::Rgba([255, 0, 0, 255]));
+        let mut bytes = Vec::new();
+        img.write_to(
+            &mut std::io::Cursor::new(&mut bytes),
+            image::ImageFormat::Png,
+        )
+        .unwrap();
+        bytes
     }
 
     #[test]
@@ -835,6 +1104,7 @@ mod tests {
             num_images: 1,
             quality: Some(ImageQuality::High),
             style_image: None,
+            reference_images: Vec::new(),
         };
 
         let body = build_image_generation_body(&req, "dall-e-3");

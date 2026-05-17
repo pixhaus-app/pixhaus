@@ -297,6 +297,7 @@ impl Verb for GenerateReferenceSheetVerb {
             num_images: num_variants,
             quality: inputs.quality,
             style_image: None,
+            reference_images: Vec::new(),
         };
 
         let response = select! {

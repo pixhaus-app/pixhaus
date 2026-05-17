@@ -237,8 +237,8 @@ mod tests {
     fn anchor_style_image_bytes_returns_image_when_anchor_set() {
         use pixhaus_core::project::{
             AiMetadata, AssetInfo, Entity, EntityContent, EntityDefaults, EntityId, EntityKind,
-            ProjectMetadata, ReferenceImage, ReferenceSheet, SheetComposition, SheetVariant,
-            SheetVariantId, UserData,
+            ProjectMetadata, ReferenceImage, ReferenceSheet, SheetVariant, SheetVariantId,
+            UserData,
         };
         use std::collections::BTreeMap;
 
@@ -252,18 +252,15 @@ mod tests {
             content: EntityContent::Sprites {
                 states: Vec::new(),
                 reference_sheet: Some(Box::new(ReferenceSheet {
-                    canonical: Some(SheetVariant {
-                        id: SheetVariantId::new(1),
-                        generated_at: 0,
-                        image: ReferenceImage {
+                    canonical: Some(SheetVariant::from_image(
+                        SheetVariantId::new(1),
+                        0,
+                        ReferenceImage {
                             bytes: vec![1, 2, 3, 4, 5],
                             mime: "image/png".into(),
                         },
-                        composition: SheetComposition::default(),
-                        generation: None,
-                        extracted_palette: Vec::new(),
-                    }),
-                    history: Vec::new(),
+                    )),
+                    variants: Vec::new(),
                     prompts: Vec::new(),
                     info: AssetInfo {
                         fields: BTreeMap::new(),

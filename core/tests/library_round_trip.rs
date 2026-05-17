@@ -58,18 +58,15 @@ fn wrap_entity(entity: Entity) -> Library {
 
 fn reference_sheet_fixture(bytes: Vec<u8>) -> ReferenceSheet {
     ReferenceSheet {
-        canonical: Some(SheetVariant {
-            id: SheetVariantId::new(1),
-            generated_at: 1_700_000_010,
-            image: ReferenceImage {
+        canonical: Some(SheetVariant::from_image(
+            SheetVariantId::new(1),
+            1_700_000_010,
+            ReferenceImage {
                 bytes,
                 mime: "image/png".into(),
             },
-            composition: SheetComposition::default(),
-            generation: None,
-            extracted_palette: Vec::new(),
-        }),
-        history: Vec::new(),
+        )),
+        variants: Vec::new(),
         prompts: Vec::new(),
         info: AssetInfo::default(),
     }
@@ -316,7 +313,7 @@ fn sprite_entity_with_minimal_reference_sheet_round_trips() {
 fn sprite_entity_with_draft_only_reference_sheet_round_trips() {
     let mut sheet = reference_sheet_fixture(vec![1, 2, 3]);
     let draft = sheet.canonical.take().expect("fixture canonical");
-    sheet.history.push(draft);
+    sheet.variants.push(draft);
     let entity = Entity {
         id: EntityId::new(1),
         kind: EntityKind::Custom("Character".into()),
@@ -345,7 +342,7 @@ fn sprite_entity_with_draft_only_reference_sheet_round_trips() {
         panic!("expected embedded reference sheet");
     };
     assert!(sheet.canonical.is_none());
-    assert_eq!(sheet.history.len(), 1);
+    assert_eq!(sheet.variants.len(), 1);
 }
 
 #[test]
@@ -402,17 +399,19 @@ fn sprite_reference_sheet_with_populated_composition_preserves_rects() {
             states: Vec::new(),
             reference_sheet: Some(Box::new(ReferenceSheet {
                 canonical: Some(SheetVariant {
-                    id: SheetVariantId::new(1),
-                    generated_at: 1_700_000_000,
-                    image: ReferenceImage {
-                        bytes: vec![0xDE, 0xAD, 0xBE, 0xEF],
-                        mime: "image/png".into(),
-                    },
                     composition: composition.clone(),
                     generation: Some(provenance.clone()),
                     extracted_palette: vec![PaletteEntry::new(Rgba::opaque(10, 20, 30))],
+                    ..SheetVariant::from_image(
+                        SheetVariantId::new(1),
+                        1_700_000_000,
+                        ReferenceImage {
+                            bytes: vec![0xDE, 0xAD, 0xBE, 0xEF],
+                            mime: "image/png".into(),
+                        },
+                    )
                 }),
-                history: Vec::new(),
+                variants: Vec::new(),
                 prompts: vec![prompt_entry],
                 info,
             })),
@@ -624,6 +623,7 @@ fn library_project_ai_round_trips_corpus_lora_and_history() {
                 prompt: "more saturated".into(),
                 timestamp: 1_700_000_000,
             }],
+            ..ProjectAi::default()
         },
         ..Library::default()
     };

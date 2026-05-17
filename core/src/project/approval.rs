@@ -1,10 +1,10 @@
 //! Sprite reference-sheet approval flow.
 //!
 //! When a user clicks "Approve as canonical" on a [`SheetVariant`] in
-//! the history strip, the editor:
+//! the variants strip, the editor:
 //!
-//! 1. Moves the chosen variant from `history` into `canonical`.
-//! 2. Demotes the previous canonical variant to `history[0]`, when
+//! 1. Moves the chosen variant from `variants` into `canonical`.
+//! 2. Demotes the previous canonical variant to `variants[0]`, when
 //!    one exists.
 //! 3. Extracts a palette from the new canonical's image bytes (the
 //!    [`crate::color::extraction`] module does the work) and writes it
@@ -15,8 +15,8 @@
 //! which case this module preserves what the generator produced.
 //!
 //! No I/O happens here. The function takes a `&mut Project`, runs in
-//! O(history.len()) (one `Vec::remove` + one `Vec::insert(0, _)` over
-//! the variant history — bounded to ~10–100 entries per brief), and
+//! O(variants.len()) (one `Vec::remove` + one `Vec::insert(0, _)` over
+//! the variant list — bounded to ~10–100 entries per brief), and
 //! returns the [`Approval`] receipt the caller can hand back through
 //! the IPC bridge.
 
@@ -43,7 +43,7 @@ pub enum ApprovalError {
     #[error("entity {0} has no sprite reference sheet")]
     NoReferenceSheet(u32),
 
-    /// The variant id wasn't in the reference sheet's history *or* the
+    /// The variant id wasn't in the reference sheet's variants *or* the
     /// canonical slot.
     #[error("variant {0} is not present on entity {1}'s sheet")]
     VariantNotFound(u32, u32),
@@ -119,8 +119,8 @@ palette_size: number,
 /// - If `variant_id` is already canonical, just (re-)extract the palette
 ///   and return the no-op receipt. This makes the operation idempotent
 ///   so the UI doesn't have to special-case "already canonical".
-/// - Otherwise locate the variant in `history`, move it into
-///   `canonical`, and prepend the displaced canonical to `history`
+/// - Otherwise locate the variant in `variants`, move it into
+///   `canonical`, and prepend the displaced canonical to `variants`
 ///   when one existed.
 /// - Run [`extract_palette_from_image_bytes`] over the new canonical's
 ///   image bytes. If the variant's `extracted_palette` is non-empty
@@ -163,12 +163,12 @@ pub fn approve_sheet_variant(
     }
 
     let pos = sheet
-        .history
+        .variants
         .iter()
         .position(|v| v.id == variant_id)
         .ok_or_else(|| ApprovalError::VariantNotFound(variant_id.get(), entity_id.get()))?;
 
-    promote_history_to_canonical(sheet, pos);
+    promote_variant_to_canonical(sheet, pos);
 
     let palette_size = sheet
         .canonical
@@ -183,12 +183,12 @@ pub fn approve_sheet_variant(
     })
 }
 
-/// Moves `history[pos]` into the canonical slot; the previous canonical,
-/// when present, lands at `history[0]` (newest first).
-fn promote_history_to_canonical(sheet: &mut ReferenceSheet, pos: usize) {
-    let new_canonical = sheet.history.remove(pos);
+/// Moves `variants[pos]` into the canonical slot; the previous canonical,
+/// when present, lands at `variants[0]` (newest first).
+fn promote_variant_to_canonical(sheet: &mut ReferenceSheet, pos: usize) {
+    let new_canonical = sheet.variants.remove(pos);
     if let Some(old_canonical) = sheet.canonical.replace(new_canonical) {
-        sheet.history.insert(0, old_canonical);
+        sheet.variants.insert(0, old_canonical);
     }
 }
 
@@ -227,7 +227,6 @@ mod tests {
 
     use crate::project::library::{
         AiMetadata, AssetInfo, Entity, EntityContent, EntityDefaults, EntityKind, ReferenceImage,
-        SheetComposition,
     };
     use crate::project::user_data::UserData;
 
@@ -249,14 +248,14 @@ mod tests {
     fn variant(id: u32, png: Vec<u8>) -> SheetVariant {
         SheetVariant {
             id: SheetVariantId::new(id),
-            generated_at: 0,
-            image: ReferenceImage {
-                bytes: png,
-                mime: "image/png".into(),
-            },
-            composition: SheetComposition::default(),
-            generation: None,
-            extracted_palette: Vec::new(),
+            ..SheetVariant::from_image(
+                SheetVariantId::new(id),
+                0,
+                ReferenceImage {
+                    bytes: png,
+                    mime: "image/png".into(),
+                },
+            )
         }
     }
 
@@ -279,7 +278,7 @@ mod tests {
                 states: Vec::new(),
                 reference_sheet: Some(Box::new(ReferenceSheet {
                     canonical: Some(canonical),
-                    history,
+                    variants: history,
                     prompts: Vec::new(),
                     info: AssetInfo {
                         fields: BTreeMap::new(),
@@ -323,11 +322,11 @@ mod tests {
             sheet.canonical.as_ref().map(|variant| variant.id),
             Some(SheetVariantId::new(30))
         );
-        // Previous canonical is now first in history (newest first).
-        assert_eq!(sheet.history[0].id, SheetVariantId::new(10));
-        // Other history entries kept their order.
-        assert_eq!(sheet.history[1].id, SheetVariantId::new(20));
-        assert_eq!(sheet.history[2].id, SheetVariantId::new(40));
+        // Previous canonical is now first in variants (newest first).
+        assert_eq!(sheet.variants[0].id, SheetVariantId::new(10));
+        // Other variants kept their order.
+        assert_eq!(sheet.variants[1].id, SheetVariantId::new(20));
+        assert_eq!(sheet.variants[2].id, SheetVariantId::new(40));
     }
 
     #[test]
@@ -363,7 +362,7 @@ mod tests {
             sheet.canonical.as_ref().map(|variant| variant.id),
             Some(SheetVariantId::new(20))
         );
-        assert!(sheet.history.is_empty());
+        assert!(sheet.variants.is_empty());
     }
 
     #[test]
@@ -406,7 +405,7 @@ mod tests {
             ..
         } = &mut project.library.entities[0].content
         {
-            sheet.history[0].extracted_palette = vec![PaletteEntry::new(Rgba::opaque(7, 7, 7))];
+            sheet.variants[0].extracted_palette = vec![PaletteEntry::new(Rgba::opaque(7, 7, 7))];
         }
 
         let receipt = approve_sheet_variant(
@@ -461,8 +460,8 @@ mod tests {
             sheet.canonical.as_ref().map(|variant| variant.id),
             Some(SheetVariantId::new(1))
         );
-        assert_eq!(sheet.history.len(), 1);
-        assert_eq!(sheet.history[0].id, SheetVariantId::new(2));
+        assert_eq!(sheet.variants.len(), 1);
+        assert_eq!(sheet.variants[0].id, SheetVariantId::new(2));
     }
 
     #[test]
@@ -529,7 +528,7 @@ mod tests {
             ..
         } = &mut project.library.entities[0].content
         {
-            sheet.history[0].image.bytes = b"not a png".to_vec();
+            sheet.variants[0].image.bytes = b"not a png".to_vec();
         }
         let receipt = approve_sheet_variant(
             &mut project,

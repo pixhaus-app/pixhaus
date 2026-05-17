@@ -237,6 +237,7 @@ impl Verb for SketchFinishingVerb {
                 negative_prompt: Some("blurry, noisy, sketch lines, rough edges, artifacts".into()),
                 num_images: 1,
                 style_image: crate::verbs::anchor_style_image_bytes(&ctx),
+                reference_images: Vec::new(),
             };
 
             let images = call_image_edit(backend, req, progress.clone(), cancel.clone()).await?;

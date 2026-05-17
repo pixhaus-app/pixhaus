@@ -726,6 +726,7 @@ mod tests {
             num_images: 1,
             quality: None,
             style_image: None,
+            reference_images: Vec::new(),
         };
         let input = build_image_gen_input(&req);
         assert_eq!(input["prompt"], "a cat in space");
@@ -747,6 +748,7 @@ mod tests {
             num_images: 1,
             quality: None,
             style_image: None,
+            reference_images: Vec::new(),
         });
         let est = b.estimate_cost(&req);
         assert!(est.typical_usd_cents > 0.0);
@@ -772,6 +774,7 @@ mod tests {
             num_images: 1,
             quality: None,
             style_image: None,
+            reference_images: Vec::new(),
         });
         let (progress, _rx) = VerbProgress::channel();
         let cancel = CancellationToken::new();

@@ -52,15 +52,19 @@ pub use color::{ColorMode, Rgba};
 pub use frame::{Frame, FrameRange, FrameTag, LoopDirection};
 pub use geometry::{IVec2, Rect, Size};
 pub use id::{
-    AnimationId, EntityId, FrameIndex, GroupId, LayerId, LoraId, PaletteId, PixelBufferId,
-    SheetVariantId, SliceId, SpriteId, StateId, TagId, TileIndex, TilesetId,
+    AnimationId, AssetId, EntityId, FrameIndex, GroupId, LayerId, LoraId, PaletteId, PixelBufferId,
+    SheetVariantId, SliceId, SpriteId, StateId, TagId, TileIndex, TilesetId, TrainingJobId,
 };
 pub use layer::{Layer, LayerKind};
 pub use library::{
-    ActiveTarget, AiMetadata, AssetInfo, Entity, EntityContent, EntityDefaults, EntityGroup,
-    EntityKind, GenerationProvenance, Library, NamedSprite, ProjectAi, PromptEntry,
-    PromptHistoryEntry, PromptResult, ReferenceImage, ReferenceSheet, SheetComposition, SheetPanel,
-    SheetVariant, TagDefinition, TilemapLayer, TilemapScene, TilesetReference,
+    ActiveTarget, AiMetadata, AssetInfo, AssetLibrary, CharacterCard, ChatTranscript, ChatTurn,
+    Entity, EntityContent, EntityDefaults, EntityGroup, EntityKind, GenerationProvenance, Library,
+    LoraAsset, LoraKind, ModelId, NamedSprite, OperationKind, ProjectAi, PromptEntry,
+    PromptHistoryEntry, PromptResult, Quality, ReferenceAsset, ReferenceImage, ReferenceRole,
+    ReferenceSheet, ReferenceSheetTemplateDefinition, ReferenceSheetTemplateId, ReferenceSlot,
+    RefinementKind, RegionDefinition, SheetComposition, SheetDimensions, SheetPanel, SheetVariant,
+    StyleSwatch, TagDefinition, TilemapLayer, TilemapScene, TilesetReference, TrainingJob,
+    TrainingStatus, VariantOrigin, built_in_reference_sheet_templates, default_reference_chroma,
 };
 pub use palette::{Palette, PaletteEntry, PaletteFrameOverride};
 pub use schema::{FeatureFlags, SchemaError, SchemaVersion};

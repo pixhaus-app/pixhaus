@@ -7,8 +7,11 @@
 use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, Ordering};
 
-use dashmap::DashMap;
+use dashmap::{DashMap, mapref::entry::Entry};
+use pixhaus_ai::backends::fal::FalBackend;
+use pixhaus_ai::backends::google::GoogleAiBackend;
 use pixhaus_ai::backends::openai::OpenAiBackend;
 use pixhaus_ai::backends::{BackendError, BackendProxy};
 use pixhaus_ai::plugin::AnchorPayload;
@@ -22,6 +25,7 @@ use pixhaus_ai::verbs::{
 use pixhaus_core::project::{LayerId, PixelBufferId, Project, Rgba, SpriteId};
 use pixhaus_core::undo::History;
 use pixhaus_io::pixhaus::PixelBufferEntry;
+use tokio::sync::{OwnedSemaphorePermit, Semaphore};
 use tokio_util::sync::CancellationToken;
 
 use pixhaus_plugins::PluginRegistry;
@@ -166,6 +170,109 @@ pub struct AppState {
     /// `project_close` / `project_new` / `project_open` so a stale
     /// payload from a previous project never bleeds into a fresh one.
     pub(crate) anchor_cache: Arc<DashMap<u32, AnchorPayload>>,
+    /// Request-id and cancellation registry for v1 reference-sheet
+    /// operations. The initial implementation keeps operations short and
+    /// commits under a normal document write lock; long-running provider
+    /// streaming can build on the same ids/tokens.
+    pub(crate) reference_sheet_requests: Arc<ReferenceSheetRequestManager>,
+}
+
+/// Minimal request manager for reference-sheet operations.
+pub(crate) struct ReferenceSheetRequestManager {
+    next_id: AtomicU64,
+    cancellations: DashMap<u64, CancellationToken>,
+    sprite_semaphores: DashMap<u32, Arc<Semaphore>>,
+    active_chat_variants: DashMap<(u32, u32), u64>,
+}
+
+impl ReferenceSheetRequestManager {
+    pub(crate) fn new() -> Self {
+        Self {
+            next_id: AtomicU64::new(1),
+            cancellations: DashMap::new(),
+            sprite_semaphores: DashMap::new(),
+            active_chat_variants: DashMap::new(),
+        }
+    }
+
+    pub(crate) fn start(
+        &self,
+        entity_id: u32,
+        counts_toward_sprite_cap: bool,
+        chat_variant_id: Option<u32>,
+    ) -> Result<(u64, CancellationToken), &'static str> {
+        let _ = counts_toward_sprite_cap;
+        let id = self.next_id.fetch_add(1, Ordering::Relaxed);
+        let token = CancellationToken::new();
+        self.cancellations.insert(id, token.clone());
+        if let Some(variant_id) = chat_variant_id {
+            match self.active_chat_variants.entry((entity_id, variant_id)) {
+                Entry::Occupied(_) => {
+                    self.cancellations.remove(&id);
+                    return Err("this variant already has a chat turn in flight");
+                }
+                Entry::Vacant(entry) => {
+                    entry.insert(id);
+                }
+            }
+        }
+        Ok((id, token))
+    }
+
+    pub(crate) fn reset(&self) {
+        self.cancellations
+            .iter()
+            .for_each(|entry| entry.value().cancel());
+        self.cancellations.clear();
+        self.sprite_semaphores.clear();
+        self.active_chat_variants.clear();
+        self.next_id.store(1, Ordering::Relaxed);
+    }
+
+    pub(crate) async fn acquire_sprite_permit(
+        &self,
+        entity_id: u32,
+        counts_toward_sprite_cap: bool,
+        token: &CancellationToken,
+    ) -> Option<OwnedSemaphorePermit> {
+        if !counts_toward_sprite_cap {
+            return None;
+        }
+        let semaphore = self
+            .sprite_semaphores
+            .entry(entity_id)
+            .or_insert_with(|| Arc::new(Semaphore::new(3)))
+            .clone();
+        tokio::select! {
+            biased;
+            () = token.cancelled() => None,
+            permit = semaphore.acquire_owned() => permit.ok(),
+        }
+    }
+
+    pub(crate) fn finish(
+        &self,
+        id: u64,
+        entity_id: u32,
+        counts_toward_sprite_cap: bool,
+        chat_variant_id: Option<u32>,
+    ) {
+        let _ = entity_id;
+        let _ = counts_toward_sprite_cap;
+        self.cancellations.remove(&id);
+        if let Some(variant_id) = chat_variant_id {
+            self.active_chat_variants.remove(&(entity_id, variant_id));
+        }
+    }
+
+    pub(crate) fn cancel(&self, id: u64) -> bool {
+        if let Some((_, token)) = self.cancellations.remove(&id) {
+            token.cancel();
+            true
+        } else {
+            false
+        }
+    }
 }
 
 impl AppState {
@@ -210,6 +317,8 @@ impl AppState {
         register_builtin(&runtime, TrainEntityLoraVerb::new());
         register_builtin(&runtime, VariantVerb::new());
         register_openai_from_keychain(&runtime);
+        register_google_from_keychain(&runtime);
+        register_fal_from_keychain(&runtime);
 
         let verb_runtime = Arc::new(runtime);
         let plugins = Arc::new(PluginRegistry::new(verb_runtime.clone()));
@@ -220,6 +329,7 @@ impl AppState {
             invocations: Arc::new(DashMap::new()),
             plugins,
             anchor_cache: Arc::new(DashMap::new()),
+            reference_sheet_requests: Arc::new(ReferenceSheetRequestManager::new()),
         }
     }
 }
@@ -252,6 +362,34 @@ fn register_openai_from_keychain(runtime: &VerbRuntime) {
         Err(BackendError::ApiKeyNotFound(_)) => {}
         Err(err) => {
             tracing::warn!(error = %err, "failed to read OpenAI API key from keychain");
+        }
+    }
+}
+
+fn register_google_from_keychain(runtime: &VerbRuntime) {
+    match GoogleAiBackend::from_keychain() {
+        Ok(backend) => {
+            if let Err(err) = runtime.register_backend(BackendProxy::new(backend), 10) {
+                tracing::warn!(error = %err, "failed to register Google AI backend from keychain");
+            }
+        }
+        Err(BackendError::ApiKeyNotFound(_)) => {}
+        Err(err) => {
+            tracing::warn!(error = %err, "failed to read Google AI API key from keychain");
+        }
+    }
+}
+
+fn register_fal_from_keychain(runtime: &VerbRuntime) {
+    match FalBackend::from_keychain() {
+        Ok(backend) => {
+            if let Err(err) = runtime.register_backend(BackendProxy::new(backend), 20) {
+                tracing::warn!(error = %err, "failed to register fal backend from keychain");
+            }
+        }
+        Err(BackendError::ApiKeyNotFound(_)) => {}
+        Err(err) => {
+            tracing::warn!(error = %err, "failed to read fal API key from keychain");
         }
     }
 }
@@ -292,5 +430,30 @@ mod tests {
         expected.sort_unstable();
 
         assert_eq!(ids, expected);
+    }
+
+    #[test]
+    fn reference_sheet_manager_rejects_duplicate_chat_turns() {
+        let manager = ReferenceSheetRequestManager::new();
+        let first = manager.start(1, true, Some(7)).expect("first chat");
+        let second = manager.start(1, true, Some(7));
+
+        assert!(second.is_err());
+        manager.finish(first.0, 1, true, Some(7));
+        assert!(manager.start(1, true, Some(7)).is_ok());
+    }
+
+    #[test]
+    fn reference_sheet_manager_reset_cancels_and_clears_state() {
+        let manager = ReferenceSheetRequestManager::new();
+        let (_, token) = manager.start(1, true, Some(7)).expect("request");
+
+        manager.reset();
+
+        assert!(token.is_cancelled());
+        assert!(manager.cancellations.is_empty());
+        assert!(manager.sprite_semaphores.is_empty());
+        assert!(manager.active_chat_variants.is_empty());
+        assert!(manager.start(1, true, Some(7)).is_ok());
     }
 }

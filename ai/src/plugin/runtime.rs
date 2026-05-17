@@ -296,6 +296,30 @@ impl VerbRuntime {
         })
     }
 
+    /// Selects a specific available backend by id and verifies that it
+    /// satisfies the requested capabilities.
+    pub fn select_backend_by_id(
+        &self,
+        id: &str,
+        required: BackendCapabilities,
+        verb: &VerbId,
+    ) -> Result<Arc<dyn InferenceBackend>> {
+        let backends = self.backends.read();
+        let Some(entry) = backends.iter().find(|entry| entry.backend.id() == id) else {
+            return Err(VerbError::BackendNotFound(id.to_owned()));
+        };
+        if !entry.backend.capabilities().contains(required) {
+            return Err(VerbError::UnsupportedCapability {
+                verb: verb.clone(),
+                required,
+            });
+        }
+        if !entry.backend.is_available() {
+            return Err(VerbError::BackendUnavailable { id: id.to_owned() });
+        }
+        Ok(entry.backend.clone())
+    }
+
     // ── Dispatch ────────────────────────────────────────────────────────────
 
     /// Starts an invocation. Returns a [`VerbInvocation`] the caller
@@ -1068,6 +1092,94 @@ mod tests {
             .unwrap_err();
         assert!(
             matches!(&err, VerbError::BackendUnavailable { id } if id == "ollama"),
+            "expected BackendUnavailable, got {err:?}"
+        );
+    }
+
+    #[test]
+    fn select_backend_by_id_returns_named_backend() {
+        let rt = VerbRuntime::new();
+        rt.register_backend(
+            caps_backend("google", BackendCapabilities::IMAGE_GENERATION),
+            0,
+        )
+        .unwrap();
+
+        let backend = rt
+            .select_backend_by_id(
+                "google",
+                BackendCapabilities::IMAGE_GENERATION,
+                &VerbId::new("v"),
+            )
+            .unwrap();
+
+        assert_eq!(backend.id(), "google");
+    }
+
+    #[test]
+    fn select_backend_by_id_rejects_unknown_id() {
+        let rt = VerbRuntime::new();
+
+        let err = rt
+            .select_backend_by_id(
+                "missing",
+                BackendCapabilities::IMAGE_GENERATION,
+                &VerbId::new("v"),
+            )
+            .unwrap_err();
+
+        assert!(
+            matches!(&err, VerbError::BackendNotFound(id) if id == "missing"),
+            "expected BackendNotFound, got {err:?}"
+        );
+    }
+
+    #[test]
+    fn select_backend_by_id_checks_capabilities() {
+        let rt = VerbRuntime::new();
+        rt.register_backend(
+            caps_backend("text-only", BackendCapabilities::TEXT_GENERATION),
+            0,
+        )
+        .unwrap();
+
+        let err = rt
+            .select_backend_by_id(
+                "text-only",
+                BackendCapabilities::IMAGE_GENERATION,
+                &VerbId::new("v"),
+            )
+            .unwrap_err();
+
+        assert!(
+            matches!(err, VerbError::UnsupportedCapability { .. }),
+            "expected UnsupportedCapability, got {err:?}"
+        );
+    }
+
+    #[test]
+    fn select_backend_by_id_reports_unavailable_backend() {
+        let rt = VerbRuntime::new();
+        rt.register_backend(
+            StubBackend {
+                id: "down",
+                caps: BackendCapabilities::IMAGE_GENERATION,
+                available: false,
+            },
+            0,
+        )
+        .unwrap();
+
+        let err = rt
+            .select_backend_by_id(
+                "down",
+                BackendCapabilities::IMAGE_GENERATION,
+                &VerbId::new("v"),
+            )
+            .unwrap_err();
+
+        assert!(
+            matches!(&err, VerbError::BackendUnavailable { id } if id == "down"),
             "expected BackendUnavailable, got {err:?}"
         );
     }

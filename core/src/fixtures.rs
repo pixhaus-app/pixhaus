@@ -19,9 +19,9 @@ use crate::project::{
     Layer, LayerId, LayerKind, Library, LoopDirection, NamedSprite, NineSlice, Palette,
     PaletteEntry, PaletteId, Pivot, PixelBufferId, Project, ProjectAi, ProjectMetadata, Rect,
     ReferenceImage, ReferenceSheet, Rgba, SchemaVersion, SelectionRegion, SelectionState,
-    SheetComposition, SheetVariant, SheetVariantId, Size, Slice, SliceId, SliceKey, Sprite,
-    SpriteId, StateId, TagDefinition, TagId, TileCell, TileFlags, TileIndex, TilemapData,
-    TilemapLayer, TilemapScene, Tileset, TilesetId, TilesetReference, TilesetSource, UserData,
+    SheetVariant, SheetVariantId, Size, Slice, SliceId, SliceKey, Sprite, SpriteId, StateId,
+    TagDefinition, TagId, TileCell, TileFlags, TileIndex, TilemapData, TilemapLayer, TilemapScene,
+    Tileset, TilesetId, TilesetReference, TilesetSource, UserData,
 };
 
 /// Builds a fully-populated sample project that touches every type in
@@ -308,16 +308,16 @@ fn sample_library(hero_sprite: Sprite) -> Library {
             reference_sheet: Some(Box::new(ReferenceSheet {
                 canonical: Some(SheetVariant {
                     id: SheetVariantId::new(3),
-                    generated_at: 1_700_000_020,
-                    image: ReferenceImage {
-                        bytes: vec![0x89, 0x50, 0x4E, 0x47],
-                        mime: "image/png".into(),
-                    },
-                    composition: SheetComposition::default(),
-                    generation: None,
-                    extracted_palette: Vec::new(),
+                    ..SheetVariant::from_image(
+                        SheetVariantId::new(3),
+                        1_700_000_020,
+                        ReferenceImage {
+                            bytes: vec![0x89, 0x50, 0x4E, 0x47],
+                            mime: "image/png".into(),
+                        },
+                    )
                 }),
-                history: Vec::new(),
+                variants: Vec::new(),
                 prompts: Vec::new(),
                 info: AssetInfo::default(),
             })),

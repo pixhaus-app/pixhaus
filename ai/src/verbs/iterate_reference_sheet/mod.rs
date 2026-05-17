@@ -324,6 +324,7 @@ impl Verb for IterateReferenceSheetVerb {
             // style condition — pulling it in again as `style_image`
             // would be circular, so leave this empty.
             style_image: None,
+            reference_images: Vec::new(),
         };
 
         progress

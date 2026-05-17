@@ -280,7 +280,7 @@ mod tests {
     use dashmap::DashMap;
     use pixhaus_core::project::{
         AiMetadata, AssetInfo, Entity, EntityContent, EntityDefaults, EntityKind, ReferenceImage,
-        ReferenceSheet, SheetComposition, SheetVariant, SheetVariantId, StateId, UserData,
+        ReferenceSheet, SheetVariant, SheetVariantId, StateId, UserData,
     };
 
     use super::*;
@@ -288,18 +288,15 @@ mod tests {
     fn sprite_entity(id: u32, bytes: Option<Vec<u8>>) -> Entity {
         let reference_sheet = bytes.map(|bytes| {
             Box::new(ReferenceSheet {
-                canonical: Some(SheetVariant {
-                    id: SheetVariantId::new(1),
-                    generated_at: 0,
-                    image: ReferenceImage {
+                canonical: Some(SheetVariant::from_image(
+                    SheetVariantId::new(1),
+                    0,
+                    ReferenceImage {
                         bytes,
                         mime: "image/png".into(),
                     },
-                    composition: SheetComposition::default(),
-                    generation: None,
-                    extracted_palette: Vec::new(),
-                }),
-                history: Vec::new(),
+                )),
+                variants: Vec::new(),
                 prompts: Vec::new(),
                 info: AssetInfo {
                     fields: BTreeMap::new(),
@@ -400,7 +397,7 @@ mod tests {
         } = &mut project.library.entities[0].content
         {
             let canonical = sheet.canonical.take().expect("canonical fixture");
-            sheet.history.push(canonical);
+            sheet.variants.push(canonical);
         }
         let cache = DashMap::new();
         assert!(resolve_anchor(&project, Some(EntityId::new(9)), &cache).is_none());
