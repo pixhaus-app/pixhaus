@@ -34,7 +34,7 @@ impl SchemaVersion {
     /// Major version this build of Pixhaus writes.
     ///
     /// Bumped from `3` to `4` for the full v1 AI reference-sheet model:
-    /// variants, provenance, project assets, provider prefs, LoRA jobs,
+    /// variants, provenance, project assets, provider prefs, `LoRA` jobs,
     /// and vector outputs are stored directly in the project file.
     pub const MAJOR: u16 = 4;
 

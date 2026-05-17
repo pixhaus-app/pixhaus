@@ -254,6 +254,7 @@ impl Verb for TilesetFromDescriptionVerb {
         Ok(())
     }
 
+    #[allow(clippy::too_many_lines)]
     async fn invoke(
         &self,
         ctx: VerbContext,

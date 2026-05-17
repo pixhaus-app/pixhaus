@@ -188,7 +188,7 @@ pub async fn ai_get_fal_status(state: State<'_, AppState>) -> CommandResult<Prov
     ))
 }
 
-/// Stores a fal.ai API key. Flux, LoRA training, Recraft, and Real-ESRGAN
+/// Stores a fal.ai API key. Flux, `LoRA` training, Recraft, and Real-ESRGAN
 /// operations consume this provider.
 #[tauri::command(async, rename_all = "snake_case")]
 pub async fn ai_set_fal_api_key(

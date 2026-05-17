@@ -168,7 +168,7 @@ id_newtype! {
 }
 
 id_newtype! {
-    /// Identifier of an async LoRA training job tracked by
+    /// Identifier of an async `LoRA` training job tracked by
     /// [`TrainingJob`](super::library::TrainingJob).
     TrainingJobId, u32
 }

@@ -1715,10 +1715,10 @@ pub struct LibraryGenerateReferenceSheetArgs {
     /// Search/grounding hint for Google image models.
     #[serde(default)]
     pub real_world_grounding: bool,
-    /// Optional Flux LoRA asset to apply.
+    /// Optional Flux `LoRA` asset to apply.
     #[serde(default)]
     pub applied_lora: Option<AssetId>,
-    /// LoRA strength when a Flux LoRA is applied.
+    /// `LoRA` strength when a Flux `LoRA` is applied.
     #[serde(default = "default_request_lora_weight")]
     pub lora_weight: f32,
 }
@@ -2086,7 +2086,7 @@ pub struct SheetRequestErrorPayload {
     pub error: AppCommandError,
 }
 
-/// LoRA training progress event.
+/// `LoRA` training progress event.
 #[allow(missing_docs)]
 #[derive(Clone, Debug, Serialize)]
 pub struct TrainingJobProgressPayload {
@@ -2095,7 +2095,7 @@ pub struct TrainingJobProgressPayload {
     pub message: String,
 }
 
-/// LoRA training completion event.
+/// `LoRA` training completion event.
 #[allow(missing_docs)]
 #[derive(Clone, Debug, Serialize)]
 pub struct TrainingJobCompletePayload {
@@ -2103,7 +2103,7 @@ pub struct TrainingJobCompletePayload {
     pub lora_asset: LoraAsset,
 }
 
-/// LoRA training failure event.
+/// `LoRA` training failure event.
 #[allow(missing_docs)]
 #[derive(Clone, Debug, Serialize)]
 pub struct TrainingJobFailedPayload {
@@ -2210,7 +2210,7 @@ pub struct LibraryUpdateAssetTagsArgs {
     pub tags: Vec<String>,
 }
 
-/// Arguments for LoRA training.
+/// Arguments for `LoRA` training.
 #[allow(missing_docs)]
 #[derive(Debug, Deserialize)]
 pub struct LibraryTrainLoraArgs {
@@ -2571,7 +2571,7 @@ fn selected_model(
 ) -> ModelId {
     explicit
         .filter(|model| *model != ModelId::Auto)
-        .or_else(|| {
+        .or({
             project
                 .library
                 .ai
@@ -2580,15 +2580,15 @@ fn selected_model(
                 .copied()
                 .filter(|model| *model != ModelId::Auto)
         })
-        .unwrap_or_else(|| match operation {
+        .unwrap_or(match operation {
             OperationKind::FreshGeneration => ModelId::GoogleNanoBananaPro,
             OperationKind::MaskedRefinement
             | OperationKind::RegionalRefinement
-            | OperationKind::Promotion => ModelId::OpenAiGptImage2,
+            | OperationKind::Promotion
+            | OperationKind::CrossModelGrid => ModelId::OpenAiGptImage2,
             OperationKind::PromptOnlyRefinement | OperationKind::ChatTurn => {
                 ModelId::GoogleNanoBananaPro
             }
-            OperationKind::CrossModelGrid => ModelId::OpenAiGptImage2,
             OperationKind::VectorExport => ModelId::FalRecraftVectorize,
             OperationKind::Upscale => ModelId::FalRealEsrgan,
             OperationKind::LoraTraining => ModelId::FalFluxDev,
@@ -2644,6 +2644,7 @@ fn mint_asset_id(next_id: &mut u32) -> AssetId {
     id
 }
 
+#[allow(clippy::too_many_arguments, clippy::too_many_lines)]
 async fn invoke_provider_images(
     app: AppHandle,
     request_id: RequestId,
@@ -2847,10 +2848,10 @@ fn region_mask_png(
     let (x0, y0, x1, y1) = bounds;
     let mut mask: ImageBuffer<ImageRgba<u8>, Vec<u8>> =
         ImageBuffer::from_pixel(width, height, ImageRgba([0, 0, 0, 255]));
-    let clipped_x1 = x1.min(width);
-    let clipped_y1 = y1.min(height);
-    for y in y0.min(height)..clipped_y1 {
-        for x in x0.min(width)..clipped_x1 {
+    let max_x = x1.min(width);
+    let max_y = y1.min(height);
+    for y in y0.min(height)..max_y {
+        for x in x0.min(width)..max_x {
             mask.put_pixel(x, y, ImageRgba([255, 255, 255, 255]));
         }
     }
@@ -2920,12 +2921,13 @@ fn encode_reference_assets_zip(assets: &[ReferenceAsset]) -> CommandResult<Vec<u
             })?;
     }
     zip.finish()
-        .map(|buf| buf.into_inner())
+        .map(std::io::Cursor::into_inner)
         .map_err(|err| AppCommandError::Validation {
             detail: format!("failed to finish LoRA training archive: {err}"),
         })
 }
 
+#[allow(clippy::disallowed_methods)]
 fn build_fal_sheet_input(request: &SheetProviderRequest, prompt: &str) -> serde_json::Value {
     let mut input = serde_json::json!({
         "prompt": prompt,
@@ -2972,6 +2974,7 @@ fn build_fal_sheet_input(request: &SheetProviderRequest, prompt: &str) -> serde_
     input
 }
 
+#[allow(clippy::too_many_arguments)]
 async fn invoke_regional_refinement(
     app: AppHandle,
     request_id: RequestId,
@@ -3043,6 +3046,7 @@ async fn invoke_regional_refinement(
     Ok(outputs)
 }
 
+#[allow(clippy::disallowed_methods)]
 async fn invoke_vector_export(
     runtime: Arc<VerbRuntime>,
     image: &ReferenceImage,
@@ -3110,14 +3114,14 @@ fn build_variant_from_provider_image(
     variant.width = spec.provider.width;
     variant.height = spec.provider.height;
     variant.chroma_color = spec.provider.chroma_color;
-    variant.user_prompt = spec.provider.prompt.clone();
+    variant.user_prompt.clone_from(&spec.provider.prompt);
     variant.composed_prompt = compose_sheet_prompt(&spec.provider, "");
-    variant.references = spec.provider.references.clone();
+    variant.references.clone_from(&spec.provider.references);
     variant.model = image.model;
     variant.quality = spec.provider.quality;
     variant.parent_variant_id = spec.build.parent_variant_id;
     variant.origin = spec.build.origin;
-    variant.refinement = spec.build.refinement.clone();
+    variant.refinement.clone_from(&spec.build.refinement);
     variant.chat_transcript = spec.build.chat_transcript.clone().map(|mut transcript| {
         if let Some(last) = transcript.turns.last_mut() {
             last.resulting_variant_id = id;
@@ -3311,6 +3315,7 @@ fn spawn_sheet_provider_job(
     });
 }
 
+#[allow(clippy::too_many_arguments)]
 fn spawn_regional_sheet_job(
     app: AppHandle,
     request_id: RequestId,
@@ -3484,6 +3489,7 @@ pub async fn library_cancel_reference_sheet_request(
 
 /// Refines a variant by creating one or more derived draft variants.
 #[tauri::command(async, rename_all = "snake_case")]
+#[allow(clippy::too_many_lines)]
 pub async fn library_refine_reference_sheet_variant(
     args: LibraryRefineReferenceSheetVariantArgs,
     app: AppHandle,
@@ -3614,6 +3620,7 @@ pub async fn library_refine_reference_sheet_variant(
 
 /// Adds a conversational edit turn and persists the resulting draft variant.
 #[tauri::command(async, rename_all = "snake_case")]
+#[allow(clippy::too_many_lines)]
 pub async fn library_submit_chat_turn(
     args: LibrarySubmitChatTurnArgs,
     app: AppHandle,
@@ -3913,6 +3920,7 @@ pub async fn library_start_cross_model_grid(
 
 /// Stores an SVG vector export on a variant.
 #[tauri::command(async, rename_all = "snake_case")]
+#[allow(clippy::too_many_lines)]
 pub async fn library_export_variant_as_vector(
     args: LibraryExportVariantAsVectorArgs,
     app: AppHandle,
@@ -4242,6 +4250,7 @@ pub async fn library_browse_assets(
 
 /// Gets a single asset by id.
 #[tauri::command(async, rename_all = "snake_case")]
+#[allow(clippy::disallowed_methods)]
 pub async fn library_get_asset(
     asset_id: AssetId,
     state: State<'_, AppState>,
@@ -4345,8 +4354,9 @@ pub async fn library_update_asset_tags(
     Ok(())
 }
 
-/// Starts a fal LoRA training job record.
+/// Starts a fal `LoRA` training job record.
 #[tauri::command(async, rename_all = "snake_case")]
+#[allow(clippy::too_many_lines)]
 pub async fn library_train_lora(
     args: LibraryTrainLoraArgs,
     app: AppHandle,
@@ -4550,7 +4560,7 @@ pub async fn library_train_lora(
     Ok(id)
 }
 
-/// Returns one LoRA training job.
+/// Returns one `LoRA` training job.
 #[tauri::command(async, rename_all = "snake_case")]
 pub async fn library_get_training_job_status(
     job_id: TrainingJobId,
@@ -4574,7 +4584,7 @@ pub async fn library_get_training_job_status(
         })
 }
 
-/// Lists all LoRA training jobs.
+/// Lists all `LoRA` training jobs.
 #[tauri::command(async, rename_all = "snake_case")]
 pub async fn library_list_training_jobs(
     state: State<'_, AppState>,
@@ -4587,7 +4597,7 @@ pub async fn library_list_training_jobs(
     Ok(project.library.ai.training_jobs.clone())
 }
 
-/// Cancels a queued/running LoRA training job record.
+/// Cancels a queued/running `LoRA` training job record.
 #[tauri::command(async, rename_all = "snake_case")]
 pub async fn library_cancel_training_job(
     job_id: TrainingJobId,

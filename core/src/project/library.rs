@@ -381,7 +381,7 @@ pub struct TagDefinition {
 /// Per-entity AI metadata lives on [`Entity::ai`]; this struct collects
 /// the project-wide pieces used by the v1 reference-sheet workflow:
 /// prompt style notes, reusable assets, provider-routing preferences,
-/// project defaults, and asynchronous LoRA training jobs.
+/// project defaults, and asynchronous `LoRA` training jobs.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, TS)]
 #[ts(export)]
 pub struct ProjectAi {
@@ -419,7 +419,7 @@ pub struct ProjectAi {
     )]
     pub default_candidate_count: u8,
 
-    /// LoRA training jobs, including completed and failed jobs.
+    /// `LoRA` training jobs, including completed and failed jobs.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub training_jobs: Vec<TrainingJob>,
 
@@ -479,6 +479,7 @@ pub const fn default_reference_chroma() -> Rgba {
     Rgba::opaque(255, 0, 255)
 }
 
+#[allow(clippy::trivially_copy_pass_by_ref)]
 fn is_default_reference_chroma(color: &Rgba) -> bool {
     *color == default_reference_chroma()
 }
@@ -491,6 +492,7 @@ fn default_candidate_count() -> u8 {
     2
 }
 
+#[allow(clippy::trivially_copy_pass_by_ref)]
 fn is_default_candidate_count(n: &u8) -> bool {
     *n == default_candidate_count()
 }
@@ -640,6 +642,7 @@ pub enum Quality {
 }
 
 impl Quality {
+    #[allow(clippy::trivially_copy_pass_by_ref)]
     fn is_medium(&self) -> bool {
         matches!(self, Self::Medium)
     }
@@ -656,7 +659,7 @@ pub enum ModelId {
     /// Let the router pick by operation type and provider availability.
     #[default]
     Auto,
-    /// OpenAI image model label for `gpt-image-2`.
+    /// `OpenAI` image model label for `gpt-image-2`.
     OpenAiGptImage2,
     /// Google AI Studio Nano Banana Pro image model label.
     GoogleNanoBananaPro,
@@ -664,7 +667,7 @@ pub enum ModelId {
     GoogleGeminiFlashImage,
     /// fal Flux Kontext image/edit model.
     FalFluxKontext,
-    /// fal Flux.1 dev with extensions such as LoRA/IP-Adapter.
+    /// fal Flux.1 dev with extensions such as `LoRA`/IP-Adapter.
     FalFluxDev,
     /// fal Recraft vectorize endpoint.
     FalRecraftVectorize,
@@ -832,6 +835,7 @@ fn default_lora_weight() -> f32 {
     1.0
 }
 
+#[allow(clippy::trivially_copy_pass_by_ref)]
 fn is_default_lora_weight(weight: &f32) -> bool {
     (*weight - 1.0).abs() < f32::EPSILON
 }
@@ -1008,7 +1012,7 @@ pub struct StyleSwatch {
     pub created_at: i64,
 }
 
-/// Kind of LoRA training asset.
+/// Kind of `LoRA` training asset.
 #[allow(missing_docs)]
 #[derive(
     Copy, Clone, Debug, Default, Eq, PartialEq, Ord, PartialOrd, Hash, Serialize, Deserialize, TS,
@@ -1022,7 +1026,7 @@ pub enum LoraKind {
     KontextPair,
 }
 
-/// Trained LoRA registered in the project asset library.
+/// Trained `LoRA` registered in the project asset library.
 #[allow(missing_docs)]
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, TS)]
 #[ts(export)]
@@ -1040,7 +1044,7 @@ pub struct LoraAsset {
     pub created_at: i64,
 }
 
-/// State of a fal LoRA training job.
+/// State of a fal `LoRA` training job.
 #[allow(missing_docs)]
 #[derive(
     Copy, Clone, Debug, Default, Eq, PartialEq, Ord, PartialOrd, Hash, Serialize, Deserialize, TS,
@@ -1056,7 +1060,7 @@ pub enum TrainingStatus {
     Cancelled,
 }
 
-/// Async LoRA training job record.
+/// Async `LoRA` training job record.
 #[allow(missing_docs)]
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, TS)]
 #[ts(export)]
@@ -1187,10 +1191,10 @@ pub struct SheetVariant {
     /// Whether Google Search grounding was requested.
     #[serde(default)]
     pub real_world_grounding: bool,
-    /// Applied LoRA asset, Flux-only.
+    /// Applied `LoRA` asset, Flux-only.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub applied_lora: Option<AssetId>,
-    /// Applied LoRA strength for Flux requests.
+    /// Applied `LoRA` strength for Flux requests.
     #[serde(
         default = "default_lora_weight",
         skip_serializing_if = "is_default_lora_weight"

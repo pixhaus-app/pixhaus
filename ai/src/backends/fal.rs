@@ -21,19 +21,19 @@ const BASE_URL: &str = "https://fal.run";
 const QUEUE_BASE_URL: &str = "https://queue.fal.run";
 /// fal Flux Kontext endpoint.
 pub const FAL_FLUX_KONTEXT: &str = "fal-ai/flux-pro/kontext";
-/// fal Flux LoRA endpoint used for Flux.1 dev plus LoRA-style generation.
+/// fal Flux `LoRA` endpoint used for Flux.1 dev plus `LoRA`-style generation.
 pub const FAL_FLUX_LORA: &str = "fal-ai/flux-lora";
 /// fal Recraft vectorization endpoint.
 pub const FAL_RECRAFT_VECTORIZE: &str = "fal-ai/recraft/vectorize";
 /// fal Real-ESRGAN endpoint.
 pub const FAL_REAL_ESRGAN: &str = "fal-ai/real-esrgan";
-/// fal Flux LoRA fast training endpoint.
+/// fal Flux `LoRA` fast training endpoint.
 pub const FAL_FLUX_LORA_FAST_TRAINING: &str = "fal-ai/flux-lora-fast-training";
 
-/// Result of a fal LoRA training run.
+/// Result of a fal `LoRA` training run.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct FalLoraTrainingResult {
-    /// URL to the trained LoRA weights.
+    /// URL to the trained `LoRA` weights.
     pub lora_url: String,
 }
 
@@ -80,12 +80,12 @@ impl FalBackend {
     #[must_use]
     pub fn with_base_url(mut self, url: impl Into<String>) -> Self {
         let url = url.into();
-        self.base_url = url.clone();
+        self.base_url.clone_from(&url);
         self.queue_base_url = url;
         self
     }
 
-    /// Submits a zipped image dataset to fal's Flux LoRA fast trainer.
+    /// Submits a zipped image dataset to fal's Flux `LoRA` fast trainer.
     pub async fn train_lora_archive(
         &self,
         archive_zip: Vec<u8>,
@@ -273,7 +273,7 @@ impl FalBackend {
             async move {
                 let _ = client
                     .delete(cancel_url)
-                    .header("Authorization", format!("Key {}", api_key))
+                    .header("Authorization", format!("Key {api_key}"))
                     .send()
                     .await;
             }
@@ -514,7 +514,7 @@ async fn decode_fal_images(
             let resp = select! {
                 biased;
                 () = cancel.cancelled() => return Err(BackendError::Cancelled),
-                res = client.execute(req) => res.map_err(BackendError::Network)?,
+                response = client.execute(req) => response.map_err(BackendError::Network)?,
             };
             let resp = check_http_status(resp).await?;
             out.push(resp.bytes().await.map_err(BackendError::Network)?.to_vec());
@@ -744,7 +744,7 @@ fn collect_image_refs(value: &serde_json::Value, refs: &mut Vec<String>) {
 }
 
 fn decode_data_uri(uri: &str) -> Result<Option<Vec<u8>>> {
-    let Some((_, data)) = uri.split_once(",") else {
+    let Some((_, data)) = uri.split_once(',') else {
         return Ok(None);
     };
     if !uri.starts_with("data:image/") {
