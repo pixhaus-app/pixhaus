@@ -3,37 +3,9 @@ import type { AssetInfo } from "./AssetInfo";
 import type { PromptEntry } from "./PromptEntry";
 import type { SheetVariant } from "./SheetVariant";
 
-/**
- * A structured asset reference sheet — the anchor for every subsequent
- * AI generation for the linked entity.
- *
- * In B9 this struct ships in its minimal form: `canonical` is a single
- * [`SheetVariant`] containing one image and an empty composition; the
- * remaining fields default to empty. B10 implements sheet generation,
- * iterative refinement via prompts, panel layout (turnaround,
- * expressions, callouts, outfit variants), and palette extraction.
- */
-export type ReferenceSheet = { 
-/**
- * The current canonical variant — the user-approved sheet.
- */
-canonical: SheetVariant, 
-/**
- * Older or rejected variants the user generated and decided not to
- * canonicalise. Newest first. Capped by [`ProjectAi`] settings
- * when the cap mechanism lands in B10.
- */
-history?: Array<SheetVariant>, 
-/**
- * Generation prompts run against this sheet, ordered oldest to
- * newest. The last entry is what produced `canonical`. Empty in
- * B9; populated by the sheet generation verbs in B10.
- */
-prompts?: Array<PromptEntry>, 
-/**
- * Structured metadata: name, age, species, personality notes,
- * outfit variations. Free-form keyed map. The new-entity flow in
- * B9 prompts for a few common fields; B10 extends this with
- * AI-suggested fields based on the generated sheet.
- */
-info?: AssetInfo, };
+export type ReferenceSheet = {
+canonical: SheetVariant | null,
+history?: Array<SheetVariant>,
+prompts?: Array<PromptEntry>,
+info?: AssetInfo,
+};

@@ -96,7 +96,8 @@ impl AnchorPayload {
     /// Builds an [`AnchorPayload`] from a sprite entity's embedded
     /// reference sheet.
     ///
-    /// Returns `None` when the entity has no embedded sheet.
+    /// Returns `None` when the entity has no embedded sheet or the sheet
+    /// has no approved canonical variant yet.
     ///
     /// `strength` is clamped to `0.0..=1.0`. Pass
     /// [`DEFAULT_ANCHOR_STRENGTH`] when the host has no per-invocation
@@ -114,11 +115,9 @@ impl AnchorPayload {
             } => sheet.as_ref(),
             _ => return None,
         };
+        let canonical = sheet.canonical.as_ref()?;
         Some(Self::from_canonical_variant(
-            entity.id,
-            &sheet.canonical,
-            strength,
-            lora_path,
+            entity.id, canonical, strength, lora_path,
         ))
     }
 
@@ -214,7 +213,7 @@ mod tests {
             content: EntityContent::Sprites {
                 states: Vec::new(),
                 reference_sheet: Some(Box::new(ReferenceSheet {
-                    canonical: SheetVariant {
+                    canonical: Some(SheetVariant {
                         id: SheetVariantId::new(1),
                         generated_at: 0,
                         image: ReferenceImage {
@@ -224,7 +223,7 @@ mod tests {
                         composition: SheetComposition::default(),
                         generation: None,
                         extracted_palette: vec![PaletteEntry::new(Rgba::opaque(1, 2, 3))],
-                    },
+                    }),
                     history: Vec::new(),
                     prompts: Vec::new(),
                     info: AssetInfo {
@@ -270,6 +269,20 @@ mod tests {
             created_at: 0,
             updated_at: 0,
         };
+        assert!(AnchorPayload::from_sprite_entity(&entity, 0.7, None).is_none());
+    }
+
+    #[test]
+    fn from_sprite_with_draft_only_sheet_returns_none() {
+        let mut entity = make_sprite_entity(vec![1, 2, 3]);
+        if let EntityContent::Sprites {
+            reference_sheet: Some(sheet),
+            ..
+        } = &mut entity.content
+        {
+            let canonical = sheet.canonical.take().unwrap();
+            sheet.history.push(canonical);
+        }
         assert!(AnchorPayload::from_sprite_entity(&entity, 0.7, None).is_none());
     }
 

@@ -24,11 +24,32 @@ export const [showPanelOverlay, setShowPanelOverlay] = createSignal(true);
 /** Whether the sheet panel is mounted in the editor layout. */
 export const [isSheetPanelVisible, setSheetPanelVisible] = createSignal(false);
 
+/** The sprite entity currently open in the dedicated AI sheet editor. */
+export const [activeSheetEditorEntityId, setActiveSheetEditorEntityId] =
+  createSignal<EntityId | null>(null);
+
+/** Whether the dedicated AI sheet editor replaces the normal canvas area. */
+export const [isSheetEditorOpen, setSheetEditorOpen] = createSignal(false);
+
 /** Opens the sheet panel for the given sprite entity and makes the panel visible. */
 export function openSheetPanel(entityId: EntityId): void {
   setActiveSheetEntityId(entityId);
   setSelectedPanelRegion(null);
   setSheetPanelVisible(true);
+}
+
+/** Opens the dedicated AI reference-sheet editor for the given sprite entity. */
+export function openSheetEditor(entityId: EntityId): void {
+  setActiveSheetEditorEntityId(entityId);
+  setSelectedPanelRegion(null);
+  setSheetEditorOpen(true);
+}
+
+/** Closes the dedicated AI reference-sheet editor. */
+export function closeSheetEditor(): void {
+  setSheetEditorOpen(false);
+  setActiveSheetEditorEntityId(null);
+  setSelectedPanelRegion(null);
 }
 
 /** Closes the sheet panel and clears transient selection state. */

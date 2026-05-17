@@ -241,9 +241,40 @@ pub struct ImageGenRequest {
     pub seed: Option<u64>,
     /// Number of images to generate.
     pub num_images: u32,
+    /// Optional quality hint. Backends that do not expose a quality
+    /// parameter ignore this field.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub quality: Option<ImageQuality>,
     /// Reference image for style conditioning (raw PNG bytes).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub style_image: Option<Vec<u8>>,
+}
+
+/// Quality hint for image generation backends.
+#[derive(Copy, Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum ImageQuality {
+    /// Let the provider choose a default.
+    Auto,
+    /// Lower-cost/lower-latency generation.
+    Low,
+    /// Balanced quality.
+    Medium,
+    /// Highest provider-supported quality.
+    High,
+}
+
+impl ImageQuality {
+    /// Returns the OpenAI wire value.
+    #[must_use]
+    pub fn as_openai(self) -> &'static str {
+        match self {
+            Self::Auto => "auto",
+            Self::Low => "low",
+            Self::Medium => "medium",
+            Self::High => "high",
+        }
+    }
 }
 
 /// Image editing request (`IMAGE_EDIT` / `IMAGE_INPAINT` capability).

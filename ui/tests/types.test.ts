@@ -70,7 +70,7 @@ describe("Project fixture mirrors the Rust data model", () => {
     const spriteEntity = entities.find((entity) => entity.content.type === "Sprites");
     expect(spriteEntity?.content.type).toBe("Sprites");
     if (spriteEntity?.content.type !== "Sprites") throw new Error("expected sprite entity");
-    expect(spriteEntity.content.value.reference_sheet?.canonical.image.mime).toBe("image/png");
+    expect(spriteEntity.content.value.reference_sheet?.canonical?.image.mime).toBe("image/png");
   });
 
   it("stores tilemap cels as embedded grids", () => {

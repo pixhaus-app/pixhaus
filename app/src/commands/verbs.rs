@@ -230,7 +230,8 @@ pub(crate) fn resolve_anchor(
         } => sheet.as_ref(),
         _ => return None,
     };
-    let live_hash = pixhaus_ai::plugin::anchor::stable_hash(&sheet.canonical.image.bytes);
+    let canonical = sheet.canonical.as_ref()?;
+    let live_hash = pixhaus_ai::plugin::anchor::stable_hash(&canonical.image.bytes);
     let lora_path = resolve_lora_path(active, project.library.ai.project_lora_path.as_deref());
 
     if let Some(cached) = cache.get(&active.id.get()) {
@@ -287,7 +288,7 @@ mod tests {
     fn sprite_entity(id: u32, bytes: Option<Vec<u8>>) -> Entity {
         let reference_sheet = bytes.map(|bytes| {
             Box::new(ReferenceSheet {
-                canonical: SheetVariant {
+                canonical: Some(SheetVariant {
                     id: SheetVariantId::new(1),
                     generated_at: 0,
                     image: ReferenceImage {
@@ -297,7 +298,7 @@ mod tests {
                     composition: SheetComposition::default(),
                     generation: None,
                     extracted_palette: Vec::new(),
-                },
+                }),
                 history: Vec::new(),
                 prompts: Vec::new(),
                 info: AssetInfo {
@@ -387,6 +388,25 @@ mod tests {
     }
 
     #[test]
+    fn resolve_anchor_returns_none_for_draft_only_sheet() {
+        let mut project = Project::new("draft-only");
+        project
+            .library
+            .entities
+            .push(sprite_entity(9, Some(vec![1, 2, 3])));
+        if let EntityContent::Sprites {
+            reference_sheet: Some(sheet),
+            ..
+        } = &mut project.library.entities[0].content
+        {
+            let canonical = sheet.canonical.take().expect("canonical fixture");
+            sheet.history.push(canonical);
+        }
+        let cache = DashMap::new();
+        assert!(resolve_anchor(&project, Some(EntityId::new(9)), &cache).is_none());
+    }
+
+    #[test]
     fn resolve_anchor_caches_payload_and_serves_from_cache() {
         let mut project = Project::new("cache");
         project
@@ -423,7 +443,9 @@ mod tests {
             ..
         } = &mut project.library.entities[0].content
         {
-            sheet.canonical.image.bytes = vec![9, 9, 9];
+            if let Some(canonical) = &mut sheet.canonical {
+                canonical.image.bytes = vec![9, 9, 9];
+            }
         }
         let p2 = resolve_anchor(&project, Some(EntityId::new(7)), &cache).unwrap();
         assert_ne!(

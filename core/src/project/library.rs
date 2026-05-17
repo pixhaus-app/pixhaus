@@ -24,9 +24,10 @@
 //!   generation anchor for every state in the entity.
 
 use std::collections::BTreeMap;
+use std::path::PathBuf;
 
 use serde::{Deserialize, Serialize};
-use ts_rs::TS;
+use ts_rs::{Config, TS, TypeVisitor};
 
 use super::color::Rgba;
 use super::geometry::{Rect, Size};
@@ -187,8 +188,7 @@ pub enum EntityKind {
 /// large and absent on many sprite entities. `Sprites` itself stays
 /// inline because boxing it would force an allocation on every library
 /// walk in the hot read path.
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, TS)]
-#[ts(export)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "type", content = "value")]
 #[allow(clippy::large_enum_variant)]
 pub enum EntityContent {
@@ -221,6 +221,51 @@ pub enum EntityContent {
         /// The scene payload.
         scene: TilemapScene,
     },
+}
+
+impl TS for EntityContent {
+    type WithoutGenerics = Self;
+    type OptionInnerType = Self;
+
+    const IS_ENUM: bool = true;
+
+    fn name(_: &Config) -> String {
+        "EntityContent".into()
+    }
+
+    fn inline(_: &Config) -> String {
+        r#"{ "type": "Sprites", "value": {
+states: Array<NamedSprite>,
+reference_sheet?: ReferenceSheet | null,
+} } | { "type": "Tileset", "value": {
+tileset: Tileset,
+} } | { "type": "Tilemap", "value": {
+scene: TilemapScene,
+} }"#
+            .into()
+    }
+
+    fn decl(cfg: &Config) -> String {
+        format!("type {} = {};", Self::name(cfg), Self::inline(cfg))
+    }
+
+    fn decl_concrete(cfg: &Config) -> String {
+        Self::decl(cfg)
+    }
+
+    fn visit_dependencies(v: &mut impl TypeVisitor)
+    where
+        Self: 'static,
+    {
+        v.visit::<NamedSprite>();
+        v.visit::<ReferenceSheet>();
+        v.visit::<Tileset>();
+        v.visit::<TilemapScene>();
+    }
+
+    fn output_path() -> Option<PathBuf> {
+        Some(PathBuf::from("EntityContent.ts"))
+    }
 }
 
 /// A named state of a `Custom`-kind entity, e.g. `idle`, `walk`,
@@ -491,20 +536,22 @@ pub struct ReferenceImage {
 /// A structured asset reference sheet — the anchor for every subsequent
 /// AI generation for the linked entity.
 ///
-/// In B9 this struct ships in its minimal form: `canonical` is a single
-/// [`SheetVariant`] containing one image and an empty composition; the
-/// remaining fields default to empty. B10 implements sheet generation,
-/// iterative refinement via prompts, panel layout (turnaround,
-/// expressions, callouts, outfit variants), and palette extraction.
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, TS)]
-#[ts(export)]
+/// Draft-only sheets are valid: `canonical` is `None` until the user
+/// approves a generated or imported variant. AI verbs only use approved
+/// canonical sheets as anchors; variants in `history` are retained as
+/// candidates/history and never anchor generation on their own.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct ReferenceSheet {
-    /// The current canonical variant — the user-approved sheet.
-    pub canonical: SheetVariant,
+    /// The current canonical variant — the user-approved sheet. `None`
+    /// means candidates exist, but none has been approved as the AI
+    /// consistency anchor.
+    #[serde(default)]
+    pub canonical: Option<SheetVariant>,
 
     /// Older or rejected variants the user generated and decided not to
-    /// canonicalise. Newest first. Capped by [`ProjectAi`] settings
-    /// when the cap mechanism lands in B10.
+    /// canonicalise, plus draft candidates waiting for first approval.
+    /// Newest first. Capped by [`ProjectAi`] settings when the cap
+    /// mechanism lands in B10.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub history: Vec<SheetVariant>,
 
@@ -520,6 +567,46 @@ pub struct ReferenceSheet {
     /// AI-suggested fields based on the generated sheet.
     #[serde(default, skip_serializing_if = "AssetInfo::is_empty")]
     pub info: AssetInfo,
+}
+
+impl TS for ReferenceSheet {
+    type WithoutGenerics = Self;
+    type OptionInnerType = Self;
+
+    fn name(_: &Config) -> String {
+        "ReferenceSheet".into()
+    }
+
+    fn inline(_: &Config) -> String {
+        r#"{
+canonical: SheetVariant | null,
+history?: Array<SheetVariant>,
+prompts?: Array<PromptEntry>,
+info?: AssetInfo,
+}"#
+        .into()
+    }
+
+    fn decl(cfg: &Config) -> String {
+        format!("type {} = {};", Self::name(cfg), Self::inline(cfg))
+    }
+
+    fn decl_concrete(cfg: &Config) -> String {
+        Self::decl(cfg)
+    }
+
+    fn visit_dependencies(v: &mut impl TypeVisitor)
+    where
+        Self: 'static,
+    {
+        v.visit::<AssetInfo>();
+        v.visit::<PromptEntry>();
+        v.visit::<SheetVariant>();
+    }
+
+    fn output_path() -> Option<PathBuf> {
+        Some(PathBuf::from("ReferenceSheet.ts"))
+    }
 }
 
 /// One generated version of a reference sheet.
@@ -750,6 +837,16 @@ mod tests {
         assert_eq!(json, r#"{"kind":"Custom","value":"Character"}"#);
         let back: EntityKind = serde_json::from_str(&json).unwrap();
         assert_eq!(k, back);
+    }
+
+    #[test]
+    fn export_bindings_entitycontent() {
+        EntityContent::export_all(&Config::from_env()).expect("export EntityContent binding");
+    }
+
+    #[test]
+    fn export_bindings_referencesheet() {
+        ReferenceSheet::export_all(&Config::from_env()).expect("export ReferenceSheet binding");
     }
 
     #[test]

@@ -2,33 +2,9 @@
 import type { EntityId } from "./EntityId";
 import type { SheetVariantId } from "./SheetVariantId";
 
-/**
- * Receipt returned by a successful approval.
- *
- * The shape is small and serializable so the IPC layer can return it
- * to the UI without re-wrapping. The new canonical variant id and the
- * number of palette swatches extracted are the two facts the UI cares
- * about — both feed the toast / status indicator.
- */
-export type Approval = { 
-/**
- * The entity whose sheet was approved.
- */
-entity_id: EntityId, 
-/**
- * The variant now sitting in `canonical`.
- */
-canonical_id: SheetVariantId, 
-/**
- * The previous canonical variant id, if there was one. Will be
- * `None` only on first approval of a freshly imported entity that
- * somehow had no prior canonical (the data model always provides
- * one, so in practice this is `Some`).
- */
-previous_canonical_id: SheetVariantId | null, 
-/**
- * Number of swatches the extractor produced for the new canonical.
- * Zero when the variant already carried an extracted palette
- * (preserved from the generator) or when extraction failed.
- */
-palette_size: number, };
+export type Approval = {
+entity_id: EntityId,
+canonical_id: SheetVariantId,
+previous_canonical_id: SheetVariantId | null,
+palette_size: number,
+};

@@ -5,6 +5,220 @@
   --sheet-history-thumb-size: 60px;
 }
 
+/* ── Dedicated AI editor ─────────────────────────────────────────────────── */
+
+.sheet-editor {
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  background: var(--bg-app);
+  color: var(--text-primary);
+}
+
+.sheet-editor__topbar {
+  min-height: 44px;
+  padding: 6px 10px;
+  border-bottom: 1px solid var(--border);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.sheet-editor__eyebrow {
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--text-disabled);
+}
+
+.sheet-editor__title {
+  font-size: 14px;
+  font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.sheet-editor__loading {
+  padding: 12px;
+  font-size: 12px;
+  color: var(--text-secondary);
+}
+
+.sheet-editor__workspace {
+  flex: 1;
+  min-height: 0;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 320px;
+}
+
+.sheet-editor__preview {
+  min-width: 0;
+  min-height: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 14px;
+  overflow: hidden;
+  background:
+    linear-gradient(45deg, rgba(255, 255, 255, 0.035) 25%, transparent 25%),
+    linear-gradient(-45deg, rgba(255, 255, 255, 0.035) 25%, transparent 25%), var(--bg-canvas);
+  background-size: 20px 20px;
+}
+
+.sheet-editor__image-wrap {
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 100%;
+  height: 100%;
+}
+
+.sheet-editor__image {
+  max-width: 100%;
+  max-height: 100%;
+  object-fit: contain;
+  image-rendering: pixelated;
+}
+
+.sheet-editor__empty {
+  color: var(--text-disabled);
+  font-size: 12px;
+}
+
+.sheet-editor__overlay {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  pointer-events: auto;
+}
+
+.sheet-editor__panel rect {
+  fill: rgba(66, 153, 225, 0.12);
+  stroke: var(--accent);
+  stroke-width: 2;
+  vector-effect: non-scaling-stroke;
+}
+
+.sheet-editor__panel text {
+  fill: var(--accent);
+  font-size: 12px;
+  font-weight: 600;
+  pointer-events: none;
+}
+
+.sheet-editor__panel--selected rect,
+.sheet-editor__panel:hover rect {
+  fill: rgba(66, 153, 225, 0.22);
+}
+
+.sheet-editor__controls {
+  min-width: 0;
+  min-height: 0;
+  border-left: 1px solid var(--border);
+  background: var(--bg-panel);
+  padding: 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  overflow: auto;
+}
+
+.sheet-editor__field {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: 11px;
+  color: var(--text-secondary);
+}
+
+.sheet-editor__textarea,
+.sheet-editor__select {
+  width: 100%;
+  border: 1px solid var(--border);
+  background: var(--bg-input);
+  color: var(--text-primary);
+  border-radius: 4px;
+  font: inherit;
+}
+
+.sheet-editor__textarea {
+  min-height: 96px;
+  resize: vertical;
+  padding: 7px;
+  line-height: 1.4;
+}
+
+.sheet-editor__select {
+  height: 30px;
+  padding: 0 7px;
+}
+
+.sheet-editor__grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.sheet-editor__actions {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.sheet-editor__variants {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-height: 120px;
+}
+
+.sheet-editor__variant,
+.sheet-editor__variant-empty {
+  min-height: 30px;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  background: var(--bg-input);
+  color: var(--text-secondary);
+  font-size: 11px;
+  text-align: left;
+  padding: 0 8px;
+}
+
+.sheet-editor__variant {
+  cursor: pointer;
+}
+
+.sheet-editor__variant:hover,
+.sheet-editor__variant--active {
+  border-color: var(--accent);
+  color: var(--text-primary);
+}
+
+.sheet-editor__variant-empty {
+  display: flex;
+  align-items: center;
+  color: var(--text-disabled);
+}
+
+@media (max-width: 900px) {
+  .sheet-editor__workspace {
+    grid-template-columns: 1fr;
+    grid-template-rows: minmax(260px, 1fr) auto;
+  }
+
+  .sheet-editor__controls {
+    border-left: 0;
+    border-top: 1px solid var(--border);
+    max-height: 42vh;
+  }
+}
+
 /* ── Panel shell ──────────────────────────────────────────────────────────── */
 
 .sheet-panel {

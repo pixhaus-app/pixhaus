@@ -91,11 +91,12 @@ import {
   activeSheetEntityId,
   closeSheetPanel,
   isSheetPanelVisible,
+  openSheetEditor,
   openSheetPanel,
   setSheetPanelVisible,
 } from "../sheet/sheet-state";
 import { libraryListEntities } from "../lib/commands/library";
-import { setLibraryPanelVisible } from "../library/library-state";
+import { selectedEntityId, setLibraryPanelVisible } from "../library/library-state";
 import {
   tilemapTool,
   setTilemapTool,
@@ -1121,6 +1122,16 @@ const COMMANDS: ReadonlyMap<string, CommandEntry> = new Map<string, CommandEntry
     },
   ],
   [
+    "ai:generate-reference-sheet",
+    {
+      id: "ai:generate-reference-sheet",
+      label: "Generate Reference Sheet",
+      category: "AI",
+      keywords: ["sheet", "reference", "anchor", "sprite", "character"],
+      handler: () => openReferenceSheetEditorForSelectedSprite(),
+    },
+  ],
+  [
     "ai:settings",
     {
       id: "ai:settings",
@@ -1324,6 +1335,24 @@ function openVerbModal(verbId: string, fallbackLabel: string): void {
       setActiveVerb(v);
     })
     .catch((err: unknown) => reportCommandFailure("verb_list", err));
+}
+
+function openReferenceSheetEditorForSelectedSprite(): void {
+  const selected = selectedEntityId();
+  libraryListEntities()
+    .then((entities) => {
+      const selectedSprite =
+        selected === null
+          ? undefined
+          : entities.find((entity) => entity.id === selected && entity.content.type === "Sprites");
+      const target = selectedSprite ?? entities.find((entity) => entity.content.type === "Sprites");
+      if (target === undefined) {
+        pushToast({ title: "No sprite entities yet.", kind: "info" });
+        return;
+      }
+      openSheetEditor(target.id);
+    })
+    .catch((err: unknown) => reportCommandFailure("library_list_entities", err));
 }
 
 // Returns all commands with their current keybind resolved from preferences.

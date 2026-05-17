@@ -7,12 +7,18 @@
 use std::collections::{HashMap, HashSet};
 use std::time::SystemTime;
 
+use base64::Engine as _;
+use pixhaus_ai::backends::ImageQuality;
 use pixhaus_ai::plugin::context::VerbContextBuilder;
 use pixhaus_ai::plugin::descriptor::VerbId;
 use pixhaus_ai::plugin::inputs::VerbInputs;
 use pixhaus_ai::plugin::output::VerbEffect;
 use pixhaus_ai::plugin::{AnchorPayload, DEFAULT_ANCHOR_STRENGTH};
 use pixhaus_ai::verbs::critique::{CritiqueInputs, CritiqueMode};
+use pixhaus_ai::verbs::reference_sheet::{
+    CompositionTemplate, GENERATE_REFERENCE_SHEET_VERB_ID, GENERATE_SHEET_EFFECT_NAME,
+    GenerateReferenceSheetInputs, GenerateSheetPayload,
+};
 use pixhaus_core::color::extraction::ExtractionOptions;
 use pixhaus_core::project::approval::{ApprovalError, approve_sheet_variant};
 use pixhaus_core::project::{
@@ -60,14 +66,14 @@ pub(crate) fn reference_sheet_from_image(
     ts: i64,
 ) -> ReferenceSheet {
     ReferenceSheet {
-        canonical: SheetVariant {
+        canonical: Some(SheetVariant {
             id: variant_id,
             generated_at: ts,
             image: ReferenceImage { bytes, mime },
             composition: SheetComposition::default(),
             generation: None,
             extracted_palette: Vec::new(),
-        },
+        }),
         history: Vec::new(),
         prompts: Vec::new(),
         info: AssetInfo::default(),
@@ -1670,15 +1676,182 @@ pub struct LibraryUpdateAssetInfoArgs {
     pub info: AssetInfo,
 }
 
+/// Arguments for generating reference-sheet draft candidates.
+#[derive(Debug, Deserialize)]
+pub struct LibraryGenerateReferenceSheetArgs {
+    /// Target sprite entity that will receive generated draft variants.
+    pub entity_id: EntityId,
+    /// User description of the subject.
+    pub prompt: String,
+    /// Sheet composition template and resolution.
+    pub template: CompositionTemplate,
+    /// Optional backend quality hint.
+    pub quality: Option<ImageQuality>,
+    /// Number of candidates to request. Clamped by the verb.
+    pub candidate_count: u32,
+}
+
+/// Arguments for importing a reference-sheet image as an unapproved draft.
+#[derive(Debug, Deserialize)]
+pub struct LibraryImportReferenceSheetArgs {
+    /// Target sprite entity that will receive the draft.
+    pub entity_id: EntityId,
+    /// Image bytes to store.
+    pub bytes: Vec<u8>,
+    /// MIME type for `bytes`. Defaults to `image/png` when empty.
+    pub mime: Option<String>,
+}
+
+/// Arguments for removing a non-canonical reference-sheet variant.
+#[derive(Debug, Deserialize)]
+pub struct LibraryRemoveReferenceSheetVariantArgs {
+    /// Target sprite entity.
+    pub entity_id: EntityId,
+    /// Draft/history variant to remove.
+    pub variant_id: SheetVariantId,
+}
+
+/// Generates draft reference-sheet variants for a sprite entity.
+///
+/// The generated candidates are persisted in `ReferenceSheet::history`
+/// and never become canonical until the user approves one.
+#[tauri::command(async, rename_all = "snake_case")]
+pub async fn library_generate_reference_sheet(
+    args: LibraryGenerateReferenceSheetArgs,
+    state: State<'_, AppState>,
+) -> CommandResult<Entity> {
+    if args.prompt.trim().is_empty() {
+        return Err(AppCommandError::Validation {
+            detail: "reference sheet prompt must not be empty".into(),
+        });
+    }
+
+    let ctx = {
+        let doc = state.doc.read().await;
+        let project = doc
+            .project
+            .as_ref()
+            .ok_or(AppCommandError::NoActiveProject)?;
+        let entity = project
+            .library
+            .entities
+            .iter()
+            .find(|e| e.id == args.entity_id)
+            .ok_or_else(|| AppCommandError::NotFound {
+                entity: "entity".into(),
+                id: u64::from(args.entity_id.get()),
+            })?;
+        if !matches!(entity.content, EntityContent::Sprites { .. }) {
+            return Err(AppCommandError::Validation {
+                detail: format!(
+                    "entity {} is not a sprite entity; reference sheets belong to sprites",
+                    args.entity_id.get()
+                ),
+            });
+        }
+        VerbContextBuilder::new(project.metadata.clone())
+            .with_library_entity(args.entity_id)
+            .build()
+    };
+
+    let inputs = VerbInputs::from_struct(&GenerateReferenceSheetInputs {
+        entity_id: args.entity_id,
+        template: args.template,
+        prompt: args.prompt,
+        negative_prompt: None,
+        num_variants: args.candidate_count,
+        quality: args.quality,
+        seed: None,
+    })
+    .map_err(|e| AppCommandError::VerbError {
+        message: format!("failed to build generate_reference_sheet inputs: {e}"),
+    })?;
+
+    let verb_id = VerbId::new(GENERATE_REFERENCE_SHEET_VERB_ID);
+    let invocation = state
+        .verb_runtime
+        .invoke(&verb_id, ctx, inputs)
+        .map_err(|e| AppCommandError::VerbError {
+            message: e.to_string(),
+        })?;
+
+    let preview_id = invocation.preview_id().get();
+    state
+        .invocations
+        .insert(preview_id, invocation.cancellation());
+    let result = invocation.finish().await;
+    state.invocations.remove(&preview_id);
+
+    let preview = result.map_err(|e| AppCommandError::VerbError {
+        message: e.to_string(),
+    })?;
+    let payload = preview
+        .output
+        .effects
+        .iter()
+        .find_map(|effect| match effect {
+            VerbEffect::Custom { name, payload } if name == GENERATE_SHEET_EFFECT_NAME => {
+                serde_json::from_value::<GenerateSheetPayload>(payload.clone()).ok()
+            }
+            _ => None,
+        })
+        .ok_or_else(|| AppCommandError::VerbError {
+            message: format!(
+                "generate_reference_sheet verb did not return a {GENERATE_SHEET_EFFECT_NAME} effect"
+            ),
+        })?;
+
+    let ts = now_secs();
+    let mut doc = state.doc.write().await;
+    let mut next_id = doc.next_id;
+    let project = doc
+        .project
+        .as_mut()
+        .ok_or(AppCommandError::NoActiveProject)?;
+    let updated = apply_generated_reference_sheet_payload(project, &mut next_id, payload, ts)?;
+    doc.next_id = next_id;
+    doc.dirty = true;
+    drop(doc);
+
+    state.anchor_cache.remove(&args.entity_id.get());
+    Ok(updated)
+}
+
+/// Imports a reference image as a draft candidate on a sprite entity.
+#[tauri::command(async, rename_all = "snake_case")]
+pub async fn library_import_reference_sheet(
+    args: LibraryImportReferenceSheetArgs,
+    state: State<'_, AppState>,
+) -> CommandResult<Entity> {
+    if args.bytes.is_empty() {
+        return Err(AppCommandError::Validation {
+            detail: "reference sheet image bytes must not be empty".into(),
+        });
+    }
+
+    let ts = now_secs();
+    let mut doc = state.doc.write().await;
+    let mut next_id = doc.next_id;
+    let project = doc
+        .project
+        .as_mut()
+        .ok_or(AppCommandError::NoActiveProject)?;
+    let updated = import_reference_sheet_draft(project, &mut next_id, args, ts)?;
+    doc.next_id = next_id;
+    doc.dirty = true;
+    Ok(updated)
+}
+
 /// Approves a [`SheetVariant`] as the canonical embedded reference sheet of
 /// a sprite entity.
 ///
 /// Moves the variant from `history` into `canonical`, demotes the previous
-/// canonical to `history[0]`, runs eyedropper palette extraction over the
-/// new canonical's image bytes (skipped when the variant already carries
-/// an extracted palette), bumps `updated_at`, and invalidates any cached
-/// [`AnchorPayload`] for the entity. Returns the updated entity so the UI
-/// can refresh local state without a separate `library_get_entity`.
+/// canonical to `history[0]` when one exists, runs eyedropper palette
+/// extraction over the new canonical's image bytes (skipped when the
+/// variant already carries an extracted palette), bumps `updated_at`, and
+/// invalidates any cached [`AnchorPayload`] for the entity. Returns the
+/// updated entity so the UI can refresh local state without a separate
+/// `library_get_entity`.
 #[tauri::command(async, rename_all = "snake_case")]
 pub async fn library_approve_sheet_variant(
     args: LibraryApproveSheetVariantArgs,
@@ -1746,7 +1919,10 @@ pub async fn library_get_anchor_payload(
         } => sheet.as_ref(),
         _ => return Ok(None),
     };
-    let live_hash = pixhaus_ai::plugin::anchor::stable_hash(&sheet.canonical.image.bytes);
+    let Some(canonical) = sheet.canonical.as_ref() else {
+        return Ok(None);
+    };
+    let live_hash = pixhaus_ai::plugin::anchor::stable_hash(&canonical.image.bytes);
     let lora_path = crate::commands::verbs::resolve_lora_path(
         entity,
         project.library.ai.project_lora_path.as_deref(),
@@ -1805,7 +1981,160 @@ pub async fn library_delete_sheet_variant(
     Ok(())
 }
 
+/// Removes a non-canonical reference-sheet draft/history variant.
+#[tauri::command(async, rename_all = "snake_case")]
+pub async fn library_remove_reference_sheet_variant(
+    args: LibraryRemoveReferenceSheetVariantArgs,
+    state: State<'_, AppState>,
+) -> CommandResult<Entity> {
+    let ts = now_secs();
+    let mut doc = state.doc.write().await;
+    let project = doc
+        .project
+        .as_mut()
+        .ok_or(AppCommandError::NoActiveProject)?;
+    delete_sheet_variant_in_project(project, args.entity_id, args.variant_id, ts)?;
+    let updated = project
+        .library
+        .entities
+        .iter()
+        .find(|e| e.id == args.entity_id)
+        .ok_or_else(|| AppCommandError::NotFound {
+            entity: "entity".into(),
+            id: u64::from(args.entity_id.get()),
+        })?
+        .clone();
+    doc.dirty = true;
+    Ok(updated)
+}
+
 // ── sheet helpers ─────────────────────────────────────────────────────────────
+
+pub(crate) fn apply_generated_reference_sheet_payload(
+    project: &mut pixhaus_core::project::Project,
+    next_id: &mut u32,
+    payload: GenerateSheetPayload,
+    ts: i64,
+) -> Result<Entity, AppCommandError> {
+    let entity = project
+        .library
+        .entities
+        .iter_mut()
+        .find(|e| e.id == payload.entity_id)
+        .ok_or_else(|| AppCommandError::NotFound {
+            entity: "entity".into(),
+            id: u64::from(payload.entity_id.get()),
+        })?;
+
+    let EntityContent::Sprites {
+        reference_sheet, ..
+    } = &mut entity.content
+    else {
+        return Err(AppCommandError::Validation {
+            detail: format!(
+                "entity {} is not a sprite entity; reference sheets belong to sprites",
+                payload.entity_id.get()
+            ),
+        });
+    };
+
+    let mut variants = Vec::with_capacity(payload.variants.len());
+    for output in payload.variants {
+        let bytes = base64::engine::general_purpose::STANDARD
+            .decode(output.image_b64.as_bytes())
+            .map_err(|e| AppCommandError::Validation {
+                detail: format!("generated reference sheet image was not valid base64: {e}"),
+            })?;
+        let variant_id = SheetVariantId::new(*next_id);
+        *next_id += 1;
+        variants.push(SheetVariant {
+            id: variant_id,
+            generated_at: output.generated_at,
+            image: ReferenceImage {
+                bytes,
+                mime: "image/png".into(),
+            },
+            composition: output.composition,
+            generation: Some(output.generation),
+            extracted_palette: Vec::new(),
+        });
+    }
+
+    let sheet = reference_sheet
+        .get_or_insert_with(|| {
+            Box::new(ReferenceSheet {
+                canonical: None,
+                history: Vec::new(),
+                prompts: Vec::new(),
+                info: AssetInfo::default(),
+            })
+        })
+        .as_mut();
+    variants.append(&mut sheet.history);
+    sheet.history = variants;
+    entity.updated_at = ts;
+    Ok(entity.clone())
+}
+
+pub(crate) fn import_reference_sheet_draft(
+    project: &mut pixhaus_core::project::Project,
+    next_id: &mut u32,
+    args: LibraryImportReferenceSheetArgs,
+    ts: i64,
+) -> Result<Entity, AppCommandError> {
+    let entity = project
+        .library
+        .entities
+        .iter_mut()
+        .find(|e| e.id == args.entity_id)
+        .ok_or_else(|| AppCommandError::NotFound {
+            entity: "entity".into(),
+            id: u64::from(args.entity_id.get()),
+        })?;
+
+    let EntityContent::Sprites {
+        reference_sheet, ..
+    } = &mut entity.content
+    else {
+        return Err(AppCommandError::Validation {
+            detail: format!(
+                "entity {} is not a sprite entity; reference sheets belong to sprites",
+                args.entity_id.get()
+            ),
+        });
+    };
+
+    let variant_id = SheetVariantId::new(*next_id);
+    *next_id += 1;
+    let mime = args
+        .mime
+        .filter(|value| !value.trim().is_empty())
+        .unwrap_or_else(|| "image/png".into());
+    let variant = SheetVariant {
+        id: variant_id,
+        generated_at: ts,
+        image: ReferenceImage {
+            bytes: args.bytes,
+            mime,
+        },
+        composition: SheetComposition::default(),
+        generation: None,
+        extracted_palette: Vec::new(),
+    };
+    let sheet = reference_sheet
+        .get_or_insert_with(|| {
+            Box::new(ReferenceSheet {
+                canonical: None,
+                history: Vec::new(),
+                prompts: Vec::new(),
+                info: AssetInfo::default(),
+            })
+        })
+        .as_mut();
+    sheet.history.insert(0, variant);
+    entity.updated_at = ts;
+    Ok(entity.clone())
+}
 
 pub(crate) fn update_asset_info_in_project(
     project: &mut pixhaus_core::project::Project,
@@ -1848,7 +2177,11 @@ pub(crate) fn delete_sheet_variant_in_project(
 
     let sheet = embedded_reference_sheet_mut(entity)?;
 
-    if sheet.canonical.id == variant_id {
+    if sheet
+        .canonical
+        .as_ref()
+        .is_some_and(|variant| variant.id == variant_id)
+    {
         return Err(AppCommandError::Validation {
             detail: "cannot delete the canonical variant; approve a replacement first".into(),
         });
@@ -2346,7 +2679,15 @@ async fn build_train_entity_lora_context(
             });
         }
     };
-    let decoded = decode_reference_sheet_png(&sheet.canonical.image.bytes)?;
+    let Some(canonical) = sheet.canonical.as_ref() else {
+        return Err(AppCommandError::Validation {
+            detail: format!(
+                "entity {} has no approved canonical reference sheet; train_entity_lora requires one",
+                entity_id.get(),
+            ),
+        });
+    };
+    let decoded = decode_reference_sheet_png(&canonical.image.bytes)?;
     let ctx = VerbContextBuilder::new(project.metadata.clone())
         .with_library_entity(entity_id)
         .build();
@@ -2471,6 +2812,7 @@ pub async fn library_train_entity_lora(
 
 #[cfg(test)]
 mod tests {
+    use base64::Engine as _;
     use pixhaus_core::project::{
         ActiveTarget, AiMetadata, AssetInfo, ColorMode, EntityContent, EntityDefaults, EntityId,
         EntityKind, GroupId, NamedSprite, ReferenceImage, ReferenceSheet, SheetComposition,
@@ -3334,7 +3676,7 @@ mod tests {
             content: EntityContent::Sprites {
                 states: Vec::new(),
                 reference_sheet: Some(Box::new(ReferenceSheet {
-                    canonical,
+                    canonical: Some(canonical),
                     history: vec![make_variant(20), make_variant(30)],
                     prompts: Vec::new(),
                     info: AssetInfo::default(),
@@ -3433,6 +3775,46 @@ mod tests {
         let result =
             delete_sheet_variant_in_project(&mut project, entity_id, SheetVariantId::new(999), 0);
         assert!(matches!(result, Err(AppCommandError::NotFound { .. })));
+    }
+
+    #[test]
+    fn apply_generated_payload_creates_draft_only_sheet() {
+        let (mut project, entity_id, _) = project_with_one_custom_entity();
+        let mut next_id = 50;
+        let payload = GenerateSheetPayload {
+            entity_id,
+            variants: vec![pixhaus_ai::verbs::reference_sheet::SheetVariantOutput {
+                id: SheetVariantId::new(0),
+                generated_at: 123,
+                image_b64: base64::engine::general_purpose::STANDARD.encode([1, 2, 3]),
+                composition: SheetComposition::default(),
+                generation: pixhaus_core::project::GenerationProvenance {
+                    backend: "stub".into(),
+                    model: "stub-model".into(),
+                    prompt: "hero".into(),
+                    seed: None,
+                    negative_prompt: None,
+                },
+            }],
+        };
+
+        let updated =
+            apply_generated_reference_sheet_payload(&mut project, &mut next_id, payload, 77)
+                .unwrap();
+
+        assert_eq!(next_id, 51);
+        assert_eq!(updated.updated_at, 77);
+        let EntityContent::Sprites {
+            reference_sheet: Some(sheet),
+            ..
+        } = &updated.content
+        else {
+            panic!("expected reference sheet");
+        };
+        assert!(sheet.canonical.is_none());
+        assert_eq!(sheet.history.len(), 1);
+        assert_eq!(sheet.history[0].id, SheetVariantId::new(50));
+        assert_eq!(sheet.history[0].image.bytes, vec![1, 2, 3]);
     }
 
     // ── AI hooks (B9.4) ───────────────────────────────────────────────────

@@ -981,9 +981,9 @@ Expect:
 
 ## 12. Reference sheets
 
-Introduced in bedrock arc B10 (PRs #160, #165, #167, #168, #179). The reference sheet view panel displays a canonical sheet image embedded in a sprite entity, lets the user approve existing variants as canonical, and train a per-entity LoRA from the approved sheet. Generate/refine persistence is a follow-up after the embedded model move.
+Introduced in bedrock arc B10 (PRs #160, #165, #167, #168, #179). The reference sheet view panel displays a canonical sheet image embedded in a sprite entity, lets the user approve existing variants as canonical, and train a per-entity LoRA from the approved sheet. The dedicated AI reference-sheet editor opens for any sprite entity, generates OpenAI-backed draft candidates, and leaves them unapproved until the user promotes one as canonical.
 
-**Locations & selectors:** panel component `ui/src/sheet/SheetView.tsx`. Visibility signal `isSheetPanelVisible` (default `false`). Toggle command id `window:toggle-sheet`, palette label "Toggle Reference Sheet Panel", palette keywords: `sheet`, `reference`, `anchor`, `character`. Verb input modal is `ModalForm` hosted by `VerbInvokeHost` (`ui/src/lib/ai/VerbInvokeHost.tsx`).
+**Locations & selectors:** panel component `ui/src/sheet/SheetView.tsx`; editor component `ui/src/sheet/ReferenceSheetEditor.tsx`. Panel visibility signal `isSheetPanelVisible` (default `false`). Editor state is `activeSheetEditorEntityId` / `isSheetEditorOpen`. Toggle command id `window:toggle-sheet`, palette label "Toggle Reference Sheet Panel", palette keywords: `sheet`, `reference`, `anchor`, `character`. Editor palette command id `ai:generate-reference-sheet`, label "Generate Reference Sheet".
 
 ### T-refsheet-001: Open the reference sheet panel
 
@@ -996,14 +996,30 @@ Expect:
   - [DOM] for an entity with an approved variant: the canonical sheet image renders fit-to-window with an SVG panel overlay.
   - [DOM] history strip and prompt history strip are visible below.
 
-### T-refsheet-002: Generation and refinement controls are deferred
+### T-refsheet-002: Open the AI reference-sheet editor
 
-Pre: T-refsheet-001 done.
+Pre: at least one sprite entity exists. A sheet is optional.
 Steps:
-  1. Inspect the sheet panel action row.
+  1. Click the sheet/generate action on a sprite row, or run command palette → "Generate Reference Sheet".
 Expect:
-  - [DOM] no "Generate variant" or "Refine selection" buttons are present in this slice.
-  - [IPC] no `pixhaus.builtin.generate_reference_sheet` or `pixhaus.builtin.iterate_reference_sheet` invocation is triggered from the sheet panel.
+  - [STATE] `isSheetEditorOpen() === true` and `activeSheetEditorEntityId()` is the sprite entity id.
+  - [DOM] the normal canvas/timeline editing surface is replaced by the reference-sheet editor.
+  - [DOM] prompt, template, quality, candidate-count, Generate, Import, Approve, Remove, and Back controls are visible.
+  - [DOM] pixel editing tools are not exposed for the reference sheet.
+  - [DOM] an approved sheet, generated drafts, or an empty state renders depending on entity data.
+
+### T-refsheet-002b: Generate draft candidates
+
+Pre: T-refsheet-002 done. Preferences → AI Backend has a saved OpenAI API key.
+Steps:
+  1. Enter a subject prompt.
+  2. Pick a template, quality, and candidate count.
+  3. Click "Generate".
+Expect:
+  - [IPC] `library_generate_reference_sheet { entity_id, prompt, template, quality, candidate_count }` fires.
+  - [DOM] generated candidates appear in the editor as draft/history variants.
+  - [STATE] the sprite entity has `reference_sheet: Some(...)`, `history` contains the new variants, and `canonical` is unchanged.
+  - [STATE] if the entity had no canonical sheet before generation, `canonical === null` until a candidate is approved.
 
 ### T-refsheet-003: Panel overlay selection
 
@@ -1040,16 +1056,15 @@ Expect:
 
 > The 15–30 minute round-trip makes this test impractical for routine manual sweeps. Tracked in section 17 alongside the missing env-driven mock toggle.
 
-### T-refsheet-006: Cancel an in-flight sheet verb invocation (deferred)
+### T-refsheet-006: Streaming/cancel for sheet generation is deferred
 
-Pre: deferred with the sheet generation/refinement controls. Do not run this case as part of the embedded-reference slice. When those controls return, open a cancellable sheet verb modal and either leave it idle or submit it so it is running.
+Pre: deferred. The current editor uses a blocking app command with a loading state. Do not run this case until streaming/cancel lands for sheet generation.
 Steps:
-  1. Idle: click "Cancel" → modal closes, no IPC fires.
-  2. Running: click "Cancel running invocation" → modal stays mounted while cancellation propagates; on settle, the modal returns to idle / closes.
+  1. Submit a future streaming sheet-generation request.
+  2. Click "Cancel running invocation".
 Expect:
-  - [IPC] running case: `verb_cancel { invocation_id }` (PR #133); the runtime cancels the task.
+  - [IPC] `verb_cancel { invocation_id }` (PR #133); the runtime cancels the task.
   - [DOM] no partial variant is appended to the history strip on a cancelled run.
-  - Escape on the idle modal closes it (same as Cancel).
 
 > **Regression guard:** before PR #133 there was no in-app way to abort a long-running verb. If "Cancel running invocation" is missing or doesn't actually terminate the in-flight task, the regression is live.
 
@@ -1117,7 +1132,7 @@ Expect:
   - [DOM] explicit "Cancel" and Submit buttons at the bottom.
   - [STATE] `activeVerb` signal is set.
 
-> **Registered AI palette commands (verify against `ui/src/command-palette/command-registry.ts`):** `ai:inbetween`, `ai:continue`, `ai:variant`, `ai:cleanup`, `ai:critique`, `ai:settings`. The generate-reference-sheet verb has NO palette command today — it is reached via the "Generate variant" button in the reference sheet panel (T-refsheet-002). Tracked as a stub in section 17.
+> **Registered AI palette commands (verify against `ui/src/command-palette/command-registry.ts`):** `ai:inbetween`, `ai:continue`, `ai:variant`, `ai:cleanup`, `ai:critique`, `ai:generate-reference-sheet`, `ai:settings`. `ai:generate-reference-sheet` opens the dedicated editor for the selected sprite or the first sprite entity.
 
 ### T-cmd-006: Verb cancellation closes the modal cleanly
 
@@ -1287,11 +1302,10 @@ Tool key mapping (both presets share these as of `ui/src/keybinds/defaults.ts:41
 These are deliberate gaps. Do not file bugs against them — file follow-ups instead.
 
 - **Edit > Cut / Copy / Paste**: not in the palette; menu items exist but are dropped from the palette per PR #100 (no clipboard pipeline yet).
-- **AI backend configuration**: the verb runtime, the input modal, and verb cancellation all work. What's still gated is per-backend setup — API keys are entered via Preferences → AI (Anthropic, OpenAI, Replicate, Ollama, ComfyUI, Stability). Verbs targeting an unconfigured backend surface a toast and abort.
+- **AI backend configuration**: OpenAI API keys are saved and cleared through Preferences → AI Backend and stored in the OS keychain. Other backend setup is still follow-up work. Verbs targeting an unconfigured backend surface a toast and abort.
 - **Env-driven verb mock toggle**: there is NO `PIXHAUS_AI_MOCK` or equivalent environment variable wired into `ai/src/runtime/` today. The only mock infrastructure is `window.__PIXHAUS_MOCK__` in `tests/visual/helpers/tauri-mock.ts`, which is scoped to the visual-test harness — not usable for manual `pnpm dev` sessions. Follow-up: wire an env-driven short-circuit that returns deterministic mock output for every built-in verb so manual sweeps of T-refsheet-* and T-cmd-005 don't require a real backend.
 - **`window:toggle-library` palette command**: every other panel (layers, timeline, palette, tilemap, sheet) registers a `window:toggle-*` id in `ui/src/command-palette/command-registry.ts`. The library does not, and the native Window menu (`app/src/menu.rs:293-303`) only toggles layers/timeline/palette. Once the panel's close button fires `setLibraryPanelVisible(false)` there is no in-app way to re-show it. Follow-up: register `window:toggle-library` AND add a Window-menu entry.
 - **Manual tag CRUD UI**: the IPCs `library_add_tag` and `library_delete_tag` (and `library_untag_entity` from the row chip) are registered but unused — there is no "Add tag" input or chip-untag affordance on the library row. The auto-tag accept/reject surface is wired (T-library-006); manual tag management is filed for a follow-up Category B PR.
-- **`ai:generate-reference-sheet` palette command**: the verb itself works, but it has no command-palette entry. It is reachable only via the "Generate variant" button in the reference sheet panel (T-refsheet-002). Follow-up: register the palette command so verb sweeps can use the same `T-cmd-005`-style flow as `ai:cleanup`.
 - **Per-entity LoRA training latency**: a real training run (Replicate) takes 15–30 minutes per entity. T-refsheet-005 is impractical for routine manual sweeps without the env-driven mock toggle above.
 - **Line tool real-time preview**: the line currently only paints on release. Real-time preview needs a separate "anchor + cursor" pipeline — out of scope for PR #104.
 - **Rect / ellipse drag-time preview**: same as line — paints on release only.

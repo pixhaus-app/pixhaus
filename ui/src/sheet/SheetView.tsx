@@ -85,11 +85,12 @@ const SheetView: Component = () => {
     return e !== null ? referenceSheet(e) : null;
   };
 
-  // The image currently shown: the previewed history variant or the canonical.
+  // The image currently shown: the previewed history variant, canonical,
+  // or first draft candidate when no canonical has been approved yet.
   const displayedVariant = (): SheetVariant | null => {
     const s = sheet();
     if (s === null) return null;
-    return previewVariant() ?? s.canonical;
+    return previewVariant() ?? s.canonical ?? s.history?.[0] ?? null;
   };
 
   const displayedDataUrl = useImageObjectUrl(() => displayedVariant()?.image ?? null);

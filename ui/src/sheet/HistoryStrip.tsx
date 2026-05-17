@@ -16,7 +16,7 @@ type ContextMenuState = {
 };
 
 type Props = {
-  canonical: SheetVariant;
+  canonical: SheetVariant | null;
   history: SheetVariant[];
   /** Currently previewed variant id — null means the canonical is shown. */
   previewId: number | null;
@@ -45,41 +45,51 @@ const HistoryStrip: Component<Props> = (props) => {
   document.addEventListener("click", handleOutsideClick);
   onCleanup(() => document.removeEventListener("click", handleOutsideClick));
 
-  const allVariants = (): Array<{ variant: SheetVariant; isCanonical: boolean }> => [
-    { variant: props.canonical, isCanonical: true },
-    ...props.history.map((v) => ({ variant: v, isCanonical: false })),
-  ];
+  const allVariants = (): Array<{ variant: SheetVariant; isCanonical: boolean }> => {
+    const variants = props.history.map((v) => ({ variant: v, isCanonical: false }));
+    return props.canonical === null
+      ? variants
+      : [{ variant: props.canonical, isCanonical: true }, ...variants];
+  };
 
   return (
     <div class="sheet-history-strip">
-      <For each={allVariants()}>
-        {({ variant, isCanonical }) => {
-          const isActive = (): boolean =>
-            props.previewId === null ? isCanonical : props.previewId === variant.id;
-          const thumbUrl = useImageObjectUrl(() => variant.image);
+      <Show
+        when={allVariants().length > 0}
+        fallback={<p class="sheet-prompt-strip__empty">No sheet candidates yet.</p>}
+      >
+        <For each={allVariants()}>
+          {({ variant, isCanonical }) => {
+            const isActive = (): boolean =>
+              props.previewId === null ? isCanonical : props.previewId === variant.id;
+            const thumbUrl = useImageObjectUrl(() => variant.image);
 
-          return (
-            <div
-              class="sheet-history-thumb"
-              classList={{ "sheet-history-thumb--active": isActive() }}
-              onClick={() => props.onPreview(isCanonical ? null : variant)}
-              onContextMenu={(e) => openMenu(e, variant, isCanonical)}
-              title={
-                isCanonical
-                  ? "Canonical — currently approved"
-                  : new Date(variant.generated_at * 1000).toLocaleString()
-              }
-            >
-              <Show when={thumbUrl() !== ""} fallback={<div class="sheet-history-thumb__empty" />}>
-                <img class="sheet-history-thumb__img" src={thumbUrl()} alt="" />
-              </Show>
-              <Show when={isCanonical}>
-                <div class="sheet-history-thumb__badge">approved</div>
-              </Show>
-            </div>
-          );
-        }}
-      </For>
+            return (
+              <div
+                class="sheet-history-thumb"
+                classList={{ "sheet-history-thumb--active": isActive() }}
+                onClick={() => props.onPreview(isCanonical ? null : variant)}
+                onContextMenu={(e) => openMenu(e, variant, isCanonical)}
+                title={
+                  isCanonical
+                    ? "Canonical — currently approved"
+                    : new Date(variant.generated_at * 1000).toLocaleString()
+                }
+              >
+                <Show
+                  when={thumbUrl() !== ""}
+                  fallback={<div class="sheet-history-thumb__empty" />}
+                >
+                  <img class="sheet-history-thumb__img" src={thumbUrl()} alt="" />
+                </Show>
+                <Show when={isCanonical}>
+                  <div class="sheet-history-thumb__badge">approved</div>
+                </Show>
+              </div>
+            );
+          }}
+        </For>
+      </Show>
 
       <Show when={menu()}>
         {(m) => (
@@ -95,15 +105,17 @@ const HistoryStrip: Component<Props> = (props) => {
                 Approve as canonical
               </button>
             </Show>
-            <button
-              class="sheet-history-menu__item"
-              onClick={() => {
-                props.onPreview(null);
-                closeMenu();
-              }}
-            >
-              Preview canonical
-            </button>
+            <Show when={props.canonical !== null}>
+              <button
+                class="sheet-history-menu__item"
+                onClick={() => {
+                  props.onPreview(null);
+                  closeMenu();
+                }}
+              >
+                Preview canonical
+              </button>
+            </Show>
             <Show when={!m().isCanonical}>
               <button
                 class="sheet-history-menu__item sheet-history-menu__item--danger"

@@ -101,6 +101,10 @@ pub fn run() -> Result<(), AppError> {
         .invoke_handler(tauri::generate_handler![
             // app info
             commands::app_info::app_about,
+            // ai backend settings
+            commands::ai::ai_clear_openai_api_key,
+            commands::ai::ai_get_openai_status,
+            commands::ai::ai_set_openai_api_key,
             // crash reporting
             commands::crash_reporting::crash_reporting_get_enabled,
             commands::crash_reporting::crash_reporting_set_enabled,
@@ -173,9 +177,11 @@ pub fn run() -> Result<(), AppError> {
             commands::library::library_delete_sheet_variant,
             commands::library::library_delete_state,
             commands::library::library_delete_tag,
+            commands::library::library_generate_reference_sheet,
             commands::library::library_get_active_target,
             commands::library::library_get_anchor_payload,
             commands::library::library_get_entity,
+            commands::library::library_import_reference_sheet,
             commands::library::library_list_entities,
             commands::library::library_list_groups,
             commands::library::library_list_tags,
@@ -184,6 +190,7 @@ pub fn run() -> Result<(), AppError> {
             commands::library::library_rename_group,
             commands::library::library_rename_state,
             commands::library::library_rename_tag,
+            commands::library::library_remove_reference_sheet_variant,
             commands::library::library_reorder_entities,
             commands::library::library_search,
             commands::library::library_set_active_target,
