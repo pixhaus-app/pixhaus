@@ -758,6 +758,7 @@ const SheetEditorButton: Component<SheetEditorButtonProps> = (props) => {
         class="library-row__anchor-badge"
         data-testid={`library-row-sheet-editor-${props.entity.id}`}
         title="Open reference sheet editor"
+        aria-label="Open reference sheet editor"
         onClick={(event) => {
           event.stopPropagation();
           openSheetEditor(props.entity.id);

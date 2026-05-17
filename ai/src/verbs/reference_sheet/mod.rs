@@ -75,7 +75,7 @@ pub struct GenerateReferenceSheetInputs {
     pub num_variants: u32,
 
     /// Optional quality hint for providers that support it.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(default = "default_quality", skip_serializing_if = "Option::is_none")]
     pub quality: Option<ImageQuality>,
 
     /// RNG seed for reproducible generation. `None` uses a random seed.
@@ -85,6 +85,11 @@ pub struct GenerateReferenceSheetInputs {
 
 fn default_num_variants() -> u32 {
     1
+}
+
+#[allow(clippy::unnecessary_wraps)]
+fn default_quality() -> Option<ImageQuality> {
+    Some(ImageQuality::Auto)
 }
 
 // ── Output payload ────────────────────────────────────────────────────────────
@@ -174,7 +179,7 @@ impl GenerateReferenceSheetVerb {
                 "quality": {
                     "type": ["string", "null"],
                     "enum": ["auto", "low", "medium", "high", null],
-                    "default": "medium",
+                    "default": "auto",
                     "description": "Image quality for GPT image backends"
                 },
                 "seed": {
@@ -629,6 +634,18 @@ mod tests {
             verb.validate(&inputs_for(CompositionTemplate::Character, 2))
                 .is_ok()
         );
+    }
+
+    #[test]
+    fn omitted_quality_defaults_to_auto() {
+        let inputs: GenerateReferenceSheetInputs = serde_json::from_value(serde_json::json!({
+            "entity_id": 1,
+            "template": "character",
+            "prompt": "a fantasy hero"
+        }))
+        .unwrap();
+
+        assert_eq!(inputs.quality, Some(ImageQuality::Auto));
     }
 
     // ── Full invocation via runtime ───────────────────────────────────────────

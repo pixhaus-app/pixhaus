@@ -63,7 +63,7 @@ const ReferenceSheetEditor: Component = () => {
   const [generating, setGenerating] = createSignal(false);
   const [prompt, setPrompt] = createSignal("");
   const [template, setTemplate] = createSignal<ReferenceSheetTemplate>("character");
-  const [quality, setQuality] = createSignal<ImageQuality>("medium");
+  const [quality, setQuality] = createSignal<ImageQuality>("auto");
   const [candidateCount, setCandidateCount] = createSignal(2);
   const [selectedVariantId, setSelectedVariantId] = createSignal<number | null>(null);
 
