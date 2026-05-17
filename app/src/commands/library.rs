@@ -1747,17 +1747,17 @@ pub async fn library_get_anchor_payload(
         _ => return Ok(None),
     };
     let live_hash = pixhaus_ai::plugin::anchor::stable_hash(&sheet.canonical.image.bytes);
-
-    if let Some(cached) = state.anchor_cache.get(&entity.id.get()) {
-        if cached.canonical_hash == live_hash {
-            return Ok(Some(cached.clone()));
-        }
-    }
-
     let lora_path = crate::commands::verbs::resolve_lora_path(
         entity,
         project.library.ai.project_lora_path.as_deref(),
     );
+
+    if let Some(cached) = state.anchor_cache.get(&entity.id.get()) {
+        if cached.canonical_hash == live_hash && cached.lora_path == lora_path {
+            return Ok(Some(cached.clone()));
+        }
+    }
+
     let payload = AnchorPayload::from_sprite_entity(entity, DEFAULT_ANCHOR_STRENGTH, lora_path);
 
     if let Some(p) = &payload {

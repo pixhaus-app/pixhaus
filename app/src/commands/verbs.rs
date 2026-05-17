@@ -204,9 +204,9 @@ pub async fn verb_cancel(invocation_id: String, state: State<'_, AppState>) -> C
 /// embedded sprite reference sheet. Entities without a sheet return
 /// `None`.
 ///
-/// The cache (keyed by sprite entity id) returns a hit when the
-/// stored `canonical_hash` matches the live canonical bytes; stale
-/// entries are rebuilt and reinserted.
+/// The cache (keyed by sprite entity id) returns a hit when the stored
+/// `canonical_hash` and resolved `LoRA` path both match the live project
+/// state; stale entries are rebuilt and reinserted.
 pub(crate) fn resolve_anchor(
     project: &Project,
     target_override: Option<EntityId>,
@@ -231,14 +231,14 @@ pub(crate) fn resolve_anchor(
         _ => return None,
     };
     let live_hash = pixhaus_ai::plugin::anchor::stable_hash(&sheet.canonical.image.bytes);
+    let lora_path = resolve_lora_path(active, project.library.ai.project_lora_path.as_deref());
 
     if let Some(cached) = cache.get(&active.id.get()) {
-        if cached.canonical_hash == live_hash {
+        if cached.canonical_hash == live_hash && cached.lora_path == lora_path {
             return Some(cached.clone());
         }
     }
 
-    let lora_path = resolve_lora_path(active, project.library.ai.project_lora_path.as_deref());
     let live = AnchorPayload::from_sprite_entity(active, DEFAULT_ANCHOR_STRENGTH, lora_path)?;
     cache.insert(live.reference_entity_id.get(), live.clone());
     Some(live)
@@ -431,6 +431,43 @@ mod tests {
             "hash must change when bytes change"
         );
         assert_eq!(p2.image_bytes, vec![9, 9, 9]);
+    }
+
+    #[test]
+    fn resolve_anchor_invalidates_cache_when_entity_lora_changes() {
+        let mut project = Project::new("cache-lora");
+        project
+            .library
+            .entities
+            .push(sprite_entity(7, Some(vec![1, 2, 3])));
+        let cache = DashMap::new();
+
+        let p1 = resolve_anchor(&project, Some(EntityId::new(7)), &cache).unwrap();
+        assert_eq!(p1.lora_path, None);
+
+        project.library.entities[0].ai.lora_path = Some("entity.safetensors".into());
+        let p2 = resolve_anchor(&project, Some(EntityId::new(7)), &cache).unwrap();
+        assert_eq!(p2.canonical_hash, p1.canonical_hash);
+        assert_eq!(p2.lora_path.as_deref(), Some("entity.safetensors"));
+    }
+
+    #[test]
+    fn resolve_anchor_invalidates_cache_when_project_lora_changes() {
+        let mut project = Project::new("cache-project-lora");
+        project
+            .library
+            .entities
+            .push(sprite_entity(7, Some(vec![1, 2, 3])));
+        project.library.ai.project_lora_path = Some("project-a.safetensors".into());
+        let cache = DashMap::new();
+
+        let p1 = resolve_anchor(&project, Some(EntityId::new(7)), &cache).unwrap();
+        assert_eq!(p1.lora_path.as_deref(), Some("project-a.safetensors"));
+
+        project.library.ai.project_lora_path = Some("project-b.safetensors".into());
+        let p2 = resolve_anchor(&project, Some(EntityId::new(7)), &cache).unwrap();
+        assert_eq!(p2.canonical_hash, p1.canonical_hash);
+        assert_eq!(p2.lora_path.as_deref(), Some("project-b.safetensors"));
     }
 
     #[test]

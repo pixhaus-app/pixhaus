@@ -1040,9 +1040,9 @@ Expect:
 
 > The 15–30 minute round-trip makes this test impractical for routine manual sweeps. Tracked in section 17 alongside the missing env-driven mock toggle.
 
-### T-refsheet-006: Cancel an in-flight verb invocation
+### T-refsheet-006: Cancel an in-flight sheet verb invocation (deferred)
 
-Pre: T-refsheet-002 or T-refsheet-003 — the verb modal is open and either has just been submitted (running) or has not yet been submitted (idle).
+Pre: deferred with the sheet generation/refinement controls. Do not run this case as part of the embedded-reference slice. When those controls return, open a cancellable sheet verb modal and either leave it idle or submit it so it is running.
 Steps:
   1. Idle: click "Cancel" → modal closes, no IPC fires.
   2. Running: click "Cancel running invocation" → modal stays mounted while cancellation propagates; on settle, the modal returns to idle / closes.

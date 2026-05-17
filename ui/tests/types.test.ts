@@ -64,7 +64,9 @@ describe("Project fixture mirrors the Rust data model", () => {
 
   it("stores the reference sheet on the sprite entity", () => {
     const entities = project.library?.entities ?? [];
-    expect(entities.some((entity) => (entity.kind as { kind: string }).kind === "Reference")).toBe(false);
+    expect(entities.some((entity) => (entity.kind as { kind: string }).kind === "Reference")).toBe(
+      false,
+    );
     const spriteEntity = entities.find((entity) => entity.content.type === "Sprites");
     expect(spriteEntity?.content.type).toBe("Sprites");
     if (spriteEntity?.content.type !== "Sprites") throw new Error("expected sprite entity");
