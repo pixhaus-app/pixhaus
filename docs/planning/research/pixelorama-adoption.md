@@ -29,12 +29,12 @@ Future port PRs will follow these rules. They are codified once here so they do 
 
 ### The four borrow tiers
 
-| Tier | Meaning | Attribution rules |
-|---|---|---|
-| **A** — Asset reuse | Vendor the file verbatim (PNG, theme tokens, palette). | Sibling `LICENSE` in vendored dir plus a `docs/THIRD_PARTY_LICENSES.md` entry. |
-| **S** — Shader port | Translate `.gdshader` → GLSL ES 3.00. Semantics preserved, syntax adjusted. | Header comment on the ported file plus a `docs/THIRD_PARTY_LICENSES.md` entry. |
-| **P** — Algorithm port | Reimplement the logic in Rust or TS. Same algorithm, different language and types. | Header comment on the ported file plus a `docs/THIRD_PARTY_LICENSES.md` entry. |
-| **D** — Design adoption | Take only the design idea or data shape; write fresh code. | Single line in `docs/THIRD_PARTY_LICENSES.md` under "adopted designs". |
+| Tier                    | Meaning                                                                            | Attribution rules                                                              |
+| ----------------------- | ---------------------------------------------------------------------------------- | ------------------------------------------------------------------------------ |
+| **A** — Asset reuse     | Vendor the file verbatim (PNG, theme tokens, palette).                             | Sibling `LICENSE` in vendored dir plus a `docs/THIRD_PARTY_LICENSES.md` entry. |
+| **S** — Shader port     | Translate `.gdshader` → GLSL ES 3.00. Semantics preserved, syntax adjusted.        | Header comment on the ported file plus a `docs/THIRD_PARTY_LICENSES.md` entry. |
+| **P** — Algorithm port  | Reimplement the logic in Rust or TS. Same algorithm, different language and types. | Header comment on the ported file plus a `docs/THIRD_PARTY_LICENSES.md` entry. |
+| **D** — Design adoption | Take only the design idea or data shape; write fresh code.                         | Single line in `docs/THIRD_PARTY_LICENSES.md` under "adopted designs".         |
 
 Every catalog entry below is tagged with one or more tiers in the heading.
 
@@ -56,7 +56,7 @@ Skip beats that don't apply. Keep entries scannable.
 
 Touches **B2** (core data model), **B3** (`.pixhaus` format), **S07** (`.pixhaus` native format).
 
-### 1. ZIP container with `manifest.json` and binary payloads *(Tier D)*
+### 1. ZIP container with `manifest.json` and binary payloads _(Tier D)_
 
 - **Upstream.** `src/Autoload/OpenSave.gd` lines 292-640 (`open_pxo_file`, `save_pxo_file`). Pixelorama's `.pxo` is a ZIP archive with `data.json` (project metadata), `mimetype`, and per-cel image data at `image/<layer>/<frame>.png`, plus `tilesets/<i>/`, `audio/<i>/`, `scene/<i>.tscn`, `brushes/<i>` paths.
 - **What we adopt.** Replace the planned MessagePack + zstd format with a ZIP archive of:
@@ -100,7 +100,7 @@ Touches **B2** (core data model), **B3** (`.pixhaus` format), **S07** (`.pixhaus
 - **Attribution.** `docs/THIRD_PARTY_LICENSES.md` "adopted designs" entry: ZIP container layout informed by Pixelorama's `.pxo`.
 - **Non-goals.** Round-tripping `.pxo` files. We can read them via the Aseprite/Krita/PSD-style parser path (see entry 31), not by adopting their schema.
 
-### 2. Sparse palette as `HashMap<u16, PaletteColor>` *(Tier D)*
+### 2. Sparse palette as `HashMap<u16, PaletteColor>` _(Tier D)_
 
 - **Upstream.** `src/Palette/Palette.gd:31-82`. Pixelorama palettes are dictionaries keyed by grid index; the grid can have gaps, and resize reindexes occupied slots into the new shape.
 - **What we adopt.** Same shape in Rust:
@@ -118,7 +118,7 @@ Touches **B2** (core data model), **B3** (`.pixhaus` format), **S07** (`.pixhaus
 - **Integration.** B2, S02, S18.
 - **Attribution.** `docs/THIRD_PARTY_LICENSES.md` "adopted designs" entry.
 
-### 3. Indexed color mode via shadow index image alongside RGBA8 *(Tier D)*
+### 3. Indexed color mode via shadow index image alongside RGBA8 _(Tier D)_
 
 - **Upstream.** `src/Classes/Project.gd:16, 235-236, 609-614`. Pixelorama stores indexed-mode cels as both an `indices_image` (single-channel) for canonical state and an RGBA8 image for display. Tools that don't need to know about palette indexing operate on the RGBA8 path.
 - **What we adopt.**
@@ -134,7 +134,7 @@ Touches **B2** (core data model), **B3** (`.pixhaus` format), **S07** (`.pixhaus
 - **Integration.** B2, S02. Prerequisite: palette identity stable across the project (palette IDs, not pointer-shared).
 - **Attribution.** `docs/THIRD_PARTY_LICENSES.md` "adopted designs" entry.
 
-### 4. Cel linking via link-set IDs *(Tier D)*
+### 4. Cel linking via link-set IDs _(Tier D)_
 
 - **Upstream.** `src/Classes/Cels/BaseCel.gd:94-99`, `src/Classes/Project.gd:745+`. Pixelorama groups cels that share content into "link sets" so editing any member updates all of them, without pointer-sharing the underlying image.
 - **What we adopt.**
@@ -154,7 +154,7 @@ Touches **B2** (core data model), **B3** (`.pixhaus` format), **S07** (`.pixhaus
 - **Attribution.** `docs/THIRD_PARTY_LICENSES.md` "adopted designs" entry.
 - **Non-goals.** Cross-project link sets. Link sets are project-local; copy/paste across projects breaks the link.
 
-### 5. `SelectionMap` as an LA8 mask image *(Tier D)*
+### 5. `SelectionMap` as an LA8 mask image _(Tier D)_
 
 - **Upstream.** `src/Classes/SelectionMap.gd`, used at `src/Classes/Project.gd:97-104`. Selection state is a same-size 1-channel image; `alpha > 0` is selected.
 - **What we adopt.**
@@ -175,7 +175,7 @@ Touches **B2** (core data model), **B3** (`.pixhaus` format), **S07** (`.pixhaus
 - **Integration.** B2, S03 (selection algorithms), S16 (selection UI).
 - **Attribution.** `docs/THIRD_PARTY_LICENSES.md` "adopted designs" entry.
 
-### 6. Frame duration as float multiplier of project FPS *(Tier D)*
+### 6. Frame duration as float multiplier of project FPS _(Tier D)_
 
 - **Upstream.** `src/Classes/Frame.gd:16-17`. Pixelorama stores `duration: float`; playback time per frame is `duration * (1.0 / fps)`.
 - **What we adopt.** `duration_mul: f32` on each frame entry. Effective time = `duration_mul / project.fps` seconds. Default 1.0.
@@ -183,7 +183,7 @@ Touches **B2** (core data model), **B3** (`.pixhaus` format), **S07** (`.pixhaus
 - **Integration.** B2, S19.
 - **Attribution.** `docs/THIRD_PARTY_LICENSES.md` "adopted designs" entry.
 
-### 7. Animation tags as `{name, from, to}`; direction picked at export time *(Tier D)*
+### 7. Animation tags as `{name, from, to}`; direction picked at export time _(Tier D)_
 
 - **Upstream.** `src/Classes/AnimationTag.gd`, `src/Autoload/Export.gd:5` (`AnimationDirection` enum). Tags carry name, color, and frame range; direction (forward, reverse, ping-pong) is a per-export setting, not part of the tag.
 - **What we adopt.**
@@ -200,7 +200,7 @@ Touches **B2** (core data model), **B3** (`.pixhaus` format), **S07** (`.pixhaus
 - **Integration.** B2, S19, S11 (GIF/WebP export).
 - **Attribution.** `docs/THIRD_PARTY_LICENSES.md` "adopted designs" entry.
 
-### 8. Non-destructive layer effects as `Vec<LayerEffect>` per layer *(Tier D)*
+### 8. Non-destructive layer effects as `Vec<LayerEffect>` per layer _(Tier D)_
 
 - **Upstream.** `src/Classes/Layers/BaseLayer.gd:effects`, applied at render time in `src/Autoload/DrawingAlgos.gd:84`. Each layer carries a stack of effects (outline, drop shadow, gradient map, palettize, …), composed top-down without writing back to the cel.
 - **What we adopt.**
@@ -227,12 +227,13 @@ Touches **B2** (core data model), **B3** (`.pixhaus` format), **S07** (`.pixhaus
 
 Touches **S01** (pixel buffer / blend modes), **S02** (color/palette), **S03** (selection), **S04** (transforms).
 
-### 9. Allegro scanline flood fill *(Tier P)*
+### 9. Allegro scanline flood fill _(Tier P)_
 
 - **Upstream.** `src/Tools/DesignTools/Bucket.gd` lines 230-490 (cf. the `_compute_segments_for_image` and `_flood_line_around_point` functions); same algorithm reused in `src/Tools/SelectionTools/MagicWand.gd:67-90`. Originally from Allegro 4.2.1 by Shawn Hargreaves.
 - **What we adopt.** Single `flood_fill` function in Rust used by bucket fill, magic-wand selection, and tilemap bucket fill (operating on tile indices).
 - **Why it matters.** Scanline flood fill is O(n) pixel visits, non-recursive (no stack overflow on large fills), and friendly to bounds-checking and cancellation. The recursive 4-way variant is the canonical naive answer; the scanline form is the canonical correct answer.
 - **Data shape / pseudocode.**
+
   ```rust
   struct Segment {
       flooding: bool,
@@ -261,11 +262,13 @@ Touches **S01** (pixel buffer / blend modes), **S02** (color/palette), **S03** (
       }
   }
   ```
+
   `match_fn` is `|c| similar_colors(c, target, tol)` for fill, `|c| c == target` for exact-match selection, or `|t| t == target_tile` for tilemap fill.
+
 - **Integration.** S01 (paint ops), S03 (magic wand), S06 (tilemap bucket fill). Lives in `core/src/flood.rs`.
 - **Attribution.** Header comment in `core/src/flood.rs`; "ported algorithms" line in `docs/THIRD_PARTY_LICENSES.md`.
 
-### 10. Color similarity via squared distance *(Tier P)*
+### 10. Color similarity via squared distance _(Tier P)_
 
 - **Upstream.** `src/Autoload/DrawingAlgos.gd:667`:
   ```gdscript
@@ -287,7 +290,7 @@ Touches **S01** (pixel buffer / blend modes), **S02** (color/palette), **S03** (
 - **Integration.** S01, S02, S03. Lives in `core/src/color.rs`.
 - **Attribution.** Header comment in `core/src/color.rs`; "ported algorithms" line in `docs/THIRD_PARTY_LICENSES.md`.
 
-### 11. Three-mode bucket fill: AREA / SAME_COLOR / SELECTION_ONLY *(Tier D)*
+### 11. Three-mode bucket fill: AREA / SAME_COLOR / SELECTION_ONLY _(Tier D)_
 
 - **Upstream.** `src/Tools/DesignTools/Bucket.gd:241, 317`. Same tool, three modes; SAME_COLOR sweeps the whole image via a shader, SELECTION_ONLY masks to the active selection, AREA runs scanline flood fill.
 - **What we adopt.** Identical three-mode toggle in the brush-engine UI for the bucket tool.
@@ -295,7 +298,7 @@ Touches **S01** (pixel buffer / blend modes), **S02** (color/palette), **S03** (
 - **Integration.** S15 (brush engine UI), S01 (paint ops). Algorithm reuse: entry 9 for AREA, entry 10 for SAME_COLOR predicate.
 - **Attribution.** `docs/THIRD_PARTY_LICENSES.md` "adopted designs" entry.
 
-### 12. Pattern fill as a tiling shader *(Tier S)*
+### 12. Pattern fill as a tiling shader _(Tier S)_
 
 - **Upstream.** `src/Shaders/PatternFill.gdshader`. Bucket fill can paint a tiled image pattern instead of a solid color; offset `(x, y)` controls tiling origin.
 - **What we adopt.** Port the shader to GLSL ES 3.00:
@@ -319,7 +322,7 @@ Touches **S01** (pixel buffer / blend modes), **S02** (color/palette), **S03** (
 - **Integration.** S01, S14 (canvas viewport). Lives in `ui/src/shaders/pattern-fill.glsl`.
 - **Attribution.** Header comment in the shader file; "ported shaders" line in `docs/THIRD_PARTY_LICENSES.md`.
 
-### 13. Midpoint ellipse rasterizer *(Tier P)*
+### 13. Midpoint ellipse rasterizer _(Tier P)_
 
 - **Upstream.** `src/Autoload/DrawingAlgos.gd:147-208`. Generates 4-way symmetric ellipse points in `O(a + b)` time (Bresenham-style midpoint algorithm).
 - **What we adopt.** A `rasterize_ellipse(bounds: URect, thickness: u8) -> Vec<(u32, u32)>` function. For `thickness > 1`, draw inner and outer ellipses and fill between them.
@@ -335,7 +338,7 @@ Touches **S01** (pixel buffer / blend modes), **S02** (color/palette), **S03** (
 - **Integration.** S01, S15. Lives in `core/src/rasterize.rs`.
 - **Attribution.** Header comment in `core/src/rasterize.rs`; "ported algorithms" line in `docs/THIRD_PARTY_LICENSES.md`.
 
-### 14. Seven pixel-art rotation algorithms *(Tier S)*
+### 14. Seven pixel-art rotation algorithms _(Tier S)_
 
 - **Upstream.** `src/Shaders/Effects/Rotation/{SmearRotxel,cleanEdge,OmniScale,NearestNeighbour}.gdshader`, with CPU-side dispatch in `src/Autoload/DrawingAlgos.gd:297+`. Enum: ROTXEL_SMEAR, CLEANEDGE, OMNISCALE, NNS, NN, ROTXEL, URD.
 - **What we adopt.** Port the four primary algorithms (RotxelSmear, CleanEdge, OmniScale, NN) as GLSL ES 3.00 fragment shaders; CPU-side dispatch picks one based on a user setting on the transform tool.
@@ -344,7 +347,7 @@ Touches **S01** (pixel buffer / blend modes), **S02** (color/palette), **S03** (
 - **Attribution.** Header comment on each shader file; "ported shaders" line in `docs/THIRD_PARTY_LICENSES.md`.
 - **Non-goals.** The NNS, ROTXEL, and URD variants. NNS is a smoothed NN; smoothing pixel art usually loses the point. ROTXEL is a precursor to RotxelSmear. URD is undocumented in upstream. Skip until requested.
 
-### 15. Scale3X upscale path *(Tier P)*
+### 15. Scale3X upscale path _(Tier P)_
 
 - **Upstream.** `src/Autoload/DrawingAlgos.gd:242+`. 8-neighbor edge-pattern lookup; outputs a 3× region per source pixel based on the local edge pattern.
 - **What we adopt.** A `scale3x(src: &Image) -> Image` function emitting a 3×-resolution image. Used for export-time scale previews ("how does this look at 3×?") and as an option in the Unity importer's auto-scale step.
@@ -357,7 +360,7 @@ Touches **S01** (pixel buffer / blend modes), **S02** (color/palette), **S03** (
 - **Integration.** S04, S10 (sprite-sheet export). Lives in `core/src/scale.rs`.
 - **Attribution.** Header comment in `core/src/scale.rs`; "ported algorithms" line in `docs/THIRD_PARTY_LICENSES.md`.
 
-### 16. Transformation handles as a non-destructive floating overlay *(Tier D)*
+### 16. Transformation handles as a non-destructive floating overlay _(Tier D)_
 
 - **Upstream.** `src/UI/Canvas/TransformationHandles.gd`. The selected pixels become a "floating" overlay image with a `Mat3` transform; gizmos drive the matrix; on confirm, the result is composited back; on cancel, it is discarded.
 - **What we adopt.** Same approach for the transform tool. The floating overlay is a separate texture rendered on top of the canvas; the underlying cel is not mutated until confirm.
@@ -379,7 +382,7 @@ Touches **S01** (pixel buffer / blend modes), **S02** (color/palette), **S03** (
 
 Touches **S01**, **S14**, **S17**.
 
-### 17. Single-pass multi-layer compositor with `sampler2DArray` + metadata texture *(Tier S, D)*
+### 17. Single-pass multi-layer compositor with `sampler2DArray` + metadata texture _(Tier S, D)_
 
 - **Upstream.** `src/Shaders/BlendLayers.gdshader` + `src/Shaders/CanvasCommon.gdshaderinc`. Pixelorama packs all layer images into a `Texture2DArray`, per-layer state (blend mode index, opacity, clipping-mask flag, origin) into a small metadata texture, and runs a single fragment shader that loops over layers.
 - **What we adopt.** Same approach in WebGL2. WebGL2 supports `sampler2DArray` (GLSL ES 3.00, `#version 300 es`) and integer texture sampling via `texelFetch`.
@@ -400,7 +403,7 @@ Touches **S01**, **S14**, **S17**.
 - **Integration.** S01 (blend mode formulas; see entry 18), S14 (viewport plumbing). Lives in `ui/src/shaders/compose-layers.glsl`.
 - **Attribution.** Header comment on the shader file; "ported shaders" line in `docs/THIRD_PARTY_LICENSES.md`.
 
-### 18. 24 blend modes by formula table, not by implementation file *(Tier P)*
+### 18. 24 blend modes by formula table, not by implementation file _(Tier P)_
 
 - **Upstream.** Enum at `src/Classes/Layers/BaseLayer.gd:15-37`, implementations in `src/Shaders/CanvasCommon.gdshaderinc`. List: Normal, Erase, Darken, Multiply, Color Burn, Linear Burn, Lighten, Screen, Color Dodge, Add, Overlay, Soft Light, Hard Light, Difference, Exclusion, Subtract, Divide, Hue, Saturation, Color, Luminosity, plus Pass-Through (group-only).
 - **What we adopt.** The same 22 source-over modes plus Pass-Through, but cite the **PDF/SVG color-component specs** as the source-of-truth rather than the Godot shader code. Pixelorama's implementations follow those specs.
@@ -422,7 +425,7 @@ Touches **S01**, **S14**, **S17**.
 - **Integration.** S01 (blend mode core), S14 (shader). Lives alongside entry 17.
 - **Attribution.** Header comment in the compositor shader; "ported algorithms" line in `docs/THIRD_PARTY_LICENSES.md`.
 
-### 19. Group layers with optional Pass-Through blending *(Tier D)*
+### 19. Group layers with optional Pass-Through blending _(Tier D)_
 
 - **Upstream.** `src/Classes/Layers/GroupLayer.gd`. Groups normally composite children-then-blend; with Pass-Through, children blend directly onto the parent canvas (so adjustment-like effects on children apply to the parent).
 - **What we adopt.** A `pass_through: bool` flag on group layers. Default `false` (composite-then-blend). Single bit in layer metadata.
@@ -430,7 +433,7 @@ Touches **S01**, **S14**, **S17**.
 - **Integration.** B2, S17.
 - **Attribution.** `docs/THIRD_PARTY_LICENSES.md` "adopted designs" entry.
 
-### 20. Clipping masks as "layer below acts as alpha mask" *(Tier D)*
+### 20. Clipping masks as "layer below acts as alpha mask" _(Tier D)_
 
 - **Upstream.** `src/Classes/Layers/BaseLayer.gd:clipping_mask`. A flag on the upper layer says "multiply my alpha by the lower layer's alpha."
 - **What we adopt.** Same: one bit in layer metadata. The compositor multiplies the layer's output alpha by the alpha of the next-lower visible layer when the bit is set.
@@ -439,7 +442,7 @@ Touches **S01**, **S14**, **S17**.
 - **Attribution.** `docs/THIRD_PARTY_LICENSES.md` "adopted designs" entry.
 - **Non-goals.** True layer masks (a separate per-layer alpha asset). Worth doing as a follow-up; not in initial scope.
 
-### 21. All filters as fragment shaders against the cel image *(Tier S)*
+### 21. All filters as fragment shaders against the cel image _(Tier S)_
 
 - **Upstream.** `src/Shaders/Effects/` — 15 files: BrightnessContrast, ColorCurves, ConvolutionMatrix, Desaturate, DropShadow, GaussianBlur, Gradient, GradientMap, HSV, IndexMap, Invert, OffsetPixels, OutlineInline, Palettize, Pixelize, Posterize.
 - **What we adopt.** Port each to GLSL ES 3.00. One shader per effect. Each gets a small uniform block; the host code parses tool-options UI and uploads the uniforms.
@@ -467,20 +470,20 @@ Touches **S01**, **S14**, **S17**.
 - **Integration.** S01, S14, S17. Lives in `ui/src/shaders/effects/`.
 - **Attribution.** Header comment on each shader file; "ported shaders" line in `docs/THIRD_PARTY_LICENSES.md` (one line per shader is fine; a single grouped line is also acceptable).
 
-### 22. Bayer dither matrices precomputed as PNG assets *(Tier A)*
+### 22. Bayer dither matrices precomputed as PNG assets _(Tier A)_
 
 - **Upstream.** `assets/dither-matrices/bayer{2,4,8,16}.png`. 1-channel PNGs encoding the standard 2×2, 4×4, 8×8, 16×16 Bayer threshold matrices. Used by gradient and posterize shaders for ordered dithering.
 - **What we adopt.** **Direct verbatim vendoring** — copy the four PNGs into `assets/third-party/pixelorama/dither/` along with a sibling `LICENSE` file containing the Pixelorama copyright and MIT text.
 - **Why it matters.** The matrices are mathematical constants (Bayer's 1973 paper); regenerating them produces the same bits. Vendoring saves a code-side asset-generation step and makes the dither encoding immediately inspectable. The user-customization angle is a bonus: dropping additional PNGs alongside means designers can experiment with non-Bayer ordered dithering without code changes.
 - **Integration.** S01 (effect shaders that sample the matrices), prerequisite for entries in 21 that use dithering (gradient, posterize, palettize).
 - **Attribution.** Sibling `LICENSE` file in `assets/third-party/pixelorama/dither/LICENSE`; "vendored assets" line in `docs/THIRD_PARTY_LICENSES.md`.
-- **Non-goals.** Vendoring this in *this* PR. The adoption plan flags it; the actual copy lands in the PR that introduces the gradient/posterize shaders.
+- **Non-goals.** Vendoring this in _this_ PR. The adoption plan flags it; the actual copy lands in the PR that introduces the gradient/posterize shaders.
 
 ## Group 4 — Animation, timeline, tilemap
 
 Touches **B2**, **S06**, **S19**, **S20**.
 
-### 23. Onion skin with `opacity = base / frame_distance` and red/blue tinting *(Tier P)*
+### 23. Onion skin with `opacity = base / frame_distance` and red/blue tinting _(Tier P)_
 
 - **Upstream.** `src/UI/Canvas/OnionSkinning.gd:29-41`. Past frames tinted blue, future frames tinted red; per-frame opacity falls off as `base / frame_distance`.
 - **What we adopt.**
@@ -499,7 +502,7 @@ Touches **B2**, **S06**, **S19**, **S20**.
 - **Integration.** S19. Lives in `ui/src/timeline/onion-skin.ts` for state and a shader pass for render.
 - **Attribution.** Header comment in the onion-skin module; "ported algorithms" line in `docs/THIRD_PARTY_LICENSES.md`.
 
-### 24. Tile cell = `{ index, flip_h, flip_v, transpose }` *(Tier D)*
+### 24. Tile cell = `{ index, flip_h, flip_v, transpose }` _(Tier D)_
 
 - **Upstream.** `src/Classes/Cels/CelTileMap.gd:86` — `class Cell { index: int; flip_h, flip_v: bool; transpose: bool }`.
 - **What we adopt.**
@@ -528,10 +531,11 @@ Touches **B2**, **S06**, **S19**, **S20**.
 - **Integration.** B2, S06, S20.
 - **Attribution.** `docs/THIRD_PARTY_LICENSES.md` "adopted designs" entry.
 
-### 25. TileSetCustom: tile-shape parameter + offset axis *(Tier D)*
+### 25. TileSetCustom: tile-shape parameter + offset axis _(Tier D)_
 
 - **Upstream.** `src/Classes/Cels/CelTileMap.gd:44-66, 208-241`. One `TileSetCustom` handles square, isometric, hex-pointy-top, and hex-flat-top layouts via a `tile_shape` parameter and a `tile_offset_axis` (which row/column gets the half-step offset for hex).
 - **What we adopt.**
+
   ```rust
   enum TileShape { Square, Isometric, HexPointy, HexFlat }
   enum HexOffsetAxis { OddRow, EvenRow, OddCol, EvenCol }
@@ -543,11 +547,12 @@ Touches **B2**, **S06**, **S19**, **S20**.
       tiles: Vec<TileEntry>,
   }
   ```
+
 - **Why it matters.** Removes the future "we need a separate isometric editor" problem before it appears. Cell-to-pixel math switches on `shape`; the rest of the tilemap stack (TileCell, autotile, bucket fill) is shape-agnostic.
 - **Integration.** B2, S06, S20.
 - **Attribution.** `docs/THIRD_PARTY_LICENSES.md` "adopted designs" entry.
 
-### 26. Autotile via per-tile peering bitmask *(Tier P)*
+### 26. Autotile via per-tile peering bitmask _(Tier P)_
 
 - **Upstream.** `src/Classes/Cels/CelTileMap.gd:14-31, 225`. Each tileset tile carries a neighbor signature; placement looks up neighbors and picks the matching tile variant.
 - **What we adopt.** A 4-bit (rook) or 8-bit (queen) peering field per tile.
@@ -567,7 +572,7 @@ Touches **B2**, **S06**, **S19**, **S20**.
 - **Integration.** S06, S20. Lives in `core/src/tilemap/autotile.rs`.
 - **Attribution.** Header comment in `core/src/tilemap/autotile.rs`; "ported algorithms" line in `docs/THIRD_PARTY_LICENSES.md`.
 
-### 27. Smart-slice spritesheet import *(Tier P)*
+### 27. Smart-slice spritesheet import _(Tier P)_
 
 - **Upstream.** `src/UI/Dialogs/ImportPreviewDialog.gd:smart_slice`. Detects sprite-sheet frame boundaries from transparency: flood-fill the alpha=0 background, label connected non-transparent regions, snap detected bboxes to a grid if they align.
 - **What we adopt.** A `detect_frames(image: &Image, opts: SmartSliceOpts) -> Vec<URect>` function.
@@ -585,7 +590,7 @@ Touches **B2**, **S06**, **S19**, **S20**.
 
 Touches **B5** (verb plugin protocol), **B7** (Aseprite format spec), **S08** (`.aseprite` I/O), **S37** (plugin loader), **S38** (Lua bindings).
 
-### 28. Aseprite parser as a chunk-by-chunk state machine *(Tier P)*
+### 28. Aseprite parser as a chunk-by-chunk state machine _(Tier P)_
 
 - **Upstream.** `src/Classes/SoftwareParsers/AsepriteParser.gd` (578 lines). Reads `.ase`/`.aseprite`. Validates magic number (0xA5E0), iterates frames, iterates chunks within each frame, dispatches on chunk type.
 - **What we adopt.** Same chunk-dispatch shape in Rust, located at `io/src/aseprite/mod.rs`. Chunk types we handle initially:
@@ -617,7 +622,7 @@ Touches **B5** (verb plugin protocol), **B7** (Aseprite format spec), **S08** (`
 - **Attribution.** Header comment in `io/src/aseprite/mod.rs`; "ported algorithms" line in `docs/THIRD_PARTY_LICENSES.md`.
 - **Non-goals.** Write-side compatibility with every Aseprite feature. v1 ships read-side first; write-side follows after Aseprite users sanity-check the export.
 
-### 29. Plugin manifest + crash-detect-then-disable *(Tier D)*
+### 29. Plugin manifest + crash-detect-then-disable _(Tier D)_
 
 - **Upstream.** `src/HandleExtensions.gd:21, 55, 97-150`. Each extension carries a manifest with name, version, description, author, license, and a list of nodes to instantiate. On load, the loader sets a "loading X" session flag; on successful boot, it clears the flag. Next session boot, if a stale flag is found, the offending extension is auto-disabled and the user is notified.
 - **What we adopt.**
@@ -638,7 +643,7 @@ Touches **B5** (verb plugin protocol), **B7** (Aseprite format spec), **S08** (`
 - **Integration.** B5 (verb plugin protocol — same manifest schema for verbs and general plugins), S37 (plugin loader).
 - **Attribution.** `docs/THIRD_PARTY_LICENSES.md` "adopted designs" entry.
 
-### 30. Plugin-registered file formats *(Tier D)*
+### 30. Plugin-registered file formats _(Tier D)_
 
 - **Upstream.** `src/Autoload/Export.gd:104-128` — `add_custom_file_format(format_name, format_description, exporter, file_info)`. Same registration shape as the built-in exporters; both internal and external code use it.
 - **What we adopt.**
@@ -656,7 +661,7 @@ Touches **B5** (verb plugin protocol), **B7** (Aseprite format spec), **S08** (`
 - **Integration.** B5, S07-S12, S37.
 - **Attribution.** `docs/THIRD_PARTY_LICENSES.md` "adopted designs" entry.
 
-### 31. Krita and PSD parsers — deferred reference *(Tier P, deferred)*
+### 31. Krita and PSD parsers — deferred reference _(Tier P, deferred)_
 
 - **Upstream.** `src/Classes/SoftwareParsers/KritaParser.gd` (509 lines), `src/Classes/SoftwareParsers/PhotoshopParser.gd` (782 lines). Substantial; both handle layer hierarchies, blend modes, palettes.
 - **What we adopt.** Flagged as a reference for future streams. Pixhaus's current scope (per `docs/planning/work/streams.md`) includes `.psd` import (S09) but not `.kra`. When S09 opens, the upstream parser is the highest-quality reference available; for `.kra`, opening a follow-up stream becomes attractive once Krita interop is requested.
@@ -668,7 +673,7 @@ Touches **B5** (verb plugin protocol), **B7** (Aseprite format spec), **S08** (`
 
 Touches **S13** (app shell), **S15** (brush UI), **S16** (selection/transform UI), **S41** (documentation site / localization).
 
-### 32. Action-and-profile keyboard system *(Tier D)*
+### 32. Action-and-profile keyboard system _(Tier D)_
 
 - **Upstream.** `addons/keychain/Keychain.gd` (222 lines) + `src/Autoload/Global.gd` (defines 150+ `Keychain.InputAction` objects). Every menu item, every tool, every modifier-while-painting is a named action with default and user-bound triggers.
 - **What we adopt.**
@@ -687,7 +692,7 @@ Touches **S13** (app shell), **S15** (brush UI), **S16** (selection/transform UI
 - **Integration.** S13 (app shell command system), S41 (Aseprite migration guide cites the profile).
 - **Attribution.** `docs/THIRD_PARTY_LICENSES.md` "adopted designs" entry.
 
-### 33. Mouse-motion modifier shortcuts *(Tier D)*
+### 33. Mouse-motion modifier shortcuts _(Tier D)_
 
 - **Upstream.** `addons/keychain/Keychain.MouseMovementInputAction`. Hold modifier + drag mouse → continuously adjusts brush size, hue, saturation, value, or alpha. Configurable axis (X or Y), direction, and sensitivity per binding.
 - **What we adopt.**
@@ -704,7 +709,7 @@ Touches **S13** (app shell), **S15** (brush UI), **S16** (selection/transform UI
 - **Integration.** S15 (brush engine UI), S16. Wires into the same action system as entry 32.
 - **Attribution.** `docs/THIRD_PARTY_LICENSES.md` "adopted designs" entry.
 
-### 34. Dockable panel system with floating windows and saved layouts *(Tier D)*
+### 34. Dockable panel system with floating windows and saved layouts _(Tier D)_
 
 - **Upstream.** `addons/dockable_container/`. Dock/undock, drag-rearrange, save/restore named layouts, multi-monitor float, splittable regions.
 - **What we adopt.** Pick a web-native equivalent (Dockview, golden-layout, or a custom Solid implementation) and require the same feature set:
@@ -718,10 +723,10 @@ Touches **S13** (app shell), **S15** (brush UI), **S16** (selection/transform UI
 - **Integration.** S13 (app shell). Web-stack choice gets its own ADR.
 - **Attribution.** `docs/THIRD_PARTY_LICENSES.md` "adopted designs" entry.
 
-### 35. Theme engine with named token-file presets *(Tier D)*
+### 35. Theme engine with named token-file presets _(Tier D)_
 
 - **Upstream.** `src/Autoload/Themes.gd` + `assets/themes/{dark,gray,blue,caramel,light,purple,rose}/theme.tres`. 7 themes shipped; users pick from preferences.
-- **What we adopt.** Redefine the same 7 named themes as TOML or JSON design-token files consumed by Solid. Godot `.tres` files are engine-specific and do not port; the *idea* of seven named themes plus an extension-can-add-more API is what we adopt.
+- **What we adopt.** Redefine the same 7 named themes as TOML or JSON design-token files consumed by Solid. Godot `.tres` files are engine-specific and do not port; the _idea_ of seven named themes plus an extension-can-add-more API is what we adopt.
   ```toml
   # themes/dark.toml
   [color]
@@ -738,7 +743,7 @@ Touches **S13** (app shell), **S15** (brush UI), **S16** (selection/transform UI
 - **Integration.** S13.
 - **Attribution.** `docs/THIRD_PARTY_LICENSES.md` "adopted designs" entry.
 
-### 36. Splash dialog with rotating contributor artwork *(Tier D)*
+### 36. Splash dialog with rotating contributor artwork _(Tier D)_
 
 - **Upstream.** `src/UI/Dialogs/SplashDialog.gd`. Random artwork on each launch, with arrow-keys to browse and an artist credit; "Open Last Project" button; "Show on Startup" checkbox to suppress.
 - **What we adopt.** Same shape. Artwork lives in `assets/splash/<artist>/<piece>.png` with sibling `<piece>.txt` credit files. Optional but high-impact onboarding win.
@@ -746,7 +751,7 @@ Touches **S13** (app shell), **S15** (brush UI), **S16** (selection/transform UI
 - **Integration.** S13.
 - **Attribution.** `docs/THIRD_PARTY_LICENSES.md` "adopted designs" entry.
 
-### 37. Reference images with monochrome/overlay/clamp shader *(Tier S)*
+### 37. Reference images with monochrome/overlay/clamp shader _(Tier S)_
 
 - **Upstream.** `src/Shaders/ReferenceImageShader.gdshader` + `src/UI/ReferenceImages/ReferenceImage.gd`. Drop-in references over/under canvas with opacity, rotation, scale, monochrome toggle, color overlay tint, alpha clamping, linear/nearest filter toggle.
 - **What we adopt.** Port the shader; reproduce the data model.
@@ -769,7 +774,7 @@ Touches **S13** (app shell), **S15** (brush UI), **S16** (selection/transform UI
 - **Integration.** S14 (viewport), S17 (layer-adjacent panel UI). Shader at `ui/src/shaders/reference-image.glsl`.
 - **Attribution.** Header comment in the shader file; "ported shaders" line in `docs/THIRD_PARTY_LICENSES.md`.
 
-### 38. Crowdin + `.po` localization pipeline *(Tier D)*
+### 38. Crowdin + `.po` localization pipeline _(Tier D)_
 
 - **Upstream.** `crowdin.yml` at the upstream repo root; 65 `.po` files in `Translations/`. Gettext-style string extraction; translations crowd-sourced via Crowdin.
 - **What we adopt.** Same toolchain shape, scoped initially to a smaller language set (top 10-15 by user count). String extraction via a `tr!` macro in Rust + a `t()` helper in TypeScript that lints to a `.pot` template. Crowdin or a self-hosted alternative (e.g., Weblate) handles the rest.
@@ -777,7 +782,7 @@ Touches **S13** (app shell), **S15** (brush UI), **S16** (selection/transform UI
 - **Integration.** S41. Establishes a per-PR rule: any new user-facing string must go through `tr!` / `t()`.
 - **Attribution.** `docs/THIRD_PARTY_LICENSES.md` "adopted designs" entry.
 
-### 39. Drag-from-browser image import *(Tier D)*
+### 39. Drag-from-browser image import _(Tier D)_
 
 - **Upstream.** `src/Main.gd` — HTTPRequest path triggered when the user drops an image URL or blob payload from a browser tab onto the canvas. Pixelorama downloads the image, inserts it as a new layer or reference image.
 - **What we adopt.** Wire Tauri's `tauri::Window::on_event` to `WindowEvent::FileDrop` and, for URL payloads, fall back to a single Reqwest GET. Result: drag an image from any browser tab and it lands as a new layer.
