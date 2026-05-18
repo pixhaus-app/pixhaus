@@ -4285,6 +4285,12 @@ button.library-row__anchor-badge {
   min-height: 0;
 }
 
+.rail-section__head {
+  display: flex;
+  align-items: center;
+  background: var(--bg-panel-header, var(--bg-panel));
+}
+
 .rail-section__header {
   all: unset;
   display: flex;
@@ -4297,8 +4303,8 @@ button.library-row__anchor-badge {
   letter-spacing: 0.4px;
   text-transform: uppercase;
   color: var(--text-secondary);
-  background: var(--bg-panel-header, var(--bg-panel));
-  flex-shrink: 0;
+  flex: 1;
+  min-width: 0;
   user-select: none;
 }
 
@@ -4325,6 +4331,7 @@ button.library-row__anchor-badge {
   display: flex;
   align-items: center;
   gap: 4px;
+  padding-right: 8px;
 }
 
 .rail-section__body {

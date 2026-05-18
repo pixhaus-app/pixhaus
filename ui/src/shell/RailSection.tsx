@@ -20,39 +20,37 @@ const RailSection: Component<Props> = (props) => {
   const open = () => isSectionOpen(props.id);
   return (
     <section class="rail-section" data-section={props.id} data-open={open()}>
-      <button
-        type="button"
-        class="rail-section__header"
-        aria-expanded={open()}
-        aria-controls={`rail-section-${props.id}`}
-        data-testid={`rail-section-toggle-${props.id}`}
-        onClick={() => toggleSection(props.id)}
-      >
-        <svg
-          class="rail-section__chevron"
-          width="8"
-          height="8"
-          viewBox="0 0 8 8"
-          fill="none"
-          stroke="currentColor"
-          stroke-width="1.5"
-          stroke-linecap="round"
-          stroke-linejoin="round"
-          aria-hidden="true"
+      <div class="rail-section__head">
+        <button
+          type="button"
+          class="rail-section__header"
+          aria-expanded={open()}
+          aria-controls={`rail-section-${props.id}`}
+          data-testid={`rail-section-toggle-${props.id}`}
+          onClick={() => toggleSection(props.id)}
         >
-          <path d={open() ? "M1 2 L4 6 L7 2" : "M2 1 L6 4 L2 7"} />
-        </svg>
-        <span class="rail-section__title">{props.title ?? SECTION_TITLE[props.id]}</span>
-        <Show when={props.actions}>
-          <span
-            class="rail-section__actions"
-            onClick={(e) => e.stopPropagation()}
-            onKeyDown={(e) => e.stopPropagation()}
+          <svg
+            class="rail-section__chevron"
+            width="8"
+            height="8"
+            viewBox="0 0 8 8"
+            fill="none"
+            stroke="currentColor"
+            stroke-width="1.5"
+            stroke-linecap="round"
+            stroke-linejoin="round"
+            aria-hidden="true"
           >
+            <path d={open() ? "M1 2 L4 6 L7 2" : "M2 1 L6 4 L2 7"} />
+          </svg>
+          <span class="rail-section__title">{props.title ?? SECTION_TITLE[props.id]}</span>
+        </button>
+        <Show when={props.actions}>
+          <span class="rail-section__actions" data-testid={`rail-section-actions-${props.id}`}>
             {props.actions}
           </span>
         </Show>
-      </button>
+      </div>
       <Show when={open()}>
         <div class="rail-section__body" id={`rail-section-${props.id}`}>
           {props.children}
