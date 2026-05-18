@@ -38,6 +38,7 @@ pub struct ProviderStatus {
     pub models: &'static [&'static str],
 }
 
+#[derive(Debug)]
 struct ProviderSpec {
     id: &'static str,
     label: &'static str,

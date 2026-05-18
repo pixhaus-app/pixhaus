@@ -1955,8 +1955,7 @@ pub async fn library_remove_reference_sheet_variant(
         .as_mut()
         .ok_or(AppCommandError::NoActiveProject)?;
     delete_sheet_variant_in_project(project, args.entity_id, args.variant_id, ts)?;
-    let updated = find_entity(&project.library, args.entity_id)?
-        .clone();
+    let updated = find_entity(&project.library, args.entity_id)?.clone();
     doc.dirty = true;
     Ok(updated)
 }

@@ -957,33 +957,17 @@ const ReferenceSheetEditor: Component = () => {
             step="0.05"
             value={props.slot.weight}
             onInput={(event) =>
-              updateSlot(
-                props.index,
-                { weight: Number(event.currentTarget.value) },
-                props.target,
-              )
+              updateSlot(props.index, { weight: Number(event.currentTarget.value) }, props.target)
             }
           />
-          <Button
-            variant="ghost"
-            size="sm"
-            onClick={() => moveSlot(props.index, -1, props.target)}
-          >
+          <Button variant="ghost" size="sm" onClick={() => moveSlot(props.index, -1, props.target)}>
             Up
           </Button>
-          <Button
-            variant="ghost"
-            size="sm"
-            onClick={() => moveSlot(props.index, 1, props.target)}
-          >
+          <Button variant="ghost" size="sm" onClick={() => moveSlot(props.index, 1, props.target)}>
             Down
           </Button>
         </Show>
-        <Button
-          variant="ghost"
-          size="sm"
-          onClick={() => removeSlot(props.index, props.target)}
-        >
+        <Button variant="ghost" size="sm" onClick={() => removeSlot(props.index, props.target)}>
           Remove
         </Button>
       </div>
@@ -1493,12 +1477,7 @@ const ReferenceSheetEditor: Component = () => {
                   <span>Region references</span>
                   <For each={regionReferenceSlots()}>
                     {(slot, index) => (
-                      <ReferenceSlotRow
-                        slot={slot}
-                        index={index()}
-                        target="region"
-                        compact
-                      />
+                      <ReferenceSlotRow slot={slot} index={index()} target="region" compact />
                     )}
                   </For>
                 </div>
@@ -1512,12 +1491,7 @@ const ReferenceSheetEditor: Component = () => {
                 <span>Additional references</span>
                 <For each={additionalReferenceSlots()}>
                   {(slot, index) => (
-                    <ReferenceSlotRow
-                      slot={slot}
-                      index={index()}
-                      target="refine"
-                      compact
-                    />
+                    <ReferenceSlotRow slot={slot} index={index()} target="refine" compact />
                   )}
                 </For>
               </div>
