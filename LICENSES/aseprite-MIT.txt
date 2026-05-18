@@ -1,0 +1,75 @@
+Aseprite MIT-licensed components
+
+The following directories and files in the upstream Aseprite source tree
+(https://github.com/aseprite/aseprite) are distributed under the MIT
+license. Pixhaus may incorporate ports or derived works of these files;
+when it does, the original copyright notice must be preserved in each
+ported file and this license text must remain in the Pixhaus tree.
+
+MIT-licensed upstream subtrees include:
+
+  src/doc/         Document Library
+  src/render/      Render Library
+  src/dio/         Document I/O Library
+  src/ui/          UI widget framework
+  src/observable/  Signal/slot library
+  src/undo/        Generic undo history library
+  src/fixmath/     Fixed-point math (Allegro heritage)
+  src/flic/        FLI/FLC file loader/saver
+  src/cfg/         INI-file load/save library
+  src/net/         HTTP request library
+  src/desktop/     Desktop integration
+  src/gen/         XML-to-C++ code generator
+  src/steam/       Steam API wrapper
+
+The embedded submodules `laf` and `clip`, fetched separately from
+upstream Git repositories during the Aseprite build, are also MIT.
+
+Upstream license text (as it appears in src/ui/LICENSE.txt and at the
+top of each MIT-licensed source file):
+
+----------------------------------------------------------------------
+
+Copyright (c) 2018-2025 Igara Studio S.A.
+Copyright (c) 2001-2018 David Capello
+
+Permission is hereby granted, free of charge, to any person obtaining
+a copy of this software and associated documentation files (the
+"Software"), to deal in the Software without restriction, including
+without limitation the rights to use, copy, modify, merge, publish,
+distribute, sublicense, and/or sell copies of the Software, and to
+permit persons to whom the Software is furnished to do so, subject to
+the following conditions:
+
+The above copyright notice and this permission notice shall be
+included in all copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND,
+EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF
+MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND
+NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE
+LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION
+OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION
+WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
+
+----------------------------------------------------------------------
+
+Important: the upstream `src/app/` and `src/main/` directories are NOT
+MIT. They are distributed under the proprietary "End-User License
+Agreement for Aseprite" and must not be copied or ported into Pixhaus.
+Architectural ideas observed in those directories may inform fresh
+implementations, but no code from them is to be transcribed.
+
+The Bresenham line-drawing implementations originally written by Alois
+Zingl (2012-2016) and incorporated into upstream Aseprite's
+`src/doc/algorithm/` are separately MIT-licensed by Zingl. If those
+implementations are ported into Pixhaus, the Zingl notice must also be
+preserved in the ported file header.
+
+----------------------------------------------------------------------
+
+Reference: this file is a Pixhaus-side record of the upstream license
+posture observed in the Aseprite source tree at the time of writing
+(2026). The authoritative source is the upstream tree itself at
+https://github.com/aseprite/aseprite — re-verify when porting if
+upstream license terms have changed.
