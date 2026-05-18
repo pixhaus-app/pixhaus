@@ -53,6 +53,9 @@ type PickerMode = "edit" | "append";
 type Props = {
   /** The sprite whose palettes are displayed. Null when no project is open. */
   spriteId: SpriteId | null;
+  /** When true, render inside the right rail (no outer aside chrome — the
+   *  rail provides it). */
+  inRail?: boolean;
 };
 
 const PalettePanel: Component<Props> = (props) => {
@@ -267,7 +270,7 @@ const PalettePanel: Component<Props> = (props) => {
   const noProject = () => props.spriteId === null;
 
   return (
-    <aside class="pp" aria-label="Palette panel">
+    <aside class="pp" classList={{ "pp--in-rail": !!props.inRail }} aria-label="Palette panel">
       <Show when={noProject()}>
         <div class="pp__empty">Open a project to use the palette panel.</div>
       </Show>

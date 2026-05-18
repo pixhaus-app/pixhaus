@@ -46,10 +46,6 @@ import {
   scheduleViewportSync,
 } from "../canvas/canvas-state";
 
-// ── Panel visibility ─────────────────────────────────────────────────────────
-
-export const [isTimelinePanelVisible, setTimelinePanelVisible] = createSignal(true);
-
 // ── Data caches ──────────────────────────────────────────────────────────────
 
 export const [frames, setFrames] = createSignal<Frame[]>([]);

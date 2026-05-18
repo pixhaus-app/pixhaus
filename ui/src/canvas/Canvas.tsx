@@ -15,7 +15,6 @@ import { CanvasRenderer } from "./renderer";
 import { attachCanvasInput } from "./input";
 import { BrushCursor, ShapePreview, TransformHandles } from "./overlays";
 import Toolbar from "./tools/Toolbar";
-import ToolOptionsPanel from "./tools/ToolOptionsPanel";
 import {
   scrollX,
   scrollY,
@@ -300,7 +299,6 @@ const Canvas: Component = () => {
   return (
     <div class="canvas-workspace">
       <Toolbar />
-      <ToolOptionsPanel />
       <div ref={containerEl} class="canvas-container" data-testid="canvas-container" tabIndex={-1}>
         <canvas ref={canvasEl} class="canvas-viewport" data-testid="canvas-viewport" />
         <BrushCursor

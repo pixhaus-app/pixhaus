@@ -108,10 +108,6 @@ export function flattenLibrary(
   return result;
 }
 
-// ── Panel visibility ────────────────────────────────────────────────────────
-
-export const [isLibraryPanelVisible, setLibraryPanelVisible] = createSignal(true);
-
 // ── Data cache ──────────────────────────────────────────────────────────────
 
 export const [entities, setEntities] = createSignal<Entity[]>([]);

@@ -4253,3 +4253,162 @@ button.library-row__anchor-badge {
 .update-modal__date {
   margin-top: 12px;
 }
+
+/* ── Right rail (contextual accordion) ───────────────────────────────────── */
+
+:root {
+  --rail-width: 220px;
+  --library-collapsed-width: 24px;
+  --timeline-collapsed-height: 20px;
+}
+
+.right-rail {
+  width: var(--rail-width);
+  flex-shrink: 0;
+  display: flex;
+  flex-direction: column;
+  background: var(--bg-panel);
+  border-left: 1px solid var(--border-default);
+  overflow-y: auto;
+  overflow-x: hidden;
+}
+
+.rail-section {
+  display: flex;
+  flex-direction: column;
+  border-bottom: 1px solid var(--border-default);
+  flex-shrink: 0;
+}
+
+.rail-section[data-open="true"] {
+  flex-shrink: 1;
+  min-height: 0;
+}
+
+.rail-section__header {
+  all: unset;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 8px;
+  cursor: pointer;
+  font-size: 11px;
+  font-weight: 500;
+  letter-spacing: 0.4px;
+  text-transform: uppercase;
+  color: var(--text-secondary);
+  background: var(--bg-panel-header, var(--bg-panel));
+  flex-shrink: 0;
+  user-select: none;
+}
+
+.rail-section__header:hover {
+  color: var(--text-primary);
+}
+
+.rail-section__header:focus-visible {
+  outline: 1px solid var(--accent, #e63956);
+  outline-offset: -1px;
+}
+
+.rail-section__chevron {
+  flex-shrink: 0;
+  opacity: 0.7;
+}
+
+.rail-section__title {
+  flex: 1;
+  min-width: 0;
+}
+
+.rail-section__actions {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.rail-section__body {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.rail-section__placeholder {
+  font-size: 12px;
+  color: var(--text-secondary);
+  padding: 8px 10px;
+  margin: 0;
+  font-style: italic;
+}
+
+/* In-rail panel overrides: existing panels lose their own width/border
+   since the rail provides them. The internal layout stays intact. */
+
+.layer-panel--in-rail,
+.pp--in-rail,
+.tilemap-panel--in-rail,
+.sheet-panel--in-rail {
+  width: auto;
+  border: 0;
+  background: transparent;
+  min-height: 0;
+}
+
+.layer-panel__rail-actions,
+.sheet-panel__rail-actions {
+  display: flex;
+  gap: 4px;
+  padding: 4px 8px;
+}
+
+/* The brush/fill rail sections inherit the existing tool-options styles
+   but render inside `.rail-section__body` so they don't need their own
+   panel chrome. */
+.tool-options-group {
+  padding: 6px 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+/* ── Collapsed docks ──────────────────────────────────────────────────────── */
+
+.library-dock-collapsed {
+  all: unset;
+  width: var(--library-collapsed-width);
+  flex-shrink: 0;
+  background: var(--bg-panel);
+  border-right: 1px solid var(--border-default);
+  color: var(--text-secondary);
+  font-size: 14px;
+  text-align: center;
+  cursor: pointer;
+  display: flex;
+  align-items: flex-start;
+  justify-content: center;
+  padding-top: 8px;
+}
+
+.library-dock-collapsed:hover {
+  color: var(--text-primary);
+  background: var(--bg-panel-header, var(--bg-panel));
+}
+
+.timeline-dock-collapsed {
+  all: unset;
+  height: var(--timeline-collapsed-height);
+  width: 100%;
+  background: var(--bg-panel);
+  border-top: 1px solid var(--border-default);
+  color: var(--text-secondary);
+  font-size: 11px;
+  text-align: center;
+  cursor: pointer;
+  flex-shrink: 0;
+}
+
+.timeline-dock-collapsed:hover {
+  color: var(--text-primary);
+  background: var(--bg-panel-header, var(--bg-panel));
+}

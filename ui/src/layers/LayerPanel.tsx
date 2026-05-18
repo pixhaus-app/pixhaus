@@ -25,7 +25,6 @@ import {
   refreshLayers,
   selectedLayerIds,
   selectLayer,
-  setLayerPanelVisible,
 } from "./layer-state";
 import LayerRow from "./LayerRow";
 import LayerContextMenu, { type ContextMenuTarget } from "./LayerContextMenu";
@@ -79,7 +78,13 @@ function lowerBoundOffsetGte(offsets: readonly number[], n: number, target: numb
 
 // ── Panel component ──────────────────────────────────────────────────────────
 
-const LayerPanel: Component = () => {
+type Props = {
+  /** When true, render without the outer `.layer-panel` wrapper or its title bar —
+   *  the right-rail accordion provides its own chrome. */
+  inRail?: boolean;
+};
+
+const LayerPanel: Component<Props> = (props) => {
   const spriteId = activeSpriteId;
 
   // Single effect handles both the initial load and every sprite change.
@@ -192,10 +197,39 @@ const LayerPanel: Component = () => {
   }
 
   return (
-    <div class="layer-panel" data-testid="layer-panel">
-      <div class="layer-panel__header">
-        <span class="layer-panel__title">Layers</span>
-        <div class="layer-panel__header-actions">
+    <div
+      class="layer-panel"
+      classList={{ "layer-panel--in-rail": !!props.inRail }}
+      data-testid="layer-panel"
+    >
+      <Show when={!props.inRail}>
+        <div class="layer-panel__header">
+          <span class="layer-panel__title">Layers</span>
+          <div class="layer-panel__header-actions">
+            <button
+              class="layer-panel__icon-btn"
+              data-testid="layer-add"
+              onClick={handleAddLayer}
+              disabled={spriteId() === null}
+              title="New raster layer"
+            >
+              <svg
+                width="12"
+                height="12"
+                viewBox="0 0 12 12"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="1.5"
+                stroke-linecap="round"
+              >
+                <path d="M6 1 V11 M1 6 H11" />
+              </svg>
+            </button>
+          </div>
+        </div>
+      </Show>
+      <Show when={props.inRail}>
+        <div class="layer-panel__rail-actions">
           <button
             class="layer-panel__icon-btn"
             data-testid="layer-add"
@@ -203,37 +237,10 @@ const LayerPanel: Component = () => {
             disabled={spriteId() === null}
             title="New raster layer"
           >
-            <svg
-              width="12"
-              height="12"
-              viewBox="0 0 12 12"
-              fill="none"
-              stroke="currentColor"
-              stroke-width="1.5"
-              stroke-linecap="round"
-            >
-              <path d="M6 1 V11 M1 6 H11" />
-            </svg>
-          </button>
-          <button
-            class="layer-panel__icon-btn"
-            onClick={() => setLayerPanelVisible(false)}
-            title="Close layer panel"
-          >
-            <svg
-              width="10"
-              height="10"
-              viewBox="0 0 10 10"
-              fill="none"
-              stroke="currentColor"
-              stroke-width="1.5"
-              stroke-linecap="round"
-            >
-              <path d="M1 1 L9 9 M9 1 L1 9" />
-            </svg>
+            + New layer
           </button>
         </div>
-      </div>
+      </Show>
 
       <Show
         when={spriteId() !== null}

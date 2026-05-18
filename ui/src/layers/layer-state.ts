@@ -93,10 +93,6 @@ export function flattenLayers(all: Layer[], expandedCheck: (id: LayerId) => bool
   return result;
 }
 
-// ── Panel visibility ────────────────────────────────────────────────────────
-
-export const [isLayerPanelVisible, setLayerPanelVisible] = createSignal(true);
-
 // ── Layer list cache ────────────────────────────────────────────────────────
 
 // Flat list ordered bottom-to-top (index 0 = bottom layer), matching Rust's order.

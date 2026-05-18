@@ -37,28 +37,23 @@ import {
   showTileGrid,
   zoom,
 } from "../../canvas/canvas-state";
-import {
-  isLayerPanelVisible,
-  layers,
-  refreshLayers,
-  selectedLayerIds,
-} from "../../layers/layer-state";
+import { layers, refreshLayers, selectedLayerIds } from "../../layers/layer-state";
 import { setActiveLayerId } from "../../canvas/canvas-state";
 import {
   frameTags,
   frames,
   isLooping,
   isPlaying,
-  isTimelinePanelVisible,
   selectedFrames,
 } from "../../timeline/timeline-state";
-import { isPalettePanelVisible, isTilemapPanelVisible } from "../../shell/panel-state";
-import { isLibraryPanelVisible } from "../../library/library-state";
 import {
-  closeSheetPanel,
-  isSheetPanelVisible,
-  setSheetPanelVisible,
-} from "../../sheet/sheet-state";
+  closeSection,
+  isLibraryCollapsed,
+  isSectionOpen,
+  isTimelineCollapsed,
+  openSection,
+} from "../../shell/rail-state";
+import { clearSheetEntity } from "../../sheet/sheet-state";
 import { isCommandPaletteOpen } from "../../palette-state";
 import { isPreferencesOpen } from "../../preferences/preferences-state";
 import {
@@ -264,17 +259,18 @@ export function installDebugSurface(): void {
     isPreferencesOpen: () => isPreferencesOpen(),
 
     panel: {
-      layers: () => isLayerPanelVisible(),
-      timeline: () => isTimelinePanelVisible(),
-      palette: () => isPalettePanelVisible(),
-      tilemap: () => isTilemapPanelVisible(),
-      library: () => isLibraryPanelVisible(),
-      sheet: () => isSheetPanelVisible(),
+      layers: () => isSectionOpen("layers"),
+      timeline: () => !isTimelineCollapsed(),
+      palette: () => isSectionOpen("color"),
+      tilemap: () => isSectionOpen("tilemap"),
+      library: () => !isLibraryCollapsed(),
+      sheet: () => isSectionOpen("reference"),
       setSheetVisible: (visible: boolean) => {
         if (visible) {
-          setSheetPanelVisible(true);
+          openSection("reference");
         } else {
-          closeSheetPanel();
+          closeSection("reference");
+          clearSheetEntity();
         }
       },
     },

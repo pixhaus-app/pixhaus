@@ -71,15 +71,16 @@ import {
   setActiveFrameIndex,
 } from "../canvas/canvas-state";
 import {
-  isPalettePanelVisible,
-  setPalettePanelVisible,
-  isTilemapPanelVisible,
-  setTilemapPanelVisible,
-} from "../shell/panel-state";
-import { isLayerPanelVisible, setLayerPanelVisible } from "../layers/layer-state";
-import { isTimelinePanelVisible, setTimelinePanelVisible } from "../timeline/timeline-state";
-import { isLibraryPanelVisible, setLibraryPanelVisible } from "../library/library-state";
-import { closeSheetPanel, isSheetPanelVisible, openSheetPanel } from "../sheet/sheet-state";
+  closeSection,
+  isLibraryCollapsed,
+  isSectionOpen,
+  isTimelineCollapsed,
+  openSection,
+  resetSections,
+  setLibraryCollapsed,
+  setTimelineCollapsed,
+} from "../shell/rail-state";
+import { clearSheetEntity, setActiveSheetEntityId } from "../sheet/sheet-state";
 import { setActiveProject } from "../project-state";
 import { activeVerb, clearVerbCache, setActiveVerb } from "../lib/ai/verb-invoke-state";
 
@@ -98,18 +99,17 @@ beforeEach(() => {
   setZoom(1);
   setShowTileGrid(false);
   setShowPixelGrid(true);
-  setLayerPanelVisible(true);
-  setTimelinePanelVisible(true);
-  setPalettePanelVisible(true);
-  setTilemapPanelVisible(true);
-  setLibraryPanelVisible(true);
-  closeSheetPanel();
+  resetSections();
+  setLibraryCollapsed(false);
+  setTimelineCollapsed(false);
+  clearSheetEntity();
   setActiveProject(FAKE_PROJECT);
 });
 
 afterEach(() => {
   setActiveSpriteId(null);
-  closeSheetPanel();
+  clearSheetEntity();
+  closeSection("reference");
   setActiveProject(null);
 });
 
@@ -214,36 +214,42 @@ describe("dispatchCommand — view", () => {
 });
 
 describe("dispatchCommand — window", () => {
-  it("window:toggle-palette flips the palette-panel signal", () => {
-    setPalettePanelVisible(true);
+  it("window:toggle-palette flips the color section", () => {
     dispatchCommand("window:toggle-palette");
-    expect(isPalettePanelVisible()).toBe(false);
+    expect(isSectionOpen("color")).toBe(false);
     dispatchCommand("window:toggle-palette");
-    expect(isPalettePanelVisible()).toBe(true);
+    expect(isSectionOpen("color")).toBe(true);
   });
 
-  it("window:toggle-tilemap flips the tilemap-panel signal", () => {
-    setTilemapPanelVisible(true);
+  it("window:toggle-tilemap flips the tilemap section", () => {
+    openSection("tilemap");
     dispatchCommand("window:toggle-tilemap");
-    expect(isTilemapPanelVisible()).toBe(false);
+    expect(isSectionOpen("tilemap")).toBe(false);
   });
 
-  it("window:reset-layout restores panel defaults and closes the sheet panel", () => {
-    setLayerPanelVisible(false);
-    setTimelinePanelVisible(false);
-    setPalettePanelVisible(false);
-    setTilemapPanelVisible(false);
-    setLibraryPanelVisible(false);
-    openSheetPanel(99);
+  it("window:toggle-library flips the library dock collapse state", () => {
+    setLibraryCollapsed(false);
+    dispatchCommand("window:toggle-library");
+    expect(isLibraryCollapsed()).toBe(true);
+    dispatchCommand("window:toggle-library");
+    expect(isLibraryCollapsed()).toBe(false);
+  });
+
+  it("window:reset-layout restores default section state and uncollapses docks", () => {
+    closeSection("color");
+    closeSection("layers");
+    setLibraryCollapsed(true);
+    setTimelineCollapsed(true);
+    setActiveSheetEntityId(99 as never);
+    openSection("reference");
 
     dispatchCommand("window:reset-layout");
 
-    expect(isLayerPanelVisible()).toBe(true);
-    expect(isTimelinePanelVisible()).toBe(true);
-    expect(isPalettePanelVisible()).toBe(true);
-    expect(isTilemapPanelVisible()).toBe(true);
-    expect(isLibraryPanelVisible()).toBe(true);
-    expect(isSheetPanelVisible()).toBe(false);
+    expect(isSectionOpen("color")).toBe(true);
+    expect(isSectionOpen("layers")).toBe(true);
+    expect(isSectionOpen("reference")).toBe(false);
+    expect(isLibraryCollapsed()).toBe(false);
+    expect(isTimelineCollapsed()).toBe(false);
   });
 });
 
