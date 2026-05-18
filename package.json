@@ -10,7 +10,7 @@
     "type": "git",
     "url": "https://github.com/pixhaus-app/pixhaus"
   },
-  "packageManager": "pnpm@10.33.2",
+  "packageManager": "pnpm@11.1.3",
   "engines": {
     "node": ">=22.0.0",
     "pnpm": ">=10.0.0"
@@ -41,16 +41,5 @@
   },
   "devDependencies": {
     "@tauri-apps/cli": "^2.11.2"
-  },
-  "pnpm": {
-    "onlyBuiltDependencies": [
-      "esbuild",
-      "@tauri-apps/cli",
-      "sharp"
-    ],
-    "overrides": {
-      "yaml@<2.8.3": ">=2.8.3",
-      "serialize-javascript@<7.0.5": ">=7.0.5"
-    }
   }
 }

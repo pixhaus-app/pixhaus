@@ -26,6 +26,12 @@ updates:
     commit-message:
       prefix: "chore(deps)"
       include: scope
+    # Pair with pnpm-workspace.yaml's minimumReleaseAge: only propose
+    # versions that have been on the registry long enough for malware
+    # detection. See https://pnpm.io/supply-chain-security.
+    cooldown:
+      default-days: 7
+      semver-major-days: 14
     groups:
       npm-minor-and-patch:
         update-types: ["minor", "patch"]
@@ -41,6 +47,9 @@ updates:
     commit-message:
       prefix: "chore(deps)"
       include: scope
+    cooldown:
+      default-days: 7
+      semver-major-days: 14
     groups:
       ui-minor-and-patch:
         update-types: ["minor", "patch"]
