@@ -3,7 +3,6 @@ import { listen } from "@tauri-apps/api/event";
 import { isCommandPaletteOpen } from "../palette-state";
 import { isPreferencesOpen } from "../preferences/preferences-state";
 import { activeProject } from "../project-state";
-import { activeSpriteId } from "../canvas/canvas-state";
 import { dispatchCommand } from "../command-palette/command-registry";
 import { setupKeybindManager } from "../keybinds/keybind-manager";
 import CommandPalette from "../command-palette/CommandPalette";
@@ -15,10 +14,6 @@ import VerbInvokeHost from "../lib/ai/VerbInvokeHost";
 import StatusBar from "./StatusBar";
 import WelcomeScreen from "./WelcomeScreen";
 import Canvas from "../canvas/Canvas";
-import LayerPanel from "../layers/LayerPanel";
-import { isLayerPanelVisible } from "../layers/layer-state";
-import PalettePanel from "../palette/PalettePanel";
-import TilemapPanel from "../tilemap/TilemapPanel";
 import FirstLaunchDialog from "../crash-reporting/FirstLaunchDialog";
 import {
   crashReportingDialogShown,
@@ -33,16 +28,19 @@ import {
   setCrashReportingEnabled as setSentryEnabled,
 } from "../crash-reporting/crash-reporting";
 import TimelinePanel from "../timeline/TimelinePanel";
-import { isTimelinePanelVisible } from "../timeline/timeline-state";
-import { isPalettePanelVisible, isTilemapPanelVisible } from "./panel-state";
 import LibraryPanel from "../library/LibraryPanel";
-import { isLibraryPanelVisible } from "../library/library-state";
 import EntityCreateModal from "../library/EntityCreateModal";
 import { setupPaletteColorSync } from "../canvas/tools/palette-color-sync";
 import { installTilemapCtxSync } from "../tilemap/tilemap-ctx-sync";
-import SheetView from "../sheet/SheetView";
 import ReferenceSheetEditor from "../sheet/ReferenceSheetEditor";
-import { isSheetEditorOpen, isSheetPanelVisible } from "../sheet/sheet-state";
+import { isSheetEditorOpen } from "../sheet/sheet-state";
+import RightRail from "./RightRail";
+import {
+  isLibraryCollapsed,
+  isTimelineCollapsed,
+  toggleLibraryCollapsed,
+  toggleTimelineCollapsed,
+} from "./rail-state";
 
 const Shell: Component = () => {
   // Bridge palette FG/BG indices to the tool-state RGBA signals so brush
@@ -109,7 +107,20 @@ const Shell: Component = () => {
           </Show>
           <Show when={activeProject() !== null}>
             <div class="editor-layout" data-testid="editor-layout">
-              <Show when={isLibraryPanelVisible()}>
+              <Show
+                when={!isLibraryCollapsed()}
+                fallback={
+                  <button
+                    class="library-dock-collapsed"
+                    onClick={toggleLibraryCollapsed}
+                    title="Show library"
+                    aria-label="Show library panel"
+                    data-testid="library-expand"
+                  >
+                    ›
+                  </button>
+                }
+              >
                 <LibraryPanel />
               </Show>
               <div class="editor-layout__canvas-area">
@@ -117,27 +128,28 @@ const Shell: Component = () => {
                   <div class="editor-layout__canvas">
                     <Canvas />
                   </div>
-                  <Show when={isTimelinePanelVisible()}>
+                  <Show
+                    when={!isTimelineCollapsed()}
+                    fallback={
+                      <button
+                        class="timeline-dock-collapsed"
+                        onClick={toggleTimelineCollapsed}
+                        title="Show timeline"
+                        aria-label="Show timeline panel"
+                        data-testid="timeline-expand"
+                      >
+                        ▴
+                      </button>
+                    }
+                  >
                     <TimelinePanel />
                   </Show>
                 </Show>
               </div>
-              <Show when={activeSpriteId() !== null && isTilemapPanelVisible()}>
-                <TilemapPanel />
-              </Show>
-              <Show when={isLayerPanelVisible()}>
-                <LayerPanel />
-              </Show>
-              <Show when={isSheetPanelVisible()}>
-                <SheetView />
-              </Show>
+              <RightRail />
             </div>
           </Show>
         </div>
-
-        <Show when={isPalettePanelVisible()}>
-          <PalettePanel spriteId={activeSpriteId()} />
-        </Show>
       </div>
 
       <StatusBar />

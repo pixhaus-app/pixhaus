@@ -33,7 +33,6 @@ import {
   frames,
   isLooping,
   isPlaying,
-  isTimelinePanelVisible,
   onionSkin,
   onionSkinNext,
   onionSkinPrev,
@@ -45,10 +44,10 @@ import {
   setOnionSkin,
   setOnionSkinNext,
   setOnionSkinPrev,
-  setTimelinePanelVisible,
   stopPlayback,
   togglePlayback,
 } from "./timeline-state";
+import { isTimelineCollapsed, toggleTimelineCollapsed } from "../shell/rail-state";
 import FrameTagBar, { FRAME_WIDTH } from "./FrameTagBar";
 import TimelineContextMenu, { type ContextMenuTarget } from "./TimelineContextMenu";
 
@@ -73,7 +72,7 @@ const TimelinePanel: Component = () => {
   });
 
   createEffect(() => {
-    if (!isTimelinePanelVisible()) stopPlayback();
+    if (isTimelineCollapsed()) stopPlayback();
   });
 
   // ── Scroll state ──────────────────────────────────────────────────────────
@@ -337,10 +336,11 @@ const TimelinePanel: Component = () => {
           </button>
           <button
             class="timeline-panel__icon-btn"
-            onClick={() => setTimelinePanelVisible(false)}
-            title="Close timeline"
+            onClick={toggleTimelineCollapsed}
+            title="Collapse timeline"
+            data-testid="timeline-collapse"
           >
-            x
+            ▾
           </button>
         </div>
       </div>

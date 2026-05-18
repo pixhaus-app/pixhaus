@@ -217,7 +217,13 @@ const TilesetsTab: Component<TilesetsTabProps> = (props) => {
 
 // ── Root component ─────────────────────────────────────────────────────────
 
-const TilemapPanel: Component = () => {
+type Props = {
+  /** When true, render without the outer `.tilemap-panel` wrapper —
+   *  the right-rail accordion provides its own chrome. */
+  inRail?: boolean;
+};
+
+const TilemapPanel: Component<Props> = (props) => {
   const ctx = activeTilemapCtx;
   const tileset = createMemo(() => ctx()?.tileset ?? null);
   const spriteId = activeSpriteId;
@@ -285,7 +291,7 @@ const TilemapPanel: Component = () => {
 
   return (
     <Show when={spriteId() !== null}>
-      <div class="tilemap-panel">
+      <div class="tilemap-panel" classList={{ "tilemap-panel--in-rail": !!props.inRail }}>
         {/* Header — only when a tileset is active */}
         <Show when={tileset() !== null}>
           <div class="tilemap-panel__header">

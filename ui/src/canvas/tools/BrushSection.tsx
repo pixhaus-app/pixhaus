@@ -1,16 +1,11 @@
-// Per-tool options panel rendered below the toolbar.
+// Brush options as a right-rail section body.
 //
-// Shows size, shape, and toggle controls that apply to the active tool.
-// Only brush tools (pencil, eraser, line) show the shape and pixel-perfect
-// controls; the fill tool shows a tolerance slider instead.
+// Replaces the brush half of the legacy ToolOptionsPanel. Auto-expanded
+// by the rail when activeTool() is a brush tool (see rail-state).
 
-import { For, type Component, Match, Switch } from "solid-js";
+import { For, type Component } from "solid-js";
 import {
-  activeTool,
-  BRUSH_TOOLS,
-  fillTolerance,
   pixelPerfect,
-  setFillTolerance,
   setPixelPerfect,
   setToolShape,
   setToolSize,
@@ -21,7 +16,7 @@ import {
 
 const SHAPES: BrushShape[] = ["pixel", "circle", "square"];
 
-const BrushOptions: Component = () => (
+const BrushSection: Component = () => (
   <div class="tool-options-group" data-testid="tool-options-brush">
     <label class="tool-option-label">
       Size
@@ -66,37 +61,4 @@ const BrushOptions: Component = () => (
   </div>
 );
 
-const FillOptions: Component = () => (
-  <div class="tool-options-group" data-testid="tool-options-fill">
-    <label class="tool-option-label">
-      Tolerance
-      <input
-        type="range"
-        min="0"
-        max="255"
-        value={fillTolerance()}
-        onInput={(e) => setFillTolerance(Number(e.currentTarget.value))}
-        class="tool-option-range"
-        data-testid="tool-option-tolerance"
-      />
-      <span class="tool-option-value">{fillTolerance()}</span>
-    </label>
-  </div>
-);
-
-const ToolOptionsPanel: Component = () => {
-  return (
-    <div class="tool-options-panel">
-      <Switch>
-        <Match when={BRUSH_TOOLS.includes(activeTool())}>
-          <BrushOptions />
-        </Match>
-        <Match when={activeTool() === "fill"}>
-          <FillOptions />
-        </Match>
-      </Switch>
-    </div>
-  );
-};
-
-export default ToolOptionsPanel;
+export default BrushSection;

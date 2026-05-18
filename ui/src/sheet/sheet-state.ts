@@ -1,14 +1,15 @@
 // Sheet view panel state.
 //
-// Tracks which sprite entity is open in the sheet panel, which panel
-// region the user last clicked (for scoped inpainting in B10.2), and
-// whether the panel overlay of labelled rectangles is visible.
+// Tracks which sprite entity is open in the sheet panel and which panel
+// region the user last clicked (for scoped inpainting in B10.2). Panel
+// open/closed state itself is owned by the right-rail accordion now
+// (see ui/src/shell/rail-state.ts).
 
 import { createSignal } from "solid-js";
 import type { EntityId } from "../lib/types/EntityId";
 import type { Rect } from "../lib/types/Rect";
 
-/** The sprite entity currently shown in the sheet panel. `null` when closed. */
+/** The sprite entity currently shown in the sheet panel. `null` when no entity is selected. */
 export const [activeSheetEntityId, setActiveSheetEntityId] = createSignal<EntityId | null>(null);
 
 /**
@@ -21,9 +22,6 @@ export const [selectedPanelRegion, setSelectedPanelRegion] = createSignal<Rect |
 /** Whether the composition overlay (labelled panel rectangles) is drawn. */
 export const [showPanelOverlay, setShowPanelOverlay] = createSignal(true);
 
-/** Whether the sheet panel is mounted in the editor layout. */
-export const [isSheetPanelVisible, setSheetPanelVisible] = createSignal(false);
-
 /** The sprite entity currently open in the dedicated AI sheet editor. */
 export const [activeSheetEditorEntityId, setActiveSheetEditorEntityId] =
   createSignal<EntityId | null>(null);
@@ -31,11 +29,10 @@ export const [activeSheetEditorEntityId, setActiveSheetEditorEntityId] =
 /** Whether the dedicated AI sheet editor replaces the normal canvas area. */
 export const [isSheetEditorOpen, setSheetEditorOpen] = createSignal(false);
 
-/** Opens the sheet panel for the given sprite entity and makes the panel visible. */
-export function openSheetPanel(entityId: EntityId): void {
+/** Sets the active sheet entity. Use with `openSection("reference")` from rail-state. */
+export function showSheetForEntity(entityId: EntityId): void {
   setActiveSheetEntityId(entityId);
   setSelectedPanelRegion(null);
-  setSheetPanelVisible(true);
 }
 
 /** Opens the dedicated AI reference-sheet editor for the given sprite entity. */
@@ -52,9 +49,8 @@ export function closeSheetEditor(): void {
   setSelectedPanelRegion(null);
 }
 
-/** Closes the sheet panel and clears transient selection state. */
-export function closeSheetPanel(): void {
-  setSheetPanelVisible(false);
+/** Clears the active sheet entity. */
+export function clearSheetEntity(): void {
   setActiveSheetEntityId(null);
   setSelectedPanelRegion(null);
 }

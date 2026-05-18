@@ -54,7 +54,6 @@ import {
   setActiveTarget,
   setDragOverIndex,
   setKindFilter,
-  setLibraryPanelVisible,
   setSearchQuery,
   setSelectedEntityId,
   tags,
@@ -65,6 +64,7 @@ import LibraryContextMenu, { type LibraryContextTarget } from "./LibraryContextM
 import { openEntityCreate } from "./entity-create-state";
 import type { LibraryTreeEntry } from "./library-state";
 import { openSheetEditor } from "../sheet/sheet-state";
+import { toggleLibraryCollapsed } from "../shell/rail-state";
 
 // ── Panel component ──────────────────────────────────────────────────────────
 
@@ -181,8 +181,9 @@ const LibraryPanel: Component = () => {
           </button>
           <button
             class="library-panel__icon-btn"
-            onClick={() => setLibraryPanelVisible(false)}
-            title="Close library panel"
+            onClick={toggleLibraryCollapsed}
+            title="Collapse library panel"
+            data-testid="library-collapse"
           >
             <svg
               width="10"
@@ -193,7 +194,7 @@ const LibraryPanel: Component = () => {
               stroke-width="1.5"
               stroke-linecap="round"
             >
-              <path d="M1 1 L9 9 M9 1 L1 9" />
+              <path d="M7 1 L3 5 L7 9" />
             </svg>
           </button>
         </div>

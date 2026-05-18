@@ -65,38 +65,28 @@ import {
   beginRename,
   deleteLayer,
   flattenVisibleLayers,
-  isLayerPanelVisible,
   layers,
   mergeLayerDown,
   mergeSelectedLayers,
   nextAutoName,
   selectedLayerIds,
-  setLayerPanelVisible,
   wrapLayersInGroup,
 } from "../layers/layer-state";
-import {
-  isLooping,
-  isTimelinePanelVisible,
-  refreshTimeline,
-  setIsLooping,
-  setTimelinePanelVisible,
-} from "../timeline/timeline-state";
-import {
-  isPalettePanelVisible,
-  setPalettePanelVisible,
-  isTilemapPanelVisible,
-  setTilemapPanelVisible,
-} from "../shell/panel-state";
-import {
-  activeSheetEntityId,
-  closeSheetPanel,
-  isSheetPanelVisible,
-  openSheetEditor,
-  openSheetPanel,
-  setSheetPanelVisible,
-} from "../sheet/sheet-state";
+import { isLooping, refreshTimeline, setIsLooping } from "../timeline/timeline-state";
+import { activeSheetEntityId, openSheetEditor, setActiveSheetEntityId } from "../sheet/sheet-state";
 import { libraryListEntities } from "../lib/commands/library";
-import { selectedEntityId, setLibraryPanelVisible } from "../library/library-state";
+import { selectedEntityId } from "../library/library-state";
+import {
+  closeSection,
+  isSectionOpen,
+  openSection,
+  resetSections,
+  setLibraryCollapsed,
+  setTimelineCollapsed,
+  toggleLibraryCollapsed,
+  toggleSection,
+  toggleTimelineCollapsed,
+} from "../shell/rail-state";
 import {
   tilemapTool,
   setTilemapTool,
@@ -1173,12 +1163,9 @@ const COMMANDS: ReadonlyMap<string, CommandEntry> = new Map<string, CommandEntry
       category: "Window",
       keywords: ["panels", "restore", "default"],
       handler: () => {
-        setLayerPanelVisible(true);
-        setTimelinePanelVisible(true);
-        setPalettePanelVisible(true);
-        setTilemapPanelVisible(true);
-        setLibraryPanelVisible(true);
-        closeSheetPanel();
+        resetSections();
+        setLibraryCollapsed(false);
+        setTimelineCollapsed(false);
       },
     },
   ],
@@ -1186,9 +1173,9 @@ const COMMANDS: ReadonlyMap<string, CommandEntry> = new Map<string, CommandEntry
     "window:toggle-layers",
     {
       id: "window:toggle-layers",
-      label: "Toggle Layer Panel",
+      label: "Toggle Layers Panel",
       category: "Window",
-      handler: () => setLayerPanelVisible(!isLayerPanelVisible()),
+      handler: () => toggleSection("layers"),
     },
   ],
   [
@@ -1197,7 +1184,7 @@ const COMMANDS: ReadonlyMap<string, CommandEntry> = new Map<string, CommandEntry
       id: "window:toggle-timeline",
       label: "Toggle Timeline",
       category: "Window",
-      handler: () => setTimelinePanelVisible(!isTimelinePanelVisible()),
+      handler: () => toggleTimelineCollapsed(),
     },
   ],
   [
@@ -1206,7 +1193,7 @@ const COMMANDS: ReadonlyMap<string, CommandEntry> = new Map<string, CommandEntry
       id: "window:toggle-palette",
       label: "Toggle Color Palette",
       category: "Window",
-      handler: () => setPalettePanelVisible(!isPalettePanelVisible()),
+      handler: () => toggleSection("color"),
     },
   ],
   [
@@ -1216,7 +1203,17 @@ const COMMANDS: ReadonlyMap<string, CommandEntry> = new Map<string, CommandEntry
       label: "Toggle Tilemap Panel",
       category: "Window",
       keywords: ["tiles", "autotile", "tileset"],
-      handler: () => setTilemapPanelVisible(!isTilemapPanelVisible()),
+      handler: () => toggleSection("tilemap"),
+    },
+  ],
+  [
+    "window:toggle-library",
+    {
+      id: "window:toggle-library",
+      label: "Toggle Library Panel",
+      category: "Window",
+      keywords: ["entities", "sprites", "groups"],
+      handler: () => toggleLibraryCollapsed(),
     },
   ],
   [
@@ -1227,12 +1224,12 @@ const COMMANDS: ReadonlyMap<string, CommandEntry> = new Map<string, CommandEntry
       category: "Window",
       keywords: ["sheet", "reference", "anchor", "sprite", "character"],
       handler: () => {
-        if (isSheetPanelVisible()) {
-          closeSheetPanel();
+        if (isSectionOpen("reference")) {
+          closeSection("reference");
           return;
         }
         if (activeSheetEntityId() !== null) {
-          setSheetPanelVisible(true);
+          openSection("reference");
           return;
         }
         // Nothing has set the active entity yet. Resolve the first sprite
@@ -1253,7 +1250,8 @@ const COMMANDS: ReadonlyMap<string, CommandEntry> = new Map<string, CommandEntry
               });
               return;
             }
-            openSheetPanel(firstWithSheet.id);
+            setActiveSheetEntityId(firstWithSheet.id);
+            openSection("reference");
           })
           .catch((err: unknown) => reportCommandFailure("library_list_entities", err));
       },

@@ -25,12 +25,13 @@ import { reportCommandFailure } from "../lib/utils/errors";
 import { useImageObjectUrl } from "../lib/utils/image-object-url";
 import {
   activeSheetEntityId,
-  closeSheetPanel,
+  clearSheetEntity,
   selectedPanelRegion,
   setSelectedPanelRegion,
   showPanelOverlay,
   setShowPanelOverlay,
 } from "./sheet-state";
+import { closeSection } from "../shell/rail-state";
 import {
   flatPanels,
   sheetHeight as computeSheetHeight,
@@ -56,7 +57,13 @@ function referenceSheet(entity: Entity): ReferenceSheet | null {
   return content.value.reference_sheet ?? null;
 }
 
-const SheetView: Component = () => {
+type Props = {
+  /** When true, render without the outer panel header — the right-rail
+   *  accordion provides its own chrome. */
+  inRail?: boolean;
+};
+
+const SheetView: Component<Props> = (props) => {
   const [entity, setEntity] = createSignal<Entity | null>(null);
   const [loading, setLoading] = createSignal(false);
   const [previewVariant, setPreviewVariant] = createSignal<SheetVariant | null>(null);
@@ -243,10 +250,36 @@ const SheetView: Component = () => {
   const hasTrainedLora = (): boolean => loraPath() !== null;
 
   return (
-    <div class="sheet-panel">
-      <div class="sheet-panel__header">
-        <div class="sheet-panel__title">{entity()?.name ?? "Reference sheet"}</div>
-        <div class="sheet-panel__header-actions">
+    <div class="sheet-panel" classList={{ "sheet-panel--in-rail": !!props.inRail }}>
+      <Show when={!props.inRail}>
+        <div class="sheet-panel__header">
+          <div class="sheet-panel__title">{entity()?.name ?? "Reference sheet"}</div>
+          <div class="sheet-panel__header-actions">
+            <button
+              class="sheet-panel__icon-btn"
+              classList={{ "sheet-panel__icon-btn--active": showPanelOverlay() }}
+              onClick={() => setShowPanelOverlay(!showPanelOverlay())}
+              aria-label="Toggle panel overlay"
+              title="Toggle panel overlay"
+            >
+              ⊞
+            </button>
+            <button
+              class="sheet-panel__icon-btn"
+              onClick={() => {
+                clearSheetEntity();
+                closeSection("reference");
+              }}
+              aria-label="Close sheet panel"
+              title="Close sheet panel"
+            >
+              ✕
+            </button>
+          </div>
+        </div>
+      </Show>
+      <Show when={props.inRail}>
+        <div class="sheet-panel__rail-actions">
           <button
             class="sheet-panel__icon-btn"
             classList={{ "sheet-panel__icon-btn--active": showPanelOverlay() }}
@@ -254,18 +287,10 @@ const SheetView: Component = () => {
             aria-label="Toggle panel overlay"
             title="Toggle panel overlay"
           >
-            ⊞
-          </button>
-          <button
-            class="sheet-panel__icon-btn"
-            onClick={closeSheetPanel}
-            aria-label="Close sheet panel"
-            title="Close sheet panel"
-          >
-            ✕
+            ⊞ Overlay
           </button>
         </div>
-      </div>
+      </Show>
 
       <Show when={loading()}>
         <div class="sheet-panel__loading">Loading…</div>
