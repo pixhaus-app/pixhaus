@@ -107,3 +107,4 @@ tarpaulin-report.html
 .claude/local-cache/
 .claude/*.lock
 .followup-*.md
+.superpowers/
