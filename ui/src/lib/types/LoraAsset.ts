@@ -5,6 +5,6 @@ import type { ModelId } from "./ModelId";
 import type { ReferenceImage } from "./ReferenceImage";
 
 /**
- * Trained LoRA registered in the project asset library.
+ * Trained `LoRA` registered in the project asset library.
  */
 export type LoraAsset = { id: AssetId, name: string, kind: LoraKind, trigger_word: string, target_model: ModelId, fal_lora_url: string, training_data_thumbnails?: Array<ReferenceImage>, created_at: number, };

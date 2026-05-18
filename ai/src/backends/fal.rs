@@ -85,6 +85,10 @@ impl FalBackend {
         self
     }
 
+    fn auth_value(&self) -> String {
+        format!("Key {}", self.api_key)
+    }
+
     /// Submits a zipped image dataset to fal's Flux `LoRA` fast trainer.
     pub async fn train_lora_archive(
         &self,
@@ -97,7 +101,7 @@ impl FalBackend {
         let http_req = self
             .client
             .post(format!("{}/{}", self.base_url, FAL_FLUX_LORA_FAST_TRAINING))
-            .header("Authorization", format!("Key {}", self.api_key))
+            .header("Authorization", self.auth_value())
             .json(&body)
             .build()
             .map_err(BackendError::Network)?;
@@ -128,7 +132,7 @@ impl FalBackend {
         cancel: &CancellationToken,
     ) -> Result<ImageGenResponse> {
         if let Some(resp) = self
-            .try_stream_image_endpoint(endpoint, input.clone(), progress, cancel)
+            .try_stream_image_endpoint(endpoint, &input, progress, cancel)
             .await?
         {
             return Ok(resp);
@@ -141,7 +145,7 @@ impl FalBackend {
         let http_req = self
             .client
             .post(format!("{}/{}", self.base_url, endpoint))
-            .header("Authorization", format!("Key {}", self.api_key))
+            .header("Authorization", self.auth_value())
             .json(&input)
             .build()
             .map_err(BackendError::Network)?;
@@ -169,7 +173,7 @@ impl FalBackend {
     async fn try_stream_image_endpoint(
         &self,
         endpoint: &str,
-        input: serde_json::Value,
+        input: &serde_json::Value,
         progress: &VerbProgress,
         cancel: &CancellationToken,
     ) -> Result<Option<ImageGenResponse>> {
@@ -177,9 +181,9 @@ impl FalBackend {
         let http_req = self
             .client
             .post(stream_url)
-            .header("Authorization", format!("Key {}", self.api_key))
+            .header("Authorization", self.auth_value())
             .header("Accept", "text/event-stream")
-            .json(&input)
+            .json(input)
             .build()
             .map_err(BackendError::Network)?;
         let http_resp = select! {
@@ -218,7 +222,7 @@ impl FalBackend {
         let submit_req = self
             .client
             .post(format!("{}/{}", self.queue_base_url, endpoint))
-            .header("Authorization", format!("Key {}", self.api_key))
+            .header("Authorization", self.auth_value())
             .json(&input)
             .build()
             .map_err(BackendError::Network)?;
@@ -253,7 +257,7 @@ impl FalBackend {
         let status_req = self
             .client
             .get(status_url)
-            .header("Authorization", format!("Key {}", self.api_key))
+            .header("Authorization", self.auth_value())
             .header("Accept", "text/event-stream")
             .build()
             .map_err(BackendError::Network)?;
@@ -266,14 +270,15 @@ impl FalBackend {
             res = self.client.execute(status_req) => res.map_err(BackendError::Network)?,
         };
         let status_resp = check_http_status(status_resp).await?;
+        let auth = self.auth_value();
         wait_for_fal_queue_completion(status_resp, progress, cancel, || {
             let client = self.client.clone();
-            let api_key = self.api_key.clone();
+            let auth = auth.clone();
             let cancel_url = cancel_url.clone();
             async move {
                 let _ = client
                     .delete(cancel_url)
-                    .header("Authorization", format!("Key {api_key}"))
+                    .header("Authorization", auth)
                     .send()
                     .await;
             }
@@ -283,7 +288,7 @@ impl FalBackend {
         let result_req = self
             .client
             .get(result_url)
-            .header("Authorization", format!("Key {}", self.api_key))
+            .header("Authorization", self.auth_value())
             .build()
             .map_err(BackendError::Network)?;
         let result_resp = select! {
@@ -314,7 +319,7 @@ impl FalBackend {
         let _ = self
             .client
             .delete(cancel_url)
-            .header("Authorization", format!("Key {}", self.api_key))
+            .header("Authorization", self.auth_value())
             .send()
             .await;
     }
@@ -562,6 +567,15 @@ async fn parse_fal_sse_images(
     Ok(final_images)
 }
 
+fn parse_sse_data(frame: &str) -> String {
+    frame
+        .lines()
+        .filter_map(|line| line.strip_prefix("data:"))
+        .map(str::trim)
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
 async fn handle_fal_image_sse_frame(
     client: &reqwest::Client,
     frame: &str,
@@ -569,12 +583,7 @@ async fn handle_fal_image_sse_frame(
     cancel: &CancellationToken,
     final_images: &mut Vec<Vec<u8>>,
 ) -> Result<()> {
-    let data = frame
-        .lines()
-        .filter_map(|line| line.strip_prefix("data:"))
-        .map(str::trim)
-        .collect::<Vec<_>>()
-        .join("\n");
+    let data = parse_sse_data(frame);
     if data.is_empty() || data == "[DONE]" {
         return Ok(());
     }
@@ -665,12 +674,7 @@ where
 }
 
 async fn handle_fal_queue_status_frame(frame: &str, progress: &VerbProgress) -> Result<bool> {
-    let data = frame
-        .lines()
-        .filter_map(|line| line.strip_prefix("data:"))
-        .map(str::trim)
-        .collect::<Vec<_>>()
-        .join("\n");
+    let data = parse_sse_data(frame);
     if data.is_empty() || data == "[DONE]" {
         return Ok(false);
     }

@@ -72,6 +72,53 @@ fn now_secs() -> i64 {
         .map_or(0, |d| i64::try_from(d.as_secs()).unwrap_or(i64::MAX))
 }
 
+fn entity_not_found(id: EntityId) -> AppCommandError {
+    AppCommandError::NotFound {
+        entity: "entity".into(),
+        id: u64::from(id.get()),
+    }
+}
+
+fn group_not_found(id: GroupId) -> AppCommandError {
+    AppCommandError::NotFound {
+        entity: "group".into(),
+        id: u64::from(id.get()),
+    }
+}
+
+fn find_entity(
+    library: &pixhaus_core::project::Library,
+    id: EntityId,
+) -> Result<&Entity, AppCommandError> {
+    library
+        .entities
+        .iter()
+        .find(|e| e.id == id)
+        .ok_or_else(|| entity_not_found(id))
+}
+
+fn find_entity_mut(
+    library: &mut pixhaus_core::project::Library,
+    id: EntityId,
+) -> Result<&mut Entity, AppCommandError> {
+    library
+        .entities
+        .iter_mut()
+        .find(|e| e.id == id)
+        .ok_or_else(|| entity_not_found(id))
+}
+
+fn ensure_group_exists(
+    library: &pixhaus_core::project::Library,
+    id: GroupId,
+) -> Result<(), AppCommandError> {
+    if library.groups.iter().any(|g| g.id == id) {
+        Ok(())
+    } else {
+        Err(group_not_found(id))
+    }
+}
+
 pub(crate) fn reference_sheet_from_image(
     bytes: Vec<u8>,
     mime: String,
@@ -216,12 +263,7 @@ pub(crate) fn create_entity_in_project(
     }
 
     if let Some(gid) = args.group_id {
-        if !project.library.groups.iter().any(|g| g.id == gid) {
-            return Err(AppCommandError::NotFound {
-                entity: "group".into(),
-                id: u64::from(gid.get()),
-            });
-        }
+        ensure_group_exists(&project.library, gid)?;
     }
 
     // Validate kind-specific required fields before touching next_id.
@@ -466,15 +508,7 @@ pub(crate) fn rename_entity_in_project(
             detail: "entity name must not be empty".into(),
         });
     }
-    let entity = project
-        .library
-        .entities
-        .iter_mut()
-        .find(|e| e.id == entity_id)
-        .ok_or(AppCommandError::NotFound {
-            entity: "entity".into(),
-            id: u64::from(entity_id.get()),
-        })?;
+    let entity = find_entity_mut(&mut project.library, entity_id)?;
     entity.name = name;
     entity.updated_at = ts;
     Ok(())
@@ -585,15 +619,7 @@ pub(crate) fn delete_state_from_entity(
     state_id: StateId,
     ts: i64,
 ) -> Result<(), AppCommandError> {
-    let entity = project
-        .library
-        .entities
-        .iter_mut()
-        .find(|e| e.id == entity_id)
-        .ok_or(AppCommandError::NotFound {
-            entity: "entity".into(),
-            id: u64::from(entity_id.get()),
-        })?;
+    let entity = find_entity_mut(&mut project.library, entity_id)?;
 
     let EntityContent::Sprites { states, .. } = &mut entity.content else {
         return Err(AppCommandError::Validation {
@@ -640,15 +666,7 @@ pub(crate) fn rename_state_in_entity(
         });
     }
 
-    let entity = project
-        .library
-        .entities
-        .iter_mut()
-        .find(|e| e.id == entity_id)
-        .ok_or(AppCommandError::NotFound {
-            entity: "entity".into(),
-            id: u64::from(entity_id.get()),
-        })?;
+    let entity = find_entity_mut(&mut project.library, entity_id)?;
 
     let EntityContent::Sprites { states, .. } = &mut entity.content else {
         return Err(AppCommandError::Validation {
@@ -685,23 +703,10 @@ pub(crate) fn move_entity_to_group(
     ts: i64,
 ) -> Result<(), AppCommandError> {
     if let Some(gid) = group_id {
-        if !project.library.groups.iter().any(|g| g.id == gid) {
-            return Err(AppCommandError::NotFound {
-                entity: "group".into(),
-                id: u64::from(gid.get()),
-            });
-        }
+        ensure_group_exists(&project.library, gid)?;
     }
 
-    let entity = project
-        .library
-        .entities
-        .iter_mut()
-        .find(|e| e.id == entity_id)
-        .ok_or(AppCommandError::NotFound {
-            entity: "entity".into(),
-            id: u64::from(entity_id.get()),
-        })?;
+    let entity = find_entity_mut(&mut project.library, entity_id)?;
     entity.group_id = group_id;
     entity.updated_at = ts;
     Ok(())
@@ -720,12 +725,7 @@ pub(crate) fn create_group_in_project(
     }
 
     if let Some(pid) = args.parent_id {
-        if !project.library.groups.iter().any(|g| g.id == pid) {
-            return Err(AppCommandError::NotFound {
-                entity: "group".into(),
-                id: u64::from(pid.get()),
-            });
-        }
+        ensure_group_exists(&project.library, pid)?;
     }
 
     let group_id = GroupId::new(*next_id);
@@ -843,12 +843,7 @@ pub(crate) fn set_group_parent_in_project(
     group_id: GroupId,
     parent_id: Option<GroupId>,
 ) -> Result<(), AppCommandError> {
-    if !project.library.groups.iter().any(|g| g.id == group_id) {
-        return Err(AppCommandError::NotFound {
-            entity: "group".into(),
-            id: u64::from(group_id.get()),
-        });
-    }
+    ensure_group_exists(&project.library, group_id)?;
 
     if let Some(pid) = parent_id {
         if pid == group_id {
@@ -870,12 +865,7 @@ pub(crate) fn set_group_parent_in_project(
                 .find(|g| g.id == cid)
                 .and_then(|g| g.parent_id);
         }
-        if !project.library.groups.iter().any(|g| g.id == pid) {
-            return Err(AppCommandError::NotFound {
-                entity: "group".into(),
-                id: u64::from(pid.get()),
-            });
-        }
+        ensure_group_exists(&project.library, pid)?;
     }
 
     let group = project
@@ -908,15 +898,7 @@ pub(crate) fn set_active_target_in_project(
             entity_id,
             state_id,
         } => {
-            let entity = project
-                .library
-                .entities
-                .iter()
-                .find(|e| e.id == entity_id)
-                .ok_or(AppCommandError::NotFound {
-                    entity: "entity".into(),
-                    id: u64::from(entity_id.get()),
-                })?;
+            let entity = find_entity(&project.library, entity_id)?;
             let EntityContent::Sprites { states, .. } = &entity.content else {
                 return Err(AppCommandError::Validation {
                     detail: format!(
@@ -1064,15 +1046,7 @@ pub(crate) fn tag_entity_in_project(
         });
     }
 
-    let entity = project
-        .library
-        .entities
-        .iter_mut()
-        .find(|e| e.id == entity_id)
-        .ok_or(AppCommandError::NotFound {
-            entity: "entity".into(),
-            id: u64::from(entity_id.get()),
-        })?;
+    let entity = find_entity_mut(&mut project.library, entity_id)?;
 
     if entity.tags.contains(&tag_id) {
         return Ok(false);
@@ -1092,15 +1066,7 @@ pub(crate) fn untag_entity_in_project(
     tag_id: TagId,
     ts: i64,
 ) -> Result<bool, AppCommandError> {
-    let entity = project
-        .library
-        .entities
-        .iter_mut()
-        .find(|e| e.id == entity_id)
-        .ok_or(AppCommandError::NotFound {
-            entity: "entity".into(),
-            id: u64::from(entity_id.get()),
-        })?;
+    let entity = find_entity_mut(&mut project.library, entity_id)?;
 
     let before = entity.tags.len();
     entity.tags.retain(|&t| t != tag_id);
@@ -1769,15 +1735,7 @@ pub async fn library_generate_reference_sheet(
             .project
             .as_ref()
             .ok_or(AppCommandError::NoActiveProject)?;
-        let entity = project
-            .library
-            .entities
-            .iter()
-            .find(|e| e.id == args.entity_id)
-            .ok_or_else(|| AppCommandError::NotFound {
-                entity: "entity".into(),
-                id: u64::from(args.entity_id.get()),
-            })?;
+        let entity = find_entity(&project.library, args.entity_id)?;
         if !matches!(entity.content, EntityContent::Sprites { .. }) {
             return Err(AppCommandError::Validation {
                 detail: format!(
@@ -1890,15 +1848,7 @@ pub async fn library_approve_sheet_variant(
         ExtractionOptions::default(),
     )?;
     // Bump `updated_at` so the UI refresh observes the entity as changed.
-    let entity = project
-        .library
-        .entities
-        .iter_mut()
-        .find(|e| e.id == args.entity_id)
-        .ok_or_else(|| AppCommandError::NotFound {
-            entity: "entity".into(),
-            id: u64::from(args.entity_id.get()),
-        })?;
+    let entity = find_entity_mut(&mut project.library, args.entity_id)?;
     entity.updated_at = ts;
     let updated = entity.clone();
     doc.dirty = true;
@@ -1921,15 +1871,7 @@ pub async fn library_get_anchor_payload(
         .project
         .as_ref()
         .ok_or(AppCommandError::NoActiveProject)?;
-    let entity = project
-        .library
-        .entities
-        .iter()
-        .find(|e| e.id == entity_id)
-        .ok_or(AppCommandError::NotFound {
-            entity: "entity".into(),
-            id: u64::from(entity_id.get()),
-        })?;
+    let entity = find_entity(&project.library, entity_id)?;
 
     let sheet = match &entity.content {
         EntityContent::Sprites {
@@ -2013,16 +1955,7 @@ pub async fn library_remove_reference_sheet_variant(
         .as_mut()
         .ok_or(AppCommandError::NoActiveProject)?;
     delete_sheet_variant_in_project(project, args.entity_id, args.variant_id, ts)?;
-    let updated = project
-        .library
-        .entities
-        .iter()
-        .find(|e| e.id == args.entity_id)
-        .ok_or_else(|| AppCommandError::NotFound {
-            entity: "entity".into(),
-            id: u64::from(args.entity_id.get()),
-        })?
-        .clone();
+    let updated = find_entity(&project.library, args.entity_id)?.clone();
     doc.dirty = true;
     Ok(updated)
 }
@@ -3178,15 +3111,7 @@ async fn commit_provider_variants(
         .project
         .as_mut()
         .ok_or(AppCommandError::NoActiveProject)?;
-    let entity = project
-        .library
-        .entities
-        .iter_mut()
-        .find(|e| e.id == entity_id)
-        .ok_or_else(|| AppCommandError::NotFound {
-            entity: "entity".into(),
-            id: u64::from(entity_id.get()),
-        })?;
+    let entity = find_entity_mut(&mut project.library, entity_id)?;
     let sheet = embedded_reference_sheet_or_create_mut(entity)?;
 
     let mut new_variants = Vec::new();
@@ -3506,15 +3431,7 @@ pub async fn library_refine_reference_sheet_variant(
             .project
             .as_ref()
             .ok_or(AppCommandError::NoActiveProject)?;
-        let entity = project
-            .library
-            .entities
-            .iter()
-            .find(|e| e.id == args.entity_id)
-            .ok_or_else(|| AppCommandError::NotFound {
-                entity: "entity".into(),
-                id: u64::from(args.entity_id.get()),
-            })?;
+        let entity = find_entity(&project.library, args.entity_id)?;
         let sheet = match &entity.content {
             EntityContent::Sprites {
                 reference_sheet: Some(sheet),
@@ -3637,15 +3554,7 @@ pub async fn library_submit_chat_turn(
             .project
             .as_ref()
             .ok_or(AppCommandError::NoActiveProject)?;
-        let entity = project
-            .library
-            .entities
-            .iter()
-            .find(|e| e.id == args.entity_id)
-            .ok_or_else(|| AppCommandError::NotFound {
-                entity: "entity".into(),
-                id: u64::from(args.entity_id.get()),
-            })?;
+        let entity = find_entity(&project.library, args.entity_id)?;
         let sheet = match &entity.content {
             EntityContent::Sprites {
                 reference_sheet: Some(sheet),
@@ -3745,15 +3654,7 @@ pub async fn library_promote_variant_to_final(
             .project
             .as_ref()
             .ok_or(AppCommandError::NoActiveProject)?;
-        let entity = project
-            .library
-            .entities
-            .iter()
-            .find(|e| e.id == args.entity_id)
-            .ok_or_else(|| AppCommandError::NotFound {
-                entity: "entity".into(),
-                id: u64::from(args.entity_id.get()),
-            })?;
+        let entity = find_entity(&project.library, args.entity_id)?;
         let sheet = match &entity.content {
             EntityContent::Sprites {
                 reference_sheet: Some(sheet),
@@ -3849,15 +3750,7 @@ pub async fn library_start_cross_model_grid(
             .project
             .as_ref()
             .ok_or(AppCommandError::NoActiveProject)?;
-        let entity = project
-            .library
-            .entities
-            .iter()
-            .find(|e| e.id == args.entity_id)
-            .ok_or_else(|| AppCommandError::NotFound {
-                entity: "entity".into(),
-                id: u64::from(args.entity_id.get()),
-            })?;
+        let entity = find_entity(&project.library, args.entity_id)?;
         if !matches!(entity.content, EntityContent::Sprites { .. }) {
             return Err(AppCommandError::Validation {
                 detail: format!(
@@ -3932,15 +3825,7 @@ pub async fn library_export_variant_as_vector(
             .project
             .as_ref()
             .ok_or(AppCommandError::NoActiveProject)?;
-        let entity = project
-            .library
-            .entities
-            .iter()
-            .find(|e| e.id == args.entity_id)
-            .ok_or_else(|| AppCommandError::NotFound {
-                entity: "entity".into(),
-                id: u64::from(args.entity_id.get()),
-            })?;
+        let entity = find_entity(&project.library, args.entity_id)?;
         let sheet = match &entity.content {
             EntityContent::Sprites {
                 reference_sheet: Some(sheet),
@@ -4118,15 +4003,7 @@ pub async fn library_save_variant_as_character_card(
         .project
         .as_mut()
         .ok_or(AppCommandError::NoActiveProject)?;
-    let entity = project
-        .library
-        .entities
-        .iter_mut()
-        .find(|e| e.id == args.entity_id)
-        .ok_or_else(|| AppCommandError::NotFound {
-            entity: "entity".into(),
-            id: u64::from(args.entity_id.get()),
-        })?;
+    let entity = find_entity_mut(&mut project.library, args.entity_id)?;
     let sheet = embedded_reference_sheet_mut(entity)?;
     let variant = find_variant(sheet, args.variant_id)
         .cloned()
@@ -4186,15 +4063,7 @@ pub async fn library_save_variant_as_style_swatch(
         .project
         .as_mut()
         .ok_or(AppCommandError::NoActiveProject)?;
-    let entity = project
-        .library
-        .entities
-        .iter_mut()
-        .find(|e| e.id == args.entity_id)
-        .ok_or_else(|| AppCommandError::NotFound {
-            entity: "entity".into(),
-            id: u64::from(args.entity_id.get()),
-        })?;
+    let entity = find_entity_mut(&mut project.library, args.entity_id)?;
     let sheet = embedded_reference_sheet_mut(entity)?;
     let variant = find_variant(sheet, args.variant_id)
         .cloned()
@@ -4770,15 +4639,7 @@ pub(crate) fn apply_generated_reference_sheet_payload(
     payload: GenerateSheetPayload,
     ts: i64,
 ) -> Result<Entity, AppCommandError> {
-    let entity = project
-        .library
-        .entities
-        .iter_mut()
-        .find(|e| e.id == payload.entity_id)
-        .ok_or_else(|| AppCommandError::NotFound {
-            entity: "entity".into(),
-            id: u64::from(payload.entity_id.get()),
-        })?;
+    let entity = find_entity_mut(&mut project.library, payload.entity_id)?;
 
     let EntityContent::Sprites {
         reference_sheet, ..
@@ -4838,15 +4699,7 @@ pub(crate) fn import_reference_sheet_draft(
     args: LibraryImportReferenceSheetArgs,
     ts: i64,
 ) -> Result<Entity, AppCommandError> {
-    let entity = project
-        .library
-        .entities
-        .iter_mut()
-        .find(|e| e.id == args.entity_id)
-        .ok_or_else(|| AppCommandError::NotFound {
-            entity: "entity".into(),
-            id: u64::from(args.entity_id.get()),
-        })?;
+    let entity = find_entity_mut(&mut project.library, args.entity_id)?;
 
     let EntityContent::Sprites {
         reference_sheet, ..
@@ -4895,15 +4748,7 @@ pub(crate) fn update_asset_info_in_project(
     info: AssetInfo,
     ts: i64,
 ) -> Result<(), AppCommandError> {
-    let entity = project
-        .library
-        .entities
-        .iter_mut()
-        .find(|e| e.id == entity_id)
-        .ok_or_else(|| AppCommandError::NotFound {
-            entity: "entity".into(),
-            id: u64::from(entity_id.get()),
-        })?;
+    let entity = find_entity_mut(&mut project.library, entity_id)?;
 
     let sheet = embedded_reference_sheet_mut(entity)?;
 
@@ -4918,15 +4763,7 @@ pub(crate) fn delete_sheet_variant_in_project(
     variant_id: SheetVariantId,
     ts: i64,
 ) -> Result<(), AppCommandError> {
-    let entity = project
-        .library
-        .entities
-        .iter_mut()
-        .find(|e| e.id == entity_id)
-        .ok_or_else(|| AppCommandError::NotFound {
-            entity: "entity".into(),
-            id: u64::from(entity_id.get()),
-        })?;
+    let entity = find_entity_mut(&mut project.library, entity_id)?;
 
     let sheet = embedded_reference_sheet_mut(entity)?;
 
@@ -5148,15 +4985,7 @@ pub async fn library_auto_tag_entity(
             .project
             .as_ref()
             .ok_or(AppCommandError::NoActiveProject)?;
-        let entity = project
-            .library
-            .entities
-            .iter()
-            .find(|e| e.id == entity_id)
-            .ok_or_else(|| AppCommandError::NotFound {
-                entity: "entity".into(),
-                id: u64::from(entity_id.get()),
-            })?;
+        let entity = find_entity(&project.library, entity_id)?;
         let metadata = build_auto_tag_metadata(entity, &project.library.tags);
         let ctx = VerbContextBuilder::new(project.metadata.clone())
             .with_library_entity(entity_id)
@@ -5243,15 +5072,7 @@ pub async fn library_accept_suggested_tag(
     // Validate: the tag must currently be in the entity's suggested set —
     // accepting an arbitrary tag id (one nobody suggested, or one that
     // doesn't even exist) would silently corrupt entity.tags.
-    let entity = project
-        .library
-        .entities
-        .iter_mut()
-        .find(|e| e.id == entity_id)
-        .ok_or_else(|| AppCommandError::NotFound {
-            entity: "entity".into(),
-            id: u64::from(entity_id.get()),
-        })?;
+    let entity = find_entity_mut(&mut project.library, entity_id)?;
     if !entity.ai.suggested_tags.contains(&tag_id) {
         return Err(AppCommandError::Validation {
             detail: format!(
@@ -5285,15 +5106,7 @@ pub async fn library_reject_suggested_tag(
         .project
         .as_mut()
         .ok_or(AppCommandError::NoActiveProject)?;
-    let entity = project
-        .library
-        .entities
-        .iter_mut()
-        .find(|e| e.id == entity_id)
-        .ok_or_else(|| AppCommandError::NotFound {
-            entity: "entity".into(),
-            id: u64::from(entity_id.get()),
-        })?;
+    let entity = find_entity_mut(&mut project.library, entity_id)?;
     entity.ai.suggested_tags.retain(|&id| id != tag_id);
     entity.updated_at = ts;
     doc.dirty = true;
@@ -5409,15 +5222,7 @@ async fn build_train_entity_lora_context(
         .project
         .as_ref()
         .ok_or(AppCommandError::NoActiveProject)?;
-    let entity = project
-        .library
-        .entities
-        .iter()
-        .find(|e| e.id == entity_id)
-        .ok_or_else(|| AppCommandError::NotFound {
-            entity: "entity".into(),
-            id: u64::from(entity_id.get()),
-        })?;
+    let entity = find_entity(&project.library, entity_id)?;
     let sheet = match &entity.content {
         EntityContent::Sprites {
             reference_sheet: Some(sheet),

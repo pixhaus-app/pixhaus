@@ -6,6 +6,6 @@ import type { TrainingJobId } from "./TrainingJobId";
 import type { TrainingStatus } from "./TrainingStatus";
 
 /**
- * Async LoRA training job record.
+ * Async `LoRA` training job record.
  */
 export type TrainingJob = { id: TrainingJobId, asset_name: string, kind: LoraKind, target_model: ModelId, trigger_word: string, training_data?: Array<AssetId>, fal_job_id: string, status: TrainingStatus, created_at: number, completed_at?: number | null, result_lora_id?: AssetId | null, error?: string | null, };

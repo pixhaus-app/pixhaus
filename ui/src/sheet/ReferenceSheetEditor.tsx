@@ -48,7 +48,6 @@ import {
   libraryStartCrossModelGrid,
   librarySubmitChatTurn,
   libraryTrainLora,
-  type ImageQuality,
   type ModelQualityPair,
   type RequestId,
   type ReferenceSheetTemplate,
@@ -66,6 +65,13 @@ import {
   showPanelOverlay,
   setShowPanelOverlay,
 } from "./sheet-state";
+import {
+  DEFAULT_SHEET_DIMENSION,
+  type FlatPanel,
+  flatPanels,
+  sheetHeight as computeSheetHeight,
+  sheetWidth as computeSheetWidth,
+} from "./sheet-panels";
 
 type SheetEditorTemplateOption = {
   value: ReferenceSheetTemplate;
@@ -74,6 +80,7 @@ type SheetEditorTemplateOption = {
 
 type EditorView = "browse" | "generate" | "refine" | "chat" | "compare" | "assets" | "provenance";
 type RefineMode = "masked" | "prompt_only" | "regional";
+type SlotTarget = "generate" | "refine" | "region";
 
 type SheetRequestCompletePayload = {
   request_id: number;
@@ -121,7 +128,7 @@ const TEMPLATES: SheetEditorTemplateOption[] = [
   { value: "custom", label: "Custom" },
 ];
 
-const QUALITIES: Array<{ value: ImageQuality; label: string }> = [
+const QUALITIES: Array<{ value: Quality; label: string }> = [
   { value: "medium", label: "Medium" },
   { value: "low", label: "Low" },
   { value: "high", label: "High" },
@@ -207,7 +214,6 @@ const ReferenceSheetEditor: Component = () => {
   const [generating, setGenerating] = createSignal(false);
   const [prompt, setPrompt] = createSignal("");
   const [template, setTemplate] = createSignal<ReferenceSheetTemplate>("character");
-  const [quality, setQuality] = createSignal<ImageQuality>("medium");
   const [candidateCount, setCandidateCount] = createSignal(2);
   const [selectedVariantId, setSelectedVariantId] = createSignal<number | null>(null);
   const [activeView, setActiveView] = createSignal<EditorView>("generate");
@@ -411,25 +417,17 @@ const ReferenceSheetEditor: Component = () => {
     }),
   );
 
-  const allPanels = (): Array<{ label: string; x: number; y: number; w: number; h: number }> => {
-    const composition = selectedVariant()?.composition;
-    if (composition == null) return [];
-    return [
-      ...(composition.views ?? []),
-      ...(composition.expressions ?? []),
-      ...(composition.callouts ?? []),
-      ...(composition.outfits ?? []),
-    ].map((panel) => ({
-      label: panel.label,
-      x: panel.region.origin.x,
-      y: panel.region.origin.y,
-      w: panel.region.size.width,
-      h: panel.region.size.height,
-    }));
-  };
-  const sheetWidth = (): number => Math.max(1024, ...allPanels().map((panel) => panel.x + panel.w));
+  const allPanels = (): FlatPanel[] => flatPanels(selectedVariant()?.composition);
+  const sheetWidth = (): number =>
+    computeSheetWidth(selectedVariant()?.composition, {
+      floor: DEFAULT_SHEET_DIMENSION,
+      fallback: DEFAULT_SHEET_DIMENSION,
+    });
   const sheetHeight = (): number =>
-    Math.max(1024, ...allPanels().map((panel) => panel.y + panel.h));
+    computeSheetHeight(selectedVariant()?.composition, {
+      floor: DEFAULT_SHEET_DIMENSION,
+      fallback: DEFAULT_SHEET_DIMENSION,
+    });
 
   function isPanelSelected(panel: { x: number; y: number }): boolean {
     const selected = selectedPanelRegion();
@@ -491,55 +489,32 @@ const ReferenceSheetEditor: Component = () => {
     }
   }
 
-  function addReferenceSlot(
-    slot: ReferenceSlot,
-    target: "generate" | "refine" | "region" = "generate",
-  ): void {
-    const setter =
-      target === "refine"
-        ? setAdditionalReferenceSlots
-        : target === "region"
-          ? setRegionReferenceSlots
-          : setReferenceSlots;
-    setter((rows) => [...rows, slot].slice(0, 16));
+  function slotSetter(target: SlotTarget) {
+    if (target === "refine") return setAdditionalReferenceSlots;
+    if (target === "region") return setRegionReferenceSlots;
+    return setReferenceSlots;
+  }
+
+  function addReferenceSlot(slot: ReferenceSlot, target: SlotTarget = "generate"): void {
+    slotSetter(target)((rows) => [...rows, slot].slice(0, 16));
   }
 
   function updateSlot(
     index: number,
     patch: Partial<Pick<ReferenceSlot, "role" | "weight">>,
-    target: "generate" | "refine" | "region" = "generate",
+    target: SlotTarget = "generate",
   ): void {
-    const setter =
-      target === "refine"
-        ? setAdditionalReferenceSlots
-        : target === "region"
-          ? setRegionReferenceSlots
-          : setReferenceSlots;
-    setter((rows) => rows.map((slot, i) => (i === index ? { ...slot, ...patch } : slot)));
+    slotSetter(target)((rows) =>
+      rows.map((slot, i) => (i === index ? { ...slot, ...patch } : slot)),
+    );
   }
 
-  function removeSlot(index: number, target: "generate" | "refine" | "region" = "generate"): void {
-    const setter =
-      target === "refine"
-        ? setAdditionalReferenceSlots
-        : target === "region"
-          ? setRegionReferenceSlots
-          : setReferenceSlots;
-    setter((rows) => rows.filter((_, i) => i !== index));
+  function removeSlot(index: number, target: SlotTarget = "generate"): void {
+    slotSetter(target)((rows) => rows.filter((_, i) => i !== index));
   }
 
-  function moveSlot(
-    index: number,
-    direction: -1 | 1,
-    target: "generate" | "refine" | "region" = "generate",
-  ): void {
-    const setter =
-      target === "refine"
-        ? setAdditionalReferenceSlots
-        : target === "region"
-          ? setRegionReferenceSlots
-          : setReferenceSlots;
-    setter((rows) => {
+  function moveSlot(index: number, direction: -1 | 1, target: SlotTarget = "generate"): void {
+    slotSetter(target)((rows) => {
       const next = [...rows];
       const swap = index + direction;
       if (swap < 0 || swap >= next.length) return rows;
@@ -554,7 +529,7 @@ const ReferenceSheetEditor: Component = () => {
 
   async function handleReferenceDrop(
     event: DragEvent,
-    target: "generate" | "refine" | "region" = "generate",
+    target: SlotTarget = "generate",
   ): Promise<void> {
     event.preventDefault();
     const assetPayload = event.dataTransfer?.getData("application/x-pixhaus-reference");
@@ -951,6 +926,54 @@ const ReferenceSheetEditor: Component = () => {
       .catch((err: unknown) => reportCommandFailure("library_remove_reference_sheet_variant", err));
   }
 
+  function ReferenceSlotRow(props: {
+    slot: ReferenceSlot;
+    index: number;
+    target: SlotTarget;
+    compact?: boolean;
+  }) {
+    return (
+      <div class="sheet-editor__ref-slot">
+        <img src={dataUri(props.slot.image)} alt="" />
+        <select
+          value={props.slot.role}
+          onChange={(event) =>
+            updateSlot(
+              props.index,
+              { role: event.currentTarget.value as ReferenceRole },
+              props.target,
+            )
+          }
+        >
+          <For each={ROLE_OPTIONS}>
+            {(option) => <option value={option.value}>{option.label}</option>}
+          </For>
+        </select>
+        <Show when={!props.compact}>
+          <input
+            type="range"
+            min="0"
+            max="1"
+            step="0.05"
+            value={props.slot.weight}
+            onInput={(event) =>
+              updateSlot(props.index, { weight: Number(event.currentTarget.value) }, props.target)
+            }
+          />
+          <Button variant="ghost" size="sm" onClick={() => moveSlot(props.index, -1, props.target)}>
+            Up
+          </Button>
+          <Button variant="ghost" size="sm" onClick={() => moveSlot(props.index, 1, props.target)}>
+            Down
+          </Button>
+        </Show>
+        <Button variant="ghost" size="sm" onClick={() => removeSlot(props.index, props.target)}>
+          Remove
+        </Button>
+      </div>
+    );
+  }
+
   return (
     <div class="sheet-editor" data-testid="reference-sheet-editor">
       <div class="sheet-editor__topbar">
@@ -1182,12 +1205,8 @@ const ReferenceSheetEditor: Component = () => {
                   <span>Quality</span>
                   <select
                     class="sheet-editor__select"
-                    value={quality()}
-                    onChange={(event) => {
-                      const next = event.currentTarget.value as ImageQuality;
-                      setQuality(next);
-                      setV1Quality(next);
-                    }}
+                    value={v1Quality()}
+                    onChange={(event) => setV1Quality(event.currentTarget.value as Quality)}
                   >
                     <For each={QUALITIES}>
                       {(option) => <option value={option.value}>{option.label}</option>}
@@ -1267,38 +1286,7 @@ const ReferenceSheetEditor: Component = () => {
                 <span>References</span>
                 <For each={referenceSlots()}>
                   {(slot, index) => (
-                    <div class="sheet-editor__ref-slot">
-                      <img src={dataUri(slot.image)} alt="" />
-                      <select
-                        value={slot.role}
-                        onChange={(event) =>
-                          updateSlot(index(), { role: event.currentTarget.value as ReferenceRole })
-                        }
-                      >
-                        <For each={ROLE_OPTIONS}>
-                          {(option) => <option value={option.value}>{option.label}</option>}
-                        </For>
-                      </select>
-                      <input
-                        type="range"
-                        min="0"
-                        max="1"
-                        step="0.05"
-                        value={slot.weight}
-                        onInput={(event) =>
-                          updateSlot(index(), { weight: Number(event.currentTarget.value) })
-                        }
-                      />
-                      <Button variant="ghost" size="sm" onClick={() => moveSlot(index(), -1)}>
-                        Up
-                      </Button>
-                      <Button variant="ghost" size="sm" onClick={() => moveSlot(index(), 1)}>
-                        Down
-                      </Button>
-                      <Button variant="ghost" size="sm" onClick={() => removeSlot(index())}>
-                        Remove
-                      </Button>
-                    </div>
+                    <ReferenceSlotRow slot={slot} index={index()} target="generate" />
                   )}
                 </For>
               </div>
@@ -1489,30 +1477,7 @@ const ReferenceSheetEditor: Component = () => {
                   <span>Region references</span>
                   <For each={regionReferenceSlots()}>
                     {(slot, index) => (
-                      <div class="sheet-editor__ref-slot">
-                        <img src={dataUri(slot.image)} alt="" />
-                        <select
-                          value={slot.role}
-                          onChange={(event) =>
-                            updateSlot(
-                              index(),
-                              { role: event.currentTarget.value as ReferenceRole },
-                              "region",
-                            )
-                          }
-                        >
-                          <For each={ROLE_OPTIONS}>
-                            {(option) => <option value={option.value}>{option.label}</option>}
-                          </For>
-                        </select>
-                        <Button
-                          variant="ghost"
-                          size="sm"
-                          onClick={() => removeSlot(index(), "region")}
-                        >
-                          Remove
-                        </Button>
-                      </div>
+                      <ReferenceSlotRow slot={slot} index={index()} target="region" compact />
                     )}
                   </For>
                 </div>
@@ -1526,30 +1491,7 @@ const ReferenceSheetEditor: Component = () => {
                 <span>Additional references</span>
                 <For each={additionalReferenceSlots()}>
                   {(slot, index) => (
-                    <div class="sheet-editor__ref-slot">
-                      <img src={dataUri(slot.image)} alt="" />
-                      <select
-                        value={slot.role}
-                        onChange={(event) =>
-                          updateSlot(
-                            index(),
-                            { role: event.currentTarget.value as ReferenceRole },
-                            "refine",
-                          )
-                        }
-                      >
-                        <For each={ROLE_OPTIONS}>
-                          {(option) => <option value={option.value}>{option.label}</option>}
-                        </For>
-                      </select>
-                      <Button
-                        variant="ghost"
-                        size="sm"
-                        onClick={() => removeSlot(index(), "refine")}
-                      >
-                        Remove
-                      </Button>
-                    </div>
+                    <ReferenceSlotRow slot={slot} index={index()} target="refine" compact />
                   )}
                 </For>
               </div>

@@ -20,106 +20,106 @@ import type { VariantOrigin } from "./VariantOrigin";
  * The raster image is always embedded. Optional vector output is stored
  * as another [`ReferenceImage`] with `mime = "image/svg+xml"`.
  */
-export type SheetVariant = {
+export type SheetVariant = { 
 /**
  * Stable identifier within the parent [`ReferenceSheet`].
  */
-id: SheetVariantId,
+id: SheetVariantId, 
 /**
  * UTC seconds-since-epoch at which this variant was generated or
  * imported.
  */
-created_at: number,
+created_at: number, 
 /**
  * Layout template used to generate this sheet.
  */
-template: ReferenceSheetTemplateId,
+template: ReferenceSheetTemplateId, 
 /**
  * Output raster width.
  */
-width: number,
+width: number, 
 /**
  * Output raster height.
  */
-height: number,
+height: number, 
 /**
  * Flat chroma-key background color requested for the model.
  */
-chroma_color: Rgba,
+chroma_color: Rgba, 
 /**
  * User-typed prompt for this operation.
  */
-user_prompt?: string,
+user_prompt?: string, 
 /**
  * Full composed prompt after style notes/template/reference hints.
  */
-composed_prompt?: string,
+composed_prompt?: string, 
 /**
  * Ordered generation references with role hints.
  */
-references?: Array<ReferenceSlot>,
+references?: Array<ReferenceSlot>, 
 /**
  * Whether Google Search grounding was requested.
  */
-real_world_grounding: boolean,
+real_world_grounding: boolean, 
 /**
- * Applied LoRA asset, Flux-only.
+ * Applied `LoRA` asset, Flux-only.
  */
-applied_lora?: AssetId | null,
+applied_lora?: AssetId | null, 
 /**
- * Applied LoRA strength for Flux requests.
+ * Applied `LoRA` strength for Flux requests.
  */
-lora_weight?: number,
+lora_weight?: number, 
 /**
  * The composite sheet image.
  */
-image: ReferenceImage,
+image: ReferenceImage, 
 /**
  * Optional vectorized SVG output.
  */
-vector_image?: ReferenceImage | null,
+vector_image?: ReferenceImage | null, 
 /**
  * Model that produced this variant.
  */
-model: ModelId,
+model: ModelId, 
 /**
  * Quality tier used for the run.
  */
-quality: Quality,
+quality: Quality, 
 /**
  * Parent/source variant for refinements, chat turns, promotions, and
  * cross-model comparisons.
  */
-parent_variant_id?: SheetVariantId | null,
+parent_variant_id?: SheetVariantId | null, 
 /**
  * Operation origin.
  */
-origin: VariantOrigin,
+origin: VariantOrigin, 
 /**
  * Refinement-specific metadata.
  */
-refinement?: RefinementKind | null,
+refinement?: RefinementKind | null, 
 /**
  * Full chat transcript for chat-generated variants.
  */
-chat_transcript?: ChatTranscript | null,
+chat_transcript?: ChatTranscript | null, 
 /**
  * True when produced by "Promote to final".
  */
-promotion: boolean,
+promotion: boolean, 
 /**
  * Actual cost recorded after completion, if known.
  */
-cost_usd?: number | null,
+cost_usd?: number | null, 
 /**
  * What's in the sheet, panel by panel. Empty in B9; B10 fills it.
  */
-composition?: SheetComposition,
+composition?: SheetComposition, 
 /**
  * Generation provenance. `None` in B9 for user-uploaded references;
  * B10's generator populates these.
  */
-generation?: GenerationProvenance | null,
+generation?: GenerationProvenance | null, 
 /**
  * Palette extracted from the sheet image. Empty in B9; B10's
  * generator runs eyedropper extraction at sheet-creation time.
