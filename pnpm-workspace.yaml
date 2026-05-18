@@ -4,3 +4,39 @@ packages:
   - "website"
   - "tests/visual"
   - "tests/e2e"
+
+# Version pins for transitive dependencies with known issues.
+overrides:
+  "yaml@<2.8.3": ">=2.8.3"
+  "serialize-javascript@<7.0.5": ">=7.0.5"
+
+# Supply-chain hardening. See https://pnpm.io/supply-chain-security.
+#
+# `blockExoticSubdeps` rejects transitive deps from git URLs or direct
+# tarballs.
+#
+# `minimumReleaseAge` is set to 0 (disabled) while the current direct-
+# dependency tree contains versions younger than the target value of
+# 10080 (1 week) — e.g. @types/node, tsx, @fontsource/geist, vite,
+# eslint, astro, solid-js, rolldown, @sentry/*, @tauri-apps/cli. The
+# matching Dependabot `cooldown` in .github/dependabot.yml stops new
+# PRs from re-introducing very-recent versions. Bump this to 10080 in
+# a follow-up PR once the lockfile naturally ages past the cutoff
+# (estimated 2026-05-26 based on @types/node@25.9.0 publish time).
+#
+# `trustPolicy: no-downgrade` is intentionally not enabled. As of
+# 2026-05 it rejects foundational packages with inconsistent provenance
+# adoption (npm Inc.'s semver, Node.js team's undici-types, WebdriverIO,
+# chokidar). Revisit when ecosystem-wide provenance is the norm.
+minimumReleaseAge: 0
+blockExoticSubdeps: true
+# Postinstall script allowlist. Each entry is a trusted package that
+# needs to run its install-time script (binary download, native build).
+# All other postinstall scripts are blocked. Review carefully before
+# adding a new entry; this is the main mitigation against the
+# "compromised package runs malware on install" attack.
+allowBuilds:
+  edgedriver: true     # WebDriver binary for MS Edge (tests/e2e)
+  esbuild: true        # bundler native binary (transitive via vite/tsx)
+  geckodriver: true    # WebDriver binary for Firefox (tests/e2e)
+  sharp: true          # libvips native bindings (Astro image pipeline)
