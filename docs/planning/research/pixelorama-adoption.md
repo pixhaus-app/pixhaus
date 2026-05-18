@@ -290,11 +290,11 @@ Touches **S01** (pixel buffer / blend modes), **S02** (color/palette), **S03** (
 - **Integration.** S01, S02, S03. Lives in `core/src/color.rs`.
 - **Attribution.** Header comment in `core/src/color.rs`; "ported algorithms" line in `docs/THIRD_PARTY_LICENSES.md`.
 
-### 11. Three-mode bucket fill: AREA / SAME_COLOR / SELECTION_ONLY _(Tier D)_
+### 11. Three-mode bucket fill: area, same-color, selection-only _(Tier D)_
 
-- **Upstream.** `src/Tools/DesignTools/Bucket.gd:241, 317`. Same tool, three modes; SAME_COLOR sweeps the whole image via a shader, SELECTION_ONLY masks to the active selection, AREA runs scanline flood fill.
+- **Upstream.** `src/Tools/DesignTools/Bucket.gd:241, 317`. Same tool, three modes; "same-color" sweeps the whole image via a shader, "selection-only" masks to the active selection, "area" runs scanline flood fill.
 - **What we adopt.** Identical three-mode toggle in the brush-engine UI for the bucket tool.
-- **Why it matters.** Pixel artists use SAME_COLOR for global color-replace tasks (changing a character's shirt across all frames in one click). Forcing them to use "Edit → Replace color" hides a frequent operation behind a menu.
+- **Why it matters.** Pixel artists use the "same-color" mode for global color-replace tasks (changing a character's shirt across all frames in one click). Forcing them to use "Edit → Replace color" hides a frequent operation behind a menu.
 - **Integration.** S15 (brush engine UI), S01 (paint ops). Algorithm reuse: entry 9 for AREA, entry 10 for SAME_COLOR predicate.
 - **Attribution.** `docs/THIRD_PARTY_LICENSES.md` "adopted designs" entry.
 
