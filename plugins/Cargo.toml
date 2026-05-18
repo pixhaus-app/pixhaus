@@ -20,7 +20,7 @@ tracing.workspace = true
 parking_lot.workspace = true
 async-trait.workspace = true
 # Manifest parsing
-toml = "0.8"
+toml = "1.1"
 # Plugin-directory path resolution
 dirs = "6"
 # Hot-reload file watching
