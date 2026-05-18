@@ -14,48 +14,48 @@ import type { TrainingJob } from "./TrainingJob";
  * Per-entity AI metadata lives on [`Entity::ai`]; this struct collects
  * the project-wide pieces used by the v1 reference-sheet workflow:
  * prompt style notes, reusable assets, provider-routing preferences,
- * project defaults, and asynchronous LoRA training jobs.
+ * project defaults, and asynchronous `LoRA` training jobs.
  */
-export type ProjectAi = {
+export type ProjectAi = { 
 /**
  * Project-level notes prepended to every AI prompt composition.
  */
-style_notes?: string,
+style_notes?: string, 
 /**
  * Browseable project-scoped AI asset library.
  */
-asset_library?: AssetLibrary,
+asset_library?: AssetLibrary, 
 /**
  * Per-operation model overrides. If absent, the router uses its
  * operation defaults and configured-provider fallback.
  */
-per_operation_model_prefs?: { [key in OperationKind]?: ModelId },
+per_operation_model_prefs?: { [key in OperationKind]?: ModelId }, 
 /**
  * Default chroma-key color for new sheet generations.
  */
-default_chroma?: Rgba,
+default_chroma?: Rgba, 
 /**
  * Default quality tier for new generation forms.
  */
-default_quality?: Quality,
+default_quality?: Quality, 
 /**
  * Default candidate count for new generation forms.
  */
-default_candidate_count?: number,
+default_candidate_count?: number, 
 /**
- * LoRA training jobs, including completed and failed jobs.
+ * `LoRA` training jobs, including completed and failed jobs.
  */
-training_jobs?: Array<TrainingJob>,
+training_jobs?: Array<TrainingJob>, 
 /**
  * Entity ids included in the project's style reference corpus. The
  * Project Style Learning verb (S30) trains a `LoRA` from these.
  */
-style_corpus?: Array<EntityId>,
+style_corpus?: Array<EntityId>, 
 /**
  * Path to the trained `LoRA` file relative to the project directory.
  * Optional — projects without a learned style still work.
  */
-project_lora_path?: string | null,
+project_lora_path?: string | null, 
 /**
  * Recent prompts for resume-where-you-left-off semantic search.
  * Capped — the implementation details land with S21's follow-up.

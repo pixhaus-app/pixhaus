@@ -38,17 +38,61 @@ pub struct ProviderStatus {
     pub models: &'static [&'static str],
 }
 
-const GOOGLE_IMAGE_MODELS: &[&str] = &[
-    "gemini-3-pro-image-preview",
-    "gemini-3.1-flash-image-preview",
-];
+struct ProviderSpec {
+    id: &'static str,
+    label: &'static str,
+    models: &'static [&'static str],
+}
 
-const FAL_IMAGE_MODELS: &[&str] = &[
-    "fal-ai/flux-pro/kontext",
-    "fal-ai/flux-lora",
-    "fal-ai/recraft/vectorize",
-    "fal-ai/real-esrgan",
-];
+const OPENAI: ProviderSpec = ProviderSpec {
+    id: "openai",
+    label: "OpenAI",
+    models: &[DEFAULT_IMAGE_MODEL],
+};
+
+const GOOGLE_AI: ProviderSpec = ProviderSpec {
+    id: "google_ai",
+    label: "Google AI Studio",
+    models: &[
+        "gemini-3-pro-image-preview",
+        "gemini-3.1-flash-image-preview",
+    ],
+};
+
+const FAL: ProviderSpec = ProviderSpec {
+    id: "fal",
+    label: "fal.ai",
+    models: &[
+        "fal-ai/flux-pro/kontext",
+        "fal-ai/flux-lora",
+        "fal-ai/recraft/vectorize",
+        "fal-ai/real-esrgan",
+    ],
+};
+
+fn status_for(spec: &ProviderSpec, state: &AppState) -> CommandResult<ProviderStatus> {
+    let configured = provider_key_configured(spec.id)?;
+    let (registered, available) = provider_presence(state, spec.id);
+    Ok(provider_status(
+        spec.id,
+        spec.label,
+        configured,
+        registered,
+        available,
+        spec.models,
+    ))
+}
+
+fn status_optimistic(spec: &ProviderSpec, configured: bool) -> ProviderStatus {
+    provider_status(
+        spec.id,
+        spec.label,
+        configured,
+        configured,
+        configured,
+        spec.models,
+    )
+}
 
 /// Returns the `OpenAI` backend status without exposing the stored key.
 #[tauri::command(async, rename_all = "snake_case")]
@@ -70,8 +114,8 @@ pub async fn ai_set_openai_api_key(
         });
     }
 
-    ApiKeyStore::set("openai", trimmed).map_err(|err| key_error("openai", &err))?;
-    let _ = state.verb_runtime.unregister_backend("openai");
+    ApiKeyStore::set(OPENAI.id, trimmed).map_err(|err| key_error(OPENAI.id, &err))?;
+    let _ = state.verb_runtime.unregister_backend(OPENAI.id);
     state
         .verb_runtime
         .register_backend(BackendProxy::new(OpenAiBackend::new(trimmed)), 0)
@@ -85,11 +129,11 @@ pub async fn ai_set_openai_api_key(
 /// Deletes the stored `OpenAI` API key and unregisters the backend.
 #[tauri::command(async, rename_all = "snake_case")]
 pub async fn ai_clear_openai_api_key(state: State<'_, AppState>) -> CommandResult<OpenAiStatus> {
-    match ApiKeyStore::delete("openai") {
+    match ApiKeyStore::delete(OPENAI.id) {
         Ok(()) | Err(BackendError::ApiKeyNotFound(_)) => {}
-        Err(err) => return Err(key_error("openai", &err)),
+        Err(err) => return Err(key_error(OPENAI.id, &err)),
     }
-    let _ = state.verb_runtime.unregister_backend("openai");
+    let _ = state.verb_runtime.unregister_backend(OPENAI.id);
     Ok(openai_status(&state, false))
 }
 
@@ -99,44 +143,16 @@ pub async fn ai_get_provider_overview(
     state: State<'_, AppState>,
 ) -> CommandResult<Vec<ProviderStatus>> {
     Ok(vec![
-        provider_status(
-            "openai",
-            "OpenAI",
-            openai_key_configured()?,
-            openai_registered(&state),
-            openai_available(&state),
-            &[DEFAULT_IMAGE_MODEL],
-        ),
-        provider_status(
-            "google_ai",
-            "Google AI Studio",
-            provider_key_configured("google_ai")?,
-            provider_registered(&state, "google_ai"),
-            provider_available(&state, "google_ai"),
-            GOOGLE_IMAGE_MODELS,
-        ),
-        provider_status(
-            "fal",
-            "fal.ai",
-            provider_key_configured("fal")?,
-            provider_registered(&state, "fal"),
-            provider_available(&state, "fal"),
-            FAL_IMAGE_MODELS,
-        ),
+        status_for(&OPENAI, &state)?,
+        status_for(&GOOGLE_AI, &state)?,
+        status_for(&FAL, &state)?,
     ])
 }
 
 /// Returns the Google AI Studio key status.
 #[tauri::command(async, rename_all = "snake_case")]
 pub async fn ai_get_google_ai_status(state: State<'_, AppState>) -> CommandResult<ProviderStatus> {
-    Ok(provider_status(
-        "google_ai",
-        "Google AI Studio",
-        provider_key_configured("google_ai")?,
-        provider_registered(&state, "google_ai"),
-        provider_available(&state, "google_ai"),
-        GOOGLE_IMAGE_MODELS,
-    ))
+    status_for(&GOOGLE_AI, &state)
 }
 
 /// Stores a Google AI Studio API key. The provider adapter consumes this
@@ -147,22 +163,15 @@ pub async fn ai_set_google_ai_api_key(
     state: State<'_, AppState>,
 ) -> CommandResult<ProviderStatus> {
     let trimmed = api_key.trim();
-    set_provider_key("google_ai", trimmed)?;
-    let _ = state.verb_runtime.unregister_backend("google_ai");
+    set_provider_key(GOOGLE_AI.id, trimmed)?;
+    let _ = state.verb_runtime.unregister_backend(GOOGLE_AI.id);
     state
         .verb_runtime
         .register_backend(BackendProxy::new(GoogleAiBackend::new(trimmed)), 10)
         .map_err(|e| AppCommandError::VerbError {
             message: e.to_string(),
         })?;
-    Ok(provider_status(
-        "google_ai",
-        "Google AI Studio",
-        true,
-        true,
-        true,
-        GOOGLE_IMAGE_MODELS,
-    ))
+    Ok(status_optimistic(&GOOGLE_AI, true))
 }
 
 /// Clears the Google AI Studio API key.
@@ -170,29 +179,15 @@ pub async fn ai_set_google_ai_api_key(
 pub async fn ai_clear_google_ai_api_key(
     state: State<'_, AppState>,
 ) -> CommandResult<ProviderStatus> {
-    clear_provider_key("google_ai")?;
-    let _ = state.verb_runtime.unregister_backend("google_ai");
-    Ok(provider_status(
-        "google_ai",
-        "Google AI Studio",
-        false,
-        false,
-        false,
-        GOOGLE_IMAGE_MODELS,
-    ))
+    clear_provider_key(GOOGLE_AI.id)?;
+    let _ = state.verb_runtime.unregister_backend(GOOGLE_AI.id);
+    Ok(status_optimistic(&GOOGLE_AI, false))
 }
 
 /// Returns the fal.ai key status.
 #[tauri::command(async, rename_all = "snake_case")]
 pub async fn ai_get_fal_status(state: State<'_, AppState>) -> CommandResult<ProviderStatus> {
-    Ok(provider_status(
-        "fal",
-        "fal.ai",
-        provider_key_configured("fal")?,
-        provider_registered(&state, "fal"),
-        provider_available(&state, "fal"),
-        FAL_IMAGE_MODELS,
-    ))
+    status_for(&FAL, &state)
 }
 
 /// Stores a fal.ai API key. Flux, `LoRA` training, Recraft, and Real-ESRGAN
@@ -203,65 +198,35 @@ pub async fn ai_set_fal_api_key(
     state: State<'_, AppState>,
 ) -> CommandResult<ProviderStatus> {
     let trimmed = api_key.trim();
-    set_provider_key("fal", trimmed)?;
-    let _ = state.verb_runtime.unregister_backend("fal");
+    set_provider_key(FAL.id, trimmed)?;
+    let _ = state.verb_runtime.unregister_backend(FAL.id);
     state
         .verb_runtime
         .register_backend(BackendProxy::new(FalBackend::new(trimmed)), 20)
         .map_err(|e| AppCommandError::VerbError {
             message: e.to_string(),
         })?;
-    Ok(provider_status(
-        "fal",
-        "fal.ai",
-        true,
-        true,
-        true,
-        FAL_IMAGE_MODELS,
-    ))
+    Ok(status_optimistic(&FAL, true))
 }
 
 /// Clears the fal.ai API key.
 #[tauri::command(async, rename_all = "snake_case")]
 pub async fn ai_clear_fal_api_key(state: State<'_, AppState>) -> CommandResult<ProviderStatus> {
-    clear_provider_key("fal")?;
-    let _ = state.verb_runtime.unregister_backend("fal");
-    Ok(provider_status(
-        "fal",
-        "fal.ai",
-        false,
-        false,
-        false,
-        FAL_IMAGE_MODELS,
-    ))
+    clear_provider_key(FAL.id)?;
+    let _ = state.verb_runtime.unregister_backend(FAL.id);
+    Ok(status_optimistic(&FAL, false))
 }
 
 fn openai_key_configured() -> CommandResult<bool> {
-    provider_key_configured("openai")
+    provider_key_configured(OPENAI.id)
 }
 
 fn openai_status(state: &AppState, configured: bool) -> OpenAiStatus {
     OpenAiStatus {
         configured,
-        registered: openai_registered(state),
+        registered: provider_presence(state, OPENAI.id).0,
         model: DEFAULT_IMAGE_MODEL,
     }
-}
-
-fn openai_registered(state: &AppState) -> bool {
-    provider_registered(state, "openai")
-}
-
-fn openai_available(state: &AppState) -> bool {
-    provider_available(state, "openai")
-}
-
-fn provider_registered(state: &AppState, provider: &str) -> bool {
-    provider_presence(state, provider).0
-}
-
-fn provider_available(state: &AppState, provider: &str) -> bool {
-    provider_presence(state, provider).1
 }
 
 fn provider_presence(state: &AppState, provider: &str) -> (bool, bool) {

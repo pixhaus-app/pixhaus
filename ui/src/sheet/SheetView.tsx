@@ -31,6 +31,11 @@ import {
   showPanelOverlay,
   setShowPanelOverlay,
 } from "./sheet-state";
+import {
+  flatPanels,
+  sheetHeight as computeSheetHeight,
+  sheetWidth as computeSheetWidth,
+} from "./sheet-panels";
 import AssetInfoPanel from "./AssetInfoPanel";
 import HistoryStrip from "./HistoryStrip";
 import PromptStrip from "./PromptStrip";
@@ -122,51 +127,9 @@ const SheetView: Component = () => {
 
   const displayedDataUrl = useImageObjectUrl(() => displayedVariant()?.image ?? null);
 
-  // Determine sheet image natural dimensions from the composition template
-  // sizes known from B10.1 (1024×1536 for Character, 1024×1024 for others).
-  // When no composition panels exist we fall back to a square viewBox.
-  const sheetWidth = (): number => {
-    const v = displayedVariant();
-    if (v?.composition == null) return 1024;
-    const allPanels = [
-      ...(v.composition.views ?? []),
-      ...(v.composition.expressions ?? []),
-      ...(v.composition.callouts ?? []),
-      ...(v.composition.outfits ?? []),
-    ];
-    if (allPanels.length === 0) return 1024;
-    return Math.max(...allPanels.map((p) => p.region.origin.x + p.region.size.width));
-  };
-
-  const sheetHeight = (): number => {
-    const v = displayedVariant();
-    if (v?.composition == null) return 1024;
-    const allPanels = [
-      ...(v.composition.views ?? []),
-      ...(v.composition.expressions ?? []),
-      ...(v.composition.callouts ?? []),
-      ...(v.composition.outfits ?? []),
-    ];
-    if (allPanels.length === 0) return 1024;
-    return Math.max(...allPanels.map((p) => p.region.origin.y + p.region.size.height));
-  };
-
-  const allPanels = (): Array<{ label: string; x: number; y: number; w: number; h: number }> => {
-    const v = displayedVariant();
-    if (v?.composition == null) return [];
-    return [
-      ...(v.composition.views ?? []),
-      ...(v.composition.expressions ?? []),
-      ...(v.composition.callouts ?? []),
-      ...(v.composition.outfits ?? []),
-    ].map((p) => ({
-      label: p.label,
-      x: p.region.origin.x,
-      y: p.region.origin.y,
-      w: p.region.size.width,
-      h: p.region.size.height,
-    }));
-  };
+  const sheetWidth = (): number => computeSheetWidth(displayedVariant()?.composition);
+  const sheetHeight = (): number => computeSheetHeight(displayedVariant()?.composition);
+  const allPanels = () => flatPanels(displayedVariant()?.composition);
 
   function handlePanelClick(panel: {
     label: string;
