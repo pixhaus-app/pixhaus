@@ -23,7 +23,7 @@
     "solid-js": "^1.9.13"
   },
   "devDependencies": {
-    "@types/node": "^25.8.0",
+    "@types/node": "^25.9.0",
     "@typescript-eslint/eslint-plugin": "^8.59.3",
     "@typescript-eslint/parser": "^8.59.3",
     "esbuild": "^0.28.0",
