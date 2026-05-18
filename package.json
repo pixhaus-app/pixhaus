@@ -40,7 +40,7 @@
     "finalize": "node scripts/run.mjs finalize-task"
   },
   "devDependencies": {
-    "@tauri-apps/cli": "^2.11.1"
+    "@tauri-apps/cli": "^2.11.2"
   },
   "pnpm": {
     "onlyBuiltDependencies": [
