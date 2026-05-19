@@ -22,18 +22,41 @@
 //! plugins use their own reverse-DNS namespace; the runtime does not
 //! enforce namespacing but the convention prevents collisions.
 //!
-//! Known drift: [`SketchFinishingVerb`] advertises `pixhaus.ai.sketch_finishing`.
-//! The verb id is part of the public surface (logged, scriptable, plugin-
-//! addressable, baked into stored projects), so it is not renamed here.
-//! Future built-ins should stick to the `pixhaus.builtin.` prefix.
+//! Known drift:
+//! - [`SketchFinishingVerb`] advertises `pixhaus.ai.sketch_finishing`
+//!   (legacy prefix instead of `pixhaus.builtin.`).
+//! - [`AutoMeshDeformationVerb`] advertises
+//!   `pixhaus.builtin.auto-mesh-deformation` (kebab-case instead of the
+//!   `snake_case` every other built-in uses).
+//!
+//! Both are public surface (logged, scriptable, plugin-addressable, baked
+//! into stored projects), so neither is renamed. Future built-ins should
+//! stick to `pixhaus.builtin.<name>` in `snake_case`.
 //!
 //! # Shared helpers
 //!
-//! `call_text_vlm` is the canonical entry point for any verb that needs a
-//! vision-language call. It downcasts the backend attached to the
-//! [`crate::plugin::context::VerbContext`] to a known concrete adapter and
-//! delegates to that adapter's operational `invoke` method.
+//! Verbs that need an inference call go through one of these helpers,
+//! which each centralise the downcast from
+//! `Arc<dyn plugin::backend::InferenceBackend>` to a concrete adapter:
+//!
+//! - `call_text_vlm` — for `TextGenRequest` (Anthropic / `OpenAI`).
+//! - `call_image_edit` — for `ImageEditRequest` (Stability / `OpenAI` /
+//!   Replicate).
+//!
+//! `ctx_fat_backend` is the no-request-type escape hatch for verbs that
+//! need the fat trait reference but don't fit one of the typed helpers
+//! (today: `tileset_from_description`, `animated_sprite_sheet`).
+//!
+//! Adding a new concrete adapter means updating the helper(s) that
+//! accept it, not the verbs themselves. Two verbs still open-code their
+//! own downcast chains because their backend method is not part of the
+//! trait (`project_style_learning` and `train_entity_lora` call
+//! `replicate.run_style_training`, a Replicate-specific method) or has
+//! domain-specific response unpacking (`continue_verb` accepts both
+//! `Frames` and `Image` responses for `ComfyUI` compatibility). See the
+//! follow-up notes in `docs/planning/work/architecture-cleanup-s53.md`.
 
+pub mod animated_sprite_sheet;
 pub mod audio_timing;
 pub mod auto_mesh_deformation;
 pub mod cleanup;
@@ -52,6 +75,7 @@ pub mod tileset_from_description;
 pub mod train_entity_lora;
 pub mod variant;
 
+pub use animated_sprite_sheet::AnimatedSpriteSheetVerb;
 pub use audio_timing::AudioTimingVerb;
 pub use auto_mesh_deformation::AutoMeshDeformationVerb;
 pub use cleanup::CleanupVerb;
@@ -73,9 +97,9 @@ pub use variant::VariantVerb;
 use tokio_util::sync::CancellationToken;
 
 use crate::backends::{
-    InferenceBackend as OpsBackend, InferenceRequest, InferenceResponse, TextGenRequest,
-    TextGenResponse, anthropic::AnthropicBackend, bridge::BackendProxy, openai::OpenAiBackend,
-    replicate::ReplicateBackend, stability::StabilityBackend,
+    ImageEditRequest, InferenceBackend as OpsBackend, InferenceRequest, InferenceResponse,
+    TextGenRequest, TextGenResponse, anthropic::AnthropicBackend, bridge::BackendProxy,
+    openai::OpenAiBackend, replicate::ReplicateBackend, stability::StabilityBackend,
 };
 use crate::plugin::backend::InferenceBackend as PluginBackend;
 use crate::plugin::context::VerbContext;
@@ -194,6 +218,64 @@ pub(crate) async fn call_text_vlm(
         InferenceResponse::Text(t) => Ok(t),
         _ => Err(VerbError::Backend(
             "backend returned a non-text response to a text request".into(),
+        )),
+    }
+}
+
+/// Sends an image-edit request through whichever concrete image-edit
+/// adapter is attached to the verb context, returning the raw PNG bytes
+/// of each generated image.
+///
+/// Tries Stability → `OpenAI` → Replicate in declaration order, then
+/// [`BackendProxy`] for test backends. Returns [`VerbError::Backend`]
+/// when none match.
+///
+/// # Supported backends
+///
+/// - [`StabilityBackend`]
+/// - [`OpenAiBackend`]
+/// - [`ReplicateBackend`]
+///
+/// Additional adapters are added here as they land; verbs do not need to
+/// change when a new adapter is added.
+pub(crate) async fn call_image_edit(
+    backend: &dyn PluginBackend,
+    request: ImageEditRequest,
+    progress: VerbProgress,
+    cancel: CancellationToken,
+) -> Result<Vec<Vec<u8>>> {
+    let req = InferenceRequest::ImageEdit(request);
+    let any = backend.as_any();
+
+    let resp = if let Some(b) = any.downcast_ref::<StabilityBackend>() {
+        b.invoke(req, progress, cancel)
+            .await
+            .map_err(|e| VerbError::Backend(e.to_string()))?
+    } else if let Some(b) = any.downcast_ref::<OpenAiBackend>() {
+        b.invoke(req, progress, cancel)
+            .await
+            .map_err(|e| VerbError::Backend(e.to_string()))?
+    } else if let Some(b) = any.downcast_ref::<ReplicateBackend>() {
+        b.invoke(req, progress, cancel)
+            .await
+            .map_err(|e| VerbError::Backend(e.to_string()))?
+    } else if let Some(p) = any.downcast_ref::<BackendProxy>() {
+        p.fat()
+            .invoke(req, progress, cancel)
+            .await
+            .map_err(|e| VerbError::Backend(e.to_string()))?
+    } else {
+        return Err(VerbError::Backend(
+            "no supported image-edit adapter attached to context; \
+             register a Stability, OpenAI, or Replicate backend with the VerbRuntime"
+                .into(),
+        ));
+    };
+
+    match resp {
+        InferenceResponse::Image(img) => Ok(img.images),
+        _ => Err(VerbError::Backend(
+            "image-edit backend returned a non-image response".into(),
         )),
     }
 }

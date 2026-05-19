@@ -27,3 +27,6 @@ Sur = "Sur"
 numer = "numer"
 # m_PVREnvironmentMIS: Unity YAML property for Multiple Importance Sampling.
 MIS = "MIS"
+# "laf" is the name of Aseprite's UI submodule (https://github.com/aseprite/laf),
+# referenced verbatim in `LICENSES/NOTICE.txt` and `LICENSES/aseprite-MIT.txt`.
+laf = "laf"

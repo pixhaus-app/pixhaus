@@ -155,6 +155,15 @@ docs/planning/work/b10-reference-sheets.md.
 - [x] DONE: B10.4 — Sheet UI panel. Brief: docs/planning/work/b10-reference-sheets.md#b104. Blocked by: B10.1. Shipped: PR #167.
 - [x] DONE: B10.5 — Per-entity LoRA training (optional; defer if anchor-without-LoRA quality is acceptable). Brief: docs/planning/work/b10-reference-sheets.md#b105. Blocked by: B10.3. Shipped: PR #179.
 
+## Streams — AI verbs (second wave, integrations.md compliance)
+
+The animated-sprite-sheet verb closes the explicit gap noted in
+[`docs/planning/product/integrations.md`](../docs/planning/product/integrations.md#animated-sprite-sheet-from-prompt)
+("Lands in: new verb stream (to be added to `work/streams.md`)"). Lifts
+the FalSprite CHARACTER × CHOREOGRAPHY prompts as MIT-attributed assets.
+
+- [~] CLAIMED:s53-animated-sprite-sheet:S53 — Verb: Animated sprite sheet from prompt (CHARACTER × CHOREOGRAPHY two-stage LLM, FalSprite-derived). Brief: docs/planning/work/streams.md#s53. Blocked by: B5 S21 S22.
+
 ## Operating notes
 
 - One claim per worktree; the loop stops if the lock dir cannot be acquired

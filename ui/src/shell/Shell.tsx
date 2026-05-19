@@ -11,6 +11,7 @@ import ToastHost from "../lib/toast/ToastHost";
 import UpdateAvailableModal from "./UpdateAvailableModal";
 import CanvasSizeDialog from "./CanvasSizeDialog";
 import VerbInvokeHost from "../lib/ai/VerbInvokeHost";
+import AnimatedSpriteSheetHost from "../verbs/animated-sprite-sheet/AnimatedSpriteSheetHost";
 import StatusBar from "./StatusBar";
 import WelcomeScreen from "./WelcomeScreen";
 import Canvas from "../canvas/Canvas";
@@ -169,6 +170,7 @@ const Shell: Component = () => {
       <EntityCreateModal />
 
       <VerbInvokeHost />
+      <AnimatedSpriteSheetHost />
       <ToastHost />
 
       <Show when={!crashReportingDialogShown()}>

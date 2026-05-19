@@ -22,7 +22,7 @@ export type ProjectAi = {
  */
 style_notes?: string, 
 /**
- * Browseable project-scoped AI asset library.
+ * Browsable project-scoped AI asset library.
  */
 asset_library?: AssetLibrary, 
 /**

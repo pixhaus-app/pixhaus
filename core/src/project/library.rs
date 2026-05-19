@@ -389,7 +389,7 @@ pub struct ProjectAi {
     #[serde(default, skip_serializing_if = "String::is_empty")]
     pub style_notes: String,
 
-    /// Browseable project-scoped AI asset library.
+    /// Browsable project-scoped AI asset library.
     #[serde(default, skip_serializing_if = "AssetLibrary::is_empty")]
     pub asset_library: AssetLibrary,
 

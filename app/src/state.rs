@@ -17,10 +17,10 @@ use pixhaus_ai::backends::{BackendError, BackendProxy};
 use pixhaus_ai::plugin::AnchorPayload;
 use pixhaus_ai::plugin::runtime::VerbRuntime;
 use pixhaus_ai::verbs::{
-    AudioTimingVerb, AutoMeshDeformationVerb, CleanupVerb, ContinueVerb, ConversationalVerb,
-    CritiqueVerb, ExtendVerb, GenerateReferenceSheetVerb, InbetweenVerb, MotionFromVideoVerb,
-    ProjectStyleLearningVerb, SketchFinishingVerb, TileVerb, TilesetFromDescriptionVerb,
-    TrainEntityLoraVerb, VariantVerb,
+    AnimatedSpriteSheetVerb, AudioTimingVerb, AutoMeshDeformationVerb, CleanupVerb, ContinueVerb,
+    ConversationalVerb, CritiqueVerb, ExtendVerb, GenerateReferenceSheetVerb, InbetweenVerb,
+    IterateReferenceSheetVerb, MotionFromVideoVerb, ProjectStyleLearningVerb, SketchFinishingVerb,
+    TileVerb, TilesetFromDescriptionVerb, TrainEntityLoraVerb, VariantVerb,
 };
 use pixhaus_core::project::{LayerId, PixelBufferId, Project, Rgba, SpriteId};
 use pixhaus_core::undo::History;
@@ -300,6 +300,7 @@ impl AppState {
         // injects it into `VerbContext::backend`. Configuring backends
         // happens via `runtime.register_backend(...)` from the (planned)
         // settings flow.
+        register_builtin(&runtime, AnimatedSpriteSheetVerb::new());
         register_builtin(&runtime, AudioTimingVerb::new());
         register_builtin(&runtime, AutoMeshDeformationVerb::new());
         register_builtin(&runtime, CleanupVerb::new());
@@ -309,6 +310,7 @@ impl AppState {
         register_builtin(&runtime, ExtendVerb::new());
         register_builtin(&runtime, GenerateReferenceSheetVerb::new());
         register_builtin(&runtime, InbetweenVerb::new());
+        register_builtin(&runtime, IterateReferenceSheetVerb::new());
         register_builtin(&runtime, MotionFromVideoVerb::new());
         register_builtin(&runtime, ProjectStyleLearningVerb::new());
         register_builtin(&runtime, SketchFinishingVerb::new());
@@ -411,6 +413,7 @@ mod tests {
         // the test reflects the real surface.
         let mut expected = [
             "pixhaus.ai.sketch_finishing",
+            "pixhaus.builtin.animated_sprite_sheet",
             "pixhaus.builtin.audio_timing",
             "pixhaus.builtin.auto-mesh-deformation",
             "pixhaus.builtin.cleanup",
@@ -420,6 +423,7 @@ mod tests {
             "pixhaus.builtin.extend",
             "pixhaus.builtin.generate_reference_sheet",
             "pixhaus.builtin.inbetween",
+            "pixhaus.builtin.iterate_reference_sheet",
             "pixhaus.builtin.motion_from_video",
             "pixhaus.builtin.project_style_learning",
             "pixhaus.builtin.train_entity_lora",

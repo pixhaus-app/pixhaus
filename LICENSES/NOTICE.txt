@@ -26,3 +26,18 @@ Recorded upstream attributions:
     Copyright (c) 2012-2016 Alois Zingl
     MIT-licensed; the Zingl notice is preserved in any ported file
     that contains the implementation.
+
+  FalSprite (https://github.com/lovisdotio/falsprite)
+    Copyright (c) 2026 lovisdotio
+    MIT-licensed. The CHARACTER x CHOREOGRAPHY system prompt
+    (`lib/fal.mjs::buildRewriteSystemPrompt`) and the
+    strict-technical-requirements scaffold
+    (`lib/fal.mjs::buildSpritePrompt`) are adapted in
+    `ai/src/verbs/animated_sprite_sheet/prompts/` and used by the
+    animated-sprite-sheet verb (S53). The frame-grid math and
+    `requestAnimationFrame` playback gate at
+    `ui/src/timeline/frame-grid.ts` and
+    `ui/src/timeline/use-animation-loop.ts` are adapted from
+    `public/app.js:469-527`. See `falsprite-MIT.txt` in this directory
+    for the full notice. Observed upstream commit:
+    10107b38c01df342f5b5eb9b3fd5bded32dcbfa6 (2026-02-26).
