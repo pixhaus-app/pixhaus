@@ -48,6 +48,14 @@ const BLEND_MODE_LABELS: Record<BlendMode, string> = {
   saturation: "Saturation",
   color: "Color",
   luminosity: "Luminosity",
+  linear_burn: "Linear Burn",
+  darker_color: "Darker Color",
+  linear_dodge: "Linear Dodge",
+  lighter_color: "Lighter Color",
+  vivid_light: "Vivid Light",
+  linear_light: "Linear Light",
+  pin_light: "Pin Light",
+  hard_mix: "Hard Mix",
 };
 
 const BLEND_MODES = Object.keys(BLEND_MODE_LABELS) as BlendMode[];

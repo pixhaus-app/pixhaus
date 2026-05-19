@@ -44,7 +44,7 @@ function heroSprite(): Sprite {
 
 describe("Project fixture mirrors the Rust data model", () => {
   it("exposes the current schema version", () => {
-    expect(project.schema_version).toEqual({ major: 4, minor: 0 });
+    expect(project.schema_version).toEqual({ major: 4, minor: 1 });
   });
 
   it("encodes feature flags as a packed bitfield", () => {
