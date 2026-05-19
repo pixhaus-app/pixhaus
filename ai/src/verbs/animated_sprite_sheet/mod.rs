@@ -85,8 +85,8 @@ pub const MIN_CELL_SIZE_PX: u32 = 16;
 /// this caps the sheet at 1536×1536 — well below most backends' limits.
 pub const MAX_CELL_SIZE_PX: u32 = 256;
 
-/// Default per-frame duration in milliseconds. Falls back to
-/// [`Frame::default`]'s 100 ms when the input doesn't set one.
+/// Default per-frame duration in milliseconds. Matches
+/// `pixhaus_core::project::Frame::default`'s 100 ms.
 pub const DEFAULT_FRAME_DURATION_MS: u32 = 100;
 
 const PLACEHOLDER_LAYER_ID: u32 = 0;

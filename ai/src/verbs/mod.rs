@@ -39,11 +39,11 @@
 //! which each centralise the downcast from
 //! `Arc<dyn plugin::backend::InferenceBackend>` to a concrete adapter:
 //!
-//! - [`call_text_vlm`] — for `TextGenRequest` (Anthropic / `OpenAI`).
-//! - [`call_image_edit`] — for `ImageEditRequest` (Stability / `OpenAI` /
+//! - `call_text_vlm` — for `TextGenRequest` (Anthropic / `OpenAI`).
+//! - `call_image_edit` — for `ImageEditRequest` (Stability / `OpenAI` /
 //!   Replicate).
 //!
-//! [`ctx_fat_backend`] is the no-request-type escape hatch for verbs that
+//! `ctx_fat_backend` is the no-request-type escape hatch for verbs that
 //! need the fat trait reference but don't fit one of the typed helpers
 //! (today: `tileset_from_description`, `animated_sprite_sheet`).
 //!
@@ -54,8 +54,7 @@
 //! `replicate.run_style_training`, a Replicate-specific method) or has
 //! domain-specific response unpacking (`continue_verb` accepts both
 //! `Frames` and `Image` responses for `ComfyUI` compatibility). See the
-//! follow-up notes in
-//! [`docs/planning/work/architecture-cleanup-s53.md`].
+//! follow-up notes in `docs/planning/work/architecture-cleanup-s53.md`.
 
 pub mod animated_sprite_sheet;
 pub mod audio_timing;

@@ -8,7 +8,7 @@
 //! # Backend
 //!
 //! Requires [`crate::plugin::descriptor::BackendCapabilities::IMAGE_EDIT`].
-//! Backend routing is delegated to [`crate::verbs::call_image_edit`],
+//! Backend routing is delegated to `crate::verbs::call_image_edit`,
 //! which handles the concrete-adapter downcast (Stability / `OpenAI` /
 //! Replicate, plus the `BackendProxy` path for tests).
 //!
