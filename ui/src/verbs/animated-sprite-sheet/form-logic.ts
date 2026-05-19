@@ -24,6 +24,8 @@ export type FormState = {
   rewrittenPrompt: string;
   layerName: string;
   seed: string;
+  /** Optional reference-image bytes (raw bytes, IPC-serializable). */
+  styleReference: number[] | null;
 };
 
 /** Returns a fresh form state populated with the upstream defaults. */
@@ -38,6 +40,7 @@ export function defaultFormState(): FormState {
     rewrittenPrompt: "",
     layerName: "",
     seed: "",
+    styleReference: null,
   };
 }
 
@@ -153,6 +156,9 @@ export function toInputs(state: FormState): AnimatedSpriteSheetInputs {
     if (Number.isFinite(n) && Number.isInteger(n) && n >= 0) {
       payload.seed = n;
     }
+  }
+  if (state.styleReference !== null && state.styleReference.length > 0) {
+    payload.style_reference = state.styleReference;
   }
   return payload;
 }

@@ -40,7 +40,7 @@
 use std::time::{Duration, Instant};
 
 use async_trait::async_trait;
-use pixhaus_core::project::{Cel, Frame, FrameIndex, Layer, LayerId, Palette, PixelBufferId, Size};
+use pixhaus_core::project::{Cel, FrameIndex, Layer, LayerId, Palette, PixelBufferId, Size};
 use serde::{Deserialize, Serialize};
 use tokio::select;
 use tokio_util::sync::CancellationToken;
@@ -48,7 +48,6 @@ use tokio_util::sync::CancellationToken;
 use crate::backends::{
     ChatMessage, ImageGenRequest, InferenceRequest, InferenceResponse, TextGenRequest,
 };
-use crate::plugin::backend::InferenceBackend as PluginBackend;
 use crate::plugin::context::{PixelData, VerbContext};
 use crate::plugin::descriptor::{
     BackendCapabilities, CostEstimate, EffectKind, VerbDescriptor, VerbId,
@@ -290,9 +289,10 @@ impl Verb for AnimatedSpriteSheetVerb {
         progress: VerbProgress,
         cancel: CancellationToken,
     ) -> Result<VerbOutput> {
+        // `VerbRuntime::invoke` already calls `validate()` before reaching
+        // this point, so the deserialized payload is known well-formed.
         let started = Instant::now();
         let inputs: AnimatedSpriteSheetInputs = inputs.deserialize_owned()?;
-        validate_parsed(&inputs)?;
         let sprite_id = ctx.require_sprite_id()?;
 
         progress
@@ -301,17 +301,12 @@ impl Verb for AnimatedSpriteSheetVerb {
             })
             .await;
 
-        match inputs.mode {
-            GenerationMode::Procedural => {
-                invoke_procedural(&inputs, sprite_id, started, progress).await
-            }
-            GenerationMode::Hybrid => {
-                invoke_hybrid(&inputs, sprite_id, &ctx, started, progress, cancel).await
-            }
-            GenerationMode::Ai => {
-                invoke_ai(&inputs, sprite_id, &ctx, started, progress, cancel).await
-            }
-        }
+        let plan = match inputs.mode {
+            GenerationMode::Procedural => run_procedural(&inputs, &progress).await?,
+            GenerationMode::Hybrid => run_hybrid(&inputs, &ctx, &progress, &cancel).await?,
+            GenerationMode::Ai => run_ai(&inputs, &ctx, &progress, &cancel).await?,
+        };
+        Ok(build_verb_output(&inputs, sprite_id, started, plan))
     }
 }
 
@@ -359,140 +354,81 @@ fn validate_parsed(parsed: &AnimatedSpriteSheetInputs) -> Result<()> {
     Ok(())
 }
 
-// ── Procedural mode ────────────────────────────────────────────────────────
+// ── Mode plans ──────────────────────────────────────────────────────────────
+//
+// Each `run_*` builds an [`InvocationPlan`] — the data needed to materialise
+// a `VerbOutput`. The shared [`build_verb_output`] turns that plan into the
+// final effect record so the three modes don't repeat the assembly.
 
-async fn invoke_procedural(
+struct InvocationPlan {
+    frame_pixels: Vec<PixelData>,
+    notes: Vec<String>,
+    summary_kind: SummaryKind,
+}
+
+enum SummaryKind {
+    Placeholder,
+    HybridPreview,
+    Generated,
+}
+
+async fn run_procedural(
     inputs: &AnimatedSpriteSheetInputs,
-    sprite_id: pixhaus_core::project::SpriteId,
-    started: Instant,
-    progress: VerbProgress,
-) -> Result<VerbOutput> {
+    progress: &VerbProgress,
+) -> Result<InvocationPlan> {
     progress.step(Some(0.5), "building placeholder grid").await;
-
-    let frame_count = u32::from(inputs.grid_size).pow(2);
-    let (frame_pixels, frame_size) = build_empty_cells(inputs);
-
-    let (layer, cels, pixel_buffers) = pack_layer_with_cells(inputs, frame_pixels, frame_size);
-
+    let frame_pixels = build_empty_cells(inputs);
     progress.step(Some(1.0), "placeholder grid ready").await;
-
-    let elapsed = started.elapsed();
-    let thumbnail = pixel_buffers.first().map(|b| b.pixels.clone());
-
-    Ok(VerbOutput {
-        summary: format!(
-            "Add layer \"{}\" with {} placeholder frames ({}×{} grid)",
-            layer.name, frame_count, inputs.grid_size, inputs.grid_size,
-        ),
-        effects: vec![VerbEffect::AddLayer {
-            sprite: sprite_id,
-            layer,
-            cels,
-            pixel_buffers,
-        }],
-        thumbnail,
-        actual_cost: ActualCost::free(elapsed.max(Duration::from_micros(1))),
+    Ok(InvocationPlan {
+        frame_pixels,
         notes: action_notes(inputs),
+        summary_kind: SummaryKind::Placeholder,
     })
 }
 
-// ── Hybrid mode ─────────────────────────────────────────────────────────────
-
-async fn invoke_hybrid(
+async fn run_hybrid(
     inputs: &AnimatedSpriteSheetInputs,
-    sprite_id: pixhaus_core::project::SpriteId,
     ctx: &VerbContext,
-    started: Instant,
-    progress: VerbProgress,
-    cancel: CancellationToken,
-) -> Result<VerbOutput> {
-    let rewrite = match maybe_rewrite(inputs, ctx, &progress, &cancel).await? {
-        RewriteOutcome::Generated(text) | RewriteOutcome::UserSupplied(text) => Some(text),
-        RewriteOutcome::NotAvailable(_) => None,
-    };
+    progress: &VerbProgress,
+    cancel: &CancellationToken,
+) -> Result<InvocationPlan> {
+    let mut notes = action_notes(inputs);
+    note_rewrite_outcome(
+        &mut notes,
+        maybe_rewrite(inputs, ctx, progress, cancel).await?,
+        RewriteNoteStyle::HybridReview,
+    );
 
     progress
         .step(Some(0.8), "building hybrid placeholder grid")
         .await;
-
-    let frame_count = u32::from(inputs.grid_size).pow(2);
-    let (frame_pixels, frame_size) = build_empty_cells(inputs);
-    let (layer, cels, pixel_buffers) = pack_layer_with_cells(inputs, frame_pixels, frame_size);
-
+    let frame_pixels = build_empty_cells(inputs);
     progress.step(Some(1.0), "hybrid preview ready").await;
 
-    let mut notes = action_notes(inputs);
-    if let Some(text) = rewrite {
-        notes.push("--- Rewritten prompt (CHARACTER × CHOREOGRAPHY) ---".into());
-        notes.push(text);
-        notes.push(
-            "Re-run in AI mode with `rewritten_prompt` set to commit this rewrite, \
-             or edit and resubmit."
-                .into(),
-        );
-    } else {
-        notes.push(
-            "Rewrite stage skipped — no TEXT_GENERATION backend attached. \
-             Switching to AI mode will send the prompt directly to the image backend."
-                .into(),
-        );
-    }
-
-    let elapsed = started.elapsed();
-    let thumbnail = pixel_buffers.first().map(|b| b.pixels.clone());
-
-    Ok(VerbOutput {
-        summary: format!(
-            "Hybrid preview: add layer \"{}\" with {} placeholder frames + rewrite for review",
-            layer.name, frame_count,
-        ),
-        effects: vec![VerbEffect::AddLayer {
-            sprite: sprite_id,
-            layer,
-            cels,
-            pixel_buffers,
-        }],
-        thumbnail,
-        actual_cost: ActualCost::free(elapsed.max(Duration::from_micros(1))),
+    Ok(InvocationPlan {
+        frame_pixels,
         notes,
+        summary_kind: SummaryKind::HybridPreview,
     })
 }
 
-// ── AI mode ─────────────────────────────────────────────────────────────────
-
-async fn invoke_ai(
+async fn run_ai(
     inputs: &AnimatedSpriteSheetInputs,
-    sprite_id: pixhaus_core::project::SpriteId,
     ctx: &VerbContext,
-    started: Instant,
-    progress: VerbProgress,
-    cancel: CancellationToken,
-) -> Result<VerbOutput> {
+    progress: &VerbProgress,
+    cancel: &CancellationToken,
+) -> Result<InvocationPlan> {
     let mut notes = action_notes(inputs);
+    let outcome = maybe_rewrite(inputs, ctx, progress, cancel).await?;
+    let rewritten_text = outcome.text().unwrap_or(&inputs.prompt).to_owned();
+    note_rewrite_outcome(&mut notes, outcome, RewriteNoteStyle::AiInline);
 
-    // Stage 1 — rewrite (if possible / requested).
-    let rewrite_outcome = maybe_rewrite(inputs, ctx, &progress, &cancel).await?;
-    let rewritten_text = match &rewrite_outcome {
-        RewriteOutcome::Generated(t) | RewriteOutcome::UserSupplied(t) => t.clone(),
-        RewriteOutcome::NotAvailable(reason) => {
-            notes.push(format!("Rewrite skipped: {reason}"));
-            inputs.prompt.clone()
-        }
-    };
-    if matches!(rewrite_outcome, RewriteOutcome::Generated(_)) {
-        notes.push("--- Rewritten prompt (CHARACTER × CHOREOGRAPHY) ---".into());
-        notes.push(rewritten_text.clone());
-    }
-
-    // Stage 2 — sprite generation.
-    let sheet = call_image_stage(inputs, &rewritten_text, ctx, &progress, &cancel).await?;
+    let sheet = call_image_stage(inputs, &rewritten_text, ctx, progress, cancel).await?;
 
     progress.step(Some(0.9), "slicing grid").await;
     let mut frame_pixels = slice_grid(&sheet, inputs.grid_size)?;
 
-    // Snap to palette (or note its absence).
-    let palette = ctx.active_palette.as_ref();
-    if let Some(pal) = palette {
+    if let Some(pal) = ctx.active_palette.as_ref() {
         for cell in &mut frame_pixels {
             *cell = snap_to_palette(cell, pal);
         }
@@ -502,24 +438,52 @@ async fn invoke_ai(
         );
     }
 
-    let frame_size = Size::new(inputs.cell_size_px, inputs.cell_size_px);
-    let (layer, cels, pixel_buffers) = pack_layer_with_cells(inputs, frame_pixels, frame_size);
-
     progress.step(Some(1.0), "animated sheet ready").await;
 
-    let elapsed = started.elapsed();
-    let thumbnail = pixel_buffers.first().map(|b| b.pixels.clone());
+    Ok(InvocationPlan {
+        frame_pixels,
+        notes,
+        summary_kind: SummaryKind::Generated,
+    })
+}
 
-    Ok(VerbOutput {
-        summary: format!(
+fn build_verb_output(
+    inputs: &AnimatedSpriteSheetInputs,
+    sprite_id: pixhaus_core::project::SpriteId,
+    started: Instant,
+    plan: InvocationPlan,
+) -> VerbOutput {
+    let InvocationPlan {
+        frame_pixels,
+        notes,
+        summary_kind,
+    } = plan;
+    let frame_count = frame_pixels.len();
+    let frame_size = Size::new(inputs.cell_size_px, inputs.cell_size_px);
+    let (layer, cels, pixel_buffers) = pack_layer_with_cells(inputs, frame_pixels, frame_size);
+    let thumbnail = pixel_buffers.first().map(|b| b.pixels.clone());
+    let summary = match summary_kind {
+        SummaryKind::Placeholder => format!(
+            "Add layer \"{}\" with {} placeholder frames ({}×{} grid)",
+            layer.name, frame_count, inputs.grid_size, inputs.grid_size,
+        ),
+        SummaryKind::HybridPreview => format!(
+            "Hybrid preview: add layer \"{}\" with {} placeholder frames + rewrite for review",
+            layer.name, frame_count,
+        ),
+        SummaryKind::Generated => format!(
             "Add layer \"{}\" with {}×{} = {} frames ({}×{} px each)",
             layer.name,
             inputs.grid_size,
             inputs.grid_size,
-            cels.len(),
+            frame_count,
             inputs.cell_size_px,
             inputs.cell_size_px,
         ),
+    };
+    let elapsed = started.elapsed().max(Duration::from_micros(1));
+    VerbOutput {
+        summary,
         effects: vec![VerbEffect::AddLayer {
             sprite: sprite_id,
             layer,
@@ -527,9 +491,51 @@ async fn invoke_ai(
             pixel_buffers,
         }],
         thumbnail,
-        actual_cost: ActualCost::free(elapsed.max(Duration::from_micros(1))),
+        actual_cost: ActualCost::free(elapsed),
         notes,
-    })
+    }
+}
+
+#[derive(Copy, Clone)]
+enum RewriteNoteStyle {
+    /// Hybrid mode review: surface the rewrite verbatim plus re-run hint,
+    /// or a "skipped" explanation when the backend can't rewrite.
+    HybridReview,
+    /// AI mode inline: include the rewrite text only when freshly
+    /// generated; user-supplied text needs no echo back.
+    AiInline,
+}
+
+fn note_rewrite_outcome(notes: &mut Vec<String>, outcome: RewriteOutcome, style: RewriteNoteStyle) {
+    match (style, outcome) {
+        (
+            RewriteNoteStyle::HybridReview,
+            RewriteOutcome::Generated(text) | RewriteOutcome::UserSupplied(text),
+        ) => {
+            notes.push("--- Rewritten prompt (CHARACTER × CHOREOGRAPHY) ---".into());
+            notes.push(text);
+            notes.push(
+                "Re-run in AI mode with `rewritten_prompt` set to commit this rewrite, \
+                 or edit and resubmit."
+                    .into(),
+            );
+        }
+        (RewriteNoteStyle::HybridReview, RewriteOutcome::NotAvailable(_)) => {
+            notes.push(
+                "Rewrite stage skipped — no TEXT_GENERATION backend attached. \
+                 Switching to AI mode will send the prompt directly to the image backend."
+                    .into(),
+            );
+        }
+        (RewriteNoteStyle::AiInline, RewriteOutcome::Generated(text)) => {
+            notes.push("--- Rewritten prompt (CHARACTER × CHOREOGRAPHY) ---".into());
+            notes.push(text);
+        }
+        (RewriteNoteStyle::AiInline, RewriteOutcome::UserSupplied(_)) => {}
+        (RewriteNoteStyle::AiInline, RewriteOutcome::NotAvailable(reason)) => {
+            notes.push(format!("Rewrite skipped: {reason}"));
+        }
+    }
 }
 
 // ── Image stage ─────────────────────────────────────────────────────────────
@@ -620,6 +626,15 @@ enum RewriteOutcome {
     NotAvailable(String),
 }
 
+impl RewriteOutcome {
+    fn text(&self) -> Option<&str> {
+        match self {
+            Self::Generated(t) | Self::UserSupplied(t) => Some(t.as_str()),
+            Self::NotAvailable(_) => None,
+        }
+    }
+}
+
 async fn maybe_rewrite(
     inputs: &AnimatedSpriteSheetInputs,
     ctx: &VerbContext,
@@ -667,19 +682,10 @@ async fn maybe_rewrite(
         stop: Vec::new(),
     };
 
-    let resp =
-        call_text_via_backend(backend.as_ref(), req, progress.clone(), cancel.clone()).await?;
+    let resp = crate::verbs::call_text_vlm(backend.as_ref(), req, progress.clone(), cancel.clone())
+        .await?;
 
     Ok(RewriteOutcome::Generated(resp.content.trim().to_owned()))
-}
-
-async fn call_text_via_backend(
-    backend: &dyn PluginBackend,
-    request: TextGenRequest,
-    progress: VerbProgress,
-    cancel: CancellationToken,
-) -> Result<crate::backends::TextGenResponse> {
-    crate::verbs::call_text_vlm(backend, request, progress, cancel).await
 }
 
 fn build_rewrite_user_message(inputs: &AnimatedSpriteSheetInputs) -> String {
@@ -783,20 +789,21 @@ pub fn sprite_scaffold(inputs: &AnimatedSpriteSheetInputs) -> PromptScaffold {
         )
 }
 
-// ── Empty / placeholder cells ──────────────────────────────────────────────
+// ── Layer assembly helpers ─────────────────────────────────────────────────
 
-fn build_empty_cells(inputs: &AnimatedSpriteSheetInputs) -> (Vec<PixelData>, Size) {
+fn build_empty_cells(inputs: &AnimatedSpriteSheetInputs) -> Vec<PixelData> {
     let frame_count = u32::from(inputs.grid_size).pow(2) as usize;
-    let cell_w = inputs.cell_size_px;
-    let cell_h = inputs.cell_size_px;
-    let empty_bytes = (cell_w as usize) * (cell_h as usize) * 4;
-    let cells = (0..frame_count)
-        .map(|_| PixelData::rgba8(cell_w, cell_h, vec![0u8; empty_bytes]))
-        .collect();
-    (cells, Size::new(cell_w, cell_h))
+    let bytes_per_cell = (inputs.cell_size_px as usize).pow(2) * 4;
+    (0..frame_count)
+        .map(|_| {
+            PixelData::rgba8(
+                inputs.cell_size_px,
+                inputs.cell_size_px,
+                vec![0u8; bytes_per_cell],
+            )
+        })
+        .collect()
 }
-
-// ── Layer / cels / buffers packing ─────────────────────────────────────────
 
 fn pack_layer_with_cells(
     inputs: &AnimatedSpriteSheetInputs,
@@ -813,36 +820,24 @@ fn pack_layer_with_cells(
     });
     let layer = Layer::raster(layer_id, &layer_name);
 
-    let mut cel_records = Vec::with_capacity(frame_pixels.len());
-    let mut buffers = Vec::with_capacity(frame_pixels.len());
-    for (i, pixels) in frame_pixels.into_iter().enumerate() {
-        #[allow(clippy::cast_possible_truncation)]
-        let buf_id = PixelBufferId::new(i as u32);
-        #[allow(clippy::cast_possible_truncation)]
-        let frame_index = FrameIndex::new(i as u32);
-        cel_records.push(Cel::raster(layer_id, frame_index, buf_id, frame_size));
-        buffers.push(NewPixelBuffer {
-            placeholder: buf_id,
-            pixels,
-        });
-    }
+    let (cel_records, buffers) = frame_pixels
+        .into_iter()
+        .enumerate()
+        .map(|(i, pixels)| {
+            #[allow(clippy::cast_possible_truncation)]
+            let buf_id = PixelBufferId::new(i as u32);
+            #[allow(clippy::cast_possible_truncation)]
+            let frame_index = FrameIndex::new(i as u32);
+            let cel = Cel::raster(layer_id, frame_index, buf_id, frame_size);
+            let buf = NewPixelBuffer {
+                placeholder: buf_id,
+                pixels,
+            };
+            (cel, buf)
+        })
+        .unzip();
 
     (layer, cel_records, buffers)
-}
-
-/// Builds the per-frame [`Frame`] records for a hypothetical `AddFrames`
-/// effect. Surfaced for callers (UI, scripting plugins, future re-routing
-/// of the verb's output through `AddFrames` instead of `AddLayer`) that
-/// need the same timing the verb would use.
-#[must_use]
-pub fn build_timeline_frames(inputs: &AnimatedSpriteSheetInputs) -> Vec<Frame> {
-    let frame_count = u32::from(inputs.grid_size).pow(2) as usize;
-    (0..frame_count)
-        .map(|_| Frame {
-            duration_ms: inputs.frame_duration_ms,
-            ..Frame::default()
-        })
-        .collect()
 }
 
 // ── Misc helpers ────────────────────────────────────────────────────────────
@@ -1161,14 +1156,16 @@ mod tests {
     }
 
     #[test]
-    fn timeline_frames_carry_custom_duration() {
+    fn build_empty_cells_returns_grid_squared_zero_frames() {
         let mut p = AnimatedSpriteSheetInputs::new("baby dragon");
-        p.frame_duration_ms = 50;
-        p.grid_size = 2;
-        let frames = build_timeline_frames(&p);
-        assert_eq!(frames.len(), 4);
-        for f in frames {
-            assert_eq!(f.duration_ms, 50);
+        p.grid_size = 3;
+        p.cell_size_px = 16;
+        let cells = build_empty_cells(&p);
+        assert_eq!(cells.len(), 9);
+        for cell in cells {
+            assert_eq!(cell.width, 16);
+            assert_eq!(cell.height, 16);
+            assert!(cell.bytes.iter().all(|&b| b == 0));
         }
     }
 

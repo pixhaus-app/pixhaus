@@ -156,6 +156,7 @@ describe("toInputs", () => {
     s.layerName = "Hero";
     s.seed = "42";
     s.mode = "hybrid";
+    s.styleReference = [1, 2, 3, 4];
     const payload = toInputs(s);
     expect(payload.prompt).toBe("baby dragon");
     expect(payload.actions).toEqual(["idle", "walk"]);
@@ -163,5 +164,14 @@ describe("toInputs", () => {
     expect(payload.layer_name).toBe("Hero");
     expect(payload.seed).toBe(42);
     expect(payload.mode).toBe("hybrid");
+    expect(payload.style_reference).toEqual([1, 2, 3, 4]);
+  });
+
+  it("omits style_reference when empty or null", () => {
+    const s = defaultFormState();
+    s.prompt = "x";
+    expect(toInputs(s).style_reference).toBeUndefined();
+    s.styleReference = [];
+    expect(toInputs(s).style_reference).toBeUndefined();
   });
 });

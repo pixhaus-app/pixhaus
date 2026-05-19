@@ -58,7 +58,7 @@ const MODE_LABELS: ReadonlyArray<{ mode: GenerationMode; label: string; hint: st
 
 const AnimatedSpriteSheetForm: Component<{ onSubmitted?: () => void }> = (props) => {
   const [state, setState] = createSignal<FormState>(defaultFormState());
-  const [flashHint, setFlashHint] = createSignal(false);
+  const [flashKey, setFlashKey] = createSignal(0);
   const [submitting, setSubmitting] = createSignal(false);
 
   const validation = createMemo(() => validate(state()));
@@ -76,9 +76,9 @@ const AnimatedSpriteSheetForm: Component<{ onSubmitted?: () => void }> = (props)
   function onChipClick(chip: string): void {
     const { actions, outcome } = toggleChip(state().actions, chip, state().gridSize);
     if (outcome === "rejected-capacity") {
-      // Flash the hint briefly so the user sees the constraint enforced.
-      setFlashHint(true);
-      window.setTimeout(() => setFlashHint(false), 600);
+      // Bump the key so the constraint-hint element remounts and the CSS
+      // `flash` animation replays from scratch on every rejection.
+      setFlashKey(flashKey() + 1);
       return;
     }
     setState({ ...state(), actions });
@@ -89,14 +89,8 @@ const AnimatedSpriteSheetForm: Component<{ onSubmitted?: () => void }> = (props)
     const file = input.files?.[0];
     if (!file) return;
     const buf = await file.arrayBuffer();
-    const bytes = Array.from(new Uint8Array(buf));
-    setState({ ...state(), seed: state().seed }); // touch to keep type
-    // Stash on the form state under the actions branch? We piggy-back
-    // on a separate field; the simplest is a second signal.
-    setReferenceBytes(bytes);
+    update("styleReference", Array.from(new Uint8Array(buf)));
   }
-
-  const [referenceBytes, setReferenceBytes] = createSignal<number[] | null>(null);
 
   function onSubmit(e: Event): void {
     e.preventDefault();
@@ -106,9 +100,7 @@ const AnimatedSpriteSheetForm: Component<{ onSubmitted?: () => void }> = (props)
       return;
     }
     setSubmitting(true);
-    const payload = toInputs(state());
-    const ref = referenceBytes();
-    const inputs = ref ? { ...payload, style_reference: ref } : payload;
+    const inputs = toInputs(state());
 
     verbInvoke({ verb_id: ANIMATED_SPRITE_SHEET_VERB_ID, inputs })
       .then(() => {
@@ -186,12 +178,9 @@ const AnimatedSpriteSheetForm: Component<{ onSubmitted?: () => void }> = (props)
           <span>
             Actions ({state().actions.length} / {state().gridSize})
           </span>
-          <p
-            class="constraint-hint"
-            classList={{ flash: flashHint() }}
-            role="status"
-            aria-live="polite"
-          >
+          {/* keyed so the CSS flash animation replays from scratch when
+              a chip click is rejected. */}
+          <p class="constraint-hint flash" data-flash={flashKey()} role="status" aria-live="polite">
             Pick up to {state().gridSize} actions — one per row.
           </p>
         </label>
