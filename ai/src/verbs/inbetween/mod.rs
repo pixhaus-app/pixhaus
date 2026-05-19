@@ -160,6 +160,33 @@ impl InbetweenVerb {
                     "maximum": 16,
                     "default": 1,
                     "description": "Number of intermediate frames to generate"
+                },
+                "mode": {
+                    "description": "Generation strategy. Default is Ai. Use Procedural for backend-less local interpolation.",
+                    "oneOf": [
+                        {
+                            "type": "object",
+                            "properties": {
+                                "kind": {"const": "procedural"},
+                                "variance_range": {"type": "number", "minimum": 0.0, "default": 2.5}
+                            },
+                            "required": ["kind", "variance_range"]
+                        },
+                        {
+                            "type": "object",
+                            "properties": {"kind": {"const": "ai"}},
+                            "required": ["kind"]
+                        },
+                        {
+                            "type": "object",
+                            "properties": {
+                                "kind": {"const": "ai_with_procedural_preview"},
+                                "variance_range": {"type": "number", "minimum": 0.0, "default": 2.5}
+                            },
+                            "required": ["kind", "variance_range"]
+                        }
+                    ],
+                    "default": {"kind": "ai"}
                 }
             },
             "required": ["frame_a", "frame_b", "frame_a_index", "frame_b_index"]
@@ -866,6 +893,36 @@ mod tests {
         let j = serde_json::to_string(&InbetweenMode::Ai).unwrap();
         assert!(j.contains("\"kind\""), "missing kind tag in {j}");
         assert!(j.contains("\"ai\""), "expected snake_case ai in {j}");
+    }
+
+    #[test]
+    fn input_schema_exposes_mode_with_three_variants() {
+        let verb = InbetweenVerb::new();
+        let schema = &verb.descriptor().input_schema;
+        let mode = schema
+            .get("properties")
+            .and_then(|p| p.get("mode"))
+            .expect("mode property missing from input_schema");
+        let variants = mode
+            .get("oneOf")
+            .and_then(|o| o.as_array())
+            .expect("mode must be a oneOf union");
+        assert_eq!(variants.len(), 3, "expected 3 mode variants, got {variants:?}");
+
+        let mut kinds: Vec<&str> = variants
+            .iter()
+            .filter_map(|v| {
+                v.get("properties")
+                    .and_then(|p| p.get("kind"))
+                    .and_then(|k| k.get("const"))
+                    .and_then(|c| c.as_str())
+            })
+            .collect();
+        kinds.sort_unstable();
+        assert_eq!(kinds, vec!["ai", "ai_with_procedural_preview", "procedural"]);
+
+        let default = mode.get("default").expect("mode default missing");
+        assert_eq!(default.get("kind").and_then(|k| k.as_str()), Some("ai"));
     }
 
     #[test]
