@@ -60,6 +60,38 @@ Aseprite at $19.99 perpetual is a phenomenon. Pro Motion NG at $24.99 perpetual 
 
 LibreSprite forked from Aseprite's last GPL version when Aseprite went proprietary in 2016. Pixelorama exists in part because the community wanted an MIT-licensed alternative not controlled by one company. OpenToonz is a release of Toonz under a permissive license. The pattern: when a beloved tool changes its license model, a fork appears within months. It rarely overtakes the parent, but it consistently survives.
 
+## Patterns from the prior-art dossiers
+
+The deep dossiers in [`../research/`](../research/) — added May 14–19 — surface seven more convergent patterns the May 3 catalog above didn't reach. They're listed here for the convergence record. The dossier-grounded version (with citations, lands-in mappings, and port-roadmap rows) lives in [`prior-art.md`](prior-art.md); this section names them so `patterns.md` reads coherently against the current evidence.
+
+### Anchor-first canonical pose
+
+Pick one canonical pose — typically a south-facing idle — and cascade every direction, animation, and variant from it. Sprite-pipeline methodology, Spine skins, and Aseprite's CelData split all settle here. Regeneration without a fixed anchor produces silhouette drift; the anchor makes re-rolls cheap and variant chains consistent.
+
+### Directional economy: flip before regenerate
+
+East is the mirror of west; north-east is the mirror of north-west. Sprite-pipeline and FalSprite both treat regenerating mirrored views from scratch as a regression — it drifts, it costs tokens, and the flip is free and exact. Generate only the unique half.
+
+### Sparse, link-set variants over duplication
+
+Variants share data by reference, not by copy. Pixelorama uses explicit link-set IDs; Aseprite splits Cel and CelData so identical cels share the image; Spine skins override attachments without copying the skeleton. The shape varies — the principle does not. Never duplicate when you can link.
+
+### Palette as a first-class animated entity
+
+A palette is addressable, sparse, and keyframed — not `Vec<Rgba>`. OpenToonz palette pages keyframe colors across styles. Pixelorama's sparse `HashMap<u16, PaletteColor>` permits named slots and reindex stability. Aseprite supports per-frame palette arrays. Palette cycling, day/night transitions, and hit-flash flicker all ride this — one cel, many states.
+
+### Grid as discipline, not content
+
+Pixel-grid references discipline the model into chunky blocks without ever appearing in the output. Grid-snap's seven techniques run *after* generation. FalSprite's row-major math constrains layout, not subject. Sprite-pipeline holds the baseline lock as a visual non-negotiable. The grid is a constraint, never a content seed.
+
+### Transparent, inspectable file formats
+
+Pixelorama's ZIP + `manifest.json` is diffable and trivially scriptable. Aseprite's binary `.aseprite` survived because every chunk is documented and a community of CLI tools works around it. The cautionary tale in the project-library research is Blender's opaque `.blend` — powerful, but requires Blender or external tools to inspect. The text-vs-binary axis matters less than whether the format is inspectable.
+
+### Command-tree undo with branching history
+
+Aseprite's command system (MIT, `src/undo/`) and OpenToonz both use a branching command tree, not a linear stack. The tree is what makes redo-down-a-different-path work after the artist undoes and tries again. The verb plugin protocol aligns naturally — every AI verb is already a command-shaped operation with preview-then-commit.
+
 ## What converged versus what fragmented
 
 | Converged | Fragmented |

@@ -4,6 +4,18 @@ This file is opinionated. It maps the gaps to where AI can move the needle and, 
 
 The framing: AI is leverage, not replacement. The artist is still the artist. Their hand is still on the canvas. The AI is the apprentice that handles the toil — the variants, the in-betweens, the cleanup, the QA — so the artist can spend their hours on the parts that need taste.
 
+## Three-mode AI verb architecture
+
+Every AI verb in the surfaces below should ship with three modes:
+
+1. **Procedural** — deterministic, offline-safe, instant. The default. Built from classical image processing, rule engines, and geometric math. Runs without an API call, without a model load, without an internet connection.
+2. **AI** — on-demand, styled, slow. Invoked when the artist explicitly asks for it. Hits a model, costs tokens or watts, takes seconds to minutes.
+3. **Hybrid preview** — procedural draft, AI commit. The artist sees the deterministic version instantly and can refine with AI on accept. This is the workflow that keeps the canvas responsive without sacrificing leverage.
+
+The deep dossiers in [`../research/`](../research/) consistently land on this shape. OpenToonz's variance-rejection inbetweening predates any AI inbetweening and remains in production today; FalSprite degrades to plain canvas composition when image-gen fails; the seven-technique grid-snap pipeline is purely classical and runs instantly. See [`prior-art.md`](prior-art.md) § "Procedural fallbacks for AI verbs" and § D-04 for the consolidated argument.
+
+The trap to avoid: an "AI verb" that requires a network round-trip even for preview. That ships a tool that feels broken offline, expensive online, and slow in both modes. Procedural-first inverts every one of those.
+
 ## High-leverage AI surfaces
 
 These are the places where AI can do real work without taking craft away from the artist.
@@ -12,6 +24,8 @@ These are the places where AI can do real work without taking craft away from th
 
 Hand-drawn animation costs because every frame is hand-drawn. AI-assisted in-betweens — interpolating between two key poses while staying inside the palette — would close the cost gap to skeletal rigging while preserving the hand-drawn aesthetic. The non-trivial part is palette respect. A diffusion model that produces antialiased pixels is a regression. A model that produces palette-locked pixels with quantization-aware training is a step change. Retro Diffusion and PixelLab have started here. Neither has delivered production-quality 2x in-betweening for arbitrary palettes.
 
+The procedural baseline already exists. OpenToonz's variance-rejection inbetween (documented in [`../research/opentoonz-comparison.md`](../research/opentoonz-comparison.md) § "Stroke inbetweening") averages two key frames and rejects high-variance regions to avoid ghosting. It predates any AI inbetweening and remains in Ghibli's pipeline. The right shape is procedural-default + AI-on-demand per the three-mode architecture above — not AI-or-nothing.
+
 This is the single most valuable AI feature in the category. Get it right and the math of indie 2D animation changes.
 
 ### Variant generation: palette swaps, equipment overlays, expressions
@@ -19,6 +33,8 @@ This is the single most valuable AI feature in the category. Get it right and th
 Given a base character, generate the same character in alternate palettes (player skins), with equipment layers (helmets, weapons, capes), in alternate expressions (happy, angry, hurt). Game artists do this manually. AI can do it as derived layers — the artist defines the rule once ("apply this palette swap to this layer set") and the system generates the variants on demand.
 
 The honest version of this is mostly automation, not generation. A "smart palette swap" is half rule-based, half ML refinement. The AI part handles the cases where straight color substitution looks wrong (a character in fire palette versus ice palette has subtle shading differences that a rule engine misses). Layer.ai and Scenario gesture at this; neither has nailed it for sprite-resolution work.
+
+The architectural shortcut: anchor-first cascading and directional economy ([`../research/sprite-pipeline-methodology.md`](../research/sprite-pipeline-methodology.md) § stages 2–4, [`prior-art.md`](prior-art.md) § "Anchor-first canonical pose"). Variants derive from one canonical pose; flipped views derive from their mirror. The verb generates only the unique frames and lets the link-set structure carry the rest. That keeps the variant set consistent and cuts the generation budget by roughly half.
 
 ### Reference matching: animate like this clip
 
@@ -30,9 +46,13 @@ This converts a previously impossible task ("animate like a video reference") in
 
 Diffusion-generated pixel art has known artifacts: anti-aliased edges, palette violations, pivot drift across frames. A "fix it" pass that snaps to the palette, removes sub-pixel anti-aliasing, and aligns pivots is mostly classical image processing with ML for the ambiguous decisions. Retro Diffusion's neural pixelate tool is a primitive version. A serious version of this should be a one-click fix pass on any imported sprite, AI-generated or hand-drawn.
 
+The core of "serious version" is already engineered. Sprite Fusion's seven-step pipeline ([`../research/grid-snap-quantize-techniques.md`](../research/grid-snap-quantize-techniques.md)) covers k-means quantization, Sobel gradient profiling, step estimation, walker cut placement, cross-axis stabilization, and majority-vote downsampling — purely classical, instant, deterministic. ML refinement layers on top of that for the ambiguous edge cases; it does not replace it. See [`prior-art.md`](prior-art.md) § D-03 for the open decision on folding the full pipeline into the Cleanup verb (S27).
+
 ### Multi-angle generation from a single base
 
 Given a sprite drawn in one direction, generate it in 3 / 5 / 7 other directions. PixelLab's directional generation is the only serious attempt in market. The technique combines pose estimation, view synthesis, and style transfer. It's not solved — outputs require manual touch-up — but the time savings versus hand-drawing 8 directions are real.
+
+The two shortcuts the dossiers settle on: anchor-first cascading (every direction derives from the south canonical pose, see [`../research/sprite-pipeline-methodology.md`](../research/sprite-pipeline-methodology.md)) and directional economy (east is the mirror of west; generate four directions and flip for the other four — [`prior-art.md`](prior-art.md) § "Directional economy"). Halving the generation budget while improving consistency is rare leverage.
 
 ### Asset library QA
 
