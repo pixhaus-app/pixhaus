@@ -4,13 +4,15 @@
 //! under BSD-3-Clause. See `THIRD_PARTY_NOTICES.md`.
 
 use serde::{Deserialize, Serialize};
+use ts_rs::TS;
 
 /// A single vertex on a stroke's centerline.
 ///
 /// Coordinates are in raster pixel space (top-left origin). `thickness`
 /// is the local stroke half-width — the distance from the centerline
 /// to either edge at this vertex.
-#[derive(Copy, Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[derive(Copy, Clone, Debug, PartialEq, Serialize, Deserialize, TS)]
+#[ts(export)]
 pub struct Vertex {
     /// Horizontal coordinate in pixel space.
     pub x: f32,
@@ -30,7 +32,8 @@ impl Vertex {
 
 /// A single styled stroke: a polyline of `Vertex` values plus the
 /// palette style ID that drives its rendering.
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, TS)]
+#[ts(export)]
 pub struct Stroke {
     /// Ordered vertices that define the centerline.
     pub vertices: Vec<Vertex>,
@@ -40,7 +43,8 @@ pub struct Stroke {
 }
 
 /// The result of vectorizing a raster ink layer.
-#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize, TS)]
+#[ts(export)]
 pub struct VectorImage {
     /// All strokes extracted from the input raster.
     pub strokes: Vec<Stroke>,

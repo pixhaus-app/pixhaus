@@ -22,6 +22,7 @@ use pixhaus_core::selection::algorithms::{
 use pixhaus_core::transforms::{
     self, MlaaConfig, RotateMode, ScaleMode, TransformSpec, morphological_antialias,
 };
+use pixhaus_vectorize::{CenterlineConfig, VectorImage, centerline_vectorize};
 use pixhaus_io::pixhaus::PixelBufferEntry;
 use serde::{Deserialize, Serialize};
 use tauri::{AppHandle, Emitter, State};
@@ -1411,6 +1412,69 @@ pub async fn canvas_apply_mlaa(
     )
 }
 
+/// Vectorizes a raster layer's cel into a `VectorImage` of centerline
+/// strokes. No raster mutation; the result is returned to the caller so
+/// a follow-up surface (SVG export, vector preview overlay) can consume
+/// it. Pixhaus is raster-only by design, so `VectorImage` has no render
+/// path yet — this command exposes the pipeline for inspection while the
+/// sink lands.
+///
+/// `palette` resolution: prefer the project's `brush.active_palette`
+/// when set; otherwise fall back to the sprite's first palette. Returns
+/// an error when neither is available — `centerline_vectorize` rejects
+/// an empty palette.
+#[tauri::command(async, rename_all = "snake_case")]
+pub async fn vector_vectorize_layer(
+    sprite_id: SpriteId,
+    layer_id: LayerId,
+    state: State<'_, AppState>,
+) -> CommandResult<VectorImage> {
+    let doc = state.doc.read().await;
+    let frame_index = doc
+        .project
+        .as_ref()
+        .and_then(|p| p.canvas.active_frame)
+        .unwrap_or(FrameIndex::new(0));
+
+    let (_cel_pos, buf) = load_cel_buffer(&doc, sprite_id, layer_id, frame_index)?;
+
+    let palette = {
+        let project = doc
+            .project
+            .as_ref()
+            .ok_or(AppCommandError::NoActiveProject)?;
+        let sprite = project
+            .sprite(sprite_id)
+            .ok_or_else(|| AppCommandError::NotFound {
+                entity: "sprite".into(),
+                id: u64::from(sprite_id.get()),
+            })?;
+        let active_id = project.brush.active_palette;
+        active_id
+            .and_then(|pid| sprite.palettes.iter().find(|p| p.id == pid))
+            .or_else(|| sprite.palettes.first())
+            .cloned()
+            .ok_or_else(|| AppCommandError::Validation {
+                detail: "vectorize requires a palette with at least one color".into(),
+            })?
+    };
+
+    let result = centerline_vectorize(&buf, &palette, &CenterlineConfig::default()).map_err(
+        |e| AppCommandError::Validation {
+            detail: e.to_string(),
+        },
+    )?;
+
+    tracing::info!(
+        sprite_id = sprite_id.get(),
+        layer_id = layer_id.get(),
+        strokes = result.strokes.len(),
+        "vector_vectorize_layer produced vector image"
+    );
+
+    Ok(result)
+}
+
 /// Applies one or more geometric transforms to a raster layer cel.
 ///
 /// Operations in `args.ops` are applied sequentially; the output of each
@@ -2793,6 +2857,42 @@ mod tests {
 
         let composite = composite_frame(&doc, SpriteId::new(1), 0).expect("composite");
         assert_eq!(pixel_at(&composite, 0, 0), [0, 255, 0, 255]);
+    }
+
+    // ── Vectorize (S59) ────────────────────────────────────────────────────
+
+    #[test]
+    fn vectorize_produces_non_empty_strokes_for_a_16x16_outline() {
+        // 16x16 buffer with a black-outline square in the middle. The
+        // exact same call shape the command uses, just without the
+        // Tauri state plumbing.
+        // White RGB + full alpha for every pixel.
+        let mut bytes = vec![255u8; 16 * 16 * 4];
+        // Paint a 12x12 ink border at (2,2)..(14,14).
+        for y in 2..14 {
+            for x in 2..14 {
+                if x == 2 || x == 13 || y == 2 || y == 13 {
+                    let off = (y * 16 + x) * 4;
+                    bytes[off] = 0;
+                    bytes[off + 1] = 0;
+                    bytes[off + 2] = 0;
+                }
+            }
+        }
+        let buf = PixelBuffer::from_raw(16, 16, 16 * 4, bytes).unwrap();
+        let palette = pixhaus_core::project::Palette::from_colors(
+            pixhaus_core::project::PaletteId::new(1),
+            "ink",
+            vec![Rgba::opaque(0, 0, 0)],
+        );
+        let result =
+            centerline_vectorize(&buf, &palette, &CenterlineConfig::default()).expect("vectorize");
+        assert_eq!(result.width, 16);
+        assert_eq!(result.height, 16);
+        assert!(
+            !result.strokes.is_empty(),
+            "expected centerline_vectorize to produce at least one stroke for an outline"
+        );
     }
 
     // ── MLAA defaults (S56) ────────────────────────────────────────────────

@@ -26,6 +26,7 @@ pixhaus-io = { path = "../io" }
 pixhaus-ai = { path = "../ai" }
 pixhaus-scripting = { path = "../scripting" }
 pixhaus-plugins = { path = "../plugins" }
+pixhaus-vectorize = { path = "../vectorize" }
 tauri = { version = "2.11", features = [] }
 tauri-plugin-dialog = "2"
 tauri-plugin-updater = "2"

@@ -55,6 +55,7 @@ import {
   canvasInvertSelection,
   canvasSetSelection,
   canvasComposite,
+  vectorVectorizeLayer,
 } from "../lib/commands/canvas";
 import { undo, redo } from "../lib/commands/undo";
 import { frameAdd, frameDelete, frameDuplicate } from "../lib/commands/frames";
@@ -894,6 +895,38 @@ const COMMANDS: ReadonlyMap<string, CommandEntry> = new Map<string, CommandEntry
   ],
 
   // ── Canvas ────────────────────────────────────────────────────────────────
+  [
+    "canvas:vectorize",
+    {
+      id: "canvas:vectorize",
+      label: "Vectorize Layer (experimental)",
+      category: "Canvas",
+      keywords: ["vector", "vectorize", "centerline", "stroke", "trace"],
+      handler: () => {
+        const spriteId = activeSpriteId();
+        const layerId = activeLayerId();
+        if (spriteId === null || layerId === null) {
+          pushToast({
+            kind: "info",
+            title: "Vectorize: select a sprite and a layer first.",
+          });
+          return;
+        }
+        vectorVectorizeLayer({ sprite_id: spriteId, layer_id: layerId })
+          .then((vi) => {
+            pushToast({
+              kind: "info",
+              title: `Vectorized: ${vi.strokes.length} strokes (no visual sink yet)`,
+            });
+            // Surface the full result on the console so plugin authors
+            // can inspect strokes/vertices while a viewer lands.
+            // eslint-disable-next-line no-console
+            console.log("[pixhaus] VectorImage:", vi);
+          })
+          .catch((err: unknown) => reportCommandFailure("vector_vectorize_layer", err));
+      },
+    },
+  ],
   [
     "canvas:apply-mlaa",
     {

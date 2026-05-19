@@ -277,6 +277,8 @@ pub fn run() -> Result<(), AppError> {
             // updater
             commands::updater::updater_check,
             commands::updater::updater_install,
+            // vectorize
+            commands::canvas::vector_vectorize_layer,
             // verbs
             commands::verbs::verb_cancel,
             commands::verbs::verb_invoke,

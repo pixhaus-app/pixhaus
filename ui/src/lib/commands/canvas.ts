@@ -10,6 +10,7 @@ import type {
   SelectionRegion,
   SelectionState,
   SpriteId,
+  VectorImage,
 } from "../types";
 
 // ── argument types ────────────────────────────────────────────────────────────
@@ -211,6 +212,18 @@ export function canvasFill(args: FillArgs): Promise<void> {
  */
 export function canvasTransform(args: TransformArgs): Promise<void> {
   return invoke<void>("canvas_transform", { args });
+}
+
+/**
+ * Vectorizes a layer cel into a `VectorImage` of centerline strokes.
+ * Pixhaus is raster-only, so the result has no render path yet —
+ * callers consume it for export (SVG, follow-up sink) or inspection.
+ */
+export function vectorVectorizeLayer(args: {
+  sprite_id: SpriteId;
+  layer_id: LayerId;
+}): Promise<VectorImage> {
+  return invoke<VectorImage>("vector_vectorize_layer", { ...args });
 }
 
 export type ApplyMlaaArgs = {

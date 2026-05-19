@@ -121,3 +121,6 @@ export type { UpdateInfo } from "./UpdateInfo";
 export type { UpdateProgressPayload } from "./UpdateProgressPayload";
 export type { UserData } from "./UserData";
 export type { VariantOrigin } from "./VariantOrigin";
+export type { VectorImage } from "./VectorImage";
+export type { Vertex } from "./Vertex";
+export type { Stroke } from "./Stroke";

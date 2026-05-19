@@ -5142,6 +5142,7 @@ dependencies = [
  "pixhaus-io",
  "pixhaus-plugins",
  "pixhaus-scripting",
+ "pixhaus-vectorize",
  "sentry",
  "serde",
  "serde_json",
@@ -5245,6 +5246,7 @@ dependencies = [
  "serde",
  "thiserror 2.0.18",
  "tracing",
+ "ts-rs",
 ]
 
 [[package]]
