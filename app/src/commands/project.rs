@@ -756,6 +756,8 @@ mod tests {
             name: "main".into(),
             colors: Vec::new(),
             user_data: UserData::default(),
+            pages: Vec::new(),
+            animation: None,
         });
         install_sprite_as_new_entity(&mut project, sprite, 1_000, 1_001, None);
 

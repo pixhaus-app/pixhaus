@@ -873,6 +873,8 @@ fn build_base_palette(frame0: &DocumentFrame) -> Option<Palette> {
             name: "imported".into(),
             colors,
             user_data: UserData::default(),
+            pages: Vec::new(),
+            animation: None,
         })
     }
 }

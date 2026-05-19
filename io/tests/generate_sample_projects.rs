@@ -212,6 +212,8 @@ fn make_palette(id: u32, name: &str, entries: Vec<(&str, Rgba)>) -> Palette {
             })
             .collect(),
         user_data: UserData::default(),
+        pages: Vec::new(),
+        animation: None,
     }
 }
 

@@ -13,6 +13,8 @@ The following Pixhaus files adapt code from
 
 - `core/src/project/palette.rs` — `PalettePage`, `PaletteAnimation`
   derived from `toonz/sources/include/tpalette.h`.
+- `core/src/project/id.rs` — `PalettePageId` newtype derived from
+  the page-identity concept in `toonz/sources/include/tpalette.h`.
 - `core/src/canvas/blend.rs` — eight blend-mode math functions
   (LinearBurn, DarkerColor, LinearDodge, LighterColor, VividLight,
   LinearLight, PinLight, HardMix) derived from

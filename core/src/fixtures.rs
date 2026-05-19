@@ -159,6 +159,8 @@ pub fn sample_project() -> Project {
             },
         ],
         user_data: UserData::default(),
+        pages: Vec::new(),
+        animation: None,
     };
 
     let tileset = Tileset {

@@ -146,6 +146,8 @@ pub async fn palette_add(
             name,
             colors: Vec::new(),
             user_data: UserData::default(),
+            pages: Vec::new(),
+            animation: None,
         };
         sprite.palettes.push(palette.clone());
         palette
@@ -538,6 +540,8 @@ mod tests {
             name: "main".into(),
             colors: Vec::new(),
             user_data: UserData::default(),
+            pages: Vec::new(),
+            animation: None,
         });
         let entity_id = EntityId::new(100);
         let state_id = StateId::new(101);
@@ -668,6 +672,8 @@ mod tests {
             name: "main".into(),
             colors,
             user_data: UserData::default(),
+            pages: Vec::new(),
+            animation: None,
         }
     }
 

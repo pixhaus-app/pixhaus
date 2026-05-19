@@ -140,6 +140,8 @@ fn knight_palette() -> Palette {
             pe("steel", Rgba::opaque(140, 150, 165)),
         ],
         user_data: UserData::default(),
+        pages: Vec::new(),
+        animation: None,
     }
 }
 
@@ -182,6 +184,8 @@ fn unsorted_palette() -> Palette {
             pe("mid-gray", Rgba::opaque(115, 115, 115)),
         ],
         user_data: UserData::default(),
+        pages: Vec::new(),
+        animation: None,
     }
 }
 
@@ -213,6 +217,8 @@ fn sorted_palette() -> Palette {
         name: "tutorial-sorted".into(),
         colors,
         user_data: UserData::default(),
+        pages: Vec::new(),
+        animation: None,
     }
 }
 

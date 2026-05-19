@@ -612,6 +612,8 @@ mod tests {
                 }), // red
             ],
             user_data: UserData::default(),
+            pages: Vec::new(),
+            animation: None,
         };
 
         // A pixel that is almost-red should snap to red (255, 0, 0).
@@ -632,6 +634,8 @@ mod tests {
                 a: 255,
             })],
             user_data: UserData::default(),
+            pages: Vec::new(),
+            animation: None,
         };
 
         // Alpha == 0 means fully transparent — should not be changed.
