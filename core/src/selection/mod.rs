@@ -31,13 +31,17 @@
 //! selects everything.
 
 pub mod algorithms;
+pub mod autoclose;
 pub mod error;
 pub mod mask;
 pub mod morphology;
+mod skeleton_lut;
 
 pub use algorithms::{
-    Connectivity, color_range, magic_wand, select_ellipse, select_polygon, select_rect,
+    Connectivity, color_range, magic_wand, magic_wand_with_gap_close, select_ellipse,
+    select_polygon, select_rect,
 };
+pub use autoclose::{GapCloseConfig, close_gaps};
 pub use error::{Error, Result};
 pub use mask::SelectionMask;
 pub use morphology::{contract, expand, feather};
