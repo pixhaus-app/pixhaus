@@ -56,6 +56,25 @@ pub enum BlendMode {
     Color,
     /// Replaces dst luminosity with src.
     Luminosity,
+    /// `max(b + s - 255, 0)` per channel.
+    LinearBurn,
+    /// Picks the color whose Rec.709 luma is lower (whole-pixel choice,
+    /// not per-channel).
+    DarkerColor,
+    /// `min(b + s, 255)` per channel. Equivalent to `Addition`; kept as
+    /// a distinct variant for UI parity with Photoshop.
+    LinearDodge,
+    /// Picks the color whose Rec.709 luma is higher (whole-pixel
+    /// choice, not per-channel).
+    LighterColor,
+    /// `s < 128 ? color_burn(b, 2s) : color_dodge(b, 2s - 255)`.
+    VividLight,
+    /// `s < 128 ? linear_burn(b, 2s) : linear_dodge(b, 2s - 255)`.
+    LinearLight,
+    /// `s < 128 ? darken(b, 2s) : lighten(b, 2s - 255)`.
+    PinLight,
+    /// `vivid_light(b, s) < 128 ? 0 : 255` per channel.
+    HardMix,
 }
 
 #[cfg(test)]
@@ -89,6 +108,14 @@ mod tests {
             BlendMode::Saturation,
             BlendMode::Color,
             BlendMode::Luminosity,
+            BlendMode::LinearBurn,
+            BlendMode::DarkerColor,
+            BlendMode::LinearDodge,
+            BlendMode::LighterColor,
+            BlendMode::VividLight,
+            BlendMode::LinearLight,
+            BlendMode::PinLight,
+            BlendMode::HardMix,
         ];
         for mode in modes {
             let bytes = rmp_serde::to_vec_named(&mode).unwrap();
