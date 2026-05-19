@@ -68,8 +68,8 @@ fn default_num_outputs() -> u32 {
 ///
 /// `Ai` is the default and dispatches to the configured
 /// frame-interpolation backend. `Procedural` runs entirely locally
-/// using the variance-rejected weighted averaging in
-/// [`procedural::interpolate_frames`]; no backend is required.
+/// using the variance-rejected weighted averaging in the private
+/// `procedural` submodule; no backend is required.
 /// `AiWithProceduralPreview` emits the procedural midpoint as a
 /// `PartialPixels` progress event before invoking the backend, so
 /// the host can render a fast preview while the AI call runs.

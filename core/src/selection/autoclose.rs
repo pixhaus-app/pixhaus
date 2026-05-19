@@ -7,8 +7,8 @@
 //!
 //! The closer walks the buffer once, builds a boolean ink mask using a
 //! Rec.709 luma threshold, then classifies each ink pixel by its
-//! 8-neighbour signature against the generated [`super::skeleton_lut`]
-//! table. Endpoints — strokes that terminate with no inward
+//! 8-neighbour signature against the generated `super::skeleton_lut`
+//! table (private module). Endpoints — strokes that terminate with no inward
 //! continuation — are paired with their nearest geometric neighbour
 //! whose tangent points back toward them. A standard integer Bresenham
 //! segment is rasterized into a [`SelectionMask`] for each accepted
