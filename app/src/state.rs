@@ -19,8 +19,8 @@ use pixhaus_ai::plugin::runtime::VerbRuntime;
 use pixhaus_ai::verbs::{
     AnimatedSpriteSheetVerb, AudioTimingVerb, AutoMeshDeformationVerb, CleanupVerb, ContinueVerb,
     ConversationalVerb, CritiqueVerb, ExtendVerb, GenerateReferenceSheetVerb, InbetweenVerb,
-    MotionFromVideoVerb, ProjectStyleLearningVerb, SketchFinishingVerb, TileVerb,
-    TilesetFromDescriptionVerb, TrainEntityLoraVerb, VariantVerb,
+    IterateReferenceSheetVerb, MotionFromVideoVerb, ProjectStyleLearningVerb, SketchFinishingVerb,
+    TileVerb, TilesetFromDescriptionVerb, TrainEntityLoraVerb, VariantVerb,
 };
 use pixhaus_core::project::{LayerId, PixelBufferId, Project, Rgba, SpriteId};
 use pixhaus_core::undo::History;
@@ -310,6 +310,7 @@ impl AppState {
         register_builtin(&runtime, ExtendVerb::new());
         register_builtin(&runtime, GenerateReferenceSheetVerb::new());
         register_builtin(&runtime, InbetweenVerb::new());
+        register_builtin(&runtime, IterateReferenceSheetVerb::new());
         register_builtin(&runtime, MotionFromVideoVerb::new());
         register_builtin(&runtime, ProjectStyleLearningVerb::new());
         register_builtin(&runtime, SketchFinishingVerb::new());
@@ -422,6 +423,7 @@ mod tests {
             "pixhaus.builtin.extend",
             "pixhaus.builtin.generate_reference_sheet",
             "pixhaus.builtin.inbetween",
+            "pixhaus.builtin.iterate_reference_sheet",
             "pixhaus.builtin.motion_from_video",
             "pixhaus.builtin.project_style_learning",
             "pixhaus.builtin.train_entity_lora",
