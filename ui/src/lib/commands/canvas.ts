@@ -213,6 +213,24 @@ export function canvasTransform(args: TransformArgs): Promise<void> {
   return invoke<void>("canvas_transform", { args });
 }
 
+export type ApplyMlaaArgs = {
+  sprite_id: SpriteId;
+  layer_id: LayerId;
+  /** Per-channel max-diff classifier (default 16). */
+  threshold?: number;
+  /** Separation-line softening factor (default 128; 0 is a no-op). */
+  softness?: number;
+};
+
+/**
+ * Applies morphological anti-aliasing (MLAA) to the active layer's cel at
+ * the active frame. The result replaces the cel buffer; a `PixelOpBatch`
+ * lands on the undo stack and the renderer recomposites affected tiles.
+ */
+export function canvasApplyMlaa(args: ApplyMlaaArgs): Promise<void> {
+  return invoke<void>("canvas_apply_mlaa", { ...args });
+}
+
 /**
  * Sets the canvas selection. Pass `null` for `region` to clear the selection.
  */

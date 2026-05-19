@@ -50,6 +50,7 @@ import {
   dispatchRotateCcw,
 } from "../canvas/transform/transform-input";
 import {
+  canvasApplyMlaa,
   canvasSelectAll,
   canvasInvertSelection,
   canvasSetSelection,
@@ -888,6 +889,33 @@ const COMMANDS: ReadonlyMap<string, CommandEntry> = new Map<string, CommandEntry
               reportCommandFailure("canvas_invert_selection", err);
             }
           });
+      },
+    },
+  ],
+
+  // ── Canvas ────────────────────────────────────────────────────────────────
+  [
+    "canvas:apply-mlaa",
+    {
+      id: "canvas:apply-mlaa",
+      label: "Anti-alias Layer (MLAA)",
+      category: "Canvas",
+      keywords: ["antialias", "anti-alias", "mlaa", "smooth", "staircase"],
+      handler: () => {
+        const spriteId = activeSpriteId();
+        const layerId = activeLayerId();
+        if (spriteId === null || layerId === null) {
+          pushToast({
+            kind: "info",
+            title: "MLAA: select a sprite and a layer first.",
+          });
+          return;
+        }
+        canvasApplyMlaa({ sprite_id: spriteId, layer_id: layerId })
+          .then(() => {
+            pushToast({ kind: "info", title: "MLAA applied" });
+          })
+          .catch((err: unknown) => reportCommandFailure("canvas_apply_mlaa", err));
       },
     },
   ],

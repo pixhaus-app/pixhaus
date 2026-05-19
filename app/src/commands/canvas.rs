@@ -19,7 +19,9 @@ use pixhaus_core::selection::GapCloseConfig;
 use pixhaus_core::selection::algorithms::{
     Connectivity, color_range, magic_wand, magic_wand_with_gap_close, select_polygon,
 };
-use pixhaus_core::transforms::{self, RotateMode, ScaleMode, TransformSpec};
+use pixhaus_core::transforms::{
+    self, MlaaConfig, RotateMode, ScaleMode, TransformSpec, morphological_antialias,
+};
 use pixhaus_io::pixhaus::PixelBufferEntry;
 use serde::{Deserialize, Serialize};
 use tauri::{AppHandle, Emitter, State};
@@ -1328,6 +1330,84 @@ pub async fn canvas_fill(
         before,
         pbuf.as_bytes().to_vec(),
         "fill",
+    )
+}
+
+/// Applies morphological anti-aliasing (MLAA) to the active layer's cel at
+/// the active frame.
+///
+/// `threshold` is the per-channel max-diff classifier (default 16). `softness`
+/// controls how aggressively separation lines are smoothed (default 128;
+/// `0` is a no-op). Both default values match `OpenToonz`'s recommended
+/// starting points for 8-bit RGBA content.
+///
+/// The result replaces the cel buffer in place; a `PixelOpBatch` is pushed
+/// to the undo stack and the affected tiles re-composite for the renderer.
+#[tauri::command(async, rename_all = "snake_case")]
+pub async fn canvas_apply_mlaa(
+    sprite_id: SpriteId,
+    layer_id: LayerId,
+    threshold: Option<u8>,
+    softness: Option<u8>,
+    state: State<'_, AppState>,
+    app: AppHandle,
+) -> CommandResult<()> {
+    let mut lock = state.doc.write().await;
+    let doc = &mut *lock;
+
+    ensure_layer_writable(doc, sprite_id, layer_id)?;
+
+    // Resolve the active frame; default to frame 0 if no canvas is set.
+    let frame_index = doc
+        .project
+        .as_ref()
+        .and_then(|p| p.canvas.active_frame)
+        .map_or(0, FrameIndex::get);
+
+    let buffer_id = ensure_raster_buffer(doc, sprite_id, layer_id, frame_index)?;
+
+    let (before, w, h, stride) = {
+        let entry = doc
+            .pixel_buffers
+            .iter()
+            .find(|e| e.id == buffer_id.get())
+            .ok_or_else(|| AppCommandError::NotFound {
+                entity: "pixel buffer".into(),
+                id: u64::from(buffer_id.get()),
+            })?;
+        (
+            entry.pixels.clone(),
+            entry.width,
+            entry.height,
+            entry.stride,
+        )
+    };
+
+    let src = PixelBuffer::from_raw(w, h, stride, before.clone()).map_err(|e| {
+        AppCommandError::Validation {
+            detail: e.to_string(),
+        }
+    })?;
+
+    let defaults = MlaaConfig::default();
+    let config = MlaaConfig {
+        threshold: threshold.unwrap_or(defaults.threshold),
+        softness: softness.unwrap_or(defaults.softness),
+    };
+
+    let dst = morphological_antialias(&src, &config).map_err(|e| AppCommandError::Validation {
+        detail: e.to_string(),
+    })?;
+
+    commit_pixel_op(
+        doc,
+        &app,
+        buffer_id,
+        sprite_id,
+        frame_index,
+        before,
+        dst.as_bytes().to_vec(),
+        "mlaa",
     )
 }
 
@@ -2713,6 +2793,58 @@ mod tests {
 
         let composite = composite_frame(&doc, SpriteId::new(1), 0).expect("composite");
         assert_eq!(pixel_at(&composite, 0, 0), [0, 255, 0, 255]);
+    }
+
+    // ── MLAA defaults (S56) ────────────────────────────────────────────────
+
+    /// Same default-resolution shape the Tauri command uses inline, so a
+    /// future change to `MlaaConfig::default()` moves the command's
+    /// defaults in lock-step.
+    fn resolve_mlaa(threshold: Option<u8>, softness: Option<u8>) -> MlaaConfig {
+        let defaults = MlaaConfig::default();
+        MlaaConfig {
+            threshold: threshold.unwrap_or(defaults.threshold),
+            softness: softness.unwrap_or(defaults.softness),
+        }
+    }
+
+    #[test]
+    fn mlaa_config_resolves_to_openttoonz_defaults_when_unset() {
+        let resolved = resolve_mlaa(None, None);
+        assert_eq!(resolved, MlaaConfig::default());
+        assert_eq!(resolved.threshold, 16);
+        assert_eq!(resolved.softness, 128);
+    }
+
+    #[test]
+    fn mlaa_config_resolves_explicit_overrides() {
+        let resolved = resolve_mlaa(Some(32), Some(64));
+        assert_eq!(resolved.threshold, 32);
+        assert_eq!(resolved.softness, 64);
+    }
+
+    #[test]
+    fn mlaa_smooths_staircase_into_distinct_buffer() {
+        // 4x4 horizontal staircase: top-left 2x2 block opaque red, the
+        // remaining pixels transparent. MLAA must produce a buffer that
+        // differs from the input (the diagonal step gets softened).
+        let mut bytes = vec![0u8; 4 * 4 * 4];
+        for y in 0..2 {
+            for x in 0..2 {
+                let i = (y * 4 + x) * 4;
+                bytes[i] = 255;
+                bytes[i + 3] = 255;
+            }
+        }
+        let src = PixelBuffer::from_raw(4, 4, 16, bytes.clone()).unwrap();
+        let dst = morphological_antialias(&src, &MlaaConfig::default()).unwrap();
+        assert_eq!(dst.width(), 4);
+        assert_eq!(dst.height(), 4);
+        assert_ne!(
+            dst.as_bytes(),
+            bytes.as_slice(),
+            "expected MLAA to modify the staircase"
+        );
     }
 
     // ── Gap-close request (S57) ───────────────────────────────────────────

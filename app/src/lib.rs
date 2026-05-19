@@ -121,6 +121,7 @@ pub fn run() -> Result<(), AppError> {
             commands::exports::export_png_sprite_sheet,
             commands::exports::export_tmx,
             // canvas
+            commands::canvas::canvas_apply_mlaa,
             commands::canvas::canvas_begin_stroke,
             commands::canvas::canvas_composite,
             commands::canvas::canvas_draw_stroke,
