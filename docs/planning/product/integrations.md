@@ -387,7 +387,7 @@ Two-stage LLM choreography (CHARACTER × CHOREOGRAPHY) producing a grid sprite s
 
 - **Sources**: [`../research/falsprite-prior-art.md`](../research/falsprite-prior-art.md) § 1–3.
 - **Requirements**: CHARACTER and CHOREOGRAPHY prompts are user-editable; grid math (cell-size floor division, pixel-perfect rendering) is deterministic; output snaps to palette.
-- **Lands in**: new verb stream (to be added to `work/streams.md`).
+- **Lands in**: S53. Verb at `ai/src/verbs/animated_sprite_sheet/`; UI form at `ui/src/verbs/animated-sprite-sheet/`; frame-grid playback primitives at `ui/src/timeline/frame-grid.ts` + `ui/src/timeline/use-animation-loop.ts`. FalSprite attribution at `LICENSES/falsprite-MIT.txt` and `LICENSES/NOTICE.txt`.
 
 ---
 

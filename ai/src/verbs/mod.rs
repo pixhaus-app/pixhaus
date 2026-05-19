@@ -34,6 +34,7 @@
 //! [`crate::plugin::context::VerbContext`] to a known concrete adapter and
 //! delegates to that adapter's operational `invoke` method.
 
+pub mod animated_sprite_sheet;
 pub mod audio_timing;
 pub mod auto_mesh_deformation;
 pub mod cleanup;
@@ -52,6 +53,7 @@ pub mod tileset_from_description;
 pub mod train_entity_lora;
 pub mod variant;
 
+pub use animated_sprite_sheet::AnimatedSpriteSheetVerb;
 pub use audio_timing::AudioTimingVerb;
 pub use auto_mesh_deformation::AutoMeshDeformationVerb;
 pub use cleanup::CleanupVerb;

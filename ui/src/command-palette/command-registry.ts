@@ -22,6 +22,7 @@ import {
 import { activeProject, setActiveProject, pushRecentProject } from "../project-state";
 import { extractFilename } from "../lib/utils/path";
 import { reportCommandFailure } from "../lib/utils/errors";
+import { openAnimatedSpriteSheetForm } from "../verbs/animated-sprite-sheet/state";
 import {
   activeSpriteId,
   setActiveSpriteId,
@@ -1065,6 +1066,16 @@ const COMMANDS: ReadonlyMap<string, CommandEntry> = new Map<string, CommandEntry
   // toast — meaningfully different from the silent stub these entries used
   // to call. A future PR will land per-verb input modals; until then,
   // power users invoke verbs from the plugin SDK or scripting.
+  [
+    "ai:animated-sprite-sheet",
+    {
+      id: "ai:animated-sprite-sheet",
+      label: "Animated Sprite Sheet from Prompt",
+      category: "AI",
+      keywords: ["animate", "sheet", "grid", "character", "choreography", "falsprite", "animation"],
+      handler: () => openAnimatedSpriteSheetForm(),
+    },
+  ],
   [
     "ai:inbetween",
     {

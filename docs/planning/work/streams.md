@@ -109,6 +109,11 @@ Streams marked with **★** are on the critical path — they unblock other stre
 | S51 | Crash reporting (opt-in) |  |
 | S52 | Visual regression test harness |  |
 
+### AI verbs — second wave (S53)
+| ID | Name | Critical |
+|---|---|---|
+| S53 | Verb: Animated sprite sheet from prompt (CHARACTER × CHOREOGRAPHY, FalSprite-derived) |  |
+
 ---
 
 ## Stream details
@@ -685,6 +690,19 @@ Each verb is its own stream. They share the same shape:
 
 ---
 
+### S53. Verb: Animated sprite sheet from prompt
+
+**Scope:** New AI verb that generates a `g×g` grid of animation frames from a single prompt via a two-stage LLM choreography. CHARACTER × CHOREOGRAPHY rewrite, then strict-requirements scaffold, then image generation, then grid slicing into per-cell cels with palette snap. Three-mode architecture: procedural (placeholder frames), AI (full pipeline), hybrid (rewrite-only preview).
+
+**Depends on:** B5, S21, S22.
+
+**Interfaces:** Lands in `ai/src/verbs/animated_sprite_sheet/` under the verb runtime. UI surface in `ui/src/verbs/animated-sprite-sheet/` with a chip-multi-select form constrained by `len(actions) <= grid_size`. Frame-grid playback primitive in `ui/src/timeline/frame-grid.ts` and a Solid `useAnimationLoop` hook share with S19. Attribution: the CHARACTER × CHOREOGRAPHY rewrite system prompt and the technical-requirements scaffold are adapted verbatim from FalSprite (https://github.com/lovisdotio/falsprite), MIT, lovisdotio. Per-file headers and a project-level `NOTICES.md` carry the upstream attribution.
+
+**Agent brief:**
+> Add `ai/src/verbs/animated_sprite_sheet/` with `prompts/rewrite_system.txt`, `prompts/sprite_constraints.txt`, and `prompts/LICENSE.txt`. Implement the `Verb` trait with input schema validation (`grid_size` 2-6, `cell_size_px` 16-256, `len(actions) <= grid_size`, non-empty prompt). Required capability: `IMAGE_GENERATION`. If the selected backend also advertises `TEXT_GENERATION`, run the rewrite stage first; otherwise skip it and surface a `Rewrite skipped: …` note. Output: `AddLayer` effect carrying `g²` raster cels in row-major order, each sized to `cell_size_px`. Snap cels to `ctx.active_palette` when present. Add an integration-style lifecycle test in `ai/tests/animated_sprite_sheet_lifecycle.rs` using a mock backend that returns a checkerboard PNG. Register the verb in `app/src/state.rs`. UI: a Solid form with grid slider, action chip multi-select that silently rejects over-cap picks (flash the hint rather than throw), mode toggle, advanced section (cell size, frame duration, seed, layer name, reference image, rewritten-prompt textarea). Wire the form into the command palette as `ai:animated-sprite-sheet`. Add `ui/src/timeline/frame-grid.ts` (`frameCoord`, `cellSize`, `drawCell`) and `ui/src/timeline/use-animation-loop.ts` (FPS-gated RAF primitive). Update `NOTICES.md` with the FalSprite entry.
+
+---
+
 ## How to dispatch
 
 The recommended order:
@@ -701,7 +719,7 @@ Don't dispatch all streams the same day. The bottleneck is review, not execution
 
 ## What's not in here
 
-- A dedicated stream for AI safety / responsible AI considerations. This should arguably be a stream of its own — content policy for verbs, watermarking AI-generated assets, attribution requirements. Add as S53 if you want it explicit.
+- A dedicated stream for AI safety / responsible AI considerations. This should arguably be a stream of its own — content policy for verbs, watermarking AI-generated assets, attribution requirements. Add as S54 if you want it explicit (S53 is now the animated-sprite-sheet verb).
 - Localization (i18n / l10n). Defer until launch.
 - Mobile (iPad). Defer entirely; this is a desktop tool.
 - Web build of the editor itself. Tauri 2's mobile/web targets aren't mature enough; defer.

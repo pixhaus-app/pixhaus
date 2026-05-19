@@ -1,0 +1,35 @@
+The two `.txt` prompt assets in this directory are adapted from FalSprite
+(https://github.com/lovisdotio/falsprite), MIT-licensed, observed commit
+10107b38c01df342f5b5eb9b3fd5bded32dcbfa6.
+
+The prompts are content under copyright — when they ship inside Pixhaus
+they carry the FalSprite copyright notice and the MIT license text
+verbatim. Adaptation is limited to template-substitution markers
+(`{grid_word}`) that replace the upstream's runtime string interpolation;
+the textual content and section structure are unchanged.
+
+The full upstream license follows.
+
+----------------------------------------------------------------------
+
+MIT License
+
+Copyright (c) 2026 lovisdotio
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.

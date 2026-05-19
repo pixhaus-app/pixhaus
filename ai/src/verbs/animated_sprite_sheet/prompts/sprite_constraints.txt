@@ -1,0 +1,29 @@
+STRICT TECHNICAL REQUIREMENTS FOR THIS IMAGE:
+
+FORMAT: A single image containing a {grid_word}-by-{grid_word} grid of equally sized cells.
+Every cell must be the exact same dimensions, perfectly aligned, with no gaps or overlap.
+
+FORBIDDEN: Absolutely no text, no numbers, no letters, no digits, no labels,
+no watermarks, no signatures, no UI elements anywhere in the image. The image must
+contain ONLY the character illustrations in the grid cells and nothing else.
+
+CONSISTENCY: The exact same single character must appear in every cell.
+Same proportions, same art style, same level of detail, same camera angle throughout.
+Isometric three-quarter view. Full body visible head to toe in every cell.
+Strong clean silhouette against a plain solid flat-color background.
+
+ANIMATION FLOW: The cells read left-to-right, top-to-bottom, like reading a page.
+This is one continuous motion sequence. Each cell shows the next moment in the movement.
+The transition between the last cell of one row and the first cell of the next row
+must be just as smooth as transitions within a row — no jumps, no resets.
+Each row contains {grid_word} phases of the motion. The very last cell loops back seamlessly
+to the very first cell.
+
+MOTION QUALITY: Show real weight and physics. Bodies shift weight between feet.
+Arms counterbalance legs. Torsos rotate into actions. Follow-through on every movement.
+No stiff poses — every cell must feel like a freeze-frame of fluid motion.
+For locomotion (walk/run): strictly alternate left and right legs — one leg extends forward
+while the other pushes behind. Each frame must show a clearly different leg position.
+Never repeat the same pose twice in a row.
+
+CHARACTER AND ANIMATION DIRECTION:
