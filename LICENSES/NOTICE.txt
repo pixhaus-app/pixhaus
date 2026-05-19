@@ -1,0 +1,28 @@
+Pixhaus third-party attribution notice
+
+Pixhaus is distributed under the MIT license. See the top-level LICENSE
+file for the full Pixhaus copyright.
+
+Portions of this software may be derived from third-party sources, used
+under their respective licenses. When a port lands in the tree, the
+ported file carries the upstream copyright in its header and the
+license text is recorded in this directory.
+
+Recorded upstream attributions:
+
+  Aseprite (https://github.com/aseprite/aseprite)
+    Copyright (c) 2018-2025 Igara Studio S.A.
+    Copyright (c) 2001-2018 David Capello
+    Used under the MIT license for the upstream `src/doc/`,
+    `src/render/`, `src/dio/`, `src/ui/`, `src/observable/`,
+    `src/undo/`, `src/fixmath/`, `src/flic/`, `src/cfg/`, `src/net/`,
+    `src/desktop/`, `src/gen/`, and `src/steam/` subtrees, plus the
+    embedded `laf` and `clip` submodules. See `aseprite-MIT.txt` in
+    this directory for the full notice. The upstream `src/app/` and
+    `src/main/` subtrees are EULA-licensed and are not derived from
+    in Pixhaus.
+
+  Bresenham implementations by Alois Zingl
+    Copyright (c) 2012-2016 Alois Zingl
+    MIT-licensed; the Zingl notice is preserved in any ported file
+    that contains the implementation.
