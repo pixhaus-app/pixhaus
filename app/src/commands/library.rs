@@ -26,7 +26,6 @@ use pixhaus_ai::plugin::progress::{VerbProgress, VerbProgressEvent};
 use pixhaus_ai::plugin::runtime::VerbRuntime;
 use pixhaus_ai::plugin::{AnchorPayload, DEFAULT_ANCHOR_STRENGTH};
 use pixhaus_ai::verbs::critique::{CritiqueInputs, CritiqueMode};
-use pixhaus_ai::verbs::reference_sheet::GenerateSheetPayload;
 use pixhaus_core::color::extraction::{ExtractionOptions, extract_palette_from_image_bytes};
 use pixhaus_core::project::approval::{ApprovalError, approve_sheet_variant};
 use pixhaus_core::project::{
@@ -4632,67 +4631,6 @@ pub async fn project_set_default_candidate_count(
 
 // ── sheet helpers ─────────────────────────────────────────────────────────────
 
-#[allow(dead_code)]
-pub(crate) fn apply_generated_reference_sheet_payload(
-    project: &mut pixhaus_core::project::Project,
-    next_id: &mut u32,
-    payload: GenerateSheetPayload,
-    ts: i64,
-) -> Result<Entity, AppCommandError> {
-    let entity = find_entity_mut(&mut project.library, payload.entity_id)?;
-
-    let EntityContent::Sprites {
-        reference_sheet, ..
-    } = &mut entity.content
-    else {
-        return Err(AppCommandError::Validation {
-            detail: format!(
-                "entity {} is not a sprite entity; reference sheets belong to sprites",
-                payload.entity_id.get()
-            ),
-        });
-    };
-
-    let mut variants = Vec::with_capacity(payload.variants.len());
-    for output in payload.variants {
-        let bytes = base64::engine::general_purpose::STANDARD
-            .decode(output.image_b64.as_bytes())
-            .map_err(|e| AppCommandError::Validation {
-                detail: format!("generated reference sheet image was not valid base64: {e}"),
-            })?;
-        let variant_id = SheetVariantId::new(*next_id);
-        *next_id += 1;
-        variants.push(SheetVariant {
-            composition: output.composition,
-            generation: Some(output.generation),
-            origin: pixhaus_core::project::VariantOrigin::FreshGeneration,
-            ..SheetVariant::from_image(
-                variant_id,
-                output.generated_at,
-                ReferenceImage {
-                    bytes,
-                    mime: "image/png".into(),
-                },
-            )
-        });
-    }
-
-    let sheet = reference_sheet
-        .get_or_insert_with(|| {
-            Box::new(ReferenceSheet {
-                canonical: None,
-                variants: Vec::new(),
-                prompts: Vec::new(),
-                info: AssetInfo::default(),
-            })
-        })
-        .as_mut();
-    variants.append(&mut sheet.variants);
-    sheet.variants = variants;
-    entity.updated_at = ts;
-    Ok(entity.clone())
-}
-
 pub(crate) fn import_reference_sheet_draft(
     project: &mut pixhaus_core::project::Project,
     next_id: &mut u32,
@@ -5371,6 +5309,7 @@ pub async fn library_train_entity_lora(
 #[cfg(test)]
 mod tests {
     use base64::Engine as _;
+    use pixhaus_ai::verbs::reference_sheet::GenerateSheetPayload;
     use pixhaus_core::project::{
         ActiveTarget, AiMetadata, AssetInfo, ColorMode, EntityContent, EntityDefaults, EntityId,
         EntityKind, GroupId, NamedSprite, ReferenceImage, ReferenceSheet, SheetComposition,
@@ -6330,6 +6269,70 @@ mod tests {
         let result =
             delete_sheet_variant_in_project(&mut project, entity_id, SheetVariantId::new(999), 0);
         assert!(matches!(result, Err(AppCommandError::NotFound { .. })));
+    }
+
+    /// Test-only helper: appends decoded `GenerateSheetPayload` variants
+    /// to the entity's reference sheet. Mirrors the work the eventual
+    /// production handler will do; kept inside the test module until
+    /// that handler exists.
+    fn apply_generated_reference_sheet_payload(
+        project: &mut pixhaus_core::project::Project,
+        next_id: &mut u32,
+        payload: GenerateSheetPayload,
+        ts: i64,
+    ) -> Result<Entity, AppCommandError> {
+        let entity = find_entity_mut(&mut project.library, payload.entity_id)?;
+
+        let EntityContent::Sprites {
+            reference_sheet, ..
+        } = &mut entity.content
+        else {
+            return Err(AppCommandError::Validation {
+                detail: format!(
+                    "entity {} is not a sprite entity; reference sheets belong to sprites",
+                    payload.entity_id.get()
+                ),
+            });
+        };
+
+        let mut variants = Vec::with_capacity(payload.variants.len());
+        for output in payload.variants {
+            let bytes = base64::engine::general_purpose::STANDARD
+                .decode(output.image_b64.as_bytes())
+                .map_err(|e| AppCommandError::Validation {
+                    detail: format!("generated reference sheet image was not valid base64: {e}"),
+                })?;
+            let variant_id = SheetVariantId::new(*next_id);
+            *next_id += 1;
+            variants.push(SheetVariant {
+                composition: output.composition,
+                generation: Some(output.generation),
+                origin: pixhaus_core::project::VariantOrigin::FreshGeneration,
+                ..SheetVariant::from_image(
+                    variant_id,
+                    output.generated_at,
+                    ReferenceImage {
+                        bytes,
+                        mime: "image/png".into(),
+                    },
+                )
+            });
+        }
+
+        let sheet = reference_sheet
+            .get_or_insert_with(|| {
+                Box::new(ReferenceSheet {
+                    canonical: None,
+                    variants: Vec::new(),
+                    prompts: Vec::new(),
+                    info: AssetInfo::default(),
+                })
+            })
+            .as_mut();
+        variants.append(&mut sheet.variants);
+        sheet.variants = variants;
+        entity.updated_at = ts;
+        Ok(entity.clone())
     }
 
     #[test]

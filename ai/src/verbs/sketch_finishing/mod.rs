@@ -18,7 +18,6 @@
 //! The `sketches` vec carries raw RGBA8 frames; each entry maps to one
 //! output cel in the new layer.
 
-use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use async_trait::async_trait;
@@ -26,14 +25,7 @@ use pixhaus_core::project::{Cel, FrameIndex, Layer, LayerId, PixelBufferId, Size
 use serde::{Deserialize, Serialize};
 use tokio_util::sync::CancellationToken;
 
-use crate::backends::openai::OpenAiBackend;
-use crate::backends::replicate::ReplicateBackend;
-use crate::backends::stability::StabilityBackend;
-use crate::backends::{
-    BackendError, ImageEditRequest, InferenceBackend as BackendInvoker, InferenceRequest,
-    InferenceResponse,
-};
-use crate::plugin::backend::InferenceBackend as PluginBackend;
+use crate::backends::ImageEditRequest;
 use crate::plugin::context::{PixelData, StyleReference, VerbContext};
 use crate::plugin::descriptor::{
     BackendCapabilities, CostEstimate, EffectKind, VerbDescriptor, VerbId,
@@ -240,7 +232,13 @@ impl Verb for SketchFinishingVerb {
                 reference_images: Vec::new(),
             };
 
-            let images = call_image_edit(backend, req, progress.clone(), cancel.clone()).await?;
+            let images = crate::verbs::call_image_edit(
+                backend.as_ref(),
+                req,
+                progress.clone(),
+                cancel.clone(),
+            )
+            .await?;
 
             let raw_png = images
                 .into_iter()
@@ -365,47 +363,6 @@ fn decode_png(bytes: &[u8]) -> Result<PixelData> {
         .to_rgba8();
     let (width, height) = img.dimensions();
     Ok(PixelData::rgba8(width, height, img.into_raw()))
-}
-
-/// Calls the concrete image-edit backend through a downcast from the
-/// runtime's `Arc<dyn PluginBackend>`. Returns the raw PNG bytes for each
-/// generated image.
-///
-/// Tries Stability → `OpenAI` → Replicate in that order. Returns
-/// [`VerbError::Backend`] when the injected backend is none of the above.
-async fn call_image_edit(
-    backend: &Arc<dyn PluginBackend>,
-    request: ImageEditRequest,
-    progress: VerbProgress,
-    cancel: CancellationToken,
-) -> Result<Vec<Vec<u8>>> {
-    let req = InferenceRequest::ImageEdit(request);
-
-    let response = if let Some(b) = backend.as_any().downcast_ref::<StabilityBackend>() {
-        b.invoke(req, progress, cancel).await
-    } else if let Some(b) = backend.as_any().downcast_ref::<OpenAiBackend>() {
-        b.invoke(req, progress, cancel).await
-    } else if let Some(b) = backend.as_any().downcast_ref::<ReplicateBackend>() {
-        b.invoke(req, progress, cancel).await
-    } else {
-        return Err(VerbError::Backend(
-            "no image-edit backend available; \
-             register StabilityBackend, OpenAiBackend, or ReplicateBackend"
-                .into(),
-        ));
-    };
-
-    let response = response.map_err(|e| match e {
-        BackendError::Cancelled => VerbError::Cancelled,
-        other => VerbError::Backend(other.to_string()),
-    })?;
-
-    match response {
-        InferenceResponse::Image(img) => Ok(img.images),
-        _ => Err(VerbError::Backend(
-            "image-edit backend returned a non-image response".into(),
-        )),
-    }
 }
 
 #[cfg(test)]
