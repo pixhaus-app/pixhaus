@@ -18,9 +18,11 @@ Every traditional animation tool (TVPaint, Toon Boom Harmony, OpenToonz, Krita) 
 
 Every AI sprite tool — Scenario, PixelLab, Retro Diffusion, Leonardo, Layer — wrestles with the same problem: generating two sprites in the same style is hard, and generating thirty consistent frames of a walk cycle is harder. Custom model training (Scenario), reference images (PixelLab), and LoRA fine-tunes (ComfyUI ecosystem) are the current answers. None of them solve it cleanly. A cohesive 8-direction character with idle, walk, run, attack, hurt, and death animations in identical style is still a multi-day human-led effort even with the best AI tools.
 
-## Asset variations require manual labor
+## Asset variations: storage is solved, generation is not
 
-Palette swaps for player skins, equipment overlays for armor, expression sets for portraits, alternate poses for cutscenes — these are bread-and-butter for game artists. Every tool surveyed handles them by manual layer management, manual palette duplication, or scripted automation. None of them have a first-class concept of "this character has these variants" baked into the project model. Spine's "skins" feature is the closest — and it's bone-rig-only.
+Palette swaps for player skins, equipment overlays for armor, expression sets for portraits, alternate poses for cutscenes — these are bread-and-butter for game artists. The deep dossiers added in May (see [`prior-art.md`](prior-art.md) § "Sparse, link-set variants over duplication" and § D-05) shift this entry: the storage problem *is* solved across the field. Spine has skins, Aseprite splits Cel and CelData for linked cels, Pixelorama uses explicit link-set IDs. The shape varies — the principle that variants share data by reference does not.
+
+The remaining gap is generation with style consistency. Every tool surveyed expects the artist to author each variant by hand or via scripted automation. None of them have an integrated "generate this character in fire palette, with this helmet, with an angry expression" path that respects the project's style and palette discipline. The variant-storage architecture is ready — the variant-generation workflow is the open frontier.
 
 ## Tile autotile generation is still tedious
 
@@ -46,6 +48,10 @@ Aseprite, Pro Motion NG, and most animation tools play back at "approximate" fra
 
 Are all 8 directions of the character at the same vertical pivot? Do all frames respect the palette? Are any frames missing? Did the artist accidentally use a non-palette color? These are eyeball-and-spreadsheet checks across every tool. None of them ship asset-validation rules. Tilesetter does some of this for tilesets; nobody does it for character sprites.
 
+## Cleanup pipelines exist but stay outside the editor
+
+The seven-technique pipeline documented in [`../research/grid-snap-quantize-techniques.md`](../research/grid-snap-quantize-techniques.md) (k-means quantization → Sobel gradient profiling → step estimation → walker cut placement → cross-axis stabilization → majority-vote downsampling) and the eighth-stage normalization in [`../research/sprite-pipeline-methodology.md`](../research/sprite-pipeline-methodology.md) show that the cleanup problem is already engineered — but as standalone tools, not as editor verbs. Every artist who works with AI-generated or scanned pixel art reaches for these techniques outside the editor, then imports the result back. See [`prior-art.md`](prior-art.md) § D-03 for the open decision on folding the full pipeline into the Cleanup verb (S27).
+
 ## Animation reference matching is manual
 
 "Make this character walk like that reference video." Animators handle this by watching the reference, scrubbing frame by frame, and translating motion into key poses by hand. Cascadeur does this for 3D. No 2D sprite tool does it. AI motion-extraction-to-bones is technically possible (pose estimation models exist) and practically absent from the toolchain.
@@ -61,3 +67,5 @@ Because Aseprite is the dominant indie tool, its specific limitations are the fi
 ## What this list is not
 
 These are not "things AI can fix." Some of them are. Some of them have nothing to do with AI — collaborative editing is a CRDT problem, real-time engine preview is a runtime integration problem, asset QA is a rules engine. Treating "the gap" and "the AI opportunity" as the same set is the trap that kills AI-native products. The gaps are real. The AI subset of them is in `ai-opportunity.md`.
+
+Attribution discipline is also not a user-facing gap — but it is a tooling gap that every dossier in [`../research/`](../research/) independently re-derives (per-file headers, license file copies, `THIRD_PARTY_LICENSES.md`, sibling LICENSE files for vendored assets). The canonical form is consolidated once in [`prior-art.md`](prior-art.md) § "Attribution discipline" so each new port doesn't have to invent its own.
