@@ -15,7 +15,10 @@ use pixhaus_core::project::{
     Rgba, SelectionRegion, SelectionState, Size, SpriteId,
 };
 use pixhaus_core::selection::SelectionMask;
-use pixhaus_core::selection::algorithms::{Connectivity, color_range, magic_wand, select_polygon};
+use pixhaus_core::selection::GapCloseConfig;
+use pixhaus_core::selection::algorithms::{
+    Connectivity, color_range, magic_wand, magic_wand_with_gap_close, select_polygon,
+};
 use pixhaus_core::transforms::{self, RotateMode, ScaleMode, TransformSpec};
 use pixhaus_io::pixhaus::PixelBufferEntry;
 use serde::{Deserialize, Serialize};
@@ -1841,12 +1844,52 @@ pub async fn canvas_invert_selection(
     Ok(new_state)
 }
 
+/// Gap-closing pre-pass tuning. Every field is optional; absent fields
+/// fall back to [`GapCloseConfig::default`].
+#[derive(Debug, Clone, Deserialize, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub struct GapCloseRequest {
+    /// Maximum gap (in pixels) the closer will try to bridge. Defaults
+    /// to 10 when omitted.
+    #[serde(default)]
+    pub closing_distance: Option<u32>,
+    /// Maximum angle (radians) between an endpoint's connecting direction
+    /// and the displacement to its partner. Defaults to `FRAC_PI_2`
+    /// (~1.5708) when omitted.
+    #[serde(default)]
+    pub closing_angle_rad: Option<f32>,
+    /// Luma threshold below which a pixel counts as ink. Defaults to 128
+    /// when omitted.
+    #[serde(default)]
+    pub ink_threshold: Option<u8>,
+}
+
+impl GapCloseRequest {
+    /// Resolves the request against [`GapCloseConfig::default`].
+    fn resolve(&self) -> GapCloseConfig {
+        let defaults = GapCloseConfig::default();
+        GapCloseConfig {
+            closing_distance: self.closing_distance.unwrap_or(defaults.closing_distance),
+            closing_angle_rad: self.closing_angle_rad.unwrap_or(defaults.closing_angle_rad),
+            ink_threshold: self.ink_threshold.unwrap_or(defaults.ink_threshold),
+        }
+    }
+}
+
 /// Selects a contiguous region via flood-fill from a seed pixel.
 ///
 /// `(seed_x, seed_y)` are canvas-space coordinates. The flood-fill runs
 /// against the anchor layer's pixel buffer at the active frame; the
 /// resulting mask covers the full canvas (zeros outside the cel) so it can
 /// compose with subsequent selection ops.
+///
+/// When `gap_close` is `Some`, the core runs a gap-closing pre-pass before
+/// the flood-fill, stamping bridge pixels into a working copy of the cel
+/// buffer so the flood respects almost-closed outlines.
+// Tauri commands take their arguments as a flat list because that's the
+// IPC contract; collapsing them into a struct would change the JS-side
+// payload shape. Eight scalars is the right surface here.
+#[allow(clippy::too_many_arguments)]
 #[tauri::command(async, rename_all = "snake_case")]
 pub async fn canvas_select_magic_wand(
     sprite_id: SpriteId,
@@ -1855,6 +1898,7 @@ pub async fn canvas_select_magic_wand(
     seed_y: i32,
     tolerance: u8,
     connectivity: String,
+    gap_close: Option<GapCloseRequest>,
     state: State<'_, AppState>,
 ) -> CommandResult<SelectionState> {
     let layer_id = anchor_layer.ok_or_else(|| AppCommandError::Validation {
@@ -1904,11 +1948,31 @@ pub async fn canvas_select_magic_wand(
     }
     let local_x = u32::try_from(local_xi).unwrap_or(0);
     let local_y = u32::try_from(local_yj).unwrap_or(0);
-    let cel_mask = magic_wand(&buf, local_x, local_y, tolerance, mode).map_err(|e| {
-        AppCommandError::Validation {
-            detail: e.to_string(),
-        }
-    })?;
+    let cel_mask = if let Some(req) = gap_close.as_ref() {
+        let cfg = req.resolve();
+        // `local_xi` and `local_yj` were bounds-checked above against
+        // buf.width()/height(); both are non-negative and fit in i32 as
+        // long as the buffer dims do. Surface a Validation error
+        // otherwise rather than panic.
+        let bad_seed = || AppCommandError::Validation {
+            detail: "seed out of i32 range".into(),
+        };
+        let seed = IVec2 {
+            x: i32::try_from(local_xi).map_err(|_| bad_seed())?,
+            y: i32::try_from(local_yj).map_err(|_| bad_seed())?,
+        };
+        magic_wand_with_gap_close(&buf, seed, tolerance, mode, Some(cfg)).map_err(|e| {
+            AppCommandError::Validation {
+                detail: e.to_string(),
+            }
+        })?
+    } else {
+        magic_wand(&buf, local_x, local_y, tolerance, mode).map_err(|e| {
+            AppCommandError::Validation {
+                detail: e.to_string(),
+            }
+        })?
+    };
 
     // Lift the cel-sized mask onto a canvas-sized one at cel_pos.
     let canvas_mask = lift_mask_to_canvas(&cel_mask, cel_pos, canvas_w, canvas_h)?;
@@ -2649,5 +2713,57 @@ mod tests {
 
         let composite = composite_frame(&doc, SpriteId::new(1), 0).expect("composite");
         assert_eq!(pixel_at(&composite, 0, 0), [0, 255, 0, 255]);
+    }
+
+    // ── Gap-close request (S57) ───────────────────────────────────────────
+
+    #[test]
+    fn gap_close_request_resolve_uses_defaults_for_missing_fields() {
+        let req = GapCloseRequest {
+            closing_distance: None,
+            closing_angle_rad: None,
+            ink_threshold: None,
+        };
+        let resolved = req.resolve();
+        let defaults = GapCloseConfig::default();
+        assert_eq!(resolved.closing_distance, defaults.closing_distance);
+        assert!((resolved.closing_angle_rad - defaults.closing_angle_rad).abs() < f32::EPSILON);
+        assert_eq!(resolved.ink_threshold, defaults.ink_threshold);
+    }
+
+    #[test]
+    fn gap_close_request_resolve_overrides_explicit_fields() {
+        let req = GapCloseRequest {
+            closing_distance: Some(20),
+            closing_angle_rad: Some(0.5),
+            ink_threshold: Some(64),
+        };
+        let resolved = req.resolve();
+        assert_eq!(resolved.closing_distance, 20);
+        assert!((resolved.closing_angle_rad - 0.5).abs() < f32::EPSILON);
+        assert_eq!(resolved.ink_threshold, 64);
+    }
+
+    #[test]
+    fn gap_close_request_deserializes_from_partial_json() {
+        // Only `closing_distance` provided — the others fall back to None.
+        let json = r#"{"closing_distance": 15}"#;
+        let req: GapCloseRequest = serde_json::from_str(json).unwrap();
+        assert_eq!(req.closing_distance, Some(15));
+        assert_eq!(req.closing_angle_rad, None);
+        assert_eq!(req.ink_threshold, None);
+        let resolved = req.resolve();
+        let defaults = GapCloseConfig::default();
+        assert_eq!(resolved.closing_distance, 15);
+        assert!((resolved.closing_angle_rad - defaults.closing_angle_rad).abs() < f32::EPSILON);
+        assert_eq!(resolved.ink_threshold, defaults.ink_threshold);
+    }
+
+    #[test]
+    fn gap_close_request_deserializes_from_empty_object() {
+        let req: GapCloseRequest = serde_json::from_str("{}").unwrap();
+        assert!(req.closing_distance.is_none());
+        assert!(req.closing_angle_rad.is_none());
+        assert!(req.ink_threshold.is_none());
     }
 }

@@ -33,6 +33,8 @@ import {
   snapToPixel,
   wandTolerance,
   wandConnectivity,
+  wandGapClose,
+  wandGapDistance,
   colorRangeTolerance,
   colorRangeTarget,
   setColorRangeTarget,
@@ -188,6 +190,7 @@ async function onWandClick(e: MouseEvent, el: HTMLElement): Promise<void> {
       seed_y: Math.round(cy),
       tolerance: wandTolerance(),
       connectivity: wandConnectivity(),
+      gap_close: wandGapClose() ? { closing_distance: wandGapDistance() } : null,
     });
     if (state.region && state.region.kind === "rect") {
       const b = state.region.bounds;

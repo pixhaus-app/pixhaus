@@ -244,6 +244,17 @@ export function canvasInvertSelection(
   });
 }
 
+/**
+ * Optional gap-closing pre-pass tuning. Every field is optional; absent
+ * fields fall back to the core `GapCloseConfig` defaults
+ * (closing_distance=10, closing_angle_rad=π/2, ink_threshold=128).
+ */
+export type GapCloseRequest = {
+  closing_distance?: number;
+  closing_angle_rad?: number;
+  ink_threshold?: number;
+};
+
 export type MagicWandArgs = {
   sprite_id: SpriteId;
   anchor_layer: LayerId | null;
@@ -251,6 +262,8 @@ export type MagicWandArgs = {
   seed_y: number;
   tolerance: number;
   connectivity: "four" | "eight";
+  /** When set, runs a gap-closing pre-pass before the flood-fill. */
+  gap_close?: GapCloseRequest | null;
 };
 
 /**
