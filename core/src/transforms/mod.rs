@@ -43,6 +43,7 @@
 //!
 //! Implements: docs/planning/work/streams.md#s04
 
+pub mod antialias;
 pub mod error;
 pub mod flip;
 pub mod perspective;
@@ -51,6 +52,7 @@ pub mod scale;
 pub mod skew;
 pub mod translate;
 
+pub use antialias::{MlaaConfig, morphological_antialias};
 pub use error::{Error, Result};
 pub use flip::{flip_horizontal, flip_vertical};
 pub use perspective::perspective;
