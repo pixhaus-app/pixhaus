@@ -14,6 +14,10 @@ Deep dossiers on tools and methodologies we mine for patterns, algorithms, and d
 - [`sprite-pipeline-methodology.md`](sprite-pipeline-methodology.md) — Anchor-first generation, directional economy (flip > regenerate), neutral anchor reset, seven-step normalization. AI sprite-sheet methodology. MIT.
 - [`project-library-research.md`](project-library-research.md) — Comparative survey of multi-asset organization across Blender, Spine, Live2D, Unity, Adobe Animate, Aseprite, Pixelorama, Procreate Dreams, Krita, Scenario, ComfyUI, Midjourney.
 
+## Future dossiers
+
+[`animation-tools-roadmap.md`](animation-tools-roadmap.md) — catalog of dossier candidates the seven above do not cover, categorized by license (port-friendly / inspire-only / study-only) with a recommended next batch (Krita, Rive, Pro Motion NG). Read before writing a new dossier so the next pick is informed by the gap, not the convenience.
+
 ## Adding a new dossier
 
 Copy [`_research-template.md`](_research-template.md) to `<tool-shortname>-prior-art.md` and fill it in. The template enforces the section shape every dossier above follows, so its "Pixhaus landing" rows lift cleanly into the consolidated digest without re-derivation.
@@ -24,6 +28,8 @@ After the dossier merges, update [`../synthesis/prior-art.md`](../synthesis/prio
 - Add any new recurring pattern that crosses with the existing dossiers, with `Seen in:` and `Lands in:` cross-references.
 - Add new conflicts to the **Open decisions** table, or close decisions the new evidence resolves.
 - Add port-roadmap rows from the dossier's "Pixhaus landing" sections.
+
+Also update [`../product/integrations.md`](../product/integrations.md) if the dossier adds capabilities the PRD does not yet cover.
 
 ## Related material
 
