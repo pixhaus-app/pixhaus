@@ -1,0 +1,22 @@
+[package]
+name = "pixhaus-vectorize"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+description = "Centerline vectorization. Adapted from OpenToonz under BSD-3-Clause."
+license = "MIT AND BSD-3-Clause"
+repository.workspace = true
+
+[dependencies]
+pixhaus-core = { path = "../core" }
+serde = { workspace = true, features = ["derive"] }
+thiserror = { workspace = true }
+tracing = { workspace = true }
+
+[dev-dependencies]
+insta = { workspace = true, features = ["yaml"] }
+rstest = { workspace = true }
+
+[lints]
+workspace = true
