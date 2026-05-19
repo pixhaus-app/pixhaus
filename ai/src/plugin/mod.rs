@@ -63,7 +63,9 @@ pub use crate::verbs::auto_mesh_deformation::{
 pub use crate::verbs::conversational::{
     CONVERSATIONAL_VERB_ID, ConversationalInputs, ConversationalVerb,
 };
-pub use crate::verbs::inbetween::{INBETWEEN_VERB_ID, InbetweenInputs, InbetweenVerb};
+pub use crate::verbs::inbetween::{
+    INBETWEEN_VERB_ID, InbetweenInputs, InbetweenMode, InbetweenVerb,
+};
 pub use crate::verbs::sketch_finishing::{
     SKETCH_FINISHING_VERB_ID, SketchFinishingInputs, SketchFinishingVerb, SketchFrame,
 };

@@ -21,12 +21,16 @@
 //! [`BackendProxy`] and calls the underlying
 //! fat backend's `invoke(InferenceRequest::FrameInterpolation(...))`.
 
+mod procedural;
+
 use std::io::Cursor;
 use std::time::{Duration, Instant};
 
 use async_trait::async_trait;
 use image::ImageFormat;
-use pixhaus_core::project::{Cel, Frame, FrameIndex, LayerId, Palette, PixelBufferId, Size};
+use pixhaus_core::project::{
+    Cel, Frame, FrameIndex, LayerId, Palette, PixelBufferId, Size, SpriteId,
+};
 use serde::{Deserialize, Serialize};
 use tokio::select;
 use tokio_util::sync::CancellationToken;
@@ -60,6 +64,37 @@ fn default_num_outputs() -> u32 {
     1
 }
 
+/// Inbetween generation strategy.
+///
+/// `Ai` is the default and dispatches to the configured
+/// frame-interpolation backend. `Procedural` runs entirely locally
+/// using the variance-rejected weighted averaging in
+/// [`procedural::interpolate_frames`]; no backend is required.
+/// `AiWithProceduralPreview` emits the procedural midpoint as a
+/// `PartialPixels` progress event before invoking the backend, so
+/// the host can render a fast preview while the AI call runs.
+#[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum InbetweenMode {
+    /// Procedural variance-rejected weighted averaging. No backend
+    /// dispatch — succeeds with `ctx.backend` unset.
+    Procedural {
+        /// Outlier rejection multiplier. Samples whose squared error
+        /// from the local mean exceed `variance_range * variance` are
+        /// rejected. `OpenToonz`'s canonical value is `2.5`.
+        variance_range: f32,
+    },
+    /// Backend-driven frame interpolation (current behaviour).
+    #[default]
+    Ai,
+    /// Run the procedural midpoint first, surface it as a preview,
+    /// then invoke the AI backend.
+    AiWithProceduralPreview {
+        /// Outlier rejection multiplier for the procedural preview.
+        variance_range: f32,
+    },
+}
+
 /// Inputs for [`InbetweenVerb`].
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct InbetweenInputs {
@@ -77,6 +112,10 @@ pub struct InbetweenInputs {
     /// `[1, MAX_OUTPUTS]` in `validate`.
     #[serde(default = "default_num_outputs")]
     pub num_outputs: u32,
+    /// Generation strategy. Defaults to [`InbetweenMode::Ai`] so
+    /// pre-S58 callers keep their behaviour.
+    #[serde(default)]
+    pub mode: InbetweenMode,
 }
 
 /// Generates intermediate frames between two key frames.
@@ -147,6 +186,113 @@ impl InbetweenVerb {
                 documentation_url: Some("docs/verbs/inbetween.md".into()),
             },
         }
+    }
+}
+
+impl InbetweenVerb {
+    /// Runs the procedural fallback. Generates `num_outputs` frames
+    /// locally and packages them into the same `VerbEffect::AddFrames`
+    /// shape the AI path produces. No backend dispatch.
+    #[allow(clippy::too_many_arguments)]
+    async fn invoke_procedural(
+        &self,
+        inputs: &InbetweenInputs,
+        sprite_id: SpriteId,
+        active_layer: LayerId,
+        palette: Option<&Palette>,
+        variance_range: f32,
+        progress: &VerbProgress,
+        cancel: &CancellationToken,
+        started: Instant,
+    ) -> Result<VerbOutput> {
+        progress
+            .step(Some(0.1), "computing procedural inbetween frames")
+            .await;
+
+        let n = inputs.num_outputs;
+        // `num_outputs` is bounded to `[1, MAX_OUTPUTS]` by validate
+        // (MAX_OUTPUTS == 16), so the u16 conversion never saturates.
+        let n_u16 = u16::try_from(n).unwrap_or(u16::MAX);
+        let denom = f32::from(n_u16) + 1.0;
+        let width = inputs.frame_a.width;
+        let height = inputs.frame_a.height;
+        let frame_size = Size::new(width, height);
+
+        let mut frames = Vec::with_capacity(n as usize);
+        let mut cels = Vec::with_capacity(n as usize);
+        let mut pixel_buffers = Vec::with_capacity(n as usize);
+
+        for i in 0..n {
+            if cancel.is_cancelled() {
+                return Err(VerbError::Cancelled);
+            }
+            let i_u16 = u16::try_from(i).unwrap_or(u16::MAX);
+            let t = (f32::from(i_u16) + 1.0) / denom;
+            let bytes = procedural::interpolate_frames(
+                &inputs.frame_a.bytes,
+                &inputs.frame_b.bytes,
+                width,
+                height,
+                t,
+                variance_range,
+            );
+            let mut pixel_data = PixelData::rgba8(width, height, bytes);
+            if let Some(pal) = palette {
+                pixel_data = snap_to_palette(pixel_data, pal);
+            }
+
+            let buf_id = PixelBufferId::new(i);
+            let cel = Cel::raster(
+                LayerId::new(PLACEHOLDER_LAYER),
+                FrameIndex::new(i),
+                buf_id,
+                frame_size,
+            );
+            let cel = Cel {
+                layer_id: active_layer,
+                ..cel
+            };
+
+            frames.push(Frame::default());
+            cels.push(cel);
+            pixel_buffers.push(NewPixelBuffer {
+                placeholder: buf_id,
+                pixels: pixel_data,
+            });
+        }
+
+        progress.step(Some(1.0), "done").await;
+
+        let elapsed = started.elapsed();
+        let summary = format!(
+            "Add {} procedural inbetween frame{} after frame {} ({}x{})",
+            n,
+            if n == 1 { "" } else { "s" },
+            inputs.frame_a_index,
+            width,
+            height,
+        );
+
+        let thumbnail = pixel_buffers.first().map(|b| b.pixels.clone());
+
+        let mut notes = vec!["Procedural inbetween — no backend invoked.".to_string()];
+        if palette.is_none() {
+            notes.push("No active palette — output was not snapped to a palette.".into());
+        }
+
+        Ok(VerbOutput {
+            summary,
+            effects: vec![VerbEffect::AddFrames {
+                sprite: sprite_id,
+                after: Some(FrameIndex::new(inputs.frame_a_index)),
+                frames,
+                cels,
+                pixel_buffers,
+            }],
+            thumbnail,
+            actual_cost: ActualCost::free(elapsed.max(Duration::from_micros(1))),
+            notes,
+        })
     }
 }
 
@@ -228,6 +374,46 @@ impl Verb for InbetweenVerb {
 
         if cancel.is_cancelled() {
             return Err(VerbError::Cancelled);
+        }
+
+        // Procedural fast path: variance-rejected weighted averaging,
+        // no backend dispatch. AiWithProceduralPreview emits the
+        // midpoint as a PartialPixels progress event and falls through
+        // to the AI path.
+        match inputs.mode {
+            InbetweenMode::Procedural { variance_range } => {
+                return self
+                    .invoke_procedural(
+                        &inputs,
+                        sprite_id,
+                        active_layer,
+                        ctx.active_palette.as_ref(),
+                        variance_range,
+                        &progress,
+                        &cancel,
+                        started,
+                    )
+                    .await;
+            }
+            InbetweenMode::AiWithProceduralPreview { variance_range } => {
+                let preview_bytes = procedural::interpolate_frames(
+                    &inputs.frame_a.bytes,
+                    &inputs.frame_b.bytes,
+                    inputs.frame_a.width,
+                    inputs.frame_a.height,
+                    0.5,
+                    variance_range,
+                );
+                let preview =
+                    PixelData::rgba8(inputs.frame_a.width, inputs.frame_a.height, preview_bytes);
+                progress
+                    .send(VerbProgressEvent::PartialPixels {
+                        effect_index: 0,
+                        pixels: preview,
+                    })
+                    .await;
+            }
+            InbetweenMode::Ai => {}
         }
 
         // Encode both frames as PNG for the backend.
@@ -499,6 +685,7 @@ mod tests {
             frame_a_index: 0,
             frame_b_index: 5,
             num_outputs,
+            mode: InbetweenMode::Ai,
         })
         .unwrap()
     }
@@ -524,6 +711,7 @@ mod tests {
             frame_a_index: 0,
             frame_b_index: 1,
             num_outputs: 1,
+            mode: InbetweenMode::Ai,
         })
         .unwrap();
         assert!(verb.validate(&inputs).is_err());
@@ -538,6 +726,7 @@ mod tests {
             frame_a_index: 5,
             frame_b_index: 3,
             num_outputs: 1,
+            mode: InbetweenMode::Ai,
         })
         .unwrap();
         assert!(verb.validate(&inputs).is_err());
@@ -552,6 +741,7 @@ mod tests {
             frame_a_index: 0,
             frame_b_index: 2,
             num_outputs: 0,
+            mode: InbetweenMode::Ai,
         })
         .unwrap();
         assert!(verb.validate(&inputs).is_err());
@@ -566,6 +756,7 @@ mod tests {
             frame_a_index: 0,
             frame_b_index: 20,
             num_outputs: MAX_OUTPUTS + 1,
+            mode: InbetweenMode::Ai,
         })
         .unwrap();
         assert!(verb.validate(&inputs).is_err());
@@ -642,5 +833,63 @@ mod tests {
         let data = PixelData::rgba8(1, 1, vec![100, 100, 100, 0]);
         let snapped = snap_to_palette(data.clone(), &palette);
         assert_eq!(snapped.bytes, data.bytes);
+    }
+
+    // ── InbetweenMode serde ────────────────────────────────────────────────
+
+    #[test]
+    fn inbetween_mode_defaults_to_ai() {
+        let m = InbetweenMode::default();
+        assert!(matches!(m, InbetweenMode::Ai));
+    }
+
+    #[test]
+    fn inbetween_mode_round_trips_json_for_all_variants() {
+        let modes = [
+            InbetweenMode::Procedural {
+                variance_range: 2.5,
+            },
+            InbetweenMode::Ai,
+            InbetweenMode::AiWithProceduralPreview {
+                variance_range: 2.5,
+            },
+        ];
+        for m in modes {
+            let j = serde_json::to_string(&m).unwrap();
+            let back: InbetweenMode = serde_json::from_str(&j).unwrap();
+            assert_eq!(m, back);
+        }
+    }
+
+    #[test]
+    fn inbetween_mode_serializes_with_kind_tag() {
+        let j = serde_json::to_string(&InbetweenMode::Ai).unwrap();
+        assert!(j.contains("\"kind\""), "missing kind tag in {j}");
+        assert!(j.contains("\"ai\""), "expected snake_case ai in {j}");
+    }
+
+    #[test]
+    fn inbetween_inputs_default_mode_is_ai() {
+        // JSON missing the `mode` field must deserialize to AI.
+        let json = serde_json::json!({
+            "frame_a": {
+                "width": 1,
+                "height": 1,
+                "bytes_per_pixel": 4,
+                "stride": 4,
+                "bytes": [0, 0, 0, 255],
+            },
+            "frame_b": {
+                "width": 1,
+                "height": 1,
+                "bytes_per_pixel": 4,
+                "stride": 4,
+                "bytes": [255, 255, 255, 255],
+            },
+            "frame_a_index": 0,
+            "frame_b_index": 2,
+        });
+        let parsed: InbetweenInputs = serde_json::from_value(json).unwrap();
+        assert!(matches!(parsed.mode, InbetweenMode::Ai));
     }
 }
