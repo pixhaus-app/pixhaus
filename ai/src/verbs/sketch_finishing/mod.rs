@@ -8,9 +8,9 @@
 //! # Backend
 //!
 //! Requires [`crate::plugin::descriptor::BackendCapabilities::IMAGE_EDIT`].
-//! The verb downcasts the injected backend to one of the three concrete
-//! image-edit adapters (Stability, `OpenAI`, Replicate) and calls their
-//! `invoke` method via [`crate::backends::InferenceBackend`].
+//! Backend routing is delegated to [`crate::verbs::call_image_edit`],
+//! which handles the concrete-adapter downcast (Stability / `OpenAI` /
+//! Replicate, plus the `BackendProxy` path for tests).
 //!
 //! # Wire format
 //!

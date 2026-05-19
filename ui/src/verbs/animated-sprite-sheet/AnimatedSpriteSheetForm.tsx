@@ -88,8 +88,12 @@ const AnimatedSpriteSheetForm: Component<{ onSubmitted?: () => void }> = (props)
     const input = event.currentTarget as HTMLInputElement;
     const file = input.files?.[0];
     if (!file) return;
-    const buf = await file.arrayBuffer();
-    update("styleReference", Array.from(new Uint8Array(buf)));
+    try {
+      const buf = await file.arrayBuffer();
+      update("styleReference", Array.from(new Uint8Array(buf)));
+    } catch (err: unknown) {
+      reportCommandFailure("animated_sprite_sheet_reference_file", err);
+    }
   }
 
   function onSubmit(e: Event): void {

@@ -484,6 +484,10 @@ async fn cancel_before_finish_returns_error() {
             inputs,
         )
         .unwrap();
+    // Yield once so the spawned verb task reaches its first .await
+    // point before we fire the cancel token. Without this the mock
+    // backend's synchronous reply can race ahead of the cancel signal.
+    tokio::task::yield_now().await;
     inv.cancel();
     let res = inv.finish().await;
     assert!(res.is_err());

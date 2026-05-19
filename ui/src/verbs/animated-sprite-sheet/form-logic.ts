@@ -122,8 +122,11 @@ export function validate(state: FormState): ValidationOutcome {
   if (state.frameDurationMs < 1) {
     return { ok: false, reason: "Frame duration must be at least 1 ms." };
   }
-  if (state.seed.length > 0) {
-    const n = Number(state.seed);
+  const seed = state.seed.trim();
+  if (seed.length > 0) {
+    // Trim first — `Number("   ")` is `0`, which would silently accept
+    // a whitespace-only seed and serialise it as a real value.
+    const n = Number(seed);
     if (!Number.isFinite(n) || !Number.isInteger(n) || n < 0) {
       return { ok: false, reason: "Seed must be a non-negative integer." };
     }
@@ -151,8 +154,9 @@ export function toInputs(state: FormState): AnimatedSpriteSheetInputs {
   if (layer.length > 0) {
     payload.layer_name = layer;
   }
-  if (state.seed.length > 0) {
-    const n = Number(state.seed);
+  const seed = state.seed.trim();
+  if (seed.length > 0) {
+    const n = Number(seed);
     if (Number.isFinite(n) && Number.isInteger(n) && n >= 0) {
       payload.seed = n;
     }

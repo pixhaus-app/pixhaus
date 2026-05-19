@@ -131,6 +131,11 @@ describe("validate", () => {
   it("accepts an empty seed (means random)", () => {
     expect(validate(state({ prompt: "baby dragon", seed: "" })).ok).toBe(true);
   });
+
+  it("accepts whitespace-only seed as empty (means random)", () => {
+    // Trimming guards against the `Number("   ") === 0` footgun.
+    expect(validate(state({ prompt: "baby dragon", seed: "   " })).ok).toBe(true);
+  });
 });
 
 describe("toInputs", () => {
@@ -173,5 +178,12 @@ describe("toInputs", () => {
     expect(toInputs(s).style_reference).toBeUndefined();
     s.styleReference = [];
     expect(toInputs(s).style_reference).toBeUndefined();
+  });
+
+  it("omits seed when only whitespace was entered", () => {
+    const s = defaultFormState();
+    s.prompt = "x";
+    s.seed = "   ";
+    expect(toInputs(s).seed).toBeUndefined();
   });
 });

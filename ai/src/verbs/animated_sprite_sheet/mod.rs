@@ -426,13 +426,25 @@ async fn run_ai(
     let sheet = call_image_stage(inputs, &rewritten_text, ctx, progress, cancel).await?;
 
     progress.step(Some(0.9), "slicing grid").await;
-    let mut frame_pixels = slice_grid(&sheet, inputs.grid_size)?;
-
-    if let Some(pal) = ctx.active_palette.as_ref() {
-        for cell in &mut frame_pixels {
-            *cell = snap_to_palette(cell, pal);
+    // Grid slicing copies g² × cell_w × cell_h × 4 bytes; combined with
+    // the per-frame palette snap below, this is CPU-bound work that
+    // belongs on a blocking thread. Hoist both into one task so we
+    // only pay the join cost once.
+    let grid_size = inputs.grid_size;
+    let palette = ctx.active_palette.clone();
+    let frame_pixels = tokio::task::spawn_blocking(move || -> Result<Vec<PixelData>> {
+        let mut pixels = slice_grid(&sheet, grid_size)?;
+        if let Some(pal) = palette.as_ref() {
+            for cell in &mut pixels {
+                *cell = snap_to_palette(cell, pal);
+            }
         }
-    } else {
+        Ok(pixels)
+    })
+    .await
+    .map_err(|e| VerbError::Backend(format!("slice/snap task join failed: {e}")))??;
+
+    if ctx.active_palette.is_none() {
         notes.push(
             "No active palette — generated frames retain the backend's full RGBA gamut.".into(),
         );
@@ -459,7 +471,17 @@ fn build_verb_output(
         summary_kind,
     } = plan;
     let frame_count = frame_pixels.len();
-    let frame_size = Size::new(inputs.cell_size_px, inputs.cell_size_px);
+    // Derive cel size from the actual sliced pixels: AI mode's
+    // `slice_grid` floor-divides the backend's image, so the cell may
+    // be smaller than `inputs.cell_size_px` if the backend honoured the
+    // request loosely. Procedural / Hybrid populate from
+    // `build_empty_cells` at exactly `inputs.cell_size_px`, so the
+    // fallback only kicks in for the unreachable empty-pixels case.
+    let frame_size = frame_pixels
+        .first()
+        .map_or(Size::new(inputs.cell_size_px, inputs.cell_size_px), |px| {
+            Size::new(px.width, px.height)
+        });
     let (layer, cels, pixel_buffers) = pack_layer_with_cells(inputs, frame_pixels, frame_size);
     let thumbnail = pixel_buffers.first().map(|b| b.pixels.clone());
     let summary = match summary_kind {
@@ -610,7 +632,11 @@ async fn call_image_stage(
     };
 
     progress.step(Some(0.8), "decoding sheet").await;
-    decode_png_to_rgba8(&png_bytes)
+    // PNG decode is CPU-bound; run it off the async worker so a busy
+    // verb invocation doesn't stall other tokio tasks.
+    tokio::task::spawn_blocking(move || decode_png_to_rgba8(&png_bytes))
+        .await
+        .map_err(|e| VerbError::Backend(format!("PNG decode task join failed: {e}")))?
 }
 
 // ── Rewrite plumbing ────────────────────────────────────────────────────────
@@ -882,6 +908,11 @@ pub fn snap_to_palette(src: &PixelData, palette: &Palette) -> PixelData {
             let out_off = y * row_bytes + x * 4;
             let a = src.bytes[in_off + 3];
             if a == 0 {
+                // Preserve the source RGBA verbatim — if the artist
+                // later flips alpha back to opaque, the original colour
+                // is still there. Without this, fully-transparent
+                // pixels would lose any encoded RGB.
+                out[out_off..out_off + 4].copy_from_slice(&src.bytes[in_off..in_off + 4]);
                 continue;
             }
             let r = src.bytes[in_off];
@@ -1118,14 +1149,18 @@ mod tests {
             "test",
             vec![Rgba::new(255, 0, 0, 255), Rgba::new(0, 255, 0, 255)],
         );
+        // Transparent pixel carries non-zero RGB to verify the source
+        // bytes survive the snap (artist could later flip alpha to 255
+        // and expect the stored colour to come back).
         let bytes = vec![
-            0, 0, 0, 0, // transparent black
+            77, 88, 99, 0, // transparent, non-zero RGB
             10, 200, 10, 255, // greenish opaque
         ];
         let src = PixelData::rgba8(2, 1, bytes);
         let snapped = snap_to_palette(&src, &palette);
-        // Transparent pixel stays zeroed; opaque pixel snaps to green.
-        assert_eq!(snapped.bytes[0..4], [0, 0, 0, 0]);
+        // Transparent pixel keeps its source RGBA verbatim.
+        assert_eq!(snapped.bytes[0..4], [77, 88, 99, 0]);
+        // Opaque pixel snaps to the nearest palette colour (green).
         assert_eq!(snapped.bytes[4..8], [0, 255, 0, 255]);
     }
 
