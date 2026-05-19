@@ -58,6 +58,8 @@ export type { Palette } from "./Palette";
 export type { PaletteEntry } from "./PaletteEntry";
 export type { PaletteFrameOverride } from "./PaletteFrameOverride";
 export type { PaletteId } from "./PaletteId";
+export type { PalettePage } from "./PalettePage";
+export type { PalettePageId } from "./PalettePageId";
 export type { Pivot } from "./Pivot";
 export type { PixelBufferId } from "./PixelBufferId";
 export type { Project } from "./Project";
