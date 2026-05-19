@@ -14,16 +14,16 @@ use pixhaus_core::project::{
     CanvasState, Cel, CelData, FrameIndex, IVec2, Layer, LayerId, LayerKind, PixelBufferId, Rect,
     Rgba, SelectionRegion, SelectionState, Size, SpriteId,
 };
-use pixhaus_core::selection::SelectionMask;
 use pixhaus_core::selection::GapCloseConfig;
+use pixhaus_core::selection::SelectionMask;
 use pixhaus_core::selection::algorithms::{
     Connectivity, color_range, magic_wand, magic_wand_with_gap_close, select_polygon,
 };
 use pixhaus_core::transforms::{
     self, MlaaConfig, RotateMode, ScaleMode, TransformSpec, morphological_antialias,
 };
-use pixhaus_vectorize::{CenterlineConfig, VectorImage, centerline_vectorize};
 use pixhaus_io::pixhaus::PixelBufferEntry;
+use pixhaus_vectorize::{CenterlineConfig, VectorImage, centerline_vectorize};
 use serde::{Deserialize, Serialize};
 use tauri::{AppHandle, Emitter, State};
 
@@ -1459,11 +1459,12 @@ pub async fn vector_vectorize_layer(
             })?
     };
 
-    let result = centerline_vectorize(&buf, &palette, &CenterlineConfig::default()).map_err(
-        |e| AppCommandError::Validation {
-            detail: e.to_string(),
-        },
-    )?;
+    let result =
+        centerline_vectorize(&buf, &palette, &CenterlineConfig::default()).map_err(|e| {
+            AppCommandError::Validation {
+                detail: e.to_string(),
+            }
+        })?;
 
     tracing::info!(
         sprite_id = sprite_id.get(),

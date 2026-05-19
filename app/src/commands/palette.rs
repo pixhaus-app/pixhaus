@@ -1,8 +1,7 @@
 //! Palette CRUD and color management commands.
 
 use pixhaus_core::project::{
-    Palette, PaletteEntry, PaletteId, PalettePage, PalettePageId, Project, Rgba, SpriteId,
-    UserData,
+    Palette, PaletteEntry, PaletteId, PalettePage, PalettePageId, Project, Rgba, SpriteId, UserData,
 };
 use pixhaus_core::undo::{Command, CommandError, CommandResult as UndoCommandResult};
 use serde::{Deserialize, Deserializer, Serialize};
@@ -405,14 +404,12 @@ pub async fn palette_page_rename(
     let mut doc = state.doc.write().await;
     {
         let palette = find_palette_mut(&mut doc, sprite_id, palette_id)?;
-        let page = palette
-            .pages
-            .iter_mut()
-            .find(|p| p.id == page_id)
-            .ok_or(AppCommandError::NotFound {
+        let page = palette.pages.iter_mut().find(|p| p.id == page_id).ok_or(
+            AppCommandError::NotFound {
                 entity: "palette page".into(),
                 id: u64::from(page_id.get()),
-            })?;
+            },
+        )?;
         page.name = new_name;
     }
     doc.dirty = true;
@@ -438,19 +435,15 @@ pub async fn palette_page_set_entries(
         })?;
         if let Some(bad) = entry_indices.iter().find(|i| **i >= len) {
             return Err(AppCommandError::OutOfRange {
-                detail: format!(
-                    "entry index {bad} out of range (palette has {len} colors)"
-                ),
+                detail: format!("entry index {bad} out of range (palette has {len} colors)"),
             });
         }
-        let page = palette
-            .pages
-            .iter_mut()
-            .find(|p| p.id == page_id)
-            .ok_or(AppCommandError::NotFound {
+        let page = palette.pages.iter_mut().find(|p| p.id == page_id).ok_or(
+            AppCommandError::NotFound {
                 entity: "palette page".into(),
                 id: u64::from(page_id.get()),
-            })?;
+            },
+        )?;
         page.entry_indices = entry_indices;
     }
     doc.dirty = true;

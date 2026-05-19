@@ -907,7 +907,11 @@ mod tests {
             .get("oneOf")
             .and_then(|o| o.as_array())
             .expect("mode must be a oneOf union");
-        assert_eq!(variants.len(), 3, "expected 3 mode variants, got {variants:?}");
+        assert_eq!(
+            variants.len(),
+            3,
+            "expected 3 mode variants, got {variants:?}"
+        );
 
         let mut kinds: Vec<&str> = variants
             .iter()
@@ -919,7 +923,10 @@ mod tests {
             })
             .collect();
         kinds.sort_unstable();
-        assert_eq!(kinds, vec!["ai", "ai_with_procedural_preview", "procedural"]);
+        assert_eq!(
+            kinds,
+            vec!["ai", "ai_with_procedural_preview", "procedural"]
+        );
 
         let default = mode.get("default").expect("mode default missing");
         assert_eq!(default.get("kind").and_then(|k| k.as_str()), Some("ai"));

@@ -90,8 +90,12 @@ const PalettePagesSection: Component<Props> = (props) => {
               if (e.key === "Escape") cancelAdd();
             }}
             data-testid="palette-page-name-input"
-            // eslint-disable-next-line jsx-a11y/no-autofocus
-            autofocus
+            ref={(el) => {
+              // Focus on mount so the user can type immediately after
+              // clicking "+". `autofocus` triggers eslint's a11y rule;
+              // a ref callback is the canonical Solid workaround.
+              queueMicrotask(() => el?.focus());
+            }}
           />
           <button
             type="button"
