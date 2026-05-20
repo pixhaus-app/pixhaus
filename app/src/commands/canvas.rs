@@ -11,8 +11,8 @@ use base64::Engine;
 use pixhaus_core::canvas::tools::{BrushShape, draw_stroke, flood_fill};
 use pixhaus_core::canvas::{LayerInput, PixelBuffer, composite_onto};
 use pixhaus_core::project::{
-    CanvasState, Cel, CelData, FrameIndex, IVec2, Layer, LayerId, LayerKind, PixelBufferId, Rect,
-    Rgba, SelectionRegion, SelectionState, Size, SpriteId,
+    CanvasState, Cel, CelData, FrameIndex, IVec2, Layer, LayerId, LayerKind, Palette, PixelBufferId,
+    Rect, Rgba, SelectionRegion, SelectionState, Size, SpriteId,
 };
 use pixhaus_core::selection::GapCloseConfig;
 use pixhaus_core::selection::SelectionMask;
@@ -1356,6 +1356,57 @@ pub async fn canvas_apply_mlaa(
     let mut lock = state.doc.write().await;
     let doc = &mut *lock;
 
+    let MlaaPrep {
+        buffer_id,
+        frame_index,
+        before,
+        src,
+        config,
+    } = mlaa_prep_in_doc(doc, sprite_id, layer_id, threshold, softness)?;
+
+    // Morphological AA is a CPU-bound full-image filter; run it off the
+    // async runtime thread.
+    let dst = tokio::task::spawn_blocking(move || morphological_antialias(&src, &config))
+        .await
+        .map_err(|e| AppCommandError::Validation {
+            detail: format!("mlaa task failed: {e}"),
+        })?
+        .map_err(|e| AppCommandError::Validation {
+            detail: e.to_string(),
+        })?;
+
+    commit_pixel_op(
+        doc,
+        &app,
+        buffer_id,
+        sprite_id,
+        frame_index,
+        before,
+        dst.as_bytes().to_vec(),
+        "mlaa",
+    )
+}
+
+/// The cel-side inputs MLAA needs before the (off-thread) filter runs.
+struct MlaaPrep {
+    buffer_id: PixelBufferId,
+    frame_index: u32,
+    before: Vec<u8>,
+    src: PixelBuffer,
+    config: MlaaConfig,
+}
+
+/// Resolves the active frame, ensures a raster buffer exists, and reads
+/// the cel into a [`PixelBuffer`] plus the MLAA config. Split out from
+/// the command so it can be unit-tested against a `DocumentStore`
+/// without the `tauri::State`/`AppHandle` machinery.
+fn mlaa_prep_in_doc(
+    doc: &mut crate::state::DocumentStore,
+    sprite_id: SpriteId,
+    layer_id: LayerId,
+    threshold: Option<u8>,
+    softness: Option<u8>,
+) -> CommandResult<MlaaPrep> {
     ensure_layer_writable(doc, sprite_id, layer_id)?;
 
     // Resolve the active frame; default to frame 0 if no canvas is set.
@@ -1396,20 +1447,13 @@ pub async fn canvas_apply_mlaa(
         softness: softness.unwrap_or(defaults.softness),
     };
 
-    let dst = morphological_antialias(&src, &config).map_err(|e| AppCommandError::Validation {
-        detail: e.to_string(),
-    })?;
-
-    commit_pixel_op(
-        doc,
-        &app,
+    Ok(MlaaPrep {
         buffer_id,
-        sprite_id,
         frame_index,
         before,
-        dst.as_bytes().to_vec(),
-        "mlaa",
-    )
+        src,
+        config,
+    })
 }
 
 /// Vectorizes a raster layer's cel into a `VectorImage` of centerline
@@ -1429,42 +1473,25 @@ pub async fn vector_vectorize_layer(
     layer_id: LayerId,
     state: State<'_, AppState>,
 ) -> CommandResult<VectorImage> {
-    let doc = state.doc.read().await;
-    let frame_index = doc
-        .project
-        .as_ref()
-        .and_then(|p| p.canvas.active_frame)
-        .unwrap_or(FrameIndex::new(0));
-
-    let (_cel_pos, buf) = load_cel_buffer(&doc, sprite_id, layer_id, frame_index)?;
-
-    let palette = {
-        let project = doc
-            .project
-            .as_ref()
-            .ok_or(AppCommandError::NoActiveProject)?;
-        let sprite = project
-            .sprite(sprite_id)
-            .ok_or_else(|| AppCommandError::NotFound {
-                entity: "sprite".into(),
-                id: u64::from(sprite_id.get()),
-            })?;
-        let active_id = project.brush.active_palette;
-        active_id
-            .and_then(|pid| sprite.palettes.iter().find(|p| p.id == pid))
-            .or_else(|| sprite.palettes.first())
-            .cloned()
-            .ok_or_else(|| AppCommandError::Validation {
-                detail: "vectorize requires a palette with at least one color".into(),
-            })?
+    // Extract the cel buffer and palette under the read lock, then drop
+    // the lock before the CPU-bound vectorization so we don't hold it
+    // across the blocking work.
+    let (buf, palette) = {
+        let doc = state.doc.read().await;
+        vectorize_inputs_from_doc(&doc, sprite_id, layer_id)?
     };
 
-    let result =
-        centerline_vectorize(&buf, &palette, &CenterlineConfig::default()).map_err(|e| {
-            AppCommandError::Validation {
-                detail: e.to_string(),
-            }
-        })?;
+    // Centerline vectorization is CPU-bound; run it off the async runtime.
+    let result = tokio::task::spawn_blocking(move || {
+        centerline_vectorize(&buf, &palette, &CenterlineConfig::default())
+    })
+    .await
+    .map_err(|e| AppCommandError::Validation {
+        detail: format!("vectorize task failed: {e}"),
+    })?
+    .map_err(|e| AppCommandError::Validation {
+        detail: e.to_string(),
+    })?;
 
     tracing::info!(
         sprite_id = sprite_id.get(),
@@ -1474,6 +1501,44 @@ pub async fn vector_vectorize_layer(
     );
 
     Ok(result)
+}
+
+/// Resolves the active frame, reads the cel buffer, and selects the
+/// palette (active palette, else the sprite's first) for vectorization.
+/// Split out from the command so it can be unit-tested against a
+/// `DocumentStore` without the `tauri::State` machinery.
+fn vectorize_inputs_from_doc(
+    doc: &crate::state::DocumentStore,
+    sprite_id: SpriteId,
+    layer_id: LayerId,
+) -> CommandResult<(PixelBuffer, Palette)> {
+    let frame_index = doc
+        .project
+        .as_ref()
+        .and_then(|p| p.canvas.active_frame)
+        .unwrap_or(FrameIndex::new(0));
+
+    let (_cel_pos, buf) = load_cel_buffer(doc, sprite_id, layer_id, frame_index)?;
+
+    let project = doc
+        .project
+        .as_ref()
+        .ok_or(AppCommandError::NoActiveProject)?;
+    let sprite = project
+        .sprite(sprite_id)
+        .ok_or_else(|| AppCommandError::NotFound {
+            entity: "sprite".into(),
+            id: u64::from(sprite_id.get()),
+        })?;
+    let active_id = project.brush.active_palette;
+    let palette = active_id
+        .and_then(|pid| sprite.palettes.iter().find(|p| p.id == pid))
+        .or_else(|| sprite.palettes.first())
+        .cloned()
+        .ok_or_else(|| AppCommandError::Validation {
+            detail: "vectorize requires a palette with at least one color".into(),
+        })?;
+    Ok((buf, palette))
 }
 
 /// Applies one or more geometric transforms to a raster layer cel.
@@ -2894,6 +2959,98 @@ mod tests {
             !result.strokes.is_empty(),
             "expected centerline_vectorize to produce at least one stroke for an outline"
         );
+    }
+
+    // ── Command-level prep for MLAA + vectorize (S56/S59) ──────────────────
+
+    /// A document with one raster layer carrying a 12x12 ink outline on a
+    /// white field, plus a one-colour palette. Enough for the MLAA and
+    /// vectorize command helpers to resolve a frame, buffer, and palette.
+    fn doc_with_ink_layer_and_palette() -> crate::state::DocumentStore {
+        use pixhaus_core::project::{PaletteId, Sprite};
+
+        let mut doc = crate::state::DocumentStore::default();
+        let mut project = Project::new("test");
+        let mut sprite = Sprite::empty(SpriteId::new(1), "hero", Size::new(16, 16));
+        sprite.layers.push(Layer::raster(LayerId::new(1), "ink"));
+        sprite.palettes.push(Palette::from_colors(
+            PaletteId::new(1),
+            "ink",
+            vec![Rgba::opaque(0, 0, 0)],
+        ));
+
+        let mut bytes = vec![255u8; 16 * 16 * 4];
+        for y in 2..14 {
+            for x in 2..14 {
+                if x == 2 || x == 13 || y == 2 || y == 13 {
+                    let off = (y * 16 + x) * 4;
+                    bytes[off] = 0;
+                    bytes[off + 1] = 0;
+                    bytes[off + 2] = 0;
+                }
+            }
+        }
+        doc.pixel_buffers.push(PixelBufferEntry {
+            id: 200,
+            width: 16,
+            height: 16,
+            stride: 16 * 4,
+            pixels: bytes,
+        });
+        sprite.cels.push(Cel::raster(
+            LayerId::new(1),
+            FrameIndex::new(0),
+            PixelBufferId::new(200),
+            Size::new(16, 16),
+        ));
+        install_sprite(&mut project, sprite);
+        doc.project = Some(project);
+        doc
+    }
+
+    #[test]
+    fn vectorize_inputs_from_doc_resolves_buffer_and_palette() {
+        let doc = doc_with_ink_layer_and_palette();
+        let (buf, palette) =
+            vectorize_inputs_from_doc(&doc, SpriteId::new(1), LayerId::new(1)).expect("inputs");
+        assert_eq!(buf.width(), 16);
+        assert!(!palette.colors.is_empty());
+        // The resolved inputs vectorize end-to-end.
+        let vi =
+            centerline_vectorize(&buf, &palette, &CenterlineConfig::default()).expect("vectorize");
+        assert!(!vi.strokes.is_empty());
+    }
+
+    #[test]
+    fn vectorize_inputs_from_doc_unknown_sprite_is_error() {
+        let doc = doc_with_ink_layer_and_palette();
+        let err =
+            vectorize_inputs_from_doc(&doc, SpriteId::new(999), LayerId::new(1)).unwrap_err();
+        assert!(matches!(err, AppCommandError::NotFound { .. }));
+    }
+
+    #[test]
+    fn mlaa_prep_resolves_active_frame_and_reads_cel() {
+        let mut doc = doc_with_ink_layer_and_palette();
+        let prep =
+            mlaa_prep_in_doc(&mut doc, SpriteId::new(1), LayerId::new(1), None, None).expect("prep");
+        assert_eq!(prep.frame_index, 0, "defaults to frame 0 when no canvas set");
+        assert_eq!(prep.config, MlaaConfig::default());
+        assert_eq!(prep.src.width(), 16);
+        assert_eq!(prep.before.len(), 16 * 16 * 4);
+        // The filter runs on the prepared source without error.
+        let dst = morphological_antialias(&prep.src, &prep.config).expect("mlaa");
+        assert_eq!(dst.width(), 16);
+        assert_eq!(dst.height(), 16);
+    }
+
+    #[test]
+    fn mlaa_prep_respects_explicit_config() {
+        let mut doc = doc_with_ink_layer_and_palette();
+        let prep = mlaa_prep_in_doc(&mut doc, SpriteId::new(1), LayerId::new(1), Some(32), Some(64))
+            .expect("prep");
+        assert_eq!(prep.config.threshold, 32);
+        assert_eq!(prep.config.softness, 64);
     }
 
     // ── MLAA defaults (S56) ────────────────────────────────────────────────
