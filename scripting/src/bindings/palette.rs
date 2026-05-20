@@ -89,6 +89,8 @@ mod tests {
             name: "test".into(),
             colors: colors.into_iter().map(PaletteEntry::new).collect(),
             user_data: UserData::default(),
+            pages: Vec::new(),
+            animation: None,
         }
     }
 

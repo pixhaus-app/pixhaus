@@ -270,6 +270,14 @@ fn every_blend_mode_runs_clean_on_16x16() {
         BlendMode::Saturation,
         BlendMode::Color,
         BlendMode::Luminosity,
+        BlendMode::LinearBurn,
+        BlendMode::DarkerColor,
+        BlendMode::LinearDodge,
+        BlendMode::LighterColor,
+        BlendMode::VividLight,
+        BlendMode::LinearLight,
+        BlendMode::PinLight,
+        BlendMode::HardMix,
     ];
 
     let bottom = solid(16, 16, Rgba::opaque(120, 80, 200));

@@ -64,5 +64,7 @@ pub use chunk::{
 };
 pub use document::{AsepriteDocument, ColorDepth, DocumentFrame, DocumentHeader};
 pub use read::{decode, decode_from_file};
-pub use spec::{ChunkType, blend_mode_from_aseprite, blend_mode_to_aseprite};
+pub use spec::{
+    ChunkType, blend_mode_from_aseprite, blend_mode_supported_by_aseprite, blend_mode_to_aseprite,
+};
 pub use write::{encode, encode_to_file};

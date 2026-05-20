@@ -49,6 +49,16 @@ export const [wandTolerance, setWandTolerance] = createSignal(32);
 /** Pixel connectivity for the flood-fill expansion. */
 export const [wandConnectivity, setWandConnectivity] = createSignal<"four" | "eight">("four");
 
+/**
+ * When true, the magic wand runs a gap-closing pre-pass before flood-fill,
+ * bridging near-miss outline endpoints so almost-closed shapes still
+ * select cleanly. Matches OpenToonz's "auto-close" wand behaviour.
+ */
+export const [wandGapClose, setWandGapClose] = createSignal(false);
+
+/** Maximum gap (in pixels) the auto-close pre-pass will try to bridge. */
+export const [wandGapDistance, setWandGapDistance] = createSignal(10);
+
 // ── Color range options ──────────────────────────────────────────────────────
 
 /** Tolerance for the color-range selector. */

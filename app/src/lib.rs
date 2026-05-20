@@ -121,6 +121,7 @@ pub fn run() -> Result<(), AppError> {
             commands::exports::export_png_sprite_sheet,
             commands::exports::export_tmx,
             // canvas
+            commands::canvas::canvas_apply_mlaa,
             commands::canvas::canvas_begin_stroke,
             commands::canvas::canvas_composite,
             commands::canvas::canvas_draw_stroke,
@@ -167,8 +168,16 @@ pub fn run() -> Result<(), AppError> {
             // palette
             commands::palette::palette_add,
             commands::palette::palette_add_color,
+            commands::palette::palette_animation_get,
+            commands::palette::palette_animation_remove_keyframe,
+            commands::palette::palette_animation_resolved,
+            commands::palette::palette_animation_set_keyframe,
             commands::palette::palette_delete,
             commands::palette::palette_list,
+            commands::palette::palette_page_add,
+            commands::palette::palette_page_remove,
+            commands::palette::palette_page_rename,
+            commands::palette::palette_page_set_entries,
             commands::palette::palette_remove_color,
             commands::palette::palette_reorder_colors,
             commands::palette::palette_set_color,
@@ -272,6 +281,8 @@ pub fn run() -> Result<(), AppError> {
             // updater
             commands::updater::updater_check,
             commands::updater::updater_install,
+            // vectorize
+            commands::canvas::vector_vectorize_layer,
             // verbs
             commands::verbs::verb_cancel,
             commands::verbs::verb_invoke,

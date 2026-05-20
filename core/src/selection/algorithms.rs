@@ -17,6 +17,7 @@ use std::collections::VecDeque;
 use crate::canvas::PixelBuffer;
 use crate::project::{IVec2, Rect, Rgba};
 
+use super::autoclose::{self, GapCloseConfig};
 use super::error::{Error, Result};
 use super::mask::SelectionMask;
 
@@ -291,6 +292,66 @@ pub fn magic_wand(
     Ok(mask)
 }
 
+/// Flood-fills like [`magic_wand`], but first runs the gap-closing
+/// pre-pass from [`autoclose`] so short breaks in ink outlines stop
+/// the fill from leaking out.
+///
+/// The closure is applied to a clone of `buffer`: bridge pixels are
+/// stamped in opaque black (the typical ink color in pixel art) so
+/// the existing flood-fill rejects them as "not matching the seed".
+/// With `gap_config = None` this is equivalent to calling
+/// [`magic_wand`] directly, just with a redundant buffer clone.
+///
+/// # Errors
+///
+/// - [`Error::SeedOutOfBounds`] if `seed` is outside the buffer.
+/// - [`Error::DimensionOverflow`] if `width * height` overflows.
+pub fn magic_wand_with_gap_close(
+    buffer: &PixelBuffer,
+    seed: IVec2,
+    tolerance: u8,
+    connectivity: Connectivity,
+    gap_config: Option<GapCloseConfig>,
+) -> Result<SelectionMask> {
+    let seed_x = u32::try_from(seed.x).map_err(|_| Error::SeedOutOfBounds {
+        x: 0,
+        y: 0,
+        width: buffer.width(),
+        height: buffer.height(),
+    })?;
+    let seed_y = u32::try_from(seed.y).map_err(|_| Error::SeedOutOfBounds {
+        x: 0,
+        y: 0,
+        width: buffer.width(),
+        height: buffer.height(),
+    })?;
+
+    let Some(cfg) = gap_config else {
+        return magic_wand(buffer, seed_x, seed_y, tolerance, connectivity);
+    };
+
+    let closure = autoclose::close_gaps(buffer, &cfg)?;
+    let mut working = buffer.clone();
+    stamp_closure_pixels(&mut working, &closure);
+    magic_wand(&working, seed_x, seed_y, tolerance, connectivity)
+}
+
+/// Writes opaque black at every pixel selected by `closure`. The
+/// existing [`magic_wand`] will then refuse to cross those pixels
+/// unless the seed itself is black (which would defeat the purpose).
+fn stamp_closure_pixels(buffer: &mut PixelBuffer, closure: &SelectionMask) {
+    let ink = Rgba::new(0, 0, 0, 255);
+    let w = closure.width().min(buffer.width());
+    let h = closure.height().min(buffer.height());
+    for y in 0..h {
+        for x in 0..w {
+            if closure.is_selected(x, y) {
+                buffer.set_pixel(x, y, ink);
+            }
+        }
+    }
+}
+
 /// Selects all pixels in `buffer` whose colour matches `reference`
 /// within `tolerance`, regardless of spatial connectivity.
 ///
@@ -538,6 +599,77 @@ mod tests {
         let buf = make_two_color_buffer();
         let m = color_range(&buf, green(), 255).unwrap();
         assert_eq!(m.selected_count(), 16);
+    }
+
+    // --- magic wand with gap close ------------------------------------------
+
+    /// Builds a `size × size` canvas with a square outline drawn at
+    /// `margin` pixels from each side and a `gap_pixels`-wide hole
+    /// centred on the *top* edge of the outline. Interior is white,
+    /// outline is black, exterior (the margin frame) is also white so
+    /// any leak through the gap is visible at e.g. `(margin / 2,
+    /// margin / 2)`.
+    fn square_outline_with_top_gap(size: u32, margin: u32, gap_pixels: u32) -> PixelBuffer {
+        assert!(
+            margin >= 2,
+            "fixture needs room above the outline for leakage"
+        );
+        let mut buf = PixelBuffer::filled(size, size, Rgba::opaque(255, 255, 255)).unwrap();
+        let ink = Rgba::opaque(0, 0, 0);
+        let top = margin;
+        let bottom = size - margin - 1;
+        let left = margin;
+        let right = size - margin - 1;
+        let gap_start = size / 2 - gap_pixels / 2;
+        let gap_end = gap_start + gap_pixels;
+        // Top + bottom edges.
+        for x in left..=right {
+            if !(gap_start..gap_end).contains(&x) {
+                buf.set_pixel(x, top, ink);
+            }
+            buf.set_pixel(x, bottom, ink);
+        }
+        // Left + right edges.
+        for y in top..=bottom {
+            buf.set_pixel(left, y, ink);
+            buf.set_pixel(right, y, ink);
+        }
+        buf
+    }
+
+    #[test]
+    fn magic_wand_with_gap_close_disabled_matches_magic_wand() {
+        let buf = make_two_color_buffer();
+        let seed = IVec2 { x: 0, y: 0 };
+        let direct = magic_wand(&buf, 0, 0, 0, Connectivity::Four).unwrap();
+        let routed = magic_wand_with_gap_close(&buf, seed, 0, Connectivity::Four, None).unwrap();
+        assert_eq!(direct.selected_count(), routed.selected_count());
+    }
+
+    #[test]
+    fn magic_wand_with_gap_close_fills_through_2px_gap() {
+        // 20x20 canvas, outline at margin = 3 (top edge at y = 3),
+        // 2-pixel gap centred at x = 10. Seed inside the box;
+        // exterior pixel (0, 0) is in the white margin above the
+        // outline.
+        let buf = square_outline_with_top_gap(20, 3, 2);
+        let seed = IVec2 { x: 10, y: 10 };
+        let mask = magic_wand_with_gap_close(
+            &buf,
+            seed,
+            0,
+            Connectivity::Four,
+            Some(GapCloseConfig::default()),
+        )
+        .unwrap();
+        // Interior pixel must be selected.
+        assert!(mask.is_selected(10, 10));
+        // Outside the box (above the outline) must not be reached.
+        assert!(!mask.is_selected(0, 0));
+        // Sanity: without the gap close the fill leaks through the
+        // top gap into the exterior white margin.
+        let leaked = magic_wand(&buf, 10, 10, 0, Connectivity::Four).unwrap();
+        assert!(leaked.is_selected(0, 0), "baseline fill should leak");
     }
 
     #[test]

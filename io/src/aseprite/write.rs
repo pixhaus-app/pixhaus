@@ -23,7 +23,7 @@ use super::spec::{
     LAYER_TYPE_GROUP, LAYER_TYPE_NORMAL, LAYER_TYPE_TILEMAP, PALETTE_ENTRY_FLAG_NAME,
     SLICE_FLAG_NINE_SLICE, SLICE_FLAG_PIVOT, TILESET_FLAG_EMPTY_TILE, TILESET_FLAG_EXTERNAL,
     TILESET_FLAG_INLINE, USER_DATA_FLAG_COLOR, USER_DATA_FLAG_PROPERTIES, USER_DATA_FLAG_TEXT,
-    ZLIB_LEVEL, blend_mode_to_aseprite,
+    ZLIB_LEVEL, blend_mode_supported_by_aseprite, blend_mode_to_aseprite,
 };
 
 /// Encodes `document` to a fresh `.aseprite` byte vector.
@@ -166,6 +166,16 @@ fn write_layer(c: &LayerChunk) -> Vec<u8> {
     put_u16_le(&mut out, c.child_level);
     put_u16_le(&mut out, 0);
     put_u16_le(&mut out, 0);
+    if !blend_mode_supported_by_aseprite(c.blend) {
+        // Eight S55 OpenToonz-derived modes have no Aseprite equivalent.
+        // Downgrade to Normal on the wire and surface the loss so callers
+        // can route the user to `.pixhaus` export if they need fidelity.
+        tracing::warn!(
+            layer = %c.name,
+            blend_mode = ?c.blend,
+            "Aseprite has no equivalent for this blend mode; downgrading to Normal on export",
+        );
+    }
     put_u16_le(&mut out, blend_mode_to_aseprite(c.blend));
     out.push(c.opacity);
     put_zeros(&mut out, 3);

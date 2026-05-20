@@ -7,4 +7,4 @@
  * payloads are not attached because all compositing parameters live
  * on the layer (`opacity`, `visible`) rather than on the mode.
  */
-export type BlendMode = "normal" | "darken" | "multiply" | "color_burn" | "lighten" | "screen" | "color_dodge" | "addition" | "overlay" | "soft_light" | "hard_light" | "difference" | "exclusion" | "subtract" | "divide" | "hue" | "saturation" | "color" | "luminosity";
+export type BlendMode = "normal" | "darken" | "multiply" | "color_burn" | "lighten" | "screen" | "color_dodge" | "addition" | "overlay" | "soft_light" | "hard_light" | "difference" | "exclusion" | "subtract" | "divide" | "hue" | "saturation" | "color" | "luminosity" | "linear_burn" | "darker_color" | "linear_dodge" | "lighter_color" | "vivid_light" | "linear_light" | "pin_light" | "hard_mix";

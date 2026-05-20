@@ -1,16 +1,23 @@
-//! Transform throughput benchmarks.
+//! Transform throughput benchmarks. Baseline measurements for the
+//! S60 SIMD audit.
 //!
-//! Covers the transforms most likely to be performance-sensitive in a
-//! live editor session:
+//! S60-mandated benches:
 //!
-//! - `rotate_rotsprite_256` — RotSprite at 45° on a 256×256 buffer.
-//!   The brief requires single-digit milliseconds; this benchmark
-//!   surfaces any regression.
-//! - `rotate_bilinear_256` — direct bilinear rotation as a baseline.
-//! - `scale_nearest_256` — nearest-neighbor resize 256→512.
-//! - `scale_integer_2x_256` — integer 2× upscale on 256×256.
-//! - `flip_horizontal_256` — H-flip; should be close to a memcpy.
-//! - `translate_256` — integer translate with no mask.
+//! - `bench_rotate_bilinear_45` — `rotate_bilinear` at 45 degrees on
+//!   a 256x256 gradient. The bilinear core is the rank-9 transform
+//!   loop in the audit.
+//! - `bench_scale_nearest_2x` — `scale_nearest` 256 → 512.
+//! - `bench_scale_nearest_1_5x` — `scale_nearest` 256 → 384.
+//!   Substitutes for the spec's `bench_scale_bilinear_1_5x`: the
+//!   current public scale API exposes nearest only. The audit doc
+//!   notes the substitution.
+//!
+//! Inherited benches:
+//!
+//! - `bench_rotsprite_256` — full RotSprite path at 45 degrees.
+//! - `bench_scale_integer_2x_256` — integer 2x upscale.
+//! - `bench_flip_horizontal_256` — H-flip; close to a memcpy.
+//! - `bench_translate_256` — integer translate with no mask.
 //!
 //! Run with:
 //!
@@ -62,35 +69,55 @@ fn make_gradient(side: u32) -> PixelBuffer {
     buf
 }
 
-fn bench_rotsprite_256(c: &mut Criterion) {
-    let buf = make_gradient(SIDE);
-    let pixels = (SIDE * SIDE) as u64;
-    let mut group = c.benchmark_group("transforms");
-    group.throughput(Throughput::Elements(pixels));
-    group.bench_function("rotate_rotsprite_256", |b| {
-        b.iter(|| rotate_rotsprite(black_box(&buf), black_box(45.0)).unwrap())
-    });
-    group.finish();
-}
+// --- S60 mandated benches --------------------------------------------------
 
-fn bench_rotate_bilinear_256(c: &mut Criterion) {
+fn bench_rotate_bilinear_45(c: &mut Criterion) {
     let buf = make_gradient(SIDE);
     let pixels = (SIDE * SIDE) as u64;
     let mut group = c.benchmark_group("transforms");
     group.throughput(Throughput::Elements(pixels));
-    group.bench_function("rotate_bilinear_256", |b| {
+    group.bench_function("rotate_bilinear/256x256/45deg", |b| {
         b.iter(|| rotate_bilinear(black_box(&buf), black_box(45_f32.to_radians())).unwrap())
     });
     group.finish();
 }
 
-fn bench_scale_nearest_256(c: &mut Criterion) {
+fn bench_scale_nearest_2x(c: &mut Criterion) {
     let buf = make_gradient(SIDE);
-    let pixels = (SIDE * SIDE * 4) as u64; // output is 512×512
+    let pixels = (SIDE * 2 * SIDE * 2) as u64;
     let mut group = c.benchmark_group("transforms");
     group.throughput(Throughput::Elements(pixels));
-    group.bench_function("scale_nearest_256_to_512", |b| {
+    group.bench_function("scale_nearest/256_to_512", |b| {
         b.iter(|| scale_nearest(black_box(&buf), black_box(SIDE * 2), black_box(SIDE * 2)).unwrap())
+    });
+    group.finish();
+}
+
+/// Substitutes for `bench_scale_bilinear_1_5x` in the S60 spec. The
+/// public scale API exposes nearest only today; the audit doc records
+/// the substitution and the conditions under which a bilinear scale
+/// bench arrives.
+fn bench_scale_nearest_1_5x(c: &mut Criterion) {
+    let buf = make_gradient(SIDE);
+    let new_dim = SIDE + SIDE / 2; // 384
+    let pixels = (new_dim * new_dim) as u64;
+    let mut group = c.benchmark_group("transforms");
+    group.throughput(Throughput::Elements(pixels));
+    group.bench_function("scale_nearest/256_to_384", |b| {
+        b.iter(|| scale_nearest(black_box(&buf), black_box(new_dim), black_box(new_dim)).unwrap())
+    });
+    group.finish();
+}
+
+// --- Inherited benches ------------------------------------------------------
+
+fn bench_rotsprite_256(c: &mut Criterion) {
+    let buf = make_gradient(SIDE);
+    let pixels = (SIDE * SIDE) as u64;
+    let mut group = c.benchmark_group("transforms");
+    group.throughput(Throughput::Elements(pixels));
+    group.bench_function("rotate_rotsprite/256x256/45deg", |b| {
+        b.iter(|| rotate_rotsprite(black_box(&buf), black_box(45.0)).unwrap())
     });
     group.finish();
 }
@@ -100,7 +127,7 @@ fn bench_scale_integer_2x_256(c: &mut Criterion) {
     let pixels = (SIDE * SIDE * 4) as u64;
     let mut group = c.benchmark_group("transforms");
     group.throughput(Throughput::Elements(pixels));
-    group.bench_function("scale_integer_2x_256", |b| {
+    group.bench_function("scale_integer/2x/256", |b| {
         b.iter(|| scale_integer(black_box(&buf), black_box(2)).unwrap())
     });
     group.finish();
@@ -111,7 +138,7 @@ fn bench_flip_horizontal_256(c: &mut Criterion) {
     let pixels = (SIDE * SIDE) as u64;
     let mut group = c.benchmark_group("transforms");
     group.throughput(Throughput::Elements(pixels));
-    group.bench_function("flip_horizontal_256", |b| {
+    group.bench_function("flip_horizontal/256", |b| {
         b.iter(|| flip_horizontal(black_box(&buf), black_box(None)).unwrap())
     });
     group.finish();
@@ -122,7 +149,7 @@ fn bench_translate_256(c: &mut Criterion) {
     let pixels = (SIDE * SIDE) as u64;
     let mut group = c.benchmark_group("transforms");
     group.throughput(Throughput::Elements(pixels));
-    group.bench_function("translate_256", |b| {
+    group.bench_function("translate/256", |b| {
         b.iter(|| {
             translate(
                 black_box(&buf),
@@ -137,12 +164,13 @@ fn bench_translate_256(c: &mut Criterion) {
 }
 
 criterion_group!(
-    benches,
+    transforms_benches,
+    bench_rotate_bilinear_45,
+    bench_scale_nearest_2x,
+    bench_scale_nearest_1_5x,
     bench_rotsprite_256,
-    bench_rotate_bilinear_256,
-    bench_scale_nearest_256,
     bench_scale_integer_2x_256,
     bench_flip_horizontal_256,
     bench_translate_256,
 );
-criterion_main!(benches);
+criterion_main!(transforms_benches);

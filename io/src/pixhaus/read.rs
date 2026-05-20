@@ -70,7 +70,9 @@ fn parse_header(data: &[u8]) -> Result<(u16, u16, &[u8])> {
 ///   reader is incompatible. Surfaces
 ///   [`Error::UnsupportedSchemaVersion`].
 /// - file's MAJOR matches and MINOR may exceed: forward-compatible;
-///   unknown fields are ignored by `serde(default)`.
+///   unknown fields are ignored by `serde(default)`. The loader still
+///   emits a `tracing::warn!` so any downstream serde failure on an
+///   unknown enum variant (e.g. a future blend mode) is legible in logs.
 fn deserialize_and_validate(body: &[u8]) -> Result<PixhausArchive> {
     let archive: PixhausArchive = rmp_serde::from_slice(body)?;
     let schema = archive.project.schema_version;
@@ -85,6 +87,21 @@ fn deserialize_and_validate(body: &[u8]) -> Result<PixhausArchive> {
             major: schema.major,
             minor: schema.minor,
         });
+    }
+    if schema.minor > current.minor {
+        // Forward-compatible load: same major, newer minor. Additive
+        // fields fall through #[serde(default)], but a future minor
+        // may also introduce new enum variants that this reader has
+        // not heard of — those would have already failed
+        // deserialization above. Warning here makes downstream serde
+        // failures legible in the log timeline.
+        tracing::warn!(
+            file_minor = schema.minor,
+            reader_minor = current.minor,
+            "loading .pixhaus file written by a newer minor schema; \
+             unknown fields are tolerated but unknown enum variants \
+             will fail to deserialize"
+        );
     }
     Ok(archive)
 }

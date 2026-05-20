@@ -1,0 +1,116 @@
+---
+source: vectorize/tests/e2e.rs
+assertion_line: 75
+expression: vi
+---
+strokes:
+  - vertices:
+      - x: 1
+        y: 0
+        thickness: 1
+      - x: 0
+        y: 0
+        thickness: 1
+      - x: 0
+        y: 1
+        thickness: 1
+    style_id: 0
+  - vertices:
+      - x: 1
+        y: 0
+        thickness: 1
+      - x: 14
+        y: 0
+        thickness: 1
+    style_id: 0
+  - vertices:
+      - x: 1
+        y: 0
+        thickness: 1
+      - x: 0
+        y: 1
+        thickness: 1
+    style_id: 0
+  - vertices:
+      - x: 14
+        y: 0
+        thickness: 1
+      - x: 15
+        y: 0
+        thickness: 1
+      - x: 15
+        y: 1
+        thickness: 1
+    style_id: 0
+  - vertices:
+      - x: 14
+        y: 0
+        thickness: 1
+      - x: 15
+        y: 1
+        thickness: 1
+    style_id: 0
+  - vertices:
+      - x: 0
+        y: 1
+        thickness: 1
+      - x: 0
+        y: 14
+        thickness: 1
+    style_id: 0
+  - vertices:
+      - x: 15
+        y: 1
+        thickness: 1
+      - x: 15
+        y: 14
+        thickness: 1
+    style_id: 0
+  - vertices:
+      - x: 0
+        y: 14
+        thickness: 1
+      - x: 0
+        y: 15
+        thickness: 1
+      - x: 1
+        y: 15
+        thickness: 1
+    style_id: 0
+  - vertices:
+      - x: 0
+        y: 14
+        thickness: 1
+      - x: 1
+        y: 15
+        thickness: 1
+    style_id: 0
+  - vertices:
+      - x: 15
+        y: 14
+        thickness: 1
+      - x: 14
+        y: 15
+        thickness: 1
+    style_id: 0
+  - vertices:
+      - x: 15
+        y: 14
+        thickness: 1
+      - x: 15
+        y: 15
+        thickness: 1
+      - x: 14
+        y: 15
+        thickness: 1
+    style_id: 0
+  - vertices:
+      - x: 1
+        y: 15
+        thickness: 1
+      - x: 14
+        y: 15
+        thickness: 1
+    style_id: 0
+width: 16
+height: 16

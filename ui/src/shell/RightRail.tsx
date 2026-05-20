@@ -14,6 +14,7 @@ import TilemapPanel from "../tilemap/TilemapPanel";
 import SheetView from "../sheet/SheetView";
 import BrushSection from "../canvas/tools/BrushSection";
 import FillSection from "../canvas/tools/FillSection";
+import SelectSection from "../canvas/select/SelectSection";
 import DitheringSection from "../canvas/tools/DitheringSection";
 import FxSection from "../canvas/tools/FxSection";
 
@@ -25,6 +26,9 @@ const RightRail: Component = () => {
       </RailSection>
       <RailSection id="fill">
         <FillSection />
+      </RailSection>
+      <RailSection id="select">
+        <SelectSection />
       </RailSection>
       <RailSection id="dithering">
         <DitheringSection />

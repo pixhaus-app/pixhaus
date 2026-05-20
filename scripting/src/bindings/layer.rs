@@ -144,6 +144,14 @@ pub fn blend_mode_to_str(bm: BlendMode) -> &'static str {
         BlendMode::Addition => "addition",
         BlendMode::Subtract => "subtract",
         BlendMode::Divide => "divide",
+        BlendMode::LinearBurn => "linear_burn",
+        BlendMode::DarkerColor => "darker_color",
+        BlendMode::LinearDodge => "linear_dodge",
+        BlendMode::LighterColor => "lighter_color",
+        BlendMode::VividLight => "vivid_light",
+        BlendMode::LinearLight => "linear_light",
+        BlendMode::PinLight => "pin_light",
+        BlendMode::HardMix => "hard_mix",
     }
 }
 
@@ -170,6 +178,14 @@ pub fn blend_mode_from_str(s: &str) -> Option<BlendMode> {
         "addition" => Some(BlendMode::Addition),
         "subtract" => Some(BlendMode::Subtract),
         "divide" => Some(BlendMode::Divide),
+        "linear_burn" => Some(BlendMode::LinearBurn),
+        "darker_color" => Some(BlendMode::DarkerColor),
+        "linear_dodge" => Some(BlendMode::LinearDodge),
+        "lighter_color" => Some(BlendMode::LighterColor),
+        "vivid_light" => Some(BlendMode::VividLight),
+        "linear_light" => Some(BlendMode::LinearLight),
+        "pin_light" => Some(BlendMode::PinLight),
+        "hard_mix" => Some(BlendMode::HardMix),
         _ => None,
     }
 }

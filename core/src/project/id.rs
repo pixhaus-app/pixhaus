@@ -86,6 +86,61 @@ id_newtype! {
     PaletteId, u32
 }
 
+/// Identifier of a [`PalettePage`](super::palette::PalettePage) within a palette.
+///
+/// Pages are named subset views over a palette's entries (see
+/// [`PalettePage`](super::palette::PalettePage)). Each page carries its own
+/// stable id so renames, reorders, and undo/redo can reference a specific
+/// page without leaning on its index in the page list.
+///
+/// Adapted from `OpenToonz` `toonz/sources/include/tpalette.h` under
+/// BSD-3-Clause. See `THIRD_PARTY_NOTICES.md`.
+#[derive(
+    Copy, Clone, Debug, Eq, PartialEq, Hash, Ord, PartialOrd, Default, Serialize, Deserialize, TS,
+)]
+#[ts(export, type = "number")]
+#[serde(transparent)]
+pub struct PalettePageId(pub u32);
+
+impl PalettePageId {
+    /// Constructs a page id from a raw value.
+    #[must_use]
+    pub const fn new(value: u32) -> Self {
+        Self(value)
+    }
+
+    /// Returns the wrapped value.
+    #[must_use]
+    pub const fn value(self) -> u32 {
+        self.0
+    }
+
+    /// Alias of [`Self::value`] matching the `id_newtype!` macro accessor name
+    /// used by the other ID newtypes in this module.
+    #[must_use]
+    pub const fn get(self) -> u32 {
+        self.0
+    }
+}
+
+impl std::fmt::Display for PalettePageId {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "page-{}", self.0)
+    }
+}
+
+impl From<u32> for PalettePageId {
+    fn from(value: u32) -> Self {
+        Self(value)
+    }
+}
+
+impl From<PalettePageId> for u32 {
+    fn from(value: PalettePageId) -> Self {
+        value.0
+    }
+}
+
 id_newtype! {
     /// Identifier of a [`Tileset`](super::tileset::Tileset).
     TilesetId, u32
@@ -217,5 +272,26 @@ mod tests {
         let bytes = rmp_serde::to_vec_named(&id).unwrap();
         let back: PixelBufferId = rmp_serde::from_slice(&bytes).unwrap();
         assert_eq!(back.get(), u32::MAX);
+    }
+
+    #[test]
+    fn palette_page_id_round_trips_serde() {
+        let id = PalettePageId::new(42);
+        let bytes = rmp_serde::to_vec_named(&id).unwrap();
+        let back: PalettePageId = rmp_serde::from_slice(&bytes).unwrap();
+        assert_eq!(id, back);
+        assert_eq!(back.value(), 42);
+    }
+
+    #[test]
+    fn palette_page_id_serializes_transparently() {
+        let id = PalettePageId::new(7);
+        assert_eq!(serde_json::to_string(&id).unwrap(), "7");
+    }
+
+    #[test]
+    fn palette_page_id_display_uses_page_prefix() {
+        let id = PalettePageId::new(3);
+        assert_eq!(format!("{id}"), "page-3");
     }
 }

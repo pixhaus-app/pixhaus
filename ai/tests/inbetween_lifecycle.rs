@@ -34,7 +34,7 @@ use pixhaus_ai::plugin::{
     BackendCapabilities, CostEstimate, INBETWEEN_VERB_ID, PixelData, VerbContext, VerbEffect,
     VerbId, VerbInputs, VerbProgress, VerbRuntime,
 };
-use pixhaus_ai::verbs::inbetween::{InbetweenInputs, InbetweenVerb};
+use pixhaus_ai::verbs::inbetween::{InbetweenInputs, InbetweenMode, InbetweenVerb};
 use pixhaus_core::project::{FrameIndex, ProjectMetadata, SpriteId};
 use tokio_util::sync::CancellationToken;
 
@@ -185,6 +185,8 @@ async fn inbetween_generates_one_frame_by_default() {
         frame_a_index: 0,
         frame_b_index: 5,
         num_outputs: 1,
+        mode: InbetweenMode::Ai,
+        variance_range: 2.5,
     })
     .unwrap();
 
@@ -228,6 +230,8 @@ async fn inbetween_generates_multiple_frames() {
         frame_a_index: 2,
         frame_b_index: 10,
         num_outputs: 4,
+        mode: InbetweenMode::Ai,
+        variance_range: 2.5,
     })
     .unwrap();
 
@@ -267,6 +271,8 @@ async fn inbetween_requires_active_sprite() {
         frame_a_index: 0,
         frame_b_index: 2,
         num_outputs: 1,
+        mode: InbetweenMode::Ai,
+        variance_range: 2.5,
     })
     .unwrap();
 
@@ -296,6 +302,8 @@ async fn inbetween_cancelled_before_backend() {
         frame_a_index: 0,
         frame_b_index: 2,
         num_outputs: 1,
+        mode: InbetweenMode::Ai,
+        variance_range: 2.5,
     })
     .unwrap();
 
@@ -329,6 +337,8 @@ async fn inbetween_cels_on_active_layer() {
         frame_a_index: 1,
         frame_b_index: 3,
         num_outputs: 2,
+        mode: InbetweenMode::Ai,
+        variance_range: 2.5,
     })
     .unwrap();
 
@@ -364,6 +374,8 @@ async fn inbetween_commit_returns_effects() {
         frame_a_index: 0,
         frame_b_index: 2,
         num_outputs: 1,
+        mode: InbetweenMode::Ai,
+        variance_range: 2.5,
     })
     .unwrap();
 

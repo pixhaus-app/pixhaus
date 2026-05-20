@@ -1011,6 +1011,8 @@ fn merged_export_preserves_indexed_transparent_index() {
         name: "pal".into(),
         colors: vec![PaletteEntry::new(Rgba::transparent()); 4],
         user_data: UserData::default(),
+        pages: Vec::new(),
+        animation: None,
     }];
 
     let entity = Entity {

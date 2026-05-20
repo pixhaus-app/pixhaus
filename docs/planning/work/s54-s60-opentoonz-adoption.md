@@ -1,0 +1,917 @@
+# S54–S60 — OpenToonz adoption
+
+Exhaustive spec for the seven follow-up streams identified in
+`docs/planning/research/opentoonz-comparison.md`. The streams in that
+document are numbered S53–S59, but S53 has since been taken by the
+animated-sprite-sheet verb. This spec renumbers them as S54–S60. Each
+stream ships in a single commit on the `feat/s54-s60-opentoonz-adoption`
+branch; the whole branch lands as one PR.
+
+## Goal
+
+Adopt the production-tested algorithms in OpenToonz's `common/`,
+`toonzlib/`, and `stdfx/` that fill real gaps in Pixhaus's v1 surface:
+edge-aware AA, gap-closing flood fill, procedural inbetweening, palette
+animation, missing blend modes, centerline vectorization, plus a
+baseline SIMD audit. All adaptations are BSD-3-Clause and require
+attribution per the third-party-notices conventions below.
+
+## Why one PR
+
+The user picked the mega-PR shape: specs and implementations land
+together. The risk is review surface (4000–8000 LoC). The mitigation
+is one conventional commit per stream so reviewers can walk the diff
+stream-by-stream.
+
+## Branch and commit plan
+
+Branch: `feat/s54-s60-opentoonz-adoption`. Commits in order:
+
+1. `docs: add OpenToonz adoption spec + stream entries S54-S60` —
+   this spec, `streams.md` rows, `THIRD_PARTY_NOTICES.md`.
+2. `feat(s54): palette pages and animation [opentoonz]`
+3. `feat(s55): linear/contrast blend modes [opentoonz]`
+4. `feat(s56): morphological anti-aliasing transform [opentoonz]`
+5. `feat(s57): gap-closing magic wand [opentoonz]`
+6. `feat(s58): procedural inbetween fallback [opentoonz]`
+7. `feat(s59): centerline vectorization crate [opentoonz]`
+8. `docs(s60): SIMD audit + criterion baseline [opentoonz]`
+
+Each commit must leave the workspace green: `cargo fmt --check`,
+`cargo clippy --workspace --tests -- -D warnings`,
+`cargo nextest run --workspace`, `pnpm tsc --noEmit`. The pre-PR gate
+runs `./scripts/pre-pr.sh` before push.
+
+## Schema discipline
+
+S54 is the only stream that touches the data model. It adds two new
+fields to `Palette`: `pages: Vec<PalettePage>` (default empty) and
+`animation: Option<PaletteAnimation>` (default `None`). Both carry
+`#[serde(default, skip_serializing_if = ...)]` so files written by
+pre-S54 builds load unchanged.
+
+`SchemaVersion::MINOR` bumps from `0` to `1`. Major stays at `4`.
+A pre-S54 fixture (`tests/fixtures/v4.0-without-pages.pixhaus`) lands
+with the implementation; a round-trip test confirms it loads, that
+`pages` defaults to empty, that `animation` defaults to `None`, and
+that re-saving produces a file with `schema_version.minor == 1`.
+
+No migration runner is needed. The change is additive within
+`major == 4`; readers from this PR onward decode both `0` and `1`.
+
+## Attribution
+
+This PR is the first to adapt OpenToonz code, so it creates the repo's
+top-level `THIRD_PARTY_NOTICES.md`. Contents:
+
+- Full verbatim BSD-3-Clause text from
+  `LICENSE.txt`.
+- Copyright line: `Copyright (c) 2016, Dwango Co., Ltd.`
+- One bullet per adapted file in this PR.
+
+Per-file attribution sits at the top of every adapted module:
+
+```rust
+// Adapted from OpenToonz <path-in-opentoonz> under BSD-3-Clause.
+// See THIRD_PARTY_NOTICES.md.
+```
+
+Per CLAUDE.md voice rules: no marketing copy referencing OpenToonz,
+Toonz, Dwango, or Studio Ghibli outside of `THIRD_PARTY_NOTICES.md`
+and per-file headers (clause 3 of BSD-3 forbids endorsement).
+
+Citing the underlying papers (Reshetov MLAA, Toonz inbetweening
+literature) is independent from BSD-3 compliance and lives in module
+rustdoc.
+
+## Test discipline
+
+Per CLAUDE.md: every public function carries at least one test.
+- Unit tests use `rstest` fixtures.
+- Pixel-math functions use property tests via `proptest` where the
+  output space is bounded.
+- Visual changes use `insta` snapshots for text outputs and
+  `image-compare` with a documented SSIM tolerance for pixel outputs.
+- New criterion benchmarks (S60) live in `core/benches/` and are not
+  part of CI's gating run — they produce a baseline `target/criterion`
+  HTML report.
+
+## Risks (PR-wide)
+
+- **S59 size.** A full port of the centerline vectorizer is ~3000 lines
+  of new Rust. The diff will dominate the PR. Mitigation: per-stage
+  modules (`contour.rs`, `skeleton.rs`, `organize.rs`, `stroke_fit.rs`)
+  with independent tests so failures localize.
+- **S55 lossy Aseprite export.** Eight new blend modes have no Aseprite
+  equivalent. Export downgrades them to `Normal` with a `tracing::warn!`
+  and a one-line entry in `docs/migration/aseprite.md`. Documented in
+  this spec is the user-facing behavior.
+- **S54 default-serde.** A bad default could silently drop animations
+  from old files. Mitigation: explicit round-trip fixture test that
+  loads a pre-MINOR-1 file, asserts the defaults, re-saves, and
+  byte-compares the new file against a known-good current-version
+  fixture (with `pages: []` and `animation: null`).
+- **S57 LUT correctness.** The skeleton LUT has 256 entries; a copy
+  error silently corrupts gap detection. The LUT is generated by a
+  build-time script (`build.rs`) from the rules in
+  `common/trop/tautoclose.cpp:54-59` and the `skeletonlut.h` header;
+  the test suite verifies the LUT against ~30 hand-picked
+  neighbour-code → classification expectations.
+- **S60 audit drift.** A markdown audit that does not run becomes
+  stale. Mitigation: every loop the audit names links to its
+  criterion benchmark group; CI does not gate on criterion numbers
+  but does verify benchmarks compile.
+
+---
+
+# S54 — Palette pages and palette animation
+
+## Scope
+
+Extend `core/src/project/palette.rs` so a palette can be organized
+into named pages (subset views) and so each entry can be animated
+over the project's frame range. Both are additive — palettes without
+pages or without animation render identically to today.
+
+## Reference
+
+`toonz/sources/include/tpalette.h`,
+specifically:
+- `class Page` at lines 94–157 (the page concept).
+- `StyleAnimation` typedef at lines 177–180 (the animation table).
+- Rationale block at lines 45–83.
+
+## API surface
+
+```rust
+// core/src/project/palette.rs
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize, TS)]
+#[ts(export)]
+pub struct PalettePage {
+    pub id: PalettePageId,
+    pub name: String,
+    /// Indices into the parent palette's `colors` vector.
+    pub entry_indices: Vec<u32>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize, TS)]
+#[ts(export)]
+pub struct PaletteAnimation {
+    /// Per-entry keyframes. Outer key: palette entry index.
+    /// Inner key: timeline frame index. Inner value: color at that
+    /// frame. Frames between keys interpolate by step (no easing).
+    pub keyframes: BTreeMap<u32, BTreeMap<FrameIndex, Rgba>>,
+}
+
+impl PaletteAnimation {
+    /// Returns the color the entry at `entry_index` resolves to at
+    /// `frame`, falling back to the palette's static color when the
+    /// entry has no keyframes at or before `frame`.
+    pub fn resolve(&self, entry_index: u32, frame: FrameIndex, fallback: Rgba) -> Rgba;
+}
+
+pub struct Palette {
+    pub id: PaletteId,
+    pub name: String,
+    pub colors: Vec<PaletteEntry>,
+    pub user_data: UserData,
+    // NEW:
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub pages: Vec<PalettePage>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub animation: Option<PaletteAnimation>,
+}
+```
+
+`PalettePageId` is a new newtype in `core/src/project/id.rs`,
+following the existing `PaletteId` pattern.
+
+## Test plan
+
+- `palette_page_round_trip` — page CRUD via `Palette::add_page`,
+  `Palette::page`, `Palette::remove_page`.
+- `palette_animation_resolve_static` — empty animation returns
+  fallback unchanged.
+- `palette_animation_resolve_at_keyframe` — exact-frame lookup.
+- `palette_animation_resolve_between_keyframes` — step interpolation
+  (no easing).
+- `palette_animation_serde_msgpack` — round-trip via `rmp-serde`.
+- `palette_animation_serde_typescript` — `ts-rs` export emits the
+  expected TypeScript shape (snapshot via `insta`).
+- `pixhaus_file_legacy_compat` — load a fixture written with
+  `SchemaVersion { major: 4, minor: 0 }` and confirm
+  `palette.pages.is_empty()` and `palette.animation.is_none()`.
+- `pixhaus_file_minor_bump` — saving today produces
+  `schema_version.minor == 1`.
+
+## Schema impact
+
+- `SchemaVersion::MINOR`: `0 → 1` in `core/src/project/schema.rs`.
+- New fixture: `io/tests/fixtures/legacy_v4_0/palette_no_pages.pixhaus`.
+
+## Attribution
+
+Module header on `palette.rs` (additive — existing header stays):
+
+```rust
+// Pages and animation adapted from OpenToonz
+// toonz/sources/include/tpalette.h under BSD-3-Clause.
+// See THIRD_PARTY_NOTICES.md.
+```
+
+---
+
+# S55 — Missing blend modes
+
+## Scope
+
+Add the eight blend modes Pixhaus is missing relative to OpenToonz's
+table: `LinearBurn`, `DarkerColor`, `LinearDodge`, `LighterColor`,
+`VividLight`, `LinearLight`, `PinLight`, `HardMix`. The first four
+are arithmetic combinators; the last four are contrast modes with a
+per-pixel branch on the comparison color.
+
+## Reference
+
+`toonz/sources/stdfx/igs_color_blend.cpp`,
+specifically:
+- Mode table at lines 26–55.
+- `blend_transp_` helper at lines 97–110 (alpha composition shape;
+  we keep our existing Aseprite-byte-exact composition).
+- Per-mode math: each mode is a small named function in the file.
+
+## API surface
+
+```rust
+// core/src/project/blend.rs — add to BlendMode enum:
+LinearBurn,
+DarkerColor,
+LinearDodge,
+LighterColor,
+VividLight,
+LinearLight,
+PinLight,
+HardMix,
+```
+
+```rust
+// core/src/canvas/blend.rs — add eight functions following the
+// existing per-channel pattern. Each function returns u8.
+pub const fn channel_linear_burn(b: u8, s: u8) -> u8;
+pub const fn channel_linear_dodge(b: u8, s: u8) -> u8;
+pub fn channel_vivid_light(b: u8, s: u8) -> u8;
+pub fn channel_linear_light(b: u8, s: u8) -> u8;
+pub fn channel_pin_light(b: u8, s: u8) -> u8;
+pub const fn channel_hard_mix(b: u8, s: u8) -> u8;
+
+// "Color" comparators operate on full Rgba, not per-channel.
+pub fn rgba_darker_color(b: Rgba, s: Rgba) -> Rgba;
+pub fn rgba_lighter_color(b: Rgba, s: Rgba) -> Rgba;
+```
+
+Mode-to-function wiring lives in `core/src/canvas/composite.rs`
+inside the existing match on `BlendMode`.
+
+## Aseprite export downgrade
+
+`io/src/aseprite/write.rs` maps the eight new variants to Aseprite's
+`Normal` byte and emits a `tracing::warn!` per layer affected. A one-
+line entry lands in `docs/migration/aseprite.md`. The reverse path
+(`io/src/aseprite/read.rs`) is unaffected — Aseprite cannot produce
+these modes.
+
+## Test plan
+
+Per-mode (eight modes × these cases):
+- Black-on-white check: known input → known output value.
+- White-on-black check: known input → known output value.
+- Mid-grey-on-mid-grey check: known input → known output value.
+- Idempotence on identity color (where the math defines one).
+- Snake-case serde round-trip (extends the existing
+  `all_modes_round_trip` test).
+
+Composite-level:
+- `composite_picks_new_mode` — dispatcher routes each new variant.
+- `aseprite_export_downgrades_to_normal` — write a project with a
+  layer in `LinearLight`, re-read, assert the round-trip flagged it
+  to `Normal` and that the warning fired.
+
+## Schema impact
+
+This stream rides the S54 `SchemaVersion::MINOR` bump. Files written
+by this PR carry `minor = 1`; the eight new variants are part of the
+"things a `minor = 1` reader must understand" contract.
+
+Honest caveat about pre-PR readers: `SchemaVersion::is_compatible_with`
+is currently same-major-any-minor, so a `minor = 0` reader will
+nominally accept a `minor = 1` file — and then fail at blend-mode
+deserialization with a serde error when it encounters one of the
+new variants. Two things follow:
+
+- We do **not** add a `#[serde(other)]` fallback on `BlendMode` in
+  this PR. Forward compatibility for future-future modes is its own
+  problem and not on the path to shipping these eight.
+- A small follow-up to `core/src/project/schema.rs` (in the same S55
+  commit) makes the version check more honest: when `other.minor`
+  exceeds `Self::MINOR`, the loader emits a `tracing::warn!`
+  indicating that a feature-bearing future minor is being read; the
+  load continues but the warning makes downstream serde failures
+  legible.
+
+## Attribution
+
+Module header on `blend.rs`:
+
+```rust
+// New variants and their math adapted from OpenToonz
+// toonz/sources/stdfx/igs_color_blend.cpp under BSD-3-Clause.
+// See THIRD_PARTY_NOTICES.md.
+```
+
+---
+
+# S56 — Morphological anti-aliasing transform
+
+## Scope
+
+A new module `core/src/transforms/antialias.rs` that exposes an
+edge-aware anti-alias pass. Two-pass (rows then columns) MLAA based
+on Reshetov's "Morphological Antialiasing" algorithm.
+
+Pixhaus today rotates via RotSprite for integer multiples and
+bilinear elsewhere. Bilinear softens edges uniformly; MLAA preserves
+edges and softens only along classified separation lines. Useful
+after non-integer rotates, after up-scaling pixel art, and as a
+manual filter.
+
+## Reference
+
+`toonz/sources/common/trop/tantialias.cpp`,
+specifically:
+- File header (lines 5–20) — algorithm summary.
+- `Selector` trait pattern (lines 60–80) — per-channel max-diff
+  classifier.
+- `processLine` driver (lines 357–370) — two-pass scheme.
+
+Cited paper: Reshetov, "Morphological Antialiasing" (Intel Labs,
+2009).
+
+## API surface
+
+```rust
+// core/src/transforms/antialias.rs
+pub struct MlaaConfig {
+    /// Per-channel max difference at or below which two pixels are
+    /// classified as equal. Default 16 (about 6% of 255).
+    pub threshold: u8,
+    /// Softness factor applied at the classified separation line.
+    /// 0 = no softening, 255 = full bilinear-equivalent softening.
+    /// Default 128.
+    pub softness: u8,
+}
+
+impl Default for MlaaConfig {
+    fn default() -> Self { Self { threshold: 16, softness: 128 } }
+}
+
+pub fn morphological_antialias(
+    src: &PixelBuffer,
+    config: &MlaaConfig,
+) -> Result<PixelBuffer>;
+```
+
+The function allocates the output. The two passes are independent
+per row / per column; `rayon::iter::ParallelIterator` parallelizes
+both following `core/src/transforms/scale.rs`'s model.
+
+## Test plan
+
+- `mlaa_idempotent_on_flat` — a uniform-color buffer is returned
+  unchanged.
+- `mlaa_preserves_horizontal_edge` — black-above-white with a sharp
+  horizontal boundary returns the same boundary (any softening
+  happens only along diagonals).
+- `mlaa_softens_staircase` — a 45° black-on-white staircase emerges
+  smoother (image-compare SSIM > 0.98 against an `insta` snapshot
+  fixture).
+- `mlaa_respects_threshold` — adjacent pixels differing by less than
+  `threshold` do not produce a classified edge.
+- `mlaa_round_trip_with_bilinear` — visual diff to existing bilinear
+  documented in the test as a baseline regression marker, not a
+  gating assertion.
+
+## Schema impact
+
+None. This is a transform op, not a project-model change.
+
+## Attribution
+
+Module header:
+
+```rust
+//! Morphological anti-aliasing (MLAA).
+//!
+//! Adapted from OpenToonz toonz/sources/common/trop/tantialias.cpp
+//! under BSD-3-Clause. See THIRD_PARTY_NOTICES.md.
+//!
+//! Algorithm: Alexander Reshetov, "Morphological Antialiasing"
+//! (Intel Labs, 2009).
+```
+
+---
+
+# S57 — Gap-closing magic wand
+
+## Scope
+
+A new module `core/src/selection/autoclose.rs` plus a generated
+`skeleton_lut.rs` that lets `magic_wand` respect outlines with up to
+~10-pixel gaps. The current `magic_wand` in
+`core/src/selection/algorithms.rs` leaks the fill through any gap;
+this stream adds an optional pre-pass that detects endpoint pairs
+and rasterizes connecting segments into a temporary closure mask.
+
+## Reference
+
+`toonz/sources/common/trop/tautoclose.cpp`,
+specifically:
+- `neighboursCode` at lines 54–59 — 8-bit packed neighbour signature.
+- Skeleton LUT consumption at lines 70–110 — classifier table.
+- `DRAW_SEGMENT` Bresenham macro at lines 112–130 — closure
+  rasterization.
+
+The skeleton LUT in `skeletonlut.h` has 256 entries mapping a
+neighbour signature to one of `{Endpoint, Border, Branch, Interior,
+Isolated}`. We generate the equivalent Rust table at build time from
+the same rules.
+
+## API surface
+
+```rust
+// core/src/selection/autoclose.rs
+pub struct GapCloseConfig {
+    /// Maximum gap (in pixels) the closer will try to bridge.
+    /// Default 10.
+    pub closing_distance: u32,
+    /// Maximum angle (radians) between endpoint tangents that still
+    /// counts as a "matching pair". Default π/2 (90°).
+    pub closing_angle_rad: f32,
+    /// Threshold below which a pixel is considered "ink" for the
+    /// purposes of endpoint detection. Default 128.
+    pub ink_threshold: u8,
+}
+
+pub fn close_gaps(
+    buffer: &PixelBuffer,
+    config: &GapCloseConfig,
+) -> Result<SelectionMask>;
+
+pub fn magic_wand_with_gap_close(
+    buffer: &PixelBuffer,
+    seed: IVec2,
+    tolerance: u8,
+    connectivity: Connectivity,
+    gap_config: Option<GapCloseConfig>,
+) -> Result<SelectionMask>;
+```
+
+`magic_wand_with_gap_close` is the new entry point; the existing
+`magic_wand` stays unchanged for callers that don't want the
+behavior.
+
+## Skeleton LUT generation
+
+`core/build.rs` (new) generates `src/selection/skeleton_lut.rs` from
+the rules table. The build script enumerates all 256 neighbour codes
+and classifies each by:
+1. Count of set bits in the 8 neighbours.
+2. Connectivity pattern (adjacent set bits, isolated bits).
+
+Output:
+
+```rust
+pub(crate) static SKELETON_LUT: [Classification; 256] = [/* ... */];
+
+#[derive(Copy, Clone, Debug, Eq, PartialEq)]
+pub(crate) enum Classification {
+    Isolated, Endpoint, Border, Branch, Interior,
+}
+```
+
+The build-script-vs-static-table choice matters: a hand-typed table
+is unreviewable and an OpenToonz `skeletonlut.h` paste invites a
+copy error. Generating from rules makes the table reproducible.
+
+## Test plan
+
+- `closed_contour_fills` — magic wand on a square outline fills only
+  the interior (parity with existing `magic_wand`).
+- `two_pixel_gap_closes` — a square outline with a 2-px hole on one
+  side fills the interior when `gap_config` is supplied at default
+  settings.
+- `twelve_pixel_gap_leaks` — at default `closing_distance = 10`, a
+  12-px gap is not bridged and the fill escapes.
+- `gap_close_respects_angle` — two endpoints at 170° angle (nearly
+  opposite directions) do not bridge.
+- `skeleton_lut_classifications` — exhaustive table assertion for ~30
+  hand-picked neighbour codes (isolated pixel, straight horizontal
+  line, T-junction, X-junction, etc.).
+- `bresenham_segment_idempotent` — rasterizing the same segment
+  twice into the same mask is a no-op.
+
+## Schema impact
+
+None.
+
+## Attribution
+
+Module header:
+
+```rust
+//! Gap-closing pre-pass for the magic wand.
+//!
+//! Adapted from OpenToonz toonz/sources/common/trop/tautoclose.cpp
+//! under BSD-3-Clause. See THIRD_PARTY_NOTICES.md.
+```
+
+`build.rs` carries the same comment.
+
+---
+
+# S58 — Procedural inbetween fallback
+
+## Scope
+
+Add a `Procedural` mode to `ai/src/verbs/inbetween/` that runs
+locally without a backend. Variance-rejected weighted averaging
+between frame A and frame B, with per-pixel rejection of outlier
+samples.
+
+The verb today is AI-only; users without a configured backend get
+nothing. Procedural mode is fast (microseconds per frame),
+deterministic, and useful as a preview before paying for the AI
+call.
+
+## Reference
+
+`toonz/sources/common/tvrender/tinbetween.cpp`,
+specifically:
+- `getAverage` at lines 21–54 — the variance-rejection scheme.
+- `getWeightedAverage` at lines 56–98 — the weighted variant.
+
+Toonz's algorithm is stroke-based; we apply the same variance-
+rejection idea to raster frames.
+
+## API surface
+
+```rust
+// ai/src/verbs/inbetween/mod.rs
+
+#[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq, TS)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum InbetweenMode {
+    /// Procedural variance-rejected weighted averaging. No backend.
+    Procedural { variance_range: f32 },
+    /// Backend-driven frame interpolation (current behavior).
+    #[default]
+    Ai,
+    /// Run procedural first, surface as preview, then optionally
+    /// invoke AI.
+    AiWithProceduralPreview { variance_range: f32 },
+}
+
+pub struct InbetweenInputs {
+    // ... existing fields ...
+    #[serde(default)]
+    pub mode: InbetweenMode,
+}
+```
+
+When `Procedural`, `InbetweenVerb::invoke` returns immediately
+without dispatching to a backend — `ctx.backend` is unused. When
+`AiWithProceduralPreview`, the procedural output ships as a
+`VerbProgress` event before the backend call kicks off.
+
+The procedural path lives in a private `procedural.rs` submodule
+exposing:
+
+```rust
+pub(super) fn interpolate_frames(
+    frame_a: &[u8],     // RGBA8 contiguous
+    frame_b: &[u8],
+    width: u32,
+    height: u32,
+    t: f32,             // 0.0..=1.0
+    variance_range: f32,// default 2.5
+) -> Vec<u8>;
+```
+
+Default `variance_range` mirrors OpenToonz's 2.5σ rule.
+
+## Test plan
+
+- `procedural_t0_returns_a` — at `t = 0.0`, output equals
+  `frame_a` byte-for-byte.
+- `procedural_t1_returns_b` — at `t = 1.0`, output equals
+  `frame_b`.
+- `procedural_t05_is_average_when_no_outliers` — for two solid
+  buffers with same color, output equals input.
+- `procedural_rejects_outlier_per_pixel` — an outlier sample at one
+  position does not contaminate neighbouring averages.
+- `procedural_deterministic` — same inputs produce same output
+  twice in a row.
+- `procedural_palette_snap` — when palette is configured, output is
+  snapped to nearest palette color.
+- `procedural_no_backend_required` — `InbetweenVerb` succeeds when
+  `ctx.backend` is unset, in `Procedural` mode.
+- `inbetween_mode_serde_round_trip` — JSON and msgpack round-trip
+  for all three modes.
+- Visual: `insta` snapshot of a known fixture pair (sprite walk
+  frames 1 and 3 generating frame 2).
+
+## Schema impact
+
+`InbetweenInputs` adds the `mode` field with `#[serde(default)]`,
+defaulting to `InbetweenMode::Ai`. Old verb invocations that
+omit the field continue to call the backend.
+
+## Attribution
+
+Module header on `procedural.rs`:
+
+```rust
+//! Variance-rejected weighted averaging for raster inbetweening.
+//!
+//! Adapted from OpenToonz toonz/sources/common/tvrender/tinbetween.cpp
+//! under BSD-3-Clause. See THIRD_PARTY_NOTICES.md.
+```
+
+---
+
+# S59 — Centerline vectorization (new `vectorize/` crate)
+
+## Scope
+
+Full port of OpenToonz's raster-to-vector centerline pipeline to a
+new workspace crate. Public API: take a raster ink layer plus a
+palette, return a `VectorImage` of styled strokes. This is the
+largest stream in the PR by an order of magnitude (~3000 LoC).
+
+The pipeline is four stages:
+
+1. **Polygonize** — extract closed polygon contours from connected
+   ink regions.
+2. **Skeletonize** — compute the medial-axis graph (skeleton) of
+   each polygon via the Voronoi-diagram-of-vertices approach
+   OpenToonz uses.
+3. **Organize graphs** — collapse short branches, merge near-T
+   junctions, prune by configurable thickness ratio.
+4. **Stroke fit** — fit each skeleton arc with cubic Bézier
+   segments using Ramer–Douglas–Peucker pre-pass + least-squares
+   fit, weighted by local thickness.
+
+## Reference
+
+`toonz/sources/toonzlib/`:
+- `tcenterlinevectorizer.cpp` — entry point and globals (~600 LoC).
+- `centerlinepolygonizer.cpp` — stage 1 (~500 LoC).
+- `centerlineskeletonizer.cpp` + `centerlineskeletonizerP.h` —
+  stage 2 (~1500 LoC, the largest single file).
+- `centerlinetostroke.cpp` — stages 3 and 4 (~400 LoC).
+
+Public types referenced:
+- `TVectorImageP` — the result.
+- `TStroke` — a single styled stroke.
+- `CenterlineConfiguration` — knobs the user can tune.
+
+## Crate layout
+
+```
+vectorize/
+  Cargo.toml
+  README.md           # explains scope and BSD-3 attribution
+  src/
+    lib.rs            # public API
+    config.rs         # CenterlineConfig
+    contour.rs        # polygonize stage
+    skeleton.rs       # skeletonize stage
+    organize.rs       # graph cleanup stage
+    stroke_fit.rs     # stroke fitting stage
+    types.rs          # VectorImage, Stroke, Vertex
+    error.rs          # crate-local thiserror enum
+```
+
+Workspace `Cargo.toml` adds `"vectorize"` to `members`. The crate
+depends on `pixhaus-core` for `PixelBuffer`, `Rgba`, `Palette`, and
+on the workspace `palette` and `rayon` deps.
+
+## API surface
+
+```rust
+// vectorize/src/lib.rs
+
+pub use config::CenterlineConfig;
+pub use error::{Error, Result};
+pub use types::{VectorImage, Stroke, Vertex};
+
+pub fn centerline_vectorize(
+    raster: &pixhaus_core::canvas::PixelBuffer,
+    palette: &pixhaus_core::project::Palette,
+    config: &CenterlineConfig,
+) -> Result<VectorImage>;
+```
+
+```rust
+// vectorize/src/config.rs
+
+pub struct CenterlineConfig {
+    /// Maximum stroke half-width in pixels.
+    pub max_thickness: f32,
+    /// Aspect-ratio threshold for thinning a stroke.
+    pub thickness_ratio: f32,
+    /// Drop segments shorter than this many pixels.
+    pub min_segment_length: u32,
+    /// Junction-flagging threshold in radians.
+    pub corner_threshold_rad: f32,
+    /// Douglas-Peucker simplification tolerance, in pixels.
+    pub simplify_tolerance: f32,
+}
+```
+
+Defaults mirror OpenToonz's
+`CenterlineConfiguration::CenterlineConfiguration` in
+`tcenterlinevectP.h`.
+
+## Test plan
+
+Per stage:
+- `contour_single_blob` — one connected ink region produces one
+  contour polygon.
+- `contour_blob_with_hole` — a region with an interior hole produces
+  two polygons (outer + inner with opposite winding).
+- `skeleton_horizontal_bar` — a 100×10 rectangle's skeleton is a
+  horizontal arc with two endpoints.
+- `skeleton_t_junction` — a T-shape produces a 3-edge skeleton with
+  a single branch node.
+- `organize_drops_short_branch` — a stub branch shorter than
+  `min_segment_length` is pruned.
+- `stroke_fit_straight_line_one_segment` — a straight skeleton arc
+  fits to one Bézier segment with tolerance < 0.5 px.
+- `stroke_fit_curve_uses_multiple_segments` — a curved arc fits to
+  multiple Bézier segments.
+
+End-to-end:
+- `e2e_simple_outline` — a 64×64 black square outline on white
+  vectorizes to ~4 strokes (insta JSON snapshot of the
+  `VectorImage` description).
+- `e2e_pencil_sketch` — a fixture pencil-drawn character roundtrips
+  through the pipeline and produces a stroke count within a
+  documented range (regression-guard, not exact).
+
+## Schema impact
+
+None. The new crate does not participate in `.pixhaus` serialization
+in this PR. Integrating `VectorImage` into the cleanup verb's
+output is left to a follow-up stream; this PR ships the raw
+vectorization API only.
+
+## Attribution
+
+`vectorize/Cargo.toml`:
+
+```toml
+[package]
+name = "pixhaus-vectorize"
+description = "Centerline vectorization. Adapted from OpenToonz under BSD-3-Clause."
+license = "MIT AND BSD-3-Clause"
+```
+
+Each `src/*.rs` file carries the per-file `// Adapted from
+OpenToonz toonz/sources/toonzlib/<file> under BSD-3-Clause.` line
+naming the specific source file it derives from.
+
+`vectorize/README.md` lists every source file the crate adapts and
+points at `THIRD_PARTY_NOTICES.md`.
+
+---
+
+# S60 — SIMD audit + criterion baseline
+
+## Scope
+
+A research markdown document at
+`docs/planning/research/simd-hot-path-audit.md` that enumerates the
+hot loops in `core/src/canvas/` and `core/src/transforms/`, plus a
+new criterion benchmark suite at `core/benches/` that establishes
+baseline numbers so future SIMD work has measurements to beat.
+
+This stream produces **no production code**. It is a research
+deliverable plus benchmarks.
+
+## Reference
+
+`toonz/sources/common/trop/quickput.cpp`
+(173 KB) — the shape of OpenToonz's hot-path template machinery
+and the 16-bit fixed-point sub-pixel addressing scheme. The audit
+notes this as the contrast pattern; we do not port `quickput.cpp`.
+
+## Audit document structure
+
+Sections:
+
+1. **Methodology** — criterion configuration, hardware notes
+   (`uname -a`, CPU model), measurement caveats.
+2. **Composite hot loops** — one row per `BlendMode` in
+   `core/src/canvas/blend.rs`. Columns: current implementation
+   shape (per-pixel vs. per-channel), suitability for `std::simd`
+   (Y/N + brief reason), conflict with `palette` crate's typed
+   color API (Y/N).
+3. **Transform hot loops** — one row per transform in
+   `core/src/transforms/` (`flip`, `rotate`, `scale`, `skew`,
+   `perspective`, `translate`). Same columns.
+4. **Selection hot loops** — `magic_wand`, `color_range`,
+   morphology `expand`/`contract`. Same columns.
+5. **Findings summary** — ranked list of loops by estimated SIMD
+   payoff, with reasons.
+6. **Next-stream sketch** — what an actual SIMD implementation
+   stream would look like (S61+), without committing to it.
+
+## Criterion suite
+
+`core/benches/composite.rs`:
+
+```rust
+fn bench_normal_composite(c: &mut Criterion) { /* 256×256 normal */ }
+fn bench_multiply_composite(c: &mut Criterion) { /* 256×256 mult */ }
+fn bench_overlay_composite(c: &mut Criterion) { /* 256×256 overlay */ }
+```
+
+`core/benches/transforms.rs`:
+
+```rust
+fn bench_rotate_bilinear_45(c: &mut Criterion) { /* 256×256 rot */ }
+fn bench_scale_nearest_2x(c: &mut Criterion) { /* 128 → 256 */ }
+fn bench_scale_bilinear_1_5x(c: &mut Criterion) { /* 200 → 300 */ }
+```
+
+`core/benches/selection.rs`:
+
+```rust
+fn bench_magic_wand_dense(c: &mut Criterion) { /* 256×256, single
+                                                 connected blob */ }
+fn bench_magic_wand_sparse(c: &mut Criterion) { /* 256×256, many
+                                                  small blobs */ }
+```
+
+Benchmarks live under `[[bench]]` entries in `core/Cargo.toml`. CI
+does not gate on numbers; CI verifies the suite compiles via
+`cargo bench --no-run`.
+
+## Test plan
+
+The audit doc itself has no tests. The criterion suite is verified
+by a single CI step that runs `cargo bench --no-run -p pixhaus-core`.
+
+## Schema impact
+
+None.
+
+## Attribution
+
+The audit doc cites `common/trop/quickput.cpp` by file path as the
+inspiration for the SIMD model. No code is adapted; no per-file
+attribution is required.
+
+---
+
+# Out of scope
+
+The following items in `docs/planning/research/opentoonz-comparison.md`
+are deliberately not in this PR:
+
+- **Brush midpoint smoothing.** Listed in the deep-dive section but
+  not promoted to a stream by the source doc. Two-line helper, defer
+  to a future quality-of-life sweep.
+- **Color quantization knob set.** The source doc explicitly marks
+  this as "optional, hold until users complain."
+- **Qt UI layer, vector-on-raster level model, film-pipeline export,
+  third-party deps, GPL-tainted code.** All four are called out as
+  out-of-scope in the source doc; we honor that.
+
+# References
+
+- `docs/planning/research/opentoonz-comparison.md` — source-code
+  research that motivates this spec.
+- `docs/planning/work/bedrock.md#b2-core-data-model` — the locked
+  data-model spec that S54 extends.
+- `docs/planning/work/streams.md` — the master streams list, updated
+  in this PR with rows S54–S60.
+- `LICENSE.txt` —
+  BSD-3-Clause grant.
+- `CLAUDE.md` — voice, error-handling, branch/commit conventions.
+- `.claude/skills/pixhaus-rust-conventions/SKILL.md` — Rust style.
+- `.claude/skills/pixhaus-testing-conventions/SKILL.md` — testing
+  patterns.
+- `.claude/skills/pixhaus-claude-code-workflow/SKILL.md` — PR
+  conventions.

@@ -204,6 +204,17 @@ pub const fn blend_mode_from_aseprite(code: u16) -> Option<BlendMode> {
 }
 
 /// Maps a Pixhaus [`BlendMode`] to its Aseprite integer code (0–18).
+///
+/// The eight S55 OpenToonz-derived modes (`LinearBurn`, `DarkerColor`,
+/// `LinearDodge`, `LighterColor`, `VividLight`, `LinearLight`,
+/// `PinLight`, `HardMix`) have no Aseprite equivalent and downgrade to
+/// `Normal` (code `0`). Callers wanting to warn on the downgrade should
+/// gate the call with [`blend_mode_supported_by_aseprite`] first.
+//
+// The downgrade arm intentionally shares its result (`0`) with the
+// `Normal` arm — the two are kept distinct so the file diff stays
+// readable when future formats grow new slots.
+#[allow(clippy::match_same_arms)]
 #[must_use]
 pub const fn blend_mode_to_aseprite(mode: BlendMode) -> u16 {
     match mode {
@@ -226,7 +237,47 @@ pub const fn blend_mode_to_aseprite(mode: BlendMode) -> u16 {
         BlendMode::Addition => 16,
         BlendMode::Subtract => 17,
         BlendMode::Divide => 18,
+        // S55 modes — no slot in Aseprite; downgrade to Normal.
+        BlendMode::LinearBurn
+        | BlendMode::DarkerColor
+        | BlendMode::LinearDodge
+        | BlendMode::LighterColor
+        | BlendMode::VividLight
+        | BlendMode::LinearLight
+        | BlendMode::PinLight
+        | BlendMode::HardMix => 0,
     }
+}
+
+/// Whether `mode` has a native Aseprite blend-mode code.
+///
+/// Returns `false` for the eight S55 OpenToonz-derived modes — they
+/// downgrade to `Normal` on Aseprite export. The writer uses this to
+/// decide when to emit a `tracing::warn!` per affected layer.
+#[must_use]
+pub const fn blend_mode_supported_by_aseprite(mode: BlendMode) -> bool {
+    matches!(
+        mode,
+        BlendMode::Normal
+            | BlendMode::Multiply
+            | BlendMode::Screen
+            | BlendMode::Overlay
+            | BlendMode::Darken
+            | BlendMode::Lighten
+            | BlendMode::ColorDodge
+            | BlendMode::ColorBurn
+            | BlendMode::HardLight
+            | BlendMode::SoftLight
+            | BlendMode::Difference
+            | BlendMode::Exclusion
+            | BlendMode::Hue
+            | BlendMode::Saturation
+            | BlendMode::Color
+            | BlendMode::Luminosity
+            | BlendMode::Addition
+            | BlendMode::Subtract
+            | BlendMode::Divide
+    )
 }
 
 #[cfg(test)]
@@ -282,5 +333,49 @@ mod tests {
     #[test]
     fn unknown_blend_mode_code_is_none() {
         assert!(blend_mode_from_aseprite(99).is_none());
+    }
+
+    #[test]
+    fn s55_modes_downgrade_to_normal_code() {
+        for mode in [
+            BlendMode::LinearBurn,
+            BlendMode::DarkerColor,
+            BlendMode::LinearDodge,
+            BlendMode::LighterColor,
+            BlendMode::VividLight,
+            BlendMode::LinearLight,
+            BlendMode::PinLight,
+            BlendMode::HardMix,
+        ] {
+            assert_eq!(blend_mode_to_aseprite(mode), 0, "{mode:?}");
+            assert!(!blend_mode_supported_by_aseprite(mode), "{mode:?}");
+        }
+    }
+
+    #[test]
+    fn native_modes_are_marked_supported() {
+        for mode in [
+            BlendMode::Normal,
+            BlendMode::Multiply,
+            BlendMode::Screen,
+            BlendMode::Overlay,
+            BlendMode::Darken,
+            BlendMode::Lighten,
+            BlendMode::ColorDodge,
+            BlendMode::ColorBurn,
+            BlendMode::HardLight,
+            BlendMode::SoftLight,
+            BlendMode::Difference,
+            BlendMode::Exclusion,
+            BlendMode::Hue,
+            BlendMode::Saturation,
+            BlendMode::Color,
+            BlendMode::Luminosity,
+            BlendMode::Addition,
+            BlendMode::Subtract,
+            BlendMode::Divide,
+        ] {
+            assert!(blend_mode_supported_by_aseprite(mode), "{mode:?}");
+        }
     }
 }

@@ -10,6 +10,7 @@ import type {
   SelectionRegion,
   SelectionState,
   SpriteId,
+  VectorImage,
 } from "../types";
 
 // ── argument types ────────────────────────────────────────────────────────────
@@ -214,6 +215,36 @@ export function canvasTransform(args: TransformArgs): Promise<void> {
 }
 
 /**
+ * Vectorizes a layer cel into a `VectorImage` of centerline strokes.
+ * Pixhaus is raster-only, so the result has no render path yet —
+ * callers consume it for export (SVG, follow-up sink) or inspection.
+ */
+export function vectorVectorizeLayer(args: {
+  sprite_id: SpriteId;
+  layer_id: LayerId;
+}): Promise<VectorImage> {
+  return invoke<VectorImage>("vector_vectorize_layer", { ...args });
+}
+
+export type ApplyMlaaArgs = {
+  sprite_id: SpriteId;
+  layer_id: LayerId;
+  /** Per-channel max-diff classifier (default 16). */
+  threshold?: number;
+  /** Separation-line softening factor (default 128; 0 is a no-op). */
+  softness?: number;
+};
+
+/**
+ * Applies morphological anti-aliasing (MLAA) to the active layer's cel at
+ * the active frame. The result replaces the cel buffer; a `PixelOpBatch`
+ * lands on the undo stack and the renderer recomposites affected tiles.
+ */
+export function canvasApplyMlaa(args: ApplyMlaaArgs): Promise<void> {
+  return invoke<void>("canvas_apply_mlaa", { ...args });
+}
+
+/**
  * Sets the canvas selection. Pass `null` for `region` to clear the selection.
  */
 export function canvasSetSelection(
@@ -244,6 +275,17 @@ export function canvasInvertSelection(
   });
 }
 
+/**
+ * Optional gap-closing pre-pass tuning. Every field is optional; absent
+ * fields fall back to the core `GapCloseConfig` defaults
+ * (closing_distance=10, closing_angle_rad=π/2, ink_threshold=128).
+ */
+export type GapCloseRequest = {
+  closing_distance?: number;
+  closing_angle_rad?: number;
+  ink_threshold?: number;
+};
+
 export type MagicWandArgs = {
   sprite_id: SpriteId;
   anchor_layer: LayerId | null;
@@ -251,6 +293,8 @@ export type MagicWandArgs = {
   seed_y: number;
   tolerance: number;
   connectivity: "four" | "eight";
+  /** When set, runs a gap-closing pre-pass before the flood-fill. */
+  gap_close?: GapCloseRequest | null;
 };
 
 /**

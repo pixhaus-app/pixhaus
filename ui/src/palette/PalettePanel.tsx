@@ -40,6 +40,8 @@ import HarmonyPicker from "./HarmonyPicker";
 import RampGenerator from "./RampGenerator";
 import PaletteIOMenu from "./PaletteIOMenu";
 import LospecBrowser from "./LospecBrowser";
+import PalettePagesSection from "./PalettePagesSection";
+import PaletteAnimationSection from "./PaletteAnimationSection";
 import ModalInput from "../components/ModalInput";
 
 type SubPanel = "harmony" | "ramp" | "lospec" | null;
@@ -355,6 +357,12 @@ const PalettePanel: Component<Props> = (props) => {
           onRemove={(idx) => void handleRemoveSwatch(idx)}
           onRename={(idx, name) => void handleRenameSwatch(idx, name)}
         />
+
+        {/* Palette pages — named subset views over the swatch grid */}
+        <PalettePagesSection spriteId={props.spriteId} />
+
+        {/* Palette animation — per-entry keyframed colors over the timeline */}
+        <PaletteAnimationSection spriteId={props.spriteId} />
 
         {/* Sub-panel action bar */}
         <div class="pp__actions">

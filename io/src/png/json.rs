@@ -365,6 +365,14 @@ fn blend_mode_str(mode: BlendMode) -> &'static str {
         BlendMode::Saturation => "saturation",
         BlendMode::Color => "color",
         BlendMode::Luminosity => "luminosity",
+        BlendMode::LinearBurn => "linear_burn",
+        BlendMode::DarkerColor => "darker_color",
+        BlendMode::LinearDodge => "linear_dodge",
+        BlendMode::LighterColor => "lighter_color",
+        BlendMode::VividLight => "vivid_light",
+        BlendMode::LinearLight => "linear_light",
+        BlendMode::PinLight => "pin_light",
+        BlendMode::HardMix => "hard_mix",
     }
 }
 

@@ -12,6 +12,13 @@
 //! The public entry point is [`blend`]: pick a [`BlendMode`], pass
 //! source and backdrop colors plus an opacity multiplier, and receive
 //! the composited result.
+//!
+//! The eight contrast/linear modes added in S55 (`channel_linear_burn`,
+//! `channel_linear_dodge`, `channel_vivid_light`, `channel_linear_light`,
+//! `channel_pin_light`, `channel_hard_mix`, plus the RGBA-level
+//! `rgba_darker_color` and `rgba_lighter_color`) are adapted from
+//! `OpenToonz` `toonz/sources/stdfx/igs_color_blend.cpp` under
+//! BSD-3-Clause. See `THIRD_PARTY_NOTICES.md`.
 
 use crate::project::{BlendMode, Rgba};
 
@@ -197,6 +204,137 @@ pub const fn channel_divide(b: u8, s: u8) -> u8 {
     div_un8(b, s)
 }
 
+// -- OpenToonz linear/contrast modes (S55) --------------------------
+//
+// All eight modes adapted from OpenToonz
+// toonz/sources/stdfx/igs_color_blend.cpp under BSD-3-Clause.
+// See THIRD_PARTY_NOTICES.md.
+
+/// `max(b + s - 255, 0)` per channel.
+#[inline]
+#[must_use]
+pub const fn channel_linear_burn(b: u8, s: u8) -> u8 {
+    let sum = (b as u16) + (s as u16);
+    if sum <= 255 {
+        0
+    } else {
+        // sum is in 256..=510, so sum - 255 is in 1..=255 and fits u8.
+        #[allow(clippy::cast_possible_truncation)]
+        {
+            (sum - 255) as u8
+        }
+    }
+}
+
+/// `min(b + s, 255)` per channel.
+///
+/// Mathematically equivalent to [`channel_addition`]; named separately
+/// so the UI can surface Photoshop's "Linear Dodge" terminology
+/// alongside it.
+#[inline]
+#[must_use]
+pub const fn channel_linear_dodge(b: u8, s: u8) -> u8 {
+    let sum = (b as u16) + (s as u16);
+    if sum > 255 {
+        255
+    } else {
+        // sum <= 255, so the truncation is exact.
+        #[allow(clippy::cast_possible_truncation)]
+        {
+            sum as u8
+        }
+    }
+}
+
+/// `s < 128 ? color_burn(b, 2s) : color_dodge(b, 2s - 255)`.
+#[inline]
+#[must_use]
+pub fn channel_vivid_light(b: u8, s: u8) -> u8 {
+    if s < 128 {
+        // s in 0..=127, so 2*s fits u8 exactly.
+        let doubled = s.wrapping_mul(2);
+        channel_color_burn(b, doubled)
+    } else {
+        // s in 128..=255, so 2*s - 255 in 1..=255 and fits u8.
+        let doubled = u16::from(s) * 2 - 255;
+        let doubled = u8::try_from(doubled).unwrap_or(255);
+        channel_color_dodge(b, doubled)
+    }
+}
+
+/// `s < 128 ? linear_burn(b, 2s) : linear_dodge(b, 2s - 255)`.
+#[inline]
+#[must_use]
+pub fn channel_linear_light(b: u8, s: u8) -> u8 {
+    if s < 128 {
+        let doubled = s.wrapping_mul(2);
+        channel_linear_burn(b, doubled)
+    } else {
+        let doubled = u16::from(s) * 2 - 255;
+        let doubled = u8::try_from(doubled).unwrap_or(255);
+        channel_linear_dodge(b, doubled)
+    }
+}
+
+/// `s < 128 ? darken(b, 2s) : lighten(b, 2s - 255)`.
+#[inline]
+#[must_use]
+pub fn channel_pin_light(b: u8, s: u8) -> u8 {
+    if s < 128 {
+        let doubled = s.wrapping_mul(2);
+        channel_darken(b, doubled)
+    } else {
+        let doubled = u16::from(s) * 2 - 255;
+        let doubled = u8::try_from(doubled).unwrap_or(255);
+        channel_lighten(b, doubled)
+    }
+}
+
+/// `vivid_light(b, s) < 128 ? 0 : 255` per channel.
+#[inline]
+#[must_use]
+pub fn channel_hard_mix(b: u8, s: u8) -> u8 {
+    if channel_vivid_light(b, s) < 128 {
+        0
+    } else {
+        255
+    }
+}
+
+/// Rec.709 luma in integer fixed-point (`Y = 54r + 183g + 19b`).
+///
+/// Multipliers come from `round(0.2126 * 256) = 54`,
+/// `round(0.7152 * 256) = 183`, `round(0.0722 * 256) = 19`. The result
+/// stays in `u32` so the three terms cannot overflow.
+#[inline]
+fn luma_rec709(c: Rgba) -> u32 {
+    54_u32 * u32::from(c.r) + 183_u32 * u32::from(c.g) + 19_u32 * u32::from(c.b)
+}
+
+/// Picks the color with the lower Rec.709 luma. Ties go to the
+/// backdrop, matching Photoshop's behavior when neither color wins.
+#[inline]
+#[must_use]
+pub fn rgba_darker_color(b: Rgba, s: Rgba) -> Rgba {
+    if luma_rec709(s) < luma_rec709(b) {
+        s
+    } else {
+        b
+    }
+}
+
+/// Picks the color with the higher Rec.709 luma. Ties go to the
+/// backdrop.
+#[inline]
+#[must_use]
+pub fn rgba_lighter_color(b: Rgba, s: Rgba) -> Rgba {
+    if luma_rec709(s) > luma_rec709(b) {
+        s
+    } else {
+        b
+    }
+}
+
 // -- HSL non-separable helpers (W3C compositing-1 reference) --------
 
 #[inline]
@@ -349,6 +487,11 @@ pub fn channels_luminosity(b_rgb: [u8; 3], s_rgb: [u8; 3]) -> [u8; 3] {
 /// Replaces `src.rgb` with `mode(backdrop.rgb, src.rgb)` while keeping
 /// `src.a`. This is Aseprite's "premix" step: the alpha composite
 /// then runs in [`blend_normal`] using the modified source.
+///
+/// The dispatcher is a flat `match` for clarity; each mode's three
+/// channel calls are unrolled in place. The length is incidental — what
+/// matters is that every `BlendMode` variant lands a routing arm.
+#[allow(clippy::too_many_lines)]
 #[must_use]
 pub fn premix(mode: BlendMode, src: Rgba, dst: Rgba) -> Rgba {
     let s_rgb = [src.r, src.g, src.b];
@@ -356,6 +499,16 @@ pub fn premix(mode: BlendMode, src: Rgba, dst: Rgba) -> Rgba {
 
     let mixed: [u8; 3] = match mode {
         BlendMode::Normal => return src,
+        // RGBA-level modes pick the whole pixel rather than mixing
+        // per-channel.
+        BlendMode::DarkerColor => {
+            let picked = rgba_darker_color(dst, src);
+            return Rgba::new(picked.r, picked.g, picked.b, src.a);
+        }
+        BlendMode::LighterColor => {
+            let picked = rgba_lighter_color(dst, src);
+            return Rgba::new(picked.r, picked.g, picked.b, src.a);
+        }
         BlendMode::Darken => [
             channel_darken(d_rgb[0], s_rgb[0]),
             channel_darken(d_rgb[1], s_rgb[1]),
@@ -430,6 +583,36 @@ pub fn premix(mode: BlendMode, src: Rgba, dst: Rgba) -> Rgba {
         BlendMode::Saturation => channels_saturation(d_rgb, s_rgb),
         BlendMode::Color => channels_color(d_rgb, s_rgb),
         BlendMode::Luminosity => channels_luminosity(d_rgb, s_rgb),
+        BlendMode::LinearBurn => [
+            channel_linear_burn(d_rgb[0], s_rgb[0]),
+            channel_linear_burn(d_rgb[1], s_rgb[1]),
+            channel_linear_burn(d_rgb[2], s_rgb[2]),
+        ],
+        BlendMode::LinearDodge => [
+            channel_linear_dodge(d_rgb[0], s_rgb[0]),
+            channel_linear_dodge(d_rgb[1], s_rgb[1]),
+            channel_linear_dodge(d_rgb[2], s_rgb[2]),
+        ],
+        BlendMode::VividLight => [
+            channel_vivid_light(d_rgb[0], s_rgb[0]),
+            channel_vivid_light(d_rgb[1], s_rgb[1]),
+            channel_vivid_light(d_rgb[2], s_rgb[2]),
+        ],
+        BlendMode::LinearLight => [
+            channel_linear_light(d_rgb[0], s_rgb[0]),
+            channel_linear_light(d_rgb[1], s_rgb[1]),
+            channel_linear_light(d_rgb[2], s_rgb[2]),
+        ],
+        BlendMode::PinLight => [
+            channel_pin_light(d_rgb[0], s_rgb[0]),
+            channel_pin_light(d_rgb[1], s_rgb[1]),
+            channel_pin_light(d_rgb[2], s_rgb[2]),
+        ],
+        BlendMode::HardMix => [
+            channel_hard_mix(d_rgb[0], s_rgb[0]),
+            channel_hard_mix(d_rgb[1], s_rgb[1]),
+            channel_hard_mix(d_rgb[2], s_rgb[2]),
+        ],
     };
 
     Rgba::new(mixed[0], mixed[1], mixed[2], src.a)
@@ -685,5 +868,172 @@ mod tests {
         // multiply against transparent dst (rgb=0,0,0) zeros the source
         // RGB; only the modulated alpha survives.
         assert_eq!(out, Rgba::new(0, 0, 0, mul_un8(255, 128)));
+    }
+
+    // -- S55 OpenToonz linear/contrast modes -----------------------
+
+    #[rstest]
+    #[case(0, 0, 0)]
+    #[case(255, 255, 255)]
+    #[case(100, 100, 0)]
+    #[case(200, 200, 145)]
+    #[case(255, 0, 0)]
+    #[case(0, 255, 0)]
+    fn channel_linear_burn_table(#[case] b: u8, #[case] s: u8, #[case] expected: u8) {
+        assert_eq!(channel_linear_burn(b, s), expected);
+    }
+
+    #[rstest]
+    #[case(0, 0, 0)]
+    #[case(100, 100, 200)]
+    #[case(200, 200, 255)]
+    #[case(255, 1, 255)]
+    #[case(255, 255, 255)]
+    fn channel_linear_dodge_table(#[case] b: u8, #[case] s: u8, #[case] expected: u8) {
+        assert_eq!(channel_linear_dodge(b, s), expected);
+    }
+
+    #[test]
+    fn channel_linear_dodge_matches_addition() {
+        // `LinearDodge` is mathematically `Addition`; surfaced under a
+        // distinct name for Photoshop UI parity, but the math must agree
+        // byte-for-byte.
+        for b in 0u8..=255 {
+            for s in 0u8..=255 {
+                assert_eq!(
+                    channel_linear_dodge(b, s),
+                    channel_addition(b, s),
+                    "b={b}, s={s}",
+                );
+            }
+        }
+    }
+
+    #[rstest]
+    // s < 128: color_burn(b, 2s)
+    #[case(0, 0, 0)] // color_burn(0, 0) -> b!=255, inv_b=255, 255>=0 -> 0
+    #[case(255, 0, 255)] // color_burn(255, 0) -> b==255 -> 255
+    // s >= 128: color_dodge(b, 2s-255)
+    #[case(255, 255, 255)] // color_dodge(255, 255) -> b!=0, inv_s=0, b>=inv_s -> 255
+    #[case(0, 255, 0)]
+    // color_dodge(0, 255) -> b==0 -> 0
+    // s == 128 edge: doubled = 2*128 - 255 = 1, color_dodge(128, 1) ->
+    //   div_un8(128, 254) = (128*255 + 127) / 254 = 32767/254 = 129.
+    #[case(128, 128, 129)]
+    fn channel_vivid_light_table(#[case] b: u8, #[case] s: u8, #[case] expected: u8) {
+        assert_eq!(channel_vivid_light(b, s), expected);
+    }
+
+    #[rstest]
+    // s < 128: linear_burn(b, 2s)
+    #[case(0, 0, 0)] // 0+0 = 0
+    #[case(255, 0, 0)] // 255+0 = 255 -> sum<=255 -> 0
+    // s >= 128: linear_dodge(b, 2s-255)
+    #[case(255, 255, 255)] // 255+255=510 -> 255
+    // s == 128 edge: doubled = 1, linear_dodge(128, 1) = 129.
+    #[case(128, 128, 129)]
+    #[case(0, 255, 255)] // linear_dodge(0, 255) = 255
+    fn channel_linear_light_table(#[case] b: u8, #[case] s: u8, #[case] expected: u8) {
+        assert_eq!(channel_linear_light(b, s), expected);
+    }
+
+    #[rstest]
+    // s < 128: darken(b, 2s) = min(b, 2s)
+    #[case(0, 0, 0)] // min(0, 0)
+    #[case(255, 0, 0)] // min(255, 0)
+    #[case(100, 50, 100)] // min(100, 100)
+    // s >= 128: lighten(b, 2s-255) = max(b, 2s-255)
+    #[case(0, 255, 255)] // max(0, 255)
+    #[case(255, 255, 255)] // max(255, 255)
+    #[case(50, 200, 145)] // max(50, 145)
+    fn channel_pin_light_table(#[case] b: u8, #[case] s: u8, #[case] expected: u8) {
+        assert_eq!(channel_pin_light(b, s), expected);
+    }
+
+    #[rstest]
+    #[case(0, 0, 0)] // vivid=0 -> 0
+    #[case(255, 255, 255)] // vivid=255 -> 255
+    #[case(100, 100, 0)] // vivid(100,100)=57 -> 0
+    #[case(200, 200, 255)] // vivid(200,200)=255 -> 255
+    fn channel_hard_mix_table(#[case] b: u8, #[case] s: u8, #[case] expected: u8) {
+        assert_eq!(channel_hard_mix(b, s), expected);
+    }
+
+    #[test]
+    fn rgba_darker_color_picks_lower_luma() {
+        let dark = Rgba::new(50, 50, 50, 255);
+        let light = Rgba::new(200, 200, 200, 255);
+        assert_eq!(rgba_darker_color(dark, light), dark);
+        assert_eq!(rgba_darker_color(light, dark), dark);
+    }
+
+    #[test]
+    fn rgba_darker_color_ties_pick_backdrop() {
+        // Tie-breaks favor the backdrop so the operation is idempotent
+        // when both sides agree.
+        let a = Rgba::new(100, 120, 80, 255);
+        let b = Rgba::new(100, 120, 80, 255);
+        assert_eq!(rgba_darker_color(a, b), a);
+    }
+
+    #[test]
+    fn rgba_lighter_color_picks_higher_luma() {
+        let dark = Rgba::new(50, 50, 50, 255);
+        let light = Rgba::new(200, 200, 200, 255);
+        assert_eq!(rgba_lighter_color(dark, light), light);
+        assert_eq!(rgba_lighter_color(light, dark), light);
+    }
+
+    #[test]
+    fn rgba_lighter_color_ties_pick_backdrop() {
+        let a = Rgba::new(100, 120, 80, 255);
+        let b = Rgba::new(100, 120, 80, 255);
+        assert_eq!(rgba_lighter_color(a, b), a);
+    }
+
+    #[test]
+    fn rgba_color_picks_use_rec709_weights() {
+        // Pure green has higher Rec.709 luma than pure red, even though
+        // an unweighted RGB-sum comparator would call them equal.
+        let red = Rgba::new(255, 0, 0, 255);
+        let green = Rgba::new(0, 255, 0, 255);
+        assert_eq!(rgba_lighter_color(red, green), green);
+        assert_eq!(rgba_darker_color(red, green), red);
+    }
+
+    #[rstest]
+    #[case(BlendMode::LinearBurn)]
+    #[case(BlendMode::DarkerColor)]
+    #[case(BlendMode::LinearDodge)]
+    #[case(BlendMode::LighterColor)]
+    #[case(BlendMode::VividLight)]
+    #[case(BlendMode::LinearLight)]
+    #[case(BlendMode::PinLight)]
+    #[case(BlendMode::HardMix)]
+    fn premix_routes_new_modes_without_panic(#[case] mode: BlendMode) {
+        // Drive the dispatcher through every new variant and assert the
+        // result preserves src.a — that's the contract `premix` keeps for
+        // every mode, including the RGBA-level color picks.
+        let src = Rgba::new(100, 150, 200, 240);
+        let dst = Rgba::new(50, 75, 100, 200);
+        let out = premix(mode, src, dst);
+        assert_eq!(out.a, src.a, "{mode:?}");
+    }
+
+    #[test]
+    fn premix_darker_color_picks_dst_when_dst_is_darker() {
+        let src = Rgba::new(200, 200, 200, 220);
+        let dst = Rgba::new(50, 50, 50, 255);
+        let out = premix(BlendMode::DarkerColor, src, dst);
+        // dst's RGB wins; src's alpha is preserved.
+        assert_eq!(out, Rgba::new(50, 50, 50, 220));
+    }
+
+    #[test]
+    fn premix_lighter_color_picks_src_when_src_is_brighter() {
+        let src = Rgba::new(200, 200, 200, 220);
+        let dst = Rgba::new(50, 50, 50, 255);
+        let out = premix(BlendMode::LighterColor, src, dst);
+        assert_eq!(out, Rgba::new(200, 200, 200, 220));
     }
 }

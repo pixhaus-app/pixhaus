@@ -40,8 +40,15 @@ impl SchemaVersion {
 
     /// Minor version this build of Pixhaus writes.
     ///
-    /// Reset to `0` for the major bump.
-    pub const MINOR: u16 = 0;
+    /// Bumped to `1` for S54 palette pages and animation. The change is
+    /// additive within `major == 4`: pre-S54 files (minor 0) deserialize
+    /// cleanly because the new [`super::palette::Palette`] fields carry
+    /// `#[serde(default)]`. Readers built on this build accept both
+    /// minor 0 and minor 1; older builds reading a minor-1 file will
+    /// fail on unknown future enum variants (see S55 blend modes), and
+    /// the loader emits a `tracing::warn!` at that boundary so the
+    /// failure is legible in logs.
+    pub const MINOR: u16 = 1;
 
     /// The version emitted by this build.
     #[must_use]
@@ -178,7 +185,14 @@ mod tests {
     #[test]
     fn current_major_is_four() {
         assert_eq!(SchemaVersion::MAJOR, 4);
-        assert_eq!(SchemaVersion::MINOR, 0);
+        assert_eq!(SchemaVersion::MINOR, 1);
+    }
+
+    #[test]
+    fn current_version_is_major_4_minor_1() {
+        let v = SchemaVersion::current();
+        assert_eq!(v.major, 4);
+        assert_eq!(v.minor, 1);
     }
 
     #[test]

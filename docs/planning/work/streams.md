@@ -114,6 +114,17 @@ Streams marked with **★** are on the critical path — they unblock other stre
 |---|---|---|
 | S53 | Verb: Animated sprite sheet from prompt (CHARACTER × CHOREOGRAPHY, FalSprite-derived) |  |
 
+### OpenToonz adoption (S54-S60)
+| ID | Name | Critical |
+|---|---|---|
+| S54 | Palette pages and animation [opentoonz] |  |
+| S55 | Linear/contrast blend modes [opentoonz] |  |
+| S56 | Morphological anti-aliasing transform [opentoonz] |  |
+| S57 | Gap-closing magic wand [opentoonz] |  |
+| S58 | Procedural inbetween fallback [opentoonz] |  |
+| S59 | Centerline vectorization crate [opentoonz] |  |
+| S60 | SIMD audit and criterion baseline |  |
+
 ---
 
 ## Stream details
@@ -700,6 +711,90 @@ Each verb is its own stream. They share the same shape:
 
 **Agent brief:**
 > Add `ai/src/verbs/animated_sprite_sheet/` with `prompts/rewrite_system.txt`, `prompts/sprite_constraints.txt`, and `prompts/LICENSE.txt`. Implement the `Verb` trait with input schema validation (`grid_size` 2-6, `cell_size_px` 16-256, `len(actions) <= grid_size`, non-empty prompt). Required capability: `IMAGE_GENERATION`. If the selected backend also advertises `TEXT_GENERATION`, run the rewrite stage first; otherwise skip it and surface a `Rewrite skipped: …` note. Output: `AddLayer` effect carrying `g²` raster cels in row-major order, each sized to `cell_size_px`. Snap cels to `ctx.active_palette` when present. Add an integration-style lifecycle test in `ai/tests/animated_sprite_sheet_lifecycle.rs` using a mock backend that returns a checkerboard PNG. Register the verb in `app/src/state.rs`. UI: a Solid form with grid slider, action chip multi-select that silently rejects over-cap picks (flash the hint rather than throw), mode toggle, advanced section (cell size, frame duration, seed, layer name, reference image, rewritten-prompt textarea). Wire the form into the command palette as `ai:animated-sprite-sheet`. Add `ui/src/timeline/frame-grid.ts` (`frameCoord`, `cellSize`, `drawCell`) and `ui/src/timeline/use-animation-loop.ts` (FPS-gated RAF primitive). Update `NOTICES.md` with the FalSprite entry.
+
+---
+
+### S54. Palette pages and animation
+
+**Scope:** Extend the palette data model so a palette can be split into named subset pages and so each entry can be animated across the project's frame range. Both fields are additive — `pages` defaults to empty and `animation` defaults to `None`, so palettes written by pre-S54 builds load unchanged. `SchemaVersion::MINOR` bumps from 0 to 1.
+
+**Depends on:** B2, S02.
+
+**Interfaces:** S07 (`.pixhaus` serializes the new fields), S18 (palette panel surfaces pages and per-frame color changes).
+
+**Reference:** `toonz/sources/include/tpalette.h` (BSD-3-Clause). See `docs/planning/research/opentoonz-comparison.md` and `docs/planning/work/s54-s60-opentoonz-adoption.md` for the adaptation note and attribution.
+
+---
+
+### S55. Linear/contrast blend modes
+
+**Scope:** Add the eight blend modes Pixhaus is missing — LinearBurn, DarkerColor, LinearDodge, LighterColor, VividLight, LinearLight, PinLight, HardMix. Four are arithmetic combinators; four are contrast modes with a per-pixel branch on the comparison color. Composite dispatch picks the new variants; Aseprite export downgrades them to `Normal` with a `tracing::warn!` per affected layer and documents the loss in the migration guide.
+
+**Depends on:** B2, S01.
+
+**Interfaces:** S08 (Aseprite export downgrade path), S14 (canvas composites the new variants), S18 (blend-mode dropdown lists them).
+
+**Reference:** `toonz/sources/stdfx/igs_color_blend.cpp` (BSD-3-Clause). See `docs/planning/research/opentoonz-comparison.md` and `docs/planning/work/s54-s60-opentoonz-adoption.md` for the adaptation note and attribution.
+
+---
+
+### S56. Morphological anti-aliasing transform
+
+**Scope:** A new `core/src/transforms/antialias.rs` module exposing a two-pass MLAA pass with a configurable per-channel equality threshold and softness factor. Edges classified by the row/column passes get softened along the separation line; flat regions and sharp axis-aligned edges pass through untouched. Useful after non-integer rotation, after upscaling pixel art, and as a manual filter.
+
+**Depends on:** B2, S01.
+
+**Interfaces:** S04 (sits beside the existing transform suite), S14 (canvas exposes the filter).
+
+**Reference:** `toonz/sources/common/trop/tantialias.cpp` (BSD-3-Clause; cites Reshetov 2009, "Morphological Antialiasing"). See `docs/planning/research/opentoonz-comparison.md` and `docs/planning/work/s54-s60-opentoonz-adoption.md` for the adaptation note and attribution.
+
+---
+
+### S57. Gap-closing magic wand
+
+**Scope:** A new `core/src/selection/autoclose.rs` plus a build-script-generated `skeleton_lut.rs` that lets the magic wand respect outlines with up to roughly 10-pixel gaps. The pre-pass detects endpoint pairs from a 256-entry skeleton classifier (Isolated, Endpoint, Border, Branch, Interior), rasterizes connecting segments with Bresenham into a temporary closure mask, then runs the existing flood fill. The existing `magic_wand` stays unchanged for callers that don't want the behavior.
+
+**Depends on:** B2, S01, S03.
+
+**Interfaces:** S16 (selection UI exposes the gap-close toggle and distance/angle knobs).
+
+**Reference:** `toonz/sources/common/trop/tautoclose.cpp` and `skeletonlut.h` (BSD-3-Clause). See `docs/planning/research/opentoonz-comparison.md` and `docs/planning/work/s54-s60-opentoonz-adoption.md` for the adaptation note and attribution.
+
+---
+
+### S58. Procedural inbetween fallback
+
+**Scope:** Add a `Procedural` mode to the inbetween verb that runs locally without a backend. Variance-rejected weighted averaging between frame A and frame B, with per-pixel rejection of outlier samples and palette snap when a palette is configured. Fast (microseconds per frame), deterministic, and useful as a preview before invoking the AI path. A third `AiWithProceduralPreview` mode emits the procedural frame as a `VerbProgress` event while the backend call is in flight.
+
+**Depends on:** S21, S23.
+
+**Interfaces:** S19 (timeline preview consumes the procedural output as a fast preview).
+
+**Reference:** `toonz/sources/common/tvrender/tinbetween.cpp` (BSD-3-Clause). See `docs/planning/research/opentoonz-comparison.md` and `docs/planning/work/s54-s60-opentoonz-adoption.md` for the adaptation note and attribution.
+
+---
+
+### S59. Centerline vectorization crate
+
+**Scope:** A new `vectorize/` workspace crate that takes a raster ink layer plus a palette and returns a `VectorImage` of styled strokes. Four stages: polygonize closed contours, skeletonize via Voronoi of vertices, organize the skeleton graph (prune short branches, merge near-T junctions), and stroke-fit each arc with cubic Bézier segments. The largest stream in the PR (~3000 LoC). The crate is licensed `MIT AND BSD-3-Clause` and per-file headers name the OpenToonz source each module derives from.
+
+**Depends on:** B2, S01, S02.
+
+**Interfaces:** S27 (cleanup verb gains a procedural path that vectorizes ink and re-rasterizes), future SVG export.
+
+**Reference:** `toonz/sources/toonzlib/tcenterlinevectorizer.cpp`, `centerlinepolygonizer.cpp`, `centerlineskeletonizer.cpp`, and `centerlinetostroke.cpp` (BSD-3-Clause). See `docs/planning/research/opentoonz-comparison.md` and `docs/planning/work/s54-s60-opentoonz-adoption.md` for the adaptation note and attribution.
+
+---
+
+### S60. SIMD audit and criterion baseline
+
+**Scope:** A research markdown document at `docs/planning/research/simd-hot-path-audit.md` that enumerates the hot loops in `core/src/canvas/` and `core/src/transforms/` and a new criterion benchmark suite at `core/benches/` that establishes baseline numbers for future SIMD work. No production code lands. The audit ranks loops by estimated payoff and sketches what an actual SIMD implementation stream would look like; CI verifies the benchmarks compile via `cargo bench --no-run` but does not gate on numbers.
+
+**Depends on:** B2, S01.
+
+**Interfaces:** Future S61+ SIMD streams that pick loops off the ranked list and beat the baselines.
+
+**Reference:** `toonz/sources/common/trop/quickput.cpp` (BSD-3-Clause; audit reference for the hot-path template machinery and 16-bit fixed-point sub-pixel addressing, no code adapted). See `docs/planning/research/opentoonz-comparison.md` and `docs/planning/work/s54-s60-opentoonz-adoption.md` for the adaptation note and attribution.
 
 ---
 

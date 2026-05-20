@@ -19,11 +19,13 @@
 import { createMemo } from "solid-js";
 import { createStore } from "solid-js/store";
 import { activeTool, BRUSH_TOOLS } from "../canvas/tools/tool-state";
+import { selectTool } from "../canvas/select/select-state";
 import { activeTilemapCtx } from "../tilemap/tilemap-state";
 
 export type SectionId =
   | "brush"
   | "fill"
+  | "select"
   | "color"
   | "layers"
   | "tilemap"
@@ -34,6 +36,7 @@ export type SectionId =
 export const SECTION_ORDER: readonly SectionId[] = [
   "brush",
   "fill",
+  "select",
   "dithering",
   "color",
   "layers",
@@ -45,6 +48,7 @@ export const SECTION_ORDER: readonly SectionId[] = [
 export const SECTION_TITLE: Record<SectionId, string> = {
   brush: "Brush",
   fill: "Fill",
+  select: "Select",
   dithering: "Dithering",
   color: "Color",
   layers: "Layers",
@@ -71,6 +75,10 @@ function autoOpen(id: SectionId): boolean {
       return isBrushTool(activeTool());
     case "fill":
       return activeTool() === "fill";
+    case "select":
+      // Auto-open whenever the user has the wand tool active; the
+      // section body shows nothing useful for other select tools.
+      return selectTool() === "wand";
     case "tilemap":
       return activeTilemapCtx() !== null;
     case "color":
@@ -87,6 +95,7 @@ function blankSections(): Record<SectionId, SectionState> {
   return {
     brush: { explicitOpen: false, userTouched: false },
     fill: { explicitOpen: false, userTouched: false },
+    select: { explicitOpen: false, userTouched: false },
     dithering: { explicitOpen: false, userTouched: false },
     color: { explicitOpen: false, userTouched: false },
     layers: { explicitOpen: false, userTouched: false },

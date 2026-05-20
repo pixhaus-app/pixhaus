@@ -52,8 +52,9 @@ pub use color::{ColorMode, Rgba};
 pub use frame::{Frame, FrameRange, FrameTag, LoopDirection};
 pub use geometry::{IVec2, Rect, Size};
 pub use id::{
-    AnimationId, AssetId, EntityId, FrameIndex, GroupId, LayerId, LoraId, PaletteId, PixelBufferId,
-    SheetVariantId, SliceId, SpriteId, StateId, TagId, TileIndex, TilesetId, TrainingJobId,
+    AnimationId, AssetId, EntityId, FrameIndex, GroupId, LayerId, LoraId, PaletteId, PalettePageId,
+    PixelBufferId, SheetVariantId, SliceId, SpriteId, StateId, TagId, TileIndex, TilesetId,
+    TrainingJobId,
 };
 pub use layer::{Layer, LayerKind};
 pub use library::{
@@ -66,7 +67,7 @@ pub use library::{
     StyleSwatch, TagDefinition, TilemapLayer, TilemapScene, TilesetReference, TrainingJob,
     TrainingStatus, VariantOrigin, built_in_reference_sheet_templates, default_reference_chroma,
 };
-pub use palette::{Palette, PaletteEntry, PaletteFrameOverride};
+pub use palette::{Palette, PaletteAnimation, PaletteEntry, PaletteFrameOverride, PalettePage};
 pub use schema::{FeatureFlags, SchemaError, SchemaVersion};
 pub use selection::{SelectionRegion, SelectionState};
 pub use slice::{NineSlice, Pivot, Slice, SliceKey};

@@ -1,7 +1,7 @@
 // Palette CRUD and color management commands.
 
 import { invoke } from "../ipc";
-import type { Palette, PaletteId, Rgba, SpriteId } from "../types";
+import type { Palette, PaletteAnimation, PaletteId, PalettePageId, Rgba, SpriteId } from "../types";
 
 // ── argument types ────────────────────────────────────────────────────────────
 
@@ -89,4 +89,122 @@ export function paletteSwap(
 /** Returns all palettes in a sprite. */
 export function paletteList(sprite_id: SpriteId): Promise<Palette[]> {
   return invoke<Palette[]>("palette_list", { sprite_id });
+}
+
+// ── palette pages (S54) ──────────────────────────────────────────────────────
+
+/**
+ * Appends a new page to a palette and returns the new page id. The page
+ * starts with an empty `entry_indices` list — use {@link palettePageSetEntries}
+ * to populate it from the user's selected swatches.
+ */
+export function palettePageAdd(
+  sprite_id: SpriteId,
+  palette_id: PaletteId,
+  name: string,
+): Promise<PalettePageId> {
+  return invoke<PalettePageId>("palette_page_add", { sprite_id, palette_id, name });
+}
+
+/** Removes a page from a palette by id. Other pages are untouched. */
+export function palettePageRemove(
+  sprite_id: SpriteId,
+  palette_id: PaletteId,
+  page_id: PalettePageId,
+): Promise<void> {
+  return invoke<void>("palette_page_remove", { sprite_id, palette_id, page_id });
+}
+
+/** Renames an existing palette page. */
+export function palettePageRename(
+  sprite_id: SpriteId,
+  palette_id: PaletteId,
+  page_id: PalettePageId,
+  new_name: string,
+): Promise<void> {
+  return invoke<void>("palette_page_rename", {
+    sprite_id,
+    palette_id,
+    page_id,
+    new_name,
+  });
+}
+
+/** Replaces the page's entry-index membership wholesale. */
+export function palettePageSetEntries(
+  sprite_id: SpriteId,
+  palette_id: PaletteId,
+  page_id: PalettePageId,
+  entry_indices: number[],
+): Promise<void> {
+  return invoke<void>("palette_page_set_entries", {
+    sprite_id,
+    palette_id,
+    page_id,
+    entry_indices,
+  });
+}
+
+// ── palette animation (S54) ──────────────────────────────────────────────────
+
+/**
+ * Sets (or replaces) the keyframe color for `entry_index` at `frame`. The
+ * palette's animation table is created lazily on the first keyframe.
+ */
+export function paletteAnimationSetKeyframe(
+  sprite_id: SpriteId,
+  palette_id: PaletteId,
+  entry_index: number,
+  frame: number,
+  color: Rgba,
+): Promise<void> {
+  return invoke<void>("palette_animation_set_keyframe", {
+    sprite_id,
+    palette_id,
+    entry_index,
+    frame,
+    color,
+  });
+}
+
+/** Removes the keyframe at `(entry_index, frame)`. Rejects when none exists. */
+export function paletteAnimationRemoveKeyframe(
+  sprite_id: SpriteId,
+  palette_id: PaletteId,
+  entry_index: number,
+  frame: number,
+): Promise<void> {
+  return invoke<void>("palette_animation_remove_keyframe", {
+    sprite_id,
+    palette_id,
+    entry_index,
+    frame,
+  });
+}
+
+/** Returns the palette's animation table, or `null` when no keyframes are set. */
+export function paletteAnimationGet(
+  sprite_id: SpriteId,
+  palette_id: PaletteId,
+): Promise<PaletteAnimation | null> {
+  return invoke<PaletteAnimation | null>("palette_animation_get", {
+    sprite_id,
+    palette_id,
+  });
+}
+
+/**
+ * Resolves every palette entry's color at `frame`. The returned array is
+ * aligned with `palette.colors`; index it by the entry you care about.
+ */
+export function paletteAnimationResolved(
+  sprite_id: SpriteId,
+  palette_id: PaletteId,
+  frame: number,
+): Promise<Rgba[]> {
+  return invoke<Rgba[]>("palette_animation_resolved", {
+    sprite_id,
+    palette_id,
+    frame,
+  });
 }

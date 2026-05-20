@@ -11,13 +11,19 @@ use base64::Engine;
 use pixhaus_core::canvas::tools::{BrushShape, draw_stroke, flood_fill};
 use pixhaus_core::canvas::{LayerInput, PixelBuffer, composite_onto};
 use pixhaus_core::project::{
-    CanvasState, Cel, CelData, FrameIndex, IVec2, Layer, LayerId, LayerKind, PixelBufferId, Rect,
-    Rgba, SelectionRegion, SelectionState, Size, SpriteId,
+    CanvasState, Cel, CelData, FrameIndex, IVec2, Layer, LayerId, LayerKind, Palette,
+    PixelBufferId, Rect, Rgba, SelectionRegion, SelectionState, Size, SpriteId,
 };
+use pixhaus_core::selection::GapCloseConfig;
 use pixhaus_core::selection::SelectionMask;
-use pixhaus_core::selection::algorithms::{Connectivity, color_range, magic_wand, select_polygon};
-use pixhaus_core::transforms::{self, RotateMode, ScaleMode, TransformSpec};
+use pixhaus_core::selection::algorithms::{
+    Connectivity, color_range, magic_wand, magic_wand_with_gap_close, select_polygon,
+};
+use pixhaus_core::transforms::{
+    self, MlaaConfig, RotateMode, ScaleMode, TransformSpec, morphological_antialias,
+};
 use pixhaus_io::pixhaus::PixelBufferEntry;
+use pixhaus_vectorize::{CenterlineConfig, VectorImage, centerline_vectorize};
 use serde::{Deserialize, Serialize};
 use tauri::{AppHandle, Emitter, State};
 
@@ -1328,6 +1334,213 @@ pub async fn canvas_fill(
     )
 }
 
+/// Applies morphological anti-aliasing (MLAA) to the active layer's cel at
+/// the active frame.
+///
+/// `threshold` is the per-channel max-diff classifier (default 16). `softness`
+/// controls how aggressively separation lines are smoothed (default 128;
+/// `0` is a no-op). Both default values match `OpenToonz`'s recommended
+/// starting points for 8-bit RGBA content.
+///
+/// The result replaces the cel buffer in place; a `PixelOpBatch` is pushed
+/// to the undo stack and the affected tiles re-composite for the renderer.
+#[tauri::command(async, rename_all = "snake_case")]
+pub async fn canvas_apply_mlaa(
+    sprite_id: SpriteId,
+    layer_id: LayerId,
+    threshold: Option<u8>,
+    softness: Option<u8>,
+    state: State<'_, AppState>,
+    app: AppHandle,
+) -> CommandResult<()> {
+    let mut lock = state.doc.write().await;
+    let doc = &mut *lock;
+
+    let MlaaPrep {
+        buffer_id,
+        frame_index,
+        before,
+        src,
+        config,
+    } = mlaa_prep_in_doc(doc, sprite_id, layer_id, threshold, softness)?;
+
+    // Morphological AA is a CPU-bound full-image filter; run it off the
+    // async runtime thread.
+    let dst = tokio::task::spawn_blocking(move || morphological_antialias(&src, &config))
+        .await
+        .map_err(|e| AppCommandError::Validation {
+            detail: format!("mlaa task failed: {e}"),
+        })?
+        .map_err(|e| AppCommandError::Validation {
+            detail: e.to_string(),
+        })?;
+
+    commit_pixel_op(
+        doc,
+        &app,
+        buffer_id,
+        sprite_id,
+        frame_index,
+        before,
+        dst.as_bytes().to_vec(),
+        "mlaa",
+    )
+}
+
+/// The cel-side inputs MLAA needs before the (off-thread) filter runs.
+struct MlaaPrep {
+    buffer_id: PixelBufferId,
+    frame_index: u32,
+    before: Vec<u8>,
+    src: PixelBuffer,
+    config: MlaaConfig,
+}
+
+/// Resolves the active frame, ensures a raster buffer exists, and reads
+/// the cel into a [`PixelBuffer`] plus the MLAA config. Split out from
+/// the command so it can be unit-tested against a `DocumentStore`
+/// without the `tauri::State`/`AppHandle` machinery.
+fn mlaa_prep_in_doc(
+    doc: &mut crate::state::DocumentStore,
+    sprite_id: SpriteId,
+    layer_id: LayerId,
+    threshold: Option<u8>,
+    softness: Option<u8>,
+) -> CommandResult<MlaaPrep> {
+    ensure_layer_writable(doc, sprite_id, layer_id)?;
+
+    // Resolve the active frame; default to frame 0 if no canvas is set.
+    let frame_index = doc
+        .project
+        .as_ref()
+        .and_then(|p| p.canvas.active_frame)
+        .map_or(0, FrameIndex::get);
+
+    let buffer_id = ensure_raster_buffer(doc, sprite_id, layer_id, frame_index)?;
+
+    let (before, w, h, stride) = {
+        let entry = doc
+            .pixel_buffers
+            .iter()
+            .find(|e| e.id == buffer_id.get())
+            .ok_or_else(|| AppCommandError::NotFound {
+                entity: "pixel buffer".into(),
+                id: u64::from(buffer_id.get()),
+            })?;
+        (
+            entry.pixels.clone(),
+            entry.width,
+            entry.height,
+            entry.stride,
+        )
+    };
+
+    let src = PixelBuffer::from_raw(w, h, stride, before.clone()).map_err(|e| {
+        AppCommandError::Validation {
+            detail: e.to_string(),
+        }
+    })?;
+
+    let defaults = MlaaConfig::default();
+    let config = MlaaConfig {
+        threshold: threshold.unwrap_or(defaults.threshold),
+        softness: softness.unwrap_or(defaults.softness),
+    };
+
+    Ok(MlaaPrep {
+        buffer_id,
+        frame_index,
+        before,
+        src,
+        config,
+    })
+}
+
+/// Vectorizes a raster layer's cel into a `VectorImage` of centerline
+/// strokes. No raster mutation; the result is returned to the caller so
+/// a follow-up surface (SVG export, vector preview overlay) can consume
+/// it. Pixhaus is raster-only by design, so `VectorImage` has no render
+/// path yet — this command exposes the pipeline for inspection while the
+/// sink lands.
+///
+/// `palette` resolution: prefer the project's `brush.active_palette`
+/// when set; otherwise fall back to the sprite's first palette. Returns
+/// an error when neither is available — `centerline_vectorize` rejects
+/// an empty palette.
+#[tauri::command(async, rename_all = "snake_case")]
+pub async fn vector_vectorize_layer(
+    sprite_id: SpriteId,
+    layer_id: LayerId,
+    state: State<'_, AppState>,
+) -> CommandResult<VectorImage> {
+    // Extract the cel buffer and palette under the read lock, then drop
+    // the lock before the CPU-bound vectorization so we don't hold it
+    // across the blocking work.
+    let (buf, palette) = {
+        let doc = state.doc.read().await;
+        vectorize_inputs_from_doc(&doc, sprite_id, layer_id)?
+    };
+
+    // Centerline vectorization is CPU-bound; run it off the async runtime.
+    let result = tokio::task::spawn_blocking(move || {
+        centerline_vectorize(&buf, &palette, &CenterlineConfig::default())
+    })
+    .await
+    .map_err(|e| AppCommandError::Validation {
+        detail: format!("vectorize task failed: {e}"),
+    })?
+    .map_err(|e| AppCommandError::Validation {
+        detail: e.to_string(),
+    })?;
+
+    tracing::info!(
+        sprite_id = sprite_id.get(),
+        layer_id = layer_id.get(),
+        strokes = result.strokes.len(),
+        "vector_vectorize_layer produced vector image"
+    );
+
+    Ok(result)
+}
+
+/// Resolves the active frame, reads the cel buffer, and selects the
+/// palette (active palette, else the sprite's first) for vectorization.
+/// Split out from the command so it can be unit-tested against a
+/// `DocumentStore` without the `tauri::State` machinery.
+fn vectorize_inputs_from_doc(
+    doc: &crate::state::DocumentStore,
+    sprite_id: SpriteId,
+    layer_id: LayerId,
+) -> CommandResult<(PixelBuffer, Palette)> {
+    let frame_index = doc
+        .project
+        .as_ref()
+        .and_then(|p| p.canvas.active_frame)
+        .unwrap_or(FrameIndex::new(0));
+
+    let (_cel_pos, buf) = load_cel_buffer(doc, sprite_id, layer_id, frame_index)?;
+
+    let project = doc
+        .project
+        .as_ref()
+        .ok_or(AppCommandError::NoActiveProject)?;
+    let sprite = project
+        .sprite(sprite_id)
+        .ok_or_else(|| AppCommandError::NotFound {
+            entity: "sprite".into(),
+            id: u64::from(sprite_id.get()),
+        })?;
+    let active_id = project.brush.active_palette;
+    let palette = active_id
+        .and_then(|pid| sprite.palettes.iter().find(|p| p.id == pid))
+        .or_else(|| sprite.palettes.first())
+        .cloned()
+        .ok_or_else(|| AppCommandError::Validation {
+            detail: "vectorize requires a palette with at least one color".into(),
+        })?;
+    Ok((buf, palette))
+}
+
 /// Applies one or more geometric transforms to a raster layer cel.
 ///
 /// Operations in `args.ops` are applied sequentially; the output of each
@@ -1841,12 +2054,52 @@ pub async fn canvas_invert_selection(
     Ok(new_state)
 }
 
+/// Gap-closing pre-pass tuning. Every field is optional; absent fields
+/// fall back to [`GapCloseConfig::default`].
+#[derive(Debug, Clone, Deserialize, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub struct GapCloseRequest {
+    /// Maximum gap (in pixels) the closer will try to bridge. Defaults
+    /// to 10 when omitted.
+    #[serde(default)]
+    pub closing_distance: Option<u32>,
+    /// Maximum angle (radians) between an endpoint's connecting direction
+    /// and the displacement to its partner. Defaults to `FRAC_PI_2`
+    /// (~1.5708) when omitted.
+    #[serde(default)]
+    pub closing_angle_rad: Option<f32>,
+    /// Luma threshold below which a pixel counts as ink. Defaults to 128
+    /// when omitted.
+    #[serde(default)]
+    pub ink_threshold: Option<u8>,
+}
+
+impl GapCloseRequest {
+    /// Resolves the request against [`GapCloseConfig::default`].
+    fn resolve(&self) -> GapCloseConfig {
+        let defaults = GapCloseConfig::default();
+        GapCloseConfig {
+            closing_distance: self.closing_distance.unwrap_or(defaults.closing_distance),
+            closing_angle_rad: self.closing_angle_rad.unwrap_or(defaults.closing_angle_rad),
+            ink_threshold: self.ink_threshold.unwrap_or(defaults.ink_threshold),
+        }
+    }
+}
+
 /// Selects a contiguous region via flood-fill from a seed pixel.
 ///
 /// `(seed_x, seed_y)` are canvas-space coordinates. The flood-fill runs
 /// against the anchor layer's pixel buffer at the active frame; the
 /// resulting mask covers the full canvas (zeros outside the cel) so it can
 /// compose with subsequent selection ops.
+///
+/// When `gap_close` is `Some`, the core runs a gap-closing pre-pass before
+/// the flood-fill, stamping bridge pixels into a working copy of the cel
+/// buffer so the flood respects almost-closed outlines.
+// Tauri commands take their arguments as a flat list because that's the
+// IPC contract; collapsing them into a struct would change the JS-side
+// payload shape. Eight scalars is the right surface here.
+#[allow(clippy::too_many_arguments)]
 #[tauri::command(async, rename_all = "snake_case")]
 pub async fn canvas_select_magic_wand(
     sprite_id: SpriteId,
@@ -1855,6 +2108,7 @@ pub async fn canvas_select_magic_wand(
     seed_y: i32,
     tolerance: u8,
     connectivity: String,
+    gap_close: Option<GapCloseRequest>,
     state: State<'_, AppState>,
 ) -> CommandResult<SelectionState> {
     let layer_id = anchor_layer.ok_or_else(|| AppCommandError::Validation {
@@ -1904,11 +2158,31 @@ pub async fn canvas_select_magic_wand(
     }
     let local_x = u32::try_from(local_xi).unwrap_or(0);
     let local_y = u32::try_from(local_yj).unwrap_or(0);
-    let cel_mask = magic_wand(&buf, local_x, local_y, tolerance, mode).map_err(|e| {
-        AppCommandError::Validation {
-            detail: e.to_string(),
-        }
-    })?;
+    let cel_mask = if let Some(req) = gap_close.as_ref() {
+        let cfg = req.resolve();
+        // `local_xi` and `local_yj` were bounds-checked above against
+        // buf.width()/height(); both are non-negative and fit in i32 as
+        // long as the buffer dims do. Surface a Validation error
+        // otherwise rather than panic.
+        let bad_seed = || AppCommandError::Validation {
+            detail: "seed out of i32 range".into(),
+        };
+        let seed = IVec2 {
+            x: i32::try_from(local_xi).map_err(|_| bad_seed())?,
+            y: i32::try_from(local_yj).map_err(|_| bad_seed())?,
+        };
+        magic_wand_with_gap_close(&buf, seed, tolerance, mode, Some(cfg)).map_err(|e| {
+            AppCommandError::Validation {
+                detail: e.to_string(),
+            }
+        })?
+    } else {
+        magic_wand(&buf, local_x, local_y, tolerance, mode).map_err(|e| {
+            AppCommandError::Validation {
+                detail: e.to_string(),
+            }
+        })?
+    };
 
     // Lift the cel-sized mask onto a canvas-sized one at cel_pos.
     let canvas_mask = lift_mask_to_canvas(&cel_mask, cel_pos, canvas_w, canvas_h)?;
@@ -2649,5 +2923,245 @@ mod tests {
 
         let composite = composite_frame(&doc, SpriteId::new(1), 0).expect("composite");
         assert_eq!(pixel_at(&composite, 0, 0), [0, 255, 0, 255]);
+    }
+
+    // ── Vectorize (S59) ────────────────────────────────────────────────────
+
+    #[test]
+    fn vectorize_produces_non_empty_strokes_for_a_16x16_outline() {
+        // 16x16 buffer with a black-outline square in the middle. The
+        // exact same call shape the command uses, just without the
+        // Tauri state plumbing.
+        // White RGB + full alpha for every pixel.
+        let mut bytes = vec![255u8; 16 * 16 * 4];
+        // Paint a 12x12 ink border at (2,2)..(14,14).
+        for y in 2..14 {
+            for x in 2..14 {
+                if x == 2 || x == 13 || y == 2 || y == 13 {
+                    let off = (y * 16 + x) * 4;
+                    bytes[off] = 0;
+                    bytes[off + 1] = 0;
+                    bytes[off + 2] = 0;
+                }
+            }
+        }
+        let buf = PixelBuffer::from_raw(16, 16, 16 * 4, bytes).unwrap();
+        let palette = pixhaus_core::project::Palette::from_colors(
+            pixhaus_core::project::PaletteId::new(1),
+            "ink",
+            vec![Rgba::opaque(0, 0, 0)],
+        );
+        let result =
+            centerline_vectorize(&buf, &palette, &CenterlineConfig::default()).expect("vectorize");
+        assert_eq!(result.width, 16);
+        assert_eq!(result.height, 16);
+        assert!(
+            !result.strokes.is_empty(),
+            "expected centerline_vectorize to produce at least one stroke for an outline"
+        );
+    }
+
+    // ── Command-level prep for MLAA + vectorize (S56/S59) ──────────────────
+
+    /// A document with one raster layer carrying a 12x12 ink outline on a
+    /// white field, plus a one-colour palette. Enough for the MLAA and
+    /// vectorize command helpers to resolve a frame, buffer, and palette.
+    fn doc_with_ink_layer_and_palette() -> crate::state::DocumentStore {
+        use pixhaus_core::project::{PaletteId, Sprite};
+
+        let mut doc = crate::state::DocumentStore::default();
+        let mut project = Project::new("test");
+        let mut sprite = Sprite::empty(SpriteId::new(1), "hero", Size::new(16, 16));
+        sprite.layers.push(Layer::raster(LayerId::new(1), "ink"));
+        sprite.palettes.push(Palette::from_colors(
+            PaletteId::new(1),
+            "ink",
+            vec![Rgba::opaque(0, 0, 0)],
+        ));
+
+        let mut bytes = vec![255u8; 16 * 16 * 4];
+        for y in 2..14 {
+            for x in 2..14 {
+                if x == 2 || x == 13 || y == 2 || y == 13 {
+                    let off = (y * 16 + x) * 4;
+                    bytes[off] = 0;
+                    bytes[off + 1] = 0;
+                    bytes[off + 2] = 0;
+                }
+            }
+        }
+        doc.pixel_buffers.push(PixelBufferEntry {
+            id: 200,
+            width: 16,
+            height: 16,
+            stride: 16 * 4,
+            pixels: bytes,
+        });
+        sprite.cels.push(Cel::raster(
+            LayerId::new(1),
+            FrameIndex::new(0),
+            PixelBufferId::new(200),
+            Size::new(16, 16),
+        ));
+        install_sprite(&mut project, sprite);
+        doc.project = Some(project);
+        doc
+    }
+
+    #[test]
+    fn vectorize_inputs_from_doc_resolves_buffer_and_palette() {
+        let doc = doc_with_ink_layer_and_palette();
+        let (buf, palette) =
+            vectorize_inputs_from_doc(&doc, SpriteId::new(1), LayerId::new(1)).expect("inputs");
+        assert_eq!(buf.width(), 16);
+        assert!(!palette.colors.is_empty());
+        // The resolved inputs vectorize end-to-end.
+        let vi =
+            centerline_vectorize(&buf, &palette, &CenterlineConfig::default()).expect("vectorize");
+        assert!(!vi.strokes.is_empty());
+    }
+
+    #[test]
+    fn vectorize_inputs_from_doc_unknown_sprite_is_error() {
+        let doc = doc_with_ink_layer_and_palette();
+        let err = vectorize_inputs_from_doc(&doc, SpriteId::new(999), LayerId::new(1)).unwrap_err();
+        assert!(matches!(err, AppCommandError::NotFound { .. }));
+    }
+
+    #[test]
+    fn mlaa_prep_resolves_active_frame_and_reads_cel() {
+        let mut doc = doc_with_ink_layer_and_palette();
+        let prep = mlaa_prep_in_doc(&mut doc, SpriteId::new(1), LayerId::new(1), None, None)
+            .expect("prep");
+        assert_eq!(
+            prep.frame_index, 0,
+            "defaults to frame 0 when no canvas set"
+        );
+        assert_eq!(prep.config, MlaaConfig::default());
+        assert_eq!(prep.src.width(), 16);
+        assert_eq!(prep.before.len(), 16 * 16 * 4);
+        // The filter runs on the prepared source without error.
+        let dst = morphological_antialias(&prep.src, &prep.config).expect("mlaa");
+        assert_eq!(dst.width(), 16);
+        assert_eq!(dst.height(), 16);
+    }
+
+    #[test]
+    fn mlaa_prep_respects_explicit_config() {
+        let mut doc = doc_with_ink_layer_and_palette();
+        let prep = mlaa_prep_in_doc(
+            &mut doc,
+            SpriteId::new(1),
+            LayerId::new(1),
+            Some(32),
+            Some(64),
+        )
+        .expect("prep");
+        assert_eq!(prep.config.threshold, 32);
+        assert_eq!(prep.config.softness, 64);
+    }
+
+    // ── MLAA defaults (S56) ────────────────────────────────────────────────
+
+    /// Same default-resolution shape the Tauri command uses inline, so a
+    /// future change to `MlaaConfig::default()` moves the command's
+    /// defaults in lock-step.
+    fn resolve_mlaa(threshold: Option<u8>, softness: Option<u8>) -> MlaaConfig {
+        let defaults = MlaaConfig::default();
+        MlaaConfig {
+            threshold: threshold.unwrap_or(defaults.threshold),
+            softness: softness.unwrap_or(defaults.softness),
+        }
+    }
+
+    #[test]
+    fn mlaa_config_resolves_to_openttoonz_defaults_when_unset() {
+        let resolved = resolve_mlaa(None, None);
+        assert_eq!(resolved, MlaaConfig::default());
+        assert_eq!(resolved.threshold, 16);
+        assert_eq!(resolved.softness, 128);
+    }
+
+    #[test]
+    fn mlaa_config_resolves_explicit_overrides() {
+        let resolved = resolve_mlaa(Some(32), Some(64));
+        assert_eq!(resolved.threshold, 32);
+        assert_eq!(resolved.softness, 64);
+    }
+
+    #[test]
+    fn mlaa_smooths_staircase_into_distinct_buffer() {
+        // 4x4 horizontal staircase: top-left 2x2 block opaque red, the
+        // remaining pixels transparent. MLAA must produce a buffer that
+        // differs from the input (the diagonal step gets softened).
+        let mut bytes = vec![0u8; 4 * 4 * 4];
+        for y in 0..2 {
+            for x in 0..2 {
+                let i = (y * 4 + x) * 4;
+                bytes[i] = 255;
+                bytes[i + 3] = 255;
+            }
+        }
+        let src = PixelBuffer::from_raw(4, 4, 16, bytes.clone()).unwrap();
+        let dst = morphological_antialias(&src, &MlaaConfig::default()).unwrap();
+        assert_eq!(dst.width(), 4);
+        assert_eq!(dst.height(), 4);
+        assert_ne!(
+            dst.as_bytes(),
+            bytes.as_slice(),
+            "expected MLAA to modify the staircase"
+        );
+    }
+
+    // ── Gap-close request (S57) ───────────────────────────────────────────
+
+    #[test]
+    fn gap_close_request_resolve_uses_defaults_for_missing_fields() {
+        let req = GapCloseRequest {
+            closing_distance: None,
+            closing_angle_rad: None,
+            ink_threshold: None,
+        };
+        let resolved = req.resolve();
+        let defaults = GapCloseConfig::default();
+        assert_eq!(resolved.closing_distance, defaults.closing_distance);
+        assert!((resolved.closing_angle_rad - defaults.closing_angle_rad).abs() < f32::EPSILON);
+        assert_eq!(resolved.ink_threshold, defaults.ink_threshold);
+    }
+
+    #[test]
+    fn gap_close_request_resolve_overrides_explicit_fields() {
+        let req = GapCloseRequest {
+            closing_distance: Some(20),
+            closing_angle_rad: Some(0.5),
+            ink_threshold: Some(64),
+        };
+        let resolved = req.resolve();
+        assert_eq!(resolved.closing_distance, 20);
+        assert!((resolved.closing_angle_rad - 0.5).abs() < f32::EPSILON);
+        assert_eq!(resolved.ink_threshold, 64);
+    }
+
+    #[test]
+    fn gap_close_request_deserializes_from_partial_json() {
+        // Only `closing_distance` provided — the others fall back to None.
+        let json = r#"{"closing_distance": 15}"#;
+        let req: GapCloseRequest = serde_json::from_str(json).unwrap();
+        assert_eq!(req.closing_distance, Some(15));
+        assert_eq!(req.closing_angle_rad, None);
+        assert_eq!(req.ink_threshold, None);
+        let resolved = req.resolve();
+        let defaults = GapCloseConfig::default();
+        assert_eq!(resolved.closing_distance, 15);
+        assert!((resolved.closing_angle_rad - defaults.closing_angle_rad).abs() < f32::EPSILON);
+        assert_eq!(resolved.ink_threshold, defaults.ink_threshold);
+    }
+
+    #[test]
+    fn gap_close_request_deserializes_from_empty_object() {
+        let req: GapCloseRequest = serde_json::from_str("{}").unwrap();
+        assert!(req.closing_distance.is_none());
+        assert!(req.closing_angle_rad.is_none());
+        assert!(req.ink_threshold.is_none());
     }
 }
