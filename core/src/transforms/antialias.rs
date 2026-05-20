@@ -744,7 +744,6 @@ fn blend_lerp(a: Rgba, b: Rgba, t: f64) -> Rgba {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::time::Instant;
 
     fn black() -> Rgba {
         Rgba::opaque(0, 0, 0)
@@ -932,18 +931,8 @@ mod tests {
         );
     }
 
-    #[test]
-    fn mlaa_under_50ms_for_64x64() {
-        let buf = staircase_buffer(64);
-        let start = Instant::now();
-        let _ = morphological_antialias(&buf, &MlaaConfig::default()).unwrap();
-        let elapsed = start.elapsed();
-        assert!(
-            elapsed.as_millis() < 50,
-            "64×64 MLAA took {} ms",
-            elapsed.as_millis()
-        );
-    }
+    // Throughput is tracked by the criterion benches in core/benches/,
+    // not by a wall-clock unit assertion (which flakes on shared CI).
 
     #[test]
     fn blend_lerp_is_endpoint_safe() {

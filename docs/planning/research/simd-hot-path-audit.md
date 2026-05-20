@@ -153,7 +153,7 @@ morphology (`expand`/`contract`/`feather`).
 | Loop | Shape | SIMD eligible | Palette conflict | Rank |
 |---|---|---|---|---|
 | `algorithms::magic_wand` BFS body | `VecDeque<(u32, u32)>` of frontier pixels; `colors_match` per visit | N — irreducibly sequential frontier expansion; SIMD would need a parallel BFS rewrite | N | 1 |
-| `algorithms::colors_match` (per-channel tolerance) | `|b - s| <= tolerance` for each of r, g, b, a, then `&&` | Y in isolation — four lanes of `uabd` and a compare-mask; in BFS context the call rate is low | N | 6 (low call rate ceiling) |
+| `algorithms::colors_match` (per-channel tolerance) | `\|b - s\| <= tolerance` for each of r, g, b, a, then `&&` | Y in isolation — four lanes of `uabd` and a compare-mask; in BFS context the call rate is low | N | 6 (low call rate ceiling) |
 | `algorithms::color_range` | Linear scan over every pixel; per-pixel `colors_match` | Y — embarrassingly parallel over a flat byte slice; one mask per 4-byte group | N | 9 |
 | `algorithms::select_rect` | Double loop, `mask.set(x, y, 255)` | Y — row fills are `slice::fill` which is already SIMD-tuned | N | 3 |
 | `algorithms::select_ellipse` | Per-pixel point-in-ellipse test | Y — eight lanes of `x*x + y*y < r2` mapped to a coverage mask | N | 5 |

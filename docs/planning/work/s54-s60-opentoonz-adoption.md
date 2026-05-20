@@ -65,7 +65,7 @@ This PR is the first to adapt OpenToonz code, so it creates the repo's
 top-level `THIRD_PARTY_NOTICES.md`. Contents:
 
 - Full verbatim BSD-3-Clause text from
-  `/Users/luismorales/project/pixhaus-app/opentoonz/LICENSE.txt`.
+  `LICENSE.txt`.
 - Copyright line: `Copyright (c) 2016, Dwango Co., Ltd.`
 - One bullet per adapted file in this PR.
 
@@ -135,7 +135,7 @@ pages or without animation render identically to today.
 
 ## Reference
 
-`/Users/luismorales/project/pixhaus-app/opentoonz/toonz/sources/include/tpalette.h`,
+`toonz/sources/include/tpalette.h`,
 specifically:
 - `class Page` at lines 94–157 (the page concept).
 - `StyleAnimation` typedef at lines 177–180 (the animation table).
@@ -234,7 +234,7 @@ per-pixel branch on the comparison color.
 
 ## Reference
 
-`/Users/luismorales/project/pixhaus-app/opentoonz/toonz/sources/stdfx/igs_color_blend.cpp`,
+`toonz/sources/stdfx/igs_color_blend.cpp`,
 specifically:
 - Mode table at lines 26–55.
 - `blend_transp_` helper at lines 97–110 (alpha composition shape;
@@ -347,7 +347,7 @@ manual filter.
 
 ## Reference
 
-`/Users/luismorales/project/pixhaus-app/opentoonz/toonz/sources/common/trop/tantialias.cpp`,
+`toonz/sources/common/trop/tantialias.cpp`,
 specifically:
 - File header (lines 5–20) — algorithm summary.
 - `Selector` trait pattern (lines 60–80) — per-channel max-diff
@@ -434,7 +434,7 @@ and rasterizes connecting segments into a temporary closure mask.
 
 ## Reference
 
-`/Users/luismorales/project/pixhaus-app/opentoonz/toonz/sources/common/trop/tautoclose.cpp`,
+`toonz/sources/common/trop/tautoclose.cpp`,
 specifically:
 - `neighboursCode` at lines 54–59 — 8-bit packed neighbour signature.
 - Skeleton LUT consumption at lines 70–110 — classifier table.
@@ -555,7 +555,7 @@ call.
 
 ## Reference
 
-`/Users/luismorales/project/pixhaus-app/opentoonz/toonz/sources/common/tvrender/tinbetween.cpp`,
+`toonz/sources/common/tvrender/tinbetween.cpp`,
 specifically:
 - `getAverage` at lines 21–54 — the variance-rejection scheme.
 - `getWeightedAverage` at lines 56–98 — the weighted variant.
@@ -673,7 +673,7 @@ The pipeline is four stages:
 
 ## Reference
 
-`/Users/luismorales/project/pixhaus-app/opentoonz/toonz/sources/toonzlib/`:
+`toonz/sources/toonzlib/`:
 - `tcenterlinevectorizer.cpp` — entry point and globals (~600 LoC).
 - `centerlinepolygonizer.cpp` — stage 1 (~500 LoC).
 - `centerlineskeletonizer.cpp` + `centerlineskeletonizerP.h` —
@@ -811,7 +811,7 @@ deliverable plus benchmarks.
 
 ## Reference
 
-`/Users/luismorales/project/pixhaus-app/opentoonz/toonz/sources/common/trop/quickput.cpp`
+`toonz/sources/common/trop/quickput.cpp`
 (173 KB) — the shape of OpenToonz's hot-path template machinery
 and the 16-bit fixed-point sub-pixel addressing scheme. The audit
 notes this as the contrast pattern; we do not port `quickput.cpp`.
@@ -907,7 +907,7 @@ are deliberately not in this PR:
   data-model spec that S54 extends.
 - `docs/planning/work/streams.md` — the master streams list, updated
   in this PR with rows S54–S60.
-- `/Users/luismorales/project/pixhaus-app/opentoonz/LICENSE.txt` —
+- `LICENSE.txt` —
   BSD-3-Clause grant.
 - `CLAUDE.md` — voice, error-handling, branch/commit conventions.
 - `.claude/skills/pixhaus-rust-conventions/SKILL.md` — Rust style.

@@ -49,7 +49,7 @@ describe("canvasSelectMagicWand", () => {
     });
     // gap_close key must be absent (not just undefined) so Rust's
     // Option<GapCloseRequest> deserialises to None cleanly.
-    expect((payload as Record<string, unknown>).gap_close).toBeUndefined();
+    expect(payload as Record<string, unknown>).not.toHaveProperty("gap_close");
   });
 
   it("forwards gap_close payload through unchanged when set", async () => {
