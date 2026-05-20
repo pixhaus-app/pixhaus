@@ -9,12 +9,52 @@
 //! the stable identifier returned by
 //! [`super::InferenceBackend::backend_id`], e.g. `"pixhaus.anthropic"`.
 
+use std::sync::Once;
+
 use keyring_core::Entry;
 
 use super::error::{BackendError, Result};
 
 /// Keychain service prefix for all Pixhaus backend credentials.
 const SERVICE_PREFIX: &str = "pixhaus";
+
+/// Guards one-time registration of the process-global keychain store.
+static STORE_INIT: Once = Once::new();
+
+/// Registers the platform credential store as `keyring_core`'s default,
+/// exactly once per process, before the first [`Entry`] is created.
+///
+/// `keyring_core` keeps a single process-global "default store"; without it
+/// every `Entry::new` fails with "No default store has been set". The
+/// `keyring` meta-crate ships per-platform registration helpers — none of
+/// which run unless called, so this is where we call one.
+///
+/// On Linux we use the pure-Rust zbus Secret Service backend (persistent,
+/// integrates with GNOME Keyring / `KWallet`). macOS uses the login Keychain
+/// and Windows the Credential Manager via `use_native_store`.
+///
+/// If registration fails (e.g. a headless Linux box with no Secret Service
+/// daemon) we log and move on: the subsequent keychain call surfaces a
+/// [`BackendError::Keychain`] to the UI rather than silently falling back to
+/// an in-memory or plaintext store.
+fn ensure_store() {
+    STORE_INIT.call_once(|| {
+        // A store may already be registered — e.g. a test installs the
+        // in-memory sample store first. Don't override it.
+        if keyring_core::get_default_store().is_some() {
+            return;
+        }
+
+        #[cfg(target_os = "linux")]
+        let result = keyring::use_zbus_secret_service_store(&std::collections::HashMap::new());
+        #[cfg(not(target_os = "linux"))]
+        let result = keyring::use_native_store(false);
+
+        if let Err(err) = result {
+            tracing::warn!(error = %err, "failed to register keychain store");
+        }
+    });
+}
 
 /// Thin wrapper around the OS keychain.
 ///
@@ -59,6 +99,7 @@ impl ApiKeyStore {
     }
 
     fn entry(backend: &str) -> Result<Entry> {
+        ensure_store();
         let service = format!("{SERVICE_PREFIX}.{backend}");
         Entry::new(&service, backend).map_err(|err| BackendError::Keychain(err.to_string()))
     }
@@ -83,6 +124,35 @@ mod tests {
         }
     }
 
+    #[test]
+    fn sample_store_round_trip() {
+        // Register the cross-platform in-memory sample store before any
+        // keychain access. `ensure_store()` early-returns when a store is
+        // already set, so production lazy-init won't replace it — keeping
+        // this test hermetic and prompt-free on every platform and in CI.
+        keyring::use_sample_store(&std::collections::HashMap::new())
+            .expect("sample store registers on all platforms");
+
+        let backend = "pixhaus-test-sample-roundtrip";
+        let _ = ApiKeyStore::delete(backend);
+
+        ApiKeyStore::set(backend, "test-key-value").expect("set should succeed");
+        assert_eq!(
+            ApiKeyStore::get(backend).expect("get should succeed"),
+            "test-key-value"
+        );
+
+        ApiKeyStore::delete(backend).expect("delete should succeed");
+        assert!(matches!(
+            ApiKeyStore::get(backend),
+            Err(BackendError::ApiKeyNotFound(_))
+        ));
+    }
+
+    // Exercises the real OS keychain, which can pop an interactive "allow
+    // access" prompt on macOS once a native store is registered. Kept as a
+    // manual check (`cargo test -- --ignored`) so it never blocks CI.
+    #[ignore = "hits the real OS keychain; may prompt on macOS"]
     #[test]
     fn set_and_get_round_trip() {
         let backend = "pixhaus-test-roundtrip-xyzzy";
