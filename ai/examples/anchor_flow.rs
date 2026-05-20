@@ -70,8 +70,12 @@ async fn main() {
         }
     } else {
         println!(
-            "[1/4] no OpenAI key (or synthetic forced) — using a synthetic placeholder so the\n      \
-             create-sprite -> reference-sheet -> approve-as-anchor chain still runs offline."
+            "[1/4] no OpenAI key available — using a synthetic placeholder so the\n      \
+             create-sprite -> reference-sheet -> approve-as-anchor chain still runs offline.\n      \
+             For a LIVE generation, provide the key via the environment:\n      \
+             OPENAI_API_KEY=sk-... cargo run -p pixhaus-ai --example anchor_flow\n      \
+             (or re-save it in the app's Settings -> AI now that keychain storage works,\n      \
+             then run without the env var)."
         );
         (synthetic_png(), "synthetic placeholder")
     };
