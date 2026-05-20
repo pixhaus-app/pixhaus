@@ -135,13 +135,10 @@ pub async fn layer_set_blend_mode(
     blend_mode: BlendMode,
     state: State<'_, AppState>,
 ) -> CommandResult<()> {
-    let mut doc = state.doc.write().await;
-    {
-        let layer = find_layer_mut(&mut doc, sprite_id, layer_id)?;
+    with_layer_mut(&state, sprite_id, layer_id, |layer| {
         layer.blend_mode = blend_mode;
-    }
-    doc.dirty = true;
-    Ok(())
+    })
+    .await
 }
 
 /// Sets the opacity for a layer (`0` = fully transparent, `255` = fully opaque).
@@ -152,13 +149,10 @@ pub async fn layer_set_opacity(
     opacity: u8,
     state: State<'_, AppState>,
 ) -> CommandResult<()> {
-    let mut doc = state.doc.write().await;
-    {
-        let layer = find_layer_mut(&mut doc, sprite_id, layer_id)?;
+    with_layer_mut(&state, sprite_id, layer_id, |layer| {
         layer.opacity = opacity;
-    }
-    doc.dirty = true;
-    Ok(())
+    })
+    .await
 }
 
 /// Sets the visibility of a layer.
@@ -169,13 +163,10 @@ pub async fn layer_set_visibility(
     visible: bool,
     state: State<'_, AppState>,
 ) -> CommandResult<()> {
-    let mut doc = state.doc.write().await;
-    {
-        let layer = find_layer_mut(&mut doc, sprite_id, layer_id)?;
+    with_layer_mut(&state, sprite_id, layer_id, |layer| {
         layer.visible = visible;
-    }
-    doc.dirty = true;
-    Ok(())
+    })
+    .await
 }
 
 /// Sets the locked state of a layer.
@@ -186,13 +177,10 @@ pub async fn layer_set_locked(
     locked: bool,
     state: State<'_, AppState>,
 ) -> CommandResult<()> {
-    let mut doc = state.doc.write().await;
-    {
-        let layer = find_layer_mut(&mut doc, sprite_id, layer_id)?;
+    with_layer_mut(&state, sprite_id, layer_id, |layer| {
         layer.locked = locked;
-    }
-    doc.dirty = true;
-    Ok(())
+    })
+    .await
 }
 
 /// Returns all layers in a sprite, bottom to top (index 0 is the bottom layer).
@@ -231,12 +219,10 @@ pub async fn layer_rename(
     name: String,
     state: State<'_, AppState>,
 ) -> CommandResult<LayerRenamed> {
-    let mut doc = state.doc.write().await;
-    {
-        let layer = find_layer_mut(&mut doc, sprite_id, layer_id)?;
+    with_layer_mut(&state, sprite_id, layer_id, |layer| {
         layer.name.clone_from(&name);
-    }
-    doc.dirty = true;
+    })
+    .await?;
     Ok(LayerRenamed { layer_id, name })
 }
 
@@ -700,6 +686,25 @@ fn find_layer_mut(
             entity: "layer".into(),
             id: u64::from(layer_id.get()),
         })
+}
+
+/// Locks the document, resolves the layer, runs `mutate`, marks the
+/// document dirty, and returns the closure's value.
+///
+/// Collapses the lock-acquire / sprite+layer lookup / `dirty = true`
+/// wrapper repeated by every single-field layer setter. The closure
+/// runs while the write lock is held and the lock is released before
+/// returning, so no guard crosses an `.await`.
+async fn with_layer_mut<T>(
+    state: &State<'_, AppState>,
+    sprite_id: SpriteId,
+    layer_id: LayerId,
+    mutate: impl FnOnce(&mut Layer) -> T,
+) -> CommandResult<T> {
+    let mut doc = state.doc.write().await;
+    let out = mutate(find_layer_mut(&mut doc, sprite_id, layer_id)?);
+    doc.dirty = true;
+    Ok(out)
 }
 
 fn find_sprite(doc: &DocumentStore, sprite_id: SpriteId) -> CommandResult<&Sprite> {
