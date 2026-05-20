@@ -265,21 +265,15 @@ fn transitions(ring: [u8; 9]) -> u32 {
 
 // ----- Graph extraction --------------------------------------------------
 
-/// Endpoint or branch node in the medial-axis graph.
-#[derive(Copy, Clone, Debug, PartialEq, Eq)]
-pub(crate) enum NodeKind {
-    /// Skeleton pixel with exactly one 8-neighbour on the skeleton.
-    Endpoint,
-    /// Skeleton pixel with three or more 8-neighbours on the skeleton.
-    Branch,
-}
-
-/// A node in the medial-axis graph.
+/// A node in the medial-axis graph (an endpoint or a branch point).
+///
+/// Endpoint-vs-branch is no longer recorded statically: live edge
+/// degree is the single source of truth, since pruning and merging
+/// change a node's role as the graph evolves (see `organize`).
 #[derive(Copy, Clone, Debug)]
 pub(crate) struct Node {
     pub x: u32,
     pub y: u32,
-    pub kind: NodeKind,
 }
 
 /// An edge between two nodes plus the per-pixel path between them.
@@ -301,9 +295,19 @@ pub(crate) struct SkeletonGraph {
 }
 
 impl SkeletonGraph {
+    /// Indices of nodes touched by exactly one edge (degree-1 endpoints).
     #[cfg(test)]
-    pub(crate) fn endpoints(&self) -> impl Iterator<Item = &Node> {
-        self.nodes.iter().filter(|n| n.kind == NodeKind::Endpoint)
+    pub(crate) fn endpoint_count(&self) -> usize {
+        let mut degree = vec![0u32; self.nodes.len()];
+        for e in &self.edges {
+            if e.a < degree.len() {
+                degree[e.a] += 1;
+            }
+            if e.b < degree.len() {
+                degree[e.b] += 1;
+            }
+        }
+        degree.iter().filter(|&&d| d == 1).count()
     }
 }
 
@@ -382,17 +386,15 @@ pub(crate) fn extract_graph(skel: &Skeleton) -> SkeletonGraph {
                 continue;
             }
             let count = neighbour_count(skel, x, y);
-            // 0 = isolated dot (skip), 2 = interior of an edge (skip).
-            let kind = match count {
-                1 => NodeKind::Endpoint,
-                n if n >= 3 => NodeKind::Branch,
-                _ => continue,
-            };
+            // Graph nodes are endpoints (1 neighbour) and branches (>=3).
+            // 0 = isolated dot, 2 = interior of an edge: skip both.
+            if count == 0 || count == 2 {
+                continue;
+            }
             node_idx[idx] = nodes.len();
             nodes.push(Node {
                 x: x as u32,
                 y: y as u32,
-                kind,
             });
         }
     }
@@ -402,8 +404,22 @@ pub(crate) fn extract_graph(skel: &Skeleton) -> SkeletonGraph {
     // Pass 2: trace from each node.
     let mut edge_visited = vec![false; w * h * 8];
     let edge_key = |a: usize, dx: i32, dy: i32| -> usize {
-        let d = ((dy + 1) * 3 + (dx + 1)) as usize;
-        a * 8 + d.min(7)
+        // Map each of the 8 immediate neighbours to a distinct slot
+        // 0..8. The earlier `((dy+1)*3+(dx+1)).min(7)` collapsed both
+        // (0, 1) and (1, 1) onto slot 7, so a real branch could be
+        // skipped as already-visited.
+        let dir = match (dx, dy) {
+            (-1, -1) => 0,
+            (0, -1) => 1,
+            (1, -1) => 2,
+            (-1, 0) => 3,
+            (1, 0) => 4,
+            (-1, 1) => 5,
+            (0, 1) => 6,
+            (1, 1) => 7,
+            _ => unreachable!("edge_key expects immediate 8-neighbours"),
+        };
+        a * 8 + dir
     };
 
     for (ni, node) in nodes.iter().enumerate() {
@@ -503,7 +519,6 @@ pub(crate) fn extract_graph(skel: &Skeleton) -> SkeletonGraph {
             nodes.push(Node {
                 x: x as u32,
                 y: y as u32,
-                kind: NodeKind::Endpoint,
             });
             let nbrs = neighbour_positions(skel, x, y);
             // Two neighbours by construction; start with the first.
@@ -541,7 +556,6 @@ pub(crate) fn extract_graph(skel: &Skeleton) -> SkeletonGraph {
             nodes.push(Node {
                 x: x as u32,
                 y: y as u32,
-                kind: NodeKind::Endpoint,
             });
             edges.push(Edge { a: na, b: nb, path });
         }
@@ -630,7 +644,7 @@ mod tests {
         let mask = horizontal_bar_mask(20, 6, 1, 4);
         let skel = skeletonize(&mask, 20, 6);
         let graph = extract_graph(&skel);
-        let endpoints = graph.endpoints().count();
+        let endpoints = graph.endpoint_count();
         // A thinned bar produces a 1-pixel-wide line: two endpoints.
         assert!(
             endpoints >= 2,

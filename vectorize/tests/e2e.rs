@@ -15,6 +15,7 @@ use pixhaus_vectorize::{CenterlineConfig, Error, centerline_vectorize};
 /// Builds a `size x size` buffer with a one-pixel black border on a
 /// white background.
 fn square_outline_buffer(size: u32) -> PixelBuffer {
+    assert!(size > 0, "square_outline_buffer needs a non-empty size");
     let mut buf = PixelBuffer::filled(size, size, Rgba::opaque(255, 255, 255)).unwrap();
     let black = Rgba::opaque(0, 0, 0);
     for x in 0..size {

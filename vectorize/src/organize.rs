@@ -12,7 +12,7 @@
 //!    two incident edges into one.
 
 use crate::config::CenterlineConfig;
-use crate::skeleton::{Edge, Node, NodeKind, SkeletonGraph};
+use crate::skeleton::{Edge, Node, SkeletonGraph};
 
 /// Returns an organized copy of `graph` with branches shorter than
 /// `config.min_segment_length` pruned and degree-2 nodes merged.
@@ -25,27 +25,9 @@ pub(crate) fn organize(graph: SkeletonGraph, config: &CenterlineConfig) -> Skele
     loop {
         let mut changed = false;
 
-        // Step 1: drop short edges that connect to at least one
-        // endpoint. We keep short interior edges so we don't fragment
-        // the graph; only stubs are pruned.
-        for slot in &mut edges {
-            let Some(e) = slot.as_ref() else {
-                continue;
-            };
-            if e.path.len() >= min_len {
-                continue;
-            }
-            let a_endpoint = matches!(nodes.get(e.a).map(|n| n.kind), Some(NodeKind::Endpoint));
-            let b_endpoint = matches!(nodes.get(e.b).map(|n| n.kind), Some(NodeKind::Endpoint));
-            if a_endpoint || b_endpoint {
-                *slot = None;
-                changed = true;
-            }
-        }
-
-        // Step 2: merge through any node whose remaining degree is 2.
-        // We collect candidate node indices first to avoid mutating
-        // while iterating.
+        // Recompute live degree each iteration; topology changes as we
+        // prune and merge, so any statically recorded endpoint label
+        // would go stale. Degree is the single source of truth.
         let mut degree = vec![0u32; nodes.len()];
         for e in edges.iter().flatten() {
             if e.a < degree.len() {
@@ -56,6 +38,33 @@ pub(crate) fn organize(graph: SkeletonGraph, config: &CenterlineConfig) -> Skele
             }
         }
 
+        // Step 1: drop short edges that connect to at least one current
+        // endpoint (live degree == 1). We keep short interior edges so we
+        // don't fragment the graph; only stubs are pruned.
+        for slot in &mut edges {
+            let Some(e) = slot.as_ref() else {
+                continue;
+            };
+            if e.path.len() >= min_len {
+                continue;
+            }
+            let a_endpoint = degree.get(e.a).copied() == Some(1);
+            let b_endpoint = degree.get(e.b).copied() == Some(1);
+            if a_endpoint || b_endpoint {
+                if e.a < degree.len() {
+                    degree[e.a] = degree[e.a].saturating_sub(1);
+                }
+                if e.b < degree.len() {
+                    degree[e.b] = degree[e.b].saturating_sub(1);
+                }
+                *slot = None;
+                changed = true;
+            }
+        }
+
+        // Step 2: merge through any node whose remaining degree is 2.
+        // We collect candidate node indices first to avoid mutating
+        // while iterating.
         for ni in 0..nodes.len() {
             if degree[ni] != 2 {
                 continue;
@@ -182,10 +191,10 @@ fn merge_edges_through(e1: &Edge, e2: &Edge, pivot: usize) -> Edge {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::skeleton::{Edge, Node, NodeKind, SkeletonGraph};
+    use crate::skeleton::{Edge, Node, SkeletonGraph};
 
-    fn build_node(x: u32, y: u32, kind: NodeKind) -> Node {
-        Node { x, y, kind }
+    fn build_node(x: u32, y: u32) -> Node {
+        Node { x, y }
     }
 
     #[test]
@@ -209,10 +218,10 @@ mod tests {
         };
         let graph = SkeletonGraph {
             nodes: vec![
-                build_node(0, 0, NodeKind::Endpoint),
-                build_node(4, 0, NodeKind::Endpoint),
-                build_node(2, 0, NodeKind::Branch),
-                build_node(2, 1, NodeKind::Endpoint),
+                build_node(0, 0),
+                build_node(4, 0),
+                build_node(2, 0),
+                build_node(2, 1),
             ],
             edges: vec![main, stub],
         };
@@ -241,9 +250,9 @@ mod tests {
         };
         let graph = SkeletonGraph {
             nodes: vec![
-                build_node(0, 0, NodeKind::Endpoint),
-                build_node(2, 0, NodeKind::Branch),
-                build_node(4, 0, NodeKind::Endpoint),
+                build_node(0, 0),
+                build_node(2, 0),
+                build_node(4, 0),
             ],
             edges: vec![e1, e2],
         };
@@ -267,8 +276,8 @@ mod tests {
         };
         let graph = SkeletonGraph {
             nodes: vec![
-                build_node(0, 0, NodeKind::Endpoint),
-                build_node(3, 0, NodeKind::Endpoint),
+                build_node(0, 0),
+                build_node(3, 0),
             ],
             edges: vec![bar],
         };

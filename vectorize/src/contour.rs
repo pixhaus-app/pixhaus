@@ -187,6 +187,7 @@ fn trace_moore(
     // Initial scan: rotate around the start pixel from the
     // entry-back direction, looking for the first ink neighbour.
     let mut prev = enter_from;
+    let start_enter_from = enter_from;
     let mut cur = (sx, sy);
 
     // Cap iteration as a safety net; a w*h-pixel boundary can be at
@@ -225,10 +226,11 @@ fn trace_moore(
             return Some(contour);
         };
 
-        // Jacob stopping criterion: if we return to the start pixel
-        // having entered from the same direction as the initial scan
-        // (or after at least one step closes the loop), stop.
-        if (nx, ny) == (sx, sy) {
+        // Jacob stopping criterion: stop only when we re-enter the start
+        // pixel from the same direction as the initial scan. Stopping on
+        // any revisit of the start pixel can close early and truncate a
+        // contour that legitimately touches the start from another side.
+        if (nx, ny) == (sx, sy) && ndir == start_enter_from {
             return Some(contour);
         }
 

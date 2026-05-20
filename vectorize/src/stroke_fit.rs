@@ -56,9 +56,11 @@ pub(crate) fn douglas_peucker(path: &[(f32, f32)], tolerance: f32) -> Vec<(f32, 
         .collect()
 }
 
-/// Perpendicular distance from point `(px, py)` to the line segment
-/// `((ax, ay), (bx, by))`. Returns the chord distance when the
-/// segment is degenerate.
+/// Distance from point `(px, py)` to the line segment
+/// `((ax, ay), (bx, by))`. This is the point-to-segment distance, not
+/// point-to-infinite-line: the projection is clamped to the segment so
+/// RDP keeps points that sit beyond a segment end. Returns the chord
+/// distance when the segment is degenerate.
 fn perpendicular_distance(ax: f32, ay: f32, bx: f32, by: f32, px: f32, py: f32) -> f32 {
     let dx = bx - ax;
     let dy = by - ay;
@@ -68,8 +70,12 @@ fn perpendicular_distance(ax: f32, ay: f32, bx: f32, by: f32, px: f32, py: f32) 
         let qy = py - ay;
         return (qx * qx + qy * qy).sqrt();
     }
-    let num = (dy * px - dx * py + bx * ay - by * ax).abs();
-    num / len_sq.sqrt()
+    let t = (((px - ax) * dx + (py - ay) * dy) / len_sq).clamp(0.0, 1.0);
+    let cx = ax + t * dx;
+    let cy = ay + t * dy;
+    let qx = px - cx;
+    let qy = py - cy;
+    (qx * qx + qy * qy).sqrt()
 }
 
 /// Builds a `Stroke` from a `(x, y, thickness)` skeleton path.
@@ -200,5 +206,13 @@ mod tests {
     fn perpendicular_distance_matches_height() {
         let d = perpendicular_distance(0.0, 0.0, 10.0, 0.0, 5.0, 3.0);
         assert!((d - 3.0).abs() < 1e-4);
+    }
+
+    #[test]
+    fn perpendicular_distance_beyond_end_uses_endpoint() {
+        // Point sits past the b endpoint along the line. Infinite-line
+        // distance would be 0; segment distance is the gap to (10, 0).
+        let d = perpendicular_distance(0.0, 0.0, 10.0, 0.0, 13.0, 4.0);
+        assert!((d - 5.0).abs() < 1e-4, "expected 5.0, got {d}");
     }
 }

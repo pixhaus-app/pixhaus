@@ -1,6 +1,6 @@
 ---
 source: vectorize/tests/e2e.rs
-assertion_line: 72
+assertion_line: 75
 expression: vi
 ---
 strokes:
@@ -78,30 +78,30 @@ strokes:
         thickness: 1
     style_id: 0
   - vertices:
-      - x: 15
+      - x: 0
         y: 14
         thickness: 1
-      - x: 14
-        y: 15
-        thickness: 1
-    style_id: 0
-  - vertices:
-      - x: 15
-        y: 14
-        thickness: 1
-      - x: 15
-        y: 15
-        thickness: 1
-      - x: 14
-        y: 15
-        thickness: 1
-    style_id: 0
-  - vertices:
       - x: 1
         y: 15
         thickness: 1
-      - x: 0
+    style_id: 0
+  - vertices:
+      - x: 15
         y: 14
+        thickness: 1
+      - x: 14
+        y: 15
+        thickness: 1
+    style_id: 0
+  - vertices:
+      - x: 15
+        y: 14
+        thickness: 1
+      - x: 15
+        y: 15
+        thickness: 1
+      - x: 14
+        y: 15
         thickness: 1
     style_id: 0
   - vertices:
