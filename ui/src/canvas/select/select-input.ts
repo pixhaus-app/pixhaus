@@ -5,17 +5,18 @@
 // handles the full pointer lifecycle — start, drag, commit, cancel — and
 // returns a cleanup function that removes all listeners.
 //
-// Selection tools that require pixel data (ellipse, lasso, wand, color-range)
-// are routed to stub IPC commands that return Unimplemented until S01 lands.
+// Rect commits a rect region; ellipse / lasso / wand / color-range commit
+// mask regions, and their per-pixel mask is pulled back so the renderer can
+// trace the selection's true outline (see applyRegionSelection).
 
 import { screenToCanvas } from "../viewport";
 import {
   scrollX,
   scrollY,
   zoom,
-  selectionRect,
   setSelectionRect,
   setSelectionKind,
+  setSelectionMask,
   setSelectionLayerId,
   activeSpriteId,
   activeLayerId,
@@ -46,6 +47,8 @@ import {
   canvasSelectMagicWand,
   canvasSelectColorRange,
   canvasSelectLasso,
+  canvasSelectEllipse,
+  canvasGetSelectionMask,
   canvasInvertSelection,
 } from "../../lib/commands/canvas";
 import { transformDrag } from "../transform/transform-state";
@@ -89,6 +92,7 @@ async function commitRectSelection(bounds: {
     await canvasSetSelection(region, anchorLayer);
     setSelectionRect({ x: bounds.x, y: bounds.y, width: bounds.width, height: bounds.height });
     setSelectionKind("rect");
+    setSelectionMask(null);
     setSelectionLayerId(anchorLayer);
   } catch (err: unknown) {
     console.error("[pixhaus] canvas_set_selection failed:", err);
@@ -101,22 +105,24 @@ async function commitDeselect(): Promise<void> {
     await canvasSetSelection(null, null);
     setSelectionRect(null);
     setSelectionKind(null);
+    setSelectionMask(null);
     setSelectionLayerId(null);
   } catch (err: unknown) {
     console.error("[pixhaus] canvas_set_selection (deselect) failed:", err);
   }
 }
 
-// Reflects a backend selection region into the local rect signal.
+// Reflects a backend selection region into the local signals.
 //
-// Both `rect` and `mask` regions carry a `bounds` rect, so the marching-ants
-// overlay and transform gizmo can track either. Wand / lasso / color-range
-// all produce mask regions; without honouring `mask` here they appeared to do
-// nothing because only `rect` was handled.
-function applyRegionSelection(
+// Both `rect` and `mask` regions carry a `bounds` rect, which drives the
+// transform gizmo and the bounding-box fallback. For a `mask` region we also
+// pull the per-pixel mask so the renderer can trace the selection's true
+// outline rather than its bounding box. Wand / lasso / ellipse / color-range
+// all produce mask regions.
+async function applyRegionSelection(
   region: SelectionRegion | null | undefined,
   anchorLayer: LayerId | null,
-): void {
+): Promise<void> {
   if (!region) return;
   const b = region.bounds;
   setSelectionRect({
@@ -127,17 +133,44 @@ function applyRegionSelection(
   });
   setSelectionKind(region.kind);
   setSelectionLayerId(anchorLayer);
+
+  if (region.kind !== "mask") {
+    setSelectionMask(null);
+    return;
+  }
+  try {
+    const mask = await canvasGetSelectionMask();
+    setSelectionMask(
+      mask
+        ? {
+            x: mask.x,
+            y: mask.y,
+            width: mask.width,
+            height: mask.height,
+            data: new Uint8Array(mask.data),
+          }
+        : null,
+    );
+  } catch (err: unknown) {
+    console.error("[pixhaus] canvas_get_selection_mask failed:", err);
+    setSelectionMask(null);
+  }
 }
 
 // ── Marquee drag (rect + ellipse) ────────────────────────────────────────────
 
 // Ellipse drag reuses the same geometry as rect drag on the client side.
-// The distinction matters only at commit time (rect → rect region, ellipse →
-// mask region via a Rust algorithm). Until S01 lands ellipse is stubbed.
+// The distinction matters only at commit time: rect commits a rect region;
+// ellipse commits a mask region via the core select_ellipse algorithm and
+// renders its true outline.
 
 function onMarqueeDown(e: MouseEvent, el: HTMLElement): void {
   e.preventDefault();
   const [cx, cy] = eventToCanvas(e, el);
+  // Starting a fresh marquee drops any prior mask outline so the live rect
+  // preview isn't drawn underneath a stale arbitrary-shape selection.
+  setSelectionMask(null);
+  setSelectionKind(null);
   setMarqueeDrag({
     startX: snapToPixel(cx),
     startY: snapToPixel(cy),
@@ -189,17 +222,36 @@ async function onMarqueeUp(e: MouseEvent, el: HTMLElement): Promise<void> {
     warnIfModifierNotSupported();
     await commitRectSelection(bounds);
   } else {
-    // Ellipse marquee isn't wired to its IPC command yet. The core algorithm
-    // (select_ellipse) exists, but the editable canvas can't draw a non-rect
-    // mask outline yet, so an ellipse selection would render as a misleading
-    // bounding box. Surface that honestly instead of committing.
-    pushToast({
-      title: "Ellipse selection isn't available yet.",
-      kind: "info",
+    warnIfModifierNotSupported();
+    await commitEllipseSelection(bounds);
+  }
+}
+
+// Commits an ellipse selection via IPC. The core inscribes the ellipse in
+// `bounds` and returns a mask region; applyRegionSelection then pulls the mask
+// so the renderer can trace its true outline.
+async function commitEllipseSelection(bounds: {
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+}): Promise<void> {
+  const spriteId = activeSpriteId();
+  const anchorLayer = activeLayerId();
+  if (spriteId === null) return;
+  try {
+    const state = await canvasSelectEllipse({
+      sprite_id: spriteId,
+      anchor_layer: anchorLayer,
+      bounds: toIpcRect(bounds),
     });
-    // Revert the live preview back to whatever was committed before.
-    const prev = selectionRect();
-    setSelectionRect(prev);
+    await applyRegionSelection(state.region, anchorLayer);
+  } catch (err: unknown) {
+    if (isUnimplementedError(err)) {
+      toastUnimplemented("Ellipse selection", err, "S01");
+    } else {
+      console.error("[pixhaus] canvas_select_ellipse failed:", err);
+    }
   }
 }
 
@@ -222,7 +274,7 @@ async function onWandClick(e: MouseEvent, el: HTMLElement): Promise<void> {
       connectivity: wandConnectivity(),
       gap_close: wandGapClose() ? { closing_distance: wandGapDistance() } : null,
     });
-    applyRegionSelection(state.region, anchorLayer);
+    await applyRegionSelection(state.region, anchorLayer);
   } catch (err: unknown) {
     if (isUnimplementedError(err)) {
       toastUnimplemented("Magic wand", err, "S01");
@@ -264,7 +316,7 @@ async function onColorRangeClick(e: MouseEvent, el: HTMLElement): Promise<void> 
       target_color: target,
       tolerance: colorRangeTolerance(),
     });
-    applyRegionSelection(state.region, anchorLayer);
+    await applyRegionSelection(state.region, anchorLayer);
     setColorRangeTarget(null);
   } catch (err: unknown) {
     if (isUnimplementedError(err)) {
@@ -305,7 +357,7 @@ async function commitLasso(): Promise<void> {
       anchor_layer: anchorLayer,
       points: pts.map(([x, y]) => ({ x, y })),
     });
-    applyRegionSelection(state.region, anchorLayer);
+    await applyRegionSelection(state.region, anchorLayer);
   } catch (err: unknown) {
     if (isUnimplementedError(err)) {
       toastUnimplemented("Lasso selection", err, "S01");

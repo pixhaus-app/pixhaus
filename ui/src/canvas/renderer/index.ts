@@ -21,6 +21,7 @@ import {
   ONION_FRAG,
   ANTS_VERT,
   ANTS_FRAG,
+  MASK_ANTS_FRAG,
 } from "./shaders";
 import { TileCache, TILE_SIZE, tileKey, type TileData } from "./tile-cache";
 import { PIXEL_GRID_ZOOM_THRESHOLD } from "../viewport";
@@ -94,8 +95,21 @@ export interface SpriteConfig {
 }
 
 export interface SelectionConfig {
-  /** null = no selection. */
+  /** Bounding box for a rect-kind selection. null = no rect outline. */
   rect: { x: number; y: number; width: number; height: number } | null;
+  /**
+   * Per-pixel mask for an arbitrary-shape selection, cropped to its bounding
+   * box at (x, y). When set, the marching ants trace the mask's true outline
+   * instead of `rect`. `data` is one alpha byte per pixel (0 = out, 255 = in),
+   * row-major, `width * height` long.
+   */
+  mask?: {
+    x: number;
+    y: number;
+    width: number;
+    height: number;
+    data: Uint8Array;
+  } | null;
 }
 
 export interface OnionSkinConfig {
@@ -182,6 +196,22 @@ interface AntsProgram {
     uZoom: WebGLUniformLocation;
     uSelMin: WebGLUniformLocation;
     uSelMax: WebGLUniformLocation;
+    uTime: WebGLUniformLocation;
+  };
+}
+
+interface MaskAntsProgram {
+  prog: WebGLProgram;
+  vao: WebGLVertexArrayObject;
+  buf: WebGLBuffer;
+  loc: {
+    aPos: number;
+    uResolution: WebGLUniformLocation;
+    uScroll: WebGLUniformLocation;
+    uZoom: WebGLUniformLocation;
+    uMaskMin: WebGLUniformLocation;
+    uMaskSize: WebGLUniformLocation;
+    uMask: WebGLUniformLocation;
     uTime: WebGLUniformLocation;
   };
 }
@@ -324,6 +354,35 @@ function buildAntsProgram(gl: WebGL2RenderingContext): AntsProgram {
   };
 }
 
+function buildMaskAntsProgram(gl: WebGL2RenderingContext): MaskAntsProgram {
+  const prog = linkProgram(gl, ANTS_VERT, MASK_ANTS_FRAG);
+  const vao = gl.createVertexArray()!;
+  const buf = gl.createBuffer()!;
+
+  gl.bindVertexArray(vao);
+  gl.bindBuffer(gl.ARRAY_BUFFER, buf);
+  const aPos = gl.getAttribLocation(prog, "a_pos");
+  gl.enableVertexAttribArray(aPos);
+  gl.vertexAttribPointer(aPos, 2, gl.FLOAT, false, 0, 0);
+  gl.bindVertexArray(null);
+
+  return {
+    prog,
+    vao,
+    buf,
+    loc: {
+      aPos,
+      uResolution: gl.getUniformLocation(prog, "u_resolution")!,
+      uScroll: gl.getUniformLocation(prog, "u_scroll")!,
+      uZoom: gl.getUniformLocation(prog, "u_zoom")!,
+      uMaskMin: gl.getUniformLocation(prog, "u_mask_min")!,
+      uMaskSize: gl.getUniformLocation(prog, "u_mask_size")!,
+      uMask: gl.getUniformLocation(prog, "u_mask")!,
+      uTime: gl.getUniformLocation(prog, "u_time")!,
+    },
+  };
+}
+
 // Expands a selection rect outward by `margin` canvas pixels for the marching-
 // ants border quad so the border straddles the selection edge.
 function antsQuadCoords(
@@ -344,13 +403,15 @@ export class CanvasRenderer {
   private majorGridP!: MajorGridProgram;
   private onionP!: OnionProgram;
   private antsP!: AntsProgram;
+  private maskAntsP!: MaskAntsProgram;
+  private maskTex: WebGLTexture | null = null;
   private tileCache!: TileCache;
   private rafId = 0;
   private startTime: number;
 
   private vp: ViewportConfig = { scrollX: 0, scrollY: 0, zoom: 1, width: 1, height: 1 };
   private sprite: SpriteConfig | null = null;
-  private selection: SelectionConfig = { rect: null };
+  private selection: SelectionConfig = { rect: null, mask: null };
   private onion: OnionSkinConfig = { prev: 1, next: 1, opacity: 0.4 };
   private majorGrid: MajorGridConfig = { enabled: false, spacing: 8 };
 
@@ -384,6 +445,9 @@ export class CanvasRenderer {
       this.contextLost = true;
       cancelAnimationFrame(this.rafId);
       this.rafId = 0;
+      // The GL mask texture is gone with the context; drop the handle so the
+      // restore path recreates it from the retained SelectionConfig.
+      this.maskTex = null;
       // Mark every cached tile dirty so they get re-uploaded after restore.
       this.dirtyTiles.clear();
       this.tileCache.markAllDirty(this.dirtyTiles);
@@ -394,6 +458,7 @@ export class CanvasRenderer {
       // Build new GL programs/textures on the restored context.
       this.tileCache = new TileCache(this.gl);
       this.buildPrograms();
+      if (this.selection.mask) this.uploadMaskTexture(this.selection.mask);
       this.gl.enable(this.gl.BLEND);
       this.gl.blendFunc(this.gl.SRC_ALPHA, this.gl.ONE_MINUS_SRC_ALPHA);
       this.dirty = true;
@@ -416,6 +481,7 @@ export class CanvasRenderer {
     this.majorGridP = buildMajorGridProgram(gl);
     this.onionP = buildOnionProgram(gl);
     this.antsP = buildAntsProgram(gl);
+    this.maskAntsP = buildMaskAntsProgram(gl);
     if (!this.tileCache) {
       this.tileCache = new TileCache(gl);
     }
@@ -443,7 +509,41 @@ export class CanvasRenderer {
 
   setSelection(sel: SelectionConfig): void {
     this.selection = sel;
+    if (sel.mask) this.uploadMaskTexture(sel.mask);
     this.markDirty();
+  }
+
+  // Uploads the selection mask as an R8 texture so the mask-ants pass can
+  // sample per-pixel inclusion. Single-channel rows aren't 4-byte aligned, so
+  // UNPACK_ALIGNMENT must drop to 1 for the upload and restore afterwards.
+  private uploadMaskTexture(mask: { width: number; height: number; data: Uint8Array }): void {
+    const { gl } = this;
+    if (!this.maskTex) {
+      this.maskTex = gl.createTexture();
+      if (!this.maskTex) {
+        console.error("[pixhaus] failed to create selection mask texture");
+        return;
+      }
+    }
+    gl.bindTexture(gl.TEXTURE_2D, this.maskTex);
+    gl.pixelStorei(gl.UNPACK_ALIGNMENT, 1);
+    gl.texImage2D(
+      gl.TEXTURE_2D,
+      0,
+      gl.R8,
+      mask.width,
+      mask.height,
+      0,
+      gl.RED,
+      gl.UNSIGNED_BYTE,
+      mask.data,
+    );
+    gl.pixelStorei(gl.UNPACK_ALIGNMENT, 4);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.NEAREST);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.NEAREST);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+    gl.bindTexture(gl.TEXTURE_2D, null);
   }
 
   setOnionSkin(onion: OnionSkinConfig): void {
@@ -503,6 +603,13 @@ export class CanvasRenderer {
     gl.deleteProgram(this.antsP.prog);
     gl.deleteVertexArray(this.antsP.vao);
     gl.deleteBuffer(this.antsP.buf);
+    gl.deleteProgram(this.maskAntsP.prog);
+    gl.deleteVertexArray(this.maskAntsP.vao);
+    gl.deleteBuffer(this.maskAntsP.buf);
+    if (this.maskTex) {
+      gl.deleteTexture(this.maskTex);
+      this.maskTex = null;
+    }
   }
 
   // ── Render loop ────────────────────────────────────────────────────────
@@ -518,7 +625,7 @@ export class CanvasRenderer {
     }
 
     // Selection animation needs continuous redraw for the marching ants.
-    const animating = this.selection.rect !== null;
+    const animating = this.selection.rect !== null || this.selection.mask != null;
     if (!this.dirty && !animating) {
       // Nothing to do this frame.  Park the RAF loop until something marks
       // dirty or selection becomes active.
@@ -551,7 +658,11 @@ export class CanvasRenderer {
       }
     }
 
-    if (this.selection.rect) {
+    // A mask outline takes precedence: it traces the true shape, so the
+    // bounding-box rect ants would be redundant alongside it.
+    if (this.selection.mask) {
+      this.renderMaskAnts(t);
+    } else if (this.selection.rect) {
       this.renderAnts(t);
     }
   }
@@ -715,5 +826,34 @@ export class CanvasRenderer {
     gl.drawArrays(gl.TRIANGLES, 0, 6);
 
     gl.bindVertexArray(null);
+  }
+
+  // ── Mask marching-ants pass ─────────────────────────────────────────────
+
+  private renderMaskAnts(t: DOMHighResTimeStamp): void {
+    const { gl, vp, maskAntsP: p, selection } = this;
+    const mask = selection.mask;
+    if (!mask || !this.maskTex) return;
+
+    const elapsed = (t - this.startTime) / 1000;
+
+    gl.useProgram(p.prog);
+    gl.bindVertexArray(p.vao);
+    gl.activeTexture(gl.TEXTURE0);
+    gl.bindTexture(gl.TEXTURE_2D, this.maskTex);
+    gl.uniform1i(p.loc.uMask, 0);
+    gl.uniform2f(p.loc.uResolution, vp.width, vp.height);
+    gl.uniform2f(p.loc.uScroll, vp.scrollX, vp.scrollY);
+    gl.uniform1f(p.loc.uZoom, vp.zoom);
+    gl.uniform2f(p.loc.uMaskMin, mask.x, mask.y);
+    gl.uniform2f(p.loc.uMaskSize, mask.width, mask.height);
+    gl.uniform1f(p.loc.uTime, elapsed);
+
+    const [qx0, qy0, qx1, qy1] = antsQuadCoords(mask.x, mask.y, mask.width, mask.height, 2);
+    uploadQuad(gl, p.buf, qx0, qy0, qx1, qy1);
+    gl.drawArrays(gl.TRIANGLES, 0, 6);
+
+    gl.bindVertexArray(null);
+    gl.bindTexture(gl.TEXTURE_2D, null);
   }
 }

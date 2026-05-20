@@ -208,6 +208,61 @@ void main() {
 }
 `;
 
+// ── Mask marching-ants program ──────────────────────────────────────────────
+
+// Fragment shader for the marching-ants outline of an arbitrary-shape (mask)
+// selection. Reuses ANTS_VERT for vertex positioning; the quad covers the
+// mask's bounding box. The mask is an R8 texture (one byte per canvas pixel,
+// 0 = out, 255 = in) mapped over [u_mask_min, u_mask_min + u_mask_size].
+//
+// A fragment lies on the outline when its own canvas pixel is selected but at
+// least one 4-neighbour is not. The dashes sweep along a diagonal so the ants
+// animate over any shape without needing per-pixel arc length.
+export const MASK_ANTS_FRAG = /* glsl */ `#version 300 es
+precision highp float;
+
+in vec2 v_screen;
+in vec2 v_canvas;
+
+uniform vec2 u_mask_min;  // bounding-box origin in canvas px
+uniform vec2 u_mask_size; // bounding-box size in canvas px
+uniform sampler2D u_mask;
+uniform float u_time;     // seconds, used for march speed
+uniform float u_zoom;
+
+out vec4 out_color;
+
+// Returns 1.0 when the canvas pixel at p is selected, else 0.0.
+float selected(vec2 p) {
+  vec2 uv = (p - u_mask_min) / u_mask_size;
+  if (uv.x < 0.0 || uv.x > 1.0 || uv.y < 0.0 || uv.y > 1.0) return 0.0;
+  return step(0.5, texture(u_mask, uv).r);
+}
+
+void main() {
+  // Widen the neighbour reach when zoomed out so the 1-canvas-px outline
+  // stays visible at sub-1.0 zoom.
+  float reach = max(1.0, 1.0 / u_zoom);
+  float c = selected(v_canvas);
+  float l = selected(v_canvas + vec2(-reach, 0.0));
+  float r = selected(v_canvas + vec2(reach, 0.0));
+  float u = selected(v_canvas + vec2(0.0, -reach));
+  float d = selected(v_canvas + vec2(0.0, reach));
+
+  // Boundary: selected fragment with at least one unselected neighbour.
+  float boundary = c * (1.0 - min(min(l, r), min(u, d)));
+  if (boundary < 0.5) discard;
+
+  float period = 8.0;
+  float march_speed = 30.0; // canvas pixels per second
+  float phase = (v_canvas.x + v_canvas.y) + u_time * march_speed;
+  float dash = step(period * 0.5, mod(phase, period));
+
+  vec3 color = dash > 0.5 ? vec3(1.0) : vec3(0.0);
+  out_color = vec4(color, 0.9);
+}
+`;
+
 // ── Major-grid program ──────────────────────────────────────────────────────
 
 // Fragment shader for the configurable major-grid overlay.
