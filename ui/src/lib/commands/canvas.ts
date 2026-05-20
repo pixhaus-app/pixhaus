@@ -6,6 +6,7 @@ import type {
   CanvasState,
   FrameIndex,
   LayerId,
+  Rect,
   Rgba,
   SelectionRegion,
   SelectionState,
@@ -334,6 +335,42 @@ export type LassoArgs = {
  */
 export function canvasSelectLasso(args: LassoArgs): Promise<SelectionState> {
   return invoke<SelectionState>("canvas_select_lasso", { ...args });
+}
+
+export type EllipseArgs = {
+  sprite_id: SpriteId;
+  anchor_layer: LayerId | null;
+  /** Bounding rect the ellipse is inscribed in, in canvas coordinates. */
+  bounds: Rect;
+};
+
+/**
+ * Selects the ellipse inscribed in `bounds`. Commits as a mask region (an
+ * ellipse is not an axis-aligned rectangle).
+ */
+export function canvasSelectEllipse(args: EllipseArgs): Promise<SelectionState> {
+  return invoke<SelectionState>("canvas_select_ellipse", { ...args });
+}
+
+/** The current selection mask, cropped to its bounding box. */
+export type SelectionMaskData = {
+  /** Left edge of the cropped region in canvas coordinates. */
+  x: number;
+  /** Top edge of the cropped region in canvas coordinates. */
+  y: number;
+  width: number;
+  height: number;
+  /** Row-major inclusion bytes (0 = out, 255 = in), `width * height` long. */
+  data: number[];
+};
+
+/**
+ * Fetches the active selection mask cropped to its bounds, or `null` when the
+ * selection is empty or rectangular. The renderer uses this to trace a
+ * non-rectangular marching-ants outline.
+ */
+export function canvasGetSelectionMask(): Promise<SelectionMaskData | null> {
+  return invoke<SelectionMaskData | null>("canvas_get_selection_mask", {});
 }
 
 /**

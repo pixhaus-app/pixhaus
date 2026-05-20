@@ -36,6 +36,7 @@ import {
   activeFrameIndex,
   selectionRect,
   selectionKind,
+  selectionMask,
   isSelectMode,
   resetCanvasState,
   resetViewport,
@@ -252,7 +253,15 @@ const Canvas: Component = () => {
     });
 
     createEffect(() => {
-      renderer.setSelection({ rect: selectionRect() });
+      // A mask selection traces its true outline; a rect selection (or the
+      // live drag preview) draws bounding-box ants. The renderer prefers the
+      // mask when present, so clear the rect in that case to avoid both.
+      const mask = selectionMask();
+      if (selectionKind() === "mask" && mask) {
+        renderer.setSelection({ rect: null, mask });
+      } else {
+        renderer.setSelection({ rect: selectionRect(), mask: null });
+      }
     });
 
     // Keep transformBounds in sync with selectionRect so the handles

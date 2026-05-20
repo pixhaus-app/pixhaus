@@ -17,7 +17,8 @@ use pixhaus_core::project::{
 use pixhaus_core::selection::GapCloseConfig;
 use pixhaus_core::selection::SelectionMask;
 use pixhaus_core::selection::algorithms::{
-    Connectivity, color_range, magic_wand, magic_wand_with_gap_close, select_polygon,
+    Connectivity, color_range, magic_wand, magic_wand_with_gap_close, select_ellipse,
+    select_polygon,
 };
 use pixhaus_core::transforms::{
     self, MlaaConfig, RotateMode, ScaleMode, TransformSpec, morphological_antialias,
@@ -2276,6 +2277,133 @@ pub async fn canvas_select_lasso(
     Ok(new_state)
 }
 
+/// Selects the ellipse inscribed in the given canvas-space `bounds`.
+///
+/// Unlike the rectangle marquee, an ellipse is not axis-aligned-rectangular,
+/// so it commits as a `Mask` region (the same shape wand / lasso / color-range
+/// produce). An empty or degenerate ellipse clears the selection.
+#[tauri::command(async, rename_all = "snake_case")]
+pub async fn canvas_select_ellipse(
+    sprite_id: SpriteId,
+    anchor_layer: Option<LayerId>,
+    bounds: Rect,
+    state: State<'_, AppState>,
+) -> CommandResult<SelectionState> {
+    let mut doc = state.doc.write().await;
+    let (canvas_w, canvas_h) = sprite_canvas_size(&doc, sprite_id)?;
+    let mask = select_ellipse(canvas_w, canvas_h, bounds).map_err(|e| {
+        AppCommandError::Validation {
+            detail: e.to_string(),
+        }
+    })?;
+    let new_state = if mask.selected_count() == 0 {
+        SelectionState {
+            region: None,
+            anchor_layer,
+        }
+    } else {
+        commit_mask_selection(&mut doc, &mask, anchor_layer)
+    };
+
+    let project = doc
+        .project
+        .as_mut()
+        .ok_or(AppCommandError::NoActiveProject)?;
+    project.selection = new_state.clone();
+    doc.dirty = true;
+    Ok(new_state)
+}
+
+/// The current selection mask, cropped to its bounding box, for the renderer.
+///
+/// The marching-ants pass needs the actual per-pixel mask to trace a
+/// non-rectangular outline. Mask buffers are stored canvas-sized; cropping to
+/// `bounds` keeps the payload that crosses the IPC bridge proportional to the
+/// selection rather than the whole canvas.
+#[derive(Debug, Serialize)]
+pub struct SelectionMaskData {
+    /// Left edge of the cropped region in canvas coordinates.
+    pub x: i32,
+    /// Top edge of the cropped region in canvas coordinates.
+    pub y: i32,
+    /// Width of the cropped region in pixels.
+    pub width: u32,
+    /// Height of the cropped region in pixels.
+    pub height: u32,
+    /// Row-major inclusion bytes (`0` = out, `255` = in), `width * height` long.
+    pub data: Vec<u8>,
+}
+
+/// Crops a canvas-sized mask buffer (`stride` bytes per row, one byte per
+/// pixel) to `bounds`, clamped to the buffer. Returns the cropped region as a
+/// tightly packed (stride == width) byte run.
+fn crop_mask_region(
+    width: u32,
+    height: u32,
+    stride: u32,
+    pixels: &[u8],
+    bounds: Rect,
+) -> Result<SelectionMaskData, AppCommandError> {
+    let bx = u32::try_from(bounds.origin.x.max(0)).unwrap_or(0).min(width);
+    let by = u32::try_from(bounds.origin.y.max(0))
+        .unwrap_or(0)
+        .min(height);
+    let bw = bounds.size.width.min(width - bx);
+    let bh = bounds.size.height.min(height - by);
+
+    let mut data = Vec::with_capacity((bw as usize) * (bh as usize));
+    for row in 0..bh {
+        let src_y = (by + row) as usize;
+        let start = src_y * (stride as usize) + (bx as usize);
+        let end = start + (bw as usize);
+        let chunk = pixels
+            .get(start..end)
+            .ok_or_else(|| AppCommandError::Validation {
+                detail: "mask buffer smaller than its declared bounds".into(),
+            })?;
+        data.extend_from_slice(chunk);
+    }
+
+    Ok(SelectionMaskData {
+        x: i32::try_from(bx).unwrap_or(i32::MAX),
+        y: i32::try_from(by).unwrap_or(i32::MAX),
+        width: bw,
+        height: bh,
+        data,
+    })
+}
+
+/// Returns the current selection mask cropped to its bounds, or `None` when
+/// the selection is empty or rectangular (rect selections render from their
+/// bounds alone, so they need no mask payload).
+#[tauri::command(async, rename_all = "snake_case")]
+pub async fn canvas_get_selection_mask(
+    state: State<'_, AppState>,
+) -> CommandResult<Option<SelectionMaskData>> {
+    let doc = state.doc.read().await;
+    let project = doc
+        .project
+        .as_ref()
+        .ok_or(AppCommandError::NoActiveProject)?;
+
+    let (bounds, mask_id) = match &project.selection.region {
+        Some(SelectionRegion::Mask { bounds, mask }) => (*bounds, *mask),
+        _ => return Ok(None),
+    };
+
+    let entry = doc
+        .pixel_buffers
+        .iter()
+        .find(|e| e.id == mask_id.get())
+        .ok_or_else(|| AppCommandError::NotFound {
+            entity: "pixel buffer".into(),
+            id: u64::from(mask_id.get()),
+        })?;
+
+    let cropped = crop_mask_region(entry.width, entry.height, entry.stride, &entry.pixels, bounds)?;
+    Ok(Some(cropped))
+}
+
 /// Lifts a cel-local mask onto a canvas-sized mask, placing it at `cel_pos`.
 ///
 /// Pixels outside the cel are zero (unselected). The output dimensions are
@@ -2395,6 +2523,31 @@ mod tests {
         // No assertion needed, just shouldn't panic.
         // Pixel (0, 0) is outside the cel's rect; should remain unselected.
         assert!(!lifted.is_selected(0, 0));
+    }
+
+    #[test]
+    fn crop_mask_region_extracts_bounds() {
+        // 4x4 canvas mask; select a 2x2 block at (1, 1).
+        let mut pixels = vec![0u8; 16];
+        for (y, x) in [(1u32, 1u32), (1, 2), (2, 1), (2, 2)] {
+            pixels[(y * 4 + x) as usize] = 255;
+        }
+        let bounds = Rect::from_xywh(1, 1, 2, 2);
+        let cropped = crop_mask_region(4, 4, 4, &pixels, bounds).unwrap();
+        assert_eq!((cropped.x, cropped.y), (1, 1));
+        assert_eq!((cropped.width, cropped.height), (2, 2));
+        assert_eq!(cropped.data, vec![255, 255, 255, 255]);
+    }
+
+    #[test]
+    fn crop_mask_region_clamps_to_buffer() {
+        // Bounds that overhang the buffer get clamped instead of panicking.
+        let pixels = vec![255u8; 9]; // 3x3 fully selected
+        let bounds = Rect::from_xywh(2, 2, 10, 10);
+        let cropped = crop_mask_region(3, 3, 3, &pixels, bounds).unwrap();
+        assert_eq!((cropped.x, cropped.y), (2, 2));
+        assert_eq!((cropped.width, cropped.height), (1, 1));
+        assert_eq!(cropped.data, vec![255]);
     }
 
     #[test]

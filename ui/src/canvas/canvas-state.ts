@@ -53,6 +53,19 @@ export const [selectionRect, setSelectionRect] = createSignal<{
 // imply a rectangular transform the mask doesn't actually support.
 export const [selectionKind, setSelectionKind] = createSignal<"rect" | "mask" | null>(null);
 
+// Per-pixel mask of the active "mask"-kind selection, cropped to its bounding
+// box, with `data` as one alpha byte per pixel (0 = out, 255 = in). null for
+// rect selections and when nothing is selected. The renderer uploads this as a
+// texture to trace the selection's true outline; without it a mask could only
+// be drawn as its bounding box.
+export const [selectionMask, setSelectionMask] = createSignal<{
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+  data: Uint8Array;
+} | null>(null);
+
 // Layer the active selection was anchored on. Mirrors the `anchor_layer`
 // the backend stored when `canvas_set_selection` ran (see select-input).
 // Lets non-paint consumers (e.g. tile capture) know which layer's pixels
