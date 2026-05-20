@@ -40,12 +40,16 @@ pub struct VerbInvocation {
     pub(super) descriptor: VerbDescriptor,
     pub(super) cancel: CancellationToken,
     pub(super) progress_rx: mpsc::Receiver<VerbProgressEvent>,
-    /// `Some` until [`Self::finish`] consumes it. The `Option` lets
-    /// `Drop` distinguish a consumed handle (no-op) from an abandoned
-    /// one (fire cancellation).
+    /// `Some` until [`Self::finish`] takes it to await the worker.
     pub(super) join: Option<JoinHandle<Result<VerbOutput>>>,
     pub(super) started: Instant,
     pub(super) preview_id: PreviewId,
+    /// Set to `true` only once [`Self::finish`]'s await on the worker has
+    /// returned. `Drop` keys cancellation off this rather than off
+    /// `join.is_some()`: `finish` takes `join` *before* awaiting, so a
+    /// `finish` future abandoned mid-await would otherwise leave
+    /// `join == None` and silently skip the cancel.
+    pub(super) finished: bool,
 }
 
 impl fmt::Debug for VerbInvocation {
@@ -73,12 +77,14 @@ impl Drop for VerbInvocation {
     /// authors who want forcible abort should hold their own
     /// `JoinHandle` and `abort()` explicitly.
     ///
-    /// `finish` takes the join handle out, so its absence here means
-    /// the invocation already completed naturally and cancelling would
-    /// be a redundant signal (also unhelpful when introspecting
-    /// `cancel.is_cancelled()` after a successful run).
+    /// `finish` sets `finished` only after its await on the worker
+    /// returns, so an unset flag here means the invocation never reached
+    /// completion — whether it was never awaited or its `finish` future
+    /// was dropped mid-await. Either way the worker may still be running,
+    /// so fire the cancel. Cancelling an already-completed token is a
+    /// harmless no-op.
     fn drop(&mut self) {
-        if self.join.is_some() {
+        if !self.finished {
             self.cancel.cancel();
         }
     }
@@ -131,16 +137,20 @@ impl VerbInvocation {
     /// panicked or aborted worker, returns
     /// [`VerbError::Aborted`].
     pub async fn finish(mut self) -> Result<VerbPreview> {
-        // `take` leaves `self.join` as `None`; the `Drop` impl uses
-        // that to skip its cancel-on-drop signal, since natural
-        // completion already drove the worker to exit. A `None` here
-        // means a programmer called `finish` twice; surface that as
-        // `Aborted` rather than panic — the no-unwrap/no-expect rule.
+        // Take the handle out to await it. A `None` here would mean a
+        // programmer called `finish` twice (impossible by-value, but
+        // defended anyway); surface that as `Aborted` rather than panic —
+        // the no-unwrap/no-expect rule.
         let join = self
             .join
             .take()
             .ok_or_else(|| VerbError::Aborted("VerbInvocation::finish called twice".into()))?;
         let join_result = join.await;
+        // The worker has resolved. Mark finished so `Drop` does not fire a
+        // redundant cancel. Crucially, if this future is dropped *before*
+        // this line (abandoned mid-await), `finished` stays false and
+        // `Drop` cancels the still-running worker.
+        self.finished = true;
         let elapsed = self.started.elapsed();
         let output = match join_result {
             Ok(inner) => inner?,

@@ -3,12 +3,13 @@
 //!
 //! The runtime splits into two cooperating types across submodules:
 //!
-//! - [`VerbRuntime`] (in [`registry`]) is the host-side coordinator. It
-//!   owns the verb registry (`Arc<dyn Verb>` by ID), the priority-ordered
-//!   backend registry, and the preview ID minter, and exposes `invoke`.
-//! - [`VerbInvocation`] (in [`invocation`]) is the `'static` handle the
-//!   caller drives to completion: cancellation, progress draining, and
-//!   the join-handle state machine.
+//! - [`VerbRuntime`] (in the `registry` submodule) is the host-side
+//!   coordinator. It owns the verb registry (`Arc<dyn Verb>` by ID), the
+//!   priority-ordered backend registry, and the preview ID minter, and
+//!   exposes `invoke`.
+//! - [`VerbInvocation`] (in the `invocation` submodule) is the `'static`
+//!   handle the caller drives to completion: cancellation, progress
+//!   draining, and the join-handle state machine.
 //!
 //! # State model
 //!
@@ -363,6 +364,69 @@ mod tests {
         assert!(
             observed.load(Ordering::SeqCst),
             "drop did not cancel the in-flight verb"
+        );
+    }
+
+    #[tokio::test]
+    async fn abandoned_finish_future_cancels_worker() {
+        // A `finish()` future dropped mid-await (e.g. a timeout) must still
+        // cancel the worker. `finish` takes the join handle out before
+        // awaiting, so this only holds because Drop keys off the `finished`
+        // flag rather than `join.is_some()`.
+        use std::sync::Arc;
+        use std::sync::atomic::{AtomicBool, Ordering};
+
+        struct SignalsOnCancel {
+            descriptor: VerbDescriptor,
+            observed: Arc<AtomicBool>,
+        }
+        #[async_trait]
+        impl Verb for SignalsOnCancel {
+            fn descriptor(&self) -> &VerbDescriptor {
+                &self.descriptor
+            }
+            async fn invoke(
+                &self,
+                _ctx: VerbContext,
+                _inputs: VerbInputs,
+                _progress: VerbProgress,
+                cancel: CancellationToken,
+            ) -> Result<VerbOutput> {
+                cancel.cancelled().await;
+                self.observed.store(true, Ordering::SeqCst);
+                Err(VerbError::Cancelled)
+            }
+        }
+
+        let observed = Arc::new(AtomicBool::new(false));
+        let runtime = VerbRuntime::new();
+        runtime
+            .register(SignalsOnCancel {
+                descriptor: descriptor("test.abandon-finish", true, false),
+                observed: observed.clone(),
+            })
+            .unwrap();
+
+        let inv = runtime
+            .invoke(
+                &VerbId::new("test.abandon-finish"),
+                VerbContext::empty(metadata()),
+                VerbInputs::empty(),
+            )
+            .unwrap();
+
+        // finish() hangs because the worker waits on cancellation. Time out
+        // so the finish future is dropped mid-await.
+        let timed_out = tokio::time::timeout(Duration::from_millis(50), inv.finish()).await;
+        assert!(timed_out.is_err(), "finish should not have completed");
+
+        let deadline = std::time::Instant::now() + Duration::from_secs(1);
+        while !observed.load(Ordering::SeqCst) && std::time::Instant::now() < deadline {
+            tokio::task::yield_now().await;
+        }
+        assert!(
+            observed.load(Ordering::SeqCst),
+            "abandoning the finish future must cancel the worker"
         );
     }
 

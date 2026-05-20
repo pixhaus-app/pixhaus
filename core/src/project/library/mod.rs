@@ -187,6 +187,33 @@ mod tests {
         assert_eq!(variant.origin, VariantOrigin::ManualImport);
         assert!(variant.references.is_empty());
         assert!(!variant.promotion);
+        // Non-image bytes fall back to the template default dimensions.
+        assert_eq!((variant.width, variant.height), (2048, 1024));
+    }
+
+    #[test]
+    fn sheet_variant_from_image_reads_png_dimensions() {
+        use image::{ImageFormat, RgbaImage};
+        use std::io::Cursor;
+
+        let mut bytes = Vec::new();
+        RgbaImage::new(7, 3)
+            .write_to(&mut Cursor::new(&mut bytes), ImageFormat::Png)
+            .unwrap();
+        let variant = SheetVariant::from_image(
+            SheetVariantId::new(1),
+            0,
+            ReferenceImage {
+                bytes,
+                mime: "image/png".into(),
+            },
+        );
+
+        assert_eq!(
+            (variant.width, variant.height),
+            (7, 3),
+            "from_image should read real dimensions from the PNG header"
+        );
     }
 
     /// Pins the boxing decision for [`EntityContent`].

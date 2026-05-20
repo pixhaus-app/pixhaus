@@ -38,8 +38,8 @@ pub struct LuaRuntime {
 impl LuaRuntime {
     /// Creates a sandboxed runtime for untrusted scripts.
     ///
-    /// Only the safe standard libraries are loaded (see
-    /// [`sandboxed_stdlib`]); `os`, `io`, and `debug` are unavailable.
+    /// Only the safe standard libraries are loaded (see the private
+    /// `sandboxed_stdlib` set); `os`, `io`, and `debug` are unavailable.
     /// The `Color` global is registered immediately. The `app` global is
     /// populated (or re-populated) on each `execute` call. Use this for
     /// any script whose provenance is not fully trusted.
@@ -303,6 +303,22 @@ mod tests {
         assert!(
             rt.execute("return debug.getinfo(1)", &ctx).is_err(),
             "debug must be unavailable in the sandbox"
+        );
+        // package/ffi must stay out too: the trust model relies on scripts
+        // not being able to load native code or require() modules. Asserting
+        // them here guards against a future mlua bump silently widening the
+        // default library set.
+        assert!(
+            rt.execute("return package.loadlib", &ctx).is_err(),
+            "package must be unavailable in the sandbox"
+        );
+        assert!(
+            rt.execute("return require('os')", &ctx).is_err(),
+            "require must be unavailable in the sandbox"
+        );
+        assert!(
+            rt.execute("return ffi.cdef", &ctx).is_err(),
+            "ffi must be unavailable in the sandbox"
         );
         // Safe libraries remain available.
         rt.execute("assert(string.upper('a') == 'A')", &ctx)

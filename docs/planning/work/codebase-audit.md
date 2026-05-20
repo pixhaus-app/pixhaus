@@ -171,6 +171,12 @@ Low value / opportunistic:
 - **Done** — `core/src/undo/history.rs`: the existing ~370-line test module was already thorough; added the two missing cases (byte-cap eviction, off-path branch-subtree drop).
 - ~~Confirm the 12 `Arc<Mutex>` sites in `scripting` are each genuinely Lua-VM-bound.~~ Done 2026-05-20 — all confirmed VM-bound (see section 2).
 
+### Deferred from PR #224 review (tracked follow-up)
+
+CodeRabbit flagged one issue on PR #224 that is out of scope for a module-split refactor and is recorded here instead:
+
+- **Enforce the `EntityKind` ↔ `EntityContent` invariant** (`core/src/project/library/core.rs`). Today an `Entity` can hold a mismatched pairing (e.g. `kind = Tileset` with `content = Sprites`), pushing failure to downstream command/UI paths. Fixing it well means a discriminated single enum or a validated constructor / custom `Deserialize` gate — a behavioral data-model change that deserves its own PR, not a relocation commit. The other CodeRabbit findings (fmt, sandbox `package`/`ffi` test, `.gitignore`/CI hardening, tag-accept partial mutation, PNG-decode off the lock, `ReferenceSheet` TS export, `from_image` dimensions, abandoned-`finish` cancellation) were addressed on the branch.
+
 ## Appendix: methodology
 
 Every figure above is reproducible with these commands, run from the repo root.

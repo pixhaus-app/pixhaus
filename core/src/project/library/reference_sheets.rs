@@ -178,6 +178,18 @@ fn is_default_lora_weight(weight: &f32) -> bool {
     (*weight - 1.0).abs() < f32::EPSILON
 }
 
+/// Reads an encoded image's pixel dimensions from its header without a full
+/// decode. Returns `None` when the bytes aren't a recognizable image.
+fn image_dimensions(image: &ReferenceImage) -> Option<(u32, u32)> {
+    use std::io::Cursor;
+
+    image::ImageReader::new(Cursor::new(&image.bytes))
+        .with_guessed_format()
+        .ok()?
+        .into_dimensions()
+        .ok()
+}
+
 /// Role hint for one reference image slot.
 #[allow(missing_docs)]
 #[derive(
@@ -314,9 +326,14 @@ impl TS for ReferenceSheet {
     }
 
     fn inline(_: &Config) -> String {
+        // Keep this in sync with the struct fields below. `prompts` and
+        // `info` are serialized (with `skip_serializing_if`, hence optional)
+        // and read by the frontend, so they must appear in the TS shape.
         r"{
 canonical: SheetVariant | null,
 variants?: Array<SheetVariant>,
+prompts?: Array<PromptEntry>,
+info?: AssetInfo,
 }"
         .into()
     }
@@ -334,6 +351,8 @@ variants?: Array<SheetVariant>,
         Self: 'static,
     {
         v.visit::<SheetVariant>();
+        v.visit::<PromptEntry>();
+        v.visit::<AssetInfo>();
     }
 
     fn output_path() -> Option<PathBuf> {
@@ -434,12 +453,17 @@ impl SheetVariant {
     /// Builds a variant with PRD v1 defaults from an embedded image.
     #[must_use]
     pub fn from_image(id: SheetVariantId, created_at: i64, image: ReferenceImage) -> Self {
+        // Prefer the real encoded dimensions over the template defaults so
+        // manual imports of non-default-sized images carry correct metadata.
+        // Falls back to the defaults when the bytes aren't a decodable image.
+        let (width, height) =
+            image_dimensions(&image).unwrap_or((default_sheet_width(), default_sheet_height()));
         Self {
             id,
             created_at,
             template: ReferenceSheetTemplateId::Custom,
-            width: default_sheet_width(),
-            height: default_sheet_height(),
+            width,
+            height,
             chroma_color: default_reference_chroma(),
             user_prompt: String::new(),
             composed_prompt: String::new(),

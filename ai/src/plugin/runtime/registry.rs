@@ -375,6 +375,7 @@ impl VerbRuntime {
             join: Some(join),
             started,
             preview_id,
+            finished: false,
         })
     }
 

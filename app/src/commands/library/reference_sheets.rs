@@ -3004,4 +3004,3 @@ pub async fn project_set_default_candidate_count(
     doc.dirty = true;
     Ok(())
 }
-

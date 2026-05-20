@@ -274,22 +274,31 @@ pub async fn library_accept_suggested_tag(
     // Validate: the tag must currently be in the entity's suggested set —
     // accepting an arbitrary tag id (one nobody suggested, or one that
     // doesn't even exist) would silently corrupt entity.tags.
-    let entity = find_entity_mut(&mut project.library, entity_id)?;
-    if !entity.ai.suggested_tags.contains(&tag_id) {
-        return Err(AppCommandError::Validation {
-            detail: format!(
-                "tag {} is not in entity {}'s suggested_tags",
-                tag_id.get(),
-                entity_id.get(),
-            ),
-        });
+    {
+        let entity = find_entity_mut(&mut project.library, entity_id)?;
+        if !entity.ai.suggested_tags.contains(&tag_id) {
+            return Err(AppCommandError::Validation {
+                detail: format!(
+                    "tag {} is not in entity {}'s suggested_tags",
+                    tag_id.get(),
+                    entity_id.get(),
+                ),
+            });
+        }
     }
-    entity.ai.suggested_tags.retain(|&id| id != tag_id);
 
     // Canonical attach path: validates the tag definition exists and
     // bumps `updated_at`. Returns `Ok(false)` if the tag was already on
-    // the entity — fine, we want idempotence on the accept.
+    // the entity — fine, we want idempotence on the accept. Run this
+    // *before* dropping the suggestion so a failed attach doesn't leave
+    // the suggestion silently removed (partial mutation).
     tag_entity_in_project(project, entity_id, tag_id, ts)?;
+
+    // Attach succeeded — now retire the suggestion.
+    find_entity_mut(&mut project.library, entity_id)?
+        .ai
+        .suggested_tags
+        .retain(|&id| id != tag_id);
 
     doc.dirty = true;
     Ok(())
@@ -419,39 +428,54 @@ async fn build_train_entity_lora_context(
     pixhaus_ai::plugin::context::PixelData,
     String,
 )> {
-    let doc = state.doc.read().await;
-    let project = doc
-        .project
-        .as_ref()
-        .ok_or(AppCommandError::NoActiveProject)?;
-    let entity = find_entity(&project.library, entity_id)?;
-    let sheet = match &entity.content {
-        EntityContent::Sprites {
-            reference_sheet: Some(sheet),
-            ..
-        } => sheet.as_ref(),
-        _ => {
+    // Hold the read lock only long enough to clone what the verb consumes.
+    // The CPU-bound PNG decode runs afterwards, off the lock and off the
+    // async runtime threads, per the repo's spawn_blocking convention.
+    let (image_bytes, metadata, entity_name) = {
+        let doc = state.doc.read().await;
+        let project = doc
+            .project
+            .as_ref()
+            .ok_or(AppCommandError::NoActiveProject)?;
+        let entity = find_entity(&project.library, entity_id)?;
+        let sheet = match &entity.content {
+            EntityContent::Sprites {
+                reference_sheet: Some(sheet),
+                ..
+            } => sheet.as_ref(),
+            _ => {
+                return Err(AppCommandError::Validation {
+                    detail: format!(
+                        "entity {} has no sprite reference sheet; train_entity_lora requires one",
+                        entity_id.get(),
+                    ),
+                });
+            }
+        };
+        let Some(canonical) = sheet.canonical.as_ref() else {
             return Err(AppCommandError::Validation {
                 detail: format!(
-                    "entity {} has no sprite reference sheet; train_entity_lora requires one",
+                    "entity {} has no approved canonical reference sheet; train_entity_lora requires one",
                     entity_id.get(),
                 ),
             });
-        }
+        };
+        (
+            canonical.image.bytes.clone(),
+            project.metadata.clone(),
+            entity.name.clone(),
+        )
     };
-    let Some(canonical) = sheet.canonical.as_ref() else {
-        return Err(AppCommandError::Validation {
-            detail: format!(
-                "entity {} has no approved canonical reference sheet; train_entity_lora requires one",
-                entity_id.get(),
-            ),
-        });
-    };
-    let decoded = decode_reference_sheet_png(&canonical.image.bytes)?;
-    let ctx = VerbContextBuilder::new(project.metadata.clone())
+
+    let decoded = tokio::task::spawn_blocking(move || decode_reference_sheet_png(&image_bytes))
+        .await
+        .map_err(|e| AppCommandError::Validation {
+            detail: format!("reference sheet decode task failed: {e}"),
+        })??;
+    let ctx = VerbContextBuilder::new(metadata)
         .with_library_entity(entity_id)
         .build();
-    Ok((ctx, decoded, entity.name.clone()))
+    Ok((ctx, decoded, entity_name))
 }
 
 /// Trains a per-entity `LoRA` from a sprite entity's canonical reference sheet
@@ -567,4 +591,3 @@ pub async fn library_train_entity_lora(
         invocation_id: preview_id.to_string(),
     })
 }
-
