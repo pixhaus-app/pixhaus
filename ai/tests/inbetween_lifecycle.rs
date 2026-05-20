@@ -186,6 +186,7 @@ async fn inbetween_generates_one_frame_by_default() {
         frame_b_index: 5,
         num_outputs: 1,
         mode: InbetweenMode::Ai,
+        variance_range: 2.5,
     })
     .unwrap();
 
@@ -230,6 +231,7 @@ async fn inbetween_generates_multiple_frames() {
         frame_b_index: 10,
         num_outputs: 4,
         mode: InbetweenMode::Ai,
+        variance_range: 2.5,
     })
     .unwrap();
 
@@ -270,6 +272,7 @@ async fn inbetween_requires_active_sprite() {
         frame_b_index: 2,
         num_outputs: 1,
         mode: InbetweenMode::Ai,
+        variance_range: 2.5,
     })
     .unwrap();
 
@@ -300,6 +303,7 @@ async fn inbetween_cancelled_before_backend() {
         frame_b_index: 2,
         num_outputs: 1,
         mode: InbetweenMode::Ai,
+        variance_range: 2.5,
     })
     .unwrap();
 
@@ -334,6 +338,7 @@ async fn inbetween_cels_on_active_layer() {
         frame_b_index: 3,
         num_outputs: 2,
         mode: InbetweenMode::Ai,
+        variance_range: 2.5,
     })
     .unwrap();
 
@@ -370,6 +375,7 @@ async fn inbetween_commit_returns_effects() {
         frame_b_index: 2,
         num_outputs: 1,
         mode: InbetweenMode::Ai,
+        variance_range: 2.5,
     })
     .unwrap();
 

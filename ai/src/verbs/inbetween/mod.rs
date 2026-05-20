@@ -73,26 +73,36 @@ fn default_num_outputs() -> u32 {
 /// `AiWithProceduralPreview` emits the procedural midpoint as a
 /// `PartialPixels` progress event before invoking the backend, so
 /// the host can render a fast preview while the AI call runs.
-#[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq)]
-#[serde(tag = "kind", rename_all = "snake_case")]
+///
+/// Serializes as a plain snake-case string (`"procedural"`, `"ai"`,
+/// `"ai_with_procedural_preview"`) so the schema-driven verb form
+/// renders it as a single dropdown. The procedural outlier-rejection
+/// multiplier lives in [`InbetweenInputs::variance_range`].
+#[derive(Clone, Copy, Debug, Default, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
 pub enum InbetweenMode {
     /// Procedural variance-rejected weighted averaging. No backend
     /// dispatch — succeeds with `ctx.backend` unset.
-    Procedural {
-        /// Outlier rejection multiplier. Samples whose squared error
-        /// from the local mean exceed `variance_range * variance` are
-        /// rejected. `OpenToonz`'s canonical value is `2.5`.
-        variance_range: f32,
-    },
+    Procedural,
     /// Backend-driven frame interpolation (current behaviour).
     #[default]
     Ai,
     /// Run the procedural midpoint first, surface it as a preview,
     /// then invoke the AI backend.
-    AiWithProceduralPreview {
-        /// Outlier rejection multiplier for the procedural preview.
-        variance_range: f32,
-    },
+    AiWithProceduralPreview,
+}
+
+impl InbetweenMode {
+    /// Whether this mode runs a procedural pass (and so needs no
+    /// backend to produce its output / preview).
+    #[must_use]
+    pub fn is_procedural(self) -> bool {
+        matches!(self, Self::Procedural | Self::AiWithProceduralPreview)
+    }
+}
+
+fn default_variance_range() -> f32 {
+    2.5
 }
 
 /// Inputs for [`InbetweenVerb`].
@@ -116,6 +126,12 @@ pub struct InbetweenInputs {
     /// pre-S58 callers keep their behaviour.
     #[serde(default)]
     pub mode: InbetweenMode,
+    /// Procedural outlier-rejection multiplier. Samples whose squared
+    /// error from the local mean exceed `variance_range * variance`
+    /// are rejected. `OpenToonz`'s canonical value is `2.5`. Ignored
+    /// by [`InbetweenMode::Ai`].
+    #[serde(default = "default_variance_range")]
+    pub variance_range: f32,
 }
 
 /// Generates intermediate frames between two key frames.
@@ -162,31 +178,16 @@ impl InbetweenVerb {
                     "description": "Number of intermediate frames to generate"
                 },
                 "mode": {
-                    "description": "Generation strategy. Default is Ai. Use Procedural for backend-less local interpolation.",
-                    "oneOf": [
-                        {
-                            "type": "object",
-                            "properties": {
-                                "kind": {"const": "procedural"},
-                                "variance_range": {"type": "number", "minimum": 0.0, "default": 2.5}
-                            },
-                            "required": ["kind", "variance_range"]
-                        },
-                        {
-                            "type": "object",
-                            "properties": {"kind": {"const": "ai"}},
-                            "required": ["kind"]
-                        },
-                        {
-                            "type": "object",
-                            "properties": {
-                                "kind": {"const": "ai_with_procedural_preview"},
-                                "variance_range": {"type": "number", "minimum": 0.0, "default": 2.5}
-                            },
-                            "required": ["kind", "variance_range"]
-                        }
-                    ],
-                    "default": {"kind": "ai"}
+                    "type": "string",
+                    "enum": ["ai", "procedural", "ai_with_procedural_preview"],
+                    "default": "ai",
+                    "description": "Generation strategy. 'ai' uses the backend; 'procedural' runs locally with no backend; 'ai_with_procedural_preview' shows a fast local preview then runs the backend."
+                },
+                "variance_range": {
+                    "type": "number",
+                    "minimum": 0.0,
+                    "default": 2.5,
+                    "description": "Procedural outlier-rejection multiplier (used by procedural / preview modes; ignored by ai)."
                 }
             },
             "required": ["frame_a", "frame_b", "frame_a_index", "frame_b_index"]
@@ -361,9 +362,7 @@ impl Verb for InbetweenVerb {
         // configured. Any parse failure falls back to the descriptor's
         // requirement; `validate` rejects malformed inputs separately.
         match inputs.deserialize::<InbetweenInputs>() {
-            Ok(parsed) if matches!(parsed.mode, InbetweenMode::Procedural { .. }) => {
-                BackendCapabilities::empty()
-            }
+            Ok(parsed) if parsed.mode == InbetweenMode::Procedural => BackendCapabilities::empty(),
             _ => self.descriptor.required_capabilities,
         }
     }
@@ -441,28 +440,28 @@ impl Verb for InbetweenVerb {
         // midpoint as a PartialPixels progress event and falls through
         // to the AI path.
         match inputs.mode {
-            InbetweenMode::Procedural { variance_range } => {
+            InbetweenMode::Procedural => {
                 return self
                     .invoke_procedural(
                         &inputs,
                         sprite_id,
                         active_layer,
                         ctx.active_palette.as_ref(),
-                        variance_range,
+                        inputs.variance_range,
                         &progress,
                         &cancel,
                         started,
                     )
                     .await;
             }
-            InbetweenMode::AiWithProceduralPreview { variance_range } => {
+            InbetweenMode::AiWithProceduralPreview => {
                 let preview_bytes = procedural::interpolate_frames(
                     &inputs.frame_a.bytes,
                     &inputs.frame_b.bytes,
                     inputs.frame_a.width,
                     inputs.frame_a.height,
                     0.5,
-                    variance_range,
+                    inputs.variance_range,
                 );
                 let preview =
                     PixelData::rgba8(inputs.frame_a.width, inputs.frame_a.height, preview_bytes);
@@ -746,6 +745,7 @@ mod tests {
             frame_b_index: 5,
             num_outputs,
             mode: InbetweenMode::Ai,
+            variance_range: 2.5,
         })
         .unwrap()
     }
@@ -771,9 +771,8 @@ mod tests {
             frame_a_index: 0,
             frame_b_index: 5,
             num_outputs: 1,
-            mode: InbetweenMode::Procedural {
-                variance_range: 2.5,
-            },
+            mode: InbetweenMode::Procedural,
+            variance_range: 2.5,
         })
         .unwrap();
         assert!(verb.required_capabilities_for(&inputs).is_empty());
@@ -799,6 +798,7 @@ mod tests {
             frame_b_index: 1,
             num_outputs: 1,
             mode: InbetweenMode::Ai,
+            variance_range: 2.5,
         })
         .unwrap();
         assert!(verb.validate(&inputs).is_err());
@@ -814,6 +814,7 @@ mod tests {
             frame_b_index: 3,
             num_outputs: 1,
             mode: InbetweenMode::Ai,
+            variance_range: 2.5,
         })
         .unwrap();
         assert!(verb.validate(&inputs).is_err());
@@ -829,6 +830,7 @@ mod tests {
             frame_b_index: 2,
             num_outputs: 0,
             mode: InbetweenMode::Ai,
+            variance_range: 2.5,
         })
         .unwrap();
         assert!(verb.validate(&inputs).is_err());
@@ -844,6 +846,7 @@ mod tests {
             frame_b_index: 20,
             num_outputs: MAX_OUTPUTS + 1,
             mode: InbetweenMode::Ai,
+            variance_range: 2.5,
         })
         .unwrap();
         assert!(verb.validate(&inputs).is_err());
@@ -933,13 +936,9 @@ mod tests {
     #[test]
     fn inbetween_mode_round_trips_json_for_all_variants() {
         let modes = [
-            InbetweenMode::Procedural {
-                variance_range: 2.5,
-            },
+            InbetweenMode::Procedural,
             InbetweenMode::Ai,
-            InbetweenMode::AiWithProceduralPreview {
-                variance_range: 2.5,
-            },
+            InbetweenMode::AiWithProceduralPreview,
         ];
         for m in modes {
             let j = serde_json::to_string(&m).unwrap();
@@ -949,47 +948,48 @@ mod tests {
     }
 
     #[test]
-    fn inbetween_mode_serializes_with_kind_tag() {
-        let j = serde_json::to_string(&InbetweenMode::Ai).unwrap();
-        assert!(j.contains("\"kind\""), "missing kind tag in {j}");
-        assert!(j.contains("\"ai\""), "expected snake_case ai in {j}");
+    fn inbetween_mode_serializes_as_plain_snake_case_string() {
+        // A plain string (not a tagged object) so the schema-driven verb
+        // form can render it as a single <select>.
+        assert_eq!(serde_json::to_string(&InbetweenMode::Ai).unwrap(), "\"ai\"");
+        assert_eq!(
+            serde_json::to_string(&InbetweenMode::Procedural).unwrap(),
+            "\"procedural\""
+        );
+        assert_eq!(
+            serde_json::to_string(&InbetweenMode::AiWithProceduralPreview).unwrap(),
+            "\"ai_with_procedural_preview\""
+        );
     }
 
     #[test]
-    fn input_schema_exposes_mode_with_three_variants() {
+    fn input_schema_exposes_mode_as_string_enum_plus_variance_range() {
         let verb = InbetweenVerb::new();
         let schema = &verb.descriptor().input_schema;
-        let mode = schema
-            .get("properties")
-            .and_then(|p| p.get("mode"))
-            .expect("mode property missing from input_schema");
-        let variants = mode
-            .get("oneOf")
-            .and_then(|o| o.as_array())
-            .expect("mode must be a oneOf union");
-        assert_eq!(
-            variants.len(),
-            3,
-            "expected 3 mode variants, got {variants:?}"
-        );
+        let props = schema.get("properties").expect("properties missing");
 
-        let mut kinds: Vec<&str> = variants
+        let mode = props.get("mode").expect("mode property missing");
+        assert_eq!(mode.get("type").and_then(|t| t.as_str()), Some("string"));
+        let mut variants: Vec<&str> = mode
+            .get("enum")
+            .and_then(|e| e.as_array())
+            .expect("mode must be a string enum")
             .iter()
-            .filter_map(|v| {
-                v.get("properties")
-                    .and_then(|p| p.get("kind"))
-                    .and_then(|k| k.get("const"))
-                    .and_then(|c| c.as_str())
-            })
+            .filter_map(|v| v.as_str())
             .collect();
-        kinds.sort_unstable();
+        variants.sort_unstable();
         assert_eq!(
-            kinds,
+            variants,
             vec!["ai", "ai_with_procedural_preview", "procedural"]
         );
+        assert_eq!(mode.get("default").and_then(|d| d.as_str()), Some("ai"));
 
-        let default = mode.get("default").expect("mode default missing");
-        assert_eq!(default.get("kind").and_then(|k| k.as_str()), Some("ai"));
+        // variance_range is a sibling number field so procedural modes
+        // are tunable from the same form.
+        let vr = props
+            .get("variance_range")
+            .expect("variance_range property missing");
+        assert_eq!(vr.get("type").and_then(|t| t.as_str()), Some("number"));
     }
 
     #[test]

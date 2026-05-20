@@ -57,6 +57,7 @@ fn make_inputs(mode: InbetweenMode, num_outputs: u32) -> VerbInputs {
         frame_b_index: 5,
         num_outputs,
         mode,
+        variance_range: 2.5,
     })
     .unwrap()
 }
@@ -64,12 +65,7 @@ fn make_inputs(mode: InbetweenMode, num_outputs: u32) -> VerbInputs {
 #[tokio::test]
 async fn procedural_mode_succeeds_without_backend() {
     let verb = InbetweenVerb::new();
-    let inputs = make_inputs(
-        InbetweenMode::Procedural {
-            variance_range: 2.5,
-        },
-        1,
-    );
+    let inputs = make_inputs(InbetweenMode::Procedural, 1);
 
     let out = verb
         .invoke(
@@ -103,12 +99,7 @@ async fn procedural_mode_succeeds_without_backend() {
 #[tokio::test]
 async fn procedural_mode_generates_multiple_frames() {
     let verb = InbetweenVerb::new();
-    let inputs = make_inputs(
-        InbetweenMode::Procedural {
-            variance_range: 2.5,
-        },
-        4,
-    );
+    let inputs = make_inputs(InbetweenMode::Procedural, 4);
 
     let out = verb
         .invoke(
@@ -148,12 +139,7 @@ async fn procedural_mode_places_cels_on_active_layer() {
     let layer = LayerId::new(99);
     ctx.active_layer = Some(layer);
 
-    let inputs = make_inputs(
-        InbetweenMode::Procedural {
-            variance_range: 2.5,
-        },
-        2,
-    );
+    let inputs = make_inputs(InbetweenMode::Procedural, 2);
 
     let out = verb
         .invoke(
@@ -183,12 +169,7 @@ async fn procedural_mode_is_deterministic() {
     let first = verb
         .invoke(
             ctx.clone(),
-            make_inputs(
-                InbetweenMode::Procedural {
-                    variance_range: 2.5,
-                },
-                3,
-            ),
+            make_inputs(InbetweenMode::Procedural, 3),
             VerbProgress::discard(),
             CancellationToken::new(),
         )
@@ -197,12 +178,7 @@ async fn procedural_mode_is_deterministic() {
     let second = verb
         .invoke(
             ctx,
-            make_inputs(
-                InbetweenMode::Procedural {
-                    variance_range: 2.5,
-                },
-                3,
-            ),
+            make_inputs(InbetweenMode::Procedural, 3),
             VerbProgress::discard(),
             CancellationToken::new(),
         )
