@@ -76,6 +76,20 @@ jobs:
         env:
           RUSTDOCFLAGS: "-D warnings"
 
+  deny:
+    name: cargo-deny
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: cargo-deny check
+        uses: EmbarkStudios/cargo-deny-action@6c8f9facfa5047ec02d8485b6bf52b587b7777d1 # v2.0.18
+        with:
+          command: check
+          # --config is a `check` subcommand flag, so it goes in command-arguments
+          # (which the action appends after the command), not arguments.
+          command-arguments: --config .cargo/deny.toml
+
   ui:
     name: UI
     runs-on: ubuntu-latest

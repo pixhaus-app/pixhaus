@@ -849,4 +849,107 @@ mod tests {
         h.undo(&mut p).unwrap();
         assert_eq!(h.undo_label(), None);
     }
+
+    #[test]
+    fn redo_label_at_root_targets_last_pushed_root() {
+        let mut h = History::new();
+        let mut p = make_project();
+
+        h.push(Box::new(AppendChar('a')), &mut p).unwrap();
+        assert_eq!(h.redo_label(), None, "no child to redo at a leaf");
+
+        h.undo(&mut p).unwrap();
+        assert_eq!(
+            h.redo_label(),
+            Some("append char"),
+            "at root, redo targets the most-recently-pushed root node"
+        );
+    }
+
+    // ---- byte-cap eviction + off-path subtree drop -------------------------
+
+    /// A command that reports a fixed heap size, for exercising the byte cap
+    /// independently of the node-count cap.
+    struct SizedAppend {
+        ch: char,
+        bytes: usize,
+    }
+
+    impl Command for SizedAppend {
+        fn label(&self) -> &'static str {
+            "sized append"
+        }
+
+        fn apply(&mut self, project: &mut Project) -> CmdResult {
+            project.metadata.name.push(self.ch);
+            Ok(())
+        }
+
+        fn undo(&mut self, project: &mut Project) -> CmdResult {
+            project.metadata.name.pop();
+            Ok(())
+        }
+
+        fn estimated_size_bytes(&self) -> usize {
+            self.bytes
+        }
+    }
+
+    #[test]
+    fn byte_cap_evicts_until_total_within_max_bytes() {
+        // Node-count cap is effectively disabled so only the byte cap bites.
+        let config = HistoryConfig::new(nz(usize::MAX), nz(250));
+        let mut h = History::with_config(config);
+        let mut p = make_project();
+
+        for c in ['a', 'b', 'c', 'd', 'e'] {
+            h.push(Box::new(SizedAppend { ch: c, bytes: 100 }), &mut p)
+                .unwrap();
+        }
+
+        // 100 bytes/node against a 250-byte cap: at most two nodes survive
+        // (200 <= 250; a third would be 300 > 250 and trigger eviction).
+        assert_eq!(h.node_count(), 2, "byte cap should bound live nodes to 2");
+        assert!(
+            h.total_bytes <= 250,
+            "total_bytes {} exceeds the 250-byte cap",
+            h.total_bytes
+        );
+        // Every apply still ran against the project.
+        assert_eq!(p.metadata.name, "abcde");
+    }
+
+    #[test]
+    fn eviction_drops_off_path_branch_subtree() {
+        // Build a tree with an off-path branch (B) hanging off the eventual
+        // eviction target (A), then push past the node cap so A is evicted
+        // and its off-path subtree (B) is dropped recursively.
+        let config = HistoryConfig::new(nz(4), nz(usize::MAX));
+        let mut h = History::with_config(config);
+        let mut p = make_project();
+
+        h.push(Box::new(AppendChar('a')), &mut p).unwrap(); // node 0 (A)
+        h.push(Box::new(AppendChar('b')), &mut p).unwrap(); // node 1 (B), child of A
+        h.undo(&mut p).unwrap(); // back to A; B is now an off-path branch
+        h.push(Box::new(AppendChar('c')), &mut p).unwrap(); // node 2 (C), child of A
+        h.push(Box::new(AppendChar('d')), &mut p).unwrap(); // node 3 (D)
+        h.push(Box::new(AppendChar('e')), &mut p).unwrap(); // node 4 (E); 5 nodes, cap is 4
+
+        // Eviction removed root A (node 0) and its off-path child B (node 1).
+        assert!(
+            !h.nodes.contains_key(&NodeId(0)),
+            "evicted root A must be gone"
+        );
+        assert!(
+            !h.nodes.contains_key(&NodeId(1)),
+            "off-path branch B must be dropped along with A"
+        );
+        assert_eq!(h.node_count(), 3, "only C, D, E survive");
+        assert_eq!(
+            h.nodes.get(&NodeId(2)).and_then(|n| n.parent),
+            None,
+            "C is detached as the new root"
+        );
+        assert_eq!(p.metadata.name, "acde");
+    }
 }
