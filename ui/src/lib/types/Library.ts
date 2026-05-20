@@ -9,9 +9,10 @@ import type { TagDefinition } from "./TagDefinition";
  * Top-level container of all entities, palettes, tags, and AI metadata
  * in a Pixhaus project.
  *
- * Lives on [`super::Project::library`] alongside the legacy `sprites`
- * field; new code targets the library, the `sprites` field is the
- * transitional path until the B9 migration completes across consumers.
+ * Lives on [`super::super::Project::library`] alongside the legacy
+ * `sprites` field; new code targets the library, the `sprites` field is
+ * the transitional path until the B9 migration completes across
+ * consumers.
  */
 export type Library = { 
 /**

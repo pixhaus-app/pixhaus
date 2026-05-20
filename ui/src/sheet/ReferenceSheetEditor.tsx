@@ -7,16 +7,13 @@ import {
   Show,
   createEffect,
   createMemo,
-  createSignal,
   on,
   onCleanup,
   onMount,
 } from "solid-js";
 import { listen } from "@tauri-apps/api/event";
 import type {
-  AssetLibrary,
   Entity,
-  EntityContent,
   ModelId,
   Quality,
   ReferenceAsset,
@@ -28,7 +25,6 @@ import type {
   ReferenceSlot,
   RefinementKind,
   RegionDefinition,
-  Rgba,
   SheetVariant,
 } from "../lib/types";
 import {
@@ -72,181 +68,103 @@ import {
   sheetHeight as computeSheetHeight,
   sheetWidth as computeSheetWidth,
 } from "./sheet-panels";
-
-type SheetEditorTemplateOption = {
-  value: ReferenceSheetTemplate;
-  label: string;
-};
-
-type EditorView = "browse" | "generate" | "refine" | "chat" | "compare" | "assets" | "provenance";
-type RefineMode = "masked" | "prompt_only" | "regional";
-type SlotTarget = "generate" | "refine" | "region";
-
-type SheetRequestCompletePayload = {
-  request_id: number;
-  entity_id: number;
-  sprite: Entity;
-  total_cost_usd: number;
-};
-
-type SheetRequestProgressPayload = {
-  request_id: number;
-  stream_index: number;
-  candidate_index: number;
-  partial_index: number;
-  partial_image?: ReferenceImage | null;
-  elapsed_ms: number;
-};
-
-type SheetRequestCancelledPayload = {
-  request_id: number;
-};
-
-type SheetRequestErrorPayload = {
-  request_id: number;
-  error: { kind?: string; message?: unknown };
-};
-
-type ActiveSheetRequest = {
-  id: RequestId;
-  label: string;
-  streamIndex: number;
-  candidateIndex: number;
-  partialIndex: number;
-  elapsedMs: number;
-  partialImage: ReferenceImage | null;
-  status: "queued" | "running" | "complete" | "cancelled" | "error";
-  error?: string;
-};
-
-type RegionDraft = RegionDefinition & { id: number };
-
-const TEMPLATES: SheetEditorTemplateOption[] = [
-  { value: "character", label: "Character" },
-  { value: "item", label: "Item" },
-  { value: "tileset", label: "Tileset" },
-  { value: "custom", label: "Custom" },
-];
-
-const QUALITIES: Array<{ value: Quality; label: string }> = [
-  { value: "medium", label: "Medium" },
-  { value: "low", label: "Low" },
-  { value: "high", label: "High" },
-  { value: "auto", label: "Auto" },
-];
-
-const VIEWS: Array<{ value: EditorView; label: string }> = [
-  { value: "browse", label: "Browse" },
-  { value: "generate", label: "Generate" },
-  { value: "refine", label: "Refine" },
-  { value: "chat", label: "Chat" },
-  { value: "compare", label: "Compare" },
-  { value: "assets", label: "Assets" },
-  { value: "provenance", label: "Provenance" },
-];
-
-const MODEL_OPTIONS: Array<{ value: ModelId; label: string }> = [
-  { value: "auto", label: "Auto" },
-  { value: "open_ai_gpt_image2", label: "OpenAI gpt-image-2" },
-  { value: "google_nano_banana_pro", label: "Nano Banana Pro" },
-  { value: "google_gemini_flash_image", label: "Gemini Flash Image" },
-  { value: "fal_flux_kontext", label: "fal Flux Kontext" },
-  { value: "fal_flux_dev", label: "fal Flux.1 dev" },
-];
-
-const QUALITY_OPTIONS: Array<{ value: Quality; label: string }> = [
-  { value: "auto", label: "Auto" },
-  { value: "low", label: "Low" },
-  { value: "medium", label: "Medium" },
-  { value: "high", label: "High" },
-];
-
-const ROLE_OPTIONS: Array<{ value: ReferenceRole; label: string }> = [
-  { value: "subject", label: "Subject" },
-  { value: "style", label: "Style" },
-  { value: "pose", label: "Pose" },
-  { value: "outfit", label: "Outfit" },
-  { value: "context", label: "Context" },
-  { value: "generic", label: "Generic" },
-];
-
-const DEFAULT_CHROMA: Rgba = { r: 255, g: 0, b: 255, a: 255 };
-
-function referenceSheet(entity: Entity | null): ReferenceSheet | null {
-  if (entity === null) return null;
-  const content = entity.content as EntityContent;
-  if (content.type !== "Sprites") return null;
-  return content.value.reference_sheet ?? null;
-}
-
-function rgbaToHex(color: Rgba): string {
-  const channel = (value: number) => value.toString(16).padStart(2, "0");
-  return `#${channel(color.r)}${channel(color.g)}${channel(color.b)}`.toUpperCase();
-}
-
-function hexToRgba(hex: string): Rgba {
-  const clean = hex.replace(/^#/, "");
-  if (!/^[0-9a-fA-F]{6}$/.test(clean)) return DEFAULT_CHROMA;
-  return {
-    r: Number.parseInt(clean.slice(0, 2), 16),
-    g: Number.parseInt(clean.slice(2, 4), 16),
-    b: Number.parseInt(clean.slice(4, 6), 16),
-    a: 255,
-  };
-}
-
-function dataUri(image: ReferenceImage): string {
-  const bytes = new Uint8Array(image.bytes);
-  let binary = "";
-  for (const byte of bytes) binary += String.fromCharCode(byte);
-  return `data:${image.mime};base64,${btoa(binary)}`;
-}
-
-function variantLabel(variant: SheetVariant, isCanonical: boolean, index: number): string {
-  if (isCanonical) return "Approved";
-  const generated = new Date(variant.created_at * 1000).toLocaleString();
-  return `Draft ${index + 1} · ${generated}`;
-}
+import {
+  createSheetEditorState,
+  TEMPLATES,
+  QUALITIES,
+  VIEWS,
+  MODEL_OPTIONS,
+  QUALITY_OPTIONS,
+  ROLE_OPTIONS,
+  referenceSheet,
+  rgbaToHex,
+  hexToRgba,
+  dataUri,
+  variantLabel,
+  type RefineMode,
+  type SlotTarget,
+  type RegionDraft,
+  type SheetRequestCompletePayload,
+  type SheetRequestProgressPayload,
+  type SheetRequestCancelledPayload,
+  type SheetRequestErrorPayload,
+} from "./sheet-editor-state";
 
 const ReferenceSheetEditor: Component = () => {
-  const [entity, setEntity] = createSignal<Entity | null>(null);
-  const [loading, setLoading] = createSignal(false);
-  const [generating, setGenerating] = createSignal(false);
-  const [prompt, setPrompt] = createSignal("");
-  const [template, setTemplate] = createSignal<ReferenceSheetTemplate>("character");
-  const [candidateCount, setCandidateCount] = createSignal(2);
-  const [selectedVariantId, setSelectedVariantId] = createSignal<number | null>(null);
-  const [activeView, setActiveView] = createSignal<EditorView>("generate");
-  const [templates, setTemplates] = createSignal<ReferenceSheetTemplateDefinition[]>([]);
-  const [templateId, setTemplateId] = createSignal<ReferenceSheetTemplateId>("turnaround4_view");
-  const [dimensionValue, setDimensionValue] = createSignal("2048x1024");
-  const [chromaHex, setChromaHex] = createSignal("#FF00FF");
-  const [model, setModel] = createSignal<ModelId>("auto");
-  const [v1Quality, setV1Quality] = createSignal<Quality>("medium");
-  const [refineMode, setRefineMode] = createSignal<RefineMode>("prompt_only");
-  const [refinePrompt, setRefinePrompt] = createSignal("");
-  const [chatMessage, setChatMessage] = createSignal("");
-  const [comparePrompt, setComparePrompt] = createSignal("");
-  const [busy, setBusy] = createSignal(false);
-  const [assets, setAssets] = createSignal<AssetLibrary | null>(null);
-  const [assetName, setAssetName] = createSignal("");
-  const [referenceSlots, setReferenceSlots] = createSignal<ReferenceSlot[]>([]);
-  const [additionalReferenceSlots, setAdditionalReferenceSlots] = createSignal<ReferenceSlot[]>([]);
-  const [regionReferenceSlots, setRegionReferenceSlots] = createSignal<ReferenceSlot[]>([]);
-  const [activeRequests, setActiveRequests] = createSignal<ActiveSheetRequest[]>([]);
-  const [assetTab, setAssetTab] = createSignal<
-    "references" | "cards" | "styles" | "loras" | "notes"
-  >("references");
-  const [regionDrafts, setRegionDrafts] = createSignal<RegionDraft[]>([]);
-  const [loraName, setLoraName] = createSignal("");
-  const [loraTrigger, setLoraTrigger] = createSignal("");
-  const [selectedLoraId, setSelectedLoraId] = createSignal<number | null>(null);
-  const [loraWeight, setLoraWeight] = createSignal(1);
-  const [realWorldGrounding, setRealWorldGrounding] = createSignal(false);
-  const [brushSize, setBrushSize] = createSignal(50);
-  const [maskFeather, setMaskFeather] = createSignal(3);
-  const [maskExpand, setMaskExpand] = createSignal(12);
-  const [maskMode, setMaskMode] = createSignal<"brush" | "erase">("brush");
+  const {
+    entity,
+    setEntity,
+    loading,
+    setLoading,
+    generating,
+    setGenerating,
+    prompt,
+    setPrompt,
+    template,
+    setTemplate,
+    candidateCount,
+    setCandidateCount,
+    selectedVariantId,
+    setSelectedVariantId,
+    activeView,
+    setActiveView,
+    templates,
+    setTemplates,
+    templateId,
+    setTemplateId,
+    dimensionValue,
+    setDimensionValue,
+    chromaHex,
+    setChromaHex,
+    model,
+    setModel,
+    v1Quality,
+    setV1Quality,
+    refineMode,
+    setRefineMode,
+    refinePrompt,
+    setRefinePrompt,
+    chatMessage,
+    setChatMessage,
+    comparePrompt,
+    setComparePrompt,
+    busy,
+    setBusy,
+    assets,
+    setAssets,
+    assetName,
+    setAssetName,
+    referenceSlots,
+    setReferenceSlots,
+    additionalReferenceSlots,
+    setAdditionalReferenceSlots,
+    regionReferenceSlots,
+    setRegionReferenceSlots,
+    activeRequests,
+    setActiveRequests,
+    assetTab,
+    setAssetTab,
+    regionDrafts,
+    setRegionDrafts,
+    loraName,
+    setLoraName,
+    loraTrigger,
+    setLoraTrigger,
+    selectedLoraId,
+    setSelectedLoraId,
+    loraWeight,
+    setLoraWeight,
+    realWorldGrounding,
+    setRealWorldGrounding,
+    brushSize,
+    setBrushSize,
+    maskFeather,
+    setMaskFeather,
+    maskExpand,
+    setMaskExpand,
+    maskMode,
+    setMaskMode,
+  } = createSheetEditorState();
   let maskCanvas: HTMLCanvasElement | undefined;
   let maskDrawing = false;
 

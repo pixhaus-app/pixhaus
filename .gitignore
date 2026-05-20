@@ -70,6 +70,11 @@ Desktop.ini
 # Unity
 [Ll]ibrary/
 !ui/src/library/
+!ui/src/library/**
+!core/src/project/library/
+!core/src/project/library/**
+!app/src/commands/library/
+!app/src/commands/library/**
 [Tt]emp/
 [Oo]bj/
 [Bb]uild/

@@ -11,10 +11,10 @@ import type { TrainingJob } from "./TrainingJob";
 /**
  * Project-level AI memory and defaults.
  *
- * Per-entity AI metadata lives on [`Entity::ai`]; this struct collects
- * the project-wide pieces used by the v1 reference-sheet workflow:
- * prompt style notes, reusable assets, provider-routing preferences,
- * project defaults, and asynchronous `LoRA` training jobs.
+ * Per-entity AI metadata lives on [`Entity::ai`](super::Entity::ai); this
+ * struct collects the project-wide pieces used by the v1 reference-sheet
+ * workflow: prompt style notes, reusable assets, provider-routing
+ * preferences, project defaults, and asynchronous `LoRA` training jobs.
  */
 export type ProjectAi = { 
 /**

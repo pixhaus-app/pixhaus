@@ -10,11 +10,24 @@
 //! (not replaced) after each execution, giving a clean output per call.
 
 use mlua::prelude::*;
+use mlua::{LuaOptions, StdLib};
 
 use crate::bindings::{self, OutputCollectors};
 use crate::context::ScriptContext;
 use crate::error::{Error, Result};
 use crate::output::ScriptOutput;
+
+/// Standard libraries loaded for sandboxed (untrusted) scripts.
+///
+/// Deliberately excludes `os`, `io`, `debug`, `package`, and `ffi`. A
+/// sandboxed script therefore cannot touch the filesystem (`io`), spawn
+/// processes or read wall-clock time (`os`), load native code
+/// (`package`/`ffi`), or use the `debug` library to reach outside the VM.
+/// All pixel and project access is mediated by the host `app`/`Color`
+/// globals. See `docs/planning/architecture/plugin-trust-model.md`.
+fn sandboxed_stdlib() -> StdLib {
+    StdLib::COROUTINE | StdLib::TABLE | StdLib::STRING | StdLib::MATH | StdLib::UTF8
+}
 
 /// A Lua 5.4 scripting VM with the Pixhaus host API pre-installed.
 pub struct LuaRuntime {
@@ -23,12 +36,31 @@ pub struct LuaRuntime {
 }
 
 impl LuaRuntime {
-    /// Creates a new runtime with an empty `app` context.
+    /// Creates a sandboxed runtime for untrusted scripts.
     ///
-    /// The `Color` global is registered immediately. The `app` global
-    /// is populated (or re-populated) on each `execute` call.
+    /// Only the safe standard libraries are loaded (see the private
+    /// `sandboxed_stdlib` set); `os`, `io`, and `debug` are unavailable.
+    /// The `Color` global is registered immediately. The `app` global is
+    /// populated (or re-populated) on each `execute` call. Use this for
+    /// any script whose provenance is not fully trusted.
     pub fn new() -> Result<Self> {
-        let lua = Lua::new();
+        Self::with_stdlib(sandboxed_stdlib())
+    }
+
+    /// Creates a runtime for trusted (developer-authored, in-repo)
+    /// scripts that additionally grants the `os` and `io` libraries.
+    ///
+    /// This widens the sandbox to permit filesystem and clock access —
+    /// e.g. the `palette-export` sample writes a file via `io`. Only use
+    /// it for scripts the host has explicitly vetted; `debug`, `ffi`,
+    /// and `package` stay unavailable even here. See
+    /// `docs/planning/architecture/plugin-trust-model.md`.
+    pub fn new_trusted() -> Result<Self> {
+        Self::with_stdlib(sandboxed_stdlib() | StdLib::OS | StdLib::IO)
+    }
+
+    fn with_stdlib(libs: StdLib) -> Result<Self> {
+        let lua = Lua::new_with(libs, LuaOptions::default())?;
         // Register the Color constructor once; it doesn't depend on context.
         crate::bindings::color::register(&lua)?;
 
@@ -253,6 +285,60 @@ mod tests {
 
         let out = rt.execute("", &ctx).unwrap();
         assert!(out.mutations.is_empty(), "rolled-back mutations leaked");
+    }
+
+    #[test]
+    fn sandboxed_runtime_denies_dangerous_libraries() {
+        let rt = LuaRuntime::new().unwrap();
+        let ctx = ScriptContext::empty();
+        // os / io / debug are not loaded: indexing the nil global errors.
+        assert!(
+            rt.execute("return os.time()", &ctx).is_err(),
+            "os must be unavailable in the sandbox"
+        );
+        assert!(
+            rt.execute("return io.open('x', 'w')", &ctx).is_err(),
+            "io must be unavailable in the sandbox"
+        );
+        assert!(
+            rt.execute("return debug.getinfo(1)", &ctx).is_err(),
+            "debug must be unavailable in the sandbox"
+        );
+        // package/ffi must stay out too: the trust model relies on scripts
+        // not being able to load native code or require() modules. Asserting
+        // them here guards against a future mlua bump silently widening the
+        // default library set.
+        assert!(
+            rt.execute("return package.loadlib", &ctx).is_err(),
+            "package must be unavailable in the sandbox"
+        );
+        assert!(
+            rt.execute("return require('os')", &ctx).is_err(),
+            "require must be unavailable in the sandbox"
+        );
+        assert!(
+            rt.execute("return ffi.cdef", &ctx).is_err(),
+            "ffi must be unavailable in the sandbox"
+        );
+        // Safe libraries remain available.
+        rt.execute("assert(string.upper('a') == 'A')", &ctx)
+            .unwrap();
+        rt.execute("assert(math.max(1, 2) == 2)", &ctx).unwrap();
+    }
+
+    #[test]
+    fn trusted_runtime_grants_os_and_io() {
+        let rt = LuaRuntime::new_trusted().unwrap();
+        let ctx = ScriptContext::empty();
+        rt.execute("assert(type(os.time) == 'function')", &ctx)
+            .unwrap();
+        rt.execute("assert(type(io.open) == 'function')", &ctx)
+            .unwrap();
+        // debug stays unavailable even in trusted mode.
+        assert!(
+            rt.execute("return debug.getinfo(1)", &ctx).is_err(),
+            "debug must stay unavailable even for trusted scripts"
+        );
     }
 
     /// Wraps a sprite into the project library as a `Custom`-kind
