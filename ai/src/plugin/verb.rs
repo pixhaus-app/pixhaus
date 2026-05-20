@@ -18,7 +18,7 @@ use async_trait::async_trait;
 use tokio_util::sync::CancellationToken;
 
 use super::context::VerbContext;
-use super::descriptor::VerbDescriptor;
+use super::descriptor::{BackendCapabilities, VerbDescriptor};
 use super::error::Result;
 use super::inputs::VerbInputs;
 use super::output::VerbOutput;
@@ -84,6 +84,17 @@ pub trait Verb: Send + Sync + 'static {
     /// belongs in [`Self::invoke`] instead.
     fn validate(&self, _inputs: &VerbInputs) -> Result<()> {
         Ok(())
+    }
+
+    /// Returns the backend capabilities this invocation actually needs,
+    /// given its `inputs`. The runtime uses this (not the static
+    /// descriptor field) to decide whether to select and attach a
+    /// backend. The default returns the descriptor's
+    /// `required_capabilities`; override when a verb can run without a
+    /// backend for some inputs (e.g. a procedural mode) so the runtime
+    /// doesn't reject the invocation when no backend is configured.
+    fn required_capabilities_for(&self, _inputs: &VerbInputs) -> BackendCapabilities {
+        self.descriptor().required_capabilities
     }
 
     /// Runs the verb.

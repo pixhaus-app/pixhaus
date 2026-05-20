@@ -245,29 +245,49 @@ impl InbetweenVerb {
         let height = inputs.frame_a.height;
         let frame_size = Size::new(width, height);
 
+        if cancel.is_cancelled() {
+            return Err(VerbError::Cancelled);
+        }
+
+        // The interpolation and palette snapping are CPU-bound pixel
+        // loops; run them off the async runtime per the verb-protocol
+        // pattern. Owned copies move into the blocking closure.
+        let start_bytes = inputs.frame_a.bytes.clone();
+        let end_bytes = inputs.frame_b.bytes.clone();
+        let palette_owned = palette.cloned();
+        let pixel_datas = tokio::task::spawn_blocking(move || {
+            (0..n)
+                .map(|i| {
+                    let i_u16 = u16::try_from(i).unwrap_or(u16::MAX);
+                    let t = (f32::from(i_u16) + 1.0) / denom;
+                    let bytes = procedural::interpolate_frames(
+                        &start_bytes,
+                        &end_bytes,
+                        width,
+                        height,
+                        t,
+                        variance_range,
+                    );
+                    let pixel_data = PixelData::rgba8(width, height, bytes);
+                    match &palette_owned {
+                        Some(pal) => snap_to_palette(pixel_data, pal),
+                        None => pixel_data,
+                    }
+                })
+                .collect::<Vec<_>>()
+        })
+        .await
+        .map_err(|e| VerbError::Aborted(e.to_string()))?;
+
+        if cancel.is_cancelled() {
+            return Err(VerbError::Cancelled);
+        }
+
         let mut frames = Vec::with_capacity(n as usize);
         let mut cels = Vec::with_capacity(n as usize);
         let mut pixel_buffers = Vec::with_capacity(n as usize);
 
-        for i in 0..n {
-            if cancel.is_cancelled() {
-                return Err(VerbError::Cancelled);
-            }
-            let i_u16 = u16::try_from(i).unwrap_or(u16::MAX);
-            let t = (f32::from(i_u16) + 1.0) / denom;
-            let bytes = procedural::interpolate_frames(
-                &inputs.frame_a.bytes,
-                &inputs.frame_b.bytes,
-                width,
-                height,
-                t,
-                variance_range,
-            );
-            let mut pixel_data = PixelData::rgba8(width, height, bytes);
-            if let Some(pal) = palette {
-                pixel_data = snap_to_palette(pixel_data, pal);
-            }
-
+        for (i, pixel_data) in (0..n).zip(pixel_datas) {
             let buf_id = PixelBufferId::new(i);
             let cel = Cel::raster(
                 LayerId::new(PLACEHOLDER_LAYER),
@@ -333,6 +353,19 @@ impl Default for InbetweenVerb {
 impl Verb for InbetweenVerb {
     fn descriptor(&self) -> &VerbDescriptor {
         &self.descriptor
+    }
+
+    fn required_capabilities_for(&self, inputs: &VerbInputs) -> BackendCapabilities {
+        // Procedural mode runs entirely locally — no backend needed, so
+        // the runtime must not reject the invocation when none is
+        // configured. Any parse failure falls back to the descriptor's
+        // requirement; `validate` rejects malformed inputs separately.
+        match inputs.deserialize::<InbetweenInputs>() {
+            Ok(parsed) if matches!(parsed.mode, InbetweenMode::Procedural { .. }) => {
+                BackendCapabilities::empty()
+            }
+            _ => self.descriptor.required_capabilities,
+        }
     }
 
     fn validate(&self, inputs: &VerbInputs) -> Result<()> {
@@ -727,6 +760,33 @@ mod tests {
         );
         assert!(verb.descriptor().cancellable);
         assert!(verb.descriptor().streaming);
+    }
+
+    #[test]
+    fn procedural_mode_requires_no_backend_capability() {
+        let verb = InbetweenVerb::new();
+        let inputs = VerbInputs::from_struct(&InbetweenInputs {
+            frame_a: two_pixel_frame(0, 0, 0),
+            frame_b: two_pixel_frame(255, 255, 255),
+            frame_a_index: 0,
+            frame_b_index: 5,
+            num_outputs: 1,
+            mode: InbetweenMode::Procedural {
+                variance_range: 2.5,
+            },
+        })
+        .unwrap();
+        assert!(verb.required_capabilities_for(&inputs).is_empty());
+    }
+
+    #[test]
+    fn ai_mode_still_requires_frame_interpolation() {
+        let verb = InbetweenVerb::new();
+        let inputs = make_inputs(1);
+        assert!(
+            verb.required_capabilities_for(&inputs)
+                .contains(BackendCapabilities::FRAME_INTERPOLATION)
+        );
     }
 
     #[test]

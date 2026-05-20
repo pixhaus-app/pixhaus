@@ -356,8 +356,10 @@ impl VerbRuntime {
 
         // Capability check and backend injection. Verbs that need no
         // backend (empty capabilities) skip this; ctx.backend stays None.
+        // The capability requirement is input-dependent — a verb may
+        // need no backend for some inputs (e.g. a procedural mode).
         let mut ctx = ctx;
-        let required = verb.descriptor().required_capabilities;
+        let required = verb.required_capabilities_for(&inputs);
         if !required.is_empty() {
             let backend = self.select_backend(required, id)?;
             debug!(

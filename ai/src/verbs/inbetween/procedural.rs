@@ -28,11 +28,13 @@ pub(super) const DEFAULT_VARIANCE_RANGE: f32 = 2.5;
 /// zero disable rejection (every sample is accepted) so the output
 /// degrades to the plain neighbourhood mean.
 ///
-/// # Panics
+/// # Length handling
 ///
-/// Panics in debug builds if either buffer's length disagrees with
-/// the expected byte count. Release builds silently fall back to the
-/// shorter slice; the verb's `validate` is expected to catch this.
+/// If either buffer is shorter than the expected byte count
+/// (`width * height * 4`), this returns an all-zero frame of the
+/// expected size rather than indexing out of bounds. The verb's
+/// `validate` is expected to reject malformed inputs before this
+/// point, so the guard is a safety net, not a routine path.
 #[must_use]
 #[allow(
     clippy::cast_possible_truncation,
@@ -51,8 +53,13 @@ pub(super) fn interpolate_frames(
     let h = height as usize;
     let pixels = w.saturating_mul(h);
     let expected = pixels.saturating_mul(4);
-    debug_assert_eq!(frame_a.len(), expected, "frame_a length mismatch");
-    debug_assert_eq!(frame_b.len(), expected, "frame_b length mismatch");
+
+    // Safety net: a short buffer would index out of bounds in the main
+    // loop. Return a blank frame of the expected size instead. `validate`
+    // rejects malformed inputs at the verb boundary, so this is rare.
+    if frame_a.len() < expected || frame_b.len() < expected {
+        return vec![0u8; expected];
+    }
 
     let mut out = vec![0u8; expected];
 
@@ -193,6 +200,17 @@ mod tests {
         let b = vec![0, 0, 255, 255, 0, 255, 0, 255];
         let out = interpolate_frames(&a, &b, 2, 1, 1.0, 2.5);
         assert_eq!(out, b);
+    }
+
+    #[test]
+    fn short_buffer_returns_blank_frame_without_panicking() {
+        // Buffers shorter than width*height*4 must not index out of
+        // bounds; we return an all-zero frame of the expected size in
+        // both debug and release. t is mid-range so the main loop runs.
+        let a = vec![0u8; 4]; // claims 2x2 (16 bytes) but only has 4
+        let b = vec![0u8; 4];
+        let out = interpolate_frames(&a, &b, 2, 2, 0.5, 2.5);
+        assert_eq!(out, vec![0u8; 16]);
     }
 
     #[test]
