@@ -20,6 +20,7 @@
     "@sentry/browser": "^10.53.1",
     "@tauri-apps/api": "^2.11.0",
     "@tauri-apps/plugin-dialog": "^2",
+    "lucide-solid": "^1.16.0",
     "solid-js": "^1.9.13"
   },
   "devDependencies": {

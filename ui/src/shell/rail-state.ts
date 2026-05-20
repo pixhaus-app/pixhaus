@@ -57,6 +57,20 @@ export const SECTION_TITLE: Record<SectionId, string> = {
   reference: "Reference",
 };
 
+/** One-line explanation surfaced via the header help icon for each section. */
+export const SECTION_HELP: Record<SectionId, string> = {
+  brush: "Size, shape and pixel-perfect options for the active drawing tool.",
+  fill: "Tolerance and contiguity for the flood-fill bucket.",
+  select:
+    "Options for the active selection tool. Pick the magic wand from the toolbar to tune tolerance and gap-closing.",
+  dithering: "Apply ordered dithering patterns while you paint.",
+  color: "Pick colors, manage the palette, and set color animation keyframes.",
+  layers: "Stack, reorder, blend and toggle layers. The active layer receives your edits.",
+  tilemap: "Paint with tiles from the active tilemap context.",
+  fx: "Non-destructive effects applied to the active layer.",
+  reference: "Preview the exported sprite sheet and reference images.",
+};
+
 type SectionState = { explicitOpen: boolean; userTouched: boolean };
 
 type RailState = {
