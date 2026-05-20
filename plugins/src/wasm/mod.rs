@@ -53,9 +53,19 @@ impl WasmPlugin {
     #[instrument(skip(entry_path), fields(plugin = plugin_name))]
     pub(crate) fn load(plugin_name: &str, entry_path: &Path) -> Result<Self> {
         let wasm = extism::Wasm::file(entry_path);
+        // Deny-all capability posture: the manifest declares no allowed paths
+        // and no allowed hosts, so even with WASI enabled the guest receives
+        // no preopened directories (no filesystem) and no network. WASI stays
+        // on only so wasi-target guest toolchains link; the host exposes
+        // nothing through it. Do NOT add `with_allowed_paths`/
+        // `with_allowed_hosts` here without updating the plugin trust model.
+        //
+        // The wasmtime version pinned transitively through extism has open
+        // sandbox-escape advisories (see .cargo/deny.toml and
+        // docs/planning/architecture/plugin-trust-model.md). Until extism
+        // ships a release on a patched wasmtime, only developer-authored,
+        // trusted plugins may be loaded.
         let manifest = extism::Manifest::new([wasm]);
-        // `true` enables WASI for plugins that need it; the sandbox limits
-        // filesystem access to what extism's default allow list exposes.
         let plugin = extism::Plugin::new(&manifest, [], true).map_err(|e| PluginError::Wasm {
             plugin: plugin_name.to_owned(),
             message: e.to_string(),
