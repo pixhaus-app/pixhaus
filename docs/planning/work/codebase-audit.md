@@ -150,22 +150,25 @@ Verdict: **strong and consistent.** ~1,729 Rust test fns plus 410 UI test calls 
 
 These are optional. Nothing here is blocking; the codebase is shippable as-is.
 
+Status: the backlog below was actioned on the `refactor/split-large-modules`
+branch (2026-05-20). Done/partial items are marked.
+
 High value, low risk:
 
-- Split `ui/src/sheet/ReferenceSheetEditor.tsx` into a `sheet-editor-state.ts` plus panel sub-components. Best return — it is the one clear convention violation and the hardest file to reason about.
-- Extract the reference-sheet subsystem out of `app/src/commands/library.rs` into a `library/` module directory.
+- **Partial** — `ui/src/sheet/ReferenceSheetEditor.tsx`: state extracted into `sheet-editor-state.ts` (`createSheetEditorState()` factory + option tables + pure helpers). The panel sub-component breakup (MaskRefinePanel / RegionalRefinePanel / AssetBrowser / ProvenancePanel) is deferred — it needs a running dev server to verify reactivity, which tsc/tests can't prove.
+- **Done** — reference-sheet subsystem extracted from `app/src/commands/library.rs` into `library/{reference_sheets,lora}.rs` (shared helpers/tests stay in `mod.rs`).
 
 Medium value:
 
-- Document the plugin/script trust model explicitly in `docs/`, and gate untrusted-plugin loading behind a hardened Lua stdlib + explicit WASM capability list before it ships.
-- Add `cargo-deny` with a `deny.toml` and wire it into CI to enforce licensing and advisories.
-- Split `core/src/project/library.rs` into a module directory by concern.
+- **Done** — plugin/script trust model documented in `docs/planning/architecture/plugin-trust-model.md`; Lua stdlib sandboxed (`os`/`io`/`debug` removed from the default `LuaRuntime::new()`, `new_trusted()` for vetted scripts); WASM deny-all capability posture made explicit.
+- **Done** — `cargo-deny` added (`.cargo/deny.toml`) and wired into CI. Surfaced a real cluster of wasmtime sandbox-escape advisories via extism; ignored under the trusted-plugin model with a documented revisit trigger.
+- **Done** — `core/src/project/library.rs` split into `library/{core,tags,ai,reference_sheets,assets}.rs` (no `palettes.rs`: `Palette` already has its own module).
 
 Low value / opportunistic:
 
-- Introduce a `with_sprite_*_mut` helper to cut repeated lock/lookup/dirty/emit boilerplate in `app/src/commands/{canvas,layers}.rs`.
-- Split `ai/src/plugin/runtime.rs` into `registry` and `invocation` modules the next time it is touched.
-- Add direct unit tests for `core/src/undo/history.rs`.
+- **Done** — `with_layer_mut` helper added to `app/src/commands/layers.rs`, collapsing the five layer setters. `canvas.rs` keeps its own `commit_pixel_op` abstraction.
+- **Done** — `ai/src/plugin/runtime.rs` split into `runtime/{registry,invocation}.rs`.
+- **Done** — `core/src/undo/history.rs`: the existing ~370-line test module was already thorough; added the two missing cases (byte-cap eviction, off-path branch-subtree drop).
 - ~~Confirm the 12 `Arc<Mutex>` sites in `scripting` are each genuinely Lua-VM-bound.~~ Done 2026-05-20 — all confirmed VM-bound (see section 2).
 
 ## Appendix: methodology
