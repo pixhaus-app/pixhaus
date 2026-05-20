@@ -186,6 +186,7 @@ export function resetCanvasState(): void {
   setActiveLayerId(null);
   setSelectionRect(null);
   setSelectionKind(null);
+  setSelectionMask(null);
   setTransformBounds(null);
   setIsSelectMode(false);
 }

@@ -2291,11 +2291,10 @@ pub async fn canvas_select_ellipse(
 ) -> CommandResult<SelectionState> {
     let mut doc = state.doc.write().await;
     let (canvas_w, canvas_h) = sprite_canvas_size(&doc, sprite_id)?;
-    let mask = select_ellipse(canvas_w, canvas_h, bounds).map_err(|e| {
-        AppCommandError::Validation {
+    let mask =
+        select_ellipse(canvas_w, canvas_h, bounds).map_err(|e| AppCommandError::Validation {
             detail: e.to_string(),
-        }
-    })?;
+        })?;
     let new_state = if mask.selected_count() == 0 {
         SelectionState {
             region: None,
@@ -2344,7 +2343,9 @@ fn crop_mask_region(
     pixels: &[u8],
     bounds: Rect,
 ) -> Result<SelectionMaskData, AppCommandError> {
-    let bx = u32::try_from(bounds.origin.x.max(0)).unwrap_or(0).min(width);
+    let bx = u32::try_from(bounds.origin.x.max(0))
+        .unwrap_or(0)
+        .min(width);
     let by = u32::try_from(bounds.origin.y.max(0))
         .unwrap_or(0)
         .min(height);
@@ -2373,6 +2374,36 @@ fn crop_mask_region(
     })
 }
 
+/// Resolves the mask payload for a selection region against the document's
+/// pixel buffers. `Mask` regions crop to their bounds; `Rect`, empty, and
+/// `None` regions need no payload (they render from their bounds alone).
+fn selection_mask_payload(
+    region: Option<&SelectionRegion>,
+    buffers: &[PixelBufferEntry],
+) -> Result<Option<SelectionMaskData>, AppCommandError> {
+    let (bounds, mask_id) = match region {
+        Some(SelectionRegion::Mask { bounds, mask }) => (*bounds, *mask),
+        _ => return Ok(None),
+    };
+
+    let entry = buffers
+        .iter()
+        .find(|e| e.id == mask_id.get())
+        .ok_or_else(|| AppCommandError::NotFound {
+            entity: "pixel buffer".into(),
+            id: u64::from(mask_id.get()),
+        })?;
+
+    let cropped = crop_mask_region(
+        entry.width,
+        entry.height,
+        entry.stride,
+        &entry.pixels,
+        bounds,
+    )?;
+    Ok(Some(cropped))
+}
+
 /// Returns the current selection mask cropped to its bounds, or `None` when
 /// the selection is empty or rectangular (rect selections render from their
 /// bounds alone, so they need no mask payload).
@@ -2386,22 +2417,7 @@ pub async fn canvas_get_selection_mask(
         .as_ref()
         .ok_or(AppCommandError::NoActiveProject)?;
 
-    let (bounds, mask_id) = match &project.selection.region {
-        Some(SelectionRegion::Mask { bounds, mask }) => (*bounds, *mask),
-        _ => return Ok(None),
-    };
-
-    let entry = doc
-        .pixel_buffers
-        .iter()
-        .find(|e| e.id == mask_id.get())
-        .ok_or_else(|| AppCommandError::NotFound {
-            entity: "pixel buffer".into(),
-            id: u64::from(mask_id.get()),
-        })?;
-
-    let cropped = crop_mask_region(entry.width, entry.height, entry.stride, &entry.pixels, bounds)?;
-    Ok(Some(cropped))
+    selection_mask_payload(project.selection.region.as_ref(), &doc.pixel_buffers)
 }
 
 /// Lifts a cel-local mask onto a canvas-sized mask, placing it at `cel_pos`.
@@ -2548,6 +2564,67 @@ mod tests {
         assert_eq!((cropped.x, cropped.y), (2, 2));
         assert_eq!((cropped.width, cropped.height), (1, 1));
         assert_eq!(cropped.data, vec![255]);
+    }
+
+    #[test]
+    fn selection_mask_payload_none_for_rect_and_empty() {
+        // Rect and empty selections carry no mask payload.
+        let rect = SelectionRegion::Rect {
+            bounds: Rect::from_xywh(0, 0, 4, 4),
+        };
+        assert!(selection_mask_payload(Some(&rect), &[]).unwrap().is_none());
+        assert!(selection_mask_payload(None, &[]).unwrap().is_none());
+    }
+
+    #[test]
+    fn selection_mask_payload_crops_mask_region() {
+        // A 4x4 canvas mask with a 2x2 block selected at (1, 1), bounds tight.
+        let mut pixels = vec![0u8; 16];
+        for (y, x) in [(1u32, 1u32), (1, 2), (2, 1), (2, 2)] {
+            pixels[(y * 4 + x) as usize] = 255;
+        }
+        let buffers = vec![PixelBufferEntry {
+            id: 7,
+            width: 4,
+            height: 4,
+            stride: 4,
+            pixels,
+        }];
+        let region = SelectionRegion::Mask {
+            bounds: Rect::from_xywh(1, 1, 2, 2),
+            mask: PixelBufferId::new(7),
+        };
+        let payload = selection_mask_payload(Some(&region), &buffers)
+            .unwrap()
+            .expect("mask region yields a payload");
+        assert_eq!((payload.x, payload.y), (1, 1));
+        assert_eq!((payload.width, payload.height), (2, 2));
+        assert_eq!(payload.data, vec![255, 255, 255, 255]);
+    }
+
+    #[test]
+    fn selection_mask_payload_errors_on_missing_buffer() {
+        // A mask region pointing at an absent buffer is a not-found error.
+        let region = SelectionRegion::Mask {
+            bounds: Rect::from_xywh(0, 0, 2, 2),
+            mask: PixelBufferId::new(99),
+        };
+        assert!(selection_mask_payload(Some(&region), &[]).is_err());
+    }
+
+    #[test]
+    fn select_ellipse_empty_for_degenerate_bounds() {
+        // canvas_select_ellipse clears the selection when the inscribed ellipse
+        // covers no pixels; a zero-size rect is the degenerate case.
+        let mask = select_ellipse(16, 16, Rect::from_xywh(5, 5, 0, 0)).unwrap();
+        assert_eq!(mask.selected_count(), 0);
+    }
+
+    #[test]
+    fn select_ellipse_selects_interior_for_normal_bounds() {
+        // A normal ellipse selects pixels, so the command commits a mask region.
+        let mask = select_ellipse(16, 16, Rect::from_xywh(2, 2, 10, 10)).unwrap();
+        assert!(mask.selected_count() > 0);
     }
 
     #[test]

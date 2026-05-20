@@ -516,11 +516,7 @@ export class CanvasRenderer {
   // Uploads the selection mask as an R8 texture so the mask-ants pass can
   // sample per-pixel inclusion. Single-channel rows aren't 4-byte aligned, so
   // UNPACK_ALIGNMENT must drop to 1 for the upload and restore afterwards.
-  private uploadMaskTexture(mask: {
-    width: number;
-    height: number;
-    data: Uint8Array;
-  }): void {
+  private uploadMaskTexture(mask: { width: number; height: number; data: Uint8Array }): void {
     const { gl } = this;
     if (!this.maskTex) {
       this.maskTex = gl.createTexture();
