@@ -11,8 +11,8 @@ use base64::Engine;
 use pixhaus_core::canvas::tools::{BrushShape, draw_stroke, flood_fill};
 use pixhaus_core::canvas::{LayerInput, PixelBuffer, composite_onto};
 use pixhaus_core::project::{
-    CanvasState, Cel, CelData, FrameIndex, IVec2, Layer, LayerId, LayerKind, Palette, PixelBufferId,
-    Rect, Rgba, SelectionRegion, SelectionState, Size, SpriteId,
+    CanvasState, Cel, CelData, FrameIndex, IVec2, Layer, LayerId, LayerKind, Palette,
+    PixelBufferId, Rect, Rgba, SelectionRegion, SelectionState, Size, SpriteId,
 };
 use pixhaus_core::selection::GapCloseConfig;
 use pixhaus_core::selection::SelectionMask;
@@ -3024,17 +3024,19 @@ mod tests {
     #[test]
     fn vectorize_inputs_from_doc_unknown_sprite_is_error() {
         let doc = doc_with_ink_layer_and_palette();
-        let err =
-            vectorize_inputs_from_doc(&doc, SpriteId::new(999), LayerId::new(1)).unwrap_err();
+        let err = vectorize_inputs_from_doc(&doc, SpriteId::new(999), LayerId::new(1)).unwrap_err();
         assert!(matches!(err, AppCommandError::NotFound { .. }));
     }
 
     #[test]
     fn mlaa_prep_resolves_active_frame_and_reads_cel() {
         let mut doc = doc_with_ink_layer_and_palette();
-        let prep =
-            mlaa_prep_in_doc(&mut doc, SpriteId::new(1), LayerId::new(1), None, None).expect("prep");
-        assert_eq!(prep.frame_index, 0, "defaults to frame 0 when no canvas set");
+        let prep = mlaa_prep_in_doc(&mut doc, SpriteId::new(1), LayerId::new(1), None, None)
+            .expect("prep");
+        assert_eq!(
+            prep.frame_index, 0,
+            "defaults to frame 0 when no canvas set"
+        );
         assert_eq!(prep.config, MlaaConfig::default());
         assert_eq!(prep.src.width(), 16);
         assert_eq!(prep.before.len(), 16 * 16 * 4);
@@ -3047,8 +3049,14 @@ mod tests {
     #[test]
     fn mlaa_prep_respects_explicit_config() {
         let mut doc = doc_with_ink_layer_and_palette();
-        let prep = mlaa_prep_in_doc(&mut doc, SpriteId::new(1), LayerId::new(1), Some(32), Some(64))
-            .expect("prep");
+        let prep = mlaa_prep_in_doc(
+            &mut doc,
+            SpriteId::new(1),
+            LayerId::new(1),
+            Some(32),
+            Some(64),
+        )
+        .expect("prep");
         assert_eq!(prep.config.threshold, 32);
         assert_eq!(prep.config.softness, 64);
     }

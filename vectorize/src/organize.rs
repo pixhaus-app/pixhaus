@@ -249,11 +249,7 @@ mod tests {
             path: vec![(2.0, 0.0, 1.0), (3.0, 0.0, 1.0), (4.0, 0.0, 1.0)],
         };
         let graph = SkeletonGraph {
-            nodes: vec![
-                build_node(0, 0),
-                build_node(2, 0),
-                build_node(4, 0),
-            ],
+            nodes: vec![build_node(0, 0), build_node(2, 0), build_node(4, 0)],
             edges: vec![e1, e2],
         };
         let out = organize(graph, &CenterlineConfig::default());
@@ -275,10 +271,7 @@ mod tests {
             ],
         };
         let graph = SkeletonGraph {
-            nodes: vec![
-                build_node(0, 0),
-                build_node(3, 0),
-            ],
+            nodes: vec![build_node(0, 0), build_node(3, 0)],
             edges: vec![bar],
         };
         let cfg = CenterlineConfig {

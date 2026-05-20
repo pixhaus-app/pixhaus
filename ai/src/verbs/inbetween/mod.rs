@@ -255,7 +255,7 @@ impl InbetweenVerb {
         let start_bytes = inputs.frame_a.bytes.clone();
         let end_bytes = inputs.frame_b.bytes.clone();
         let palette_owned = palette.cloned();
-        let pixel_datas = tokio::task::spawn_blocking(move || {
+        let pixel_frames = tokio::task::spawn_blocking(move || {
             (0..n)
                 .map(|i| {
                     let i_u16 = u16::try_from(i).unwrap_or(u16::MAX);
@@ -287,7 +287,7 @@ impl InbetweenVerb {
         let mut cels = Vec::with_capacity(n as usize);
         let mut pixel_buffers = Vec::with_capacity(n as usize);
 
-        for (i, pixel_data) in (0..n).zip(pixel_datas) {
+        for (i, pixel_data) in (0..n).zip(pixel_frames) {
             let buf_id = PixelBufferId::new(i);
             let cel = Cel::raster(
                 LayerId::new(PLACEHOLDER_LAYER),

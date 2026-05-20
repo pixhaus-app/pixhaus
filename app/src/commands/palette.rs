@@ -976,8 +976,8 @@ mod tests {
         let mut doc = app_state.doc.write().await;
         let id = page_add_in_doc(&mut doc, sprite_id, palette_id, "p".into()).unwrap();
         // Palette has 2 colors; index 2 is out of range.
-        let err = page_set_entries_in_doc(&mut doc, sprite_id, palette_id, id, vec![0, 2])
-            .unwrap_err();
+        let err =
+            page_set_entries_in_doc(&mut doc, sprite_id, palette_id, id, vec![0, 2]).unwrap_err();
         assert!(matches!(err, AppCommandError::OutOfRange { .. }));
         // In-range membership is stored.
         page_set_entries_in_doc(&mut doc, sprite_id, palette_id, id, vec![0, 1]).unwrap();
