@@ -35,6 +35,8 @@ import {
   activeSpriteId,
   activeFrameIndex,
   selectionRect,
+  selectionKind,
+  isSelectMode,
   resetCanvasState,
   resetViewport,
 } from "./canvas-state";
@@ -319,13 +321,18 @@ const Canvas: Component = () => {
           vpH={vpH()}
           preview={shapePreview()}
         />
+        {/* Handles render only for a rectangular selection while a selection
+            tool is active. Mask selections (wand, lasso, ellipse) only know
+            their bounding box, so resize handles would imply a rectangular
+            transform they don't support; and with a draw tool the body
+            hit-zone must not steal clicks meant for painting. */}
         <TransformHandles
           scrollX={scrollX()}
           scrollY={scrollY()}
           zoom={zoom()}
           vpW={vpW()}
           vpH={vpH()}
-          bounds={transformBounds()}
+          bounds={isSelectMode() && selectionKind() === "rect" ? transformBounds() : null}
           onHandleDown={(handle: TransformHandle, e: PointerEvent) => startTransformDrag(handle, e)}
         />
       </div>

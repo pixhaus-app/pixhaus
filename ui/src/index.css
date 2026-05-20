@@ -60,6 +60,11 @@ select {
   /* Borders */
   --border: #2a2a35;
   --border-strong: #3d3d50;
+  --border-default: var(--border);
+
+  /* Panel header strip — sits a touch above the panel body so collapsible
+     section headers read as headers rather than blending into the rail. */
+  --bg-panel-header: #1d1d26;
 
   /* Text */
   --text-primary: #e6e6f0;
@@ -130,6 +135,8 @@ select {
 
   --border: #2e2e38;
   --border-strong: #424250;
+  --border-default: var(--border);
+  --bg-panel-header: #22222a;
 
   --text-primary: #e4e4ef;
   --text-secondary: #8888a0;
@@ -165,6 +172,8 @@ select {
 
   --border: #d4d4e0;
   --border-strong: #b0b0c8;
+  --border-default: var(--border);
+  --bg-panel-header: #eef0f6;
 
   --text-primary: #1a1a2e;
   --text-secondary: #5a5a72;
@@ -1066,6 +1075,13 @@ body {
   background: var(--accent-hover, var(--accent));
 }
 
+.toolbar-divider {
+  width: 20px;
+  height: 1px;
+  margin: 2px auto;
+  background: var(--border-strong);
+}
+
 /* ── Tool options panel (top strip beside the toolbar) ───────────────────── */
 
 .tool-options-panel {
@@ -1254,14 +1270,36 @@ body {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 4px 8px 2px;
+  padding: 6px 8px 2px;
+  border-top: 1px solid var(--border);
 }
 
-.pp__grid-label {
+/* Shared section-label treatment for the palette panel's sub-blocks so
+   Color / Pages / Animation read as labelled groups, not loose text. */
+.pp__grid-label,
+.pp__pages-label,
+.pp__anim-label {
   font-size: 11px;
-  color: var(--text-disabled);
+  font-weight: 600;
+  color: var(--text-secondary);
   text-transform: uppercase;
   letter-spacing: 0.06em;
+}
+
+/* Pages and Animation sub-sections: separators + breathing room. They had
+   no styling before, so they ran together with the grid above. */
+.pp__pages,
+.pp__anim {
+  padding: 4px 8px 8px;
+  border-top: 1px solid var(--border);
+}
+
+.pp__pages-header,
+.pp__anim-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 4px 0;
 }
 
 .pp__actions {
@@ -2899,6 +2937,9 @@ body {
   transition: background var(--transition-fast);
   position: relative;
   box-sizing: border-box;
+  /* Hairline separator so adjacent rows read as distinct cards rather
+     than one undifferentiated list. */
+  border-bottom: 1px solid var(--border);
   /* Without this, dragging from the name area selects the text instead
      of starting a drag — even though the row is draggable. */
   user-select: none;
@@ -2963,6 +3004,9 @@ body {
   display: flex;
   align-items: center;
   justify-content: center;
+  border: 1px solid var(--border-strong);
+  border-radius: 3px;
+  background: var(--bg-app);
 }
 
 .layer-row__name {
@@ -4276,11 +4320,21 @@ button.library-row__anchor-badge {
 .rail-section {
   display: flex;
   flex-direction: column;
-  border-bottom: 1px solid var(--border-default);
+  border-bottom: 1px solid var(--border-strong);
   flex-shrink: 0;
 }
 
+/* Static-content sections (brush, fill, select, dithering, fx, …) size to
+   their content and must never shrink, or their body clips the controls.
+   The rail itself scrolls when the open sections don't all fit. */
 .rail-section[data-open="true"] {
+  flex-shrink: 0;
+}
+
+/* Sections that own a scrollable list may shrink and scroll internally so a
+   long list doesn't push everything else off-screen. */
+.rail-section[data-open="true"][data-section="layers"],
+.rail-section[data-open="true"][data-section="color"] {
   flex-shrink: 1;
   min-height: 0;
 }
@@ -4291,16 +4345,22 @@ button.library-row__anchor-badge {
   background: var(--bg-panel-header, var(--bg-panel));
 }
 
+/* When a section is open, separate its header strip from the body so the
+   header reads as a label sitting above its controls. */
+.rail-section[data-open="true"] .rail-section__head {
+  border-bottom: 1px solid var(--border-default);
+}
+
 .rail-section__header {
   all: unset;
   display: flex;
   align-items: center;
   gap: 6px;
-  padding: 6px 8px;
+  padding: 7px 8px;
   cursor: pointer;
   font-size: 11px;
-  font-weight: 500;
-  letter-spacing: 0.4px;
+  font-weight: 600;
+  letter-spacing: 0.5px;
   text-transform: uppercase;
   color: var(--text-secondary);
   flex: 1;
@@ -4310,6 +4370,12 @@ button.library-row__anchor-badge {
 
 .rail-section__header:hover {
   color: var(--text-primary);
+  background: var(--bg-hover);
+}
+
+.rail-section[data-open="true"] .rail-section__chevron {
+  color: var(--accent);
+  opacity: 1;
 }
 
 .rail-section__header:focus-visible {
@@ -4332,6 +4398,21 @@ button.library-row__anchor-badge {
   align-items: center;
   gap: 4px;
   padding-right: 8px;
+}
+
+.rail-section__help {
+  all: unset;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 6px 8px;
+  cursor: help;
+  color: var(--text-disabled);
+}
+
+.rail-section__help:hover,
+.rail-section__help:focus-visible {
+  color: var(--accent);
 }
 
 .rail-section__body {
@@ -4366,17 +4447,64 @@ button.library-row__anchor-badge {
 .sheet-panel__rail-actions {
   display: flex;
   gap: 4px;
-  padding: 4px 8px;
+  padding: 6px 8px;
+}
+
+.layer-panel__add-btn {
+  all: unset;
+  box-sizing: border-box;
+  display: flex;
+  flex: 1;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
+  height: 26px;
+  border: 1px solid var(--border-strong);
+  border-radius: 4px;
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--text-secondary);
+  white-space: nowrap;
+  cursor: pointer;
+  transition:
+    background var(--transition-fast),
+    color var(--transition-fast),
+    border-color var(--transition-fast);
+}
+
+.layer-panel__add-btn:hover {
+  background: var(--accent-subtle);
+  border-color: var(--accent-border);
+  color: var(--text-primary);
+}
+
+.layer-panel__add-btn:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+
+.layer-panel__add-btn:disabled {
+  opacity: 0.4;
+  cursor: default;
 }
 
 /* The brush/fill rail sections inherit the existing tool-options styles
    but render inside `.rail-section__body` so they don't need their own
    panel chrome. */
 .tool-options-group {
-  padding: 6px 10px;
+  padding: 10px;
   display: flex;
   flex-direction: column;
-  gap: 6px;
+  gap: 8px;
+}
+
+/* In the rail, a single active layer's blend/opacity strip (which breaks out
+   of the 32px row into a 56px active row) was getting clipped when the
+   section was squeezed. A min-height keeps the full active row visible; the
+   rail itself scrolls when sections don't all fit. */
+.layer-panel--in-rail .layer-panel__scroll {
+  min-height: 100px;
+  padding-bottom: 4px;
 }
 
 /* ── Collapsed docks ──────────────────────────────────────────────────────── */
@@ -4418,4 +4546,82 @@ button.library-row__anchor-badge {
 .timeline-dock-collapsed:hover {
   color: var(--text-primary);
   background: var(--bg-panel-header, var(--bg-panel));
+}
+
+/* ── Tooltip ─────────────────────────────────────────────────────────────── */
+
+.tt-anchor {
+  display: inline-flex;
+}
+
+.tt {
+  position: fixed;
+  z-index: 4000;
+  max-width: 240px;
+  padding: 6px 8px;
+  background: var(--bg-elevated);
+  border: 1px solid var(--border-strong);
+  border-radius: 6px;
+  box-shadow: 0 4px 16px rgb(0 0 0 / 45%);
+  color: var(--text-primary);
+  pointer-events: none;
+  animation: tt-fade var(--transition-fast, 80ms) ease;
+}
+
+@keyframes tt-fade {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+.tt[data-placement="right"] {
+  transform: translateY(-50%);
+}
+
+.tt[data-placement="left"] {
+  transform: translate(-100%, -50%);
+}
+
+.tt[data-placement="top"] {
+  transform: translate(-50%, -100%);
+}
+
+.tt[data-placement="bottom"] {
+  transform: translateX(-50%);
+}
+
+.tt__head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  justify-content: space-between;
+}
+
+.tt__label {
+  font-size: 12px;
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.tt__kbd {
+  flex-shrink: 0;
+  padding: 1px 5px;
+  font-family: inherit;
+  font-size: 10px;
+  font-weight: 600;
+  line-height: 1.4;
+  color: var(--text-secondary);
+  background: var(--bg-active);
+  border: 1px solid var(--border-strong);
+  border-radius: 3px;
+}
+
+.tt__desc {
+  margin: 3px 0 0;
+  font-size: 11px;
+  line-height: 1.35;
+  color: var(--text-secondary);
 }

@@ -46,6 +46,13 @@ export const [selectionRect, setSelectionRect] = createSignal<{
   height: number;
 } | null>(null);
 
+// Shape of the active selection. "rect" is an exact rectangle (drag marquee);
+// "mask" is an arbitrary region (wand, lasso, ellipse, color range) for which
+// `selectionRect` only holds the bounding box. The transform gizmo is shown
+// for "rect" selections only — resize handles on a mask's bounding box would
+// imply a rectangular transform the mask doesn't actually support.
+export const [selectionKind, setSelectionKind] = createSignal<"rect" | "mask" | null>(null);
+
 // Layer the active selection was anchored on. Mirrors the `anchor_layer`
 // the backend stored when `canvas_set_selection` ran (see select-input).
 // Lets non-paint consumers (e.g. tile capture) know which layer's pixels
@@ -165,6 +172,7 @@ export function resetCanvasState(): void {
   setActiveFrameIndex(0);
   setActiveLayerId(null);
   setSelectionRect(null);
+  setSelectionKind(null);
   setTransformBounds(null);
   setIsSelectMode(false);
 }

@@ -1,6 +1,22 @@
 import { keybindPreset, customKeybinds } from "../preferences/preferences-store";
-import { ASEPRITE_DEFAULTS, PHOTOSHOP_DEFAULTS } from "./defaults";
+import { ASEPRITE_DEFAULTS, PHOTOSHOP_DEFAULTS, defaultCombo } from "./defaults";
 import { dispatchCommand } from "../command-palette/command-registry";
+
+/**
+ * Returns the combo currently bound to a command, or undefined if unbound.
+ *
+ * A custom override wins over the active preset, mirroring the resolution
+ * order in the keydown handler. Reactive: reads the preset and custom-bind
+ * signals, so callers in a tracking scope re-run when the user remaps keys.
+ */
+export function comboForCommand(commandId: string): string | undefined {
+  const custom = customKeybinds();
+  for (const [combo, id] of Object.entries(custom)) {
+    if (id === commandId) return combo;
+  }
+  const table = keybindPreset() === "photoshop" ? PHOTOSHOP_DEFAULTS : ASEPRITE_DEFAULTS;
+  return defaultCombo(table, commandId);
+}
 
 // Builds a canonical combo string from a keyboard event.
 // Format: [Ctrl+][Shift+][Alt+]Key

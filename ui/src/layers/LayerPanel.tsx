@@ -26,6 +26,7 @@ import {
   selectedLayerIds,
   selectLayer,
 } from "./layer-state";
+import { Plus } from "lucide-solid";
 import LayerRow from "./LayerRow";
 import LayerContextMenu, { type ContextMenuTarget } from "./LayerContextMenu";
 import TilesetPickerDialog from "./TilesetPickerDialog";
@@ -231,13 +232,14 @@ const LayerPanel: Component<Props> = (props) => {
       <Show when={props.inRail}>
         <div class="layer-panel__rail-actions">
           <button
-            class="layer-panel__icon-btn"
+            class="layer-panel__add-btn"
             data-testid="layer-add"
             onClick={handleAddLayer}
             disabled={spriteId() === null}
             title="New raster layer"
           >
-            + New layer
+            <Plus size={13} aria-hidden={true} />
+            New layer
           </button>
         </div>
       </Show>

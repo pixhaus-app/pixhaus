@@ -250,47 +250,90 @@ interface TransformHandlesProps extends ViewportProps {
  * drag-to-translate.
  */
 export const TransformHandles: Component<TransformHandlesProps> = (props) => {
+  // A non-keyed `<Show>` runs its child function once, so any plain `const`
+  // computed in the body freezes at first render — see BrushCursor above for
+  // the same trap. The previous version did exactly that, which locked the
+  // gizmo to the selection's initial 1x1 bounds at the drag start (it looked
+  // mangled in a corner while the reactive marching ants grew correctly).
+  // Every screen-space value is a memo so the handles track the live bounds,
+  // scroll, and zoom.
+  // Handles are a fixed screen size (not scaled with zoom) so they stay
+  // grabbable at any magnification; kept small so they read as light chrome
+  // rather than dominating a small selection.
+  const handleSize = 4;
+  const handleStroke = 1.25;
+
+  function fireHandle(id: TransformHandle, e: PointerEvent): void {
+    e.stopPropagation();
+    props.onHandleDown?.(id, e);
+  }
+
   return (
     <Show when={props.bounds}>
       {(bounds) => {
-        const [sx0, sy0] = canvasToScreen(
-          bounds().x,
-          bounds().y,
-          props.scrollX,
-          props.scrollY,
-          props.zoom,
-          props.vpW,
-          props.vpH,
+        const sx0 = createMemo(
+          () =>
+            canvasToScreen(
+              bounds().x,
+              bounds().y,
+              props.scrollX,
+              props.scrollY,
+              props.zoom,
+              props.vpW,
+              props.vpH,
+            )[0],
         );
-        const [sx1, sy1] = canvasToScreen(
-          bounds().x + bounds().width,
-          bounds().y + bounds().height,
-          props.scrollX,
-          props.scrollY,
-          props.zoom,
-          props.vpW,
-          props.vpH,
+        const sy0 = createMemo(
+          () =>
+            canvasToScreen(
+              bounds().x,
+              bounds().y,
+              props.scrollX,
+              props.scrollY,
+              props.zoom,
+              props.vpW,
+              props.vpH,
+            )[1],
         );
-        const cxMid = (sx0 + sx1) / 2;
-        const cyMid = (sy0 + sy1) / 2;
-        const handleSize = 8;
-        const rotateOffset = 24; // CSS px above the bounding box
+        const sx1 = createMemo(
+          () =>
+            canvasToScreen(
+              bounds().x + bounds().width,
+              bounds().y + bounds().height,
+              props.scrollX,
+              props.scrollY,
+              props.zoom,
+              props.vpW,
+              props.vpH,
+            )[0],
+        );
+        const sy1 = createMemo(
+          () =>
+            canvasToScreen(
+              bounds().x + bounds().width,
+              bounds().y + bounds().height,
+              props.scrollX,
+              props.scrollY,
+              props.zoom,
+              props.vpW,
+              props.vpH,
+            )[1],
+        );
+        const cxMid = createMemo(() => (sx0() + sx1()) / 2);
+        const cyMid = createMemo(() => (sy0() + sy1()) / 2);
 
-        const handles: Array<{ id: TransformHandle; cx: number; cy: number; cursor: string }> = [
-          { id: "nw", cx: sx0, cy: sy0, cursor: "nwse-resize" },
-          { id: "n", cx: cxMid, cy: sy0, cursor: "ns-resize" },
-          { id: "ne", cx: sx1, cy: sy0, cursor: "nesw-resize" },
-          { id: "e", cx: sx1, cy: cyMid, cursor: "ew-resize" },
-          { id: "se", cx: sx1, cy: sy1, cursor: "nwse-resize" },
-          { id: "s", cx: cxMid, cy: sy1, cursor: "ns-resize" },
-          { id: "sw", cx: sx0, cy: sy1, cursor: "nesw-resize" },
-          { id: "w", cx: sx0, cy: cyMid, cursor: "ew-resize" },
-        ];
-
-        function fireHandle(id: TransformHandle, e: PointerEvent): void {
-          e.stopPropagation();
-          props.onHandleDown?.(id, e);
-        }
+        const handles = createMemo<
+          Array<{ id: TransformHandle; cx: number; cy: number; cursor: string }>
+        >(() => [
+          { id: "nw", cx: sx0(), cy: sy0(), cursor: "nwse-resize" },
+          { id: "n", cx: cxMid(), cy: sy0(), cursor: "ns-resize" },
+          { id: "ne", cx: sx1(), cy: sy0(), cursor: "nesw-resize" },
+          { id: "e", cx: sx1(), cy: cyMid(), cursor: "ew-resize" },
+          { id: "se", cx: sx1(), cy: sy1(), cursor: "nwse-resize" },
+          { id: "s", cx: cxMid(), cy: sy1(), cursor: "ns-resize" },
+          { id: "sw", cx: sx0(), cy: sy1(), cursor: "nesw-resize" },
+          { id: "w", cx: sx0(), cy: cyMid(), cursor: "ew-resize" },
+        ]);
 
         return (
           <svg
@@ -302,10 +345,10 @@ export const TransformHandles: Component<TransformHandlesProps> = (props) => {
           >
             {/* Interior hit zone: drag the body to translate the selection. */}
             <rect
-              x={sx0}
-              y={sy0}
-              width={sx1 - sx0}
-              height={sy1 - sy0}
+              x={sx0()}
+              y={sy0()}
+              width={sx1() - sx0()}
+              height={sy1() - sy0()}
               fill="transparent"
               stroke="#7aa2ff"
               stroke-width="1"
@@ -313,28 +356,7 @@ export const TransformHandles: Component<TransformHandlesProps> = (props) => {
               style={{ cursor: "move" }}
               onPointerDown={(e) => fireHandle("body", e)}
             />
-            {/* Tether between rotation handle and bounding box. */}
-            <line
-              x1={cxMid}
-              y1={sy0}
-              x2={cxMid}
-              y2={sy0 - rotateOffset}
-              stroke="#7aa2ff"
-              stroke-width="1"
-              pointer-events="none"
-            />
-            <circle
-              cx={cxMid}
-              cy={sy0 - rotateOffset}
-              r={handleSize / 2 + 2}
-              fill="#0f0f13"
-              stroke="#7aa2ff"
-              stroke-width="1.5"
-              data-handle="rotate"
-              style={{ cursor: "alias" }}
-              onPointerDown={(e) => fireHandle("rotate", e)}
-            />
-            <For each={handles}>
+            <For each={handles()}>
               {(h) => (
                 <rect
                   x={h.cx - handleSize / 2}
@@ -343,7 +365,7 @@ export const TransformHandles: Component<TransformHandlesProps> = (props) => {
                   height={handleSize}
                   fill="#0f0f13"
                   stroke="#7aa2ff"
-                  stroke-width="1.5"
+                  stroke-width={handleStroke}
                   data-handle={h.id}
                   style={{ cursor: h.cursor }}
                   onPointerDown={(e) => fireHandle(h.id, e)}

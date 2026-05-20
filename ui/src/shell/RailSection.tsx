@@ -5,7 +5,15 @@
 // header toggles userTouched so auto-expand rules stop driving it.
 
 import { Show, type Component, type JSX } from "solid-js";
-import { isSectionOpen, toggleSection, SECTION_TITLE, type SectionId } from "./rail-state";
+import { HelpCircle } from "lucide-solid";
+import {
+  isSectionOpen,
+  toggleSection,
+  SECTION_TITLE,
+  SECTION_HELP,
+  type SectionId,
+} from "./rail-state";
+import Tooltip from "../lib/ui/Tooltip";
 
 type Props = {
   id: SectionId;
@@ -50,6 +58,20 @@ const RailSection: Component<Props> = (props) => {
             {props.actions}
           </span>
         </Show>
+        <Tooltip
+          label={props.title ?? SECTION_TITLE[props.id]}
+          description={SECTION_HELP[props.id]}
+          placement="left"
+        >
+          <button
+            type="button"
+            class="rail-section__help"
+            aria-label={`About ${props.title ?? SECTION_TITLE[props.id]}`}
+            data-testid={`rail-section-help-${props.id}`}
+          >
+            <HelpCircle size={13} aria-hidden={true} />
+          </button>
+        </Tooltip>
       </div>
       <Show when={open()}>
         <div class="rail-section__body" id={`rail-section-${props.id}`}>

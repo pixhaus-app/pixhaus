@@ -542,9 +542,14 @@ export function attachCanvasInput(el: HTMLElement): () => void {
       return;
     }
 
-    // Selection mode: delegated to the selection input handler.
-    // Transform drag takes priority — skip if one is in progress.
-    if (isSelectMode() && transformDrag() === null && !spaceHeld) return;
+    // A transform drag owns the pointer. pointerdown on a gizmo handle fires
+    // before this mousedown and sets transformDrag, so bailing here stops the
+    // press from also starting a brush stroke (the cause of the draw-while-
+    // transforming + flicker bug). Space-pan still wins so the user can pan.
+    if (transformDrag() !== null && !spaceHeld) return;
+
+    // Selection mode is delegated to the selection input handler; never draw.
+    if (isSelectMode() && !spaceHeld) return;
 
     // Tile-paint mode: left-click places, right-click erases.
     if (activeTilemapCtx() !== null && !spaceHeld) {
