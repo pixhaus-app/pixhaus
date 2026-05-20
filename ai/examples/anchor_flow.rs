@@ -145,9 +145,20 @@ fn obtain_backend() -> Option<OpenAiBackend> {
 }
 
 /// Runs a real `OpenAI` image generation and returns the first image's bytes.
+///
+/// The image model defaults to the backend default (`gpt-image-2`); override
+/// it with `PIXHAUS_OPENAI_IMAGE_MODEL` (e.g. `gpt-image-1`) if your account
+/// doesn't have the default.
 async fn generate(backend: &OpenAiBackend) -> Result<Vec<u8>, String> {
+    let model = std::env::var("PIXHAUS_OPENAI_IMAGE_MODEL")
+        .ok()
+        .map(|m| m.trim().to_owned())
+        .filter(|m| !m.is_empty());
+    if let Some(m) = &model {
+        println!("      using image model override: {m}");
+    }
     let request = ImageGenRequest {
-        model: None, // backend default (gpt-image-2)
+        model,
         prompt: PROMPT.into(),
         negative_prompt: None,
         width: 1024,
