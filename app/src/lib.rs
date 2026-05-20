@@ -168,6 +168,10 @@ pub fn run() -> Result<(), AppError> {
             // palette
             commands::palette::palette_add,
             commands::palette::palette_add_color,
+            commands::palette::palette_animation_get,
+            commands::palette::palette_animation_remove_keyframe,
+            commands::palette::palette_animation_resolved,
+            commands::palette::palette_animation_set_keyframe,
             commands::palette::palette_delete,
             commands::palette::palette_list,
             commands::palette::palette_page_add,

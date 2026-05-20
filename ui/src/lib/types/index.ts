@@ -55,6 +55,7 @@ export type { NamedSprite } from "./NamedSprite";
 export type { NeighborCondition } from "./NeighborCondition";
 export type { NineSlice } from "./NineSlice";
 export type { Palette } from "./Palette";
+export type { PaletteAnimation } from "./PaletteAnimation";
 export type { PaletteEntry } from "./PaletteEntry";
 export type { PaletteFrameOverride } from "./PaletteFrameOverride";
 export type { PaletteId } from "./PaletteId";

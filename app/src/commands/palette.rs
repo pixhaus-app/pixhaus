@@ -1,7 +1,8 @@
 //! Palette CRUD and color management commands.
 
 use pixhaus_core::project::{
-    Palette, PaletteEntry, PaletteId, PalettePage, PalettePageId, Project, Rgba, SpriteId, UserData,
+    FrameIndex, Palette, PaletteAnimation, PaletteEntry, PaletteId, PalettePage, PalettePageId,
+    Project, Rgba, SpriteId, UserData,
 };
 use pixhaus_core::undo::{Command, CommandError, CommandResult as UndoCommandResult};
 use serde::{Deserialize, Deserializer, Serialize};
@@ -491,6 +492,188 @@ pub async fn palette_page_set_entries(
 ) -> CommandResult<()> {
     let mut doc = state.doc.write().await;
     page_set_entries_in_doc(&mut doc, sprite_id, palette_id, page_id, entry_indices)
+}
+
+// ── palette animation (S54) ──────────────────────────────────────────────────
+//
+// Per-entry keyframed colors over the timeline. The four commands below let
+// the palette panel set/remove keyframes on a single entry, read the whole
+// animation table, and resolve every entry's color at a given frame for the
+// "resolved at frame N" chip. They follow the same `*_in_doc` + thin
+// `#[tauri::command]` wrapper split as the page commands so the logic is unit
+// testable without a Tauri runtime.
+
+fn animation_set_keyframe_in_doc(
+    doc: &mut DocumentStore,
+    sprite_id: SpriteId,
+    palette_id: PaletteId,
+    entry_index: u32,
+    frame: u32,
+    color: Rgba,
+) -> CommandResult<()> {
+    {
+        let palette = find_palette_mut(doc, sprite_id, palette_id)?;
+        let len = u32::try_from(palette.colors.len()).map_err(|_| AppCommandError::Validation {
+            detail: "palette has too many colors".into(),
+        })?;
+        if entry_index >= len {
+            return Err(AppCommandError::OutOfRange {
+                detail: format!(
+                    "entry index {entry_index} out of range (palette has {len} colors)"
+                ),
+            });
+        }
+        palette
+            .animation
+            .get_or_insert_with(PaletteAnimation::default)
+            .set(entry_index, FrameIndex::new(frame), color);
+    }
+    doc.dirty = true;
+    Ok(())
+}
+
+fn animation_remove_keyframe_in_doc(
+    doc: &mut DocumentStore,
+    sprite_id: SpriteId,
+    palette_id: PaletteId,
+    entry_index: u32,
+    frame: u32,
+) -> CommandResult<()> {
+    {
+        let palette = find_palette_mut(doc, sprite_id, palette_id)?;
+        let animation = palette
+            .animation
+            .as_mut()
+            .ok_or_else(|| AppCommandError::NotFound {
+                entity: "palette keyframe".into(),
+                id: u64::from(frame),
+            })?;
+        let removed = animation
+            .keyframes
+            .get_mut(&entry_index)
+            .and_then(|per_entry| per_entry.remove(&FrameIndex::new(frame)))
+            .is_some();
+        if !removed {
+            return Err(AppCommandError::NotFound {
+                entity: "palette keyframe".into(),
+                id: u64::from(frame),
+            });
+        }
+        // Prune the now-empty inner map so `get` does not report an entry
+        // with zero keyframes; drop the whole table when it empties so the
+        // palette re-saves with `animation` omitted from the wire form.
+        if animation
+            .keyframes
+            .get(&entry_index)
+            .is_some_and(std::collections::BTreeMap::is_empty)
+        {
+            animation.keyframes.remove(&entry_index);
+        }
+        if animation.keyframes.is_empty() {
+            palette.animation = None;
+        }
+    }
+    doc.dirty = true;
+    Ok(())
+}
+
+fn animation_get_in_doc(
+    doc: &DocumentStore,
+    sprite_id: SpriteId,
+    palette_id: PaletteId,
+) -> CommandResult<Option<PaletteAnimation>> {
+    let project = doc
+        .project
+        .as_ref()
+        .ok_or(AppCommandError::NoActiveProject)?;
+    let palette = find_palette_in_project(project, sprite_id, palette_id)?;
+    Ok(palette.animation.clone())
+}
+
+fn animation_resolved_in_doc(
+    doc: &DocumentStore,
+    sprite_id: SpriteId,
+    palette_id: PaletteId,
+    frame: u32,
+) -> CommandResult<Vec<Rgba>> {
+    let project = doc
+        .project
+        .as_ref()
+        .ok_or(AppCommandError::NoActiveProject)?;
+    let palette = find_palette_in_project(project, sprite_id, palette_id)?;
+    let frame = FrameIndex::new(frame);
+    palette
+        .colors
+        .iter()
+        .enumerate()
+        .map(|(i, entry)| {
+            let index = u32::try_from(i).map_err(|_| AppCommandError::Validation {
+                detail: "palette has too many colors".into(),
+            })?;
+            Ok(palette
+                .animation
+                .as_ref()
+                .map_or(entry.color, |a| a.resolve(index, frame, entry.color)))
+        })
+        .collect()
+}
+
+/// Sets (or replaces) the keyframe color for `entry_index` at `frame`.
+/// Lazily creates the palette's animation table on the first keyframe.
+/// Rejects an out-of-range `entry_index`.
+#[tauri::command(async, rename_all = "snake_case")]
+pub async fn palette_animation_set_keyframe(
+    sprite_id: SpriteId,
+    palette_id: PaletteId,
+    entry_index: u32,
+    frame: u32,
+    color: Rgba,
+    state: State<'_, AppState>,
+) -> CommandResult<()> {
+    let mut doc = state.doc.write().await;
+    animation_set_keyframe_in_doc(&mut doc, sprite_id, palette_id, entry_index, frame, color)
+}
+
+/// Removes the keyframe at `(entry_index, frame)`. Returns `NotFound` when
+/// no such keyframe exists. Empties the animation table back to `None` when
+/// the last keyframe is removed.
+#[tauri::command(async, rename_all = "snake_case")]
+pub async fn palette_animation_remove_keyframe(
+    sprite_id: SpriteId,
+    palette_id: PaletteId,
+    entry_index: u32,
+    frame: u32,
+    state: State<'_, AppState>,
+) -> CommandResult<()> {
+    let mut doc = state.doc.write().await;
+    animation_remove_keyframe_in_doc(&mut doc, sprite_id, palette_id, entry_index, frame)
+}
+
+/// Returns the palette's animation table, or `None` when no keyframes are
+/// set. The UI uses this to list keyframes for the selected entry.
+#[tauri::command(async, rename_all = "snake_case")]
+pub async fn palette_animation_get(
+    sprite_id: SpriteId,
+    palette_id: PaletteId,
+    state: State<'_, AppState>,
+) -> CommandResult<Option<PaletteAnimation>> {
+    let doc = state.doc.read().await;
+    animation_get_in_doc(&doc, sprite_id, palette_id)
+}
+
+/// Resolves every palette entry's color at `frame`. Each entry falls back to
+/// its static color when it has no keyframe at or before `frame`. The result
+/// is aligned with `palette.colors`; the UI's "resolved at frame N" chip
+/// reads the entry it cares about by index.
+#[tauri::command(async, rename_all = "snake_case")]
+pub async fn palette_animation_resolved(
+    sprite_id: SpriteId,
+    palette_id: PaletteId,
+    frame: u32,
+    state: State<'_, AppState>,
+) -> CommandResult<Vec<Rgba>> {
+    let doc = state.doc.read().await;
+    animation_resolved_in_doc(&doc, sprite_id, palette_id, frame)
 }
 
 /// Moves a colour from `from_index` to `to_index` within a palette,
@@ -983,6 +1166,140 @@ mod tests {
         page_set_entries_in_doc(&mut doc, sprite_id, palette_id, id, vec![0, 1]).unwrap();
         let palette = find_palette_mut(&mut doc, sprite_id, palette_id).unwrap();
         assert_eq!(palette.pages[0].entry_indices, vec![0, 1]);
+    }
+
+    // ── Palette animation (S54) ───────────────────────────────────────────
+    //
+    // Same `*_in_doc` test strategy as the page commands: drive the helpers
+    // through an `AppState` doc so id allocation, the dirty flag, and
+    // `AppCommandError` mapping are exercised against real state.
+
+    #[tokio::test]
+    async fn animation_set_keyframe_creates_table_marks_dirty_and_resolves() {
+        let (app_state, sprite_id, palette_id) = doc_with_two_color_palette().await;
+        let mut doc = app_state.doc.write().await;
+        let keyed = Rgba {
+            r: 10,
+            g: 20,
+            b: 30,
+            a: 255,
+        };
+        animation_set_keyframe_in_doc(&mut doc, sprite_id, palette_id, 0, 4, keyed).unwrap();
+        assert!(doc.dirty, "set_keyframe marks the doc dirty");
+
+        let animation = animation_get_in_doc(&doc, sprite_id, palette_id)
+            .unwrap()
+            .expect("animation table created on first keyframe");
+        let resolved = animation.resolve(0, FrameIndex::new(4), Rgba::transparent());
+        assert_eq!(resolved, keyed, "keyframe is resolvable at its frame");
+    }
+
+    #[tokio::test]
+    async fn animation_set_keyframe_rejects_out_of_range_entry() {
+        let (app_state, sprite_id, palette_id) = doc_with_two_color_palette().await;
+        let mut doc = app_state.doc.write().await;
+        // Palette has 2 colors; entry index 2 is out of range.
+        let err = animation_set_keyframe_in_doc(
+            &mut doc,
+            sprite_id,
+            palette_id,
+            2,
+            0,
+            Rgba::transparent(),
+        )
+        .unwrap_err();
+        assert!(matches!(err, AppCommandError::OutOfRange { .. }));
+    }
+
+    #[tokio::test]
+    async fn animation_remove_keyframe_removes_then_404s_when_gone() {
+        let (app_state, sprite_id, palette_id) = doc_with_two_color_palette().await;
+        let mut doc = app_state.doc.write().await;
+        let keyed = Rgba {
+            r: 1,
+            g: 2,
+            b: 3,
+            a: 255,
+        };
+        animation_set_keyframe_in_doc(&mut doc, sprite_id, palette_id, 1, 7, keyed).unwrap();
+        animation_remove_keyframe_in_doc(&mut doc, sprite_id, palette_id, 1, 7).unwrap();
+        // The last keyframe is gone, so the table collapses back to None.
+        assert!(
+            animation_get_in_doc(&doc, sprite_id, palette_id)
+                .unwrap()
+                .is_none(),
+            "removing the last keyframe drops the animation table"
+        );
+        // Removing an already-gone keyframe is NotFound.
+        let err =
+            animation_remove_keyframe_in_doc(&mut doc, sprite_id, palette_id, 1, 7).unwrap_err();
+        assert!(matches!(err, AppCommandError::NotFound { .. }));
+    }
+
+    #[tokio::test]
+    async fn animation_resolved_returns_static_colors_without_animation() {
+        let (app_state, sprite_id, palette_id) = doc_with_two_color_palette().await;
+        let doc = app_state.doc.read().await;
+        let resolved = animation_resolved_in_doc(&doc, sprite_id, palette_id, 5).unwrap();
+        assert_eq!(resolved.len(), 2);
+        assert_eq!(
+            resolved[0],
+            Rgba {
+                r: 0,
+                g: 0,
+                b: 0,
+                a: 255
+            }
+        );
+        assert_eq!(
+            resolved[1],
+            Rgba {
+                r: 255,
+                g: 255,
+                b: 255,
+                a: 255
+            }
+        );
+    }
+
+    #[tokio::test]
+    async fn animation_resolved_uses_step_semantics() {
+        let (app_state, sprite_id, palette_id) = doc_with_two_color_palette().await;
+        let keyed = Rgba {
+            r: 9,
+            g: 8,
+            b: 7,
+            a: 255,
+        };
+        {
+            let mut doc = app_state.doc.write().await;
+            animation_set_keyframe_in_doc(&mut doc, sprite_id, palette_id, 0, 3, keyed).unwrap();
+        }
+        let doc = app_state.doc.read().await;
+        let static0 = Rgba {
+            r: 0,
+            g: 0,
+            b: 0,
+            a: 255,
+        };
+        // Before the keyframe: entry 0 falls back to its static color.
+        let before = animation_resolved_in_doc(&doc, sprite_id, palette_id, 2).unwrap();
+        assert_eq!(before[0], static0, "frame 2 precedes the keyframe at 3");
+        // At and after the keyframe: entry 0 resolves to the keyed color.
+        let at = animation_resolved_in_doc(&doc, sprite_id, palette_id, 3).unwrap();
+        assert_eq!(at[0], keyed, "frame 3 is the keyframe frame");
+        let after = animation_resolved_in_doc(&doc, sprite_id, palette_id, 10).unwrap();
+        assert_eq!(after[0], keyed, "frame 10 holds the last keyframe value");
+        // Entry 1 has no keyframe, so it stays static throughout.
+        assert_eq!(
+            after[1],
+            Rgba {
+                r: 255,
+                g: 255,
+                b: 255,
+                a: 255
+            }
+        );
     }
 
     #[test]

@@ -1,7 +1,7 @@
 // Palette CRUD and color management commands.
 
 import { invoke } from "../ipc";
-import type { Palette, PaletteId, PalettePageId, Rgba, SpriteId } from "../types";
+import type { Palette, PaletteAnimation, PaletteId, PalettePageId, Rgba, SpriteId } from "../types";
 
 // ── argument types ────────────────────────────────────────────────────────────
 
@@ -142,5 +142,69 @@ export function palettePageSetEntries(
     palette_id,
     page_id,
     entry_indices,
+  });
+}
+
+// ── palette animation (S54) ──────────────────────────────────────────────────
+
+/**
+ * Sets (or replaces) the keyframe color for `entry_index` at `frame`. The
+ * palette's animation table is created lazily on the first keyframe.
+ */
+export function paletteAnimationSetKeyframe(
+  sprite_id: SpriteId,
+  palette_id: PaletteId,
+  entry_index: number,
+  frame: number,
+  color: Rgba,
+): Promise<void> {
+  return invoke<void>("palette_animation_set_keyframe", {
+    sprite_id,
+    palette_id,
+    entry_index,
+    frame,
+    color,
+  });
+}
+
+/** Removes the keyframe at `(entry_index, frame)`. Rejects when none exists. */
+export function paletteAnimationRemoveKeyframe(
+  sprite_id: SpriteId,
+  palette_id: PaletteId,
+  entry_index: number,
+  frame: number,
+): Promise<void> {
+  return invoke<void>("palette_animation_remove_keyframe", {
+    sprite_id,
+    palette_id,
+    entry_index,
+    frame,
+  });
+}
+
+/** Returns the palette's animation table, or `null` when no keyframes are set. */
+export function paletteAnimationGet(
+  sprite_id: SpriteId,
+  palette_id: PaletteId,
+): Promise<PaletteAnimation | null> {
+  return invoke<PaletteAnimation | null>("palette_animation_get", {
+    sprite_id,
+    palette_id,
+  });
+}
+
+/**
+ * Resolves every palette entry's color at `frame`. The returned array is
+ * aligned with `palette.colors`; index it by the entry you care about.
+ */
+export function paletteAnimationResolved(
+  sprite_id: SpriteId,
+  palette_id: PaletteId,
+  frame: number,
+): Promise<Rgba[]> {
+  return invoke<Rgba[]>("palette_animation_resolved", {
+    sprite_id,
+    palette_id,
+    frame,
   });
 }
