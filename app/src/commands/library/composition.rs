@@ -1,9 +1,8 @@
 //! Composition-library IPC commands: Structures, Styles, and Prompts.
 //!
-//! The project tier lives on [`ProjectAi`](pixhaus_core::project::library::ProjectAi)
-//! (`project.library.ai`); built-ins come from
-//! [`BuiltinLibrary`](pixhaus_ai::compose::builtins::BuiltinLibrary). Project
-//! records shadow built-ins by id. Per spec section 11.
+//! The project tier lives on `ProjectAi` (`project.library.ai`); built-ins
+//! come from `BuiltinLibrary`. Project records shadow built-ins by id. Per
+//! spec section 11.
 //!
 //! The merge policies (`merge_structures` / `merge_styles` / `merge_prompts`)
 //! are pure and carry the testable core; the command bodies are thin wrappers
@@ -599,7 +598,7 @@ pub async fn library_import_pack(
 
 /// Copies composition records from another `.pixhaus` project into this one.
 ///
-/// Opens `source_path` read-only, extracts its [`ProjectAi`] composition tier,
+/// Opens `source_path` read-only, extracts its `ProjectAi` composition tier,
 /// and merges it per `policy`. The source project is untouched.
 ///
 /// # Errors
