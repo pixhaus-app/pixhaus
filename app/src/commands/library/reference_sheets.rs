@@ -810,16 +810,25 @@ fn reference_data_uri(image: &ReferenceImage) -> String {
     )
 }
 
+/// Assembles the positive prompt for a sheet-provider generation request.
+///
+/// Builds the app-level context fragments and operation hint, then delegates
+/// to [`pixhaus_ai::compose::compose`] per spec section 11. The template name
+/// and dimensions ride along as a context fragment; a `Single` structure is
+/// used because the app sheet-provider path has no paneled layout contract of
+/// its own.
 fn compose_sheet_prompt(request: &SheetProviderRequest, style_notes: &str) -> String {
-    let mut parts = Vec::new();
-    if !style_notes.trim().is_empty() {
-        parts.push(format!("Project style notes:\n{}", style_notes.trim()));
-    }
-    parts.push(format!(
+    use pixhaus_ai::compose::builtins::BUILTIN_DEFAULT_BASELINE;
+    use pixhaus_ai::compose::{ComposeRequest, compose};
+    use pixhaus_core::project::library::composition::{Structure, StructureId, StructureOutput};
+
+    // App-level context fragments, in the same order and wording as before.
+    let mut fragments: Vec<String> = Vec::new();
+    fragments.push(format!(
         "Create a sprite reference sheet using template {:?} at {}x{}.",
         request.template, request.width, request.height
     ));
-    parts.push(format!(
+    fragments.push(format!(
         "Background must be a flat solid chroma key color {} with no shadows, gradients, or background props.",
         chroma_hex(request.chroma_color)
     ));
@@ -838,7 +847,7 @@ fn compose_sheet_prompt(request: &SheetProviderRequest, style_notes: &str) -> St
             })
             .collect::<Vec<_>>()
             .join(" ");
-        parts.push(hints);
+        fragments.push(hints);
     }
     if request.real_world_grounding
         && matches!(
@@ -846,30 +855,59 @@ fn compose_sheet_prompt(request: &SheetProviderRequest, style_notes: &str) -> St
             ModelId::GoogleNanoBananaPro | ModelId::GoogleGeminiFlashImage
         )
     {
-        parts.push("Use accurate real-world references for named places, objects, and scenes when composing this image.".into());
+        fragments.push("Use accurate real-world references for named places, objects, and scenes when composing this image.".into());
     }
     if let Some(lora) = &request.applied_lora {
-        parts.push(format!(
+        fragments.push(format!(
             "Apply the Flux LoRA trigger word `{}` at weight {:.2}.",
             lora.trigger_word, request.lora_weight
         ));
     }
-    match request.operation {
+
+    let operation_hint = match request.operation {
         OperationKind::MaskedRefinement | OperationKind::RegionalRefinement => {
-            parts.push("Preserve everything outside the edited region.".into());
+            Some("Preserve everything outside the edited region.")
         }
-        OperationKind::PromptOnlyRefinement | OperationKind::ChatTurn => {
-            parts.push("Preserve the character identity, proportions, palette, and sheet layout unless the user specifically asks to change them.".into());
-        }
+        OperationKind::PromptOnlyRefinement | OperationKind::ChatTurn => Some(
+            "Preserve the character identity, proportions, palette, and sheet layout unless the user specifically asks to change them.",
+        ),
         OperationKind::Promotion => {
-            parts.push(
-                "Re-render this approved direction as a polished final reference sheet.".into(),
-            );
+            Some("Re-render this approved direction as a polished final reference sheet.")
         }
-        _ => {}
-    }
-    parts.push(request.prompt.trim().to_owned());
-    parts.join("\n\n")
+        _ => None,
+    };
+
+    // Cascading baseline (spec section 5): project style notes, else the default.
+    let baseline = if style_notes.trim().is_empty() {
+        BUILTIN_DEFAULT_BASELINE
+    } else {
+        style_notes.trim()
+    };
+
+    // The app sheet-provider path has no paneled Structure — the template name
+    // and dimensions ride along as a context fragment above. A `Single`
+    // structure contributes no layout prose, so compose() assembles only the
+    // prose segments in the spec's fixed order.
+    let structure = Structure {
+        id: StructureId("pixhaus.app.sheet_provider".into()),
+        name: "Sheet provider".into(),
+        output: StructureOutput::Single,
+        layout_negatives: String::new(),
+    };
+    let empty = std::collections::BTreeMap::new();
+    let req = ComposeRequest {
+        baseline,
+        structure: &structure,
+        style: None,
+        prompt: None,
+        variable_values: &empty,
+        entity_info: &empty,
+        inline_text: request.prompt.trim(),
+        inline_negatives: "",
+        operation_hint,
+        context_fragments: &fragments,
+    };
+    compose(&req).map_or_else(|_| request.prompt.trim().to_owned(), |c| c.positive)
 }
 
 fn selected_model(
@@ -3003,4 +3041,44 @@ pub async fn project_set_default_candidate_count(
     project.library.ai.default_candidate_count = n;
     doc.dirty = true;
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use pixhaus_core::project::default_reference_chroma;
+
+    fn sample_masked_request() -> SheetProviderRequest {
+        SheetProviderRequest {
+            operation: OperationKind::MaskedRefinement,
+            model: ModelId::OpenAiGptImage2,
+            quality: Quality::Medium,
+            prompt: "make the hair longer".into(),
+            template: ReferenceSheetTemplateId::Custom,
+            width: 1024,
+            height: 1024,
+            chroma_color: default_reference_chroma(),
+            references: Vec::new(),
+            source_image: None,
+            mask: None,
+            candidate_count: 1,
+            applied_lora: None,
+            lora_weight: 1.0,
+            real_world_grounding: false,
+        }
+    }
+
+    #[test]
+    fn adapter_includes_background_and_operation_hint() {
+        let composed = compose_sheet_prompt(&sample_masked_request(), "");
+        assert!(composed.contains("flat solid chroma key color"));
+        assert!(composed.contains("Preserve everything outside the edited region"));
+        assert!(composed.contains("make the hair longer"));
+    }
+
+    #[test]
+    fn adapter_uses_default_baseline_when_no_style_notes() {
+        let composed = compose_sheet_prompt(&sample_masked_request(), "");
+        assert!(composed.starts_with("pixel art reference sheet"));
+    }
 }
