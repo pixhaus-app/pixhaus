@@ -189,10 +189,19 @@ const ReferenceSheetEditor: Component = () => {
     setPanY(0);
   }
 
-  function isEditableTarget(target: EventTarget | null): boolean {
+  // Space toggles pan mode, but it must keep working as the activation key
+  // for focused controls (the editor's tabs and actions are <button>s) and
+  // as text input in fields, so skip pan mode when a control is focused.
+  function isInteractiveTarget(target: EventTarget | null): boolean {
     const el = target as HTMLElement | null;
     if (el === null) return false;
-    return el.tagName === "INPUT" || el.tagName === "TEXTAREA" || el.isContentEditable;
+    return (
+      el.tagName === "INPUT" ||
+      el.tagName === "TEXTAREA" ||
+      el.tagName === "SELECT" ||
+      el.tagName === "BUTTON" ||
+      el.isContentEditable
+    );
   }
 
   function handleWheel(event: WheelEvent): void {
@@ -233,11 +242,17 @@ const ReferenceSheetEditor: Component = () => {
   }
 
   function handleSpaceDown(event: KeyboardEvent): void {
-    if (event.code === "Space" && !isEditableTarget(event.target)) setSpaceHeld(true);
+    if (event.code !== "Space" || isInteractiveTarget(event.target)) return;
+    // Only entered when no control is focused, so suppressing the default
+    // (page scroll) is safe and keeps the pan gesture clean.
+    event.preventDefault();
+    setSpaceHeld(true);
   }
 
   function handleSpaceUp(event: KeyboardEvent): void {
-    if (event.code === "Space") setSpaceHeld(false);
+    if (event.code !== "Space") return;
+    if (spaceHeld()) event.preventDefault();
+    setSpaceHeld(false);
   }
 
   onMount(() => {
@@ -1099,11 +1114,12 @@ const ReferenceSheetEditor: Component = () => {
                     width={selectedVariant()?.width ?? 1024}
                     height={selectedVariant()?.height ?? 1024}
                     onPointerDown={(event) => {
+                      if (spaceHeld() || event.button !== 0) return;
                       maskDrawing = true;
                       drawMaskAt(event);
                     }}
                     onPointerMove={(event) => {
-                      if (maskDrawing) drawMaskAt(event);
+                      if (maskDrawing && !spaceHeld() && !panning()) drawMaskAt(event);
                     }}
                     onPointerUp={() => {
                       maskDrawing = false;
