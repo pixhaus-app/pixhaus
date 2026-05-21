@@ -33,6 +33,12 @@ mkdir -p "../pixhaus-worktrees"
 echo "==> Creating worktree at $WORKTREE_PATH on $BRANCH_NAME (base: $BASE)"
 git worktree add "$WORKTREE_PATH" -b "$BRANCH_NAME" "$BASE"
 
+# Wire the project hooks so the pre-commit gate fires even when `pnpm bootstrap`
+# was never run in this checkout. core.hooksPath is resolved relative to each
+# worktree's root, and every worktree carries its own .githooks/ checkout. The
+# hook scripts are committed executable (git mode 100755), so no chmod is needed.
+git -C "$WORKTREE_PATH" config core.hooksPath .githooks
+
 echo ""
 echo "Worktree ready."
 echo "  path:   $WORKTREE_PATH"

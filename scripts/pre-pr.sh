@@ -32,6 +32,14 @@ if command -v cargo >/dev/null 2>&1; then
     section "cargo doc --no-deps -D warnings"
     RUSTDOCFLAGS="-D warnings" cargo doc --workspace --no-deps --document-private-items \
         || fail "rustdoc (broken intra-doc link or missing docs)"
+
+    if command -v cargo-deny >/dev/null 2>&1; then
+        section "cargo deny check"
+        cargo deny check --config .cargo/deny.toml \
+            || fail "cargo-deny (dependency, license, or advisory violation)"
+    else
+        echo "pre-pr: cargo-deny not installed; install with cargo install cargo-deny" >&2
+    fi
 else
     echo "pre-pr: cargo not on PATH; Rust checks skipped" >&2
     failed=1

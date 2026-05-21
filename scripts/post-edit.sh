@@ -51,9 +51,11 @@ esac
 
 is_rust=false
 is_ts=false
+is_web=false
 case "$FILE_PATH" in
     *.rs)             is_rust=true ;;
     *.ts|*.tsx)       is_ts=true ;;
+    *.css|*.json)     is_web=true ;;
     *)                exit 0 ;;
 esac
 
@@ -63,27 +65,50 @@ if $is_rust; then
         exit 0
     fi
 
-    cargo fmt --manifest-path Cargo.toml -- "$FILE_PATH" 2>/dev/null || true
-
     CRATE="$(bash scripts/find-crate-for-file.sh "$FILE_PATH" 2>/dev/null || true)"
     if [ -n "$CRATE" ]; then
+        # Crate-scoped fmt uses the workspace rustfmt config and edition; the
+        # `-- <file>` path form is finicky with absolute paths and silently
+        # no-ops, which is how unformatted code reached CI. Surface failures
+        # rather than swallowing them.
+        echo "post-edit: cargo fmt -p $CRATE" >&2
+        cargo fmt -p "$CRATE" 2>&1 || echo "post-edit: cargo fmt failed for crate $CRATE" >&2
+
         echo "post-edit: cargo clippy --tests -p $CRATE -- -D warnings" >&2
         if ! cargo clippy --tests -p "$CRATE" -- -D warnings 2>&1; then
             echo "post-edit: cargo clippy failed in crate $CRATE" >&2
             exit 0
         fi
     else
-        echo "post-edit: could not locate owning crate for $FILE_PATH" >&2
+        echo "post-edit: could not locate owning crate for $FILE_PATH; running cargo fmt --all" >&2
+        cargo fmt --all 2>&1 || echo "post-edit: cargo fmt --all failed" >&2
     fi
+fi
+
+# Prettier covers ts/tsx/css/json under the ui workspace (matches CI's
+# pnpm format:check glob). Guard on the ui/ path so we never reformat a
+# root file like package.json with the ui prettier config.
+if { $is_ts || $is_web; } && [[ "$FILE_PATH" == *"/ui/"* || "$FILE_PATH" == "ui/"* ]]; then
+    if ! command -v pnpm >/dev/null 2>&1; then
+        echo "post-edit: pnpm not on PATH; skipping prettier/tsc checks." >&2
+        exit 0
+    fi
+
+    # We run prettier from inside ui/, so strip a leading "ui/" from a
+    # repo-relative path or it would resolve to ui/ui/... and miss the file.
+    # Absolute paths (start with /) are passed through unchanged.
+    PRETTIER_PATH="$FILE_PATH"
+    case "$PRETTIER_PATH" in
+        ui/*) PRETTIER_PATH="${PRETTIER_PATH#ui/}" ;;
+    esac
+    echo "post-edit: prettier --write $PRETTIER_PATH" >&2
+    (cd ui && pnpm prettier --write "$PRETTIER_PATH" 2>&1) || echo "post-edit: prettier failed for $PRETTIER_PATH" >&2
 fi
 
 if $is_ts; then
     if ! command -v pnpm >/dev/null 2>&1; then
-        echo "post-edit: pnpm not on PATH; skipping TS checks." >&2
         exit 0
     fi
-
-    (cd ui && pnpm prettier --write "$FILE_PATH" 2>/dev/null || true)
     echo "post-edit: tsc --noEmit (ui)" >&2
     if ! (cd ui && pnpm tsc --noEmit) 2>&1; then
         echo "post-edit: tsc reported errors" >&2

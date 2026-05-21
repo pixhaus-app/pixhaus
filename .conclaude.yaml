@@ -3,24 +3,75 @@
 # Pixhaus conclaude config. Pairs with .claude/settings.json which wires
 # conclaude into PreToolUse and Stop. PostToolUse stays on the existing
 # scripts/post-edit dispatcher: per-edit fmt + clippy (-D warnings) on the
-# touched crate, plus prettier + tsc for TS files. Stop is heavier - full
-# workspace tests + UI tests.
+# touched crate, plus prettier + tsc for TS files. Stop is the full CI mirror.
 
 # Stop hook - runs when Claude declares the session done.
-# Per-edit fmt / clippy / typecheck is handled by scripts/post-edit, so by
-# the time we get here those are already green. Stop's job is the full test
-# suite. Heavier gates (rustdoc, release build, lint, format:check) still
-# live in scripts/pre-pr for the pre-PR run.
+#
+# This is the only gate guaranteed to run for every Claude session, regardless
+# of git config (the pre-commit git hook only fires when core.hooksPath is wired
+# by `pnpm bootstrap`, which a fresh clone or worktree may never have run). So
+# Stop mirrors what CI gates a PR on (.github/workflows/ci.yml): a clean session
+# should mean green CI. Commands run cheapest-first so a format slip fails fast
+# before the heavy build/test steps. RUSTFLAGS=-D warnings matches the
+# workspace-wide env CI sets. The lighter pre-PR run lives in scripts/pre-pr.
 stop:
   commands:
-    - run: "cargo nextest run --workspace --no-fail-fast"
+    - run: "cargo fmt --all -- --check"
+      message: "rustfmt: code is not formatted - run `cargo fmt --all` before completing"
+      showStdout: true
+      showStderr: true
+      maxOutputLines: 200
+
+    - run: "RUSTFLAGS='-D warnings' cargo clippy --workspace --all-targets -- -D warnings"
+      message: "clippy reported warnings - fix or annotate before completing the session"
+      showStdout: true
+      showStderr: true
+      maxOutputLines: 200
+
+    - run: "RUSTFLAGS='-D warnings' cargo test --workspace --all-targets --no-fail-fast"
       message: "Rust tests failed in the workspace - fix before completing the session"
+      showStdout: true
+      showStderr: true
+      maxOutputLines: 200
+
+    - run: "RUSTDOCFLAGS='-D warnings' cargo doc --workspace --no-deps --document-private-items"
+      message: "rustdoc failed - broken intra-doc link or missing docs; fix before completing"
+      showStdout: true
+      showStderr: true
+      maxOutputLines: 200
+
+    - run: "cargo deny check --config .cargo/deny.toml"
+      message: "cargo-deny: dependency, license, or advisory violation - fix before completing"
+      showStdout: true
+      showStderr: true
+      maxOutputLines: 200
+
+    - run: "pnpm typecheck"
+      message: "TypeScript typecheck failed - fix before completing the session"
+      showStdout: true
+      showStderr: true
+      maxOutputLines: 200
+
+    - run: "pnpm lint"
+      message: "eslint reported errors - fix before completing the session"
+      showStdout: true
+      showStderr: true
+      maxOutputLines: 200
+
+    - run: "pnpm format:check"
+      message: "prettier: UI code is not formatted - run `pnpm format` before completing"
       showStdout: true
       showStderr: true
       maxOutputLines: 200
 
     - run: "pnpm test"
       message: "UI tests failed in ui/ - fix before completing the session"
+      showStdout: true
+      showStderr: true
+      maxOutputLines: 200
+
+    - run: "pnpm ui:build"
+      message: "UI build failed - fix before completing the session"
       showStdout: true
       showStderr: true
       maxOutputLines: 200

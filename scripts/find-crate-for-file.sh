@@ -28,7 +28,10 @@ while [ "$DIR" != "/" ] && [ -n "$DIR" ]; do
     if [ -f "$DIR/Cargo.toml" ]; then
         # Skip the workspace root (no [package] section).
         if grep -q '^\[package\]' "$DIR/Cargo.toml"; then
-            NAME="$(grep -E '^name\s*=' "$DIR/Cargo.toml" | head -n1 | sed -E 's/^name\s*=\s*"(.*)"\s*$/\1/')"
+            # POSIX [[:space:]] not \s: BSD sed/grep (macOS) treat \s as a
+            # literal 's', which left the raw `name = "..."` line unparsed and
+            # silently broke crate-scoped clippy/fmt in the post-edit hook.
+            NAME="$(grep -E '^name[[:space:]]*=' "$DIR/Cargo.toml" | head -n1 | sed -E 's/^name[[:space:]]*=[[:space:]]*"(.*)"[[:space:]]*$/\1/')"
             if [ -n "$NAME" ]; then
                 echo "$NAME"
                 exit 0
