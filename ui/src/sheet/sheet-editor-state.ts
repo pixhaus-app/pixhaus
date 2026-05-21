@@ -12,6 +12,7 @@ import type {
   Entity,
   EntityContent,
   ModelId,
+  PromptId,
   Quality,
   ReferenceImage,
   ReferenceRole,
@@ -22,6 +23,8 @@ import type {
   RegionDefinition,
   Rgba,
   SheetVariant,
+  StructureId,
+  StyleId,
 } from "../lib/types";
 import type { RequestId, ReferenceSheetTemplate } from "../lib/commands/library";
 
@@ -104,21 +107,7 @@ export const VIEWS: Array<{ value: EditorView; label: string }> = [
   { value: "provenance", label: "Provenance" },
 ];
 
-export const MODEL_OPTIONS: Array<{ value: ModelId; label: string }> = [
-  { value: "auto", label: "Auto" },
-  { value: "open_ai_gpt_image2", label: "OpenAI gpt-image-2" },
-  { value: "google_nano_banana_pro", label: "Nano Banana Pro" },
-  { value: "google_gemini_flash_image", label: "Gemini Flash Image" },
-  { value: "fal_flux_kontext", label: "fal Flux Kontext" },
-  { value: "fal_flux_dev", label: "fal Flux.1 dev" },
-];
-
-export const QUALITY_OPTIONS: Array<{ value: Quality; label: string }> = [
-  { value: "auto", label: "Auto" },
-  { value: "low", label: "Low" },
-  { value: "medium", label: "Medium" },
-  { value: "high", label: "High" },
-];
+export { MODEL_OPTIONS, QUALITY_OPTIONS } from "../composition-library/options";
 
 export const ROLE_OPTIONS: Array<{ value: ReferenceRole; label: string }> = [
   { value: "subject", label: "Subject" },
@@ -220,6 +209,16 @@ export function createSheetEditorState() {
   const [maskExpand, setMaskExpand] = createSignal(12);
   const [maskMode, setMaskMode] = createSignal<"brush" | "erase">("brush");
 
+  // ── composition library selection signals ─────────────────────────────────
+  // Drive the Library panel (spec sections 15-17) without touching the
+  // existing template/templateId generation path.
+  const [selectedStructureId, setSelectedStructureId] = createSignal<StructureId | null>(null);
+  const [selectedStyleId, setSelectedStyleId] = createSignal<StyleId | null>(null);
+  const [selectedPromptId, setSelectedPromptId] = createSignal<PromptId | null>(null);
+  const [variableValues, setVariableValues] = createSignal<Record<string, string>>({});
+  const [inlineText, setInlineText] = createSignal<string>("");
+  const [inlineNegatives, setInlineNegatives] = createSignal<string>("");
+
   return {
     entity,
     setEntity,
@@ -293,5 +292,17 @@ export function createSheetEditorState() {
     setMaskExpand,
     maskMode,
     setMaskMode,
+    selectedStructureId,
+    setSelectedStructureId,
+    selectedStyleId,
+    setSelectedStyleId,
+    selectedPromptId,
+    setSelectedPromptId,
+    variableValues,
+    setVariableValues,
+    inlineText,
+    setInlineText,
+    inlineNegatives,
+    setInlineNegatives,
   };
 }

@@ -61,6 +61,7 @@
 )]
 
 pub mod backends;
+pub mod compose;
 pub mod plugin;
 pub mod verbs;
 

@@ -7,6 +7,7 @@ import {
   Show,
   createEffect,
   createMemo,
+  createResource,
   createSignal,
   on,
   onCleanup,
@@ -26,10 +27,13 @@ import type {
   ReferenceSlot,
   RefinementKind,
   RegionDefinition,
+  ResolvedVariable,
   SheetVariant,
 } from "../lib/types";
 import {
   libraryGenerateReferenceSheet,
+  listComposition,
+  resolvePromptVariables,
   libraryGetEntity,
   libraryImportReferenceSheet,
   libraryBrowseAssets,
@@ -50,6 +54,7 @@ import {
   type ReferenceSheetTemplate,
 } from "../lib/commands/library";
 import { approveSheetVariantAndRefreshCorpus, refreshLibrary } from "../library/library-state";
+import { StructurePicker, StylePicker, PromptPicker } from "../composition-library";
 import HistoryStrip from "./HistoryStrip";
 import { zoomToCursor } from "./preview-zoom";
 import { Button } from "../lib/ui/Button";
@@ -167,9 +172,70 @@ const ReferenceSheetEditor: Component = () => {
     setMaskExpand,
     maskMode,
     setMaskMode,
+    selectedStructureId,
+    setSelectedStructureId,
+    selectedStyleId,
+    setSelectedStyleId,
+    selectedPromptId,
+    setSelectedPromptId,
+    variableValues,
+    setVariableValues,
+    inlineText,
+    setInlineText,
+    inlineNegatives,
+    setInlineNegatives,
   } = createSheetEditorState();
   let maskCanvas: HTMLCanvasElement | undefined;
   let maskDrawing = false;
+
+  // Composition library, loaded once. Project records shadow built-ins by id,
+  // so combine each tier with the project records first.
+  const [composition] = createResource(() => listComposition());
+  const structureOptions = createMemo(() => {
+    const lib = composition();
+    if (lib === undefined) return [];
+    const projectIds = new Set(lib.structures.map((s) => s.id));
+    return [...lib.structures, ...lib.builtin_structures.filter((s) => !projectIds.has(s.id))];
+  });
+  const styleOptions = createMemo(() => {
+    const lib = composition();
+    if (lib === undefined) return [];
+    const projectIds = new Set(lib.styles.map((s) => s.id));
+    return [...lib.styles, ...lib.builtin_styles.filter((s) => !projectIds.has(s.id))];
+  });
+  const promptOptions = createMemo(() => {
+    const lib = composition();
+    if (lib === undefined) return [];
+    const projectIds = new Set(lib.prompts.map((p) => p.id));
+    return [...lib.prompts, ...lib.builtin_prompts.filter((p) => !projectIds.has(p.id))];
+  });
+
+  // Resolve the picked prompt's variables against the active entity. Keyed on
+  // the prompt id and entity id; refetches when either changes.
+  const [promptVariables] = createResource(
+    () => {
+      const promptId = selectedPromptId();
+      const target = entity();
+      if (promptId === null || target == null) return null;
+      return { promptId, entityId: target.id };
+    },
+    (key): Promise<ResolvedVariable[]> =>
+      key === null ? Promise.resolve([]) : resolvePromptVariables(key.promptId, key.entityId),
+  );
+
+  // Rebuild the variable values whenever the resolved set changes (i.e. the
+  // picked prompt or entity changed), seeding each with the entity autofill or
+  // declared default. Rebuilding — rather than merging — drops keys from a
+  // previously-picked prompt so stale substitutions can't leak into generation.
+  createEffect(() => {
+    const vars = promptVariables();
+    if (vars === undefined) return;
+    const next: Record<string, string> = {};
+    for (const v of vars) {
+      next[v.key] = v.autofilled ?? v.default;
+    }
+    setVariableValues(next);
+  });
 
   // Preview pan/zoom. The transform lives on `.sheet-editor__image-wrap`,
   // which is absolutely anchored to the non-transformed viewport, so the
@@ -708,15 +774,23 @@ const ReferenceSheetEditor: Component = () => {
     return a[0] < b[2] && a[2] > b[0] && a[1] < b[3] && a[3] > b[1];
   }
 
+  // Generation is allowed when the user typed a prompt, or when a Structure is
+  // picked with non-empty inline text (the backend composes from the records).
+  function canGenerate(): boolean {
+    return (
+      prompt().trim().length > 0 ||
+      (selectedStructureId() !== null && inlineText().trim().length > 0)
+    );
+  }
+
   function handleGenerate(): void {
     const target = entity();
-    const text = prompt().trim();
-    if (target === null || text.length === 0 || generating()) return;
+    if (target === null || !canGenerate() || generating()) return;
     setGenerating(true);
     void queueSheetRequest("Reference sheet generation", () =>
       libraryGenerateReferenceSheet({
         entity_id: target.id,
-        prompt: text,
+        prompt: prompt().trim(),
         template: templateId(),
         width: selectedDimensions().width,
         height: selectedDimensions().height,
@@ -728,6 +802,12 @@ const ReferenceSheetEditor: Component = () => {
         real_world_grounding: realWorldGrounding(),
         applied_lora: selectedLoraId(),
         lora_weight: loraWeight(),
+        structure_id: selectedStructureId() ?? undefined,
+        style_id: selectedStyleId() ?? undefined,
+        prompt_id: selectedPromptId() ?? undefined,
+        variable_values: variableValues(),
+        inline_text: inlineText(),
+        inline_negatives: inlineNegatives(),
       }),
     );
   }
@@ -1212,6 +1292,76 @@ const ReferenceSheetEditor: Component = () => {
 
               <div class="sheet-editor__grid">
                 <label class="sheet-editor__field">
+                  <span>Structure</span>
+                  <StructurePicker
+                    structures={structureOptions()}
+                    value={selectedStructureId()}
+                    onChange={setSelectedStructureId}
+                  />
+                </label>
+
+                <label class="sheet-editor__field">
+                  <span>Style</span>
+                  <StylePicker
+                    styles={styleOptions()}
+                    value={selectedStyleId()}
+                    onChange={setSelectedStyleId}
+                  />
+                </label>
+
+                <label class="sheet-editor__field">
+                  <span>Saved prompt</span>
+                  <PromptPicker
+                    prompts={promptOptions()}
+                    value={selectedPromptId()}
+                    onChange={setSelectedPromptId}
+                  />
+                </label>
+              </div>
+
+              <Show when={selectedStructureId() !== null}>
+                <label class="sheet-editor__field">
+                  <span>Inline prompt additions</span>
+                  <textarea
+                    class="sheet-editor__textarea"
+                    value={inlineText()}
+                    onInput={(event) => setInlineText(event.currentTarget.value)}
+                  />
+                </label>
+
+                <label class="sheet-editor__field">
+                  <span>Inline negatives</span>
+                  <textarea
+                    class="sheet-editor__textarea"
+                    value={inlineNegatives()}
+                    onInput={(event) => setInlineNegatives(event.currentTarget.value)}
+                  />
+                </label>
+              </Show>
+
+              <Show when={selectedPromptId() !== null && (promptVariables()?.length ?? 0) > 0}>
+                <div class="sheet-editor__variables">
+                  <span class="sheet-editor__field-label">Variables</span>
+                  <For each={promptVariables() ?? []}>
+                    {(variable) => (
+                      <label class="sheet-editor__field">
+                        <span>{variable.label}</span>
+                        <input
+                          class="sheet-editor__input"
+                          value={variableValues()[variable.key] ?? ""}
+                          onInput={(event) => {
+                            const next = event.currentTarget.value;
+                            setVariableValues((current) => ({ ...current, [variable.key]: next }));
+                          }}
+                        />
+                      </label>
+                    )}
+                  </For>
+                </div>
+              </Show>
+
+              <div class="sheet-editor__grid">
+                <label class="sheet-editor__field">
                   <span>Legacy template</span>
                   <select
                     class="sheet-editor__select"
@@ -1372,7 +1522,7 @@ const ReferenceSheetEditor: Component = () => {
               </div>
 
               <div class="sheet-editor__actions">
-                <Button onClick={handleGenerate} disabled={generating() || prompt().trim() === ""}>
+                <Button onClick={handleGenerate} disabled={generating() || !canGenerate()}>
                   {generating() ? "Generating…" : "Generate"}
                 </Button>
                 <Button variant="ghost" onClick={handleImport}>

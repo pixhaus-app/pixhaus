@@ -372,6 +372,17 @@ body {
   width: 640px;
 }
 
+/* Fills the entire app window (no backdrop margin, square corners). */
+.dialog--full {
+  width: 100vw;
+  height: 100vh;
+  max-width: 100vw;
+  max-height: 100vh;
+  border-radius: 0;
+  border: none;
+  box-shadow: none;
+}
+
 .dialog__header {
   display: flex;
   align-items: center;

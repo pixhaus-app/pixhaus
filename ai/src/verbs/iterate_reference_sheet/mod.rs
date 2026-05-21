@@ -511,9 +511,20 @@ mod tests {
     use crate::plugin::progress::VerbProgress;
     use crate::plugin::runtime::VerbRuntime;
     use crate::plugin::verb::Verb;
-    use crate::verbs::reference_sheet::CompositionTemplate;
+    use pixhaus_core::project::library::composition::StructureId;
 
     use super::*;
+
+    /// Built-in panel composition for a structure id, for fixtures that need
+    /// stored `SheetComposition` rectangles.
+    fn builtin_composition(id: &str) -> pixhaus_core::project::SheetComposition {
+        let lib = crate::compose::builtins::BuiltinLibrary::load();
+        let structure = lib
+            .structures
+            .get(&StructureId(id.into()))
+            .expect("built-in structure id");
+        crate::compose::composition_for(structure)
+    }
 
     fn meta() -> ProjectMetadata {
         ProjectMetadata {
@@ -587,7 +598,7 @@ mod tests {
             entity_id: EntityId::new(1),
             source_variant_id: SheetVariantId::new(0),
             sheet_image_b64: white_png_b64(),
-            composition: CompositionTemplate::Custom.composition(),
+            composition: builtin_composition("pixhaus.builtin.structure.custom"),
             panel_label: None,
             prompt: prompt.into(),
             negative_prompt: None,
@@ -600,7 +611,7 @@ mod tests {
             entity_id: EntityId::new(2),
             source_variant_id: SheetVariantId::new(5),
             sheet_image_b64: white_png_b64(),
-            composition: CompositionTemplate::Character.composition(),
+            composition: builtin_composition("pixhaus.builtin.structure.character"),
             panel_label: Some(label.into()),
             prompt: "make the hair longer".into(),
             negative_prompt: None,
@@ -659,7 +670,7 @@ mod tests {
             entity_id: EntityId::new(1),
             source_variant_id: SheetVariantId::new(0),
             sheet_image_b64: white_png_b64(),
-            composition: CompositionTemplate::Custom.composition(),
+            composition: builtin_composition("pixhaus.builtin.structure.custom"),
             panel_label: None,
             prompt: "   ".into(),
             negative_prompt: None,
@@ -675,7 +686,7 @@ mod tests {
             entity_id: EntityId::new(1),
             source_variant_id: SheetVariantId::new(0),
             sheet_image_b64: "   ".into(),
-            composition: CompositionTemplate::Custom.composition(),
+            composition: builtin_composition("pixhaus.builtin.structure.custom"),
             panel_label: None,
             prompt: "make the eyes blue".into(),
             negative_prompt: None,
@@ -828,7 +839,7 @@ mod tests {
             entity_id: EntityId::new(1),
             source_variant_id: SheetVariantId::new(0),
             sheet_image_b64: white_png_b64(),
-            composition: CompositionTemplate::Custom.composition(),
+            composition: builtin_composition("pixhaus.builtin.structure.custom"),
             panel_label: Some("does-not-exist".into()),
             prompt: "make it green".into(),
             negative_prompt: None,
@@ -866,7 +877,7 @@ mod tests {
             entity_id: EntityId::new(1),
             source_variant_id: SheetVariantId::new(0),
             sheet_image_b64: bogus,
-            composition: CompositionTemplate::Custom.composition(),
+            composition: builtin_composition("pixhaus.builtin.structure.custom"),
             panel_label: None,
             prompt: "make it green".into(),
             negative_prompt: None,
@@ -932,7 +943,7 @@ mod tests {
 
     #[test]
     fn find_panel_rect_returns_view_by_label() {
-        let comp = CompositionTemplate::Character.composition();
+        let comp = builtin_composition("pixhaus.builtin.structure.character");
         let rect = find_panel_rect(&comp, "front");
         assert!(
             rect.is_some(),
@@ -945,7 +956,7 @@ mod tests {
 
     #[test]
     fn find_panel_rect_returns_expression_by_label() {
-        let comp = CompositionTemplate::Character.composition();
+        let comp = builtin_composition("pixhaus.builtin.structure.character");
         let rect = find_panel_rect(&comp, "happy");
         assert!(
             rect.is_some(),
@@ -955,7 +966,7 @@ mod tests {
 
     #[test]
     fn find_panel_rect_returns_palette_swatch() {
-        let comp = CompositionTemplate::Custom.composition();
+        let comp = builtin_composition("pixhaus.builtin.structure.custom");
         let rect = find_panel_rect(&comp, "palette-swatch");
         assert!(
             rect.is_some(),
@@ -965,7 +976,7 @@ mod tests {
 
     #[test]
     fn find_panel_rect_returns_none_for_unknown_label() {
-        let comp = CompositionTemplate::Custom.composition();
+        let comp = builtin_composition("pixhaus.builtin.structure.custom");
         assert!(find_panel_rect(&comp, "does-not-exist").is_none());
     }
 

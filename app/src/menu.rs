@@ -267,6 +267,11 @@ pub fn build(app: &AppHandle) -> tauri::Result<Menu<tauri::Wry>> {
         )
         .separator()
         .item(
+            &MenuItemBuilder::new("Prompt & Style Library")
+                .id("ai:composition-library")
+                .build(app)?,
+        )
+        .item(
             &MenuItemBuilder::new("AI Backend Settings")
                 .id("ai:settings")
                 .build(app)?,

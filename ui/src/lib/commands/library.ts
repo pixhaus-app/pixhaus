@@ -4,6 +4,9 @@
 // search) plus reference-sheet variant operations embedded on sprite
 // entities (approve, update asset info, delete history entry). Commands
 // that touch pixel data live in canvas.ts; palette commands live in palette.ts.
+//
+// Composition library commands (spec sections 12, 15-17) are appended at the
+// bottom of this file.
 
 import { invoke } from "../ipc";
 import type {
@@ -13,16 +16,22 @@ import type {
   AssetInfo,
   CharacterCard,
   ColorMode,
+  CompositionKind,
+  CompositionLibrary,
+  ConflictPolicy,
   Entity,
   EntityGroup,
   EntityId,
   EntityKind,
   GroupId,
+  ImportReport,
   LoraKind,
   ModelId,
   NamedSprite,
   OperationKind,
   PaletteEntry,
+  PromptId,
+  PromptTemplate,
   Quality,
   ReferenceAsset,
   ReferenceImage,
@@ -31,9 +40,14 @@ import type {
   ReferenceSheetTemplateId,
   ReferenceSlot,
   RefinementKind,
+  ResolvedVariable,
   Rgba,
   SheetComposition,
   SheetVariantId,
+  Structure,
+  StructureId,
+  Style,
+  StyleId,
   StyleSwatch,
   TagDefinition,
   TagId,
@@ -88,6 +102,12 @@ export type LibraryGenerateReferenceSheetArgs = {
   real_world_grounding?: boolean;
   applied_lora?: AssetId | null;
   lora_weight?: number;
+  structure_id?: StructureId | undefined;
+  style_id?: StyleId | undefined;
+  prompt_id?: PromptId | undefined;
+  variable_values?: Record<string, string> | undefined;
+  inline_text?: string | undefined;
+  inline_negatives?: string | undefined;
 };
 
 export type LibraryImportReferenceSheetArgs = {
@@ -650,4 +670,95 @@ export type AnchorPayload = {
  */
 export function libraryGetAnchorPayload(entity_id: EntityId): Promise<AnchorPayload | null> {
   return invoke<AnchorPayload | null>("library_get_anchor_payload", { entity_id });
+}
+
+// ── composition library commands (spec sections 12, 15-17) ───────────────────
+//
+// These wrappers map to the Rust `library_*` commands registered in
+// `app/src/commands/composition.rs`. Param key names match the Rust
+// snake_case parameters exactly because the Tauri IPC bridge deserializes
+// them without renaming.
+
+/** Returns the full composition library: project records + built-in registry. */
+export function listComposition(): Promise<CompositionLibrary> {
+  return invoke<CompositionLibrary>("library_list_composition");
+}
+
+/** Inserts or replaces a project-tier Structure by id. */
+export function upsertStructure(structure: Structure): Promise<void> {
+  return invoke<void>("library_upsert_structure", { structure });
+}
+
+/** Inserts or replaces a project-tier Style by id. */
+export function upsertStyle(style: Style): Promise<void> {
+  return invoke<void>("library_upsert_style", { style });
+}
+
+/** Inserts or replaces a project-tier PromptTemplate by id. */
+export function upsertPrompt(prompt: PromptTemplate): Promise<void> {
+  return invoke<void>("library_upsert_prompt", { prompt });
+}
+
+/** Deletes a project-tier Structure. No-op if the id is a built-in. */
+export function deleteStructure(id: StructureId): Promise<void> {
+  return invoke<void>("library_delete_structure", { id });
+}
+
+/** Deletes a project-tier Style. No-op if the id is a built-in. */
+export function deleteStyle(id: StyleId): Promise<void> {
+  return invoke<void>("library_delete_style", { id });
+}
+
+/** Deletes a project-tier PromptTemplate. No-op if the id is a built-in. */
+export function deletePrompt(id: PromptId): Promise<void> {
+  return invoke<void>("library_delete_prompt", { id });
+}
+
+/**
+ * Forks a built-in composition record into the project tier.
+ * Returns the id of the newly created record.
+ */
+export function forkBuiltin(
+  kind: CompositionKind,
+  builtin_id: string,
+  as_new: boolean,
+): Promise<string> {
+  return invoke<string>("library_fork_builtin", { kind, builtin_id, as_new });
+}
+
+/** Exports a subset of the library to a `.pixstyle` pack at `path`. */
+export function exportPack(
+  structure_ids: string[],
+  style_ids: string[],
+  prompt_ids: string[],
+  path: string,
+): Promise<void> {
+  return invoke<void>("library_export_pack", { structure_ids, style_ids, prompt_ids, path });
+}
+
+/** Imports a `.pixstyle` pack from `path`, resolving conflicts with `policy`. */
+export function importPack(path: string, policy: ConflictPolicy): Promise<ImportReport> {
+  return invoke<ImportReport>("library_import_pack", { path, policy });
+}
+
+/**
+ * Copies the composition library from another project file into this one,
+ * resolving conflicts with `policy`.
+ */
+export function copyFromProject(
+  source_path: string,
+  policy: ConflictPolicy,
+): Promise<ImportReport> {
+  return invoke<ImportReport>("library_copy_from_project", { source_path, policy });
+}
+
+/**
+ * Resolves the variables of a saved PromptTemplate against the given entity's
+ * metadata, returning one `ResolvedVariable` per declared or detected token.
+ */
+export function resolvePromptVariables(
+  prompt_id: PromptId,
+  entity_id: EntityId,
+): Promise<ResolvedVariable[]> {
+  return invoke<ResolvedVariable[]>("library_resolve_prompt_variables", { prompt_id, entity_id });
 }

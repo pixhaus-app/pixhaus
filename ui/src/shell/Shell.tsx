@@ -2,11 +2,13 @@ import { Show, onMount, onCleanup, type Component } from "solid-js";
 import { listen } from "@tauri-apps/api/event";
 import { isCommandPaletteOpen } from "../palette-state";
 import { isPreferencesOpen } from "../preferences/preferences-state";
+import { isCompositionLibraryOpen } from "../composition-library/composition-library-state";
 import { activeProject } from "../project-state";
 import { dispatchCommand } from "../command-palette/command-registry";
 import { setupKeybindManager } from "../keybinds/keybind-manager";
 import CommandPalette from "../command-palette/CommandPalette";
 import PreferencesModal from "../preferences/PreferencesModal";
+import CompositionLibraryModal from "../composition-library/CompositionLibraryModal";
 import ToastHost from "../lib/toast/ToastHost";
 import UpdateAvailableModal from "./UpdateAvailableModal";
 import CanvasSizeDialog from "./CanvasSizeDialog";
@@ -161,6 +163,10 @@ const Shell: Component = () => {
 
       <Show when={isPreferencesOpen()}>
         <PreferencesModal />
+      </Show>
+
+      <Show when={isCompositionLibraryOpen()}>
+        <CompositionLibraryModal />
       </Show>
 
       <UpdateAvailableModal />

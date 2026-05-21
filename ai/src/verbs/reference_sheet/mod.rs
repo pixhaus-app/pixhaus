@@ -1,17 +1,19 @@
 //! Verb: `GenerateReferenceSheet` — AI-generated character / item / tileset
 //! reference sheets.
 //!
-//! Takes a target sprite entity, a composition template, a user prompt,
-//! and a backend selection. Produces 1–4 `SheetVariant` candidates and
-//! delivers them to the host as a `VerbEffect::Custom` payload. None of the
-//! candidates are canonical until the user approves one.
+//! Takes a target sprite entity plus a picked composition Structure (and
+//! optional Style and saved Prompt), runs them through the `ai::compose`
+//! resolver, and produces 1–4 `SheetVariant` candidates delivered to the
+//! host as a `VerbEffect::Custom` payload. None of the candidates are
+//! canonical until the user approves one.
 //!
-//! The four composition templates (Character / Item / Tileset / Custom) each
-//! define a distinct panel layout and a backend prompt-engineering layer that
-//! augments the user's description with layout instructions before dispatch.
+//! The layout, dimensions, panel slice geometry, and prompt prose all derive
+//! from the resolved Structure (built-in or project-tier), so the verb itself
+//! holds no hardcoded templates — see [`crate::compose`].
 //!
 //! Implements: docs/planning/work/b10-reference-sheets.md#b101
 
+use std::collections::BTreeMap;
 use std::time::Instant;
 
 use async_trait::async_trait;
@@ -20,9 +22,12 @@ use serde::{Deserialize, Serialize};
 use tokio::select;
 use tokio_util::sync::CancellationToken;
 
+use pixhaus_core::project::library::composition::{PromptId, StructureId, StyleId};
 use pixhaus_core::project::{EntityId, GenerationProvenance, SheetVariantId};
 
 use crate::backends::{ImageGenRequest, ImageQuality, InferenceRequest, InferenceResponse};
+use crate::compose::builtins::BUILTIN_DEFAULT_BASELINE;
+use crate::compose::{ComposeRequest, compose};
 use crate::plugin::context::VerbContext;
 use crate::plugin::descriptor::{
     BackendCapabilities, CostEstimate, EffectKind, VerbDescriptor, VerbId,
@@ -32,10 +37,6 @@ use crate::plugin::inputs::VerbInputs;
 use crate::plugin::output::{ActualCost, VerbEffect, VerbOutput};
 use crate::plugin::progress::{VerbProgress, VerbProgressEvent};
 use crate::plugin::verb::Verb;
-
-pub mod templates;
-
-pub use templates::CompositionTemplate;
 
 /// Stable ID for the built-in generate-reference-sheet verb.
 pub const GENERATE_REFERENCE_SHEET_VERB_ID: &str = "pixhaus.builtin.generate_reference_sheet";
@@ -56,19 +57,33 @@ pub struct GenerateReferenceSheetInputs {
     /// generated variants into this entity's embedded `ReferenceSheet::history`.
     pub entity_id: EntityId,
 
-    /// Composition template — determines panel layout, sheet dimensions, and
-    /// the backend prompt engineering applied on top of the user's text.
-    pub template: CompositionTemplate,
+    /// Composition Structure id. Resolved against project records first, then
+    /// the built-in registry; determines panel layout, dimensions, and the
+    /// layout prose.
+    pub structure_id: StructureId,
 
-    /// User's description of the subject (e.g. "32px fantasy hero with a
-    /// blue cloak, sword, and brown hair"). The verb prepends layout
-    /// instructions appropriate for the chosen template.
-    pub prompt: String,
-
-    /// Optional user-supplied negative prompt. Concatenated after the
-    /// template's own negative prompt, separated by a comma.
+    /// Optional Style id applying reusable look modifiers and look negatives.
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub negative_prompt: Option<String>,
+    pub style_id: Option<StyleId>,
+
+    /// Optional saved Prompt id whose text (with variables substituted) is
+    /// composed into the request.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub prompt_id: Option<PromptId>,
+
+    /// Explicit values for the picked Prompt's `{variables}`.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub variable_values: BTreeMap<String, String>,
+
+    /// Free-typed prompt additions (replaces the old single `prompt` field
+    /// for the inline case; a saved Prompt is referenced by `prompt_id`).
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub inline_text: String,
+
+    /// Free-typed negative additions, merged with the Structure and Style
+    /// negatives at compose time.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub inline_negatives: String,
 
     /// Number of candidate sheets to generate. Clamped to `1..=4`.
     #[serde(default = "default_num_variants")]
@@ -155,19 +170,31 @@ impl GenerateReferenceSheetVerb {
                     "minimum": 0,
                     "description": "ID of the target sprite entity in the project library"
                 },
-                "template": {
-                    "type": "string",
-                    "enum": ["character", "item", "tileset", "custom"],
-                    "description": "Composition template that controls panel layout and prompt engineering"
-                },
-                "prompt": {
+                "structure_id": {
                     "type": "string",
                     "minLength": 1,
-                    "description": "User description of the subject"
+                    "description": "Composition Structure id (built-in or project-tier) that controls panel layout and dimensions"
                 },
-                "negative_prompt": {
+                "style_id": {
                     "type": ["string", "null"],
-                    "description": "Optional user-supplied negative prompt"
+                    "description": "Optional Style id applying look modifiers and look negatives"
+                },
+                "prompt_id": {
+                    "type": ["string", "null"],
+                    "description": "Optional saved Prompt id whose text is composed into the request"
+                },
+                "variable_values": {
+                    "type": "object",
+                    "additionalProperties": { "type": "string" },
+                    "description": "Values for the picked Prompt's {variables}"
+                },
+                "inline_text": {
+                    "type": "string",
+                    "description": "Free-typed prompt additions (subject description)"
+                },
+                "inline_negatives": {
+                    "type": "string",
+                    "description": "Free-typed negative additions"
                 },
                 "num_variants": {
                     "type": "integer",
@@ -188,7 +215,7 @@ impl GenerateReferenceSheetVerb {
                     "description": "Optional RNG seed for reproducibility"
                 }
             },
-            "required": ["entity_id", "template", "prompt"]
+            "required": ["entity_id", "structure_id"]
         });
 
         Self {
@@ -196,10 +223,10 @@ impl GenerateReferenceSheetVerb {
                 id: VerbId::new(GENERATE_REFERENCE_SHEET_VERB_ID),
                 display_name: "Generate Reference Sheet".into(),
                 description: "Generates 1–4 reference-sheet candidate images for a \
-                              sprite library entity using one of four composition \
-                              templates (Character, Item, Tileset, Custom). Candidates land in \
-                              the entity's embedded sheet history; the user approves one as \
-                              canonical."
+                              sprite library entity from a picked composition Structure \
+                              (built-in or project-tier), with an optional Style and saved \
+                              Prompt. Candidates land in the entity's embedded sheet history; \
+                              the user approves one as canonical."
                     .into(),
                 version: env!("CARGO_PKG_VERSION").into(),
                 required_capabilities: BackendCapabilities::IMAGE_GENERATION,
@@ -242,9 +269,9 @@ impl Verb for GenerateReferenceSheetVerb {
 
     fn validate(&self, inputs: &VerbInputs) -> Result<()> {
         let parsed: GenerateReferenceSheetInputs = inputs.deserialize()?;
-        if parsed.prompt.trim().is_empty() {
+        if parsed.structure_id.0.trim().is_empty() {
             return Err(VerbError::Schema(
-                "generate-reference-sheet: prompt must not be blank".into(),
+                "generate-reference-sheet: structure_id must not be blank".into(),
             ));
         }
         Ok(())
@@ -267,9 +294,64 @@ impl Verb for GenerateReferenceSheetVerb {
         let started = Instant::now();
 
         let num_variants = inputs.num_variants.clamp(1, 4);
-        let composition = inputs.template.composition();
-        let negative = build_negative_prompt(&inputs);
-        let full_prompt = build_reference_prompt(&inputs, &negative);
+
+        // Resolve the picked records and run the composition resolver. The
+        // resolved view borrows `ctx`; we extract owned values before the
+        // backend await so nothing is held across the suspension point.
+        let (full_prompt, negative, composition, width, height, structure_name) = {
+            let library = ctx.library_view();
+            let structure = library.structure(&inputs.structure_id).ok_or_else(|| {
+                VerbError::Schema(format!(
+                    "generate-reference-sheet: unknown structure `{}`",
+                    inputs.structure_id.0
+                ))
+            })?;
+            // A stale style/prompt id is an error, not a silent no-op — otherwise
+            // the verb would generate a different composition than was picked.
+            let style = match inputs.style_id.as_ref() {
+                Some(id) => Some(library.style(id).ok_or_else(|| {
+                    VerbError::Schema(format!(
+                        "generate-reference-sheet: unknown style `{}`",
+                        id.0
+                    ))
+                })?),
+                None => None,
+            };
+            let prompt = match inputs.prompt_id.as_ref() {
+                Some(id) => Some(library.prompt(id).ok_or_else(|| {
+                    VerbError::Schema(format!(
+                        "generate-reference-sheet: unknown prompt `{}`",
+                        id.0
+                    ))
+                })?),
+                None => None,
+            };
+            let entity_info: BTreeMap<String, String> = BTreeMap::new();
+            let req = ComposeRequest {
+                baseline: BUILTIN_DEFAULT_BASELINE,
+                structure,
+                style,
+                prompt,
+                variable_values: &inputs.variable_values,
+                entity_info: &entity_info,
+                inline_text: &inputs.inline_text,
+                inline_negatives: &inputs.inline_negatives,
+                operation_hint: None,
+                context_fragments: &[],
+            };
+            let composed = compose(&req).map_err(|e| VerbError::Schema(e.to_string()))?;
+            let (width, height) = composed
+                .canvas
+                .map_or((1024, 1024), |c| (c.width, c.height));
+            (
+                composed.positive,
+                composed.negative,
+                composed.composition,
+                width,
+                height,
+                structure.name.clone(),
+            )
+        };
 
         let backend_id = backend.backend_id().to_owned();
         progress
@@ -286,12 +368,13 @@ impl Verb for GenerateReferenceSheetVerb {
             .step(Some(0.1), "sending to image generation backend")
             .await;
 
+        let negative_opt = (!negative.trim().is_empty()).then(|| negative.clone());
         let req = ImageGenRequest {
             model: None,
             prompt: full_prompt.clone(),
-            negative_prompt: Some(negative.clone()),
-            width: inputs.template.sheet_width(),
-            height: inputs.template.sheet_height(),
+            negative_prompt: negative_opt.clone(),
+            width,
+            height,
             steps: None,
             seed: inputs.seed,
             num_images: num_variants,
@@ -349,7 +432,7 @@ impl Verb for GenerateReferenceSheetVerb {
             &backend_id,
             &backend_model,
             &full_prompt,
-            &negative,
+            negative_opt.as_deref(),
             inputs.seed,
             &composition,
         );
@@ -363,10 +446,9 @@ impl Verb for GenerateReferenceSheetVerb {
 
         let elapsed = started.elapsed();
         let summary = format!(
-            "Generate {variant_count} reference sheet candidate{} for entity {} ({} template)",
+            "Generate {variant_count} reference sheet candidate{} for entity {} ({structure_name})",
             if variant_count == 1 { "" } else { "s" },
             inputs.entity_id.get(),
-            template_display_name(&inputs.template),
         );
 
         progress.step(Some(1.0), "done").await;
@@ -392,32 +474,6 @@ impl Verb for GenerateReferenceSheetVerb {
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
-fn build_negative_prompt(inputs: &GenerateReferenceSheetInputs) -> String {
-    let template_neg = inputs.template.build_negative_prompt();
-    match &inputs.negative_prompt {
-        Some(user_neg) => format!("{template_neg}, {user_neg}"),
-        None => template_neg.to_owned(),
-    }
-}
-
-fn build_reference_prompt(inputs: &GenerateReferenceSheetInputs, negative_prompt: &str) -> String {
-    let prompt = inputs.template.build_prompt(&inputs.prompt);
-    if negative_prompt.trim().is_empty() {
-        prompt
-    } else {
-        format!("{prompt}\n\nAvoid: {negative_prompt}")
-    }
-}
-
-fn template_display_name(template: &CompositionTemplate) -> &'static str {
-    match template {
-        CompositionTemplate::Character => "Character",
-        CompositionTemplate::Item => "Item",
-        CompositionTemplate::Tileset => "Tileset",
-        CompositionTemplate::Custom => "Custom",
-    }
-}
-
 fn unix_now() -> i64 {
     std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
@@ -432,7 +488,7 @@ fn build_variants(
     backend_id: &str,
     model: &str,
     prompt: &str,
-    negative_prompt: &str,
+    negative_prompt: Option<&str>,
     seed: Option<u64>,
     composition: &pixhaus_core::project::SheetComposition,
 ) -> Vec<SheetVariantOutput> {
@@ -449,7 +505,7 @@ fn build_variants(
                 model: model.to_owned(),
                 prompt: prompt.to_owned(),
                 seed,
-                negative_prompt: Some(negative_prompt.to_owned()),
+                negative_prompt: negative_prompt.map(ToOwned::to_owned),
             },
         })
         .collect()
@@ -555,12 +611,20 @@ mod tests {
         }
     }
 
-    fn inputs_for(template: CompositionTemplate, num_variants: u32) -> VerbInputs {
+    const CHARACTER: &str = "pixhaus.builtin.structure.character";
+    const ITEM: &str = "pixhaus.builtin.structure.item";
+    const TILESET: &str = "pixhaus.builtin.structure.tileset";
+    const CUSTOM: &str = "pixhaus.builtin.structure.custom";
+
+    fn inputs_for(structure_id: &str, num_variants: u32) -> VerbInputs {
         VerbInputs::from_struct(&GenerateReferenceSheetInputs {
             entity_id: EntityId::new(42),
-            template,
-            prompt: "a fantasy hero with a sword".into(),
-            negative_prompt: None,
+            structure_id: StructureId(structure_id.into()),
+            style_id: None,
+            prompt_id: None,
+            variable_values: BTreeMap::new(),
+            inline_text: "a fantasy hero with a sword".into(),
+            inline_negatives: String::new(),
             num_variants,
             quality: None,
             seed: None,
@@ -613,13 +677,16 @@ mod tests {
     // ── Validation ────────────────────────────────────────────────────────────
 
     #[test]
-    fn validate_rejects_blank_prompt() {
+    fn validate_rejects_blank_structure_id() {
         let verb = GenerateReferenceSheetVerb::new();
         let inputs = VerbInputs::from_struct(&GenerateReferenceSheetInputs {
             entity_id: EntityId::new(1),
-            template: CompositionTemplate::Custom,
-            prompt: "   ".into(),
-            negative_prompt: None,
+            structure_id: StructureId("   ".into()),
+            style_id: None,
+            prompt_id: None,
+            variable_values: BTreeMap::new(),
+            inline_text: String::new(),
+            inline_negatives: String::new(),
             num_variants: 1,
             quality: None,
             seed: None,
@@ -631,22 +698,21 @@ mod tests {
     #[test]
     fn validate_accepts_well_formed_inputs() {
         let verb = GenerateReferenceSheetVerb::new();
-        assert!(
-            verb.validate(&inputs_for(CompositionTemplate::Character, 2))
-                .is_ok()
-        );
+        assert!(verb.validate(&inputs_for(CHARACTER, 2)).is_ok());
     }
 
     #[test]
     fn omitted_quality_defaults_to_auto() {
         let inputs: GenerateReferenceSheetInputs = serde_json::from_value(serde_json::json!({
             "entity_id": 1,
-            "template": "character",
-            "prompt": "a fantasy hero"
+            "structure_id": "pixhaus.builtin.structure.character",
+            "inline_text": "a fantasy hero"
         }))
         .unwrap();
 
         assert_eq!(inputs.quality, Some(ImageQuality::Auto));
+        assert!(inputs.style_id.is_none());
+        assert_eq!(inputs.inline_text, "a fantasy hero");
     }
 
     // ── Full invocation via runtime ───────────────────────────────────────────
@@ -663,7 +729,7 @@ mod tests {
             .invoke(
                 &VerbId::new(GENERATE_REFERENCE_SHEET_VERB_ID),
                 VerbContext::empty(meta()),
-                inputs_for(CompositionTemplate::Character, 2),
+                inputs_for(CHARACTER, 2),
             )
             .unwrap();
         let preview = inv.finish().await.unwrap();
@@ -695,7 +761,7 @@ mod tests {
             .invoke(
                 &VerbId::new(GENERATE_REFERENCE_SHEET_VERB_ID),
                 VerbContext::empty(meta()),
-                inputs_for(CompositionTemplate::Character, 1),
+                inputs_for(CHARACTER, 1),
             )
             .unwrap();
         let preview = inv.finish().await.unwrap();
@@ -732,7 +798,7 @@ mod tests {
             .invoke(
                 &VerbId::new(GENERATE_REFERENCE_SHEET_VERB_ID),
                 VerbContext::empty(meta()),
-                inputs_for(CompositionTemplate::Custom, 1),
+                inputs_for(CUSTOM, 1),
             )
             .unwrap();
         let preview = inv.finish().await.unwrap();
@@ -764,9 +830,12 @@ mod tests {
         // Request 10 — the verb should clamp to 4.
         let inputs = VerbInputs::from_struct(&GenerateReferenceSheetInputs {
             entity_id: EntityId::new(1),
-            template: CompositionTemplate::Item,
-            prompt: "treasure chest".into(),
-            negative_prompt: None,
+            structure_id: StructureId(ITEM.into()),
+            style_id: None,
+            prompt_id: None,
+            variable_values: BTreeMap::new(),
+            inline_text: "treasure chest".into(),
+            inline_negatives: String::new(),
             num_variants: 10,
             quality: None,
             seed: None,
@@ -800,7 +869,7 @@ mod tests {
         let result = verb
             .invoke(
                 VerbContext::empty(meta()),
-                inputs_for(CompositionTemplate::Custom, 1),
+                inputs_for(CUSTOM, 1),
                 VerbProgress::discard(),
                 cancel,
             )
@@ -820,7 +889,7 @@ mod tests {
             .invoke(
                 &VerbId::new(GENERATE_REFERENCE_SHEET_VERB_ID),
                 VerbContext::empty(meta()),
-                inputs_for(CompositionTemplate::Custom, 1),
+                inputs_for(CUSTOM, 1),
             )
             .unwrap_err();
 
@@ -845,7 +914,7 @@ mod tests {
             .invoke(
                 &VerbId::new(GENERATE_REFERENCE_SHEET_VERB_ID),
                 VerbContext::empty(meta()),
-                inputs_for(CompositionTemplate::Tileset, 1),
+                inputs_for(TILESET, 1),
             )
             .unwrap();
         let preview = inv.finish().await.unwrap();
@@ -866,17 +935,12 @@ mod tests {
             .unwrap();
         runtime.register(GenerateReferenceSheetVerb::new()).unwrap();
 
-        for template in [
-            CompositionTemplate::Character,
-            CompositionTemplate::Item,
-            CompositionTemplate::Tileset,
-            CompositionTemplate::Custom,
-        ] {
+        for structure_id in [CHARACTER, ITEM, TILESET, CUSTOM] {
             let inv = runtime
                 .invoke(
                     &VerbId::new(GENERATE_REFERENCE_SHEET_VERB_ID),
                     VerbContext::empty(meta()),
-                    inputs_for(template, 1),
+                    inputs_for(structure_id, 1),
                 )
                 .unwrap();
             let preview = inv.finish().await.unwrap();
@@ -907,7 +971,7 @@ mod tests {
             .invoke(
                 &VerbId::new(GENERATE_REFERENCE_SHEET_VERB_ID),
                 VerbContext::empty(meta()),
-                inputs_for(CompositionTemplate::Character, 1),
+                inputs_for(CHARACTER, 1),
             )
             .unwrap();
         let err = inv.finish().await.unwrap_err();
@@ -930,7 +994,7 @@ mod tests {
             .invoke(
                 &VerbId::new(GENERATE_REFERENCE_SHEET_VERB_ID),
                 VerbContext::empty(meta()),
-                inputs_for(CompositionTemplate::Character, 1),
+                inputs_for(CHARACTER, 1),
             )
             .unwrap();
         let preview = inv.finish().await.unwrap();
@@ -955,9 +1019,12 @@ mod tests {
 
         let inputs = VerbInputs::from_struct(&GenerateReferenceSheetInputs {
             entity_id: EntityId::new(7),
-            template: CompositionTemplate::Character,
-            prompt: "test subject".into(),
-            negative_prompt: Some("user_neg".into()),
+            structure_id: StructureId(CHARACTER.into()),
+            style_id: None,
+            prompt_id: None,
+            variable_values: BTreeMap::new(),
+            inline_text: "test subject".into(),
+            inline_negatives: "user_neg".into(),
             num_variants: 1,
             quality: None,
             seed: None,
@@ -989,6 +1056,42 @@ mod tests {
                 "negative prompt must not start with a bare comma"
             );
         }
+    }
+
+    #[tokio::test]
+    async fn unknown_style_id_is_rejected() {
+        let runtime = VerbRuntime::new();
+        runtime
+            .register_backend(BackendProxy::new(WhiteStub::new(1)), 0)
+            .unwrap();
+        runtime.register(GenerateReferenceSheetVerb::new()).unwrap();
+
+        let inputs = VerbInputs::from_struct(&GenerateReferenceSheetInputs {
+            entity_id: EntityId::new(1),
+            structure_id: StructureId(CHARACTER.into()),
+            style_id: Some(StyleId("does.not.exist".into())),
+            prompt_id: None,
+            variable_values: BTreeMap::new(),
+            inline_text: "a hero".into(),
+            inline_negatives: String::new(),
+            num_variants: 1,
+            quality: None,
+            seed: None,
+        })
+        .unwrap();
+
+        let inv = runtime
+            .invoke(
+                &VerbId::new(GENERATE_REFERENCE_SHEET_VERB_ID),
+                VerbContext::empty(meta()),
+                inputs,
+            )
+            .unwrap();
+        let err = inv.finish().await.unwrap_err();
+        assert!(
+            matches!(err, VerbError::Schema(_)),
+            "an unknown style id must be rejected, got {err:?}"
+        );
     }
 
     // Ensure WhiteStub image and Duration are visible in this test scope.

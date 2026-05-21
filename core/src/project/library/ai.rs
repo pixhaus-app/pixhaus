@@ -72,6 +72,18 @@ pub struct ProjectAi {
     /// Capped — the implementation details land with S21's follow-up.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub prompt_history: Vec<PromptHistoryEntry>,
+
+    /// Project-tier composition Structures. Shadow built-ins by id.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub structures: Vec<crate::project::library::composition::Structure>,
+
+    /// Project-tier Styles.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub styles: Vec<crate::project::library::composition::Style>,
+
+    /// Project-tier saved Prompts.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub prompts: Vec<crate::project::library::composition::PromptTemplate>,
 }
 
 impl Default for ProjectAi {
@@ -87,6 +99,9 @@ impl Default for ProjectAi {
             style_corpus: Vec::new(),
             project_lora_path: None,
             prompt_history: Vec::new(),
+            structures: Vec::new(),
+            styles: Vec::new(),
+            prompts: Vec::new(),
         }
     }
 }
@@ -105,6 +120,9 @@ impl ProjectAi {
             && self.style_corpus.is_empty()
             && self.project_lora_path.is_none()
             && self.prompt_history.is_empty()
+            && self.structures.is_empty()
+            && self.styles.is_empty()
+            && self.prompts.is_empty()
     }
 }
 
@@ -301,4 +319,39 @@ pub struct TrainingJob {
     pub result_lora_id: Option<AssetId>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub error: Option<String>,
+}
+
+#[cfg(test)]
+mod project_ai_library_tests {
+    use super::*;
+    use crate::project::library::composition::{Structure, StructureId, StructureOutput};
+
+    #[test]
+    fn new_project_ai_has_empty_library() {
+        let ai = ProjectAi::default();
+        assert!(ai.structures.is_empty());
+        assert!(ai.styles.is_empty());
+        assert!(ai.prompts.is_empty());
+        assert!(ai.is_empty());
+    }
+
+    #[test]
+    fn project_ai_with_structure_is_not_empty() {
+        let mut ai = ProjectAi::default();
+        ai.structures.push(Structure {
+            id: StructureId("p.s".into()),
+            name: "P".into(),
+            output: StructureOutput::Single,
+            layout_negatives: String::new(),
+        });
+        assert!(!ai.is_empty());
+    }
+
+    #[test]
+    fn old_blob_without_library_deserializes() {
+        // Simulate an old file: a ProjectAi JSON with none of the new fields.
+        let old = r"{}";
+        let ai: ProjectAi = serde_json::from_str(old).unwrap();
+        assert!(ai.structures.is_empty());
+    }
 }

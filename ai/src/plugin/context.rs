@@ -15,12 +15,102 @@ use std::sync::Arc;
 
 use serde::{Deserialize, Serialize};
 
+use pixhaus_core::project::library::composition::{
+    PromptId, PromptTemplate, Structure, StructureId, Style, StyleId,
+};
 use pixhaus_core::project::{
     EntityId, FrameIndex, IVec2, LayerId, Palette, ProjectMetadata, Rect, Size, Sprite, SpriteId,
 };
 
 use super::anchor::AnchorPayload;
 use super::backend::InferenceBackend;
+use crate::compose::builtins::BuiltinLibrary;
+
+/// Project-tier composition records carried on a [`VerbContext`].
+///
+/// Owned (not borrowed) so the context stays `Clone + Serialize`. The
+/// built-in registry is layered on at resolution time via
+/// [`VerbContext::library_view`], not stored here — it is a pure
+/// constructor with no per-project state.
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+pub struct ProjectCompositionLibrary {
+    /// Project-tier Structures. Shadow built-ins by id.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub structures: Vec<Structure>,
+    /// Project-tier Styles.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub styles: Vec<Style>,
+    /// Project-tier saved Prompts.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub prompts: Vec<PromptTemplate>,
+}
+
+impl ProjectCompositionLibrary {
+    /// Returns `true` when no project-tier records are present.
+    #[must_use]
+    pub fn is_empty(&self) -> bool {
+        self.structures.is_empty() && self.styles.is_empty() && self.prompts.is_empty()
+    }
+}
+
+/// Borrowed, read-only resolution view layering project-tier records over
+/// the built-in registry. Project records shadow built-ins by id.
+///
+/// The view borrows the project records from a [`VerbContext`] and owns a
+/// freshly-loaded [`BuiltinLibrary`] (a pure, cheap constructor), so it can
+/// be returned from [`VerbContext::library_view`] without a self-referential
+/// borrow.
+pub struct CompositionLibraryView<'a> {
+    structures: &'a [Structure],
+    styles: &'a [Style],
+    prompts: &'a [PromptTemplate],
+    builtins: BuiltinLibrary,
+}
+
+impl<'a> CompositionLibraryView<'a> {
+    /// Constructs a view over the given project records and built-in registry.
+    #[must_use]
+    pub fn new(
+        structures: &'a [Structure],
+        styles: &'a [Style],
+        prompts: &'a [PromptTemplate],
+        builtins: BuiltinLibrary,
+    ) -> Self {
+        Self {
+            structures,
+            styles,
+            prompts,
+            builtins,
+        }
+    }
+
+    /// Resolves a Structure id: project record first, then built-in.
+    #[must_use]
+    pub fn structure(&self, id: &StructureId) -> Option<&Structure> {
+        self.structures
+            .iter()
+            .find(|s| &s.id == id)
+            .or_else(|| self.builtins.structures.get(id))
+    }
+
+    /// Resolves a Style id: project record first, then built-in.
+    #[must_use]
+    pub fn style(&self, id: &StyleId) -> Option<&Style> {
+        self.styles
+            .iter()
+            .find(|s| &s.id == id)
+            .or_else(|| self.builtins.styles.get(id))
+    }
+
+    /// Resolves a Prompt id: project record first, then built-in.
+    #[must_use]
+    pub fn prompt(&self, id: &PromptId) -> Option<&PromptTemplate> {
+        self.prompts
+            .iter()
+            .find(|p| &p.id == id)
+            .or_else(|| self.builtins.prompts.get(id))
+    }
+}
 
 /// Raw pixel bytes carried in or out of a verb.
 ///
@@ -225,6 +315,12 @@ pub struct VerbContext {
     /// never changes a verb's invocation requirements.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub anchor: Option<AnchorPayload>,
+
+    /// Project-tier composition library (Structures, Styles, Prompts) for
+    /// this invocation. Layered over the built-in registry by
+    /// [`VerbContext::library_view`]. Empty for verbs that do not compose.
+    #[serde(default, skip_serializing_if = "ProjectCompositionLibrary::is_empty")]
+    pub composition_library: ProjectCompositionLibrary,
     /// Backend selected by the runtime for this invocation.
     ///
     /// Contract enforced by [`super::runtime::VerbRuntime::invoke`]:
@@ -266,6 +362,7 @@ impl PartialEq for VerbContext {
             && self.library_entity_id == other.library_entity_id
             && self.anchor_reference == other.anchor_reference
             && self.anchor == other.anchor
+            && self.composition_library == other.composition_library
     }
 }
 
@@ -290,8 +387,21 @@ impl VerbContext {
             library_entity_id: None,
             anchor_reference: None,
             anchor: None,
+            composition_library: ProjectCompositionLibrary::default(),
             backend: None,
         }
+    }
+
+    /// Returns a resolution view layering this context's project-tier
+    /// composition records over a freshly-loaded built-in registry.
+    #[must_use]
+    pub fn library_view(&self) -> CompositionLibraryView<'_> {
+        CompositionLibraryView::new(
+            &self.composition_library.structures,
+            &self.composition_library.styles,
+            &self.composition_library.prompts,
+            BuiltinLibrary::load(),
+        )
     }
 
     /// Returns a [`VerbContextBuilder`] seeded with project metadata.
@@ -458,6 +568,13 @@ impl VerbContextBuilder {
         self
     }
 
+    /// Sets the project-tier composition library for this invocation.
+    #[must_use]
+    pub fn with_composition_library(mut self, library: ProjectCompositionLibrary) -> Self {
+        self.ctx.composition_library = library;
+        self
+    }
+
     /// Finalises the builder and returns the [`VerbContext`].
     ///
     /// `backend` is left as `None`; the runtime fills it in during
@@ -590,6 +707,113 @@ mod tests {
         ctx_a.backend = Some(Arc::new(Stub));
 
         assert_eq!(ctx_a, ctx_b);
+    }
+
+    #[test]
+    fn library_view_resolves_project_over_builtin() {
+        use pixhaus_core::project::library::composition::{
+            Structure, StructureId, StructureOutput,
+        };
+
+        let project_struct = Structure {
+            id: StructureId("pixhaus.builtin.structure.character".into()),
+            name: "Shadowed".into(),
+            output: StructureOutput::Single,
+            layout_negatives: String::new(),
+        };
+        let ctx = VerbContext::builder(metadata())
+            .with_composition_library(ProjectCompositionLibrary {
+                structures: vec![project_struct],
+                styles: Vec::new(),
+                prompts: Vec::new(),
+            })
+            .build();
+        let view = ctx.library_view();
+        let resolved = view
+            .structure(&StructureId("pixhaus.builtin.structure.character".into()))
+            .unwrap();
+        assert_eq!(resolved.name, "Shadowed", "project record shadows built-in");
+    }
+
+    #[test]
+    fn library_view_falls_back_to_builtin() {
+        use pixhaus_core::project::library::composition::StructureId;
+
+        let ctx = VerbContext::empty(metadata());
+        let view = ctx.library_view();
+        // No project records: a built-in id still resolves.
+        assert!(
+            view.structure(&StructureId("pixhaus.builtin.structure.item".into()))
+                .is_some()
+        );
+        assert!(view.structure(&StructureId("nonexistent".into())).is_none());
+    }
+
+    #[test]
+    fn library_view_resolves_style_over_builtin() {
+        use pixhaus_core::project::library::composition::{Style, StyleId};
+
+        let shadow = Style {
+            id: StyleId("pixhaus.builtin.style.default".into()),
+            name: "Shadowed".into(),
+            modifiers: String::new(),
+            look_negatives: String::new(),
+            model_pref: None,
+            quality: None,
+        };
+        let ctx = VerbContext::builder(metadata())
+            .with_composition_library(ProjectCompositionLibrary {
+                structures: Vec::new(),
+                styles: vec![shadow],
+                prompts: Vec::new(),
+            })
+            .build();
+        let view = ctx.library_view();
+        let resolved = view
+            .style(&StyleId("pixhaus.builtin.style.default".into()))
+            .unwrap();
+        assert_eq!(resolved.name, "Shadowed", "project style shadows built-in");
+    }
+
+    #[test]
+    fn library_view_style_falls_back_to_builtin() {
+        use pixhaus_core::project::library::composition::StyleId;
+
+        let view_owner = VerbContext::empty(metadata());
+        let view = view_owner.library_view();
+        assert!(
+            view.style(&StyleId("pixhaus.builtin.style.default".into()))
+                .is_some()
+        );
+        assert!(view.style(&StyleId("nope".into())).is_none());
+    }
+
+    #[test]
+    fn library_view_resolves_prompt_over_builtin() {
+        use pixhaus_core::project::library::composition::{PromptId, PromptTemplate};
+
+        let project_prompt = PromptTemplate {
+            id: PromptId("project.prompt.hero".into()),
+            name: "Hero".into(),
+            text: "a {species} hero".into(),
+            variables: Vec::new(),
+            default_style: None,
+            default_structure: None,
+        };
+        let ctx = VerbContext::builder(metadata())
+            .with_composition_library(ProjectCompositionLibrary {
+                structures: Vec::new(),
+                styles: Vec::new(),
+                prompts: vec![project_prompt],
+            })
+            .build();
+        let view = ctx.library_view();
+        let resolved = view
+            .prompt(&PromptId("project.prompt.hero".into()))
+            .unwrap();
+        assert_eq!(resolved.name, "Hero");
+        // No built-in prompts ship, so an unknown id resolves to nothing.
+        assert!(view.prompt(&PromptId("nope".into())).is_none());
     }
 
     #[test]

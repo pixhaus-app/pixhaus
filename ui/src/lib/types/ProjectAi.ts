@@ -4,8 +4,11 @@ import type { EntityId } from "./EntityId";
 import type { ModelId } from "./ModelId";
 import type { OperationKind } from "./OperationKind";
 import type { PromptHistoryEntry } from "./PromptHistoryEntry";
+import type { PromptTemplate } from "./PromptTemplate";
 import type { Quality } from "./Quality";
 import type { Rgba } from "./Rgba";
+import type { Structure } from "./Structure";
+import type { Style } from "./Style";
 import type { TrainingJob } from "./TrainingJob";
 
 /**
@@ -60,4 +63,16 @@ project_lora_path?: string | null,
  * Recent prompts for resume-where-you-left-off semantic search.
  * Capped — the implementation details land with S21's follow-up.
  */
-prompt_history?: Array<PromptHistoryEntry>, };
+prompt_history?: Array<PromptHistoryEntry>, 
+/**
+ * Project-tier composition Structures. Shadow built-ins by id.
+ */
+structures?: Array<Structure>, 
+/**
+ * Project-tier Styles.
+ */
+styles?: Array<Style>, 
+/**
+ * Project-tier saved Prompts.
+ */
+prompts?: Array<PromptTemplate>, };

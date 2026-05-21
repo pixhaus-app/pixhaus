@@ -62,6 +62,25 @@ pub struct LibraryGenerateReferenceSheetArgs {
     /// `LoRA` strength when a Flux `LoRA` is applied.
     #[serde(default = "default_request_lora_weight")]
     pub lora_weight: f32,
+    /// Optional composition Structure id. When set, the picked Structure (and
+    /// optional Style/Prompt) drive the composed prompt instead of the template.
+    #[serde(default)]
+    pub structure_id: Option<pixhaus_core::project::library::composition::StructureId>,
+    /// Optional composition Style id layered onto the picked Structure.
+    #[serde(default)]
+    pub style_id: Option<pixhaus_core::project::library::composition::StyleId>,
+    /// Optional saved Prompt template id supplying variables and body text.
+    #[serde(default)]
+    pub prompt_id: Option<pixhaus_core::project::library::composition::PromptId>,
+    /// Explicit values for the picked prompt's variables.
+    #[serde(default)]
+    pub variable_values: std::collections::BTreeMap<String, String>,
+    /// Free-typed prompt additions appended to the composed text.
+    #[serde(default)]
+    pub inline_text: String,
+    /// Free-typed negative-prompt additions.
+    #[serde(default)]
+    pub inline_negatives: String,
 }
 
 fn default_request_lora_weight() -> f32 {
@@ -88,6 +107,77 @@ pub struct LibraryRemoveReferenceSheetVariantArgs {
     pub variant_id: SheetVariantId,
 }
 
+/// Resolves the picked Structure (and optional Style/Prompt) from the project
+/// library, falling back to the built-in library, into a [`PickedComposition`].
+///
+/// Returns `Ok(None)` when no Structure id was supplied, leaving the legacy
+/// template path in charge. Errors only when a named Structure cannot be found.
+fn resolve_picked_composition(
+    project: &pixhaus_core::project::Project,
+    args: &LibraryGenerateReferenceSheetArgs,
+) -> Result<Option<PickedComposition>, AppCommandError> {
+    let builtins = pixhaus_ai::compose::builtins::BuiltinLibrary::load();
+
+    // Resolve the picked prompt first; a prompt can carry a default structure
+    // and style, so a prompt-only pick still activates the composition path.
+    let prompt = args.prompt_id.as_ref().and_then(|id| {
+        project
+            .library
+            .ai
+            .prompts
+            .iter()
+            .find(|p| &p.id == id)
+            .cloned()
+            .or_else(|| builtins.prompts.get(id).cloned())
+    });
+
+    // Structure: explicit pick wins; otherwise the prompt's default_structure.
+    // With neither, fall back to the legacy template path.
+    let Some(sid) = args
+        .structure_id
+        .clone()
+        .or_else(|| prompt.as_ref().and_then(|p| p.default_structure.clone()))
+    else {
+        return Ok(None);
+    };
+    let structure = project
+        .library
+        .ai
+        .structures
+        .iter()
+        .find(|s| s.id == sid)
+        .cloned()
+        .or_else(|| builtins.structures.get(&sid).cloned())
+        .ok_or_else(|| AppCommandError::Validation {
+            detail: format!("unknown structure {}", sid.0),
+        })?;
+
+    // Style: explicit pick wins; otherwise the prompt's default_style.
+    let style_id = args
+        .style_id
+        .clone()
+        .or_else(|| prompt.as_ref().and_then(|p| p.default_style.clone()));
+    let style = style_id.as_ref().and_then(|id| {
+        project
+            .library
+            .ai
+            .styles
+            .iter()
+            .find(|s| &s.id == id)
+            .cloned()
+            .or_else(|| builtins.styles.get(id).cloned())
+    });
+
+    Ok(Some(PickedComposition {
+        structure,
+        style,
+        prompt,
+        variable_values: args.variable_values.clone(),
+        inline_text: args.inline_text.clone(),
+        inline_negatives: args.inline_negatives.clone(),
+    }))
+}
+
 /// Generates draft reference-sheet variants for a sprite entity.
 ///
 /// The generated candidates are persisted in `ReferenceSheet::history`
@@ -98,13 +188,17 @@ pub async fn library_generate_reference_sheet(
     app: AppHandle,
     state: State<'_, AppState>,
 ) -> CommandResult<RequestId> {
-    if args.prompt.trim().is_empty() {
+    if args.prompt.trim().is_empty()
+        && args.inline_text.trim().is_empty()
+        && args.structure_id.is_none()
+        && args.prompt_id.is_none()
+    {
         return Err(AppCommandError::Validation {
             detail: "reference sheet prompt must not be empty".into(),
         });
     }
 
-    let (style_notes, model, lora_asset) = {
+    let (style_notes, model, lora_asset, picked) = {
         let doc = state.doc.read().await;
         let project = doc
             .project
@@ -122,7 +216,13 @@ pub async fn library_generate_reference_sheet(
         let preferred = selected_model(args.model, OperationKind::FreshGeneration, project);
         let model = configured_execution_model(preferred, &state);
         let lora_asset = find_lora_asset(project, args.applied_lora);
-        (project.library.ai.style_notes.clone(), model, lora_asset)
+        let picked = resolve_picked_composition(project, &args)?;
+        (
+            project.library.ai.style_notes.clone(),
+            model,
+            lora_asset,
+            picked,
+        )
     };
 
     let (request_id, token, lease) =
@@ -144,6 +244,7 @@ pub async fn library_generate_reference_sheet(
             applied_lora: lora_asset,
             lora_weight: args.lora_weight,
             real_world_grounding: args.real_world_grounding,
+            composition: picked,
         },
         build: VariantBuildSpec {
             origin: VariantOrigin::FreshGeneration,
@@ -557,6 +658,16 @@ impl Drop for SheetRequestLease {
 }
 
 #[derive(Clone)]
+struct PickedComposition {
+    structure: pixhaus_core::project::library::composition::Structure,
+    style: Option<pixhaus_core::project::library::composition::Style>,
+    prompt: Option<pixhaus_core::project::library::composition::PromptTemplate>,
+    variable_values: std::collections::BTreeMap<String, String>,
+    inline_text: String,
+    inline_negatives: String,
+}
+
+#[derive(Clone)]
 struct SheetProviderRequest {
     operation: OperationKind,
     model: ModelId,
@@ -573,6 +684,7 @@ struct SheetProviderRequest {
     applied_lora: Option<LoraAsset>,
     lora_weight: f32,
     real_world_grounding: bool,
+    composition: Option<PickedComposition>,
 }
 
 #[derive(Clone)]
@@ -810,16 +922,34 @@ fn reference_data_uri(image: &ReferenceImage) -> String {
     )
 }
 
-fn compose_sheet_prompt(request: &SheetProviderRequest, style_notes: &str) -> String {
-    let mut parts = Vec::new();
-    if !style_notes.trim().is_empty() {
-        parts.push(format!("Project style notes:\n{}", style_notes.trim()));
+/// Assembles the positive prompt for a sheet-provider generation request.
+///
+/// Builds the app-level context fragments and operation hint, then delegates
+/// to [`pixhaus_ai::compose::compose`] per spec section 11. The template name
+/// and dimensions ride along as a context fragment; a `Single` structure is
+/// used because the app sheet-provider path has no paneled layout contract of
+/// its own.
+/// Maps a sheet-provider operation to its trailing compose instruction.
+fn operation_hint_for(operation: OperationKind) -> Option<&'static str> {
+    match operation {
+        OperationKind::MaskedRefinement | OperationKind::RegionalRefinement => {
+            Some("Preserve everything outside the edited region.")
+        }
+        OperationKind::PromptOnlyRefinement | OperationKind::ChatTurn => Some(
+            "Preserve the character identity, proportions, palette, and sheet layout unless the user specifically asks to change them.",
+        ),
+        OperationKind::Promotion => {
+            Some("Re-render this approved direction as a polished final reference sheet.")
+        }
+        _ => None,
     }
-    parts.push(format!(
-        "Create a sprite reference sheet using template {:?} at {}x{}.",
-        request.template, request.width, request.height
-    ));
-    parts.push(format!(
+}
+
+/// Builds the shared app-level context fragments (background, references,
+/// grounding, `LoRA`) reused by both the picked-composition and template paths.
+fn sheet_context_fragments(request: &SheetProviderRequest) -> Vec<String> {
+    let mut fragments: Vec<String> = Vec::new();
+    fragments.push(format!(
         "Background must be a flat solid chroma key color {} with no shadows, gradients, or background props.",
         chroma_hex(request.chroma_color)
     ));
@@ -838,7 +968,7 @@ fn compose_sheet_prompt(request: &SheetProviderRequest, style_notes: &str) -> St
             })
             .collect::<Vec<_>>()
             .join(" ");
-        parts.push(hints);
+        fragments.push(hints);
     }
     if request.real_world_grounding
         && matches!(
@@ -846,30 +976,133 @@ fn compose_sheet_prompt(request: &SheetProviderRequest, style_notes: &str) -> St
             ModelId::GoogleNanoBananaPro | ModelId::GoogleGeminiFlashImage
         )
     {
-        parts.push("Use accurate real-world references for named places, objects, and scenes when composing this image.".into());
+        fragments.push("Use accurate real-world references for named places, objects, and scenes when composing this image.".into());
     }
     if let Some(lora) = &request.applied_lora {
-        parts.push(format!(
+        fragments.push(format!(
             "Apply the Flux LoRA trigger word `{}` at weight {:.2}.",
             lora.trigger_word, request.lora_weight
         ));
     }
-    match request.operation {
-        OperationKind::MaskedRefinement | OperationKind::RegionalRefinement => {
-            parts.push("Preserve everything outside the edited region.".into());
-        }
-        OperationKind::PromptOnlyRefinement | OperationKind::ChatTurn => {
-            parts.push("Preserve the character identity, proportions, palette, and sheet layout unless the user specifically asks to change them.".into());
-        }
-        OperationKind::Promotion => {
-            parts.push(
-                "Re-render this approved direction as a polished final reference sheet.".into(),
-            );
-        }
-        _ => {}
+    fragments
+}
+
+/// Composes the positive prompt from a picked composition (Structure plus
+/// optional Style/Prompt), per spec section 11.
+/// The positive and negative prompt produced by the composition resolver for a
+/// sheet-provider request.
+struct ComposedSheetPrompt {
+    positive: String,
+    negative: String,
+}
+
+fn compose_picked_prompt(
+    request: &SheetProviderRequest,
+    picked: &PickedComposition,
+    style_notes: &str,
+) -> ComposedSheetPrompt {
+    use pixhaus_ai::compose::builtins::BUILTIN_DEFAULT_BASELINE;
+    use pixhaus_ai::compose::{ComposeRequest, compose};
+
+    let fragments = sheet_context_fragments(request);
+    let baseline = if style_notes.trim().is_empty() {
+        BUILTIN_DEFAULT_BASELINE
+    } else {
+        style_notes.trim()
+    };
+    // `inline_text` is an addition to the request prompt, not a replacement.
+    let base = request.prompt.trim();
+    let extra = picked.inline_text.trim();
+    let inline = match (base.is_empty(), extra.is_empty()) {
+        (false, false) => format!("{base}, {extra}"),
+        (false, true) => base.to_owned(),
+        (true, false) => extra.to_owned(),
+        (true, true) => String::new(),
+    };
+    let empty = std::collections::BTreeMap::new();
+    let req = ComposeRequest {
+        baseline,
+        structure: &picked.structure,
+        style: picked.style.as_ref(),
+        prompt: picked.prompt.as_ref(),
+        variable_values: &picked.variable_values,
+        entity_info: &empty,
+        inline_text: &inline,
+        inline_negatives: picked.inline_negatives.trim(),
+        operation_hint: operation_hint_for(request.operation),
+        context_fragments: &fragments,
+    };
+    compose(&req).map_or_else(
+        |_| ComposedSheetPrompt {
+            positive: inline.clone(),
+            negative: String::new(),
+        },
+        |c| ComposedSheetPrompt {
+            positive: c.positive,
+            negative: c.negative,
+        },
+    )
+}
+
+fn compose_sheet_prompt(request: &SheetProviderRequest, style_notes: &str) -> ComposedSheetPrompt {
+    use pixhaus_ai::compose::builtins::BUILTIN_DEFAULT_BASELINE;
+    use pixhaus_ai::compose::{ComposeRequest, compose};
+    use pixhaus_core::project::library::composition::{Structure, StructureId, StructureOutput};
+
+    if let Some(picked) = &request.composition {
+        return compose_picked_prompt(request, picked, style_notes);
     }
-    parts.push(request.prompt.trim().to_owned());
-    parts.join("\n\n")
+
+    // App-level context fragments, in the same order and wording as before.
+    // The template name and dimensions lead, then the shared fragments.
+    let mut fragments = vec![format!(
+        "Create a sprite reference sheet using template {:?} at {}x{}.",
+        request.template, request.width, request.height
+    )];
+    fragments.extend(sheet_context_fragments(request));
+
+    let operation_hint = operation_hint_for(request.operation);
+
+    // Cascading baseline (spec section 5): project style notes, else the default.
+    let baseline = if style_notes.trim().is_empty() {
+        BUILTIN_DEFAULT_BASELINE
+    } else {
+        style_notes.trim()
+    };
+
+    // The app sheet-provider path has no paneled Structure — the template name
+    // and dimensions ride along as a context fragment above. A `Single`
+    // structure contributes no layout prose, so compose() assembles only the
+    // prose segments in the spec's fixed order.
+    let structure = Structure {
+        id: StructureId("pixhaus.app.sheet_provider".into()),
+        name: "Sheet provider".into(),
+        output: StructureOutput::Single,
+        layout_negatives: String::new(),
+    };
+    let empty = std::collections::BTreeMap::new();
+    let req = ComposeRequest {
+        baseline,
+        structure: &structure,
+        style: None,
+        prompt: None,
+        variable_values: &empty,
+        entity_info: &empty,
+        inline_text: request.prompt.trim(),
+        inline_negatives: "",
+        operation_hint,
+        context_fragments: &fragments,
+    };
+    compose(&req).map_or_else(
+        |_| ComposedSheetPrompt {
+            positive: request.prompt.trim().to_owned(),
+            negative: String::new(),
+        },
+        |c| ComposedSheetPrompt {
+            positive: c.positive,
+            negative: c.negative,
+        },
+    )
 }
 
 fn selected_model(
@@ -994,7 +1227,12 @@ async fn invoke_provider_images(
             message: "selected backend does not expose the image execution surface".into(),
         })?;
 
-    let prompt = compose_sheet_prompt(request, style_notes);
+    let composed = compose_sheet_prompt(request, style_notes);
+    let prompt = composed.positive;
+    let negative_prompt = {
+        let n = composed.negative.trim();
+        (!n.is_empty()).then(|| n.to_owned())
+    };
     let model = if request.model == ModelId::Auto {
         None
     } else {
@@ -1014,7 +1252,7 @@ async fn invoke_provider_images(
                 InferenceRequest::Replicate(pixhaus_ai::backends::ReplicateRequest {
                     model: model_label(request.model).into(),
                     version: None,
-                    input: build_fal_sheet_input(request, &prompt),
+                    input: build_fal_sheet_input(request, &prompt, negative_prompt.as_deref()),
                 }),
                 progress,
                 cancel,
@@ -1029,7 +1267,7 @@ async fn invoke_provider_images(
             image: source.bytes.clone(),
             mask: request.mask.as_ref().map(|mask| mask.bytes.clone()),
             prompt,
-            negative_prompt: None,
+            negative_prompt: negative_prompt.clone(),
             num_images: u32::from(request.candidate_count.clamp(1, 4)),
             style_image: request
                 .references
@@ -1053,7 +1291,7 @@ async fn invoke_provider_images(
         let image_gen = ImageGenRequest {
             model,
             prompt,
-            negative_prompt: None,
+            negative_prompt,
             width: request.width,
             height: request.height,
             steps: None,
@@ -1236,12 +1474,19 @@ fn encode_reference_assets_zip(assets: &[ReferenceAsset]) -> CommandResult<Vec<u
 }
 
 #[allow(clippy::disallowed_methods)]
-fn build_fal_sheet_input(request: &SheetProviderRequest, prompt: &str) -> serde_json::Value {
+fn build_fal_sheet_input(
+    request: &SheetProviderRequest,
+    prompt: &str,
+    negative_prompt: Option<&str>,
+) -> serde_json::Value {
     let mut input = serde_json::json!({
         "prompt": prompt,
         "num_images": request.candidate_count.clamp(1, 4),
         "sync_mode": true,
     });
+    if let Some(negative) = negative_prompt.filter(|n| !n.trim().is_empty()) {
+        input["negative_prompt"] = serde_json::json!(negative);
+    }
     if request.source_image.is_none() {
         input["image_size"] = serde_json::json!({
             "width": request.width,
@@ -1423,7 +1668,7 @@ fn build_variant_from_provider_image(
     variant.height = spec.provider.height;
     variant.chroma_color = spec.provider.chroma_color;
     variant.user_prompt.clone_from(&spec.provider.prompt);
-    variant.composed_prompt = compose_sheet_prompt(&spec.provider, "");
+    variant.composed_prompt = compose_sheet_prompt(&spec.provider, "").positive;
     variant.references.clone_from(&spec.provider.references);
     variant.model = image.model;
     variant.quality = spec.provider.quality;
@@ -1871,6 +2116,7 @@ pub async fn library_refine_reference_sheet_variant(
             applied_lora: lora_asset,
             lora_weight: source.lora_weight,
             real_world_grounding: source.real_world_grounding,
+            composition: None,
         },
         build: VariantBuildSpec {
             origin: VariantOrigin::Refinement,
@@ -1991,6 +2237,7 @@ pub async fn library_submit_chat_turn(
             applied_lora: lora_asset,
             lora_weight: source.lora_weight,
             real_world_grounding: source.real_world_grounding,
+            composition: None,
         },
         build: VariantBuildSpec {
             origin: VariantOrigin::ChatTurn,
@@ -2077,6 +2324,7 @@ pub async fn library_promote_variant_to_final(
             applied_lora: lora_asset,
             lora_weight: source.lora_weight,
             real_world_grounding: source.real_world_grounding,
+            composition: None,
         },
         build: VariantBuildSpec {
             origin: VariantOrigin::Promotion,
@@ -2160,6 +2408,7 @@ pub async fn library_start_cross_model_grid(
                 applied_lora: None,
                 lora_weight: 1.0,
                 real_world_grounding: false,
+                composition: None,
             },
             build: VariantBuildSpec {
                 origin: VariantOrigin::CrossModelGrid,
@@ -3003,4 +3252,85 @@ pub async fn project_set_default_candidate_count(
     project.library.ai.default_candidate_count = n;
     doc.dirty = true;
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use pixhaus_core::project::default_reference_chroma;
+
+    fn sample_masked_request() -> SheetProviderRequest {
+        SheetProviderRequest {
+            operation: OperationKind::MaskedRefinement,
+            model: ModelId::OpenAiGptImage2,
+            quality: Quality::Medium,
+            prompt: "make the hair longer".into(),
+            template: ReferenceSheetTemplateId::Custom,
+            width: 1024,
+            height: 1024,
+            chroma_color: default_reference_chroma(),
+            references: Vec::new(),
+            source_image: None,
+            mask: None,
+            candidate_count: 1,
+            applied_lora: None,
+            lora_weight: 1.0,
+            real_world_grounding: false,
+            composition: None,
+        }
+    }
+
+    #[test]
+    fn adapter_includes_background_and_operation_hint() {
+        let composed = compose_sheet_prompt(&sample_masked_request(), "").positive;
+        assert!(composed.contains("flat solid chroma key color"));
+        assert!(composed.contains("Preserve everything outside the edited region"));
+        assert!(composed.contains("make the hair longer"));
+    }
+
+    #[test]
+    fn adapter_uses_default_baseline_when_no_style_notes() {
+        let composed = compose_sheet_prompt(&sample_masked_request(), "").positive;
+        assert!(composed.starts_with("pixel art reference sheet"));
+    }
+
+    #[test]
+    fn picked_structure_drives_the_composed_prompt() {
+        use pixhaus_ai::compose::builtins::BuiltinLibrary;
+        use pixhaus_core::project::library::composition::StructureId;
+
+        let builtins = BuiltinLibrary::load();
+        let structure = builtins
+            .structures
+            .get(&StructureId("pixhaus.builtin.structure.character".into()))
+            .cloned()
+            .expect("character structure exists");
+
+        let mut request = SheetProviderRequest {
+            operation: OperationKind::FreshGeneration,
+            ..sample_masked_request()
+        };
+        request.composition = Some(PickedComposition {
+            structure,
+            style: None,
+            prompt: None,
+            variable_values: std::collections::BTreeMap::new(),
+            inline_text: "a knight".into(),
+            inline_negatives: "watermark".into(),
+        });
+
+        let composed = compose_sheet_prompt(&request, "");
+        assert!(
+            composed
+                .positive
+                .contains("each 200 pixels wide, 480 pixels tall")
+        );
+        assert!(composed.positive.contains("flat solid chroma key color"));
+        // inline_text is appended to the request prompt, not replacing it.
+        assert!(composed.positive.contains("make the hair longer"));
+        assert!(composed.positive.contains("a knight"));
+        // The structure's layout negatives and inline negatives are threaded out.
+        assert!(composed.negative.contains("overlapping views"));
+        assert!(composed.negative.contains("watermark"));
+    }
 }
