@@ -31,7 +31,7 @@ fi
 if command -v rustc >/dev/null 2>&1; then
     expected_channel=""
     if [ -f rust-toolchain.toml ]; then
-        expected_channel="$(grep -E '^channel\s*=' rust-toolchain.toml | head -n1 | sed -E 's/^channel\s*=\s*"([^"]+)".*/\1/')"
+        expected_channel="$(grep -E '^channel[[:space:]]*=' rust-toolchain.toml | head -n1 | sed -E 's/^channel[[:space:]]*=[[:space:]]*"([^"]+)".*/\1/')"
     fi
     rustc_version="$(rustc --version 2>/dev/null | awk '{print $2}')"
     if [ -z "$expected_channel" ]; then
@@ -42,7 +42,7 @@ if command -v rustc >/dev/null 2>&1; then
         fail "rust toolchain" "have $rustc_version, expected $expected_channel; run: rustup install $expected_channel"
     fi
 else
-    fail "rustc" "rustup install $(grep -E '^channel\s*=' rust-toolchain.toml 2>/dev/null | sed -E 's/^channel\s*=\s*"([^"]+)".*/\1/' || echo stable)"
+    fail "rustc" "rustup install $(grep -E '^channel[[:space:]]*=' rust-toolchain.toml 2>/dev/null | sed -E 's/^channel[[:space:]]*=[[:space:]]*"([^"]+)".*/\1/' || echo stable)"
 fi
 
 if command -v cargo >/dev/null 2>&1; then
