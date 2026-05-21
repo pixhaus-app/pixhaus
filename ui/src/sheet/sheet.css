@@ -97,8 +97,8 @@
   min-width: 0;
   min-height: 0;
   display: flex;
-  align-items: center;
-  justify-content: center;
+  flex-direction: column;
+  gap: 10px;
   padding: 14px;
   overflow: hidden;
   background:
@@ -107,13 +107,36 @@
   background-size: 20px 20px;
 }
 
-.sheet-editor__image-wrap {
+.sheet-editor__viewport {
   position: relative;
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
+  touch-action: none;
+}
+
+.sheet-editor__viewport--grab {
+  cursor: grab;
+}
+
+.sheet-editor__viewport--grabbing {
+  cursor: grabbing;
+}
+
+.sheet-editor__image-wrap {
+  position: absolute;
+  inset: 0;
   display: flex;
   align-items: center;
   justify-content: center;
-  width: 100%;
-  height: 100%;
+  transform-origin: 0 0;
+  will-change: transform;
+}
+
+/* The shared strip uses `flex: 1` for SheetView; pin it as a fixed-height
+   row at the bottom of the reference-sheet preview column instead. */
+.sheet-editor__preview > .sheet-history-strip {
+  flex: 0 0 auto;
 }
 
 .sheet-editor__image {
