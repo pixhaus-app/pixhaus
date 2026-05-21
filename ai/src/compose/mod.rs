@@ -108,6 +108,14 @@ fn structure_prose(structure: &Structure) -> Result<(Vec<String>, Option<Canvas>
     }
 }
 
+/// Returns the panel slice geometry for a Structure, independent of any
+/// prompt text. For consumers that only need the `SheetComposition`
+/// rectangles (building test fixtures, seeding stored variants).
+#[must_use]
+pub fn composition_for(structure: &Structure) -> SheetComposition {
+    build_composition(structure)
+}
+
 fn build_composition(structure: &Structure) -> SheetComposition {
     let StructureOutput::Paneled { panels, .. } = &structure.output else {
         return SheetComposition::default();
