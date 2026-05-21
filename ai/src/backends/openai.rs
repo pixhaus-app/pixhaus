@@ -228,7 +228,7 @@ impl OpenAiBackend {
         };
 
         let http_resp = check_http_status(http_resp).await?;
-        if is_gpt_image_model(&model) {
+        if use_image_stream(&model, req.num_images) {
             let images = parse_openai_image_stream(http_resp, progress, cancel).await?;
             progress
                 .send(VerbProgressEvent::Cost(CostUpdate {
@@ -274,8 +274,10 @@ impl OpenAiBackend {
             .text("size", format!("{}x{}", req.width, req.height));
         if is_gpt_image_model(model) {
             form = form.text("output_format", "png");
-            form = form.text("stream", "true");
-            form = form.text("partial_images", "2");
+            if use_image_stream(model, req.num_images) {
+                form = form.text("stream", "true");
+                form = form.text("partial_images", "2");
+            }
             if let Some(quality) = req.quality {
                 form = form.text("quality", quality.as_openai());
             }
@@ -305,7 +307,7 @@ impl OpenAiBackend {
             res = self.client.execute(http_req) => res.map_err(BackendError::Network)?,
         };
         let http_resp = check_http_status(http_resp).await?;
-        if is_gpt_image_model(model) {
+        if use_image_stream(model, req.num_images) {
             let images = parse_openai_image_stream(http_resp, progress, cancel).await?;
             progress
                 .send(VerbProgressEvent::Cost(CostUpdate {
@@ -367,8 +369,10 @@ impl OpenAiBackend {
             );
         if is_gpt_image {
             form = form.text("output_format", "png");
-            form = form.text("stream", "true");
-            form = form.text("partial_images", "2");
+            if use_image_stream(&model, req.num_images) {
+                form = form.text("stream", "true");
+                form = form.text("partial_images", "2");
+            }
         } else {
             form = form.text("response_format", "b64_json");
         }
@@ -407,7 +411,7 @@ impl OpenAiBackend {
         };
 
         let http_resp = check_http_status(http_resp).await?;
-        if is_gpt_image {
+        if use_image_stream(&model, req.num_images) {
             let images = parse_openai_image_stream(http_resp, progress, cancel).await?;
             progress
                 .send(VerbProgressEvent::Cost(CostUpdate {
@@ -714,8 +718,10 @@ fn build_image_generation_body(req: &ImageGenRequest, model: &str) -> serde_json
 
     if is_gpt_image_model(model) {
         body["output_format"] = serde_json::json!("png");
-        body["stream"] = serde_json::json!(true);
-        body["partial_images"] = serde_json::json!(2);
+        if use_image_stream(model, req.num_images) {
+            body["stream"] = serde_json::json!(true);
+            body["partial_images"] = serde_json::json!(2);
+        }
         if let Some(quality) = req.quality {
             body["quality"] = serde_json::json!(quality.as_openai());
         }
@@ -728,6 +734,16 @@ fn build_image_generation_body(req: &ImageGenRequest, model: &str) -> serde_json
 
 fn is_gpt_image_model(model: &str) -> bool {
     model.starts_with("gpt-image-") || model == "chatgpt-image-latest"
+}
+
+/// Whether to request server-sent partial frames for an image call.
+///
+/// `OpenAI` only streams gpt-image responses when `n == 1`; asking for
+/// `stream=true` alongside `n > 1` is rejected with HTTP 400
+/// ("Streaming is only supported with n=1."). Multi-candidate requests
+/// therefore fall back to the buffered JSON response.
+fn use_image_stream(model: &str, num_images: u32) -> bool {
+    is_gpt_image_model(model) && num_images == 1
 }
 
 /// Converts one wire-level tool call into the public [`ToolCall`].
@@ -1024,7 +1040,7 @@ mod tests {
     }
 
     #[test]
-    fn gpt_image_generation_body_omits_legacy_response_format() {
+    fn gpt_image_single_candidate_body_streams() {
         let req = ImageGenRequest {
             model: None,
             prompt: "a reference sheet".into(),
@@ -1033,7 +1049,7 @@ mod tests {
             height: 1536,
             steps: None,
             seed: None,
-            num_images: 2,
+            num_images: 1,
             quality: Some(ImageQuality::Medium),
             style_image: None,
             reference_images: Vec::new(),
@@ -1050,6 +1066,35 @@ mod tests {
         assert!(body.get("response_format").is_none());
         assert!(body.get("background").is_none());
         assert!(body.get("negative_prompt").is_none());
+    }
+
+    // OpenAI rejects `stream=true` when `n > 1`
+    // ("Streaming is only supported with n=1."), so multi-candidate
+    // requests must drop streaming and fall back to the JSON response.
+    #[test]
+    fn gpt_image_multi_candidate_body_drops_streaming() {
+        let req = ImageGenRequest {
+            model: None,
+            prompt: "a reference sheet".into(),
+            negative_prompt: None,
+            width: 1024,
+            height: 1536,
+            steps: None,
+            seed: None,
+            num_images: 2,
+            quality: Some(ImageQuality::Medium),
+            style_image: None,
+            reference_images: Vec::new(),
+        };
+
+        let body = build_image_generation_body(&req, "gpt-image-2");
+
+        assert_eq!(body["n"], 2);
+        assert_eq!(body["output_format"], "png");
+        assert_eq!(body["quality"], "medium");
+        assert!(body.get("stream").is_none());
+        assert!(body.get("partial_images").is_none());
+        assert!(body.get("response_format").is_none());
     }
 
     #[tokio::test]
