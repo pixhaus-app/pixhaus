@@ -30,6 +30,7 @@ zip.workspace = true
 anyhow.workspace = true
 criterion.workspace = true
 image.workspace = true
+proptest.workspace = true
 rmp-serde.workspace = true
 tokio = { workspace = true, features = ["full", "test-util"] }
 tokio-util.workspace = true

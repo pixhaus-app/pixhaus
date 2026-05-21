@@ -5117,6 +5117,7 @@ dependencies = [
  "keyring-core",
  "parking_lot",
  "pixhaus-core",
+ "proptest",
  "reqwest 0.12.28",
  "rmp-serde",
  "serde",
