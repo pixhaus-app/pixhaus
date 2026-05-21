@@ -9,7 +9,7 @@ import type { AppCommandError } from "../types/AppCommandError";
 // variants put their fields inside `message` (e.g. `{ kind: "validation",
 // message: { detail: "..." } }`). Pull the most informative string out of
 // whatever shape is there; fall back to String(err) for non-IPC errors.
-function extractDetail(err: unknown): string {
+export function extractDetail(err: unknown): string {
   if (err === null || typeof err !== "object") return String(err);
   const e = err as { kind?: unknown; message?: unknown };
   const message = e.message;
