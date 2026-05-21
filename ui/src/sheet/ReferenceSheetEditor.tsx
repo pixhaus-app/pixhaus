@@ -7,6 +7,7 @@ import {
   Show,
   createEffect,
   createMemo,
+  createSignal,
   on,
   onCleanup,
   onMount,
@@ -49,9 +50,11 @@ import {
   type ReferenceSheetTemplate,
 } from "../lib/commands/library";
 import { approveSheetVariantAndRefreshCorpus, refreshLibrary } from "../library/library-state";
+import HistoryStrip from "./HistoryStrip";
+import { zoomToCursor } from "./preview-zoom";
 import { Button } from "../lib/ui/Button";
 import { pushToast } from "../lib/toast/toast-state";
-import { reportCommandFailure } from "../lib/utils/errors";
+import { extractDetail, reportCommandFailure } from "../lib/utils/errors";
 import { useImageObjectUrl } from "../lib/utils/image-object-url";
 import {
   activeSheetEditorEntityId,
@@ -168,6 +171,91 @@ const ReferenceSheetEditor: Component = () => {
   let maskCanvas: HTMLCanvasElement | undefined;
   let maskDrawing = false;
 
+  // Preview pan/zoom. The transform lives on `.sheet-editor__image-wrap`,
+  // which is absolutely anchored to the non-transformed viewport, so the
+  // cursor measured against the viewport rect shares the pan coordinate
+  // space that `zoomToCursor` expects.
+  const [scale, setScale] = createSignal(1);
+  const [panX, setPanX] = createSignal(0);
+  const [panY, setPanY] = createSignal(0);
+  const [spaceHeld, setSpaceHeld] = createSignal(false);
+  const [panning, setPanning] = createSignal(false);
+  let viewportEl: HTMLDivElement | undefined;
+  let panStart: { px: number; py: number; ox: number; oy: number } | null = null;
+
+  function resetView(): void {
+    setScale(1);
+    setPanX(0);
+    setPanY(0);
+  }
+
+  function isEditableTarget(target: EventTarget | null): boolean {
+    const el = target as HTMLElement | null;
+    if (el === null) return false;
+    return el.tagName === "INPUT" || el.tagName === "TEXTAREA" || el.isContentEditable;
+  }
+
+  function handleWheel(event: WheelEvent): void {
+    if (viewportEl === undefined) return;
+    event.preventDefault();
+    const rect = viewportEl.getBoundingClientRect();
+    const factor = event.deltaY < 0 ? 1.1 : 1 / 1.1;
+    const next = zoomToCursor(
+      { scale: scale(), panX: panX(), panY: panY() },
+      event.clientX - rect.left,
+      event.clientY - rect.top,
+      factor,
+    );
+    setScale(next.scale);
+    setPanX(next.panX);
+    setPanY(next.panY);
+  }
+
+  // Pan only on middle-mouse or space+left so left-drag stays free for
+  // mask painting and panel selection, matching the main canvas.
+  function handlePreviewMouseDown(event: MouseEvent): void {
+    if (event.button === 1 || (event.button === 0 && spaceHeld())) {
+      event.preventDefault();
+      panStart = { px: event.clientX, py: event.clientY, ox: panX(), oy: panY() };
+      setPanning(true);
+    }
+  }
+
+  function handleWindowMouseMove(event: MouseEvent): void {
+    if (panStart === null) return;
+    setPanX(panStart.ox + (event.clientX - panStart.px));
+    setPanY(panStart.oy + (event.clientY - panStart.py));
+  }
+
+  function endPan(): void {
+    panStart = null;
+    setPanning(false);
+  }
+
+  function handleSpaceDown(event: KeyboardEvent): void {
+    if (event.code === "Space" && !isEditableTarget(event.target)) setSpaceHeld(true);
+  }
+
+  function handleSpaceUp(event: KeyboardEvent): void {
+    if (event.code === "Space") setSpaceHeld(false);
+  }
+
+  onMount(() => {
+    const el = viewportEl;
+    el?.addEventListener("wheel", handleWheel, { passive: false });
+    window.addEventListener("mousemove", handleWindowMouseMove);
+    window.addEventListener("mouseup", endPan);
+    window.addEventListener("keydown", handleSpaceDown);
+    window.addEventListener("keyup", handleSpaceUp);
+    onCleanup(() => {
+      el?.removeEventListener("wheel", handleWheel);
+      window.removeEventListener("mousemove", handleWindowMouseMove);
+      window.removeEventListener("mouseup", endPan);
+      window.removeEventListener("keydown", handleSpaceDown);
+      window.removeEventListener("keyup", handleSpaceUp);
+    });
+  });
+
   onMount(() => {
     libraryListReferenceSheetTemplates()
       .then((defs) => {
@@ -226,10 +314,7 @@ const ReferenceSheetEditor: Component = () => {
     const errorListener = listen<SheetRequestErrorPayload>("SheetRequestError", (event) => {
       setGenerating(false);
       setBusy(false);
-      const message =
-        typeof event.payload.error.message === "string"
-          ? event.payload.error.message
-          : "Reference sheet request failed.";
+      const message = extractDetail(event.payload.error);
       setActiveRequests((rows) =>
         rows.map((row) =>
           row.id === event.payload.request_id ? { ...row, status: "error", error: message } : row,
@@ -260,6 +345,7 @@ const ReferenceSheetEditor: Component = () => {
 
   createEffect(
     on(activeSheetEditorEntityId, (entityId) => {
+      resetView();
       if (entityId === null) {
         setEntity(null);
         return;
@@ -844,6 +930,42 @@ const ReferenceSheetEditor: Component = () => {
       .catch((err: unknown) => reportCommandFailure("library_remove_reference_sheet_variant", err));
   }
 
+  // Adapters for the candidate thumbnail strip. HistoryStrip uses
+  // `previewId === null` to mean "show canonical"; the editor's
+  // `selectedVariantId` falls back to canonical, so translate both ways.
+  const stripPreviewId = (): number | null => {
+    const sel = selectedVariant();
+    if (sel === null) return null;
+    return selectedIsCanonical() ? null : sel.id;
+  };
+
+  function handleStripPreview(variant: SheetVariant | null): void {
+    setSelectedVariantId(variant?.id ?? canonical()?.id ?? null);
+  }
+
+  function approveVariant(variant: SheetVariant): void {
+    const target = entity();
+    if (target === null) return;
+    approveSheetVariantAndRefreshCorpus(target.id, variant.id)
+      .then((updated) => {
+        refreshEntity(updated);
+        setSelectedVariantId(null);
+        pushToast({ kind: "success", title: "Reference sheet approved." });
+      })
+      .catch((err: unknown) => reportCommandFailure("library_approve_sheet_variant", err));
+  }
+
+  function removeVariant(variant: SheetVariant): void {
+    const target = entity();
+    if (target === null) return;
+    libraryRemoveReferenceSheetVariant(target.id, variant.id)
+      .then((updated) => {
+        refreshEntity(updated);
+        setSelectedVariantId(null);
+      })
+      .catch((err: unknown) => reportCommandFailure("library_remove_reference_sheet_variant", err));
+  }
+
   function ReferenceSlotRow(props: {
     slot: ReferenceSlot;
     index: number;
@@ -944,83 +1066,107 @@ const ReferenceSheetEditor: Component = () => {
         </Show>
         <div class="sheet-editor__workspace">
           <section class="sheet-editor__preview">
-            <div class="sheet-editor__image-wrap">
-              <Show
-                when={displayedUrl() !== ""}
-                fallback={<div class="sheet-editor__empty">No candidates</div>}
+            <div
+              class="sheet-editor__viewport"
+              classList={{
+                "sheet-editor__viewport--grab": spaceHeld() && !panning(),
+                "sheet-editor__viewport--grabbing": panning(),
+              }}
+              ref={(el) => (viewportEl = el)}
+              onMouseDown={handlePreviewMouseDown}
+              onDblClick={resetView}
+            >
+              <div
+                class="sheet-editor__image-wrap"
+                style={{ transform: `translate(${panX()}px, ${panY()}px) scale(${scale()})` }}
               >
-                <img class="sheet-editor__image" src={displayedUrl()} alt="Reference sheet" />
-              </Show>
-              <Show
-                when={
-                  activeView() === "refine" &&
-                  refineMode() === "masked" &&
-                  selectedVariant() !== null
-                }
-              >
-                <canvas
-                  ref={maskCanvas}
-                  class="sheet-editor__mask-canvas"
-                  width={selectedVariant()?.width ?? 1024}
-                  height={selectedVariant()?.height ?? 1024}
-                  onPointerDown={(event) => {
-                    maskDrawing = true;
-                    drawMaskAt(event);
-                  }}
-                  onPointerMove={(event) => {
-                    if (maskDrawing) drawMaskAt(event);
-                  }}
-                  onPointerUp={() => {
-                    maskDrawing = false;
-                  }}
-                  onPointerLeave={() => {
-                    maskDrawing = false;
-                  }}
-                />
-              </Show>
-              <Show when={showPanelOverlay() && allPanels().length > 0}>
-                <svg
-                  class="sheet-editor__overlay"
-                  viewBox={`0 0 ${sheetWidth()} ${sheetHeight()}`}
-                  preserveAspectRatio="none"
+                <Show
+                  when={displayedUrl() !== ""}
+                  fallback={<div class="sheet-editor__empty">No candidates</div>}
                 >
-                  <For each={allPanels()}>
-                    {(panel) => (
-                      <g
-                        class="sheet-editor__panel"
-                        classList={{ "sheet-editor__panel--selected": isPanelSelected(panel) }}
-                        onClick={() => handlePanelClick(panel)}
-                      >
-                        <rect x={panel.x} y={panel.y} width={panel.w} height={panel.h} />
-                        <text x={panel.x + 4} y={panel.y + 14}>
-                          {panel.label}
-                        </text>
-                      </g>
-                    )}
-                  </For>
-                </svg>
-              </Show>
-              <Show
-                when={
-                  activeView() === "refine" &&
-                  refineMode() === "regional" &&
-                  regionDrafts().length > 0
-                }
-              >
-                <svg
-                  class="sheet-editor__overlay sheet-editor__overlay--regions"
-                  viewBox={`0 0 ${sheetWidth()} ${sheetHeight()}`}
-                  preserveAspectRatio="none"
+                  <img class="sheet-editor__image" src={displayedUrl()} alt="Reference sheet" />
+                </Show>
+                <Show
+                  when={
+                    activeView() === "refine" &&
+                    refineMode() === "masked" &&
+                    selectedVariant() !== null
+                  }
                 >
-                  <For each={regionDrafts()}>
-                    {(region) => {
-                      const [x0, y0, x1, y1] = regionBounds(region);
-                      return <rect x={x0} y={y0} width={x1 - x0} height={y1 - y0} />;
+                  <canvas
+                    ref={maskCanvas}
+                    class="sheet-editor__mask-canvas"
+                    width={selectedVariant()?.width ?? 1024}
+                    height={selectedVariant()?.height ?? 1024}
+                    onPointerDown={(event) => {
+                      maskDrawing = true;
+                      drawMaskAt(event);
                     }}
-                  </For>
-                </svg>
-              </Show>
+                    onPointerMove={(event) => {
+                      if (maskDrawing) drawMaskAt(event);
+                    }}
+                    onPointerUp={() => {
+                      maskDrawing = false;
+                    }}
+                    onPointerLeave={() => {
+                      maskDrawing = false;
+                    }}
+                  />
+                </Show>
+                <Show when={showPanelOverlay() && allPanels().length > 0}>
+                  <svg
+                    class="sheet-editor__overlay"
+                    viewBox={`0 0 ${sheetWidth()} ${sheetHeight()}`}
+                    preserveAspectRatio="none"
+                  >
+                    <For each={allPanels()}>
+                      {(panel) => (
+                        <g
+                          class="sheet-editor__panel"
+                          classList={{ "sheet-editor__panel--selected": isPanelSelected(panel) }}
+                          onClick={() => handlePanelClick(panel)}
+                        >
+                          <rect x={panel.x} y={panel.y} width={panel.w} height={panel.h} />
+                          <text x={panel.x + 4} y={panel.y + 14}>
+                            {panel.label}
+                          </text>
+                        </g>
+                      )}
+                    </For>
+                  </svg>
+                </Show>
+                <Show
+                  when={
+                    activeView() === "refine" &&
+                    refineMode() === "regional" &&
+                    regionDrafts().length > 0
+                  }
+                >
+                  <svg
+                    class="sheet-editor__overlay sheet-editor__overlay--regions"
+                    viewBox={`0 0 ${sheetWidth()} ${sheetHeight()}`}
+                    preserveAspectRatio="none"
+                  >
+                    <For each={regionDrafts()}>
+                      {(region) => {
+                        const [x0, y0, x1, y1] = regionBounds(region);
+                        return <rect x={x0} y={y0} width={x1 - x0} height={y1 - y0} />;
+                      }}
+                    </For>
+                  </svg>
+                </Show>
+              </div>
             </div>
+            <Show when={variants().length > 1}>
+              <HistoryStrip
+                canonical={canonical()}
+                history={drafts()}
+                previewId={stripPreviewId()}
+                onPreview={handleStripPreview}
+                onApprove={approveVariant}
+                onDelete={removeVariant}
+              />
+            </Show>
           </section>
 
           <aside class="sheet-editor__controls">
