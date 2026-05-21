@@ -5113,6 +5113,7 @@ dependencies = [
  "criterion",
  "futures",
  "image",
+ "insta",
  "keyring",
  "keyring-core",
  "parking_lot",
