@@ -750,6 +750,73 @@ mod tests {
     }
 
     #[test]
+    fn library_view_resolves_style_over_builtin() {
+        use pixhaus_core::project::library::composition::{Style, StyleId};
+
+        let shadow = Style {
+            id: StyleId("pixhaus.builtin.style.default".into()),
+            name: "Shadowed".into(),
+            modifiers: String::new(),
+            look_negatives: String::new(),
+            model_pref: None,
+            quality: None,
+        };
+        let ctx = VerbContext::builder(metadata())
+            .with_composition_library(ProjectCompositionLibrary {
+                structures: Vec::new(),
+                styles: vec![shadow],
+                prompts: Vec::new(),
+            })
+            .build();
+        let view = ctx.library_view();
+        let resolved = view
+            .style(&StyleId("pixhaus.builtin.style.default".into()))
+            .unwrap();
+        assert_eq!(resolved.name, "Shadowed", "project style shadows built-in");
+    }
+
+    #[test]
+    fn library_view_style_falls_back_to_builtin() {
+        use pixhaus_core::project::library::composition::StyleId;
+
+        let view_owner = VerbContext::empty(metadata());
+        let view = view_owner.library_view();
+        assert!(
+            view.style(&StyleId("pixhaus.builtin.style.default".into()))
+                .is_some()
+        );
+        assert!(view.style(&StyleId("nope".into())).is_none());
+    }
+
+    #[test]
+    fn library_view_resolves_prompt_over_builtin() {
+        use pixhaus_core::project::library::composition::{PromptId, PromptTemplate};
+
+        let project_prompt = PromptTemplate {
+            id: PromptId("project.prompt.hero".into()),
+            name: "Hero".into(),
+            text: "a {species} hero".into(),
+            variables: Vec::new(),
+            default_style: None,
+            default_structure: None,
+        };
+        let ctx = VerbContext::builder(metadata())
+            .with_composition_library(ProjectCompositionLibrary {
+                structures: Vec::new(),
+                styles: Vec::new(),
+                prompts: vec![project_prompt],
+            })
+            .build();
+        let view = ctx.library_view();
+        let resolved = view
+            .prompt(&PromptId("project.prompt.hero".into()))
+            .unwrap();
+        assert_eq!(resolved.name, "Hero");
+        // No built-in prompts ship, so an unknown id resolves to nothing.
+        assert!(view.prompt(&PromptId("nope".into())).is_none());
+    }
+
+    #[test]
     fn context_serializes_without_backend() {
         use crate::plugin::backend::InferenceBackend;
         use crate::plugin::descriptor::{BackendCapabilities, CostEstimate};

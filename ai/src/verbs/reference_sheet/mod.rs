@@ -306,8 +306,26 @@ impl Verb for GenerateReferenceSheetVerb {
                     inputs.structure_id.0
                 ))
             })?;
-            let style = inputs.style_id.as_ref().and_then(|id| library.style(id));
-            let prompt = inputs.prompt_id.as_ref().and_then(|id| library.prompt(id));
+            // A stale style/prompt id is an error, not a silent no-op — otherwise
+            // the verb would generate a different composition than was picked.
+            let style = match inputs.style_id.as_ref() {
+                Some(id) => Some(library.style(id).ok_or_else(|| {
+                    VerbError::Schema(format!(
+                        "generate-reference-sheet: unknown style `{}`",
+                        id.0
+                    ))
+                })?),
+                None => None,
+            };
+            let prompt = match inputs.prompt_id.as_ref() {
+                Some(id) => Some(library.prompt(id).ok_or_else(|| {
+                    VerbError::Schema(format!(
+                        "generate-reference-sheet: unknown prompt `{}`",
+                        id.0
+                    ))
+                })?),
+                None => None,
+            };
             let entity_info: BTreeMap<String, String> = BTreeMap::new();
             let req = ComposeRequest {
                 baseline: BUILTIN_DEFAULT_BASELINE,
@@ -1038,6 +1056,42 @@ mod tests {
                 "negative prompt must not start with a bare comma"
             );
         }
+    }
+
+    #[tokio::test]
+    async fn unknown_style_id_is_rejected() {
+        let runtime = VerbRuntime::new();
+        runtime
+            .register_backend(BackendProxy::new(WhiteStub::new(1)), 0)
+            .unwrap();
+        runtime.register(GenerateReferenceSheetVerb::new()).unwrap();
+
+        let inputs = VerbInputs::from_struct(&GenerateReferenceSheetInputs {
+            entity_id: EntityId::new(1),
+            structure_id: StructureId(CHARACTER.into()),
+            style_id: Some(StyleId("does.not.exist".into())),
+            prompt_id: None,
+            variable_values: BTreeMap::new(),
+            inline_text: "a hero".into(),
+            inline_negatives: String::new(),
+            num_variants: 1,
+            quality: None,
+            seed: None,
+        })
+        .unwrap();
+
+        let inv = runtime
+            .invoke(
+                &VerbId::new(GENERATE_REFERENCE_SHEET_VERB_ID),
+                VerbContext::empty(meta()),
+                inputs,
+            )
+            .unwrap();
+        let err = inv.finish().await.unwrap_err();
+        assert!(
+            matches!(err, VerbError::Schema(_)),
+            "an unknown style id must be rejected, got {err:?}"
+        );
     }
 
     // Ensure WhiteStub image and Duration are visible in this test scope.

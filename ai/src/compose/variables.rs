@@ -41,13 +41,17 @@ pub fn detect_tokens(text: &str) -> Vec<String> {
                     continue;
                 }
                 let mut key = String::new();
+                let mut closed = false;
                 for (_, k) in chars.by_ref() {
                     if k == '}' {
+                        closed = true;
                         break;
                     }
                     key.push(k);
                 }
-                if !key.is_empty() && !out.contains(&key) {
+                // Only a properly closed `{key}` yields a token; an unterminated
+                // `{key` is malformed and contributes nothing.
+                if closed && !key.is_empty() && !out.contains(&key) {
                     out.push(key);
                 }
             }
@@ -67,18 +71,19 @@ pub fn detect_tokens(text: &str) -> Vec<String> {
 /// source can fill.
 pub fn substitute(text: &str, sources: &[&dyn VarSource]) -> Result<String, VarError> {
     let mut out = String::with_capacity(text.len());
-    let bytes = text.as_bytes();
-    let mut i = 0;
-    while i < bytes.len() {
-        let c = bytes[i] as char;
+    // Iterate Unicode scalars (not bytes) so multi-byte characters in the
+    // literal passthrough survive intact. `{`/`}` are ASCII, so the byte
+    // offsets used for key slicing always land on char boundaries.
+    let mut chars = text.char_indices().peekable();
+    while let Some((i, c)) = chars.next() {
         match c {
-            '{' if bytes.get(i + 1) == Some(&b'{') => {
+            '{' if matches!(chars.peek(), Some((_, '{'))) => {
+                chars.next();
                 out.push('{');
-                i += 2;
             }
-            '}' if bytes.get(i + 1) == Some(&b'}') => {
+            '}' if matches!(chars.peek(), Some((_, '}'))) => {
+                chars.next();
                 out.push('}');
-                i += 2;
             }
             '{' => {
                 let start = i + 1;
@@ -92,12 +97,15 @@ pub fn substitute(text: &str, sources: &[&dyn VarSource]) -> Result<String, VarE
                     .find_map(|s| s.get(key))
                     .ok_or_else(|| VarError::Unfilled(key.to_string()))?;
                 out.push_str(&val);
-                i = end + 1;
+                // Advance past the key and its closing `}` (at byte `end`).
+                while let Some(&(pos, _)) = chars.peek() {
+                    if pos > end {
+                        break;
+                    }
+                    chars.next();
+                }
             }
-            _ => {
-                out.push(c);
-                i += 1;
-            }
+            _ => out.push(c),
         }
     }
     Ok(out)
@@ -126,6 +134,30 @@ mod tests {
     #[test]
     fn detects_no_tokens_in_escaped_braces() {
         assert!(detect_tokens("{{not a token}}").is_empty());
+    }
+
+    #[test]
+    fn detects_no_token_for_unterminated_brace() {
+        assert!(detect_tokens("a {name").is_empty());
+        assert_eq!(detect_tokens("{a} {b"), vec!["a"]);
+    }
+
+    #[test]
+    fn substitution_preserves_non_ascii() {
+        let vars = map(&[("x", "orc")]);
+        assert_eq!(
+            substitute("héllo {x} 世界 🎨", &[&vars]).unwrap(),
+            "héllo orc 世界 🎨"
+        );
+    }
+
+    #[test]
+    fn substitution_with_non_ascii_value_and_key_after() {
+        let vars = map(&[("名前", "勇者")]);
+        assert_eq!(
+            substitute("名は {名前} です", &[&vars]).unwrap(),
+            "名は 勇者 です"
+        );
     }
 
     #[test]
