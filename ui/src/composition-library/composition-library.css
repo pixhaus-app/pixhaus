@@ -5,6 +5,14 @@
 
 /* ── Two-pane layout ─────────────────────────────────────────────────────── */
 
+/* The panel fills the full-window dialog body edge to edge (the dialog body's
+   default padding/gap would otherwise inset it). */
+.comp-lib__dialog-body {
+  padding: 0;
+  gap: 0;
+  overflow: hidden;
+}
+
 .comp-lib {
   display: flex;
   flex-direction: column;
@@ -190,6 +198,11 @@
   padding: 16px;
 }
 
+/* Keep field rows readable instead of stretching across the full window. */
+.comp-lib__editor-body > * {
+  max-width: 940px;
+}
+
 .comp-lib__placeholder {
   display: flex;
   align-items: center;
@@ -362,6 +375,26 @@
   padding: 8px;
 }
 
+/* ── Structure editor: fields + pinned preview ───────────────────────────── */
+
+/* Paneled structures lay the fields beside a sticky preview on wide screens. */
+.lib-structure-editor--paneled {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 300px;
+  gap: 20px;
+  align-items: start;
+}
+
+.lib-structure-editor__fields {
+  min-width: 0;
+}
+
+@media (max-width: 820px) {
+  .lib-structure-editor--paneled {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
 /* ── Panels section (StructureEditor) ────────────────────────────────────── */
 
 .lib-panels {
@@ -376,32 +409,76 @@
   margin-bottom: 8px;
 }
 
-.lib-panel-row {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 6px;
-  padding: 8px;
-  background: var(--bg-elevated);
-  border: 1px solid var(--border);
-  border-radius: 4px;
-  margin-bottom: 6px;
+.lib-panels__empty {
+  font-size: 12px;
+  color: var(--text-disabled);
+  padding: 8px 0;
 }
 
-.lib-panel-row__coord-label {
-  font-size: 11px;
-  color: var(--text-secondary);
+/* Each panel is a card: a head row, an X/Y/W/H grid, then the prose. */
+.lib-panel-row {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 10px;
+  background: var(--bg-elevated);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  margin-bottom: 8px;
+}
+
+.lib-panel-row__head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.lib-panel-row__label {
+  flex: 1;
+  min-width: 0;
 }
 
 .lib-panel-row__prose {
   width: 100%;
-  margin-top: 4px;
+  min-height: 48px;
+}
+
+/* X/Y/W/H coordinate grid — label sits above each input so a label can
+   never wrap away from its field. */
+.lib-coords {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 8px;
+}
+
+.lib-coord {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.lib-coord__label {
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--text-secondary);
+}
+
+.lib-coord__input {
+  width: 100%;
 }
 
 /* ── Structure SVG preview ───────────────────────────────────────────────── */
 
 .lib-structure-preview {
   margin-bottom: 14px;
+}
+
+/* In the paneled two-column layout the preview pins as you scroll panels. */
+.lib-structure-editor--paneled .lib-structure-preview {
+  position: sticky;
+  top: 0;
+  margin-bottom: 0;
 }
 
 .lib-structure-preview__heading {
@@ -414,6 +491,8 @@
 
 .lib-structure-preview__svg {
   display: block;
+  max-width: 100%;
+  height: auto;
   background: var(--bg-app);
   border: 1px solid var(--border);
   border-radius: 4px;

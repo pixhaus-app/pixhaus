@@ -1,7 +1,7 @@
 import { createEffect, createUniqueId, onCleanup, Show, type JSX } from "solid-js";
 import { Portal } from "solid-js/web";
 
-type Size = "sm" | "md" | "lg";
+type Size = "sm" | "md" | "lg" | "full";
 type InitialFocus = "first-input" | "primary" | "none";
 
 interface DialogProps {

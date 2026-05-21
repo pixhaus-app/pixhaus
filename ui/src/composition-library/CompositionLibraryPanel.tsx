@@ -327,6 +327,50 @@ const CompositionLibraryPanel: Component = () => {
     }
   }
 
+  // Forks the record currently open read-only into an editable project copy
+  // and immediately opens that copy in the editor, so a built-in isn't a
+  // dead end.
+  async function forkCurrentToEdit(): Promise<void> {
+    try {
+      if (tab() === "structures") {
+        const cur = editingStructure();
+        if (!cur) return;
+        const newId = await forkBuiltin("structure" as CompositionKind, cur.id, true);
+        await reload();
+        const rec = library()?.structures.find((s) => s.id === newId);
+        if (rec) {
+          setEditingStructure(rec);
+          setSelectedStructureId(rec.id);
+          setEditReadOnly(false);
+        }
+      } else if (tab() === "styles") {
+        const cur = editingStyle();
+        if (!cur) return;
+        const newId = await forkBuiltin("style" as CompositionKind, cur.id, true);
+        await reload();
+        const rec = library()?.styles.find((s) => s.id === newId);
+        if (rec) {
+          setEditingStyle(rec);
+          setSelectedStyleId(rec.id);
+          setEditReadOnly(false);
+        }
+      } else {
+        const cur = editingPrompt();
+        if (!cur) return;
+        const newId = await forkBuiltin("prompt" as CompositionKind, cur.id, true);
+        await reload();
+        const rec = library()?.prompts.find((p) => p.id === newId);
+        if (rec) {
+          setEditingPrompt(rec);
+          setSelectedPromptId(rec.id);
+          setEditReadOnly(false);
+        }
+      }
+    } catch (e) {
+      setError(extractDetail(e));
+    }
+  }
+
   async function savePrompt(p: PromptTemplate): Promise<void> {
     try {
       await upsertPrompt(p);
@@ -693,6 +737,9 @@ const CompositionLibraryPanel: Component = () => {
                   Cancel
                 </Button>
                 <Show when={editReadOnly()}>
+                  <Button variant="primary" size="sm" onClick={() => void forkCurrentToEdit()}>
+                    Fork to edit
+                  </Button>
                   <span style={{ "font-size": "11px", color: "var(--text-secondary)" }}>
                     Read-only (built-in)
                   </span>
