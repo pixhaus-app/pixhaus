@@ -45,6 +45,18 @@ fn ensure_store() {
             return;
         }
 
+        // Test runs set `PIXHAUS_KEYRING_MOCK` (see .config/nextest.toml) so
+        // keychain access uses an in-memory store instead of the OS keychain.
+        // Without this, every test process that touches a backend would pop a
+        // native credential-store prompt (the macOS login Keychain password
+        // dialog). The dev app and production never set the variable.
+        if std::env::var_os("PIXHAUS_KEYRING_MOCK").is_some() {
+            if let Err(err) = keyring::use_sample_store(&std::collections::HashMap::new()) {
+                tracing::warn!(error = %err, "failed to register in-memory keyring store");
+            }
+            return;
+        }
+
         #[cfg(target_os = "linux")]
         let result = keyring::use_zbus_secret_service_store(&std::collections::HashMap::new());
         #[cfg(not(target_os = "linux"))]

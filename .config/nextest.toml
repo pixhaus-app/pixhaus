@@ -1,0 +1,10 @@
+# Nextest configuration.
+#
+# Tests must never touch the real OS credential store. Setting
+# PIXHAUS_KEYRING_MOCK routes keychain access through keyring's in-memory
+# sample store (see ai/src/backends/keys.rs::ensure_store), so a test that
+# constructs an AI backend no longer pops the macOS login Keychain prompt.
+# Each nextest test runs in its own process, so without this several prompts
+# could appear in a row.
+[env]
+PIXHAUS_KEYRING_MOCK = "1"
