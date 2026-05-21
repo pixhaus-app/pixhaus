@@ -54,7 +54,8 @@ foreach ($pattern in $skipPatterns) {
 
 $isRust = $filePath -match '\.rs$'
 $isTs = $filePath -match '\.(ts|tsx)$'
-if (-not ($isRust -or $isTs)) { exit 0 }
+$isWeb = $filePath -match '\.(css|json)$'
+if (-not ($isRust -or $isTs -or $isWeb)) { exit 0 }
 
 function Has-Command([string]$name) {
     $null -ne (Get-Command $name -ErrorAction SilentlyContinue)
@@ -66,8 +67,6 @@ if ($isRust) {
         exit 0
     }
 
-    & cargo fmt --manifest-path Cargo.toml -- "$filePath" 2>$null | Out-Null
-
     $crate = ''
     try {
         $crate = (& node "$PSScriptRoot/run.mjs" find-crate-for-file "$filePath" 2>$null) | Select-Object -First 1
@@ -75,6 +74,13 @@ if ($isRust) {
     catch { $crate = '' }
 
     if ($crate) {
+        # Crate-scoped fmt uses the workspace rustfmt config and edition; the
+        # `-- <file>` path form silently no-ops, which is how unformatted code
+        # reached CI. Surface failures rather than swallowing them.
+        Write-Stderr "post-edit: cargo fmt -p $crate"
+        & cargo fmt -p $crate 2>&1 | ForEach-Object { Write-Stderr $_ }
+        if ($LASTEXITCODE -ne 0) { Write-Stderr "post-edit: cargo fmt failed for crate $crate" }
+
         Write-Stderr "post-edit: cargo clippy --tests -p $crate -- -D warnings"
         & cargo clippy --tests -p $crate -- -D warnings 2>&1 | ForEach-Object { Write-Stderr $_ }
         if ($LASTEXITCODE -ne 0) {
@@ -83,24 +89,35 @@ if ($isRust) {
         }
     }
     else {
-        Write-Stderr "post-edit: could not locate owning crate for $filePath"
+        Write-Stderr "post-edit: could not locate owning crate for $filePath; running cargo fmt --all"
+        & cargo fmt --all 2>&1 | ForEach-Object { Write-Stderr $_ }
+        if ($LASTEXITCODE -ne 0) { Write-Stderr 'post-edit: cargo fmt --all failed' }
     }
 }
 
-if ($isTs) {
+# Prettier covers ts/tsx/css/json under the ui workspace (matches CI's
+# pnpm format:check glob). Guard on the ui/ path so we never reformat a
+# root file like package.json with the ui prettier config.
+$underUi = ($filePath -like '*/ui/*') -or ($filePath -like 'ui/*')
+if (($isTs -or $isWeb) -and $underUi) {
     if (-not (Has-Command 'pnpm')) {
-        Write-Stderr 'post-edit: pnpm not on PATH; skipping TS checks.'
+        Write-Stderr 'post-edit: pnpm not on PATH; skipping prettier/tsc checks.'
         exit 0
     }
 
     Push-Location ui
     try {
-        & pnpm prettier --write "$filePath" 2>$null | Out-Null
-        Write-Stderr 'post-edit: tsc --noEmit (ui)'
-        & pnpm tsc --noEmit 2>&1 | ForEach-Object { Write-Stderr $_ }
-        if ($LASTEXITCODE -ne 0) {
-            Write-Stderr 'post-edit: tsc reported errors'
-            exit 0
+        Write-Stderr "post-edit: prettier --write $filePath"
+        & pnpm prettier --write "$filePath" 2>&1 | ForEach-Object { Write-Stderr $_ }
+        if ($LASTEXITCODE -ne 0) { Write-Stderr "post-edit: prettier failed for $filePath" }
+
+        if ($isTs) {
+            Write-Stderr 'post-edit: tsc --noEmit (ui)'
+            & pnpm tsc --noEmit 2>&1 | ForEach-Object { Write-Stderr $_ }
+            if ($LASTEXITCODE -ne 0) {
+                Write-Stderr 'post-edit: tsc reported errors'
+                exit 0
+            }
         }
     }
     finally {

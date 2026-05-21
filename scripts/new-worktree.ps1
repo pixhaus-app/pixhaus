@@ -36,6 +36,11 @@ Write-Output "==> Creating worktree at $worktreePath on $branchName (base: $Base
 & git worktree add $worktreePath -b $branchName $Base
 if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
+# Wire the project hooks so the pre-commit gate fires even when `pnpm bootstrap`
+# was never run in this checkout. core.hooksPath is resolved relative to each
+# worktree's root, and every worktree carries its own .githooks/ checkout.
+& git -C $worktreePath config core.hooksPath .githooks
+
 Write-Output ''
 Write-Output 'Worktree ready.'
 Write-Output "  path:   $worktreePath"

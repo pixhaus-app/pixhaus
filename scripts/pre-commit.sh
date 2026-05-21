@@ -22,6 +22,14 @@ if command -v cargo >/dev/null 2>&1; then
     echo "pre-commit: cargo clippy"
     cargo clippy --workspace --all-targets -- -D warnings \
         || fail "clippy reported warnings"
+
+    if command -v cargo-deny >/dev/null 2>&1; then
+        echo "pre-commit: cargo deny check"
+        cargo deny check --config .cargo/deny.toml \
+            || fail "cargo-deny: dependency, license, or advisory violation"
+    else
+        echo "pre-commit: cargo-deny not installed; skipping (cargo install cargo-deny)" >&2
+    fi
 else
     echo "pre-commit: cargo not on PATH; skipping Rust checks" >&2
 fi
@@ -33,14 +41,15 @@ else
     echo "pre-commit: typos not installed; skipping" >&2
 fi
 
+# Call the same scripts CI runs (pnpm -r format:check / lint) so the local
+# gate covers the exact glob CI does - including tests/, which the old
+# hand-rolled src/** globs missed and let unformatted test files reach CI.
 if command -v pnpm >/dev/null 2>&1 && [ -d ui ]; then
-    echo "pre-commit: prettier --check (ui)"
-    (cd ui && pnpm prettier --check "src/**/*.{ts,tsx,css,json}") \
-        || fail "prettier check failed (run: cd ui && pnpm format)"
+    echo "pre-commit: pnpm format:check"
+    pnpm format:check || fail "prettier check failed (run: pnpm format)"
 
-    echo "pre-commit: eslint (ui)"
-    (cd ui && pnpm eslint "src/**/*.{ts,tsx}") \
-        || fail "eslint reported errors"
+    echo "pre-commit: pnpm lint"
+    pnpm lint || fail "eslint reported errors"
 else
     echo "pre-commit: pnpm not on PATH or ui/ missing; skipping TS checks" >&2
 fi

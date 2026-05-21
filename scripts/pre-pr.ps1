@@ -38,6 +38,14 @@ if (Has-Command cargo) {
     cargo doc --workspace --no-deps --document-private-items
     if ($LASTEXITCODE -ne 0) { Fail "rustdoc (broken intra-doc link or missing docs)" }
     Remove-Item Env:\RUSTDOCFLAGS -ErrorAction SilentlyContinue
+
+    if (Has-Command cargo-deny) {
+        Section "cargo deny check"
+        cargo deny check --config .cargo/deny.toml
+        if ($LASTEXITCODE -ne 0) { Fail "cargo-deny (dependency, license, or advisory violation)" }
+    } else {
+        Write-Warning "pre-pr: cargo-deny not installed; install with cargo install cargo-deny"
+    }
 } else {
     Write-Warning "pre-pr: cargo not on PATH; Rust checks skipped"
     $script:Failed = $true
