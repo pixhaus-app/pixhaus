@@ -107,9 +107,12 @@ if (($isTs -or $isWeb) -and $underUi) {
 
     Push-Location ui
     try {
-        Write-Stderr "post-edit: prettier --write $filePath"
-        & pnpm prettier --write "$filePath" 2>&1 | ForEach-Object { Write-Stderr $_ }
-        if ($LASTEXITCODE -ne 0) { Write-Stderr "post-edit: prettier failed for $filePath" }
+        # We run prettier from inside ui/, so strip a leading "ui/" from a
+        # repo-relative path or it would resolve to ui/ui/... and miss the file.
+        $prettierPath = if ($filePath -like 'ui/*') { $filePath.Substring(3) } else { $filePath }
+        Write-Stderr "post-edit: prettier --write $prettierPath"
+        & pnpm prettier --write "$prettierPath" 2>&1 | ForEach-Object { Write-Stderr $_ }
+        if ($LASTEXITCODE -ne 0) { Write-Stderr "post-edit: prettier failed for $prettierPath" }
 
         if ($isTs) {
             Write-Stderr 'post-edit: tsc --noEmit (ui)'

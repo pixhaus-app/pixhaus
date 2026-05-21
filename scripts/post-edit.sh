@@ -94,8 +94,15 @@ if { $is_ts || $is_web; } && [[ "$FILE_PATH" == *"/ui/"* || "$FILE_PATH" == "ui/
         exit 0
     fi
 
-    echo "post-edit: prettier --write $FILE_PATH" >&2
-    (cd ui && pnpm prettier --write "$FILE_PATH" 2>&1) || echo "post-edit: prettier failed for $FILE_PATH" >&2
+    # We run prettier from inside ui/, so strip a leading "ui/" from a
+    # repo-relative path or it would resolve to ui/ui/... and miss the file.
+    # Absolute paths (start with /) are passed through unchanged.
+    PRETTIER_PATH="$FILE_PATH"
+    case "$PRETTIER_PATH" in
+        ui/*) PRETTIER_PATH="${PRETTIER_PATH#ui/}" ;;
+    esac
+    echo "post-edit: prettier --write $PRETTIER_PATH" >&2
+    (cd ui && pnpm prettier --write "$PRETTIER_PATH" 2>&1) || echo "post-edit: prettier failed for $PRETTIER_PATH" >&2
 fi
 
 if $is_ts; then
