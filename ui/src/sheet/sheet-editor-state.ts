@@ -12,6 +12,7 @@ import type {
   Entity,
   EntityContent,
   ModelId,
+  PromptId,
   Quality,
   ReferenceImage,
   ReferenceRole,
@@ -22,6 +23,8 @@ import type {
   RegionDefinition,
   Rgba,
   SheetVariant,
+  StructureId,
+  StyleId,
 } from "../lib/types";
 import type { RequestId, ReferenceSheetTemplate } from "../lib/commands/library";
 
@@ -220,6 +223,16 @@ export function createSheetEditorState() {
   const [maskExpand, setMaskExpand] = createSignal(12);
   const [maskMode, setMaskMode] = createSignal<"brush" | "erase">("brush");
 
+  // ── composition library selection signals ─────────────────────────────────
+  // Drive the Library panel (spec sections 15-17) without touching the
+  // existing template/templateId generation path.
+  const [selectedStructureId, setSelectedStructureId] = createSignal<StructureId | null>(null);
+  const [selectedStyleId, setSelectedStyleId] = createSignal<StyleId | null>(null);
+  const [selectedPromptId, setSelectedPromptId] = createSignal<PromptId | null>(null);
+  const [variableValues, setVariableValues] = createSignal<Record<string, string>>({});
+  const [inlineText, setInlineText] = createSignal<string>("");
+  const [inlineNegatives, setInlineNegatives] = createSignal<string>("");
+
   return {
     entity,
     setEntity,
@@ -293,5 +306,17 @@ export function createSheetEditorState() {
     setMaskExpand,
     maskMode,
     setMaskMode,
+    selectedStructureId,
+    setSelectedStructureId,
+    selectedStyleId,
+    setSelectedStyleId,
+    selectedPromptId,
+    setSelectedPromptId,
+    variableValues,
+    setVariableValues,
+    inlineText,
+    setInlineText,
+    inlineNegatives,
+    setInlineNegatives,
   };
 }

@@ -75,6 +75,8 @@ Desktop.ini
 !core/src/project/library/**
 !app/src/commands/library/
 !app/src/commands/library/**
+!ui/src/sheet/library/
+!ui/src/sheet/library/**
 [Tt]emp/
 [Oo]bj/
 [Bb]uild/
