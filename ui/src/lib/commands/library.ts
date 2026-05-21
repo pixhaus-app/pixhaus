@@ -102,6 +102,12 @@ export type LibraryGenerateReferenceSheetArgs = {
   real_world_grounding?: boolean;
   applied_lora?: AssetId | null;
   lora_weight?: number;
+  structure_id?: StructureId | undefined;
+  style_id?: StyleId | undefined;
+  prompt_id?: PromptId | undefined;
+  variable_values?: Record<string, string> | undefined;
+  inline_text?: string | undefined;
+  inline_negatives?: string | undefined;
 };
 
 export type LibraryImportReferenceSheetArgs = {

@@ -40,7 +40,8 @@ export type EditorView =
   | "chat"
   | "compare"
   | "assets"
-  | "provenance";
+  | "provenance"
+  | "library";
 export type RefineMode = "masked" | "prompt_only" | "regional";
 export type SlotTarget = "generate" | "refine" | "region";
 
@@ -105,6 +106,7 @@ export const VIEWS: Array<{ value: EditorView; label: string }> = [
   { value: "compare", label: "Compare" },
   { value: "assets", label: "Assets" },
   { value: "provenance", label: "Provenance" },
+  { value: "library", label: "Library" },
 ];
 
 export const MODEL_OPTIONS: Array<{ value: ModelId; label: string }> = [
