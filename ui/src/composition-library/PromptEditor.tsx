@@ -5,7 +5,7 @@
 // No internal persistence — changes surface through `onChange`.
 
 import { type Component, For, createMemo } from "solid-js";
-import type { PromptTemplate, PromptVariable, Structure, Style } from "../../lib/types";
+import type { PromptTemplate, PromptVariable, Structure, Style } from "../lib/types";
 import { detectTokens } from "./tokens";
 import { StructurePicker, StylePicker } from "./pickers";
 

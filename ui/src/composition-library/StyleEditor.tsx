@@ -4,8 +4,8 @@
 // The parent decides when (and whether) to call upsertStyle.
 
 import { type Component, For } from "solid-js";
-import type { ModelId, Quality, Style } from "../../lib/types";
-import { MODEL_OPTIONS, QUALITY_OPTIONS } from "../sheet-editor-state";
+import type { ModelId, Quality, Style } from "../lib/types";
+import { MODEL_OPTIONS, QUALITY_OPTIONS } from "./options";
 
 type Props = {
   value: Style;

@@ -1,0 +1,437 @@
+/* Composition Library — full-screen panel opened from the AI menu.
+ *
+ * Class prefix: comp-lib
+ */
+
+/* ── Two-pane layout ─────────────────────────────────────────────────────── */
+
+.comp-lib {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-height: 0;
+  background: var(--bg-app);
+  color: var(--text-primary);
+}
+
+.comp-lib__toolbar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 16px;
+  border-bottom: 1px solid var(--border);
+  flex-shrink: 0;
+}
+
+.comp-lib__toolbar-label {
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--text-secondary);
+  margin-right: 4px;
+}
+
+.comp-lib__body {
+  display: grid;
+  grid-template-columns: 260px 1fr;
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
+}
+
+/* ── Left pane ───────────────────────────────────────────────────────────── */
+
+.comp-lib__pane {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.comp-lib__pane--left {
+  border-right: 1px solid var(--border);
+  background: var(--bg-panel);
+}
+
+.comp-lib__pane--right {
+  background: var(--bg-app);
+}
+
+/* ── Tab strip ───────────────────────────────────────────────────────────── */
+
+.comp-lib__tabs {
+  display: flex;
+  border-bottom: 1px solid var(--border);
+  flex-shrink: 0;
+}
+
+.comp-lib__tab {
+  flex: 1;
+  height: 32px;
+  font-size: 12px;
+  color: var(--text-secondary);
+  border-bottom: 2px solid transparent;
+  cursor: pointer;
+  transition:
+    color var(--transition-fast),
+    border-color var(--transition-fast);
+  padding: 0 4px;
+}
+
+.comp-lib__tab:hover {
+  color: var(--text-primary);
+}
+
+.comp-lib__tab--active {
+  color: var(--text-primary);
+  border-bottom-color: var(--accent);
+}
+
+/* ── Record list ─────────────────────────────────────────────────────────── */
+
+.comp-lib__list {
+  flex: 1;
+  overflow-y: auto;
+  padding: 4px 0;
+}
+
+.comp-lib__row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 7px 12px;
+  cursor: pointer;
+  border-radius: 4px;
+  margin: 0 4px;
+  transition: background var(--transition-fast);
+}
+
+.comp-lib__row:hover {
+  background: var(--bg-hover);
+}
+
+.comp-lib__row--selected {
+  background: var(--accent-subtle);
+  outline: 1px solid var(--accent-border);
+  outline-offset: -1px;
+}
+
+.comp-lib__row-name {
+  flex: 1;
+  font-size: 13px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.comp-lib__empty {
+  padding: 12px;
+  font-size: 12px;
+  color: var(--text-disabled);
+  text-align: center;
+}
+
+/* ── Built-in badge ──────────────────────────────────────────────────────── */
+
+.comp-lib__badge {
+  font-size: 10px;
+  padding: 1px 6px;
+  border-radius: 10px;
+  background: var(--bg-elevated);
+  color: var(--text-secondary);
+  border: 1px solid var(--border-strong);
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+
+/* ── List-action toolbar (below the list) ────────────────────────────────── */
+
+.comp-lib__list-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  padding: 8px;
+  border-top: 1px solid var(--border);
+  flex-shrink: 0;
+}
+
+/* ── Status / error bar ──────────────────────────────────────────────────── */
+
+.comp-lib__status {
+  padding: 6px 12px;
+  font-size: 12px;
+  color: var(--text-secondary);
+  background: var(--bg-elevated);
+  border-bottom: 1px solid var(--border);
+  flex-shrink: 0;
+}
+
+/* ── Right pane: editor area ─────────────────────────────────────────────── */
+
+.comp-lib__editor-wrap {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-height: 0;
+}
+
+.comp-lib__editor-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 16px;
+  border-bottom: 1px solid var(--border);
+  flex-shrink: 0;
+}
+
+.comp-lib__editor-body {
+  flex: 1;
+  overflow-y: auto;
+  padding: 16px;
+}
+
+.comp-lib__placeholder {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: 100%;
+  font-size: 13px;
+  color: var(--text-disabled);
+}
+
+/* ── Editor fields (used by StyleEditor, PromptEditor, StructureEditor) ─── */
+
+.lib-field {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin-bottom: 14px;
+}
+
+.lib-field--row {
+  flex-direction: row;
+  align-items: center;
+  gap: 8px;
+}
+
+.lib-field__label {
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--text-secondary);
+}
+
+.lib-field__input {
+  background: var(--bg-elevated);
+  border: 1px solid var(--border-strong);
+  border-radius: 4px;
+  color: var(--text-primary);
+  padding: 5px 8px;
+  font-size: 13px;
+  line-height: 1.4;
+}
+
+.lib-field__input:focus {
+  outline: none;
+  border-color: var(--accent-border);
+  box-shadow: 0 0 0 2px var(--accent-subtle);
+}
+
+.lib-field__input:disabled {
+  color: var(--text-disabled);
+  cursor: not-allowed;
+}
+
+.lib-field__input--num {
+  width: 72px;
+}
+
+.lib-field__input--label {
+  width: 100px;
+}
+
+.lib-field__input--sm {
+  padding: 3px 6px;
+  font-size: 12px;
+}
+
+.lib-field__textarea {
+  background: var(--bg-elevated);
+  border: 1px solid var(--border-strong);
+  border-radius: 4px;
+  color: var(--text-primary);
+  padding: 6px 8px;
+  font-size: 13px;
+  line-height: 1.4;
+  resize: vertical;
+  min-height: 60px;
+}
+
+.lib-field__textarea:focus {
+  outline: none;
+  border-color: var(--accent-border);
+  box-shadow: 0 0 0 2px var(--accent-subtle);
+}
+
+.lib-field__textarea:disabled {
+  color: var(--text-disabled);
+  cursor: not-allowed;
+}
+
+.lib-field__select {
+  background: var(--bg-elevated);
+  border: 1px solid var(--border-strong);
+  border-radius: 4px;
+  color: var(--text-primary);
+  padding: 5px 8px;
+  font-size: 13px;
+}
+
+.lib-field__select:focus {
+  outline: none;
+  border-color: var(--accent-border);
+}
+
+.lib-field__select:disabled {
+  color: var(--text-disabled);
+  cursor: not-allowed;
+}
+
+.lib-field__select--slot {
+  width: 110px;
+}
+
+.lib-field__sep {
+  color: var(--text-secondary);
+  font-size: 13px;
+}
+
+.lib-radio {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 13px;
+  cursor: pointer;
+}
+
+/* ── Variables table (PromptEditor) ──────────────────────────────────────── */
+
+.lib-variables {
+  margin-bottom: 14px;
+}
+
+.lib-variables__heading {
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--text-secondary);
+  margin-bottom: 6px;
+}
+
+.lib-variables__table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 12px;
+}
+
+.lib-variables__table th {
+  text-align: left;
+  padding: 4px 8px;
+  color: var(--text-secondary);
+  border-bottom: 1px solid var(--border);
+  font-weight: 500;
+}
+
+.lib-variables__table td {
+  padding: 4px 8px;
+  border-bottom: 1px solid var(--border);
+  vertical-align: middle;
+}
+
+.lib-variables__key code {
+  font-family: monospace;
+  background: var(--bg-elevated);
+  padding: 1px 4px;
+  border-radius: 3px;
+  font-size: 11px;
+}
+
+.lib-variables__empty {
+  color: var(--text-disabled);
+  font-style: italic;
+  padding: 8px;
+}
+
+/* ── Panels section (StructureEditor) ────────────────────────────────────── */
+
+.lib-panels {
+  margin-bottom: 14px;
+}
+
+.lib-panels__heading {
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--text-secondary);
+  margin-bottom: 8px;
+}
+
+.lib-panel-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  padding: 8px;
+  background: var(--bg-elevated);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  margin-bottom: 6px;
+}
+
+.lib-panel-row__coord-label {
+  font-size: 11px;
+  color: var(--text-secondary);
+}
+
+.lib-panel-row__prose {
+  width: 100%;
+  margin-top: 4px;
+}
+
+/* ── Structure SVG preview ───────────────────────────────────────────────── */
+
+.lib-structure-preview {
+  margin-bottom: 14px;
+}
+
+.lib-structure-preview__heading {
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--text-secondary);
+  margin-bottom: 6px;
+}
+
+.lib-structure-preview__svg {
+  display: block;
+  background: var(--bg-app);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+}
+
+/* ── Pickers ─────────────────────────────────────────────────────────────── */
+
+.lib-picker {
+  background: var(--bg-elevated);
+  border: 1px solid var(--border-strong);
+  border-radius: 4px;
+  color: var(--text-primary);
+  padding: 5px 8px;
+  font-size: 13px;
+  width: 100%;
+}
+
+.lib-picker:focus {
+  outline: none;
+  border-color: var(--accent-border);
+}

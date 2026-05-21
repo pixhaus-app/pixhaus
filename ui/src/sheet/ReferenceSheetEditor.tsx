@@ -54,7 +54,7 @@ import {
   type ReferenceSheetTemplate,
 } from "../lib/commands/library";
 import { approveSheetVariantAndRefreshCorpus, refreshLibrary } from "../library/library-state";
-import { LibraryPanel, StructurePicker, StylePicker, PromptPicker } from "./library";
+import { StructurePicker, StylePicker, PromptPicker } from "../composition-library";
 import HistoryStrip from "./HistoryStrip";
 import { zoomToCursor } from "./preview-zoom";
 import { Button } from "../lib/ui/Button";
@@ -1976,10 +1976,6 @@ const ReferenceSheetEditor: Component = () => {
                   Use as reference
                 </Button>
               </div>
-            </Show>
-
-            <Show when={activeView() === "library"}>
-              <LibraryPanel />
             </Show>
           </aside>
         </div>

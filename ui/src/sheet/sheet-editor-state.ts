@@ -40,8 +40,7 @@ export type EditorView =
   | "chat"
   | "compare"
   | "assets"
-  | "provenance"
-  | "library";
+  | "provenance";
 export type RefineMode = "masked" | "prompt_only" | "regional";
 export type SlotTarget = "generate" | "refine" | "region";
 
@@ -106,24 +105,9 @@ export const VIEWS: Array<{ value: EditorView; label: string }> = [
   { value: "compare", label: "Compare" },
   { value: "assets", label: "Assets" },
   { value: "provenance", label: "Provenance" },
-  { value: "library", label: "Library" },
 ];
 
-export const MODEL_OPTIONS: Array<{ value: ModelId; label: string }> = [
-  { value: "auto", label: "Auto" },
-  { value: "open_ai_gpt_image2", label: "OpenAI gpt-image-2" },
-  { value: "google_nano_banana_pro", label: "Nano Banana Pro" },
-  { value: "google_gemini_flash_image", label: "Gemini Flash Image" },
-  { value: "fal_flux_kontext", label: "fal Flux Kontext" },
-  { value: "fal_flux_dev", label: "fal Flux.1 dev" },
-];
-
-export const QUALITY_OPTIONS: Array<{ value: Quality; label: string }> = [
-  { value: "auto", label: "Auto" },
-  { value: "low", label: "Low" },
-  { value: "medium", label: "Medium" },
-  { value: "high", label: "High" },
-];
+export { MODEL_OPTIONS, QUALITY_OPTIONS } from "../composition-library/options";
 
 export const ROLE_OPTIONS: Array<{ value: ReferenceRole; label: string }> = [
   { value: "subject", label: "Subject" },

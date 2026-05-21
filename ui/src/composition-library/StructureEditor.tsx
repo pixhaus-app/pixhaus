@@ -14,7 +14,7 @@ import type {
   Structure,
   StructureOutput,
   StructurePanel,
-} from "../../lib/types";
+} from "../lib/types";
 import { previewBoxes } from "./preview";
 
 // Preview area dimensions (px).

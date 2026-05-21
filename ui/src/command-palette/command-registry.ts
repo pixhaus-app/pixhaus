@@ -1,6 +1,7 @@
 import { open as dialogOpen, save as dialogSave, confirm, message } from "../lib/dialog";
 import { isCommandPaletteOpen, openCommandPalette, closeCommandPalette } from "../palette-state";
 import { openPreferences } from "../preferences/preferences-state";
+import { openCompositionLibrary } from "../composition-library/composition-library-state";
 import { keybindPreset, customKeybinds } from "../preferences/preferences-store";
 import { ASEPRITE_DEFAULTS, PHOTOSHOP_DEFAULTS, defaultCombo } from "../keybinds/defaults";
 import {
@@ -1191,6 +1192,16 @@ const COMMANDS: ReadonlyMap<string, CommandEntry> = new Map<string, CommandEntry
       category: "AI",
       keywords: ["sheet", "reference", "anchor", "sprite", "character"],
       handler: () => openReferenceSheetEditorForSelectedSprite(),
+    },
+  ],
+  [
+    "ai:composition-library",
+    {
+      id: "ai:composition-library",
+      label: "Prompt & Style Library",
+      category: "AI",
+      keywords: ["style", "structure", "prompt", "template", "library", "composition"],
+      handler: () => openCompositionLibrary(),
     },
   ],
   [

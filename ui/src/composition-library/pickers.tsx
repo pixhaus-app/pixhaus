@@ -11,7 +11,7 @@ import type {
   StyleId,
   PromptTemplate,
   PromptId,
-} from "../../lib/types";
+} from "../lib/types";
 
 // ── StructurePicker ───────────────────────────────────────────────────────────
 
