@@ -11,6 +11,12 @@ use thiserror::Error;
 const PIXSTYLE_MAGIC: &[u8; 4] = b"PXST";
 const PIXSTYLE_FORMAT_VERSION: u16 = 1;
 
+/// Maximum accepted compressed body. A `.pixstyle` is a small set of text
+/// records; anything larger is rejected before decompression.
+const MAX_COMPRESSED: usize = 8 * 1024 * 1024;
+/// Maximum accepted decompressed body, bounding a decompression bomb.
+const MAX_DECOMPRESSED: usize = 64 * 1024 * 1024;
+
 /// Error reading or writing a `.pixstyle` bundle.
 #[derive(Debug, Error)]
 pub enum PixstyleError {
@@ -23,6 +29,10 @@ pub enum PixstyleError {
     /// The bundle's format version is newer than this build supports.
     #[error("unsupported format version {0}")]
     UnsupportedVersion(u16),
+    /// The compressed or decompressed body exceeds the safety cap — guards the
+    /// import path against a maliciously crafted decompression bomb.
+    #[error("bundle exceeds the maximum allowed size")]
+    TooLarge,
     /// `MessagePack` decode failure.
     #[error("decode: {0}")]
     Decode(#[from] rmp_serde::decode::Error),
@@ -74,11 +84,25 @@ pub fn read_pack(mut r: impl Read) -> Result<StylePack, PixstyleError> {
     if version != PIXSTYLE_FORMAT_VERSION {
         return Err(PixstyleError::UnsupportedVersion(version));
     }
-    let mut compressed = Vec::new();
-    r.read_to_end(&mut compressed)?;
-    let body = zstd::decode_all(&compressed[..])?;
+    // Bound both the compressed read and the decompressed body so a tiny
+    // malicious bundle can't exhaust memory before `rmp_serde` ever runs.
+    let compressed = read_capped(r, MAX_COMPRESSED)?;
+    let decoder = zstd::Decoder::new(&compressed[..])?;
+    let body = read_capped(decoder, MAX_DECOMPRESSED)?;
     let pack: StylePack = rmp_serde::from_slice(&body)?;
     Ok(pack)
+}
+
+/// Reads at most `max` bytes from `r`; returns [`PixstyleError::TooLarge`] if
+/// the source has more than `max` bytes.
+fn read_capped(r: impl Read, max: usize) -> Result<Vec<u8>, PixstyleError> {
+    let limit = u64::try_from(max).unwrap_or(u64::MAX).saturating_add(1);
+    let mut buf = Vec::new();
+    r.take(limit).read_to_end(&mut buf)?;
+    if buf.len() > max {
+        return Err(PixstyleError::TooLarge);
+    }
+    Ok(buf)
 }
 
 /// Extracts a [`StylePack`] from an existing project's [`ProjectAi`] for
@@ -160,5 +184,31 @@ mod tests {
         let pack = read_library_from_project_ai(&ai);
         assert_eq!(pack.styles.len(), 1);
         assert_eq!(pack.format_version, PIXSTYLE_FORMAT_VERSION);
+    }
+
+    #[test]
+    fn read_capped_rejects_oversized_source() {
+        let data = [0u8; 100];
+        assert!(matches!(
+            read_capped(&data[..], 10),
+            Err(PixstyleError::TooLarge)
+        ));
+        // At or under the cap reads fully.
+        assert_eq!(read_capped(&data[..], 100).unwrap().len(), 100);
+        assert_eq!(read_capped(&data[..], 256).unwrap().len(), 100);
+    }
+
+    #[test]
+    fn read_pack_rejects_decompression_bomb() {
+        // A small compressed body that inflates past the decompressed cap.
+        let bomb = vec![0u8; MAX_DECOMPRESSED + 1];
+        let mut buf = Vec::new();
+        buf.extend_from_slice(PIXSTYLE_MAGIC);
+        buf.extend_from_slice(&PIXSTYLE_FORMAT_VERSION.to_le_bytes());
+        buf.extend_from_slice(&zstd::encode_all(&bomb[..], 0).unwrap());
+        assert!(matches!(
+            read_pack(&buf[..]).unwrap_err(),
+            PixstyleError::TooLarge
+        ));
     }
 }
