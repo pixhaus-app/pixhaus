@@ -1631,6 +1631,7 @@ pub async fn library_search(
     Ok(search_library(project, &args))
 }
 
+pub mod composition;
 pub mod lora;
 pub mod reference_sheets;
 
