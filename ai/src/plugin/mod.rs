@@ -71,7 +71,10 @@ pub use crate::verbs::sketch_finishing::{
 };
 pub use anchor::{AnchorPayload, DEFAULT_ANCHOR_STRENGTH};
 pub use backend::{BackendInfo, InferenceBackend};
-pub use context::{PixelData, ReferenceImage, StyleReference, VerbContext, VerbContextBuilder};
+pub use context::{
+    CompositionLibraryView, PixelData, ProjectCompositionLibrary, ReferenceImage, StyleReference,
+    VerbContext, VerbContextBuilder,
+};
 pub use descriptor::{BackendCapabilities, CostEstimate, EffectKind, VerbDescriptor, VerbId};
 pub use echo::{ECHO_VERB_ID, EchoInputs, EchoVerb};
 pub use error::{Result, VerbError};
