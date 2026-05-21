@@ -194,17 +194,20 @@ const ReferenceSheetEditor: Component = () => {
   const structureOptions = createMemo(() => {
     const lib = composition();
     if (lib === undefined) return [];
-    return [...lib.structures, ...lib.builtin_structures];
+    const projectIds = new Set(lib.structures.map((s) => s.id));
+    return [...lib.structures, ...lib.builtin_structures.filter((s) => !projectIds.has(s.id))];
   });
   const styleOptions = createMemo(() => {
     const lib = composition();
     if (lib === undefined) return [];
-    return [...lib.styles, ...lib.builtin_styles];
+    const projectIds = new Set(lib.styles.map((s) => s.id));
+    return [...lib.styles, ...lib.builtin_styles.filter((s) => !projectIds.has(s.id))];
   });
   const promptOptions = createMemo(() => {
     const lib = composition();
     if (lib === undefined) return [];
-    return [...lib.prompts, ...lib.builtin_prompts];
+    const projectIds = new Set(lib.prompts.map((p) => p.id));
+    return [...lib.prompts, ...lib.builtin_prompts.filter((p) => !projectIds.has(p.id))];
   });
 
   // Resolve the picked prompt's variables against the active entity. Keyed on
@@ -220,20 +223,18 @@ const ReferenceSheetEditor: Component = () => {
       key === null ? Promise.resolve([]) : resolvePromptVariables(key.promptId, key.entityId),
   );
 
-  // When resolved variables arrive, seed any unset values with the entity
-  // autofill (or the declared default), leaving user edits intact.
+  // Rebuild the variable values whenever the resolved set changes (i.e. the
+  // picked prompt or entity changed), seeding each with the entity autofill or
+  // declared default. Rebuilding — rather than merging — drops keys from a
+  // previously-picked prompt so stale substitutions can't leak into generation.
   createEffect(() => {
     const vars = promptVariables();
     if (vars === undefined) return;
-    setVariableValues((current) => {
-      const next = { ...current };
-      for (const v of vars) {
-        if (next[v.key] === undefined) {
-          next[v.key] = v.autofilled ?? v.default;
-        }
-      }
-      return next;
-    });
+    const next: Record<string, string> = {};
+    for (const v of vars) {
+      next[v.key] = v.autofilled ?? v.default;
+    }
+    setVariableValues(next);
   });
 
   // Preview pan/zoom. The transform lives on `.sheet-editor__image-wrap`,

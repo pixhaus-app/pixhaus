@@ -7,7 +7,7 @@
 // output variant. The paneled branch shows canvas dimensions, a panel list
 // editor, layout_negatives, and a live SVG preview.
 
-import { type Component, For, Show, createMemo } from "solid-js";
+import { type Component, For, Show, createMemo, createSignal } from "solid-js";
 import type {
   Dimensions,
   PanelSlot,
@@ -78,6 +78,13 @@ function newPanel(): StructurePanel {
   };
 }
 
+// Parses a numeric input value, falling back when it is empty or non-numeric
+// so a cleared field never writes `NaN` into the panel geometry.
+function safeInt(value: string, fallback: number): number {
+  const n = Number(value);
+  return Number.isFinite(n) ? Math.trunc(n) : fallback;
+}
+
 // ── component ─────────────────────────────────────────────────────────────────
 
 const StructureEditor: Component<Props> = (props) => {
@@ -98,14 +105,21 @@ const StructureEditor: Component<Props> = (props) => {
 
   const paneled = createMemo(() => isPaneled(props.value.output));
 
-  // Switches the output variant; preserves data when possible.
+  // Remembers the latest paneled output so a Single→Paneled round-trip restores
+  // the user's panels instead of resetting to defaults. Seeded on the way to
+  // Single (see toggleOutputKind), so starting null is sufficient.
+  const [lastPaneled, setLastPaneled] = createSignal<StructureOutput | null>(null);
+
+  // Switches the output variant; preserves paneled data across the toggle.
   function toggleOutputKind(toKind: "single" | "paneled"): void {
+    const current = props.value.output;
     if (toKind === "single") {
+      if (isPaneled(current)) setLastPaneled(current);
       update({ output: "single" });
+    } else if (isPaneled(current)) {
+      update({ output: current });
     } else {
-      // Preserve existing paneled data if we already have it; otherwise create default.
-      const current = props.value.output;
-      update({ output: isPaneled(current) ? current : defaultPaneledOutput() });
+      update({ output: lastPaneled() ?? defaultPaneledOutput() });
     }
   }
 
@@ -268,7 +282,7 @@ const StructureEditor: Component<Props> = (props) => {
                         value={panel.rect.x}
                         onInput={(e) =>
                           updatePanel(i(), {
-                            rect: { ...panel.rect, x: Number(e.currentTarget.value) },
+                            rect: { ...panel.rect, x: safeInt(e.currentTarget.value, 0) },
                           })
                         }
                       />
@@ -282,7 +296,7 @@ const StructureEditor: Component<Props> = (props) => {
                         value={panel.rect.y}
                         onInput={(e) =>
                           updatePanel(i(), {
-                            rect: { ...panel.rect, y: Number(e.currentTarget.value) },
+                            rect: { ...panel.rect, y: safeInt(e.currentTarget.value, 0) },
                           })
                         }
                       />
@@ -297,7 +311,7 @@ const StructureEditor: Component<Props> = (props) => {
                         value={panel.rect.w}
                         onInput={(e) =>
                           updatePanel(i(), {
-                            rect: { ...panel.rect, w: Number(e.currentTarget.value) },
+                            rect: { ...panel.rect, w: safeInt(e.currentTarget.value, 1) },
                           })
                         }
                       />
@@ -312,7 +326,7 @@ const StructureEditor: Component<Props> = (props) => {
                         value={panel.rect.h}
                         onInput={(e) =>
                           updatePanel(i(), {
-                            rect: { ...panel.rect, h: Number(e.currentTarget.value) },
+                            rect: { ...panel.rect, h: safeInt(e.currentTarget.value, 1) },
                           })
                         }
                       />

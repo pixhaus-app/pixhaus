@@ -33,4 +33,9 @@ describe("detectTokens", () => {
   it("handles mixed escapes and tokens", () => {
     expect(detectTokens("{{literal}} {real} {{another}}")).toEqual(["real"]);
   });
+
+  it("ignores an unterminated opening brace", () => {
+    expect(detectTokens("a {name")).toEqual([]);
+    expect(detectTokens("{a} {b")).toEqual(["a"]);
+  });
 });

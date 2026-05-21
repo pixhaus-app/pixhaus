@@ -27,9 +27,11 @@ export function detectTokens(text: string): string[] {
         key += text[i];
         i += 1;
       }
-      // Advance past the closing `}`.
-      i += 1;
-      if (key.length > 0 && !out.includes(key)) {
+      // `closed` is true only when we stopped on a `}` (not end-of-string);
+      // an unterminated `{key` is malformed and yields no token.
+      const closed = i < text.length;
+      i += 1; // advance past the closing `}` (or harmlessly past the end)
+      if (closed && key.length > 0 && !out.includes(key)) {
         out.push(key);
       }
     } else if (c === "}") {

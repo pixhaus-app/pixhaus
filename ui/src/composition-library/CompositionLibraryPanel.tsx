@@ -125,13 +125,15 @@ const CompositionLibraryPanel: Component = () => {
   const allStructures = createMemo<Structure[]>(() => {
     const lib = library();
     if (!lib) return [];
-    return [...lib.structures, ...lib.builtin_structures];
+    const projectIds = new Set(lib.structures.map((s) => s.id));
+    return [...lib.structures, ...lib.builtin_structures.filter((s) => !projectIds.has(s.id))];
   });
 
   const allStyles = createMemo<Style[]>(() => {
     const lib = library();
     if (!lib) return [];
-    return [...lib.styles, ...lib.builtin_styles];
+    const projectIds = new Set(lib.styles.map((s) => s.id));
+    return [...lib.styles, ...lib.builtin_styles.filter((s) => !projectIds.has(s.id))];
   });
 
   // ── helpers: selected-row lookups ────────────────────────────────────────────
@@ -517,9 +519,19 @@ const CompositionLibraryPanel: Component = () => {
                   <div
                     class={`comp-lib__row${selectedStructureId() === row.record.id ? " comp-lib__row--selected" : ""}`}
                     role="option"
+                    tabindex={0}
                     aria-selected={selectedStructureId() === row.record.id}
                     onClick={() => setSelectedStructureId(row.record.id)}
                     onDblClick={() => editStructure(row)}
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter") {
+                        e.preventDefault();
+                        editStructure(row);
+                      } else if (e.key === " ") {
+                        e.preventDefault();
+                        setSelectedStructureId(row.record.id);
+                      }
+                    }}
                   >
                     <span class="comp-lib__row-name">{row.record.name}</span>
                     <Show when={row.builtin}>
@@ -580,9 +592,19 @@ const CompositionLibraryPanel: Component = () => {
                   <div
                     class={`comp-lib__row${selectedStyleId() === row.record.id ? " comp-lib__row--selected" : ""}`}
                     role="option"
+                    tabindex={0}
                     aria-selected={selectedStyleId() === row.record.id}
                     onClick={() => setSelectedStyleId(row.record.id)}
                     onDblClick={() => editStyle(row)}
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter") {
+                        e.preventDefault();
+                        editStyle(row);
+                      } else if (e.key === " ") {
+                        e.preventDefault();
+                        setSelectedStyleId(row.record.id);
+                      }
+                    }}
                   >
                     <span class="comp-lib__row-name">{row.record.name}</span>
                     <Show when={row.builtin}>
@@ -641,9 +663,19 @@ const CompositionLibraryPanel: Component = () => {
                   <div
                     class={`comp-lib__row${selectedPromptId() === row.record.id ? " comp-lib__row--selected" : ""}`}
                     role="option"
+                    tabindex={0}
                     aria-selected={selectedPromptId() === row.record.id}
                     onClick={() => setSelectedPromptId(row.record.id)}
                     onDblClick={() => editPrompt(row)}
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter") {
+                        e.preventDefault();
+                        editPrompt(row);
+                      } else if (e.key === " ") {
+                        e.preventDefault();
+                        setSelectedPromptId(row.record.id);
+                      }
+                    }}
                   >
                     <span class="comp-lib__row-name">{row.record.name}</span>
                     <Show when={row.builtin}>

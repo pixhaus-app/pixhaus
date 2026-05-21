@@ -50,7 +50,7 @@ const PromptEditor: Component<Props> = (props) => {
           id="prompt-name"
           class="lib-field__input"
           type="text"
-          disabled={props.readOnly}
+          disabled={props.readOnly ?? false}
           value={props.value.name}
           onInput={(e) => update({ name: e.currentTarget.value })}
         />
@@ -63,7 +63,7 @@ const PromptEditor: Component<Props> = (props) => {
         <textarea
           id="prompt-text"
           class="lib-field__textarea"
-          disabled={props.readOnly}
+          disabled={props.readOnly ?? false}
           rows={6}
           value={props.value.text}
           onInput={(e) => update({ text: e.currentTarget.value })}
@@ -100,7 +100,7 @@ const PromptEditor: Component<Props> = (props) => {
                     <input
                       class="lib-field__input lib-field__input--sm"
                       type="text"
-                      disabled={props.readOnly}
+                      disabled={props.readOnly ?? false}
                       value={v.label}
                       onInput={(e) => updateVariable(i(), { label: e.currentTarget.value })}
                     />
@@ -109,7 +109,7 @@ const PromptEditor: Component<Props> = (props) => {
                     <input
                       class="lib-field__input lib-field__input--sm"
                       type="text"
-                      disabled={props.readOnly}
+                      disabled={props.readOnly ?? false}
                       value={v.default ?? ""}
                       onInput={(e) => updateVariable(i(), { default: e.currentTarget.value })}
                     />
@@ -127,6 +127,7 @@ const PromptEditor: Component<Props> = (props) => {
           styles={props.styles}
           value={props.value.default_style ?? null}
           onChange={(id) => update({ default_style: id })}
+          disabled={props.readOnly ?? false}
         />
       </div>
 
@@ -136,6 +137,7 @@ const PromptEditor: Component<Props> = (props) => {
           structures={props.structures}
           value={props.value.default_structure ?? null}
           onChange={(id) => update({ default_structure: id })}
+          disabled={props.readOnly ?? false}
         />
       </div>
     </div>
