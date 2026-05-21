@@ -43,6 +43,7 @@
 
 pub mod ai;
 pub mod assets;
+pub mod composition;
 pub mod core;
 pub mod reference_sheets;
 pub mod tags;
