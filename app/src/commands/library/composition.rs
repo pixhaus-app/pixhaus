@@ -119,8 +119,26 @@ impl std::fmt::Display for CompositionKind {
 
 // ── pure merge logic ────────────────────────────────────────────────────────
 
+/// Mints a unique `<base>.copy` id (or `.copy.2`, `.copy.3`, …) that `exists`
+/// reports as free, so `ImportAsCopy` never produces a duplicate id even when
+/// `<base>.copy` is already taken or the same id repeats within one pack.
+fn unique_copy_id(base: &str, exists: impl Fn(&str) -> bool) -> String {
+    let first = format!("{base}.copy");
+    if !exists(&first) {
+        return first;
+    }
+    let mut n = 2u32;
+    loop {
+        let candidate = format!("{base}.copy.{n}");
+        if !exists(&candidate) {
+            return candidate;
+        }
+        n += 1;
+    }
+}
+
 /// Merges `incoming` Structures into `target` per `policy`, reporting the
-/// counts. On `ImportAsCopy` a colliding id gains a `.copy` suffix.
+/// counts. On `ImportAsCopy` a colliding id gains a unique `.copy` suffix.
 #[must_use]
 pub fn merge_structures(
     target: &mut Vec<Structure>,
@@ -138,7 +156,9 @@ pub fn merge_structures(
             Some(_) => {
                 // ImportAsCopy.
                 let mut c = s;
-                c.id = StructureId(format!("{}.copy", c.id.0));
+                c.id = StructureId(unique_copy_id(&c.id.0, |id| {
+                    target.iter().any(|t| t.id.0 == id)
+                }));
                 target.push(c);
                 report.imported += 1;
             }
@@ -168,7 +188,9 @@ pub fn merge_styles(
             }
             Some(_) => {
                 let mut c = s;
-                c.id = StyleId(format!("{}.copy", c.id.0));
+                c.id = StyleId(unique_copy_id(&c.id.0, |id| {
+                    target.iter().any(|t| t.id.0 == id)
+                }));
                 target.push(c);
                 report.imported += 1;
             }
@@ -198,7 +220,9 @@ pub fn merge_prompts(
             }
             Some(_) => {
                 let mut c = p;
-                c.id = PromptId(format!("{}.copy", c.id.0));
+                c.id = PromptId(unique_copy_id(&c.id.0, |id| {
+                    target.iter().any(|t| t.id.0 == id)
+                }));
                 target.push(c);
                 report.imported += 1;
             }
@@ -467,7 +491,11 @@ pub async fn library_fork_builtin(
                 .ok_or_else(not_found)?
                 .clone();
             rec.id = StructureId(new_id.clone());
-            project.library.ai.structures.push(rec);
+            let list = &mut project.library.ai.structures;
+            match list.iter().position(|s| s.id == rec.id) {
+                Some(i) => list[i] = rec,
+                None => list.push(rec),
+            }
         }
         CompositionKind::Style => {
             let mut rec = builtins
@@ -476,7 +504,11 @@ pub async fn library_fork_builtin(
                 .ok_or_else(not_found)?
                 .clone();
             rec.id = StyleId(new_id.clone());
-            project.library.ai.styles.push(rec);
+            let list = &mut project.library.ai.styles;
+            match list.iter().position(|s| s.id == rec.id) {
+                Some(i) => list[i] = rec,
+                None => list.push(rec),
+            }
         }
         CompositionKind::Prompt => {
             let mut rec = builtins
@@ -485,7 +517,11 @@ pub async fn library_fork_builtin(
                 .ok_or_else(not_found)?
                 .clone();
             rec.id = PromptId(new_id.clone());
-            project.library.ai.prompts.push(rec);
+            let list = &mut project.library.ai.prompts;
+            match list.iter().position(|p| p.id == rec.id) {
+                Some(i) => list[i] = rec,
+                None => list.push(rec),
+            }
         }
     }
     doc.dirty = true;
@@ -775,6 +811,21 @@ mod tests {
         assert_eq!(target.len(), 2);
         assert_eq!(target[1].id, StructureId("a.copy".into()));
         assert_eq!(target[1].name, "incoming");
+    }
+
+    #[test]
+    fn merge_structures_import_as_copy_avoids_existing_copy_id() {
+        // `a` and `a.copy` already present: importing `a` must mint `a.copy.2`,
+        // and importing the same id twice in one pack must not collide either.
+        let mut target = vec![structure("a", "orig"), structure("a.copy", "prev")];
+        let report = merge_structures(
+            &mut target,
+            vec![structure("a", "first"), structure("a", "second")],
+            ConflictPolicy::ImportAsCopy,
+        );
+        assert_eq!(report.imported, 2);
+        let ids: Vec<&str> = target.iter().map(|s| s.id.0.as_str()).collect();
+        assert_eq!(ids, ["a", "a.copy", "a.copy.2", "a.copy.3"]);
     }
 
     #[test]

@@ -116,10 +116,30 @@ fn resolve_picked_composition(
     project: &pixhaus_core::project::Project,
     args: &LibraryGenerateReferenceSheetArgs,
 ) -> Result<Option<PickedComposition>, AppCommandError> {
-    let Some(sid) = args.structure_id.clone() else {
+    let builtins = pixhaus_ai::compose::builtins::BuiltinLibrary::load();
+
+    // Resolve the picked prompt first; a prompt can carry a default structure
+    // and style, so a prompt-only pick still activates the composition path.
+    let prompt = args.prompt_id.as_ref().and_then(|id| {
+        project
+            .library
+            .ai
+            .prompts
+            .iter()
+            .find(|p| &p.id == id)
+            .cloned()
+            .or_else(|| builtins.prompts.get(id).cloned())
+    });
+
+    // Structure: explicit pick wins; otherwise the prompt's default_structure.
+    // With neither, fall back to the legacy template path.
+    let Some(sid) = args
+        .structure_id
+        .clone()
+        .or_else(|| prompt.as_ref().and_then(|p| p.default_structure.clone()))
+    else {
         return Ok(None);
     };
-    let builtins = pixhaus_ai::compose::builtins::BuiltinLibrary::load();
     let structure = project
         .library
         .ai
@@ -131,7 +151,13 @@ fn resolve_picked_composition(
         .ok_or_else(|| AppCommandError::Validation {
             detail: format!("unknown structure {}", sid.0),
         })?;
-    let style = args.style_id.as_ref().and_then(|id| {
+
+    // Style: explicit pick wins; otherwise the prompt's default_style.
+    let style_id = args
+        .style_id
+        .clone()
+        .or_else(|| prompt.as_ref().and_then(|p| p.default_style.clone()));
+    let style = style_id.as_ref().and_then(|id| {
         project
             .library
             .ai
@@ -141,16 +167,7 @@ fn resolve_picked_composition(
             .cloned()
             .or_else(|| builtins.styles.get(id).cloned())
     });
-    let prompt = args.prompt_id.as_ref().and_then(|id| {
-        project
-            .library
-            .ai
-            .prompts
-            .iter()
-            .find(|p| &p.id == id)
-            .cloned()
-            .or_else(|| builtins.prompts.get(id).cloned())
-    });
+
     Ok(Some(PickedComposition {
         structure,
         style,
@@ -174,6 +191,7 @@ pub async fn library_generate_reference_sheet(
     if args.prompt.trim().is_empty()
         && args.inline_text.trim().is_empty()
         && args.structure_id.is_none()
+        && args.prompt_id.is_none()
     {
         return Err(AppCommandError::Validation {
             detail: "reference sheet prompt must not be empty".into(),
@@ -971,11 +989,18 @@ fn sheet_context_fragments(request: &SheetProviderRequest) -> Vec<String> {
 
 /// Composes the positive prompt from a picked composition (Structure plus
 /// optional Style/Prompt), per spec section 11.
+/// The positive and negative prompt produced by the composition resolver for a
+/// sheet-provider request.
+struct ComposedSheetPrompt {
+    positive: String,
+    negative: String,
+}
+
 fn compose_picked_prompt(
     request: &SheetProviderRequest,
     picked: &PickedComposition,
     style_notes: &str,
-) -> String {
+) -> ComposedSheetPrompt {
     use pixhaus_ai::compose::builtins::BUILTIN_DEFAULT_BASELINE;
     use pixhaus_ai::compose::{ComposeRequest, compose};
 
@@ -985,10 +1010,14 @@ fn compose_picked_prompt(
     } else {
         style_notes.trim()
     };
-    let inline = if picked.inline_text.trim().is_empty() {
-        request.prompt.trim()
-    } else {
-        picked.inline_text.trim()
+    // `inline_text` is an addition to the request prompt, not a replacement.
+    let base = request.prompt.trim();
+    let extra = picked.inline_text.trim();
+    let inline = match (base.is_empty(), extra.is_empty()) {
+        (false, false) => format!("{base}, {extra}"),
+        (false, true) => base.to_owned(),
+        (true, false) => extra.to_owned(),
+        (true, true) => String::new(),
     };
     let empty = std::collections::BTreeMap::new();
     let req = ComposeRequest {
@@ -998,15 +1027,24 @@ fn compose_picked_prompt(
         prompt: picked.prompt.as_ref(),
         variable_values: &picked.variable_values,
         entity_info: &empty,
-        inline_text: inline,
+        inline_text: &inline,
         inline_negatives: picked.inline_negatives.trim(),
         operation_hint: operation_hint_for(request.operation),
         context_fragments: &fragments,
     };
-    compose(&req).map_or_else(|_| inline.to_owned(), |c| c.positive)
+    compose(&req).map_or_else(
+        |_| ComposedSheetPrompt {
+            positive: inline.clone(),
+            negative: String::new(),
+        },
+        |c| ComposedSheetPrompt {
+            positive: c.positive,
+            negative: c.negative,
+        },
+    )
 }
 
-fn compose_sheet_prompt(request: &SheetProviderRequest, style_notes: &str) -> String {
+fn compose_sheet_prompt(request: &SheetProviderRequest, style_notes: &str) -> ComposedSheetPrompt {
     use pixhaus_ai::compose::builtins::BUILTIN_DEFAULT_BASELINE;
     use pixhaus_ai::compose::{ComposeRequest, compose};
     use pixhaus_core::project::library::composition::{Structure, StructureId, StructureOutput};
@@ -1055,7 +1093,16 @@ fn compose_sheet_prompt(request: &SheetProviderRequest, style_notes: &str) -> St
         operation_hint,
         context_fragments: &fragments,
     };
-    compose(&req).map_or_else(|_| request.prompt.trim().to_owned(), |c| c.positive)
+    compose(&req).map_or_else(
+        |_| ComposedSheetPrompt {
+            positive: request.prompt.trim().to_owned(),
+            negative: String::new(),
+        },
+        |c| ComposedSheetPrompt {
+            positive: c.positive,
+            negative: c.negative,
+        },
+    )
 }
 
 fn selected_model(
@@ -1180,7 +1227,12 @@ async fn invoke_provider_images(
             message: "selected backend does not expose the image execution surface".into(),
         })?;
 
-    let prompt = compose_sheet_prompt(request, style_notes);
+    let composed = compose_sheet_prompt(request, style_notes);
+    let prompt = composed.positive;
+    let negative_prompt = {
+        let n = composed.negative.trim();
+        (!n.is_empty()).then(|| n.to_owned())
+    };
     let model = if request.model == ModelId::Auto {
         None
     } else {
@@ -1200,7 +1252,7 @@ async fn invoke_provider_images(
                 InferenceRequest::Replicate(pixhaus_ai::backends::ReplicateRequest {
                     model: model_label(request.model).into(),
                     version: None,
-                    input: build_fal_sheet_input(request, &prompt),
+                    input: build_fal_sheet_input(request, &prompt, negative_prompt.as_deref()),
                 }),
                 progress,
                 cancel,
@@ -1215,7 +1267,7 @@ async fn invoke_provider_images(
             image: source.bytes.clone(),
             mask: request.mask.as_ref().map(|mask| mask.bytes.clone()),
             prompt,
-            negative_prompt: None,
+            negative_prompt: negative_prompt.clone(),
             num_images: u32::from(request.candidate_count.clamp(1, 4)),
             style_image: request
                 .references
@@ -1239,7 +1291,7 @@ async fn invoke_provider_images(
         let image_gen = ImageGenRequest {
             model,
             prompt,
-            negative_prompt: None,
+            negative_prompt,
             width: request.width,
             height: request.height,
             steps: None,
@@ -1422,12 +1474,19 @@ fn encode_reference_assets_zip(assets: &[ReferenceAsset]) -> CommandResult<Vec<u
 }
 
 #[allow(clippy::disallowed_methods)]
-fn build_fal_sheet_input(request: &SheetProviderRequest, prompt: &str) -> serde_json::Value {
+fn build_fal_sheet_input(
+    request: &SheetProviderRequest,
+    prompt: &str,
+    negative_prompt: Option<&str>,
+) -> serde_json::Value {
     let mut input = serde_json::json!({
         "prompt": prompt,
         "num_images": request.candidate_count.clamp(1, 4),
         "sync_mode": true,
     });
+    if let Some(negative) = negative_prompt.filter(|n| !n.trim().is_empty()) {
+        input["negative_prompt"] = serde_json::json!(negative);
+    }
     if request.source_image.is_none() {
         input["image_size"] = serde_json::json!({
             "width": request.width,
@@ -1609,7 +1668,7 @@ fn build_variant_from_provider_image(
     variant.height = spec.provider.height;
     variant.chroma_color = spec.provider.chroma_color;
     variant.user_prompt.clone_from(&spec.provider.prompt);
-    variant.composed_prompt = compose_sheet_prompt(&spec.provider, "");
+    variant.composed_prompt = compose_sheet_prompt(&spec.provider, "").positive;
     variant.references.clone_from(&spec.provider.references);
     variant.model = image.model;
     variant.quality = spec.provider.quality;
@@ -3223,7 +3282,7 @@ mod tests {
 
     #[test]
     fn adapter_includes_background_and_operation_hint() {
-        let composed = compose_sheet_prompt(&sample_masked_request(), "");
+        let composed = compose_sheet_prompt(&sample_masked_request(), "").positive;
         assert!(composed.contains("flat solid chroma key color"));
         assert!(composed.contains("Preserve everything outside the edited region"));
         assert!(composed.contains("make the hair longer"));
@@ -3231,7 +3290,7 @@ mod tests {
 
     #[test]
     fn adapter_uses_default_baseline_when_no_style_notes() {
-        let composed = compose_sheet_prompt(&sample_masked_request(), "");
+        let composed = compose_sheet_prompt(&sample_masked_request(), "").positive;
         assert!(composed.starts_with("pixel art reference sheet"));
     }
 
@@ -3257,11 +3316,21 @@ mod tests {
             prompt: None,
             variable_values: std::collections::BTreeMap::new(),
             inline_text: "a knight".into(),
-            inline_negatives: String::new(),
+            inline_negatives: "watermark".into(),
         });
 
         let composed = compose_sheet_prompt(&request, "");
-        assert!(composed.contains("each 200 pixels wide, 480 pixels tall"));
-        assert!(composed.contains("flat solid chroma key color"));
+        assert!(
+            composed
+                .positive
+                .contains("each 200 pixels wide, 480 pixels tall")
+        );
+        assert!(composed.positive.contains("flat solid chroma key color"));
+        // inline_text is appended to the request prompt, not replacing it.
+        assert!(composed.positive.contains("make the hair longer"));
+        assert!(composed.positive.contains("a knight"));
+        // The structure's layout negatives and inline negatives are threaded out.
+        assert!(composed.negative.contains("overlapping views"));
+        assert!(composed.negative.contains("watermark"));
     }
 }
