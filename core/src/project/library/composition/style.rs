@@ -6,7 +6,7 @@ use ts_rs::TS;
 use crate::project::library::ai::{ModelId, Quality};
 
 /// Stable id for a Style.
-#[derive(Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize, TS)]
+#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize, TS)]
 #[ts(export)]
 pub struct StyleId(pub String);
 

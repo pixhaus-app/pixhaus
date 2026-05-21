@@ -6,7 +6,7 @@ use ts_rs::TS;
 use super::{StructureId, StyleId};
 
 /// Stable id for a `PromptTemplate`.
-#[derive(Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize, TS)]
+#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize, TS)]
 #[ts(export)]
 pub struct PromptId(pub String);
 

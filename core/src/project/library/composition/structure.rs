@@ -10,7 +10,7 @@ use super::Dimensions;
 /// Stable id for a Structure. Built-ins use reverse-DNS
 /// (`pixhaus.builtin.structure.character`); a project record reuses that id
 /// to shadow the built-in, or takes a fresh project slug.
-#[derive(Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize, TS)]
+#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize, TS)]
 #[ts(export)]
 pub struct StructureId(pub String);
 
