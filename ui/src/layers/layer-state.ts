@@ -6,7 +6,7 @@
 // the list via refreshLayers().
 
 import { createSignal } from "solid-js";
-import type { BlendMode, Layer, LayerId, SpriteId, TilesetId } from "../lib/types";
+import type { BlendMode, Layer, LayerEffect, LayerId, SpriteId, TilesetId } from "../lib/types";
 import {
   layerAdd,
   layerConvertToTilemap,
@@ -18,6 +18,7 @@ import {
   layerRename,
   layerReorder,
   layerSetBlendMode,
+  layerSetEffects,
   layerSetLocked,
   layerSetOpacity,
   layerSetParent,
@@ -413,6 +414,15 @@ export function setLayerBlendMode(spriteId: SpriteId, id: LayerId, blendMode: Bl
       refreshViewport(spriteId);
     })
     .catch((err: unknown) => console.error("[pixhaus] layer_set_blend_mode:", err));
+}
+
+export function setLayerEffects(spriteId: SpriteId, id: LayerId, effects: LayerEffect[]): void {
+  layerSetEffects(spriteId, id, effects)
+    .then(() => {
+      refreshLayers();
+      refreshViewport(spriteId);
+    })
+    .catch((err: unknown) => console.error("[pixhaus] layer_set_effects:", err));
 }
 
 export function reparentLayer(spriteId: SpriteId, id: LayerId, parentId: LayerId | null): void {

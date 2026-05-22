@@ -22,7 +22,9 @@
 use std::time::Duration;
 
 use async_trait::async_trait;
-use pixhaus_core::project::{PixelBufferId, Size, Tileset, TilesetId, TilesetSource, UserData};
+use pixhaus_core::project::{
+    PixelBufferId, Size, TileShape, Tileset, TilesetId, TilesetSource, UserData,
+};
 use serde::{Deserialize, Serialize};
 use tokio::select;
 use tokio_util::sync::CancellationToken;
@@ -348,6 +350,8 @@ impl Verb for TilesetFromDescriptionVerb {
             id: TilesetId::new(PLACEHOLDER_TILESET_ID),
             name: tileset_name.clone(),
             tile_size: Size::new(inputs.tile_size, inputs.tile_size),
+            shape: TileShape::Square,
+            hex_offset: None,
             tile_count: kind.tile_count(),
             base_index: kind.base_index(),
             source: TilesetSource::Inline {

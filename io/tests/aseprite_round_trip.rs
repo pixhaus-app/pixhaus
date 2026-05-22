@@ -87,6 +87,7 @@ fn make_layer() -> Layer {
         visible: true,
         locked: false,
         parent: None,
+        effects: Vec::new(),
         user_data: UserData::default(),
     }
 }
@@ -945,7 +946,7 @@ fn inline_tileset_import_repacks_to_horizontal_layout() {
 
 #[test]
 fn merged_export_emits_tileset_chunks_for_sprite_tilesets() {
-    use pixhaus_core::project::{PixelBufferId, Tileset, TilesetId, TilesetSource};
+    use pixhaus_core::project::{PixelBufferId, TileShape, Tileset, TilesetId, TilesetSource};
 
     let mut archive = make_archive_with_states(&["idle"]);
 
@@ -966,6 +967,8 @@ fn merged_export_emits_tileset_chunks_for_sprite_tilesets() {
         id: TilesetId::new(0),
         name: "terrain".into(),
         tile_size: Size::new(4, 4),
+        shape: TileShape::Square,
+        hex_offset: None,
         tile_count: 2,
         base_index: 1,
         source: TilesetSource::Inline {

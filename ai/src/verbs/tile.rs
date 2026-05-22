@@ -24,7 +24,9 @@ use image::{ImageFormat, RgbaImage};
 use serde::{Deserialize, Serialize};
 use tokio_util::sync::CancellationToken;
 
-use pixhaus_core::project::{PixelBufferId, Size, Tileset, TilesetId, TilesetSource, UserData};
+use pixhaus_core::project::{
+    PixelBufferId, Size, TileShape, Tileset, TilesetId, TilesetSource, UserData,
+};
 
 use crate::backends::{
     ChatMessage, ChatRole, ContentPart, ImageGenRequest, ImageGenResponse, InferenceBackend,
@@ -292,6 +294,8 @@ impl Verb for TileVerb {
             id: TilesetId::new(0), // placeholder; host rewrites on commit
             name: tileset_name.clone(),
             tile_size: Size::new(inputs.tile_width, inputs.tile_height),
+            shape: TileShape::Square,
+            hex_offset: None,
             tile_count: ATLAS_TILE_COUNT,
             base_index: 1,
             source: TilesetSource::Inline { buffer: buffer_id },

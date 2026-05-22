@@ -39,6 +39,7 @@ use std::io::Cursor;
 
 use image::{ImageFormat, RgbaImage};
 use pixhaus_core::canvas::PixelBuffer;
+use pixhaus_core::import::{SmartSliceOpts, detect_frames};
 use pixhaus_core::project::Sprite;
 use pixhaus_core::project::geometry::Size;
 
@@ -214,6 +215,27 @@ pub fn export_sprite_sheet(
     })
 }
 
+// ── Smart slice ─────────────────────────────────────────────────────────────
+
+/// Decodes a PNG sprite sheet and detects its frame bounding boxes from
+/// transparency via [`pixhaus_core::import::detect_frames`].
+///
+/// Returns the detected frames in reading order. An import dialog can preview
+/// these boxes and let the user accept or adjust the slice.
+///
+/// # Errors
+///
+/// Returns [`Error::PngEncode`] (the `image` crate's error type) if `bytes`
+/// is not a decodable PNG.
+pub fn detect_sheet_frames(
+    bytes: &[u8],
+    opts: SmartSliceOpts,
+) -> Result<Vec<pixhaus_core::project::geometry::Rect>> {
+    let img = image::load_from_memory_with_format(bytes, ImageFormat::Png)?.to_rgba8();
+    let buffer = PixelBuffer::from_image(img);
+    Ok(detect_frames(&buffer, opts))
+}
+
 // ── Validation ────────────────────────────────────────────────────────────────
 
 fn validate_frames(sprite: &Sprite, composited_frames: &[PixelBuffer]) -> Result<()> {
@@ -321,6 +343,23 @@ mod tests {
     use pixhaus_core::project::{
         BlendMode, Frame, FrameRange, FrameTag, LoopDirection, Rgba, Sprite, UserData,
     };
+
+    #[test]
+    fn detect_sheet_frames_finds_two_sprites() {
+        // 5x1 sheet: opaque, gap, gap, gap, opaque.
+        let mut img = RgbaImage::new(5, 1);
+        img.put_pixel(0, 0, image::Rgba([255, 0, 0, 255]));
+        img.put_pixel(4, 0, image::Rgba([0, 255, 0, 255]));
+        let bytes = encode_png(&img).unwrap();
+        let frames = detect_sheet_frames(&bytes, SmartSliceOpts::default()).unwrap();
+        assert_eq!(frames.len(), 2);
+        assert_eq!(frames[0].size, Size::new(1, 1));
+    }
+
+    #[test]
+    fn detect_sheet_frames_rejects_non_png() {
+        assert!(detect_sheet_frames(&[1, 2, 3], SmartSliceOpts::default()).is_err());
+    }
 
     fn make_frame_buf(w: u32, h: u32, color: Rgba) -> PixelBuffer {
         PixelBuffer::filled(w, h, color).unwrap()
@@ -524,6 +563,7 @@ mod tests {
             visible: true,
             locked: false,
             parent: None,
+            effects: Vec::new(),
             user_data: UserData::default(),
         });
 

@@ -142,7 +142,7 @@ mod tests {
     use pixhaus_core::project::geometry::Size;
     use pixhaus_core::project::id::{PixelBufferId, TilesetId};
     use pixhaus_core::project::tileset::{
-        AnimLoopMode, TileAnimation, TileAnimationFrame, TilesetSource,
+        AnimLoopMode, TileAnimation, TileAnimationFrame, TileShape, TilesetSource,
     };
 
     fn sample_tileset() -> Tileset {
@@ -150,6 +150,8 @@ mod tests {
             id: TilesetId::new(1),
             name: "dungeon".into(),
             tile_size: Size::new(16, 16),
+            shape: TileShape::Square,
+            hex_offset: None,
             tile_count: 6,
             base_index: 1,
             source: TilesetSource::External {
@@ -275,6 +277,8 @@ mod tests {
             id: TilesetId::new(2),
             name: "forest".into(),
             tile_size: Size::new(8, 8),
+            shape: TileShape::Square,
+            hex_offset: None,
             tile_count: 4,
             base_index: 1,
             source: TilesetSource::Inline {
@@ -302,6 +306,8 @@ mod tests {
             id: TilesetId::new(3),
             name: "empty".into(),
             tile_size: Size::new(16, 16),
+            shape: TileShape::Square,
+            hex_offset: None,
             tile_count: 0,
             base_index: 1,
             source: TilesetSource::External {

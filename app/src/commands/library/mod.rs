@@ -35,7 +35,7 @@ use pixhaus_core::project::{
     ReferenceAsset, ReferenceImage, ReferenceRole, ReferenceSheet,
     ReferenceSheetTemplateDefinition, ReferenceSheetTemplateId, ReferenceSlot, RefinementKind,
     Rgba, SheetVariant, SheetVariantId, Size, Sprite, SpriteId, StateId, StyleSwatch,
-    TagDefinition, TagId, TilemapScene, Tileset, TilesetId, TilesetSource, TrainingJob,
+    TagDefinition, TagId, TileShape, TilemapScene, Tileset, TilesetId, TilesetSource, TrainingJob,
     TrainingJobId, TrainingStatus, UserData, VariantOrigin, built_in_reference_sheet_templates,
 };
 use serde::{Deserialize, Serialize};
@@ -385,6 +385,8 @@ pub(crate) fn create_entity_in_project(
                         args.tile_width.unwrap_or(16),
                         args.tile_height.unwrap_or(16),
                     ),
+                    shape: TileShape::Square,
+                    hex_offset: None,
                     // tile_count = 1 for the implicit empty tile at index 0.
                     tile_count: 1,
                     base_index: 1,

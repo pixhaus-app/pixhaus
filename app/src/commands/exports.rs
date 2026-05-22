@@ -14,7 +14,7 @@
 
 use std::path::PathBuf;
 
-use pixhaus_core::canvas::{LayerInput, PixelBuffer, composite_layers};
+use pixhaus_core::canvas::{LayerInput, PixelBuffer, apply_effects, composite_layers};
 use pixhaus_core::project::{
     Cel, CelData, FrameIndex, Layer, LayerId, LayerKind, PixelBufferId, Sprite, SpriteId,
 };
@@ -332,6 +332,13 @@ fn composite_one_frame(
             Some(entry) => buffer_from_entry(entry, canvas_w, canvas_h)?,
             None => PixelBuffer::new(canvas_w, canvas_h)
                 .map_err(|e| format!("alloc transparent layer: {e:?}"))?,
+        };
+        // Non-destructive layer effects are applied to a copy of the
+        // composited pixels before blending; the cel data is untouched.
+        let buf = if layer.effects.is_empty() {
+            buf
+        } else {
+            apply_effects(&buf, &layer.effects).map_err(|e| format!("layer effects: {e:?}"))?
         };
         layer_bufs.push((buf, layer));
     }

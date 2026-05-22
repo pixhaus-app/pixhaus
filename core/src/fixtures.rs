@@ -20,8 +20,8 @@ use crate::project::{
     PaletteEntry, PaletteId, Pivot, PixelBufferId, Project, ProjectAi, ProjectMetadata, Rect,
     ReferenceImage, ReferenceSheet, Rgba, SchemaVersion, SelectionRegion, SelectionState,
     SheetVariant, SheetVariantId, Size, Slice, SliceId, SliceKey, Sprite, SpriteId, StateId,
-    TagDefinition, TagId, TileCell, TileFlags, TileIndex, TilemapData, TilemapLayer, TilemapScene,
-    Tileset, TilesetId, TilesetReference, TilesetSource, UserData,
+    TagDefinition, TagId, TileCell, TileFlags, TileIndex, TileShape, TilemapData, TilemapLayer,
+    TilemapScene, Tileset, TilesetId, TilesetReference, TilesetSource, UserData,
 };
 
 /// Builds a fully-populated sample project that touches every type in
@@ -43,6 +43,7 @@ pub fn sample_project() -> Project {
         visible: true,
         locked: false,
         parent: None,
+        effects: Vec::new(),
         user_data: UserData::default(),
     };
 
@@ -55,6 +56,7 @@ pub fn sample_project() -> Project {
         visible: true,
         locked: false,
         parent: None,
+        effects: Vec::new(),
         user_data: UserData {
             text: Some("non-exported FX".into()),
             color: Some(Rgba::opaque(255, 200, 0)),
@@ -72,6 +74,7 @@ pub fn sample_project() -> Project {
         visible: true,
         locked: false,
         parent: Some(LayerId::new(2)),
+        effects: Vec::new(),
         user_data: UserData::default(),
     };
 
@@ -87,6 +90,7 @@ pub fn sample_project() -> Project {
         visible: true,
         locked: true,
         parent: None,
+        effects: Vec::new(),
         user_data: UserData::default(),
     };
 
@@ -167,6 +171,8 @@ pub fn sample_project() -> Project {
         id: TilesetId::new(1),
         name: "dungeon".into(),
         tile_size: Size::new(8, 8),
+        shape: TileShape::Square,
+        hex_offset: None,
         tile_count: 16,
         base_index: 1,
         source: TilesetSource::Inline {
@@ -342,6 +348,8 @@ fn sample_library(hero_sprite: Sprite) -> Library {
         id: TilesetId::new(2),
         name: "dungeon-shared".into(),
         tile_size: Size::new(8, 8),
+        shape: TileShape::Square,
+        hex_offset: None,
         tile_count: 16,
         base_index: 1,
         source: TilesetSource::Inline {

@@ -162,6 +162,7 @@ pub fn run() -> Result<(), AppError> {
             commands::layers::layer_rename,
             commands::layers::layer_reorder,
             commands::layers::layer_set_blend_mode,
+            commands::layers::layer_set_effects,
             commands::layers::layer_set_locked,
             commands::layers::layer_set_opacity,
             commands::layers::layer_set_parent,

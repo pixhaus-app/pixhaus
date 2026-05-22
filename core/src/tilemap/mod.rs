@@ -9,6 +9,7 @@
 
 pub mod animate;
 pub mod autotile;
+pub mod geometry;
 
 pub use animate::step_animation;
 pub use autotile::{
@@ -16,3 +17,4 @@ pub use autotile::{
     blob47_tile_index, corner16_tile_index, minimal4_tile_index, resolve_autotile,
     trim_blob47_mask,
 };
+pub use geometry::cell_to_pixel;

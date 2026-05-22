@@ -2919,6 +2919,7 @@ mod tests {
             visible: true,
             locked,
             parent: None,
+            effects: Vec::new(),
             user_data: UserData::default(),
         }
     }

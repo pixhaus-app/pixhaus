@@ -249,6 +249,7 @@ mod tests {
             visible: true,
             locked: false,
             parent: None,
+            effects: Vec::new(),
             user_data: UserData::default(),
         };
         let sink = Arc::new(Mutex::new(Vec::new()));

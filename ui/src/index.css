@@ -3071,6 +3071,13 @@ body {
   color: var(--text-disabled);
 }
 
+.layer-row__icon-btn--active {
+  background: var(--bg-active);
+  color: var(--primary, var(--text-primary));
+  font-size: 10px;
+  font-weight: 600;
+}
+
 /* Blend mode + opacity strip — visible only on the active layer row */
 .layer-row__props {
   /* Breaks out of the 32px row into the next 24px for the active layer */

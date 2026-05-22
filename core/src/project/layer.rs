@@ -9,6 +9,7 @@ use serde::{Deserialize, Serialize};
 use ts_rs::TS;
 
 use super::blend::BlendMode;
+use super::effect::LayerEffect;
 use super::geometry::IVec2;
 use super::id::{LayerId, PixelBufferId, TilesetId};
 use super::user_data::UserData;
@@ -35,6 +36,12 @@ pub struct Layer {
     /// Parent group, if any. `None` means a top-level layer.
     #[serde(skip_serializing_if = "Option::is_none", default)]
     pub parent: Option<LayerId>,
+    /// Non-destructive effects applied to this layer's composited pixels
+    /// in order at render time. Empty by default; files written before
+    /// effects existed load with an empty stack and re-save with the field
+    /// omitted from the wire form.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub effects: Vec<LayerEffect>,
     /// Free-form user metadata.
     #[serde(skip_serializing_if = "UserData::is_empty", default)]
     pub user_data: UserData,
@@ -53,6 +60,7 @@ impl Layer {
             visible: true,
             locked: false,
             parent: None,
+            effects: Vec::new(),
             user_data: UserData::default(),
         }
     }
@@ -118,6 +126,7 @@ mod tests {
             visible: true,
             locked: false,
             parent: None,
+            effects: Vec::new(),
             user_data: UserData::default(),
         };
         let bytes = rmp_serde::to_vec_named(&l).unwrap();
@@ -138,6 +147,7 @@ mod tests {
             visible: true,
             locked: false,
             parent: Some(LayerId::new(2)),
+            effects: Vec::new(),
             user_data: UserData::default(),
         };
         let bytes = rmp_serde::to_vec_named(&l).unwrap();
@@ -159,6 +169,7 @@ mod tests {
             visible: true,
             locked: true,
             parent: None,
+            effects: Vec::new(),
             user_data: UserData::default(),
         };
         let bytes = rmp_serde::to_vec_named(&l).unwrap();

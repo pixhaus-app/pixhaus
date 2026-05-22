@@ -374,6 +374,7 @@ fn reference_layers_excluded_from_meta_layers() {
         visible: true,
         locked: false,
         parent: None,
+        effects: Vec::new(),
         user_data: UserData::default(),
     });
     sprite.layers.push(Layer::raster(LayerId::new(3), "shadow"));

@@ -33,6 +33,7 @@
 pub mod canvas;
 pub mod color;
 pub mod fixtures;
+pub mod import;
 pub mod project;
 pub mod selection;
 pub mod tilemap;

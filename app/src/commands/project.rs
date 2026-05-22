@@ -749,6 +749,7 @@ mod tests {
             visible: true,
             locked: false,
             parent: None,
+            effects: Vec::new(),
             user_data: UserData::default(),
         });
         sprite.palettes.push(Palette {
@@ -834,6 +835,7 @@ mod tests {
             visible: true,
             locked: false,
             parent: None,
+            effects: Vec::new(),
             user_data: UserData::default(),
         });
         sprite.layers.push(Layer {
@@ -848,6 +850,7 @@ mod tests {
             visible: true,
             locked: true,
             parent: None,
+            effects: Vec::new(),
             user_data: UserData::default(),
         });
         install_sprite_as_new_entity(&mut project, sprite, 10, 11, None);

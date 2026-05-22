@@ -5,7 +5,7 @@
 // reorder. Group rows have an expand/collapse chevron.
 
 import { type Component, For, Show, createEffect, createSignal, onCleanup } from "solid-js";
-import type { BlendMode, Layer, LayerId, SpriteId } from "../lib/types";
+import type { BlendMode, Layer, LayerEffect, LayerId, SpriteId } from "../lib/types";
 import { activeLayerId } from "../canvas/canvas-state";
 import {
   beginRename,
@@ -18,6 +18,7 @@ import {
   selectLayer,
   setDragOverIndex,
   setLayerBlendMode,
+  setLayerEffects,
   setLayerLocked,
   setLayerOpacity,
   setLayerVisibility,
@@ -26,6 +27,16 @@ import {
   reparentLayer,
   reorderLayer,
 } from "./layer-state";
+
+// A 1px black 4-connected outline — the most common pixel-art layer effect,
+// offered as a one-click toggle on the active layer. Fuller effect editing
+// (drop shadow, brightness, reordering) goes through layer_set_effects.
+const DEFAULT_OUTLINE: LayerEffect = {
+  kind: "outline",
+  color: { r: 0, g: 0, b: 0, a: 255 },
+  thickness: 1,
+  diagonal: false,
+};
 
 // Human-readable labels for blend modes shown in the dropdown.
 const BLEND_MODE_LABELS: Record<BlendMode, string> = {
@@ -111,6 +122,15 @@ const LayerRow: Component<Props> = (props) => {
   function handleBlendModeChange(e: Event): void {
     const value = (e.target as HTMLSelectElement).value as BlendMode;
     setLayerBlendMode(props.spriteId, props.layer.id, value);
+  }
+
+  const hasEffects = (): boolean => (props.layer.effects ?? []).length > 0;
+
+  function handleEffectsToggle(e: MouseEvent): void {
+    e.stopPropagation();
+    // Toggle the default outline on/off. Clearing drops the whole stack so
+    // the button reads as a simple on/off; richer editing is a follow-up.
+    setLayerEffects(props.spriteId, props.layer.id, hasEffects() ? [] : [DEFAULT_OUTLINE]);
   }
 
   // Drag-to-reorder handlers.
@@ -298,6 +318,16 @@ const LayerRow: Component<Props> = (props) => {
             onInput={handleOpacityChange}
             title={`Opacity: ${Math.round((props.layer.opacity / 255) * 100)}%`}
           />
+          <button
+            type="button"
+            class="layer-row__icon-btn"
+            classList={{ "layer-row__icon-btn--active": hasEffects() }}
+            onClick={handleEffectsToggle}
+            title={hasEffects() ? "Remove layer outline effect" : "Add layer outline effect"}
+            aria-pressed={hasEffects()}
+          >
+            fx
+          </button>
         </div>
       </Show>
     </div>

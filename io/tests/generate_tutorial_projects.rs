@@ -234,6 +234,7 @@ fn base_layer() -> Layer {
         visible: true,
         locked: false,
         parent: None,
+        effects: Vec::new(),
         user_data: UserData::default(),
     }
 }

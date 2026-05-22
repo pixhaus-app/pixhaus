@@ -31,8 +31,8 @@ use pixhaus_core::project::{
     NamedSprite, PaletteEntry, PaletteId, Pivot, PixelBufferId, ProjectAi, PromptEntry,
     PromptHistoryEntry, PromptResult, Rect, ReferenceImage, ReferenceSheet, Rgba, SheetComposition,
     SheetPanel, SheetVariant, SheetVariantId, Size, Sprite, SpriteId, StateId, TagDefinition,
-    TagId, TileCell, TileFlags, TileIndex, TilemapData, TilemapLayer, TilemapScene, Tileset,
-    TilesetId, TilesetReference, TilesetSource, UserData,
+    TagId, TileCell, TileFlags, TileIndex, TileShape, TilemapData, TilemapLayer, TilemapScene,
+    Tileset, TilesetId, TilesetReference, TilesetSource, UserData,
 };
 use proptest::prelude::*;
 use rstest::rstest;
@@ -119,6 +119,8 @@ fn tileset_entity_fixture() -> Entity {
                 id: TilesetId::new(10),
                 name: "Forest".into(),
                 tile_size: Size::new(16, 16),
+                shape: TileShape::Square,
+                hex_offset: None,
                 tile_count: 32,
                 base_index: 1,
                 source: TilesetSource::Inline {

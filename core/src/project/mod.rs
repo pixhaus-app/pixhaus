@@ -28,6 +28,7 @@ pub mod brush;
 pub mod canvas;
 pub mod cel;
 pub mod color;
+pub mod effect;
 pub mod frame;
 pub mod geometry;
 pub mod id;
@@ -49,6 +50,7 @@ pub use brush::{BrushShape, BrushState};
 pub use canvas::CanvasState;
 pub use cel::{Cel, CelData};
 pub use color::{ColorMode, Rgba};
+pub use effect::LayerEffect;
 pub use frame::{Frame, FrameRange, FrameTag, LoopDirection};
 pub use geometry::{IVec2, Rect, Size};
 pub use id::{
@@ -74,8 +76,8 @@ pub use slice::{NineSlice, Pivot, Slice, SliceKey};
 pub use sprite::Sprite;
 pub use tilemap::{TileCell, TileFlags, TilemapData};
 pub use tileset::{
-    AnimLoopMode, CollisionShape, TileAnimation, TileAnimationFrame, TileProperties, Tileset,
-    TilesetSource,
+    AnimLoopMode, CollisionShape, HexOffsetAxis, TileAnimation, TileAnimationFrame, TileProperties,
+    TileShape, Tileset, TilesetSource,
 };
 pub use user_data::UserData;
 
