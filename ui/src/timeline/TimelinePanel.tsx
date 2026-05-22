@@ -40,6 +40,7 @@ import {
   selectFrame,
   selectedFrames,
   setFrameDuration,
+  setFrameDurationMul,
   setIsLooping,
   setOnionSkin,
   setOnionSkinNext,
@@ -182,6 +183,17 @@ const TimelinePanel: Component = () => {
     const ms = parseInt(durationInput(), 10);
     if (id !== null && !isNaN(ms) && ms >= 1) setFrameDuration(id, index, ms);
     setEditingFrame(null);
+  }
+
+  // Cycle the per-frame hold multiplier through a few useful values. Lets the
+  // user stretch a beat (×2, ×4) or shorten it (×0.5) without retyping ms.
+  const MUL_CYCLE = [1, 2, 4, 0.5];
+  function cycleDurationMul(index: number, current: number): void {
+    const id = spriteId();
+    if (id === null) return;
+    const i = MUL_CYCLE.findIndex((m) => Math.abs(m - current) < 0.001);
+    const next = MUL_CYCLE[(i + 1) % MUL_CYCLE.length] ?? 1;
+    setFrameDurationMul(id, index, next);
   }
 
   // ── Context menu ──────────────────────────────────────────────────────────
@@ -411,8 +423,35 @@ const TimelinePanel: Component = () => {
                           class="timeline-panel__frame-dur"
                           data-testid={`timeline-frame-${index}-duration`}
                           onDblClick={() => beginEditDuration(index, frame.duration_ms)}
+                          title="Double-click to edit ms; the ×N badge holds the frame longer"
                         >
                           {frame.duration_ms}
+                          <Show when={(frame.duration_mul ?? 1) !== 1}>
+                            <button
+                              type="button"
+                              class="timeline-panel__dur-mul"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                cycleDurationMul(index, frame.duration_mul ?? 1);
+                              }}
+                              title={`Hold multiplier ×${frame.duration_mul ?? 1} — click to cycle`}
+                            >
+                              ×{frame.duration_mul ?? 1}
+                            </button>
+                          </Show>
+                          <Show when={(frame.duration_mul ?? 1) === 1}>
+                            <button
+                              type="button"
+                              class="timeline-panel__dur-mul timeline-panel__dur-mul--idle"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                cycleDurationMul(index, 1);
+                              }}
+                              title="Frame hold multiplier — click to stretch this frame"
+                            >
+                              ×1
+                            </button>
+                          </Show>
                         </div>
                       }
                     >

@@ -234,6 +234,7 @@ fn base_layer() -> Layer {
         visible: true,
         locked: false,
         parent: None,
+        effects: Vec::new(),
         user_data: UserData::default(),
     }
 }
@@ -241,6 +242,7 @@ fn base_layer() -> Layer {
 fn ms(duration_ms: u32) -> Frame {
     Frame {
         duration_ms,
+        duration_mul: 1.0,
         user_data: UserData::default(),
     }
 }

@@ -66,6 +66,19 @@ export function frameSetDuration(
   return invoke<void>("frame_set_duration", { sprite_id, frame_index, duration_ms });
 }
 
+/**
+ * Sets the float duration multiplier for a single frame (1.0 = base speed,
+ * 2.0 = holds twice as long). Lets the user re-time a beat without editing
+ * milliseconds.
+ */
+export function frameSetDurationMul(
+  sprite_id: SpriteId,
+  frame_index: FrameIndex,
+  duration_mul: number,
+): Promise<void> {
+  return invoke<void>("frame_set_duration_mul", { sprite_id, frame_index, duration_mul });
+}
+
 /** Creates a named frame tag on a sprite. Tags with duplicate names are rejected. */
 export function frameTagCreate(args: FrameTagCreateArgs): Promise<FrameTag> {
   return invoke<FrameTag>("frame_tag_create", { args });

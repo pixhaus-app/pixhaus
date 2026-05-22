@@ -19,21 +19,55 @@ use super::user_data::UserData;
 ///
 /// `duration_ms` is independent of any frame tag's playback speed —
 /// tags multiply, they don't replace.
-#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize, TS)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, TS)]
 #[ts(export)]
 pub struct Frame {
     /// Display duration in milliseconds. The minimum honoured by
     /// downstream players (Unity importer, web preview) is `1`.
     pub duration_ms: u32,
+    /// Float multiplier on the frame's effective on-screen time, adopted
+    /// from Pixelorama's per-frame `duration`. `1.0` plays at the base
+    /// `duration_ms`; `2.0` holds twice as long; `0.5` half. Lets an artist
+    /// re-time a beat ("this frame holds 4x") without editing milliseconds,
+    /// while `duration_ms` stays the absolute base that round-trips with
+    /// Aseprite. Files written before this field load with `1.0` and re-save
+    /// with the field omitted. See `THIRD_PARTY_NOTICES.md`.
+    #[serde(default = "default_duration_mul", skip_serializing_if = "is_unit_mul")]
+    pub duration_mul: f32,
     /// Free-form user metadata.
     #[serde(skip_serializing_if = "UserData::is_empty", default)]
     pub user_data: UserData,
+}
+
+fn default_duration_mul() -> f32 {
+    1.0
+}
+
+#[allow(clippy::trivially_copy_pass_by_ref)]
+fn is_unit_mul(m: &f32) -> bool {
+    (*m - 1.0).abs() < f32::EPSILON
+}
+
+impl Frame {
+    /// Effective on-screen duration in milliseconds, `duration_ms` scaled by
+    /// [`Self::duration_mul`] and floored at `1`.
+    #[must_use]
+    #[allow(
+        clippy::cast_precision_loss,
+        clippy::cast_possible_truncation,
+        clippy::cast_sign_loss
+    )]
+    pub fn effective_duration_ms(&self) -> u32 {
+        let scaled = (self.duration_ms as f32 * self.duration_mul).round();
+        (scaled.max(1.0) as u32).max(1)
+    }
 }
 
 impl Default for Frame {
     fn default() -> Self {
         Self {
             duration_ms: 100,
+            duration_mul: 1.0,
             user_data: UserData::default(),
         }
     }
@@ -91,6 +125,39 @@ pub enum LoopDirection {
     PingPongReverse,
 }
 
+impl LoopDirection {
+    /// Expands an inclusive `[start, end]` frame range into the order frames
+    /// should be emitted for this direction.
+    ///
+    /// Direction is applied here, at expansion (export) time, rather than
+    /// baked into frame data — so the same tagged range can export forward
+    /// for a walk cycle and ping-pong for a hover idle just by choosing a
+    /// different [`LoopDirection`] at the call site. Ping-pong does not
+    /// duplicate the turnaround frames. Adopted from Pixelorama's
+    /// export-time `AnimationDirection`; see `THIRD_PARTY_NOTICES.md`.
+    #[must_use]
+    pub fn play_order(self, start: u32, end: u32) -> Vec<u32> {
+        if end < start {
+            return Vec::new();
+        }
+        let fwd: Vec<u32> = (start..=end).collect();
+        match self {
+            Self::Forward => fwd,
+            Self::Reverse => fwd.into_iter().rev().collect(),
+            Self::PingPong => {
+                let mut out = fwd.clone();
+                out.extend((start.saturating_add(1)..end).rev());
+                out
+            }
+            Self::PingPongReverse => {
+                let mut out: Vec<u32> = fwd.iter().copied().rev().collect();
+                out.extend(start.saturating_add(1)..end);
+                out
+            }
+        }
+    }
+}
+
 /// A named, contiguous range of frames in the timeline.
 ///
 /// Used for editor organization and as the source of truth for
@@ -124,6 +191,56 @@ mod tests {
     }
 
     #[test]
+    fn default_duration_mul_is_one() {
+        assert!((Frame::default().duration_mul - 1.0).abs() < f32::EPSILON);
+    }
+
+    #[test]
+    fn effective_duration_scales_by_multiplier() {
+        let f = Frame {
+            duration_ms: 100,
+            duration_mul: 2.0,
+            user_data: UserData::default(),
+        };
+        assert_eq!(f.effective_duration_ms(), 200);
+        let half = Frame {
+            duration_ms: 100,
+            duration_mul: 0.5,
+            user_data: UserData::default(),
+        };
+        assert_eq!(half.effective_duration_ms(), 50);
+    }
+
+    #[test]
+    fn effective_duration_floors_at_one() {
+        let f = Frame {
+            duration_ms: 1,
+            duration_mul: 0.0,
+            user_data: UserData::default(),
+        };
+        assert_eq!(f.effective_duration_ms(), 1);
+    }
+
+    #[test]
+    fn duration_mul_omitted_from_wire_when_default() {
+        let f = Frame::default();
+        let json = serde_json::to_string(&f).unwrap();
+        assert!(!json.contains("duration_mul"), "got {json}");
+    }
+
+    #[test]
+    fn duration_mul_round_trips_when_set() {
+        let f = Frame {
+            duration_ms: 80,
+            duration_mul: 3.0,
+            user_data: UserData::default(),
+        };
+        let bytes = rmp_serde::to_vec_named(&f).unwrap();
+        let back: Frame = rmp_serde::from_slice(&bytes).unwrap();
+        assert!((back.duration_mul - 3.0).abs() < f32::EPSILON);
+    }
+
+    #[test]
     fn frame_range_len_inclusive() {
         let r = FrameRange::new(FrameIndex::new(2), FrameIndex::new(5));
         assert_eq!(r.len(), 4);
@@ -149,6 +266,44 @@ mod tests {
         let bytes = rmp_serde::to_vec_named(&t).unwrap();
         let back: FrameTag = rmp_serde::from_slice(&bytes).unwrap();
         assert_eq!(t, back);
+    }
+
+    #[test]
+    fn play_order_forward_and_reverse() {
+        assert_eq!(LoopDirection::Forward.play_order(0, 3), vec![0, 1, 2, 3]);
+        assert_eq!(LoopDirection::Reverse.play_order(0, 3), vec![3, 2, 1, 0]);
+    }
+
+    #[test]
+    fn play_order_ping_pong_no_duplicate_endpoints() {
+        assert_eq!(
+            LoopDirection::PingPong.play_order(0, 3),
+            vec![0, 1, 2, 3, 2, 1]
+        );
+        assert_eq!(
+            LoopDirection::PingPongReverse.play_order(0, 3),
+            vec![3, 2, 1, 0, 1, 2]
+        );
+    }
+
+    #[test]
+    fn play_order_single_frame_and_empty() {
+        assert_eq!(LoopDirection::PingPong.play_order(5, 5), vec![5]);
+        assert!(LoopDirection::Forward.play_order(3, 1).is_empty());
+    }
+
+    #[test]
+    fn play_order_ping_pong_single_frame_at_u32_max_does_not_overflow() {
+        // A single-frame range at the top of the u32 range used to compute
+        // `start + 1`, panicking in debug builds. The tail must stay empty.
+        assert_eq!(
+            LoopDirection::PingPong.play_order(u32::MAX, u32::MAX),
+            vec![u32::MAX]
+        );
+        assert_eq!(
+            LoopDirection::PingPongReverse.play_order(u32::MAX, u32::MAX),
+            vec![u32::MAX]
+        );
     }
 
     #[test]

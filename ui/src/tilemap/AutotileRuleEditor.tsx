@@ -67,6 +67,10 @@ const STANDARD_DESCRIPTIONS: Record<StandardInfoProps["kind"], { title: string; 
   },
 };
 
+function isStandardKind(kind: AutotileKind["kind"]): kind is StandardInfoProps["kind"] {
+  return kind === "blob47" || kind === "corner16" || kind === "minimal4";
+}
+
 const StandardInfo: Component<StandardInfoProps> = (props) => {
   const desc = createMemo(() => STANDARD_DESCRIPTIONS[props.kind]);
   return (
@@ -235,16 +239,7 @@ const AutotileRuleEditor: Component = () => {
       // `custom`, snapshot the live rules + default_tile so the
       // persisted value reflects exactly what's on screen.
       const liveKind = localAutotileKind();
-      const payload: AutotileKind | null =
-        liveKind === null
-          ? null
-          : liveKind.kind === "custom"
-            ? {
-                kind: "custom",
-                rules: [...autotileRules],
-                default_tile: autotileDefaultTile(),
-              }
-            : { kind: liveKind.kind };
+      const payload: AutotileKind | null = liveKind === null ? null : buildKind(liveKind.kind);
       tilesetSetAutotile(sidNow, cur.tilesetId, payload)
         .then((updated) => {
           const stillCurrent = activeTilemapCtx();
@@ -273,6 +268,11 @@ const AutotileRuleEditor: Component = () => {
         rules: [...autotileRules],
         default_tile: autotileDefaultTile(),
       };
+    }
+    // Peering carries a per-tile signature set; a dedicated editor for it is
+    // a follow-up, so selecting it here starts from an empty set.
+    if (k === "peering") {
+      return { kind: "peering", tiles: [], default_tile: 0 };
     }
     return { kind: k };
   }
@@ -348,8 +348,14 @@ const AutotileRuleEditor: Component = () => {
       </div>
 
       {/* Standard set description */}
-      <Show when={currentKind() && currentKind()!.kind !== "custom"}>
-        <StandardInfo kind={currentKind()!.kind as "blob47" | "corner16" | "minimal4"} />
+      <Show when={currentKind() && isStandardKind(currentKind()!.kind)}>
+        <StandardInfo kind={currentKind()!.kind as StandardInfoProps["kind"]} />
+      </Show>
+
+      {/* Peering sets have no inline editor yet — surface a hint instead of
+          crashing on the missing standard description. */}
+      <Show when={currentKind()?.kind === "peering"}>
+        <p class="are__empty-hint">Peering rule editing is not available yet.</p>
       </Show>
 
       {/* Custom rule editor */}

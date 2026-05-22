@@ -353,6 +353,7 @@ fn decode_and_build_effects(
 
         frames.push(Frame {
             duration_ms: frame_duration_ms,
+            duration_mul: 1.0,
             ..Frame::default()
         });
 

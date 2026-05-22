@@ -9,10 +9,12 @@
 
 pub mod animate;
 pub mod autotile;
+pub mod geometry;
 
 pub use animate::step_animation;
 pub use autotile::{
-    AutotileKind, AutotileRule, AutotileRuleSet, BLOB47_MASKS, NeighborCondition,
-    blob47_tile_index, corner16_tile_index, minimal4_tile_index, resolve_autotile,
-    trim_blob47_mask,
+    AutotileKind, AutotileRule, AutotileRuleSet, BLOB47_MASKS, NeighborCondition, PeeringSet,
+    PeeringTile, blob47_tile_index, corner16_tile_index, minimal4_tile_index, pick_peering_tile,
+    resolve_autotile, trim_blob47_mask,
 };
+pub use geometry::cell_to_pixel;

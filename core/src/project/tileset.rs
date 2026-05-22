@@ -16,6 +16,48 @@ use super::geometry::Size;
 use super::id::{PixelBufferId, TileIndex, TilesetId};
 use super::user_data::UserData;
 
+/// Grid geometry of a tilemap that draws from this tileset.
+///
+/// One tileset handles square, isometric, and both hex orientations via this
+/// parameter; cell-to-pixel math (see `core::tilemap::cell_to_pixel`) switches
+/// on it while the rest of the tilemap stack stays shape-agnostic.
+///
+/// Adopted from Pixelorama's `TileSetCustom` `tile_shape`
+/// (`src/Classes/Cels/CelTileMap.gd`). See `THIRD_PARTY_NOTICES.md`.
+#[derive(Copy, Clone, Debug, Default, Eq, PartialEq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "snake_case")]
+#[ts(export)]
+pub enum TileShape {
+    /// Axis-aligned square grid. The default.
+    #[default]
+    Square,
+    /// Isometric diamond grid.
+    Isometric,
+    /// Hexagonal grid with pointy-top tiles (offset rows).
+    HexPointy,
+    /// Hexagonal grid with flat-top tiles (offset columns).
+    HexFlat,
+}
+
+/// Which rows or columns take the half-step offset in a hex grid.
+///
+/// Only meaningful when [`TileShape`] is `HexPointy` (rows) or `HexFlat`
+/// (columns). Adopted from Pixelorama's `tile_offset_axis`.
+#[derive(Copy, Clone, Debug, Default, Eq, PartialEq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "snake_case")]
+#[ts(export)]
+pub enum HexOffsetAxis {
+    /// Odd-indexed rows are pushed half a tile right (pointy-top).
+    #[default]
+    OddRow,
+    /// Even-indexed rows are pushed half a tile right (pointy-top).
+    EvenRow,
+    /// Odd-indexed columns are pushed half a tile down (flat-top).
+    OddCol,
+    /// Even-indexed columns are pushed half a tile down (flat-top).
+    EvenCol,
+}
+
 /// Collision shape for a tile.
 ///
 /// Full-tile collision is the common case for opaque wall tiles.
@@ -113,6 +155,15 @@ pub struct Tileset {
     pub name: String,
     /// Width and height of one tile in pixels.
     pub tile_size: Size,
+    /// Grid geometry tilemaps using this tileset are laid out with.
+    /// Defaults to [`TileShape::Square`]; files written before tile shapes
+    /// existed load as square and re-save with the field omitted.
+    #[serde(default, skip_serializing_if = "is_square")]
+    pub shape: TileShape,
+    /// Which rows/columns take the half-step offset for hex shapes. `None`
+    /// for square and isometric grids.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub hex_offset: Option<HexOffsetAxis>,
     /// Number of tiles the tileset declares. Index `0` is the empty
     /// tile by convention; `tile_count` includes that index.
     pub tile_count: u32,
@@ -160,6 +211,11 @@ fn default_base_index() -> i16 {
     1
 }
 
+#[allow(clippy::trivially_copy_pass_by_ref)]
+fn is_square(shape: &TileShape) -> bool {
+    matches!(*shape, TileShape::Square)
+}
+
 /// Where a tileset's pixel data is stored.
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize, TS)]
 #[serde(tag = "kind", rename_all = "snake_case")]
@@ -189,6 +245,8 @@ mod tests {
             id: TilesetId::new(1),
             name: "dungeon".into(),
             tile_size: Size::new(16, 16),
+            shape: TileShape::Square,
+            hex_offset: None,
             tile_count: 64,
             base_index: 1,
             source: TilesetSource::Inline {
@@ -214,6 +272,8 @@ mod tests {
             id: TilesetId::new(2),
             name: "shared".into(),
             tile_size: Size::new(8, 8),
+            shape: TileShape::Square,
+            hex_offset: None,
             tile_count: 32,
             base_index: 1,
             source: TilesetSource::External {
@@ -234,6 +294,8 @@ mod tests {
             id: TilesetId::new(3),
             name: "decals".into(),
             tile_size: Size::new(8, 8),
+            shape: TileShape::Square,
+            hex_offset: None,
             tile_count: 4,
             base_index: 5,
             source: TilesetSource::Inline {
@@ -255,6 +317,8 @@ mod tests {
             id: TilesetId::new(7),
             name: "walls".into(),
             tile_size: Size::new(16, 16),
+            shape: TileShape::Square,
+            hex_offset: None,
             tile_count: 8,
             base_index: 1,
             source: TilesetSource::Inline {

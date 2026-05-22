@@ -17,6 +17,7 @@
 //! | Rotate 90° CW | [`rotate_90_cw`] | yes |
 //! | Rotate 90° CCW | [`rotate_90_ccw`] | yes |
 //! | Rotate 180° | [`rotate_180`] | yes |
+//! | Rotate arbitrary (nearest) | [`rotate_nearest`] | yes |
 //! | Rotate arbitrary (`RotSprite`) | [`rotate_rotsprite`] | pixel-art quality |
 //! | Rotate arbitrary (bilinear) | [`rotate_bilinear`] | no |
 //! | Skew X | [`skew_x`] | integer factors only |
@@ -56,7 +57,10 @@ pub use antialias::{MlaaConfig, morphological_antialias};
 pub use error::{Error, Result};
 pub use flip::{flip_horizontal, flip_vertical};
 pub use perspective::perspective;
-pub use rotate::{rotate_90_ccw, rotate_90_cw, rotate_180, rotate_bilinear, rotate_rotsprite};
+pub use rotate::{
+    RotationAlgorithm, rotate, rotate_90_ccw, rotate_90_cw, rotate_180, rotate_bilinear,
+    rotate_nearest, rotate_rotsprite,
+};
 pub use scale::{scale_integer, scale_integer_down, scale_nearest};
 pub use skew::{skew_x, skew_y};
 pub use translate::translate;
@@ -80,17 +84,6 @@ pub enum ScaleMode {
     /// Integer-divisor downscale. Samples the top-left pixel of each
     /// `N×N` block.
     IntegerDivisor(u32),
-}
-
-/// Interpolation mode used by [`TransformSpec::RotateArbitrary`].
-#[derive(Clone, Debug, PartialEq)]
-pub enum RotateMode {
-    /// `RotSprite` — Scale2x × 2 upscale, bilinear rotate, nearest
-    /// downscale. Best quality for pixel art.
-    RotSprite,
-    /// Direct bilinear interpolation on the source. Faster but
-    /// introduces sub-pixel blending.
-    Bilinear,
 }
 
 /// A description of a single transform that can be applied to a
@@ -126,8 +119,8 @@ pub enum TransformSpec {
     RotateArbitrary {
         /// Angle in degrees, counter-clockwise.
         degrees: f32,
-        /// Interpolation algorithm.
-        mode: RotateMode,
+        /// Rotation algorithm: nearest-neighbor, bilinear, or `RotSprite`.
+        algorithm: RotationAlgorithm,
     },
     /// Horizontal mirror.
     FlipHorizontal,
@@ -185,10 +178,7 @@ pub fn apply_transform(
         TransformSpec::Rotate90Ccw => rotate_90_ccw(buf),
         TransformSpec::Rotate180 => rotate_180(buf),
 
-        TransformSpec::RotateArbitrary { degrees, mode } => match mode {
-            RotateMode::RotSprite => rotate_rotsprite(buf, *degrees),
-            RotateMode::Bilinear => rotate_bilinear(buf, degrees.to_radians()),
-        },
+        TransformSpec::RotateArbitrary { degrees, algorithm } => rotate(buf, *degrees, *algorithm),
 
         TransformSpec::FlipHorizontal => flip_horizontal(buf, mask),
         TransformSpec::FlipVertical => flip_vertical(buf, mask),
@@ -298,7 +288,22 @@ mod tests {
         let out = apply_transform(
             &TransformSpec::RotateArbitrary {
                 degrees: 0.0,
-                mode: RotateMode::RotSprite,
+                algorithm: RotationAlgorithm::RotSprite,
+            },
+            &buf,
+            None,
+        )
+        .unwrap();
+        assert_eq!(out, buf);
+    }
+
+    #[test]
+    fn dispatch_rotate_nearest_0_is_identity() {
+        let buf = make_buf();
+        let out = apply_transform(
+            &TransformSpec::RotateArbitrary {
+                degrees: 0.0,
+                algorithm: RotationAlgorithm::NearestNeighbor,
             },
             &buf,
             None,

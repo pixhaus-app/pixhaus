@@ -1,7 +1,15 @@
 // Layer CRUD and property commands.
 
 import { invoke } from "../ipc";
-import type { BlendMode, Layer, LayerId, LayerKind, SpriteId, TilesetId } from "../types";
+import type {
+  BlendMode,
+  Layer,
+  LayerEffect,
+  LayerId,
+  LayerKind,
+  SpriteId,
+  TilesetId,
+} from "../types";
 
 // ── argument types ────────────────────────────────────────────────────────────
 
@@ -73,6 +81,18 @@ export function layerSetLocked(
   locked: boolean,
 ): Promise<void> {
   return invoke<void>("layer_set_locked", { sprite_id, layer_id, locked });
+}
+
+/**
+ * Replaces a layer's non-destructive effect stack. Effects apply in order at
+ * composite time and never mutate the layer's pixels. Pass `[]` to clear.
+ */
+export function layerSetEffects(
+  sprite_id: SpriteId,
+  layer_id: LayerId,
+  effects: LayerEffect[],
+): Promise<void> {
+  return invoke<void>("layer_set_effects", { sprite_id, layer_id, effects });
 }
 
 /** Renames a layer. */

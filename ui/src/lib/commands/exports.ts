@@ -5,7 +5,7 @@
 // stay focused on the cross-process call.
 
 import { invoke } from "../ipc";
-import type { SpriteId } from "../types";
+import type { LoopDirection, SpriteId } from "../types";
 
 export type ExportPngArgs = {
   sprite_id: SpriteId;
@@ -17,11 +17,15 @@ export type ExportPngArgs = {
 export type ExportGifArgs = {
   sprite_id: SpriteId;
   output_path: string;
+  /** Playback direction baked into the exported frame order. Omit for forward. */
+  direction?: LoopDirection | null;
 };
 
 export type ExportWebpArgs = {
   sprite_id: SpriteId;
   output_path: string;
+  /** Playback direction baked into the exported frame order. Omit for forward. */
+  direction?: LoopDirection | null;
 };
 
 export type ExportTmxArgs = {

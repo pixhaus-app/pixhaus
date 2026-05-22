@@ -5,7 +5,7 @@
 // reorder. Group rows have an expand/collapse chevron.
 
 import { type Component, For, Show, createEffect, createSignal, onCleanup } from "solid-js";
-import type { BlendMode, Layer, LayerId, SpriteId } from "../lib/types";
+import type { BlendMode, Layer, LayerEffect, LayerId, SpriteId } from "../lib/types";
 import { activeLayerId } from "../canvas/canvas-state";
 import {
   beginRename,
@@ -18,6 +18,7 @@ import {
   selectLayer,
   setDragOverIndex,
   setLayerBlendMode,
+  setLayerEffects,
   setLayerLocked,
   setLayerOpacity,
   setLayerVisibility,
@@ -26,6 +27,16 @@ import {
   reparentLayer,
   reorderLayer,
 } from "./layer-state";
+
+// A 1px black 4-connected outline — the most common pixel-art layer effect,
+// offered as a one-click toggle on the active layer. Fuller effect editing
+// (drop shadow, brightness, reordering) goes through layer_set_effects.
+const DEFAULT_OUTLINE: Extract<LayerEffect, { kind: "outline" }> = {
+  kind: "outline",
+  color: { r: 0, g: 0, b: 0, a: 255 },
+  thickness: 1,
+  diagonal: false,
+};
 
 // Human-readable labels for blend modes shown in the dropdown.
 const BLEND_MODE_LABELS: Record<BlendMode, string> = {
@@ -111,6 +122,30 @@ const LayerRow: Component<Props> = (props) => {
   function handleBlendModeChange(e: Event): void {
     const value = (e.target as HTMLSelectElement).value as BlendMode;
     setLayerBlendMode(props.spriteId, props.layer.id, value);
+  }
+
+  const effects = (): LayerEffect[] => props.layer.effects ?? [];
+
+  // The button toggles only the default outline. Matching by value (not just
+  // "any effect present") keeps a drop-shadow or brightness effect intact when
+  // the outline is turned off; richer per-effect editing is a follow-up.
+  const isDefaultOutline = (effect: LayerEffect): boolean =>
+    effect.kind === "outline" &&
+    effect.thickness === DEFAULT_OUTLINE.thickness &&
+    effect.diagonal === DEFAULT_OUTLINE.diagonal &&
+    effect.color.r === DEFAULT_OUTLINE.color.r &&
+    effect.color.g === DEFAULT_OUTLINE.color.g &&
+    effect.color.b === DEFAULT_OUTLINE.color.b &&
+    effect.color.a === DEFAULT_OUTLINE.color.a;
+
+  const hasDefaultOutline = (): boolean => effects().some(isDefaultOutline);
+
+  function handleEffectsToggle(e: MouseEvent): void {
+    e.stopPropagation();
+    const next = hasDefaultOutline()
+      ? effects().filter((effect) => !isDefaultOutline(effect))
+      : [...effects(), DEFAULT_OUTLINE];
+    setLayerEffects(props.spriteId, props.layer.id, next);
   }
 
   // Drag-to-reorder handlers.
@@ -298,6 +333,16 @@ const LayerRow: Component<Props> = (props) => {
             onInput={handleOpacityChange}
             title={`Opacity: ${Math.round((props.layer.opacity / 255) * 100)}%`}
           />
+          <button
+            type="button"
+            class="layer-row__icon-btn"
+            classList={{ "layer-row__icon-btn--active": hasDefaultOutline() }}
+            onClick={handleEffectsToggle}
+            title={hasDefaultOutline() ? "Remove layer outline effect" : "Add layer outline effect"}
+            aria-pressed={hasDefaultOutline()}
+          >
+            fx
+          </button>
         </div>
       </Show>
     </div>

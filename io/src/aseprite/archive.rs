@@ -49,8 +49,8 @@ use pixhaus_core::project::tileset::TilesetSource as CoreTilesetSource;
 use pixhaus_core::project::{
     ActiveTarget, BlendMode, Cel, CelData, ColorMode, EntityId, FrameIndex, IVec2, Layer,
     LayerKind, NineSlice, Palette, PaletteEntry, PaletteFrameOverride, Pivot, Rect, Size, Slice,
-    SliceId, SliceKey, Sprite, SpriteId, StateId, TileCell, TileFlags, TileIndex, TilemapData,
-    Tileset, TilesetId, UserData,
+    SliceId, SliceKey, Sprite, SpriteId, StateId, TileCell, TileFlags, TileIndex, TileShape,
+    TilemapData, Tileset, TilesetId, UserData,
 };
 
 use crate::error::{Error, Result};
@@ -279,6 +279,7 @@ pub fn document_to_archive(
             .iter()
             .map(|f| Frame {
                 duration_ms: u32::from(f.duration_ms),
+                duration_mul: 1.0,
                 user_data: UserData::default(),
             })
             .collect();
@@ -828,6 +829,7 @@ fn build_layers(
             visible: lc.flags & LAYER_FLAG_VISIBLE != 0,
             locked: lc.flags & LAYER_FLAG_EDITABLE == 0,
             parent,
+            effects: Vec::new(),
             user_data: UserData::default(),
         });
     }
@@ -1002,6 +1004,8 @@ fn build_tilesets(
                 id: TilesetId::new(tc.tileset_id),
                 name: tc.name.clone(),
                 tile_size: Size::new(u32::from(tc.tile_width), u32::from(tc.tile_height)),
+                shape: TileShape::Square,
+                hex_offset: None,
                 tile_count: tc.tile_count,
                 base_index: tc.base_index,
                 source,
@@ -1989,6 +1993,7 @@ mod tests {
 
         let frame = pixhaus_core::project::Frame {
             duration_ms: 100,
+            duration_mul: 1.0,
             user_data: UserData::default(),
         };
 

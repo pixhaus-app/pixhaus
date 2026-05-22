@@ -435,8 +435,8 @@ mod tests {
     use pixhaus_core::project::geometry::Size;
     use pixhaus_core::project::id::{PixelBufferId, TileIndex, TilesetId};
     use pixhaus_core::project::tileset::{
-        AnimLoopMode, CollisionShape, TileAnimation, TileAnimationFrame, TileProperties, Tileset,
-        TilesetSource,
+        AnimLoopMode, CollisionShape, TileAnimation, TileAnimationFrame, TileProperties, TileShape,
+        Tileset, TilesetSource,
     };
 
     fn sample_tileset() -> Tileset {
@@ -444,6 +444,8 @@ mod tests {
             id: TilesetId::new(1),
             name: "dungeon".into(),
             tile_size: Size::new(16, 16),
+            shape: TileShape::Square,
+            hex_offset: None,
             // tile_count includes the empty-tile sentinel at index 0.
             tile_count: 6,
             base_index: 1,
@@ -595,6 +597,8 @@ mod tests {
             id: TilesetId::new(1),
             name: "x".into(),
             tile_size: Size::new(16, 16),
+            shape: TileShape::Square,
+            hex_offset: None,
             tile_count,
             base_index: 1,
             source: TilesetSource::External {
@@ -883,6 +887,8 @@ mod tests {
             id: TilesetId::new(1),
             name: "forest".into(),
             tile_size: Size::new(16, 16),
+            shape: TileShape::Square,
+            hex_offset: None,
             tile_count: 4,
             base_index: 1,
             source: TilesetSource::External {
@@ -896,6 +902,8 @@ mod tests {
             id: TilesetId::new(2),
             name: "forest".into(), // intentional collision
             tile_size: Size::new(16, 16),
+            shape: TileShape::Square,
+            hex_offset: None,
             tile_count: 4,
             base_index: 1,
             source: TilesetSource::External {
@@ -1019,6 +1027,8 @@ mod tests {
             id: TilesetId::new(2),
             name: "forest".into(),
             tile_size: Size::new(16, 16),
+            shape: TileShape::Square,
+            hex_offset: None,
             tile_count: 4, // 3 real tiles
             base_index: 1,
             source: TilesetSource::External {
@@ -1163,6 +1173,8 @@ mod tests {
             id: TilesetId::new(2),
             name: "forest".into(),
             tile_size: Size::new(8, 8),
+            shape: TileShape::Square,
+            hex_offset: None,
             tile_count: 5,
             base_index: 1,
             source: TilesetSource::Inline {

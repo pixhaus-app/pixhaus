@@ -2,8 +2,8 @@
 
 use pixhaus_core::project::{
     Cel, CelData, FrameIndex, IVec2, Layer, LayerId, LayerKind, PixelBufferId, Project, Size,
-    SpriteId, TileCell, TileFlags, TileIndex, TileProperties, TilemapData, Tileset, TilesetId,
-    TilesetSource, UserData,
+    SpriteId, TileCell, TileFlags, TileIndex, TileProperties, TileShape, TilemapData, Tileset,
+    TilesetId, TilesetSource, UserData,
 };
 use pixhaus_core::tilemap::{AutotileKind, resolve_autotile};
 use pixhaus_core::undo::{Command, CommandError, CommandResult as UndoCommandResult};
@@ -862,6 +862,8 @@ pub async fn tileset_add(
             id,
             name: args.name,
             tile_size: Size::new(args.tile_width, args.tile_height),
+            shape: TileShape::Square,
+            hex_offset: None,
             // tile_count = 1 (just the implicit empty tile at index 0).
             // The pixel buffer subsystem (S01) grows this as tiles are added.
             tile_count: 1,
@@ -1347,6 +1349,8 @@ mod tests {
             id: tileset_id,
             name: "dungeon".into(),
             tile_size: Size::new(16, 16),
+            shape: TileShape::Square,
+            hex_offset: None,
             tile_count: 64,
             base_index: 1,
             source: TilesetSource::Inline {
@@ -1367,6 +1371,7 @@ mod tests {
             visible: true,
             locked: false,
             parent: None,
+            effects: Vec::new(),
             user_data: UserData::default(),
         });
         // Pre-populate a 4x3 tilemap cel at frame 0.

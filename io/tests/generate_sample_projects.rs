@@ -46,7 +46,7 @@ use pixhaus_core::project::{
     IVec2, Layer, LayerId, LayerKind, LoopDirection, NamedSprite, NineSlice, Palette, PaletteEntry,
     PaletteId, Pivot, PixelBufferId, Project, Rect, Rgba, Size, Slice, SliceId, SliceKey, Sprite,
     SpriteId, StateId, TileAnimation, TileAnimationFrame, TileCell, TileFlags, TileIndex,
-    TileProperties, TilemapData, Tileset, TilesetId, TilesetSource, UserData,
+    TileProperties, TileShape, TilemapData, Tileset, TilesetId, TilesetSource, UserData,
 };
 use pixhaus_io::pixhaus::{PixelBufferEntry, PixhausArchive, encode_to_file};
 
@@ -273,6 +273,7 @@ fn raster(id: u32, name: &str, blend: BlendMode, opacity: u8, parent: Option<u32
         visible: true,
         locked: false,
         parent: parent.map(LayerId::new),
+        effects: Vec::new(),
         user_data: UserData::default(),
     }
 }
@@ -287,6 +288,7 @@ fn group(id: u32, name: &str) -> Layer {
         visible: true,
         locked: false,
         parent: None,
+        effects: Vec::new(),
         user_data: UserData::default(),
     }
 }
@@ -303,6 +305,7 @@ fn tilemap(id: u32, name: &str, tileset_id: u32) -> Layer {
         visible: true,
         locked: false,
         parent: None,
+        effects: Vec::new(),
         user_data: UserData::default(),
     }
 }
@@ -354,6 +357,7 @@ fn linked_cel(layer: u32, frame: u32, source: u32) -> Cel {
 fn ms(duration_ms: u32) -> Frame {
     Frame {
         duration_ms,
+        duration_mul: 1.0,
         user_data: UserData::default(),
     }
 }
@@ -517,6 +521,7 @@ fn build_knight() -> PixhausArchive {
             visible: true,
             locked: false,
             parent: Some(LayerId::new(2)),
+            effects: Vec::new(),
             user_data: UserData::default(),
         },
         raster(3, "skin", BlendMode::Normal, 255, Some(2)),
@@ -676,6 +681,8 @@ fn build_forest_tileset() -> PixhausArchive {
         id: TilesetId::new(1),
         name: "forest".into(),
         tile_size: Size::new(tw, th),
+        shape: TileShape::Square,
+        hex_offset: None,
         tile_count: n,
         base_index: 1,
         source: TilesetSource::Inline {
@@ -1054,6 +1061,8 @@ fn build_forest_level() -> PixhausArchive {
         id: TilesetId::new(1),
         name: "forest".into(),
         tile_size: Size::new(TW, TH),
+        shape: TileShape::Square,
+        hex_offset: None,
         tile_count: FOREST_TILE_COUNT,
         base_index: 1,
         source: TilesetSource::Inline {

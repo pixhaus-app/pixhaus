@@ -118,6 +118,7 @@ pub async fn frame_add(
             })?;
         let frame = Frame {
             duration_ms,
+            duration_mul: 1.0,
             user_data: UserData::default(),
         };
         let index = FrameIndex::new(u32::try_from(sprite.frames.len()).map_err(|_| {
@@ -335,6 +336,57 @@ pub async fn frame_set_duration(
         frame.duration_ms = duration_ms;
     }
     doc.dirty = true;
+    Ok(())
+}
+
+/// Sets the float duration multiplier for a single frame. `1.0` plays at the
+/// base `duration_ms`; larger values hold the frame longer. Clamped to a
+/// small positive minimum so a frame can never have zero on-screen time.
+#[tauri::command(async, rename_all = "snake_case")]
+pub async fn frame_set_duration_mul(
+    sprite_id: SpriteId,
+    frame_index: FrameIndex,
+    duration_mul: f32,
+    state: State<'_, AppState>,
+) -> CommandResult<()> {
+    let mut doc = state.doc.write().await;
+    {
+        let sprite = doc
+            .project
+            .as_mut()
+            .ok_or(AppCommandError::NoActiveProject)?
+            .sprite_mut(sprite_id)
+            .ok_or(AppCommandError::NotFound {
+                entity: "sprite".into(),
+                id: u64::from(sprite_id.get()),
+            })?;
+        set_duration_mul_in_sprite(sprite, frame_index, duration_mul)?;
+    }
+    doc.dirty = true;
+    Ok(())
+}
+
+/// Smallest on-screen multiplier a frame can hold. Keeps a frame from ever
+/// having zero playback time.
+const MIN_DURATION_MUL: f32 = 0.01;
+
+/// Sets a frame's float duration multiplier, clamping to [`MIN_DURATION_MUL`].
+///
+/// Split out from the command so the clamp and range check stay unit-testable
+/// without a Tauri `State`.
+fn set_duration_mul_in_sprite(
+    sprite: &mut Sprite,
+    frame_index: FrameIndex,
+    duration_mul: f32,
+) -> CommandResult<()> {
+    let idx = frame_index.get() as usize;
+    let frame = sprite
+        .frames
+        .get_mut(idx)
+        .ok_or_else(|| AppCommandError::OutOfRange {
+            detail: format!("frame index {idx} out of range"),
+        })?;
+    frame.duration_mul = duration_mul.max(MIN_DURATION_MUL);
     Ok(())
 }
 
@@ -580,6 +632,32 @@ mod tests {
         };
         assert_eq!(result.index.get(), 0);
         assert_eq!(result.frame.duration_ms, frame.duration_ms);
+    }
+
+    // set_duration_mul_in_sprite ──────────────────────────────────────────────
+
+    #[test]
+    fn duration_mul_clamps_below_minimum() {
+        let mut s = sprite_with_frames(1);
+        set_duration_mul_in_sprite(&mut s, FrameIndex::new(0), 0.0).unwrap();
+        assert!((s.frames[0].duration_mul - MIN_DURATION_MUL).abs() < f32::EPSILON);
+    }
+
+    #[test]
+    fn duration_mul_passes_normal_value_through() {
+        let mut s = sprite_with_frames(1);
+        set_duration_mul_in_sprite(&mut s, FrameIndex::new(0), 2.5).unwrap();
+        assert!((s.frames[0].duration_mul - 2.5).abs() < f32::EPSILON);
+    }
+
+    #[test]
+    fn duration_mul_out_of_range_index_errors() {
+        let mut s = sprite_with_frames(1);
+        let err = set_duration_mul_in_sprite(&mut s, FrameIndex::new(5), 1.0).unwrap_err();
+        assert!(
+            matches!(err, AppCommandError::OutOfRange { .. }),
+            "expected OutOfRange, got {err:?}"
+        );
     }
 
     // shift_frame_indices ────────────────────────────────────────────────────

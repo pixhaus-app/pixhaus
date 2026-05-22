@@ -87,6 +87,7 @@ fn make_layer() -> Layer {
         visible: true,
         locked: false,
         parent: None,
+        effects: Vec::new(),
         user_data: UserData::default(),
     }
 }
@@ -101,6 +102,7 @@ fn make_sprite(sprite_id: u32, name: &str, layer: Layer, cel: Cel) -> Sprite {
         layers: vec![layer],
         frames: vec![Frame {
             duration_ms: 100,
+            duration_mul: 1.0,
             user_data: UserData::default(),
         }],
         cels: vec![cel],
@@ -563,6 +565,7 @@ fn per_state_export_picks_active_entity() {
                     layers: vec![make_layer()],
                     frames: vec![Frame {
                         duration_ms: 100,
+                        duration_mul: 1.0,
                         user_data: UserData::default(),
                     }],
                     cels: vec![Cel {
@@ -791,6 +794,7 @@ fn merged_export_overflowing_total_frames_returns_typed_error() {
         let frames: Vec<Frame> = (0..frame_count)
             .map(|_| Frame {
                 duration_ms: 100,
+                duration_mul: 1.0,
                 user_data: UserData::default(),
             })
             .collect();
@@ -945,7 +949,7 @@ fn inline_tileset_import_repacks_to_horizontal_layout() {
 
 #[test]
 fn merged_export_emits_tileset_chunks_for_sprite_tilesets() {
-    use pixhaus_core::project::{PixelBufferId, Tileset, TilesetId, TilesetSource};
+    use pixhaus_core::project::{PixelBufferId, TileShape, Tileset, TilesetId, TilesetSource};
 
     let mut archive = make_archive_with_states(&["idle"]);
 
@@ -966,6 +970,8 @@ fn merged_export_emits_tileset_chunks_for_sprite_tilesets() {
         id: TilesetId::new(0),
         name: "terrain".into(),
         tile_size: Size::new(4, 4),
+        shape: TileShape::Square,
+        hex_offset: None,
         tile_count: 2,
         base_index: 1,
         source: TilesetSource::Inline {
@@ -1093,10 +1099,12 @@ fn merged_export_merges_slices_across_states_with_offset() {
                 frames: vec![
                     Frame {
                         duration_ms: 100,
+                        duration_mul: 1.0,
                         user_data: UserData::default(),
                     },
                     Frame {
                         duration_ms: 100,
+                        duration_mul: 1.0,
                         user_data: UserData::default(),
                     },
                 ],
@@ -1293,6 +1301,7 @@ fn merged_export_emits_per_frame_palette_overrides_with_offsets() {
 
     let make_frame = || Frame {
         duration_ms: 100,
+        duration_mul: 1.0,
         user_data: UserData::default(),
     };
     let make_cel = |buf_id: u32| Cel {

@@ -2,8 +2,8 @@
 
 use pixhaus_core::canvas::{LayerInput, PixelBuffer, composite_onto};
 use pixhaus_core::project::{
-    BlendMode, Cel, CelData, FrameIndex, Layer, LayerId, LayerKind, PixelBufferId, Size, Sprite,
-    SpriteId, TilesetId, UserData,
+    BlendMode, Cel, CelData, FrameIndex, Layer, LayerEffect, LayerId, LayerKind, PixelBufferId,
+    Size, Sprite, SpriteId, TilesetId, UserData,
 };
 use pixhaus_io::pixhaus::PixelBufferEntry;
 use serde::{Deserialize, Serialize};
@@ -50,6 +50,7 @@ pub async fn layer_add(args: LayerAddArgs, state: State<'_, AppState>) -> Comman
             visible: true,
             locked: false,
             parent: None,
+            effects: Vec::new(),
             user_data: UserData::default(),
         };
         sprite.layers.push(layer.clone());
@@ -179,6 +180,22 @@ pub async fn layer_set_locked(
 ) -> CommandResult<()> {
     with_layer_mut(&state, sprite_id, layer_id, |layer| {
         layer.locked = locked;
+    })
+    .await
+}
+
+/// Replaces a layer's non-destructive effect stack. Effects apply in order
+/// at composite time and never mutate the layer's pixels, so the operation
+/// is fully reversible by setting the stack again.
+#[tauri::command(async, rename_all = "snake_case")]
+pub async fn layer_set_effects(
+    sprite_id: SpriteId,
+    layer_id: LayerId,
+    effects: Vec<LayerEffect>,
+    state: State<'_, AppState>,
+) -> CommandResult<()> {
+    with_layer_mut(&state, sprite_id, layer_id, |layer| {
+        layer.effects = effects;
     })
     .await
 }
@@ -396,6 +413,7 @@ fn wrap_layers_in_group(
         visible: true,
         locked: false,
         parent: anchor_parent,
+        effects: Vec::new(),
         user_data: UserData::default(),
     };
 
@@ -1440,6 +1458,7 @@ mod tests {
             visible: true,
             locked: false,
             parent: None,
+            effects: Vec::new(),
             user_data: UserData::default(),
         };
         assert_eq!(layer.opacity, 255);
@@ -1459,6 +1478,7 @@ mod tests {
             visible: true,
             locked: false,
             parent,
+            effects: Vec::new(),
             user_data: UserData::default(),
         }
     }
@@ -1681,6 +1701,7 @@ mod tests {
             visible: true,
             locked: false,
             parent: None,
+            effects: Vec::new(),
             user_data: UserData::default(),
         });
         sprite.layers.push(Layer {
@@ -1692,6 +1713,7 @@ mod tests {
             visible: true,
             locked: false,
             parent: None,
+            effects: Vec::new(),
             user_data: UserData::default(),
         });
         sprite.layers.push(layer_with(3, None, LayerKind::Raster));
@@ -1893,6 +1915,7 @@ mod tests {
             visible: true,
             locked: false,
             parent: None,
+            effects: Vec::new(),
             user_data: UserData::default(),
         });
         layer_id
@@ -2008,6 +2031,7 @@ mod tests {
             visible: true,
             locked: false,
             parent: None,
+            effects: Vec::new(),
             user_data: UserData::default(),
         });
         let tilemap = LayerId::new(2);
@@ -2160,5 +2184,31 @@ mod tests {
         for chunk in after.chunks_exact(4) {
             assert_eq!(chunk, &[255, 0, 0, 255]);
         }
+    }
+
+    // ── layer_set_effects ────────────────────────────────────────────────────
+
+    #[test]
+    fn set_effects_persists_stack_to_target_layer() {
+        // Exercises the data path `layer_set_effects` runs through
+        // `with_layer_mut` -> `find_layer_mut`, without a Tauri `State`.
+        let mut doc = fresh_doc(Size::new(8, 8));
+        let layer_id = add_raster_layer(&mut doc, 1, "art");
+
+        let effects = vec![
+            LayerEffect::Outline {
+                color: pixhaus_core::project::Rgba::new(0, 0, 0, 255),
+                thickness: 1,
+                diagonal: false,
+            },
+            LayerEffect::Invert,
+        ];
+        find_layer_mut(&mut doc, SpriteId::new(1), layer_id)
+            .unwrap()
+            .effects = effects.clone();
+
+        let sprite = find_sprite(&doc, SpriteId::new(1)).unwrap();
+        let layer = sprite.layers.iter().find(|l| l.id == layer_id).unwrap();
+        assert_eq!(layer.effects, effects);
     }
 }

@@ -460,6 +460,7 @@ impl ConversationalVerb {
                 let frames = (0..count)
                     .map(|_| Frame {
                         duration_ms,
+                        duration_mul: 1.0,
                         user_data: UserData::default(),
                     })
                     .collect();

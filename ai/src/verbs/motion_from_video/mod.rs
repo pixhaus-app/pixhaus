@@ -525,6 +525,7 @@ fn keyframe_durations(frames: &[VideoFrame], keyframe_indices: &[usize]) -> Vec<
         let dur = next.saturating_sub(cur).max(1);
         result.push(Frame {
             duration_ms: dur,
+            duration_mul: 1.0,
             user_data: UserData::default(),
         });
     }
@@ -539,6 +540,7 @@ fn keyframe_durations(frames: &[VideoFrame], keyframe_indices: &[usize]) -> Vec<
     };
     result.push(Frame {
         duration_ms: last_dur,
+        duration_mul: 1.0,
         user_data: UserData::default(),
     });
 

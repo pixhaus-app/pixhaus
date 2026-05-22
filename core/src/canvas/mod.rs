@@ -22,10 +22,12 @@
 pub mod blend;
 pub mod buffer;
 pub mod composite;
+pub mod effects;
 pub mod error;
 pub mod tools;
 
 pub use blend::{blend, blend_normal, mul_un8, premix};
 pub use buffer::{IndexedBuffer, PixelBuffer, RGBA_BYTES_PER_PIXEL};
 pub use composite::{LayerInput, composite_layers, composite_onto};
+pub use effects::{apply_effect, apply_effects};
 pub use error::{Error, Result};

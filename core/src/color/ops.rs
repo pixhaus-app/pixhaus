@@ -30,6 +30,40 @@ where
         .map(|(i, _)| i)
 }
 
+// ── Color similarity ───────────────────────────────────────────────────────
+
+/// The default similarity tolerance, matching Pixelorama's `similar_colors`
+/// default of `0.392157` (≈ `100 / 255`) expressed in normalized 0..1 space.
+pub const DEFAULT_SIMILARITY_TOLERANCE: f32 = 0.392_157;
+
+/// Returns `true` when `a` and `b` are within `tolerance` of each other by
+/// squared Euclidean distance over all four normalized channels.
+///
+/// Channels are normalized to `0.0..=1.0` before comparison, so `tolerance`
+/// is a straight-line distance in that unit cube (alpha included). Pass
+/// [`DEFAULT_SIMILARITY_TOLERANCE`] to match the upstream bucket/wand default;
+/// pass `0.0` for exact match.
+///
+/// Shared by flood fill, the magic wand, color-select, and color-replace so a
+/// single tolerance slider produces consistent behaviour across tools.
+//
+// Ported from Pixelorama (MIT-licensed, Orama Interactive 2019-present).
+// Upstream: src/Autoload/DrawingAlgos.gd `similar_colors`.
+// Original: `c1.distance_squared_to(c2) < tol * tol` over linear color.
+// We use `<=` deliberately so `tolerance == 0.0` means exact match (the
+// documented contract above and the `tolerance, 0.0` test below); strict
+// `<` would make a zero tolerance reject identical colors.
+// See THIRD_PARTY_NOTICES.md for the full upstream copyright notice.
+#[must_use]
+pub fn similar_colors(a: Rgba, b: Rgba, tolerance: f32) -> bool {
+    let to_f = |c: u8| f32::from(c) / 255.0;
+    let dr = to_f(a.r) - to_f(b.r);
+    let dg = to_f(a.g) - to_f(b.g);
+    let db = to_f(a.b) - to_f(b.b);
+    let da = to_f(a.a) - to_f(b.a);
+    dr * dr + dg * dg + db * db + da * da <= tolerance * tolerance
+}
+
 // ── Palette swap ─────────────────────────────────────────────────────────────
 
 /// Replaces every occurrence of `from` (compared by all four channels) with
@@ -137,6 +171,42 @@ mod tests {
     #[test]
     fn nearest_empty_palette_returns_none() {
         assert_eq!(nearest_color_index(std::iter::empty(), red()), None);
+    }
+
+    // ── similar_colors ─────────────────────────────────────────────────────
+
+    #[test]
+    fn similar_identical_colors_match_at_zero_tolerance() {
+        assert!(similar_colors(red(), red(), 0.0));
+    }
+
+    #[test]
+    fn similar_distinct_colors_differ_at_zero_tolerance() {
+        assert!(!similar_colors(red(), blue(), 0.0));
+    }
+
+    #[test]
+    fn similar_near_colors_match_within_tolerance() {
+        let a = Rgba::opaque(100, 100, 100);
+        let b = Rgba::opaque(108, 100, 100); // 8/255 ≈ 0.031 on one channel
+        assert!(similar_colors(a, b, 0.05));
+        assert!(!similar_colors(a, b, 0.01));
+    }
+
+    #[test]
+    fn similar_accounts_for_alpha() {
+        let opaque = Rgba::new(0, 0, 0, 255);
+        let clear = Rgba::new(0, 0, 0, 0);
+        assert!(!similar_colors(opaque, clear, 0.5));
+        assert!(similar_colors(opaque, clear, 1.0));
+    }
+
+    #[test]
+    fn similar_default_tolerance_is_reasonable() {
+        // Two mid-grays a notch apart should match under the upstream default.
+        let a = Rgba::opaque(120, 120, 120);
+        let b = Rgba::opaque(140, 140, 140);
+        assert!(similar_colors(a, b, DEFAULT_SIMILARITY_TOLERANCE));
     }
 
     // ── palette_swap ─────────────────────────────────────────────────────────
