@@ -24,6 +24,7 @@ import {
   frameList,
   frameReorder,
   frameSetDuration,
+  frameSetDurationMul,
   frameTagCreate,
   frameTagDelete,
   frameTagList,
@@ -161,8 +162,15 @@ function scheduleNextFrame(): void {
 
   const nextIdx = activeFrameIndex();
   const nextFrame = all[nextIdx];
-  const delay = nextFrame !== undefined ? Math.max(1, nextFrame.duration_ms) : 100;
+  const delay = nextFrame !== undefined ? effectiveDurationMs(nextFrame) : 100;
   playbackTimer = setTimeout(scheduleNextFrame, delay);
+}
+
+/** On-screen duration in ms: base `duration_ms` scaled by the float
+ * `duration_mul` (defaulting to 1.0 for older data), floored at 1. */
+function effectiveDurationMs(frame: Frame): number {
+  const mul = frame.duration_mul ?? 1.0;
+  return Math.max(1, Math.round(frame.duration_ms * mul));
 }
 
 export function startPlayback(): void {
@@ -171,7 +179,7 @@ export function startPlayback(): void {
   if (all.length === 0) return;
   setIsPlaying(true);
   const currentFrame = all[activeFrameIndex()];
-  const delay = currentFrame !== undefined ? Math.max(1, currentFrame.duration_ms) : 100;
+  const delay = currentFrame !== undefined ? effectiveDurationMs(currentFrame) : 100;
   playbackTimer = setTimeout(scheduleNextFrame, delay);
 }
 
@@ -286,6 +294,12 @@ export function setFrameDuration(spriteId: SpriteId, index: FrameIndex, duration
   frameSetDuration(spriteId, index, durationMs)
     .then(() => refreshTimeline())
     .catch((err: unknown) => reportCommandFailure("frame_set_duration", err));
+}
+
+export function setFrameDurationMul(spriteId: SpriteId, index: FrameIndex, mul: number): void {
+  frameSetDurationMul(spriteId, index, mul)
+    .then(() => refreshTimeline())
+    .catch((err: unknown) => reportCommandFailure("frame_set_duration_mul", err));
 }
 
 // Swap two frames in-place using two sequential frameReorder calls.

@@ -379,6 +379,7 @@ impl Verb for AudioTimingVerb {
             .iter()
             .map(|&ms| Frame {
                 duration_ms: ms.max(1),
+                duration_mul: 1.0,
                 user_data: UserData::default(),
             })
             .collect();

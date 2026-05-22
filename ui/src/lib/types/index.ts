@@ -146,3 +146,7 @@ export type { VariantOrigin } from "./VariantOrigin";
 export type { VectorImage } from "./VectorImage";
 export type { Vertex } from "./Vertex";
 export type { Stroke } from "./Stroke";
+
+export type { PeeringSet } from "./PeeringSet";
+export type { PeeringTile } from "./PeeringTile";
+export type { RotationAlgorithm } from "./RotationAlgorithm";

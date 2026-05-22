@@ -147,6 +147,7 @@ pub fn run() -> Result<(), AppError> {
             commands::frames::frame_list,
             commands::frames::frame_reorder,
             commands::frames::frame_set_duration,
+            commands::frames::frame_set_duration_mul,
             commands::frames::frame_tag_create,
             commands::frames::frame_tag_delete,
             commands::frames::frame_tag_list,

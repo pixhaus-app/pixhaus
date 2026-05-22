@@ -16,7 +16,8 @@ use std::path::PathBuf;
 
 use pixhaus_core::canvas::{LayerInput, PixelBuffer, apply_effects, composite_layers};
 use pixhaus_core::project::{
-    Cel, CelData, FrameIndex, Layer, LayerId, LayerKind, PixelBufferId, Sprite, SpriteId,
+    Cel, CelData, FrameIndex, Layer, LayerId, LayerKind, LoopDirection, PixelBufferId, Sprite,
+    SpriteId,
 };
 use pixhaus_io::animated::{
     DitherMode, GifOptions, LoopCount, PaletteMode, WebPOptions, encode_gif, encode_webp,
@@ -53,6 +54,11 @@ pub struct ExportGifArgs {
     pub sprite_id: SpriteId,
     /// Output `.gif` path.
     pub output_path: String,
+    /// Playback direction to bake into the exported frame order. `None`
+    /// exports frames as authored (forward); a value reorders/expands them
+    /// at export time (e.g. ping-pong replays the run backward).
+    #[serde(default)]
+    pub direction: Option<LoopDirection>,
 }
 
 /// Arguments for an animated WebP export.
@@ -62,6 +68,10 @@ pub struct ExportWebpArgs {
     pub sprite_id: SpriteId,
     /// Output `.webp` path.
     pub output_path: String,
+    /// Playback direction to bake into the exported frame order. See
+    /// [`ExportGifArgs::direction`].
+    #[serde(default)]
+    pub direction: Option<LoopDirection>,
 }
 
 /// Arguments for a Tiled `.tmx` export.
@@ -123,7 +133,7 @@ pub async fn export_animated_gif(
 ) -> CommandResult<()> {
     let (sprite, frames) = snapshot_sprite_for_export(args.sprite_id, &state).await?;
     let output_path = PathBuf::from(&args.output_path);
-    let pairs = pair_frames_with_durations(&sprite, &frames);
+    let pairs = pair_frames_with_durations(&sprite, &frames, args.direction);
 
     spawn_blocking_export(move || -> Result<(), pixhaus_io::Error> {
         let mut bytes: Vec<u8> = Vec::new();
@@ -152,7 +162,7 @@ pub async fn export_animated_webp(
 ) -> CommandResult<()> {
     let (sprite, frames) = snapshot_sprite_for_export(args.sprite_id, &state).await?;
     let output_path = PathBuf::from(&args.output_path);
-    let pairs = pair_frames_with_durations(&sprite, &frames);
+    let pairs = pair_frames_with_durations(&sprite, &frames, args.direction);
 
     spawn_blocking_export(move || -> Result<(), pixhaus_io::Error> {
         let bytes = encode_webp(&pairs, &WebPOptions::default())?;
@@ -440,15 +450,37 @@ fn buffer_from_entry(
     Ok(canvas)
 }
 
-/// Pairs each composited frame with its `duration_ms` for the animated
-/// encoders. Owns the buffers (clones aren't free, but `encode_gif` /
-/// `encode_webp` need owned `PixelBuffer` values).
-fn pair_frames_with_durations(sprite: &Sprite, frames: &[PixelBuffer]) -> Vec<(PixelBuffer, u32)> {
-    sprite
+/// Pairs each composited frame with its effective on-screen duration for the
+/// animated encoders, applying the per-frame hold multiplier. When `direction`
+/// is `Some`, the whole sequence is expanded at export time via
+/// [`LoopDirection::play_order`] (e.g. ping-pong duplicates the run back),
+/// so playback direction is an export choice, not baked into the data.
+///
+/// Owns the buffers (clones aren't free, but the encoders need owned
+/// `PixelBuffer` values).
+fn pair_frames_with_durations(
+    sprite: &Sprite,
+    frames: &[PixelBuffer],
+    direction: Option<LoopDirection>,
+) -> Vec<(PixelBuffer, u32)> {
+    let base: Vec<(PixelBuffer, u32)> = sprite
         .frames
         .iter()
         .zip(frames.iter())
-        .map(|(meta, buf)| (buf.clone(), meta.duration_ms))
+        .map(|(meta, buf)| (buf.clone(), meta.effective_duration_ms()))
+        .collect();
+
+    let Some(direction) = direction else {
+        return base;
+    };
+    if base.is_empty() {
+        return base;
+    }
+    let last = u32::try_from(base.len() - 1).unwrap_or(u32::MAX);
+    direction
+        .play_order(0, last)
+        .into_iter()
+        .filter_map(|i| base.get(i as usize).cloned())
         .collect()
 }
 

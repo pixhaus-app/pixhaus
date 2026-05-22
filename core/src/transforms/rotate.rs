@@ -30,6 +30,9 @@
 //!
 //! `RotSprite` algorithm: <https://en.wikipedia.org/wiki/Pixel_art_scaling_algorithms#RotSprite>
 
+use serde::{Deserialize, Serialize};
+use ts_rs::TS;
+
 use crate::canvas::buffer::PixelBuffer;
 use crate::project::Rgba;
 
@@ -349,6 +352,98 @@ pub fn rotate_rotsprite(buf: &PixelBuffer, angle_deg: f32) -> Result<PixelBuffer
 }
 
 // ──────────────────────────────────────────────────────────────────────────────
+// Nearest-neighbor rotation
+// ──────────────────────────────────────────────────────────────────────────────
+
+/// Rotates `buf` by `angle_rad` using nearest-neighbor sampling.
+///
+/// The crispest, lowest-cost option: no interpolation, so edges stay hard
+/// (and diagonals show the classic NN stair-stepping). Rotation is around the
+/// canvas centre; out-of-bounds pixels become transparent; output keeps the
+/// source dimensions.
+///
+/// # Errors
+///
+/// Returns [`Error::EmptyBuffer`] if `buf` is 0×0.
+#[allow(
+    clippy::cast_precision_loss,
+    clippy::cast_possible_truncation,
+    clippy::cast_sign_loss
+)]
+pub fn rotate_nearest(buf: &PixelBuffer, angle_rad: f32) -> Result<PixelBuffer> {
+    if buf.is_empty() {
+        return Err(Error::EmptyBuffer);
+    }
+    let w = buf.width();
+    let h = buf.height();
+    let cx = (w as f32 - 1.0) / 2.0;
+    let cy = (h as f32 - 1.0) / 2.0;
+    let cos_a = (-angle_rad).cos();
+    let sin_a = (-angle_rad).sin();
+
+    let mut out = PixelBuffer::new(w, h)?;
+    for dy in 0..h {
+        for dx in 0..w {
+            let rx = dx as f32 - cx;
+            let ry = dy as f32 - cy;
+            let sx = (cos_a * rx - sin_a * ry + cx).round();
+            let sy = (sin_a * rx + cos_a * ry + cy).round();
+            if sx >= 0.0 && sy >= 0.0 && (sx as u32) < w && (sy as u32) < h {
+                if let Some(p) = buf.pixel(sx as u32, sy as u32) {
+                    out.set_pixel(dx, dy, p);
+                }
+            }
+        }
+    }
+    Ok(out)
+}
+
+// ──────────────────────────────────────────────────────────────────────────────
+// Algorithm dispatch
+// ──────────────────────────────────────────────────────────────────────────────
+
+/// Selectable arbitrary-angle rotation algorithm for the transform tool.
+///
+/// Pixel-art rotation has no single best algorithm, so the tool exposes a
+/// choice. The three CPU algorithms here cover the practical range: crisp
+/// ([`RotationAlgorithm::NearestNeighbor`]), smooth
+/// ([`RotationAlgorithm::Bilinear`]), and diagonal-preserving
+/// ([`RotationAlgorithm::RotSprite`]). The remaining `RotSprite`-family
+/// variants (`CleanEdge`, `OmniScale`, `RotxelSmear`) are GPU shaders that
+/// belong to the WebGL2 viewport (Tier S in the adoption catalog) and are
+/// tracked there.
+#[derive(Copy, Clone, Debug, Default, Eq, PartialEq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "snake_case")]
+#[ts(export)]
+pub enum RotationAlgorithm {
+    /// Hard-edged nearest-neighbor. See [`rotate_nearest`].
+    NearestNeighbor,
+    /// Smooth bilinear interpolation. See [`rotate_bilinear`].
+    Bilinear,
+    /// Diagonal-preserving `RotSprite`. The pixel-art default. See
+    /// [`rotate_rotsprite`].
+    #[default]
+    RotSprite,
+}
+
+/// Rotates `buf` by `angle_deg` using the selected [`RotationAlgorithm`].
+///
+/// # Errors
+///
+/// Returns [`Error::EmptyBuffer`] if `buf` is 0×0.
+pub fn rotate(
+    buf: &PixelBuffer,
+    angle_deg: f32,
+    algorithm: RotationAlgorithm,
+) -> Result<PixelBuffer> {
+    match algorithm {
+        RotationAlgorithm::NearestNeighbor => rotate_nearest(buf, angle_deg.to_radians()),
+        RotationAlgorithm::Bilinear => rotate_bilinear(buf, angle_deg.to_radians()),
+        RotationAlgorithm::RotSprite => rotate_rotsprite(buf, angle_deg),
+    }
+}
+
+// ──────────────────────────────────────────────────────────────────────────────
 // Tests
 // ──────────────────────────────────────────────────────────────────────────────
 
@@ -536,5 +631,45 @@ mod tests {
                 assert_eq!(out.pixel(x, y), Some(red()), "at ({x},{y})");
             }
         }
+    }
+
+    #[test]
+    fn nearest_zero_angle_is_identity() {
+        let buf = PixelBuffer::filled(4, 4, red()).unwrap();
+        let out = rotate_nearest(&buf, 0.0).unwrap();
+        assert_eq!(out, buf);
+    }
+
+    #[test]
+    fn nearest_empty_buffer_errors() {
+        assert!(rotate_nearest(&PixelBuffer::empty(), 0.5).is_err());
+    }
+
+    #[test]
+    fn dispatch_default_is_rotsprite() {
+        assert_eq!(RotationAlgorithm::default(), RotationAlgorithm::RotSprite);
+    }
+
+    #[test]
+    fn dispatch_routes_to_each_algorithm() {
+        let buf = PixelBuffer::filled(5, 5, red()).unwrap();
+        // Each algorithm preserves dimensions and round-trips a 0° rotation
+        // to an all-red buffer (no transparent fill at the identity angle).
+        for algo in [
+            RotationAlgorithm::NearestNeighbor,
+            RotationAlgorithm::Bilinear,
+            RotationAlgorithm::RotSprite,
+        ] {
+            let out = rotate(&buf, 0.0, algo).unwrap();
+            assert_eq!(out.width(), 5);
+            assert_eq!(out.height(), 5);
+            assert_eq!(out.pixel(2, 2), Some(red()), "centre for {algo:?}");
+        }
+    }
+
+    #[test]
+    fn rotation_algorithm_serializes_snake_case() {
+        let json = serde_json::to_string(&RotationAlgorithm::NearestNeighbor).unwrap();
+        assert_eq!(json, "\"nearest_neighbor\"");
     }
 }

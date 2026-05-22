@@ -331,10 +331,12 @@ fn frame_duration_from_sprite_frames() {
     let mut sprite = Sprite::empty(SpriteId::new(1), "timed", canvas);
     sprite.frames.push(Frame {
         duration_ms: 200,
+        duration_mul: 1.0,
         user_data: UserData::default(),
     });
     sprite.frames.push(Frame {
         duration_ms: 50,
+        duration_mul: 1.0,
         user_data: UserData::default(),
     });
 

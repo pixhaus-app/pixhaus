@@ -9,11 +9,11 @@ use serde::{Deserialize, Serialize};
 use ts_rs::TS;
 
 use super::animation::Animation;
-use super::cel::Cel;
+use super::cel::{Cel, CelData};
 use super::color::ColorMode;
 use super::frame::{Frame, FrameTag};
 use super::geometry::Size;
-use super::id::SpriteId;
+use super::id::{FrameIndex, LayerId, SpriteId};
 use super::layer::Layer;
 use super::palette::{Palette, PaletteFrameOverride};
 use super::slice::Slice;
@@ -91,6 +91,53 @@ impl Sprite {
             user_data: UserData::default(),
         }
     }
+
+    /// Returns the cel at `(layer, frame)`, or `None` if the layer has no
+    /// content on that frame.
+    #[must_use]
+    pub fn cel(&self, layer: LayerId, frame: FrameIndex) -> Option<&Cel> {
+        self.cels
+            .iter()
+            .find(|c| c.layer_id == layer && c.frame_index == frame)
+    }
+
+    /// Resolves a possibly-linked cel to the frame that actually owns its
+    /// pixel data. A [`CelData::Linked`] cel points at its source frame on the
+    /// same layer; this follows that one hop. Owning (raster/tilemap) cels
+    /// resolve to themselves. Returns `frame` unchanged if no cel exists.
+    #[must_use]
+    pub fn resolve_source_frame(&self, layer: LayerId, frame: FrameIndex) -> FrameIndex {
+        match self.cel(layer, frame).map(|c| &c.data) {
+            Some(CelData::Linked { source_frame }) => *source_frame,
+            _ => frame,
+        }
+    }
+
+    /// Returns the link set a frame belongs to on `layer`: every frame whose
+    /// cel shares the same owning source, including the source itself, sorted
+    /// by frame index.
+    ///
+    /// The owning source frame is the stable link-set identity — editing the
+    /// source updates the whole set. Idle animations that reuse one drawing
+    /// across many frames form a link set without duplicating pixel data.
+    /// Cel linking adopted from Pixelorama/Aseprite; see `THIRD_PARTY_NOTICES.md`.
+    #[must_use]
+    pub fn cel_link_set(&self, layer: LayerId, frame: FrameIndex) -> Vec<FrameIndex> {
+        let source = self.resolve_source_frame(layer, frame);
+        let mut members: Vec<FrameIndex> = self
+            .cels
+            .iter()
+            .filter(|c| c.layer_id == layer)
+            .filter(|c| match &c.data {
+                CelData::Linked { source_frame } => *source_frame == source,
+                _ => c.frame_index == source,
+            })
+            .map(|c| c.frame_index)
+            .collect();
+        members.sort_by_key(|f| f.get());
+        members.dedup();
+        members
+    }
 }
 
 #[cfg(test)]
@@ -111,5 +158,78 @@ mod tests {
         let bytes = rmp_serde::to_vec_named(&s).unwrap();
         let back: Sprite = rmp_serde::from_slice(&bytes).unwrap();
         assert_eq!(s, back);
+    }
+
+    fn sprite_with_link_set() -> Sprite {
+        use super::super::id::PixelBufferId;
+        let mut s = Sprite::empty(SpriteId::new(1), "anim", Size::new(8, 8));
+        let layer = LayerId::new(1);
+        // Frame 0 owns the drawing; frames 1 and 3 link to it; frame 2 is its
+        // own raster cel (not part of the set).
+        s.cels.push(Cel::raster(
+            layer,
+            FrameIndex::new(0),
+            PixelBufferId::new(10),
+            Size::new(8, 8),
+        ));
+        s.cels.push(Cel {
+            layer_id: layer,
+            frame_index: FrameIndex::new(1),
+            position: super::super::geometry::IVec2::zero(),
+            opacity: 255,
+            data: CelData::Linked {
+                source_frame: FrameIndex::new(0),
+            },
+            user_data: UserData::default(),
+        });
+        s.cels.push(Cel::raster(
+            layer,
+            FrameIndex::new(2),
+            PixelBufferId::new(11),
+            Size::new(8, 8),
+        ));
+        s.cels.push(Cel {
+            layer_id: layer,
+            frame_index: FrameIndex::new(3),
+            position: super::super::geometry::IVec2::zero(),
+            opacity: 255,
+            data: CelData::Linked {
+                source_frame: FrameIndex::new(0),
+            },
+            user_data: UserData::default(),
+        });
+        s
+    }
+
+    #[test]
+    fn resolve_source_frame_follows_link() {
+        let s = sprite_with_link_set();
+        let layer = LayerId::new(1);
+        assert_eq!(
+            s.resolve_source_frame(layer, FrameIndex::new(1)),
+            FrameIndex::new(0)
+        );
+        // An owning cel resolves to itself.
+        assert_eq!(
+            s.resolve_source_frame(layer, FrameIndex::new(2)),
+            FrameIndex::new(2)
+        );
+    }
+
+    #[test]
+    fn cel_link_set_groups_shared_source() {
+        let s = sprite_with_link_set();
+        let layer = LayerId::new(1);
+        // Asking from any member returns the whole set (source + linkers).
+        let from_link = s.cel_link_set(layer, FrameIndex::new(3));
+        assert_eq!(
+            from_link,
+            vec![FrameIndex::new(0), FrameIndex::new(1), FrameIndex::new(3)]
+        );
+        // The standalone raster cel is its own singleton set.
+        assert_eq!(
+            s.cel_link_set(layer, FrameIndex::new(2)),
+            vec![FrameIndex::new(2)]
+        );
     }
 }

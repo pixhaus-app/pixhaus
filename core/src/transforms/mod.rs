@@ -56,7 +56,10 @@ pub use antialias::{MlaaConfig, morphological_antialias};
 pub use error::{Error, Result};
 pub use flip::{flip_horizontal, flip_vertical};
 pub use perspective::perspective;
-pub use rotate::{rotate_90_ccw, rotate_90_cw, rotate_180, rotate_bilinear, rotate_rotsprite};
+pub use rotate::{
+    RotationAlgorithm, rotate, rotate_90_ccw, rotate_90_cw, rotate_180, rotate_bilinear,
+    rotate_nearest, rotate_rotsprite,
+};
 pub use scale::{scale_integer, scale_integer_down, scale_nearest};
 pub use skew::{skew_x, skew_y};
 pub use translate::translate;

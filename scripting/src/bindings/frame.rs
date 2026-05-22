@@ -106,6 +106,7 @@ mod tests {
     fn make_frame(duration_ms: u32) -> Frame {
         Frame {
             duration_ms,
+            duration_mul: 1.0,
             user_data: UserData::default(),
         }
     }

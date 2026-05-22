@@ -357,6 +357,7 @@ fn linked_cel(layer: u32, frame: u32, source: u32) -> Cel {
 fn ms(duration_ms: u32) -> Frame {
     Frame {
         duration_ms,
+        duration_mul: 1.0,
         user_data: UserData::default(),
     }
 }

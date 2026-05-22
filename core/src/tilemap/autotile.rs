@@ -76,6 +76,35 @@ pub enum AutotileKind {
     /// determines the output. Falls back to `default_tile` when no rule
     /// matches.
     Custom(AutotileRuleSet),
+    /// Per-tile peering bitmask. Each tile declares the 8-neighbor signature
+    /// it expects (in `BIT_*` order); placement builds the neighbor mask and
+    /// picks the tile whose signature matches exactly, falling back to the
+    /// best partial match. This is the standard authoring model for
+    /// pixel-art tilesets (e.g. 47-tile terrain sheets) — see
+    /// [`PeeringSet`]. Adopted from Pixelorama; see `THIRD_PARTY_NOTICES.md`.
+    Peering(PeeringSet),
+}
+
+/// A per-tile peering bitmask set.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize, TS)]
+#[ts(export)]
+pub struct PeeringSet {
+    /// One entry per authored tile, in any order.
+    pub tiles: Vec<PeeringTile>,
+    /// Tile emitted when `tiles` is empty.
+    pub default_tile: TileIndex,
+}
+
+/// One tile's peering signature.
+#[derive(Copy, Clone, Debug, Eq, PartialEq, Serialize, Deserialize, TS)]
+#[ts(export)]
+pub struct PeeringTile {
+    /// Expected-neighbor bitmask in `BIT_NW..BIT_SE` order. A set bit means
+    /// "this tile expects a matching neighbor in that direction".
+    #[ts(type = "number")]
+    pub peering: u8,
+    /// Tile index to place when this signature is selected.
+    pub tile: TileIndex,
 }
 
 // ---------------------------------------------------------------------------
@@ -271,7 +300,46 @@ pub fn resolve_autotile(
         AutotileKind::Corner16 => resolve_corner16(tilemap, x, y, is_same),
         AutotileKind::Minimal4 => resolve_minimal4(tilemap, x, y, is_same),
         AutotileKind::Custom(rules) => resolve_custom(tilemap, x, y, rules, is_same),
+        AutotileKind::Peering(set) => resolve_peering(tilemap, x, y, set, is_same),
     }
+}
+
+/// Picks a tile by per-tile peering signature: exact match first, then the
+/// signature sharing the most bits with the neighbor mask (ties broken by the
+/// fewest spurious bits, then declaration order). Falls back to `default_tile`.
+fn resolve_peering(
+    tilemap: &TilemapData,
+    x: u32,
+    y: u32,
+    set: &PeeringSet,
+    is_same: impl Fn(Option<TileCell>) -> bool,
+) -> TileCell {
+    let mask = build_8neighbor_mask(tilemap, x, y, &is_same);
+    let tile = pick_peering_tile(set, mask).unwrap_or(set.default_tile);
+    TileCell {
+        index: tile,
+        flags: TileFlags::empty(),
+    }
+}
+
+/// Resolves a neighbor `mask` to the best-matching tile in `set`, or `None`
+/// when the set is empty. Public so authoring tools can preview a selection.
+#[must_use]
+pub fn pick_peering_tile(set: &PeeringSet, mask: u8) -> Option<TileIndex> {
+    // Exact match wins outright.
+    if let Some(t) = set.tiles.iter().find(|t| t.peering == mask) {
+        return Some(t.tile);
+    }
+    // Otherwise maximize shared bits, then minimize spurious bits.
+    set.tiles
+        .iter()
+        .max_by_key(|t| {
+            let shared = (t.peering & mask).count_ones();
+            let spurious = (t.peering & !mask).count_ones();
+            // Higher shared, lower spurious. Encode as a single comparable key.
+            (shared, u32::from(u8::MAX) - spurious)
+        })
+        .map(|t| t.tile)
 }
 
 // ---------------------------------------------------------------------------
@@ -421,6 +489,72 @@ mod tests {
     use super::*;
     use crate::project::id::TileIndex;
     use crate::project::tilemap::{TileCell, TileFlags, TilemapData};
+
+    #[test]
+    fn peering_exact_match_wins() {
+        let set = PeeringSet {
+            tiles: vec![
+                PeeringTile {
+                    peering: BIT_N | BIT_E,
+                    tile: TileIndex::new(5),
+                },
+                PeeringTile {
+                    peering: BIT_N,
+                    tile: TileIndex::new(6),
+                },
+            ],
+            default_tile: TileIndex::new(0),
+        };
+        assert_eq!(
+            pick_peering_tile(&set, BIT_N | BIT_E),
+            Some(TileIndex::new(5))
+        );
+        assert_eq!(pick_peering_tile(&set, BIT_N), Some(TileIndex::new(6)));
+    }
+
+    #[test]
+    fn peering_falls_back_to_best_partial_match() {
+        let set = PeeringSet {
+            tiles: vec![
+                PeeringTile {
+                    peering: BIT_N | BIT_E | BIT_S,
+                    tile: TileIndex::new(1),
+                },
+                PeeringTile {
+                    peering: BIT_W,
+                    tile: TileIndex::new(2),
+                },
+            ],
+            default_tile: TileIndex::new(0),
+        };
+        // No exact entry for N|E: tile 1 shares 2 bits, tile 2 shares 0.
+        assert_eq!(
+            pick_peering_tile(&set, BIT_N | BIT_E),
+            Some(TileIndex::new(1))
+        );
+    }
+
+    #[test]
+    fn peering_empty_set_is_none() {
+        let set = PeeringSet {
+            tiles: Vec::new(),
+            default_tile: TileIndex::new(9),
+        };
+        assert_eq!(pick_peering_tile(&set, BIT_N), None);
+    }
+
+    #[test]
+    fn resolve_peering_uses_default_when_empty() {
+        let m = TilemapData::empty(3, 3);
+        let set = PeeringSet {
+            tiles: Vec::new(),
+            default_tile: TileIndex::new(7),
+        };
+        let cell = resolve_autotile(&m, 1, 1, &AutotileKind::Peering(set), |c| {
+            c.is_some_and(|c| c.index.get() > 0)
+        });
+        assert_eq!(cell.index, TileIndex::new(7));
+    }
 
     // Helper: build a tilemap where every cell with index > 0 counts as "same".
     fn filled_map(w: u32, h: u32) -> TilemapData {

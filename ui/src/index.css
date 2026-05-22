@@ -3578,6 +3578,26 @@ body {
   margin-top: 2px;
 }
 
+.timeline-panel__dur-mul {
+  margin-left: 3px;
+  padding: 0 3px;
+  font-size: 9px;
+  font-weight: 600;
+  border-radius: 2px;
+  background: var(--bg-active);
+  color: var(--primary, var(--text-primary));
+}
+
+.timeline-panel__dur-mul--idle {
+  background: transparent;
+  color: var(--text-disabled);
+}
+
+.timeline-panel__dur-mul--idle:hover {
+  background: var(--bg-active);
+  color: var(--text-secondary);
+}
+
 .timeline-panel__dur-input {
   width: calc(var(--tl-frame-w, 36px) - 4px);
   height: 18px;

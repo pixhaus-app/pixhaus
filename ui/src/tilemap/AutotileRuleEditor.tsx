@@ -235,16 +235,7 @@ const AutotileRuleEditor: Component = () => {
       // `custom`, snapshot the live rules + default_tile so the
       // persisted value reflects exactly what's on screen.
       const liveKind = localAutotileKind();
-      const payload: AutotileKind | null =
-        liveKind === null
-          ? null
-          : liveKind.kind === "custom"
-            ? {
-                kind: "custom",
-                rules: [...autotileRules],
-                default_tile: autotileDefaultTile(),
-              }
-            : { kind: liveKind.kind };
+      const payload: AutotileKind | null = liveKind === null ? null : buildKind(liveKind.kind);
       tilesetSetAutotile(sidNow, cur.tilesetId, payload)
         .then((updated) => {
           const stillCurrent = activeTilemapCtx();
@@ -273,6 +264,11 @@ const AutotileRuleEditor: Component = () => {
         rules: [...autotileRules],
         default_tile: autotileDefaultTile(),
       };
+    }
+    // Peering carries a per-tile signature set; a dedicated editor for it is
+    // a follow-up, so selecting it here starts from an empty set.
+    if (k === "peering") {
+      return { kind: "peering", tiles: [], default_tile: 0 };
     }
     return { kind: k };
   }

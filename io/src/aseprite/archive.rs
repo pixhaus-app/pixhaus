@@ -279,6 +279,7 @@ pub fn document_to_archive(
             .iter()
             .map(|f| Frame {
                 duration_ms: u32::from(f.duration_ms),
+                duration_mul: 1.0,
                 user_data: UserData::default(),
             })
             .collect();
@@ -1992,6 +1993,7 @@ mod tests {
 
         let frame = pixhaus_core::project::Frame {
             duration_ms: 100,
+            duration_mul: 1.0,
             user_data: UserData::default(),
         };
 

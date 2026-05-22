@@ -97,11 +97,13 @@ pub fn sample_project() -> Project {
     let frames = vec![
         Frame {
             duration_ms: 100,
+            duration_mul: 1.0,
             user_data: UserData::default(),
         },
         Frame::default(),
         Frame {
             duration_ms: 250,
+            duration_mul: 1.0,
             user_data: UserData {
                 text: Some("hold".into()),
                 color: None,

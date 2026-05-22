@@ -14,6 +14,16 @@ export type Frame = {
  */
 duration_ms: number, 
 /**
+ * Float multiplier on the frame's effective on-screen time, adopted
+ * from Pixelorama's per-frame `duration`. `1.0` plays at the base
+ * `duration_ms`; `2.0` holds twice as long; `0.5` half. Lets an artist
+ * re-time a beat ("this frame holds 4x") without editing milliseconds,
+ * while `duration_ms` stays the absolute base that round-trips with
+ * Aseprite. Files written before this field load with `1.0` and re-save
+ * with the field omitted. See `THIRD_PARTY_NOTICES.md`.
+ */
+duration_mul?: number, 
+/**
  * Free-form user metadata.
  */
 user_data?: UserData, };
