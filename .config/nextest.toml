@@ -1,10 +1,10 @@
 # Nextest configuration.
 #
-# Tests must never touch the real OS credential store. Setting
-# PIXHAUS_KEYRING_MOCK routes keychain access through keyring's in-memory
-# sample store (see ai/src/backends/keys.rs::ensure_store), so a test that
-# constructs an AI backend no longer pops the macOS login Keychain prompt.
-# Each nextest test runs in its own process, so without this several prompts
-# could appear in a row.
-[env]
-PIXHAUS_KEYRING_MOCK = "1"
+# Keychain isolation is NOT configured here. nextest has no top-level `[env]`
+# table — it silently ignores one (it only injects env vars from setup scripts
+# or Cargo's `[env]` in `.cargo/config.toml`), so an earlier `[env]` block here
+# was a no-op and every test still popped the macOS login Keychain dialog.
+#
+# Instead, ai/src/backends/keys.rs::mock_store_requested() keys off the
+# `NEXTEST` variable that cargo-nextest sets in every test process, falling
+# back to the in-memory keyring store. No config here has to stay in sync.

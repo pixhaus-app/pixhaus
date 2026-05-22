@@ -21,6 +21,35 @@ const SERVICE_PREFIX: &str = "pixhaus";
 /// Guards one-time registration of the process-global keychain store.
 static STORE_INIT: Once = Once::new();
 
+/// Pure decision: should keychain access route through the in-memory store
+/// instead of the real OS keychain?
+///
+/// `mock` is the explicit `PIXHAUS_KEYRING_MOCK` opt-in; `under_nextest` is
+/// cargo-nextest's auto-set `NEXTEST` marker. Split out so the policy is
+/// unit-testable without touching the process environment.
+fn should_use_mock_store(mock: bool, under_nextest: bool) -> bool {
+    mock || under_nextest
+}
+
+/// True when this process must never touch the real OS keychain.
+///
+/// Two signals, either of which is enough:
+///
+/// - `PIXHAUS_KEYRING_MOCK` — explicit opt-in for anyone (e.g. plain
+///   `cargo test`) who wants the in-memory store.
+/// - `NEXTEST` — cargo-nextest sets this in every test process it spawns, so
+///   the project's standard test command is covered with no harness config to
+///   drift out of sync. (An earlier attempt set `PIXHAUS_KEYRING_MOCK` from a
+///   `[env]` table in `.config/nextest.toml`, but nextest has no such key and
+///   silently ignored it, so the variable never reached the tests and every
+///   one popped the macOS login Keychain dialog.)
+fn mock_store_requested() -> bool {
+    should_use_mock_store(
+        std::env::var_os("PIXHAUS_KEYRING_MOCK").is_some(),
+        std::env::var_os("NEXTEST").is_some(),
+    )
+}
+
 /// Registers the platform credential store as `keyring_core`'s default,
 /// exactly once per process, before the first [`Entry`] is created.
 ///
@@ -45,12 +74,13 @@ fn ensure_store() {
             return;
         }
 
-        // Test runs set `PIXHAUS_KEYRING_MOCK` (see .config/nextest.toml) so
-        // keychain access uses an in-memory store instead of the OS keychain.
-        // Without this, every test process that touches a backend would pop a
-        // native credential-store prompt (the macOS login Keychain password
-        // dialog). The dev app and production never set the variable.
-        if std::env::var_os("PIXHAUS_KEYRING_MOCK").is_some() {
+        // Test processes route keychain access through an in-memory store
+        // instead of the OS keychain (see `mock_store_requested`). Without
+        // this, every test process that touches a backend pops a native
+        // credential-store prompt (the macOS login Keychain dialog). The dev
+        // app and production trigger neither signal, so they use the real
+        // keychain.
+        if mock_store_requested() {
             if let Err(err) = keyring::use_sample_store(&std::collections::HashMap::new()) {
                 tracing::warn!(error = %err, "failed to register in-memory keyring store");
             }
@@ -120,6 +150,31 @@ impl ApiKeyStore {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn mock_store_policy_truth_table() {
+        assert!(!should_use_mock_store(false, false), "neither signal");
+        assert!(should_use_mock_store(true, false), "explicit opt-in");
+        assert!(should_use_mock_store(false, true), "nextest marker");
+        assert!(should_use_mock_store(true, true), "both signals");
+    }
+
+    #[test]
+    fn nextest_runs_request_the_mock_store() {
+        // Regression guard for the keychain-prompt-during-tests bug. cargo-nextest
+        // sets NEXTEST=1 in every test process, so under nextest the gate must
+        // resolve to the in-memory store with no extra configuration. If this
+        // fails, the suite is about to pop the macOS login Keychain dialog again.
+        if std::env::var_os("NEXTEST").is_none() {
+            // Not running under nextest (e.g. plain `cargo test`); the NEXTEST
+            // path doesn't apply. PIXHAUS_KEYRING_MOCK remains the opt-in.
+            return;
+        }
+        assert!(
+            mock_store_requested(),
+            "expected nextest's NEXTEST marker to select the in-memory store"
+        );
+    }
 
     #[test]
     fn get_missing_key_returns_not_found() {
