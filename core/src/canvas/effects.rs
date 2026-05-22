@@ -22,6 +22,7 @@
 use crate::project::Rgba;
 use crate::project::effect::LayerEffect;
 
+use super::blend::blend_normal;
 use super::buffer::PixelBuffer;
 use super::error::Result;
 
@@ -203,14 +204,16 @@ fn drop_shadow(
         }
     }
 
-    // Source art over the shadow.
+    // Source art over the shadow. Composite rather than overwrite so a
+    // semi-transparent source pixel still shows the shadow beneath it.
     for y in 0..h {
         for x in 0..w {
             let Some(s) = src.pixel(x, y) else { continue };
             if s.a == 0 {
                 continue;
             }
-            out.set_pixel(x, y, s);
+            let dst = out.pixel(x, y).unwrap_or_else(Rgba::transparent);
+            out.set_pixel(x, y, blend_normal(s, dst, 255));
         }
     }
     Ok(out)
@@ -302,6 +305,27 @@ mod tests {
         assert_eq!(out.pixel(2, 2), Some(WHITE));
         // Shadow one pixel down-right at half alpha.
         assert_eq!(out.pixel(3, 3), Some(Rgba::new(0, 0, 0, 128)));
+    }
+
+    #[test]
+    fn drop_shadow_blends_semi_transparent_source_over_shadow() {
+        // A semi-transparent source pixel sits exactly where another pixel's
+        // shadow lands. The source must composite over the shadow, not erase it.
+        let mut buf = PixelBuffer::new(3, 3).unwrap();
+        buf.set_pixel(0, 0, WHITE); // casts a shadow onto (1, 1)
+        buf.set_pixel(1, 1, Rgba::new(255, 255, 255, 128)); // half-opaque source
+        let out = apply_effect(
+            &buf,
+            &LayerEffect::DropShadow {
+                color: BLACK,
+                offset: IVec2::new(1, 1),
+                opacity: 255,
+            },
+        )
+        .unwrap();
+        // Half-opaque white over opaque-black shadow -> mid grey, fully opaque.
+        // A plain overwrite would have left (255, 255, 255, 128) instead.
+        assert_eq!(out.pixel(1, 1), Some(Rgba::new(128, 128, 128, 255)));
     }
 
     #[test]

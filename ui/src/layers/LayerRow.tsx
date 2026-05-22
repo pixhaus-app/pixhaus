@@ -31,7 +31,7 @@ import {
 // A 1px black 4-connected outline — the most common pixel-art layer effect,
 // offered as a one-click toggle on the active layer. Fuller effect editing
 // (drop shadow, brightness, reordering) goes through layer_set_effects.
-const DEFAULT_OUTLINE: LayerEffect = {
+const DEFAULT_OUTLINE: Extract<LayerEffect, { kind: "outline" }> = {
   kind: "outline",
   color: { r: 0, g: 0, b: 0, a: 255 },
   thickness: 1,
@@ -124,13 +124,28 @@ const LayerRow: Component<Props> = (props) => {
     setLayerBlendMode(props.spriteId, props.layer.id, value);
   }
 
-  const hasEffects = (): boolean => (props.layer.effects ?? []).length > 0;
+  const effects = (): LayerEffect[] => props.layer.effects ?? [];
+
+  // The button toggles only the default outline. Matching by value (not just
+  // "any effect present") keeps a drop-shadow or brightness effect intact when
+  // the outline is turned off; richer per-effect editing is a follow-up.
+  const isDefaultOutline = (effect: LayerEffect): boolean =>
+    effect.kind === "outline" &&
+    effect.thickness === DEFAULT_OUTLINE.thickness &&
+    effect.diagonal === DEFAULT_OUTLINE.diagonal &&
+    effect.color.r === DEFAULT_OUTLINE.color.r &&
+    effect.color.g === DEFAULT_OUTLINE.color.g &&
+    effect.color.b === DEFAULT_OUTLINE.color.b &&
+    effect.color.a === DEFAULT_OUTLINE.color.a;
+
+  const hasDefaultOutline = (): boolean => effects().some(isDefaultOutline);
 
   function handleEffectsToggle(e: MouseEvent): void {
     e.stopPropagation();
-    // Toggle the default outline on/off. Clearing drops the whole stack so
-    // the button reads as a simple on/off; richer editing is a follow-up.
-    setLayerEffects(props.spriteId, props.layer.id, hasEffects() ? [] : [DEFAULT_OUTLINE]);
+    const next = hasDefaultOutline()
+      ? effects().filter((effect) => !isDefaultOutline(effect))
+      : [...effects(), DEFAULT_OUTLINE];
+    setLayerEffects(props.spriteId, props.layer.id, next);
   }
 
   // Drag-to-reorder handlers.
@@ -321,10 +336,10 @@ const LayerRow: Component<Props> = (props) => {
           <button
             type="button"
             class="layer-row__icon-btn"
-            classList={{ "layer-row__icon-btn--active": hasEffects() }}
+            classList={{ "layer-row__icon-btn--active": hasDefaultOutline() }}
             onClick={handleEffectsToggle}
-            title={hasEffects() ? "Remove layer outline effect" : "Add layer outline effect"}
-            aria-pressed={hasEffects()}
+            title={hasDefaultOutline() ? "Remove layer outline effect" : "Add layer outline effect"}
+            aria-pressed={hasDefaultOutline()}
           >
             fx
           </button>

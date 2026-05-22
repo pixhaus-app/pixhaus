@@ -64,6 +64,7 @@ export type TransformOp =
   | { kind: "rotate180" }
   | { kind: "rotate_rot_sprite"; degrees: number }
   | { kind: "rotate_bilinear"; degrees: number }
+  | { kind: "rotate_nearest"; degrees: number }
   | { kind: "flip_horizontal" }
   | { kind: "flip_vertical" }
   | { kind: "skew_x"; factor: number }

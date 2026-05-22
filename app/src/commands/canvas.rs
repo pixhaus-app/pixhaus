@@ -21,7 +21,7 @@ use pixhaus_core::selection::algorithms::{
     select_polygon,
 };
 use pixhaus_core::transforms::{
-    self, MlaaConfig, RotateMode, ScaleMode, TransformSpec, morphological_antialias,
+    self, MlaaConfig, RotationAlgorithm, ScaleMode, TransformSpec, morphological_antialias,
 };
 use pixhaus_io::pixhaus::PixelBufferEntry;
 use pixhaus_vectorize::{CenterlineConfig, VectorImage, centerline_vectorize};
@@ -138,6 +138,11 @@ pub enum TransformOpArg {
         /// Rotation angle in degrees, counter-clockwise.
         degrees: f32,
     },
+    /// Arbitrary rotation via nearest-neighbor sampling (hard edges).
+    RotateNearest {
+        /// Rotation angle in degrees, counter-clockwise.
+        degrees: f32,
+    },
     /// Horizontal mirror.
     FlipHorizontal,
     /// Vertical mirror.
@@ -186,11 +191,15 @@ impl TransformOpArg {
             Self::Rotate180 => TransformSpec::Rotate180,
             Self::RotateRotSprite { degrees } => TransformSpec::RotateArbitrary {
                 degrees: *degrees,
-                mode: RotateMode::RotSprite,
+                algorithm: RotationAlgorithm::RotSprite,
             },
             Self::RotateBilinear { degrees } => TransformSpec::RotateArbitrary {
                 degrees: *degrees,
-                mode: RotateMode::Bilinear,
+                algorithm: RotationAlgorithm::Bilinear,
+            },
+            Self::RotateNearest { degrees } => TransformSpec::RotateArbitrary {
+                degrees: *degrees,
+                algorithm: RotationAlgorithm::NearestNeighbor,
             },
             Self::FlipHorizontal => TransformSpec::FlipHorizontal,
             Self::FlipVertical => TransformSpec::FlipVertical,

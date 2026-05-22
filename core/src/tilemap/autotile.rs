@@ -330,16 +330,19 @@ pub fn pick_peering_tile(set: &PeeringSet, mask: u8) -> Option<TileIndex> {
     if let Some(t) = set.tiles.iter().find(|t| t.peering == mask) {
         return Some(t.tile);
     }
-    // Otherwise maximize shared bits, then minimize spurious bits.
+    // Otherwise maximize shared bits, then minimize spurious bits. `max_by_key`
+    // keeps the last of equal elements, so add `Reverse(index)` to the key to
+    // make the first-declared tile win on a full tie, matching the doc above.
     set.tiles
         .iter()
-        .max_by_key(|t| {
+        .enumerate()
+        .max_by_key(|(i, t)| {
             let shared = (t.peering & mask).count_ones();
             let spurious = (t.peering & !mask).count_ones();
-            // Higher shared, lower spurious. Encode as a single comparable key.
-            (shared, u32::from(u8::MAX) - spurious)
+            // Higher shared, lower spurious, then earlier declaration.
+            (shared, u32::from(u8::MAX) - spurious, std::cmp::Reverse(*i))
         })
-        .map(|t| t.tile)
+        .map(|(_, t)| t.tile)
 }
 
 // ---------------------------------------------------------------------------
@@ -530,6 +533,30 @@ mod tests {
         // No exact entry for N|E: tile 1 shares 2 bits, tile 2 shares 0.
         assert_eq!(
             pick_peering_tile(&set, BIT_N | BIT_E),
+            Some(TileIndex::new(1))
+        );
+    }
+
+    #[test]
+    fn peering_tie_picks_first_declared() {
+        // Against mask N|S, both tiles share exactly one bit and add exactly
+        // one spurious bit, and neither is an exact match — a full tie that
+        // must resolve to the first-declared tile.
+        let set = PeeringSet {
+            tiles: vec![
+                PeeringTile {
+                    peering: BIT_N | BIT_E,
+                    tile: TileIndex::new(1),
+                },
+                PeeringTile {
+                    peering: BIT_S | BIT_W,
+                    tile: TileIndex::new(2),
+                },
+            ],
+            default_tile: TileIndex::new(0),
+        };
+        assert_eq!(
+            pick_peering_tile(&set, BIT_N | BIT_S),
             Some(TileIndex::new(1))
         );
     }

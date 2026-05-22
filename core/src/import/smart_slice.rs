@@ -134,21 +134,18 @@ pub fn detect_frames(image: &PixelBuffer, opts: SmartSliceOpts) -> Vec<Rect> {
 }
 
 /// In-bounds 4-connected neighbours of `(x, y)`.
+///
+/// Returns a fixed-size array iterator rather than a `Vec` so component
+/// labelling stays allocation-free in its inner loop.
 fn four_neighbours(x: u32, y: u32, w: u32, h: u32) -> impl Iterator<Item = (u32, u32)> {
-    let mut out = Vec::with_capacity(4);
-    if x > 0 {
-        out.push((x - 1, y));
-    }
-    if x + 1 < w {
-        out.push((x + 1, y));
-    }
-    if y > 0 {
-        out.push((x, y - 1));
-    }
-    if y + 1 < h {
-        out.push((x, y + 1));
-    }
-    out.into_iter()
+    [
+        x.checked_sub(1).map(|nx| (nx, y)),
+        (x + 1 < w).then_some((x + 1, y)),
+        y.checked_sub(1).map(|ny| (x, ny)),
+        (y + 1 < h).then_some((x, y + 1)),
+    ]
+    .into_iter()
+    .flatten()
 }
 
 #[cfg(test)]

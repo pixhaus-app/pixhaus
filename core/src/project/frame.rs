@@ -146,12 +146,12 @@ impl LoopDirection {
             Self::Reverse => fwd.into_iter().rev().collect(),
             Self::PingPong => {
                 let mut out = fwd.clone();
-                out.extend((start + 1..end).rev());
+                out.extend((start.saturating_add(1)..end).rev());
                 out
             }
             Self::PingPongReverse => {
                 let mut out: Vec<u32> = fwd.iter().copied().rev().collect();
-                out.extend(start + 1..end);
+                out.extend(start.saturating_add(1)..end);
                 out
             }
         }
@@ -290,6 +290,20 @@ mod tests {
     fn play_order_single_frame_and_empty() {
         assert_eq!(LoopDirection::PingPong.play_order(5, 5), vec![5]);
         assert!(LoopDirection::Forward.play_order(3, 1).is_empty());
+    }
+
+    #[test]
+    fn play_order_ping_pong_single_frame_at_u32_max_does_not_overflow() {
+        // A single-frame range at the top of the u32 range used to compute
+        // `start + 1`, panicking in debug builds. The tail must stay empty.
+        assert_eq!(
+            LoopDirection::PingPong.play_order(u32::MAX, u32::MAX),
+            vec![u32::MAX]
+        );
+        assert_eq!(
+            LoopDirection::PingPongReverse.play_order(u32::MAX, u32::MAX),
+            vec![u32::MAX]
+        );
     }
 
     #[test]

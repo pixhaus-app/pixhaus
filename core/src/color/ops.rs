@@ -50,6 +50,9 @@ pub const DEFAULT_SIMILARITY_TOLERANCE: f32 = 0.392_157;
 // Ported from Pixelorama (MIT-licensed, Orama Interactive 2019-present).
 // Upstream: src/Autoload/DrawingAlgos.gd `similar_colors`.
 // Original: `c1.distance_squared_to(c2) < tol * tol` over linear color.
+// We use `<=` deliberately so `tolerance == 0.0` means exact match (the
+// documented contract above and the `tolerance, 0.0` test below); strict
+// `<` would make a zero tolerance reject identical colors.
 // See THIRD_PARTY_NOTICES.md for the full upstream copyright notice.
 #[must_use]
 pub fn similar_colors(a: Rgba, b: Rgba, tolerance: f32) -> bool {

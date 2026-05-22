@@ -2185,4 +2185,30 @@ mod tests {
             assert_eq!(chunk, &[255, 0, 0, 255]);
         }
     }
+
+    // ── layer_set_effects ────────────────────────────────────────────────────
+
+    #[test]
+    fn set_effects_persists_stack_to_target_layer() {
+        // Exercises the data path `layer_set_effects` runs through
+        // `with_layer_mut` -> `find_layer_mut`, without a Tauri `State`.
+        let mut doc = fresh_doc(Size::new(8, 8));
+        let layer_id = add_raster_layer(&mut doc, 1, "art");
+
+        let effects = vec![
+            LayerEffect::Outline {
+                color: pixhaus_core::project::Rgba::new(0, 0, 0, 255),
+                thickness: 1,
+                diagonal: false,
+            },
+            LayerEffect::Invert,
+        ];
+        find_layer_mut(&mut doc, SpriteId::new(1), layer_id)
+            .unwrap()
+            .effects = effects.clone();
+
+        let sprite = find_sprite(&doc, SpriteId::new(1)).unwrap();
+        let layer = sprite.layers.iter().find(|l| l.id == layer_id).unwrap();
+        assert_eq!(layer.effects, effects);
+    }
 }
