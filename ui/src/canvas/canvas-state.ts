@@ -9,6 +9,14 @@ import { createSignal } from "solid-js";
 import type { CanvasState, LayerId, SpriteId } from "../lib/types";
 import { canvasSetViewport } from "../lib/commands/canvas";
 import { fitZoom } from "./viewport";
+import {
+  activeSpriteId,
+  setActiveSpriteId,
+  activeFrameIndex,
+  setActiveFrameIndex,
+  activeLayerId,
+  setActiveLayerId,
+} from "../stores/active-store";
 
 // ── Viewport state ─────────────────────────────────────────────────────────
 
@@ -31,12 +39,17 @@ export const [onionSkinOpacity, setOnionSkinOpacity] = createSignal(0.4);
 
 // Currently foregrounded sprite, frame, and layer.
 //
-// activeLayerId is owned by this module (not the layer panel) so the
-// canvas input handler can read it without a circular import. The
-// layer panel writes to it via setActiveLayerId on selection.
-export const [activeSpriteId, setActiveSpriteId] = createSignal<SpriteId | null>(null);
-export const [activeFrameIndex, setActiveFrameIndex] = createSignal<number>(0);
-export const [activeLayerId, setActiveLayerId] = createSignal<LayerId | null>(null);
+// The triple now lives in stores/active-store.ts (a leaf module) so canvas
+// and the layer panel can both read it without importing each other. Re-export
+// here so existing `from "../canvas/canvas-state"` imports keep resolving.
+export {
+  activeSpriteId,
+  setActiveSpriteId,
+  activeFrameIndex,
+  setActiveFrameIndex,
+  activeLayerId,
+  setActiveLayerId,
+} from "../stores/active-store";
 
 // Active selection rect in canvas coordinates, null when no selection.
 export const [selectionRect, setSelectionRect] = createSignal<{
