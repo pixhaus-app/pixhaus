@@ -236,6 +236,10 @@ pub enum VariantOrigin {
     Promotion,
     CrossModelGrid,
     ManualImport,
+    /// Effect-stripped neutral anchor derived from the canonical pose.
+    NeutralReset,
+    /// Directional anchor derived from the neutral variant.
+    DirectionalAnchor,
 }
 
 /// Region used by regional reference refinement.
@@ -285,6 +289,194 @@ pub struct ChatTurn {
     pub resulting_variant_id: SheetVariantId,
 }
 
+/// Facing direction for a directional anchor.
+///
+/// East is the horizontal flip of west and is never generated or stored as
+/// its own variant — see [`DirectionalAnchors::east_from_west`].
+#[derive(Copy, Clone, Debug, Eq, PartialEq, Hash, Serialize, Deserialize, TS)]
+#[serde(rename_all = "snake_case")]
+#[ts(export)]
+pub enum AnchorDirection {
+    /// Facing the viewer (front).
+    South,
+    /// Facing left (the canonical side view).
+    West,
+    /// Facing away (back).
+    North,
+    /// Facing right — the horizontal flip of [`Self::West`].
+    East,
+}
+
+/// The kind of animation a derived sheet holds.
+#[derive(Copy, Clone, Debug, Eq, PartialEq, Hash, Serialize, Deserialize, TS)]
+#[serde(rename_all = "snake_case")]
+#[ts(export)]
+pub enum AnimationKind {
+    /// A looping idle.
+    Idle,
+    /// A walk cycle.
+    Walk,
+    /// An attack beat.
+    Attack,
+}
+
+/// Directional anchors derived from the neutral variant.
+///
+/// Each directional variant carries `parent_variant_id == neutral.id` so the
+/// staleness cascade can walk the edge back. East is the horizontal flip of
+/// west, so it conditions on the west variant and is not stored separately.
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize, TS)]
+#[ts(export)]
+pub struct DirectionalAnchors {
+    /// South (front) directional anchor.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub south: Option<SheetVariant>,
+    /// West (side) directional anchor. East flips this.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub west: Option<SheetVariant>,
+    /// North (back) directional anchor.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub north: Option<SheetVariant>,
+    /// `true` once east is enabled — east derives from west by a horizontal
+    /// flip rather than its own generation.
+    #[serde(default)]
+    pub east_from_west: bool,
+}
+
+impl DirectionalAnchors {
+    /// Returns the variant a direction conditions on. East returns the west
+    /// variant (the caller flips it).
+    #[must_use]
+    pub fn get(&self, dir: AnchorDirection) -> Option<&SheetVariant> {
+        match dir {
+            AnchorDirection::South => self.south.as_ref(),
+            AnchorDirection::West | AnchorDirection::East => self.west.as_ref(),
+            AnchorDirection::North => self.north.as_ref(),
+        }
+    }
+
+    /// Stores a generated directional variant. East is a no-op store — call
+    /// with [`AnchorDirection::East`] only to flip `east_from_west` on.
+    pub fn set(&mut self, dir: AnchorDirection, variant: SheetVariant) {
+        match dir {
+            AnchorDirection::South => self.south = Some(variant),
+            AnchorDirection::West => self.west = Some(variant),
+            AnchorDirection::North => self.north = Some(variant),
+            AnchorDirection::East => self.east_from_west = true,
+        }
+    }
+
+    /// `true` when no directional anchor has been derived.
+    #[must_use]
+    pub fn is_empty(&self) -> bool {
+        self.south.is_none() && self.west.is_none() && self.north.is_none() && !self.east_from_west
+    }
+}
+
+/// One animation sheet derived from a directional anchor, with the edge back
+/// to its source for staleness tracking.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, TS)]
+#[ts(export)]
+pub struct DerivedSheet {
+    /// Which animation this sheet holds.
+    pub animation_kind: AnimationKind,
+    /// Which direction it was generated for.
+    pub direction: AnchorDirection,
+    /// The `FrameTag` / `Animation` name this sheet landed as on the sprite.
+    pub tag_name: String,
+    /// The directional anchor variant id this was animated from. When the
+    /// upstream directional anchor changes id, this sheet is stale.
+    pub derived_from: SheetVariantId,
+}
+
+/// The character anchor cascade for a sprite entity.
+///
+/// The hero `canonical` lives on the parent [`ReferenceSheet`]. This struct
+/// adds the downstream layers the animation pipeline derives from it:
+///
+/// - `neutral` — the canonical stripped of baked-in effects (no glow,
+///   fireball, charged weapon, spell trail). Animations root here, not on the
+///   hero shot, so per-attack effects can be added cleanly later.
+/// - `directional` — south / west / north anchors derived from `neutral`
+///   (east is the flip of west).
+/// - `derived_sheets` — the idle / walk / attack sheets derived from the
+///   directional anchors.
+///
+/// Each layer points at its source via `parent_variant_id` / `derived_from`,
+/// so re-rolling the canonical pose cascades staleness down the chain.
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize, TS)]
+#[ts(export)]
+pub struct CharacterAnchor {
+    /// The effect-stripped neutral anchor. `parent_variant_id == canonical.id`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub neutral: Option<SheetVariant>,
+    /// Directional anchors derived from the neutral variant.
+    #[serde(default, skip_serializing_if = "DirectionalAnchors::is_empty")]
+    pub directional: DirectionalAnchors,
+    /// Animation sheets derived from the directional anchors.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub derived_sheets: Vec<DerivedSheet>,
+}
+
+impl CharacterAnchor {
+    /// `true` when no neutral, directional, or derived data exists.
+    #[must_use]
+    pub fn is_empty(&self) -> bool {
+        self.neutral.is_none() && self.directional.is_empty() && self.derived_sheets.is_empty()
+    }
+
+    /// The neutral anchor is stale when it is missing or was not derived from
+    /// the current `canonical` variant.
+    #[must_use]
+    pub fn is_neutral_stale(&self, canonical: &SheetVariant) -> bool {
+        match &self.neutral {
+            None => true,
+            Some(neutral) => neutral.parent_variant_id != Some(canonical.id),
+        }
+    }
+
+    /// A directional anchor is stale when it is missing or was not derived
+    /// from the current `neutral` variant. East mirrors west's staleness.
+    #[must_use]
+    pub fn is_directional_stale(&self, dir: AnchorDirection, canonical: &SheetVariant) -> bool {
+        if self.is_neutral_stale(canonical) {
+            return true;
+        }
+        let Some(neutral) = &self.neutral else {
+            return true;
+        };
+        match self.directional.get(dir) {
+            None => true,
+            Some(variant) => variant.parent_variant_id != Some(neutral.id),
+        }
+    }
+
+    /// A derived sheet is stale when an upstream anchor changed.
+    ///
+    /// The source it should derive from is the directional anchor for its
+    /// direction when one exists, otherwise the neutral variant (animations
+    /// condition on neutral directly when no directional anchor is present).
+    /// The sheet is stale when the neutral is stale, the directional anchor it
+    /// derived from is stale, or its `derived_from` edge no longer matches the
+    /// current source id.
+    #[must_use]
+    pub fn is_sheet_stale(&self, sheet: &DerivedSheet, canonical: &SheetVariant) -> bool {
+        if self.is_neutral_stale(canonical) {
+            return true;
+        }
+        match self.directional.get(sheet.direction) {
+            Some(anchor) => {
+                self.is_directional_stale(sheet.direction, canonical)
+                    || sheet.derived_from != anchor.id
+            }
+            None => match &self.neutral {
+                Some(neutral) => sheet.derived_from != neutral.id,
+                None => true,
+            },
+        }
+    }
+}
+
 /// A structured asset reference sheet: the canonical AI anchor and all
 /// drafts/history for one sprite entity.
 ///
@@ -292,7 +484,7 @@ pub struct ChatTurn {
 /// approves a generated or imported variant. AI verbs only use approved
 /// canonical sheets as anchors; variants in `variants` are retained as
 /// candidates/history and never anchor generation on their own.
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 pub struct ReferenceSheet {
     /// The current canonical variant — the user-approved sheet. `None`
     /// means candidates exist, but none has been approved as the AI
@@ -315,6 +507,12 @@ pub struct ReferenceSheet {
     /// [`AssetLibrary`](super::AssetLibrary).
     #[serde(default, skip_serializing_if = "AssetInfo::is_empty")]
     pub info: AssetInfo,
+
+    /// The character-anchor cascade derived from `canonical`: the neutral
+    /// variant, directional anchors, and derived animation sheets. Empty
+    /// until the animation pipeline derives a neutral anchor.
+    #[serde(default, skip_serializing_if = "CharacterAnchor::is_empty")]
+    pub anchor: CharacterAnchor,
 }
 
 impl TS for ReferenceSheet {
@@ -334,6 +532,7 @@ canonical: SheetVariant | null,
 variants?: Array<SheetVariant>,
 prompts?: Array<PromptEntry>,
 info?: AssetInfo,
+anchor?: CharacterAnchor,
 }"
         .into()
     }
@@ -353,6 +552,7 @@ info?: AssetInfo,
         v.visit::<SheetVariant>();
         v.visit::<PromptEntry>();
         v.visit::<AssetInfo>();
+        v.visit::<CharacterAnchor>();
     }
 
     fn output_path() -> Option<PathBuf> {
@@ -616,4 +816,99 @@ pub enum PromptResult {
     Variant(SheetVariantId),
     /// The prompt failed; the string is the user-facing error message.
     Error(String),
+}
+
+#[cfg(test)]
+mod anchor_tests {
+    use super::*;
+    use crate::project::id::SheetVariantId;
+
+    fn variant(id: u32, parent: Option<u32>) -> SheetVariant {
+        let mut v = SheetVariant::from_image(
+            SheetVariantId::new(id),
+            0,
+            ReferenceImage {
+                bytes: vec![id as u8],
+                mime: "image/png".into(),
+            },
+        );
+        v.parent_variant_id = parent.map(SheetVariantId::new);
+        v
+    }
+
+    #[test]
+    fn empty_anchor_round_trips_and_skips_serialization() {
+        let sheet = ReferenceSheet::default();
+        assert!(sheet.anchor.is_empty());
+        let json = serde_json::to_string(&sheet).unwrap();
+        assert!(!json.contains("anchor"), "empty anchor omitted: {json}");
+        let bytes = rmp_serde::to_vec_named(&sheet).unwrap();
+        let back: ReferenceSheet = rmp_serde::from_slice(&bytes).unwrap();
+        assert_eq!(sheet, back);
+    }
+
+    #[test]
+    fn neutral_stale_when_missing_or_wrong_parent() {
+        let canonical = variant(1, None);
+        assert!(
+            CharacterAnchor::default().is_neutral_stale(&canonical),
+            "missing neutral is stale"
+        );
+
+        let anchor = CharacterAnchor {
+            neutral: Some(variant(2, Some(1))),
+            ..Default::default()
+        };
+        assert!(
+            !anchor.is_neutral_stale(&canonical),
+            "neutral derived from canonical"
+        );
+
+        // Re-roll the canonical → new id 3; the old neutral's parent (1) no
+        // longer matches, so it's stale.
+        let rerolled = variant(3, None);
+        assert!(anchor.is_neutral_stale(&rerolled));
+    }
+
+    #[test]
+    fn directional_and_sheet_staleness_cascade() {
+        let canonical = variant(1, None);
+        let mut directional = DirectionalAnchors::default();
+        directional.set(AnchorDirection::South, variant(3, Some(2)));
+        let anchor = CharacterAnchor {
+            neutral: Some(variant(2, Some(1))),
+            directional,
+            derived_sheets: vec![DerivedSheet {
+                animation_kind: AnimationKind::Idle,
+                direction: AnchorDirection::South,
+                tag_name: "idle-south".into(),
+                derived_from: SheetVariantId::new(3),
+            }],
+        };
+
+        let sheet = &anchor.derived_sheets[0];
+        assert!(!anchor.is_directional_stale(AnchorDirection::South, &canonical));
+        assert!(!anchor.is_sheet_stale(sheet, &canonical));
+
+        // Re-roll canonical: neutral parent (1) no longer matches → everything
+        // downstream cascades stale.
+        let rerolled = variant(9, None);
+        assert!(anchor.is_neutral_stale(&rerolled));
+        assert!(anchor.is_directional_stale(AnchorDirection::South, &rerolled));
+        assert!(anchor.is_sheet_stale(sheet, &rerolled));
+    }
+
+    #[test]
+    fn east_conditions_on_west_and_flips() {
+        let mut dirs = DirectionalAnchors::default();
+        dirs.set(AnchorDirection::West, variant(5, Some(2)));
+        dirs.set(AnchorDirection::East, variant(99, Some(2))); // east is a flag, not stored
+        assert!(dirs.east_from_west);
+        // East conditions on the west variant.
+        assert_eq!(
+            dirs.get(AnchorDirection::East).map(|v| v.id),
+            Some(SheetVariantId::new(5))
+        );
+        assert!(dirs.get(AnchorDirection::North).is_none());
+    }
 }

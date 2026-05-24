@@ -932,6 +932,7 @@ mod tests {
                     )],
                     prompts: Vec::new(),
                     info: AssetInfo::default(),
+                    ..Default::default()
                 })),
             },
             ai: AiMetadata::default(),

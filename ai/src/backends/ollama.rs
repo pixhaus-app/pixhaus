@@ -188,6 +188,7 @@ impl InferenceBackend for OllamaBackend {
             | InferenceRequest::ImageEdit(_)
             | InferenceRequest::ImageInpaint(_)
             | InferenceRequest::FrameInterpolation(_)
+            | InferenceRequest::ImageToVideo(_)
             | InferenceRequest::Replicate(_)
             | InferenceRequest::ComfyUi(_) => {
                 warn!("Ollama does not support this request type");

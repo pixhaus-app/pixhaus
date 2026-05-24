@@ -2,6 +2,7 @@ import { open as dialogOpen, save as dialogSave, confirm, message } from "../lib
 import { isCommandPaletteOpen, openCommandPalette, closeCommandPalette } from "../palette-state";
 import { openPreferences } from "../preferences/preferences-state";
 import { openCompositionLibrary } from "../composition-library/composition-library-state";
+import { openAnimationStudio } from "../animation/animation-studio-state";
 import { keybindPreset, customKeybinds } from "../preferences/preferences-store";
 import { ASEPRITE_DEFAULTS, PHOTOSHOP_DEFAULTS, defaultCombo } from "../keybinds/defaults";
 import {
@@ -23,7 +24,6 @@ import {
 import { activeProject, setActiveProject, pushRecentProject } from "../project-state";
 import { extractFilename } from "../lib/utils/path";
 import { reportCommandFailure } from "../lib/utils/errors";
-import { openAnimatedSpriteSheetForm } from "../verbs/animated-sprite-sheet/state";
 import {
   activeSpriteId,
   setActiveSpriteId,
@@ -227,6 +227,24 @@ function buildExportCommand(spec: ExportSpec): [string, CommandEntry] {
 }
 
 const COMMANDS: ReadonlyMap<string, CommandEntry> = new Map<string, CommandEntry>([
+  // ── AI ─────────────────────────────────────────────────────────────────────
+  [
+    "ai:animations",
+    {
+      id: "ai:animations",
+      label: "Animation studio",
+      category: "AI",
+      keywords: ["animation", "studio", "walk", "idle", "sprite sheet"],
+      handler: () => {
+        const entity = selectedEntityId();
+        if (entity === null) {
+          pushToast({ kind: "info", title: "Select a sprite entity first." });
+          return;
+        }
+        openAnimationStudio(entity);
+      },
+    },
+  ],
   // ── File ─────────────────────────────────────────────────────────────────
   [
     "file:new",
@@ -1128,16 +1146,6 @@ const COMMANDS: ReadonlyMap<string, CommandEntry> = new Map<string, CommandEntry
   // toast — meaningfully different from the silent stub these entries used
   // to call. A future PR will land per-verb input modals; until then,
   // power users invoke verbs from the plugin SDK or scripting.
-  [
-    "ai:animated-sprite-sheet",
-    {
-      id: "ai:animated-sprite-sheet",
-      label: "Animated Sprite Sheet from Prompt",
-      category: "AI",
-      keywords: ["animate", "sheet", "grid", "character", "choreography", "falsprite", "animation"],
-      handler: () => openAnimatedSpriteSheetForm(),
-    },
-  ],
   [
     "ai:inbetween",
     {

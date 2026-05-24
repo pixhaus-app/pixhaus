@@ -98,6 +98,21 @@ export function frameTagRename(
   return invoke<void>("frame_tag_rename", { sprite_id, old_name, new_name });
 }
 
+/** Sets a frame tag's loop direction and repeat count. */
+export function frameTagSetPlayback(
+  sprite_id: SpriteId,
+  tag_name: string,
+  loop_direction: LoopDirection,
+  repeat: number,
+): Promise<void> {
+  return invoke<void>("frame_tag_set_playback", {
+    sprite_id,
+    tag_name,
+    loop_direction,
+    repeat,
+  });
+}
+
 /** Returns all frames in a sprite's timeline. */
 export function frameList(sprite_id: SpriteId): Promise<Frame[]> {
   return invoke<Frame[]>("frame_list", { sprite_id });

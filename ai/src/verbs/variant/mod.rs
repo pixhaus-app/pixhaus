@@ -87,6 +87,16 @@ pub enum VariantMode {
         #[serde(default = "default_count")]
         count: u32,
     },
+    /// Neutral anchor reset: strip the baked-in effects (glow, fireball,
+    /// charged weapon, spell trail, particles, rim light) from a hero-shot
+    /// anchor, leaving a clean neutral pose to derive directions and
+    /// animations from. The methodology's Stage 3; has no analogue in the
+    /// palette / equipment / expression categories. Requires `IMAGE_EDIT`.
+    StripBakedEffects {
+        /// Extra negative terms appended to the built-in effect rails.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        extra_negatives: Option<String>,
+    },
 }
 
 fn default_count() -> u32 {
@@ -275,6 +285,8 @@ impl Verb for VariantVerb {
                     ));
                 }
             }
+            // The prompt is built in, so there's nothing to validate.
+            VariantMode::StripBakedEffects { .. } => {}
         }
 
         Ok(())
@@ -313,8 +325,37 @@ impl Verb for VariantVerb {
                 let enriched = enrich_description_with_anchor(&description, &ctx);
                 Self::invoke_text_edit(backend, enriched, count, ictx, progress, cancel).await
             }
+            VariantMode::StripBakedEffects { extra_negatives } => {
+                let backend = crate::verbs::ctx_fat_backend(&ctx)?;
+                let prompt = strip_baked_effects_prompt(extra_negatives.as_deref());
+                Self::invoke_text_edit(backend, prompt, 1, ictx, progress, cancel).await
+            }
         }
     }
+}
+
+/// Builds the neutral-anchor-reset edit prompt: keep the character, strip
+/// every baked-in effect. The hard negative rails are the methodology's —
+/// effects must not bleed into the neutral anchor, or they leak into every
+/// derived direction and animation frame.
+#[must_use]
+pub fn strip_baked_effects_prompt(extra_negatives: Option<&str>) -> String {
+    let mut prompt = String::from(
+        "Remove all baked-in effects from this character: no glow, no fireball, no charged \
+         weapon, no spell trail, no particles, no sparks, no rim light, no dramatic lighting, \
+         no motion blur. Keep the exact same character — identical pose, palette, proportions, \
+         framing, and art style — in a flat, clean, neutral resting stance. \
+         Do not add, remove, or restyle the character itself.",
+    );
+    if let Some(extra) = extra_negatives {
+        let extra = extra.trim();
+        if !extra.is_empty() {
+            prompt.push_str(" Also avoid: ");
+            prompt.push_str(extra);
+            prompt.push('.');
+        }
+    }
+    prompt
 }
 
 // ── Mode helpers ──────────────────────────────────────────────────────────────
@@ -467,9 +508,9 @@ impl VariantVerb {
                     "backend returned a text response to an image-edit request".into(),
                 ));
             }
-            InferenceResponse::Frames(_) => {
+            InferenceResponse::Frames(_) | InferenceResponse::Video(_) => {
                 return Err(VerbError::Backend(
-                    "backend returned frames to an image-edit request".into(),
+                    "backend returned frames/video to an image-edit request".into(),
                 ));
             }
             InferenceResponse::Raw(_) => {
@@ -629,7 +670,24 @@ mod tests {
     use async_trait::async_trait;
     use tokio_util::sync::CancellationToken;
 
+    use super::strip_baked_effects_prompt;
     use pixhaus_core::project::{FrameIndex, ProjectMetadata, SpriteId};
+
+    #[test]
+    fn strip_baked_effects_prompt_carries_negative_rails() {
+        let p = strip_baked_effects_prompt(None);
+        for needle in [
+            "no glow",
+            "no fireball",
+            "no spell trail",
+            "no particles",
+            "neutral",
+        ] {
+            assert!(p.contains(needle), "missing rail: {needle}");
+        }
+        let extra = strip_baked_effects_prompt(Some("no cape"));
+        assert!(extra.contains("no cape"));
+    }
 
     use crate::backends::bridge::BackendProxy;
     use crate::backends::{

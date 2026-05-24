@@ -13,7 +13,6 @@ import ToastHost from "../lib/toast/ToastHost";
 import UpdateAvailableModal from "./UpdateAvailableModal";
 import CanvasSizeDialog from "./CanvasSizeDialog";
 import VerbInvokeHost from "../lib/ai/VerbInvokeHost";
-import AnimatedSpriteSheetHost from "../verbs/animated-sprite-sheet/AnimatedSpriteSheetHost";
 import StatusBar from "./StatusBar";
 import WelcomeScreen from "./WelcomeScreen";
 import Canvas from "../canvas/Canvas";
@@ -37,6 +36,8 @@ import { setupPaletteColorSync } from "../canvas/tools/palette-color-sync";
 import { installTilemapCtxSync } from "../tilemap/tilemap-ctx-sync";
 import ReferenceSheetEditor from "../sheet/ReferenceSheetEditor";
 import { isSheetEditorOpen } from "../sheet/sheet-state";
+import AnimationStudio from "../animation/AnimationStudio";
+import { isAnimationStudioOpen } from "../animation/animation-studio-state";
 import RightRail from "./RightRail";
 import {
   isLibraryCollapsed,
@@ -127,25 +128,27 @@ const Shell: Component = () => {
                 <LibraryPanel />
               </Show>
               <div class="editor-layout__canvas-area">
-                <Show when={!isSheetEditorOpen()} fallback={<ReferenceSheetEditor />}>
-                  <div class="editor-layout__canvas">
-                    <Canvas />
-                  </div>
-                  <Show
-                    when={!isTimelineCollapsed()}
-                    fallback={
-                      <button
-                        class="timeline-dock-collapsed"
-                        onClick={toggleTimelineCollapsed}
-                        title="Show timeline"
-                        aria-label="Show timeline panel"
-                        data-testid="timeline-expand"
-                      >
-                        ▴
-                      </button>
-                    }
-                  >
-                    <TimelinePanel />
+                <Show when={!isAnimationStudioOpen()} fallback={<AnimationStudio />}>
+                  <Show when={!isSheetEditorOpen()} fallback={<ReferenceSheetEditor />}>
+                    <div class="editor-layout__canvas">
+                      <Canvas />
+                    </div>
+                    <Show
+                      when={!isTimelineCollapsed()}
+                      fallback={
+                        <button
+                          class="timeline-dock-collapsed"
+                          onClick={toggleTimelineCollapsed}
+                          title="Show timeline"
+                          aria-label="Show timeline panel"
+                          data-testid="timeline-expand"
+                        >
+                          ▴
+                        </button>
+                      }
+                    >
+                      <TimelinePanel />
+                    </Show>
                   </Show>
                 </Show>
               </div>
@@ -176,7 +179,6 @@ const Shell: Component = () => {
       <EntityCreateModal />
 
       <VerbInvokeHost />
-      <AnimatedSpriteSheetHost />
       <ToastHost />
 
       <Show when={!crashReportingDialogShown()}>

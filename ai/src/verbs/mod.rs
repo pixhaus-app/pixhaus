@@ -45,7 +45,7 @@
 //!
 //! `ctx_fat_backend` is the no-request-type escape hatch for verbs that
 //! need the fat trait reference but don't fit one of the typed helpers
-//! (today: `tileset_from_description`, `animated_sprite_sheet`).
+//! (today: `tileset_from_description`).
 //!
 //! Adding a new concrete adapter means updating the helper(s) that
 //! accept it, not the verbs themselves. Two verbs still open-code their
@@ -56,7 +56,6 @@
 //! `Frames` and `Image` responses for `ComfyUI` compatibility). See the
 //! follow-up notes in `docs/planning/work/architecture-cleanup-s53.md`.
 
-pub mod animated_sprite_sheet;
 pub mod audio_timing;
 pub mod auto_mesh_deformation;
 pub mod cleanup;
@@ -75,7 +74,6 @@ pub mod tileset_from_description;
 pub mod train_entity_lora;
 pub mod variant;
 
-pub use animated_sprite_sheet::AnimatedSpriteSheetVerb;
 pub use audio_timing::AudioTimingVerb;
 pub use auto_mesh_deformation::AutoMeshDeformationVerb;
 pub use cleanup::CleanupVerb;
@@ -348,6 +346,7 @@ mod tests {
                         fields: BTreeMap::new(),
                         notes: Vec::new(),
                     },
+                    ..Default::default()
                 })),
             },
             ai: AiMetadata::default(),

@@ -249,6 +249,7 @@ fn build_project_with_draft(
                 variants: vec![variant],
                 prompts: Vec::new(),
                 info: AssetInfo::default(),
+                ..Default::default()
             })),
         },
         ai: AiMetadata::default(),

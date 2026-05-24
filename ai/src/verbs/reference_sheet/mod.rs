@@ -404,9 +404,9 @@ impl Verb for GenerateReferenceSheetVerb {
                     "backend returned text for an image-generation request".into(),
                 ));
             }
-            InferenceResponse::Frames(_) => {
+            InferenceResponse::Frames(_) | InferenceResponse::Video(_) => {
                 return Err(VerbError::Backend(
-                    "backend returned frames for an image-generation request".into(),
+                    "backend returned frames/video for an image-generation request".into(),
                 ));
             }
             InferenceResponse::Raw(_) => {

@@ -14,6 +14,7 @@
     )
 )]
 
+pub mod animation_jobs;
 pub mod commands;
 pub mod crash_reporting;
 pub mod error;
@@ -101,6 +102,20 @@ pub fn run() -> Result<(), AppError> {
         .invoke_handler(tauri::generate_handler![
             // app info
             commands::app_info::app_about,
+            // animation studio
+            commands::animation::animation_normalize,
+            commands::animation::animation_pick_frames,
+            commands::animation::animation_integrate,
+            commands::animation::animation_set,
+            commands::animation::animation_reroll_dependents,
+            commands::animation::animation_derive_neutral,
+            commands::animation::animation_get_anchor,
+            commands::animation::animation_generate_first_frame,
+            commands::animation::animation_generate_clip,
+            commands::animation::animation_jobs_list,
+            commands::animation::animation_job_get,
+            commands::animation::animation_job_clip,
+            commands::animation::animation_cancel_clip_job,
             // ai backend settings
             commands::ai::ai_clear_fal_api_key,
             commands::ai::ai_clear_google_ai_api_key,
@@ -152,6 +167,7 @@ pub fn run() -> Result<(), AppError> {
             commands::frames::frame_tag_delete,
             commands::frames::frame_tag_list,
             commands::frames::frame_tag_rename,
+            commands::frames::frame_tag_set_playback,
             // layers
             commands::layers::layer_add,
             commands::layers::layer_convert_to_tilemap,

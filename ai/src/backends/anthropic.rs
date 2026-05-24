@@ -261,6 +261,7 @@ impl InferenceBackend for AnthropicBackend {
             | InferenceRequest::ImageEdit(_)
             | InferenceRequest::ImageInpaint(_)
             | InferenceRequest::FrameInterpolation(_)
+            | InferenceRequest::ImageToVideo(_)
             | InferenceRequest::Replicate(_)
             | InferenceRequest::ComfyUi(_) => {
                 warn!("Anthropic does not support this request type");

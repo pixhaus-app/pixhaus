@@ -360,6 +360,7 @@ const StructureEditor: Component<Props> = (props) => {
             class="lib-field__textarea"
             disabled={props.readOnly}
             rows={3}
+            placeholder="e.g. no overlapping panels, no merged views, keep margins"
             value={props.value.layout_negatives ?? ""}
             onInput={(e) => updateLayoutNegatives(e.currentTarget.value)}
           />

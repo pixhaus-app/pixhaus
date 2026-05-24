@@ -314,6 +314,7 @@ impl InferenceBackend for StabilityBackend {
             }
             InferenceRequest::Text(_)
             | InferenceRequest::FrameInterpolation(_)
+            | InferenceRequest::ImageToVideo(_)
             | InferenceRequest::Replicate(_)
             | InferenceRequest::ComfyUi(_) => {
                 warn!("Stability does not support this request type");

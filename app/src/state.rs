@@ -17,10 +17,10 @@ use pixhaus_ai::backends::{BackendError, BackendProxy};
 use pixhaus_ai::plugin::AnchorPayload;
 use pixhaus_ai::plugin::runtime::VerbRuntime;
 use pixhaus_ai::verbs::{
-    AnimatedSpriteSheetVerb, AudioTimingVerb, AutoMeshDeformationVerb, CleanupVerb, ContinueVerb,
-    ConversationalVerb, CritiqueVerb, ExtendVerb, GenerateReferenceSheetVerb, InbetweenVerb,
-    IterateReferenceSheetVerb, MotionFromVideoVerb, ProjectStyleLearningVerb, SketchFinishingVerb,
-    TileVerb, TilesetFromDescriptionVerb, TrainEntityLoraVerb, VariantVerb,
+    AudioTimingVerb, AutoMeshDeformationVerb, CleanupVerb, ContinueVerb, ConversationalVerb,
+    CritiqueVerb, ExtendVerb, GenerateReferenceSheetVerb, InbetweenVerb, IterateReferenceSheetVerb,
+    MotionFromVideoVerb, ProjectStyleLearningVerb, SketchFinishingVerb, TileVerb,
+    TilesetFromDescriptionVerb, TrainEntityLoraVerb, VariantVerb,
 };
 use pixhaus_core::project::{LayerId, PixelBufferId, Project, Rgba, SpriteId};
 use pixhaus_core::undo::History;
@@ -30,6 +30,7 @@ use tokio_util::sync::CancellationToken;
 
 use pixhaus_plugins::PluginRegistry;
 
+use crate::animation_jobs::AnimationJobManager;
 use crate::pixel_history::PixelHistory;
 
 /// In-memory document and editor session. Internal to the app crate.
@@ -175,6 +176,10 @@ pub struct AppState {
     /// commits under a normal document write lock; long-running provider
     /// streaming can build on the same ids/tokens.
     pub(crate) reference_sheet_requests: Arc<ReferenceSheetRequestManager>,
+    /// Durable image-to-video job queue for the animation studio. Owns
+    /// in-flight i2v generations and persists finished clips to disk so they
+    /// survive stage navigation and app restart.
+    pub(crate) animation_jobs: Arc<AnimationJobManager>,
 }
 
 /// Minimal request manager for reference-sheet operations.
@@ -300,7 +305,6 @@ impl AppState {
         // injects it into `VerbContext::backend`. Configuring backends
         // happens via `runtime.register_backend(...)` from the (planned)
         // settings flow.
-        register_builtin(&runtime, AnimatedSpriteSheetVerb::new());
         register_builtin(&runtime, AudioTimingVerb::new());
         register_builtin(&runtime, AutoMeshDeformationVerb::new());
         register_builtin(&runtime, CleanupVerb::new());
@@ -332,6 +336,7 @@ impl AppState {
             plugins,
             anchor_cache: Arc::new(DashMap::new()),
             reference_sheet_requests: Arc::new(ReferenceSheetRequestManager::new()),
+            animation_jobs: Arc::new(AnimationJobManager::new()),
         }
     }
 }
@@ -413,7 +418,6 @@ mod tests {
         // the test reflects the real surface.
         let mut expected = [
             "pixhaus.ai.sketch_finishing",
-            "pixhaus.builtin.animated_sprite_sheet",
             "pixhaus.builtin.audio_timing",
             "pixhaus.builtin.auto-mesh-deformation",
             "pixhaus.builtin.cleanup",

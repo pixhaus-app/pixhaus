@@ -13,6 +13,7 @@
 //!
 //! See `docs/export-formats.md` for per-format quality knob documentation.
 
+pub mod decode;
 pub mod dither;
 pub mod gif;
 pub mod mp4;
@@ -20,6 +21,7 @@ pub mod webp;
 
 // ── Re-exports ────────────────────────────────────────────────────────────────
 
+pub use decode::{DecodeOptions, DecodedFrame, decode_video};
 pub use dither::{DitherMode, apply as apply_dither, palette_to_rgba4};
 pub use gif::{GifOptions, LoopCount, PaletteMode, encode_gif};
 pub use mp4::{VideoOptions, encode_mp4};

@@ -118,6 +118,11 @@ impl BackendCapabilities {
     /// Synthesises novel views of a single subject. Used by Extend.
     pub const VIEW_SYNTHESIS: Self = Self(1 << 12);
 
+    /// Animates a still image into a short video clip. Used by the walk-
+    /// cycle path of the animated-sprite-sheet verb: image generation
+    /// cannot produce a stable walk, image-to-video can.
+    pub const IMAGE_TO_VIDEO: Self = Self(1 << 13);
+
     /// The empty set — the verb runs entirely on local CPU and needs
     /// no inference backend. Used by classical-only verbs (Cleanup's
     /// fast path) and the [`super::echo::EchoVerb`] reference plugin.
@@ -178,6 +183,7 @@ impl BackendCapabilities {
             (BackendCapabilities::TOOL_USE, "TOOL_USE"),
             (BackendCapabilities::EMBEDDINGS, "EMBEDDINGS"),
             (BackendCapabilities::VIEW_SYNTHESIS, "VIEW_SYNTHESIS"),
+            (BackendCapabilities::IMAGE_TO_VIDEO, "IMAGE_TO_VIDEO"),
         ];
         let mut names = Vec::new();
         let mut covered: u32 = 0;

@@ -1,13 +1,12 @@
 //! Deterministic end-to-end test of the live `OpenAI` image HTTP path.
 //!
 //! Unlike `openai_live_image` (which needs a real key and hits `OpenAI`), this
-//! stands up a local TCP server that returns an `OpenAI`-shaped Server-Sent
-//! Events stream and points the backend at it via `with_base_url`. It exercises
-//! the exact code the live call uses — request construction, the real reqwest
-//! round-trip, the SSE stream parser, and PNG decode — with zero network, zero
-//! cost, and full determinism, so the "live API half" of our own code is
-//! proven in CI. The one thing it can't cover is whether `OpenAI`'s production
-//! accepts a given model id; that's an account matter, not code correctness.
+//! stands up a local TCP server that returns an `OpenAI`-shaped buffered JSON
+//! image response and points the backend at it via `with_base_url`. It
+//! exercises the exact code the live call uses — request construction, the real
+//! reqwest round-trip, JSON decode, and PNG decode — with zero network, zero
+//! cost, and full determinism. (Image streaming is disabled in the backend; the
+//! buffered `{ data: [{ b64_json }] }` response is the active path.)
 
 #![allow(
     clippy::unwrap_used,
@@ -46,16 +45,11 @@ fn sample_png_b64() -> String {
 }
 
 #[tokio::test]
-async fn generate_image_round_trips_through_sse_over_http() {
+async fn generate_image_round_trips_over_http() {
     let png_b64 = sample_png_b64();
 
-    // An OpenAI gpt-image SSE stream: a partial frame, then the final frame,
-    // then the [DONE] sentinel. Frames are separated by a blank line.
-    let body = format!(
-        "data: {{\"type\":\"image_generation.partial_image\",\"b64_json\":\"{png_b64}\"}}\n\n\
-         data: {{\"type\":\"image_generation.completed\",\"b64_json\":\"{png_b64}\"}}\n\n\
-         data: [DONE]\n\n"
-    );
+    // A buffered OpenAI image response: a single image as base64 PNG.
+    let body = format!("{{\"data\":[{{\"b64_json\":\"{png_b64}\"}}]}}");
 
     let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
     let addr = listener.local_addr().unwrap();
@@ -79,7 +73,7 @@ async fn generate_image_round_trips_through_sse_over_http() {
             }
         }
         let response = format!(
-            "HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+            "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
             server_body.len(),
             server_body
         );
@@ -89,7 +83,7 @@ async fn generate_image_round_trips_through_sse_over_http() {
 
     let backend = OpenAiBackend::new("test-key").with_base_url(format!("http://{addr}/v1"));
     let request = ImageGenRequest {
-        model: None, // default gpt-image-2 -> exercises the SSE streaming path
+        model: None, // default gpt-image-2 -> buffered JSON image path
         prompt: "a knight".into(),
         negative_prompt: None,
         width: 1024,

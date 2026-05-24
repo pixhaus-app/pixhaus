@@ -228,20 +228,15 @@ impl OpenAiBackend {
         };
 
         let http_resp = check_http_status(http_resp).await?;
-        if use_image_stream(&model, req.num_images) {
-            let images = parse_openai_image_stream(http_resp, progress, cancel).await?;
-            progress
-                .send(VerbProgressEvent::Cost(CostUpdate {
-                    usd_cents: IMAGE_PRICE_CENTS * req.num_images as f32,
-                    tokens_input: None,
-                    tokens_output: None,
-                }))
-                .await;
-            return Ok(ImageGenResponse { images, model });
-        }
-        let raw: OpenAiImageResponse = http_resp.json().await.map_err(BackendError::Network)?;
-
-        let images = decode_image_data(raw.data)?;
+        let images = if use_image_stream(&model, req.num_images) {
+            parse_openai_image_stream(http_resp, progress, cancel).await?
+        } else {
+            let raw: OpenAiImageResponse = http_resp.json().await.map_err(BackendError::Network)?;
+            decode_image_data(raw.data)?
+        };
+        // The request size may have been snapped to a valid gpt-image size;
+        // downscale back to what the caller asked for.
+        let images = fit_images_to_request(images, req, &model)?;
 
         progress
             .send(VerbProgressEvent::Cost(CostUpdate {
@@ -271,7 +266,7 @@ impl OpenAiBackend {
             .text("prompt", req.prompt.clone())
             .text("n", req.num_images.to_string())
             .text("model", model.to_owned())
-            .text("size", format!("{}x{}", req.width, req.height));
+            .text("size", openai_size_param(req, model));
         if is_gpt_image_model(model) {
             form = form.text("output_format", "png");
             if use_image_stream(model, req.num_images) {
@@ -307,22 +302,13 @@ impl OpenAiBackend {
             res = self.client.execute(http_req) => res.map_err(BackendError::Network)?,
         };
         let http_resp = check_http_status(http_resp).await?;
-        if use_image_stream(model, req.num_images) {
-            let images = parse_openai_image_stream(http_resp, progress, cancel).await?;
-            progress
-                .send(VerbProgressEvent::Cost(CostUpdate {
-                    usd_cents: IMAGE_PRICE_CENTS * req.num_images as f32,
-                    tokens_input: None,
-                    tokens_output: None,
-                }))
-                .await;
-            return Ok(ImageGenResponse {
-                images,
-                model: model.to_owned(),
-            });
-        }
-        let raw: OpenAiImageResponse = http_resp.json().await.map_err(BackendError::Network)?;
-        let images = decode_image_data(raw.data)?;
+        let images = if use_image_stream(model, req.num_images) {
+            parse_openai_image_stream(http_resp, progress, cancel).await?
+        } else {
+            let raw: OpenAiImageResponse = http_resp.json().await.map_err(BackendError::Network)?;
+            decode_image_data(raw.data)?
+        };
+        let images = fit_images_to_request(images, req, model)?;
         progress
             .send(VerbProgressEvent::Cost(CostUpdate {
                 usd_cents: IMAGE_PRICE_CENTS * req.num_images as f32,
@@ -538,6 +524,7 @@ impl InferenceBackend for OpenAiBackend {
                 Ok(InferenceResponse::Image(resp))
             }
             InferenceRequest::FrameInterpolation(_)
+            | InferenceRequest::ImageToVideo(_)
             | InferenceRequest::Replicate(_)
             | InferenceRequest::ComfyUi(_) => {
                 warn!("OpenAI does not support this request type");
@@ -707,13 +694,85 @@ fn build_chat_body(req: &TextGenRequest, model: &str) -> serde_json::Value {
     body
 }
 
+/// Maps a requested image size to the nearest size `gpt-image-*` actually
+/// accepts (`1024x1024`, `1024x1536`, `1536x1024`), chosen by aspect ratio.
+///
+/// `OpenAI` rejects any other size (e.g. the animation verb's `256x256`) with
+/// an in-stream error event. Callers snap for the API call, then downscale the
+/// returned image back to the requested dimensions via [`resize_png_to`] so
+/// the `ImageGenRequest` width/height contract still holds.
+#[must_use]
+fn snap_gpt_image_size(width: u32, height: u32) -> (u32, u32) {
+    if height == 0 {
+        return (1024, 1024);
+    }
+    #[allow(clippy::cast_precision_loss)]
+    let ratio = width as f32 / height as f32;
+    if ratio > 1.2 {
+        (1536, 1024)
+    } else if ratio < 0.83 {
+        (1024, 1536)
+    } else {
+        (1024, 1024)
+    }
+}
+
+/// The `OpenAI` `size` string for a request: snapped to a valid gpt-image size
+/// for gpt-image models, or the verbatim request size otherwise (`dall-e`
+/// accepts a wider range and is left as-is).
+fn openai_size_param(req: &ImageGenRequest, model: &str) -> String {
+    if is_gpt_image_model(model) {
+        let (w, h) = snap_gpt_image_size(req.width, req.height);
+        format!("{w}x{h}")
+    } else {
+        format!("{}x{}", req.width, req.height)
+    }
+}
+
+/// Resizes a PNG to `(width, height)` if it differs, returning re-encoded PNG
+/// bytes. Used to downscale a snapped gpt-image result back to the requested
+/// size. A no-op (re-encode aside) when the image already matches.
+fn resize_png_to(bytes: &[u8], width: u32, height: u32) -> Result<Vec<u8>> {
+    let img = image::load_from_memory(bytes)
+        .map_err(|e| BackendError::InvalidResponse(format!("image decode failed: {e}")))?;
+    if img.width() == width && img.height() == height {
+        return Ok(bytes.to_vec());
+    }
+    let resized = img.resize_exact(width, height, image::imageops::FilterType::Lanczos3);
+    let mut out = Vec::new();
+    resized
+        .write_to(&mut std::io::Cursor::new(&mut out), image::ImageFormat::Png)
+        .map_err(|e| BackendError::InvalidResponse(format!("image encode failed: {e}")))?;
+    Ok(out)
+}
+
+/// Downscales each image back to the requested size when the API call used a
+/// snapped gpt-image size. No-op for non-gpt models or when sizes already match.
+fn fit_images_to_request(
+    images: Vec<Vec<u8>>,
+    req: &ImageGenRequest,
+    model: &str,
+) -> Result<Vec<Vec<u8>>> {
+    if !is_gpt_image_model(model) {
+        return Ok(images);
+    }
+    let (snapped_w, snapped_h) = snap_gpt_image_size(req.width, req.height);
+    if snapped_w == req.width && snapped_h == req.height {
+        return Ok(images);
+    }
+    images
+        .into_iter()
+        .map(|bytes| resize_png_to(&bytes, req.width, req.height))
+        .collect()
+}
+
 #[allow(clippy::disallowed_methods)]
 fn build_image_generation_body(req: &ImageGenRequest, model: &str) -> serde_json::Value {
     let mut body = serde_json::json!({
         "model": model,
         "prompt": req.prompt,
         "n": req.num_images,
-        "size": format!("{}x{}", req.width, req.height),
+        "size": openai_size_param(req, model),
     });
 
     if is_gpt_image_model(model) {
@@ -738,12 +797,14 @@ fn is_gpt_image_model(model: &str) -> bool {
 
 /// Whether to request server-sent partial frames for an image call.
 ///
-/// `OpenAI` only streams gpt-image responses when `n == 1`; asking for
-/// `stream=true` alongside `n > 1` is rejected with HTTP 400
-/// ("Streaming is only supported with n=1."). Multi-candidate requests
-/// therefore fall back to the buffered JSON response.
+/// Currently always `false`: the buffered JSON image response
+/// (`{ data: [{ b64_json }] }`) is reliable, whereas the SSE byte-stream path
+/// surfaced `error decoding response body` on `/images/generations`. The
+/// streaming parser is retained (and tested) so partial-image previews can be
+/// re-enabled once that decode is root-caused. Args are kept for that future.
+#[allow(unused_variables)]
 fn use_image_stream(model: &str, num_images: u32) -> bool {
-    is_gpt_image_model(model) && num_images == 1
+    false
 }
 
 /// Converts one wire-level tool call into the public [`ToolCall`].
@@ -833,6 +894,19 @@ async fn handle_openai_sse_frame(
         .get("type")
         .and_then(serde_json::Value::as_str)
         .unwrap_or_default();
+    // Surface a provider-side error event instead of swallowing it (it carries
+    // no `b64` key, so it would otherwise end as the generic "no final image").
+    if event_type.contains("error") || value.get("error").is_some() {
+        let msg = value
+            .get("error")
+            .and_then(|e| e.get("message"))
+            .and_then(serde_json::Value::as_str)
+            .or_else(|| value.get("message").and_then(serde_json::Value::as_str))
+            .unwrap_or(event_type);
+        return Err(BackendError::InvalidResponse(format!(
+            "OpenAI image error: {msg}"
+        )));
+    }
     let mut images = Vec::new();
     collect_base64_images(&value, &mut images);
     if images.is_empty() {
@@ -1040,7 +1114,7 @@ mod tests {
     }
 
     #[test]
-    fn gpt_image_single_candidate_body_streams() {
+    fn gpt_image_single_candidate_body_is_non_streaming() {
         let req = ImageGenRequest {
             model: None,
             prompt: "a reference sheet".into(),
@@ -1061,8 +1135,9 @@ mod tests {
         assert_eq!(body["size"], "1024x1536");
         assert_eq!(body["quality"], "medium");
         assert_eq!(body["output_format"], "png");
-        assert_eq!(body["stream"], true);
-        assert_eq!(body["partial_images"], 2);
+        // Streaming is disabled — the buffered JSON image path is used.
+        assert!(body.get("stream").is_none());
+        assert!(body.get("partial_images").is_none());
         assert!(body.get("response_format").is_none());
         assert!(body.get("background").is_none());
         assert!(body.get("negative_prompt").is_none());
@@ -1095,6 +1170,68 @@ mod tests {
         assert!(body.get("stream").is_none());
         assert!(body.get("partial_images").is_none());
         assert!(body.get("response_format").is_none());
+    }
+
+    #[test]
+    fn snap_gpt_image_size_picks_valid_dims_by_aspect() {
+        assert_eq!(snap_gpt_image_size(256, 256), (1024, 1024));
+        assert_eq!(snap_gpt_image_size(800, 1200), (1024, 1536));
+        assert_eq!(snap_gpt_image_size(1600, 900), (1536, 1024));
+        assert_eq!(snap_gpt_image_size(1024, 1024), (1024, 1024));
+        // Degenerate height falls back to the square size.
+        assert_eq!(snap_gpt_image_size(256, 0), (1024, 1024));
+    }
+
+    #[test]
+    fn gpt_image_body_snaps_small_square_to_1024() {
+        let req = ImageGenRequest {
+            model: None,
+            prompt: "sprite sheet".into(),
+            negative_prompt: None,
+            width: 256,
+            height: 256,
+            steps: None,
+            seed: None,
+            num_images: 1,
+            quality: None,
+            style_image: None,
+            reference_images: Vec::new(),
+        };
+        // gpt-image snaps the rejected 256x256 up to a valid size...
+        let gpt = build_image_generation_body(&req, "gpt-image-2");
+        assert_eq!(gpt["size"], "1024x1024");
+        // ...while dall-e keeps the verbatim request size.
+        let dalle = build_image_generation_body(&req, "dall-e-2");
+        assert_eq!(dalle["size"], "256x256");
+    }
+
+    #[test]
+    fn resize_png_to_changes_and_preserves_dims() {
+        let src = one_pixel_png();
+        let resized = resize_png_to(&src, 8, 8).unwrap();
+        let img = image::load_from_memory(&resized).unwrap();
+        assert_eq!((img.width(), img.height()), (8, 8));
+        // Same-size request returns a same-dimension image.
+        let same = resize_png_to(&resized, 8, 8).unwrap();
+        let img2 = image::load_from_memory(&same).unwrap();
+        assert_eq!((img2.width(), img2.height()), (8, 8));
+    }
+
+    #[tokio::test]
+    async fn openai_image_stream_frame_surfaces_error_event() {
+        let (progress, _rx) = VerbProgress::channel();
+        let mut finals = Vec::new();
+        let err = handle_openai_sse_frame(
+            "data: {\"type\":\"error\",\"error\":{\"message\":\"Invalid size 256x256\"}}\n\n",
+            &progress,
+            &mut finals,
+        )
+        .await
+        .expect_err("error event must surface");
+        assert!(
+            matches!(err, BackendError::InvalidResponse(ref m) if m.contains("Invalid size 256x256"))
+        );
+        assert!(finals.is_empty());
     }
 
     #[tokio::test]

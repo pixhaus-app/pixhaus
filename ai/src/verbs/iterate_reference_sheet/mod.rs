@@ -352,9 +352,9 @@ impl Verb for IterateReferenceSheetVerb {
                     "backend returned text for an inpainting request".into(),
                 ));
             }
-            InferenceResponse::Frames(_) => {
+            InferenceResponse::Frames(_) | InferenceResponse::Video(_) => {
                 return Err(VerbError::Backend(
-                    "backend returned frames for an inpainting request".into(),
+                    "backend returned frames/video for an inpainting request".into(),
                 ));
             }
             InferenceResponse::Raw(_) => {

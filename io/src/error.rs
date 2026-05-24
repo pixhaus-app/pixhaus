@@ -267,6 +267,10 @@ pub enum Error {
         /// Stderr captured from ffmpeg.
         stderr: String,
     },
+
+    /// Video decode produced no usable frames.
+    #[error("video decode produced no frames: {0}")]
+    VideoDecodeFailed(String),
     // ── Tiled TMX export (S12) ─────────────────────────────────────────────────
     /// Two or more tilemap layers passed to the TMX exporter have different
     /// `width` or `height` values. Tiled requires all layers in a map to

@@ -4663,3 +4663,604 @@ button.library-row__anchor-badge {
   line-height: 1.35;
   color: var(--text-secondary);
 }
+
+/* ── Animation studio ──────────────────────────────────────────────────────────
+   Full-screen AI animation generation surface. Mirrors the reference-sheet
+   editor's full-bleed layout: header, left controls, center preview + reviews,
+   footer animation-set ribbon. */
+
+.animation-studio {
+  display: flex;
+  flex-direction: column;
+  width: 100%;
+  height: 100%;
+  background: var(--bg-app);
+  color: var(--text-primary);
+  overflow: hidden;
+}
+
+.animation-studio__header {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 8px 12px;
+  border-bottom: 1px solid var(--border);
+  background: var(--bg-panel);
+}
+
+.animation-studio__back {
+  background: transparent;
+  border: 1px solid var(--border);
+  color: var(--text-primary);
+  border-radius: 4px;
+  padding: 4px 10px;
+  cursor: pointer;
+}
+
+.animation-studio__back:hover {
+  background: var(--bg-hover);
+}
+
+.animation-studio__title {
+  font-weight: 600;
+}
+
+.animation-studio__anchor-chip {
+  margin-left: auto;
+  font-size: 12px;
+  color: var(--text-secondary);
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  padding: 2px 10px;
+}
+
+.animation-studio__body {
+  display: flex;
+  flex: 1;
+  min-height: 0;
+}
+
+.animation-studio__controls {
+  width: 260px;
+  flex-shrink: 0;
+  padding: 12px;
+  border-right: 1px solid var(--border);
+  background: var(--bg-panel);
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.animation-studio__control-group {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.animation-studio__control-heading {
+  margin: 0;
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--text-secondary);
+}
+
+.animation-studio__radio-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.animation-studio__chip {
+  background: var(--bg-base);
+  border: 1px solid var(--border);
+  color: var(--text-primary);
+  border-radius: 4px;
+  padding: 4px 10px;
+  cursor: pointer;
+  font-size: 13px;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.animation-studio__chip:hover {
+  background: var(--bg-hover);
+}
+
+.animation-studio__chip--active {
+  background: var(--accent-subtle);
+  border-color: var(--accent-border);
+  color: var(--text-primary);
+}
+
+.animation-studio__chip--flip {
+  font-style: italic;
+}
+
+.animation-studio__chip-tag {
+  font-size: 9px;
+  text-transform: uppercase;
+  background: var(--accent);
+  color: var(--text-on-accent);
+  border-radius: 3px;
+  padding: 0 3px;
+}
+
+.animation-studio__field,
+.animation-studio__checkbox {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: 12px;
+  color: var(--text-secondary);
+}
+
+.animation-studio__checkbox {
+  flex-direction: row;
+  align-items: center;
+  gap: 6px;
+}
+
+.animation-studio__prompt {
+  width: 100%;
+  background: var(--bg-base);
+  border: 1px solid var(--border);
+  color: var(--text-primary);
+  border-radius: 4px;
+  padding: 6px;
+  resize: vertical;
+  font-family: inherit;
+}
+
+.animation-studio__advanced summary {
+  cursor: pointer;
+  font-size: 12px;
+  color: var(--text-secondary);
+}
+
+.animation-studio__generate {
+  margin-top: auto;
+  background: var(--accent);
+  color: var(--text-on-accent);
+  border: none;
+  border-radius: 4px;
+  padding: 8px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.animation-studio__generate:disabled {
+  opacity: 0.6;
+  cursor: progress;
+}
+
+.animation-studio__center {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 12px;
+  overflow-y: auto;
+}
+
+/* ── staged pipeline ─────────────────────────────────────────────────────── */
+
+.animation-studio__fit-image {
+  max-width: 100%;
+  max-height: 100%;
+  width: auto;
+  height: auto;
+  object-fit: contain;
+}
+
+.animation-studio__stage-strip {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 12px;
+  border-bottom: 1px solid var(--border);
+  overflow-x: auto;
+}
+
+.animation-studio__stage-arrow {
+  opacity: 0.5;
+}
+
+.animation-studio__stage-chip {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+  padding: 4px 6px;
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  cursor: pointer;
+  color: inherit;
+}
+
+.animation-studio__stage-chip--active {
+  border-color: var(--accent);
+}
+
+.animation-studio__stage-chip--locked {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+.animation-studio__stage-thumb {
+  width: 44px;
+  height: 44px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  background: var(--bg-base);
+  overflow: hidden;
+}
+
+.animation-studio__stage-thumb img {
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+}
+
+.animation-studio__stage-num {
+  opacity: 0.6;
+  font-size: 14px;
+}
+
+.animation-studio__stage-label {
+  font-size: 11px;
+}
+
+.animation-studio__stage {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.animation-studio__stage-controls {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.animation-studio__stage-actions {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+
+.animation-studio__mask-editor {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.animation-studio__mask-stage {
+  position: relative;
+  display: inline-flex;
+  align-self: center;
+  max-height: 440px;
+}
+
+.animation-studio__mask-stage img {
+  max-height: 440px;
+}
+
+.animation-studio__mask-overlay {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  cursor: crosshair;
+  touch-action: none;
+}
+
+.animation-studio__mask-tools {
+  display: flex;
+  gap: 12px;
+  align-items: flex-end;
+}
+
+.animation-studio__success {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 16px;
+  border: 1px solid var(--accent);
+  border-radius: 6px;
+  background: var(--bg-elevated);
+}
+
+.animation-studio__success-msg {
+  font-size: 14px;
+}
+
+.animation-studio__preview-stage,
+.animation-studio__picker-preview,
+.animation-studio__normalize-preview {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 180px;
+  max-height: 440px;
+  background: repeating-conic-gradient(var(--bg-base) 0% 25%, var(--bg-elevated) 0% 50%) 0 / 16px
+    16px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  overflow: hidden;
+}
+
+.animation-studio__transport {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.animation-studio__candidate-strip {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.animation-studio__candidate-thumb {
+  position: relative;
+  width: 72px;
+  height: 72px;
+  border: 2px solid var(--border);
+  border-radius: 4px;
+  background: var(--bg-base);
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  overflow: hidden;
+}
+
+.animation-studio__candidate-thumb img {
+  max-width: 100%;
+  max-height: 100%;
+  width: auto;
+  height: auto;
+  object-fit: contain;
+  image-rendering: pixelated;
+}
+
+.animation-studio__candidate-thumb--active {
+  border-color: var(--accent);
+}
+
+.animation-studio__candidate-index {
+  position: absolute;
+  bottom: 1px;
+  right: 2px;
+  font-size: 10px;
+  background: rgba(0, 0, 0, 0.6);
+  color: #fff;
+  padding: 0 3px;
+  border-radius: 3px;
+}
+
+.animation-studio__candidate-actions,
+.animation-studio__picker-actions,
+.animation-studio__normalize-actions,
+.animation-studio__picker-markers {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  align-items: flex-end;
+}
+
+.animation-studio__flags {
+  display: flex;
+  gap: 8px;
+  font-size: 12px;
+}
+
+.animation-studio__flag {
+  border-radius: 3px;
+  padding: 1px 6px;
+}
+
+.animation-studio__flag--ok {
+  background: color-mix(in srgb, var(--success) 25%, transparent);
+}
+
+.animation-studio__flag--warn {
+  background: color-mix(in srgb, var(--warning) 30%, transparent);
+}
+
+.animation-studio__btn {
+  background: var(--bg-base);
+  border: 1px solid var(--border);
+  color: var(--text-primary);
+  border-radius: 4px;
+  padding: 5px 12px;
+  cursor: pointer;
+}
+
+.animation-studio__btn:hover {
+  background: var(--bg-hover);
+}
+
+.animation-studio__btn--small {
+  padding: 2px 8px;
+  font-size: 11px;
+}
+
+.animation-studio__btn--accept {
+  background: var(--success);
+  border-color: var(--success);
+  color: #fff;
+}
+
+.animation-studio__btn--reject {
+  background: transparent;
+  border-color: var(--error);
+  color: var(--error);
+}
+
+.animation-studio__contact-sheet {
+  display: flex;
+  gap: 4px;
+  flex-wrap: wrap;
+  padding: 6px;
+  background: var(--bg-base);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+}
+
+.animation-studio__contact-cell {
+  width: 40px;
+  height: 40px;
+  image-rendering: pixelated;
+  border: 1px solid var(--border);
+}
+
+.animation-studio__normalize-meta,
+.animation-studio__picker-meta {
+  font-size: 12px;
+  color: var(--text-secondary);
+  display: flex;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.animation-studio__warnings {
+  margin: 4px 0 0;
+  padding-left: 16px;
+  color: var(--warning);
+}
+
+.animation-studio__requests {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.animation-studio__request-row {
+  display: flex;
+  gap: 12px;
+  font-size: 12px;
+  padding: 4px 8px;
+  background: var(--bg-base);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+}
+
+.animation-studio__request-row--i2v {
+  border-color: var(--accent-border);
+}
+
+.animation-studio__request-row--error {
+  border-color: var(--error);
+}
+
+.animation-studio__request-error {
+  color: var(--error);
+  overflow-wrap: anywhere;
+  flex: 1;
+}
+
+.animation-studio__footer {
+  border-top: 1px solid var(--border);
+  background: var(--bg-panel);
+  padding: 8px 12px;
+  max-height: 220px;
+  overflow-y: auto;
+}
+
+.animation-studio__set-grid {
+  border-collapse: collapse;
+  font-size: 12px;
+}
+
+.animation-studio__set-grid th,
+.animation-studio__set-grid td {
+  padding: 2px 6px;
+  text-align: center;
+}
+
+.animation-studio__set-cell {
+  width: 56px;
+  background: var(--bg-base);
+  border: 1px solid var(--border);
+  border-radius: 3px;
+  color: var(--text-secondary);
+  cursor: pointer;
+  padding: 2px;
+}
+
+.animation-studio__set-cell--present {
+  background: color-mix(in srgb, var(--success) 25%, transparent);
+  color: var(--text-primary);
+}
+
+.animation-studio__set-cell--stale {
+  background: color-mix(in srgb, var(--warning) 30%, transparent);
+  color: var(--text-primary);
+}
+
+.animation-studio__stale-banner {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-top: 8px;
+  font-size: 12px;
+  color: var(--warning);
+}
+
+.animation-studio__empty,
+.animation-studio__hint {
+  font-size: 13px;
+  color: var(--text-secondary);
+  padding: 8px;
+}
+
+.animation-studio__error {
+  color: var(--error);
+  font-size: 12px;
+}
+
+.animation-studio__set-head,
+.animation-studio__picker-head,
+.animation-studio__normalize-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-weight: 600;
+  margin-bottom: 6px;
+}
+
+/* Tag bar playback controls (loop direction + repeat). */
+.tl-ctx-menu__playback {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 6px 10px;
+  border-top: 1px solid var(--border);
+}
+
+.tl-ctx-menu__field {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  font-size: 12px;
+  color: var(--text-secondary);
+}
+
+.tl-ctx-menu__field select,
+.tl-ctx-menu__field input {
+  background: var(--bg-base);
+  border: 1px solid var(--border);
+  color: var(--text-primary);
+  border-radius: 3px;
+  padding: 2px 4px;
+}

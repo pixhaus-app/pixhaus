@@ -69,6 +69,7 @@ fn reference_sheet_fixture(bytes: Vec<u8>) -> ReferenceSheet {
         variants: Vec::new(),
         prompts: Vec::new(),
         info: AssetInfo::default(),
+        ..Default::default()
     }
 }
 
@@ -416,6 +417,7 @@ fn sprite_reference_sheet_with_populated_composition_preserves_rects() {
                 variants: Vec::new(),
                 prompts: vec![prompt_entry],
                 info,
+                ..Default::default()
             })),
         },
         ai: AiMetadata::default(),

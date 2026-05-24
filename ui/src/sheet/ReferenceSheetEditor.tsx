@@ -1324,6 +1324,7 @@ const ReferenceSheetEditor: Component = () => {
                   <span>Inline prompt additions</span>
                   <textarea
                     class="sheet-editor__textarea"
+                    placeholder="e.g. Bit waving, screen showing a smiley face"
                     value={inlineText()}
                     onInput={(event) => setInlineText(event.currentTarget.value)}
                   />
@@ -1333,6 +1334,7 @@ const ReferenceSheetEditor: Component = () => {
                   <span>Inline negatives</span>
                   <textarea
                     class="sheet-editor__textarea"
+                    placeholder="e.g. no extra antennas, no text labels, no drop shadow"
                     value={inlineNegatives()}
                     onInput={(event) => setInlineNegatives(event.currentTarget.value)}
                   />
@@ -1604,6 +1606,7 @@ const ReferenceSheetEditor: Component = () => {
                 <span>Refinement prompt</span>
                 <textarea
                   class="sheet-editor__textarea"
+                  placeholder="e.g. make Bit's antenna light brighter, soften the cheeks"
                   value={refinePrompt()}
                   onInput={(event) => setRefinePrompt(event.currentTarget.value)}
                 />
@@ -1756,6 +1759,7 @@ const ReferenceSheetEditor: Component = () => {
                 <span>Message</span>
                 <textarea
                   class="sheet-editor__textarea"
+                  placeholder="e.g. give Bit a little backpack and a happier screen face"
                   value={chatMessage()}
                   onInput={(event) => setChatMessage(event.currentTarget.value)}
                 />
@@ -1773,6 +1777,7 @@ const ReferenceSheetEditor: Component = () => {
                 <span>Compare prompt</span>
                 <textarea
                   class="sheet-editor__textarea"
+                  placeholder="e.g. Bit, the Pixhaus mascot robot, full-body turnaround"
                   value={comparePrompt()}
                   onInput={(event) => setComparePrompt(event.currentTarget.value)}
                 />
