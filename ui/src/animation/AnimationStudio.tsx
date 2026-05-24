@@ -13,10 +13,9 @@ import {
   createMemo,
   createResource,
   createSignal,
-  onCleanup,
   onMount,
 } from "solid-js";
-import { listen } from "@tauri-apps/api/event";
+import { subscribeTauriEvent } from "../lib/sync/subscribe-event";
 
 import { aiGetProviderOverview } from "../lib/commands/ai";
 import {
@@ -78,8 +77,7 @@ const AnimationStudio: Component = () => {
   // whole studio session, so navigating between stages never loses an in-flight
   // or finished generation. On completion, fetch the clip for the picker.
   onMount(() => {
-    const unlisten = listen<AnimationJob>("AnimationJobUpdate", (event) => {
-      const job = event.payload;
+    subscribeTauriEvent<AnimationJob>("AnimationJobUpdate", (job) => {
       if (job.entity_id !== activeAnimationStudioEntityId()) return;
       const current = videoJob();
       if (current !== null && current.id !== job.id) return;
@@ -98,9 +96,6 @@ const AnimationStudio: Component = () => {
           )
           .catch(() => undefined);
       }
-    });
-    onCleanup(() => {
-      void unlisten.then((un) => un()).catch(() => undefined);
     });
   });
 

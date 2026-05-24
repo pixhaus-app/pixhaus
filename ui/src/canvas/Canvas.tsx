@@ -10,7 +10,7 @@
 //   unmount → destroy renderer, remove all listeners
 
 import { onMount, onCleanup, createEffect, createSignal, type Component } from "solid-js";
-import { listen } from "@tauri-apps/api/event";
+import { subscribeTauriEvent } from "../lib/sync/subscribe-event";
 import { CanvasRenderer } from "./renderer";
 import { attachCanvasInput } from "./input";
 import { BrushCursor, ShapePreview, TransformHandles } from "./overlays";
@@ -112,12 +112,9 @@ const Canvas: Component = () => {
     });
     ro.observe(containerEl);
 
-    // Hold the listen() promise rather than the resolved UnlistenFn so
-    // an unmount that happens before listen() resolves still detaches
-    // the listener (the cleanup awaits the promise and calls fn() on
-    // resolve). Mirrors the pattern used by Shell.tsx::menuListenerPromise.
-    const tileDirtyPromise = listen<TileDirtyPayload>("canvas:tile-dirty", (event) => {
-      const p = event.payload;
+    // Tile-dirty drives the WebGL renderer directly (hot path) — the handler
+    // stays here, bound to this component's renderer instance.
+    subscribeTauriEvent<TileDirtyPayload>("canvas:tile-dirty", (p) => {
       const raw = atob(p.data);
       const bytes = new Uint8Array(raw.length);
       for (let i = 0; i < raw.length; i++) bytes[i] = raw.charCodeAt(i);
@@ -298,11 +295,6 @@ const Canvas: Component = () => {
       ro.disconnect();
       detachInput();
       detachTransformKeys();
-      tileDirtyPromise
-        .then((unlisten) => unlisten())
-        .catch((err: unknown) => {
-          console.warn("[pixhaus] failed to unlisten canvas:tile-dirty:", err);
-        });
       renderer.destroy();
     });
   });

@@ -1,5 +1,5 @@
 import { Show, onMount, onCleanup, type Component } from "solid-js";
-import { listen } from "@tauri-apps/api/event";
+import { subscribeTauriEvent } from "../lib/sync/subscribe-event";
 import { isCommandPaletteOpen } from "../palette-state";
 import { isPreferencesOpen } from "../preferences/preferences-state";
 import { isCompositionLibraryOpen } from "../composition-library/composition-library-state";
@@ -81,19 +81,12 @@ const Shell: Component = () => {
       });
 
     // Forward native menu events to the command dispatcher
-    const menuListenerPromise = listen<string>("shell:menu", (event) => {
-      dispatchCommand(event.payload);
-    });
+    subscribeTauriEvent<string>("shell:menu", (payload) => dispatchCommand(payload));
 
     // Register keyboard shortcuts
     const removeKeybinds = setupKeybindManager();
 
-    onCleanup(() => {
-      menuListenerPromise
-        .then((unlisten) => unlisten())
-        .catch((err: unknown) => console.error("[pixhaus] failed to unlisten shell:menu:", err));
-      removeKeybinds();
-    });
+    onCleanup(removeKeybinds);
   });
 
   function answerCrashReportingDialog(enabled: boolean): void {

@@ -13,7 +13,7 @@ import {
   onCleanup,
   onMount,
 } from "solid-js";
-import { listen } from "@tauri-apps/api/event";
+import { subscribeTauriEvent } from "../lib/sync/subscribe-event";
 import type {
   Entity,
   ModelId,
@@ -354,73 +354,54 @@ const ReferenceSheetEditor: Component = () => {
       .then(setAssets)
       .catch((err: unknown) => reportCommandFailure("library_browse_assets", err));
 
-    const progressListener = listen<SheetRequestProgressPayload>(
-      "SheetRequestProgress",
-      (event) => {
-        setActiveRequests((rows) =>
-          rows.map((row) =>
-            row.id === event.payload.request_id
-              ? {
-                  ...row,
-                  status: "running",
-                  streamIndex: event.payload.stream_index,
-                  candidateIndex: event.payload.candidate_index,
-                  partialIndex: event.payload.partial_index,
-                  partialImage: event.payload.partial_image ?? row.partialImage,
-                  elapsedMs: event.payload.elapsed_ms,
-                }
-              : row,
-          ),
-        );
-      },
-    );
-    const completeListener = listen<SheetRequestCompletePayload>(
-      "SheetRequestComplete",
-      (event) => {
-        const activeId = activeSheetEditorEntityId();
-        if (activeId === null || event.payload.entity_id !== activeId) return;
-        refreshEntity(event.payload.sprite);
-        setGenerating(false);
-        setBusy(false);
-        setActiveRequests((rows) =>
-          rows.map((row) =>
-            row.id === event.payload.request_id ? { ...row, status: "complete" } : row,
-          ),
-        );
-        const firstDraft = referenceSheet(event.payload.sprite)?.variants?.[0] ?? null;
-        setSelectedVariantId(firstDraft?.id ?? selectedVariantId());
-        pushToast({ kind: "success", title: "Reference sheet request complete." });
-      },
-    );
-    const errorListener = listen<SheetRequestErrorPayload>("SheetRequestError", (event) => {
-      setGenerating(false);
-      setBusy(false);
-      const message = extractDetail(event.payload.error);
+    subscribeTauriEvent<SheetRequestProgressPayload>("SheetRequestProgress", (payload) => {
       setActiveRequests((rows) =>
         rows.map((row) =>
-          row.id === event.payload.request_id ? { ...row, status: "error", error: message } : row,
+          row.id === payload.request_id
+            ? {
+                ...row,
+                status: "running",
+                streamIndex: payload.stream_index,
+                candidateIndex: payload.candidate_index,
+                partialIndex: payload.partial_index,
+                partialImage: payload.partial_image ?? row.partialImage,
+                elapsedMs: payload.elapsed_ms,
+              }
+            : row,
+        ),
+      );
+    });
+    subscribeTauriEvent<SheetRequestCompletePayload>("SheetRequestComplete", (payload) => {
+      const activeId = activeSheetEditorEntityId();
+      if (activeId === null || payload.entity_id !== activeId) return;
+      refreshEntity(payload.sprite);
+      setGenerating(false);
+      setBusy(false);
+      setActiveRequests((rows) =>
+        rows.map((row) => (row.id === payload.request_id ? { ...row, status: "complete" } : row)),
+      );
+      const firstDraft = referenceSheet(payload.sprite)?.variants?.[0] ?? null;
+      setSelectedVariantId(firstDraft?.id ?? selectedVariantId());
+      pushToast({ kind: "success", title: "Reference sheet request complete." });
+    });
+    subscribeTauriEvent<SheetRequestErrorPayload>("SheetRequestError", (payload) => {
+      setGenerating(false);
+      setBusy(false);
+      const message = extractDetail(payload.error);
+      setActiveRequests((rows) =>
+        rows.map((row) =>
+          row.id === payload.request_id ? { ...row, status: "error", error: message } : row,
         ),
       );
       pushToast({ kind: "error", title: message });
     });
-    const cancelListener = listen<SheetRequestCancelledPayload>(
-      "SheetRequestCancelled",
-      (event) => {
-        setGenerating(false);
-        setBusy(false);
-        setActiveRequests((rows) =>
-          rows.map((row) =>
-            row.id === event.payload.request_id ? { ...row, status: "cancelled" } : row,
-          ),
-        );
-        pushToast({ kind: "info", title: "Reference sheet request cancelled." });
-      },
-    );
-    onCleanup(() => {
-      void progressListener.then((unlisten) => unlisten());
-      void completeListener.then((unlisten) => unlisten());
-      void errorListener.then((unlisten) => unlisten());
-      void cancelListener.then((unlisten) => unlisten());
+    subscribeTauriEvent<SheetRequestCancelledPayload>("SheetRequestCancelled", (payload) => {
+      setGenerating(false);
+      setBusy(false);
+      setActiveRequests((rows) =>
+        rows.map((row) => (row.id === payload.request_id ? { ...row, status: "cancelled" } : row)),
+      );
+      pushToast({ kind: "info", title: "Reference sheet request cancelled." });
     });
   });
 
