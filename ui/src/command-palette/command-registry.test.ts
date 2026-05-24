@@ -58,6 +58,7 @@ const LIST_COMMANDS = new Set([
   "frame_list",
   "frame_tag_list",
   "cel_list",
+  "palette_list",
   "library_list_entities",
   "library_list_groups",
   "library_list_tags",

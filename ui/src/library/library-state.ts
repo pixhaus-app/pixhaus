@@ -165,7 +165,7 @@ export const tagsById = (): ReadonlyMap<TagId, TagDefinition> => libraryQuery.da
 
 /** Refetches entities, groups, and tags for the active project. */
 export function refreshLibrary(): void {
-  libraryQuery.refetch();
+  void libraryQuery.refetch();
 }
 
 // Drop pending suggestions for entities that no longer exist. Without this,

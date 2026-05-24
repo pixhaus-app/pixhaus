@@ -23,8 +23,12 @@ export interface BackendQuery<T> {
   data: Accessor<T>;
   /** True while a fetch is in flight. */
   loading: Accessor<boolean>;
-  /** Force a refetch with the current source value. */
-  refetch: () => void;
+  /**
+   * Force a refetch with the current source value. Resolves when the fetch
+   * settles so callers that need fresh data immediately after can await it;
+   * fire-and-forget callers can ignore the promise.
+   */
+  refetch: () => Promise<void>;
   /**
    * Optimistically overwrite the cached value without a fetch. The next
    * refetch replaces it with authoritative data. Mirrors createResource's
@@ -106,7 +110,9 @@ export function createBackendQuery<P, T>(opts: BackendQueryOptions<P, T>): Backe
     return {
       data,
       loading,
-      refetch: () => void refetch(),
+      refetch: async () => {
+        await refetch();
+      },
       mutate: (value: T) => mutate(() => value),
       dispose: () => {
         unregister();

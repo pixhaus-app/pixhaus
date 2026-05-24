@@ -6,11 +6,26 @@
 import { createSignal } from "solid-js";
 import type { Palette, PaletteId, Rgba, SpriteId } from "../lib/types";
 import { paletteList } from "../lib/commands/palette";
+import { createBackendQuery } from "../lib/sync/query";
+import { activeSpriteId } from "../canvas/canvas-state";
 
 // ── Palettes ──────────────────────────────────────────────────────────────────
 
-export const [palettes, setPalettes] = createSignal<Palette[]>([]);
 export const [activePaletteId, setActivePaletteId] = createSignal<PaletteId | null>(null);
+
+// Palettes for the active sprite, backed by a createBackendQuery. The cache
+// reloads on sprite change and on refreshPalettes() (which palette mutations
+// in the panel call after editing).
+const palettesQuery = createBackendQuery<SpriteId, Palette[]>({
+  key: "palettes",
+  source: activeSpriteId,
+  fetch: (spriteId) => paletteList(spriteId),
+  initial: [],
+  onLoaded: (list) => ensureActivePalette(list),
+  errorTitle: "Failed to load palettes",
+});
+
+export const palettes = palettesQuery.data;
 
 /** The currently active palette, defaulting to the first in the list. */
 export function activePalette(): Palette | null {
@@ -21,19 +36,24 @@ export function activePalette(): Palette | null {
   return list.find((p) => p.id === id) ?? list[0] ?? null;
 }
 
-/** Load all palettes for a sprite and update reactive state. */
-export async function refreshPalettes(spriteId: SpriteId): Promise<void> {
-  try {
-    const result = await paletteList(spriteId);
-    setPalettes(result);
-    const id = activePaletteId();
-    const first = result[0];
-    if (first && (id === null || !result.some((p) => p.id === id))) {
-      setActivePaletteId(first.id);
-    }
-  } catch (err: unknown) {
-    console.error("[pixhaus] palette_list failed:", err);
+// Keep activePaletteId pointing at a live palette: default to the first when
+// nothing is selected or the selection vanished (e.g. after a sprite change).
+function ensureActivePalette(list: Palette[] | undefined): void {
+  const result = list ?? [];
+  const id = activePaletteId();
+  const first = result[0];
+  if (first && (id === null || !result.some((p) => p.id === id))) {
+    setActivePaletteId(first.id);
   }
+}
+
+/**
+ * Refetches palettes for the active sprite. The `spriteId` argument is kept
+ * for call-site compatibility but ignored — the query already keys on the
+ * active sprite. Resolves when the fetch settles.
+ */
+export async function refreshPalettes(_spriteId?: SpriteId): Promise<void> {
+  await palettesQuery.refetch();
 }
 
 // ── Foreground / background indices ───────────────────────────────────────────

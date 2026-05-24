@@ -120,7 +120,7 @@ export const layers = layersQuery.data;
 
 /** Refetches the layer list for the active sprite. */
 export function refreshLayers(): void {
-  layersQuery.refetch();
+  void layersQuery.refetch();
 }
 
 /**

@@ -89,7 +89,7 @@ export const celPresence = (): CelPresence => timelineQuery.data().celPresence;
 
 /** Refetches frames, tags, and cels for the active sprite. */
 export function refreshTimeline(): void {
-  timelineQuery.refetch();
+  void timelineQuery.refetch();
 }
 
 // ── Frame selection ──────────────────────────────────────────────────────────
