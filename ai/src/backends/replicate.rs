@@ -453,14 +453,15 @@ async fn extract_url_clip(output: &serde_json::Value) -> Result<(Vec<u8>, String
         }
     };
     let lower = url.to_ascii_lowercase();
-    let mime = if lower.ends_with(".webm") {
+    // Fallback when the response carries no Content-Type — signed URLs often
+    // lack a useful extension, so the header is preferred when present.
+    let ext_mime = if lower.ends_with(".webm") {
         "video/webm"
     } else if lower.ends_with(".gif") {
         "image/gif"
     } else {
         "video/mp4"
-    }
-    .to_owned();
+    };
     let client = reqwest::Client::new();
     let resp = client
         .get(url)
@@ -468,6 +469,13 @@ async fn extract_url_clip(output: &serde_json::Value) -> Result<(Vec<u8>, String
         .await
         .map_err(BackendError::Network)?;
     let resp = check_http_status(resp).await?;
+    let mime = resp
+        .headers()
+        .get(reqwest::header::CONTENT_TYPE)
+        .and_then(|v| v.to_str().ok())
+        .map(|s| s.split(';').next().unwrap_or(s).trim().to_owned())
+        .filter(|s| !s.is_empty())
+        .unwrap_or_else(|| ext_mime.to_owned());
     let bytes = resp.bytes().await.map_err(BackendError::Network)?;
     Ok((bytes.to_vec(), mime))
 }

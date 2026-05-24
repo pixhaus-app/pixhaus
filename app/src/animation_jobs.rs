@@ -195,20 +195,33 @@ impl AnimationJobManager {
         (id, token)
     }
 
-    /// Marks a job done and writes its clip bytes to disk.
+    /// Marks a job done and writes its clip bytes to disk. If the clip can't be
+    /// persisted, the job ends as `Error` rather than a "success" whose clip
+    /// can't be fetched.
     pub(crate) fn finish_done(&self, id: u64, mime: &str, clip: &[u8]) {
         self.cancellations.remove(&id);
-        if let Some(path) = self.clip_path(id, mime) {
-            if let Err(err) = std::fs::write(&path, clip) {
-                tracing::warn!(error = %err, "failed to write animation clip");
+        let mut write_error: Option<String> = None;
+        match self.clip_path(id, mime) {
+            Some(path) => {
+                if let Err(err) = std::fs::write(&path, clip) {
+                    tracing::warn!(error = %err, "failed to write animation clip");
+                    write_error = Some(format!("failed to persist clip: {err}"));
+                }
             }
+            None => write_error = Some("no clip storage directory available".into()),
         }
         let snapshot = {
             let Some(mut job) = self.jobs.get_mut(&id) else {
                 return;
             };
-            job.status = AnimationJobStatus::Done;
-            mime.clone_into(&mut job.mime);
+            if let Some(err) = write_error {
+                job.status = AnimationJobStatus::Error;
+                job.error = Some(err);
+            } else {
+                job.status = AnimationJobStatus::Done;
+                job.error = None;
+                mime.clone_into(&mut job.mime);
+            }
             job.clone()
         };
         self.persist(&snapshot);
@@ -236,6 +249,7 @@ impl AnimationJobManager {
             job.clone()
         };
         self.persist(&snapshot);
+        self.prune();
     }
 
     /// Returns a snapshot of one job.

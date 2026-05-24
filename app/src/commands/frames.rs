@@ -524,6 +524,31 @@ pub async fn frame_tag_delete(
     Ok(())
 }
 
+/// Sets a frame tag's playback (loop direction + repeat) on `sprite`, mirroring
+/// the loop direction onto any engine animation of the same name so the editor
+/// tag and the engine clip stay in sync. Errors when the tag is missing.
+fn set_frame_tag_playback_on_sprite(
+    sprite: &mut Sprite,
+    tag_name: &str,
+    loop_direction: LoopDirection,
+    repeat: u16,
+) -> CommandResult<()> {
+    let tag = sprite
+        .frame_tags
+        .iter_mut()
+        .find(|t| t.name == tag_name)
+        .ok_or_else(|| AppCommandError::NotFoundByName {
+            entity: "frame_tag".into(),
+            name: tag_name.to_owned(),
+        })?;
+    tag.loop_direction = loop_direction;
+    tag.repeat = repeat;
+    for anim in sprite.animations.iter_mut().filter(|a| a.name == tag_name) {
+        anim.loop_direction = loop_direction;
+    }
+    Ok(())
+}
+
 /// Sets the loop direction and repeat count of a named frame tag.
 ///
 /// Generated animations set these and the timeline tag bar must let the user
@@ -549,20 +574,7 @@ pub async fn frame_tag_set_playback(
                 entity: "sprite".into(),
                 id: u64::from(sprite_id.get()),
             })?;
-        let tag = sprite
-            .frame_tags
-            .iter_mut()
-            .find(|t| t.name == tag_name)
-            .ok_or(AppCommandError::NotFoundByName {
-                entity: "frame_tag".into(),
-                name: tag_name.clone(),
-            })?;
-        tag.loop_direction = loop_direction;
-        tag.repeat = repeat;
-        // Keep the engine animation of the same name in sync.
-        for anim in sprite.animations.iter_mut().filter(|a| a.name == tag_name) {
-            anim.loop_direction = loop_direction;
-        }
+        set_frame_tag_playback_on_sprite(sprite, &tag_name, loop_direction, repeat)?;
     }
     doc.dirty = true;
     Ok(())
@@ -850,5 +862,57 @@ mod tests {
             .expect_err("unknown source rejected");
         assert!(matches!(err, AppCommandError::NotFoundByName { .. }));
         assert_eq!(s.frame_tags[0].name, "walk");
+    }
+
+    // set_frame_tag_playback_on_sprite ─────────────────────────────────────────
+
+    fn push_animation(sprite: &mut Sprite, name: &str) {
+        use pixhaus_core::project::{Animation, AnimationId};
+        sprite.animations.push(Animation {
+            id: AnimationId::new(1),
+            name: name.into(),
+            range: FrameRange::new(FrameIndex::new(0), FrameIndex::new(1)),
+            loop_direction: LoopDirection::Forward,
+            speed_multiplier: 1.0,
+            user_data: UserData::default(),
+        });
+    }
+
+    #[test]
+    fn set_playback_updates_tag_fields() {
+        let mut s = sprite_with_tag("walk");
+        set_frame_tag_playback_on_sprite(&mut s, "walk", LoopDirection::PingPong, 3)
+            .expect("set ok");
+        assert_eq!(s.frame_tags[0].loop_direction, LoopDirection::PingPong);
+        assert_eq!(s.frame_tags[0].repeat, 3);
+    }
+
+    #[test]
+    fn set_playback_syncs_engine_animation_of_same_name() {
+        let mut s = sprite_with_tag("walk");
+        push_animation(&mut s, "walk");
+        push_animation(&mut s, "idle");
+        set_frame_tag_playback_on_sprite(&mut s, "walk", LoopDirection::PingPong, 0)
+            .expect("set ok");
+        let walk = s.animations.iter().find(|a| a.name == "walk").unwrap();
+        let idle = s.animations.iter().find(|a| a.name == "idle").unwrap();
+        assert_eq!(
+            walk.loop_direction,
+            LoopDirection::PingPong,
+            "same-name synced"
+        );
+        assert_eq!(
+            idle.loop_direction,
+            LoopDirection::Forward,
+            "other animation untouched"
+        );
+    }
+
+    #[test]
+    fn set_playback_rejects_missing_tag() {
+        let mut s = sprite_with_tag("walk");
+        let err = set_frame_tag_playback_on_sprite(&mut s, "missing", LoopDirection::Forward, 0)
+            .expect_err("missing tag rejected");
+        assert!(matches!(err, AppCommandError::NotFoundByName { .. }));
     }
 }

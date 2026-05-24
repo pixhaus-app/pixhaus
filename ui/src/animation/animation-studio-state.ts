@@ -206,4 +206,5 @@ export function resetStudio(): void {
   setPendingClip(null);
   setVideoJob(null);
   setPreviewPlaying(true);
+  setPreviewLooping(true);
 }

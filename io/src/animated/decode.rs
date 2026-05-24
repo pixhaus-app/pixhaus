@@ -116,8 +116,9 @@ pub fn decode_video(clip: &[u8], mime: &str, options: &DecodeOptions) -> Result<
     // Collect produced PNGs in filename order (ffmpeg zero-pads to 6 digits).
     let mut entries: Vec<std::path::PathBuf> = std::fs::read_dir(temp_dir.path())
         .map_err(Error::Io)?
-        .filter_map(std::result::Result::ok)
-        .map(|e| e.path())
+        .map(|entry| entry.map(|e| e.path()).map_err(Error::Io))
+        .collect::<Result<Vec<_>>>()?
+        .into_iter()
         .filter(|p| p.extension().is_some_and(|x| x == "png"))
         .collect();
     entries.sort();

@@ -56,7 +56,7 @@ next — so the run can be debugged and the output optimized at every step.
 
 ## Target flow
 
-```
+```text
 Stage 0  Reference     show resolved anchor for the chosen direction
 Stage 1  First frame   gpt-image-2 edit(reference sheet, prompt) -> candidates
                         reroll / pick / inpaint-edit -> approved first frame (on magenta)
@@ -85,7 +85,7 @@ entity has no approved anchor.
 
 New command:
 
-```
+```text
 animation_generate_first_frame(
     entity_id, direction, animation_kind,
     prompt: Option<String>,        // user choreography / pose description

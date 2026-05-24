@@ -557,6 +557,11 @@ fn build_fal_i2v_body(endpoint: &str, req: &ImageToVideoRequest) -> serde_json::
 /// Sprite frames are tiny, so it renders at 480p (cheapest, fastest) with
 /// audio off; `num_frames`/`fps` and the negative prompt have no Seedance
 /// equivalent and are dropped.
+///
+/// `duration` is fixed at the minimum 4s on purpose: we frame-pick a short
+/// loop from the clip, and `req.num_frames` is the Wan-specific minimum (81),
+/// not a desired clip length — deriving seconds from it would only make the
+/// generation longer and slower for no benefit.
 #[allow(clippy::disallowed_methods)]
 fn build_seedance_i2v_body(req: &ImageToVideoRequest) -> serde_json::Value {
     let mut input = serde_json::json!({
@@ -872,13 +877,17 @@ fn collect_image_refs(value: &serde_json::Value, refs: &mut Vec<String>) {
     }
 }
 
+/// Decodes a base64 `data:` URI's payload, or `None` for a non-data URL.
+///
+/// Accepts any `data:<mime>;base64,…` (image or video) — fal can return a
+/// `data:video/...` clip, and the caller derives the mime separately.
 fn decode_data_uri(uri: &str) -> Result<Option<Vec<u8>>> {
+    if !uri.starts_with("data:") {
+        return Ok(None);
+    }
     let Some((_, data)) = uri.split_once(',') else {
         return Ok(None);
     };
-    if !uri.starts_with("data:image/") {
-        return Ok(None);
-    }
     base64::engine::general_purpose::STANDARD
         .decode(data.as_bytes())
         .map(Some)

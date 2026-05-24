@@ -366,7 +366,8 @@ pub async fn animation_generate_first_frame(
 
     let resp = if let Some(mask_b64) = args.mask_base64.as_deref() {
         // Inpaint: edit the painted region of the current frame in place.
-        let backend = select_image_backend(&state, BackendCapabilities::IMAGE_EDIT, "image-edit")?;
+        let backend =
+            select_image_backend(&state, BackendCapabilities::IMAGE_INPAINT, "image-inpaint")?;
         let edit = ImageEditRequest {
             model: None,
             image: source,
@@ -1442,7 +1443,14 @@ fn encode_pixeldata_to_png(pd: &PixelData) -> CommandResult<Vec<u8>> {
     let mut tight = Vec::with_capacity(row * pd.height as usize);
     for y in 0..pd.height as usize {
         let start = y * stride;
-        tight.extend_from_slice(&pd.bytes[start..start + row]);
+        let end = start.saturating_add(row);
+        let slice = pd
+            .bytes
+            .get(start..end)
+            .ok_or_else(|| AppCommandError::Validation {
+                detail: "stripped image has inconsistent stride / byte length".into(),
+            })?;
+        tight.extend_from_slice(slice);
     }
     let img = image::RgbaImage::from_raw(pd.width, pd.height, tight).ok_or_else(|| {
         AppCommandError::Validation {

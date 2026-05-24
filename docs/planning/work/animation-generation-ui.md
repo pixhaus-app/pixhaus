@@ -62,7 +62,7 @@ Full-screen, replacing the canvas. Header, left controls, center animated previe
 candidate strip, streaming request strip, and a timeline ribbon showing the entity's
 animation set.
 
-```
+```text
 +--------------------------------------------------------------+
 | < Back   Hero - Animations    anchor: south(approved)        |
 |          est: i2v ~60s, ~12c          [ Generate ]           |
@@ -111,7 +111,7 @@ animation set.
 | Direction | South, West, North as buttons. East is shown as a derived horizontal flip of West, not a generate target (directional economy). |
 | Mode | Grid image-gen or Walk via i2v. Walk forces i2v and disables grid-only controls; the doc's pipeline marks i2v as the only reliable walk path. |
 | Frames / grid size | Grid mode: g (2-6), reusing the existing slider and the `actions.length <= gridSize` chip constraint. i2v mode: target picked-frame count (8-12). |
-| Choreography / prompt | Free text; pre-filled from the anchor's stored prompt. Idle/attack expose the CHARACTER x CHOREOGRAPHY scaffold; attack exposes per-beat effect scripting. |
+| Choreography / prompt | Free text; prefilled from the anchor's stored prompt. Idle/attack expose the CHARACTER x CHOREOGRAPHY scaffold; attack exposes per-beat effect scripting. |
 | Advanced | Seed, cell size, frame durations, layout-guide toggle, negative prompts (direction-locked, no pivots, no background, no particles), backend and quality. |
 
 Defaults derive from the anchor: direction defaults to the anchor's direction, palette
@@ -132,7 +132,7 @@ progress events the studio renders as request rows (mirroring `SheetRequestProgr
 
 ## Candidate review
 
-```
+```text
 +--------------------------------------------------+
 |                 [ candidate #2 ]                 |
 |        > playing  loop  fps 10   [ compare ]     |
@@ -157,7 +157,7 @@ When a walk is generated via i2v, the backend returns a clip; the studio opens a
 picker (advances S32, reusing `motion_from_video` keyframe detection) to extract a clean
 loop before review.
 
-```
+```text
 +--------------------------------------------------------------+
 | Pick walk loop - West                                        |
 |  [ clip scrubber #################################### ]      |
@@ -181,7 +181,7 @@ loop before review.
 Before an animation integrates, the studio shows the normalization result so the user
 sees baseline lock and scale correction (pipeline doc, seven-step pass).
 
-```
+```text
 +--------------------------------------------------+
 | Normalize - Walk / South                         |
 |  contact sheet:  [1][2][3][4][5][6][7][8]        |
@@ -203,7 +203,7 @@ for the animation, one cel per frame at the right indices, and a `FrameTag` (plu
 engine-side `Animation`) over the range with the right `LoopDirection`. The timeline
 selects the new tag and starts playback.
 
-```
+```text
 | tags:   [ idle (pingpong) ] [ walk-s (forward) ] [ attack ]  |
 | frames:  1  2  3  4  5  6  7  8  9 10 11 12 13 14 ...         |
 | Hero    [#][#][#][#][#][#][#][#][#][#][#][#][#][#]            |
@@ -220,7 +220,7 @@ since generated animations set these and the user must see and edit them.
 A per-entity view of the whole set, so the user sees coverage and staleness. Re-rolling
 the anchor marks dependents stale (pipeline doc cascade).
 
-```
+```text
 +--------------------------------------------------+
 | Hero - animation set            anchor: approved |
 |            South    West    North   East(flip)   |

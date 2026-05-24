@@ -21,6 +21,9 @@ const ReferenceStage: Component = () => {
   const [anchor] = createResource(
     () => ({ id: activeAnimationStudioEntityId(), dir: direction() }),
     async ({ id, dir }) => {
+      // Clear the shared image so a stale anchor isn't shown for the wrong
+      // entity or after a failed fetch.
+      setReferenceImage(null);
       if (id === null) return null;
       const img = await animationGetAnchor(id, dir);
       setReferenceImage(img);

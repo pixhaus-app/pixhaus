@@ -34,7 +34,10 @@ function statusLabel(status: string): string {
 }
 
 const AnimationSet: Component<Props> = (props) => {
-  const [data, { refetch }] = createResource<AnimationSetData>(() => animationSet(props.entityId));
+  const [data, { refetch }] = createResource(
+    () => props.entityId,
+    (entityId) => animationSet(entityId),
+  );
 
   const cellStatus = (set: AnimationSetData, ty: string, dir: string): string =>
     set.cells.find((c) => c.animation_type === ty && c.direction === dir)?.status ?? "missing";
