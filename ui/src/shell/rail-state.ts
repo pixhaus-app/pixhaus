@@ -18,7 +18,7 @@
 
 import { createMemo } from "solid-js";
 import { createStore } from "solid-js/store";
-import { activeTool, BRUSH_TOOLS } from "../canvas/tools/tool-state";
+import { tool, BRUSH_TOOLS } from "../canvas/tools/tool-state";
 import { selectTool } from "../canvas/select/select-state";
 import { activeTilemapCtx } from "../tilemap/tilemap-state";
 
@@ -79,16 +79,16 @@ type RailState = {
   timelineCollapsed: boolean;
 };
 
-function isBrushTool(tool: string): boolean {
-  return (BRUSH_TOOLS as readonly string[]).includes(tool);
+function isBrushTool(t: string): boolean {
+  return (BRUSH_TOOLS as readonly string[]).includes(t);
 }
 
 function autoOpen(id: SectionId): boolean {
   switch (id) {
     case "brush":
-      return isBrushTool(activeTool());
+      return isBrushTool(tool.activeTool);
     case "fill":
-      return activeTool() === "fill";
+      return tool.activeTool === "fill";
     case "select":
       // Auto-open whenever the user has the wand tool active; the
       // section body shows nothing useful for other select tools.

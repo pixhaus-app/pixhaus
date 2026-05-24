@@ -69,14 +69,7 @@ import {
 } from "../dialog";
 import type { MessageDialogResult } from "@tauri-apps/plugin-dialog";
 import { dispatchCommand } from "../../command-palette/command-registry";
-import {
-  activeTool,
-  pixelPerfect,
-  toolShape,
-  toolSize,
-  type BrushShape,
-  type ToolType,
-} from "../../canvas/tools/tool-state";
+import { tool, type BrushShape, type ToolType } from "../../canvas/tools/tool-state";
 
 interface LayerDebug {
   /** Force a layer-list IPC + refresh of the layers signal. Use sparingly
@@ -229,7 +222,7 @@ export function installDebugSurface(): void {
     getActiveSpriteId: () => activeSpriteId(),
     getActiveLayerId: () => activeLayerId(),
     getActiveFrameIndex: () => activeFrameIndex(),
-    getActiveTool: () => activeTool(),
+    getActiveTool: () => tool.activeTool,
 
     getZoom: () => zoom(),
     getScroll: () => ({ x: scrollX(), y: scrollY() }),
@@ -307,10 +300,10 @@ export function installDebugSurface(): void {
     },
 
     tool: {
-      active: () => activeTool(),
-      size: () => toolSize(),
-      shape: () => toolShape(),
-      pixelPerfect: () => pixelPerfect(),
+      active: () => tool.activeTool,
+      size: () => tool.size,
+      shape: () => tool.shape,
+      pixelPerfect: () => tool.pixelPerfect,
     },
 
     layer: {

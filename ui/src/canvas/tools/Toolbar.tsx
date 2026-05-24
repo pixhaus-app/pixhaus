@@ -25,7 +25,7 @@ import {
   Pipette,
   type LucideProps,
 } from "lucide-solid";
-import { activeTool, setActiveTool, type ToolType } from "./tool-state";
+import { tool as toolState, setActiveTool, type ToolType } from "./tool-state";
 import { selectTool, setSelectTool, type SelectTool } from "../select/select-state";
 import { isSelectMode, setIsSelectMode } from "../canvas-state";
 import { comboForCommand } from "../../keybinds/keybind-manager";
@@ -133,7 +133,7 @@ const SELECT_TOOLS: SelectToolMeta[] = [
 ];
 
 const Toolbar: Component = () => {
-  const drawActive = (id: ToolType) => !isSelectMode() && activeTool() === id;
+  const drawActive = (id: ToolType) => !isSelectMode() && toolState.activeTool === id;
   const selectActive = (id: SelectTool) => isSelectMode() && selectTool() === id;
 
   return (

@@ -97,7 +97,7 @@ import {
   autotileMode,
   setAutotileMode,
 } from "../tilemap/tilemap-state";
-import { foregroundColor, setActiveTool, type ToolType } from "../canvas/tools/tool-state";
+import { tool as toolState, setActiveTool, type ToolType } from "../canvas/tools/tool-state";
 import {
   paletteAdd as paletteAddCmd,
   paletteAddColor as paletteAddColorCmd,
@@ -758,7 +758,7 @@ const COMMANDS: ReadonlyMap<string, CommandEntry> = new Map<string, CommandEntry
         paletteAddColorCmd({
           sprite_id: spriteId,
           palette_id: pal.id,
-          color: foregroundColor(),
+          color: toolState.foregroundColor,
         })
           .then(() => refreshPalettes(spriteId))
           .catch((err: unknown) => reportCommandFailure("palette_add_color", err));

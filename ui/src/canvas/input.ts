@@ -25,14 +25,7 @@ import {
   setShapePreview,
   type ShapeKind,
 } from "./canvas-state";
-import {
-  activeTool,
-  fillTolerance,
-  foregroundColor,
-  pixelPerfect,
-  toolShape,
-  toolSize,
-} from "./tools/tool-state";
+import { tool } from "./tools/tool-state";
 import { attachSelectInput } from "./select/select-input";
 import { transformDrag } from "./transform/transform-state";
 import { snapZoom, clampZoom, zoomAt, screenToCanvas } from "./viewport";
@@ -214,17 +207,17 @@ function canvasPointFromEvent(e: MouseEvent, el: HTMLElement): [number, number] 
 }
 
 function isDrawingTool(): boolean {
-  const t = activeTool();
+  const t = tool.activeTool;
   return t === "pencil" || t === "eraser";
 }
 
 function isShapeTool(): boolean {
-  const t = activeTool();
+  const t = tool.activeTool;
   return t === "rect" || t === "ellipse" || t === "line";
 }
 
 function isFillTool(): boolean {
-  return activeTool() === "fill";
+  return tool.activeTool === "fill";
 }
 
 // Anchor point of an in-progress shape (line/rect/ellipse) drag, in
@@ -244,20 +237,20 @@ function dispatchShape(end: [number, number]): void {
     return;
   }
 
-  const tool = activeTool();
+  const active = tool.activeTool;
   let points: Array<[number, number]>;
-  if (tool === "rect") {
+  if (active === "rect") {
     points = rectPerimeterPoints(start[0], start[1], end[0], end[1]);
-  } else if (tool === "ellipse") {
+  } else if (active === "ellipse") {
     points = ellipsePerimeterPoints(start[0], start[1], end[0], end[1]);
-  } else if (tool === "line") {
+  } else if (active === "line") {
     points = linePoints(start[0], start[1], end[0], end[1]);
   } else {
     return;
   }
   if (points.length === 0) return;
 
-  const color = foregroundColor();
+  const color = tool.foregroundColor;
   canvasDrawStroke({
     sprite_id: spriteId,
     layer_id: layerId,
@@ -265,9 +258,9 @@ function dispatchShape(end: [number, number]): void {
     points,
     color: { r: color.r, g: color.g, b: color.b, a: color.a },
     pressure: points.map(() => 1.0),
-    brush_shape: toolShape(),
-    brush_size: toolSize(),
-    pixel_perfect: pixelPerfect(),
+    brush_shape: tool.shape,
+    brush_size: tool.size,
+    pixel_perfect: tool.pixelPerfect,
     erase: false,
   }).catch((err: unknown) => {
     reportCommandFailure("canvas_draw_stroke (shape)", err);
@@ -283,7 +276,7 @@ function dispatchFill(canvasX: number, canvasY: number): void {
     return;
   }
 
-  const color = foregroundColor();
+  const color = tool.foregroundColor;
   canvasFill({
     sprite_id: spriteId,
     layer_id: layerId,
@@ -291,7 +284,7 @@ function dispatchFill(canvasX: number, canvasY: number): void {
     x: Math.floor(canvasX),
     y: Math.floor(canvasY),
     color: { r: color.r, g: color.g, b: color.b, a: color.a },
-    tolerance: fillTolerance(),
+    tolerance: tool.fillTolerance,
   }).catch((err: unknown) => {
     reportCommandFailure("canvas_fill", err);
   });
@@ -380,15 +373,15 @@ export function attachCanvasInput(el: HTMLElement): () => void {
     // Reset the chain — a fresh stroke starts a fresh ordering.
     strokeIpcChain = Promise.resolve();
 
-    const color = foregroundColor();
+    const color = tool.foregroundColor;
     canvasBeginStroke({
       sprite_id: spriteId,
       layer_id: layerId,
       frame_index: activeFrameIndex(),
       color: { r: color.r, g: color.g, b: color.b, a: color.a },
-      brush_shape: toolShape(),
-      brush_size: toolSize(),
-      pixel_perfect: pixelPerfect(),
+      brush_shape: tool.shape,
+      brush_size: tool.size,
+      pixel_perfect: tool.pixelPerfect,
       erase,
       first_point: firstPoint,
     })
@@ -582,7 +575,7 @@ export function attachCanvasInput(el: HTMLElement): () => void {
       if (isDrawingTool()) {
         e.preventDefault();
         const point = canvasPointFromEvent(e, el);
-        const erase = activeTool() === "eraser";
+        const erase = tool.activeTool === "eraser";
         startStroke(point, erase);
         return;
       }
@@ -593,9 +586,9 @@ export function attachCanvasInput(el: HTMLElement): () => void {
         shapeAnchor = anchor;
         // Show the preview at the anchor immediately so the user gets
         // feedback before the first mousemove.
-        const tool = activeTool();
+        const active = tool.activeTool;
         const kind: ShapeKind | null =
-          tool === "line" || tool === "rect" || tool === "ellipse" ? tool : null;
+          active === "line" || active === "rect" || active === "ellipse" ? active : null;
         if (kind !== null) {
           setShapePreview({ kind, start: anchor, end: anchor });
         }
@@ -649,9 +642,9 @@ export function attachCanvasInput(el: HTMLElement): () => void {
     // dispatches on mouseup via dispatchShape.
     if (shapeActive && shapeAnchor !== null) {
       const end = canvasPointFromEvent(e, el);
-      const tool = activeTool();
+      const active = tool.activeTool;
       const kind: ShapeKind | null =
-        tool === "line" || tool === "rect" || tool === "ellipse" ? tool : null;
+        active === "line" || active === "rect" || active === "ellipse" ? active : null;
       if (kind !== null) {
         setShapePreview({ kind, start: shapeAnchor, end });
       }
