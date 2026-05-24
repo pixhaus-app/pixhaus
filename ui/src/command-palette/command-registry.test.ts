@@ -91,7 +91,7 @@ const FAKE_PROJECT = {
   sprite_count: 1,
 } as unknown as Parameters<typeof setActiveProject>[0];
 
-beforeEach(() => {
+beforeEach(async () => {
   invokeMock.mockReset();
   invokeMock.mockResolvedValue(undefined);
   setActiveSpriteId(1);
@@ -104,6 +104,11 @@ beforeEach(() => {
   setTimelineCollapsed(false);
   clearSheetEntity();
   setActiveProject(FAKE_PROJECT);
+  // Setting the active sprite makes the module-level layers query (see
+  // layer-state) fetch layer_list in a microtask. Let that settle and clear
+  // it so each test body observes only the IPC its own dispatch triggers.
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  invokeMock.mockClear();
 });
 
 afterEach(() => {

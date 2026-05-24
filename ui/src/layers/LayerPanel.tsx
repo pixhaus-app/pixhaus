@@ -5,15 +5,7 @@
 // Drag-to-reorder is handled per-row in LayerRow. The context menu is portal-mounted
 // so it isn't clipped by panel overflow.
 
-import {
-  type Component,
-  For,
-  Show,
-  createEffect,
-  createMemo,
-  createSignal,
-  onCleanup,
-} from "solid-js";
+import { type Component, For, Show, createMemo, createSignal, onCleanup } from "solid-js";
 import { activeSpriteId, activeLayerId } from "../canvas/canvas-state";
 import {
   addLayer,
@@ -22,7 +14,6 @@ import {
   isGroupExpanded,
   layers,
   nextAutoName,
-  refreshLayers,
   selectedLayerIds,
   selectLayer,
 } from "./layer-state";
@@ -88,15 +79,10 @@ type Props = {
 const LayerPanel: Component<Props> = (props) => {
   const spriteId = activeSpriteId;
 
-  // Single effect handles both the initial load and every sprite change.
-  // The previous version had onMount + a tracking effect, which fired
-  // refreshLayers() twice on mount and could race when the sprite-id
-  // signal changed before the first IPC settled.
-  createEffect(() => {
-    spriteId(); // track
-    refreshLayers();
-  });
-
+  // The layer list is backed by a createBackendQuery keyed on the active
+  // sprite (see layer-state), so it loads and reloads on sprite change with
+  // no panel-side effect. The old onMount/effect refetch lived here only
+  // because the cache had no source of its own.
   const flatEntries = createMemo(() => flattenLayers(layers(), isGroupExpanded));
 
   // ── Virtual scroll ─────────────────────────────────────────────────────────
