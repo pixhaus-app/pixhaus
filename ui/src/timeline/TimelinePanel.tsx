@@ -24,7 +24,7 @@ import {
   setActiveFrameIndex,
 } from "../canvas/canvas-state";
 import { activeSpriteId } from "../canvas/canvas-state";
-import { flattenLayers, isGroupExpanded, layers, refreshLayers } from "../layers/layer-state";
+import { flattenLayers, isGroupExpanded, layers } from "../layers/layer-state";
 import {
   addFrame,
   celPresence,
@@ -36,7 +36,6 @@ import {
   onionSkin,
   onionSkinNext,
   onionSkinPrev,
-  refreshTimeline,
   selectFrame,
   selectedFrames,
   setFrameDuration,
@@ -66,11 +65,9 @@ const TimelinePanel: Component = () => {
   const spriteId = activeSpriteId;
   const activeFrame = activeFrameIndex;
 
-  createEffect(() => {
-    spriteId();
-    refreshTimeline();
-    refreshLayers();
-  });
+  // The frame/tag/cel and layer caches are backed by createBackendQuery
+  // keyed on the active sprite (see timeline-state, layer-state), so they
+  // reload on sprite change with no panel-side effect.
 
   createEffect(() => {
     if (isTimelineCollapsed()) stopPlayback();

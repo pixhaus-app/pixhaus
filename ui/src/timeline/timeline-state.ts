@@ -32,7 +32,8 @@ import {
   frameTagSetPlayback,
 } from "../lib/commands/frames";
 import { canvasRecompositeFrame } from "../lib/commands/canvas";
-import { reportCommandFailure } from "../lib/utils/errors";
+import { createBackendQuery } from "../lib/sync/query";
+import { runMutation } from "../lib/sync/mutation";
 import {
   activeSpriteId,
   activeFrameIndex,
@@ -50,38 +51,45 @@ import {
 
 // ── Data caches ──────────────────────────────────────────────────────────────
 
-export const [frames, setFrames] = createSignal<Frame[]>([]);
-export const [frameTags, setFrameTags] = createSignal<FrameTag[]>([]);
-
 // Cel presence as a two-level lookup: Map<LayerId, Set<FrameIndex>>.
 // Built from the flat cel list; missing entry means no cel at that (layer, frame).
 export type CelPresence = ReadonlyMap<LayerId, ReadonlySet<FrameIndex>>;
-export const [celPresence, setCelPresence] = createSignal<CelPresence>(new Map());
 
-// All three caches share one refresh token so a sprite change mid-fetch
-// drops all three stale responses atomically, not just the first that resolves.
-let refreshToken = 0;
+interface TimelineData {
+  frames: Frame[];
+  tags: FrameTag[];
+  celPresence: CelPresence;
+}
 
+const EMPTY_TIMELINE: TimelineData = { frames: [], tags: [], celPresence: new Map() };
+
+// Frames, tags, and cels load together as one query keyed on the active
+// sprite. They used to share a hand-rolled refresh token so a sprite change
+// mid-fetch dropped all three stale responses atomically; a single
+// createBackendQuery gives that for free (createResource commits only the
+// latest fetch) and fetches all three in one Promise.all.
+const timelineQuery = createBackendQuery<SpriteId, TimelineData>({
+  key: "frames",
+  source: activeSpriteId,
+  fetch: async (spriteId) => {
+    const [nextFrames, nextTags, nextCels]: [Frame[], FrameTag[], Cel[]] = await Promise.all([
+      frameList(spriteId),
+      frameTagList(spriteId),
+      celList(spriteId),
+    ]);
+    return { frames: nextFrames, tags: nextTags, celPresence: buildCelPresence(nextCels) };
+  },
+  initial: EMPTY_TIMELINE,
+  errorTitle: "Failed to load timeline",
+});
+
+export const frames = (): Frame[] => timelineQuery.data().frames;
+export const frameTags = (): FrameTag[] => timelineQuery.data().tags;
+export const celPresence = (): CelPresence => timelineQuery.data().celPresence;
+
+/** Refetches frames, tags, and cels for the active sprite. */
 export function refreshTimeline(): void {
-  refreshToken += 1;
-  const myToken = refreshToken;
-  const spriteId = activeSpriteId();
-  if (spriteId === null) {
-    setFrames([]);
-    setFrameTags([]);
-    setCelPresence(new Map());
-    return;
-  }
-  void Promise.all([frameList(spriteId), frameTagList(spriteId), celList(spriteId)])
-    .then(([nextFrames, nextTags, nextCels]: [Frame[], FrameTag[], Cel[]]) => {
-      if (myToken !== refreshToken) return;
-      setFrames(nextFrames);
-      setFrameTags(nextTags);
-      setCelPresence(buildCelPresence(nextCels));
-    })
-    .catch((err: unknown) => {
-      console.error("[pixhaus] timeline refresh:", err);
-    });
+  timelineQuery.refetch();
 }
 
 // ── Frame selection ──────────────────────────────────────────────────────────
@@ -126,15 +134,16 @@ export function copyFrame(index: FrameIndex): void {
 export function pasteFrame(spriteId: SpriteId): void {
   const src = copiedFrameIndex();
   if (src === null) return;
-  frameDuplicate(spriteId, src)
-    .then(({ index }) => {
-      refreshTimeline();
+  void runMutation({
+    run: () => frameDuplicate(spriteId, src),
+    invalidate: ["frames"],
+    onSuccess: ({ index }) => {
       selectFrame(index, false);
       // Newly materialised frames have no tiles in the renderer's cache;
       // recomposite so the duplicated cels actually appear instead of a blank.
       recompositeFrameOrLog(spriteId, index);
-    })
-    .catch((err: unknown) => reportCommandFailure("frame paste", err));
+    },
+  });
 }
 
 // ── Playback ─────────────────────────────────────────────────────────────────
@@ -227,12 +236,11 @@ export const [tagDragState, setTagDragState] = createSignal<TagDragState>({ kind
 // ── Mutation helpers ─────────────────────────────────────────────────────────
 
 export function addFrame(spriteId: SpriteId, durationMs = 100): void {
-  frameAdd(spriteId, durationMs)
-    .then(({ index }) => {
-      refreshTimeline();
-      selectFrame(index, false);
-    })
-    .catch((err: unknown) => reportCommandFailure("frame_add", err));
+  void runMutation({
+    run: () => frameAdd(spriteId, durationMs),
+    invalidate: ["frames"],
+    onSuccess: ({ index }) => selectFrame(index, false),
+  });
 }
 
 export function deleteFrames(spriteId: SpriteId, indices: ReadonlySet<FrameIndex>): void {
@@ -241,13 +249,14 @@ export function deleteFrames(spriteId: SpriteId, indices: ReadonlySet<FrameIndex
   const currentActive = activeFrameIndex();
   const wasDeleted = indices.has(currentActive);
 
-  sorted
-    .reduce<Promise<void>>(
-      (chain, idx) => chain.then(() => frameDelete(spriteId, idx)),
-      Promise.resolve(),
-    )
-    .then(() => {
-      refreshTimeline();
+  void runMutation({
+    run: () =>
+      sorted.reduce<Promise<void>>(
+        (chain, idx) => chain.then(() => frameDelete(spriteId, idx)),
+        Promise.resolve(),
+      ),
+    invalidate: ["frames"],
+    onSuccess: () => {
       if (wasDeleted) {
         const firstDeleted = sorted[sorted.length - 1] ?? 0;
         setActiveFrameIndex(Math.max(0, firstDeleted - 1));
@@ -266,20 +275,21 @@ export function deleteFrames(spriteId: SpriteId, indices: ReadonlySet<FrameIndex
         }
       }
       setSelectedFrames(new Set<FrameIndex>());
-    })
-    .catch((err: unknown) => reportCommandFailure("frame_delete", err));
+    },
+  });
 }
 
 export function duplicateFrame(spriteId: SpriteId, index: FrameIndex): void {
-  frameDuplicate(spriteId, index)
-    .then(({ index: newIdx }) => {
-      refreshTimeline();
+  void runMutation({
+    run: () => frameDuplicate(spriteId, index),
+    invalidate: ["frames"],
+    onSuccess: ({ index: newIdx }) => {
       selectFrame(newIdx, false);
       // Newly materialised frames have no tiles in the renderer's cache;
       // recomposite so the duplicated cels actually appear instead of a blank.
       recompositeFrameOrLog(spriteId, newIdx);
-    })
-    .catch((err: unknown) => reportCommandFailure("frame_duplicate", err));
+    },
+  });
 }
 
 // Asks the backend to recomposite `frameIndex` and emit tile-dirty events.
@@ -292,15 +302,17 @@ function recompositeFrameOrLog(spriteId: SpriteId, frameIndex: FrameIndex): void
 }
 
 export function setFrameDuration(spriteId: SpriteId, index: FrameIndex, durationMs: number): void {
-  frameSetDuration(spriteId, index, durationMs)
-    .then(() => refreshTimeline())
-    .catch((err: unknown) => reportCommandFailure("frame_set_duration", err));
+  void runMutation({
+    run: () => frameSetDuration(spriteId, index, durationMs),
+    invalidate: ["frames"],
+  });
 }
 
 export function setFrameDurationMul(spriteId: SpriteId, index: FrameIndex, mul: number): void {
-  frameSetDurationMul(spriteId, index, mul)
-    .then(() => refreshTimeline())
-    .catch((err: unknown) => reportCommandFailure("frame_set_duration_mul", err));
+  void runMutation({
+    run: () => frameSetDurationMul(spriteId, index, mul),
+    invalidate: ["frames"],
+  });
 }
 
 // Swap two frames in-place using two sequential frameReorder calls.
@@ -320,13 +332,14 @@ export function reverseSelectedFrames(spriteId: SpriteId, indices: ReadonlySet<F
   const pairs = buildSwapPairs(indices);
   if (pairs.length === 0) return;
 
-  pairs
-    .reduce<Promise<void>>(
-      (p, [a, b]) => p.then(() => swapFrames(spriteId, a, b)),
-      Promise.resolve(),
-    )
-    .then(() => refreshTimeline())
-    .catch((err: unknown) => reportCommandFailure("frame_reverse", err));
+  void runMutation({
+    run: () =>
+      pairs.reduce<Promise<void>>(
+        (p, [a, b]) => p.then(() => swapFrames(spriteId, a, b)),
+        Promise.resolve(),
+      ),
+    invalidate: ["frames"],
+  });
 }
 
 export function createTag(
@@ -336,21 +349,25 @@ export function createTag(
   loopDirection: LoopDirection = "forward",
   repeat = 0,
 ): void {
-  frameTagCreate({ sprite_id: spriteId, name, range, loop_direction: loopDirection, repeat })
-    .then(() => refreshTimeline())
-    .catch((err: unknown) => reportCommandFailure("frame_tag_create", err));
+  void runMutation({
+    run: () =>
+      frameTagCreate({ sprite_id: spriteId, name, range, loop_direction: loopDirection, repeat }),
+    invalidate: ["frames"],
+  });
 }
 
 export function deleteTag(spriteId: SpriteId, tagName: string): void {
-  frameTagDelete(spriteId, tagName)
-    .then(() => refreshTimeline())
-    .catch((err: unknown) => reportCommandFailure("frame_tag_delete", err));
+  void runMutation({
+    run: () => frameTagDelete(spriteId, tagName),
+    invalidate: ["frames"],
+  });
 }
 
 export function renameTag(spriteId: SpriteId, oldName: string, newName: string): void {
-  frameTagRename(spriteId, oldName, newName)
-    .then(() => refreshTimeline())
-    .catch((err: unknown) => reportCommandFailure("frame_tag_rename", err));
+  void runMutation({
+    run: () => frameTagRename(spriteId, oldName, newName),
+    invalidate: ["frames"],
+  });
 }
 
 /** Sets a tag's loop direction and repeat (generated animations need both). */
@@ -360,9 +377,10 @@ export function setTagPlayback(
   loopDirection: LoopDirection,
   repeat: number,
 ): void {
-  frameTagSetPlayback(spriteId, tagName, loopDirection, repeat)
-    .then(() => refreshTimeline())
-    .catch((err: unknown) => reportCommandFailure("frame_tag_set_playback", err));
+  void runMutation({
+    run: () => frameTagSetPlayback(spriteId, tagName, loopDirection, repeat),
+    invalidate: ["frames"],
+  });
 }
 
 // Pure helper: generates a name from a set of existing names.
