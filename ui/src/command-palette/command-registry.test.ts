@@ -49,6 +49,20 @@ vi.mock("@tauri-apps/api/core", () => ({
   invoke: (cmd: string, args?: unknown) => invokeMock(cmd, args),
 }));
 
+// List commands that the module-level backend queries (layers, timeline,
+// library) fire in the background whenever the active sprite/project is set.
+// They must resolve to an array so the query fetchers don't throw on the
+// default `undefined` mock return.
+const LIST_COMMANDS = new Set([
+  "layer_list",
+  "frame_list",
+  "frame_tag_list",
+  "cel_list",
+  "library_list_entities",
+  "library_list_groups",
+  "library_list_tags",
+]);
+
 // The dialog plugin pulls in the IPC layer; stub the surface used by
 // the registry so the tests don't depend on a Tauri host.
 vi.mock("@tauri-apps/plugin-dialog", () => ({
@@ -93,7 +107,9 @@ const FAKE_PROJECT = {
 
 beforeEach(async () => {
   invokeMock.mockReset();
-  invokeMock.mockResolvedValue(undefined);
+  invokeMock.mockImplementation((cmd: string) =>
+    Promise.resolve(LIST_COMMANDS.has(cmd) ? [] : undefined),
+  );
   setActiveSpriteId(1);
   setActiveFrameIndex(0);
   setZoom(1);

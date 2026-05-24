@@ -70,7 +70,9 @@ import { toggleLibraryCollapsed } from "../shell/rail-state";
 // ── Panel component ──────────────────────────────────────────────────────────
 
 const LibraryPanel: Component = () => {
-  createEffect(() => refreshLibrary());
+  // The entity/group/tag caches are backed by a createBackendQuery keyed on
+  // the active project (see library-state), so they load on project open with
+  // no panel-side effect.
 
   const displayed = createMemo(() => filteredEntities(entities(), tags()));
 
