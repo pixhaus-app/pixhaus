@@ -20,9 +20,11 @@ import {
   frameTags,
   renameTag,
   setTagDragState,
+  setTagPlayback,
   tagDragState,
   uniqueTagName,
 } from "./timeline-state";
+import type { LoopDirection } from "../lib/types";
 import ModalInput from "../components/ModalInput";
 import { clampMenuToViewport } from "../lib/utils/menu-position";
 
@@ -76,6 +78,9 @@ const FrameTagBar: Component<Props> = (props) => {
     const count = props.frameCount;
     return frameTags().filter((t) => t.range.end >= 0 && t.range.start < count);
   });
+
+  const tagByName = (name: string): FrameTag | undefined =>
+    frameTags().find((t) => t.name === name);
 
   const isEmpty = createMemo(
     () => visibleTags().length === 0 && drag().kind === "none" && props.frameCount > 0,
@@ -238,6 +243,51 @@ const FrameTagBar: Component<Props> = (props) => {
               >
                 Delete tag
               </button>
+              <Show when={tagByName(m().tagName)}>
+                {(tag) => (
+                  <div class="tl-ctx-menu__playback">
+                    <label class="tl-ctx-menu__field">
+                      loop
+                      <select
+                        value={tag().loop_direction}
+                        onChange={(e) => {
+                          if (props.spriteId !== null) {
+                            setTagPlayback(
+                              props.spriteId,
+                              tag().name,
+                              e.currentTarget.value as LoopDirection,
+                              tag().repeat,
+                            );
+                          }
+                        }}
+                      >
+                        <option value="forward">forward</option>
+                        <option value="reverse">reverse</option>
+                        <option value="ping_pong">ping-pong</option>
+                        <option value="ping_pong_reverse">ping-pong reverse</option>
+                      </select>
+                    </label>
+                    <label class="tl-ctx-menu__field">
+                      repeat
+                      <input
+                        type="number"
+                        min={0}
+                        value={tag().repeat}
+                        onChange={(e) => {
+                          if (props.spriteId !== null) {
+                            setTagPlayback(
+                              props.spriteId,
+                              tag().name,
+                              tag().loop_direction,
+                              Math.max(0, Number(e.currentTarget.value)),
+                            );
+                          }
+                        }}
+                      />
+                    </label>
+                  </div>
+                )}
+              </Show>
             </div>
           </Portal>
         )}

@@ -28,8 +28,8 @@ use std::time::Duration;
 use serde::{Deserialize, Serialize};
 
 use pixhaus_core::project::{
-    Cel, EntityId, Frame, FrameIndex, FrameTag, Layer, LayerId, Palette, PixelBufferId, Rect,
-    Slice, SpriteId, Tileset,
+    Animation, Cel, EntityId, Frame, FrameIndex, FrameTag, Layer, LayerId, Palette, PixelBufferId,
+    Rect, Slice, SpriteId, Tileset,
 };
 
 use super::context::PixelData;
@@ -175,6 +175,19 @@ pub enum VerbEffect {
         sprite: SpriteId,
         /// New tag.
         tag: FrameTag,
+    },
+    /// Add an engine-side animation entry.
+    ///
+    /// Produced alongside [`Self::AddTag`] by the animated-sprite-sheet
+    /// verb so a generated animation lands as a playable clip, not just an
+    /// editor tag. The `id` is a placeholder the host renumbers on commit;
+    /// the `range` uses the same relative frame indices as the companion
+    /// tag and frames, which the host offsets to absolute positions.
+    AddAnimation {
+        /// Sprite that owns the animation set.
+        sprite: SpriteId,
+        /// New animation with a placeholder `id`.
+        animation: Animation,
     },
     /// Add a named slice.
     AddSlice {

@@ -58,7 +58,8 @@ pub use core::{
     NamedSprite, TilemapLayer, TilemapScene, TilesetReference,
 };
 pub use reference_sheets::{
-    AssetInfo, ChatTranscript, ChatTurn, GenerationProvenance, PromptEntry, PromptResult,
+    AnchorDirection, AnimationKind, AssetInfo, CharacterAnchor, ChatTranscript, ChatTurn,
+    DerivedSheet, DirectionalAnchors, GenerationProvenance, PromptEntry, PromptResult,
     ReferenceImage, ReferenceRole, ReferenceSheet, ReferenceSheetTemplateDefinition,
     ReferenceSheetTemplateId, ReferenceSlot, RefinementKind, RegionDefinition, SheetComposition,
     SheetDimensions, SheetPanel, SheetVariant, VariantOrigin, built_in_reference_sheet_templates,

@@ -60,7 +60,8 @@ pub use id::{
 };
 pub use layer::{Layer, LayerKind};
 pub use library::{
-    ActiveTarget, AiMetadata, AssetInfo, AssetLibrary, CharacterCard, ChatTranscript, ChatTurn,
+    ActiveTarget, AiMetadata, AnchorDirection, AnimationKind, AssetInfo, AssetLibrary,
+    CharacterAnchor, CharacterCard, ChatTranscript, ChatTurn, DerivedSheet, DirectionalAnchors,
     Entity, EntityContent, EntityDefaults, EntityGroup, EntityKind, GenerationProvenance, Library,
     LoraAsset, LoraKind, ModelId, NamedSprite, OperationKind, ProjectAi, PromptEntry,
     PromptHistoryEntry, PromptResult, Quality, ReferenceAsset, ReferenceImage, ReferenceRole,

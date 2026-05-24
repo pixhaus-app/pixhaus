@@ -47,6 +47,7 @@
 pub mod antialias;
 pub mod error;
 pub mod flip;
+pub mod normalize;
 pub mod perspective;
 pub mod rotate;
 pub mod scale;
@@ -56,6 +57,10 @@ pub mod translate;
 pub use antialias::{MlaaConfig, morphological_antialias};
 pub use error::{Error, Result};
 pub use flip::{flip_horizontal, flip_vertical};
+pub use normalize::{
+    ChromaKey, FrameMetrics, NormalizeOptions, NormalizeReport, NormalizeResult, SeamMatch,
+    chroma_key, measure, normalize_frames, repad,
+};
 pub use perspective::perspective;
 pub use rotate::{
     RotationAlgorithm, rotate, rotate_90_ccw, rotate_90_cw, rotate_180, rotate_bilinear,

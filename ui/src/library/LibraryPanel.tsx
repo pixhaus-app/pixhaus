@@ -64,6 +64,7 @@ import LibraryContextMenu, { type LibraryContextTarget } from "./LibraryContextM
 import { openEntityCreate } from "./entity-create-state";
 import type { LibraryTreeEntry } from "./library-state";
 import { openSheetEditor } from "../sheet/sheet-state";
+import { openAnimationStudio } from "../animation/animation-studio-state";
 import { toggleLibraryCollapsed } from "../shell/rail-state";
 
 // ── Panel component ──────────────────────────────────────────────────────────
@@ -700,6 +701,7 @@ const EntityRow: Component<EntityRowProps> = (props) => {
 
         {/* Reference-sheet badge before the kind icon. */}
         <SheetEditorButton entity={props.entry.entity} />
+        <AnimationStudioButton entity={props.entry.entity} />
         <AnchorBadge entity={props.entry.entity} />
 
         {/* Kind icon */}
@@ -766,6 +768,27 @@ const SheetEditorButton: Component<SheetEditorButtonProps> = (props) => {
         }}
       >
         ✦
+      </button>
+    </Show>
+  );
+};
+
+const AnimationStudioButton: Component<SheetEditorButtonProps> = (props) => {
+  const isSpriteEntity = (): boolean => props.entity.content.type === "Sprites";
+
+  return (
+    <Show when={isSpriteEntity()}>
+      <button
+        class="library-row__anchor-badge"
+        data-testid={`library-row-animation-studio-${props.entity.id}`}
+        title="Generate animations"
+        aria-label="Generate animations"
+        onClick={(event) => {
+          event.stopPropagation();
+          openAnimationStudio(props.entity.id);
+        }}
+      >
+        ⏯
       </button>
     </Show>
   );

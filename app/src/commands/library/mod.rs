@@ -133,6 +133,7 @@ pub(crate) fn reference_sheet_from_image(
         variants: Vec::new(),
         prompts: Vec::new(),
         info: AssetInfo::default(),
+        ..Default::default()
     }
 }
 
@@ -1684,6 +1685,7 @@ pub(crate) fn import_reference_sheet_draft(
                 variants: Vec::new(),
                 prompts: Vec::new(),
                 info: AssetInfo::default(),
+                ..Default::default()
             })
         })
         .as_mut();
@@ -2629,6 +2631,7 @@ mod tests {
                     variants: vec![make_variant(20), make_variant(30)],
                     prompts: Vec::new(),
                     info: AssetInfo::default(),
+                    ..Default::default()
                 })),
             },
             ai: AiMetadata::default(),
@@ -2781,6 +2784,7 @@ mod tests {
                     variants: Vec::new(),
                     prompts: Vec::new(),
                     info: AssetInfo::default(),
+                    ..Default::default()
                 })
             })
             .as_mut();

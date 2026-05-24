@@ -326,6 +326,34 @@ pub struct FrameInterpolationRequest {
     pub num_outputs: u32,
 }
 
+/// Image-to-video request (`IMAGE_TO_VIDEO` capability).
+///
+/// Animates a single still into a short clip. Used by the walk-cycle path of
+/// the animated-sprite-sheet verb: a direction-locked clip is generated, then
+/// frame-picked into a clean loop. The prompt bakes in the methodology's hard
+/// negatives (no pivots, no background, no particles) at the call site.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct ImageToVideoRequest {
+    /// Override the backend's default i2v model.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub model: Option<String>,
+    /// Source still as raw PNG bytes — the first frame the motion derives from.
+    pub image: Vec<u8>,
+    /// Positive prompt describing the desired motion.
+    pub prompt: String,
+    /// Negative prompt: pivots, quarter-turns, backgrounds, particles, glow.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub negative_prompt: Option<String>,
+    /// Target clip length in frames. Backends that only take a duration
+    /// convert via [`Self::fps`].
+    pub num_frames: u32,
+    /// Target frames per second of the generated clip.
+    pub fps: u32,
+    /// RNG seed for reproducibility. `None` uses a random seed.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub seed: Option<u64>,
+}
+
 /// Raw Replicate prediction request for model-marketplace access.
 ///
 /// Used by verbs that need a specific Replicate model not covered by a
@@ -369,6 +397,8 @@ pub enum InferenceRequest {
     ImageInpaint(ImageEditRequest),
     /// Generate intermediate frames between key frames.
     FrameInterpolation(FrameInterpolationRequest),
+    /// Animate a still image into a short video clip.
+    ImageToVideo(ImageToVideoRequest),
     /// Raw Replicate API prediction (any registered model).
     Replicate(ReplicateRequest),
     /// Raw `ComfyUI` workflow execution.
@@ -427,6 +457,17 @@ pub struct FrameInterpolationResponse {
     pub model: String,
 }
 
+/// Response carrying a generated video clip.
+#[derive(Clone, Debug)]
+pub struct ImageToVideoResponse {
+    /// The clip as raw container bytes (typically `MP4` / `WebM`).
+    pub clip: Vec<u8>,
+    /// MIME type of the clip (e.g. `video/mp4`). Drives the decode path.
+    pub mime: String,
+    /// Model identifier that produced this response.
+    pub model: String,
+}
+
 /// Returned by [`InferenceBackend::invoke`].
 pub enum InferenceResponse {
     /// Text or tool-call response.
@@ -435,6 +476,8 @@ pub enum InferenceResponse {
     Image(ImageGenResponse),
     /// Frame interpolation response.
     Frames(FrameInterpolationResponse),
+    /// Image-to-video clip response.
+    Video(ImageToVideoResponse),
     /// Raw JSON value used by Replicate when the prediction output
     /// doesn't fit a typed variant. `ComfyUI` returns
     /// [`InferenceResponse::Image`] for its raw workflow execution; the

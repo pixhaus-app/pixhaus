@@ -29,8 +29,8 @@ use tracing::{debug, instrument, warn};
 
 use super::{
     BackendError, FrameInterpolationRequest, FrameInterpolationResponse, ImageEditRequest,
-    ImageGenRequest, ImageGenResponse, InferenceBackend, InferenceRequest, InferenceResponse,
-    ReplicateRequest, Result, VerbProgress, check_http_status,
+    ImageGenRequest, ImageGenResponse, ImageToVideoRequest, ImageToVideoResponse, InferenceBackend,
+    InferenceRequest, InferenceResponse, ReplicateRequest, Result, VerbProgress, check_http_status,
 };
 use crate::plugin::descriptor::{BackendCapabilities, CostEstimate};
 use crate::plugin::progress::VerbProgressEvent;
@@ -206,6 +206,7 @@ impl InferenceBackend for ReplicateBackend {
             .union(BackendCapabilities::SEGMENTATION)
             .union(BackendCapabilities::POSE_ESTIMATION)
             .union(BackendCapabilities::STYLE_TRAINING)
+            .union(BackendCapabilities::IMAGE_TO_VIDEO)
     }
 
     fn supports_streaming(&self) -> bool {
@@ -235,6 +236,13 @@ impl InferenceBackend for ReplicateBackend {
                 max_latency: Duration::from_secs(300),
                 typical_usd_cents: 5.0,
                 max_usd_cents: 50.0,
+            },
+            InferenceRequest::ImageToVideo(_) => CostEstimate {
+                // i2v is the slow, pricey path the studio flags prominently.
+                typical_latency: Duration::from_secs(60),
+                max_latency: Duration::from_secs(300),
+                typical_usd_cents: 12.0,
+                max_usd_cents: 40.0,
             },
             _ => CostEstimate::free(),
         }
@@ -320,6 +328,30 @@ impl InferenceBackend for ReplicateBackend {
                 let images = extract_url_images(&output).await?;
                 Ok(InferenceResponse::Image(ImageGenResponse { images, model }))
             }
+            InferenceRequest::ImageToVideo(ref req) => {
+                progress
+                    .send(VerbProgressEvent::Started {
+                        backend: Some("replicate".into()),
+                    })
+                    .await;
+                let model = req
+                    .model
+                    .clone()
+                    .unwrap_or_else(|| "stability-ai/stable-video-diffusion".into());
+                let input = build_i2v_input(req);
+                let rep_req = ReplicateRequest {
+                    model: model.clone(),
+                    version: None,
+                    input,
+                };
+                let output = self.run_prediction(rep_req, &progress, &cancel).await?;
+                let (clip, mime) = extract_url_clip(&output).await?;
+                Ok(InferenceResponse::Video(ImageToVideoResponse {
+                    clip,
+                    mime,
+                    model,
+                }))
+            }
             InferenceRequest::Text(_) | InferenceRequest::ComfyUi(_) => {
                 warn!("Replicate adapter does not support this request type directly");
                 Err(BackendError::UnsupportedCapability)
@@ -382,6 +414,62 @@ fn build_interpolation_input(req: &FrameInterpolationRequest) -> serde_json::Val
         "frames": frames,
         "num_outputs": req.num_outputs,
     })
+}
+
+#[allow(clippy::disallowed_methods)]
+fn build_i2v_input(req: &ImageToVideoRequest) -> serde_json::Value {
+    let img_b64 = base64::engine::general_purpose::STANDARD.encode(&req.image);
+    let mut input = serde_json::json!({
+        "input_image": format!("data:image/png;base64,{img_b64}"),
+        "prompt": req.prompt,
+        "frames_per_second": req.fps,
+        "video_length": req.num_frames,
+    });
+    if let Some(np) = &req.negative_prompt {
+        input["negative_prompt"] = serde_json::json!(np);
+    }
+    if let Some(seed) = req.seed {
+        input["seed"] = serde_json::json!(seed);
+    }
+    input
+}
+
+/// Fetches a single video clip from the URL returned by Replicate, inferring
+/// the MIME type from the URL extension (default `video/mp4`).
+// The URL is lower-cased before comparison, so the case-sensitivity lint is a
+// false positive here.
+#[allow(clippy::case_sensitive_file_extension_comparisons)]
+async fn extract_url_clip(output: &serde_json::Value) -> Result<(Vec<u8>, String)> {
+    let url = match output {
+        serde_json::Value::String(s) => s.as_str(),
+        serde_json::Value::Array(arr) => arr
+            .iter()
+            .find_map(serde_json::Value::as_str)
+            .ok_or_else(|| BackendError::InvalidResponse("i2v output array is empty".into()))?,
+        _ => {
+            return Err(BackendError::InvalidResponse(
+                "Replicate i2v output is not a URL".into(),
+            ));
+        }
+    };
+    let lower = url.to_ascii_lowercase();
+    let mime = if lower.ends_with(".webm") {
+        "video/webm"
+    } else if lower.ends_with(".gif") {
+        "image/gif"
+    } else {
+        "video/mp4"
+    }
+    .to_owned();
+    let client = reqwest::Client::new();
+    let resp = client
+        .get(url)
+        .send()
+        .await
+        .map_err(BackendError::Network)?;
+    let resp = check_http_status(resp).await?;
+    let bytes = resp.bytes().await.map_err(BackendError::Network)?;
+    Ok((bytes.to_vec(), mime))
 }
 
 /// Fetches images from URLs returned by Replicate.

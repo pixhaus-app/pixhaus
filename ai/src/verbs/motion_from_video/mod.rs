@@ -53,6 +53,10 @@ use crate::plugin::{
     verb::Verb,
 };
 
+pub mod frame_pick;
+
+pub use frame_pick::{LoopMarkers, auto_loop_markers, pick_loop_frames, seam_similarity};
+
 /// Stable identifier for the built-in motion-from-video verb.
 pub const MOTION_FROM_VIDEO_VERB_ID: &str = "pixhaus.builtin.motion_from_video";
 
@@ -414,7 +418,7 @@ impl Verb for MotionFromVideoVerb {
 ///
 /// Returns `0.0` on dimension mismatch, zero-area images, or non-RGBA8
 /// input (any `bytes_per_pixel != 4`).
-fn motion_magnitude(a: &PixelData, b: &PixelData) -> f32 {
+pub(crate) fn motion_magnitude(a: &PixelData, b: &PixelData) -> f32 {
     if a.width != b.width
         || a.height != b.height
         || a.bytes_per_pixel != 4

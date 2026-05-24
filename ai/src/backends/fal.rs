@@ -10,8 +10,9 @@ use tokio::select;
 use tokio_util::sync::CancellationToken;
 
 use super::{
-    BackendError, ImageEditRequest, ImageGenRequest, ImageGenResponse, InferenceBackend,
-    InferenceRequest, InferenceResponse, ReplicateRequest, Result, VerbProgress, check_http_status,
+    BackendError, ImageEditRequest, ImageGenRequest, ImageGenResponse, ImageToVideoRequest,
+    ImageToVideoResponse, InferenceBackend, InferenceRequest, InferenceResponse, ReplicateRequest,
+    Result, VerbProgress, check_http_status,
 };
 use crate::plugin::context::PixelData;
 use crate::plugin::descriptor::{BackendCapabilities, CostEstimate};
@@ -29,6 +30,16 @@ pub const FAL_RECRAFT_VECTORIZE: &str = "fal-ai/recraft/vectorize";
 pub const FAL_REAL_ESRGAN: &str = "fal-ai/real-esrgan";
 /// fal Flux `LoRA` fast training endpoint.
 pub const FAL_FLUX_LORA_FAST_TRAINING: &str = "fal-ai/flux-lora-fast-training";
+/// fal image-to-video endpoint (Wan 2.1 i2v). Driven by a frame count + fps.
+pub const FAL_I2V: &str = "fal-ai/wan-i2v";
+/// fal image-to-video endpoint (`ByteDance` Seedance 2.0). The animation
+/// studio's default — driven by a duration + resolution, not a frame count.
+pub const FAL_SEEDANCE: &str = "bytedance/seedance-2.0/image-to-video";
+
+/// Upper bound on how long a queued fal request is polled before it is
+/// abandoned as timed out. A backstop against a wedged provider job; the user
+/// can cancel sooner.
+const MAX_QUEUE_WAIT: Duration = Duration::from_secs(600);
 
 /// Result of a fal `LoRA` training run.
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -219,6 +230,30 @@ impl FalBackend {
         progress: &VerbProgress,
         cancel: &CancellationToken,
     ) -> Result<ImageGenResponse> {
+        let raw = self.run_queue(endpoint, input, progress, cancel).await?;
+        let images = decode_fal_images(&self.client, raw, cancel).await?;
+        progress
+            .send(VerbProgressEvent::Cost(CostUpdate {
+                usd_cents: 0.0,
+                tokens_input: None,
+                tokens_output: None,
+            }))
+            .await;
+        Ok(ImageGenResponse {
+            images,
+            model: endpoint.into(),
+        })
+    }
+
+    /// Submits a queued fal request, waits for completion, and returns the raw
+    /// result JSON. Shared by the image and video endpoints.
+    async fn run_queue(
+        &self,
+        endpoint: &str,
+        input: serde_json::Value,
+        progress: &VerbProgress,
+        cancel: &CancellationToken,
+    ) -> Result<serde_json::Value> {
         let submit_req = self
             .client
             .post(format!("{}/{}", self.queue_base_url, endpoint))
@@ -237,7 +272,7 @@ impl FalBackend {
         let request_id = raw.request_id;
         let status_url = raw.status_url.unwrap_or_else(|| {
             format!(
-                "{}/{}/requests/{}/status/stream?logs=1",
+                "{}/{}/requests/{}/status?logs=1",
                 self.queue_base_url, endpoint, request_id
             )
         });
@@ -254,36 +289,51 @@ impl FalBackend {
             )
         });
 
-        let status_req = self
-            .client
-            .get(status_url)
-            .header("Authorization", self.auth_value())
-            .header("Accept", "text/event-stream")
-            .build()
-            .map_err(BackendError::Network)?;
-        let status_resp = select! {
-            biased;
-            () = cancel.cancelled() => {
+        // fal's status endpoint is single-shot, not an SSE stream. Poll it
+        // until the request reaches a terminal state — image-to-video jobs run
+        // well past the lifetime of any one streamed connection, so streaming
+        // the status drops out mid-job and never sees COMPLETED.
+        //
+        // The loop is bounded so a stuck or wedged provider job fails cleanly
+        // instead of polling forever; the user can also cancel sooner.
+        let poll_interval = Duration::from_secs(2);
+        let deadline = std::time::Instant::now() + MAX_QUEUE_WAIT;
+        loop {
+            if std::time::Instant::now() > deadline {
                 self.cancel_queue_request(&cancel_url).await;
-                return Err(BackendError::Cancelled);
-            },
-            res = self.client.execute(status_req) => res.map_err(BackendError::Network)?,
-        };
-        let status_resp = check_http_status(status_resp).await?;
-        let auth = self.auth_value();
-        wait_for_fal_queue_completion(status_resp, progress, cancel, || {
-            let client = self.client.clone();
-            let auth = auth.clone();
-            let cancel_url = cancel_url.clone();
-            async move {
-                let _ = client
-                    .delete(cancel_url)
-                    .header("Authorization", auth)
-                    .send()
-                    .await;
+                return Err(BackendError::InvalidResponse(
+                    "fal queue timed out before completion".into(),
+                ));
             }
-        })
-        .await?;
+            let status_req = self
+                .client
+                .get(&status_url)
+                .header("Authorization", self.auth_value())
+                .build()
+                .map_err(BackendError::Network)?;
+            let status_resp = select! {
+                biased;
+                () = cancel.cancelled() => {
+                    self.cancel_queue_request(&cancel_url).await;
+                    return Err(BackendError::Cancelled);
+                },
+                res = self.client.execute(status_req) => res.map_err(BackendError::Network)?,
+            };
+            let status_resp = check_http_status(status_resp).await?;
+            let value: serde_json::Value =
+                status_resp.json().await.map_err(BackendError::Network)?;
+            if report_fal_queue_status(&value, progress).await? {
+                break;
+            }
+            select! {
+                biased;
+                () = cancel.cancelled() => {
+                    self.cancel_queue_request(&cancel_url).await;
+                    return Err(BackendError::Cancelled);
+                },
+                () = tokio::time::sleep(poll_interval) => {},
+            }
+        }
 
         let result_req = self
             .client
@@ -301,7 +351,21 @@ impl FalBackend {
         };
         let result_resp = check_http_status(result_resp).await?;
         let raw: serde_json::Value = result_resp.json().await.map_err(BackendError::Network)?;
-        let images = decode_fal_images(&self.client, raw, cancel).await?;
+        Ok(raw)
+    }
+
+    /// Animates a still into a clip via a fal image-to-video model. Submits to
+    /// the queue, waits for completion, extracts the result video URL, and
+    /// downloads the clip bytes.
+    async fn call_video_endpoint(
+        &self,
+        endpoint: &str,
+        input: serde_json::Value,
+        progress: &VerbProgress,
+        cancel: &CancellationToken,
+    ) -> Result<ImageToVideoResponse> {
+        let raw = self.run_queue(endpoint, input, progress, cancel).await?;
+        let (clip, mime) = decode_fal_video(&self.client, &raw, cancel).await?;
         progress
             .send(VerbProgressEvent::Cost(CostUpdate {
                 usd_cents: 0.0,
@@ -309,8 +373,9 @@ impl FalBackend {
                 tokens_output: None,
             }))
             .await;
-        Ok(ImageGenResponse {
-            images,
+        Ok(ImageToVideoResponse {
+            clip,
+            mime,
             model: endpoint.into(),
         })
     }
@@ -336,6 +401,7 @@ impl InferenceBackend for FalBackend {
             .union(BackendCapabilities::IMAGE_EDIT)
             .union(BackendCapabilities::IMAGE_INPAINT)
             .union(BackendCapabilities::STYLE_TRAINING)
+            .union(BackendCapabilities::IMAGE_TO_VIDEO)
     }
 
     fn supports_streaming(&self) -> bool {
@@ -384,6 +450,14 @@ impl InferenceBackend for FalBackend {
                     .call_image_endpoint(&req.model, req.input, &progress, &cancel)
                     .await?;
                 Ok(InferenceResponse::Image(resp))
+            }
+            InferenceRequest::ImageToVideo(req) => {
+                let endpoint = req.model.as_deref().unwrap_or(FAL_SEEDANCE).to_owned();
+                let body = build_fal_i2v_body(&endpoint, &req);
+                let resp = self
+                    .call_video_endpoint(&endpoint, body, &progress, &cancel)
+                    .await?;
+                Ok(InferenceResponse::Video(resp))
             }
             _ => Err(BackendError::UnsupportedCapability),
         }
@@ -465,6 +539,93 @@ fn build_fal_edit_body(req: &ImageEditRequest) -> serde_json::Value {
         input["reference_image_urls"] = serde_json::json!(refs);
     }
     input
+}
+
+/// Builds the i2v request body for `endpoint`. Models take different motion
+/// controls: Seedance is driven by a duration + resolution, Wan by a frame
+/// count + fps. Branches on the endpoint so each model gets only the fields it
+/// understands.
+fn build_fal_i2v_body(endpoint: &str, req: &ImageToVideoRequest) -> serde_json::Value {
+    if endpoint.contains("seedance") {
+        build_seedance_i2v_body(req)
+    } else {
+        build_wan_i2v_body(req)
+    }
+}
+
+/// Seedance 2.0 body: `image_url` + `prompt` + `resolution` + `duration`.
+/// Sprite frames are tiny, so it renders at 480p (cheapest, fastest) with
+/// audio off; `num_frames`/`fps` and the negative prompt have no Seedance
+/// equivalent and are dropped.
+#[allow(clippy::disallowed_methods)]
+fn build_seedance_i2v_body(req: &ImageToVideoRequest) -> serde_json::Value {
+    let mut input = serde_json::json!({
+        "image_url": data_uri(&req.image, "image/png"),
+        "prompt": req.prompt,
+        "resolution": "480p",
+        "duration": "4",
+        "generate_audio": false,
+    });
+    if let Some(seed) = req.seed {
+        input["seed"] = serde_json::json!(seed);
+    }
+    input
+}
+
+/// Wan 2.1 body: `image_url` + `prompt` + `num_frames` + `frames_per_second`.
+#[allow(clippy::disallowed_methods)]
+fn build_wan_i2v_body(req: &ImageToVideoRequest) -> serde_json::Value {
+    let mut input = serde_json::json!({
+        "image_url": data_uri(&req.image, "image/png"),
+        "prompt": req.prompt,
+        "num_frames": req.num_frames,
+        "frames_per_second": req.fps,
+    });
+    if let Some(np) = &req.negative_prompt {
+        input["negative_prompt"] = serde_json::json!(np);
+    }
+    if let Some(seed) = req.seed {
+        input["seed"] = serde_json::json!(seed);
+    }
+    input
+}
+
+/// Extracts the result video from a fal i2v response and downloads its bytes.
+///
+/// fal returns `{ "video": { "url": "…", "content_type": "video/mp4" } }`;
+/// some models nest it differently, so this falls back to the first URL-like
+/// `url` field found.
+async fn decode_fal_video(
+    client: &reqwest::Client,
+    raw: &serde_json::Value,
+    cancel: &CancellationToken,
+) -> Result<(Vec<u8>, String)> {
+    let video = raw.get("video").unwrap_or(raw);
+    let url = video
+        .get("url")
+        .and_then(serde_json::Value::as_str)
+        .or_else(|| raw.get("url").and_then(serde_json::Value::as_str))
+        .ok_or_else(|| {
+            BackendError::InvalidResponse("fal i2v response contained no video URL".into())
+        })?;
+    let mime = video
+        .get("content_type")
+        .and_then(serde_json::Value::as_str)
+        .unwrap_or("video/mp4")
+        .to_owned();
+
+    if let Some(bytes) = decode_data_uri(url)? {
+        return Ok((bytes, mime));
+    }
+    let req = client.get(url).build().map_err(BackendError::Network)?;
+    let resp = select! {
+        biased;
+        () = cancel.cancelled() => return Err(BackendError::Cancelled),
+        response = client.execute(req) => response.map_err(BackendError::Network)?,
+    };
+    let resp = check_http_status(resp).await?;
+    let bytes = resp.bytes().await.map_err(BackendError::Network)?.to_vec();
+    Ok((bytes, mime))
 }
 
 #[allow(clippy::disallowed_methods)]
@@ -632,53 +793,16 @@ async fn handle_fal_image_sse_frame(
     Ok(())
 }
 
-async fn wait_for_fal_queue_completion<F, Fut>(
-    response: reqwest::Response,
+/// Reports a fal queue status JSON to `progress` and returns whether the
+/// request reached the terminal `COMPLETED` state.
+///
+/// # Errors
+///
+/// Returns an error when the status is `FAILED` or `ERROR`.
+async fn report_fal_queue_status(
+    value: &serde_json::Value,
     progress: &VerbProgress,
-    cancel: &CancellationToken,
-    cancel_request: F,
-) -> Result<()>
-where
-    F: FnOnce() -> Fut,
-    Fut: std::future::Future<Output = ()>,
-{
-    let mut cancel_request = Some(cancel_request);
-    let mut stream = response.bytes_stream();
-    let mut buffer = String::new();
-    while let Some(chunk) = select! {
-        biased;
-        () = cancel.cancelled() => {
-            if let Some(cancel_request) = cancel_request.take() {
-                cancel_request().await;
-            }
-            return Err(BackendError::Cancelled);
-        },
-        next = stream.next() => next,
-    } {
-        let chunk = chunk.map_err(BackendError::Network)?;
-        buffer.push_str(&String::from_utf8_lossy(&chunk));
-        while let Some(index) = buffer.find("\n\n") {
-            let frame = buffer[..index].to_owned();
-            buffer.drain(..index + 2);
-            if handle_fal_queue_status_frame(&frame, progress).await? {
-                return Ok(());
-            }
-        }
-    }
-    if !buffer.trim().is_empty() && handle_fal_queue_status_frame(&buffer, progress).await? {
-        return Ok(());
-    }
-    Err(BackendError::InvalidResponse(
-        "fal queue status stream ended before completion".into(),
-    ))
-}
-
-async fn handle_fal_queue_status_frame(frame: &str, progress: &VerbProgress) -> Result<bool> {
-    let data = parse_sse_data(frame);
-    if data.is_empty() || data == "[DONE]" {
-        return Ok(false);
-    }
-    let value: serde_json::Value = serde_json::from_str(&data)?;
+) -> Result<bool> {
     let status = value
         .get("status")
         .and_then(serde_json::Value::as_str)
@@ -792,6 +916,60 @@ mod tests {
     use super::*;
 
     #[test]
+    fn capabilities_include_image_to_video() {
+        let caps = <FalBackend as InferenceBackend>::capabilities(&FalBackend::new("k"));
+        assert!(caps.contains(BackendCapabilities::IMAGE_GENERATION));
+        assert!(caps.contains(BackendCapabilities::IMAGE_TO_VIDEO));
+    }
+
+    fn sample_i2v_req() -> ImageToVideoRequest {
+        ImageToVideoRequest {
+            model: None,
+            image: b"still".to_vec(),
+            prompt: "walk in place".into(),
+            negative_prompt: Some("no pivots".into()),
+            num_frames: 12,
+            fps: 12,
+            seed: Some(7),
+        }
+    }
+
+    #[test]
+    fn wan_i2v_body_carries_image_and_motion() {
+        let body = build_fal_i2v_body(FAL_I2V, &sample_i2v_req());
+        assert!(
+            body["image_url"]
+                .as_str()
+                .unwrap()
+                .starts_with("data:image/png;base64,")
+        );
+        assert_eq!(body["prompt"], "walk in place");
+        assert_eq!(body["num_frames"], 12);
+        assert_eq!(body["frames_per_second"], 12);
+        assert_eq!(body["negative_prompt"], "no pivots");
+        assert_eq!(body["seed"], 7);
+    }
+
+    #[test]
+    fn seedance_i2v_body_uses_duration_not_frames() {
+        let body = build_fal_i2v_body(FAL_SEEDANCE, &sample_i2v_req());
+        assert!(
+            body["image_url"]
+                .as_str()
+                .unwrap()
+                .starts_with("data:image/png;base64,")
+        );
+        assert_eq!(body["prompt"], "walk in place");
+        assert_eq!(body["resolution"], "480p");
+        assert_eq!(body["generate_audio"], false);
+        assert_eq!(body["seed"], 7);
+        // Seedance has no frame-count / fps / negative-prompt controls.
+        assert!(body.get("num_frames").is_none());
+        assert!(body.get("frames_per_second").is_none());
+        assert!(body.get("negative_prompt").is_none());
+    }
+
+    #[test]
     fn edit_body_uses_data_uri() {
         let req = ImageEditRequest {
             model: None,
@@ -847,14 +1025,12 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn queue_status_frame_reports_completion() {
+    async fn queue_status_reports_completion() {
         let (progress, mut rx) = VerbProgress::channel();
-        let done = handle_fal_queue_status_frame(
-            "data: {\"status\":\"COMPLETED\",\"logs\":[{\"message\":\"done\"}]}\n\n",
-            &progress,
-        )
-        .await
-        .unwrap();
+        let value: serde_json::Value =
+            serde_json::from_str("{\"status\":\"COMPLETED\",\"logs\":[{\"message\":\"done\"}]}")
+                .unwrap();
+        let done = report_fal_queue_status(&value, &progress).await.unwrap();
         assert!(done);
         assert!(matches!(
             rx.recv().await,

@@ -55,6 +55,7 @@ const StyleEditor: Component<Props> = (props) => {
           class="lib-field__textarea"
           disabled={props.readOnly}
           rows={4}
+          placeholder="e.g. crisp 8-bit palette, clean outlines, soft top-down lighting"
           value={props.value.modifiers ?? ""}
           onInput={(e) => updateOptStr("modifiers", e.currentTarget.value)}
         />
@@ -69,6 +70,7 @@ const StyleEditor: Component<Props> = (props) => {
           class="lib-field__textarea"
           disabled={props.readOnly}
           rows={3}
+          placeholder="e.g. blurry, photo realistic, 3d render, watermark"
           value={props.value.look_negatives ?? ""}
           onInput={(e) => updateOptStr("look_negatives", e.currentTarget.value)}
         />

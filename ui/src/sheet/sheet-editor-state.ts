@@ -162,6 +162,16 @@ export function variantLabel(variant: SheetVariant, isCanonical: boolean, index:
 }
 
 /**
+ * Default starter prompt featuring Bit, the Pixhaus mascot. Pre-fills a fresh
+ * editor so Generate works in one click and shows a worked example; it is
+ * overwritten when an existing sheet's prompt loads, and the user can clear it.
+ */
+export const DEFAULT_SHEET_PROMPT =
+  "Bit, the Pixhaus mascot — a small retro robot with a boxy CRT/floppy-disk head, a glowing " +
+  "pixel-face screen showing its expression, a stubby antenna with a blinking pixel, chunky " +
+  "rounded limbs, friendly proportions, crisp 8-bit palette.";
+
+/**
  * Creates the reactive state for one reference-sheet editor instance.
  *
  * Called once during component setup; the editor destructures the
@@ -173,7 +183,7 @@ export function createSheetEditorState() {
   const [entity, setEntity] = createSignal<Entity | null>(null);
   const [loading, setLoading] = createSignal(false);
   const [generating, setGenerating] = createSignal(false);
-  const [prompt, setPrompt] = createSignal("");
+  const [prompt, setPrompt] = createSignal(DEFAULT_SHEET_PROMPT);
   const [template, setTemplate] = createSignal<ReferenceSheetTemplate>("character");
   const [candidateCount, setCandidateCount] = createSignal(2);
   const [selectedVariantId, setSelectedVariantId] = createSignal<number | null>(null);

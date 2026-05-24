@@ -29,6 +29,7 @@ import {
   frameTagDelete,
   frameTagList,
   frameTagRename,
+  frameTagSetPlayback,
 } from "../lib/commands/frames";
 import { canvasRecompositeFrame } from "../lib/commands/canvas";
 import { reportCommandFailure } from "../lib/utils/errors";
@@ -350,6 +351,18 @@ export function renameTag(spriteId: SpriteId, oldName: string, newName: string):
   frameTagRename(spriteId, oldName, newName)
     .then(() => refreshTimeline())
     .catch((err: unknown) => reportCommandFailure("frame_tag_rename", err));
+}
+
+/** Sets a tag's loop direction and repeat (generated animations need both). */
+export function setTagPlayback(
+  spriteId: SpriteId,
+  tagName: string,
+  loopDirection: LoopDirection,
+  repeat: number,
+): void {
+  frameTagSetPlayback(spriteId, tagName, loopDirection, repeat)
+    .then(() => refreshTimeline())
+    .catch((err: unknown) => reportCommandFailure("frame_tag_set_playback", err));
 }
 
 // Pure helper: generates a name from a set of existing names.

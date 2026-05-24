@@ -65,6 +65,7 @@ const PromptEditor: Component<Props> = (props) => {
           class="lib-field__textarea"
           disabled={props.readOnly ?? false}
           rows={6}
+          placeholder="e.g. Bit, the Pixhaus mascot robot, in a {pose} pose"
           value={props.value.text}
           onInput={(e) => update({ text: e.currentTarget.value })}
         />

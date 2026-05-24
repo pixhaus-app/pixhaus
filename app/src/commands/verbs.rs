@@ -39,6 +39,11 @@ pub struct VerbInvokeArgs {
     /// active one.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub target_entity_id: Option<EntityId>,
+    /// Which character-anchor layer to condition on. Defaults to
+    /// [`AnchorKind::Canonical`]; the animation studio passes `Neutral` /
+    /// `Directional` so animations root from the neutral anchor.
+    #[serde(default)]
+    pub anchor_kind: AnchorKind,
 }
 
 /// Result of a verb invocation: the output the host commits, plus the
@@ -118,24 +123,12 @@ pub async fn verb_invoke(
     // ignore it pay nothing.
     let ctx = {
         let doc = state.doc.read().await;
-        let project_meta = doc.project.as_ref().map_or_else(
-            || ProjectMetadata {
-                name: "untitled".into(),
-                description: None,
-                author: None,
-                created_at: 0,
-                updated_at: 0,
-                editor_version: env!("CARGO_PKG_VERSION").into(),
-            },
-            |p| p.metadata.clone(),
-        );
-        let anchor = doc
-            .project
-            .as_ref()
-            .and_then(|p| resolve_anchor(p, args.target_entity_id, &state.anchor_cache));
-        let mut ctx = VerbContext::empty(project_meta);
-        ctx.anchor = anchor;
-        ctx
+        build_verb_context(
+            doc.project.as_ref(),
+            args.target_entity_id,
+            args.anchor_kind,
+            &state.anchor_cache,
+        )
         // doc guard drops here
     };
 
@@ -207,9 +200,43 @@ pub async fn verb_cancel(invocation_id: String, state: State<'_, AppState>) -> C
 /// The cache (keyed by sprite entity id) returns a hit when the stored
 /// `canonical_hash` and resolved `LoRA` path both match the live project
 /// state; stale entries are rebuilt and reinserted.
+///
+/// Thin canonical-only wrapper retained for the unit tests; production callers
+/// use [`resolve_anchor_kind`] directly.
+#[cfg(test)]
 pub(crate) fn resolve_anchor(
     project: &Project,
     target_override: Option<EntityId>,
+    cache: &dashmap::DashMap<u32, AnchorPayload>,
+) -> Option<AnchorPayload> {
+    resolve_anchor_kind(project, target_override, AnchorKind::Canonical, cache)
+}
+
+/// Which variant of the character-anchor cascade a verb conditions on.
+///
+/// Animation generation auto-prefers the neutral / directional anchor so
+/// effects don't bleed into derived sheets; reference-sheet verbs keep using
+/// the hero canonical.
+#[derive(Copy, Clone, Debug, Default, Deserialize, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum AnchorKind {
+    /// The approved hero canonical (default — current behaviour).
+    #[default]
+    Canonical,
+    /// The effect-stripped neutral anchor, falling back to canonical.
+    Neutral,
+    /// A directional anchor, falling back to neutral then canonical.
+    Directional(pixhaus_core::project::AnchorDirection),
+}
+
+/// Resolves the anchor payload for a verb invocation, selecting the cascade
+/// layer named by `kind`. Only the canonical hot path is cached; the
+/// neutral / directional payloads are built fresh (they change rarely and the
+/// cache key is the entity id alone).
+pub(crate) fn resolve_anchor_kind(
+    project: &Project,
+    target_override: Option<EntityId>,
+    kind: AnchorKind,
     cache: &dashmap::DashMap<u32, AnchorPayload>,
 ) -> Option<AnchorPayload> {
     let active_entity_id = target_override.or_else(|| active_target_entity_id(&project.active))?;
@@ -219,10 +246,6 @@ pub(crate) fn resolve_anchor(
         .iter()
         .find(|e| e.id == active_entity_id)?;
 
-    // Cheap hash of the live canonical bytes — no base64 alloc.
-    // Cache hits skip the AnchorPayload::from_sprite_entity build
-    // entirely, which would otherwise clone the bytes and base64-encode
-    // a ~megabyte payload on every verb invocation.
     let sheet = match &active.content {
         EntityContent::Sprites {
             reference_sheet: Some(sheet),
@@ -230,19 +253,99 @@ pub(crate) fn resolve_anchor(
         } => sheet.as_ref(),
         _ => return None,
     };
-    let canonical = sheet.canonical.as_ref()?;
-    let live_hash = pixhaus_ai::plugin::anchor::stable_hash(&canonical.image.bytes);
     let lora_path = resolve_lora_path(active, project.library.ai.project_lora_path.as_deref());
 
-    if let Some(cached) = cache.get(&active.id.get()) {
-        if cached.canonical_hash == live_hash && cached.lora_path == lora_path {
-            return Some(cached.clone());
-        }
-    }
+    // Select the cascade layer, falling back up the chain when a lower layer
+    // hasn't been derived yet.
+    let variant = match kind {
+        AnchorKind::Canonical => sheet.canonical.as_ref()?,
+        AnchorKind::Neutral => sheet.anchor.neutral.as_ref().or(sheet.canonical.as_ref())?,
+        AnchorKind::Directional(dir) => sheet
+            .anchor
+            .directional
+            .get(dir)
+            .or(sheet.anchor.neutral.as_ref())
+            .or(sheet.canonical.as_ref())?,
+    };
 
-    let live = AnchorPayload::from_sprite_entity(active, DEFAULT_ANCHOR_STRENGTH, lora_path)?;
-    cache.insert(live.reference_entity_id.get(), live.clone());
-    Some(live)
+    if matches!(kind, AnchorKind::Canonical) {
+        // Cheap hash of the live canonical bytes — cache hits skip the
+        // base64 encode of a ~megabyte payload on every verb invocation.
+        let live_hash = pixhaus_ai::plugin::anchor::stable_hash(&variant.image.bytes);
+        if let Some(cached) = cache.get(&active.id.get()) {
+            if cached.canonical_hash == live_hash && cached.lora_path == lora_path {
+                return Some(cached.clone());
+            }
+        }
+        let live = AnchorPayload::from_canonical_variant(
+            active.id,
+            variant,
+            DEFAULT_ANCHOR_STRENGTH,
+            lora_path,
+        );
+        cache.insert(active.id.get(), live.clone());
+        Some(live)
+    } else {
+        Some(AnchorPayload::from_canonical_variant(
+            active.id,
+            variant,
+            DEFAULT_ANCHOR_STRENGTH,
+            lora_path,
+        ))
+    }
+}
+
+/// Builds a [`VerbContext`] from the current document state: project metadata,
+/// the resolved anchor (per `anchor_kind`), and the target sprite (so
+/// sprite-targeted verbs can read frames and the active palette). Shared by
+/// `verb_invoke` and the animation host commands.
+pub(crate) fn build_verb_context(
+    project: Option<&Project>,
+    target_override: Option<EntityId>,
+    anchor_kind: AnchorKind,
+    anchor_cache: &dashmap::DashMap<u32, AnchorPayload>,
+) -> VerbContext {
+    let project_meta = project.map_or_else(
+        || ProjectMetadata {
+            name: "untitled".into(),
+            description: None,
+            author: None,
+            created_at: 0,
+            updated_at: 0,
+            editor_version: env!("CARGO_PKG_VERSION").into(),
+        },
+        |p| p.metadata.clone(),
+    );
+    let anchor =
+        project.and_then(|p| resolve_anchor_kind(p, target_override, anchor_kind, anchor_cache));
+    let mut ctx = VerbContext::empty(project_meta);
+    ctx.anchor = anchor;
+    if let Some(project) = project
+        && let Some(sprite) = resolve_target_sprite(project, target_override)
+    {
+        ctx.active_sprite = Some(sprite.id);
+        ctx.active_palette = sprite.palettes.first().cloned();
+        ctx.sprite = Some(sprite.clone());
+    }
+    ctx
+}
+
+/// Resolves the sprite a verb should operate on.
+///
+/// Prefers the first sprite state of `target_override`'s entity; otherwise
+/// falls back to the project's active sprite. Returns `None` when neither
+/// resolves (e.g. no active sprite and no override).
+pub(crate) fn resolve_target_sprite(
+    project: &Project,
+    target_override: Option<EntityId>,
+) -> Option<&pixhaus_core::project::Sprite> {
+    if let Some(eid) = target_override
+        && let Some((state, _)) = project.sprites_iter().find(|(_, owner)| *owner == eid)
+    {
+        return Some(&state.sprite);
+    }
+    let id = project.active_sprite_id()?;
+    project.sprite(id)
 }
 
 /// Returns the `LoRA` path to thread through the anchor payload.
@@ -302,6 +405,7 @@ mod tests {
                     fields: BTreeMap::new(),
                     notes: Vec::new(),
                 },
+                ..Default::default()
             })
         });
         Entity {

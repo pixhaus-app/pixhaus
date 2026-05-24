@@ -3,4 +3,4 @@
 /**
  * Source operation that produced a sheet variant.
  */
-export type VariantOrigin = "fresh_generation" | "refinement" | "chat_turn" | "promotion" | "cross_model_grid" | "manual_import";
+export type VariantOrigin = "fresh_generation" | "refinement" | "chat_turn" | "promotion" | "cross_model_grid" | "manual_import" | "neutral_reset" | "directional_anchor";

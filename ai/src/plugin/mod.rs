@@ -47,11 +47,6 @@ pub mod runtime;
 pub mod verb;
 pub mod view_synthesis;
 
-pub use crate::verbs::animated_sprite_sheet::{
-    ANIMATED_SPRITE_SHEET_VERB_ID, AnimatedSpriteSheetInputs, AnimatedSpriteSheetVerb,
-    DEFAULT_CELL_SIZE_PX, DEFAULT_FRAME_DURATION_MS, GenerationMode, MAX_CELL_SIZE_PX,
-    MIN_CELL_SIZE_PX,
-};
 pub use crate::verbs::audio_timing::{
     AUDIO_TIMING_VERB_ID, AudioFormat, AudioTimingInputs, AudioTimingMode, AudioTimingVerb,
 };

@@ -1705,6 +1705,7 @@ fn embedded_reference_sheet_or_create_mut(
                     variants: Vec::new(),
                     prompts: Vec::new(),
                     info: AssetInfo::default(),
+                    ..Default::default()
                 })
             })
             .as_mut()),

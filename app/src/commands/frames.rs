@@ -524,6 +524,50 @@ pub async fn frame_tag_delete(
     Ok(())
 }
 
+/// Sets the loop direction and repeat count of a named frame tag.
+///
+/// Generated animations set these and the timeline tag bar must let the user
+/// see and edit them (animation-generation-ui.md). Also mirrors the change
+/// onto any engine animation with the same name so the editor tag and the
+/// engine clip stay in sync.
+#[tauri::command(async, rename_all = "snake_case")]
+pub async fn frame_tag_set_playback(
+    sprite_id: SpriteId,
+    tag_name: String,
+    loop_direction: LoopDirection,
+    repeat: u16,
+    state: State<'_, AppState>,
+) -> CommandResult<()> {
+    let mut doc = state.doc.write().await;
+    {
+        let sprite = doc
+            .project
+            .as_mut()
+            .ok_or(AppCommandError::NoActiveProject)?
+            .sprite_mut(sprite_id)
+            .ok_or(AppCommandError::NotFound {
+                entity: "sprite".into(),
+                id: u64::from(sprite_id.get()),
+            })?;
+        let tag = sprite
+            .frame_tags
+            .iter_mut()
+            .find(|t| t.name == tag_name)
+            .ok_or(AppCommandError::NotFoundByName {
+                entity: "frame_tag".into(),
+                name: tag_name.clone(),
+            })?;
+        tag.loop_direction = loop_direction;
+        tag.repeat = repeat;
+        // Keep the engine animation of the same name in sync.
+        for anim in sprite.animations.iter_mut().filter(|a| a.name == tag_name) {
+            anim.loop_direction = loop_direction;
+        }
+    }
+    doc.dirty = true;
+    Ok(())
+}
+
 /// Returns all frames in a sprite's timeline.
 #[tauri::command(async, rename_all = "snake_case")]
 pub async fn frame_list(

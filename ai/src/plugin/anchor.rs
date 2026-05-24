@@ -229,6 +229,7 @@ mod tests {
                         fields: BTreeMap::new(),
                         notes: Vec::new(),
                     },
+                    ..Default::default()
                 })),
             },
             ai: AiMetadata::default(),

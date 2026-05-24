@@ -210,3 +210,13 @@ B10 is the substrate every AI-native workflow downstream wants:
 - **The "fix this character across every state" command** — when the Hero's anchor sheet changes (user iterated and re-approved), a verb sweeps every state Sprite under the Hero entity and re-generates with the new anchor. Reskinning a character is one verb away.
 
 Without B10, every one of those is a per-prompt fight. With B10, the data model and the anchor mechanic does the work.
+
+## Extension: `CharacterAnchor` (animation pipeline)
+
+The animation pipeline extends `ReferenceSheet` with a `CharacterAnchor` cascade
+(`core/src/project/library/reference_sheets.rs`): the hero `canonical` stays as-is,
+and the struct adds the `neutral` anchor (effect-stripped, derived via the Variant
+verb's `StripBakedEffects` mode), `directional` anchors (south/west/north + east-as-flip),
+and `derived_sheets`. Staleness is structural — `SheetVariant::parent_variant_id` and
+`DerivedSheet::derived_from` are the `derived_from` edges, so re-rolling the canonical
+cascades staleness down the chain. See `docs/planning/work/animation-generation-pipeline.md`.

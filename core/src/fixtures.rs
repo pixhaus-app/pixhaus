@@ -330,6 +330,7 @@ fn sample_library(hero_sprite: Sprite) -> Library {
                 variants: Vec::new(),
                 prompts: Vec::new(),
                 info: AssetInfo::default(),
+                ..Default::default()
             })),
         },
         ai: AiMetadata {

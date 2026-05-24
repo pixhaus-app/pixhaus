@@ -16,7 +16,22 @@ export type VerbInvokeArgs = {
   verb_id: string;
   /** Per-verb input payload. Schema defined by the verb's descriptor. */
   inputs: unknown;
+  /** Override entity whose reference sheet / sprite the verb targets. */
+  target_entity_id?: number | null;
+  /**
+   * Which character-anchor layer to condition on. `"canonical"` (default),
+   * `"neutral"`, or `{ directional: "south" | "west" | "north" | "east" }`.
+   * The animation studio passes neutral/directional so animations root from
+   * the effect-stripped neutral anchor.
+   */
+  anchor_kind?: AnchorKind;
 };
+
+/** Mirror of the Rust `AnchorKind` enum on the IPC wire. */
+export type AnchorKind =
+  | "canonical"
+  | "neutral"
+  | { directional: "south" | "west" | "north" | "east" };
 
 /**
  * Output of a successful verb invocation. The shape is per-verb; for now

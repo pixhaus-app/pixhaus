@@ -483,7 +483,9 @@ impl InferenceBackend for ComfyUiBackend {
                 // and run a bespoke graph via `InferenceRequest::ComfyUi`.
                 Err(BackendError::UnsupportedCapability)
             }
-            InferenceRequest::Text(_) | InferenceRequest::Replicate(_) => {
+            InferenceRequest::Text(_)
+            | InferenceRequest::ImageToVideo(_)
+            | InferenceRequest::Replicate(_) => {
                 warn!("ComfyUI does not support this request type");
                 Err(BackendError::UnsupportedCapability)
             }

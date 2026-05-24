@@ -5,6 +5,7 @@
 //! catalog. Add commands there when adding them to a module.
 
 pub mod ai;
+pub mod animation;
 pub mod app_info;
 pub mod canvas;
 pub mod crash_reporting;

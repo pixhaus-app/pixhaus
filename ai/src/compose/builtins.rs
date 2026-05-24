@@ -26,7 +26,7 @@ pub struct BuiltinLibrary {
     pub structures: BTreeMap<StructureId, Structure>,
     /// Built-in Styles keyed by id.
     pub styles: BTreeMap<StyleId, Style>,
-    /// Built-in saved Prompts keyed by id (none ship in v1).
+    /// Built-in example Prompts keyed by id (Bit, the mascot, and its world).
     pub prompts: BTreeMap<PromptId, PromptTemplate>,
 }
 
@@ -41,10 +41,14 @@ impl BuiltinLibrary {
         let mut styles = BTreeMap::new();
         let def = default_style();
         styles.insert(def.id.clone(), def);
+        let mut prompts = BTreeMap::new();
+        for p in example_prompts() {
+            prompts.insert(p.id.clone(), p);
+        }
         Self {
             structures,
             styles,
-            prompts: BTreeMap::new(),
+            prompts,
         }
     }
 }
@@ -332,6 +336,63 @@ fn default_style() -> Style {
     }
 }
 
+/// Built-in example prompts featuring Bit, the Pixhaus mascot, and its world.
+///
+/// These seed the prompt picker so a fresh project has worked examples to start
+/// from and a default character to run through the reference-sheet → animation
+/// pipeline. Each points at the built-in structure that frames it best. Plain
+/// text, no variables — they double as copy a new user can read and tweak.
+fn example_prompts() -> Vec<PromptTemplate> {
+    let character = StructureId("pixhaus.builtin.structure.character".into());
+    let item = StructureId("pixhaus.builtin.structure.item".into());
+    let tileset = StructureId("pixhaus.builtin.structure.tileset".into());
+    vec![
+        PromptTemplate {
+            id: PromptId("pixhaus.builtin.prompt.bit".into()),
+            name: "Bit — mascot".into(),
+            text: "Bit, the Pixhaus mascot — a small retro robot with a boxy CRT/floppy-disk \
+                   head, a glowing pixel-face screen showing its expression, a stubby antenna \
+                   with a blinking pixel, chunky rounded limbs, friendly proportions, crisp \
+                   8-bit palette."
+                .into(),
+            variables: Vec::new(),
+            default_style: None,
+            default_structure: Some(character.clone()),
+        },
+        PromptTemplate {
+            id: PromptId("pixhaus.builtin.prompt.byte".into()),
+            name: "Byte — companion bot".into(),
+            text: "Byte, Bit's companion — a small floating drone bot with a single round \
+                   glowing lens-eye, a little spinning propeller on top, slim arms, the same \
+                   crisp 8-bit palette as Bit."
+                .into(),
+            variables: Vec::new(),
+            default_style: None,
+            default_structure: Some(character),
+        },
+        PromptTemplate {
+            id: PromptId("pixhaus.builtin.prompt.floppy".into()),
+            name: "Floppy — power-up".into(),
+            text: "A retro floppy-disk power-up from Bit's world — a chunky 3.5-inch floppy \
+                   disk with a glowing label and a pixel shine, 8-bit palette."
+                .into(),
+            variables: Vec::new(),
+            default_style: None,
+            default_structure: Some(item),
+        },
+        PromptTemplate {
+            id: PromptId("pixhaus.builtin.prompt.circuit_tiles".into()),
+            name: "Circuit-grid — tileset".into(),
+            text: "A top-down circuit-board floor tileset for Bit's world — blueprint-grid \
+                   lines, solder traces, glowing node junctions, seamless edges, 8-bit palette."
+                .into(),
+            variables: Vec::new(),
+            default_style: None,
+            default_structure: Some(tileset),
+        },
+    ]
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -378,7 +439,24 @@ mod tests {
         let lib = BuiltinLibrary::load();
         assert_eq!(lib.structures.len(), 4);
         assert!(lib.styles.contains_key(&StyleId(STYLE_DEFAULT_ID.into())));
-        assert!(lib.prompts.is_empty());
+        // Seeded example prompts — Bit's world.
+        assert_eq!(lib.prompts.len(), 4);
+        for id in [
+            "pixhaus.builtin.prompt.bit",
+            "pixhaus.builtin.prompt.byte",
+            "pixhaus.builtin.prompt.floppy",
+            "pixhaus.builtin.prompt.circuit_tiles",
+        ] {
+            assert!(lib.prompts.contains_key(&PromptId(id.into())));
+        }
+        // Every example points at a real built-in structure.
+        for p in lib.prompts.values() {
+            let s = p
+                .default_structure
+                .as_ref()
+                .expect("example prompt names a structure");
+            assert!(lib.structures.contains_key(s));
+        }
     }
 
     #[test]
