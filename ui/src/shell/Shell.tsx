@@ -33,7 +33,7 @@ import TimelinePanel from "../timeline/TimelinePanel";
 import LibraryPanel from "../library/LibraryPanel";
 import EntityCreateModal from "../library/EntityCreateModal";
 import { setupPaletteColorSync } from "../canvas/tools/palette-color-sync";
-import { installTilemapCtxSync } from "../tilemap/tilemap-ctx-sync";
+import { installTilemapCtxSync } from "../tilemap/tilemap-state";
 import ReferenceSheetEditor from "../sheet/ReferenceSheetEditor";
 import { isSheetEditorOpen } from "../sheet/sheet-state";
 import AnimationStudio from "../animation/AnimationStudio";
