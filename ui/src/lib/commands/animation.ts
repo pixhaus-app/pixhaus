@@ -40,6 +40,15 @@ export function animationNormalize(args: NormalizeArgs): Promise<NormalizeResult
   return invoke<NormalizeResultDto>("animation_normalize", { args });
 }
 
+/**
+ * Cuts the background from each extracted frame via the AI background-removal
+ * backend (fal Bria), returning alpha-cut frames. One call per frame, fired
+ * concurrently on the host. Requires a fal.ai key; rejects if none configured.
+ */
+export function animationRemoveBackground(frames: RgbaFrame[]): Promise<RgbaFrame[]> {
+  return invoke<RgbaFrame[]>("animation_remove_background", { frames });
+}
+
 // ── frame pick (i2v) ─────────────────────────────────────────────────────────────
 
 export type PickFramesArgs = {

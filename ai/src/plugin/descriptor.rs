@@ -123,6 +123,12 @@ impl BackendCapabilities {
     /// cannot produce a stable walk, image-to-video can.
     pub const IMAGE_TO_VIDEO: Self = Self(1 << 13);
 
+    /// Removes the background from an image, returning an alpha-cut result.
+    /// Used by the animation studio's frame-extract stage: a Seedance clip
+    /// dithers its flat background into noise a chroma key can't cleanly
+    /// remove, so each extracted frame is cut by a dedicated model instead.
+    pub const BACKGROUND_REMOVAL: Self = Self(1 << 14);
+
     /// The empty set — the verb runs entirely on local CPU and needs
     /// no inference backend. Used by classical-only verbs (Cleanup's
     /// fast path) and the [`super::echo::EchoVerb`] reference plugin.

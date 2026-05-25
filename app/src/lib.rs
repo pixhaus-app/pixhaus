@@ -104,6 +104,7 @@ pub fn run() -> Result<(), AppError> {
             commands::app_info::app_about,
             // animation studio
             commands::animation::animation_normalize,
+            commands::animation::animation_remove_background,
             commands::animation::animation_pick_frames,
             commands::animation::animation_integrate,
             commands::animation::animation_set,

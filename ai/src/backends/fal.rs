@@ -10,9 +10,9 @@ use tokio::select;
 use tokio_util::sync::CancellationToken;
 
 use super::{
-    BackendError, ImageEditRequest, ImageGenRequest, ImageGenResponse, ImageToVideoRequest,
-    ImageToVideoResponse, InferenceBackend, InferenceRequest, InferenceResponse, ReplicateRequest,
-    Result, VerbProgress, check_http_status,
+    BackendError, BackgroundRemovalRequest, ImageEditRequest, ImageGenRequest, ImageGenResponse,
+    ImageToVideoRequest, ImageToVideoResponse, InferenceBackend, InferenceRequest,
+    InferenceResponse, ReplicateRequest, Result, VerbProgress, check_http_status,
 };
 use crate::plugin::context::PixelData;
 use crate::plugin::descriptor::{BackendCapabilities, CostEstimate};
@@ -35,6 +35,9 @@ pub const FAL_I2V: &str = "fal-ai/wan-i2v";
 /// fal image-to-video endpoint (`ByteDance` Seedance 2.0). The animation
 /// studio's default — driven by a duration + resolution, not a frame count.
 pub const FAL_SEEDANCE: &str = "bytedance/seedance-2.0/image-to-video";
+/// fal Bria background-removal endpoint. Returns an alpha-cut image; the
+/// animation studio runs it per extracted frame.
+pub const FAL_BRIA_REMOVE_BACKGROUND: &str = "fal-ai/bria/background/remove";
 
 /// Upper bound on how long a queued fal request is polled before it is
 /// abandoned as timed out. A backstop against a wedged provider job; the user
@@ -402,6 +405,7 @@ impl InferenceBackend for FalBackend {
             .union(BackendCapabilities::IMAGE_INPAINT)
             .union(BackendCapabilities::STYLE_TRAINING)
             .union(BackendCapabilities::IMAGE_TO_VIDEO)
+            .union(BackendCapabilities::BACKGROUND_REMOVAL)
     }
 
     fn supports_streaming(&self) -> bool {
@@ -458,6 +462,14 @@ impl InferenceBackend for FalBackend {
                     .call_video_endpoint(&endpoint, body, &progress, &cancel)
                     .await?;
                 Ok(InferenceResponse::Video(resp))
+            }
+            InferenceRequest::BackgroundRemoval(req) => {
+                let endpoint = req.model.as_deref().unwrap_or(FAL_BRIA_REMOVE_BACKGROUND);
+                let body = build_bria_remove_bg_body(&req);
+                let resp = self
+                    .call_image_endpoint(endpoint, body, &progress, &cancel)
+                    .await?;
+                Ok(InferenceResponse::Image(resp))
             }
             _ => Err(BackendError::UnsupportedCapability),
         }
@@ -598,6 +610,17 @@ fn build_wan_i2v_body(req: &ImageToVideoRequest) -> serde_json::Value {
         input["seed"] = serde_json::json!(seed);
     }
     input
+}
+
+/// Bria background-removal body: just the source image as a data URI. The
+/// model returns `{ "image": { "url": … } }`, decoded by `decode_fal_images`.
+/// `sync_mode` stays false so the result rides the normal queue/result path.
+#[allow(clippy::disallowed_methods)]
+fn build_bria_remove_bg_body(req: &BackgroundRemovalRequest) -> serde_json::Value {
+    serde_json::json!({
+        "image_url": data_uri(&req.image, "image/png"),
+        "sync_mode": false,
+    })
 }
 
 /// Extracts the result video from a fal i2v response and downloads its bytes.
@@ -983,6 +1006,22 @@ mod tests {
         assert!(body.get("num_frames").is_none());
         assert!(body.get("frames_per_second").is_none());
         assert!(body.get("negative_prompt").is_none());
+    }
+
+    #[test]
+    fn bria_remove_bg_body_uses_data_uri() {
+        let req = BackgroundRemovalRequest {
+            model: None,
+            image: b"frame".to_vec(),
+        };
+        let body = build_bria_remove_bg_body(&req);
+        assert!(
+            body["image_url"]
+                .as_str()
+                .unwrap()
+                .starts_with("data:image/png;base64,")
+        );
+        assert_eq!(body["sync_mode"], false);
     }
 
     #[test]

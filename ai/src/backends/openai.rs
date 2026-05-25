@@ -525,6 +525,7 @@ impl InferenceBackend for OpenAiBackend {
             }
             InferenceRequest::FrameInterpolation(_)
             | InferenceRequest::ImageToVideo(_)
+            | InferenceRequest::BackgroundRemoval(_)
             | InferenceRequest::Replicate(_)
             | InferenceRequest::ComfyUi(_) => {
                 warn!("OpenAI does not support this request type");

@@ -485,6 +485,7 @@ impl InferenceBackend for ComfyUiBackend {
             }
             InferenceRequest::Text(_)
             | InferenceRequest::ImageToVideo(_)
+            | InferenceRequest::BackgroundRemoval(_)
             | InferenceRequest::Replicate(_) => {
                 warn!("ComfyUI does not support this request type");
                 Err(BackendError::UnsupportedCapability)

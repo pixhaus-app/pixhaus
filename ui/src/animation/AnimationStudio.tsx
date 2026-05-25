@@ -26,6 +26,7 @@ import {
   animationIntegrate,
   animationJobClip,
   animationNormalize,
+  animationRemoveBackground,
   animationRerollDependents,
 } from "../lib/commands/animation";
 import { activeTarget } from "../canvas/canvas-state";
@@ -64,6 +65,10 @@ const AnimationStudio: Component = () => {
   // Set after a successful integrate so the extract stage shows a completion
   // panel instead of silently re-arming the picker.
   const [lastIntegrated, setLastIntegrated] = createSignal<string | null>(null);
+  // True while a pick is being background-removed + normalized; the picker is
+  // replaced by a progress panel because background removal is a per-frame
+  // round trip to the AI backend.
+  const [extracting, setExtracting] = createSignal(false);
 
   // Reflect backend i2v job updates into the module-level `videoJob` for the
   // whole studio session, so navigating between stages never loses an in-flight
@@ -126,17 +131,24 @@ const AnimationStudio: Component = () => {
   }
 
   async function usePickedFrames(frames: RgbaFrame[]): Promise<void> {
+    setExtracting(true);
     try {
+      // AI background removal replaces the old magenta chroma key: Seedance
+      // dithers the flat background into noise a fixed-tolerance key leaves
+      // speckled. Each frame is cut independently, so normalize then only has
+      // to crop/scale/pad (chroma: "none").
+      const cut = await animationRemoveBackground(frames);
       const normalized = await animationNormalize({
-        frames,
+        frames: cut,
         canvas_size: studio.frameSize,
-        // The first frame is rendered on magenta, so the clip frames carry it.
-        chroma: "magenta",
+        chroma: "none",
         reference_height: null,
       });
       addCandidate(normalized.frames, normalized.report);
     } catch (err) {
-      pushToast({ kind: "error", title: "Normalize failed", body: extractDetail(err) });
+      pushToast({ kind: "error", title: "Frame extraction failed", body: extractDetail(err) });
+    } finally {
+      setExtracting(false);
     }
   }
 
@@ -284,11 +296,15 @@ const AnimationStudio: Component = () => {
                     <Show
                       when={current()}
                       fallback={
-                        <FramePicker
-                          clip={clip()}
-                          onUse={(frames) => void usePickedFrames(frames)}
-                          onCancel={() => setStage("video")}
-                        />
+                        extracting() ? (
+                          <div class="animation-studio__empty">Removing background…</div>
+                        ) : (
+                          <FramePicker
+                            clip={clip()}
+                            onUse={(frames) => void usePickedFrames(frames)}
+                            onCancel={() => setStage("video")}
+                          />
+                        )
                       }
                     >
                       {(candidate) => (

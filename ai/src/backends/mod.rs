@@ -354,6 +354,20 @@ pub struct ImageToVideoRequest {
     pub seed: Option<u64>,
 }
 
+/// Background-removal request (`BACKGROUND_REMOVAL` capability).
+///
+/// Returns the input image with its background cut to transparency. Used by the
+/// animation studio's frame-extract stage on each picked frame, replacing the
+/// magenta chroma key that Seedance's dithered background defeats.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct BackgroundRemovalRequest {
+    /// Override the backend's default background-removal model.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub model: Option<String>,
+    /// Source image as raw PNG bytes.
+    pub image: Vec<u8>,
+}
+
 /// Raw Replicate prediction request for model-marketplace access.
 ///
 /// Used by verbs that need a specific Replicate model not covered by a
@@ -399,6 +413,8 @@ pub enum InferenceRequest {
     FrameInterpolation(FrameInterpolationRequest),
     /// Animate a still image into a short video clip.
     ImageToVideo(ImageToVideoRequest),
+    /// Remove an image's background, returning an alpha-cut result.
+    BackgroundRemoval(BackgroundRemovalRequest),
     /// Raw Replicate API prediction (any registered model).
     Replicate(ReplicateRequest),
     /// Raw `ComfyUI` workflow execution.

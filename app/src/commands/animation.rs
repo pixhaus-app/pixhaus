@@ -22,8 +22,8 @@ use tauri::{AppHandle, Emitter, State};
 use tokio_util::sync::CancellationToken;
 
 use pixhaus_ai::backends::{
-    BackendProxy, ImageEditRequest, ImageGenRequest, ImageQuality, ImageToVideoRequest,
-    InferenceRequest, InferenceResponse,
+    BackendProxy, BackgroundRemovalRequest, ImageEditRequest, ImageGenRequest, ImageQuality,
+    ImageToVideoRequest, InferenceRequest, InferenceResponse,
 };
 use pixhaus_ai::plugin::context::PixelData;
 use pixhaus_ai::plugin::descriptor::{BackendCapabilities, VerbId};
@@ -154,6 +154,83 @@ pub async fn animation_normalize(args: NormalizeArgs) -> CommandResult<Normalize
         frames: result.frames.iter().map(RgbaFrame::from_buffer).collect(),
         report: result.report,
     })
+}
+
+// ── Background removal (extract stage) ───────────────────────────────────────────
+
+/// Cuts the background from each extracted frame via the AI background-removal
+/// backend (fal Bria), returning alpha-cut frames the studio then normalizes
+/// with `chroma: "none"`.
+///
+/// Replaces the magenta chroma key: Seedance dithers the flat magenta into
+/// noise a fixed-tolerance key leaves speckled. Each frame is an independent
+/// call fired concurrently; any failure fails the whole extract (no chroma
+/// fallback). Selecting by the `BACKGROUND_REMOVAL` capability guarantees an
+/// fal backend, so a missing key errors before any call.
+#[tauri::command(async, rename_all = "snake_case")]
+pub async fn animation_remove_background(
+    frames: Vec<RgbaFrame>,
+    state: State<'_, AppState>,
+) -> CommandResult<Vec<RgbaFrame>> {
+    if frames.is_empty() {
+        return Err(AppCommandError::Validation {
+            detail: "no frames to remove background from".into(),
+        });
+    }
+    let backend = state
+        .verb_runtime
+        .select_backend(
+            BackendCapabilities::BACKGROUND_REMOVAL,
+            &VerbId::new("pixhaus.animation.remove_bg"),
+        )
+        .map_err(|_| AppCommandError::Validation {
+            detail: "no background-removal backend configured — add a fal.ai key".into(),
+        })?;
+
+    // One call per frame, all in flight at once; await in order to keep the
+    // loop sequenced. Cloning the backend Arc into each task keeps it 'static.
+    let mut handles = Vec::with_capacity(frames.len());
+    for frame in frames {
+        let png = encode_pixeldata_to_png(&frame.into_pixeldata())?;
+        let backend = backend.clone();
+        handles.push(tokio::spawn(async move {
+            invoke_selected_backend(
+                &backend,
+                InferenceRequest::BackgroundRemoval(BackgroundRemovalRequest {
+                    model: None,
+                    image: png,
+                }),
+                CancellationToken::new(),
+            )
+            .await
+        }));
+    }
+
+    let mut out = Vec::with_capacity(handles.len());
+    for handle in handles {
+        let resp = handle.await.map_err(|e| AppCommandError::VerbError {
+            message: format!("background-removal task failed: {e}"),
+        })??;
+        let InferenceResponse::Image(image) = resp else {
+            return Err(AppCommandError::VerbError {
+                message: "background-removal backend returned a non-image response".into(),
+            });
+        };
+        let png = image
+            .images
+            .into_iter()
+            .next()
+            .ok_or_else(|| AppCommandError::VerbError {
+                message: "background-removal backend returned no image".into(),
+            })?;
+        let pd = decode_png_to_pixeldata(&png)?;
+        out.push(RgbaFrame {
+            width: pd.width,
+            height: pd.height,
+            pixels: pd.bytes,
+        });
+    }
+    Ok(out)
 }
 
 // ── Frame pick (i2v) ───────────────────────────────────────────────────────────
