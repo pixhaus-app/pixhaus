@@ -9,6 +9,7 @@
 //   update → ResizeObserver keeps the GL viewport in sync
 //   unmount → destroy renderer, remove all listeners
 
+import { Channel } from "@tauri-apps/api/core";
 import { onMount, onCleanup, createEffect, createSignal, type Component } from "solid-js";
 import { subscribeTauriEvent } from "../lib/sync/subscribe-event";
 import { CanvasRenderer } from "./renderer";
@@ -29,8 +30,12 @@ import { syncNumericFromBounds } from "./transform/transform-state";
 import type { TransformHandle } from "./transform/transform-state";
 import { projectState } from "../project-state";
 import type { ProjectStatus } from "../lib/commands/project";
-import { canvasComposite } from "../lib/commands/canvas";
+import { canvasComposite, canvasSetTileChannel } from "../lib/commands/canvas";
 import { spriteList } from "../lib/commands/project";
+
+/** Byte length of a binary tile-frame header (six little-endian u32 fields).
+ * Mirrors `TILE_FRAME_HEADER_LEN` in `app/src/commands/canvas.rs`. */
+const TILE_FRAME_HEADER_LEN = 24;
 
 // ── Tile-dirty event payload ────────────────────────────────────────────────
 
@@ -95,8 +100,30 @@ const Canvas: Component = () => {
     });
     ro.observe(containerEl);
 
-    // Tile-dirty drives the WebGL renderer directly (hot path) — the handler
-    // stays here, bound to this component's renderer instance.
+    // Binary tile channel — the hot path. Composited tiles arrive as raw
+    // ArrayBuffers (24-byte header + RGBA), bypassing base64 and the JSON
+    // event bridge that makes drawing unusable on WebView2 (Windows).
+    const tileChannel = new Channel<ArrayBuffer>();
+    tileChannel.onmessage = (buf) => {
+      if (buf.byteLength < TILE_FRAME_HEADER_LEN) return;
+      const header = new DataView(buf, 0, TILE_FRAME_HEADER_LEN);
+      const spriteId = header.getUint32(0, true);
+      const frameIndex = header.getUint32(4, true);
+      const tileX = header.getUint32(8, true);
+      const tileY = header.getUint32(12, true);
+      const width = header.getUint32(16, true);
+      const height = header.getUint32(20, true);
+      const bytes = new Uint8Array(buf, TILE_FRAME_HEADER_LEN);
+      renderer.uploadTile(String(spriteId), frameIndex, tileX, tileY, { bytes, width, height });
+    };
+    void canvasSetTileChannel(tileChannel).catch((err) =>
+      console.error("[pixhaus] canvas_set_tile_channel failed:", err),
+    );
+
+    // Legacy base64 event — fallback for any tile composited before the
+    // channel registration above lands on the backend. Once the channel is
+    // registered the backend stops emitting this event, so exactly one
+    // transport runs per tile and the renderer never double-uploads.
     subscribeTauriEvent<TileDirtyPayload>("canvas:tile-dirty", (p) => {
       const raw = atob(p.data);
       const bytes = new Uint8Array(raw.length);

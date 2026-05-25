@@ -1,6 +1,8 @@
 // Canvas operation commands.
 // Pixel-drawing ops (draw_stroke, fill, transform) are stubbed until S01 lands.
 
+import type { Channel } from "@tauri-apps/api/core";
+
 import { invoke } from "../ipc";
 import type {
   CanvasState,
@@ -106,6 +108,24 @@ export type CanvasComposite = {
  */
 export function canvasComposite(spriteId: SpriteId): Promise<CanvasComposite> {
   return invoke<CanvasComposite>("canvas_composite", { sprite_id: spriteId });
+}
+
+/**
+ * Registers the renderer's binary tile channel with the backend.
+ *
+ * Composited tiles arrive through this channel as raw bytes (an
+ * `ArrayBuffer` per tile) rather than base64 `canvas:tile-dirty` events.
+ * Tauri routes payloads over 1 KiB through the webview's fetch transport,
+ * which is far faster on WebView2 (Windows) than a base64 JSON event.
+ * Call once per renderer init; the backend keeps a legacy event fallback
+ * for any tiles emitted before this lands.
+ *
+ * Wire format per message: a 24-byte little-endian header
+ * `[sprite_id, frame_index, tile_x, tile_y, width, height]` (six `u32`)
+ * followed by `width * height * 4` RGBA8 bytes.
+ */
+export function canvasSetTileChannel(channel: Channel<ArrayBuffer>): Promise<void> {
+  return invoke<void>("canvas_set_tile_channel", { channel });
 }
 
 /**

@@ -155,6 +155,7 @@ pub fn run() -> Result<(), AppError> {
             commands::canvas::canvas_select_lasso,
             commands::canvas::canvas_select_magic_wand,
             commands::canvas::canvas_set_selection,
+            commands::canvas::canvas_set_tile_channel,
             commands::canvas::canvas_set_viewport,
             commands::canvas::canvas_transform,
             // frames

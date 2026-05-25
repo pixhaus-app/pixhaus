@@ -8,11 +8,11 @@
 use std::sync::Arc;
 
 use base64::Engine;
-use pixhaus_core::canvas::tools::{BrushShape, draw_stroke, flood_fill};
+use pixhaus_core::canvas::tools::{BrushShape, draw_stroke, flood_fill, stamp_segment};
 use pixhaus_core::canvas::{LayerInput, PixelBuffer, composite_onto};
 use pixhaus_core::project::{
     CanvasState, Cel, CelData, FrameIndex, IVec2, Layer, LayerId, LayerKind, Palette,
-    PixelBufferId, Rect, Rgba, SelectionRegion, SelectionState, Size, SpriteId,
+    PixelBufferId, Rect, Rgba, SelectionRegion, SelectionState, Size, Sprite, SpriteId,
 };
 use pixhaus_core::selection::GapCloseConfig;
 use pixhaus_core::selection::SelectionMask;
@@ -26,7 +26,8 @@ use pixhaus_core::transforms::{
 use pixhaus_io::pixhaus::PixelBufferEntry;
 use pixhaus_vectorize::{CenterlineConfig, VectorImage, centerline_vectorize};
 use serde::{Deserialize, Serialize};
-use tauri::{AppHandle, Emitter, State};
+use tauri::ipc::{Channel, InvokeResponseBody};
+use tauri::{AppHandle, Emitter, Manager, State};
 
 use crate::error::{AppCommandError, CommandResult};
 use crate::pixel_history::{PixelOp, PixelOpBatch};
@@ -267,6 +268,117 @@ pub struct TileDirtyPayload {
     pub data: String,
 }
 
+/// Byte length of a binary tile frame header: six little-endian `u32`
+/// fields (`sprite_id`, `frame_index`, `tile_x`, `tile_y`, `width`,
+/// `height`) followed by the raw RGBA8 bytes. Kept in sync with the decoder
+/// in `ui/src/canvas/Canvas.tsx`.
+const TILE_FRAME_HEADER_LEN: usize = 24;
+
+/// Geometry of one composited tile: which sprite/frame/tile it covers and
+/// its pixel dimensions. Groups the fields [`send_tile`] and the binary
+/// frame header share so the function stays under the argument-count lint.
+struct TileSlice {
+    sprite_id: u32,
+    frame_index: u32,
+    tile_x: u32,
+    tile_y: u32,
+    width: u32,
+    height: u32,
+}
+
+/// Registers the renderer's binary tile channel.
+///
+/// The frontend creates a `Channel` and passes it here once per renderer
+/// init. From then on composited tiles travel through the channel as raw
+/// bytes instead of base64 `canvas:tile-dirty` events — the hot path that
+/// makes drawing usable on `WebView2` (Windows). Replaces any previously
+/// registered channel (e.g. after a webview reload).
+#[tauri::command(async)]
+pub async fn canvas_set_tile_channel(
+    channel: Channel<InvokeResponseBody>,
+    state: State<'_, AppState>,
+) -> Result<(), String> {
+    let mut guard = state
+        .tile_channel
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    *guard = Some(channel);
+    Ok(())
+}
+
+/// Packs a tile into the binary frame the renderer's channel decoder
+/// expects: a six-field little-endian `u32` header (see
+/// [`TILE_FRAME_HEADER_LEN`]) followed by the raw RGBA bytes. The matching
+/// decoder lives in `ui/src/canvas/Canvas.tsx`.
+fn encode_tile_frame(slice: &TileSlice, rgba: &[u8]) -> Vec<u8> {
+    let mut buf = Vec::with_capacity(TILE_FRAME_HEADER_LEN + rgba.len());
+    for field in [
+        slice.sprite_id,
+        slice.frame_index,
+        slice.tile_x,
+        slice.tile_y,
+        slice.width,
+        slice.height,
+    ] {
+        buf.extend_from_slice(&field.to_le_bytes());
+    }
+    buf.extend_from_slice(rgba);
+    buf
+}
+
+/// Ships one composited tile to the renderer.
+///
+/// Fast path: when the renderer has registered a binary channel
+/// (`canvas_set_tile_channel`), pack a `[u32; 6]` little-endian header plus
+/// the raw RGBA bytes and send them as `InvokeResponseBody::Raw`. Tauri
+/// routes payloads over 1 KiB through the webview's fetch transport, which
+/// avoids base64 inflation and the slow JSON event bridge on `WebView2`.
+///
+/// Fallback: no channel registered yet (the first composited tiles can fire
+/// before the renderer's setup command lands) — emit the legacy base64
+/// `canvas:tile-dirty` event so the tile is not lost. Exactly one transport
+/// runs per tile, so the renderer never double-uploads.
+///
+/// Both paths are fire-and-forget: a send/emit failure is logged, never
+/// propagated, so a transient IPC hiccup can't fail the drawing command.
+fn send_tile(app: &AppHandle, slice: &TileSlice, rgba: &[u8]) {
+    let &TileSlice {
+        sprite_id,
+        frame_index,
+        tile_x,
+        tile_y,
+        width,
+        height,
+    } = slice;
+    if let Some(state) = app.try_state::<AppState>() {
+        let channel = state
+            .tile_channel
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .clone();
+        if let Some(channel) = channel {
+            let frame = encode_tile_frame(slice, rgba);
+            if let Err(err) = channel.send(InvokeResponseBody::Raw(frame)) {
+                tracing::warn!("failed to send tile ({tile_x},{tile_y}) over channel: {err}");
+            }
+            return;
+        }
+    }
+
+    let payload = TileDirtyPayload {
+        sprite_id,
+        frame_index,
+        tile_x,
+        tile_y,
+        width,
+        height,
+        data: base64::engine::general_purpose::STANDARD.encode(rgba),
+    };
+    if let Err(err) = app.emit("canvas:tile-dirty", payload) {
+        tracing::warn!("failed to emit canvas:tile-dirty tile ({tile_x},{tile_y}): {err}");
+    }
+}
+
 /// Builds an all-transparent `TileDirtyPayload` for a tile of the given size.
 ///
 /// Used by the (currently dormant) `emit_tile_dirty_for_sprite` helper.
@@ -345,10 +457,10 @@ fn emit_tile_dirty_for_sprite(
     }
 }
 
-/// Emits `canvas:tile-dirty` events for every tile of a pixel buffer after
-/// a drawing operation.  One event per tile; each carries the extracted
-/// RGBA bytes for its region.  Stride-aware: reads at `buf_stride` bytes
-/// per row and packs the tile data tight before base64-encoding.
+/// Ships every tile of a pixel buffer to the renderer after a drawing
+/// operation. One tile per call to [`send_tile`]; each carries the extracted
+/// RGBA bytes for its region. Stride-aware: reads at `buf_stride` bytes per
+/// row and packs the tile data tight before handing it to the transport.
 pub(crate) fn emit_buffer_tiles(
     app: &AppHandle,
     sprite_id: u32,
@@ -377,19 +489,18 @@ pub(crate) fn emit_buffer_tiles(
                 tile_bytes[dst..dst + copy_len].copy_from_slice(&pixels[src..src + copy_len]);
             }
 
-            let data = base64::engine::general_purpose::STANDARD.encode(&tile_bytes);
-            let payload = TileDirtyPayload {
-                sprite_id,
-                frame_index,
-                tile_x: tx,
-                tile_y: ty,
-                width: w,
-                height: h,
-                data,
-            };
-            if let Err(err) = app.emit("canvas:tile-dirty", payload) {
-                tracing::warn!("failed to emit canvas:tile-dirty tile ({tx},{ty}): {err}");
-            }
+            send_tile(
+                app,
+                &TileSlice {
+                    sprite_id,
+                    frame_index,
+                    tile_x: tx,
+                    tile_y: ty,
+                    width: w,
+                    height: h,
+                },
+                &tile_bytes,
+            );
         }
     }
 }
@@ -894,31 +1005,53 @@ pub struct EndStrokeArgs {
 /// Pure rasterize: produces the post-stroke pixels without mutating
 /// any shared state or emitting events. Extracted so tests can assert
 /// the brush math without standing up a Tauri runtime.
+/// Re-rasterizes a whole stroke from its pre-stroke pixels: clones
+/// `initial`, stamps every point, and returns the result. Used by the
+/// pixel-perfect path (corner removal needs the full stroke topology) and
+/// by `canvas_draw_stroke`. The incremental hot path uses [`stamp_segment`]
+/// directly instead — see [`apply_stroke_update`].
+#[allow(clippy::too_many_arguments, reason = "a pure rasterize signature")]
+fn rasterize_pixels(
+    initial: &[u8],
+    buf_width: u32,
+    buf_height: u32,
+    buf_stride: u32,
+    points: &[[f32; 2]],
+    color: Rgba,
+    shape: BrushShape,
+    brush_size: u32,
+    pixel_perfect: bool,
+) -> CommandResult<Vec<u8>> {
+    let mut pbuf = PixelBuffer::from_raw(buf_width, buf_height, buf_stride, initial.to_vec())
+        .map_err(|e| AppCommandError::Validation {
+            detail: e.to_string(),
+        })?;
+    draw_stroke(&mut pbuf, points, color, shape, brush_size, pixel_perfect);
+    Ok(pbuf.into_raw())
+}
+
+/// Full re-rasterization of a whole session. Now only exercised by tests —
+/// the live paths use [`stamp_segment`] (incremental) or [`rasterize_pixels`]
+/// (pixel-perfect) — but kept as the reference the rasterize tests assert
+/// against.
+#[cfg(test)]
 fn rasterize_session_pixels(session: &StrokeSession) -> CommandResult<Vec<u8>> {
-    let mut pbuf = PixelBuffer::from_raw(
-        session.buf_width,
-        session.buf_height,
-        session.buf_stride,
-        (*session.initial_pixels).clone(),
-    )
-    .map_err(|e| AppCommandError::Validation {
-        detail: e.to_string(),
-    })?;
     let color = if session.erase {
         Rgba::transparent()
     } else {
         session.color
     };
-    let shape = parse_brush_shape(&session.brush_shape);
-    draw_stroke(
-        &mut pbuf,
+    rasterize_pixels(
+        &session.initial_pixels,
+        session.buf_width,
+        session.buf_height,
+        session.buf_stride,
         &session.points,
         color,
-        shape,
+        parse_brush_shape(&session.brush_shape),
         session.brush_size,
         session.pixel_perfect,
-    );
-    Ok(pbuf.as_bytes().to_vec())
+    )
 }
 
 /// Pixel coords above 2^23 round-trip imprecisely through f32 anyway,
@@ -990,94 +1123,274 @@ fn dirty_tile_range(
     Some((tx_min, tx_max, ty_min, ty_max))
 }
 
-/// Emits `canvas:tile-dirty` for the tiles that cover the painted
-/// region of `new_points` (plus brush radius). Other tiles are
-/// untouched by this extend and the renderer's tile cache is still
-/// valid for them.
+/// Copies a tile-sized region `[x0..x0+w, y0..y0+h]` out of a full-canvas
+/// buffer into a tight `w*h*4` [`PixelBuffer`] (stride `w*4`). Stride-aware
+/// on the source; bounds-guarded so a short or padded source can't panic.
+fn extract_tile_region(
+    pixels: &[u8],
+    src_stride: u32,
+    x0: u32,
+    y0: u32,
+    w: u32,
+    h: u32,
+) -> CommandResult<PixelBuffer> {
+    let src_stride = src_stride as usize;
+    let row_bytes = w as usize * 4;
+    let mut tile = vec![0u8; row_bytes * h as usize];
+    for row in 0..h {
+        let src = (y0 + row) as usize * src_stride + x0 as usize * 4;
+        let dst = row as usize * row_bytes;
+        let end = (src + row_bytes).min(pixels.len());
+        let copy = end.saturating_sub(src);
+        if copy > 0 {
+            tile[dst..dst + copy].copy_from_slice(&pixels[src..src + copy]);
+        }
+    }
+    PixelBuffer::from_raw(w, h, w * 4, tile).map_err(|e| AppCommandError::Validation {
+        detail: e.to_string(),
+    })
+}
+
+/// Composites a single tile-sized region across the sprite's visible raster
+/// layers, returning tight `w*h*4` RGBA bytes.
+///
+/// This is the region-scoped counterpart to [`composite_frame`]: it touches
+/// only the requested tile, so per-extend compositing cost is bounded by the
+/// brush footprint rather than the canvas size — the difference between a
+/// usable and an unusable brush at 8K. Produces the same bytes
+/// `composite_frame` would for that tile (same layer order / blend / opacity
+/// rules, including the "cel must match canvas dims" guard).
+fn composite_tile_region(
+    sprite: &Sprite,
+    pixel_buffers: &[PixelBufferEntry],
+    frame_index: u32,
+    x0: u32,
+    y0: u32,
+    w: u32,
+    h: u32,
+) -> CommandResult<Vec<u8>> {
+    let canvas_w = sprite.canvas.width;
+    let canvas_h = sprite.canvas.height;
+    let mut backdrop = PixelBuffer::new(w, h).map_err(|e| AppCommandError::Validation {
+        detail: e.to_string(),
+    })?;
+
+    for layer in &sprite.layers {
+        if !matches!(layer.kind, LayerKind::Raster) {
+            continue;
+        }
+        if !layer.visible || layer.opacity == 0 {
+            continue;
+        }
+        let Some(buf_id) = find_cel_buffer(&sprite.cels, layer.id, frame_index) else {
+            continue;
+        };
+        let Some(entry) = pixel_buffers.iter().find(|e| e.id == buf_id.get()) else {
+            continue;
+        };
+        if entry.width != canvas_w || entry.height != canvas_h {
+            continue;
+        }
+        let tile_buf = extract_tile_region(&entry.pixels, entry.stride, x0, y0, w, h)?;
+        let input = LayerInput {
+            buffer: &tile_buf,
+            mode: layer.blend_mode,
+            opacity: layer.opacity,
+            visible: layer.visible,
+        };
+        composite_onto(&mut backdrop, &input).map_err(|e| AppCommandError::Validation {
+            detail: e.to_string(),
+        })?;
+    }
+    Ok(backdrop.into_raw())
+}
+
+/// Composites and ships each tile that `new_points` (plus brush radius)
+/// touched. Composites only the dirty tile regions — never the whole frame —
+/// so per-extend cost is independent of canvas size.
 #[allow(
     clippy::similar_names,
     reason = "tx_min/tx_max/ty_min/ty_max convey tile-rect bounds clearly"
 )]
-fn emit_dirty_tiles_for_points(
+fn composite_and_emit_dirty_tiles(
+    doc: &crate::state::DocumentStore,
     app: &AppHandle,
-    session: &StrokeSession,
+    sprite_id: SpriteId,
+    frame_index: u32,
+    brush_size: u32,
     new_points: &[[f32; 2]],
-    composited: &PixelBuffer,
-) {
-    // Tile slicing pulls dimensions from the composited buffer, not the
-    // session. The two have always matched in practice (both are
-    // `canvas_w * 4`) but coupling the session's stride to a buffer
-    // we're slicing is a latent corruption hazard if the cel buffer
-    // ever ends up with a padded stride (.psd / .aseprite imports,
-    // SIMD-aligned scratch buffers). Use the actual buffer's layout.
-    let buf_w = composited.width();
-    let buf_h = composited.height();
-    let buf_stride = composited.stride() as usize;
-    let pixels = composited.as_bytes();
+) -> CommandResult<()> {
+    let project = doc
+        .project
+        .as_ref()
+        .ok_or(AppCommandError::NoActiveProject)?;
+    let sprite = project
+        .sprite(sprite_id)
+        .ok_or_else(|| AppCommandError::NotFound {
+            entity: "sprite".into(),
+            id: u64::from(sprite_id.get()),
+        })?;
+    let canvas_w = sprite.canvas.width;
+    let canvas_h = sprite.canvas.height;
 
     let Some((tx_min, tx_max, ty_min, ty_max)) =
-        dirty_tile_range(new_points, session.brush_size, buf_w, buf_h)
+        dirty_tile_range(new_points, brush_size, canvas_w, canvas_h)
     else {
-        return;
+        return Ok(());
     };
     for ty in ty_min..=ty_max {
         for tx in tx_min..=tx_max {
             let x0 = tx * TILE_SIZE;
             let y0 = ty * TILE_SIZE;
-            let w = (buf_w - x0).min(TILE_SIZE);
-            let h = (buf_h - y0).min(TILE_SIZE);
-            let mut tile_bytes = vec![0u8; (w * h * 4) as usize];
-            for row in 0..h {
-                let src = ((y0 + row) as usize * buf_stride + x0 as usize * 4).min(pixels.len());
-                let dst = row as usize * w as usize * 4;
-                let copy_len = (w as usize * 4).min(pixels.len().saturating_sub(src));
-                tile_bytes[dst..dst + copy_len].copy_from_slice(&pixels[src..src + copy_len]);
-            }
-            let data = base64::engine::general_purpose::STANDARD.encode(&tile_bytes);
-            let payload = TileDirtyPayload {
-                sprite_id: session.sprite_id.get(),
-                frame_index: session.frame_index,
-                tile_x: tx,
-                tile_y: ty,
-                width: w,
-                height: h,
-                data,
-            };
-            if let Err(err) = app.emit("canvas:tile-dirty", payload) {
-                tracing::warn!("failed to emit canvas:tile-dirty tile ({tx},{ty}): {err}");
-            }
+            let w = (canvas_w - x0).min(TILE_SIZE);
+            let h = (canvas_h - y0).min(TILE_SIZE);
+            let tile =
+                composite_tile_region(sprite, &doc.pixel_buffers, frame_index, x0, y0, w, h)?;
+            send_tile(
+                app,
+                &TileSlice {
+                    sprite_id: sprite_id.get(),
+                    frame_index,
+                    tile_x: tx,
+                    tile_y: ty,
+                    width: w,
+                    height: h,
+                },
+                &tile,
+            );
         }
+    }
+    Ok(())
+}
+
+/// How to repaint the active layer's buffer for one stroke batch.
+enum StrokeRaster {
+    /// Stamp only the new segment onto the buffer's existing pixels.
+    /// Correct because `set_pixel` overwrites rather than blends, so
+    /// stamping is idempotent — see [`stamp_segment`]. `from` bridges a
+    /// line from the previously-stamped point so the drag stays continuous.
+    Incremental { from: Option<[f32; 2]> },
+    /// Re-rasterize the whole stroke from the pre-stroke snapshot. Used only
+    /// for pixel-perfect pencil strokes, whose corner-removal pass needs the
+    /// full stroke topology. The pixel brush is cheap (1px stamps), so the
+    /// O(points) re-stamp here is not the perf concern the incremental path
+    /// fixes.
+    Full {
+        initial: Arc<Vec<u8>>,
+        points: Vec<[f32; 2]>,
+    },
+}
+
+/// Everything [`apply_stroke_update`] needs to repaint a stroke batch and
+/// ship the affected tiles, lifted out of the [`StrokeSession`] so the
+/// caller doesn't hold a borrow on `doc.active_strokes` while mutating
+/// `doc.pixel_buffers`.
+struct StrokeUpdate {
+    buffer_id: PixelBufferId,
+    sprite_id: SpriteId,
+    frame_index: u32,
+    color: Rgba,
+    shape: BrushShape,
+    brush_size: u32,
+    raster: StrokeRaster,
+}
+
+/// Builds a [`StrokeUpdate`] from a session. `from` is the bridge origin for
+/// the incremental path — the last point stamped before this batch. Clones
+/// the accumulated point list only on the (rare) pixel-perfect path.
+fn build_stroke_update(session: &StrokeSession, from: Option<[f32; 2]>) -> StrokeUpdate {
+    let shape = parse_brush_shape(&session.brush_shape);
+    let color = if session.erase {
+        Rgba::transparent()
+    } else {
+        session.color
+    };
+    let raster = if session.pixel_perfect && shape == BrushShape::Pixel {
+        StrokeRaster::Full {
+            initial: session.initial_pixels.clone(),
+            points: session.points.clone(),
+        }
+    } else {
+        StrokeRaster::Incremental { from }
+    };
+    StrokeUpdate {
+        buffer_id: session.buffer_id,
+        sprite_id: session.sprite_id,
+        frame_index: session.frame_index,
+        color,
+        shape,
+        brush_size: session.brush_size,
+        raster,
     }
 }
 
-/// Re-rasterizes a session into its target buffer and emits tile-dirty
-/// events for the tiles intersecting `new_points`. Does NOT record undo.
-/// Returns the post-paint pixels so callers can use them for subsequent
-/// operations (e.g. `canvas_end_stroke` capturing the after-state for
-/// the undo entry).
+/// Repaints the active layer's buffer for one stroke batch, then composites
+/// and ships only the tiles the batch touched. Does NOT record undo.
 ///
-/// The emitted tiles carry the COMPOSITED frame across all visible
-/// layers, not just the active layer. See `commit_pixel_op` for why.
-fn rasterize_session_and_emit(
+/// Per-extend cost is bounded by the brush footprint, not the canvas: the
+/// incremental path stamps just `new_points` onto the existing buffer (no
+/// snapshot clone, no full re-stamp, no full copy-back), and compositing
+/// runs per dirty tile. This keeps drawing responsive up to 8K.
+fn apply_stroke_update(
     doc: &mut crate::state::DocumentStore,
     app: &AppHandle,
-    session: &StrokeSession,
+    update: &StrokeUpdate,
     new_points: &[[f32; 2]],
-) -> CommandResult<Vec<u8>> {
-    let pixels = rasterize_session_pixels(session)?;
-    let entry = doc
-        .pixel_buffers
-        .iter_mut()
-        .find(|e| e.id == session.buffer_id.get())
-        .ok_or_else(|| AppCommandError::NotFound {
-            entity: "pixel buffer".into(),
-            id: u64::from(session.buffer_id.get()),
-        })?;
-    entry.pixels.clone_from(&pixels);
+) -> CommandResult<()> {
+    {
+        let entry = doc
+            .pixel_buffers
+            .iter_mut()
+            .find(|e| e.id == update.buffer_id.get())
+            .ok_or_else(|| AppCommandError::NotFound {
+                entity: "pixel buffer".into(),
+                id: u64::from(update.buffer_id.get()),
+            })?;
+        match &update.raster {
+            StrokeRaster::Incremental { from } => {
+                // Move the bytes into a PixelBuffer, stamp in place, move
+                // them back — no allocation, no copy of the (8K-sized) buffer.
+                let bytes = std::mem::take(&mut entry.pixels);
+                let mut pbuf =
+                    PixelBuffer::from_raw(entry.width, entry.height, entry.stride, bytes).map_err(
+                        |e| AppCommandError::Validation {
+                            detail: e.to_string(),
+                        },
+                    )?;
+                stamp_segment(
+                    &mut pbuf,
+                    *from,
+                    new_points,
+                    update.color,
+                    update.shape,
+                    update.brush_size,
+                );
+                entry.pixels = pbuf.into_raw();
+            }
+            StrokeRaster::Full { initial, points } => {
+                entry.pixels = rasterize_pixels(
+                    initial,
+                    entry.width,
+                    entry.height,
+                    entry.stride,
+                    points,
+                    update.color,
+                    update.shape,
+                    update.brush_size,
+                    true,
+                )?;
+            }
+        }
+    }
 
-    let composited = composite_frame(doc, session.sprite_id, session.frame_index)?;
-    emit_dirty_tiles_for_points(app, session, new_points, &composited);
-    Ok(pixels)
+    composite_and_emit_dirty_tiles(
+        doc,
+        app,
+        update.sprite_id,
+        update.frame_index,
+        update.brush_size,
+        new_points,
+    )
 }
 
 /// Begins a freehand stroke session on a layer cel.
@@ -1140,6 +1453,7 @@ pub async fn canvas_begin_stroke(
         buf_stride,
         initial_pixels,
         points: Vec::new(),
+        last_point: None,
         color: args.color,
         brush_shape: args.brush_shape,
         brush_size: args.brush_size,
@@ -1147,17 +1461,14 @@ pub async fn canvas_begin_stroke(
         erase: args.erase,
         label,
     };
-    if let Some(p) = args.first_point {
-        session.points.push(p);
-    }
 
     // Paint the first point immediately if one was provided so the user
-    // sees the click anchor before the first mousemove. Clone is O(1)
-    // because `initial_pixels` is `Arc`.
-    if !session.points.is_empty() {
-        let snapshot = session.clone();
-        let new_points = snapshot.points.clone();
-        rasterize_session_and_emit(doc, &app, &snapshot, &new_points)?;
+    // sees the click anchor before the first mousemove.
+    if let Some(p) = args.first_point {
+        session.points.push(p);
+        let update = build_stroke_update(&session, None);
+        apply_stroke_update(doc, &app, &update, &[p])?;
+        session.last_point = Some(p);
     }
     doc.active_strokes.insert(session_id, session);
 
@@ -1195,7 +1506,7 @@ pub async fn canvas_extend_stroke(
     };
     ensure_layer_writable(doc, sprite_id, layer_id)?;
 
-    let snapshot = {
+    let update = {
         let session = doc
             .active_strokes
             .get_mut(&args.session_id)
@@ -1203,10 +1514,14 @@ pub async fn canvas_extend_stroke(
                 entity: "stroke session".into(),
                 id: u64::from(args.session_id),
             })?;
+        let from = session.last_point;
         session.points.extend_from_slice(&args.new_points);
-        session.clone()
+        if let Some(p) = args.new_points.last() {
+            session.last_point = Some(*p);
+        }
+        build_stroke_update(session, from)
     };
-    rasterize_session_and_emit(doc, &app, &snapshot, &args.new_points)?;
+    apply_stroke_update(doc, &app, &update, &args.new_points)?;
     Ok(())
 }
 
@@ -1239,9 +1554,8 @@ pub async fn canvas_end_stroke(
     ensure_layer_writable(doc, sprite_id, layer_id)?;
 
     // Validate up front so we never start re-rasterizing for an unknown
-    // id and have to roll back. The clone here is O(1) because
-    // `initial_pixels` is `Arc`.
-    let snapshot = {
+    // id and have to roll back.
+    let update = {
         let session = doc
             .active_strokes
             .get_mut(&args.session_id)
@@ -1249,10 +1563,28 @@ pub async fn canvas_end_stroke(
                 entity: "stroke session".into(),
                 id: u64::from(args.session_id),
             })?;
+        let from = session.last_point;
         session.points.extend_from_slice(&args.new_points);
-        session.clone()
+        if let Some(p) = args.new_points.last() {
+            session.last_point = Some(*p);
+        }
+        build_stroke_update(session, from)
     };
-    let after_pixels = rasterize_session_and_emit(doc, &app, &snapshot, &args.new_points)?;
+    apply_stroke_update(doc, &app, &update, &args.new_points)?;
+
+    // The undo after-state is the cel's now-final pixels (the incremental
+    // path mutated the buffer in place rather than returning a copy).
+    let after_pixels = {
+        let entry = doc
+            .pixel_buffers
+            .iter()
+            .find(|e| e.id == update.buffer_id.get())
+            .ok_or_else(|| AppCommandError::NotFound {
+                entity: "pixel buffer".into(),
+                id: u64::from(update.buffer_id.get()),
+            })?;
+        entry.pixels.clone()
+    };
 
     // Move the session out so we own its initial_pixels for the undo
     // entry. Existence is guaranteed by the validation above (no
@@ -2676,6 +3008,32 @@ mod tests {
     }
 
     #[test]
+    fn encode_tile_frame_header_then_payload() {
+        // Header is six little-endian u32s in field order, then raw RGBA.
+        // The decoder in ui/src/canvas/Canvas.tsx reads the same layout.
+        let slice = TileSlice {
+            sprite_id: 7,
+            frame_index: 2,
+            tile_x: 1,
+            tile_y: 3,
+            width: 1,
+            height: 1,
+        };
+        let rgba = [10u8, 20, 30, 40];
+        let buf = encode_tile_frame(&slice, &rgba);
+
+        assert_eq!(buf.len(), TILE_FRAME_HEADER_LEN + rgba.len());
+        let field = |i: usize| u32::from_le_bytes(buf[i..i + 4].try_into().unwrap());
+        assert_eq!(field(0), 7, "sprite_id");
+        assert_eq!(field(4), 2, "frame_index");
+        assert_eq!(field(8), 1, "tile_x");
+        assert_eq!(field(12), 3, "tile_y");
+        assert_eq!(field(16), 1, "width");
+        assert_eq!(field(20), 1, "height");
+        assert_eq!(&buf[TILE_FRAME_HEADER_LEN..], &rgba);
+    }
+
+    #[test]
     fn canvas_composite_metadata_matches_sprite() {
         let mut project = Project::new("test");
         let sprite = Sprite::empty(SpriteId::new(1), "hero", Size::new(64, 48));
@@ -2770,6 +3128,7 @@ mod tests {
             buf_stride: 16,
             initial_pixels: Arc::new(initial_pixels),
             points,
+            last_point: None,
             color: Rgba::opaque(255, 0, 0),
             brush_shape: "pixel".to_owned(),
             brush_size: 1,
@@ -2846,6 +3205,7 @@ mod tests {
                 buf_stride: 4,
                 initial_pixels: Arc::new(initial.clone()),
                 points: vec![],
+                last_point: None,
                 color: Rgba::opaque(0, 255, 0),
                 brush_shape: "pixel".to_owned(),
                 brush_size: 1,
@@ -3163,6 +3523,49 @@ mod tests {
 
         let composite = composite_frame(&doc, SpriteId::new(1), 0).expect("composite");
         assert_eq!(pixel_at(&composite, 0, 0), [0, 255, 0, 255]);
+    }
+
+    #[test]
+    fn region_composite_matches_full_frame_slice() {
+        // The hot path composites per dirty tile instead of the whole frame.
+        // Each tile's region-composited bytes must equal exactly that tile's
+        // slice of the full-frame composite — for every tile, including the
+        // partial edge tile. A canvas wider than one tile (300px) proves the
+        // region path is independent of canvas size: tile 1 at x0=256
+        // composites only its 44px sliver, never the whole frame.
+        let canvas_w = 300u32;
+        let canvas_h = 4u32;
+        let doc = doc_with_two_raster_layers(canvas_w, canvas_h);
+        let frame = composite_frame(&doc, SpriteId::new(1), 0).expect("frame composite");
+
+        let project = doc.project.as_ref().expect("project");
+        let sprite = project.sprite(SpriteId::new(1)).expect("sprite");
+        let frame_stride = frame.stride() as usize;
+        let frame_bytes = frame.as_bytes();
+
+        for ty in 0..canvas_h.div_ceil(TILE_SIZE) {
+            for tx in 0..canvas_w.div_ceil(TILE_SIZE) {
+                let x0 = tx * TILE_SIZE;
+                let y0 = ty * TILE_SIZE;
+                let w = (canvas_w - x0).min(TILE_SIZE);
+                let h = (canvas_h - y0).min(TILE_SIZE);
+
+                let region = composite_tile_region(sprite, &doc.pixel_buffers, 0, x0, y0, w, h)
+                    .expect("region composite");
+
+                let row_bytes = w as usize * 4;
+                let mut expected = vec![0u8; row_bytes * h as usize];
+                for row in 0..h {
+                    let s = (y0 + row) as usize * frame_stride + x0 as usize * 4;
+                    let d = row as usize * row_bytes;
+                    expected[d..d + row_bytes].copy_from_slice(&frame_bytes[s..s + row_bytes]);
+                }
+                assert_eq!(
+                    region, expected,
+                    "tile ({tx},{ty}) region != full-frame slice"
+                );
+            }
+        }
     }
 
     // ── Vectorize (S59) ────────────────────────────────────────────────────

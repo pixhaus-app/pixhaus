@@ -40,5 +40,9 @@ harness = false
 name = "selection"
 harness = false
 
+[[bench]]
+name = "stroke"
+harness = false
+
 [lints]
 workspace = true

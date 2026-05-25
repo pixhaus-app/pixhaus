@@ -25,6 +25,7 @@ use pixhaus_ai::verbs::{
 use pixhaus_core::project::{LayerId, PixelBufferId, Project, Rgba, SpriteId};
 use pixhaus_core::undo::History;
 use pixhaus_io::pixhaus::PixelBufferEntry;
+use tauri::ipc::{Channel, InvokeResponseBody};
 use tokio::sync::{OwnedSemaphorePermit, Semaphore};
 use tokio_util::sync::CancellationToken;
 
@@ -101,8 +102,15 @@ pub(crate) struct StrokeSession {
     /// on every extend so partial strokes never accumulate. Wrapped in
     /// `Arc` so cloning the session is constant-time.
     pub(crate) initial_pixels: Arc<Vec<u8>>,
-    /// All points received via begin + extend so far, in order.
+    /// All points received via begin + extend so far, in order. Retained
+    /// for the pixel-perfect re-rasterization path and for diagnostics; the
+    /// incremental (non-pixel-perfect) path only needs `last_point`.
     pub(crate) points: Vec<[f32; 2]>,
+    /// Last point stamped so far, or `None` before the first point lands.
+    /// The incremental rasterizer bridges a line from here to each new
+    /// batch's first point so a freehand drag stays continuous without
+    /// re-stamping the whole accumulated stroke.
+    pub(crate) last_point: Option<[f32; 2]>,
     pub(crate) color: Rgba,
     pub(crate) brush_shape: String,
     pub(crate) brush_size: u32,
@@ -180,6 +188,18 @@ pub struct AppState {
     /// in-flight i2v generations and persists finished clips to disk so they
     /// survive stage navigation and app restart.
     pub(crate) animation_jobs: Arc<AnimationJobManager>,
+    /// Binary channel the canvas renderer registers via `canvas_set_tile_channel`.
+    ///
+    /// Composited tiles travel through this channel as raw bytes
+    /// (`InvokeResponseBody::Raw`) instead of base64 `canvas:tile-dirty`
+    /// events. Tauri routes payloads over 1 KiB through the webview's fetch
+    /// transport, which is far faster than a base64 JSON event on `WebView2`
+    /// (Windows) — the difference between a usable and an unusable brush on
+    /// a 256x256 canvas. `None` until the renderer registers; the emit path
+    /// falls back to the legacy event so no tile is lost before registration.
+    /// Plain `std::sync::Mutex` because `send` is synchronous and the guard
+    /// is never held across an `.await`.
+    pub(crate) tile_channel: std::sync::Mutex<Option<Channel<InvokeResponseBody>>>,
 }
 
 /// Minimal request manager for reference-sheet operations.
@@ -337,6 +357,7 @@ impl AppState {
             anchor_cache: Arc::new(DashMap::new()),
             reference_sheet_requests: Arc::new(ReferenceSheetRequestManager::new()),
             animation_jobs: Arc::new(AnimationJobManager::new()),
+            tile_channel: std::sync::Mutex::new(None),
         }
     }
 }
