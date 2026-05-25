@@ -5,7 +5,7 @@
 // collapse, search query, panel visibility). Mutations go through the command
 // wrappers, which call Rust and then refresh via refreshLibrary().
 
-import { createSignal } from "solid-js";
+import { createStore } from "solid-js/store";
 import type {
   ActiveTarget,
   Entity,
@@ -111,14 +111,65 @@ export function flattenLibrary(
   return result;
 }
 
-// ── Data cache ──────────────────────────────────────────────────────────────
+// ── UI state ───────────────────────────────────────────────────────────────
 
-// Declared before the query below because the query's onLoaded prunes this
-// map on its initial (synchronous) run, which would otherwise hit the const's
-// temporal dead zone. See the "AI tag suggestions" section for the mutators.
-export const [pendingTagSuggestions, setPendingTagSuggestions] = createSignal<
-  ReadonlyMap<EntityId, ReadonlyArray<TagId>>
->(new Map());
+/** Inline-rename target — an entity, group, or state. */
+export type RenameTarget =
+  | { kind: "entity"; id: EntityId }
+  | { kind: "group"; id: GroupId }
+  | { kind: "state"; entityId: EntityId; stateId: StateId };
+
+// UI-only library-panel state in one store. Reads are libraryUi.selectedEntityId,
+// libraryUi.searchQuery, etc.; writes go through the setters below (the
+// Map/Set-mutating ones accept a value or updater). Declared before the query
+// because the query's onLoaded prunes pendingTagSuggestions on its initial
+// synchronous run, which would otherwise hit a temporal dead zone.
+interface LibraryUiState {
+  selectedEntityId: EntityId | null;
+  renamingTarget: RenameTarget | null;
+  /** Groups default to expanded; collapsed ones are tracked explicitly. */
+  collapsedGroups: ReadonlySet<GroupId>;
+  /** Flat-list index where the drop indicator renders. */
+  dragOverIndex: number | null;
+  searchQuery: string;
+  /** Active kind filter; null = show all. */
+  kindFilter: EntityKind | null;
+  /** Active tag filter; null = show all. */
+  tagFilter: TagId | null;
+  /** Pending VLM tag suggestions per entity (B9.4); accepted tags move to
+   * entity.tags, the rest render as an accept/reject chip strip. */
+  pendingTagSuggestions: ReadonlyMap<EntityId, ReadonlyArray<TagId>>;
+}
+
+const [libraryUi, setLibraryUi] = createStore<LibraryUiState>({
+  selectedEntityId: null,
+  renamingTarget: null,
+  collapsedGroups: new Set(),
+  dragOverIndex: null,
+  searchQuery: "",
+  kindFilter: null,
+  tagFilter: null,
+  pendingTagSuggestions: new Map(),
+});
+
+export { libraryUi };
+
+type SetArg<T> = T | ((prev: T) => T);
+
+export const setSelectedEntityId = (v: EntityId | null): void =>
+  setLibraryUi("selectedEntityId", v);
+export const setRenamingTarget = (v: RenameTarget | null): void =>
+  setLibraryUi("renamingTarget", v);
+function setCollapsedGroups(next: SetArg<ReadonlySet<GroupId>>): void {
+  setLibraryUi("collapsedGroups", typeof next === "function" ? next : () => next);
+}
+export const setDragOverIndex = (v: number | null): void => setLibraryUi("dragOverIndex", v);
+export const setSearchQuery = (v: string): void => setLibraryUi("searchQuery", v);
+export const setKindFilter = (v: EntityKind | null): void => setLibraryUi("kindFilter", v);
+export const setTagFilter = (v: TagId | null): void => setLibraryUi("tagFilter", v);
+function setPendingTagSuggestions(next: SetArg<ReadonlyMap<EntityId, ReadonlyArray<TagId>>>): void {
+  setLibraryUi("pendingTagSuggestions", typeof next === "function" ? next : () => next);
+}
 
 interface LibraryData {
   entities: Entity[];
@@ -247,18 +298,7 @@ export function refreshCorpusFor(entityId: EntityId): void {
   );
 }
 
-// ── Selection ───────────────────────────────────────────────────────────────
-
-export const [selectedEntityId, setSelectedEntityId] = createSignal<EntityId | null>(null);
-
 // ── Inline rename ───────────────────────────────────────────────────────────
-
-export type RenameTarget =
-  | { kind: "entity"; id: EntityId }
-  | { kind: "group"; id: GroupId }
-  | { kind: "state"; entityId: EntityId; stateId: StateId };
-
-export const [renamingTarget, setRenamingTarget] = createSignal<RenameTarget | null>(null);
 
 export function beginEntityRename(id: EntityId): void {
   setRenamingTarget({ kind: "entity", id });
@@ -302,11 +342,8 @@ export function commitStateRename(entityId: EntityId, stateId: StateId, name: st
 
 // ── Expanded groups ─────────────────────────────────────────────────────────
 
-// Groups default to expanded; track collapsed ones explicitly.
-const [collapsedGroups, setCollapsedGroups] = createSignal<ReadonlySet<GroupId>>(new Set());
-
 export function isGroupExpanded(id: GroupId): boolean {
-  return !collapsedGroups().has(id);
+  return !libraryUi.collapsedGroups.has(id);
 }
 
 export function toggleGroupExpanded(id: GroupId): void {
@@ -330,29 +367,16 @@ export function ensureGroupExpanded(id: GroupId): void {
   });
 }
 
-// ── Drag-to-reorder ─────────────────────────────────────────────────────────
-
-// Flat-list index where the drop indicator renders.
-export const [dragOverIndex, setDragOverIndex] = createSignal<number | null>(null);
-
 // ── Search ──────────────────────────────────────────────────────────────────
-
-export const [searchQuery, setSearchQuery] = createSignal("");
-
-// Active kind filter. null = show all.
-export const [kindFilter, setKindFilter] = createSignal<EntityKind | null>(null);
-
-// Active tag filter. null = show all.
-export const [tagFilter, setTagFilter] = createSignal<TagId | null>(null);
 
 /**
  * Filters entities by the current search query, kind filter, and tag filter.
  * Matches entity names, Custom kind strings, and tag names case-insensitively.
  */
 export function filteredEntities(allEntities: Entity[], allTags: TagDefinition[]): Entity[] {
-  const q = searchQuery().toLowerCase().trim();
-  const kf = kindFilter();
-  const tf = tagFilter();
+  const q = libraryUi.searchQuery.toLowerCase().trim();
+  const kf = libraryUi.kindFilter;
+  const tf = libraryUi.tagFilter;
 
   return allEntities.filter((entity) => {
     if (kf !== null) {
@@ -398,7 +422,7 @@ export function deleteEntity(entityId: EntityId): void {
     run: () => libraryDeleteEntity(entityId),
     invalidate: ["library"],
     onSuccess: () => {
-      if (selectedEntityId() === entityId) setSelectedEntityId(null);
+      if (libraryUi.selectedEntityId === entityId) setSelectedEntityId(null);
     },
   });
 }

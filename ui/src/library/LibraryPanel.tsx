@@ -36,21 +36,16 @@ import {
   commitStateRename,
   createGroup,
   deleteState,
-  dragOverIndex,
   entities,
   filteredEntities,
   flattenLibrary,
   groups,
   isGroupExpanded,
-  kindFilter,
+  libraryUi,
   moveEntityToGroup,
-  pendingTagSuggestions,
   refreshLibrary,
   removePendingSuggestion,
-  renamingTarget,
   reorderEntity,
-  searchQuery,
-  selectedEntityId,
   setActiveTarget,
   setDragOverIndex,
   setKindFilter,
@@ -84,7 +79,7 @@ const LibraryPanel: Component = () => {
 
   function handleEntityContextMenu(e: MouseEvent, entityId: EntityId): void {
     e.preventDefault();
-    if (selectedEntityId() !== entityId) setSelectedEntityId(entityId);
+    if (libraryUi.selectedEntityId !== entityId) setSelectedEntityId(entityId);
     setContextTarget({ kind: "entity", x: e.clientX, y: e.clientY, entityId });
   }
 
@@ -223,11 +218,11 @@ const LibraryPanel: Component = () => {
             class="library-panel__search"
             type="text"
             placeholder="Search..."
-            value={searchQuery()}
+            value={libraryUi.searchQuery}
             onInput={(e) => setSearchQuery(e.currentTarget.value)}
             data-testid="library-search"
           />
-          <Show when={searchQuery().length > 0}>
+          <Show when={libraryUi.searchQuery.length > 0}>
             <button
               class="library-panel__search-clear"
               onClick={() => setSearchQuery("")}
@@ -246,7 +241,7 @@ const LibraryPanel: Component = () => {
         <div class="library-panel__chips">
           <button
             class="library-panel__chip"
-            classList={{ "library-panel__chip--active": kindFilter() === null }}
+            classList={{ "library-panel__chip--active": libraryUi.kindFilter === null }}
             onClick={() => setKindFilter(null)}
           >
             All
@@ -255,7 +250,7 @@ const LibraryPanel: Component = () => {
             <button
               class="library-panel__chip"
               classList={{
-                "library-panel__chip--active": kindFilter()?.kind === "Tileset",
+                "library-panel__chip--active": libraryUi.kindFilter?.kind === "Tileset",
               }}
               onClick={() => setKindFilter({ kind: "Tileset" })}
             >
@@ -266,7 +261,7 @@ const LibraryPanel: Component = () => {
             <button
               class="library-panel__chip"
               classList={{
-                "library-panel__chip--active": kindFilter()?.kind === "Tilemap",
+                "library-panel__chip--active": libraryUi.kindFilter?.kind === "Tilemap",
               }}
               onClick={() => setKindFilter({ kind: "Tilemap" })}
             >
@@ -279,8 +274,8 @@ const LibraryPanel: Component = () => {
                 class="library-panel__chip"
                 classList={{
                   "library-panel__chip--active":
-                    kindFilter()?.kind === "Custom" &&
-                    (kindFilter() as { kind: "Custom"; value: string }).value === cat,
+                    libraryUi.kindFilter?.kind === "Custom" &&
+                    (libraryUi.kindFilter as { kind: "Custom"; value: string }).value === cat,
                 }}
                 onClick={() => setKindFilter({ kind: "Custom", value: cat })}
               >
@@ -307,7 +302,7 @@ const LibraryPanel: Component = () => {
           when={treeEntries().length > 0}
           fallback={
             <div class="library-panel__empty">
-              <span>No results for "{searchQuery()}"</span>
+              <span>No results for "{libraryUi.searchQuery}"</span>
             </div>
           }
         >
@@ -366,7 +361,7 @@ const LibraryPanel: Component = () => {
                 reorderEntity(parsed.id as EntityId, lastIndex);
               }}
             />
-            <Show when={dragOverIndex() === treeEntries().length}>
+            <Show when={libraryUi.dragOverIndex === treeEntries().length}>
               <div class="library-panel__drop-indicator" />
             </Show>
           </div>
@@ -477,7 +472,7 @@ type GroupRowProps = {
 const GroupRow: Component<GroupRowProps> = (props) => {
   const expanded = () => isGroupExpanded(props.entry.group.id);
   const isRenaming = () => {
-    const t = renamingTarget();
+    const t = libraryUi.renamingTarget;
     return t?.kind === "group" && t.id === props.entry.group.id;
   };
 
@@ -563,12 +558,12 @@ type EntityRowProps = {
 };
 
 const EntityRow: Component<EntityRowProps> = (props) => {
-  const isSelected = () => selectedEntityId() === props.entry.entity.id;
+  const isSelected = () => libraryUi.selectedEntityId === props.entry.entity.id;
   const isRenaming = () => {
-    const t = renamingTarget();
+    const t = libraryUi.renamingTarget;
     return t?.kind === "entity" && t.id === props.entry.entity.id;
   };
-  const isDragTarget = () => dragOverIndex() === props.entry.index;
+  const isDragTarget = () => libraryUi.dragOverIndex === props.entry.index;
 
   // State expand/collapse for Custom entities with multiple states
   const isCustom = () => props.entry.entity.kind.kind === "Custom";
@@ -938,7 +933,7 @@ const TagChips: Component<TagChipsProps> = (props) => {
   });
 
   const pendingTagDefs = createMemo<TagDefinition[]>(() => {
-    const pending = pendingTagSuggestions().get(props.entity.id) ?? [];
+    const pending = libraryUi.pendingTagSuggestions.get(props.entity.id) ?? [];
     if (pending.length === 0) return [];
     const lookup = tagsById();
     const confirmed = new Set(props.entity.tags ?? []);
@@ -1033,7 +1028,7 @@ type StateRowProps = {
 
 const StateRow: Component<StateRowProps> = (props) => {
   const isRenaming = () => {
-    const t = renamingTarget();
+    const t = libraryUi.renamingTarget;
     return t?.kind === "state" && t.entityId === props.entityId && t.stateId === props.stateId;
   };
 

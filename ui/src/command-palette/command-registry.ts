@@ -76,7 +76,7 @@ import {
 import { timelineUi, refreshTimeline, setIsLooping } from "../timeline/timeline-state";
 import { sheetState, openSheetEditor, setActiveSheetEntityId } from "../sheet/sheet-state";
 import { libraryListEntities } from "../lib/commands/library";
-import { selectedEntityId } from "../library/library-state";
+import { libraryUi } from "../library/library-state";
 import {
   closeSection,
   isSectionOpen,
@@ -233,7 +233,7 @@ const COMMANDS: ReadonlyMap<string, CommandEntry> = new Map<string, CommandEntry
       category: "AI",
       keywords: ["animation", "studio", "walk", "idle", "sprite sheet"],
       handler: () => {
-        const entity = selectedEntityId();
+        const entity = libraryUi.selectedEntityId;
         if (entity === null) {
           pushToast({ kind: "info", title: "Select a sprite entity first." });
           return;
@@ -1424,7 +1424,7 @@ function openVerbModal(verbId: string, fallbackLabel: string): void {
 }
 
 function openReferenceSheetEditorForSelectedSprite(): void {
-  const selected = selectedEntityId();
+  const selected = libraryUi.selectedEntityId;
   libraryListEntities()
     .then((entities) => {
       const selectedSprite =
