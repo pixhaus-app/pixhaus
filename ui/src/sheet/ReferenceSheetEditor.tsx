@@ -62,11 +62,9 @@ import { pushToast } from "../lib/toast/toast-state";
 import { extractDetail, reportCommandFailure } from "../lib/utils/errors";
 import { useImageObjectUrl } from "../lib/utils/image-object-url";
 import {
-  activeSheetEditorEntityId,
+  sheetState,
   closeSheetEditor,
-  selectedPanelRegion,
   setSelectedPanelRegion,
-  showPanelOverlay,
   setShowPanelOverlay,
 } from "./sheet-state";
 import {
@@ -372,7 +370,7 @@ const ReferenceSheetEditor: Component = () => {
       );
     });
     subscribeTauriEvent<SheetRequestCompletePayload>("SheetRequestComplete", (payload) => {
-      const activeId = activeSheetEditorEntityId();
+      const activeId = sheetState.activeSheetEditorEntityId;
       if (activeId === null || payload.entity_id !== activeId) return;
       refreshEntity(payload.sprite);
       setGenerating(false);
@@ -406,33 +404,36 @@ const ReferenceSheetEditor: Component = () => {
   });
 
   createEffect(
-    on(activeSheetEditorEntityId, (entityId) => {
-      resetView();
-      if (entityId === null) {
-        setEntity(null);
-        return;
-      }
-      const requestId = entityId;
-      setLoading(true);
-      libraryGetEntity(entityId)
-        .then((next) => {
-          if (activeSheetEditorEntityId() !== requestId) return;
-          setEntity(next);
-          if (prompt().trim().length === 0) {
-            setPrompt(next.name);
-          }
-          if (comparePrompt().trim().length === 0) setComparePrompt(next.name);
-          if (assetName().trim().length === 0) setAssetName(next.name);
-        })
-        .catch((err: unknown) => {
-          if (activeSheetEditorEntityId() !== requestId) return;
-          reportCommandFailure("library_get_entity", err);
-        })
-        .finally(() => {
-          if (activeSheetEditorEntityId() !== requestId) return;
-          setLoading(false);
-        });
-    }),
+    on(
+      () => sheetState.activeSheetEditorEntityId,
+      (entityId) => {
+        resetView();
+        if (entityId === null) {
+          setEntity(null);
+          return;
+        }
+        const requestId = entityId;
+        setLoading(true);
+        libraryGetEntity(entityId)
+          .then((next) => {
+            if (sheetState.activeSheetEditorEntityId !== requestId) return;
+            setEntity(next);
+            if (prompt().trim().length === 0) {
+              setPrompt(next.name);
+            }
+            if (comparePrompt().trim().length === 0) setComparePrompt(next.name);
+            if (assetName().trim().length === 0) setAssetName(next.name);
+          })
+          .catch((err: unknown) => {
+            if (sheetState.activeSheetEditorEntityId !== requestId) return;
+            reportCommandFailure("library_get_entity", err);
+          })
+          .finally(() => {
+            if (sheetState.activeSheetEditorEntityId !== requestId) return;
+            setLoading(false);
+          });
+      },
+    ),
   );
 
   const sheet = (): ReferenceSheet | null => referenceSheet(entity());
@@ -496,12 +497,12 @@ const ReferenceSheetEditor: Component = () => {
     });
 
   function isPanelSelected(panel: { x: number; y: number }): boolean {
-    const selected = selectedPanelRegion();
+    const selected = sheetState.selectedPanelRegion;
     return selected !== null && selected.origin.x === panel.x && selected.origin.y === panel.y;
   }
 
   function handlePanelClick(panel: { x: number; y: number; w: number; h: number }): void {
-    const selected = selectedPanelRegion();
+    const selected = sheetState.selectedPanelRegion;
     if (selected !== null && selected.origin.x === panel.x && selected.origin.y === panel.y) {
       setSelectedPanelRegion(null);
       return;
@@ -715,7 +716,7 @@ const ReferenceSheetEditor: Component = () => {
   }
 
   function addRegionFromSelection(): void {
-    const selected = selectedPanelRegion();
+    const selected = sheetState.selectedPanelRegion;
     if (selected === null) return;
     const polygon = [
       selected.origin,
@@ -1190,7 +1191,7 @@ const ReferenceSheetEditor: Component = () => {
                     }}
                   />
                 </Show>
-                <Show when={showPanelOverlay() && allPanels().length > 0}>
+                <Show when={sheetState.showPanelOverlay && allPanels().length > 0}>
                   <svg
                     class="sheet-editor__overlay"
                     viewBox={`0 0 ${sheetWidth()} ${sheetHeight()}`}
@@ -1513,7 +1514,7 @@ const ReferenceSheetEditor: Component = () => {
                 </Button>
                 <Button
                   variant="ghost"
-                  onClick={() => setShowPanelOverlay(!showPanelOverlay())}
+                  onClick={() => setShowPanelOverlay(!sheetState.showPanelOverlay)}
                   disabled={allPanels().length === 0}
                 >
                   Overlay

@@ -74,7 +74,7 @@ import {
   wrapLayersInGroup,
 } from "../layers/layer-state";
 import { isLooping, refreshTimeline, setIsLooping } from "../timeline/timeline-state";
-import { activeSheetEntityId, openSheetEditor, setActiveSheetEntityId } from "../sheet/sheet-state";
+import { sheetState, openSheetEditor, setActiveSheetEntityId } from "../sheet/sheet-state";
 import { libraryListEntities } from "../lib/commands/library";
 import { selectedEntityId } from "../library/library-state";
 import {
@@ -1316,7 +1316,7 @@ const COMMANDS: ReadonlyMap<string, CommandEntry> = new Map<string, CommandEntry
           closeSection("reference");
           return;
         }
-        if (activeSheetEntityId() !== null) {
+        if (sheetState.activeSheetEntityId !== null) {
           openSection("reference");
           return;
         }

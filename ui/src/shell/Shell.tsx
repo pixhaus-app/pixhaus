@@ -35,7 +35,7 @@ import EntityCreateModal from "../library/EntityCreateModal";
 import { setupPaletteColorSync } from "../canvas/tools/palette-color-sync";
 import { installTilemapCtxSync } from "../tilemap/tilemap-state";
 import ReferenceSheetEditor from "../sheet/ReferenceSheetEditor";
-import { isSheetEditorOpen } from "../sheet/sheet-state";
+import { sheetState } from "../sheet/sheet-state";
 import AnimationStudio from "../animation/AnimationStudio";
 import { isAnimationStudioOpen } from "../animation/animation-studio-state";
 import RightRail from "./RightRail";
@@ -122,7 +122,7 @@ const Shell: Component = () => {
               </Show>
               <div class="editor-layout__canvas-area">
                 <Show when={!isAnimationStudioOpen()} fallback={<AnimationStudio />}>
-                  <Show when={!isSheetEditorOpen()} fallback={<ReferenceSheetEditor />}>
+                  <Show when={!sheetState.isSheetEditorOpen} fallback={<ReferenceSheetEditor />}>
                     <div class="editor-layout__canvas">
                       <Canvas />
                     </div>

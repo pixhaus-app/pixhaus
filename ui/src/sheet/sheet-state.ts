@@ -5,52 +5,64 @@
 // open/closed state itself is owned by the right-rail accordion now
 // (see ui/src/shell/rail-state.ts).
 
-import { createSignal } from "solid-js";
+import { createStore } from "solid-js/store";
 import type { EntityId } from "../lib/types/EntityId";
 import type { Rect } from "../lib/types/Rect";
 
-/** The sprite entity currently shown in the sheet panel. `null` when no entity is selected. */
-export const [activeSheetEntityId, setActiveSheetEntityId] = createSignal<EntityId | null>(null);
+// One store for the sheet panel / editor. Reads are sheet.activeSheetEntityId,
+// sheet.isSheetEditorOpen, etc.; writes go through the named functions below.
+interface SheetState {
+  /** Sprite entity shown in the sheet panel; null when none selected. */
+  activeSheetEntityId: EntityId | null;
+  /** Panel rect the user clicked most recently, used to scope the
+   * iterate-reference-sheet verb. null = whole-sheet mode. */
+  selectedPanelRegion: Rect | null;
+  /** Whether the composition overlay (labelled panel rectangles) is drawn. */
+  showPanelOverlay: boolean;
+  /** Sprite entity open in the dedicated AI sheet editor. */
+  activeSheetEditorEntityId: EntityId | null;
+  /** Whether the dedicated AI sheet editor replaces the normal canvas area. */
+  isSheetEditorOpen: boolean;
+}
 
-/**
- * The panel rectangle the user clicked most recently, used to scope the
- * iterate-reference-sheet verb to a single panel. `null` means no panel
- * is selected — the Refine button uses whole-sheet mode.
- */
-export const [selectedPanelRegion, setSelectedPanelRegion] = createSignal<Rect | null>(null);
+export const [sheetState, setSheetState] = createStore<SheetState>({
+  activeSheetEntityId: null,
+  selectedPanelRegion: null,
+  showPanelOverlay: true,
+  activeSheetEditorEntityId: null,
+  isSheetEditorOpen: false,
+});
 
-/** Whether the composition overlay (labelled panel rectangles) is drawn. */
-export const [showPanelOverlay, setShowPanelOverlay] = createSignal(true);
-
-/** The sprite entity currently open in the dedicated AI sheet editor. */
-export const [activeSheetEditorEntityId, setActiveSheetEditorEntityId] =
-  createSignal<EntityId | null>(null);
-
-/** Whether the dedicated AI sheet editor replaces the normal canvas area. */
-export const [isSheetEditorOpen, setSheetEditorOpen] = createSignal(false);
+export const setActiveSheetEntityId = (v: EntityId | null): void =>
+  setSheetState("activeSheetEntityId", v);
+export const setSelectedPanelRegion = (v: Rect | null): void =>
+  setSheetState("selectedPanelRegion", v);
+export const setShowPanelOverlay = (v: boolean): void => setSheetState("showPanelOverlay", v);
 
 /** Sets the active sheet entity. Use with `openSection("reference")` from rail-state. */
 export function showSheetForEntity(entityId: EntityId): void {
-  setActiveSheetEntityId(entityId);
-  setSelectedPanelRegion(null);
+  setSheetState({ activeSheetEntityId: entityId, selectedPanelRegion: null });
 }
 
 /** Opens the dedicated AI reference-sheet editor for the given sprite entity. */
 export function openSheetEditor(entityId: EntityId): void {
-  setActiveSheetEditorEntityId(entityId);
-  setSelectedPanelRegion(null);
-  setSheetEditorOpen(true);
+  setSheetState({
+    activeSheetEditorEntityId: entityId,
+    selectedPanelRegion: null,
+    isSheetEditorOpen: true,
+  });
 }
 
 /** Closes the dedicated AI reference-sheet editor. */
 export function closeSheetEditor(): void {
-  setSheetEditorOpen(false);
-  setActiveSheetEditorEntityId(null);
-  setSelectedPanelRegion(null);
+  setSheetState({
+    isSheetEditorOpen: false,
+    activeSheetEditorEntityId: null,
+    selectedPanelRegion: null,
+  });
 }
 
 /** Clears the active sheet entity. */
 export function clearSheetEntity(): void {
-  setActiveSheetEntityId(null);
-  setSelectedPanelRegion(null);
+  setSheetState({ activeSheetEntityId: null, selectedPanelRegion: null });
 }
