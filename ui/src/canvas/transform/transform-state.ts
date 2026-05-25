@@ -4,7 +4,7 @@
 // handle. The canvas input handler sets these signals; the TransformHandles
 // overlay component reads them to show the preview position.
 
-import { createSignal } from "solid-js";
+import { createStore } from "solid-js/store";
 
 // ── Handle types ─────────────────────────────────────────────────────────────
 
@@ -34,17 +34,31 @@ export type TransformDrag = {
   originalBounds: { x: number; y: number; width: number; height: number };
 };
 
-export const [transformDrag, setTransformDrag] = createSignal<TransformDrag | null>(null);
+// One store for the whole transform sub-UI. Reads are transform.transformDrag,
+// transform.numericX, etc.; writes go through the named setters. The numeric
+// fields back SelectionNumericPanel and are kept in sync with selectionRect by
+// Canvas.tsx via a createEffect.
+export interface TransformState {
+  transformDrag: TransformDrag | null;
+  numericX: number;
+  numericY: number;
+  numericW: number;
+  numericH: number;
+}
 
-// ── Numeric input state ──────────────────────────────────────────────────────
+export const [transform, setTransform] = createStore<TransformState>({
+  transformDrag: null,
+  numericX: 0,
+  numericY: 0,
+  numericW: 0,
+  numericH: 0,
+});
 
-// Exposed so SelectionNumericPanel can read and write precise values.
-// Kept in sync with selectionRect by Canvas.tsx via a createEffect.
-
-export const [numericX, setNumericX] = createSignal(0);
-export const [numericY, setNumericY] = createSignal(0);
-export const [numericW, setNumericW] = createSignal(0);
-export const [numericH, setNumericH] = createSignal(0);
+export const setTransformDrag = (v: TransformDrag | null): void => setTransform("transformDrag", v);
+export const setNumericX = (v: number): void => setTransform("numericX", v);
+export const setNumericY = (v: number): void => setTransform("numericY", v);
+export const setNumericW = (v: number): void => setTransform("numericW", v);
+export const setNumericH = (v: number): void => setTransform("numericH", v);
 
 /** Syncs the numeric panel signals from a selection rect. */
 export function syncNumericFromBounds(bounds: {

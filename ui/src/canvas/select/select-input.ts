@@ -38,7 +38,7 @@ import {
   canvasGetSelectionMask,
   canvasInvertSelection,
 } from "../../lib/commands/canvas";
-import { transformDrag } from "../transform/transform-state";
+import { transform } from "../transform/transform-state";
 import { pushToast } from "../../lib/toast/toast-state";
 import { isUnimplementedError, toastUnimplemented } from "../../lib/utils/errors";
 import { toIpcRect } from "../../lib/utils/geometry";
@@ -379,7 +379,7 @@ export function attachSelectInput(el: HTMLElement): () => void {
     // A gizmo-handle press (pointerdown) fires before this mousedown and sets
     // transformDrag; bail so transforming an existing selection doesn't also
     // start a brand-new marquee underneath it.
-    if (transformDrag() !== null) return;
+    if (transform.transformDrag !== null) return;
     const tool = select.selectTool;
     if (tool === "rect" || tool === "ellipse") {
       onMarqueeDown(e, el);

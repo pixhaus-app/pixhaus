@@ -11,7 +11,7 @@
 // committing them as a scale op is out of scope for this task.
 
 import {
-  transformDrag,
+  transform,
   setTransformDrag,
   applyHandleDelta,
   syncNumericFromBounds,
@@ -127,7 +127,7 @@ async function commitBodyTranslate(
 
 // Reverts local signals to the originalBounds captured at drag start.
 function revertToDragOrigin(): void {
-  const drag = transformDrag();
+  const drag = transform.transformDrag;
   if (!drag) return;
   const { originalBounds: ob } = drag;
   setSelectionRect(ob);
@@ -167,7 +167,7 @@ export function startTransformDrag(handle: TransformHandle, e: PointerEvent): vo
   });
 
   const onMove = (ev: PointerEvent): void => {
-    const drag = transformDrag();
+    const drag = transform.transformDrag;
     if (!drag) return;
 
     const dxScreen = ev.clientX - drag.startScreenX;
@@ -185,7 +185,7 @@ export function startTransformDrag(handle: TransformHandle, e: PointerEvent): vo
   };
 
   const onUp = (ev: PointerEvent): void => {
-    const drag = transformDrag();
+    const drag = transform.transformDrag;
     if (!drag) {
       cleanup();
       return;
@@ -243,7 +243,7 @@ export function startTransformDrag(handle: TransformHandle, e: PointerEvent): vo
 export function attachTransformKeyboard(): () => void {
   function onKeyDown(e: KeyboardEvent): void {
     if (e.code === "Enter") {
-      const drag = transformDrag();
+      const drag = transform.transformDrag;
       if (drag) {
         // A drag is still active — cancel it (commit may already be queued
         // in the pointerup handler, so just let it run).

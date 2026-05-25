@@ -1,12 +1,5 @@
 import { describe, it, expect } from "vitest";
-import {
-  applyHandleDelta,
-  syncNumericFromBounds,
-  numericX,
-  numericY,
-  numericW,
-  numericH,
-} from "./transform-state";
+import { applyHandleDelta, syncNumericFromBounds, transform } from "./transform-state";
 import type { TransformArgs, TransformOp } from "../../lib/commands/canvas";
 
 const BASE = { x: 10, y: 20, width: 100, height: 80 };
@@ -80,10 +73,10 @@ describe("applyHandleDelta — rotate stub", () => {
 describe("syncNumericFromBounds", () => {
   it("rounds and writes to signals", () => {
     syncNumericFromBounds({ x: 1.6, y: 2.3, width: 99.9, height: 40.1 });
-    expect(numericX()).toBe(2);
-    expect(numericY()).toBe(2);
-    expect(numericW()).toBe(100);
-    expect(numericH()).toBe(40);
+    expect(transform.numericX).toBe(2);
+    expect(transform.numericY).toBe(2);
+    expect(transform.numericW).toBe(100);
+    expect(transform.numericH).toBe(40);
   });
 });
 

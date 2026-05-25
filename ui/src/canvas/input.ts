@@ -24,7 +24,7 @@ import {
 } from "./canvas-state";
 import { tool } from "./tools/tool-state";
 import { attachSelectInput } from "./select/select-input";
-import { transformDrag } from "./transform/transform-state";
+import { transform } from "./transform/transform-state";
 import { snapZoom, clampZoom, zoomAt, screenToCanvas } from "./viewport";
 import { isEditableTarget } from "../keybinds/keybind-manager";
 import {
@@ -552,7 +552,7 @@ export function attachCanvasInput(el: HTMLElement): () => void {
     // before this mousedown and sets transformDrag, so bailing here stops the
     // press from also starting a brush stroke (the cause of the draw-while-
     // transforming + flicker bug). Space-pan still wins so the user can pan.
-    if (transformDrag() !== null && !spaceHeld) return;
+    if (transform.transformDrag !== null && !spaceHeld) return;
 
     // Selection mode is delegated to the selection input handler; never draw.
     if (viewport.isSelectMode && !spaceHeld) return;
