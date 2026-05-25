@@ -28,13 +28,7 @@ import {
 } from "../../canvas/canvas-state";
 import { layers, refreshLayers, layerUi } from "../../layers/layer-state";
 import { setActiveLayerId } from "../../canvas/canvas-state";
-import {
-  frameTags,
-  frames,
-  isLooping,
-  isPlaying,
-  selectedFrames,
-} from "../../timeline/timeline-state";
+import { frameTags, frames, timelineUi } from "../../timeline/timeline-state";
 import {
   closeSection,
   isLibraryCollapsed,
@@ -230,9 +224,9 @@ export function installDebugSurface(): void {
     getSelectedLayerIds: () => [...layerUi.selectedLayerIds],
     getFrameCount: () => frames().length,
     getFrameTags: () => frameTags(),
-    getSelectedFrames: () => [...selectedFrames()],
-    getIsPlaying: () => isPlaying(),
-    getIsLooping: () => isLooping(),
+    getSelectedFrames: () => [...timelineUi.selectedFrames],
+    getIsPlaying: () => timelineUi.isPlaying,
+    getIsLooping: () => timelineUi.isLooping,
 
     isCommandPaletteOpen: () => isCommandPaletteOpen(),
     isPreferencesOpen: () => isPreferencesOpen(),

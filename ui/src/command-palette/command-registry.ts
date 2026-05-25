@@ -73,7 +73,7 @@ import {
   nextAutoName,
   wrapLayersInGroup,
 } from "../layers/layer-state";
-import { isLooping, refreshTimeline, setIsLooping } from "../timeline/timeline-state";
+import { timelineUi, refreshTimeline, setIsLooping } from "../timeline/timeline-state";
 import { sheetState, openSheetEditor, setActiveSheetEntityId } from "../sheet/sheet-state";
 import { libraryListEntities } from "../lib/commands/library";
 import { selectedEntityId } from "../library/library-state";
@@ -604,7 +604,7 @@ const COMMANDS: ReadonlyMap<string, CommandEntry> = new Map<string, CommandEntry
       label: "Toggle Playback Loop",
       category: "Frame",
       keywords: ["loop", "playback"],
-      handler: () => setIsLooping(!isLooping()),
+      handler: () => setIsLooping(!timelineUi.isLooping),
     },
   ],
 

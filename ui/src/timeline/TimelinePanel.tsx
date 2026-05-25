@@ -31,11 +31,9 @@ import {
   deleteFrames,
   extendSelectionTo,
   frames,
-  isLooping,
-  isPlaying,
+  timelineUi,
   viewport,
   selectFrame,
-  selectedFrames,
   setFrameDuration,
   setFrameDurationMul,
   setIsLooping,
@@ -245,7 +243,7 @@ const TimelinePanel: Component = () => {
       selectFrame(Math.max(0, activeFrame() - 1), false);
     } else if (e.code === "Delete" || e.code === "Backspace") {
       e.preventDefault();
-      const sel = selectedFrames();
+      const sel = timelineUi.selectedFrames;
       if (sel.size > 0) deleteFrames(id, sel);
     }
   }
@@ -259,11 +257,11 @@ const TimelinePanel: Component = () => {
         <div class="timeline-panel__playback">
           <button
             class="timeline-panel__pb-btn"
-            classList={{ "timeline-panel__pb-btn--active": isPlaying() }}
+            classList={{ "timeline-panel__pb-btn--active": timelineUi.isPlaying }}
             onClick={togglePlayback}
-            title={isPlaying() ? "Pause (Space)" : "Play (Space)"}
+            title={timelineUi.isPlaying ? "Pause (Space)" : "Play (Space)"}
           >
-            {isPlaying() ? "Pause" : "Play"}
+            {timelineUi.isPlaying ? "Pause" : "Play"}
           </button>
           <button
             class="timeline-panel__pb-btn"
@@ -279,7 +277,7 @@ const TimelinePanel: Component = () => {
           <label class="timeline-panel__loop-toggle" title="Loop playback at last frame">
             <input
               type="checkbox"
-              checked={isLooping()}
+              checked={timelineUi.isLooping}
               onChange={(e) => setIsLooping(e.currentTarget.checked)}
             />
             <span class="timeline-panel__loop-toggle-label">Loop</span>
@@ -404,7 +402,7 @@ const TimelinePanel: Component = () => {
                     class="timeline-panel__frame-col"
                     classList={{
                       "timeline-panel__frame-col--active": index === activeFrame(),
-                      "timeline-panel__frame-col--selected": selectedFrames().has(index),
+                      "timeline-panel__frame-col--selected": timelineUi.selectedFrames.has(index),
                     }}
                     style={{ left: `${index * FRAME_WIDTH}px` }}
                     onClick={(e) => handleFrameClick(e, index)}
@@ -528,7 +526,7 @@ const TimelinePanel: Component = () => {
                           "timeline-panel__cel--present":
                             celPresence().get(entry.layer.id)?.has(frameIdx) === true,
                           "timeline-panel__cel--active": frameIdx === activeFrame(),
-                          "timeline-panel__cel--selected": selectedFrames().has(frameIdx),
+                          "timeline-panel__cel--selected": timelineUi.selectedFrames.has(frameIdx),
                         }}
                         style={{
                           position: "absolute",

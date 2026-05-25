@@ -5,7 +5,7 @@
 // tag drag, panel visibility). Mutations call Rust and then refresh
 // the caches via refreshTimeline().
 
-import { createSignal } from "solid-js";
+import { createStore } from "solid-js/store";
 import type {
   Cel,
   Frame,
@@ -89,9 +89,46 @@ export function refreshTimeline(): void {
   void timelineQuery.refetch();
 }
 
-// ── Frame selection ──────────────────────────────────────────────────────────
+// ── UI state ───────────────────────────────────────────────────────────────
 
-export const [selectedFrames, setSelectedFrames] = createSignal<ReadonlySet<FrameIndex>>(new Set());
+export type TagDragState =
+  | { readonly kind: "none" }
+  | { readonly kind: "dragging"; startFrame: FrameIndex; endFrame: FrameIndex };
+
+// UI-only timeline state in one store. Reads are timelineUi.selectedFrames,
+// timelineUi.isPlaying, etc.; writes go through the setter functions below
+// (setSelectedFrames accepts a value or updater for the Set-mutating sites).
+interface TimelineUiState {
+  selectedFrames: ReadonlySet<FrameIndex>;
+  /** Copy source frame index; paste duplicates it after the active frame. */
+  copiedFrameIndex: FrameIndex | null;
+  isPlaying: boolean;
+  isLooping: boolean;
+  tagDragState: TagDragState;
+}
+
+const [timelineUi, setTimelineUi] = createStore<TimelineUiState>({
+  selectedFrames: new Set(),
+  copiedFrameIndex: null,
+  isPlaying: false,
+  isLooping: true,
+  tagDragState: { kind: "none" },
+});
+
+export { timelineUi };
+
+type SetArg<T> = T | ((prev: T) => T);
+
+export function setSelectedFrames(next: SetArg<ReadonlySet<FrameIndex>>): void {
+  setTimelineUi("selectedFrames", typeof next === "function" ? next : () => next);
+}
+export const setCopiedFrameIndex = (v: FrameIndex | null): void =>
+  setTimelineUi("copiedFrameIndex", v);
+export const setIsPlaying = (v: boolean): void => setTimelineUi("isPlaying", v);
+export const setIsLooping = (v: boolean): void => setTimelineUi("isLooping", v);
+export const setTagDragState = (v: TagDragState): void => setTimelineUi("tagDragState", v);
+
+// ── Frame selection ──────────────────────────────────────────────────────────
 
 export function selectFrame(index: FrameIndex, extend: boolean): void {
   setActiveFrameIndex(index);
@@ -114,9 +151,6 @@ export function extendSelectionTo(toIndex: FrameIndex): void {
 
 // ── Cel clipboard ────────────────────────────────────────────────────────────
 
-// Copy stores the source frame index; paste duplicates it after the active frame.
-export const [copiedFrameIndex, setCopiedFrameIndex] = createSignal<FrameIndex | null>(null);
-
 export function copyActiveFrame(): void {
   setCopiedFrameIndex(activeFrameIndex());
 }
@@ -129,7 +163,7 @@ export function copyFrame(index: FrameIndex): void {
 }
 
 export function pasteFrame(spriteId: SpriteId): void {
-  const src = copiedFrameIndex();
+  const src = timelineUi.copiedFrameIndex;
   if (src === null) return;
   void runMutation({
     run: () => frameDuplicate(spriteId, src),
@@ -145,9 +179,6 @@ export function pasteFrame(spriteId: SpriteId): void {
 
 // ── Playback ─────────────────────────────────────────────────────────────────
 
-export const [isPlaying, setIsPlaying] = createSignal(false);
-export const [isLooping, setIsLooping] = createSignal(true);
-
 let playbackTimer: ReturnType<typeof setTimeout> | null = null;
 
 function scheduleNextFrame(): void {
@@ -156,7 +187,7 @@ function scheduleNextFrame(): void {
   const next = current + 1;
 
   if (next >= all.length) {
-    if (isLooping()) {
+    if (timelineUi.isLooping) {
       setActiveFrameIndex(0);
     } else {
       stopPlayback();
@@ -181,7 +212,7 @@ function effectiveDurationMs(frame: Frame): number {
 }
 
 export function startPlayback(): void {
-  if (isPlaying()) return;
+  if (timelineUi.isPlaying) return;
   const all = frames();
   if (all.length === 0) return;
   setIsPlaying(true);
@@ -199,13 +230,13 @@ export function stopPlayback(): void {
 }
 
 export function togglePlayback(): void {
-  if (isPlaying()) stopPlayback();
+  if (timelineUi.isPlaying) stopPlayback();
   else startPlayback();
 }
 
 // Stop playback when the panel is hidden or the sprite changes.
 export function stopPlaybackIfActive(): void {
-  if (isPlaying()) stopPlayback();
+  if (timelineUi.isPlaying) stopPlayback();
 }
 
 // ── Onion skin re-exports ────────────────────────────────────────────────────
@@ -213,14 +244,6 @@ export function stopPlaybackIfActive(): void {
 // so timeline components import the store + onion setters from one place;
 // reads are viewport.onionSkin, viewport.onionSkinPrev, etc.
 export { viewport, setOnionSkin, setOnionSkinPrev, setOnionSkinNext, setOnionSkinOpacity };
-
-// ── Tag drag state ───────────────────────────────────────────────────────────
-
-export type TagDragState =
-  | { readonly kind: "none" }
-  | { readonly kind: "dragging"; startFrame: FrameIndex; endFrame: FrameIndex };
-
-export const [tagDragState, setTagDragState] = createSignal<TagDragState>({ kind: "none" });
 
 // ── Mutation helpers ─────────────────────────────────────────────────────────
 

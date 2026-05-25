@@ -13,9 +13,8 @@ import {
   deleteFrames,
   duplicateFrame,
   pasteFrame,
-  copiedFrameIndex,
   reverseSelectedFrames,
-  selectedFrames,
+  timelineUi,
 } from "./timeline-state";
 
 export type ContextMenuTarget = {
@@ -36,7 +35,7 @@ type Props = {
 
 const TimelineContextMenu: Component<Props> = (props) => {
   function effectiveSelection(): ReadonlySet<FrameIndex> {
-    const sel = selectedFrames();
+    const sel = timelineUi.selectedFrames;
     const t = props.target;
     if (t !== null && sel.has(t.frameIndex)) return sel;
     return new Set([t?.frameIndex ?? activeFrameIndex()]);
@@ -45,7 +44,7 @@ const TimelineContextMenu: Component<Props> = (props) => {
   function buildItems(): MenuItem[] {
     const id = props.spriteId;
     const eff = effectiveSelection();
-    const canPaste = copiedFrameIndex() !== null;
+    const canPaste = timelineUi.copiedFrameIndex !== null;
     const multi = eff.size > 1;
     // Operate on the right-click target by default. Menu items that
     // intentionally consume the active frame (none currently) can fall

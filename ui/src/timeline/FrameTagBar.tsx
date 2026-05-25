@@ -21,8 +21,9 @@ import {
   renameTag,
   setTagDragState,
   setTagPlayback,
-  tagDragState,
+  timelineUi,
   uniqueTagName,
+  type TagDragState,
 } from "./timeline-state";
 import type { LoopDirection } from "../lib/types";
 import ModalInput from "../components/ModalInput";
@@ -69,7 +70,7 @@ type ContextMenuState = {
 };
 
 const FrameTagBar: Component<Props> = (props) => {
-  const drag = tagDragState;
+  const drag = (): TagDragState => timelineUi.tagDragState;
 
   const [ctxMenu, setCtxMenu] = createSignal<ContextMenuState | null>(null);
   const [renameTarget, setRenameTarget] = createSignal<string | null>(null);
