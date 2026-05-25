@@ -27,7 +27,7 @@ import {
 } from "lucide-solid";
 import { tool as toolState, setActiveTool, type ToolType } from "./tool-state";
 import { selectTool, setSelectTool, type SelectTool } from "../select/select-state";
-import { isSelectMode, setIsSelectMode } from "../canvas-state";
+import { viewport, setIsSelectMode } from "../canvas-state";
 import { comboForCommand } from "../../keybinds/keybind-manager";
 import Tooltip from "../../lib/ui/Tooltip";
 
@@ -133,8 +133,8 @@ const SELECT_TOOLS: SelectToolMeta[] = [
 ];
 
 const Toolbar: Component = () => {
-  const drawActive = (id: ToolType) => !isSelectMode() && toolState.activeTool === id;
-  const selectActive = (id: SelectTool) => isSelectMode() && selectTool() === id;
+  const drawActive = (id: ToolType) => !viewport.isSelectMode && toolState.activeTool === id;
+  const selectActive = (id: SelectTool) => viewport.isSelectMode && selectTool() === id;
 
   return (
     <div class="toolbar" role="toolbar" aria-label="Tools">

@@ -18,12 +18,7 @@ import {
   activeTilemapCtx,
   setActiveTilemapCtx,
 } from "./tilemap-state";
-import {
-  activeFrameIndex,
-  activeSpriteId,
-  selectionLayerId,
-  selectionRect,
-} from "../canvas/canvas-state";
+import { activeFrameIndex, activeSpriteId, viewport } from "../canvas/canvas-state";
 import { layers } from "../layers/layer-state";
 import { tilesetAddTile } from "../lib/commands/tilesets";
 import { reportCommandFailure } from "../lib/utils/errors";
@@ -117,7 +112,7 @@ const TilesetPanel: Component<TilesetPanelProps> = (props) => {
   // not from "the first raster layer in the sprite" — anchoring keeps
   // the source consistent with the rectangle the user actually drew.
   const captureSourceLayer = createMemo(() => {
-    const lid = selectionLayerId();
+    const lid = viewport.selectionLayerId;
     if (lid === null) return null;
     return layers().find((l) => l.id === lid) ?? null;
   });
@@ -129,7 +124,7 @@ const TilesetPanel: Component<TilesetPanelProps> = (props) => {
     if (props.tileset.source.kind !== "inline") {
       return "Capture is only supported for inline tilesets";
     }
-    const sel = selectionRect();
+    const sel = viewport.selectionRect;
     if (!sel) return "Make a selection on a raster layer first";
     if (sel.width !== tileW() || sel.height !== tileH()) {
       return `Selection must be ${tileW()}×${tileH()}px (matches tile size)`;
@@ -147,7 +142,7 @@ const TilesetPanel: Component<TilesetPanelProps> = (props) => {
 
   async function onCapture() {
     const sid = activeSpriteId();
-    const sel = selectionRect();
+    const sel = viewport.selectionRect;
     const layer = captureSourceLayer();
     if (sid === null || !sel || !layer) return;
     try {

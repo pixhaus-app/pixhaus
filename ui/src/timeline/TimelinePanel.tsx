@@ -33,9 +33,7 @@ import {
   frames,
   isLooping,
   isPlaying,
-  onionSkin,
-  onionSkinNext,
-  onionSkinPrev,
+  viewport,
   selectFrame,
   selectedFrames,
   setFrameDuration,
@@ -291,13 +289,13 @@ const TimelinePanel: Component = () => {
         <div class="timeline-panel__onion">
           <button
             class="timeline-panel__pb-btn"
-            classList={{ "timeline-panel__pb-btn--active": onionSkin() }}
-            onClick={() => setOnionSkin(!onionSkin())}
+            classList={{ "timeline-panel__pb-btn--active": viewport.onionSkin }}
+            onClick={() => setOnionSkin(!viewport.onionSkin)}
             title="Toggle onion skin"
           >
             Onion
           </button>
-          <Show when={onionSkin()}>
+          <Show when={viewport.onionSkin}>
             <label class="timeline-panel__onion-label">
               Prev
               <input
@@ -306,7 +304,7 @@ const TimelinePanel: Component = () => {
                 type="number"
                 min={0}
                 max={8}
-                value={onionSkinPrev()}
+                value={viewport.onionSkinPrev}
                 onInput={(e) => {
                   const v = parseInt(e.currentTarget.value, 10);
                   if (!isNaN(v)) setOnionSkinPrev(v);
@@ -321,7 +319,7 @@ const TimelinePanel: Component = () => {
                 type="number"
                 min={0}
                 max={8}
-                value={onionSkinNext()}
+                value={viewport.onionSkinNext}
                 onInput={(e) => {
                   const v = parseInt(e.currentTarget.value, 10);
                   if (!isNaN(v)) setOnionSkinNext(v);

@@ -18,10 +18,9 @@ import {
   type TransformHandle,
 } from "./transform-state";
 import {
-  selectionRect,
+  viewport,
   setSelectionRect,
   setTransformBounds,
-  zoom,
   activeSpriteId,
   activeLayerId,
   activeFrameIndex,
@@ -148,7 +147,7 @@ let cleanupDrag: (() => void) | null = null;
  * even when the pointer moves outside the handle rect.
  */
 export function startTransformDrag(handle: TransformHandle, e: PointerEvent): void {
-  const bounds = selectionRect();
+  const bounds = viewport.selectionRect;
   if (!bounds) return;
 
   // Rotation stubs until S04.
@@ -173,7 +172,7 @@ export function startTransformDrag(handle: TransformHandle, e: PointerEvent): vo
 
     const dxScreen = ev.clientX - drag.startScreenX;
     const dyScreen = ev.clientY - drag.startScreenY;
-    const z = zoom();
+    const z = viewport.zoom;
     // Convert screen-px delta to canvas-px delta.
     const dx = dxScreen / z;
     const dy = dyScreen / z;
@@ -194,7 +193,7 @@ export function startTransformDrag(handle: TransformHandle, e: PointerEvent): vo
 
     const dxScreen = ev.clientX - drag.startScreenX;
     const dyScreen = ev.clientY - drag.startScreenY;
-    const z = zoom();
+    const z = viewport.zoom;
     const dx = dxScreen / z;
     const dy = dyScreen / z;
 
@@ -252,7 +251,7 @@ export function attachTransformKeyboard(): () => void {
       }
       // No drag, but user pressed Enter: treat as explicit commit of the
       // current selectionRect as-is.
-      const bounds = selectionRect();
+      const bounds = viewport.selectionRect;
       if (bounds) {
         void commitBounds(bounds);
         e.preventDefault();

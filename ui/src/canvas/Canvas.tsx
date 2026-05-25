@@ -16,28 +16,12 @@ import { attachCanvasInput } from "./input";
 import { BrushCursor, ShapePreview, TransformHandles } from "./overlays";
 import Toolbar from "./tools/Toolbar";
 import {
-  scrollX,
-  scrollY,
-  zoom,
-  showPixelGrid,
-  showTileGrid,
-  gridSpacing,
-  onionSkin,
-  onionSkinPrev,
-  onionSkinNext,
-  onionSkinOpacity,
+  viewport,
   brushSize,
   brushShape,
-  cursorCanvas,
-  shapePreview,
-  transformBounds,
   setTransformBounds,
   activeSpriteId,
   activeFrameIndex,
-  selectionRect,
-  selectionKind,
-  selectionMask,
-  isSelectMode,
   resetCanvasState,
   resetViewport,
 } from "./canvas-state";
@@ -103,9 +87,9 @@ const Canvas: Component = () => {
       setVpW(w);
       setVpH(h);
       renderer.setViewport({
-        scrollX: scrollX(),
-        scrollY: scrollY(),
-        zoom: zoom(),
+        scrollX: viewport.scrollX,
+        scrollY: viewport.scrollY,
+        zoom: viewport.zoom,
         width: w,
         height: h,
       });
@@ -230,8 +214,8 @@ const Canvas: Component = () => {
         frameIndex: activeFrameIndex(),
         spriteWidth: size.w,
         spriteHeight: size.h,
-        showPixelGrid: showPixelGrid(),
-        onionSkin: onionSkin(),
+        showPixelGrid: viewport.showPixelGrid,
+        onionSkin: viewport.onionSkin,
       });
     });
 
@@ -241,9 +225,9 @@ const Canvas: Component = () => {
       const canvas = canvasEl;
       if (!canvas) return;
       renderer.setViewport({
-        scrollX: scrollX(),
-        scrollY: scrollY(),
-        zoom: zoom(),
+        scrollX: viewport.scrollX,
+        scrollY: viewport.scrollY,
+        zoom: viewport.zoom,
         width: canvas.width,
         height: canvas.height,
       });
@@ -253,11 +237,11 @@ const Canvas: Component = () => {
       // A mask selection traces its true outline; a rect selection (or the
       // live drag preview) draws bounding-box ants. The renderer prefers the
       // mask when present, so clear the rect in that case to avoid both.
-      const mask = selectionMask();
-      if (selectionKind() === "mask" && mask) {
+      const mask = viewport.selectionMask;
+      if (viewport.selectionKind === "mask" && mask) {
         renderer.setSelection({ rect: null, mask });
       } else {
-        renderer.setSelection({ rect: selectionRect(), mask: null });
+        renderer.setSelection({ rect: viewport.selectionRect, mask: null });
       }
     });
 
@@ -266,7 +250,7 @@ const Canvas: Component = () => {
     // drag path updates transformBounds independently during a drag,
     // so we only sync from selectionRect when no drag is in progress.
     createEffect(() => {
-      const rect = selectionRect();
+      const rect = viewport.selectionRect;
       if (rect) {
         setTransformBounds(rect);
         syncNumericFromBounds(rect);
@@ -277,14 +261,14 @@ const Canvas: Component = () => {
 
     createEffect(() => {
       renderer.setOnionSkin({
-        prev: onionSkinPrev(),
-        next: onionSkinNext(),
-        opacity: onionSkinOpacity(),
+        prev: viewport.onionSkinPrev,
+        next: viewport.onionSkinNext,
+        opacity: viewport.onionSkinOpacity,
       });
     });
 
     createEffect(() => {
-      renderer.setMajorGrid({ enabled: showTileGrid(), spacing: gridSpacing() });
+      renderer.setMajorGrid({ enabled: viewport.showTileGrid, spacing: viewport.gridSpacing });
     });
 
     onCleanup(() => {
@@ -305,22 +289,22 @@ const Canvas: Component = () => {
       <div ref={containerEl} class="canvas-container" data-testid="canvas-container" tabIndex={-1}>
         <canvas ref={canvasEl} class="canvas-viewport" data-testid="canvas-viewport" />
         <BrushCursor
-          scrollX={scrollX()}
-          scrollY={scrollY()}
-          zoom={zoom()}
+          scrollX={viewport.scrollX}
+          scrollY={viewport.scrollY}
+          zoom={viewport.zoom}
           vpW={vpW()}
           vpH={vpH()}
-          cursor={cursorCanvas()}
+          cursor={viewport.cursorCanvas}
           size={brushSize()}
           shape={brushShape()}
         />
         <ShapePreview
-          scrollX={scrollX()}
-          scrollY={scrollY()}
-          zoom={zoom()}
+          scrollX={viewport.scrollX}
+          scrollY={viewport.scrollY}
+          zoom={viewport.zoom}
           vpW={vpW()}
           vpH={vpH()}
-          preview={shapePreview()}
+          preview={viewport.shapePreview}
         />
         {/* Handles render only for a rectangular selection while a selection
             tool is active. Mask selections (wand, lasso, ellipse) only know
@@ -328,12 +312,16 @@ const Canvas: Component = () => {
             transform they don't support; and with a draw tool the body
             hit-zone must not steal clicks meant for painting. */}
         <TransformHandles
-          scrollX={scrollX()}
-          scrollY={scrollY()}
-          zoom={zoom()}
+          scrollX={viewport.scrollX}
+          scrollY={viewport.scrollY}
+          zoom={viewport.zoom}
           vpW={vpW()}
           vpH={vpH()}
-          bounds={isSelectMode() && selectionKind() === "rect" ? transformBounds() : null}
+          bounds={
+            viewport.isSelectMode && viewport.selectionKind === "rect"
+              ? viewport.transformBounds
+              : null
+          }
           onHandleDown={(handle: TransformHandle, e: PointerEvent) => startTransformDrag(handle, e)}
         />
       </div>

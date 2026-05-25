@@ -29,16 +29,13 @@ import {
   setActiveSpriteId,
   activeFrameIndex,
   activeLayerId,
+  viewport,
   setIsSelectMode,
   setSelectionRect,
   setTransformBounds,
-  zoom,
   setZoom,
-  showTileGrid,
   setShowTileGrid,
-  showPixelGrid,
   setShowPixelGrid,
-  onionSkin,
   setOnionSkin,
   resetViewport,
 } from "../canvas/canvas-state";
@@ -1048,7 +1045,7 @@ const COMMANDS: ReadonlyMap<string, CommandEntry> = new Map<string, CommandEntry
       id: "view:zoom-in",
       label: "Zoom In",
       category: "View",
-      handler: () => setZoom(snapZoom(zoom(), 1)),
+      handler: () => setZoom(snapZoom(viewport.zoom, 1)),
     },
   ],
   [
@@ -1057,7 +1054,7 @@ const COMMANDS: ReadonlyMap<string, CommandEntry> = new Map<string, CommandEntry
       id: "view:zoom-out",
       label: "Zoom Out",
       category: "View",
-      handler: () => setZoom(snapZoom(zoom(), -1)),
+      handler: () => setZoom(snapZoom(viewport.zoom, -1)),
     },
   ],
   [
@@ -1097,7 +1094,7 @@ const COMMANDS: ReadonlyMap<string, CommandEntry> = new Map<string, CommandEntry
       id: "view:toggle-grid",
       label: "Toggle Grid",
       category: "View",
-      handler: () => setShowTileGrid(!showTileGrid()),
+      handler: () => setShowTileGrid(!viewport.showTileGrid),
     },
   ],
   [
@@ -1106,7 +1103,7 @@ const COMMANDS: ReadonlyMap<string, CommandEntry> = new Map<string, CommandEntry
       id: "view:toggle-pixel-grid",
       label: "Toggle Pixel Grid",
       category: "View",
-      handler: () => setShowPixelGrid(!showPixelGrid()),
+      handler: () => setShowPixelGrid(!viewport.showPixelGrid),
     },
   ],
   [
@@ -1116,7 +1113,7 @@ const COMMANDS: ReadonlyMap<string, CommandEntry> = new Map<string, CommandEntry
       label: "Toggle Onion Skin",
       category: "View",
       keywords: ["onion", "skin"],
-      handler: () => setOnionSkin(!onionSkin()),
+      handler: () => setOnionSkin(!viewport.onionSkin),
     },
   ],
   [

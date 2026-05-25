@@ -11,16 +11,13 @@
 
 import { screenToCanvas } from "../viewport";
 import {
-  scrollX,
-  scrollY,
-  zoom,
+  viewport,
   setSelectionRect,
   setSelectionKind,
   setSelectionMask,
   setSelectionLayerId,
   activeSpriteId,
   activeLayerId,
-  isSelectMode,
 } from "../canvas-state";
 import {
   selectTool,
@@ -64,7 +61,15 @@ function eventToCanvas(e: MouseEvent, el: HTMLElement): [number, number] {
   const rect = el.getBoundingClientRect();
   const sx = e.clientX - rect.left;
   const sy = e.clientY - rect.top;
-  return screenToCanvas(sx, sy, scrollX(), scrollY(), zoom(), rect.width, rect.height);
+  return screenToCanvas(
+    sx,
+    sy,
+    viewport.scrollX,
+    viewport.scrollY,
+    viewport.zoom,
+    rect.width,
+    rect.height,
+  );
 }
 
 // Applies shift-add / alt-subtract modifiers to the pending selection.
@@ -379,7 +384,7 @@ async function commitLasso(): Promise<void> {
  */
 export function attachSelectInput(el: HTMLElement): () => void {
   function onMouseDown(e: MouseEvent): void {
-    if (!isSelectMode()) return;
+    if (!viewport.isSelectMode) return;
     if (e.button !== 0) return;
     // A gizmo-handle press (pointerdown) fires before this mousedown and sets
     // transformDrag; bail so transforming an existing selection doesn't also
@@ -403,7 +408,7 @@ export function attachSelectInput(el: HTMLElement): () => void {
   }
 
   function onMouseMove(e: MouseEvent): void {
-    if (!isSelectMode()) return;
+    if (!viewport.isSelectMode) return;
     const tool = selectTool();
     if (tool === "rect" || tool === "ellipse") {
       onMarqueeMove(e, el);
@@ -411,7 +416,7 @@ export function attachSelectInput(el: HTMLElement): () => void {
   }
 
   function onMouseUp(e: MouseEvent): void {
-    if (!isSelectMode()) return;
+    if (!viewport.isSelectMode) return;
     const tool = selectTool();
     if (tool === "rect" || tool === "ellipse") {
       void onMarqueeUp(e, el);
@@ -419,7 +424,7 @@ export function attachSelectInput(el: HTMLElement): () => void {
   }
 
   function onKeyDown(e: KeyboardEvent): void {
-    if (!isSelectMode()) return;
+    if (!viewport.isSelectMode) return;
     if (e.code === "Enter" && selectTool() === "lasso") {
       void commitLasso();
       e.preventDefault();

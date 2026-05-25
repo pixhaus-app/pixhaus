@@ -10,9 +10,7 @@
 // the kind chosen in the Rules tab (or the kind persisted on the tileset).
 
 import {
-  scrollX,
-  scrollY,
-  zoom,
+  viewport,
   setScrollX,
   setScrollY,
   setZoom,
@@ -21,7 +19,6 @@ import {
   activeSpriteId,
   activeFrameIndex,
   activeLayerId,
-  isSelectMode,
   setShapePreview,
   type ShapeKind,
 } from "./canvas-state";
@@ -115,7 +112,15 @@ function dispatchTilePaint(
   const rect = el.getBoundingClientRect();
   const sx = screenX - rect.left;
   const sy = screenY - rect.top;
-  const [cx, cy] = screenToCanvas(sx, sy, scrollX(), scrollY(), zoom(), rect.width, rect.height);
+  const [cx, cy] = screenToCanvas(
+    sx,
+    sy,
+    viewport.scrollX,
+    viewport.scrollY,
+    viewport.zoom,
+    rect.width,
+    rect.height,
+  );
 
   const { tile_size } = ctx.tileset;
   const cell = canvasToTileCell(cx, cy, tile_size.width, tile_size.height);
@@ -202,7 +207,15 @@ function canvasPointFromEvent(e: MouseEvent, el: HTMLElement): [number, number] 
   const rect = el.getBoundingClientRect();
   const sx = e.clientX - rect.left;
   const sy = e.clientY - rect.top;
-  const [cx, cy] = screenToCanvas(sx, sy, scrollX(), scrollY(), zoom(), rect.width, rect.height);
+  const [cx, cy] = screenToCanvas(
+    sx,
+    sy,
+    viewport.scrollX,
+    viewport.scrollY,
+    viewport.zoom,
+    rect.width,
+    rect.height,
+  );
   return [Math.floor(cx), Math.floor(cy)];
 }
 
@@ -454,15 +467,15 @@ export function attachCanvasInput(el: HTMLElement): () => void {
     const vpW = rect.width;
     const vpH = rect.height;
 
-    const curZoom = zoom();
+    const curZoom = viewport.zoom;
 
     if (e.ctrlKey || e.metaKey) {
       // Ctrl+scroll: snap to adjacent zoom level.
       const dir = e.deltaY < 0 ? 1 : -1;
       const newZoom = snapZoom(curZoom, dir as 1 | -1);
       const { scrollX: nx, scrollY: ny } = zoomAt(
-        scrollX(),
-        scrollY(),
+        viewport.scrollX,
+        viewport.scrollY,
         curZoom,
         vpW,
         vpH,
@@ -475,7 +488,7 @@ export function attachCanvasInput(el: HTMLElement): () => void {
       setZoom(newZoom);
     } else if (e.shiftKey) {
       // Shift+scroll: pan horizontally.
-      setScrollX(scrollX() + e.deltaY / curZoom);
+      setScrollX(viewport.scrollX + e.deltaY / curZoom);
     } else if (
       e.deltaMode === WheelEvent.DOM_DELTA_LINE ||
       e.deltaMode === WheelEvent.DOM_DELTA_PAGE
@@ -484,8 +497,8 @@ export function attachCanvasInput(el: HTMLElement): () => void {
       const dir = e.deltaY < 0 ? 1 : -1;
       const newZoom = snapZoom(curZoom, dir as 1 | -1);
       const { scrollX: nx, scrollY: ny } = zoomAt(
-        scrollX(),
-        scrollY(),
+        viewport.scrollX,
+        viewport.scrollY,
         curZoom,
         vpW,
         vpH,
@@ -501,8 +514,8 @@ export function attachCanvasInput(el: HTMLElement): () => void {
       const factor = e.deltaY < 0 ? WHEEL_ZOOM_FACTOR : 1 / WHEEL_ZOOM_FACTOR;
       const newZoom = clampZoom(curZoom * factor);
       const { scrollX: nx, scrollY: ny } = zoomAt(
-        scrollX(),
-        scrollY(),
+        viewport.scrollX,
+        viewport.scrollY,
         curZoom,
         vpW,
         vpH,
@@ -542,7 +555,7 @@ export function attachCanvasInput(el: HTMLElement): () => void {
     if (transformDrag() !== null && !spaceHeld) return;
 
     // Selection mode is delegated to the selection input handler; never draw.
-    if (isSelectMode() && !spaceHeld) return;
+    if (viewport.isSelectMode && !spaceHeld) return;
 
     // Tile-paint mode: left-click places, right-click erases.
     if (activeTilemapCtx() !== null && !spaceHeld) {
@@ -613,9 +626,9 @@ export function attachCanvasInput(el: HTMLElement): () => void {
       const [cx, cy] = screenToCanvas(
         sx,
         sy,
-        scrollX(),
-        scrollY(),
-        zoom(),
+        viewport.scrollX,
+        viewport.scrollY,
+        viewport.zoom,
         rect.width,
         rect.height,
       );
@@ -656,9 +669,9 @@ export function attachCanvasInput(el: HTMLElement): () => void {
     pan.lastX = e.clientX;
     pan.lastY = e.clientY;
 
-    const z = zoom();
-    setScrollX(scrollX() - dx / z);
-    setScrollY(scrollY() - dy / z);
+    const z = viewport.zoom;
+    setScrollX(viewport.scrollX - dx / z);
+    setScrollY(viewport.scrollY - dy / z);
     scheduleViewportSync();
   }
 

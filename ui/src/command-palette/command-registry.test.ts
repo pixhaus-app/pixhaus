@@ -76,11 +76,9 @@ vi.mock("@tauri-apps/plugin-dialog", () => ({
 
 import { dispatchCommand, getAllCommands } from "./command-registry";
 import {
-  zoom,
+  viewport,
   setZoom,
-  showTileGrid,
   setShowTileGrid,
-  showPixelGrid,
   setShowPixelGrid,
   setActiveSpriteId,
   setActiveFrameIndex,
@@ -205,33 +203,33 @@ describe("dispatchCommand — view", () => {
   it("view:zoom-in steps to the next snap level", () => {
     setZoom(1);
     dispatchCommand("view:zoom-in");
-    expect(zoom()).toBe(2);
+    expect(viewport.zoom).toBe(2);
   });
 
   it("view:zoom-out steps to the previous snap level", () => {
     setZoom(1);
     dispatchCommand("view:zoom-out");
-    expect(zoom()).toBe(0.5);
+    expect(viewport.zoom).toBe(0.5);
   });
 
   it("view:zoom-100 sets the zoom to 1", () => {
     setZoom(4);
     dispatchCommand("view:zoom-100");
-    expect(zoom()).toBe(1);
+    expect(viewport.zoom).toBe(1);
   });
 
   it("view:toggle-grid flips showTileGrid", () => {
     setShowTileGrid(false);
     dispatchCommand("view:toggle-grid");
-    expect(showTileGrid()).toBe(true);
+    expect(viewport.showTileGrid).toBe(true);
     dispatchCommand("view:toggle-grid");
-    expect(showTileGrid()).toBe(false);
+    expect(viewport.showTileGrid).toBe(false);
   });
 
   it("view:toggle-pixel-grid flips showPixelGrid", () => {
     setShowPixelGrid(true);
     dispatchCommand("view:toggle-pixel-grid");
-    expect(showPixelGrid()).toBe(false);
+    expect(viewport.showPixelGrid).toBe(false);
   });
 });
 

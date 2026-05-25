@@ -1,11 +1,13 @@
 // Solid reactive state for the canvas viewport.
 //
-// This module owns the viewport's mutable state as Solid signals.  The Canvas
-// component reads them; input handlers write them.  Changes are periodically
-// synced to the Rust side via canvas_set_viewport so the project's persisted
-// canvas state stays current.
+// This module owns the viewport's mutable state as a single Solid store
+// (`viewport`). The Canvas component and overlays read it as `viewport.zoom`,
+// `viewport.scrollX`, etc.; input handlers write it through the named setter
+// functions, which keep the store's write surface encapsulated. Changes are
+// periodically synced to the Rust side via canvas_set_viewport so the
+// project's persisted canvas state stays current.
 
-import { createSignal } from "solid-js";
+import { createStore } from "solid-js/store";
 import type { CanvasState, LayerId, SpriteId } from "../lib/types";
 import { canvasSetViewport } from "../lib/commands/canvas";
 import { fitZoom } from "./viewport";
@@ -18,30 +20,11 @@ import {
   setActiveLayerId,
 } from "../stores/active-store";
 
-// ── Viewport state ─────────────────────────────────────────────────────────
-
-export const [scrollX, setScrollX] = createSignal(0);
-export const [scrollY, setScrollY] = createSignal(0);
-export const [zoom, setZoom] = createSignal(1);
-export const [onionSkin, setOnionSkin] = createSignal(false);
-export const [showPixelGrid, setShowPixelGrid] = createSignal(true);
-export const [showTileGrid, setShowTileGrid] = createSignal(false);
-
-// Number of canvas pixels between major-grid lines when showTileGrid is on.
-export const [gridSpacing, setGridSpacing] = createSignal(8);
-
-// Onion skin: how many neighbour frames to overlay and at what opacity.
-// onionSkin (above) is the on/off toggle. These three control the overlay's
-// shape; the renderer reads them when onionSkin() is true.
-export const [onionSkinPrev, setOnionSkinPrev] = createSignal(1);
-export const [onionSkinNext, setOnionSkinNext] = createSignal(1);
-export const [onionSkinOpacity, setOnionSkinOpacity] = createSignal(0.4);
-
 // Currently foregrounded sprite, frame, and layer.
 //
-// The triple now lives in stores/active-store.ts (a leaf module) so canvas
-// and the layer panel can both read it without importing each other. Re-export
-// here so existing `from "../canvas/canvas-state"` imports keep resolving.
+// The triple lives in stores/active-store.ts (a leaf module) so canvas and the
+// layer panel can both read it without importing each other. Re-export here so
+// existing `from "../canvas/canvas-state"` imports keep resolving.
 export {
   activeSpriteId,
   setActiveSpriteId,
@@ -51,50 +34,120 @@ export {
   setActiveLayerId,
 } from "../stores/active-store";
 
-// Active selection rect in canvas coordinates, null when no selection.
-export const [selectionRect, setSelectionRect] = createSignal<{
+// ── Types ──────────────────────────────────────────────────────────────────
+
+export interface RectBounds {
   x: number;
   y: number;
   width: number;
   height: number;
-} | null>(null);
+}
 
-// Shape of the active selection. "rect" is an exact rectangle (drag marquee);
-// "mask" is an arbitrary region (wand, lasso, ellipse, color range) for which
-// `selectionRect` only holds the bounding box. The transform gizmo is shown
-// for "rect" selections only — resize handles on a mask's bounding box would
-// imply a rectangular transform the mask doesn't actually support.
-export const [selectionKind, setSelectionKind] = createSignal<"rect" | "mask" | null>(null);
+/** Shape of the active selection. "rect" is an exact rectangle (drag marquee);
+ * "mask" is an arbitrary region (wand, lasso, ellipse, color range) for which
+ * selectionRect holds only the bounding box. The transform gizmo shows for
+ * "rect" selections only. */
+export type SelectionKind = "rect" | "mask";
 
-// Per-pixel mask of the active "mask"-kind selection, cropped to its bounding
-// box, with `data` as one alpha byte per pixel (0 = out, 255 = in). null for
-// rect selections and when nothing is selected. The renderer uploads this as a
-// texture to trace the selection's true outline; without it a mask could only
-// be drawn as its bounding box.
-export const [selectionMask, setSelectionMask] = createSignal<{
-  x: number;
-  y: number;
-  width: number;
-  height: number;
+export interface SelectionMaskData extends RectBounds {
+  /** One alpha byte per pixel (0 = out, 255 = in), cropped to the bounding box. */
   data: Uint8Array;
-} | null>(null);
+}
 
-// Layer the active selection was anchored on. Mirrors the `anchor_layer`
-// the backend stored when `canvas_set_selection` ran (see select-input).
-// Lets non-paint consumers (e.g. tile capture) know which layer's pixels
-// the selection refers to without re-querying the backend.
-export const [selectionLayerId, setSelectionLayerId] = createSignal<LayerId | null>(null);
+export type ShapeKind = "line" | "rect" | "ellipse";
+export interface ShapePreviewState {
+  kind: ShapeKind;
+  start: [number, number];
+  end: [number, number];
+}
 
-// Whether the canvas is in selection-tool mode. Input routing checks this
-// before dispatching pointer events to the selection handlers.
-// S16 sets it to true when the user activates any select tool.
-export const [isSelectMode, setIsSelectMode] = createSignal(false);
+export interface ViewportState {
+  scrollX: number;
+  scrollY: number;
+  zoom: number;
+  onionSkin: boolean;
+  showPixelGrid: boolean;
+  showTileGrid: boolean;
+  /** Canvas pixels between major-grid lines when showTileGrid is on. */
+  gridSpacing: number;
+  /** Onion skin: neighbour frames to overlay and the overlay opacity. The
+   * renderer reads these when onionSkin is true. */
+  onionSkinPrev: number;
+  onionSkinNext: number;
+  onionSkinOpacity: number;
+  /** Active selection rect in canvas coordinates, null when no selection. */
+  selectionRect: RectBounds | null;
+  selectionKind: SelectionKind | null;
+  /** Per-pixel mask of the active "mask"-kind selection; null for rect
+   * selections. The renderer uploads it as a texture to trace the true
+   * outline. */
+  selectionMask: SelectionMaskData | null;
+  /** Layer the active selection was anchored on (mirrors the backend's
+   * anchor_layer), so non-paint consumers know which layer it refers to. */
+  selectionLayerId: LayerId | null;
+  /** Whether the canvas is in selection-tool mode; input routing checks it
+   * before dispatching pointer events to the selection handlers. */
+  isSelectMode: boolean;
+  /** Cursor position in canvas coordinates, null when off-canvas. */
+  cursorCanvas: { x: number; y: number } | null;
+  /** Outline preview while a line/rect/ellipse drag is in progress. */
+  shapePreview: ShapePreviewState | null;
+  /** Bounding box drawn with resize + rotation handles while transforming. */
+  transformBounds: RectBounds | null;
+}
 
-// ── Brush preview state ───────────────────────────────────────────────────────
+// ── Store ──────────────────────────────────────────────────────────────────
+
+export const [viewport, setViewport] = createStore<ViewportState>({
+  scrollX: 0,
+  scrollY: 0,
+  zoom: 1,
+  onionSkin: false,
+  showPixelGrid: true,
+  showTileGrid: false,
+  gridSpacing: 8,
+  onionSkinPrev: 1,
+  onionSkinNext: 1,
+  onionSkinOpacity: 0.4,
+  selectionRect: null,
+  selectionKind: null,
+  selectionMask: null,
+  selectionLayerId: null,
+  isSelectMode: false,
+  cursorCanvas: null,
+  shapePreview: null,
+  transformBounds: null,
+});
+
+// ── Setters (encapsulate the store's write surface) ──────────────────────────
+
+export const setScrollX = (v: number): void => setViewport("scrollX", v);
+export const setScrollY = (v: number): void => setViewport("scrollY", v);
+export const setZoom = (v: number): void => setViewport("zoom", v);
+export const setOnionSkin = (v: boolean): void => setViewport("onionSkin", v);
+export const setShowPixelGrid = (v: boolean): void => setViewport("showPixelGrid", v);
+export const setShowTileGrid = (v: boolean): void => setViewport("showTileGrid", v);
+export const setGridSpacing = (v: number): void => setViewport("gridSpacing", v);
+export const setOnionSkinPrev = (v: number): void => setViewport("onionSkinPrev", v);
+export const setOnionSkinNext = (v: number): void => setViewport("onionSkinNext", v);
+export const setOnionSkinOpacity = (v: number): void => setViewport("onionSkinOpacity", v);
+export const setSelectionRect = (v: RectBounds | null): void => setViewport("selectionRect", v);
+export const setSelectionKind = (v: SelectionKind | null): void => setViewport("selectionKind", v);
+export const setSelectionMask = (v: SelectionMaskData | null): void =>
+  setViewport("selectionMask", v);
+export const setSelectionLayerId = (v: LayerId | null): void => setViewport("selectionLayerId", v);
+export const setIsSelectMode = (v: boolean): void => setViewport("isSelectMode", v);
+export const setCursorCanvas = (v: { x: number; y: number } | null): void =>
+  setViewport("cursorCanvas", v);
+export const setShapePreview = (v: ShapePreviewState | null): void =>
+  setViewport("shapePreview", v);
+export const setTransformBounds = (v: RectBounds | null): void => setViewport("transformBounds", v);
+
+// ── Brush preview shims ──────────────────────────────────────────────────────
 //
-// The canonical tool state lives in tools/tool-state.ts (owned by S15).
-// These accessor shims let Canvas.tsx and overlays.tsx keep reading brush
-// size/shape as functions from a single stable import path.
+// The canonical tool state lives in tools/tool-state.ts (owned by S15). These
+// accessor shims let Canvas.tsx and overlays.tsx read brush size/shape as
+// functions from a single stable import path.
 
 import { tool, type BrushShape } from "./tools/tool-state";
 
@@ -102,46 +155,14 @@ export type { BrushShape } from "./tools/tool-state";
 export const brushSize = (): number => tool.size;
 export const brushShape = (): BrushShape => tool.shape;
 
-// Cursor position in canvas coordinates, or null when the pointer is off-canvas.
-export const [cursorCanvas, setCursorCanvas] = createSignal<{ x: number; y: number } | null>(null);
-
-// ── Shape preview ──────────────────────────────────────────────────────────
-//
-// Set by the canvas input handler while a line/rect/ellipse drag is in
-// progress so the overlay can render the outline the user is about to
-// commit. `null` means no shape drag is active. The kind is captured at
-// drag-start so a tool change mid-drag (which the input handler doesn't
-// allow today, but defense-in-depth) can't morph the preview.
-export type ShapeKind = "line" | "rect" | "ellipse";
-export type ShapePreviewState = {
-  kind: ShapeKind;
-  start: [number, number];
-  end: [number, number];
-};
-export const [shapePreview, setShapePreview] = createSignal<ShapePreviewState | null>(null);
-
-// ── Transform target (S16 will own; default null) ──────────────────────────
-
-/**
- * Bounding box drawn with eight resize handles + one rotation handle.
- * S16 will set this when a selection is being transformed; for now the
- * signal exists so renderer/Canvas wiring is in place.
- */
-export const [transformBounds, setTransformBounds] = createSignal<{
-  x: number;
-  y: number;
-  width: number;
-  height: number;
-} | null>(null);
-
 // ── Derived helpers ─────────────────────────────────────────────────────────
 
 /** Snapshot of the viewport state for passing to the renderer. */
 export function viewportSnapshot(width: number, height: number) {
   return {
-    scrollX: scrollX(),
-    scrollY: scrollY(),
-    zoom: zoom(),
+    scrollX: viewport.scrollX,
+    scrollY: viewport.scrollY,
+    zoom: viewport.zoom,
     width,
     height,
   };
@@ -163,23 +184,23 @@ export function scheduleViewportSync(): void {
 
 function pushViewportToRust(): void {
   const sprite = activeSpriteId();
-  // Skip sync when no sprite is active — the project may not be open
-  // yet. Use an explicit null check: SpriteId is a numeric newtype and
-  // `0` is a valid id, which `if (!sprite)` would silently swallow.
+  // Skip sync when no sprite is active — the project may not be open yet. Use
+  // an explicit null check: SpriteId is a numeric newtype and `0` is a valid
+  // id, which `if (!sprite)` would silently swallow.
   if (sprite === null) return;
 
-  // The Rust CanvasState no longer carries `active_sprite` after the
-  // B9.1 cleanup; library focus now lives on `Project.active`. The IPC
-  // command still needs to know which sprite the viewport belongs to,
-  // but the on-the-wire CanvasState only carries layer/frame/zoom.
+  // The Rust CanvasState no longer carries `active_sprite` after the B9.1
+  // cleanup; library focus now lives on `Project.active`. The IPC command
+  // still needs to know which sprite the viewport belongs to, but the
+  // on-the-wire CanvasState only carries layer/frame/zoom.
   const state: CanvasState = {
     active_layer: activeLayerId(),
     active_frame: activeFrameIndex(),
-    scroll_x: scrollX(),
-    scroll_y: scrollY(),
-    zoom: zoom(),
-    onion_skin: onionSkin(),
-    show_tile_grid: showTileGrid(),
+    scroll_x: viewport.scrollX,
+    scroll_y: viewport.scrollY,
+    zoom: viewport.zoom,
+    onion_skin: viewport.onionSkin,
+    show_tile_grid: viewport.showTileGrid,
   };
 
   canvasSetViewport(state).catch((err: unknown) => {
@@ -190,21 +211,22 @@ function pushViewportToRust(): void {
 // ── Reset ───────────────────────────────────────────────────────────────────
 
 /**
- * Clears all per-document canvas state — the active sprite/frame/layer
- * triple and any selection. Called when a project closes or the active
- * project changes identity so the previous document's selections don't
- * leak into the next one (e.g. preventing the auto-select-first-sprite
- * effect from short-circuiting on a stale `activeSpriteId`).
+ * Clears all per-document canvas state — the active sprite/frame/layer triple
+ * and any selection. Called when a project closes or the active project
+ * changes identity so the previous document's selections don't leak into the
+ * next one.
  */
 export function resetCanvasState(): void {
   setActiveSpriteId(null);
   setActiveFrameIndex(0);
   setActiveLayerId(null);
-  setSelectionRect(null);
-  setSelectionKind(null);
-  setSelectionMask(null);
-  setTransformBounds(null);
-  setIsSelectMode(false);
+  setViewport({
+    selectionRect: null,
+    selectionKind: null,
+    selectionMask: null,
+    transformBounds: null,
+    isSelectMode: false,
+  });
 }
 
 /**
@@ -218,14 +240,13 @@ export function resetViewport(
   vpH: number,
   spriteId: SpriteId,
 ): void {
-  // Centre on the sprite.
-  setScrollX(spriteW * 0.5);
-  setScrollY(spriteH * 0.5);
-
-  // Fit zoom delegates to viewport.ts so the snap/padding rules stay
-  // in one place — both the keyboard zoom shortcuts and this reset path
-  // pick the same value for a given sprite + viewport pair.
-  setZoom(fitZoom(spriteW, spriteH, vpW, vpH));
+  // Centre on the sprite. Fit zoom delegates to viewport.ts so the snap/padding
+  // rules stay in one place across the keyboard shortcuts and this reset path.
+  setViewport({
+    scrollX: spriteW * 0.5,
+    scrollY: spriteH * 0.5,
+    zoom: fitZoom(spriteW, spriteH, vpW, vpH),
+  });
 
   setActiveSpriteId(spriteId);
   setActiveFrameIndex(0);

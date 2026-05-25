@@ -38,13 +38,10 @@ import {
   activeSpriteId,
   activeFrameIndex,
   setActiveFrameIndex,
-  onionSkin,
+  viewport,
   setOnionSkin,
-  onionSkinPrev,
   setOnionSkinPrev,
-  onionSkinNext,
   setOnionSkinNext,
-  onionSkinOpacity,
   setOnionSkinOpacity,
   scheduleViewportSync,
 } from "../canvas/canvas-state";
@@ -212,18 +209,10 @@ export function stopPlaybackIfActive(): void {
 }
 
 // ── Onion skin re-exports ────────────────────────────────────────────────────
-// Canvas-state owns these signals. Re-exported so timeline components
-// import from one place rather than two.
-export {
-  onionSkin,
-  setOnionSkin,
-  onionSkinPrev,
-  setOnionSkinPrev,
-  onionSkinNext,
-  setOnionSkinNext,
-  onionSkinOpacity,
-  setOnionSkinOpacity,
-};
+// Canvas-state owns the viewport store (onion fields live on it). Re-exported
+// so timeline components import the store + onion setters from one place;
+// reads are viewport.onionSkin, viewport.onionSkinPrev, etc.
+export { viewport, setOnionSkin, setOnionSkinPrev, setOnionSkinNext, setOnionSkinOpacity };
 
 // ── Tag drag state ───────────────────────────────────────────────────────────
 

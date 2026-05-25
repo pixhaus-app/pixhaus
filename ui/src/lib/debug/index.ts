@@ -24,18 +24,7 @@ import {
   activeFrameIndex,
   activeLayerId,
   activeSpriteId,
-  isSelectMode,
-  onionSkin,
-  onionSkinNext,
-  onionSkinOpacity,
-  onionSkinPrev,
-  scrollX,
-  scrollY,
-  selectionLayerId,
-  selectionRect,
-  showPixelGrid,
-  showTileGrid,
-  zoom,
+  viewport,
 } from "../../canvas/canvas-state";
 import { layers, refreshLayers, selectedLayerIds } from "../../layers/layer-state";
 import { setActiveLayerId } from "../../canvas/canvas-state";
@@ -224,20 +213,20 @@ export function installDebugSurface(): void {
     getActiveFrameIndex: () => activeFrameIndex(),
     getActiveTool: () => tool.activeTool,
 
-    getZoom: () => zoom(),
-    getScroll: () => ({ x: scrollX(), y: scrollY() }),
-    getShowPixelGrid: () => showPixelGrid(),
-    getShowTileGrid: () => showTileGrid(),
+    getZoom: () => viewport.zoom,
+    getScroll: () => ({ x: viewport.scrollX, y: viewport.scrollY }),
+    getShowPixelGrid: () => viewport.showPixelGrid,
+    getShowTileGrid: () => viewport.showTileGrid,
 
-    getSelectionRect: () => selectionRect(),
-    getSelectionLayerId: () => selectionLayerId(),
-    getIsSelectMode: () => isSelectMode(),
+    getSelectionRect: () => viewport.selectionRect,
+    getSelectionLayerId: () => viewport.selectionLayerId,
+    getIsSelectMode: () => viewport.isSelectMode,
 
     getOnionSkin: () => ({
-      enabled: onionSkin(),
-      prev: onionSkinPrev(),
-      next: onionSkinNext(),
-      opacity: onionSkinOpacity(),
+      enabled: viewport.onionSkin,
+      prev: viewport.onionSkinPrev,
+      next: viewport.onionSkinNext,
+      opacity: viewport.onionSkinOpacity,
     }),
 
     getLayerCount: () => layers().length,
