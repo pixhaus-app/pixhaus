@@ -11,4 +11,4 @@ pub mod stroke;
 
 pub use fill::flood_fill;
 pub use shapes::{draw_ellipse, draw_filled_ellipse, draw_filled_rect, draw_rect};
-pub use stroke::{BrushShape, draw_line, draw_stroke, paint_brush};
+pub use stroke::{BrushShape, draw_line, draw_stroke, paint_brush, stamp_segment};

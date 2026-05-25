@@ -102,8 +102,15 @@ pub(crate) struct StrokeSession {
     /// on every extend so partial strokes never accumulate. Wrapped in
     /// `Arc` so cloning the session is constant-time.
     pub(crate) initial_pixels: Arc<Vec<u8>>,
-    /// All points received via begin + extend so far, in order.
+    /// All points received via begin + extend so far, in order. Retained
+    /// for the pixel-perfect re-rasterization path and for diagnostics; the
+    /// incremental (non-pixel-perfect) path only needs `last_point`.
     pub(crate) points: Vec<[f32; 2]>,
+    /// Last point stamped so far, or `None` before the first point lands.
+    /// The incremental rasterizer bridges a line from here to each new
+    /// batch's first point so a freehand drag stays continuous without
+    /// re-stamping the whole accumulated stroke.
+    pub(crate) last_point: Option<[f32; 2]>,
     pub(crate) color: Rgba,
     pub(crate) brush_shape: String,
     pub(crate) brush_size: u32,

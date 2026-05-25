@@ -183,6 +183,15 @@ impl PixelBuffer {
         &mut self.pixels
     }
 
+    /// Consumes the buffer and returns its raw bytes. The inverse of
+    /// [`Self::from_raw`]: lets a caller move a `Vec<u8>` into a buffer,
+    /// mutate it, and reclaim ownership without copying — used by the
+    /// stroke hot path to stamp directly onto a cel's pixels in place.
+    #[must_use]
+    pub fn into_raw(self) -> Vec<u8> {
+        self.pixels
+    }
+
     /// Returns the pixel at `(x, y)` or `None` if the coordinates fall
     /// outside the buffer.
     #[must_use]
