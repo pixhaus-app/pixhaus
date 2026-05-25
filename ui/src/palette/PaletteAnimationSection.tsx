@@ -8,7 +8,7 @@
 // effect is the resolved chip changing as the active frame changes.
 
 import { For, Show, createMemo, createResource, createSignal, type Component } from "solid-js";
-import { activePalette, activePaletteId } from "./palette-panel-state";
+import { activePalette, paletteUi } from "./palette-panel-state";
 import {
   paletteAnimationGet,
   paletteAnimationRemoveKeyframe,
@@ -43,7 +43,7 @@ const PaletteAnimationSection: Component<Props> = (props) => {
   // palette, selected entry, or a mutation changes.
   const listSource = createMemo(() => {
     const sid = props.spriteId;
-    const pid = activePaletteId();
+    const pid = paletteUi.activePaletteId;
     if (sid === null || pid === null) return null;
     return { sid, pid, entry: entryIndex(), tick: refreshTick() };
   });
@@ -61,7 +61,7 @@ const PaletteAnimationSection: Component<Props> = (props) => {
   // chip recomputes as the user scrubs the timeline.
   const resolvedSource = createMemo(() => {
     const sid = props.spriteId;
-    const pid = activePaletteId();
+    const pid = paletteUi.activePaletteId;
     if (sid === null || pid === null) return null;
     return { sid, pid, entry: entryIndex(), frame: activeFrameIndex(), tick: refreshTick() };
   });
@@ -80,7 +80,7 @@ const PaletteAnimationSection: Component<Props> = (props) => {
 
   const handleSetKeyframe = async (): Promise<void> => {
     const sid = props.spriteId;
-    const pid = activePaletteId();
+    const pid = paletteUi.activePaletteId;
     const palette = activePalette();
     const idx = entryIndex();
     const color = palette?.colors[idx]?.color;
@@ -95,7 +95,7 @@ const PaletteAnimationSection: Component<Props> = (props) => {
 
   const handleRemoveKeyframe = async (frame: number): Promise<void> => {
     const sid = props.spriteId;
-    const pid = activePaletteId();
+    const pid = paletteUi.activePaletteId;
     if (sid === null || pid === null) return;
     try {
       await paletteAnimationRemoveKeyframe(sid, pid, entryIndex(), frame);
@@ -113,7 +113,7 @@ const PaletteAnimationSection: Component<Props> = (props) => {
           type="button"
           class="pp__action-btn"
           onClick={() => void handleSetKeyframe()}
-          disabled={activePaletteId() === null || colorCount() === 0}
+          disabled={paletteUi.activePaletteId === null || colorCount() === 0}
           data-testid="palette-anim-set-keyframe"
         >
           Set keyframe @ {activeFrameIndex()}
@@ -132,7 +132,7 @@ const PaletteAnimationSection: Component<Props> = (props) => {
           max={Math.max(0, colorCount() - 1)}
           value={entryIndex()}
           onInput={(e) => onEntryInput(e.currentTarget.value)}
-          disabled={activePaletteId() === null || colorCount() === 0}
+          disabled={paletteUi.activePaletteId === null || colorCount() === 0}
           data-testid="palette-anim-entry-input"
         />
         <span class="pp__anim-resolved">

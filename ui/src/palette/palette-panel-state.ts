@@ -3,7 +3,7 @@
 // Module-level Solid signals own all panel state so any component can read
 // or write without prop-drilling. The pattern mirrors canvas-state.ts.
 
-import { createSignal } from "solid-js";
+import { createStore } from "solid-js/store";
 import type { Palette, PaletteId, Rgba, SpriteId } from "../lib/types";
 import { paletteList } from "../lib/commands/palette";
 import { createBackendQuery } from "../lib/sync/query";
@@ -11,7 +11,42 @@ import { activeSpriteId } from "../canvas/canvas-state";
 
 // ── Palettes ──────────────────────────────────────────────────────────────────
 
-export const [activePaletteId, setActivePaletteId] = createSignal<PaletteId | null>(null);
+// UI-only palette-panel state in one store. Reads are paletteUi.activePaletteId,
+// paletteUi.foregroundIndex, etc.; writes go through the setters below (the
+// Set-mutating one accepts a value or updater). Declared before the palettes
+// query because the query's onLoaded defaults activePaletteId.
+interface PaletteUiState {
+  activePaletteId: PaletteId | null;
+  /** Index into the active palette used for the foreground color. */
+  foregroundIndex: number;
+  /** Index into the active palette used for the background color. */
+  backgroundIndex: number;
+  /** Index of the swatch being edited, or null when no edit is in progress. */
+  editingIndex: number | null;
+  /** Draft color for the swatch at editingIndex before it is committed. */
+  editingColor: Rgba | null;
+  /** Per-swatch lock (UI guard only, not persisted to Rust). */
+  lockedIndices: ReadonlySet<number>;
+}
+
+export const [paletteUi, setPaletteUi] = createStore<PaletteUiState>({
+  activePaletteId: null,
+  foregroundIndex: 0,
+  backgroundIndex: 1,
+  editingIndex: null,
+  editingColor: null,
+  lockedIndices: new Set(),
+});
+
+type SetArg<T> = T | ((prev: T) => T);
+
+export const setActivePaletteId = (v: PaletteId | null): void => setPaletteUi("activePaletteId", v);
+export const setForegroundIndex = (v: number): void => setPaletteUi("foregroundIndex", v);
+export const setBackgroundIndex = (v: number): void => setPaletteUi("backgroundIndex", v);
+export const setEditingIndex = (v: number | null): void => setPaletteUi("editingIndex", v);
+export const setEditingColor = (v: Rgba | null): void => setPaletteUi("editingColor", v);
+export const setLockedIndices = (next: SetArg<ReadonlySet<number>>): void =>
+  setPaletteUi("lockedIndices", typeof next === "function" ? next : () => next);
 
 // Palettes for the active sprite, backed by a createBackendQuery. The cache
 // reloads on sprite change and on refreshPalettes() (which palette mutations
@@ -31,7 +66,7 @@ export const palettes = palettesQuery.data;
 export function activePalette(): Palette | null {
   const list = palettes();
   if (list.length === 0) return null;
-  const id = activePaletteId();
+  const id = paletteUi.activePaletteId;
   if (id === null) return list[0] ?? null;
   return list.find((p) => p.id === id) ?? list[0] ?? null;
 }
@@ -40,7 +75,7 @@ export function activePalette(): Palette | null {
 // nothing is selected or the selection vanished (e.g. after a sprite change).
 function ensureActivePalette(list: Palette[] | undefined): void {
   const result = list ?? [];
-  const id = activePaletteId();
+  const id = paletteUi.activePaletteId;
   const first = result[0];
   if (first && (id === null || !result.some((p) => p.id === id))) {
     setActivePaletteId(first.id);
@@ -58,16 +93,10 @@ export async function refreshPalettes(_spriteId?: SpriteId): Promise<void> {
 
 // ── Foreground / background indices ───────────────────────────────────────────
 
-/** Index into the active palette used for the foreground color. */
-export const [foregroundIndex, setForegroundIndex] = createSignal(0);
-
-/** Index into the active palette used for the background color. */
-export const [backgroundIndex, setBackgroundIndex] = createSignal(1);
-
 /** Swap foreground and background indices (Photoshop X key). */
 export function swapFgBg(): void {
-  const fg = foregroundIndex();
-  setForegroundIndex(backgroundIndex());
+  const fg = paletteUi.foregroundIndex;
+  setForegroundIndex(paletteUi.backgroundIndex);
   setBackgroundIndex(fg);
 }
 
@@ -78,15 +107,9 @@ export function resetFgBg(): void {
 }
 
 // ── Per-swatch edit session ───────────────────────────────────────────────────
-
+//
 // These track the in-progress color edit while the picker is being dragged.
-// The committed value lives in `palettes` (updated after IPC round-trip).
-
-/** Index of the swatch being edited, or null when no edit is in progress. */
-export const [editingIndex, setEditingIndex] = createSignal<number | null>(null);
-
-/** Draft color for the swatch at `editingIndex` before it is committed. */
-export const [editingColor, setEditingColor] = createSignal<Rgba | null>(null);
+// The committed value lives in the palettes query (updated after IPC).
 
 /** Begin editing a specific swatch. */
 export function startEditing(index: number, color: Rgba): void {
@@ -102,8 +125,6 @@ export function cancelEditing(): void {
 
 // ── Per-swatch lock (UI guard only, not persisted to Rust) ────────────────────
 
-export const [lockedIndices, setLockedIndices] = createSignal<ReadonlySet<number>>(new Set());
-
 export function toggleLock(index: number): void {
   setLockedIndices((prev) => {
     const next = new Set(prev);
@@ -114,5 +135,5 @@ export function toggleLock(index: number): void {
 }
 
 export function isLocked(index: number): boolean {
-  return lockedIndices().has(index);
+  return paletteUi.lockedIndices.has(index);
 }
