@@ -41,13 +41,11 @@ export interface RunMutationOptions<T> {
  */
 export async function runMutation<T>(opts: RunMutationOptions<T>): Promise<T | undefined> {
   opts.optimistic?.apply();
+  let value: T;
+  // Only the backend call rolls back. A throw from invalidate/onSuccess after a
+  // successful mutation must not undo committed state or report a false failure.
   try {
-    const value = await opts.run();
-    if (opts.invalidate !== undefined && opts.invalidate.length > 0) {
-      invalidate(...opts.invalidate);
-    }
-    opts.onSuccess?.(value);
-    return value;
+    value = await opts.run();
   } catch (err) {
     opts.optimistic?.rollback();
     if (opts.errorToast !== false) {
@@ -59,6 +57,11 @@ export async function runMutation<T>(opts: RunMutationOptions<T>): Promise<T | u
     }
     return undefined;
   }
+  if (opts.invalidate !== undefined && opts.invalidate.length > 0) {
+    invalidate(...opts.invalidate);
+  }
+  opts.onSuccess?.(value);
+  return value;
 }
 
 function defaultErrorTitle(err: unknown): string {

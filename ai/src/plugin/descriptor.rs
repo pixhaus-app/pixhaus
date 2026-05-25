@@ -190,6 +190,10 @@ impl BackendCapabilities {
             (BackendCapabilities::EMBEDDINGS, "EMBEDDINGS"),
             (BackendCapabilities::VIEW_SYNTHESIS, "VIEW_SYNTHESIS"),
             (BackendCapabilities::IMAGE_TO_VIDEO, "IMAGE_TO_VIDEO"),
+            (
+                BackendCapabilities::BACKGROUND_REMOVAL,
+                "BACKGROUND_REMOVAL",
+            ),
         ];
         let mut names = Vec::new();
         let mut covered: u32 = 0;

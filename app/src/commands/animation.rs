@@ -206,29 +206,46 @@ pub async fn animation_remove_background(
         }));
     }
 
+    // Await in order. On the first failure, abort the still-running tasks
+    // before returning so we don't leave detached jobs racking up paid calls.
     let mut out = Vec::with_capacity(handles.len());
-    for handle in handles {
-        let resp = handle.await.map_err(|e| AppCommandError::VerbError {
-            message: format!("background-removal task failed: {e}"),
-        })??;
-        let InferenceResponse::Image(image) = resp else {
-            return Err(AppCommandError::VerbError {
-                message: "background-removal backend returned a non-image response".into(),
-            });
-        };
-        let png = image
-            .images
-            .into_iter()
-            .next()
-            .ok_or_else(|| AppCommandError::VerbError {
-                message: "background-removal backend returned no image".into(),
-            })?;
-        let pd = decode_png_to_pixeldata(&png)?;
-        out.push(RgbaFrame {
-            width: pd.width,
-            height: pd.height,
-            pixels: pd.bytes,
-        });
+    for idx in 0..handles.len() {
+        let frame = async {
+            let resp = (&mut handles[idx])
+                .await
+                .map_err(|e| AppCommandError::VerbError {
+                    message: format!("background-removal task failed: {e}"),
+                })??;
+            let InferenceResponse::Image(image) = resp else {
+                return Err(AppCommandError::VerbError {
+                    message: "background-removal backend returned a non-image response".into(),
+                });
+            };
+            let png =
+                image
+                    .images
+                    .into_iter()
+                    .next()
+                    .ok_or_else(|| AppCommandError::VerbError {
+                        message: "background-removal backend returned no image".into(),
+                    })?;
+            let pd = decode_png_to_pixeldata(&png)?;
+            Ok(RgbaFrame {
+                width: pd.width,
+                height: pd.height,
+                pixels: pd.bytes,
+            })
+        }
+        .await;
+        match frame {
+            Ok(frame) => out.push(frame),
+            Err(err) => {
+                for handle in &handles[idx + 1..] {
+                    handle.abort();
+                }
+                return Err(err);
+            }
+        }
     }
     Ok(out)
 }

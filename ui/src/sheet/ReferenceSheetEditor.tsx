@@ -383,22 +383,34 @@ const ReferenceSheetEditor: Component = () => {
       pushToast({ kind: "success", title: "Reference sheet request complete." });
     });
     subscribeTauriEvent<SheetRequestErrorPayload>("SheetRequestError", (payload) => {
+      const message = extractDetail(payload.error);
+      let matched = false;
+      setActiveRequests((rows) =>
+        rows.map((row) => {
+          if (row.id !== payload.request_id) return row;
+          matched = true;
+          return { ...row, status: "error", error: message };
+        }),
+      );
+      // Only unlock the UI if this error belongs to a request we're tracking;
+      // another request may still be in flight.
+      if (!matched) return;
       setGenerating(false);
       setBusy(false);
-      const message = extractDetail(payload.error);
-      setActiveRequests((rows) =>
-        rows.map((row) =>
-          row.id === payload.request_id ? { ...row, status: "error", error: message } : row,
-        ),
-      );
       pushToast({ kind: "error", title: message });
     });
     subscribeTauriEvent<SheetRequestCancelledPayload>("SheetRequestCancelled", (payload) => {
+      let matched = false;
+      setActiveRequests((rows) =>
+        rows.map((row) => {
+          if (row.id !== payload.request_id) return row;
+          matched = true;
+          return { ...row, status: "cancelled" };
+        }),
+      );
+      if (!matched) return;
       setGenerating(false);
       setBusy(false);
-      setActiveRequests((rows) =>
-        rows.map((row) => (row.id === payload.request_id ? { ...row, status: "cancelled" } : row)),
-      );
       pushToast({ kind: "info", title: "Reference sheet request cancelled." });
     });
   });

@@ -18,7 +18,7 @@ Intended outcome: one consistent way to read backend-owned state, one way to mut
 ## Architecture
 
 ### New layout
-```
+```text
 ui/src/lib/sync/         # the central IPC-sync layer (new)
   query.ts               # createBackendQuery — wraps createResource, kills refreshToken
   mutation.ts            # runMutation — invoke + invalidate + toast-on-error + optional rollback

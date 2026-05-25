@@ -337,6 +337,17 @@ mod project_ai_library_tests {
     use crate::project::library::composition::{Structure, StructureId, StructureOutput};
 
     #[test]
+    fn ai_metadata_is_empty_tracks_animation_studio_state() {
+        assert!(AiMetadata::default().is_empty());
+
+        let with_state = AiMetadata {
+            animation_studio_state: Some(r#"{"stage":"reference"}"#.into()),
+            ..AiMetadata::default()
+        };
+        assert!(!with_state.is_empty());
+    }
+
+    #[test]
     fn new_project_ai_has_empty_library() {
         let ai = ProjectAi::default();
         assert!(ai.structures.is_empty());

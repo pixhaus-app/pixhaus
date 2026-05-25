@@ -199,6 +199,10 @@ export const setVideoJob = setter("videoJob");
  */
 export function openAnimationStudio(entityId: EntityId): void {
   if (entityId !== studio.activeAnimationStudioEntityId) {
+    // Persist the outgoing entity's working state before we reset. flushStudioState
+    // reads the active entity id and serializes the snapshot synchronously (before
+    // its await), so it captures the old entity's state even though we switch next.
+    void flushStudioState();
     setActiveAnimationStudioEntityId(entityId);
     resetStudio();
     // Different sprite: start from its persisted studio state (if the project
@@ -312,21 +316,16 @@ export function nextStudioId(): number {
   return nextId;
 }
 
-/** Clears all working state (stage, artifacts, candidates, requests, picker). */
+/**
+ * Clears all working state back to defaults — artifacts, candidates, picker,
+ * and the generation controls (animType, direction, frame count, etc.) — so a
+ * different sprite starts fresh. Only window identity (the active entity id and
+ * open flag) is preserved; hydration then overlays any persisted state.
+ */
 export function resetStudio(): void {
   setStudio({
-    stage: "reference",
-    referenceImage: null,
-    firstFrameCandidates: [],
-    selectedFirstFrame: null,
-    approvedFirstFrame: null,
-    firstFramePrompt: "",
-    candidates: [],
-    selectedCandidateId: null,
-    requests: [],
-    pendingClip: null,
-    videoJob: null,
-    previewPlaying: true,
-    previewLooping: true,
+    ...INITIAL,
+    activeAnimationStudioEntityId: studio.activeAnimationStudioEntityId,
+    isAnimationStudioOpen: studio.isAnimationStudioOpen,
   });
 }

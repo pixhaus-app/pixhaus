@@ -191,9 +191,12 @@ const EMPTY_LIBRARY: LibraryData = {
 // used to share a hand-rolled refresh token to drop superseded responses; the
 // query gets that from createResource. The source is the active project, so
 // the library loads on project open and clears on close.
-const libraryQuery = createBackendQuery<true, LibraryData>({
+const libraryQuery = createBackendQuery<number, LibraryData>({
   key: "library",
-  source: () => (projectState.activeProject !== null ? true : null),
+  // Key by the project's creation timestamp (stable per project, distinct
+  // between projects, unchanged by save/save-as) so switching projects
+  // re-sources the query instead of reusing the previous project's data.
+  source: () => projectState.activeProject?.metadata.created_at ?? null,
   fetch: async () => {
     const [newEntities, newGroups, newTags] = await Promise.all([
       libraryListEntities(),
