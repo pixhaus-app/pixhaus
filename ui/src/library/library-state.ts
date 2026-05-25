@@ -42,7 +42,7 @@ import {
 import { reportCommandFailure } from "../lib/utils/errors";
 import { createBackendQuery } from "../lib/sync/query";
 import { runMutation } from "../lib/sync/mutation";
-import { activeProject } from "../project-state";
+import { projectState } from "../project-state";
 
 export type { LibraryCreateEntityArgs, LibraryAddStateArgs };
 
@@ -142,7 +142,7 @@ const EMPTY_LIBRARY: LibraryData = {
 // the library loads on project open and clears on close.
 const libraryQuery = createBackendQuery<true, LibraryData>({
   key: "library",
-  source: () => (activeProject() !== null ? true : null),
+  source: () => (projectState.activeProject !== null ? true : null),
   fetch: async () => {
     const [newEntities, newGroups, newTags] = await Promise.all([
       libraryListEntities(),

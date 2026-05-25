@@ -28,7 +28,7 @@ import {
 import { startTransformDrag, attachTransformKeyboard } from "./transform/transform-input";
 import { syncNumericFromBounds } from "./transform/transform-state";
 import type { TransformHandle } from "./transform/transform-state";
-import { activeProject } from "../project-state";
+import { projectState } from "../project-state";
 import type { ProjectStatus } from "../lib/commands/project";
 import { canvasComposite } from "../lib/commands/canvas";
 import { spriteList } from "../lib/commands/project";
@@ -126,7 +126,7 @@ const Canvas: Component = () => {
     let lastSeenProject: ProjectStatus | null = null;
     let spriteListRequestId = 0;
     createEffect(() => {
-      const proj = activeProject();
+      const proj = projectState.activeProject;
       if (proj === lastSeenProject) return;
       lastSeenProject = proj;
       if (!proj) {
@@ -179,7 +179,7 @@ const Canvas: Component = () => {
 
     createEffect(() => {
       const spriteId = activeSpriteId();
-      const proj = activeProject();
+      const proj = projectState.activeProject;
       if (!proj || spriteId === null) {
         setSpriteSize(null);
         return;

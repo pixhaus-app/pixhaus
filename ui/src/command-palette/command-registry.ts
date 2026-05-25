@@ -21,7 +21,7 @@ import {
   exportPngSpriteSheet,
   exportTmx,
 } from "../lib/commands/exports";
-import { activeProject, setActiveProject, pushRecentProject } from "../project-state";
+import { projectState, setActiveProject, pushRecentProject } from "../project-state";
 import { extractFilename } from "../lib/utils/path";
 import { reportCommandFailure } from "../lib/utils/errors";
 import {
@@ -182,7 +182,7 @@ function inferOpenOperation(path: string): string {
  * projects can wire a sprite picker later.
  */
 function activeSpriteIdForExport(): number | null {
-  const project = activeProject();
+  const project = projectState.activeProject;
   if (project === null) return null;
   // The project-state store doesn't expose the sprite list; fall back
   // to the canvas's active id which is the editor's current sprite.
@@ -457,7 +457,7 @@ const COMMANDS: ReadonlyMap<string, CommandEntry> = new Map<string, CommandEntry
       label: "New Sprite",
       category: "Sprite",
       handler: () => {
-        if (activeProject() === null) {
+        if (projectState.activeProject === null) {
           pushToast({ kind: "info", title: "Open or create a project first." });
           return;
         }

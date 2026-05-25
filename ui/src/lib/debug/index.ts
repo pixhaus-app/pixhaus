@@ -19,7 +19,7 @@
 // boundary to cross here.
 
 import type { IpcLogEntry } from "../ipc";
-import { activeProject, recentProjects } from "../../project-state";
+import { projectState } from "../../project-state";
 import {
   activeFrameIndex,
   activeLayerId,
@@ -206,8 +206,8 @@ export function installDebugSurface(): void {
   if (w.__pixhaus_debug__ !== undefined) return;
 
   const surface: PixhausDebug = {
-    getActiveProject: () => activeProject(),
-    getRecentProjects: () => recentProjects(),
+    getActiveProject: () => projectState.activeProject,
+    getRecentProjects: () => projectState.recentProjects,
     getActiveSpriteId: () => activeSpriteId(),
     getActiveLayerId: () => activeLayerId(),
     getActiveFrameIndex: () => activeFrameIndex(),

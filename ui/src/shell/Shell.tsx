@@ -3,7 +3,7 @@ import { subscribeTauriEvent } from "../lib/sync/subscribe-event";
 import { isCommandPaletteOpen } from "../palette-state";
 import { isPreferencesOpen } from "../preferences/preferences-state";
 import { isCompositionLibraryOpen } from "../composition-library/composition-library-state";
-import { activeProject } from "../project-state";
+import { projectState } from "../project-state";
 import { dispatchCommand } from "../command-palette/command-registry";
 import { setupKeybindManager } from "../keybinds/keybind-manager";
 import CommandPalette from "../command-palette/CommandPalette";
@@ -99,10 +99,10 @@ const Shell: Component = () => {
     <div class="shell" data-testid="shell">
       <div class="shell-body">
         <div class="shell-main">
-          <Show when={activeProject() === null}>
+          <Show when={projectState.activeProject === null}>
             <WelcomeScreen />
           </Show>
-          <Show when={activeProject() !== null}>
+          <Show when={projectState.activeProject !== null}>
             <div class="editor-layout" data-testid="editor-layout">
               <Show
                 when={!isLibraryCollapsed()}
