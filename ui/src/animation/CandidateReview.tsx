@@ -10,10 +10,9 @@ import { type Component, For, Show } from "solid-js";
 import type { NormalizeReport } from "../lib/types/NormalizeReport";
 import {
   type Candidate,
-  candidates,
+  studio,
   loopDirectionFor,
   selectedCandidate,
-  selectedCandidateId,
   setSelectedCandidateId,
 } from "./animation-studio-state";
 import FramePreview from "./FramePreview";
@@ -52,26 +51,26 @@ const CandidateReview: Component<Props> = (props) => {
   return (
     <div class="animation-studio__candidates" data-testid="candidate-review">
       <Show
-        when={candidates().length > 0}
+        when={studio.candidates.length > 0}
         fallback={<div class="animation-studio__empty">No candidates yet — generate to start.</div>}
       >
         <div class="animation-studio__candidate-strip">
-          <For each={candidates()}>
+          <For each={studio.candidates}>
             {(candidate, i) => (
               <button
                 class="animation-studio__candidate-thumb"
                 classList={{
                   "animation-studio__candidate-thumb--active":
-                    selectedCandidateId() === candidate.id,
+                    studio.selectedCandidateId === candidate.id,
                 }}
-                aria-pressed={selectedCandidateId() === candidate.id}
+                aria-pressed={studio.selectedCandidateId === candidate.id}
                 onClick={() => setSelectedCandidateId(candidate.id)}
                 data-testid={`candidate-thumb-${i()}`}
               >
                 <FramePreview
                   frames={candidate.frames}
                   fps={props.fps}
-                  playing={selectedCandidateId() === candidate.id}
+                  playing={studio.selectedCandidateId === candidate.id}
                   loopDirection={loopDirectionFor(candidate.animType)}
                   scale={2}
                 />

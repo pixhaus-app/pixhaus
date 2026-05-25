@@ -9,12 +9,8 @@ import { type Component, For, Show, createSignal } from "solid-js";
 import {
   type AnimType,
   type DirectionOpt,
-  activeAnimationStudioEntityId,
-  animType,
+  studio,
   approveFirstFrame,
-  direction,
-  firstFrameCandidates,
-  firstFramePrompt,
   setAnimType,
   setDirection,
   setFirstFrameCandidates,
@@ -42,7 +38,7 @@ const FirstFrameStage: Component<Props> = (props) => {
   let exportMask: (() => string | null) | null = null;
 
   async function generate(base?: FirstFrameImage, mask?: string, prompt?: string): Promise<void> {
-    const entityId = activeAnimationStudioEntityId();
+    const entityId = studio.activeAnimationStudioEntityId;
     if (entityId === null) {
       setError("No entity selected.");
       return;
@@ -52,9 +48,9 @@ const FirstFrameStage: Component<Props> = (props) => {
     try {
       const res = await animationGenerateFirstFrame({
         entity_id: entityId,
-        direction: direction(),
-        animation_kind: animType(),
-        prompt: prompt ?? (firstFramePrompt().trim() || null),
+        direction: studio.direction,
+        animation_kind: studio.animType,
+        prompt: prompt ?? (studio.firstFramePrompt.trim() || null),
         base_image_base64: base?.png_base64 ?? null,
         mask_base64: mask ?? null,
         num_images: 2,
@@ -95,7 +91,7 @@ const FirstFrameStage: Component<Props> = (props) => {
             {(t) => (
               <button
                 class="animation-studio__chip"
-                classList={{ "animation-studio__chip--active": animType() === t }}
+                classList={{ "animation-studio__chip--active": studio.animType === t }}
                 onClick={() => setAnimType(t)}
               >
                 {t}
@@ -108,7 +104,7 @@ const FirstFrameStage: Component<Props> = (props) => {
             {(d) => (
               <button
                 class="animation-studio__chip"
-                classList={{ "animation-studio__chip--active": direction() === d }}
+                classList={{ "animation-studio__chip--active": studio.direction === d }}
                 onClick={() => setDirection(d)}
               >
                 {d}
@@ -120,7 +116,7 @@ const FirstFrameStage: Component<Props> = (props) => {
           class="animation-studio__prompt"
           rows={2}
           placeholder="Pose detail (optional) — e.g. Bit waving, antenna blinking, arms raised"
-          value={firstFramePrompt()}
+          value={studio.firstFramePrompt}
           onInput={(e) => setFirstFramePrompt(e.currentTarget.value)}
         />
         <Show
@@ -207,13 +203,13 @@ const FirstFrameCandidates: Component<{
   onSelect: (f: FirstFrameImage) => void;
 }> = (props) => (
   <Show
-    when={firstFrameCandidates().length > 0}
+    when={studio.firstFrameCandidates.length > 0}
     fallback={
       <div class="animation-studio__empty">Generate to preview first-frame candidates.</div>
     }
   >
     <div class="animation-studio__candidate-strip">
-      <For each={firstFrameCandidates()}>
+      <For each={studio.firstFrameCandidates}>
         {(img) => (
           <button
             class="animation-studio__candidate-thumb"

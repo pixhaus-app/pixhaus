@@ -21,22 +21,12 @@ import {
   type AnimType,
   type DirectionOpt,
   type VideoModel,
-  activeAnimationStudioEntityId,
-  animType,
-  approvedFirstFrame,
-  choreography,
-  direction,
-  fps,
-  frameCount,
-  pendingClip,
-  seed,
+  studio,
   setChoreography,
   setPendingClip,
   setStage,
   setVideoJob,
   setVideoModel,
-  videoJob,
-  videoModel,
 } from "./animation-studio-state";
 
 type Props = {
@@ -49,7 +39,7 @@ const VideoStage: Component<Props> = (props) => {
   const [clipUrl, setClipUrl] = createSignal<string | null>(null);
   const [nowMs, setNowMs] = createSignal(Date.now());
 
-  const generating = (): boolean => videoJob()?.status === "running";
+  const generating = (): boolean => studio.videoJob?.status === "running";
 
   // Tick a clock while a job runs so the elapsed time advances; elapsed is
   // derived from the job's start so it stays correct across stage navigation.
@@ -59,14 +49,14 @@ const VideoStage: Component<Props> = (props) => {
     onCleanup(() => clearInterval(timer));
   });
   const elapsedS = (): number => {
-    const job = videoJob();
+    const job = studio.videoJob;
     if (job === null) return 0;
     return Math.max(0, Math.round((nowMs() - job.created_at_ms) / 1000));
   };
 
   // Fetches a finished job's clip into `pendingClip` (once).
   async function fetchClipFor(job: AnimationJob): Promise<void> {
-    if (pendingClip() !== null) return;
+    if (studio.pendingClip !== null) return;
     try {
       const clip = await animationJobClip(job.id);
       setPendingClip({
@@ -85,7 +75,7 @@ const VideoStage: Component<Props> = (props) => {
   // Poll the backend job while it runs — authoritative for completion and
   // cancellation, so the UI reflects them even if the live event is missed.
   createEffect(() => {
-    const job = videoJob();
+    const job = studio.videoJob;
     if (job === null || job.status !== "running") return;
     const jobId = job.id;
     const timer = setInterval(() => {
@@ -103,7 +93,7 @@ const VideoStage: Component<Props> = (props) => {
   // Materialize the base64 clip into a blob URL for the <video>, revoking the
   // previous one when the clip changes or the stage unmounts.
   createEffect(() => {
-    const c = pendingClip();
+    const c = studio.pendingClip;
     if (c === null) {
       setClipUrl(null);
       return;
@@ -118,8 +108,8 @@ const VideoStage: Component<Props> = (props) => {
   // one — covers reopening the studio (or app restart) with a finished or
   // interrupted job on disk.
   onMount(() => {
-    const entityId = activeAnimationStudioEntityId();
-    if (entityId === null || videoJob() !== null) return;
+    const entityId = studio.activeAnimationStudioEntityId;
+    if (entityId === null || studio.videoJob !== null) return;
     void animationJobsList(entityId)
       .then((jobs) => {
         const latest = jobs[0];
@@ -131,8 +121,8 @@ const VideoStage: Component<Props> = (props) => {
   });
 
   async function generate(): Promise<void> {
-    const frame = approvedFirstFrame();
-    const entityId = activeAnimationStudioEntityId();
+    const frame = studio.approvedFirstFrame;
+    const entityId = studio.activeAnimationStudioEntityId;
     if (frame === null || entityId === null) {
       setError("Approve a first frame first.");
       return;
@@ -143,25 +133,25 @@ const VideoStage: Component<Props> = (props) => {
       const jobId = await animationGenerateClip({
         entity_id: entityId,
         first_frame_base64: frame.png_base64,
-        direction: direction(),
-        animation_kind: animType() === "custom" ? null : animType(),
-        choreography: choreography().trim() || null,
-        model: videoModel(),
-        num_frames: frameCount(),
-        fps: fps(),
-        seed: seed(),
+        direction: studio.direction,
+        animation_kind: studio.animType === "custom" ? null : studio.animType,
+        choreography: studio.choreography.trim() || null,
+        model: studio.videoModel,
+        num_frames: studio.frameCount,
+        fps: studio.fps,
+        seed: studio.seed,
       });
       // Optimistic running state; the AnimationJobUpdate listener refines it.
       setVideoJob({
         id: jobId,
         entity_id: entityId,
-        direction: direction(),
-        animation_kind: animType(),
-        model: videoModel(),
+        direction: studio.direction,
+        animation_kind: studio.animType,
+        model: studio.videoModel,
         status: "running",
         created_at_ms: Date.now(),
-        target_count: frameCount(),
-        fps: fps(),
+        target_count: studio.frameCount,
+        fps: studio.fps,
         mime: "video/mp4",
         error: null,
       });
@@ -171,12 +161,12 @@ const VideoStage: Component<Props> = (props) => {
   }
 
   function cancel(): void {
-    const job = videoJob();
+    const job = studio.videoJob;
     if (job !== null) void animationCancelClipJob(job.id).catch(() => undefined);
   }
 
   const jobError = (): string | null => {
-    const job = videoJob();
+    const job = studio.videoJob;
     if (job?.status === "error") return job.error ?? "generation failed";
     if (job?.status === "interrupted") return "this generation was interrupted — generate again";
     if (job?.status === "cancelled") return "generation cancelled";
@@ -189,7 +179,7 @@ const VideoStage: Component<Props> = (props) => {
         <label class="animation-studio__field">
           model
           <select
-            value={videoModel()}
+            value={studio.videoModel}
             onChange={(e) => setVideoModel(e.currentTarget.value as VideoModel)}
             data-testid="video-model"
           >
@@ -201,7 +191,7 @@ const VideoStage: Component<Props> = (props) => {
           class="animation-studio__prompt"
           rows={2}
           placeholder="Motion detail (optional) — e.g. screen flickers, antenna light pulses"
-          value={choreography()}
+          value={studio.choreography}
           onInput={(e) => setChoreography(e.currentTarget.value)}
         />
         <Show
@@ -249,7 +239,7 @@ const VideoStage: Component<Props> = (props) => {
         </Show>
       </div>
 
-      <Show when={pendingClip()}>
+      <Show when={studio.pendingClip}>
         <div class="animation-studio__stage-actions">
           <button
             class="animation-studio__generate"

@@ -36,7 +36,7 @@ import { installTilemapCtxSync } from "../tilemap/tilemap-state";
 import ReferenceSheetEditor from "../sheet/ReferenceSheetEditor";
 import { sheetState } from "../sheet/sheet-state";
 import AnimationStudio from "../animation/AnimationStudio";
-import { isAnimationStudioOpen } from "../animation/animation-studio-state";
+import { studio } from "../animation/animation-studio-state";
 import RightRail from "./RightRail";
 import {
   isLibraryCollapsed,
@@ -120,7 +120,7 @@ const Shell: Component = () => {
                 <LibraryPanel />
               </Show>
               <div class="editor-layout__canvas-area">
-                <Show when={!isAnimationStudioOpen()} fallback={<AnimationStudio />}>
+                <Show when={!studio.isAnimationStudioOpen} fallback={<AnimationStudio />}>
                   <Show when={!sheetState.isSheetEditorOpen} fallback={<ReferenceSheetEditor />}>
                     <div class="editor-layout__canvas">
                       <Canvas />
