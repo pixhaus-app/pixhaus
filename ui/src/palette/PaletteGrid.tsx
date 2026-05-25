@@ -13,7 +13,7 @@ import { createSignal, For, Show, type Component } from "solid-js";
 import type { PaletteEntry, Rgba } from "../lib/types";
 import { paletteReorderColors } from "../lib/commands/palette";
 import { reportCommandFailure } from "../lib/utils/errors";
-import { activeSpriteId } from "../canvas/canvas-state";
+import { activeTarget } from "../canvas/canvas-state";
 import {
   paletteUi,
   setForegroundIndex,
@@ -97,7 +97,7 @@ const PaletteGrid: Component<Props> = (props) => {
     setDragFrom(null);
     setDragOver(null);
     if (fromIndex === null || fromIndex === toIndex) return;
-    const spriteId = activeSpriteId();
+    const spriteId = activeTarget.spriteId;
     const paletteId = paletteUi.activePaletteId;
     if (spriteId === null || paletteId === null) return;
     paletteReorderColors(spriteId, paletteId, fromIndex, toIndex)

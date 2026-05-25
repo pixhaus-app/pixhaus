@@ -6,7 +6,7 @@
 
 import { type Component, For, Show, createEffect, createSignal, onCleanup } from "solid-js";
 import type { BlendMode, Layer, LayerEffect, LayerId, SpriteId } from "../lib/types";
-import { activeLayerId } from "../canvas/canvas-state";
+import { activeTarget } from "../canvas/canvas-state";
 import {
   beginRename,
   cancelRename,
@@ -78,7 +78,7 @@ type Props = {
 };
 
 const LayerRow: Component<Props> = (props) => {
-  const isActive = () => activeLayerId() === props.layer.id;
+  const isActive = () => activeTarget.layerId === props.layer.id;
   const isSelected = () => layerUi.selectedLayerIds.has(props.layer.id);
   const isRenaming = () => layerUi.renamingLayerId === props.layer.id;
   const isGroup = () => props.layer.kind.kind === "group";

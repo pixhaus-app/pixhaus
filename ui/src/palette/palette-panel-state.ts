@@ -7,7 +7,7 @@ import { createStore } from "solid-js/store";
 import type { Palette, PaletteId, Rgba, SpriteId } from "../lib/types";
 import { paletteList } from "../lib/commands/palette";
 import { createBackendQuery } from "../lib/sync/query";
-import { activeSpriteId } from "../canvas/canvas-state";
+import { activeTarget } from "../canvas/canvas-state";
 
 // ── Palettes ──────────────────────────────────────────────────────────────────
 
@@ -53,7 +53,7 @@ export const setLockedIndices = (next: SetArg<ReadonlySet<number>>): void =>
 // in the panel call after editing).
 const palettesQuery = createBackendQuery<SpriteId, Palette[]>({
   key: "palettes",
-  source: activeSpriteId,
+  source: () => activeTarget.spriteId,
   fetch: (spriteId) => paletteList(spriteId),
   initial: [],
   onLoaded: (list) => ensureActivePalette(list),

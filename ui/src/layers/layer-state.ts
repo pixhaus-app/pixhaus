@@ -26,13 +26,7 @@ import {
   layerWrapInGroup,
 } from "../lib/commands/layers";
 import { canvasRecompositeFrame } from "../lib/commands/canvas";
-import {
-  activeFrameIndex,
-  activeSpriteId,
-  activeLayerId,
-  setActiveLayerId,
-  scheduleViewportSync,
-} from "../canvas/canvas-state";
+import { activeTarget, setActiveLayerId, scheduleViewportSync } from "../canvas/canvas-state";
 import { createBackendQuery } from "../lib/sync/query";
 import { runMutation } from "../lib/sync/mutation";
 import { invalidate } from "../lib/sync/invalidation";
@@ -46,7 +40,7 @@ import { pushToast } from "../lib/toast/toast-state";
  * `locked` has no visual effect.
  */
 function refreshViewport(spriteId: SpriteId): void {
-  canvasRecompositeFrame(spriteId, activeFrameIndex()).catch((err: unknown) =>
+  canvasRecompositeFrame(spriteId, activeTarget.frameIndex).catch((err: unknown) =>
     console.error("[pixhaus] canvas_recomposite_frame:", err),
   );
 }
@@ -109,7 +103,7 @@ export function flattenLayers(all: Layer[], expandedCheck: (id: LayerId) => bool
 // module used to carry is gone. `layers()` keeps its old read shape.
 const layersQuery = createBackendQuery<SpriteId, Layer[]>({
   key: "layers",
-  source: activeSpriteId,
+  source: () => activeTarget.spriteId,
   fetch: (spriteId) => layerList(spriteId),
   initial: [],
   onLoaded: (list) => ensureActiveLayer(list),
@@ -136,7 +130,7 @@ function ensureActiveLayer(list: readonly Layer[] | undefined): void {
     setActiveLayerId(null);
     return;
   }
-  const current = activeLayerId();
+  const current = activeTarget.layerId;
   if (current !== null && list.some((l) => l.id === current)) {
     return;
   }
@@ -162,7 +156,7 @@ export type TilesetPickerTarget = {
 // layerUi.selectedLayerIds, layerUi.renamingLayerId, etc.; writes go through
 // the setter functions below (which accept either a value or an updater so the
 // Set-mutating call sites keep their callback form). The "primary" active
-// layer (for painting) is activeLayerId() from canvas-state; selectedLayerIds
+// layer (for painting) is activeTarget.layerId from canvas-state; selectedLayerIds
 // tracks which rows are highlighted in the panel.
 interface LayerUiState {
   selectedLayerIds: ReadonlySet<LayerId>;
@@ -229,7 +223,7 @@ export function beginRename(id: LayerId): void {
 }
 
 export function commitRename(id: LayerId, name: string): void {
-  const spriteId = activeSpriteId();
+  const spriteId = activeTarget.spriteId;
   if (spriteId === null) return;
   setRenamingLayerId(null);
   const trimmed = name.trim();
@@ -329,7 +323,7 @@ export function deleteLayer(spriteId: SpriteId, id: LayerId): void {
     invalidate: ["layers"],
     onSuccess: () => {
       // Clear the active layer if it was the one deleted.
-      if (activeLayerId() === id) setActiveLayerId(null);
+      if (activeTarget.layerId === id) setActiveLayerId(null);
       setSelectedLayerIds((prev) => {
         const next = new Set(prev);
         next.delete(id);
@@ -359,7 +353,7 @@ export function deleteLayers(spriteId: SpriteId, ids: readonly LayerId[]): void 
     }
     invalidate("layers");
     const idSet = new Set(ids);
-    const active = activeLayerId();
+    const active = activeTarget.layerId;
     if (active !== null && idSet.has(active)) setActiveLayerId(null);
     setSelectedLayerIds((prev) => {
       const next = new Set(prev);
@@ -416,7 +410,7 @@ export function isLayerWritable(all: readonly Layer[], id: LayerId): boolean {
  * active layer is set; the caller already early-returns in that case.
  */
 export function isActiveLayerWritable(): boolean {
-  const id = activeLayerId();
+  const id = activeTarget.layerId;
   if (id === null) return true;
   return isLayerWritable(layers(), id);
 }

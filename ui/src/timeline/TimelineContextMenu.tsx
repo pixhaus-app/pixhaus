@@ -5,7 +5,7 @@
 import { type Component, For, Show } from "solid-js";
 import { Portal } from "solid-js/web";
 import type { FrameIndex, SpriteId } from "../lib/types";
-import { activeFrameIndex } from "../canvas/canvas-state";
+import { activeTarget } from "../canvas/canvas-state";
 import { clampMenuToViewport } from "../lib/utils/menu-position";
 import {
   addFrame,
@@ -38,7 +38,7 @@ const TimelineContextMenu: Component<Props> = (props) => {
     const sel = timelineUi.selectedFrames;
     const t = props.target;
     if (t !== null && sel.has(t.frameIndex)) return sel;
-    return new Set([t?.frameIndex ?? activeFrameIndex()]);
+    return new Set([t?.frameIndex ?? activeTarget.frameIndex]);
   }
 
   function buildItems(): MenuItem[] {
@@ -48,8 +48,8 @@ const TimelineContextMenu: Component<Props> = (props) => {
     const multi = eff.size > 1;
     // Operate on the right-click target by default. Menu items that
     // intentionally consume the active frame (none currently) can fall
-    // back to `activeFrameIndex()` explicitly.
-    const target = props.target?.frameIndex ?? activeFrameIndex();
+    // back to `activeTarget.frameIndex` explicitly.
+    const target = props.target?.frameIndex ?? activeTarget.frameIndex;
     const close = props.onClose;
 
     return [

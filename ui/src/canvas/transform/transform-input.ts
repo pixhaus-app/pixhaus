@@ -17,14 +17,7 @@ import {
   syncNumericFromBounds,
   type TransformHandle,
 } from "./transform-state";
-import {
-  viewport,
-  setSelectionRect,
-  setTransformBounds,
-  activeSpriteId,
-  activeLayerId,
-  activeFrameIndex,
-} from "../canvas-state";
+import { activeTarget, viewport, setSelectionRect, setTransformBounds } from "../canvas-state";
 import { canvasSetSelection, canvasTransform, type TransformOp } from "../../lib/commands/canvas";
 import { isActiveLayerWritable } from "../../layers/layer-state";
 import { pushToast } from "../../lib/toast/toast-state";
@@ -47,7 +40,7 @@ async function commitBounds(bounds: {
   width: number;
   height: number;
 }): Promise<void> {
-  const anchorLayer = activeLayerId();
+  const anchorLayer = activeTarget.layerId;
   try {
     await canvasSetSelection({ kind: "rect", bounds: toIpcRect(bounds) }, anchorLayer);
     setSelectionRect(bounds);
@@ -85,8 +78,8 @@ async function commitBodyTranslate(
     return;
   }
 
-  const spriteId = activeSpriteId();
-  const layerId = activeLayerId();
+  const spriteId = activeTarget.spriteId;
+  const layerId = activeTarget.layerId;
   if (spriteId === null || layerId === null) {
     // No active document — fall back to a marquee-only commit.
     void commitBounds(snappedBounds);
@@ -105,7 +98,7 @@ async function commitBodyTranslate(
     await canvasTransform({
       sprite_id: spriteId,
       layer_id: layerId,
-      frame_index: activeFrameIndex(),
+      frame_index: activeTarget.frameIndex,
       ops: [{ kind: "translate", dx, dy }],
     });
   } catch (err: unknown) {
@@ -272,13 +265,13 @@ export function attachTransformKeyboard(): () => void {
 // Shared dispatcher: runs one op against the active sprite/layer/frame and
 // surfaces an Unimplemented error as a toast instead of a console log.
 function dispatchTransformOp(op: TransformOp, label: string): void {
-  const spriteId = activeSpriteId();
-  const layerId = activeLayerId();
+  const spriteId = activeTarget.spriteId;
+  const layerId = activeTarget.layerId;
   if (spriteId === null || layerId === null) return;
   canvasTransform({
     sprite_id: spriteId,
     layer_id: layerId,
-    frame_index: activeFrameIndex(),
+    frame_index: activeTarget.frameIndex,
     ops: [op],
   }).catch((err: unknown) => {
     if (isUnimplementedError(err)) {

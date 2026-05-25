@@ -16,12 +16,11 @@ import { attachCanvasInput } from "./input";
 import { BrushCursor, ShapePreview, TransformHandles } from "./overlays";
 import Toolbar from "./tools/Toolbar";
 import {
+  activeTarget,
   viewport,
   brushSize,
   brushShape,
   setTransformBounds,
-  activeSpriteId,
-  activeFrameIndex,
   resetCanvasState,
   resetViewport,
 } from "./canvas-state";
@@ -178,7 +177,7 @@ const Canvas: Component = () => {
     let compositeRequestId = 0;
 
     createEffect(() => {
-      const spriteId = activeSpriteId();
+      const spriteId = activeTarget.spriteId;
       const proj = projectState.activeProject;
       if (!proj || spriteId === null) {
         setSpriteSize(null);
@@ -203,7 +202,7 @@ const Canvas: Component = () => {
     // tuple to the renderer. Re-fires on every signal change — Solid
     // tracks every read at the top of the closure.
     createEffect(() => {
-      const spriteId = activeSpriteId();
+      const spriteId = activeTarget.spriteId;
       const size = spriteSize();
       if (spriteId === null || size === null) {
         renderer.setSprite(null);
@@ -211,7 +210,7 @@ const Canvas: Component = () => {
       }
       renderer.setSprite({
         spriteId: String(spriteId),
-        frameIndex: activeFrameIndex(),
+        frameIndex: activeTarget.frameIndex,
         spriteWidth: size.w,
         spriteHeight: size.h,
         showPixelGrid: viewport.showPixelGrid,

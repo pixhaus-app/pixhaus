@@ -21,7 +21,7 @@ import {
   setLocalAutotileKind,
 } from "./tilemap-state";
 import { blankRule, conditionLabel, conditionTitle, nextCondition } from "./autotile-helpers";
-import { activeSpriteId } from "../canvas/canvas-state";
+import { activeTarget } from "../canvas/canvas-state";
 import { tilesetSetAutotile } from "../lib/commands/tilesets";
 import { reportCommandFailure } from "../lib/utils/errors";
 
@@ -225,13 +225,13 @@ const AutotileRuleEditor: Component = () => {
   let persistTimer: ReturnType<typeof setTimeout> | null = null;
   function schedulePersist() {
     const ctx = tilemapUi.activeTilemapCtx;
-    const sid = activeSpriteId();
+    const sid = activeTarget.spriteId;
     if (!ctx || sid === null) return;
     if (persistTimer !== null) clearTimeout(persistTimer);
     persistTimer = setTimeout(() => {
       persistTimer = null;
       const cur = tilemapUi.activeTilemapCtx;
-      const sidNow = activeSpriteId();
+      const sidNow = activeTarget.spriteId;
       if (!cur || sidNow === null) return;
       // Build the kind to persist from the current UI state. For
       // `custom`, snapshot the live rules + default_tile so the

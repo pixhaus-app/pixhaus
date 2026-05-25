@@ -17,13 +17,8 @@ import {
   createSignal,
   onCleanup,
 } from "solid-js";
-import type { Frame } from "../lib/types";
-import {
-  activeFrameIndex,
-  scheduleViewportSync,
-  setActiveFrameIndex,
-} from "../canvas/canvas-state";
-import { activeSpriteId } from "../canvas/canvas-state";
+import type { Frame, SpriteId } from "../lib/types";
+import { activeTarget, scheduleViewportSync, setActiveFrameIndex } from "../canvas/canvas-state";
 import { flattenLayers, isGroupExpanded, layers } from "../layers/layer-state";
 import {
   addFrame,
@@ -58,8 +53,8 @@ const OVERSCAN = 3;
 // ── Component ────────────────────────────────────────────────────────────────
 
 const TimelinePanel: Component = () => {
-  const spriteId = activeSpriteId;
-  const activeFrame = activeFrameIndex;
+  const spriteId = (): SpriteId | null => activeTarget.spriteId;
+  const activeFrame = (): number => activeTarget.frameIndex;
 
   // The frame/tag/cel and layer caches are backed by createBackendQuery
   // keyed on the active sprite (see timeline-state, layer-state), so they

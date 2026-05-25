@@ -11,13 +11,12 @@
 
 import { screenToCanvas } from "../viewport";
 import {
+  activeTarget,
   viewport,
   setSelectionRect,
   setSelectionKind,
   setSelectionMask,
   setSelectionLayerId,
-  activeSpriteId,
-  activeLayerId,
 } from "../canvas-state";
 import {
   select,
@@ -81,7 +80,7 @@ async function commitRectSelection(bounds: {
   width: number;
   height: number;
 }): Promise<void> {
-  const anchorLayer = activeLayerId();
+  const anchorLayer = activeTarget.layerId;
   try {
     const region = { kind: "rect" as const, bounds: toIpcRect(bounds) };
     await canvasSetSelection(region, anchorLayer);
@@ -192,7 +191,7 @@ function onMarqueeMove(e: MouseEvent, el: HTMLElement): void {
   if (dragIsNonEmpty(updated)) {
     const b = dragToBounds(updated);
     setSelectionRect(b);
-    setSelectionLayerId(activeLayerId());
+    setSelectionLayerId(activeTarget.layerId);
   }
 }
 
@@ -231,8 +230,8 @@ async function commitEllipseSelection(bounds: {
   width: number;
   height: number;
 }): Promise<void> {
-  const spriteId = activeSpriteId();
-  const anchorLayer = activeLayerId();
+  const spriteId = activeTarget.spriteId;
+  const anchorLayer = activeTarget.layerId;
   if (spriteId === null) return;
   try {
     const state = await canvasSelectEllipse({
@@ -255,8 +254,8 @@ async function commitEllipseSelection(bounds: {
 async function onWandClick(e: MouseEvent, el: HTMLElement): Promise<void> {
   e.preventDefault();
   const [cx, cy] = eventToCanvas(e, el);
-  const spriteId = activeSpriteId();
-  const anchorLayer = activeLayerId();
+  const spriteId = activeTarget.spriteId;
+  const anchorLayer = activeTarget.layerId;
   if (spriteId === null) return;
 
   try {
@@ -284,8 +283,8 @@ async function onWandClick(e: MouseEvent, el: HTMLElement): Promise<void> {
 async function onColorRangeClick(e: MouseEvent, el: HTMLElement): Promise<void> {
   e.preventDefault();
   const [cx, cy] = eventToCanvas(e, el);
-  const spriteId = activeSpriteId();
-  const anchorLayer = activeLayerId();
+  const spriteId = activeTarget.spriteId;
+  const anchorLayer = activeTarget.layerId;
   if (spriteId === null) return;
 
   // The target color is picked from the click position; if the IPC stub is
@@ -339,8 +338,8 @@ async function commitLasso(): Promise<void> {
     setLassoPoints([]);
     return;
   }
-  const spriteId = activeSpriteId();
-  const anchorLayer = activeLayerId();
+  const spriteId = activeTarget.spriteId;
+  const anchorLayer = activeTarget.layerId;
   if (spriteId === null) {
     setLassoPoints([]);
     return;

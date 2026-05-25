@@ -28,7 +28,7 @@ import {
   animationNormalize,
   animationRerollDependents,
 } from "../lib/commands/animation";
-import { activeSpriteId } from "../canvas/canvas-state";
+import { activeTarget } from "../canvas/canvas-state";
 import { entities } from "../library/library-state";
 import { pushToast } from "../lib/toast/toast-state";
 import { extractDetail } from "../lib/utils/errors";
@@ -141,7 +141,7 @@ const AnimationStudio: Component = () => {
   }
 
   async function integrate(candidate: Candidate): Promise<void> {
-    const sprite = activeSpriteId();
+    const sprite = activeTarget.spriteId;
     if (sprite === null) {
       pushToast({ kind: "error", title: "No active sprite." });
       return;

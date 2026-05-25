@@ -17,7 +17,7 @@ import type {
   Tileset,
   TilesetId,
 } from "../lib/types";
-import { activeSpriteId, activeLayerId } from "../canvas/canvas-state";
+import { activeTarget } from "../canvas/canvas-state";
 import { layers } from "../layers/layer-state";
 import { tilesetList } from "../lib/commands/tilesets";
 import { createBackendQuery } from "../lib/sync/query";
@@ -95,8 +95,8 @@ export const setAutotileDefaultTile = (v: TileIndex): void =>
 const tilesetsQuery = createBackendQuery<SpriteId, Tileset[]>({
   key: "tilesets",
   source: () => {
-    const sid = activeSpriteId();
-    const lid = activeLayerId();
+    const sid = activeTarget.spriteId;
+    const lid = activeTarget.layerId;
     if (sid === null || lid === null) return null;
     const layer = layers().find((l) => l.id === lid);
     return layer !== undefined && layer.kind.kind === "tilemap" ? sid : null;
@@ -120,8 +120,8 @@ export const tilesets = tilesetsQuery.data;
  */
 export function installTilemapCtxSync(): void {
   createEffect(() => {
-    const sid = activeSpriteId();
-    const lid = activeLayerId();
+    const sid = activeTarget.spriteId;
+    const lid = activeTarget.layerId;
     const all = layers();
     const tsList = tilesets();
 

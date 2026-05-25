@@ -25,10 +25,8 @@ import { projectState, setActiveProject, pushRecentProject } from "../project-st
 import { extractFilename } from "../lib/utils/path";
 import { reportCommandFailure } from "../lib/utils/errors";
 import {
-  activeSpriteId,
+  activeTarget,
   setActiveSpriteId,
-  activeFrameIndex,
-  activeLayerId,
   viewport,
   setIsSelectMode,
   setSelectionRect,
@@ -182,7 +180,7 @@ function activeSpriteIdForExport(): number | null {
   // The project-state store doesn't expose the sprite list; fall back
   // to the canvas's active id which is the editor's current sprite.
   // `activeSpriteId` is imported from "../canvas/canvas-state" already.
-  const id = activeSpriteId();
+  const id = activeTarget.spriteId;
   return id;
 }
 
@@ -407,7 +405,7 @@ const COMMANDS: ReadonlyMap<string, CommandEntry> = new Map<string, CommandEntry
       label: "Select All",
       category: "Edit",
       handler: () => {
-        const spriteId = activeSpriteId();
+        const spriteId = activeTarget.spriteId;
         if (spriteId === null) return;
         canvasSelectAll(spriteId)
           .then((state) => {
@@ -500,7 +498,7 @@ const COMMANDS: ReadonlyMap<string, CommandEntry> = new Map<string, CommandEntry
       label: "Delete Sprite",
       category: "Sprite",
       handler: () => {
-        const id = activeSpriteId();
+        const id = activeTarget.spriteId;
         if (id === null) {
           pushToast({ kind: "info", title: "No active sprite to delete." });
           return;
@@ -548,7 +546,7 @@ const COMMANDS: ReadonlyMap<string, CommandEntry> = new Map<string, CommandEntry
       label: "Add Frame",
       category: "Frame",
       handler: () => {
-        const spriteId = activeSpriteId();
+        const spriteId = activeTarget.spriteId;
         if (spriteId === null) return;
         // Re-use the duration of the currently-active frame so quick
         // additions keep the timeline cadence consistent. frame_add
@@ -567,9 +565,9 @@ const COMMANDS: ReadonlyMap<string, CommandEntry> = new Map<string, CommandEntry
       label: "Delete Frame",
       category: "Frame",
       handler: () => {
-        const spriteId = activeSpriteId();
+        const spriteId = activeTarget.spriteId;
         if (spriteId === null) return;
-        const idx = activeFrameIndex();
+        const idx = activeTarget.frameIndex;
         frameDelete(spriteId, idx)
           .then(() => refreshTimeline())
           .catch((err: unknown) => reportCommandFailure("frame_delete", err));
@@ -583,9 +581,9 @@ const COMMANDS: ReadonlyMap<string, CommandEntry> = new Map<string, CommandEntry
       label: "Duplicate Frame",
       category: "Frame",
       handler: () => {
-        const spriteId = activeSpriteId();
+        const spriteId = activeTarget.spriteId;
         if (spriteId === null) return;
-        const idx = activeFrameIndex();
+        const idx = activeTarget.frameIndex;
         frameDuplicate(spriteId, idx)
           .then(() => refreshTimeline())
           .catch((err: unknown) => reportCommandFailure("frame_duplicate", err));
@@ -611,7 +609,7 @@ const COMMANDS: ReadonlyMap<string, CommandEntry> = new Map<string, CommandEntry
       label: "New Layer",
       category: "Layer",
       handler: () => {
-        const id = activeSpriteId();
+        const id = activeTarget.spriteId;
         if (id !== null) addLayer(id, nextAutoName(layers(), "Layer"));
       },
     },
@@ -623,8 +621,8 @@ const COMMANDS: ReadonlyMap<string, CommandEntry> = new Map<string, CommandEntry
       label: "Delete Layer",
       category: "Layer",
       handler: () => {
-        const spriteId = activeSpriteId();
-        const layerId = activeLayerId();
+        const spriteId = activeTarget.spriteId;
+        const layerId = activeTarget.layerId;
         if (spriteId !== null && layerId !== null) deleteLayer(spriteId, layerId);
       },
     },
@@ -636,7 +634,7 @@ const COMMANDS: ReadonlyMap<string, CommandEntry> = new Map<string, CommandEntry
       label: "Rename Layer",
       category: "Layer",
       handler: () => {
-        const layerId = activeLayerId();
+        const layerId = activeTarget.layerId;
         if (layerId !== null) beginRename(layerId);
       },
     },
@@ -648,8 +646,8 @@ const COMMANDS: ReadonlyMap<string, CommandEntry> = new Map<string, CommandEntry
       label: "Merge Down",
       category: "Layer",
       handler: () => {
-        const spriteId = activeSpriteId();
-        const layerId = activeLayerId();
+        const spriteId = activeTarget.spriteId;
+        const layerId = activeTarget.layerId;
         if (spriteId === null || layerId === null) return;
         mergeLayerDown(spriteId, layerId);
       },
@@ -663,7 +661,7 @@ const COMMANDS: ReadonlyMap<string, CommandEntry> = new Map<string, CommandEntry
       category: "Layer",
       keywords: ["merge", "selected"],
       handler: () => {
-        const spriteId = activeSpriteId();
+        const spriteId = activeTarget.spriteId;
         if (spriteId === null) return;
         mergeSelectedLayers(spriteId, layerUi.selectedLayerIds);
       },
@@ -677,7 +675,7 @@ const COMMANDS: ReadonlyMap<string, CommandEntry> = new Map<string, CommandEntry
       category: "Layer",
       keywords: ["flatten", "visible"],
       handler: () => {
-        const spriteId = activeSpriteId();
+        const spriteId = activeTarget.spriteId;
         if (spriteId === null) return;
         flattenVisibleLayers(spriteId);
       },
@@ -691,8 +689,8 @@ const COMMANDS: ReadonlyMap<string, CommandEntry> = new Map<string, CommandEntry
       category: "Layer",
       keywords: ["group", "wrap", "convert"],
       handler: () => {
-        const spriteId = activeSpriteId();
-        const layerId = activeLayerId();
+        const spriteId = activeTarget.spriteId;
+        const layerId = activeTarget.layerId;
         if (spriteId === null || layerId === null) return;
         const ids = layerUi.selectedLayerIds.size > 0 ? [...layerUi.selectedLayerIds] : [layerId];
         wrapLayersInGroup(spriteId, ids);
@@ -709,7 +707,7 @@ const COMMANDS: ReadonlyMap<string, CommandEntry> = new Map<string, CommandEntry
       category: "Palette",
       keywords: ["palette", "new", "create"],
       handler: () => {
-        const spriteId = activeSpriteId();
+        const spriteId = activeTarget.spriteId;
         if (spriteId === null) return;
         const existing = palettes();
         const name = `Palette ${existing.length + 1}`;
@@ -727,7 +725,7 @@ const COMMANDS: ReadonlyMap<string, CommandEntry> = new Map<string, CommandEntry
       category: "Palette",
       keywords: ["palette", "delete", "remove"],
       handler: () => {
-        const spriteId = activeSpriteId();
+        const spriteId = activeTarget.spriteId;
         const pal = activePalette();
         if (spriteId === null || pal === null) return;
         paletteDeleteCmd(spriteId, pal.id)
@@ -744,7 +742,7 @@ const COMMANDS: ReadonlyMap<string, CommandEntry> = new Map<string, CommandEntry
       category: "Palette",
       keywords: ["palette", "add", "color", "swatch"],
       handler: () => {
-        const spriteId = activeSpriteId();
+        const spriteId = activeTarget.spriteId;
         const pal = activePalette();
         if (spriteId === null || pal === null) return;
         paletteAddColorCmd({
@@ -873,8 +871,8 @@ const COMMANDS: ReadonlyMap<string, CommandEntry> = new Map<string, CommandEntry
       category: "Select",
       keywords: ["invert", "inverse"],
       handler: () => {
-        const spriteId = activeSpriteId();
-        const layerId = activeLayerId();
+        const spriteId = activeTarget.spriteId;
+        const layerId = activeTarget.layerId;
         if (spriteId === null) return;
         canvasInvertSelection(spriteId, layerId)
           .then((state) => {
@@ -914,8 +912,8 @@ const COMMANDS: ReadonlyMap<string, CommandEntry> = new Map<string, CommandEntry
       category: "Canvas",
       keywords: ["vector", "vectorize", "centerline", "stroke", "trace"],
       handler: () => {
-        const spriteId = activeSpriteId();
-        const layerId = activeLayerId();
+        const spriteId = activeTarget.spriteId;
+        const layerId = activeTarget.layerId;
         if (spriteId === null || layerId === null) {
           pushToast({
             kind: "info",
@@ -946,8 +944,8 @@ const COMMANDS: ReadonlyMap<string, CommandEntry> = new Map<string, CommandEntry
       category: "Canvas",
       keywords: ["antialias", "anti-alias", "mlaa", "smooth", "staircase"],
       handler: () => {
-        const spriteId = activeSpriteId();
-        const layerId = activeLayerId();
+        const spriteId = activeTarget.spriteId;
+        const layerId = activeTarget.layerId;
         if (spriteId === null || layerId === null) {
           pushToast({
             kind: "info",
@@ -1059,7 +1057,7 @@ const COMMANDS: ReadonlyMap<string, CommandEntry> = new Map<string, CommandEntry
       label: "Fit to Window",
       category: "View",
       handler: () => {
-        const spriteId = activeSpriteId();
+        const spriteId = activeTarget.spriteId;
         if (spriteId === null) return;
         const vp = getCanvasViewportRect();
         if (vp === null) return;
@@ -1119,7 +1117,7 @@ const COMMANDS: ReadonlyMap<string, CommandEntry> = new Map<string, CommandEntry
       category: "Tilemap",
       keywords: ["tileset", "tilemap", "new"],
       handler: () => {
-        const spriteId = activeSpriteId();
+        const spriteId = activeTarget.spriteId;
         if (spriteId === null) return;
         tilesetAddCmd({
           sprite_id: spriteId,

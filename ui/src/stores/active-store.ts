@@ -5,20 +5,31 @@
 // canvas-state) — a circular-import dodge. Hoisting the triple here lets both
 // canvas and layers depend on a leaf module instead of each other.
 //
-// These are the "which thing is focused" ids shared across the editor. They
-// are UI-owned selection state; the backend mirrors them through
-// canvas_set_viewport (see canvas-store).
+// One Solid store: reads are activeTarget.spriteId, activeTarget.frameIndex,
+// activeTarget.layerId; writes go through the named setters. These are the
+// "which thing is focused" ids shared across the editor — UI-owned selection
+// state; the backend mirrors them through canvas_set_viewport (see canvas).
 
-import { createSignal } from "solid-js";
+import { createStore } from "solid-js/store";
 import type { LayerId, SpriteId } from "../lib/types";
 
-export const [activeSpriteId, setActiveSpriteId] = createSignal<SpriteId | null>(null);
-export const [activeFrameIndex, setActiveFrameIndex] = createSignal<number>(0);
-export const [activeLayerId, setActiveLayerId] = createSignal<LayerId | null>(null);
+export interface ActiveTarget {
+  spriteId: SpriteId | null;
+  frameIndex: number;
+  layerId: LayerId | null;
+}
+
+export const [activeTarget, setActiveTarget] = createStore<ActiveTarget>({
+  spriteId: null,
+  frameIndex: 0,
+  layerId: null,
+});
+
+export const setActiveSpriteId = (v: SpriteId | null): void => setActiveTarget("spriteId", v);
+export const setActiveFrameIndex = (v: number): void => setActiveTarget("frameIndex", v);
+export const setActiveLayerId = (v: LayerId | null): void => setActiveTarget("layerId", v);
 
 /** Clears the active triple. Called when a project closes or changes identity. */
 export function resetActiveTarget(): void {
-  setActiveSpriteId(null);
-  setActiveFrameIndex(0);
-  setActiveLayerId(null);
+  setActiveTarget({ spriteId: null, frameIndex: 0, layerId: null });
 }

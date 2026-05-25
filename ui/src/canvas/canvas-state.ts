@@ -12,25 +12,22 @@ import type { CanvasState, LayerId, SpriteId } from "../lib/types";
 import { canvasSetViewport } from "../lib/commands/canvas";
 import { fitZoom } from "./viewport";
 import {
-  activeSpriteId,
+  activeTarget,
   setActiveSpriteId,
-  activeFrameIndex,
   setActiveFrameIndex,
-  activeLayerId,
   setActiveLayerId,
 } from "../stores/active-store";
 
 // Currently foregrounded sprite, frame, and layer.
 //
 // The triple lives in stores/active-store.ts (a leaf module) so canvas and the
-// layer panel can both read it without importing each other. Re-export here so
-// existing `from "../canvas/canvas-state"` imports keep resolving.
+// layer panel can both read it without importing each other. Re-export the
+// activeTarget store + its setters here so `from "../canvas/canvas-state"`
+// imports keep resolving (reads are activeTarget.spriteId/frameIndex/layerId).
 export {
-  activeSpriteId,
+  activeTarget,
   setActiveSpriteId,
-  activeFrameIndex,
   setActiveFrameIndex,
-  activeLayerId,
   setActiveLayerId,
 } from "../stores/active-store";
 
@@ -183,7 +180,7 @@ export function scheduleViewportSync(): void {
 }
 
 function pushViewportToRust(): void {
-  const sprite = activeSpriteId();
+  const sprite = activeTarget.spriteId;
   // Skip sync when no sprite is active — the project may not be open yet. Use
   // an explicit null check: SpriteId is a numeric newtype and `0` is a valid
   // id, which `if (!sprite)` would silently swallow.
@@ -194,8 +191,8 @@ function pushViewportToRust(): void {
   // still needs to know which sprite the viewport belongs to, but the
   // on-the-wire CanvasState only carries layer/frame/zoom.
   const state: CanvasState = {
-    active_layer: activeLayerId(),
-    active_frame: activeFrameIndex(),
+    active_layer: activeTarget.layerId,
+    active_frame: activeTarget.frameIndex,
     scroll_x: viewport.scrollX,
     scroll_y: viewport.scrollY,
     zoom: viewport.zoom,

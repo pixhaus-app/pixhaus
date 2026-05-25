@@ -16,7 +16,7 @@ import {
   TILE_FLIP_DIAGONAL,
   setActiveTilemapCtx,
 } from "./tilemap-state";
-import { activeFrameIndex, activeSpriteId, viewport } from "../canvas/canvas-state";
+import { activeTarget, viewport } from "../canvas/canvas-state";
 import { layers } from "../layers/layer-state";
 import { tilesetAddTile } from "../lib/commands/tilesets";
 import { reportCommandFailure } from "../lib/utils/errors";
@@ -139,7 +139,7 @@ const TilesetPanel: Component<TilesetPanelProps> = (props) => {
   });
 
   async function onCapture() {
-    const sid = activeSpriteId();
+    const sid = activeTarget.spriteId;
     const sel = viewport.selectionRect;
     const layer = captureSourceLayer();
     if (sid === null || !sel || !layer) return;
@@ -148,7 +148,7 @@ const TilesetPanel: Component<TilesetPanelProps> = (props) => {
         sprite_id: sid,
         tileset_id: props.tileset.id,
         source_layer_id: layer.id,
-        frame_index: activeFrameIndex(),
+        frame_index: activeTarget.frameIndex,
         source_x: sel.x,
         source_y: sel.y,
       });

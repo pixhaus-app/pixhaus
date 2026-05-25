@@ -10,15 +10,13 @@
 // the kind chosen in the Rules tab (or the kind persisted on the tileset).
 
 import {
+  activeTarget,
   viewport,
   setScrollX,
   setScrollY,
   setZoom,
   scheduleViewportSync,
   setCursorCanvas,
-  activeSpriteId,
-  activeFrameIndex,
-  activeLayerId,
   setShapePreview,
   type ShapeKind,
 } from "./canvas-state";
@@ -98,8 +96,8 @@ function dispatchTilePaint(
   const ctx = tilemapUi.activeTilemapCtx;
   if (!ctx) return;
 
-  const spriteId = activeSpriteId();
-  const layerId = activeLayerId();
+  const spriteId = activeTarget.spriteId;
+  const layerId = activeTarget.layerId;
   if (spriteId === null || layerId === null) return;
 
   const rect = el.getBoundingClientRect();
@@ -131,7 +129,7 @@ function dispatchTilePaint(
   }
   lastPaintedCell = { x: cell.cellX, y: cell.cellY };
 
-  const frameIndex = activeFrameIndex();
+  const frameIndex = activeTarget.frameIndex;
   const onErr = (err: unknown): void => {
     reportCommandFailure("tile paint", err);
   };
@@ -235,8 +233,8 @@ function dispatchShape(end: [number, number]): void {
   const start = shapeAnchor;
   shapeAnchor = null;
 
-  const spriteId = activeSpriteId();
-  const layerId = activeLayerId();
+  const spriteId = activeTarget.spriteId;
+  const layerId = activeTarget.layerId;
   if (spriteId === null || layerId === null) return;
   if (!isActiveLayerWritable()) {
     toastLayerLocked();
@@ -260,7 +258,7 @@ function dispatchShape(end: [number, number]): void {
   canvasDrawStroke({
     sprite_id: spriteId,
     layer_id: layerId,
-    frame_index: activeFrameIndex(),
+    frame_index: activeTarget.frameIndex,
     points,
     color: { r: color.r, g: color.g, b: color.b, a: color.a },
     pressure: points.map(() => 1.0),
@@ -274,8 +272,8 @@ function dispatchShape(end: [number, number]): void {
 }
 
 function dispatchFill(canvasX: number, canvasY: number): void {
-  const spriteId = activeSpriteId();
-  const layerId = activeLayerId();
+  const spriteId = activeTarget.spriteId;
+  const layerId = activeTarget.layerId;
   if (spriteId === null || layerId === null) return;
   if (!isActiveLayerWritable()) {
     toastLayerLocked();
@@ -286,7 +284,7 @@ function dispatchFill(canvasX: number, canvasY: number): void {
   canvasFill({
     sprite_id: spriteId,
     layer_id: layerId,
-    frame_index: activeFrameIndex(),
+    frame_index: activeTarget.frameIndex,
     x: Math.floor(canvasX),
     y: Math.floor(canvasY),
     color: { r: color.r, g: color.g, b: color.b, a: color.a },
@@ -365,8 +363,8 @@ export function attachCanvasInput(el: HTMLElement): () => void {
   }
 
   function startStroke(firstPoint: [number, number], erase: boolean): void {
-    const spriteId = activeSpriteId();
-    const layerId = activeLayerId();
+    const spriteId = activeTarget.spriteId;
+    const layerId = activeTarget.layerId;
     if (spriteId === null || layerId === null) return;
     if (!isActiveLayerWritable()) {
       toastLayerLocked();
@@ -383,7 +381,7 @@ export function attachCanvasInput(el: HTMLElement): () => void {
     canvasBeginStroke({
       sprite_id: spriteId,
       layer_id: layerId,
-      frame_index: activeFrameIndex(),
+      frame_index: activeTarget.frameIndex,
       color: { r: color.r, g: color.g, b: color.b, a: color.a },
       brush_shape: tool.shape,
       brush_size: tool.size,

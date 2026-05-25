@@ -20,12 +20,7 @@
 
 import type { IpcLogEntry } from "../ipc";
 import { projectState } from "../../project-state";
-import {
-  activeFrameIndex,
-  activeLayerId,
-  activeSpriteId,
-  viewport,
-} from "../../canvas/canvas-state";
+import { activeTarget, viewport } from "../../canvas/canvas-state";
 import { layers, refreshLayers, layerUi } from "../../layers/layer-state";
 import { setActiveLayerId } from "../../canvas/canvas-state";
 import { frameTags, frames, timelineUi } from "../../timeline/timeline-state";
@@ -199,9 +194,9 @@ export function installDebugSurface(): void {
   const surface: PixhausDebug = {
     getActiveProject: () => projectState.activeProject,
     getRecentProjects: () => projectState.recentProjects,
-    getActiveSpriteId: () => activeSpriteId(),
-    getActiveLayerId: () => activeLayerId(),
-    getActiveFrameIndex: () => activeFrameIndex(),
+    getActiveSpriteId: () => activeTarget.spriteId,
+    getActiveLayerId: () => activeTarget.layerId,
+    getActiveFrameIndex: () => activeTarget.frameIndex,
     getActiveTool: () => tool.activeTool,
 
     getZoom: () => viewport.zoom,

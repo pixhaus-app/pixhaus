@@ -18,7 +18,7 @@ import {
   type Component,
 } from "solid-js";
 import type { TileProperties, Tileset, TilesetId, SpriteId } from "../lib/types";
-import { activeSpriteId } from "../canvas/canvas-state";
+import { activeTarget } from "../canvas/canvas-state";
 import {
   tilemapUi,
   setActiveTilemapCtx,
@@ -225,7 +225,7 @@ type Props = {
 const TilemapPanel: Component<Props> = (props) => {
   const ctx = (): ActiveTilemapCtx | null => tilemapUi.activeTilemapCtx;
   const tileset = createMemo(() => ctx()?.tileset ?? null);
-  const spriteId = activeSpriteId;
+  const spriteId = (): SpriteId | null => activeTarget.spriteId;
 
   // Default to the tab that's actually visible: when no tileset is
   // active the Tileset and Rules tabs are gated behind a Show, leaving

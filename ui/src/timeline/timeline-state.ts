@@ -35,8 +35,7 @@ import { canvasRecompositeFrame } from "../lib/commands/canvas";
 import { createBackendQuery } from "../lib/sync/query";
 import { runMutation } from "../lib/sync/mutation";
 import {
-  activeSpriteId,
-  activeFrameIndex,
+  activeTarget,
   setActiveFrameIndex,
   viewport,
   setOnionSkin,
@@ -67,7 +66,7 @@ const EMPTY_TIMELINE: TimelineData = { frames: [], tags: [], celPresence: new Ma
 // latest fetch) and fetches all three in one Promise.all.
 const timelineQuery = createBackendQuery<SpriteId, TimelineData>({
   key: "frames",
-  source: activeSpriteId,
+  source: () => activeTarget.spriteId,
   fetch: async (spriteId) => {
     const [nextFrames, nextTags, nextCels]: [Frame[], FrameTag[], Cel[]] = await Promise.all([
       frameList(spriteId),
@@ -141,7 +140,7 @@ export function selectFrame(index: FrameIndex, extend: boolean): void {
 }
 
 export function extendSelectionTo(toIndex: FrameIndex): void {
-  const from = activeFrameIndex();
+  const from = activeTarget.frameIndex;
   const lo = Math.min(from, toIndex);
   const hi = Math.max(from, toIndex);
   const range = new Set<FrameIndex>();
@@ -152,7 +151,7 @@ export function extendSelectionTo(toIndex: FrameIndex): void {
 // ── Cel clipboard ────────────────────────────────────────────────────────────
 
 export function copyActiveFrame(): void {
-  setCopiedFrameIndex(activeFrameIndex());
+  setCopiedFrameIndex(activeTarget.frameIndex);
 }
 
 /// Stores `index` as the copy source (used by the right-click menu so
@@ -183,7 +182,7 @@ let playbackTimer: ReturnType<typeof setTimeout> | null = null;
 
 function scheduleNextFrame(): void {
   const all = frames();
-  const current = activeFrameIndex();
+  const current = activeTarget.frameIndex;
   const next = current + 1;
 
   if (next >= all.length) {
@@ -198,7 +197,7 @@ function scheduleNextFrame(): void {
   }
   scheduleViewportSync();
 
-  const nextIdx = activeFrameIndex();
+  const nextIdx = activeTarget.frameIndex;
   const nextFrame = all[nextIdx];
   const delay = nextFrame !== undefined ? effectiveDurationMs(nextFrame) : 100;
   playbackTimer = setTimeout(scheduleNextFrame, delay);
@@ -216,7 +215,7 @@ export function startPlayback(): void {
   const all = frames();
   if (all.length === 0) return;
   setIsPlaying(true);
-  const currentFrame = all[activeFrameIndex()];
+  const currentFrame = all[activeTarget.frameIndex];
   const delay = currentFrame !== undefined ? effectiveDurationMs(currentFrame) : 100;
   playbackTimer = setTimeout(scheduleNextFrame, delay);
 }
@@ -258,7 +257,7 @@ export function addFrame(spriteId: SpriteId, durationMs = 100): void {
 export function deleteFrames(spriteId: SpriteId, indices: ReadonlySet<FrameIndex>): void {
   // Delete highest-index-first so surviving indices don't shift under us.
   const sorted = [...indices].sort((a, b) => b - a);
-  const currentActive = activeFrameIndex();
+  const currentActive = activeTarget.frameIndex;
   const wasDeleted = indices.has(currentActive);
 
   void runMutation({

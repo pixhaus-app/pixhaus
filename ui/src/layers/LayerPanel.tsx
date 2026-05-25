@@ -6,7 +6,7 @@
 // so it isn't clipped by panel overflow.
 
 import { type Component, For, Show, createMemo, createSignal, onCleanup } from "solid-js";
-import { activeSpriteId, activeLayerId } from "../canvas/canvas-state";
+import { activeTarget } from "../canvas/canvas-state";
 import {
   addLayer,
   flattenLayers,
@@ -20,7 +20,7 @@ import { Plus } from "lucide-solid";
 import LayerRow from "./LayerRow";
 import LayerContextMenu, { type ContextMenuTarget } from "./LayerContextMenu";
 import TilesetPickerDialog from "./TilesetPickerDialog";
-import type { LayerId } from "../lib/types";
+import type { LayerId, SpriteId } from "../lib/types";
 
 // Default row height in px for inactive rows.
 const ROW_HEIGHT = 32;
@@ -76,7 +76,7 @@ type Props = {
 };
 
 const LayerPanel: Component<Props> = (props) => {
-  const spriteId = activeSpriteId;
+  const spriteId = (): SpriteId | null => activeTarget.spriteId;
 
   // The layer list is backed by a createBackendQuery keyed on the active
   // sprite (see layer-state), so it loads and reloads on sprite change with
@@ -108,7 +108,7 @@ const LayerPanel: Component<Props> = (props) => {
   // Per-row heights: the active row is 56px; all others are 32px.
   // Recomputes whenever the active layer or flat entry list changes.
   const rowHeights = createMemo(() => {
-    const activeId = activeLayerId();
+    const activeId = activeTarget.layerId;
     return flatEntries().map((e) => (e.layer.id === activeId ? ACTIVE_ROW_HEIGHT : ROW_HEIGHT));
   });
 
