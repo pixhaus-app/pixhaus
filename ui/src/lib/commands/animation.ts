@@ -238,3 +238,20 @@ export function animationJobClip(jobId: number): Promise<GenerateClipResult> {
 export function animationCancelClipJob(jobId: number): Promise<void> {
   return invoke<void>("animation_cancel_clip_job", { job_id: jobId });
 }
+
+/**
+ * Persists the animation-studio working state (a JSON snapshot of the studio
+ * store) for an entity into the project, so it is written to the .pixhaus file
+ * on save. Pass `null` to clear it.
+ */
+export function animationStudioSetState(entityId: number, stateJson: string | null): Promise<void> {
+  return invoke<void>("animation_studio_set_state", {
+    entity_id: entityId,
+    state_json: stateJson,
+  });
+}
+
+/** Reads the persisted animation-studio working state for an entity, if any. */
+export function animationStudioGetState(entityId: number): Promise<string | null> {
+  return invoke<string | null>("animation_studio_get_state", { entity_id: entityId });
+}

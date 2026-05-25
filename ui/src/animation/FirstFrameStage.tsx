@@ -14,6 +14,7 @@ import {
   setAnimType,
   setDirection,
   setFirstFrameCandidates,
+  setSelectedFirstFrame,
   setFirstFramePrompt,
   setStage,
 } from "./animation-studio-state";
@@ -32,7 +33,6 @@ const DIRECTIONS: DirectionOpt[] = ["south", "west", "north", "east"];
 const FirstFrameStage: Component<Props> = (props) => {
   const [busy, setBusy] = createSignal(false);
   const [error, setError] = createSignal<string | null>(null);
-  const [selected, setSelected] = createSignal<FirstFrameImage | null>(null);
   const [inpainting, setInpainting] = createSignal(false);
   const [fixPrompt, setFixPrompt] = createSignal("");
   let exportMask: (() => string | null) | null = null;
@@ -56,7 +56,7 @@ const FirstFrameStage: Component<Props> = (props) => {
         num_images: 2,
       });
       setFirstFrameCandidates(res.images);
-      setSelected(res.images[0] ?? null);
+      setSelectedFirstFrame(res.images[0] ?? null);
       setInpainting(false);
     } catch (err) {
       setError(extractDetail(err));
@@ -66,7 +66,7 @@ const FirstFrameStage: Component<Props> = (props) => {
   }
 
   function applyInpaint(): void {
-    const base = selected();
+    const base = studio.selectedFirstFrame;
     if (base === null || exportMask === null) return;
     const mask = exportMask();
     if (mask === null) {
@@ -77,7 +77,7 @@ const FirstFrameStage: Component<Props> = (props) => {
   }
 
   function approve(): void {
-    const frame = selected();
+    const frame = studio.selectedFirstFrame;
     if (frame === null) return;
     approveFirstFrame(frame);
     setStage("video");
@@ -142,9 +142,14 @@ const FirstFrameStage: Component<Props> = (props) => {
 
       <Show
         when={inpainting()}
-        fallback={<FirstFrameCandidates selected={selected()} onSelect={setSelected} />}
+        fallback={
+          <FirstFrameCandidates
+            selected={studio.selectedFirstFrame}
+            onSelect={setSelectedFirstFrame}
+          />
+        }
       >
-        <Show when={selected()}>
+        <Show when={studio.selectedFirstFrame}>
           {(frame) => (
             <div class="animation-studio__stage">
               <MaskCanvas
@@ -179,7 +184,7 @@ const FirstFrameStage: Component<Props> = (props) => {
         </Show>
       </Show>
 
-      <Show when={selected() && !inpainting()}>
+      <Show when={studio.selectedFirstFrame && !inpainting()}>
         <div class="animation-studio__stage-actions">
           <button class="animation-studio__btn" onClick={() => setInpainting(true)}>
             Refine (inpaint)

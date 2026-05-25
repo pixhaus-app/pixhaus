@@ -7,16 +7,18 @@
 // array-mutating call sites (candidates, requests, first-frame candidates)
 // keep their callback form.
 
-import { createStore } from "solid-js/store";
+import { createStore, unwrap } from "solid-js/store";
 
 import type { LoopDirection } from "../lib/types/LoopDirection";
 import type { NormalizeReport } from "../lib/types/NormalizeReport";
 import type { EntityId } from "../lib/types/EntityId";
-import type {
-  AnchorImage,
-  AnimationJob,
-  FirstFrameImage,
-  RgbaFrame,
+import {
+  animationStudioGetState,
+  animationStudioSetState,
+  type AnchorImage,
+  type AnimationJob,
+  type FirstFrameImage,
+  type RgbaFrame,
 } from "../lib/commands/animation";
 
 // ── Types ──────────────────────────────────────────────────────────────────
@@ -100,6 +102,10 @@ interface StudioState {
   referenceImage: AnchorImage | null;
   // stage 1: first frame
   firstFrameCandidates: FirstFrameImage[];
+  /** Candidate currently highlighted in the first-frame strip. In the store
+   * (not the component) so the selection survives leaving and returning to the
+   * stage. */
+  selectedFirstFrame: FirstFrameImage | null;
   approvedFirstFrame: FirstFrameImage | null;
   /** Pose / choreography detail for the first-frame edit prompt. */
   firstFramePrompt: string;
@@ -134,6 +140,7 @@ const INITIAL: StudioState = {
   advancedOpen: false,
   referenceImage: null,
   firstFrameCandidates: [],
+  selectedFirstFrame: null,
   approvedFirstFrame: null,
   firstFramePrompt: "",
   candidates: [],
@@ -171,6 +178,7 @@ export const setFrameSize = setter("frameSize");
 export const setAdvancedOpen = setter("advancedOpen");
 export const setReferenceImage = setter("referenceImage");
 export const setFirstFrameCandidates = setter("firstFrameCandidates");
+export const setSelectedFirstFrame = setter("selectedFirstFrame");
 export const setApprovedFirstFrame = setter("approvedFirstFrame");
 export const setFirstFramePrompt = setter("firstFramePrompt");
 export const setCandidates = setter("candidates");
@@ -183,18 +191,86 @@ export const setVideoJob = setter("videoJob");
 
 // ── open / close ─────────────────────────────────────────────────────────────
 
-/** Opens the studio for `entityId` (its sprite). */
+/**
+ * Opens the studio for `entityId` (its sprite). The working state persists
+ * across close/reopen of the *same* sprite so the user resumes where they left
+ * off (stage, reference, first-frame candidates, approved frame, video job,
+ * etc.). Switching to a *different* sprite starts fresh.
+ */
 export function openAnimationStudio(entityId: EntityId): void {
-  setActiveAnimationStudioEntityId(entityId);
-  resetStudio();
+  if (entityId !== studio.activeAnimationStudioEntityId) {
+    setActiveAnimationStudioEntityId(entityId);
+    resetStudio();
+    // Different sprite: start from its persisted studio state (if the project
+    // has one saved), loaded async so the UI opens immediately.
+    void hydrateStudioFor(entityId);
+  }
   setAnimationStudioOpen(true);
 }
 
-/** Closes the studio and clears working state. */
+/**
+ * Closes the studio. Working state is intentionally kept (not reset) so
+ * reopening the same sprite resumes the pipeline; it's reset only when a
+ * different sprite is opened (see openAnimationStudio). Flushes the state into
+ * the project first so a later save persists it.
+ */
 export function closeAnimationStudio(): void {
+  void flushStudioState();
   setAnimationStudioOpen(false);
-  setActiveAnimationStudioEntityId(null);
-  resetStudio();
+}
+
+// ── Persistence to the project file ──────────────────────────────────────────
+//
+// The studio store is per-entity working state. It's mirrored into the project
+// (AiMetadata.animation_studio_state, a JSON blob) so it survives save/reload
+// and travels with the .pixhaus file. We flush on close and before save rather
+// than syncing continuously, because the blob includes the multi-MB raw clip.
+
+/** Fields excluded from the persisted snapshot: window identity/visibility and
+ * the in-flight request rows (meaningless after a reload). */
+type PersistedStudio = Omit<
+  StudioState,
+  "isAnimationStudioOpen" | "activeAnimationStudioEntityId" | "requests"
+>;
+
+function serializeStudio(): string {
+  // Shallow-copy the unwrapped store, then drop the fields we don't persist.
+  const snap: Partial<StudioState> = { ...unwrap(studio) };
+  delete snap.isAnimationStudioOpen;
+  delete snap.activeAnimationStudioEntityId;
+  delete snap.requests;
+  return JSON.stringify(snap as PersistedStudio);
+}
+
+/**
+ * Writes the current studio snapshot into the project for the active entity so
+ * a subsequent save persists it. Awaitable so callers (the save path) can
+ * ensure the project holds the latest before serializing; swallows its own
+ * errors so a flush failure never blocks the save.
+ */
+export async function flushStudioState(): Promise<void> {
+  const id = studio.activeAnimationStudioEntityId;
+  if (id === null) return;
+  try {
+    await animationStudioSetState(id, serializeStudio());
+  } catch (err: unknown) {
+    console.error("[pixhaus] animation_studio_set_state:", err);
+  }
+}
+
+/** Loads a sprite's persisted studio state and applies it, unless the user has
+ * already switched to a different sprite while the fetch was in flight. */
+async function hydrateStudioFor(entityId: EntityId): Promise<void> {
+  try {
+    const json = await animationStudioGetState(entityId);
+    if (json === null) return;
+    if (studio.activeAnimationStudioEntityId !== entityId) return;
+    const parsed = JSON.parse(json) as PersistedStudio;
+    // Reset in-flight rows; everything else restores from the snapshot.
+    setStudio({ ...parsed, requests: [] });
+  } catch (err: unknown) {
+    console.error("[pixhaus] animation_studio_get_state:", err);
+  }
 }
 
 // ── helpers ──────────────────────────────────────────────────────────────────
@@ -242,6 +318,7 @@ export function resetStudio(): void {
     stage: "reference",
     referenceImage: null,
     firstFrameCandidates: [],
+    selectedFirstFrame: null,
     approvedFirstFrame: null,
     firstFramePrompt: "",
     candidates: [],

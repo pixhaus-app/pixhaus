@@ -2,7 +2,7 @@ import { open as dialogOpen, save as dialogSave, confirm, message } from "../lib
 import { commandPalette, openCommandPalette, closeCommandPalette } from "../palette-state";
 import { openPreferences } from "../preferences/preferences-state";
 import { openCompositionLibrary } from "../composition-library/composition-library-state";
-import { openAnimationStudio } from "../animation/animation-studio-state";
+import { openAnimationStudio, flushStudioState } from "../animation/animation-studio-state";
 import { prefs } from "../preferences/preferences-store";
 import { ASEPRITE_DEFAULTS, PHOTOSHOP_DEFAULTS, defaultCombo } from "../keybinds/defaults";
 import {
@@ -284,10 +284,13 @@ const COMMANDS: ReadonlyMap<string, CommandEntry> = new Map<string, CommandEntry
       label: "Save",
       category: "File",
       handler: () => {
-        // saveOrSaveAs handles the first-save fallback automatically:
-        // if the project has no path yet, it opens the Save As dialog
-        // instead of bubbling the Validation error to a toast.
-        saveOrSaveAs().catch((err: unknown) => reportCommandFailure("project_save", err));
+        // Flush the animation-studio working state into the project first so
+        // the save embeds it. saveOrSaveAs handles the first-save fallback
+        // automatically: if the project has no path yet, it opens the Save As
+        // dialog instead of bubbling the Validation error to a toast.
+        flushStudioState()
+          .then(() => saveOrSaveAs())
+          .catch((err: unknown) => reportCommandFailure("project_save", err));
       },
     },
   ],
@@ -298,7 +301,8 @@ const COMMANDS: ReadonlyMap<string, CommandEntry> = new Map<string, CommandEntry
       label: "Save As...",
       category: "File",
       handler: () => {
-        pickSavePath()
+        flushStudioState()
+          .then(() => pickSavePath())
           .then((path) => {
             if (path === null) return;
             return projectSave(path);

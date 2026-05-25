@@ -1482,6 +1482,66 @@ impl RgbaFrame {
     }
 }
 
+// ── Studio state persistence ─────────────────────────────────────────────────
+
+/// Persists the animation-studio working state for `entity_id` into the
+/// project so it is written to the `.pixhaus` file on save. The blob is a
+/// UI-owned JSON string (the studio store snapshot); `None` clears it. Mirrors
+/// the `canvas_set_viewport` "push editor state into the project" pattern.
+#[tauri::command(async, rename_all = "snake_case")]
+pub async fn animation_studio_set_state(
+    entity_id: u32,
+    state_json: Option<String>,
+    state: State<'_, AppState>,
+) -> CommandResult<()> {
+    let id = EntityId::new(entity_id);
+    let mut doc = state.doc.write().await;
+    let project = doc
+        .project
+        .as_mut()
+        .ok_or(AppCommandError::NoActiveProject)?;
+    let entity = project
+        .library
+        .entities
+        .iter_mut()
+        .find(|e| e.id == id)
+        .ok_or(AppCommandError::NotFound {
+            entity: "entity".into(),
+            id: u64::from(entity_id),
+        })?;
+    entity.ai.animation_studio_state = state_json;
+    doc.dirty = true;
+    Ok(())
+}
+
+/// Reads the persisted animation-studio working state for `entity_id`, or
+/// `None` when the studio has never been used for it.
+#[tauri::command(async, rename_all = "snake_case")]
+pub async fn animation_studio_get_state(
+    entity_id: u32,
+    state: State<'_, AppState>,
+) -> CommandResult<Option<String>> {
+    let id = EntityId::new(entity_id);
+    let doc = state.doc.read().await;
+    let project = doc
+        .project
+        .as_ref()
+        .ok_or(AppCommandError::NoActiveProject)?;
+    let blob = project
+        .library
+        .entities
+        .iter()
+        .find(|e| e.id == id)
+        .ok_or(AppCommandError::NotFound {
+            entity: "entity".into(),
+            id: u64::from(entity_id),
+        })?
+        .ai
+        .animation_studio_state
+        .clone();
+    Ok(blob)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

@@ -116,6 +116,8 @@ pub fn run() -> Result<(), AppError> {
             commands::animation::animation_job_get,
             commands::animation::animation_job_clip,
             commands::animation::animation_cancel_clip_job,
+            commands::animation::animation_studio_set_state,
+            commands::animation::animation_studio_get_state,
             // ai backend settings
             commands::ai::ai_clear_fal_api_key,
             commands::ai::ai_clear_google_ai_api_key,

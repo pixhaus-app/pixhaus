@@ -568,6 +568,11 @@ fn build_seedance_i2v_body(req: &ImageToVideoRequest) -> serde_json::Value {
         "image_url": data_uri(&req.image, "image/png"),
         "prompt": req.prompt,
         "resolution": "480p",
+        // Lock to 1:1 so the clip matches the square first frame. Seedance
+        // defaults aspect_ratio to "auto", which infers a non-square (~16:9)
+        // output from the square input; the frame extractor would then decode
+        // wide frames and the normalize step would crop the subject's sides.
+        "aspect_ratio": "1:1",
         "duration": "4",
         "generate_audio": false,
     });
@@ -970,6 +975,8 @@ mod tests {
         );
         assert_eq!(body["prompt"], "walk in place");
         assert_eq!(body["resolution"], "480p");
+        // Locked square so extraction/normalize keep the full subject.
+        assert_eq!(body["aspect_ratio"], "1:1");
         assert_eq!(body["generate_audio"], false);
         assert_eq!(body["seed"], 7);
         // Seedance has no frame-count / fps / negative-prompt controls.
