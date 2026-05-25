@@ -18,8 +18,7 @@ import WelcomeScreen from "./WelcomeScreen";
 import Canvas from "../canvas/Canvas";
 import FirstLaunchDialog from "../crash-reporting/FirstLaunchDialog";
 import {
-  crashReportingDialogShown,
-  crashReportingEnabled,
+  prefs,
   crashReportingUid,
   hydrateCrashReportingFromBackend,
   setCrashReportingEnabled,
@@ -76,8 +75,8 @@ const Shell: Component = () => {
         // braces: init Sentry from the localStorage-seeded signal so the
         // panic hook is wired up regardless of IPC health.
         console.error("[pixhaus] crash-reporting boot failed:", err);
-        initCrashReporting({ enabled: crashReportingEnabled(), uid: crashReportingUid });
-        setSentryEnabled(crashReportingEnabled());
+        initCrashReporting({ enabled: prefs.crashReportingEnabled, uid: crashReportingUid });
+        setSentryEnabled(prefs.crashReportingEnabled);
       });
 
     // Forward native menu events to the command dispatcher
@@ -174,7 +173,7 @@ const Shell: Component = () => {
       <VerbInvokeHost />
       <ToastHost />
 
-      <Show when={!crashReportingDialogShown()}>
+      <Show when={!prefs.crashReportingDialogShown}>
         <FirstLaunchDialog
           onAccept={() => answerCrashReportingDialog(true)}
           onDecline={() => answerCrashReportingDialog(false)}

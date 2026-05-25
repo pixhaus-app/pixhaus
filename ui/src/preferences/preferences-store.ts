@@ -1,4 +1,4 @@
-import { createSignal } from "solid-js";
+import { createStore } from "solid-js/store";
 import { crashReportingGetEnabled } from "../lib/commands/crash-reporting";
 import { loadStorageJSON } from "../lib/utils/storage";
 
@@ -57,68 +57,71 @@ function loadOrCreateUid(): string {
 }
 
 const initialTheme = loadTheme();
-const [theme, setThemeInternal] = createSignal<Theme>(initialTheme);
-const [keybindPreset, setKeybindPresetInternal] = createSignal<KeybindPreset>(loadPreset());
-const [customKeybinds, setCustomKeybindsInternal] =
-  createSignal<Record<string, string>>(loadCustom());
-const [crashReportingEnabled, setCrashReportingEnabledInternal] =
-  createSignal<boolean>(loadCrashEnabled());
-const [crashReportingDialogShown, setCrashReportingDialogShownInternal] =
-  createSignal<boolean>(loadCrashDialogShown());
-// Flips on the first user-initiated toggle (Preferences UI, first-launch
-// dialog, etc). The hydrator reads this to bail out if the user changed
-// the preference between the IPC starting and the response landing — the
-// user's newer choice wins. Internal-only; not exported.
-const [crashReportingUserTouched, setCrashReportingUserTouchedInternal] =
-  createSignal<boolean>(false);
+
+// One store for editor preferences. Reads are prefs.theme, prefs.keybindPreset,
+// prefs.crashReportingEnabled, etc.; writes go through the named setters (which
+// also persist to localStorage). crashReportingUserTouched flips on the first
+// user-initiated toggle so the hydrator can bail if the user changed the
+// preference mid-IPC — the user's newer choice wins.
+interface PreferencesState {
+  theme: Theme;
+  keybindPreset: KeybindPreset;
+  customKeybinds: Record<string, string>;
+  crashReportingEnabled: boolean;
+  crashReportingDialogShown: boolean;
+  crashReportingUserTouched: boolean;
+}
+
+export const [prefs, setPrefs] = createStore<PreferencesState>({
+  theme: initialTheme,
+  keybindPreset: loadPreset(),
+  customKeybinds: loadCustom(),
+  crashReportingEnabled: loadCrashEnabled(),
+  crashReportingDialogShown: loadCrashDialogShown(),
+  crashReportingUserTouched: false,
+});
 
 // Apply initial theme to DOM immediately on module load (the literal value,
-// not the signal, to avoid a reactive-outside-owner warning).
+// not a reactive read, to avoid a reactive-outside-owner warning).
 document.documentElement.dataset["theme"] = initialTheme;
-
-export { theme, keybindPreset, customKeybinds, crashReportingEnabled, crashReportingDialogShown };
 
 /** Anonymous stable identifier for the local installation. */
 export const crashReportingUid: string = loadOrCreateUid();
 
 export function setTheme(t: Theme): void {
-  setThemeInternal(t);
+  setPrefs("theme", t);
   localStorage.setItem(THEME_KEY, t);
   document.documentElement.dataset["theme"] = t;
 }
 
 export function setKeybindPreset(p: KeybindPreset): void {
-  setKeybindPresetInternal(p);
+  setPrefs("keybindPreset", p);
   localStorage.setItem(PRESET_KEY, p);
 }
 
 export function setCustomKeybind(commandId: string, combo: string): void {
-  setCustomKeybindsInternal((prev) => {
-    const next = { ...prev, [commandId]: combo };
-    localStorage.setItem(CUSTOM_KEY, JSON.stringify(next));
-    return next;
-  });
+  const next = { ...prefs.customKeybinds, [commandId]: combo };
+  localStorage.setItem(CUSTOM_KEY, JSON.stringify(next));
+  setPrefs("customKeybinds", next);
 }
 
 export function clearCustomKeybind(commandId: string): void {
-  setCustomKeybindsInternal((prev) => {
-    const next = { ...prev };
-    delete next[commandId];
-    localStorage.setItem(CUSTOM_KEY, JSON.stringify(next));
-    return next;
-  });
+  const next = { ...prefs.customKeybinds };
+  delete next[commandId];
+  localStorage.setItem(CUSTOM_KEY, JSON.stringify(next));
+  setPrefs("customKeybinds", next);
 }
 
 export function setCrashReportingEnabled(enabled: boolean): void {
   // Mark the preference as user-touched so a late-arriving hydrator
   // response from app start can't clobber the choice we're recording here.
-  setCrashReportingUserTouchedInternal(true);
-  setCrashReportingEnabledInternal(enabled);
+  setPrefs("crashReportingUserTouched", true);
+  setPrefs("crashReportingEnabled", enabled);
   localStorage.setItem(CRASH_ENABLED_KEY, enabled ? "1" : "0");
 }
 
 export function markCrashReportingDialogShown(): void {
-  setCrashReportingDialogShownInternal(true);
+  setPrefs("crashReportingDialogShown", true);
   localStorage.setItem(CRASH_DIALOG_SHOWN_KEY, "1");
 }
 
@@ -140,13 +143,13 @@ export function markCrashReportingDialogShown(): void {
 export async function hydrateCrashReportingFromBackend(): Promise<boolean> {
   try {
     const backendValue = await crashReportingGetEnabled();
-    if (crashReportingUserTouched()) {
+    if (prefs.crashReportingUserTouched) {
       // The user flipped the toggle while the IPC was in flight; the
-      // newer choice is already in the signal and persisted to the
+      // newer choice is already in the store and persisted to the
       // backend via setCrashReportingEnabled. Don't apply the stale read.
-      return crashReportingEnabled();
+      return prefs.crashReportingEnabled;
     }
-    setCrashReportingEnabledInternal(backendValue);
+    setPrefs("crashReportingEnabled", backendValue);
     localStorage.setItem(CRASH_ENABLED_KEY, backendValue ? "1" : "0");
     return backendValue;
   } catch (err: unknown) {
@@ -154,6 +157,6 @@ export async function hydrateCrashReportingFromBackend(): Promise<boolean> {
       "[pixhaus] crash_reporting_get_enabled failed, falling back to localStorage:",
       err,
     );
-    return crashReportingEnabled();
+    return prefs.crashReportingEnabled;
   }
 }

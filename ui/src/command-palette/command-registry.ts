@@ -3,7 +3,7 @@ import { isCommandPaletteOpen, openCommandPalette, closeCommandPalette } from ".
 import { openPreferences } from "../preferences/preferences-state";
 import { openCompositionLibrary } from "../composition-library/composition-library-state";
 import { openAnimationStudio } from "../animation/animation-studio-state";
-import { keybindPreset, customKeybinds } from "../preferences/preferences-store";
+import { prefs } from "../preferences/preferences-store";
 import { ASEPRITE_DEFAULTS, PHOTOSHOP_DEFAULTS, defaultCombo } from "../keybinds/defaults";
 import {
   createNewProject,
@@ -1443,9 +1443,9 @@ function openReferenceSheetEditorForSelectedSprite(): void {
 
 // Returns all commands with their current keybind resolved from preferences.
 export function getAllCommands(): ReadonlyArray<Command & { keybind?: string }> {
-  const preset = keybindPreset();
+  const preset = prefs.keybindPreset;
   const table = preset === "photoshop" ? PHOTOSHOP_DEFAULTS : ASEPRITE_DEFAULTS;
-  const custom = customKeybinds();
+  const custom = prefs.customKeybinds;
 
   return Array.from(COMMANDS.values()).map((cmd) => {
     const customCombo = custom[cmd.id];

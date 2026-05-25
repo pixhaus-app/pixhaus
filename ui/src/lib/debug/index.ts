@@ -45,10 +45,7 @@ import {
 import { clearSheetEntity } from "../../sheet/sheet-state";
 import { isCommandPaletteOpen } from "../../palette-state";
 import { isPreferencesOpen } from "../../preferences/preferences-state";
-import {
-  crashReportingDialogShown,
-  crashReportingEnabled,
-} from "../../preferences/preferences-store";
+import { prefs } from "../../preferences/preferences-store";
 import {
   clearDialogQueue,
   enqueueConfirm,
@@ -257,8 +254,8 @@ export function installDebugSurface(): void {
       },
     },
 
-    getCrashReportingEnabled: () => crashReportingEnabled(),
-    getCrashReportingDialogShown: () => crashReportingDialogShown(),
+    getCrashReportingEnabled: () => prefs.crashReportingEnabled,
+    getCrashReportingDialogShown: () => prefs.crashReportingDialogShown,
 
     ipc: {
       log: () => (w.__pixhaus_ipc_log__ ?? []).slice(),
