@@ -29,6 +29,31 @@ body,
   box-sizing: border-box;
 }
 
+/* Scrollbars — normalize across platforms. macOS WebKit uses overlay
+   scrollbars (zero layout width); Windows WebView2 (Chromium) reserves
+   space for classic scrollbars, which shifts content and shows thick grey
+   bars. Thin them everywhere so both platforms lay out the same. The
+   standard `scrollbar-*` properties cover current WebView2/Firefox; the
+   `::-webkit-` rules cover all Chromium. Individual panels override width. */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: var(--border-strong) transparent;
+}
+
+*::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+*::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+*::-webkit-scrollbar-thumb {
+  background: var(--border-strong);
+  border-radius: 4px;
+}
+
 button {
   font: inherit;
   cursor: pointer;
@@ -56,6 +81,13 @@ select {
   --bg-hover: #252530;
   --bg-active: #2c2c3a;
   --bg-selection: #2a3a5c;
+  /* Inset background for text/number inputs. Aliases an existing token so
+     theme overrides of the underlying surface propagate (var() resolves
+     lazily at use). Referenced by sheet.css; was previously undefined. */
+  --bg-input: var(--bg-active);
+  /* Base colour under the checkerboard in the animation-studio sheet
+     canvas. Previously undefined, which left the canvas with no backdrop. */
+  --bg-canvas: var(--bg-app);
 
   /* Borders */
   --border: #2a2a35;
@@ -97,6 +129,11 @@ select {
   /* Transition */
   --transition-fast: 80ms ease;
   --transition-mid: 150ms ease;
+
+  /* Monospace stack. Geist Mono is bundled (@fontsource/geist-mono in
+     main.tsx) so it resolves identically on every OS; the rest are
+     fallbacks. Referenced by sheet.css; was previously undefined. */
+  --font-mono: "Geist Mono", "Cascadia Code", Consolas, monospace;
 
   /* brand/tokens.css aliases — consumed by S47 website sharing this token set */
   --color-bg-app: var(--bg-app);
@@ -1124,7 +1161,20 @@ body {
 
 .tool-option-range {
   width: 120px;
+  /* Pin the height so the native slider occupies the same row space on
+     Safari (macOS) and Chromium (Windows) — their default range heights
+     differ, which shifted these rows between platforms. */
+  height: 16px;
   vertical-align: middle;
+  /* Brand-tint the native control. accent-color keeps native rendering
+     (and is honoured by both engines), so it stays consistent without the
+     fragility of fully custom thumb/track styling. */
+  accent-color: var(--accent);
+}
+
+.tool-option-radio input,
+.tool-option-checkbox input {
+  accent-color: var(--accent);
 }
 
 .tool-option-value {
