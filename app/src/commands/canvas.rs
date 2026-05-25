@@ -26,7 +26,8 @@ use pixhaus_core::transforms::{
 use pixhaus_io::pixhaus::PixelBufferEntry;
 use pixhaus_vectorize::{CenterlineConfig, VectorImage, centerline_vectorize};
 use serde::{Deserialize, Serialize};
-use tauri::{AppHandle, Emitter, State};
+use tauri::ipc::{Channel, InvokeResponseBody};
+use tauri::{AppHandle, Emitter, Manager, State};
 
 use crate::error::{AppCommandError, CommandResult};
 use crate::pixel_history::{PixelOp, PixelOpBatch};
@@ -267,6 +268,117 @@ pub struct TileDirtyPayload {
     pub data: String,
 }
 
+/// Byte length of a binary tile frame header: six little-endian `u32`
+/// fields (`sprite_id`, `frame_index`, `tile_x`, `tile_y`, `width`,
+/// `height`) followed by the raw RGBA8 bytes. Kept in sync with the decoder
+/// in `ui/src/canvas/Canvas.tsx`.
+const TILE_FRAME_HEADER_LEN: usize = 24;
+
+/// Geometry of one composited tile: which sprite/frame/tile it covers and
+/// its pixel dimensions. Groups the fields [`send_tile`] and the binary
+/// frame header share so the function stays under the argument-count lint.
+struct TileSlice {
+    sprite_id: u32,
+    frame_index: u32,
+    tile_x: u32,
+    tile_y: u32,
+    width: u32,
+    height: u32,
+}
+
+/// Registers the renderer's binary tile channel.
+///
+/// The frontend creates a `Channel` and passes it here once per renderer
+/// init. From then on composited tiles travel through the channel as raw
+/// bytes instead of base64 `canvas:tile-dirty` events — the hot path that
+/// makes drawing usable on `WebView2` (Windows). Replaces any previously
+/// registered channel (e.g. after a webview reload).
+#[tauri::command(async)]
+pub async fn canvas_set_tile_channel(
+    channel: Channel<InvokeResponseBody>,
+    state: State<'_, AppState>,
+) -> Result<(), String> {
+    let mut guard = state
+        .tile_channel
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    *guard = Some(channel);
+    Ok(())
+}
+
+/// Packs a tile into the binary frame the renderer's channel decoder
+/// expects: a six-field little-endian `u32` header (see
+/// [`TILE_FRAME_HEADER_LEN`]) followed by the raw RGBA bytes. The matching
+/// decoder lives in `ui/src/canvas/Canvas.tsx`.
+fn encode_tile_frame(slice: &TileSlice, rgba: &[u8]) -> Vec<u8> {
+    let mut buf = Vec::with_capacity(TILE_FRAME_HEADER_LEN + rgba.len());
+    for field in [
+        slice.sprite_id,
+        slice.frame_index,
+        slice.tile_x,
+        slice.tile_y,
+        slice.width,
+        slice.height,
+    ] {
+        buf.extend_from_slice(&field.to_le_bytes());
+    }
+    buf.extend_from_slice(rgba);
+    buf
+}
+
+/// Ships one composited tile to the renderer.
+///
+/// Fast path: when the renderer has registered a binary channel
+/// (`canvas_set_tile_channel`), pack a `[u32; 6]` little-endian header plus
+/// the raw RGBA bytes and send them as `InvokeResponseBody::Raw`. Tauri
+/// routes payloads over 1 KiB through the webview's fetch transport, which
+/// avoids base64 inflation and the slow JSON event bridge on `WebView2`.
+///
+/// Fallback: no channel registered yet (the first composited tiles can fire
+/// before the renderer's setup command lands) — emit the legacy base64
+/// `canvas:tile-dirty` event so the tile is not lost. Exactly one transport
+/// runs per tile, so the renderer never double-uploads.
+///
+/// Both paths are fire-and-forget: a send/emit failure is logged, never
+/// propagated, so a transient IPC hiccup can't fail the drawing command.
+fn send_tile(app: &AppHandle, slice: &TileSlice, rgba: &[u8]) {
+    let &TileSlice {
+        sprite_id,
+        frame_index,
+        tile_x,
+        tile_y,
+        width,
+        height,
+    } = slice;
+    if let Some(state) = app.try_state::<AppState>() {
+        let channel = state
+            .tile_channel
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .clone();
+        if let Some(channel) = channel {
+            let frame = encode_tile_frame(slice, rgba);
+            if let Err(err) = channel.send(InvokeResponseBody::Raw(frame)) {
+                tracing::warn!("failed to send tile ({tile_x},{tile_y}) over channel: {err}");
+            }
+            return;
+        }
+    }
+
+    let payload = TileDirtyPayload {
+        sprite_id,
+        frame_index,
+        tile_x,
+        tile_y,
+        width,
+        height,
+        data: base64::engine::general_purpose::STANDARD.encode(rgba),
+    };
+    if let Err(err) = app.emit("canvas:tile-dirty", payload) {
+        tracing::warn!("failed to emit canvas:tile-dirty tile ({tile_x},{tile_y}): {err}");
+    }
+}
+
 /// Builds an all-transparent `TileDirtyPayload` for a tile of the given size.
 ///
 /// Used by the (currently dormant) `emit_tile_dirty_for_sprite` helper.
@@ -345,10 +457,10 @@ fn emit_tile_dirty_for_sprite(
     }
 }
 
-/// Emits `canvas:tile-dirty` events for every tile of a pixel buffer after
-/// a drawing operation.  One event per tile; each carries the extracted
-/// RGBA bytes for its region.  Stride-aware: reads at `buf_stride` bytes
-/// per row and packs the tile data tight before base64-encoding.
+/// Ships every tile of a pixel buffer to the renderer after a drawing
+/// operation. One tile per call to [`send_tile`]; each carries the extracted
+/// RGBA bytes for its region. Stride-aware: reads at `buf_stride` bytes per
+/// row and packs the tile data tight before handing it to the transport.
 pub(crate) fn emit_buffer_tiles(
     app: &AppHandle,
     sprite_id: u32,
@@ -377,19 +489,18 @@ pub(crate) fn emit_buffer_tiles(
                 tile_bytes[dst..dst + copy_len].copy_from_slice(&pixels[src..src + copy_len]);
             }
 
-            let data = base64::engine::general_purpose::STANDARD.encode(&tile_bytes);
-            let payload = TileDirtyPayload {
-                sprite_id,
-                frame_index,
-                tile_x: tx,
-                tile_y: ty,
-                width: w,
-                height: h,
-                data,
-            };
-            if let Err(err) = app.emit("canvas:tile-dirty", payload) {
-                tracing::warn!("failed to emit canvas:tile-dirty tile ({tx},{ty}): {err}");
-            }
+            send_tile(
+                app,
+                &TileSlice {
+                    sprite_id,
+                    frame_index,
+                    tile_x: tx,
+                    tile_y: ty,
+                    width: w,
+                    height: h,
+                },
+                &tile_bytes,
+            );
         }
     }
 }
@@ -990,8 +1101,8 @@ fn dirty_tile_range(
     Some((tx_min, tx_max, ty_min, ty_max))
 }
 
-/// Emits `canvas:tile-dirty` for the tiles that cover the painted
-/// region of `new_points` (plus brush radius). Other tiles are
+/// Ships the tiles that cover the painted region of `new_points` (plus
+/// brush radius) to the renderer via [`send_tile`]. Other tiles are
 /// untouched by this extend and the renderer's tile cache is still
 /// valid for them.
 #[allow(
@@ -1033,19 +1144,18 @@ fn emit_dirty_tiles_for_points(
                 let copy_len = (w as usize * 4).min(pixels.len().saturating_sub(src));
                 tile_bytes[dst..dst + copy_len].copy_from_slice(&pixels[src..src + copy_len]);
             }
-            let data = base64::engine::general_purpose::STANDARD.encode(&tile_bytes);
-            let payload = TileDirtyPayload {
-                sprite_id: session.sprite_id.get(),
-                frame_index: session.frame_index,
-                tile_x: tx,
-                tile_y: ty,
-                width: w,
-                height: h,
-                data,
-            };
-            if let Err(err) = app.emit("canvas:tile-dirty", payload) {
-                tracing::warn!("failed to emit canvas:tile-dirty tile ({tx},{ty}): {err}");
-            }
+            send_tile(
+                app,
+                &TileSlice {
+                    sprite_id: session.sprite_id.get(),
+                    frame_index: session.frame_index,
+                    tile_x: tx,
+                    tile_y: ty,
+                    width: w,
+                    height: h,
+                },
+                &tile_bytes,
+            );
         }
     }
 }
@@ -2673,6 +2783,32 @@ mod tests {
         // 4096 × 2048 sprite → 16 × 8 tile grid.
         assert_eq!(4096u32.div_ceil(TILE_SIZE), 16);
         assert_eq!(2048u32.div_ceil(TILE_SIZE), 8);
+    }
+
+    #[test]
+    fn encode_tile_frame_header_then_payload() {
+        // Header is six little-endian u32s in field order, then raw RGBA.
+        // The decoder in ui/src/canvas/Canvas.tsx reads the same layout.
+        let slice = TileSlice {
+            sprite_id: 7,
+            frame_index: 2,
+            tile_x: 1,
+            tile_y: 3,
+            width: 1,
+            height: 1,
+        };
+        let rgba = [10u8, 20, 30, 40];
+        let buf = encode_tile_frame(&slice, &rgba);
+
+        assert_eq!(buf.len(), TILE_FRAME_HEADER_LEN + rgba.len());
+        let field = |i: usize| u32::from_le_bytes(buf[i..i + 4].try_into().unwrap());
+        assert_eq!(field(0), 7, "sprite_id");
+        assert_eq!(field(4), 2, "frame_index");
+        assert_eq!(field(8), 1, "tile_x");
+        assert_eq!(field(12), 3, "tile_y");
+        assert_eq!(field(16), 1, "width");
+        assert_eq!(field(20), 1, "height");
+        assert_eq!(&buf[TILE_FRAME_HEADER_LEN..], &rgba);
     }
 
     #[test]
