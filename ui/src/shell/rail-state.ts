@@ -19,7 +19,7 @@
 import { createMemo } from "solid-js";
 import { createStore } from "solid-js/store";
 import { tool, BRUSH_TOOLS } from "../canvas/tools/tool-state";
-import { selectTool } from "../canvas/select/select-state";
+import { select } from "../canvas/select/select-state";
 import { activeTilemapCtx } from "../tilemap/tilemap-state";
 
 export type SectionId =
@@ -92,7 +92,7 @@ function autoOpen(id: SectionId): boolean {
     case "select":
       // Auto-open whenever the user has the wand tool active; the
       // section body shows nothing useful for other select tools.
-      return selectTool() === "wand";
+      return select.selectTool === "wand";
     case "tilemap":
       return activeTilemapCtx() !== null;
     case "color":

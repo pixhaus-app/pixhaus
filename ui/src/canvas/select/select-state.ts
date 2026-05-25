@@ -1,31 +1,24 @@
 // Selection tool state (stream S16).
 //
-// Module-level signals so the canvas input handler, the command registry,
-// and future tool-option panels all share the same reactive state without
-// circular imports. Mirrors the tilemap-state.ts pattern.
+// One Solid store shared by the canvas input handler, the command registry,
+// and the tool-option panels. Reads are `select.selectTool`,
+// `select.marqueeDrag`, etc.; writes go through the named setter functions.
 
-import { createSignal } from "solid-js";
+import { createStore } from "solid-js/store";
 import type { Rgba } from "../../lib/types";
-
-// ── Tool type ────────────────────────────────────────────────────────────────
 
 /**
  * Which selection tool is active.
  *
  * "rect" and "ellipse" are marquee tools driven by drag.
- * "lasso" accumulates click-points into a polygon (stub until S01).
- * "wand" and "color-range" use pixel data (stub until S01).
+ * "lasso" accumulates click-points into a polygon.
+ * "wand" and "color-range" use pixel data.
  */
 export type SelectTool = "rect" | "ellipse" | "lasso" | "wand" | "color-range";
 
-export const [selectTool, setSelectTool] = createSignal<SelectTool>("rect");
-
-// ── Drag state ───────────────────────────────────────────────────────────────
-
 /**
- * Live drag state for marquee tools (rect, ellipse).
- * null = no drag in progress.
- * All values are canvas coordinates (sprite pixels).
+ * Live drag state for marquee tools (rect, ellipse). null = no drag in
+ * progress. All values are canvas coordinates (sprite pixels).
  */
 export type MarqueeDrag = {
   startX: number;
@@ -34,57 +27,61 @@ export type MarqueeDrag = {
   currentY: number;
 };
 
-export const [marqueeDrag, setMarqueeDrag] = createSignal<MarqueeDrag | null>(null);
+export interface SelectState {
+  selectTool: SelectTool;
+  marqueeDrag: MarqueeDrag | null;
+  /** Accumulated polygon points for the lasso tool, in canvas coordinates. */
+  lassoPoints: Array<[number, number]>;
+  /** Magic-wand flood-fill tolerance (0 = exact, 255 = match all). */
+  wandTolerance: number;
+  /** Pixel connectivity for the flood-fill expansion. */
+  wandConnectivity: "four" | "eight";
+  /** Run a gap-closing pre-pass before flood-fill (OpenToonz "auto-close"). */
+  wandGapClose: boolean;
+  /** Maximum gap (px) the auto-close pre-pass will bridge. */
+  wandGapDistance: number;
+  colorRangeTolerance: number;
+  /** Target color for the color-range selector (null = nothing picked). */
+  colorRangeTarget: Rgba | null;
+  /** Shift held: new selection is unioned with the current one. */
+  selectionAddMode: boolean;
+  /** Alt held: new selection is subtracted from the current one. */
+  selectionSubtractMode: boolean;
+}
 
-// ── Lasso ───────────────────────────────────────────────────────────────────
+export const [select, setSelect] = createStore<SelectState>({
+  selectTool: "rect",
+  marqueeDrag: null,
+  lassoPoints: [],
+  wandTolerance: 32,
+  wandConnectivity: "four",
+  wandGapClose: false,
+  wandGapDistance: 10,
+  colorRangeTolerance: 32,
+  colorRangeTarget: null,
+  selectionAddMode: false,
+  selectionSubtractMode: false,
+});
 
-/** Accumulated polygon points for the lasso tool, in canvas coordinates. */
-export const [lassoPoints, setLassoPoints] = createSignal<Array<[number, number]>>([]);
+// ── Setters ──────────────────────────────────────────────────────────────────
 
-// ── Magic wand options ───────────────────────────────────────────────────────
-
-/** Flood-fill tolerance (0 = exact match, 255 = match all). */
-export const [wandTolerance, setWandTolerance] = createSignal(32);
-
-/** Pixel connectivity for the flood-fill expansion. */
-export const [wandConnectivity, setWandConnectivity] = createSignal<"four" | "eight">("four");
-
-/**
- * When true, the magic wand runs a gap-closing pre-pass before flood-fill,
- * bridging near-miss outline endpoints so almost-closed shapes still
- * select cleanly. Matches OpenToonz's "auto-close" wand behaviour.
- */
-export const [wandGapClose, setWandGapClose] = createSignal(false);
-
-/** Maximum gap (in pixels) the auto-close pre-pass will try to bridge. */
-export const [wandGapDistance, setWandGapDistance] = createSignal(10);
-
-// ── Color range options ──────────────────────────────────────────────────────
-
-/** Tolerance for the color-range selector. */
-export const [colorRangeTolerance, setColorRangeTolerance] = createSignal(32);
-
-/** Target color for the color-range selector (null = nothing picked yet). */
-export const [colorRangeTarget, setColorRangeTarget] = createSignal<Rgba | null>(null);
-
-// ── Boolean modifier flags ───────────────────────────────────────────────────
-
-// Held-key flags updated by the canvas input handler on keydown/keyup.
-
-/** Shift held: new selection is unioned with the current one. */
-export const [selectionAddMode, setSelectionAddMode] = createSignal(false);
-
-/** Alt held: new selection is subtracted from the current one. */
-export const [selectionSubtractMode, setSelectionSubtractMode] = createSignal(false);
+export const setSelectTool = (v: SelectTool): void => setSelect("selectTool", v);
+export const setMarqueeDrag = (v: MarqueeDrag | null): void => setSelect("marqueeDrag", v);
+export const setLassoPoints = (v: Array<[number, number]>): void => setSelect("lassoPoints", v);
+export const setWandTolerance = (v: number): void => setSelect("wandTolerance", v);
+export const setWandConnectivity = (v: "four" | "eight"): void => setSelect("wandConnectivity", v);
+export const setWandGapClose = (v: boolean): void => setSelect("wandGapClose", v);
+export const setWandGapDistance = (v: number): void => setSelect("wandGapDistance", v);
+export const setColorRangeTolerance = (v: number): void => setSelect("colorRangeTolerance", v);
+export const setColorRangeTarget = (v: Rgba | null): void => setSelect("colorRangeTarget", v);
+export const setSelectionAddMode = (v: boolean): void => setSelect("selectionAddMode", v);
+export const setSelectionSubtractMode = (v: boolean): void => setSelect("selectionSubtractMode", v);
 
 // ── Geometry helpers ─────────────────────────────────────────────────────────
 
 /**
  * Converts a marquee drag into a normalised { x, y, width, height } rect.
- *
- * "Normalised" means x < x+width and y < y+height regardless of which
- * direction the user dragged. The result is in canvas coordinates and
- * always has non-negative dimensions.
+ * "Normalised" means non-negative width/height regardless of drag direction.
  */
 export function dragToBounds(drag: MarqueeDrag): {
   x: number;
@@ -99,10 +96,7 @@ export function dragToBounds(drag: MarqueeDrag): {
   return { x, y, width, height };
 }
 
-/**
- * Snaps a canvas coordinate to the nearest integer pixel boundary.
- * Selection tools operate on whole pixels, not sub-pixel positions.
- */
+/** Snaps a canvas coordinate to the nearest integer pixel boundary. */
 export function snapToPixel(v: number): number {
   return Math.floor(v);
 }
@@ -112,16 +106,16 @@ export function dragIsNonEmpty(drag: MarqueeDrag): boolean {
   return Math.abs(drag.currentX - drag.startX) >= 1 && Math.abs(drag.currentY - drag.startY) >= 1;
 }
 
-// ── Reset ────────────────────────────────────────────────────────────────────
-
 /**
  * Clears all in-progress drag / lasso / color-range state.
  * Called on project close and on Escape.
  */
 export function resetSelectState(): void {
-  setMarqueeDrag(null);
-  setLassoPoints([]);
-  setColorRangeTarget(null);
-  setSelectionAddMode(false);
-  setSelectionSubtractMode(false);
+  setSelect({
+    marqueeDrag: null,
+    lassoPoints: [],
+    colorRangeTarget: null,
+    selectionAddMode: false,
+    selectionSubtractMode: false,
+  });
 }
