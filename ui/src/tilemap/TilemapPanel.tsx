@@ -20,13 +20,12 @@ import {
 import type { TileProperties, Tileset, TilesetId, SpriteId } from "../lib/types";
 import { activeSpriteId } from "../canvas/canvas-state";
 import {
-  activeTilemapCtx,
+  tilemapUi,
   setActiveTilemapCtx,
-  tilemapTool,
   setTilemapTool,
-  autotileMode,
   setAutotileMode,
   resetTileSelection,
+  type ActiveTilemapCtx,
 } from "./tilemap-state";
 import { tilesetList, tilesetAdd, tilesetRename, tilesetSetTileMetadata } from "../lib/commands";
 import { reportCommandFailure } from "../lib/utils/errors";
@@ -224,7 +223,7 @@ type Props = {
 };
 
 const TilemapPanel: Component<Props> = (props) => {
-  const ctx = activeTilemapCtx;
+  const ctx = (): ActiveTilemapCtx | null => tilemapUi.activeTilemapCtx;
   const tileset = createMemo(() => ctx()?.tileset ?? null);
   const spriteId = activeSpriteId;
 
@@ -303,7 +302,7 @@ const TilemapPanel: Component<Props> = (props) => {
           <div class="tilemap-panel__tool-row">
             <button
               class="tilemap-panel__tool-btn"
-              classList={{ "tilemap-panel__tool-btn--active": tilemapTool() === "pencil" }}
+              classList={{ "tilemap-panel__tool-btn--active": tilemapUi.tilemapTool === "pencil" }}
               title="Pencil — place tile (P)"
               onClick={() => setTilemapTool("pencil")}
             >
@@ -311,7 +310,7 @@ const TilemapPanel: Component<Props> = (props) => {
             </button>
             <button
               class="tilemap-panel__tool-btn"
-              classList={{ "tilemap-panel__tool-btn--active": tilemapTool() === "erase" }}
+              classList={{ "tilemap-panel__tool-btn--active": tilemapUi.tilemapTool === "erase" }}
               title="Eraser — clear cell (E)"
               onClick={() => setTilemapTool("erase")}
             >
@@ -320,7 +319,7 @@ const TilemapPanel: Component<Props> = (props) => {
             <label class="tilemap-panel__autotile-toggle">
               <input
                 type="checkbox"
-                checked={autotileMode()}
+                checked={tilemapUi.autotileMode}
                 onChange={(e) => setAutotileMode(e.currentTarget.checked)}
               />
               Autotile

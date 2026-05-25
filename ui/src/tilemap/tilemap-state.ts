@@ -6,7 +6,7 @@
 // scoped) because the tileset panel, the rule editor, and the canvas input
 // handler all read and write the same signals.
 
-import { createEffect, createSignal, untrack } from "solid-js";
+import { createEffect, untrack } from "solid-js";
 import { createStore } from "solid-js/store";
 import type {
   AutotileKind,
@@ -43,7 +43,48 @@ export type ActiveTilemapCtx = {
   tileset: Tileset;
 };
 
-export const [activeTilemapCtx, setActiveTilemapCtx] = createSignal<ActiveTilemapCtx | null>(null);
+// UI-only tilemap state in one store. Reads are tilemapUi.activeTilemapCtx,
+// tilemapUi.selectedTileIndex, etc.; writes go through the setters below.
+// (The autotile rule list stays its own array store — see autotileRules.)
+interface TilemapUiState {
+  /** Set when a tilemap layer is foregrounded; null otherwise.
+   * installTilemapCtxSync keeps this in sync with the active layer; direct
+   * setActiveTilemapCtx calls are for in-panel edits (rename, switch). */
+  activeTilemapCtx: ActiveTilemapCtx | null;
+  /** Selected tile index; 0 is the empty-tile sentinel, default 1 (first
+   * paintable) so the pencil starts in paint mode. */
+  selectedTileIndex: number;
+  /** Flags to apply when placing a tile (flip X / Y / diagonal). */
+  selectedTileFlags: number;
+  tilemapTool: TilemapTool;
+  /** When true the brush resolves the autotile rule set after each stroke. */
+  autotileMode: boolean;
+  /** Autotile kind for the active tileset, mirrored from Tileset.autotile so
+   * the editor re-renders without a round-trip. Survives tab switches. */
+  localAutotileKind: AutotileKind | null;
+  autotileDefaultTile: TileIndex;
+}
+
+export const [tilemapUi, setTilemapUi] = createStore<TilemapUiState>({
+  activeTilemapCtx: null,
+  selectedTileIndex: 1,
+  selectedTileFlags: 0,
+  tilemapTool: "pencil",
+  autotileMode: false,
+  localAutotileKind: null,
+  autotileDefaultTile: 0 as TileIndex,
+});
+
+export const setActiveTilemapCtx = (v: ActiveTilemapCtx | null): void =>
+  setTilemapUi("activeTilemapCtx", v);
+export const setSelectedTileIndex = (v: number): void => setTilemapUi("selectedTileIndex", v);
+export const setSelectedTileFlags = (v: number): void => setTilemapUi("selectedTileFlags", v);
+export const setTilemapTool = (v: TilemapTool): void => setTilemapUi("tilemapTool", v);
+export const setAutotileMode = (v: boolean): void => setTilemapUi("autotileMode", v);
+export const setLocalAutotileKind = (v: AutotileKind | null): void =>
+  setTilemapUi("localAutotileKind", v);
+export const setAutotileDefaultTile = (v: TileIndex): void =>
+  setTilemapUi("autotileDefaultTile", v);
 
 // Tilesets for the active sprite. The source returns the sprite id only when
 // a tilemap layer is foregrounded, so this stays as lazy as the old ad-hoc
@@ -96,7 +137,7 @@ export function installTilemapCtxSync(): void {
     }
 
     const tilesetId = layer.kind.tileset;
-    const cur = untrack(() => activeTilemapCtx());
+    const cur = untrack(() => tilemapUi.activeTilemapCtx);
 
     // Same tileset already bound: keep the current ctx (which in-panel edits
     // update in place) and only refresh the layer id when switching between
@@ -116,55 +157,23 @@ export function installTilemapCtxSync(): void {
   });
 }
 
-// ── Tile selection ─────────────────────────────────────────────────────────
-
-// Selected tile index in the active tileset.
-// Index 0 is the empty-tile sentinel; default to 1 (the first paintable
-// tile) so the pencil tool starts in paint mode rather than erase mode.
-// Users can still select index 0 explicitly to paint "empty" if they
-// want the autotile editor's empty default.
-export const [selectedTileIndex, setSelectedTileIndex] = createSignal<number>(1);
-
-// Bitfield of flags to apply when placing a tile (flip X, flip Y, diagonal).
-export const [selectedTileFlags, setSelectedTileFlags] = createSignal<number>(0);
-
 // ── Tool ──────────────────────────────────────────────────────────────────
 
 export type TilemapTool = "pencil" | "erase";
 
-export const [tilemapTool, setTilemapTool] = createSignal<TilemapTool>("pencil");
-
-// ── Autotile mode ──────────────────────────────────────────────────────────
-
-// When true, the brush resolves the autotile rule set after each stroke rather
-// than placing the selected tile index literally.
-export const [autotileMode, setAutotileMode] = createSignal(false);
-
 // ── Local autotile rule state ──────────────────────────────────────────────
-// Autotile kind / rule set for the active tileset. The editor mirrors
-// `Tileset.autotile` here so the UI can re-render without round-tripping
-// every keystroke; `tilesetSetAutotile` debounces the persist back to
-// the backend.
-//
-// These signals live at module scope (not inside AutotileRuleEditor) so the
-// rules and default_tile survive the editor unmounting — e.g. when the user
-// switches tabs. Solid's <Tabs/> implementation here destroys the inactive
-// panel's components, so any state inside the component is lost on every
-// tab switch.
-
-export const [localAutotileKind, setLocalAutotileKind] = createSignal<AutotileKind | null>(null);
-
+// The autotile rule list mirrors `Tileset.autotile` so the editor re-renders
+// without round-tripping every keystroke; `tilesetSetAutotile` debounces the
+// persist back to the backend. It lives at module scope (not inside
+// AutotileRuleEditor) so it survives the editor unmounting on tab switch.
+// Kept as its own array store for fine-grained per-rule updates.
 export const [autotileRules, setAutotileRules] = createStore<AutotileRule[]>([]);
-
-export const [autotileDefaultTile, setAutotileDefaultTile] = createSignal<TileIndex>(
-  0 as TileIndex,
-);
 
 // ── Helpers ────────────────────────────────────────────────────────────────
 
 /** Returns true when the canvas is in tilemap-paint mode. */
 export function isTilemapActive(): boolean {
-  return activeTilemapCtx() !== null;
+  return tilemapUi.activeTilemapCtx !== null;
 }
 
 /**

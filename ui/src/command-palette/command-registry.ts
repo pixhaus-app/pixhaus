@@ -88,12 +88,7 @@ import {
   toggleSection,
   toggleTimelineCollapsed,
 } from "../shell/rail-state";
-import {
-  tilemapTool,
-  setTilemapTool,
-  autotileMode,
-  setAutotileMode,
-} from "../tilemap/tilemap-state";
+import { tilemapUi, setTilemapTool, setAutotileMode } from "../tilemap/tilemap-state";
 import { tool as toolState, setActiveTool, type ToolType } from "../canvas/tools/tool-state";
 import {
   paletteAdd as paletteAddCmd,
@@ -791,7 +786,7 @@ const COMMANDS: ReadonlyMap<string, CommandEntry> = new Map<string, CommandEntry
       label: "Toggle autotile mode",
       category: "Tilemap",
       keywords: ["autotile", "auto", "wang", "rules"],
-      handler: () => setAutotileMode(!autotileMode()),
+      handler: () => setAutotileMode(!tilemapUi.autotileMode),
     },
   ],
   [
@@ -800,7 +795,7 @@ const COMMANDS: ReadonlyMap<string, CommandEntry> = new Map<string, CommandEntry
       id: "tilemap:toggle-tool",
       label: "Toggle tile tool (pencil/erase)",
       category: "Tilemap",
-      handler: () => setTilemapTool(tilemapTool() === "pencil" ? "erase" : "pencil"),
+      handler: () => setTilemapTool(tilemapUi.tilemapTool === "pencil" ? "erase" : "pencil"),
     },
   ],
 

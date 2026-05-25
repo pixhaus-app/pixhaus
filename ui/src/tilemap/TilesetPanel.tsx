@@ -8,14 +8,12 @@
 import { For, Show, createSignal, createMemo, onCleanup, type Component } from "solid-js";
 import type { CollisionShape, TileProperties, Tileset } from "../lib/types";
 import {
-  selectedTileIndex,
+  tilemapUi,
   setSelectedTileIndex,
-  selectedTileFlags,
   setSelectedTileFlags,
   TILE_FLIP_X,
   TILE_FLIP_Y,
   TILE_FLIP_DIAGONAL,
-  activeTilemapCtx,
   setActiveTilemapCtx,
 } from "./tilemap-state";
 import { activeFrameIndex, activeSpriteId, viewport } from "../canvas/canvas-state";
@@ -98,11 +96,11 @@ const TilesetPanel: Component<TilesetPanelProps> = (props) => {
   // ── Flags toolbar ────────────────────────────────────────────────────
 
   function toggleFlag(flag: number) {
-    setSelectedTileFlags((f) => f ^ flag);
+    setSelectedTileFlags(tilemapUi.selectedTileFlags ^ flag);
   }
 
   function hasFlag(flag: number): boolean {
-    return (selectedTileFlags() & flag) !== 0;
+    return (tilemapUi.selectedTileFlags & flag) !== 0;
   }
 
   // ── Capture-tile button ──────────────────────────────────────────────
@@ -156,7 +154,7 @@ const TilesetPanel: Component<TilesetPanelProps> = (props) => {
       });
       // Refresh ctx so the grid re-renders with the new tile_count;
       // pre-select the new tile so the user can paint immediately.
-      const ctx = activeTilemapCtx();
+      const ctx = tilemapUi.activeTilemapCtx;
       if (ctx && ctx.tilesetId === result.tileset.id) {
         setActiveTilemapCtx({ ...ctx, tileset: result.tileset });
       }
@@ -226,10 +224,10 @@ const TilesetPanel: Component<TilesetPanelProps> = (props) => {
               class="ts-panel__tile"
               classList={{
                 "ts-panel__tile--empty": index === 0,
-                "ts-panel__tile--selected": selectedTileIndex() === index,
+                "ts-panel__tile--selected": tilemapUi.selectedTileIndex === index,
               }}
               role="option"
-              aria-selected={selectedTileIndex() === index}
+              aria-selected={tilemapUi.selectedTileIndex === index}
               title={index === 0 ? "Empty tile" : `Tile ${tileLabel(index)}`}
               onClick={(e) => onTileClick(index, e)}
               onContextMenu={(e) => onTileContextMenu(index, e)}

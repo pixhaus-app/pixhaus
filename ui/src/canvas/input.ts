@@ -27,14 +27,7 @@ import { attachSelectInput } from "./select/select-input";
 import { transform } from "./transform/transform-state";
 import { snapZoom, clampZoom, zoomAt, screenToCanvas } from "./viewport";
 import { isEditableTarget } from "../keybinds/keybind-manager";
-import {
-  activeTilemapCtx,
-  localAutotileKind,
-  selectedTileIndex,
-  selectedTileFlags,
-  tilemapTool,
-  autotileMode,
-} from "../tilemap/tilemap-state";
+import { tilemapUi } from "../tilemap/tilemap-state";
 import { tilePlace, tileErase, tileAutotileApply } from "../lib/commands/tiles";
 import {
   canvasBeginStroke,
@@ -102,7 +95,7 @@ function dispatchTilePaint(
   el: HTMLElement,
   erase: boolean,
 ): void {
-  const ctx = activeTilemapCtx();
+  const ctx = tilemapUi.activeTilemapCtx;
   if (!ctx) return;
 
   const spriteId = activeSpriteId();
@@ -154,8 +147,8 @@ function dispatchTilePaint(
     return;
   }
 
-  if (autotileMode()) {
-    const kind = localAutotileKind() ?? ctx.tileset.autotile;
+  if (tilemapUi.autotileMode) {
+    const kind = tilemapUi.localAutotileKind ?? ctx.tileset.autotile;
     if (kind === null || kind === undefined) {
       reportCommandFailure(
         "tile autotile",
@@ -168,7 +161,7 @@ function dispatchTilePaint(
       layer_id: layerId,
       frame_index: frameIndex,
       kind,
-      source_tile: selectedTileIndex(),
+      source_tile: tilemapUi.selectedTileIndex,
     }).catch(onErr);
     return;
   }
@@ -179,7 +172,7 @@ function dispatchTilePaint(
     frame_index: frameIndex,
     cell_x: cell.cellX,
     cell_y: cell.cellY,
-    cell: { index: selectedTileIndex(), flags: selectedTileFlags() },
+    cell: { index: tilemapUi.selectedTileIndex, flags: tilemapUi.selectedTileFlags },
   }).catch(onErr);
 }
 
@@ -558,11 +551,11 @@ export function attachCanvasInput(el: HTMLElement): () => void {
     if (viewport.isSelectMode && !spaceHeld) return;
 
     // Tile-paint mode: left-click places, right-click erases.
-    if (activeTilemapCtx() !== null && !spaceHeld) {
+    if (tilemapUi.activeTilemapCtx !== null && !spaceHeld) {
       if (e.button === 0) {
         e.preventDefault();
         tilePaintActive = true;
-        tilePaintErase = tilemapTool() === "erase";
+        tilePaintErase = tilemapUi.tilemapTool === "erase";
         resetTilePaintStroke();
         dispatchTilePaint(e.clientX, e.clientY, el, tilePaintErase);
         return;
@@ -578,7 +571,7 @@ export function attachCanvasInput(el: HTMLElement): () => void {
     }
 
     // Drawing / fill tools: left-click only, no spacebar (spacebar pans).
-    if (e.button === 0 && !spaceHeld && activeTilemapCtx() === null) {
+    if (e.button === 0 && !spaceHeld && tilemapUi.activeTilemapCtx === null) {
       if (isFillTool()) {
         e.preventDefault();
         const [cx, cy] = canvasPointFromEvent(e, el);
