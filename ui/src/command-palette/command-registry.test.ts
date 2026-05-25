@@ -95,7 +95,7 @@ import {
 } from "../shell/rail-state";
 import { clearSheetEntity, setActiveSheetEntityId } from "../sheet/sheet-state";
 import { setActiveProject } from "../project-state";
-import { activeVerb, clearVerbCache, setActiveVerb } from "../lib/ai/verb-invoke-state";
+import { verbModal, clearVerbCache, setActiveVerb } from "../lib/ai/verb-invoke-state";
 
 const FAKE_PROJECT = {
   metadata: { name: "Test", version: "0.0.0" },
@@ -349,7 +349,7 @@ describe("dispatchCommand — ai", () => {
     // openVerbModal awaits verb_list before setting activeVerb; flush.
     await new Promise((r) => setTimeout(r, 0));
     expect(invokeMock).toHaveBeenCalledWith("verb_list", undefined);
-    expect(activeVerb()?.id).toBe("pixhaus.builtin.critique");
+    expect(verbModal.activeVerb?.id).toBe("pixhaus.builtin.critique");
   });
 
   it("ai:inbetween triggers a verb_list fetch and opens the modal for inbetween", async () => {
@@ -366,7 +366,7 @@ describe("dispatchCommand — ai", () => {
     dispatchCommand("ai:inbetween");
     await new Promise((r) => setTimeout(r, 0));
     expect(invokeMock).toHaveBeenCalledWith("verb_list", undefined);
-    expect(activeVerb()?.id).toBe("pixhaus.builtin.inbetween");
+    expect(verbModal.activeVerb?.id).toBe("pixhaus.builtin.inbetween");
   });
 });
 

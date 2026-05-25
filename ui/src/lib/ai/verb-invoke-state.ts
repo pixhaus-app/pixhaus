@@ -5,23 +5,36 @@
 // `<VerbInvokeHost>` component (mounted once in the shell) subscribes
 // and renders `ModalForm` accordingly.
 
-import { createSignal } from "solid-js";
+import { createStore } from "solid-js/store";
 import type { VerbInfo } from "../commands/verbs";
 
-/** Verb the modal is currently open for, or null when closed. */
-const [activeVerb, setActiveVerb] = createSignal<VerbInfo | null>(null);
+// One store for the verb-invoke modal host. Reads are verbModal.activeVerb,
+// verbModal.pendingPrefill, etc.; writes go through the setters below.
+interface VerbInvokeState {
+  /** Verb the modal is currently open for, or null when closed. */
+  activeVerb: VerbInfo | null;
+  /** In-flight invocation handle while a verb is running, else null. */
+  activeInvocationId: string | null;
+  /**
+   * Caller-supplied prefill for the next modal open, threaded into ModalForm's
+   * initialValues and cleared on close. Set before setActiveVerb() so the
+   * modal opens with seeded inputs (sheet-panel Refine passes panel_label,
+   * Re-run passes prompt).
+   */
+  pendingPrefill: Record<string, unknown> | null;
+}
 
-/** In-flight invocation handle while a verb is running, else null. */
-const [activeInvocationId, setActiveInvocationId] = createSignal<string | null>(null);
+export const [verbModal, setVerbModal] = createStore<VerbInvokeState>({
+  activeVerb: null,
+  activeInvocationId: null,
+  pendingPrefill: null,
+});
 
-/**
- * Caller-supplied prefill for the next modal open. Read by `VerbInvokeHost`
- * and threaded into `ModalForm`'s `initialValues`. Cleared on modal close.
- * Set this before calling `setActiveVerb()` so the modal opens with seeded
- * inputs (used by sheet-panel Refine to pass `panel_label` and by Re-run
- * to pass `prompt`).
- */
-const [pendingPrefill, setPendingPrefill] = createSignal<Record<string, unknown> | null>(null);
+export const setActiveVerb = (v: VerbInfo | null): void => setVerbModal("activeVerb", v);
+export const setActiveInvocationId = (v: string | null): void =>
+  setVerbModal("activeInvocationId", v);
+export const setPendingPrefill = (v: Record<string, unknown> | null): void =>
+  setVerbModal("pendingPrefill", v);
 
 /**
  * Memoised verb list — populated lazily on first open. The runtime's
@@ -30,15 +43,6 @@ const [pendingPrefill, setPendingPrefill] = createSignal<Record<string, unknown>
  * `clearVerbCache()` to refetch.
  */
 let verbsCache: Promise<VerbInfo[]> | null = null;
-
-export {
-  activeVerb,
-  setActiveVerb,
-  activeInvocationId,
-  setActiveInvocationId,
-  pendingPrefill,
-  setPendingPrefill,
-};
 
 export function getCachedVerbList(load: () => Promise<VerbInfo[]>): Promise<VerbInfo[]> {
   if (verbsCache === null) {

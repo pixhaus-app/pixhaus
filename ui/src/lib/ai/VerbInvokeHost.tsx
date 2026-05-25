@@ -12,9 +12,7 @@ import { pushToast } from "../toast/toast-state";
 import { reportCommandFailure } from "../utils/errors";
 import { verbCancel, verbInvoke } from "../commands/verbs";
 import {
-  activeInvocationId,
-  activeVerb,
-  pendingPrefill,
+  verbModal,
   setActiveInvocationId,
   setActiveVerb,
   setPendingPrefill,
@@ -28,7 +26,7 @@ const VerbInvokeHost: Component = () => {
   }
 
   function onSubmit(inputs: Record<string, unknown>): void {
-    const verb = activeVerb();
+    const verb = verbModal.activeVerb;
     if (verb === null) return;
     const verbId = verb.id;
     const label = verb.display_name;
@@ -62,13 +60,13 @@ const VerbInvokeHost: Component = () => {
   }
 
   return (
-    <Show when={activeVerb() !== null}>
+    <Show when={verbModal.activeVerb !== null}>
       <ModalForm
         open={true}
-        title={activeVerb()?.display_name ?? "Verb"}
-        schema={activeVerb()?.input_schema ?? {}}
-        runningInvocationId={activeInvocationId()}
-        initialValues={pendingPrefill() ?? undefined}
+        title={verbModal.activeVerb?.display_name ?? "Verb"}
+        schema={verbModal.activeVerb?.input_schema ?? {}}
+        runningInvocationId={verbModal.activeInvocationId}
+        initialValues={verbModal.pendingPrefill ?? undefined}
         onSubmit={onSubmit}
         onCancelRunning={onCancelRunning}
         onClose={close}
