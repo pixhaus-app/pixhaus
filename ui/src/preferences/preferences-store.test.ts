@@ -44,7 +44,7 @@ vi.mock("../lib/ipc", () => ({
 }));
 
 import {
-  crashReportingEnabled,
+  prefs,
   hydrateCrashReportingFromBackend,
   setCrashReportingEnabled,
 } from "./preferences-store";
@@ -74,7 +74,7 @@ describe("hydrateCrashReportingFromBackend", () => {
     const result = await hydrateCrashReportingFromBackend();
 
     expect(result).toBe(true);
-    expect(crashReportingEnabled()).toBe(true);
+    expect(prefs.crashReportingEnabled).toBe(true);
     expect(localStorage.getItem("pixhaus:crash-reporting-enabled")).toBe("1");
     expect(invokeMock).toHaveBeenCalledWith("crash_reporting_get_enabled", undefined);
   });
@@ -98,7 +98,7 @@ describe("hydrateCrashReportingFromBackend", () => {
 
     // The user's false wins; the stale backend true is discarded.
     expect(result).toBe(false);
-    expect(crashReportingEnabled()).toBe(false);
+    expect(prefs.crashReportingEnabled).toBe(false);
     expect(localStorage.getItem("pixhaus:crash-reporting-enabled")).toBe("0");
   });
 
@@ -111,6 +111,6 @@ describe("hydrateCrashReportingFromBackend", () => {
     const result = await hydrateCrashReportingFromBackend();
 
     expect(result).toBe(true);
-    expect(crashReportingEnabled()).toBe(true);
+    expect(prefs.crashReportingEnabled).toBe(true);
   });
 });

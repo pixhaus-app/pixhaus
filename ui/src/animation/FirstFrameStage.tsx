@@ -9,15 +9,12 @@ import { type Component, For, Show, createSignal } from "solid-js";
 import {
   type AnimType,
   type DirectionOpt,
-  activeAnimationStudioEntityId,
-  animType,
+  studio,
   approveFirstFrame,
-  direction,
-  firstFrameCandidates,
-  firstFramePrompt,
   setAnimType,
   setDirection,
   setFirstFrameCandidates,
+  setSelectedFirstFrame,
   setFirstFramePrompt,
   setStage,
 } from "./animation-studio-state";
@@ -36,13 +33,12 @@ const DIRECTIONS: DirectionOpt[] = ["south", "west", "north", "east"];
 const FirstFrameStage: Component<Props> = (props) => {
   const [busy, setBusy] = createSignal(false);
   const [error, setError] = createSignal<string | null>(null);
-  const [selected, setSelected] = createSignal<FirstFrameImage | null>(null);
   const [inpainting, setInpainting] = createSignal(false);
   const [fixPrompt, setFixPrompt] = createSignal("");
   let exportMask: (() => string | null) | null = null;
 
   async function generate(base?: FirstFrameImage, mask?: string, prompt?: string): Promise<void> {
-    const entityId = activeAnimationStudioEntityId();
+    const entityId = studio.activeAnimationStudioEntityId;
     if (entityId === null) {
       setError("No entity selected.");
       return;
@@ -52,15 +48,15 @@ const FirstFrameStage: Component<Props> = (props) => {
     try {
       const res = await animationGenerateFirstFrame({
         entity_id: entityId,
-        direction: direction(),
-        animation_kind: animType(),
-        prompt: prompt ?? (firstFramePrompt().trim() || null),
+        direction: studio.direction,
+        animation_kind: studio.animType,
+        prompt: prompt ?? (studio.firstFramePrompt.trim() || null),
         base_image_base64: base?.png_base64 ?? null,
         mask_base64: mask ?? null,
         num_images: 2,
       });
       setFirstFrameCandidates(res.images);
-      setSelected(res.images[0] ?? null);
+      setSelectedFirstFrame(res.images[0] ?? null);
       setInpainting(false);
     } catch (err) {
       setError(extractDetail(err));
@@ -70,7 +66,7 @@ const FirstFrameStage: Component<Props> = (props) => {
   }
 
   function applyInpaint(): void {
-    const base = selected();
+    const base = studio.selectedFirstFrame;
     if (base === null || exportMask === null) return;
     const mask = exportMask();
     if (mask === null) {
@@ -81,7 +77,7 @@ const FirstFrameStage: Component<Props> = (props) => {
   }
 
   function approve(): void {
-    const frame = selected();
+    const frame = studio.selectedFirstFrame;
     if (frame === null) return;
     approveFirstFrame(frame);
     setStage("video");
@@ -95,7 +91,7 @@ const FirstFrameStage: Component<Props> = (props) => {
             {(t) => (
               <button
                 class="animation-studio__chip"
-                classList={{ "animation-studio__chip--active": animType() === t }}
+                classList={{ "animation-studio__chip--active": studio.animType === t }}
                 onClick={() => setAnimType(t)}
               >
                 {t}
@@ -108,7 +104,7 @@ const FirstFrameStage: Component<Props> = (props) => {
             {(d) => (
               <button
                 class="animation-studio__chip"
-                classList={{ "animation-studio__chip--active": direction() === d }}
+                classList={{ "animation-studio__chip--active": studio.direction === d }}
                 onClick={() => setDirection(d)}
               >
                 {d}
@@ -120,7 +116,7 @@ const FirstFrameStage: Component<Props> = (props) => {
           class="animation-studio__prompt"
           rows={2}
           placeholder="Pose detail (optional) — e.g. Bit waving, antenna blinking, arms raised"
-          value={firstFramePrompt()}
+          value={studio.firstFramePrompt}
           onInput={(e) => setFirstFramePrompt(e.currentTarget.value)}
         />
         <Show
@@ -146,9 +142,14 @@ const FirstFrameStage: Component<Props> = (props) => {
 
       <Show
         when={inpainting()}
-        fallback={<FirstFrameCandidates selected={selected()} onSelect={setSelected} />}
+        fallback={
+          <FirstFrameCandidates
+            selected={studio.selectedFirstFrame}
+            onSelect={setSelectedFirstFrame}
+          />
+        }
       >
-        <Show when={selected()}>
+        <Show when={studio.selectedFirstFrame}>
           {(frame) => (
             <div class="animation-studio__stage">
               <MaskCanvas
@@ -183,7 +184,7 @@ const FirstFrameStage: Component<Props> = (props) => {
         </Show>
       </Show>
 
-      <Show when={selected() && !inpainting()}>
+      <Show when={studio.selectedFirstFrame && !inpainting()}>
         <div class="animation-studio__stage-actions">
           <button class="animation-studio__btn" onClick={() => setInpainting(true)}>
             Refine (inpaint)
@@ -207,13 +208,13 @@ const FirstFrameCandidates: Component<{
   onSelect: (f: FirstFrameImage) => void;
 }> = (props) => (
   <Show
-    when={firstFrameCandidates().length > 0}
+    when={studio.firstFrameCandidates.length > 0}
     fallback={
       <div class="animation-studio__empty">Generate to preview first-frame candidates.</div>
     }
   >
     <div class="animation-studio__candidate-strip">
-      <For each={firstFrameCandidates()}>
+      <For each={studio.firstFrameCandidates}>
         {(img) => (
           <button
             class="animation-studio__candidate-thumb"

@@ -30,4 +30,13 @@ embedding?: Array<number> | null,
  * generations against this entity. `None` means "fall back to the
  * project-wide `LoRA`, if any."
  */
-lora_path?: string | null, };
+lora_path?: string | null, 
+/**
+ * Animation-studio working state for this entity — stage, controls,
+ * first-frame candidates, approved frame, normalized candidates, the raw
+ * video clip, and the video job — as a UI-owned JSON blob. Opaque here on
+ * purpose: the studio's shape lives in the frontend, and this lets the
+ * user resume the staged pipeline after save/reload. `None` means the
+ * studio has never been used for this entity (start fresh).
+ */
+animation_studio_state?: string | null, };

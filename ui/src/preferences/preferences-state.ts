@@ -1,13 +1,13 @@
-import { createSignal } from "solid-js";
+import { createStore } from "solid-js/store";
 
-const [isPreferencesOpen, setPreferencesOpen] = createSignal(false);
-
-export { isPreferencesOpen };
+// Preferences-modal open/close. A store for consistency with the rest of the
+// UI state layer; read as preferencesModal.open.
+export const [preferencesModal, setPreferencesModal] = createStore({ open: false });
 
 export function openPreferences(): void {
-  setPreferencesOpen(true);
+  setPreferencesModal("open", true);
 }
 
 export function closePreferences(): void {
-  setPreferencesOpen(false);
+  setPreferencesModal("open", false);
 }

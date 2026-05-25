@@ -4,13 +4,10 @@ import { Dialog } from "../lib/ui/Dialog";
 import { closePreferences } from "./preferences-state";
 import PluginsTab from "./PluginsTab";
 import {
-  theme,
+  prefs,
   setTheme,
-  keybindPreset,
   setKeybindPreset,
-  customKeybinds,
   clearCustomKeybind,
-  crashReportingEnabled,
   setCrashReportingEnabled,
   type Theme,
   type KeybindPreset,
@@ -124,7 +121,7 @@ const GeneralTab: Component = () => {
         </div>
         <select
           class="prefs__select"
-          value={theme()}
+          value={prefs.theme}
           onChange={(e) => setTheme(e.currentTarget.value as Theme)}
         >
           <option value="pixhaus">Pixhaus (default)</option>
@@ -138,7 +135,7 @@ const GeneralTab: Component = () => {
 
 const KeybindsTab: Component = () => {
   const commands = createMemo(() => getAllCommands());
-  const custom = customKeybinds;
+  const custom = (): Record<string, string> => prefs.customKeybinds;
 
   return (
     <>
@@ -153,7 +150,7 @@ const KeybindsTab: Component = () => {
           </div>
           <select
             class="prefs__select"
-            value={keybindPreset()}
+            value={prefs.keybindPreset}
             onChange={(e) => setKeybindPreset(e.currentTarget.value as KeybindPreset)}
           >
             <option value="aseprite">Aseprite</option>
@@ -535,7 +532,7 @@ const PrivacyTab: Component = () => {
         </div>
         <input
           type="checkbox"
-          checked={crashReportingEnabled()}
+          checked={prefs.crashReportingEnabled}
           onChange={handleToggle}
           aria-label="Enable anonymous crash reporting"
         />

@@ -4,7 +4,7 @@
 // palette's "sprite:new" entry. The caller supplies an `onConfirm`
 // callback so the dialog stays decoupled from the create paths.
 
-import { createSignal } from "solid-js";
+import { createStore } from "solid-js/store";
 import { loadStorageJSON } from "../lib/utils/storage";
 
 export type CanvasSizeMode = "project" | "sprite";
@@ -89,14 +89,16 @@ export function saveLastCanvasSize(size: CanvasSize): void {
   }
 }
 
-const [canvasSizeRequest, setCanvasSizeRequest] = createSignal<CanvasSizeRequest | null>(null);
-
-export { canvasSizeRequest };
+// A store for consistency with the rest of the UI state layer; read as
+// canvasSizeDialog.request (non-null while the dialog is open).
+export const [canvasSizeDialog, setCanvasSizeDialog] = createStore<{
+  request: CanvasSizeRequest | null;
+}>({ request: null });
 
 export function openCanvasSizeDialog(request: CanvasSizeRequest): void {
-  setCanvasSizeRequest(request);
+  setCanvasSizeDialog("request", request);
 }
 
 export function closeCanvasSizeDialog(): void {
-  setCanvasSizeRequest(null);
+  setCanvasSizeDialog("request", null);
 }

@@ -8,22 +8,15 @@
 import { For, Show, createSignal, createMemo, onCleanup, type Component } from "solid-js";
 import type { CollisionShape, TileProperties, Tileset } from "../lib/types";
 import {
-  selectedTileIndex,
+  tilemapUi,
   setSelectedTileIndex,
-  selectedTileFlags,
   setSelectedTileFlags,
   TILE_FLIP_X,
   TILE_FLIP_Y,
   TILE_FLIP_DIAGONAL,
-  activeTilemapCtx,
   setActiveTilemapCtx,
 } from "./tilemap-state";
-import {
-  activeFrameIndex,
-  activeSpriteId,
-  selectionLayerId,
-  selectionRect,
-} from "../canvas/canvas-state";
+import { activeTarget, viewport } from "../canvas/canvas-state";
 import { layers } from "../layers/layer-state";
 import { tilesetAddTile } from "../lib/commands/tilesets";
 import { reportCommandFailure } from "../lib/utils/errors";
@@ -103,11 +96,11 @@ const TilesetPanel: Component<TilesetPanelProps> = (props) => {
   // ── Flags toolbar ────────────────────────────────────────────────────
 
   function toggleFlag(flag: number) {
-    setSelectedTileFlags((f) => f ^ flag);
+    setSelectedTileFlags(tilemapUi.selectedTileFlags ^ flag);
   }
 
   function hasFlag(flag: number): boolean {
-    return (selectedTileFlags() & flag) !== 0;
+    return (tilemapUi.selectedTileFlags & flag) !== 0;
   }
 
   // ── Capture-tile button ──────────────────────────────────────────────
@@ -117,7 +110,7 @@ const TilesetPanel: Component<TilesetPanelProps> = (props) => {
   // not from "the first raster layer in the sprite" — anchoring keeps
   // the source consistent with the rectangle the user actually drew.
   const captureSourceLayer = createMemo(() => {
-    const lid = selectionLayerId();
+    const lid = viewport.selectionLayerId;
     if (lid === null) return null;
     return layers().find((l) => l.id === lid) ?? null;
   });
@@ -129,7 +122,7 @@ const TilesetPanel: Component<TilesetPanelProps> = (props) => {
     if (props.tileset.source.kind !== "inline") {
       return "Capture is only supported for inline tilesets";
     }
-    const sel = selectionRect();
+    const sel = viewport.selectionRect;
     if (!sel) return "Make a selection on a raster layer first";
     if (sel.width !== tileW() || sel.height !== tileH()) {
       return `Selection must be ${tileW()}×${tileH()}px (matches tile size)`;
@@ -146,8 +139,8 @@ const TilesetPanel: Component<TilesetPanelProps> = (props) => {
   });
 
   async function onCapture() {
-    const sid = activeSpriteId();
-    const sel = selectionRect();
+    const sid = activeTarget.spriteId;
+    const sel = viewport.selectionRect;
     const layer = captureSourceLayer();
     if (sid === null || !sel || !layer) return;
     try {
@@ -155,13 +148,13 @@ const TilesetPanel: Component<TilesetPanelProps> = (props) => {
         sprite_id: sid,
         tileset_id: props.tileset.id,
         source_layer_id: layer.id,
-        frame_index: activeFrameIndex(),
+        frame_index: activeTarget.frameIndex,
         source_x: sel.x,
         source_y: sel.y,
       });
       // Refresh ctx so the grid re-renders with the new tile_count;
       // pre-select the new tile so the user can paint immediately.
-      const ctx = activeTilemapCtx();
+      const ctx = tilemapUi.activeTilemapCtx;
       if (ctx && ctx.tilesetId === result.tileset.id) {
         setActiveTilemapCtx({ ...ctx, tileset: result.tileset });
       }
@@ -231,10 +224,10 @@ const TilesetPanel: Component<TilesetPanelProps> = (props) => {
               class="ts-panel__tile"
               classList={{
                 "ts-panel__tile--empty": index === 0,
-                "ts-panel__tile--selected": selectedTileIndex() === index,
+                "ts-panel__tile--selected": tilemapUi.selectedTileIndex === index,
               }}
               role="option"
-              aria-selected={selectedTileIndex() === index}
+              aria-selected={tilemapUi.selectedTileIndex === index}
               title={index === 0 ? "Empty tile" : `Tile ${tileLabel(index)}`}
               onClick={(e) => onTileClick(index, e)}
               onContextMenu={(e) => onTileContextMenu(index, e)}

@@ -11,7 +11,7 @@ import { Button } from "../lib/ui/Button";
 import { Dialog } from "../lib/ui/Dialog";
 import { FormField } from "../lib/ui/FormField";
 import { groups, createEntity } from "./library-state";
-import { closeEntityCreate, entityCreateRequest } from "./entity-create-state";
+import { closeEntityCreate, entityCreate } from "./entity-create-state";
 
 const CATEGORY_SUGGESTIONS = [
   "Character",
@@ -53,7 +53,7 @@ const EntityCreateModal: Component = () => {
 
   // Reset form when a new request comes in.
   createEffect(() => {
-    const req = entityCreateRequest();
+    const req = entityCreate.request;
     if (req === null) return;
     setKindTag("Custom");
     setName("");
@@ -180,7 +180,7 @@ const EntityCreateModal: Component = () => {
 
   return (
     <Dialog
-      open={entityCreateRequest() !== null}
+      open={entityCreate.request !== null}
       title="New entity"
       onClose={closeEntityCreate}
       size="sm"

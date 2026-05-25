@@ -17,28 +17,18 @@ import {
   createSignal,
   onCleanup,
 } from "solid-js";
-import type { Frame } from "../lib/types";
-import {
-  activeFrameIndex,
-  scheduleViewportSync,
-  setActiveFrameIndex,
-} from "../canvas/canvas-state";
-import { activeSpriteId } from "../canvas/canvas-state";
-import { flattenLayers, isGroupExpanded, layers, refreshLayers } from "../layers/layer-state";
+import type { Frame, SpriteId } from "../lib/types";
+import { activeTarget, scheduleViewportSync, setActiveFrameIndex } from "../canvas/canvas-state";
+import { flattenLayers, isGroupExpanded, layers } from "../layers/layer-state";
 import {
   addFrame,
   celPresence,
   deleteFrames,
   extendSelectionTo,
   frames,
-  isLooping,
-  isPlaying,
-  onionSkin,
-  onionSkinNext,
-  onionSkinPrev,
-  refreshTimeline,
+  timelineUi,
+  viewport,
   selectFrame,
-  selectedFrames,
   setFrameDuration,
   setFrameDurationMul,
   setIsLooping,
@@ -63,14 +53,12 @@ const OVERSCAN = 3;
 // ── Component ────────────────────────────────────────────────────────────────
 
 const TimelinePanel: Component = () => {
-  const spriteId = activeSpriteId;
-  const activeFrame = activeFrameIndex;
+  const spriteId = (): SpriteId | null => activeTarget.spriteId;
+  const activeFrame = (): number => activeTarget.frameIndex;
 
-  createEffect(() => {
-    spriteId();
-    refreshTimeline();
-    refreshLayers();
-  });
+  // The frame/tag/cel and layer caches are backed by createBackendQuery
+  // keyed on the active sprite (see timeline-state, layer-state), so they
+  // reload on sprite change with no panel-side effect.
 
   createEffect(() => {
     if (isTimelineCollapsed()) stopPlayback();
@@ -250,7 +238,7 @@ const TimelinePanel: Component = () => {
       selectFrame(Math.max(0, activeFrame() - 1), false);
     } else if (e.code === "Delete" || e.code === "Backspace") {
       e.preventDefault();
-      const sel = selectedFrames();
+      const sel = timelineUi.selectedFrames;
       if (sel.size > 0) deleteFrames(id, sel);
     }
   }
@@ -264,11 +252,11 @@ const TimelinePanel: Component = () => {
         <div class="timeline-panel__playback">
           <button
             class="timeline-panel__pb-btn"
-            classList={{ "timeline-panel__pb-btn--active": isPlaying() }}
+            classList={{ "timeline-panel__pb-btn--active": timelineUi.isPlaying }}
             onClick={togglePlayback}
-            title={isPlaying() ? "Pause (Space)" : "Play (Space)"}
+            title={timelineUi.isPlaying ? "Pause (Space)" : "Play (Space)"}
           >
-            {isPlaying() ? "Pause" : "Play"}
+            {timelineUi.isPlaying ? "Pause" : "Play"}
           </button>
           <button
             class="timeline-panel__pb-btn"
@@ -284,7 +272,7 @@ const TimelinePanel: Component = () => {
           <label class="timeline-panel__loop-toggle" title="Loop playback at last frame">
             <input
               type="checkbox"
-              checked={isLooping()}
+              checked={timelineUi.isLooping}
               onChange={(e) => setIsLooping(e.currentTarget.checked)}
             />
             <span class="timeline-panel__loop-toggle-label">Loop</span>
@@ -294,13 +282,13 @@ const TimelinePanel: Component = () => {
         <div class="timeline-panel__onion">
           <button
             class="timeline-panel__pb-btn"
-            classList={{ "timeline-panel__pb-btn--active": onionSkin() }}
-            onClick={() => setOnionSkin(!onionSkin())}
+            classList={{ "timeline-panel__pb-btn--active": viewport.onionSkin }}
+            onClick={() => setOnionSkin(!viewport.onionSkin)}
             title="Toggle onion skin"
           >
             Onion
           </button>
-          <Show when={onionSkin()}>
+          <Show when={viewport.onionSkin}>
             <label class="timeline-panel__onion-label">
               Prev
               <input
@@ -309,7 +297,7 @@ const TimelinePanel: Component = () => {
                 type="number"
                 min={0}
                 max={8}
-                value={onionSkinPrev()}
+                value={viewport.onionSkinPrev}
                 onInput={(e) => {
                   const v = parseInt(e.currentTarget.value, 10);
                   if (!isNaN(v)) setOnionSkinPrev(v);
@@ -324,7 +312,7 @@ const TimelinePanel: Component = () => {
                 type="number"
                 min={0}
                 max={8}
-                value={onionSkinNext()}
+                value={viewport.onionSkinNext}
                 onInput={(e) => {
                   const v = parseInt(e.currentTarget.value, 10);
                   if (!isNaN(v)) setOnionSkinNext(v);
@@ -409,7 +397,7 @@ const TimelinePanel: Component = () => {
                     class="timeline-panel__frame-col"
                     classList={{
                       "timeline-panel__frame-col--active": index === activeFrame(),
-                      "timeline-panel__frame-col--selected": selectedFrames().has(index),
+                      "timeline-panel__frame-col--selected": timelineUi.selectedFrames.has(index),
                     }}
                     style={{ left: `${index * FRAME_WIDTH}px` }}
                     onClick={(e) => handleFrameClick(e, index)}
@@ -533,7 +521,7 @@ const TimelinePanel: Component = () => {
                           "timeline-panel__cel--present":
                             celPresence().get(entry.layer.id)?.has(frameIdx) === true,
                           "timeline-panel__cel--active": frameIdx === activeFrame(),
-                          "timeline-panel__cel--selected": selectedFrames().has(frameIdx),
+                          "timeline-panel__cel--selected": timelineUi.selectedFrames.has(frameIdx),
                         }}
                         style={{
                           position: "absolute",

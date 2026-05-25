@@ -352,7 +352,9 @@ impl InferenceBackend for ReplicateBackend {
                     model,
                 }))
             }
-            InferenceRequest::Text(_) | InferenceRequest::ComfyUi(_) => {
+            InferenceRequest::Text(_)
+            | InferenceRequest::BackgroundRemoval(_)
+            | InferenceRequest::ComfyUi(_) => {
                 warn!("Replicate adapter does not support this request type directly");
                 Err(BackendError::UnsupportedCapability)
             }

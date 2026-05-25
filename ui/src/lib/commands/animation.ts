@@ -40,6 +40,15 @@ export function animationNormalize(args: NormalizeArgs): Promise<NormalizeResult
   return invoke<NormalizeResultDto>("animation_normalize", { args });
 }
 
+/**
+ * Cuts the background from each extracted frame via the AI background-removal
+ * backend (fal Bria), returning alpha-cut frames. One call per frame, fired
+ * concurrently on the host. Requires a fal.ai key; rejects if none configured.
+ */
+export function animationRemoveBackground(frames: RgbaFrame[]): Promise<RgbaFrame[]> {
+  return invoke<RgbaFrame[]>("animation_remove_background", { frames });
+}
+
 // ── frame pick (i2v) ─────────────────────────────────────────────────────────────
 
 export type PickFramesArgs = {
@@ -237,4 +246,21 @@ export function animationJobClip(jobId: number): Promise<GenerateClipResult> {
 /** Cancels an in-flight i2v job. */
 export function animationCancelClipJob(jobId: number): Promise<void> {
   return invoke<void>("animation_cancel_clip_job", { job_id: jobId });
+}
+
+/**
+ * Persists the animation-studio working state (a JSON snapshot of the studio
+ * store) for an entity into the project, so it is written to the .pixhaus file
+ * on save. Pass `null` to clear it.
+ */
+export function animationStudioSetState(entityId: number, stateJson: string | null): Promise<void> {
+  return invoke<void>("animation_studio_set_state", {
+    entity_id: entityId,
+    state_json: stateJson,
+  });
+}
+
+/** Reads the persisted animation-studio working state for an entity, if any. */
+export function animationStudioGetState(entityId: number): Promise<string | null> {
+  return invoke<string | null>("animation_studio_get_state", { entity_id: entityId });
 }

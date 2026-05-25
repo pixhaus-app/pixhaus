@@ -1,15 +1,13 @@
 import { describe, it, expect, beforeEach } from "vitest";
 import {
+  select,
   setSelectTool,
-  selectTool,
   setMarqueeDrag,
-  marqueeDrag,
   dragToBounds,
   dragIsNonEmpty,
   snapToPixel,
   resetSelectState,
   setLassoPoints,
-  lassoPoints,
 } from "./select-state";
 
 describe("dragToBounds", () => {
@@ -62,12 +60,12 @@ describe("snapToPixel", () => {
 
 describe("selectTool signal", () => {
   it("defaults to 'rect'", () => {
-    expect(selectTool()).toBe("rect");
+    expect(select.selectTool).toBe("rect");
   });
 
   it("updates when set", () => {
     setSelectTool("wand");
-    expect(selectTool()).toBe("wand");
+    expect(select.selectTool).toBe("wand");
     setSelectTool("rect"); // restore
   });
 });
@@ -83,11 +81,11 @@ describe("resetSelectState", () => {
 
   it("clears marquee drag", () => {
     resetSelectState();
-    expect(marqueeDrag()).toBeNull();
+    expect(select.marqueeDrag).toBeNull();
   });
 
   it("clears lasso points", () => {
     resetSelectState();
-    expect(lassoPoints()).toEqual([]);
+    expect(select.lassoPoints).toEqual([]);
   });
 });

@@ -11,34 +11,20 @@
 
 import { screenToCanvas } from "../viewport";
 import {
-  scrollX,
-  scrollY,
-  zoom,
+  activeTarget,
+  viewport,
   setSelectionRect,
   setSelectionKind,
   setSelectionMask,
   setSelectionLayerId,
-  activeSpriteId,
-  activeLayerId,
-  isSelectMode,
 } from "../canvas-state";
 import {
-  selectTool,
-  marqueeDrag,
+  select,
   setMarqueeDrag,
-  lassoPoints,
   setLassoPoints,
-  selectionAddMode,
-  selectionSubtractMode,
   dragToBounds,
   dragIsNonEmpty,
   snapToPixel,
-  wandTolerance,
-  wandConnectivity,
-  wandGapClose,
-  wandGapDistance,
-  colorRangeTolerance,
-  colorRangeTarget,
   setColorRangeTarget,
   resetSelectState,
 } from "./select-state";
@@ -51,7 +37,7 @@ import {
   canvasGetSelectionMask,
   canvasInvertSelection,
 } from "../../lib/commands/canvas";
-import { transformDrag } from "../transform/transform-state";
+import { transform } from "../transform/transform-state";
 import { pushToast } from "../../lib/toast/toast-state";
 import { isUnimplementedError, toastUnimplemented } from "../../lib/utils/errors";
 import { toIpcRect } from "../../lib/utils/geometry";
@@ -64,14 +50,22 @@ function eventToCanvas(e: MouseEvent, el: HTMLElement): [number, number] {
   const rect = el.getBoundingClientRect();
   const sx = e.clientX - rect.left;
   const sy = e.clientY - rect.top;
-  return screenToCanvas(sx, sy, scrollX(), scrollY(), zoom(), rect.width, rect.height);
+  return screenToCanvas(
+    sx,
+    sy,
+    viewport.scrollX,
+    viewport.scrollY,
+    viewport.zoom,
+    rect.width,
+    rect.height,
+  );
 }
 
 // Applies shift-add / alt-subtract modifiers to the pending selection.
 // Currently only "replace" is implemented for rect (add/subtract require mask
 // buffers from S01). Logs a stub warning when the mode cannot be honoured.
 function warnIfModifierNotSupported(): void {
-  if (selectionAddMode() || selectionSubtractMode()) {
+  if (select.selectionAddMode || select.selectionSubtractMode) {
     pushToast({
       title: "Add / subtract mode requires S01 (pixel buffers) — using replace instead.",
       kind: "info",
@@ -86,7 +80,7 @@ async function commitRectSelection(bounds: {
   width: number;
   height: number;
 }): Promise<void> {
-  const anchorLayer = activeLayerId();
+  const anchorLayer = activeTarget.layerId;
   try {
     const region = { kind: "rect" as const, bounds: toIpcRect(bounds) };
     await canvasSetSelection(region, anchorLayer);
@@ -180,7 +174,7 @@ function onMarqueeDown(e: MouseEvent, el: HTMLElement): void {
 }
 
 function onMarqueeMove(e: MouseEvent, el: HTMLElement): void {
-  const drag = marqueeDrag();
+  const drag = select.marqueeDrag;
   if (!drag) return;
   const [cx, cy] = eventToCanvas(e, el);
   const updated = {
@@ -197,12 +191,12 @@ function onMarqueeMove(e: MouseEvent, el: HTMLElement): void {
   if (dragIsNonEmpty(updated)) {
     const b = dragToBounds(updated);
     setSelectionRect(b);
-    setSelectionLayerId(activeLayerId());
+    setSelectionLayerId(activeTarget.layerId);
   }
 }
 
 async function onMarqueeUp(e: MouseEvent, el: HTMLElement): Promise<void> {
-  const drag = marqueeDrag();
+  const drag = select.marqueeDrag;
   setMarqueeDrag(null);
   if (!drag) return;
 
@@ -216,7 +210,7 @@ async function onMarqueeUp(e: MouseEvent, el: HTMLElement): Promise<void> {
   }
 
   const bounds = dragToBounds(finalDrag);
-  const tool = selectTool();
+  const tool = select.selectTool;
 
   if (tool === "rect") {
     warnIfModifierNotSupported();
@@ -236,8 +230,8 @@ async function commitEllipseSelection(bounds: {
   width: number;
   height: number;
 }): Promise<void> {
-  const spriteId = activeSpriteId();
-  const anchorLayer = activeLayerId();
+  const spriteId = activeTarget.spriteId;
+  const anchorLayer = activeTarget.layerId;
   if (spriteId === null) return;
   try {
     const state = await canvasSelectEllipse({
@@ -260,8 +254,8 @@ async function commitEllipseSelection(bounds: {
 async function onWandClick(e: MouseEvent, el: HTMLElement): Promise<void> {
   e.preventDefault();
   const [cx, cy] = eventToCanvas(e, el);
-  const spriteId = activeSpriteId();
-  const anchorLayer = activeLayerId();
+  const spriteId = activeTarget.spriteId;
+  const anchorLayer = activeTarget.layerId;
   if (spriteId === null) return;
 
   try {
@@ -270,9 +264,9 @@ async function onWandClick(e: MouseEvent, el: HTMLElement): Promise<void> {
       anchor_layer: anchorLayer,
       seed_x: Math.round(cx),
       seed_y: Math.round(cy),
-      tolerance: wandTolerance(),
-      connectivity: wandConnectivity(),
-      gap_close: wandGapClose() ? { closing_distance: wandGapDistance() } : null,
+      tolerance: select.wandTolerance,
+      connectivity: select.wandConnectivity,
+      gap_close: select.wandGapClose ? { closing_distance: select.wandGapDistance } : null,
     });
     await applyRegionSelection(state.region, anchorLayer);
   } catch (err: unknown) {
@@ -289,13 +283,13 @@ async function onWandClick(e: MouseEvent, el: HTMLElement): Promise<void> {
 async function onColorRangeClick(e: MouseEvent, el: HTMLElement): Promise<void> {
   e.preventDefault();
   const [cx, cy] = eventToCanvas(e, el);
-  const spriteId = activeSpriteId();
-  const anchorLayer = activeLayerId();
+  const spriteId = activeTarget.spriteId;
+  const anchorLayer = activeTarget.layerId;
   if (spriteId === null) return;
 
   // The target color is picked from the click position; if the IPC stub is
   // not yet wired, we still store the click for live preview purposes.
-  const target = colorRangeTarget();
+  const target = select.colorRangeTarget;
   if (!target) {
     pushToast({
       title: "Click to pick a target color first, then click again to select.",
@@ -314,7 +308,7 @@ async function onColorRangeClick(e: MouseEvent, el: HTMLElement): Promise<void> 
       x: Math.round(cx),
       y: Math.round(cy),
       target_color: target,
-      tolerance: colorRangeTolerance(),
+      tolerance: select.colorRangeTolerance,
     });
     await applyRegionSelection(state.region, anchorLayer);
     setColorRangeTarget(null);
@@ -334,18 +328,18 @@ async function onColorRangeClick(e: MouseEvent, el: HTMLElement): Promise<void> 
 function onLassoDown(e: MouseEvent, el: HTMLElement): void {
   e.preventDefault();
   const [cx, cy] = eventToCanvas(e, el);
-  const pts = lassoPoints();
+  const pts = select.lassoPoints;
   setLassoPoints([...pts, [snapToPixel(cx), snapToPixel(cy)]]);
 }
 
 async function commitLasso(): Promise<void> {
-  const pts = lassoPoints();
+  const pts = select.lassoPoints;
   if (pts.length < 3) {
     setLassoPoints([]);
     return;
   }
-  const spriteId = activeSpriteId();
-  const anchorLayer = activeLayerId();
+  const spriteId = activeTarget.spriteId;
+  const anchorLayer = activeTarget.layerId;
   if (spriteId === null) {
     setLassoPoints([]);
     return;
@@ -379,13 +373,13 @@ async function commitLasso(): Promise<void> {
  */
 export function attachSelectInput(el: HTMLElement): () => void {
   function onMouseDown(e: MouseEvent): void {
-    if (!isSelectMode()) return;
+    if (!viewport.isSelectMode) return;
     if (e.button !== 0) return;
     // A gizmo-handle press (pointerdown) fires before this mousedown and sets
     // transformDrag; bail so transforming an existing selection doesn't also
     // start a brand-new marquee underneath it.
-    if (transformDrag() !== null) return;
-    const tool = selectTool();
+    if (transform.transformDrag !== null) return;
+    const tool = select.selectTool;
     if (tool === "rect" || tool === "ellipse") {
       onMarqueeDown(e, el);
     } else if (tool === "wand") {
@@ -403,35 +397,35 @@ export function attachSelectInput(el: HTMLElement): () => void {
   }
 
   function onMouseMove(e: MouseEvent): void {
-    if (!isSelectMode()) return;
-    const tool = selectTool();
+    if (!viewport.isSelectMode) return;
+    const tool = select.selectTool;
     if (tool === "rect" || tool === "ellipse") {
       onMarqueeMove(e, el);
     }
   }
 
   function onMouseUp(e: MouseEvent): void {
-    if (!isSelectMode()) return;
-    const tool = selectTool();
+    if (!viewport.isSelectMode) return;
+    const tool = select.selectTool;
     if (tool === "rect" || tool === "ellipse") {
       void onMarqueeUp(e, el);
     }
   }
 
   function onKeyDown(e: KeyboardEvent): void {
-    if (!isSelectMode()) return;
-    if (e.code === "Enter" && selectTool() === "lasso") {
+    if (!viewport.isSelectMode) return;
+    if (e.code === "Enter" && select.selectTool === "lasso") {
       void commitLasso();
       e.preventDefault();
     }
     if (e.code === "Escape") {
       // Cancel any in-progress drag.
-      const drag = marqueeDrag();
+      const drag = select.marqueeDrag;
       if (drag) {
         setMarqueeDrag(null);
         setSelectionRect(null);
       }
-      if (lassoPoints().length > 0) {
+      if (select.lassoPoints.length > 0) {
         setLassoPoints([]);
       }
     }

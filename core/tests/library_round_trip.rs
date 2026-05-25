@@ -662,6 +662,7 @@ fn entity_defaults_round_trip_in_full() {
             vlm_summary: Some("hero".into()),
             embedding: Some(vec![0.1, 0.2, 0.3]),
             lora_path: Some("_lora/hero.safetensors".into()),
+            animation_studio_state: None,
         },
         user_data: UserData {
             text: Some("playable".into()),
@@ -722,6 +723,7 @@ fn ai_metadata_embedding_round_trips_boundary_f32_values() {
         vlm_summary: None,
         embedding: Some(boundary.clone()),
         lora_path: None,
+        animation_studio_state: None,
     };
 
     let back: AiMetadata = round_trip(&metadata);

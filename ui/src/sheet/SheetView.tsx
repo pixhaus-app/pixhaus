@@ -24,11 +24,9 @@ import { pushToast } from "../lib/toast/toast-state";
 import { reportCommandFailure } from "../lib/utils/errors";
 import { useImageObjectUrl } from "../lib/utils/image-object-url";
 import {
-  activeSheetEntityId,
+  sheetState,
   clearSheetEntity,
-  selectedPanelRegion,
   setSelectedPanelRegion,
-  showPanelOverlay,
   setShowPanelOverlay,
 } from "./sheet-state";
 import { closeSection } from "../shell/rail-state";
@@ -82,28 +80,31 @@ const SheetView: Component<Props> = (props) => {
   // Capture the requested id and ignore stale resolutions — fast back-to-back
   // selections must not let an older fetch clobber a newer one.
   createEffect(
-    on(activeSheetEntityId, (entityId) => {
-      if (entityId === null) {
-        setEntity(null);
-        return;
-      }
-      const requestId = entityId;
-      setLoading(true);
-      setPreviewVariant(null);
-      libraryGetEntity(entityId)
-        .then((e) => {
-          if (activeSheetEntityId() !== requestId) return;
-          setEntity(e);
-        })
-        .catch((err: unknown) => {
-          if (activeSheetEntityId() !== requestId) return;
-          reportCommandFailure("library_get_entity", err);
-        })
-        .finally(() => {
-          if (activeSheetEntityId() !== requestId) return;
-          setLoading(false);
-        });
-    }),
+    on(
+      () => sheetState.activeSheetEntityId,
+      (entityId) => {
+        if (entityId === null) {
+          setEntity(null);
+          return;
+        }
+        const requestId = entityId;
+        setLoading(true);
+        setPreviewVariant(null);
+        libraryGetEntity(entityId)
+          .then((e) => {
+            if (sheetState.activeSheetEntityId !== requestId) return;
+            setEntity(e);
+          })
+          .catch((err: unknown) => {
+            if (sheetState.activeSheetEntityId !== requestId) return;
+            reportCommandFailure("library_get_entity", err);
+          })
+          .finally(() => {
+            if (sheetState.activeSheetEntityId !== requestId) return;
+            setLoading(false);
+          });
+      },
+    ),
   );
 
   const sheet = (): ReferenceSheet | null => {
@@ -145,7 +146,7 @@ const SheetView: Component<Props> = (props) => {
     w: number;
     h: number;
   }): void {
-    const current = selectedPanelRegion();
+    const current = sheetState.selectedPanelRegion;
     if (current !== null && current.origin.x === panel.x && current.origin.y === panel.y) {
       setSelectedPanelRegion(null);
     } else {
@@ -157,7 +158,7 @@ const SheetView: Component<Props> = (props) => {
   }
 
   function isPanelSelected(panel: { x: number; y: number }): boolean {
-    const sel = selectedPanelRegion();
+    const sel = sheetState.selectedPanelRegion;
     return sel !== null && sel.origin.x === panel.x && sel.origin.y === panel.y;
   }
 
@@ -222,7 +223,7 @@ const SheetView: Component<Props> = (props) => {
         // Only update if the active sheet hasn't changed since the
         // request was issued — long training runs may outlive the
         // user's navigation.
-        if (activeSheetEntityId() === e.id) {
+        if (sheetState.activeSheetEntityId === e.id) {
           setEntity(refreshed);
         }
       })
@@ -257,8 +258,8 @@ const SheetView: Component<Props> = (props) => {
           <div class="sheet-panel__header-actions">
             <button
               class="sheet-panel__icon-btn"
-              classList={{ "sheet-panel__icon-btn--active": showPanelOverlay() }}
-              onClick={() => setShowPanelOverlay(!showPanelOverlay())}
+              classList={{ "sheet-panel__icon-btn--active": sheetState.showPanelOverlay }}
+              onClick={() => setShowPanelOverlay(!sheetState.showPanelOverlay)}
               aria-label="Toggle panel overlay"
               title="Toggle panel overlay"
             >
@@ -282,8 +283,8 @@ const SheetView: Component<Props> = (props) => {
         <div class="sheet-panel__rail-actions">
           <button
             class="sheet-panel__icon-btn"
-            classList={{ "sheet-panel__icon-btn--active": showPanelOverlay() }}
-            onClick={() => setShowPanelOverlay(!showPanelOverlay())}
+            classList={{ "sheet-panel__icon-btn--active": sheetState.showPanelOverlay }}
+            onClick={() => setShowPanelOverlay(!sheetState.showPanelOverlay)}
             aria-label="Toggle panel overlay"
             title="Toggle panel overlay"
           >
@@ -296,7 +297,7 @@ const SheetView: Component<Props> = (props) => {
         <div class="sheet-panel__loading">Loading…</div>
       </Show>
 
-      <Show when={!loading() && sheet() === null && activeSheetEntityId() !== null}>
+      <Show when={!loading() && sheet() === null && sheetState.activeSheetEntityId !== null}>
         <div class="sheet-panel__error">Entity not found or has no reference sheet.</div>
       </Show>
 
@@ -310,7 +311,7 @@ const SheetView: Component<Props> = (props) => {
               >
                 <img class="sheet-panel__image" src={displayedDataUrl()} alt="Reference sheet" />
               </Show>
-              <Show when={showPanelOverlay() && allPanels().length > 0}>
+              <Show when={sheetState.showPanelOverlay && allPanels().length > 0}>
                 <svg
                   class="sheet-panel__overlay"
                   viewBox={`0 0 ${sheetWidth()} ${sheetHeight()}`}

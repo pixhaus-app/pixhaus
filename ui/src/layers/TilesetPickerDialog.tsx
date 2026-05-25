@@ -9,12 +9,12 @@ import type { Tileset, TilesetId } from "../lib/types";
 import { Button } from "../lib/ui/Button";
 import { Dialog } from "../lib/ui/Dialog";
 import { tilesetAdd, tilesetList } from "../lib/commands/tilesets";
-import { closeTilesetPicker, convertLayerToTilemap, tilesetPickerTarget } from "./layer-state";
+import { closeTilesetPicker, convertLayerToTilemap, layerUi } from "./layer-state";
 
 const DEFAULT_TILE_SIZE = 16;
 
 const TilesetPickerDialog: Component = () => {
-  const target = () => tilesetPickerTarget();
+  const target = () => layerUi.tilesetPickerTarget;
 
   const [tilesets, setTilesets] = createSignal<Tileset[]>([]);
   const [selectedId, setSelectedId] = createSignal<TilesetId | null>(null);
@@ -27,7 +27,7 @@ const TilesetPickerDialog: Component = () => {
   const [error, setError] = createSignal<string | null>(null);
 
   function isCurrentRequest(spriteId: number): boolean {
-    const cur = tilesetPickerTarget();
+    const cur = layerUi.tilesetPickerTarget;
     return cur !== null && cur.spriteId === spriteId;
   }
 

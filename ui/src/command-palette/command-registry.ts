@@ -1,9 +1,9 @@
 import { open as dialogOpen, save as dialogSave, confirm, message } from "../lib/dialog";
-import { isCommandPaletteOpen, openCommandPalette, closeCommandPalette } from "../palette-state";
+import { commandPalette, openCommandPalette, closeCommandPalette } from "../palette-state";
 import { openPreferences } from "../preferences/preferences-state";
 import { openCompositionLibrary } from "../composition-library/composition-library-state";
-import { openAnimationStudio } from "../animation/animation-studio-state";
-import { keybindPreset, customKeybinds } from "../preferences/preferences-store";
+import { openAnimationStudio, flushStudioState } from "../animation/animation-studio-state";
+import { prefs } from "../preferences/preferences-store";
 import { ASEPRITE_DEFAULTS, PHOTOSHOP_DEFAULTS, defaultCombo } from "../keybinds/defaults";
 import {
   createNewProject,
@@ -21,24 +21,19 @@ import {
   exportPngSpriteSheet,
   exportTmx,
 } from "../lib/commands/exports";
-import { activeProject, setActiveProject, pushRecentProject } from "../project-state";
+import { projectState, setActiveProject, pushRecentProject } from "../project-state";
 import { extractFilename } from "../lib/utils/path";
 import { reportCommandFailure } from "../lib/utils/errors";
 import {
-  activeSpriteId,
+  activeTarget,
   setActiveSpriteId,
-  activeFrameIndex,
-  activeLayerId,
+  viewport,
   setIsSelectMode,
   setSelectionRect,
   setTransformBounds,
-  zoom,
   setZoom,
-  showTileGrid,
   setShowTileGrid,
-  showPixelGrid,
   setShowPixelGrid,
-  onionSkin,
   setOnionSkin,
   resetViewport,
 } from "../canvas/canvas-state";
@@ -70,16 +65,16 @@ import {
   deleteLayer,
   flattenVisibleLayers,
   layers,
+  layerUi,
   mergeLayerDown,
   mergeSelectedLayers,
   nextAutoName,
-  selectedLayerIds,
   wrapLayersInGroup,
 } from "../layers/layer-state";
-import { isLooping, refreshTimeline, setIsLooping } from "../timeline/timeline-state";
-import { activeSheetEntityId, openSheetEditor, setActiveSheetEntityId } from "../sheet/sheet-state";
+import { timelineUi, refreshTimeline, setIsLooping } from "../timeline/timeline-state";
+import { sheetState, openSheetEditor, setActiveSheetEntityId } from "../sheet/sheet-state";
 import { libraryListEntities } from "../lib/commands/library";
-import { selectedEntityId } from "../library/library-state";
+import { libraryUi } from "../library/library-state";
 import {
   closeSection,
   isSectionOpen,
@@ -91,13 +86,8 @@ import {
   toggleSection,
   toggleTimelineCollapsed,
 } from "../shell/rail-state";
-import {
-  tilemapTool,
-  setTilemapTool,
-  autotileMode,
-  setAutotileMode,
-} from "../tilemap/tilemap-state";
-import { foregroundColor, setActiveTool, type ToolType } from "../canvas/tools/tool-state";
+import { tilemapUi, setTilemapTool, setAutotileMode } from "../tilemap/tilemap-state";
+import { tool as toolState, setActiveTool, type ToolType } from "../canvas/tools/tool-state";
 import {
   paletteAdd as paletteAddCmd,
   paletteAddColor as paletteAddColorCmd,
@@ -185,12 +175,12 @@ function inferOpenOperation(path: string): string {
  * projects can wire a sprite picker later.
  */
 function activeSpriteIdForExport(): number | null {
-  const project = activeProject();
+  const project = projectState.activeProject;
   if (project === null) return null;
   // The project-state store doesn't expose the sprite list; fall back
   // to the canvas's active id which is the editor's current sprite.
   // `activeSpriteId` is imported from "../canvas/canvas-state" already.
-  const id = activeSpriteId();
+  const id = activeTarget.spriteId;
   return id;
 }
 
@@ -236,7 +226,7 @@ const COMMANDS: ReadonlyMap<string, CommandEntry> = new Map<string, CommandEntry
       category: "AI",
       keywords: ["animation", "studio", "walk", "idle", "sprite sheet"],
       handler: () => {
-        const entity = selectedEntityId();
+        const entity = libraryUi.selectedEntityId;
         if (entity === null) {
           pushToast({ kind: "info", title: "Select a sprite entity first." });
           return;
@@ -294,10 +284,13 @@ const COMMANDS: ReadonlyMap<string, CommandEntry> = new Map<string, CommandEntry
       label: "Save",
       category: "File",
       handler: () => {
-        // saveOrSaveAs handles the first-save fallback automatically:
-        // if the project has no path yet, it opens the Save As dialog
-        // instead of bubbling the Validation error to a toast.
-        saveOrSaveAs().catch((err: unknown) => reportCommandFailure("project_save", err));
+        // Flush the animation-studio working state into the project first so
+        // the save embeds it. saveOrSaveAs handles the first-save fallback
+        // automatically: if the project has no path yet, it opens the Save As
+        // dialog instead of bubbling the Validation error to a toast.
+        flushStudioState()
+          .then(() => saveOrSaveAs())
+          .catch((err: unknown) => reportCommandFailure("project_save", err));
       },
     },
   ],
@@ -308,7 +301,8 @@ const COMMANDS: ReadonlyMap<string, CommandEntry> = new Map<string, CommandEntry
       label: "Save As...",
       category: "File",
       handler: () => {
-        pickSavePath()
+        flushStudioState()
+          .then(() => pickSavePath())
           .then((path) => {
             if (path === null) return;
             return projectSave(path);
@@ -415,7 +409,7 @@ const COMMANDS: ReadonlyMap<string, CommandEntry> = new Map<string, CommandEntry
       label: "Select All",
       category: "Edit",
       handler: () => {
-        const spriteId = activeSpriteId();
+        const spriteId = activeTarget.spriteId;
         if (spriteId === null) return;
         canvasSelectAll(spriteId)
           .then((state) => {
@@ -460,7 +454,7 @@ const COMMANDS: ReadonlyMap<string, CommandEntry> = new Map<string, CommandEntry
       label: "New Sprite",
       category: "Sprite",
       handler: () => {
-        if (activeProject() === null) {
+        if (projectState.activeProject === null) {
           pushToast({ kind: "info", title: "Open or create a project first." });
           return;
         }
@@ -508,7 +502,7 @@ const COMMANDS: ReadonlyMap<string, CommandEntry> = new Map<string, CommandEntry
       label: "Delete Sprite",
       category: "Sprite",
       handler: () => {
-        const id = activeSpriteId();
+        const id = activeTarget.spriteId;
         if (id === null) {
           pushToast({ kind: "info", title: "No active sprite to delete." });
           return;
@@ -556,7 +550,7 @@ const COMMANDS: ReadonlyMap<string, CommandEntry> = new Map<string, CommandEntry
       label: "Add Frame",
       category: "Frame",
       handler: () => {
-        const spriteId = activeSpriteId();
+        const spriteId = activeTarget.spriteId;
         if (spriteId === null) return;
         // Re-use the duration of the currently-active frame so quick
         // additions keep the timeline cadence consistent. frame_add
@@ -575,9 +569,9 @@ const COMMANDS: ReadonlyMap<string, CommandEntry> = new Map<string, CommandEntry
       label: "Delete Frame",
       category: "Frame",
       handler: () => {
-        const spriteId = activeSpriteId();
+        const spriteId = activeTarget.spriteId;
         if (spriteId === null) return;
-        const idx = activeFrameIndex();
+        const idx = activeTarget.frameIndex;
         frameDelete(spriteId, idx)
           .then(() => refreshTimeline())
           .catch((err: unknown) => reportCommandFailure("frame_delete", err));
@@ -591,9 +585,9 @@ const COMMANDS: ReadonlyMap<string, CommandEntry> = new Map<string, CommandEntry
       label: "Duplicate Frame",
       category: "Frame",
       handler: () => {
-        const spriteId = activeSpriteId();
+        const spriteId = activeTarget.spriteId;
         if (spriteId === null) return;
-        const idx = activeFrameIndex();
+        const idx = activeTarget.frameIndex;
         frameDuplicate(spriteId, idx)
           .then(() => refreshTimeline())
           .catch((err: unknown) => reportCommandFailure("frame_duplicate", err));
@@ -607,7 +601,7 @@ const COMMANDS: ReadonlyMap<string, CommandEntry> = new Map<string, CommandEntry
       label: "Toggle Playback Loop",
       category: "Frame",
       keywords: ["loop", "playback"],
-      handler: () => setIsLooping(!isLooping()),
+      handler: () => setIsLooping(!timelineUi.isLooping),
     },
   ],
 
@@ -619,7 +613,7 @@ const COMMANDS: ReadonlyMap<string, CommandEntry> = new Map<string, CommandEntry
       label: "New Layer",
       category: "Layer",
       handler: () => {
-        const id = activeSpriteId();
+        const id = activeTarget.spriteId;
         if (id !== null) addLayer(id, nextAutoName(layers(), "Layer"));
       },
     },
@@ -631,8 +625,8 @@ const COMMANDS: ReadonlyMap<string, CommandEntry> = new Map<string, CommandEntry
       label: "Delete Layer",
       category: "Layer",
       handler: () => {
-        const spriteId = activeSpriteId();
-        const layerId = activeLayerId();
+        const spriteId = activeTarget.spriteId;
+        const layerId = activeTarget.layerId;
         if (spriteId !== null && layerId !== null) deleteLayer(spriteId, layerId);
       },
     },
@@ -644,7 +638,7 @@ const COMMANDS: ReadonlyMap<string, CommandEntry> = new Map<string, CommandEntry
       label: "Rename Layer",
       category: "Layer",
       handler: () => {
-        const layerId = activeLayerId();
+        const layerId = activeTarget.layerId;
         if (layerId !== null) beginRename(layerId);
       },
     },
@@ -656,8 +650,8 @@ const COMMANDS: ReadonlyMap<string, CommandEntry> = new Map<string, CommandEntry
       label: "Merge Down",
       category: "Layer",
       handler: () => {
-        const spriteId = activeSpriteId();
-        const layerId = activeLayerId();
+        const spriteId = activeTarget.spriteId;
+        const layerId = activeTarget.layerId;
         if (spriteId === null || layerId === null) return;
         mergeLayerDown(spriteId, layerId);
       },
@@ -671,9 +665,9 @@ const COMMANDS: ReadonlyMap<string, CommandEntry> = new Map<string, CommandEntry
       category: "Layer",
       keywords: ["merge", "selected"],
       handler: () => {
-        const spriteId = activeSpriteId();
+        const spriteId = activeTarget.spriteId;
         if (spriteId === null) return;
-        mergeSelectedLayers(spriteId, selectedLayerIds());
+        mergeSelectedLayers(spriteId, layerUi.selectedLayerIds);
       },
     },
   ],
@@ -685,7 +679,7 @@ const COMMANDS: ReadonlyMap<string, CommandEntry> = new Map<string, CommandEntry
       category: "Layer",
       keywords: ["flatten", "visible"],
       handler: () => {
-        const spriteId = activeSpriteId();
+        const spriteId = activeTarget.spriteId;
         if (spriteId === null) return;
         flattenVisibleLayers(spriteId);
       },
@@ -699,10 +693,10 @@ const COMMANDS: ReadonlyMap<string, CommandEntry> = new Map<string, CommandEntry
       category: "Layer",
       keywords: ["group", "wrap", "convert"],
       handler: () => {
-        const spriteId = activeSpriteId();
-        const layerId = activeLayerId();
+        const spriteId = activeTarget.spriteId;
+        const layerId = activeTarget.layerId;
         if (spriteId === null || layerId === null) return;
-        const ids = selectedLayerIds().size > 0 ? [...selectedLayerIds()] : [layerId];
+        const ids = layerUi.selectedLayerIds.size > 0 ? [...layerUi.selectedLayerIds] : [layerId];
         wrapLayersInGroup(spriteId, ids);
       },
     },
@@ -717,7 +711,7 @@ const COMMANDS: ReadonlyMap<string, CommandEntry> = new Map<string, CommandEntry
       category: "Palette",
       keywords: ["palette", "new", "create"],
       handler: () => {
-        const spriteId = activeSpriteId();
+        const spriteId = activeTarget.spriteId;
         if (spriteId === null) return;
         const existing = palettes();
         const name = `Palette ${existing.length + 1}`;
@@ -735,7 +729,7 @@ const COMMANDS: ReadonlyMap<string, CommandEntry> = new Map<string, CommandEntry
       category: "Palette",
       keywords: ["palette", "delete", "remove"],
       handler: () => {
-        const spriteId = activeSpriteId();
+        const spriteId = activeTarget.spriteId;
         const pal = activePalette();
         if (spriteId === null || pal === null) return;
         paletteDeleteCmd(spriteId, pal.id)
@@ -752,13 +746,13 @@ const COMMANDS: ReadonlyMap<string, CommandEntry> = new Map<string, CommandEntry
       category: "Palette",
       keywords: ["palette", "add", "color", "swatch"],
       handler: () => {
-        const spriteId = activeSpriteId();
+        const spriteId = activeTarget.spriteId;
         const pal = activePalette();
         if (spriteId === null || pal === null) return;
         paletteAddColorCmd({
           sprite_id: spriteId,
           palette_id: pal.id,
-          color: foregroundColor(),
+          color: toolState.foregroundColor,
         })
           .then(() => refreshPalettes(spriteId))
           .catch((err: unknown) => reportCommandFailure("palette_add_color", err));
@@ -794,7 +788,7 @@ const COMMANDS: ReadonlyMap<string, CommandEntry> = new Map<string, CommandEntry
       label: "Toggle autotile mode",
       category: "Tilemap",
       keywords: ["autotile", "auto", "wang", "rules"],
-      handler: () => setAutotileMode(!autotileMode()),
+      handler: () => setAutotileMode(!tilemapUi.autotileMode),
     },
   ],
   [
@@ -803,7 +797,7 @@ const COMMANDS: ReadonlyMap<string, CommandEntry> = new Map<string, CommandEntry
       id: "tilemap:toggle-tool",
       label: "Toggle tile tool (pencil/erase)",
       category: "Tilemap",
-      handler: () => setTilemapTool(tilemapTool() === "pencil" ? "erase" : "pencil"),
+      handler: () => setTilemapTool(tilemapUi.tilemapTool === "pencil" ? "erase" : "pencil"),
     },
   ],
 
@@ -881,8 +875,8 @@ const COMMANDS: ReadonlyMap<string, CommandEntry> = new Map<string, CommandEntry
       category: "Select",
       keywords: ["invert", "inverse"],
       handler: () => {
-        const spriteId = activeSpriteId();
-        const layerId = activeLayerId();
+        const spriteId = activeTarget.spriteId;
+        const layerId = activeTarget.layerId;
         if (spriteId === null) return;
         canvasInvertSelection(spriteId, layerId)
           .then((state) => {
@@ -922,8 +916,8 @@ const COMMANDS: ReadonlyMap<string, CommandEntry> = new Map<string, CommandEntry
       category: "Canvas",
       keywords: ["vector", "vectorize", "centerline", "stroke", "trace"],
       handler: () => {
-        const spriteId = activeSpriteId();
-        const layerId = activeLayerId();
+        const spriteId = activeTarget.spriteId;
+        const layerId = activeTarget.layerId;
         if (spriteId === null || layerId === null) {
           pushToast({
             kind: "info",
@@ -954,8 +948,8 @@ const COMMANDS: ReadonlyMap<string, CommandEntry> = new Map<string, CommandEntry
       category: "Canvas",
       keywords: ["antialias", "anti-alias", "mlaa", "smooth", "staircase"],
       handler: () => {
-        const spriteId = activeSpriteId();
-        const layerId = activeLayerId();
+        const spriteId = activeTarget.spriteId;
+        const layerId = activeTarget.layerId;
         if (spriteId === null || layerId === null) {
           pushToast({
             kind: "info",
@@ -1048,7 +1042,7 @@ const COMMANDS: ReadonlyMap<string, CommandEntry> = new Map<string, CommandEntry
       id: "view:zoom-in",
       label: "Zoom In",
       category: "View",
-      handler: () => setZoom(snapZoom(zoom(), 1)),
+      handler: () => setZoom(snapZoom(viewport.zoom, 1)),
     },
   ],
   [
@@ -1057,7 +1051,7 @@ const COMMANDS: ReadonlyMap<string, CommandEntry> = new Map<string, CommandEntry
       id: "view:zoom-out",
       label: "Zoom Out",
       category: "View",
-      handler: () => setZoom(snapZoom(zoom(), -1)),
+      handler: () => setZoom(snapZoom(viewport.zoom, -1)),
     },
   ],
   [
@@ -1067,7 +1061,7 @@ const COMMANDS: ReadonlyMap<string, CommandEntry> = new Map<string, CommandEntry
       label: "Fit to Window",
       category: "View",
       handler: () => {
-        const spriteId = activeSpriteId();
+        const spriteId = activeTarget.spriteId;
         if (spriteId === null) return;
         const vp = getCanvasViewportRect();
         if (vp === null) return;
@@ -1097,7 +1091,7 @@ const COMMANDS: ReadonlyMap<string, CommandEntry> = new Map<string, CommandEntry
       id: "view:toggle-grid",
       label: "Toggle Grid",
       category: "View",
-      handler: () => setShowTileGrid(!showTileGrid()),
+      handler: () => setShowTileGrid(!viewport.showTileGrid),
     },
   ],
   [
@@ -1106,7 +1100,7 @@ const COMMANDS: ReadonlyMap<string, CommandEntry> = new Map<string, CommandEntry
       id: "view:toggle-pixel-grid",
       label: "Toggle Pixel Grid",
       category: "View",
-      handler: () => setShowPixelGrid(!showPixelGrid()),
+      handler: () => setShowPixelGrid(!viewport.showPixelGrid),
     },
   ],
   [
@@ -1116,7 +1110,7 @@ const COMMANDS: ReadonlyMap<string, CommandEntry> = new Map<string, CommandEntry
       label: "Toggle Onion Skin",
       category: "View",
       keywords: ["onion", "skin"],
-      handler: () => setOnionSkin(!onionSkin()),
+      handler: () => setOnionSkin(!viewport.onionSkin),
     },
   ],
   [
@@ -1127,7 +1121,7 @@ const COMMANDS: ReadonlyMap<string, CommandEntry> = new Map<string, CommandEntry
       category: "Tilemap",
       keywords: ["tileset", "tilemap", "new"],
       handler: () => {
-        const spriteId = activeSpriteId();
+        const spriteId = activeTarget.spriteId;
         if (spriteId === null) return;
         tilesetAddCmd({
           sprite_id: spriteId,
@@ -1231,7 +1225,7 @@ const COMMANDS: ReadonlyMap<string, CommandEntry> = new Map<string, CommandEntry
       category: "Window",
       keywords: ["search", "commands"],
       handler: () => {
-        if (isCommandPaletteOpen()) closeCommandPalette();
+        if (commandPalette.open) closeCommandPalette();
         else openCommandPalette();
       },
     },
@@ -1319,7 +1313,7 @@ const COMMANDS: ReadonlyMap<string, CommandEntry> = new Map<string, CommandEntry
           closeSection("reference");
           return;
         }
-        if (activeSheetEntityId() !== null) {
+        if (sheetState.activeSheetEntityId !== null) {
           openSection("reference");
           return;
         }
@@ -1427,7 +1421,7 @@ function openVerbModal(verbId: string, fallbackLabel: string): void {
 }
 
 function openReferenceSheetEditorForSelectedSprite(): void {
-  const selected = selectedEntityId();
+  const selected = libraryUi.selectedEntityId;
   libraryListEntities()
     .then((entities) => {
       const selectedSprite =
@@ -1446,9 +1440,9 @@ function openReferenceSheetEditorForSelectedSprite(): void {
 
 // Returns all commands with their current keybind resolved from preferences.
 export function getAllCommands(): ReadonlyArray<Command & { keybind?: string }> {
-  const preset = keybindPreset();
+  const preset = prefs.keybindPreset;
   const table = preset === "photoshop" ? PHOTOSHOP_DEFAULTS : ASEPRITE_DEFAULTS;
-  const custom = customKeybinds();
+  const custom = prefs.customKeybinds;
 
   return Array.from(COMMANDS.values()).map((cmd) => {
     const customCombo = custom[cmd.id];

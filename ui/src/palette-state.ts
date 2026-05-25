@@ -1,13 +1,13 @@
-import { createSignal } from "solid-js";
+import { createStore } from "solid-js/store";
 
-const [isCommandPaletteOpen, setCommandPaletteOpen] = createSignal(false);
-
-export { isCommandPaletteOpen };
+// Command-palette open/close. A store for consistency with the rest of the UI
+// state layer; read as commandPalette.open.
+export const [commandPalette, setCommandPalette] = createStore({ open: false });
 
 export function openCommandPalette(): void {
-  setCommandPaletteOpen(true);
+  setCommandPalette("open", true);
 }
 
 export function closeCommandPalette(): void {
-  setCommandPaletteOpen(false);
+  setCommandPalette("open", false);
 }

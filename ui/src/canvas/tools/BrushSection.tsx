@@ -4,15 +4,7 @@
 // by the rail when activeTool() is a brush tool (see rail-state).
 
 import { For, type Component } from "solid-js";
-import {
-  pixelPerfect,
-  setPixelPerfect,
-  setToolShape,
-  setToolSize,
-  toolShape,
-  toolSize,
-  type BrushShape,
-} from "./tool-state";
+import { tool, setPixelPerfect, setToolShape, setToolSize, type BrushShape } from "./tool-state";
 
 const SHAPES: BrushShape[] = ["pixel", "circle", "square"];
 
@@ -24,12 +16,12 @@ const BrushSection: Component = () => (
         type="range"
         min="1"
         max="64"
-        value={toolSize()}
+        value={tool.size}
         onInput={(e) => setToolSize(Number(e.currentTarget.value))}
         class="tool-option-range"
         data-testid="tool-option-size"
       />
-      <span class="tool-option-value">{toolSize()}</span>
+      <span class="tool-option-value">{tool.size}</span>
     </label>
     <fieldset class="tool-option-fieldset">
       <legend>Shape</legend>
@@ -40,7 +32,7 @@ const BrushSection: Component = () => (
               type="radio"
               name="brush-shape"
               value={s}
-              checked={toolShape() === s}
+              checked={tool.shape === s}
               onChange={() => setToolShape(s)}
               data-testid={`tool-option-shape-${s}`}
             />
@@ -52,7 +44,7 @@ const BrushSection: Component = () => (
     <label class="tool-option-checkbox">
       <input
         type="checkbox"
-        checked={pixelPerfect()}
+        checked={tool.pixelPerfect}
         onChange={(e) => setPixelPerfect(e.currentTarget.checked)}
         data-testid="tool-option-pixel-perfect"
       />

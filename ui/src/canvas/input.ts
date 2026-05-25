@@ -10,41 +10,22 @@
 // the kind chosen in the Rules tab (or the kind persisted on the tileset).
 
 import {
-  scrollX,
-  scrollY,
-  zoom,
+  activeTarget,
+  viewport,
   setScrollX,
   setScrollY,
   setZoom,
   scheduleViewportSync,
   setCursorCanvas,
-  activeSpriteId,
-  activeFrameIndex,
-  activeLayerId,
-  isSelectMode,
   setShapePreview,
   type ShapeKind,
 } from "./canvas-state";
-import {
-  activeTool,
-  fillTolerance,
-  foregroundColor,
-  pixelPerfect,
-  toolShape,
-  toolSize,
-} from "./tools/tool-state";
+import { tool } from "./tools/tool-state";
 import { attachSelectInput } from "./select/select-input";
-import { transformDrag } from "./transform/transform-state";
+import { transform } from "./transform/transform-state";
 import { snapZoom, clampZoom, zoomAt, screenToCanvas } from "./viewport";
 import { isEditableTarget } from "../keybinds/keybind-manager";
-import {
-  activeTilemapCtx,
-  localAutotileKind,
-  selectedTileIndex,
-  selectedTileFlags,
-  tilemapTool,
-  autotileMode,
-} from "../tilemap/tilemap-state";
+import { tilemapUi } from "../tilemap/tilemap-state";
 import { tilePlace, tileErase, tileAutotileApply } from "../lib/commands/tiles";
 import {
   canvasBeginStroke,
@@ -112,17 +93,25 @@ function dispatchTilePaint(
   el: HTMLElement,
   erase: boolean,
 ): void {
-  const ctx = activeTilemapCtx();
+  const ctx = tilemapUi.activeTilemapCtx;
   if (!ctx) return;
 
-  const spriteId = activeSpriteId();
-  const layerId = activeLayerId();
+  const spriteId = activeTarget.spriteId;
+  const layerId = activeTarget.layerId;
   if (spriteId === null || layerId === null) return;
 
   const rect = el.getBoundingClientRect();
   const sx = screenX - rect.left;
   const sy = screenY - rect.top;
-  const [cx, cy] = screenToCanvas(sx, sy, scrollX(), scrollY(), zoom(), rect.width, rect.height);
+  const [cx, cy] = screenToCanvas(
+    sx,
+    sy,
+    viewport.scrollX,
+    viewport.scrollY,
+    viewport.zoom,
+    rect.width,
+    rect.height,
+  );
 
   const { tile_size } = ctx.tileset;
   const cell = canvasToTileCell(cx, cy, tile_size.width, tile_size.height);
@@ -140,7 +129,7 @@ function dispatchTilePaint(
   }
   lastPaintedCell = { x: cell.cellX, y: cell.cellY };
 
-  const frameIndex = activeFrameIndex();
+  const frameIndex = activeTarget.frameIndex;
   const onErr = (err: unknown): void => {
     reportCommandFailure("tile paint", err);
   };
@@ -156,8 +145,8 @@ function dispatchTilePaint(
     return;
   }
 
-  if (autotileMode()) {
-    const kind = localAutotileKind() ?? ctx.tileset.autotile;
+  if (tilemapUi.autotileMode) {
+    const kind = tilemapUi.localAutotileKind ?? ctx.tileset.autotile;
     if (kind === null || kind === undefined) {
       reportCommandFailure(
         "tile autotile",
@@ -170,7 +159,7 @@ function dispatchTilePaint(
       layer_id: layerId,
       frame_index: frameIndex,
       kind,
-      source_tile: selectedTileIndex(),
+      source_tile: tilemapUi.selectedTileIndex,
     }).catch(onErr);
     return;
   }
@@ -181,7 +170,7 @@ function dispatchTilePaint(
     frame_index: frameIndex,
     cell_x: cell.cellX,
     cell_y: cell.cellY,
-    cell: { index: selectedTileIndex(), flags: selectedTileFlags() },
+    cell: { index: tilemapUi.selectedTileIndex, flags: tilemapUi.selectedTileFlags },
   }).catch(onErr);
 }
 
@@ -209,22 +198,30 @@ function canvasPointFromEvent(e: MouseEvent, el: HTMLElement): [number, number] 
   const rect = el.getBoundingClientRect();
   const sx = e.clientX - rect.left;
   const sy = e.clientY - rect.top;
-  const [cx, cy] = screenToCanvas(sx, sy, scrollX(), scrollY(), zoom(), rect.width, rect.height);
+  const [cx, cy] = screenToCanvas(
+    sx,
+    sy,
+    viewport.scrollX,
+    viewport.scrollY,
+    viewport.zoom,
+    rect.width,
+    rect.height,
+  );
   return [Math.floor(cx), Math.floor(cy)];
 }
 
 function isDrawingTool(): boolean {
-  const t = activeTool();
+  const t = tool.activeTool;
   return t === "pencil" || t === "eraser";
 }
 
 function isShapeTool(): boolean {
-  const t = activeTool();
+  const t = tool.activeTool;
   return t === "rect" || t === "ellipse" || t === "line";
 }
 
 function isFillTool(): boolean {
-  return activeTool() === "fill";
+  return tool.activeTool === "fill";
 }
 
 // Anchor point of an in-progress shape (line/rect/ellipse) drag, in
@@ -236,38 +233,38 @@ function dispatchShape(end: [number, number]): void {
   const start = shapeAnchor;
   shapeAnchor = null;
 
-  const spriteId = activeSpriteId();
-  const layerId = activeLayerId();
+  const spriteId = activeTarget.spriteId;
+  const layerId = activeTarget.layerId;
   if (spriteId === null || layerId === null) return;
   if (!isActiveLayerWritable()) {
     toastLayerLocked();
     return;
   }
 
-  const tool = activeTool();
+  const active = tool.activeTool;
   let points: Array<[number, number]>;
-  if (tool === "rect") {
+  if (active === "rect") {
     points = rectPerimeterPoints(start[0], start[1], end[0], end[1]);
-  } else if (tool === "ellipse") {
+  } else if (active === "ellipse") {
     points = ellipsePerimeterPoints(start[0], start[1], end[0], end[1]);
-  } else if (tool === "line") {
+  } else if (active === "line") {
     points = linePoints(start[0], start[1], end[0], end[1]);
   } else {
     return;
   }
   if (points.length === 0) return;
 
-  const color = foregroundColor();
+  const color = tool.foregroundColor;
   canvasDrawStroke({
     sprite_id: spriteId,
     layer_id: layerId,
-    frame_index: activeFrameIndex(),
+    frame_index: activeTarget.frameIndex,
     points,
     color: { r: color.r, g: color.g, b: color.b, a: color.a },
     pressure: points.map(() => 1.0),
-    brush_shape: toolShape(),
-    brush_size: toolSize(),
-    pixel_perfect: pixelPerfect(),
+    brush_shape: tool.shape,
+    brush_size: tool.size,
+    pixel_perfect: tool.pixelPerfect,
     erase: false,
   }).catch((err: unknown) => {
     reportCommandFailure("canvas_draw_stroke (shape)", err);
@@ -275,23 +272,23 @@ function dispatchShape(end: [number, number]): void {
 }
 
 function dispatchFill(canvasX: number, canvasY: number): void {
-  const spriteId = activeSpriteId();
-  const layerId = activeLayerId();
+  const spriteId = activeTarget.spriteId;
+  const layerId = activeTarget.layerId;
   if (spriteId === null || layerId === null) return;
   if (!isActiveLayerWritable()) {
     toastLayerLocked();
     return;
   }
 
-  const color = foregroundColor();
+  const color = tool.foregroundColor;
   canvasFill({
     sprite_id: spriteId,
     layer_id: layerId,
-    frame_index: activeFrameIndex(),
+    frame_index: activeTarget.frameIndex,
     x: Math.floor(canvasX),
     y: Math.floor(canvasY),
     color: { r: color.r, g: color.g, b: color.b, a: color.a },
-    tolerance: fillTolerance(),
+    tolerance: tool.fillTolerance,
   }).catch((err: unknown) => {
     reportCommandFailure("canvas_fill", err);
   });
@@ -366,8 +363,8 @@ export function attachCanvasInput(el: HTMLElement): () => void {
   }
 
   function startStroke(firstPoint: [number, number], erase: boolean): void {
-    const spriteId = activeSpriteId();
-    const layerId = activeLayerId();
+    const spriteId = activeTarget.spriteId;
+    const layerId = activeTarget.layerId;
     if (spriteId === null || layerId === null) return;
     if (!isActiveLayerWritable()) {
       toastLayerLocked();
@@ -380,15 +377,15 @@ export function attachCanvasInput(el: HTMLElement): () => void {
     // Reset the chain — a fresh stroke starts a fresh ordering.
     strokeIpcChain = Promise.resolve();
 
-    const color = foregroundColor();
+    const color = tool.foregroundColor;
     canvasBeginStroke({
       sprite_id: spriteId,
       layer_id: layerId,
-      frame_index: activeFrameIndex(),
+      frame_index: activeTarget.frameIndex,
       color: { r: color.r, g: color.g, b: color.b, a: color.a },
-      brush_shape: toolShape(),
-      brush_size: toolSize(),
-      pixel_perfect: pixelPerfect(),
+      brush_shape: tool.shape,
+      brush_size: tool.size,
+      pixel_perfect: tool.pixelPerfect,
       erase,
       first_point: firstPoint,
     })
@@ -461,15 +458,15 @@ export function attachCanvasInput(el: HTMLElement): () => void {
     const vpW = rect.width;
     const vpH = rect.height;
 
-    const curZoom = zoom();
+    const curZoom = viewport.zoom;
 
     if (e.ctrlKey || e.metaKey) {
       // Ctrl+scroll: snap to adjacent zoom level.
       const dir = e.deltaY < 0 ? 1 : -1;
       const newZoom = snapZoom(curZoom, dir as 1 | -1);
       const { scrollX: nx, scrollY: ny } = zoomAt(
-        scrollX(),
-        scrollY(),
+        viewport.scrollX,
+        viewport.scrollY,
         curZoom,
         vpW,
         vpH,
@@ -482,7 +479,7 @@ export function attachCanvasInput(el: HTMLElement): () => void {
       setZoom(newZoom);
     } else if (e.shiftKey) {
       // Shift+scroll: pan horizontally.
-      setScrollX(scrollX() + e.deltaY / curZoom);
+      setScrollX(viewport.scrollX + e.deltaY / curZoom);
     } else if (
       e.deltaMode === WheelEvent.DOM_DELTA_LINE ||
       e.deltaMode === WheelEvent.DOM_DELTA_PAGE
@@ -491,8 +488,8 @@ export function attachCanvasInput(el: HTMLElement): () => void {
       const dir = e.deltaY < 0 ? 1 : -1;
       const newZoom = snapZoom(curZoom, dir as 1 | -1);
       const { scrollX: nx, scrollY: ny } = zoomAt(
-        scrollX(),
-        scrollY(),
+        viewport.scrollX,
+        viewport.scrollY,
         curZoom,
         vpW,
         vpH,
@@ -508,8 +505,8 @@ export function attachCanvasInput(el: HTMLElement): () => void {
       const factor = e.deltaY < 0 ? WHEEL_ZOOM_FACTOR : 1 / WHEEL_ZOOM_FACTOR;
       const newZoom = clampZoom(curZoom * factor);
       const { scrollX: nx, scrollY: ny } = zoomAt(
-        scrollX(),
-        scrollY(),
+        viewport.scrollX,
+        viewport.scrollY,
         curZoom,
         vpW,
         vpH,
@@ -546,17 +543,17 @@ export function attachCanvasInput(el: HTMLElement): () => void {
     // before this mousedown and sets transformDrag, so bailing here stops the
     // press from also starting a brush stroke (the cause of the draw-while-
     // transforming + flicker bug). Space-pan still wins so the user can pan.
-    if (transformDrag() !== null && !spaceHeld) return;
+    if (transform.transformDrag !== null && !spaceHeld) return;
 
     // Selection mode is delegated to the selection input handler; never draw.
-    if (isSelectMode() && !spaceHeld) return;
+    if (viewport.isSelectMode && !spaceHeld) return;
 
     // Tile-paint mode: left-click places, right-click erases.
-    if (activeTilemapCtx() !== null && !spaceHeld) {
+    if (tilemapUi.activeTilemapCtx !== null && !spaceHeld) {
       if (e.button === 0) {
         e.preventDefault();
         tilePaintActive = true;
-        tilePaintErase = tilemapTool() === "erase";
+        tilePaintErase = tilemapUi.tilemapTool === "erase";
         resetTilePaintStroke();
         dispatchTilePaint(e.clientX, e.clientY, el, tilePaintErase);
         return;
@@ -572,7 +569,7 @@ export function attachCanvasInput(el: HTMLElement): () => void {
     }
 
     // Drawing / fill tools: left-click only, no spacebar (spacebar pans).
-    if (e.button === 0 && !spaceHeld && activeTilemapCtx() === null) {
+    if (e.button === 0 && !spaceHeld && tilemapUi.activeTilemapCtx === null) {
       if (isFillTool()) {
         e.preventDefault();
         const [cx, cy] = canvasPointFromEvent(e, el);
@@ -582,7 +579,7 @@ export function attachCanvasInput(el: HTMLElement): () => void {
       if (isDrawingTool()) {
         e.preventDefault();
         const point = canvasPointFromEvent(e, el);
-        const erase = activeTool() === "eraser";
+        const erase = tool.activeTool === "eraser";
         startStroke(point, erase);
         return;
       }
@@ -593,9 +590,9 @@ export function attachCanvasInput(el: HTMLElement): () => void {
         shapeAnchor = anchor;
         // Show the preview at the anchor immediately so the user gets
         // feedback before the first mousemove.
-        const tool = activeTool();
+        const active = tool.activeTool;
         const kind: ShapeKind | null =
-          tool === "line" || tool === "rect" || tool === "ellipse" ? tool : null;
+          active === "line" || active === "rect" || active === "ellipse" ? active : null;
         if (kind !== null) {
           setShapePreview({ kind, start: anchor, end: anchor });
         }
@@ -620,9 +617,9 @@ export function attachCanvasInput(el: HTMLElement): () => void {
       const [cx, cy] = screenToCanvas(
         sx,
         sy,
-        scrollX(),
-        scrollY(),
-        zoom(),
+        viewport.scrollX,
+        viewport.scrollY,
+        viewport.zoom,
         rect.width,
         rect.height,
       );
@@ -649,9 +646,9 @@ export function attachCanvasInput(el: HTMLElement): () => void {
     // dispatches on mouseup via dispatchShape.
     if (shapeActive && shapeAnchor !== null) {
       const end = canvasPointFromEvent(e, el);
-      const tool = activeTool();
+      const active = tool.activeTool;
       const kind: ShapeKind | null =
-        tool === "line" || tool === "rect" || tool === "ellipse" ? tool : null;
+        active === "line" || active === "rect" || active === "ellipse" ? active : null;
       if (kind !== null) {
         setShapePreview({ kind, start: shapeAnchor, end });
       }
@@ -663,9 +660,9 @@ export function attachCanvasInput(el: HTMLElement): () => void {
     pan.lastX = e.clientX;
     pan.lastY = e.clientY;
 
-    const z = zoom();
-    setScrollX(scrollX() - dx / z);
-    setScrollY(scrollY() - dy / z);
+    const z = viewport.zoom;
+    setScrollX(viewport.scrollX - dx / z);
+    setScrollY(viewport.scrollY - dy / z);
     scheduleViewportSync();
   }
 

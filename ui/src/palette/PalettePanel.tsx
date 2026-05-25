@@ -20,12 +20,9 @@ import {
 import {
   palettes,
   activePalette,
-  activePaletteId,
+  paletteUi,
   setActivePaletteId,
-  foregroundIndex,
-  editingIndex,
   setEditingIndex,
-  editingColor,
   setEditingColor,
   cancelEditing,
   refreshPalettes,
@@ -87,8 +84,8 @@ const PalettePanel: Component<Props> = (props) => {
     // The explicit "Add to palette" button is the only commit path.
     if (pickerMode() === "append") return;
 
-    const idx = editingIndex();
-    const pid = activePaletteId();
+    const idx = paletteUi.editingIndex;
+    const pid = paletteUi.activePaletteId;
     const sid = props.spriteId;
     if (idx === null || pid === null || sid === null) return;
     if (isLocked(idx)) return;
@@ -124,8 +121,8 @@ const PalettePanel: Component<Props> = (props) => {
   // Open the picker with no associated swatch index. The chosen color is
   // appended via paletteAddColor only when the user clicks "Add to palette".
   const handleAddColorClick = () => {
-    if (props.spriteId === null || activePaletteId() === null) return;
-    const seed = activePalette()?.colors[foregroundIndex()]?.color ?? {
+    if (props.spriteId === null || paletteUi.activePaletteId === null) return;
+    const seed = activePalette()?.colors[paletteUi.foregroundIndex]?.color ?? {
       r: 0,
       g: 0,
       b: 0,
@@ -138,7 +135,7 @@ const PalettePanel: Component<Props> = (props) => {
   };
 
   const handlePickerAdd = async () => {
-    const color = editingColor();
+    const color = paletteUi.editingColor;
     if (!color) return;
     // Only close and clear the staged draft if the backend accepted the
     // append; on failure (already toasted by appendColor) keep the picker
@@ -152,7 +149,7 @@ const PalettePanel: Component<Props> = (props) => {
   // ── Grid callbacks ─────────────────────────────────────────────────────────
 
   const handleRemoveSwatch = async (index: number) => {
-    const pid = activePaletteId();
+    const pid = paletteUi.activePaletteId;
     const sid = props.spriteId;
     if (pid === null || sid === null) return;
     try {
@@ -164,7 +161,7 @@ const PalettePanel: Component<Props> = (props) => {
   };
 
   const handleRenameSwatch = async (index: number, name: string) => {
-    const pid = activePaletteId();
+    const pid = paletteUi.activePaletteId;
     const sid = props.spriteId;
     const entry = activePalette()?.colors[index];
     if (!entry || pid === null || sid === null) return;
@@ -190,7 +187,7 @@ const PalettePanel: Component<Props> = (props) => {
   // surfaced via toast). Callers that need to react to failure (e.g. keep
   // the picker open so the user can retry) check the boolean.
   const appendColor = async (color: Rgba): Promise<boolean> => {
-    const pid = activePaletteId();
+    const pid = paletteUi.activePaletteId;
     const sid = props.spriteId;
     if (pid === null || sid === null) return false;
     const args: PaletteAddColorArgs = { sprite_id: sid, palette_id: pid, color };
@@ -226,7 +223,7 @@ const PalettePanel: Component<Props> = (props) => {
   // ── Palette I/O import ────────────────────────────────────────────────────
 
   const handleFileImport = async (colors: Rgba[]) => {
-    const pid = activePaletteId();
+    const pid = paletteUi.activePaletteId;
     const sid = props.spriteId;
     if (pid === null || sid === null) return;
     for (const color of colors) {
@@ -259,9 +256,9 @@ const PalettePanel: Component<Props> = (props) => {
   // ── Effective color shown by the picker ───────────────────────────────────
 
   const pickerColor = (): Rgba => {
-    const draft = editingColor();
+    const draft = paletteUi.editingColor;
     if (draft) return draft;
-    const entry = activePalette()?.colors[foregroundIndex()];
+    const entry = activePalette()?.colors[paletteUi.foregroundIndex];
     return entry?.color ?? { r: 0, g: 0, b: 0, a: 255 };
   };
 
@@ -282,7 +279,7 @@ const PalettePanel: Component<Props> = (props) => {
         <div class="pp__palette-row">
           <select
             class="pp__palette-select"
-            value={activePaletteId() ?? ""}
+            value={paletteUi.activePaletteId ?? ""}
             onChange={(e) => {
               const v = e.currentTarget.value;
               setActivePaletteId(v === "" ? null : parseInt(v, 10));
@@ -310,8 +307,8 @@ const PalettePanel: Component<Props> = (props) => {
             <span class="pp__picker-label">
               {pickerMode() === "append"
                 ? "New color"
-                : (activePalette()?.colors[editingIndex() ?? 0]?.name ??
-                  `Swatch ${editingIndex() ?? 0}`)}
+                : (activePalette()?.colors[paletteUi.editingIndex ?? 0]?.name ??
+                  `Swatch ${paletteUi.editingIndex ?? 0}`)}
             </span>
             <button
               class="pp__icon-btn"
@@ -347,7 +344,7 @@ const PalettePanel: Component<Props> = (props) => {
             onClick={handleAddColorClick}
             title="Add color"
             aria-label="Add color"
-            disabled={activePaletteId() === null}
+            disabled={paletteUi.activePaletteId === null}
           >
             +
           </button>

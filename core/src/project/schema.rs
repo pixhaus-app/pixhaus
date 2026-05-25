@@ -48,7 +48,12 @@ impl SchemaVersion {
     /// fail on unknown future enum variants (see S55 blend modes), and
     /// the loader emits a `tracing::warn!` at that boundary so the
     /// failure is legible in logs.
-    pub const MINOR: u16 = 1;
+    ///
+    /// Bumped to `2` for the persisted animation-studio working state
+    /// (`AiMetadata::animation_studio_state`). Additive: the field carries
+    /// `#[serde(default)]`, so minor-1 files load cleanly and older builds
+    /// simply ignore the unknown field.
+    pub const MINOR: u16 = 2;
 
     /// The version emitted by this build.
     #[must_use]
@@ -185,14 +190,14 @@ mod tests {
     #[test]
     fn current_major_is_four() {
         assert_eq!(SchemaVersion::MAJOR, 4);
-        assert_eq!(SchemaVersion::MINOR, 1);
+        assert_eq!(SchemaVersion::MINOR, 2);
     }
 
     #[test]
-    fn current_version_is_major_4_minor_1() {
+    fn current_version_is_major_4_minor_2() {
         let v = SchemaVersion::current();
         assert_eq!(v.major, 4);
-        assert_eq!(v.minor, 1);
+        assert_eq!(v.minor, 2);
     }
 
     #[test]

@@ -5,7 +5,7 @@
 // Mutations go through the command wrappers, which call Rust and then refresh
 // the list via refreshLayers().
 
-import { createSignal } from "solid-js";
+import { createStore } from "solid-js/store";
 import type { BlendMode, Layer, LayerEffect, LayerId, SpriteId, TilesetId } from "../lib/types";
 import {
   layerAdd,
@@ -26,13 +26,11 @@ import {
   layerWrapInGroup,
 } from "../lib/commands/layers";
 import { canvasRecompositeFrame } from "../lib/commands/canvas";
-import {
-  activeFrameIndex,
-  activeSpriteId,
-  activeLayerId,
-  setActiveLayerId,
-  scheduleViewportSync,
-} from "../canvas/canvas-state";
+import { activeTarget, setActiveLayerId, scheduleViewportSync } from "../canvas/canvas-state";
+import { createBackendQuery } from "../lib/sync/query";
+import { runMutation } from "../lib/sync/mutation";
+import { invalidate } from "../lib/sync/invalidation";
+import { pushToast } from "../lib/toast/toast-state";
 
 /**
  * Asks the backend to recomposite the active frame and emit tile-dirty
@@ -42,7 +40,7 @@ import {
  * `locked` has no visual effect.
  */
 function refreshViewport(spriteId: SpriteId): void {
-  canvasRecompositeFrame(spriteId, activeFrameIndex()).catch((err: unknown) =>
+  canvasRecompositeFrame(spriteId, activeTarget.frameIndex).catch((err: unknown) =>
     console.error("[pixhaus] canvas_recomposite_frame:", err),
   );
 }
@@ -98,48 +96,41 @@ export function flattenLayers(all: Layer[], expandedCheck: (id: LayerId) => bool
 
 // Flat list ordered bottom-to-top (index 0 = bottom layer), matching Rust's order.
 // The panel renders in reverse to show topmost layers at the top of the list.
-export const [layers, setLayers] = createSignal<Layer[]>([]);
+//
+// Backed by a createBackendQuery keyed on the active sprite. The query
+// refetches automatically when the active sprite changes and discards
+// out-of-order responses itself, so the hand-rolled refreshToken guard this
+// module used to carry is gone. `layers()` keeps its old read shape.
+const layersQuery = createBackendQuery<SpriteId, Layer[]>({
+  key: "layers",
+  source: () => activeTarget.spriteId,
+  fetch: (spriteId) => layerList(spriteId),
+  initial: [],
+  onLoaded: (list) => ensureActiveLayer(list),
+  errorTitle: "Failed to load layers",
+});
 
-// Monotonically incremented on every refreshLayers() call. The async
-// layerList() resolves out-of-order if the active sprite changes
-// between two refreshes; by capturing the token we started with and
-// comparing against the current value, late responses get dropped
-// instead of overwriting the new sprite's layer list.
-let refreshToken = 0;
+export const layers = layersQuery.data;
 
+/** Refetches the layer list for the active sprite. */
 export function refreshLayers(): void {
-  refreshToken += 1;
-  const myToken = refreshToken;
-  const spriteId = activeSpriteId();
-  if (spriteId === null) {
-    setLayers([]);
-    return;
-  }
-  layerList(spriteId)
-    .then((next) => {
-      if (myToken !== refreshToken) return; // stale
-      setLayers(next);
-      ensureActiveLayer(next);
-    })
-    .catch((err: unknown) => {
-      console.error("[pixhaus] layer_list:", err);
-    });
+  void layersQuery.refetch();
 }
 
 /**
  * Picks a sensible default for `activeLayerId` when the previous one is
  * gone (or never set). Without an active layer, every paint / transform /
  * select-on-layer command silently fails its `if (layerId === null) return`
- * guard and the user sees "nothing happens." Called from `refreshLayers`
- * after the new list lands, so the auto-pick lines up with the rendered
- * panel state.
+ * guard and the user sees "nothing happens." Runs whenever the layers query
+ * commits a fresh list, so the auto-pick lines up with the rendered panel
+ * state. Tolerates an undefined list (idle cache before the first fetch).
  */
-function ensureActiveLayer(list: readonly Layer[]): void {
-  if (list.length === 0) {
+function ensureActiveLayer(list: readonly Layer[] | undefined): void {
+  if (list === undefined || list.length === 0) {
     setActiveLayerId(null);
     return;
   }
-  const current = activeLayerId();
+  const current = activeTarget.layerId;
   if (current !== null && list.some((l) => l.id === current)) {
     return;
   }
@@ -153,11 +144,52 @@ function ensureActiveLayer(list: readonly Layer[]): void {
 
 // ── Selection ───────────────────────────────────────────────────────────────
 
-// Multi-select set. The "primary" active layer (for painting) is activeLayerId()
-// from canvas-state. selectedLayerIds tracks which rows are highlighted in the panel.
-export const [selectedLayerIds, setSelectedLayerIds] = createSignal<ReadonlySet<LayerId>>(
-  new Set(),
-);
+// When non-null, a tileset picker dialog is open and Convert-to-Tilemap is
+// pending the user's tileset choice. Set by the layer context menu, cleared by
+// the dialog on confirm/cancel.
+export type TilesetPickerTarget = {
+  spriteId: SpriteId;
+  layerId: LayerId;
+};
+
+// UI-only layer-panel state, grouped in one store. Reads are
+// layerUi.selectedLayerIds, layerUi.renamingLayerId, etc.; writes go through
+// the setter functions below (which accept either a value or an updater so the
+// Set-mutating call sites keep their callback form). The "primary" active
+// layer (for painting) is activeTarget.layerId from canvas-state; selectedLayerIds
+// tracks which rows are highlighted in the panel.
+interface LayerUiState {
+  selectedLayerIds: ReadonlySet<LayerId>;
+  renamingLayerId: LayerId | null;
+  /** Groups default to expanded; collapsed ones are tracked explicitly. */
+  collapsedGroups: ReadonlySet<LayerId>;
+  /** Flat-list index where the drop indicator should render. */
+  dragOverIndex: number | null;
+  tilesetPickerTarget: TilesetPickerTarget | null;
+}
+
+const [layerUi, setLayerUi] = createStore<LayerUiState>({
+  selectedLayerIds: new Set(),
+  renamingLayerId: null,
+  collapsedGroups: new Set(),
+  dragOverIndex: null,
+  tilesetPickerTarget: null,
+});
+
+export { layerUi };
+
+type SetArg<T> = T | ((prev: T) => T);
+
+export function setSelectedLayerIds(next: SetArg<ReadonlySet<LayerId>>): void {
+  setLayerUi("selectedLayerIds", typeof next === "function" ? next : () => next);
+}
+export const setRenamingLayerId = (v: LayerId | null): void => setLayerUi("renamingLayerId", v);
+function setCollapsedGroups(next: SetArg<ReadonlySet<LayerId>>): void {
+  setLayerUi("collapsedGroups", typeof next === "function" ? next : () => next);
+}
+export const setDragOverIndex = (v: number | null): void => setLayerUi("dragOverIndex", v);
+export const setTilesetPickerTarget = (v: TilesetPickerTarget | null): void =>
+  setLayerUi("tilesetPickerTarget", v);
 
 export function selectLayer(id: LayerId, extend: boolean): void {
   setActiveLayerId(id);
@@ -186,21 +218,20 @@ export function toggleLayerSelection(id: LayerId): void {
 
 // ── Inline rename state ─────────────────────────────────────────────────────
 
-export const [renamingLayerId, setRenamingLayerId] = createSignal<LayerId | null>(null);
-
 export function beginRename(id: LayerId): void {
   setRenamingLayerId(id);
 }
 
 export function commitRename(id: LayerId, name: string): void {
-  const spriteId = activeSpriteId();
+  const spriteId = activeTarget.spriteId;
   if (spriteId === null) return;
   setRenamingLayerId(null);
   const trimmed = name.trim();
   if (!trimmed) return;
-  layerRename(spriteId, id, trimmed)
-    .then(() => refreshLayers())
-    .catch((err: unknown) => console.error("[pixhaus] layer_rename:", err));
+  void runMutation({
+    run: () => layerRename(spriteId, id, trimmed),
+    invalidate: ["layers"],
+  });
 }
 
 export function cancelRename(): void {
@@ -209,11 +240,8 @@ export function cancelRename(): void {
 
 // ── Expanded groups ─────────────────────────────────────────────────────────
 
-// Groups default to expanded. Track collapsed ones explicitly.
-const [collapsedGroups, setCollapsedGroups] = createSignal<ReadonlySet<LayerId>>(new Set());
-
 export function isGroupExpanded(id: LayerId): boolean {
-  return !collapsedGroups().has(id);
+  return !layerUi.collapsedGroups.has(id);
 }
 
 export function toggleGroupExpanded(id: LayerId): void {
@@ -243,22 +271,7 @@ export function ensureGroupExpanded(id: LayerId): void {
   });
 }
 
-// ── Drag-to-reorder state ───────────────────────────────────────────────────
-
-// Index (in the flat layers array) where the drop indicator should render.
-export const [dragOverIndex, setDragOverIndex] = createSignal<number | null>(null);
-
 // ── Tileset picker (Convert to Tilemap Layer) ───────────────────────────────
-
-// When non-null, a tileset picker dialog is open and Convert-to-Tilemap is
-// pending the user's tileset choice. Set by the layer context menu, cleared
-// by the dialog on confirm/cancel.
-export type TilesetPickerTarget = {
-  spriteId: SpriteId;
-  layerId: LayerId;
-};
-export const [tilesetPickerTarget, setTilesetPickerTarget] =
-  createSignal<TilesetPickerTarget | null>(null);
 
 export function openTilesetPicker(spriteId: SpriteId, layerId: LayerId): void {
   setTilesetPickerTarget({ spriteId, layerId });
@@ -297,27 +310,27 @@ export function nextAutoName(all: readonly Layer[], prefix: string): string {
 // ── Mutation helpers ────────────────────────────────────────────────────────
 
 export function addLayer(spriteId: SpriteId, name: string): void {
-  layerAdd({ sprite_id: spriteId, name, kind: { kind: "raster" } })
-    .then((layer) => {
-      refreshLayers();
-      selectLayer(layer.id, false);
-    })
-    .catch((err: unknown) => console.error("[pixhaus] layer_add:", err));
+  void runMutation({
+    run: () => layerAdd({ sprite_id: spriteId, name, kind: { kind: "raster" } }),
+    invalidate: ["layers"],
+    onSuccess: (layer) => selectLayer(layer.id, false),
+  });
 }
 
 export function deleteLayer(spriteId: SpriteId, id: LayerId): void {
-  layerDelete(spriteId, id)
-    .then(() => {
-      refreshLayers();
+  void runMutation({
+    run: () => layerDelete(spriteId, id),
+    invalidate: ["layers"],
+    onSuccess: () => {
       // Clear the active layer if it was the one deleted.
-      if (activeLayerId() === id) setActiveLayerId(null);
+      if (activeTarget.layerId === id) setActiveLayerId(null);
       setSelectedLayerIds((prev) => {
         const next = new Set(prev);
         next.delete(id);
         return next;
       });
-    })
-    .catch((err: unknown) => console.error("[pixhaus] layer_delete:", err));
+    },
+  });
 }
 
 /**
@@ -330,14 +343,17 @@ export function deleteLayer(spriteId: SpriteId, id: LayerId): void {
 export function deleteLayers(spriteId: SpriteId, ids: readonly LayerId[]): void {
   if (ids.length === 0) return;
   void Promise.allSettled(ids.map((id) => layerDelete(spriteId, id))).then((results) => {
-    for (const r of results) {
-      if (r.status === "rejected") {
-        console.error("[pixhaus] layer_delete batch:", r.reason);
-      }
+    const failed = results.filter((r) => r.status === "rejected").length;
+    if (failed > 0) {
+      pushToast({
+        kind: "error",
+        title: "Some layers could not be deleted",
+        body: `${failed} of ${ids.length} deletes failed.`,
+      });
     }
-    refreshLayers();
+    invalidate("layers");
     const idSet = new Set(ids);
-    const active = activeLayerId();
+    const active = activeTarget.layerId;
     if (active !== null && idSet.has(active)) setActiveLayerId(null);
     setSelectedLayerIds((prev) => {
       const next = new Set(prev);
@@ -348,24 +364,25 @@ export function deleteLayers(spriteId: SpriteId, ids: readonly LayerId[]): void 
 }
 
 export function reorderLayer(spriteId: SpriteId, id: LayerId, newIndex: number): void {
-  layerReorder(spriteId, id, newIndex)
-    .then(() => refreshLayers())
-    .catch((err: unknown) => console.error("[pixhaus] layer_reorder:", err));
+  void runMutation({
+    run: () => layerReorder(spriteId, id, newIndex),
+    invalidate: ["layers"],
+  });
 }
 
 export function setLayerVisibility(spriteId: SpriteId, id: LayerId, visible: boolean): void {
-  layerSetVisibility(spriteId, id, visible)
-    .then(() => {
-      refreshLayers();
-      refreshViewport(spriteId);
-    })
-    .catch((err: unknown) => console.error("[pixhaus] layer_set_visibility:", err));
+  void runMutation({
+    run: () => layerSetVisibility(spriteId, id, visible),
+    invalidate: ["layers"],
+    onSuccess: () => refreshViewport(spriteId),
+  });
 }
 
 export function setLayerLocked(spriteId: SpriteId, id: LayerId, locked: boolean): void {
-  layerSetLocked(spriteId, id, locked)
-    .then(() => refreshLayers())
-    .catch((err: unknown) => console.error("[pixhaus] layer_set_locked:", err));
+  void runMutation({
+    run: () => layerSetLocked(spriteId, id, locked),
+    invalidate: ["layers"],
+  });
 }
 
 /**
@@ -393,77 +410,78 @@ export function isLayerWritable(all: readonly Layer[], id: LayerId): boolean {
  * active layer is set; the caller already early-returns in that case.
  */
 export function isActiveLayerWritable(): boolean {
-  const id = activeLayerId();
+  const id = activeTarget.layerId;
   if (id === null) return true;
   return isLayerWritable(layers(), id);
 }
 
 export function setLayerOpacity(spriteId: SpriteId, id: LayerId, opacity: number): void {
-  layerSetOpacity(spriteId, id, opacity)
-    .then(() => {
-      refreshLayers();
-      refreshViewport(spriteId);
-    })
-    .catch((err: unknown) => console.error("[pixhaus] layer_set_opacity:", err));
+  void runMutation({
+    run: () => layerSetOpacity(spriteId, id, opacity),
+    invalidate: ["layers"],
+    onSuccess: () => refreshViewport(spriteId),
+  });
 }
 
 export function setLayerBlendMode(spriteId: SpriteId, id: LayerId, blendMode: BlendMode): void {
-  layerSetBlendMode(spriteId, id, blendMode)
-    .then(() => {
-      refreshLayers();
-      refreshViewport(spriteId);
-    })
-    .catch((err: unknown) => console.error("[pixhaus] layer_set_blend_mode:", err));
+  void runMutation({
+    run: () => layerSetBlendMode(spriteId, id, blendMode),
+    invalidate: ["layers"],
+    onSuccess: () => refreshViewport(spriteId),
+  });
 }
 
 export function setLayerEffects(spriteId: SpriteId, id: LayerId, effects: LayerEffect[]): void {
-  layerSetEffects(spriteId, id, effects)
-    .then(() => {
-      refreshLayers();
-      refreshViewport(spriteId);
-    })
-    .catch((err: unknown) => console.error("[pixhaus] layer_set_effects:", err));
+  void runMutation({
+    run: () => layerSetEffects(spriteId, id, effects),
+    invalidate: ["layers"],
+    onSuccess: () => refreshViewport(spriteId),
+  });
 }
 
 export function reparentLayer(spriteId: SpriteId, id: LayerId, parentId: LayerId | null): void {
-  layerSetParent(spriteId, id, parentId)
-    .then(() => refreshLayers())
-    .catch((err: unknown) => console.error("[pixhaus] layer_set_parent:", err));
+  void runMutation({
+    run: () => layerSetParent(spriteId, id, parentId),
+    invalidate: ["layers"],
+  });
 }
 
 export function wrapLayersInGroup(spriteId: SpriteId, layerIds: readonly LayerId[]): void {
   if (layerIds.length === 0) return;
-  layerWrapInGroup(spriteId, [...layerIds])
-    .then((newGroup) => {
-      refreshLayers();
-      // Auto-expand the new group so its children (the wrapped layers)
-      // are immediately visible — and so the group is a valid drop
-      // target for additional layers without an extra chevron click.
-      ensureGroupExpanded(newGroup.id);
-    })
-    .catch((err: unknown) => console.error("[pixhaus] layer_wrap_in_group:", err));
+  void runMutation({
+    run: () => layerWrapInGroup(spriteId, [...layerIds]),
+    invalidate: ["layers"],
+    // Auto-expand the new group so its children (the wrapped layers) are
+    // immediately visible — and so the group is a valid drop target for
+    // additional layers without an extra chevron click.
+    onSuccess: (newGroup) => ensureGroupExpanded(newGroup.id),
+  });
 }
 
 export function convertLayerToTilemap(spriteId: SpriteId, id: LayerId, tilesetId: TilesetId): void {
-  layerConvertToTilemap(spriteId, id, tilesetId)
-    .then(() => refreshLayers())
-    .catch((err: unknown) => console.error("[pixhaus] layer_convert_to_tilemap:", err));
+  void runMutation({
+    run: () => layerConvertToTilemap(spriteId, id, tilesetId),
+    invalidate: ["layers"],
+  });
 }
 
 export function mergeLayerDown(spriteId: SpriteId, id: LayerId): void {
-  layerMergeDown(spriteId, id)
-    .then(() => refreshLayers())
-    .catch((err: unknown) => console.error("[pixhaus] layer_merge_down:", err));
+  void runMutation({
+    run: () => layerMergeDown(spriteId, id),
+    invalidate: ["layers"],
+  });
 }
 
 export function mergeSelectedLayers(spriteId: SpriteId, ids: ReadonlySet<LayerId>): void {
-  layerMergeSelected(spriteId, [...ids])
-    .then(() => refreshLayers())
-    .catch((err: unknown) => console.error("[pixhaus] layer_merge_selected:", err));
+  void runMutation({
+    run: () => layerMergeSelected(spriteId, [...ids]),
+    invalidate: ["layers"],
+  });
 }
 
 export function flattenVisibleLayers(spriteId: SpriteId): void {
-  layerFlattenVisible(spriteId)
-    .then(() => refreshLayers())
-    .catch((err: unknown) => console.error("[pixhaus] layer_flatten_visible:", err));
+  void runMutation({
+    run: () => layerFlattenVisible(spriteId),
+    invalidate: ["layers"],
+  });
 }

@@ -6,7 +6,7 @@
 // ToolOptionsPanel.
 
 import { type Component } from "solid-js";
-import { activeSpriteId } from "../canvas/canvas-state";
+import { activeTarget } from "../canvas/canvas-state";
 import RailSection from "./RailSection";
 import PalettePanel from "../palette/PalettePanel";
 import LayerPanel from "../layers/LayerPanel";
@@ -34,7 +34,7 @@ const RightRail: Component = () => {
         <DitheringSection />
       </RailSection>
       <RailSection id="color">
-        <PalettePanel spriteId={activeSpriteId()} inRail />
+        <PalettePanel spriteId={activeTarget.spriteId} inRail />
       </RailSection>
       <RailSection id="layers">
         <LayerPanel inRail />

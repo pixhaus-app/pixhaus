@@ -10,41 +10,24 @@
 //   unmount → destroy renderer, remove all listeners
 
 import { onMount, onCleanup, createEffect, createSignal, type Component } from "solid-js";
-import { listen } from "@tauri-apps/api/event";
+import { subscribeTauriEvent } from "../lib/sync/subscribe-event";
 import { CanvasRenderer } from "./renderer";
 import { attachCanvasInput } from "./input";
 import { BrushCursor, ShapePreview, TransformHandles } from "./overlays";
 import Toolbar from "./tools/Toolbar";
 import {
-  scrollX,
-  scrollY,
-  zoom,
-  showPixelGrid,
-  showTileGrid,
-  gridSpacing,
-  onionSkin,
-  onionSkinPrev,
-  onionSkinNext,
-  onionSkinOpacity,
+  activeTarget,
+  viewport,
   brushSize,
   brushShape,
-  cursorCanvas,
-  shapePreview,
-  transformBounds,
   setTransformBounds,
-  activeSpriteId,
-  activeFrameIndex,
-  selectionRect,
-  selectionKind,
-  selectionMask,
-  isSelectMode,
   resetCanvasState,
   resetViewport,
 } from "./canvas-state";
 import { startTransformDrag, attachTransformKeyboard } from "./transform/transform-input";
 import { syncNumericFromBounds } from "./transform/transform-state";
 import type { TransformHandle } from "./transform/transform-state";
-import { activeProject } from "../project-state";
+import { projectState } from "../project-state";
 import type { ProjectStatus } from "../lib/commands/project";
 import { canvasComposite } from "../lib/commands/canvas";
 import { spriteList } from "../lib/commands/project";
@@ -103,21 +86,18 @@ const Canvas: Component = () => {
       setVpW(w);
       setVpH(h);
       renderer.setViewport({
-        scrollX: scrollX(),
-        scrollY: scrollY(),
-        zoom: zoom(),
+        scrollX: viewport.scrollX,
+        scrollY: viewport.scrollY,
+        zoom: viewport.zoom,
         width: w,
         height: h,
       });
     });
     ro.observe(containerEl);
 
-    // Hold the listen() promise rather than the resolved UnlistenFn so
-    // an unmount that happens before listen() resolves still detaches
-    // the listener (the cleanup awaits the promise and calls fn() on
-    // resolve). Mirrors the pattern used by Shell.tsx::menuListenerPromise.
-    const tileDirtyPromise = listen<TileDirtyPayload>("canvas:tile-dirty", (event) => {
-      const p = event.payload;
+    // Tile-dirty drives the WebGL renderer directly (hot path) — the handler
+    // stays here, bound to this component's renderer instance.
+    subscribeTauriEvent<TileDirtyPayload>("canvas:tile-dirty", (p) => {
       const raw = atob(p.data);
       const bytes = new Uint8Array(raw.length);
       for (let i = 0; i < raw.length; i++) bytes[i] = raw.charCodeAt(i);
@@ -145,7 +125,7 @@ const Canvas: Component = () => {
     let lastSeenProject: ProjectStatus | null = null;
     let spriteListRequestId = 0;
     createEffect(() => {
-      const proj = activeProject();
+      const proj = projectState.activeProject;
       if (proj === lastSeenProject) return;
       lastSeenProject = proj;
       if (!proj) {
@@ -197,8 +177,8 @@ const Canvas: Component = () => {
     let compositeRequestId = 0;
 
     createEffect(() => {
-      const spriteId = activeSpriteId();
-      const proj = activeProject();
+      const spriteId = activeTarget.spriteId;
+      const proj = projectState.activeProject;
       if (!proj || spriteId === null) {
         setSpriteSize(null);
         return;
@@ -222,7 +202,7 @@ const Canvas: Component = () => {
     // tuple to the renderer. Re-fires on every signal change — Solid
     // tracks every read at the top of the closure.
     createEffect(() => {
-      const spriteId = activeSpriteId();
+      const spriteId = activeTarget.spriteId;
       const size = spriteSize();
       if (spriteId === null || size === null) {
         renderer.setSprite(null);
@@ -230,11 +210,11 @@ const Canvas: Component = () => {
       }
       renderer.setSprite({
         spriteId: String(spriteId),
-        frameIndex: activeFrameIndex(),
+        frameIndex: activeTarget.frameIndex,
         spriteWidth: size.w,
         spriteHeight: size.h,
-        showPixelGrid: showPixelGrid(),
-        onionSkin: onionSkin(),
+        showPixelGrid: viewport.showPixelGrid,
+        onionSkin: viewport.onionSkin,
       });
     });
 
@@ -244,9 +224,9 @@ const Canvas: Component = () => {
       const canvas = canvasEl;
       if (!canvas) return;
       renderer.setViewport({
-        scrollX: scrollX(),
-        scrollY: scrollY(),
-        zoom: zoom(),
+        scrollX: viewport.scrollX,
+        scrollY: viewport.scrollY,
+        zoom: viewport.zoom,
         width: canvas.width,
         height: canvas.height,
       });
@@ -256,11 +236,11 @@ const Canvas: Component = () => {
       // A mask selection traces its true outline; a rect selection (or the
       // live drag preview) draws bounding-box ants. The renderer prefers the
       // mask when present, so clear the rect in that case to avoid both.
-      const mask = selectionMask();
-      if (selectionKind() === "mask" && mask) {
+      const mask = viewport.selectionMask;
+      if (viewport.selectionKind === "mask" && mask) {
         renderer.setSelection({ rect: null, mask });
       } else {
-        renderer.setSelection({ rect: selectionRect(), mask: null });
+        renderer.setSelection({ rect: viewport.selectionRect, mask: null });
       }
     });
 
@@ -269,7 +249,7 @@ const Canvas: Component = () => {
     // drag path updates transformBounds independently during a drag,
     // so we only sync from selectionRect when no drag is in progress.
     createEffect(() => {
-      const rect = selectionRect();
+      const rect = viewport.selectionRect;
       if (rect) {
         setTransformBounds(rect);
         syncNumericFromBounds(rect);
@@ -280,14 +260,14 @@ const Canvas: Component = () => {
 
     createEffect(() => {
       renderer.setOnionSkin({
-        prev: onionSkinPrev(),
-        next: onionSkinNext(),
-        opacity: onionSkinOpacity(),
+        prev: viewport.onionSkinPrev,
+        next: viewport.onionSkinNext,
+        opacity: viewport.onionSkinOpacity,
       });
     });
 
     createEffect(() => {
-      renderer.setMajorGrid({ enabled: showTileGrid(), spacing: gridSpacing() });
+      renderer.setMajorGrid({ enabled: viewport.showTileGrid, spacing: viewport.gridSpacing });
     });
 
     onCleanup(() => {
@@ -298,11 +278,6 @@ const Canvas: Component = () => {
       ro.disconnect();
       detachInput();
       detachTransformKeys();
-      tileDirtyPromise
-        .then((unlisten) => unlisten())
-        .catch((err: unknown) => {
-          console.warn("[pixhaus] failed to unlisten canvas:tile-dirty:", err);
-        });
       renderer.destroy();
     });
   });
@@ -313,22 +288,22 @@ const Canvas: Component = () => {
       <div ref={containerEl} class="canvas-container" data-testid="canvas-container" tabIndex={-1}>
         <canvas ref={canvasEl} class="canvas-viewport" data-testid="canvas-viewport" />
         <BrushCursor
-          scrollX={scrollX()}
-          scrollY={scrollY()}
-          zoom={zoom()}
+          scrollX={viewport.scrollX}
+          scrollY={viewport.scrollY}
+          zoom={viewport.zoom}
           vpW={vpW()}
           vpH={vpH()}
-          cursor={cursorCanvas()}
+          cursor={viewport.cursorCanvas}
           size={brushSize()}
           shape={brushShape()}
         />
         <ShapePreview
-          scrollX={scrollX()}
-          scrollY={scrollY()}
-          zoom={zoom()}
+          scrollX={viewport.scrollX}
+          scrollY={viewport.scrollY}
+          zoom={viewport.zoom}
           vpW={vpW()}
           vpH={vpH()}
-          preview={shapePreview()}
+          preview={viewport.shapePreview}
         />
         {/* Handles render only for a rectangular selection while a selection
             tool is active. Mask selections (wand, lasso, ellipse) only know
@@ -336,12 +311,16 @@ const Canvas: Component = () => {
             transform they don't support; and with a draw tool the body
             hit-zone must not steal clicks meant for painting. */}
         <TransformHandles
-          scrollX={scrollX()}
-          scrollY={scrollY()}
-          zoom={zoom()}
+          scrollX={viewport.scrollX}
+          scrollY={viewport.scrollY}
+          zoom={viewport.zoom}
           vpW={vpW()}
           vpH={vpH()}
-          bounds={isSelectMode() && selectionKind() === "rect" ? transformBounds() : null}
+          bounds={
+            viewport.isSelectMode && viewport.selectionKind === "rect"
+              ? viewport.transformBounds
+              : null
+          }
           onHandleDown={(handle: TransformHandle, e: PointerEvent) => startTransformDrag(handle, e)}
         />
       </div>

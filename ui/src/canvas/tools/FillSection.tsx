@@ -4,7 +4,7 @@
 // by the rail when activeTool() === "fill" (see rail-state).
 
 import { type Component } from "solid-js";
-import { fillTolerance, setFillTolerance } from "./tool-state";
+import { tool, setFillTolerance } from "./tool-state";
 
 const FillSection: Component = () => (
   <div class="tool-options-group" data-testid="tool-options-fill">
@@ -14,12 +14,12 @@ const FillSection: Component = () => (
         type="range"
         min="0"
         max="255"
-        value={fillTolerance()}
+        value={tool.fillTolerance}
         onInput={(e) => setFillTolerance(Number(e.currentTarget.value))}
         class="tool-option-range"
         data-testid="tool-option-tolerance"
       />
-      <span class="tool-option-value">{fillTolerance()}</span>
+      <span class="tool-option-value">{tool.fillTolerance}</span>
     </label>
   </div>
 );

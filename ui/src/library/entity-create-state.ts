@@ -4,21 +4,23 @@
 // openEntityCreate(...) to surface the dialog; the dialog closes itself
 // after success or cancel.
 
-import { createSignal } from "solid-js";
+import { createStore } from "solid-js/store";
 import type { GroupId } from "../lib/types";
 
 export interface EntityCreateRequest {
   initialGroupId: GroupId | null;
 }
 
-const [request, setRequest] = createSignal<EntityCreateRequest | null>(null);
-
-export const entityCreateRequest = request;
+// A store for consistency with the rest of the UI state layer; read as
+// entityCreate.request (non-null while the dialog is open).
+export const [entityCreate, setEntityCreate] = createStore<{ request: EntityCreateRequest | null }>(
+  { request: null },
+);
 
 export function openEntityCreate(req: EntityCreateRequest = { initialGroupId: null }): void {
-  setRequest(req);
+  setEntityCreate("request", req);
 }
 
 export function closeEntityCreate(): void {
-  setRequest(null);
+  setEntityCreate("request", null);
 }

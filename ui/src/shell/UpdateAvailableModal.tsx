@@ -1,7 +1,7 @@
 import { createSignal, Show, type Component } from "solid-js";
 import { Button } from "../lib/ui/Button";
 import { Dialog } from "../lib/ui/Dialog";
-import { closeUpdateModal, showUpdateModal, updateInfo } from "./update-modal-state";
+import { closeUpdateModal, updateModal } from "./update-modal-state";
 import { updaterInstall } from "../lib/commands/updater";
 import { reportCommandFailure } from "../lib/utils/errors";
 import { pushToast } from "../lib/toast/toast-state";
@@ -36,13 +36,13 @@ const UpdateAvailableModal: Component = () => {
   }
 
   const title = () => {
-    const info = updateInfo();
+    const info = updateModal.updateInfo;
     return info ? `Pixhaus ${info.version} is available` : "Update available";
   };
 
   return (
     <Dialog
-      open={showUpdateModal()}
+      open={updateModal.showUpdateModal}
       title={title()}
       onClose={closeUpdateModal}
       size="lg"
@@ -51,7 +51,7 @@ const UpdateAvailableModal: Component = () => {
     >
       <Dialog.Body>
         <Show
-          when={updateInfo()?.body}
+          when={updateModal.updateInfo?.body}
           fallback={<p class="prefs__sublabel">No release notes were included with this update.</p>}
         >
           {(body) => (
@@ -61,7 +61,7 @@ const UpdateAvailableModal: Component = () => {
             </div>
           )}
         </Show>
-        <Show when={updateInfo()?.date}>
+        <Show when={updateModal.updateInfo?.date}>
           {(date) => <p class="prefs__sublabel update-modal__date">Released {date()}</p>}
         </Show>
       </Dialog.Body>

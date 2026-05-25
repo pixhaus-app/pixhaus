@@ -5,7 +5,7 @@
 // collapse, search query, panel visibility). Mutations go through the command
 // wrappers, which call Rust and then refresh via refreshLibrary().
 
-import { createSignal } from "solid-js";
+import { createStore } from "solid-js/store";
 import type {
   ActiveTarget,
   Entity,
@@ -40,6 +40,9 @@ import {
   type LibraryAddStateArgs,
 } from "../lib/commands/library";
 import { reportCommandFailure } from "../lib/utils/errors";
+import { createBackendQuery } from "../lib/sync/query";
+import { runMutation } from "../lib/sync/mutation";
+import { projectState } from "../project-state";
 
 export type { LibraryCreateEntityArgs, LibraryAddStateArgs };
 
@@ -108,57 +111,135 @@ export function flattenLibrary(
   return result;
 }
 
-// ── Data cache ──────────────────────────────────────────────────────────────
+// ── UI state ───────────────────────────────────────────────────────────────
 
-export const [entities, setEntities] = createSignal<Entity[]>([]);
-export const [groups, setGroups] = createSignal<EntityGroup[]>([]);
-export const [tags, setTags] = createSignal<TagDefinition[]>([]);
+/** Inline-rename target — an entity, group, or state. */
+export type RenameTarget =
+  | { kind: "entity"; id: EntityId }
+  | { kind: "group"; id: GroupId }
+  | { kind: "state"; entityId: EntityId; stateId: StateId };
 
-// Lookup from TagId to its definition. Recomputed once per refreshLibrary()
-// so chip rendering can hit the map by id in O(1) instead of running a
-// linear `tags().find(...)` per chip per row.
-export const [tagsById, setTagsById] = createSignal<ReadonlyMap<TagId, TagDefinition>>(new Map());
+// UI-only library-panel state in one store. Reads are libraryUi.selectedEntityId,
+// libraryUi.searchQuery, etc.; writes go through the setters below (the
+// Map/Set-mutating ones accept a value or updater). Declared before the query
+// because the query's onLoaded prunes pendingTagSuggestions on its initial
+// synchronous run, which would otherwise hit a temporal dead zone.
+interface LibraryUiState {
+  selectedEntityId: EntityId | null;
+  renamingTarget: RenameTarget | null;
+  /** Groups default to expanded; collapsed ones are tracked explicitly. */
+  collapsedGroups: ReadonlySet<GroupId>;
+  /** Flat-list index where the drop indicator renders. */
+  dragOverIndex: number | null;
+  searchQuery: string;
+  /** Active kind filter; null = show all. */
+  kindFilter: EntityKind | null;
+  /** Active tag filter; null = show all. */
+  tagFilter: TagId | null;
+  /** Pending VLM tag suggestions per entity (B9.4); accepted tags move to
+   * entity.tags, the rest render as an accept/reject chip strip. */
+  pendingTagSuggestions: ReadonlyMap<EntityId, ReadonlyArray<TagId>>;
+}
 
-// Stale-request guard: incremented on every refreshLibrary() call. Async
-// IPC responses from a superseded refresh are dropped on arrival.
-let refreshToken = 0;
+const [libraryUi, setLibraryUi] = createStore<LibraryUiState>({
+  selectedEntityId: null,
+  renamingTarget: null,
+  collapsedGroups: new Set(),
+  dragOverIndex: null,
+  searchQuery: "",
+  kindFilter: null,
+  tagFilter: null,
+  pendingTagSuggestions: new Map(),
+});
 
+export { libraryUi };
+
+type SetArg<T> = T | ((prev: T) => T);
+
+export const setSelectedEntityId = (v: EntityId | null): void =>
+  setLibraryUi("selectedEntityId", v);
+export const setRenamingTarget = (v: RenameTarget | null): void =>
+  setLibraryUi("renamingTarget", v);
+function setCollapsedGroups(next: SetArg<ReadonlySet<GroupId>>): void {
+  setLibraryUi("collapsedGroups", typeof next === "function" ? next : () => next);
+}
+export const setDragOverIndex = (v: number | null): void => setLibraryUi("dragOverIndex", v);
+export const setSearchQuery = (v: string): void => setLibraryUi("searchQuery", v);
+export const setKindFilter = (v: EntityKind | null): void => setLibraryUi("kindFilter", v);
+export const setTagFilter = (v: TagId | null): void => setLibraryUi("tagFilter", v);
+function setPendingTagSuggestions(next: SetArg<ReadonlyMap<EntityId, ReadonlyArray<TagId>>>): void {
+  setLibraryUi("pendingTagSuggestions", typeof next === "function" ? next : () => next);
+}
+
+interface LibraryData {
+  entities: Entity[];
+  groups: EntityGroup[];
+  tags: TagDefinition[];
+  // Lookup from TagId to its definition, built once per fetch so chip
+  // rendering hits the map in O(1) instead of a linear tags().find() per chip.
+  tagsById: ReadonlyMap<TagId, TagDefinition>;
+}
+
+const EMPTY_LIBRARY: LibraryData = {
+  entities: [],
+  groups: [],
+  tags: [],
+  tagsById: new Map(),
+};
+
+// Entities, groups, and tags load together as one project-global query. They
+// used to share a hand-rolled refresh token to drop superseded responses; the
+// query gets that from createResource. The source is the active project, so
+// the library loads on project open and clears on close.
+const libraryQuery = createBackendQuery<number, LibraryData>({
+  key: "library",
+  // Key by the project's creation timestamp (stable per project, distinct
+  // between projects, unchanged by save/save-as) so switching projects
+  // re-sources the query instead of reusing the previous project's data.
+  source: () => projectState.activeProject?.metadata.created_at ?? null,
+  fetch: async () => {
+    const [newEntities, newGroups, newTags] = await Promise.all([
+      libraryListEntities(),
+      libraryListGroups(),
+      libraryListTags(),
+    ]);
+    const byId = new Map<TagId, TagDefinition>();
+    for (const tag of newTags) byId.set(tag.id, tag);
+    return { entities: newEntities, groups: newGroups, tags: newTags, tagsById: byId };
+  },
+  initial: EMPTY_LIBRARY,
+  onLoaded: (data) => pruneStaleSuggestions(data.entities),
+  errorTitle: "Failed to load library",
+});
+
+export const entities = (): Entity[] => libraryQuery.data().entities;
+export const groups = (): EntityGroup[] => libraryQuery.data().groups;
+export const tags = (): TagDefinition[] => libraryQuery.data().tags;
+export const tagsById = (): ReadonlyMap<TagId, TagDefinition> => libraryQuery.data().tagsById;
+
+/** Refetches entities, groups, and tags for the active project. */
 export function refreshLibrary(): void {
-  refreshToken += 1;
-  const myToken = refreshToken;
+  void libraryQuery.refetch();
+}
 
-  Promise.all([libraryListEntities(), libraryListGroups(), libraryListTags()])
-    .then(([newEntities, newGroups, newTags]) => {
-      if (myToken !== refreshToken) return;
-      setEntities(newEntities);
-      setGroups(newGroups);
-      setTags(newTags);
-
-      // Rebuild the id lookup so chip rendering doesn't pay linear search
-      // costs per row.
-      const byId = new Map<TagId, TagDefinition>();
-      for (const tag of newTags) byId.set(tag.id, tag);
-      setTagsById(byId);
-
-      // Drop pending suggestions for entities that no longer exist. Without
-      // this, switching projects (or deleting an entity then creating a new
-      // one that reuses its id) would surface stale chips against the new
-      // entity. Refreshing on the same entity list is a no-op.
-      const liveIds = new Set(newEntities.map((e) => e.id));
-      setPendingTagSuggestions((prev) => {
-        let removed = false;
-        const next = new Map<EntityId, ReadonlyArray<TagId>>();
-        for (const [id, sugg] of prev) {
-          if (liveIds.has(id)) {
-            next.set(id, sugg);
-          } else {
-            removed = true;
-          }
-        }
-        return removed ? next : prev;
-      });
-    })
-    .catch((err: unknown) => console.error("[pixhaus] refreshLibrary:", err));
+// Drop pending suggestions for entities that no longer exist. Without this,
+// switching projects (or deleting an entity then creating a new one that
+// reuses its id) would surface stale chips against the new entity. Refreshing
+// on the same entity list is a no-op.
+function pruneStaleSuggestions(liveEntities: readonly Entity[] | undefined): void {
+  const liveIds = new Set((liveEntities ?? []).map((e) => e.id));
+  setPendingTagSuggestions((prev) => {
+    let removed = false;
+    const next = new Map<EntityId, ReadonlyArray<TagId>>();
+    for (const [id, sugg] of prev) {
+      if (liveIds.has(id)) {
+        next.set(id, sugg);
+      } else {
+        removed = true;
+      }
+    }
+    return removed ? next : prev;
+  });
 }
 
 // ── AI tag suggestions (B9.4) ───────────────────────────────────────────────
@@ -166,11 +247,8 @@ export function refreshLibrary(): void {
 // Pending VLM suggestions per entity, keyed by EntityId. Tags only land in
 // `entity.tags` once the user accepts them; until then they live here so the
 // row can render a chip strip with accept/reject buttons. The Map is replaced
-// (not mutated) on every update so the Solid signal fires.
-export const [pendingTagSuggestions, setPendingTagSuggestions] = createSignal<
-  ReadonlyMap<EntityId, ReadonlyArray<TagId>>
->(new Map());
-
+// (not mutated) on every update so the Solid signal fires. Declared above the
+// library query (temporal-dead-zone reasons); the mutators follow here.
 export function addPendingSuggestions(entityId: EntityId, tagIds: TagId[]): void {
   setPendingTagSuggestions((prev) => {
     const next = new Map(prev);
@@ -223,18 +301,7 @@ export function refreshCorpusFor(entityId: EntityId): void {
   );
 }
 
-// ── Selection ───────────────────────────────────────────────────────────────
-
-export const [selectedEntityId, setSelectedEntityId] = createSignal<EntityId | null>(null);
-
 // ── Inline rename ───────────────────────────────────────────────────────────
-
-export type RenameTarget =
-  | { kind: "entity"; id: EntityId }
-  | { kind: "group"; id: GroupId }
-  | { kind: "state"; entityId: EntityId; stateId: StateId };
-
-export const [renamingTarget, setRenamingTarget] = createSignal<RenameTarget | null>(null);
 
 export function beginEntityRename(id: EntityId): void {
   setRenamingTarget({ kind: "entity", id });
@@ -256,36 +323,30 @@ export function commitEntityRename(id: EntityId, name: string): void {
   setRenamingTarget(null);
   const trimmed = name.trim();
   if (!trimmed) return;
-  libraryRenameEntity(id, trimmed)
-    .then(() => refreshLibrary())
-    .catch((err: unknown) => console.error("[pixhaus] library_rename_entity:", err));
+  void runMutation({ run: () => libraryRenameEntity(id, trimmed), invalidate: ["library"] });
 }
 
 export function commitGroupRename(id: GroupId, name: string): void {
   setRenamingTarget(null);
   const trimmed = name.trim();
   if (!trimmed) return;
-  libraryRenameGroup(id, trimmed)
-    .then(() => refreshLibrary())
-    .catch((err: unknown) => console.error("[pixhaus] library_rename_group:", err));
+  void runMutation({ run: () => libraryRenameGroup(id, trimmed), invalidate: ["library"] });
 }
 
 export function commitStateRename(entityId: EntityId, stateId: StateId, name: string): void {
   setRenamingTarget(null);
   const trimmed = name.trim();
   if (!trimmed) return;
-  libraryRenameState(entityId, stateId, trimmed)
-    .then(() => refreshLibrary())
-    .catch((err: unknown) => console.error("[pixhaus] library_rename_state:", err));
+  void runMutation({
+    run: () => libraryRenameState(entityId, stateId, trimmed),
+    invalidate: ["library"],
+  });
 }
 
 // ── Expanded groups ─────────────────────────────────────────────────────────
 
-// Groups default to expanded; track collapsed ones explicitly.
-const [collapsedGroups, setCollapsedGroups] = createSignal<ReadonlySet<GroupId>>(new Set());
-
 export function isGroupExpanded(id: GroupId): boolean {
-  return !collapsedGroups().has(id);
+  return !libraryUi.collapsedGroups.has(id);
 }
 
 export function toggleGroupExpanded(id: GroupId): void {
@@ -309,29 +370,16 @@ export function ensureGroupExpanded(id: GroupId): void {
   });
 }
 
-// ── Drag-to-reorder ─────────────────────────────────────────────────────────
-
-// Flat-list index where the drop indicator renders.
-export const [dragOverIndex, setDragOverIndex] = createSignal<number | null>(null);
-
 // ── Search ──────────────────────────────────────────────────────────────────
-
-export const [searchQuery, setSearchQuery] = createSignal("");
-
-// Active kind filter. null = show all.
-export const [kindFilter, setKindFilter] = createSignal<EntityKind | null>(null);
-
-// Active tag filter. null = show all.
-export const [tagFilter, setTagFilter] = createSignal<TagId | null>(null);
 
 /**
  * Filters entities by the current search query, kind filter, and tag filter.
  * Matches entity names, Custom kind strings, and tag names case-insensitively.
  */
 export function filteredEntities(allEntities: Entity[], allTags: TagDefinition[]): Entity[] {
-  const q = searchQuery().toLowerCase().trim();
-  const kf = kindFilter();
-  const tf = tagFilter();
+  const q = libraryUi.searchQuery.toLowerCase().trim();
+  const kf = libraryUi.kindFilter;
+  const tf = libraryUi.tagFilter;
 
   return allEntities.filter((entity) => {
     if (kf !== null) {
@@ -365,59 +413,60 @@ export function filteredEntities(allEntities: Entity[], allTags: TagDefinition[]
 // ── Mutation helpers ────────────────────────────────────────────────────────
 
 export function createEntity(args: LibraryCreateEntityArgs): void {
-  libraryCreateEntity(args)
-    .then((entity) => {
-      refreshLibrary();
-      setSelectedEntityId(entity.id);
-    })
-    .catch((err: unknown) => console.error("[pixhaus] library_create_entity:", err));
+  void runMutation({
+    run: () => libraryCreateEntity(args),
+    invalidate: ["library"],
+    onSuccess: (entity) => setSelectedEntityId(entity.id),
+  });
 }
 
 export function deleteEntity(entityId: EntityId): void {
-  libraryDeleteEntity(entityId)
-    .then(() => {
-      refreshLibrary();
-      if (selectedEntityId() === entityId) setSelectedEntityId(null);
-    })
-    .catch((err: unknown) => console.error("[pixhaus] library_delete_entity:", err));
+  void runMutation({
+    run: () => libraryDeleteEntity(entityId),
+    invalidate: ["library"],
+    onSuccess: () => {
+      if (libraryUi.selectedEntityId === entityId) setSelectedEntityId(null);
+    },
+  });
 }
 
 export function moveEntityToGroup(entityId: EntityId, groupId: GroupId | null): void {
-  libraryMoveEntityToGroup(entityId, groupId)
-    .then(() => refreshLibrary())
-    .catch((err: unknown) => console.error("[pixhaus] library_move_entity_to_group:", err));
+  void runMutation({
+    run: () => libraryMoveEntityToGroup(entityId, groupId),
+    invalidate: ["library"],
+  });
 }
 
 export function reorderEntity(entityId: EntityId, newIndex: number): void {
-  libraryReorderEntities(entityId, newIndex)
-    .then(() => refreshLibrary())
-    .catch((err: unknown) => console.error("[pixhaus] library_reorder_entities:", err));
+  void runMutation({
+    run: () => libraryReorderEntities(entityId, newIndex),
+    invalidate: ["library"],
+  });
 }
 
 export function createGroup(name: string, parentId?: GroupId): void {
-  libraryCreateGroup({ name, parent_id: parentId ?? null })
-    .then((group) => {
-      refreshLibrary();
-      ensureGroupExpanded(group.id);
-    })
-    .catch((err: unknown) => console.error("[pixhaus] library_create_group:", err));
+  void runMutation({
+    run: () => libraryCreateGroup({ name, parent_id: parentId ?? null }),
+    invalidate: ["library"],
+    onSuccess: (group) => ensureGroupExpanded(group.id),
+  });
 }
 
 export function deleteGroup(groupId: GroupId, keepEntities: boolean): void {
-  libraryDeleteGroup({ group_id: groupId, keep_entities: keepEntities })
-    .then(() => refreshLibrary())
-    .catch((err: unknown) => console.error("[pixhaus] library_delete_group:", err));
+  void runMutation({
+    run: () => libraryDeleteGroup({ group_id: groupId, keep_entities: keepEntities }),
+    invalidate: ["library"],
+  });
 }
 
 export function addStateToEntity(args: LibraryAddStateArgs): void {
-  libraryAddState(args)
-    .then(() => {
-      refreshLibrary();
-      // The new state is meaningful library content — refresh the AI
-      // style corpus so subsequent verb runs see it.
-      refreshCorpusFor(args.entity_id);
-    })
-    .catch((err: unknown) => console.error("[pixhaus] library_add_state:", err));
+  void runMutation({
+    run: () => libraryAddState(args),
+    invalidate: ["library"],
+    // The new state is meaningful library content — refresh the AI style
+    // corpus so subsequent verb runs see it.
+    onSuccess: () => refreshCorpusFor(args.entity_id),
+  });
 }
 
 /**
@@ -439,9 +488,10 @@ export function approveSheetVariantAndRefreshCorpus(
 }
 
 export function deleteState(entityId: EntityId, stateId: StateId): void {
-  libraryDeleteState(entityId, stateId)
-    .then(() => refreshLibrary())
-    .catch((err: unknown) => console.error("[pixhaus] library_delete_state:", err));
+  void runMutation({
+    run: () => libraryDeleteState(entityId, stateId),
+    invalidate: ["library"],
+  });
 }
 
 export function setActiveTarget(target: ActiveTarget): void {

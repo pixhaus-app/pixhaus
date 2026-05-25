@@ -7,7 +7,7 @@
 // the panel doesn't yet have.
 
 import { For, Show, createSignal, type Component } from "solid-js";
-import { activePalette, activePaletteId, refreshPalettes } from "./palette-panel-state";
+import { activePalette, paletteUi, refreshPalettes } from "./palette-panel-state";
 import { palettePageAdd, palettePageRemove } from "../lib/commands/palette";
 import { reportCommandFailure } from "../lib/utils/errors";
 import type { SpriteId } from "../lib/types";
@@ -33,7 +33,7 @@ const PalettePagesSection: Component<Props> = (props) => {
 
   const submitAdd = async (): Promise<void> => {
     const sid = props.spriteId;
-    const pid = activePaletteId();
+    const pid = paletteUi.activePaletteId;
     const name = newName().trim();
     if (sid === null || pid === null || name === "") {
       cancelAdd();
@@ -50,7 +50,7 @@ const PalettePagesSection: Component<Props> = (props) => {
 
   const handleRemove = async (pageId: number): Promise<void> => {
     const sid = props.spriteId;
-    const pid = activePaletteId();
+    const pid = paletteUi.activePaletteId;
     if (sid === null || pid === null) return;
     try {
       await palettePageRemove(sid, pid, pageId);
@@ -68,7 +68,7 @@ const PalettePagesSection: Component<Props> = (props) => {
           type="button"
           class="pp__icon-btn"
           onClick={beginAdd}
-          disabled={activePaletteId() === null || adding()}
+          disabled={paletteUi.activePaletteId === null || adding()}
           title="New page"
           aria-label="New page"
           data-testid="palette-page-add"

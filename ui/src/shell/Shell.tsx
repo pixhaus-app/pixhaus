@@ -1,9 +1,9 @@
 import { Show, onMount, onCleanup, type Component } from "solid-js";
-import { listen } from "@tauri-apps/api/event";
-import { isCommandPaletteOpen } from "../palette-state";
-import { isPreferencesOpen } from "../preferences/preferences-state";
-import { isCompositionLibraryOpen } from "../composition-library/composition-library-state";
-import { activeProject } from "../project-state";
+import { subscribeTauriEvent } from "../lib/sync/subscribe-event";
+import { commandPalette } from "../palette-state";
+import { preferencesModal } from "../preferences/preferences-state";
+import { compositionLibrary } from "../composition-library/composition-library-state";
+import { projectState } from "../project-state";
 import { dispatchCommand } from "../command-palette/command-registry";
 import { setupKeybindManager } from "../keybinds/keybind-manager";
 import CommandPalette from "../command-palette/CommandPalette";
@@ -18,8 +18,7 @@ import WelcomeScreen from "./WelcomeScreen";
 import Canvas from "../canvas/Canvas";
 import FirstLaunchDialog from "../crash-reporting/FirstLaunchDialog";
 import {
-  crashReportingDialogShown,
-  crashReportingEnabled,
+  prefs,
   crashReportingUid,
   hydrateCrashReportingFromBackend,
   setCrashReportingEnabled,
@@ -33,11 +32,11 @@ import TimelinePanel from "../timeline/TimelinePanel";
 import LibraryPanel from "../library/LibraryPanel";
 import EntityCreateModal from "../library/EntityCreateModal";
 import { setupPaletteColorSync } from "../canvas/tools/palette-color-sync";
-import { installTilemapCtxSync } from "../tilemap/tilemap-ctx-sync";
+import { installTilemapCtxSync } from "../tilemap/tilemap-state";
 import ReferenceSheetEditor from "../sheet/ReferenceSheetEditor";
-import { isSheetEditorOpen } from "../sheet/sheet-state";
+import { sheetState } from "../sheet/sheet-state";
 import AnimationStudio from "../animation/AnimationStudio";
-import { isAnimationStudioOpen } from "../animation/animation-studio-state";
+import { studio } from "../animation/animation-studio-state";
 import RightRail from "./RightRail";
 import {
   isLibraryCollapsed,
@@ -76,24 +75,17 @@ const Shell: Component = () => {
         // braces: init Sentry from the localStorage-seeded signal so the
         // panic hook is wired up regardless of IPC health.
         console.error("[pixhaus] crash-reporting boot failed:", err);
-        initCrashReporting({ enabled: crashReportingEnabled(), uid: crashReportingUid });
-        setSentryEnabled(crashReportingEnabled());
+        initCrashReporting({ enabled: prefs.crashReportingEnabled, uid: crashReportingUid });
+        setSentryEnabled(prefs.crashReportingEnabled);
       });
 
     // Forward native menu events to the command dispatcher
-    const menuListenerPromise = listen<string>("shell:menu", (event) => {
-      dispatchCommand(event.payload);
-    });
+    subscribeTauriEvent<string>("shell:menu", (payload) => dispatchCommand(payload));
 
     // Register keyboard shortcuts
     const removeKeybinds = setupKeybindManager();
 
-    onCleanup(() => {
-      menuListenerPromise
-        .then((unlisten) => unlisten())
-        .catch((err: unknown) => console.error("[pixhaus] failed to unlisten shell:menu:", err));
-      removeKeybinds();
-    });
+    onCleanup(removeKeybinds);
   });
 
   function answerCrashReportingDialog(enabled: boolean): void {
@@ -106,10 +98,10 @@ const Shell: Component = () => {
     <div class="shell" data-testid="shell">
       <div class="shell-body">
         <div class="shell-main">
-          <Show when={activeProject() === null}>
+          <Show when={projectState.activeProject === null}>
             <WelcomeScreen />
           </Show>
-          <Show when={activeProject() !== null}>
+          <Show when={projectState.activeProject !== null}>
             <div class="editor-layout" data-testid="editor-layout">
               <Show
                 when={!isLibraryCollapsed()}
@@ -128,8 +120,8 @@ const Shell: Component = () => {
                 <LibraryPanel />
               </Show>
               <div class="editor-layout__canvas-area">
-                <Show when={!isAnimationStudioOpen()} fallback={<AnimationStudio />}>
-                  <Show when={!isSheetEditorOpen()} fallback={<ReferenceSheetEditor />}>
+                <Show when={!studio.isAnimationStudioOpen} fallback={<AnimationStudio />}>
+                  <Show when={!sheetState.isSheetEditorOpen} fallback={<ReferenceSheetEditor />}>
                     <div class="editor-layout__canvas">
                       <Canvas />
                     </div>
@@ -160,15 +152,15 @@ const Shell: Component = () => {
 
       <StatusBar />
 
-      <Show when={isCommandPaletteOpen()}>
+      <Show when={commandPalette.open}>
         <CommandPalette />
       </Show>
 
-      <Show when={isPreferencesOpen()}>
+      <Show when={preferencesModal.open}>
         <PreferencesModal />
       </Show>
 
-      <Show when={isCompositionLibraryOpen()}>
+      <Show when={compositionLibrary.open}>
         <CompositionLibraryModal />
       </Show>
 
@@ -181,7 +173,7 @@ const Shell: Component = () => {
       <VerbInvokeHost />
       <ToastHost />
 
-      <Show when={!crashReportingDialogShown()}>
+      <Show when={!prefs.crashReportingDialogShown}>
         <FirstLaunchDialog
           onAccept={() => answerCrashReportingDialog(true)}
           onDecline={() => answerCrashReportingDialog(false)}

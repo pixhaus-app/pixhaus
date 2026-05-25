@@ -13,17 +13,15 @@ import { For, Show, createEffect, createMemo, onCleanup, type Component } from "
 import { produce } from "solid-js/store";
 import type { AutotileKind, AutotileRule, TileIndex } from "../lib/types";
 import {
-  activeTilemapCtx,
-  autotileDefaultTile,
+  tilemapUi,
   autotileRules,
-  localAutotileKind,
   setActiveTilemapCtx,
   setAutotileDefaultTile,
   setAutotileRules,
   setLocalAutotileKind,
 } from "./tilemap-state";
 import { blankRule, conditionLabel, conditionTitle, nextCondition } from "./autotile-helpers";
-import { activeSpriteId } from "../canvas/canvas-state";
+import { activeTarget } from "../canvas/canvas-state";
 import { tilesetSetAutotile } from "../lib/commands/tilesets";
 import { reportCommandFailure } from "../lib/utils/errors";
 
@@ -185,7 +183,7 @@ const RuleRow: Component<RuleRowProps> = (props) => {
 // ── Root component ─────────────────────────────────────────────────────────
 
 const AutotileRuleEditor: Component = () => {
-  const kind = localAutotileKind;
+  const kind = (): AutotileKind | null => tilemapUi.localAutotileKind;
 
   // Custom rule state lives at module scope in tilemap-state so it
   // survives the editor unmounting (e.g. when the user switches
@@ -193,7 +191,7 @@ const AutotileRuleEditor: Component = () => {
   // readable.
   const rules = autotileRules;
   const setRules = setAutotileRules;
-  const defaultTile = autotileDefaultTile;
+  const defaultTile = (): TileIndex => tilemapUi.autotileDefaultTile;
   const setDefaultTile = setAutotileDefaultTile;
 
   // Hydrate UI state from the active tileset's persisted autotile field
@@ -202,7 +200,7 @@ const AutotileRuleEditor: Component = () => {
   // session's choice regardless of what's actually saved.
   let lastHydratedTilesetId: number | null = null;
   createEffect(() => {
-    const ctx = activeTilemapCtx();
+    const ctx = tilemapUi.activeTilemapCtx;
     if (!ctx) {
       lastHydratedTilesetId = null;
       return;
@@ -226,23 +224,23 @@ const AutotileRuleEditor: Component = () => {
   const PERSIST_DEBOUNCE_MS = 200;
   let persistTimer: ReturnType<typeof setTimeout> | null = null;
   function schedulePersist() {
-    const ctx = activeTilemapCtx();
-    const sid = activeSpriteId();
+    const ctx = tilemapUi.activeTilemapCtx;
+    const sid = activeTarget.spriteId;
     if (!ctx || sid === null) return;
     if (persistTimer !== null) clearTimeout(persistTimer);
     persistTimer = setTimeout(() => {
       persistTimer = null;
-      const cur = activeTilemapCtx();
-      const sidNow = activeSpriteId();
+      const cur = tilemapUi.activeTilemapCtx;
+      const sidNow = activeTarget.spriteId;
       if (!cur || sidNow === null) return;
       // Build the kind to persist from the current UI state. For
       // `custom`, snapshot the live rules + default_tile so the
       // persisted value reflects exactly what's on screen.
-      const liveKind = localAutotileKind();
+      const liveKind = tilemapUi.localAutotileKind;
       const payload: AutotileKind | null = liveKind === null ? null : buildKind(liveKind.kind);
       tilesetSetAutotile(sidNow, cur.tilesetId, payload)
         .then((updated) => {
-          const stillCurrent = activeTilemapCtx();
+          const stillCurrent = tilemapUi.activeTilemapCtx;
           if (stillCurrent && stillCurrent.tilesetId === updated.id) {
             setActiveTilemapCtx({ ...stillCurrent, tileset: updated });
           }
@@ -266,7 +264,7 @@ const AutotileRuleEditor: Component = () => {
       return {
         kind: "custom",
         rules: [...autotileRules],
-        default_tile: autotileDefaultTile(),
+        default_tile: tilemapUi.autotileDefaultTile,
       };
     }
     // Peering carries a per-tile signature set; a dedicated editor for it is

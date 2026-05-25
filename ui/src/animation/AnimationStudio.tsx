@@ -13,10 +13,9 @@ import {
   createMemo,
   createResource,
   createSignal,
-  onCleanup,
   onMount,
 } from "solid-js";
-import { listen } from "@tauri-apps/api/event";
+import { subscribeTauriEvent } from "../lib/sync/subscribe-event";
 
 import { aiGetProviderOverview } from "../lib/commands/ai";
 import {
@@ -27,9 +26,10 @@ import {
   animationIntegrate,
   animationJobClip,
   animationNormalize,
+  animationRemoveBackground,
   animationRerollDependents,
 } from "../lib/commands/animation";
-import { activeSpriteId } from "../canvas/canvas-state";
+import { activeTarget } from "../canvas/canvas-state";
 import { entities } from "../library/library-state";
 import { pushToast } from "../lib/toast/toast-state";
 import { extractDetail } from "../lib/utils/errors";
@@ -47,16 +47,10 @@ import {
   type AnimType,
   type Candidate,
   type DirectionOpt,
-  activeAnimationStudioEntityId,
-  animType,
+  studio,
   closeAnimationStudio,
-  direction,
-  fps,
-  frameSize,
   loopDirectionFor,
   nextStudioId,
-  pendingClip,
-  previewPlaying,
   selectedCandidate,
   setCandidates,
   setPendingClip,
@@ -64,8 +58,6 @@ import {
   setSelectedCandidateId,
   setStage,
   setVideoJob,
-  stage,
-  videoJob,
 } from "./animation-studio-state";
 
 const AnimationStudio: Component = () => {
@@ -73,18 +65,21 @@ const AnimationStudio: Component = () => {
   // Set after a successful integrate so the extract stage shows a completion
   // panel instead of silently re-arming the picker.
   const [lastIntegrated, setLastIntegrated] = createSignal<string | null>(null);
+  // True while a pick is being background-removed + normalized; the picker is
+  // replaced by a progress panel because background removal is a per-frame
+  // round trip to the AI backend.
+  const [extracting, setExtracting] = createSignal(false);
 
   // Reflect backend i2v job updates into the module-level `videoJob` for the
   // whole studio session, so navigating between stages never loses an in-flight
   // or finished generation. On completion, fetch the clip for the picker.
   onMount(() => {
-    const unlisten = listen<AnimationJob>("AnimationJobUpdate", (event) => {
-      const job = event.payload;
-      if (job.entity_id !== activeAnimationStudioEntityId()) return;
-      const current = videoJob();
+    subscribeTauriEvent<AnimationJob>("AnimationJobUpdate", (job) => {
+      if (job.entity_id !== studio.activeAnimationStudioEntityId) return;
+      const current = studio.videoJob;
       if (current !== null && current.id !== job.id) return;
       setVideoJob(job);
-      if (job.status === "done" && pendingClip() === null) {
+      if (job.status === "done" && studio.pendingClip === null) {
         void animationJobClip(job.id)
           .then((clip) =>
             setPendingClip({
@@ -99,9 +94,6 @@ const AnimationStudio: Component = () => {
           .catch(() => undefined);
       }
     });
-    onCleanup(() => {
-      void unlisten.then((un) => un()).catch(() => undefined);
-    });
   });
 
   const [providers] = createResource(aiGetProviderOverview);
@@ -110,7 +102,7 @@ const AnimationStudio: Component = () => {
   const backendReady = (): boolean => (providers() ?? []).some((p) => p.state === "configured");
 
   const entityName = createMemo((): string => {
-    const id = activeAnimationStudioEntityId();
+    const id = studio.activeAnimationStudioEntityId;
     const e = entities().find((x) => x.id === id);
     return e?.name ?? "Animations";
   });
@@ -121,10 +113,10 @@ const AnimationStudio: Component = () => {
     const candidate: Candidate = {
       id: nextStudioId(),
       frames,
-      direction: direction(),
-      animType: animType(),
+      direction: studio.direction,
+      animType: studio.animType,
       report,
-      flip: direction() === "east",
+      flip: studio.direction === "east",
     };
     setCandidates((cs) => [...cs, candidate]);
     setSelectedCandidateId(candidate.id);
@@ -139,22 +131,29 @@ const AnimationStudio: Component = () => {
   }
 
   async function usePickedFrames(frames: RgbaFrame[]): Promise<void> {
+    setExtracting(true);
     try {
+      // AI background removal replaces the old magenta chroma key: Seedance
+      // dithers the flat background into noise a fixed-tolerance key leaves
+      // speckled. Each frame is cut independently, so normalize then only has
+      // to crop/scale/pad (chroma: "none").
+      const cut = await animationRemoveBackground(frames);
       const normalized = await animationNormalize({
-        frames,
-        canvas_size: frameSize(),
-        // The first frame is rendered on magenta, so the clip frames carry it.
-        chroma: "magenta",
+        frames: cut,
+        canvas_size: studio.frameSize,
+        chroma: "none",
         reference_height: null,
       });
       addCandidate(normalized.frames, normalized.report);
     } catch (err) {
-      pushToast({ kind: "error", title: "Normalize failed", body: extractDetail(err) });
+      pushToast({ kind: "error", title: "Frame extraction failed", body: extractDetail(err) });
+    } finally {
+      setExtracting(false);
     }
   }
 
   async function integrate(candidate: Candidate): Promise<void> {
-    const sprite = activeSpriteId();
+    const sprite = activeTarget.spriteId;
     if (sprite === null) {
       pushToast({ kind: "error", title: "No active sprite." });
       return;
@@ -165,10 +164,10 @@ const AnimationStudio: Component = () => {
       frames: candidate.frames,
       loop_direction: loopDirectionFor(candidate.animType),
       repeat: 0,
-      frame_duration_ms: Math.max(1, Math.round(1000 / fps())),
+      frame_duration_ms: Math.max(1, Math.round(1000 / studio.fps)),
       flip_horizontal: candidate.flip,
       // Record the cascade edge so re-rolling the anchor marks this stale.
-      entity_id: activeAnimationStudioEntityId(),
+      entity_id: studio.activeAnimationStudioEntityId,
       animation_kind: candidate.animType === "custom" ? null : candidate.animType,
       direction: candidate.direction,
     };
@@ -188,7 +187,7 @@ const AnimationStudio: Component = () => {
   const [derivingNeutral, setDerivingNeutral] = createSignal(false);
 
   async function deriveNeutral(): Promise<void> {
-    const entityId = activeAnimationStudioEntityId();
+    const entityId = studio.activeAnimationStudioEntityId;
     if (entityId === null) {
       pushToast({ kind: "error", title: "No entity selected." });
       return;
@@ -253,16 +252,16 @@ const AnimationStudio: Component = () => {
 
       <div class="animation-studio__center">
         <Switch>
-          <Match when={stage() === "reference"}>
+          <Match when={studio.stage === "reference"}>
             <ReferenceStage />
           </Match>
-          <Match when={stage() === "first_frame"}>
+          <Match when={studio.stage === "first_frame"}>
             <FirstFrameStage backendReady={backendReady()} onOpenPreferences={openPreferences} />
           </Match>
-          <Match when={stage() === "video"}>
+          <Match when={studio.stage === "video"}>
             <VideoStage backendReady={backendReady()} onOpenPreferences={openPreferences} />
           </Match>
-          <Match when={stage() === "extract"}>
+          <Match when={studio.stage === "extract"}>
             <div class="animation-studio__stage" data-testid="extract-stage">
               <Show when={lastIntegrated()}>
                 {(name) => (
@@ -290,18 +289,22 @@ const AnimationStudio: Component = () => {
 
               <Show when={!lastIntegrated()}>
                 <Show
-                  when={pendingClip()}
+                  when={studio.pendingClip}
                   fallback={<div class="animation-studio__empty">Generate a video first.</div>}
                 >
                   {(clip) => (
                     <Show
                       when={current()}
                       fallback={
-                        <FramePicker
-                          clip={clip()}
-                          onUse={(frames) => void usePickedFrames(frames)}
-                          onCancel={() => setStage("video")}
-                        />
+                        extracting() ? (
+                          <div class="animation-studio__empty">Removing background…</div>
+                        ) : (
+                          <FramePicker
+                            clip={clip()}
+                            onUse={(frames) => void usePickedFrames(frames)}
+                            onCancel={() => setStage("video")}
+                          />
+                        )
                       }
                     >
                       {(candidate) => (
@@ -309,8 +312,8 @@ const AnimationStudio: Component = () => {
                           <div class="animation-studio__preview-stage">
                             <FramePreview
                               frames={candidate().frames}
-                              fps={fps()}
-                              playing={previewPlaying()}
+                              fps={studio.fps}
+                              playing={studio.previewPlaying}
                               loopDirection={loopDirectionFor(candidate().animType)}
                               baselineFraction={0.95}
                               scale={5}
@@ -321,7 +324,7 @@ const AnimationStudio: Component = () => {
                               class="animation-studio__btn"
                               onClick={() => setPreviewPlaying((p) => !p)}
                             >
-                              {previewPlaying() ? "Pause" : "Play"}
+                              {studio.previewPlaying ? "Pause" : "Play"}
                             </button>
                             <button class="animation-studio__btn" onClick={repick}>
                               Re-pick
@@ -334,7 +337,7 @@ const AnimationStudio: Component = () => {
                 </Show>
 
                 <CandidateReview
-                  fps={fps()}
+                  fps={studio.fps}
                   onAccept={(c) => setAccepted(c)}
                   onReject={(c) => {
                     setCandidates((cs) => cs.filter((x) => x.id !== c.id));
@@ -349,7 +352,7 @@ const AnimationStudio: Component = () => {
                       frames={candidate().frames}
                       report={candidate().report}
                       loopDirection={loopDirectionFor(candidate().animType)}
-                      fps={fps()}
+                      fps={studio.fps}
                       onReNormalize={repick}
                       onIntegrate={() => void integrate(candidate())}
                     />
@@ -362,7 +365,7 @@ const AnimationStudio: Component = () => {
       </div>
 
       <footer class="animation-studio__footer">
-        <Show when={activeAnimationStudioEntityId()}>
+        <Show when={studio.activeAnimationStudioEntityId}>
           {(entityId) => (
             <AnimationSet
               entityId={entityId()}

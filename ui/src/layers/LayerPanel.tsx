@@ -5,32 +5,22 @@
 // Drag-to-reorder is handled per-row in LayerRow. The context menu is portal-mounted
 // so it isn't clipped by panel overflow.
 
-import {
-  type Component,
-  For,
-  Show,
-  createEffect,
-  createMemo,
-  createSignal,
-  onCleanup,
-} from "solid-js";
-import { activeSpriteId, activeLayerId } from "../canvas/canvas-state";
+import { type Component, For, Show, createMemo, createSignal, onCleanup } from "solid-js";
+import { activeTarget } from "../canvas/canvas-state";
 import {
   addLayer,
-  dragOverIndex,
   flattenLayers,
   isGroupExpanded,
   layers,
+  layerUi,
   nextAutoName,
-  refreshLayers,
-  selectedLayerIds,
   selectLayer,
 } from "./layer-state";
 import { Plus } from "lucide-solid";
 import LayerRow from "./LayerRow";
 import LayerContextMenu, { type ContextMenuTarget } from "./LayerContextMenu";
 import TilesetPickerDialog from "./TilesetPickerDialog";
-import type { LayerId } from "../lib/types";
+import type { LayerId, SpriteId } from "../lib/types";
 
 // Default row height in px for inactive rows.
 const ROW_HEIGHT = 32;
@@ -86,17 +76,12 @@ type Props = {
 };
 
 const LayerPanel: Component<Props> = (props) => {
-  const spriteId = activeSpriteId;
+  const spriteId = (): SpriteId | null => activeTarget.spriteId;
 
-  // Single effect handles both the initial load and every sprite change.
-  // The previous version had onMount + a tracking effect, which fired
-  // refreshLayers() twice on mount and could race when the sprite-id
-  // signal changed before the first IPC settled.
-  createEffect(() => {
-    spriteId(); // track
-    refreshLayers();
-  });
-
+  // The layer list is backed by a createBackendQuery keyed on the active
+  // sprite (see layer-state), so it loads and reloads on sprite change with
+  // no panel-side effect. The old onMount/effect refetch lived here only
+  // because the cache had no source of its own.
   const flatEntries = createMemo(() => flattenLayers(layers(), isGroupExpanded));
 
   // ── Virtual scroll ─────────────────────────────────────────────────────────
@@ -123,7 +108,7 @@ const LayerPanel: Component<Props> = (props) => {
   // Per-row heights: the active row is 56px; all others are 32px.
   // Recomputes whenever the active layer or flat entry list changes.
   const rowHeights = createMemo(() => {
-    const activeId = activeLayerId();
+    const activeId = activeTarget.layerId;
     return flatEntries().map((e) => (e.layer.id === activeId ? ACTIVE_ROW_HEIGHT : ROW_HEIGHT));
   });
 
@@ -184,7 +169,7 @@ const LayerPanel: Component<Props> = (props) => {
     // selection to just that row — matches Photoshop / Aseprite. Right-
     // click on a row inside the selection leaves the selection alone, so
     // multi-select operations from the menu hit every selected row.
-    if (!selectedLayerIds().has(layerId)) {
+    if (!layerUi.selectedLayerIds.has(layerId)) {
       selectLayer(layerId, false);
     }
     setContextTarget({ x: e.clientX, y: e.clientY, layerId });
@@ -280,7 +265,7 @@ const LayerPanel: Component<Props> = (props) => {
                     }}
                     onDragOver={(e) => e.preventDefault()}
                   >
-                    <Show when={dragOverIndex() === entry.index}>
+                    <Show when={layerUi.dragOverIndex === entry.index}>
                       <div class="layer-panel__drop-indicator" />
                     </Show>
                     <LayerRow

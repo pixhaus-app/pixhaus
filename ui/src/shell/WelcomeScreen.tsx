@@ -1,6 +1,6 @@
 import { For, createSignal, onMount, type Component } from "solid-js";
 import { open as dialogOpen } from "../lib/dialog";
-import { recentProjects, setActiveProject, pushRecentProject } from "../project-state";
+import { projectState, setActiveProject, pushRecentProject } from "../project-state";
 import {
   createNewProject,
   listSamples,
@@ -129,11 +129,11 @@ const WelcomeScreen: Component = () => {
         </div>
       )}
 
-      {recentProjects().length > 0 && (
+      {projectState.recentProjects.length > 0 && (
         <div class="welcome__recent" data-testid="welcome-recent">
           <p class="welcome__recent-title">Recent</p>
           <div class="welcome__recent-list">
-            <For each={recentProjects()}>
+            <For each={projectState.recentProjects}>
               {(project, i) => (
                 <button
                   class="welcome__recent-item"

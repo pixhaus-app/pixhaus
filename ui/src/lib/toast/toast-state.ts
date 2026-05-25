@@ -1,8 +1,8 @@
 // Toast queue state. Module-level so any non-component code (catch
 // blocks, IPC error helpers) can surface a message without threading
-// a context through. ToastHost reads this signal to render the stack.
+// a context through. ToastHost reads toastState.toasts to render the stack.
 
-import { createSignal } from "solid-js";
+import { createStore } from "solid-js/store";
 
 export type ToastKind = "error" | "info" | "success";
 
@@ -26,7 +26,7 @@ const DEFAULT_DURATION_MS = 6000;
 
 let nextId = 1;
 
-export const [toasts, setToasts] = createSignal<Toast[]>([]);
+export const [toastState, setToastState] = createStore<{ toasts: Toast[] }>({ toasts: [] });
 
 export function pushToast(input: PushToastInput): number {
   const toast: Toast = {
@@ -35,7 +35,7 @@ export function pushToast(input: PushToastInput): number {
     title: input.title,
     ...(input.body !== undefined ? { body: input.body } : {}),
   };
-  setToasts((prev) => [...prev, toast]);
+  setToastState("toasts", (prev) => [...prev, toast]);
   const duration = input.durationMs ?? DEFAULT_DURATION_MS;
   if (duration > 0) {
     setTimeout(() => dismissToast(toast.id), duration);
@@ -44,9 +44,9 @@ export function pushToast(input: PushToastInput): number {
 }
 
 export function dismissToast(id: number): void {
-  setToasts((prev) => prev.filter((t) => t.id !== id));
+  setToastState("toasts", (prev) => prev.filter((t) => t.id !== id));
 }
 
 export function clearToasts(): void {
-  setToasts([]);
+  setToastState("toasts", []);
 }

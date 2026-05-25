@@ -9,11 +9,7 @@
 import { type Component, For, Show, createMemo, createSignal } from "solid-js";
 import { Portal } from "solid-js/web";
 import type { FrameIndex, FrameTag, SpriteId } from "../lib/types";
-import {
-  activeFrameIndex,
-  setActiveFrameIndex,
-  scheduleViewportSync,
-} from "../canvas/canvas-state";
+import { activeTarget, setActiveFrameIndex, scheduleViewportSync } from "../canvas/canvas-state";
 import {
   createTag,
   deleteTag,
@@ -21,8 +17,9 @@ import {
   renameTag,
   setTagDragState,
   setTagPlayback,
-  tagDragState,
+  timelineUi,
   uniqueTagName,
+  type TagDragState,
 } from "./timeline-state";
 import type { LoopDirection } from "../lib/types";
 import ModalInput from "../components/ModalInput";
@@ -69,7 +66,7 @@ type ContextMenuState = {
 };
 
 const FrameTagBar: Component<Props> = (props) => {
-  const drag = tagDragState;
+  const drag = (): TagDragState => timelineUi.tagDragState;
 
   const [ctxMenu, setCtxMenu] = createSignal<ContextMenuState | null>(null);
   const [renameTarget, setRenameTarget] = createSignal<string | null>(null);
@@ -121,7 +118,7 @@ const FrameTagBar: Component<Props> = (props) => {
   // Solid tuple event handlers: (data, event). Tag is first, event is second.
   function handleTagClick(tag: FrameTag, e: MouseEvent): void {
     e.stopPropagation();
-    if (tag.range.start !== activeFrameIndex()) {
+    if (tag.range.start !== activeTarget.frameIndex) {
       setActiveFrameIndex(tag.range.start);
       scheduleViewportSync();
     }

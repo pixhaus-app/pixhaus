@@ -19,33 +19,11 @@
 // boundary to cross here.
 
 import type { IpcLogEntry } from "../ipc";
-import { activeProject, recentProjects } from "../../project-state";
-import {
-  activeFrameIndex,
-  activeLayerId,
-  activeSpriteId,
-  isSelectMode,
-  onionSkin,
-  onionSkinNext,
-  onionSkinOpacity,
-  onionSkinPrev,
-  scrollX,
-  scrollY,
-  selectionLayerId,
-  selectionRect,
-  showPixelGrid,
-  showTileGrid,
-  zoom,
-} from "../../canvas/canvas-state";
-import { layers, refreshLayers, selectedLayerIds } from "../../layers/layer-state";
+import { projectState } from "../../project-state";
+import { activeTarget, viewport } from "../../canvas/canvas-state";
+import { layers, refreshLayers, layerUi } from "../../layers/layer-state";
 import { setActiveLayerId } from "../../canvas/canvas-state";
-import {
-  frameTags,
-  frames,
-  isLooping,
-  isPlaying,
-  selectedFrames,
-} from "../../timeline/timeline-state";
+import { frameTags, frames, timelineUi } from "../../timeline/timeline-state";
 import {
   closeSection,
   isLibraryCollapsed,
@@ -54,12 +32,9 @@ import {
   openSection,
 } from "../../shell/rail-state";
 import { clearSheetEntity } from "../../sheet/sheet-state";
-import { isCommandPaletteOpen } from "../../palette-state";
-import { isPreferencesOpen } from "../../preferences/preferences-state";
-import {
-  crashReportingDialogShown,
-  crashReportingEnabled,
-} from "../../preferences/preferences-store";
+import { commandPalette } from "../../palette-state";
+import { preferencesModal } from "../../preferences/preferences-state";
+import { prefs } from "../../preferences/preferences-store";
 import {
   clearDialogQueue,
   enqueueConfirm,
@@ -69,14 +44,7 @@ import {
 } from "../dialog";
 import type { MessageDialogResult } from "@tauri-apps/plugin-dialog";
 import { dispatchCommand } from "../../command-palette/command-registry";
-import {
-  activeTool,
-  pixelPerfect,
-  toolShape,
-  toolSize,
-  type BrushShape,
-  type ToolType,
-} from "../../canvas/tools/tool-state";
+import { tool, type BrushShape, type ToolType } from "../../canvas/tools/tool-state";
 
 interface LayerDebug {
   /** Force a layer-list IPC + refresh of the layers signal. Use sparingly
@@ -224,39 +192,39 @@ export function installDebugSurface(): void {
   if (w.__pixhaus_debug__ !== undefined) return;
 
   const surface: PixhausDebug = {
-    getActiveProject: () => activeProject(),
-    getRecentProjects: () => recentProjects(),
-    getActiveSpriteId: () => activeSpriteId(),
-    getActiveLayerId: () => activeLayerId(),
-    getActiveFrameIndex: () => activeFrameIndex(),
-    getActiveTool: () => activeTool(),
+    getActiveProject: () => projectState.activeProject,
+    getRecentProjects: () => projectState.recentProjects,
+    getActiveSpriteId: () => activeTarget.spriteId,
+    getActiveLayerId: () => activeTarget.layerId,
+    getActiveFrameIndex: () => activeTarget.frameIndex,
+    getActiveTool: () => tool.activeTool,
 
-    getZoom: () => zoom(),
-    getScroll: () => ({ x: scrollX(), y: scrollY() }),
-    getShowPixelGrid: () => showPixelGrid(),
-    getShowTileGrid: () => showTileGrid(),
+    getZoom: () => viewport.zoom,
+    getScroll: () => ({ x: viewport.scrollX, y: viewport.scrollY }),
+    getShowPixelGrid: () => viewport.showPixelGrid,
+    getShowTileGrid: () => viewport.showTileGrid,
 
-    getSelectionRect: () => selectionRect(),
-    getSelectionLayerId: () => selectionLayerId(),
-    getIsSelectMode: () => isSelectMode(),
+    getSelectionRect: () => viewport.selectionRect,
+    getSelectionLayerId: () => viewport.selectionLayerId,
+    getIsSelectMode: () => viewport.isSelectMode,
 
     getOnionSkin: () => ({
-      enabled: onionSkin(),
-      prev: onionSkinPrev(),
-      next: onionSkinNext(),
-      opacity: onionSkinOpacity(),
+      enabled: viewport.onionSkin,
+      prev: viewport.onionSkinPrev,
+      next: viewport.onionSkinNext,
+      opacity: viewport.onionSkinOpacity,
     }),
 
     getLayerCount: () => layers().length,
-    getSelectedLayerIds: () => [...selectedLayerIds()],
+    getSelectedLayerIds: () => [...layerUi.selectedLayerIds],
     getFrameCount: () => frames().length,
     getFrameTags: () => frameTags(),
-    getSelectedFrames: () => [...selectedFrames()],
-    getIsPlaying: () => isPlaying(),
-    getIsLooping: () => isLooping(),
+    getSelectedFrames: () => [...timelineUi.selectedFrames],
+    getIsPlaying: () => timelineUi.isPlaying,
+    getIsLooping: () => timelineUi.isLooping,
 
-    isCommandPaletteOpen: () => isCommandPaletteOpen(),
-    isPreferencesOpen: () => isPreferencesOpen(),
+    isCommandPaletteOpen: () => commandPalette.open,
+    isPreferencesOpen: () => preferencesModal.open,
 
     panel: {
       layers: () => isSectionOpen("layers"),
@@ -275,8 +243,8 @@ export function installDebugSurface(): void {
       },
     },
 
-    getCrashReportingEnabled: () => crashReportingEnabled(),
-    getCrashReportingDialogShown: () => crashReportingDialogShown(),
+    getCrashReportingEnabled: () => prefs.crashReportingEnabled,
+    getCrashReportingDialogShown: () => prefs.crashReportingDialogShown,
 
     ipc: {
       log: () => (w.__pixhaus_ipc_log__ ?? []).slice(),
@@ -307,10 +275,10 @@ export function installDebugSurface(): void {
     },
 
     tool: {
-      active: () => activeTool(),
-      size: () => toolSize(),
-      shape: () => toolShape(),
-      pixelPerfect: () => pixelPerfect(),
+      active: () => tool.activeTool,
+      size: () => tool.size,
+      shape: () => tool.shape,
+      pixelPerfect: () => tool.pixelPerfect,
     },
 
     layer: {

@@ -179,6 +179,15 @@ pub struct AiMetadata {
     /// project-wide `LoRA`, if any."
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub lora_path: Option<String>,
+
+    /// Animation-studio working state for this entity — stage, controls,
+    /// first-frame candidates, approved frame, normalized candidates, the raw
+    /// video clip, and the video job — as a UI-owned JSON blob. Opaque here on
+    /// purpose: the studio's shape lives in the frontend, and this lets the
+    /// user resume the staged pipeline after save/reload. `None` means the
+    /// studio has never been used for this entity (start fresh).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub animation_studio_state: Option<String>,
 }
 
 impl AiMetadata {
@@ -189,6 +198,7 @@ impl AiMetadata {
             && self.vlm_summary.is_none()
             && self.embedding.is_none()
             && self.lora_path.is_none()
+            && self.animation_studio_state.is_none()
     }
 }
 
@@ -325,6 +335,17 @@ pub struct TrainingJob {
 mod project_ai_library_tests {
     use super::*;
     use crate::project::library::composition::{Structure, StructureId, StructureOutput};
+
+    #[test]
+    fn ai_metadata_is_empty_tracks_animation_studio_state() {
+        assert!(AiMetadata::default().is_empty());
+
+        let with_state = AiMetadata {
+            animation_studio_state: Some(r#"{"stage":"reference"}"#.into()),
+            ..AiMetadata::default()
+        };
+        assert!(!with_state.is_empty());
+    }
 
     #[test]
     fn new_project_ai_has_empty_library() {

@@ -22,8 +22,8 @@ use tauri::{AppHandle, Emitter, State};
 use tokio_util::sync::CancellationToken;
 
 use pixhaus_ai::backends::{
-    BackendProxy, ImageEditRequest, ImageGenRequest, ImageQuality, ImageToVideoRequest,
-    InferenceRequest, InferenceResponse,
+    BackendProxy, BackgroundRemovalRequest, ImageEditRequest, ImageGenRequest, ImageQuality,
+    ImageToVideoRequest, InferenceRequest, InferenceResponse,
 };
 use pixhaus_ai::plugin::context::PixelData;
 use pixhaus_ai::plugin::descriptor::{BackendCapabilities, VerbId};
@@ -154,6 +154,100 @@ pub async fn animation_normalize(args: NormalizeArgs) -> CommandResult<Normalize
         frames: result.frames.iter().map(RgbaFrame::from_buffer).collect(),
         report: result.report,
     })
+}
+
+// ── Background removal (extract stage) ───────────────────────────────────────────
+
+/// Cuts the background from each extracted frame via the AI background-removal
+/// backend (fal Bria), returning alpha-cut frames the studio then normalizes
+/// with `chroma: "none"`.
+///
+/// Replaces the magenta chroma key: Seedance dithers the flat magenta into
+/// noise a fixed-tolerance key leaves speckled. Each frame is an independent
+/// call fired concurrently; any failure fails the whole extract (no chroma
+/// fallback). Selecting by the `BACKGROUND_REMOVAL` capability guarantees an
+/// fal backend, so a missing key errors before any call.
+#[tauri::command(async, rename_all = "snake_case")]
+pub async fn animation_remove_background(
+    frames: Vec<RgbaFrame>,
+    state: State<'_, AppState>,
+) -> CommandResult<Vec<RgbaFrame>> {
+    if frames.is_empty() {
+        return Err(AppCommandError::Validation {
+            detail: "no frames to remove background from".into(),
+        });
+    }
+    let backend = state
+        .verb_runtime
+        .select_backend(
+            BackendCapabilities::BACKGROUND_REMOVAL,
+            &VerbId::new("pixhaus.animation.remove_bg"),
+        )
+        .map_err(|_| AppCommandError::Validation {
+            detail: "no background-removal backend configured — add a fal.ai key".into(),
+        })?;
+
+    // One call per frame, all in flight at once; await in order to keep the
+    // loop sequenced. Cloning the backend Arc into each task keeps it 'static.
+    let mut handles = Vec::with_capacity(frames.len());
+    for frame in frames {
+        let png = encode_pixeldata_to_png(&frame.into_pixeldata())?;
+        let backend = backend.clone();
+        handles.push(tokio::spawn(async move {
+            invoke_selected_backend(
+                &backend,
+                InferenceRequest::BackgroundRemoval(BackgroundRemovalRequest {
+                    model: None,
+                    image: png,
+                }),
+                CancellationToken::new(),
+            )
+            .await
+        }));
+    }
+
+    // Await in order. On the first failure, abort the still-running tasks
+    // before returning so we don't leave detached jobs racking up paid calls.
+    let mut out = Vec::with_capacity(handles.len());
+    for idx in 0..handles.len() {
+        let frame = async {
+            let resp = (&mut handles[idx])
+                .await
+                .map_err(|e| AppCommandError::VerbError {
+                    message: format!("background-removal task failed: {e}"),
+                })??;
+            let InferenceResponse::Image(image) = resp else {
+                return Err(AppCommandError::VerbError {
+                    message: "background-removal backend returned a non-image response".into(),
+                });
+            };
+            let png =
+                image
+                    .images
+                    .into_iter()
+                    .next()
+                    .ok_or_else(|| AppCommandError::VerbError {
+                        message: "background-removal backend returned no image".into(),
+                    })?;
+            let pd = decode_png_to_pixeldata(&png)?;
+            Ok(RgbaFrame {
+                width: pd.width,
+                height: pd.height,
+                pixels: pd.bytes,
+            })
+        }
+        .await;
+        match frame {
+            Ok(frame) => out.push(frame),
+            Err(err) => {
+                for handle in &handles[idx + 1..] {
+                    handle.abort();
+                }
+                return Err(err);
+            }
+        }
+    }
+    Ok(out)
 }
 
 // ── Frame pick (i2v) ───────────────────────────────────────────────────────────
@@ -1480,6 +1574,66 @@ impl RgbaFrame {
     fn into_pixeldata(self) -> PixelData {
         PixelData::rgba8(self.width, self.height, self.pixels)
     }
+}
+
+// ── Studio state persistence ─────────────────────────────────────────────────
+
+/// Persists the animation-studio working state for `entity_id` into the
+/// project so it is written to the `.pixhaus` file on save. The blob is a
+/// UI-owned JSON string (the studio store snapshot); `None` clears it. Mirrors
+/// the `canvas_set_viewport` "push editor state into the project" pattern.
+#[tauri::command(async, rename_all = "snake_case")]
+pub async fn animation_studio_set_state(
+    entity_id: u32,
+    state_json: Option<String>,
+    state: State<'_, AppState>,
+) -> CommandResult<()> {
+    let id = EntityId::new(entity_id);
+    let mut doc = state.doc.write().await;
+    let project = doc
+        .project
+        .as_mut()
+        .ok_or(AppCommandError::NoActiveProject)?;
+    let entity = project
+        .library
+        .entities
+        .iter_mut()
+        .find(|e| e.id == id)
+        .ok_or(AppCommandError::NotFound {
+            entity: "entity".into(),
+            id: u64::from(entity_id),
+        })?;
+    entity.ai.animation_studio_state = state_json;
+    doc.dirty = true;
+    Ok(())
+}
+
+/// Reads the persisted animation-studio working state for `entity_id`, or
+/// `None` when the studio has never been used for it.
+#[tauri::command(async, rename_all = "snake_case")]
+pub async fn animation_studio_get_state(
+    entity_id: u32,
+    state: State<'_, AppState>,
+) -> CommandResult<Option<String>> {
+    let id = EntityId::new(entity_id);
+    let doc = state.doc.read().await;
+    let project = doc
+        .project
+        .as_ref()
+        .ok_or(AppCommandError::NoActiveProject)?;
+    let blob = project
+        .library
+        .entities
+        .iter()
+        .find(|e| e.id == id)
+        .ok_or(AppCommandError::NotFound {
+            entity: "entity".into(),
+            id: u64::from(entity_id),
+        })?
+        .ai
+        .animation_studio_state
+        .clone();
+    Ok(blob)
 }
 
 #[cfg(test)]

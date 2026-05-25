@@ -30,7 +30,7 @@ import {
   DEFAULT_CANVAS_SIZE,
   MAX_CANVAS_DIM,
   MIN_CANVAS_DIM,
-  canvasSizeRequest,
+  canvasSizeDialog,
   closeCanvasSizeDialog,
   loadLastCanvasSize,
   openCanvasSizeDialog,
@@ -103,23 +103,23 @@ describe("loadLastCanvasSize / saveLastCanvasSize", () => {
 
 describe("openCanvasSizeDialog / closeCanvasSizeDialog", () => {
   it("starts closed and reflects open state via the signal", () => {
-    expect(canvasSizeRequest()).toBeNull();
+    expect(canvasSizeDialog.request).toBeNull();
     const onConfirm = vi.fn();
     openCanvasSizeDialog({ mode: "project", onConfirm });
-    expect(canvasSizeRequest()).not.toBeNull();
-    expect(canvasSizeRequest()?.mode).toBe("project");
+    expect(canvasSizeDialog.request).not.toBeNull();
+    expect(canvasSizeDialog.request?.mode).toBe("project");
   });
 
   it("closes back to null", () => {
     openCanvasSizeDialog({ mode: "sprite", onConfirm: () => {} });
     closeCanvasSizeDialog();
-    expect(canvasSizeRequest()).toBeNull();
+    expect(canvasSizeDialog.request).toBeNull();
   });
 
   it("forwards the supplied onConfirm callback", () => {
     const onConfirm = vi.fn();
     openCanvasSizeDialog({ mode: "sprite", onConfirm });
-    canvasSizeRequest()?.onConfirm({ width: 64, height: 48 });
+    canvasSizeDialog.request?.onConfirm({ width: 64, height: 48 });
     expect(onConfirm).toHaveBeenCalledWith({ width: 64, height: 48 });
   });
 });

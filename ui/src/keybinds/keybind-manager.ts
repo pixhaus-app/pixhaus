@@ -1,4 +1,4 @@
-import { keybindPreset, customKeybinds } from "../preferences/preferences-store";
+import { prefs } from "../preferences/preferences-store";
 import { ASEPRITE_DEFAULTS, PHOTOSHOP_DEFAULTS, defaultCombo } from "./defaults";
 import { dispatchCommand } from "../command-palette/command-registry";
 
@@ -10,11 +10,11 @@ import { dispatchCommand } from "../command-palette/command-registry";
  * signals, so callers in a tracking scope re-run when the user remaps keys.
  */
 export function comboForCommand(commandId: string): string | undefined {
-  const custom = customKeybinds();
+  const custom = prefs.customKeybinds;
   for (const [combo, id] of Object.entries(custom)) {
     if (id === commandId) return combo;
   }
-  const table = keybindPreset() === "photoshop" ? PHOTOSHOP_DEFAULTS : ASEPRITE_DEFAULTS;
+  const table = prefs.keybindPreset === "photoshop" ? PHOTOSHOP_DEFAULTS : ASEPRITE_DEFAULTS;
   return defaultCombo(table, commandId);
 }
 
@@ -73,7 +73,7 @@ export function setupKeybindManager(): () => void {
     const combo = comboFromEvent(e);
 
     // Custom overrides take priority over presets
-    const custom = customKeybinds();
+    const custom = prefs.customKeybinds;
     const customCmd = custom[combo];
     if (customCmd !== undefined) {
       e.preventDefault();
@@ -81,7 +81,7 @@ export function setupKeybindManager(): () => void {
       return;
     }
 
-    const preset = keybindPreset();
+    const preset = prefs.keybindPreset;
     const table = preset === "photoshop" ? PHOTOSHOP_DEFAULTS : ASEPRITE_DEFAULTS;
     const cmd = table.get(combo);
     if (cmd !== undefined) {

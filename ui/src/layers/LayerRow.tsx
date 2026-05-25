@@ -6,15 +6,13 @@
 
 import { type Component, For, Show, createEffect, createSignal, onCleanup } from "solid-js";
 import type { BlendMode, Layer, LayerEffect, LayerId, SpriteId } from "../lib/types";
-import { activeLayerId } from "../canvas/canvas-state";
+import { activeTarget } from "../canvas/canvas-state";
 import {
   beginRename,
   cancelRename,
   commitRename,
-  dragOverIndex,
   isGroupExpanded,
-  renamingLayerId,
-  selectedLayerIds,
+  layerUi,
   selectLayer,
   setDragOverIndex,
   setLayerBlendMode,
@@ -80,12 +78,12 @@ type Props = {
 };
 
 const LayerRow: Component<Props> = (props) => {
-  const isActive = () => activeLayerId() === props.layer.id;
-  const isSelected = () => selectedLayerIds().has(props.layer.id);
-  const isRenaming = () => renamingLayerId() === props.layer.id;
+  const isActive = () => activeTarget.layerId === props.layer.id;
+  const isSelected = () => layerUi.selectedLayerIds.has(props.layer.id);
+  const isRenaming = () => layerUi.renamingLayerId === props.layer.id;
   const isGroup = () => props.layer.kind.kind === "group";
   const expanded = () => isGroup() && isGroupExpanded(props.layer.id);
-  const isDragTarget = () => dragOverIndex() === props.layerIndex;
+  const isDragTarget = () => layerUi.dragOverIndex === props.layerIndex;
 
   function handleClick(e: MouseEvent): void {
     if (e.ctrlKey || e.metaKey) {
@@ -381,7 +379,7 @@ const RenameInput: Component<RenameInputProps> = (props) => {
     // to a cancel so we don't IPC an empty rename. The renamingLayerId
     // guard avoids re-committing if some other path (Enter, Escape,
     // blur) already finalized this rename.
-    if (renamingLayerId() === props.layerId) {
+    if (layerUi.renamingLayerId === props.layerId) {
       const v = value().trim();
       if (v.length > 0) {
         commitRename(props.layerId, v);
@@ -403,7 +401,7 @@ const RenameInput: Component<RenameInputProps> = (props) => {
         // Guard: if Escape was pressed before blur fires (DOM removal
         // can still dispatch blur in some browsers), don't re-commit
         // after the rename was already cancelled.
-        if (renamingLayerId() === props.layerId) {
+        if (layerUi.renamingLayerId === props.layerId) {
           commitRename(props.layerId, value());
         }
       }}

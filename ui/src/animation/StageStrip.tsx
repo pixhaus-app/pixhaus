@@ -6,14 +6,7 @@
 
 import { type Component, For, Show } from "solid-js";
 
-import {
-  type Stage,
-  approvedFirstFrame,
-  pendingClip,
-  referenceImage,
-  setStage,
-  stage,
-} from "./animation-studio-state";
+import { type Stage, studio, setStage } from "./animation-studio-state";
 
 type StageDef = {
   key: Stage;
@@ -32,7 +25,7 @@ const StageStrip: Component = () => {
       key: "reference",
       label: "Reference",
       thumb: () => {
-        const r = referenceImage();
+        const r = studio.referenceImage;
         return r ? pngUri(r.png_base64) : null;
       },
       ready: () => true,
@@ -41,10 +34,10 @@ const StageStrip: Component = () => {
       key: "first_frame",
       label: "First frame",
       thumb: () => {
-        const f = approvedFirstFrame();
+        const f = studio.approvedFirstFrame;
         return f ? pngUri(f.png_base64) : null;
       },
-      ready: () => referenceImage() !== null,
+      ready: () => studio.referenceImage !== null,
     },
     {
       key: "video",
@@ -52,16 +45,16 @@ const StageStrip: Component = () => {
       // The clip is a video, not an image; show the approved first frame as a
       // stand-in poster (it is the clip's first frame).
       thumb: () => {
-        const f = approvedFirstFrame();
-        return pendingClip() && f ? pngUri(f.png_base64) : null;
+        const f = studio.approvedFirstFrame;
+        return studio.pendingClip && f ? pngUri(f.png_base64) : null;
       },
-      ready: () => approvedFirstFrame() !== null,
+      ready: () => studio.approvedFirstFrame !== null,
     },
     {
       key: "extract",
       label: "Frames",
       thumb: () => null,
-      ready: () => pendingClip() !== null,
+      ready: () => studio.pendingClip !== null,
     },
   ];
 
@@ -76,7 +69,7 @@ const StageStrip: Component = () => {
             <button
               class="animation-studio__stage-chip"
               classList={{
-                "animation-studio__stage-chip--active": stage() === s.key,
+                "animation-studio__stage-chip--active": studio.stage === s.key,
                 "animation-studio__stage-chip--locked": !s.ready(),
               }}
               disabled={!s.ready()}

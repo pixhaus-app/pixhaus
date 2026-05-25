@@ -7,7 +7,7 @@
 // at its initial black/white — strokes draw black no matter what.
 
 import { createEffect } from "solid-js";
-import { activePalette, foregroundIndex, backgroundIndex } from "../../palette/palette-panel-state";
+import { activePalette, paletteUi } from "../../palette/palette-panel-state";
 import { setForegroundColor, setBackgroundColor } from "./tool-state";
 
 const BLACK = { r: 0, g: 0, b: 0, a: 255 } as const;
@@ -18,11 +18,11 @@ const WHITE = { r: 255, g: 255, b: 255, a: 255 } as const;
 // fire whenever the active palette or the FG/BG index changes.
 export function setupPaletteColorSync(): void {
   createEffect(() => {
-    const entry = activePalette()?.colors[foregroundIndex()];
+    const entry = activePalette()?.colors[paletteUi.foregroundIndex];
     setForegroundColor(entry ? { ...entry.color } : { ...BLACK });
   });
   createEffect(() => {
-    const entry = activePalette()?.colors[backgroundIndex()];
+    const entry = activePalette()?.colors[paletteUi.backgroundIndex];
     setBackgroundColor(entry ? { ...entry.color } : { ...WHITE });
   });
 }

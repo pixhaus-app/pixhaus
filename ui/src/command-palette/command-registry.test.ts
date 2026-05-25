@@ -49,6 +49,21 @@ vi.mock("@tauri-apps/api/core", () => ({
   invoke: (cmd: string, args?: unknown) => invokeMock(cmd, args),
 }));
 
+// List commands that the module-level backend queries (layers, timeline,
+// library) fire in the background whenever the active sprite/project is set.
+// They must resolve to an array so the query fetchers don't throw on the
+// default `undefined` mock return.
+const LIST_COMMANDS = new Set([
+  "layer_list",
+  "frame_list",
+  "frame_tag_list",
+  "cel_list",
+  "palette_list",
+  "library_list_entities",
+  "library_list_groups",
+  "library_list_tags",
+]);
+
 // The dialog plugin pulls in the IPC layer; stub the surface used by
 // the registry so the tests don't depend on a Tauri host.
 vi.mock("@tauri-apps/plugin-dialog", () => ({
@@ -61,11 +76,9 @@ vi.mock("@tauri-apps/plugin-dialog", () => ({
 
 import { dispatchCommand, getAllCommands } from "./command-registry";
 import {
-  zoom,
+  viewport,
   setZoom,
-  showTileGrid,
   setShowTileGrid,
-  showPixelGrid,
   setShowPixelGrid,
   setActiveSpriteId,
   setActiveFrameIndex,
@@ -82,7 +95,7 @@ import {
 } from "../shell/rail-state";
 import { clearSheetEntity, setActiveSheetEntityId } from "../sheet/sheet-state";
 import { setActiveProject } from "../project-state";
-import { activeVerb, clearVerbCache, setActiveVerb } from "../lib/ai/verb-invoke-state";
+import { verbModal, clearVerbCache, setActiveVerb } from "../lib/ai/verb-invoke-state";
 
 const FAKE_PROJECT = {
   metadata: { name: "Test", version: "0.0.0" },
@@ -91,9 +104,11 @@ const FAKE_PROJECT = {
   sprite_count: 1,
 } as unknown as Parameters<typeof setActiveProject>[0];
 
-beforeEach(() => {
+beforeEach(async () => {
   invokeMock.mockReset();
-  invokeMock.mockResolvedValue(undefined);
+  invokeMock.mockImplementation((cmd: string) =>
+    Promise.resolve(LIST_COMMANDS.has(cmd) ? [] : undefined),
+  );
   setActiveSpriteId(1);
   setActiveFrameIndex(0);
   setZoom(1);
@@ -104,6 +119,11 @@ beforeEach(() => {
   setTimelineCollapsed(false);
   clearSheetEntity();
   setActiveProject(FAKE_PROJECT);
+  // Setting the active sprite makes the module-level layers query (see
+  // layer-state) fetch layer_list in a microtask. Let that settle and clear
+  // it so each test body observes only the IPC its own dispatch triggers.
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  invokeMock.mockClear();
 });
 
 afterEach(() => {
@@ -183,33 +203,33 @@ describe("dispatchCommand — view", () => {
   it("view:zoom-in steps to the next snap level", () => {
     setZoom(1);
     dispatchCommand("view:zoom-in");
-    expect(zoom()).toBe(2);
+    expect(viewport.zoom).toBe(2);
   });
 
   it("view:zoom-out steps to the previous snap level", () => {
     setZoom(1);
     dispatchCommand("view:zoom-out");
-    expect(zoom()).toBe(0.5);
+    expect(viewport.zoom).toBe(0.5);
   });
 
   it("view:zoom-100 sets the zoom to 1", () => {
     setZoom(4);
     dispatchCommand("view:zoom-100");
-    expect(zoom()).toBe(1);
+    expect(viewport.zoom).toBe(1);
   });
 
   it("view:toggle-grid flips showTileGrid", () => {
     setShowTileGrid(false);
     dispatchCommand("view:toggle-grid");
-    expect(showTileGrid()).toBe(true);
+    expect(viewport.showTileGrid).toBe(true);
     dispatchCommand("view:toggle-grid");
-    expect(showTileGrid()).toBe(false);
+    expect(viewport.showTileGrid).toBe(false);
   });
 
   it("view:toggle-pixel-grid flips showPixelGrid", () => {
     setShowPixelGrid(true);
     dispatchCommand("view:toggle-pixel-grid");
-    expect(showPixelGrid()).toBe(false);
+    expect(viewport.showPixelGrid).toBe(false);
   });
 });
 
@@ -256,7 +276,7 @@ describe("dispatchCommand — window", () => {
 describe("dispatchCommand — sprite", () => {
   it("sprite:new opens the canvas-size dialog instead of dispatching sprite_add directly", async () => {
     invokeMock.mockResolvedValue({ id: 2, canvas: { width: 64, height: 64 } });
-    const { canvasSizeRequest, closeCanvasSizeDialog } =
+    const { canvasSizeDialog, closeCanvasSizeDialog } =
       await import("../shell/canvas-size-dialog-state");
     closeCanvasSizeDialog();
 
@@ -264,7 +284,7 @@ describe("dispatchCommand — sprite", () => {
 
     // The handler must defer to the dialog rather than fire sprite_add.
     expect(invokeMock.mock.calls.find(([cmd]) => cmd === "sprite_add")).toBeUndefined();
-    const req = canvasSizeRequest();
+    const req = canvasSizeDialog.request;
     expect(req).not.toBeNull();
     expect(req?.mode).toBe("sprite");
 
@@ -329,7 +349,7 @@ describe("dispatchCommand — ai", () => {
     // openVerbModal awaits verb_list before setting activeVerb; flush.
     await new Promise((r) => setTimeout(r, 0));
     expect(invokeMock).toHaveBeenCalledWith("verb_list", undefined);
-    expect(activeVerb()?.id).toBe("pixhaus.builtin.critique");
+    expect(verbModal.activeVerb?.id).toBe("pixhaus.builtin.critique");
   });
 
   it("ai:inbetween triggers a verb_list fetch and opens the modal for inbetween", async () => {
@@ -346,7 +366,7 @@ describe("dispatchCommand — ai", () => {
     dispatchCommand("ai:inbetween");
     await new Promise((r) => setTimeout(r, 0));
     expect(invokeMock).toHaveBeenCalledWith("verb_list", undefined);
-    expect(activeVerb()?.id).toBe("pixhaus.builtin.inbetween");
+    expect(verbModal.activeVerb?.id).toBe("pixhaus.builtin.inbetween");
   });
 });
 

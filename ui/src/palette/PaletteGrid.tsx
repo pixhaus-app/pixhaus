@@ -13,16 +13,13 @@ import { createSignal, For, Show, type Component } from "solid-js";
 import type { PaletteEntry, Rgba } from "../lib/types";
 import { paletteReorderColors } from "../lib/commands/palette";
 import { reportCommandFailure } from "../lib/utils/errors";
-import { activeSpriteId } from "../canvas/canvas-state";
+import { activeTarget } from "../canvas/canvas-state";
 import {
-  foregroundIndex,
-  backgroundIndex,
+  paletteUi,
   setForegroundIndex,
   setBackgroundIndex,
-  lockedIndices,
   toggleLock,
   activePalette,
-  activePaletteId,
   refreshPalettes,
   startEditing,
 } from "./palette-panel-state";
@@ -100,8 +97,8 @@ const PaletteGrid: Component<Props> = (props) => {
     setDragFrom(null);
     setDragOver(null);
     if (fromIndex === null || fromIndex === toIndex) return;
-    const spriteId = activeSpriteId();
-    const paletteId = activePaletteId();
+    const spriteId = activeTarget.spriteId;
+    const paletteId = paletteUi.activePaletteId;
     if (spriteId === null || paletteId === null) return;
     paletteReorderColors(spriteId, paletteId, fromIndex, toIndex)
       .then(() => refreshPalettes(spriteId))
@@ -122,7 +119,7 @@ const PaletteGrid: Component<Props> = (props) => {
 
   const handleDelete = (index: number) => {
     closeMenu();
-    if (lockedIndices().has(index)) return;
+    if (paletteUi.lockedIndices.has(index)) return;
     props.onRemove(index);
   };
 
@@ -138,9 +135,9 @@ const PaletteGrid: Component<Props> = (props) => {
       <div class="pgrid" role="listbox" aria-label="Palette swatches" aria-multiselectable="false">
         <For each={palette()?.colors ?? []}>
           {(entry: PaletteEntry, i) => {
-            const isFg = () => foregroundIndex() === i();
-            const isBg = () => backgroundIndex() === i();
-            const locked = () => lockedIndices().has(i());
+            const isFg = () => paletteUi.foregroundIndex === i();
+            const isBg = () => paletteUi.backgroundIndex === i();
+            const locked = () => paletteUi.lockedIndices.has(i());
             const isDragSrc = () => dragFrom() === i();
             const isDragTarget = () => dragOver() === i();
 
@@ -236,14 +233,14 @@ const PaletteGrid: Component<Props> = (props) => {
             role="menuitem"
             onClick={() => handleToggleLock(contextMenu()!.index)}
           >
-            {lockedIndices().has(contextMenu()!.index) ? "Unlock" : "Lock"}
+            {paletteUi.lockedIndices.has(contextMenu()!.index) ? "Unlock" : "Lock"}
           </button>
           <div class="pgrid__menu-sep" role="separator" />
           <button
             class="pgrid__menu-item pgrid__menu-item--danger"
             data-testid="palette-swatch-delete"
             role="menuitem"
-            disabled={lockedIndices().has(contextMenu()!.index)}
+            disabled={paletteUi.lockedIndices.has(contextMenu()!.index)}
             onClick={() => handleDelete(contextMenu()!.index)}
           >
             Remove swatch

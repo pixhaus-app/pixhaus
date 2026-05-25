@@ -6,7 +6,7 @@
 
 import { createSignal, For, type Component } from "solid-js";
 import type { Rgba } from "../lib/types";
-import { activePalette, foregroundIndex } from "./palette-panel-state";
+import { activePalette, paletteUi } from "./palette-panel-state";
 import { harmonyColors, rgbaToCss, rgbToHex, contrastColor, type HarmonyKind } from "./color-utils";
 
 type Props = {
@@ -27,7 +27,7 @@ const HarmonyPicker: Component<Props> = (props) => {
 
   const fgColor = (): Rgba | null => {
     const p = activePalette();
-    return p?.colors[foregroundIndex()]?.color ?? null;
+    return p?.colors[paletteUi.foregroundIndex]?.color ?? null;
   };
 
   const suggestions = (): Rgba[] => {

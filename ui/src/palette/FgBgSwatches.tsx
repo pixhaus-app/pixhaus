@@ -6,14 +6,7 @@
 // the color picker for that index.
 
 import { type Component } from "solid-js";
-import {
-  foregroundIndex,
-  backgroundIndex,
-  activePalette,
-  swapFgBg,
-  resetFgBg,
-  startEditing,
-} from "./palette-panel-state";
+import { paletteUi, activePalette, swapFgBg, resetFgBg, startEditing } from "./palette-panel-state";
 import { rgbaToCss, contrastColor } from "./color-utils";
 
 type Props = {
@@ -26,12 +19,12 @@ const FgBgSwatches: Component<Props> = (props) => {
 
   const fgEntry = () => {
     const p = palette();
-    return p?.colors[foregroundIndex()] ?? null;
+    return p?.colors[paletteUi.foregroundIndex] ?? null;
   };
 
   const bgEntry = () => {
     const p = palette();
-    return p?.colors[backgroundIndex()] ?? null;
+    return p?.colors[paletteUi.backgroundIndex] ?? null;
   };
 
   const fgCss = () => (fgEntry() ? rgbaToCss(fgEntry()!.color) : "transparent");
@@ -40,16 +33,16 @@ const FgBgSwatches: Component<Props> = (props) => {
   const handleFgClick = () => {
     const entry = fgEntry();
     if (entry) {
-      startEditing(foregroundIndex(), entry.color);
-      props.onPickerOpen(foregroundIndex());
+      startEditing(paletteUi.foregroundIndex, entry.color);
+      props.onPickerOpen(paletteUi.foregroundIndex);
     }
   };
 
   const handleBgClick = () => {
     const entry = bgEntry();
     if (entry) {
-      startEditing(backgroundIndex(), entry.color);
-      props.onPickerOpen(backgroundIndex());
+      startEditing(paletteUi.backgroundIndex, entry.color);
+      props.onPickerOpen(paletteUi.backgroundIndex);
     }
   };
 
@@ -102,7 +95,7 @@ const FgBgSwatches: Component<Props> = (props) => {
             color: fgEntry() ? contrastColor(fgEntry()!.color) : "inherit",
           }}
         >
-          {foregroundIndex()}
+          {paletteUi.foregroundIndex}
         </span>
         <span
           class="fgbg__index-badge"
@@ -111,7 +104,7 @@ const FgBgSwatches: Component<Props> = (props) => {
             color: bgEntry() ? contrastColor(bgEntry()!.color) : "inherit",
           }}
         >
-          {backgroundIndex()}
+          {paletteUi.backgroundIndex}
         </span>
       </div>
     </div>
