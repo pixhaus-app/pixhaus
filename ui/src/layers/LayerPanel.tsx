@@ -9,12 +9,11 @@ import { type Component, For, Show, createMemo, createSignal, onCleanup } from "
 import { activeSpriteId, activeLayerId } from "../canvas/canvas-state";
 import {
   addLayer,
-  dragOverIndex,
   flattenLayers,
   isGroupExpanded,
   layers,
+  layerUi,
   nextAutoName,
-  selectedLayerIds,
   selectLayer,
 } from "./layer-state";
 import { Plus } from "lucide-solid";
@@ -170,7 +169,7 @@ const LayerPanel: Component<Props> = (props) => {
     // selection to just that row — matches Photoshop / Aseprite. Right-
     // click on a row inside the selection leaves the selection alone, so
     // multi-select operations from the menu hit every selected row.
-    if (!selectedLayerIds().has(layerId)) {
+    if (!layerUi.selectedLayerIds.has(layerId)) {
       selectLayer(layerId, false);
     }
     setContextTarget({ x: e.clientX, y: e.clientY, layerId });
@@ -266,7 +265,7 @@ const LayerPanel: Component<Props> = (props) => {
                     }}
                     onDragOver={(e) => e.preventDefault()}
                   >
-                    <Show when={dragOverIndex() === entry.index}>
+                    <Show when={layerUi.dragOverIndex === entry.index}>
                       <div class="layer-panel__drop-indicator" />
                     </Show>
                     <LayerRow

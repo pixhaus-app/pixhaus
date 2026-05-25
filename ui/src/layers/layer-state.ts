@@ -5,7 +5,7 @@
 // Mutations go through the command wrappers, which call Rust and then refresh
 // the list via refreshLayers().
 
-import { createSignal } from "solid-js";
+import { createStore } from "solid-js/store";
 import type { BlendMode, Layer, LayerEffect, LayerId, SpriteId, TilesetId } from "../lib/types";
 import {
   layerAdd,
@@ -150,11 +150,52 @@ function ensureActiveLayer(list: readonly Layer[] | undefined): void {
 
 // ── Selection ───────────────────────────────────────────────────────────────
 
-// Multi-select set. The "primary" active layer (for painting) is activeLayerId()
-// from canvas-state. selectedLayerIds tracks which rows are highlighted in the panel.
-export const [selectedLayerIds, setSelectedLayerIds] = createSignal<ReadonlySet<LayerId>>(
-  new Set(),
-);
+// When non-null, a tileset picker dialog is open and Convert-to-Tilemap is
+// pending the user's tileset choice. Set by the layer context menu, cleared by
+// the dialog on confirm/cancel.
+export type TilesetPickerTarget = {
+  spriteId: SpriteId;
+  layerId: LayerId;
+};
+
+// UI-only layer-panel state, grouped in one store. Reads are
+// layerUi.selectedLayerIds, layerUi.renamingLayerId, etc.; writes go through
+// the setter functions below (which accept either a value or an updater so the
+// Set-mutating call sites keep their callback form). The "primary" active
+// layer (for painting) is activeLayerId() from canvas-state; selectedLayerIds
+// tracks which rows are highlighted in the panel.
+interface LayerUiState {
+  selectedLayerIds: ReadonlySet<LayerId>;
+  renamingLayerId: LayerId | null;
+  /** Groups default to expanded; collapsed ones are tracked explicitly. */
+  collapsedGroups: ReadonlySet<LayerId>;
+  /** Flat-list index where the drop indicator should render. */
+  dragOverIndex: number | null;
+  tilesetPickerTarget: TilesetPickerTarget | null;
+}
+
+const [layerUi, setLayerUi] = createStore<LayerUiState>({
+  selectedLayerIds: new Set(),
+  renamingLayerId: null,
+  collapsedGroups: new Set(),
+  dragOverIndex: null,
+  tilesetPickerTarget: null,
+});
+
+export { layerUi };
+
+type SetArg<T> = T | ((prev: T) => T);
+
+export function setSelectedLayerIds(next: SetArg<ReadonlySet<LayerId>>): void {
+  setLayerUi("selectedLayerIds", typeof next === "function" ? next : () => next);
+}
+export const setRenamingLayerId = (v: LayerId | null): void => setLayerUi("renamingLayerId", v);
+function setCollapsedGroups(next: SetArg<ReadonlySet<LayerId>>): void {
+  setLayerUi("collapsedGroups", typeof next === "function" ? next : () => next);
+}
+export const setDragOverIndex = (v: number | null): void => setLayerUi("dragOverIndex", v);
+export const setTilesetPickerTarget = (v: TilesetPickerTarget | null): void =>
+  setLayerUi("tilesetPickerTarget", v);
 
 export function selectLayer(id: LayerId, extend: boolean): void {
   setActiveLayerId(id);
@@ -183,8 +224,6 @@ export function toggleLayerSelection(id: LayerId): void {
 
 // ── Inline rename state ─────────────────────────────────────────────────────
 
-export const [renamingLayerId, setRenamingLayerId] = createSignal<LayerId | null>(null);
-
 export function beginRename(id: LayerId): void {
   setRenamingLayerId(id);
 }
@@ -207,11 +246,8 @@ export function cancelRename(): void {
 
 // ── Expanded groups ─────────────────────────────────────────────────────────
 
-// Groups default to expanded. Track collapsed ones explicitly.
-const [collapsedGroups, setCollapsedGroups] = createSignal<ReadonlySet<LayerId>>(new Set());
-
 export function isGroupExpanded(id: LayerId): boolean {
-  return !collapsedGroups().has(id);
+  return !layerUi.collapsedGroups.has(id);
 }
 
 export function toggleGroupExpanded(id: LayerId): void {
@@ -241,22 +277,7 @@ export function ensureGroupExpanded(id: LayerId): void {
   });
 }
 
-// ── Drag-to-reorder state ───────────────────────────────────────────────────
-
-// Index (in the flat layers array) where the drop indicator should render.
-export const [dragOverIndex, setDragOverIndex] = createSignal<number | null>(null);
-
 // ── Tileset picker (Convert to Tilemap Layer) ───────────────────────────────
-
-// When non-null, a tileset picker dialog is open and Convert-to-Tilemap is
-// pending the user's tileset choice. Set by the layer context menu, cleared
-// by the dialog on confirm/cancel.
-export type TilesetPickerTarget = {
-  spriteId: SpriteId;
-  layerId: LayerId;
-};
-export const [tilesetPickerTarget, setTilesetPickerTarget] =
-  createSignal<TilesetPickerTarget | null>(null);
 
 export function openTilesetPicker(spriteId: SpriteId, layerId: LayerId): void {
   setTilesetPickerTarget({ spriteId, layerId });

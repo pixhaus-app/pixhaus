@@ -13,10 +13,10 @@ import {
   deleteLayers,
   flattenVisibleLayers,
   layers,
+  layerUi,
   mergeLayerDown,
   mergeSelectedLayers,
   openTilesetPicker,
-  selectedLayerIds,
   wrapLayersInGroup,
 } from "./layer-state";
 
@@ -78,12 +78,12 @@ const LayerContextMenu: Component<Props> = (props) => {
     const idx = all.findIndex((x) => x.id === l.id);
     return idx > 0;
   };
-  const multiSelected = () => selectedLayerIds().size >= 2;
+  const multiSelected = () => layerUi.selectedLayerIds.size >= 2;
   // Convert to Group accepts non-group layers; reject if the target or
   // any other selected layer is already a group (the backend would
   // reject anyway, but disabling here saves a round-trip).
   const canConvertToGroup = () => {
-    const sel = selectedLayerIds();
+    const sel = layerUi.selectedLayerIds;
     const ids = sel.size > 0 ? [...sel] : layer() ? [layer()!.id] : [];
     if (ids.length === 0) return false;
     const all = layers();
@@ -96,7 +96,7 @@ const LayerContextMenu: Component<Props> = (props) => {
   // this means the selection cannot cover every layer.
   const canDelete = () => {
     const total = layers().length;
-    const sel = selectedLayerIds();
+    const sel = layerUi.selectedLayerIds;
     const count = sel.size > 0 ? sel.size : 1;
     return total - count >= 1;
   };
@@ -163,7 +163,7 @@ const LayerContextMenu: Component<Props> = (props) => {
             class="ctx-menu__item"
             data-testid="layer-ctx-merge-selected"
             onClick={() => {
-              mergeSelectedLayers(props.spriteId, selectedLayerIds());
+              mergeSelectedLayers(props.spriteId, layerUi.selectedLayerIds);
               props.onClose();
             }}
             disabled={!multiSelected()}
@@ -191,7 +191,7 @@ const LayerContextMenu: Component<Props> = (props) => {
               // After R2-B1 the right-clicked target is always in
               // selectedLayerIds — operate on the whole selection so
               // multi-select wraps every selected layer into one group.
-              const sel = selectedLayerIds();
+              const sel = layerUi.selectedLayerIds;
               const ids = sel.size > 0 ? [...sel] : [props.target!.layerId];
               wrapLayersInGroup(props.spriteId, ids);
               props.onClose();
@@ -233,7 +233,7 @@ const LayerContextMenu: Component<Props> = (props) => {
               // Multi-select deletes every selected layer; the single-layer
               // case keeps the named-layer prompt for clarity.
               const spriteId = props.spriteId;
-              const sel = selectedLayerIds();
+              const sel = layerUi.selectedLayerIds;
               const ids = sel.size > 0 ? [...sel] : [props.target!.layerId];
               const message =
                 ids.length > 1

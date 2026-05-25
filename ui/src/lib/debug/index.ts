@@ -26,7 +26,7 @@ import {
   activeSpriteId,
   viewport,
 } from "../../canvas/canvas-state";
-import { layers, refreshLayers, selectedLayerIds } from "../../layers/layer-state";
+import { layers, refreshLayers, layerUi } from "../../layers/layer-state";
 import { setActiveLayerId } from "../../canvas/canvas-state";
 import {
   frameTags,
@@ -227,7 +227,7 @@ export function installDebugSurface(): void {
     }),
 
     getLayerCount: () => layers().length,
-    getSelectedLayerIds: () => [...selectedLayerIds()],
+    getSelectedLayerIds: () => [...layerUi.selectedLayerIds],
     getFrameCount: () => frames().length,
     getFrameTags: () => frameTags(),
     getSelectedFrames: () => [...selectedFrames()],

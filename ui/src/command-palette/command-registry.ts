@@ -67,10 +67,10 @@ import {
   deleteLayer,
   flattenVisibleLayers,
   layers,
+  layerUi,
   mergeLayerDown,
   mergeSelectedLayers,
   nextAutoName,
-  selectedLayerIds,
   wrapLayersInGroup,
 } from "../layers/layer-state";
 import { isLooping, refreshTimeline, setIsLooping } from "../timeline/timeline-state";
@@ -670,7 +670,7 @@ const COMMANDS: ReadonlyMap<string, CommandEntry> = new Map<string, CommandEntry
       handler: () => {
         const spriteId = activeSpriteId();
         if (spriteId === null) return;
-        mergeSelectedLayers(spriteId, selectedLayerIds());
+        mergeSelectedLayers(spriteId, layerUi.selectedLayerIds);
       },
     },
   ],
@@ -699,7 +699,7 @@ const COMMANDS: ReadonlyMap<string, CommandEntry> = new Map<string, CommandEntry
         const spriteId = activeSpriteId();
         const layerId = activeLayerId();
         if (spriteId === null || layerId === null) return;
-        const ids = selectedLayerIds().size > 0 ? [...selectedLayerIds()] : [layerId];
+        const ids = layerUi.selectedLayerIds.size > 0 ? [...layerUi.selectedLayerIds] : [layerId];
         wrapLayersInGroup(spriteId, ids);
       },
     },
