@@ -1,8 +1,8 @@
 import { Show, onMount, onCleanup, type Component } from "solid-js";
 import { subscribeTauriEvent } from "../lib/sync/subscribe-event";
-import { isCommandPaletteOpen } from "../palette-state";
-import { isPreferencesOpen } from "../preferences/preferences-state";
-import { isCompositionLibraryOpen } from "../composition-library/composition-library-state";
+import { commandPalette } from "../palette-state";
+import { preferencesModal } from "../preferences/preferences-state";
+import { compositionLibrary } from "../composition-library/composition-library-state";
 import { projectState } from "../project-state";
 import { dispatchCommand } from "../command-palette/command-registry";
 import { setupKeybindManager } from "../keybinds/keybind-manager";
@@ -152,15 +152,15 @@ const Shell: Component = () => {
 
       <StatusBar />
 
-      <Show when={isCommandPaletteOpen()}>
+      <Show when={commandPalette.open}>
         <CommandPalette />
       </Show>
 
-      <Show when={isPreferencesOpen()}>
+      <Show when={preferencesModal.open}>
         <PreferencesModal />
       </Show>
 
-      <Show when={isCompositionLibraryOpen()}>
+      <Show when={compositionLibrary.open}>
         <CompositionLibraryModal />
       </Show>
 

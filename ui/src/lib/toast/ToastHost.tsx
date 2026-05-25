@@ -1,14 +1,14 @@
-// Renders the toast stack from `toasts()`. Mounted once at the top of
+// Renders the toast stack from `toastState.toasts`. Mounted once at the top of
 // Shell so every surface-level catch block can call `pushToast()`
 // without owning a portal.
 
 import { For, type Component } from "solid-js";
-import { dismissToast, toasts } from "./toast-state";
+import { dismissToast, toastState } from "./toast-state";
 
 const ToastHost: Component = () => {
   return (
     <div class="toast-host" role="region" aria-label="Notifications" aria-live="polite">
-      <For each={toasts()}>
+      <For each={toastState.toasts}>
         {(t) => (
           <div class={`toast toast--${t.kind}`} role={t.kind === "error" ? "alert" : "status"}>
             <div class="toast__body">

@@ -37,8 +37,8 @@ import {
   openSection,
 } from "../../shell/rail-state";
 import { clearSheetEntity } from "../../sheet/sheet-state";
-import { isCommandPaletteOpen } from "../../palette-state";
-import { isPreferencesOpen } from "../../preferences/preferences-state";
+import { commandPalette } from "../../palette-state";
+import { preferencesModal } from "../../preferences/preferences-state";
 import { prefs } from "../../preferences/preferences-store";
 import {
   clearDialogQueue,
@@ -228,8 +228,8 @@ export function installDebugSurface(): void {
     getIsPlaying: () => timelineUi.isPlaying,
     getIsLooping: () => timelineUi.isLooping,
 
-    isCommandPaletteOpen: () => isCommandPaletteOpen(),
-    isPreferencesOpen: () => isPreferencesOpen(),
+    isCommandPaletteOpen: () => commandPalette.open,
+    isPreferencesOpen: () => preferencesModal.open,
 
     panel: {
       layers: () => isSectionOpen("layers"),

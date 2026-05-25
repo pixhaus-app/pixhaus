@@ -1,5 +1,5 @@
 import { open as dialogOpen, save as dialogSave, confirm, message } from "../lib/dialog";
-import { isCommandPaletteOpen, openCommandPalette, closeCommandPalette } from "../palette-state";
+import { commandPalette, openCommandPalette, closeCommandPalette } from "../palette-state";
 import { openPreferences } from "../preferences/preferences-state";
 import { openCompositionLibrary } from "../composition-library/composition-library-state";
 import { openAnimationStudio } from "../animation/animation-studio-state";
@@ -1223,7 +1223,7 @@ const COMMANDS: ReadonlyMap<string, CommandEntry> = new Map<string, CommandEntry
       category: "Window",
       keywords: ["search", "commands"],
       handler: () => {
-        if (isCommandPaletteOpen()) closeCommandPalette();
+        if (commandPalette.open) closeCommandPalette();
         else openCommandPalette();
       },
     },

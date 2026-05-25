@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { humanizeCommandError, runMutation } from "./mutation";
 import { __resetRegistry, registerQuery } from "./invalidation";
-import { clearToasts, toasts } from "../toast/toast-state";
+import { clearToasts, toastState } from "../toast/toast-state";
 import type { AppCommandError } from "../types/AppCommandError";
 
 afterEach(() => {
@@ -43,8 +43,8 @@ describe("runMutation", () => {
     // No invalidation on failure.
     expect(refetch).not.toHaveBeenCalled();
     // A toast surfaced the failure (the old code only console.error'd).
-    expect(toasts()).toHaveLength(1);
-    expect(toasts()[0]?.kind).toBe("error");
+    expect(toastState.toasts).toHaveLength(1);
+    expect(toastState.toasts[0]?.kind).toBe("error");
   });
 
   it("suppresses the toast when errorToast is false", async () => {
@@ -52,7 +52,7 @@ describe("runMutation", () => {
       run: () => Promise.reject<number>({ kind: "no_active_project" }),
       errorToast: false,
     });
-    expect(toasts()).toHaveLength(0);
+    expect(toastState.toasts).toHaveLength(0);
   });
 
   it("applies the optimistic update before the call resolves", async () => {

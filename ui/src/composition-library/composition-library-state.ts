@@ -1,13 +1,13 @@
-import { createSignal } from "solid-js";
+import { createStore } from "solid-js/store";
 
-const [isCompositionLibraryOpen, setCompositionLibraryOpen] = createSignal(false);
-
-export { isCompositionLibraryOpen };
+// Composition-library modal open/close. A store for consistency with the rest
+// of the UI state layer; read as compositionLibrary.open.
+export const [compositionLibrary, setCompositionLibrary] = createStore({ open: false });
 
 export function openCompositionLibrary(): void {
-  setCompositionLibraryOpen(true);
+  setCompositionLibrary("open", true);
 }
 
 export function closeCompositionLibrary(): void {
-  setCompositionLibraryOpen(false);
+  setCompositionLibrary("open", false);
 }

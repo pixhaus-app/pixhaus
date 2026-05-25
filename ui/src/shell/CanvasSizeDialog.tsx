@@ -10,7 +10,7 @@ import { Button } from "../lib/ui/Button";
 import { Dialog } from "../lib/ui/Dialog";
 import { FormField } from "../lib/ui/FormField";
 import {
-  canvasSizeRequest,
+  canvasSizeDialog,
   closeCanvasSizeDialog,
   loadLastCanvasSize,
   saveLastCanvasSize,
@@ -33,7 +33,7 @@ const CanvasSizeDialog: Component = () => {
   const [error, setError] = createSignal<string | null>(null);
 
   createEffect(() => {
-    const req = canvasSizeRequest();
+    const req = canvasSizeDialog.request;
     if (req === null) return;
     const last = loadLastCanvasSize();
     setWidthInput(String(last.width));
@@ -89,7 +89,7 @@ const CanvasSizeDialog: Component = () => {
 
   function submit(e: SubmitEvent): void {
     e.preventDefault();
-    const req = canvasSizeRequest();
+    const req = canvasSizeDialog.request;
     if (req === null) return;
     const w = parseCanvasDim(widthInput());
     const h = parseCanvasDim(heightInput());
@@ -127,18 +127,18 @@ const CanvasSizeDialog: Component = () => {
     return validateCanvasDim(w) !== null || validateCanvasDim(h) !== null;
   }
 
-  const title = () => (canvasSizeRequest()?.mode === "project" ? "New project" : "New sprite");
+  const title = () => (canvasSizeDialog.request?.mode === "project" ? "New project" : "New sprite");
 
   return (
     <Dialog
-      open={canvasSizeRequest() !== null}
+      open={canvasSizeDialog.request !== null}
       title={title()}
       onClose={closeCanvasSizeDialog}
       size="md"
     >
       <form onSubmit={submit}>
         <Dialog.Body>
-          <Show when={canvasSizeRequest()?.mode === "project"}>
+          <Show when={canvasSizeDialog.request?.mode === "project"}>
             <FormField label="Name" for="canvas-size-name-input">
               <input
                 id="canvas-size-name-input"
@@ -209,7 +209,7 @@ const CanvasSizeDialog: Component = () => {
             </div>
           </div>
 
-          <Show when={canvasSizeRequest()?.mode === "sprite"}>
+          <Show when={canvasSizeDialog.request?.mode === "sprite"}>
             <div class="prefs__row">
               <div>
                 <div class="prefs__label">Reference sheet</div>

@@ -2,7 +2,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { createSignal } from "solid-js";
 import { createBackendQuery } from "./query";
 import { __resetRegistry, invalidate } from "./invalidation";
-import { clearToasts, toasts } from "../toast/toast-state";
+import { clearToasts, toastState } from "../toast/toast-state";
 
 afterEach(() => {
   __resetRegistry();
@@ -110,8 +110,8 @@ describe("createBackendQuery", () => {
       errorTitle: "Could not load layers",
     });
     await tick();
-    expect(toasts()).toHaveLength(1);
-    expect(toasts()[0]?.title).toBe("Could not load layers");
+    expect(toastState.toasts).toHaveLength(1);
+    expect(toastState.toasts[0]?.title).toBe("Could not load layers");
     q.dispose();
   });
 });

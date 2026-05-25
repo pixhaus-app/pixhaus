@@ -276,7 +276,7 @@ describe("dispatchCommand — window", () => {
 describe("dispatchCommand — sprite", () => {
   it("sprite:new opens the canvas-size dialog instead of dispatching sprite_add directly", async () => {
     invokeMock.mockResolvedValue({ id: 2, canvas: { width: 64, height: 64 } });
-    const { canvasSizeRequest, closeCanvasSizeDialog } =
+    const { canvasSizeDialog, closeCanvasSizeDialog } =
       await import("../shell/canvas-size-dialog-state");
     closeCanvasSizeDialog();
 
@@ -284,7 +284,7 @@ describe("dispatchCommand — sprite", () => {
 
     // The handler must defer to the dialog rather than fire sprite_add.
     expect(invokeMock.mock.calls.find(([cmd]) => cmd === "sprite_add")).toBeUndefined();
-    const req = canvasSizeRequest();
+    const req = canvasSizeDialog.request;
     expect(req).not.toBeNull();
     expect(req?.mode).toBe("sprite");
 
