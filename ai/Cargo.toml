@@ -1,0 +1,37 @@
+[package]
+name = "pixhaus-ai"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Pixhaus AI: verb runtime, reference-sheet verb, FAL backend (vertical-slice subset)"
+
+[dependencies]
+pixhaus-core.workspace = true
+async-trait.workspace = true
+base64.workspace = true
+futures.workspace = true
+image.workspace = true
+keyring.workspace = true
+keyring-core.workspace = true
+parking_lot.workspace = true
+reqwest.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+tokio.workspace = true
+tokio-util.workspace = true
+tracing.workspace = true
+
+[dev-dependencies]
+anyhow.workspace = true
+insta.workspace = true
+proptest.workspace = true
+rmp-serde.workspace = true
+rstest.workspace = true
+tokio = { workspace = true, features = ["full", "test-util"] }
+
+[lints]
+workspace = true
