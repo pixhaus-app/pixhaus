@@ -1,0 +1,355 @@
+{
+  "metadata": {
+    "skill_name": "pixhaus-egui-wgpu",
+    "skill_path": "C:\\Users\\luism\\Documents\\GitHub\\pixhaus-worktrees\\v2\\.claude\\skills\\pixhaus-egui-wgpu",
+    "executor_model": "claude-opus-4-7[1m]",
+    "analyzer_model": "claude-opus-4-7[1m]",
+    "timestamp": "2026-05-25T21:50:00Z",
+    "evals_run": [
+      0,
+      1,
+      2
+    ],
+    "runs_per_configuration": 1
+  },
+  "runs": [
+    {
+      "eval_id": 0,
+      "eval_name": "canvas-paint-callback",
+      "configuration": "with_skill",
+      "run_number": 1,
+      "result": {
+        "pass_rate": 1.0,
+        "passed": 5,
+        "failed": 0,
+        "total": 5,
+        "time_seconds": 97.8,
+        "tokens": 81048,
+        "tool_calls": 0,
+        "errors": 0
+      },
+      "expectations": [
+        {
+          "text": "Implements CallbackTrait with a paint method",
+          "passed": true,
+          "evidence": "8192x8192 canvas. That is exactly what the `CallbackTrait` path is for, and the dirty-rect"
+        },
+        {
+          "text": "paint takes RenderPass<'static> (the 'static-lifetime pass)",
+          "passed": true,
+          "evidence": "render_pass: &mut RenderPass<'static>,"
+        },
+        {
+          "text": "Uploads only the dirty sub-rect via queue.write_texture in prepare (no full-canvas reupload)",
+          "passed": true,
+          "evidence": "- Uploads (uniform write, dirty-rect `write_texture`) happen in `prepare`, which gets"
+        },
+        {
+          "text": "Stores GPU resources in the callback_resources / CallbackResources type-map (built once)",
+          "passed": true,
+          "evidence": "This struct is inserted once into the renderer's `callback_resources` type-map and persists"
+        },
+        {
+          "text": "Pushes the callback via Callback::new_paint_callback(rect, ...)",
+          "passed": true,
+          "evidence": "painter.add(egui_wgpu::Callback::new_paint_callback("
+        }
+      ],
+      "notes": []
+    },
+    {
+      "eval_id": 0,
+      "eval_name": "canvas-paint-callback",
+      "configuration": "without_skill",
+      "run_number": 1,
+      "result": {
+        "pass_rate": 1.0,
+        "passed": 5,
+        "failed": 0,
+        "total": 5,
+        "time_seconds": 100.7,
+        "tokens": 51645,
+        "tool_calls": 0,
+        "errors": 0
+      },
+      "expectations": [
+        {
+          "text": "Implements CallbackTrait with a paint method",
+          "passed": true,
+          "evidence": "## The CallbackTrait implementation"
+        },
+        {
+          "text": "paint takes RenderPass<'static> (the 'static-lifetime pass)",
+          "passed": true,
+          "evidence": "render_pass: &mut wgpu::RenderPass<'static>,"
+        },
+        {
+          "text": "Uploads only the dirty sub-rect via queue.write_texture in prepare (no full-canvas reupload)",
+          "passed": true,
+          "evidence": "`queue.write_texture`. egui's job is purely to schedule a paint callback into the right"
+        },
+        {
+          "text": "Stores GPU resources in the callback_resources / CallbackResources type-map (built once)",
+          "passed": true,
+          "evidence": "`callback_resources` (a `TypeMap`). You insert your resource struct once at startup"
+        },
+        {
+          "text": "Pushes the callback via Callback::new_paint_callback(rect, ...)",
+          "passed": true,
+          "evidence": "and hand it to egui via `egui_wgpu::Callback::new_paint_callback`."
+        }
+      ],
+      "notes": []
+    },
+    {
+      "eval_id": 1,
+      "eval_name": "display-wgpu-texture",
+      "configuration": "with_skill",
+      "run_number": 1,
+      "result": {
+        "pass_rate": 1.0,
+        "passed": 6,
+        "failed": 0,
+        "total": 6,
+        "time_seconds": 65.5,
+        "tokens": 49243,
+        "tool_calls": 0,
+        "errors": 0
+      },
+      "expectations": [
+        {
+          "text": "Uses register_native_texture to get a TextureId",
+          "passed": true,
+          "evidence": "You're on the right path. Since `render` already composites into its own `wgpu::Texture`, you don't need the `CallbackTrait` route at all \u2014 that's for splicing a live wgpu pass *inside* the egui frame"
+        },
+        {
+          "text": "Specifies FilterMode::Nearest for crisp pixel art",
+          "passed": true,
+          "evidence": "## Crisp, not blurry \u2014 pass `FilterMode::Nearest`"
+        },
+        {
+          "text": "Uses update_egui_texture_from_wgpu_texture and avoids the nonexistent update_native_texture",
+          "passed": true,
+          "evidence": "- `update_egui_texture_from_wgpu_texture` \u2014 the in-place updater. This is the function people mean when they say \"`update_native_texture`,\" which **does not exist** under that name. It re-points an ex"
+        },
+        {
+          "text": "Does NOT present the nonexistent update_native_texture as a real API",
+          "passed": true,
+          "evidence": "## First, clear up the naming \u2014 there is no `update_native_texture`"
+        },
+        {
+          "text": "Uses the correct sampler-options method name (register_native_texture_with_sampler_options), not the invented _with_sampler_descriptor",
+          "passed": true,
+          "evidence": "pub fn register_native_texture_with_sampler_options("
+        },
+        {
+          "text": "Draws the texture via painter.image / ui.image with the TextureId",
+          "passed": true,
+          "evidence": "ui.painter().image("
+        }
+      ],
+      "notes": []
+    },
+    {
+      "eval_id": 1,
+      "eval_name": "display-wgpu-texture",
+      "configuration": "without_skill",
+      "run_number": 1,
+      "result": {
+        "pass_rate": 0.667,
+        "passed": 4,
+        "failed": 2,
+        "total": 6,
+        "time_seconds": 54.6,
+        "tokens": 35471,
+        "tool_calls": 0,
+        "errors": 0
+      },
+      "expectations": [
+        {
+          "text": "Uses register_native_texture to get a TextureId",
+          "passed": true,
+          "evidence": "- `register_native_texture` \u2014 \"give me a fresh `TextureId` for this view.\" Call"
+        },
+        {
+          "text": "Specifies FilterMode::Nearest for crisp pixel art",
+          "passed": true,
+          "evidence": "`FilterMode::Nearest` for both `mag_filter` and `min_filter`."
+        },
+        {
+          "text": "Uses update_egui_texture_from_wgpu_texture and avoids the nonexistent update_native_texture",
+          "passed": true,
+          "evidence": "renderer.update_egui_texture_from_wgpu_texture("
+        },
+        {
+          "text": "Does NOT present the nonexistent update_native_texture as a real API",
+          "passed": false,
+          "evidence": "- `update_native_texture` \u2014 \"keep this *existing* `TextureId`, but it now points"
+        },
+        {
+          "text": "Uses the correct sampler-options method name (register_native_texture_with_sampler_options), not the invented _with_sampler_descriptor",
+          "passed": false,
+          "evidence": "`register_native_texture_with_sampler_descriptor` lets you pick. Use"
+        },
+        {
+          "text": "Draws the texture via painter.image / ui.image with the TextureId",
+          "passed": true,
+          "evidence": "painter.image("
+        }
+      ],
+      "notes": []
+    },
+    {
+      "eval_id": 2,
+      "eval_name": "wgpu-setup-config",
+      "configuration": "with_skill",
+      "run_number": 1,
+      "result": {
+        "pass_rate": 1.0,
+        "passed": 6,
+        "failed": 0,
+        "total": 6,
+        "time_seconds": 61.9,
+        "tokens": 46419,
+        "tool_calls": 0,
+        "errors": 0
+      },
+      "expectations": [
+        {
+          "text": "Identifies WgpuConfiguration as the home for these settings",
+          "passed": true,
+          "evidence": "texture-dimension limits \u2014 live in **one place**: `egui_wgpu::WgpuConfiguration`. On"
+        },
+        {
+          "text": "Sets desired_maximum_frame_latency = Some(1) for low input latency",
+          "passed": true,
+          "evidence": "| Minimize brush-stroke input latency | `WgpuConfiguration::desired_maximum_frame_latency` | `Some(1)` |"
+        },
+        {
+          "text": "Uses an AutoVsync present_mode (vsync on)",
+          "passed": true,
+          "evidence": "| Vsync on, no tearing | `WgpuConfiguration::present_mode` | `wgpu::PresentMode::AutoVsync` |"
+        },
+        {
+          "text": "Prefers the discrete GPU via PowerPreference::HighPerformance or native_adapter_selector",
+          "passed": true,
+          "evidence": "| Prefer discrete / high-perf GPU | `wgpu_setup` \u2192 `WgpuSetupCreateNew::power_preference` (and optionally `native_adapter_selector` to pin it hard) | `wgpu::PowerPreference::HighPerformance` |"
+        },
+        {
+          "text": "Requests higher texture limits via the device_descriptor closure (max_texture_dimension_2d)",
+          "passed": true,
+          "evidence": "| 8K texture support | `WgpuSetupCreateNew::device_descriptor` closure \u2192 `DeviceDescriptor::required_limits` | raise `max_texture_dimension_2d` to \u2265 8192 |"
+        },
+        {
+          "text": "Routes config through eframe NativeOptions wgpu_options",
+          "passed": true,
+          "evidence": "to eframe through `NativeOptions.wgpu_options` and eframe creates the instance, adapter,"
+        }
+      ],
+      "notes": []
+    },
+    {
+      "eval_id": 2,
+      "eval_name": "wgpu-setup-config",
+      "configuration": "without_skill",
+      "run_number": 1,
+      "result": {
+        "pass_rate": 1.0,
+        "passed": 6,
+        "failed": 0,
+        "total": 6,
+        "time_seconds": 48.2,
+        "tokens": 35148,
+        "tool_calls": 0,
+        "errors": 0
+      },
+      "expectations": [
+        {
+          "text": "Identifies WgpuConfiguration as the home for these settings",
+          "passed": true,
+          "evidence": "`NativeOptions::wgpu_options`, which is an `egui_wgpu::WgpuConfiguration`."
+        },
+        {
+          "text": "Sets desired_maximum_frame_latency = Some(1) for low input latency",
+          "passed": true,
+          "evidence": "//    desired_maximum_frame_latency caps how many frames the present"
+        },
+        {
+          "text": "Uses an AutoVsync present_mode (vsync on)",
+          "passed": true,
+          "evidence": "// present_mode is left at its default (AutoVsync) because we want vsync."
+        },
+        {
+          "text": "Prefers the discrete GPU via PowerPreference::HighPerformance or native_adapter_selector",
+          "passed": true,
+          "evidence": "power_preference: PowerPreference::HighPerformance,"
+        },
+        {
+          "text": "Requests higher texture limits via the device_descriptor closure (max_texture_dimension_2d)",
+          "passed": true,
+          "evidence": "carries the `power_preference` and a `device_descriptor` closure where you set"
+        },
+        {
+          "text": "Routes config through eframe NativeOptions wgpu_options",
+          "passed": true,
+          "evidence": "`NativeOptions::wgpu_options`, which is an `egui_wgpu::WgpuConfiguration`."
+        }
+      ],
+      "notes": []
+    }
+  ],
+  "run_summary": {
+    "with_skill": {
+      "pass_rate": {
+        "mean": 1.0,
+        "stddev": 0.0,
+        "min": 1.0,
+        "max": 1.0
+      },
+      "time_seconds": {
+        "mean": 75.067,
+        "stddev": 16.142,
+        "min": 61.9,
+        "max": 97.8
+      },
+      "tokens": {
+        "mean": 58903,
+        "stddev": 15701,
+        "min": 46419,
+        "max": 81048
+      }
+    },
+    "without_skill": {
+      "pass_rate": {
+        "mean": 0.889,
+        "stddev": 0.157,
+        "min": 0.667,
+        "max": 1.0
+      },
+      "time_seconds": {
+        "mean": 67.833,
+        "stddev": 23.387,
+        "min": 48.2,
+        "max": 100.7
+      },
+      "tokens": {
+        "mean": 40755,
+        "stddev": 7702,
+        "min": 35148,
+        "max": 51645
+      }
+    },
+    "delta": {
+      "pass_rate": "+0.111",
+      "time_seconds": "+7.2",
+      "tokens": "+18148"
+    }
+  },
+  "notes": [
+    "1 run per eval per config (not repeated) - treat pass-rate deltas as directional, not statistically robust.",
+    "eval-0 (canvas-paint-callback): TIE at 5/5 both. The base model already produces correct egui-wgpu 0.34 callback code (RenderPass<'static>, parking_lot lock, TexelCopyTextureInfo, dirty-rect write_texture). Assertions here are non-discriminating.",
+    "eval-1 (display-wgpu-texture): CLEAR SKILL WIN (6/6 vs 4/6). Baseline hallucinated update_native_texture as a real function AND used the wrong name register_native_texture_with_sampler_descriptor; the skill run correctly states update_native_texture does not exist and uses register_native_texture_with_sampler_options.",
+    "eval-2 (wgpu-setup-config): both 6/6 on keyword assertions, but baseline's WgpuSetupCreateNew struct literal omits display_handle and native_adapter_selector with no ..Default::default() (would not compile) - a subtle correctness gap the skill's full-field docs avoid; not captured by the assertions.",
+    "Skill cost: +18k tokens and +7s average (reading SKILL.md + references). Worth it where it prevents a hallucinated API that wastes a debugging cycle."
+  ]
+}

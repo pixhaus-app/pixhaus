@@ -1,0 +1,1325 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Eval Review</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Poppins:wght@500;600&family=Lora:wght@400;500&display=swap" rel="stylesheet">
+  <script src="https://cdn.sheetjs.com/xlsx-0.20.3/package/dist/xlsx.full.min.js" integrity="sha384-EnyY0/GSHQGSxSgMwaIPzSESbqoOLSexfnSMN2AP+39Ckmn92stwABZynq1JyzdT" crossorigin="anonymous"></script>
+  <style>
+    :root {
+      --bg: #faf9f5;
+      --surface: #ffffff;
+      --border: #e8e6dc;
+      --text: #141413;
+      --text-muted: #b0aea5;
+      --accent: #d97757;
+      --accent-hover: #c4613f;
+      --green: #788c5d;
+      --green-bg: #eef2e8;
+      --red: #c44;
+      --red-bg: #fceaea;
+      --header-bg: #141413;
+      --header-text: #faf9f5;
+      --radius: 6px;
+    }
+
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+
+    body {
+      font-family: 'Lora', Georgia, serif;
+      background: var(--bg);
+      color: var(--text);
+      height: 100vh;
+      display: flex;
+      flex-direction: column;
+    }
+
+    /* ---- Header ---- */
+    .header {
+      background: var(--header-bg);
+      color: var(--header-text);
+      padding: 1rem 2rem;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      flex-shrink: 0;
+    }
+    .header h1 {
+      font-family: 'Poppins', sans-serif;
+      font-size: 1.25rem;
+      font-weight: 600;
+    }
+    .header .instructions {
+      font-size: 0.8rem;
+      opacity: 0.7;
+      margin-top: 0.25rem;
+    }
+    .header .progress {
+      font-size: 0.875rem;
+      opacity: 0.8;
+      text-align: right;
+    }
+
+    /* ---- Main content ---- */
+    .main {
+      flex: 1;
+      overflow-y: auto;
+      padding: 1.5rem 2rem;
+      display: flex;
+      flex-direction: column;
+      gap: 1.25rem;
+    }
+
+    /* ---- Sections ---- */
+    .section {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      flex-shrink: 0;
+    }
+    .section-header {
+      font-family: 'Poppins', sans-serif;
+      padding: 0.75rem 1rem;
+      font-size: 0.75rem;
+      font-weight: 500;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+      color: var(--text-muted);
+      border-bottom: 1px solid var(--border);
+      background: var(--bg);
+    }
+    .section-body {
+      padding: 1rem;
+    }
+
+    /* ---- Config badge ---- */
+    .config-badge {
+      display: inline-block;
+      padding: 0.2rem 0.625rem;
+      border-radius: 9999px;
+      font-family: 'Poppins', sans-serif;
+      font-size: 0.6875rem;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.03em;
+      margin-left: 0.75rem;
+      vertical-align: middle;
+    }
+    .config-badge.config-primary {
+      background: rgba(33, 150, 243, 0.12);
+      color: #1976d2;
+    }
+    .config-badge.config-baseline {
+      background: rgba(255, 193, 7, 0.15);
+      color: #f57f17;
+    }
+
+    /* ---- Prompt ---- */
+    .prompt-text {
+      white-space: pre-wrap;
+      font-size: 0.9375rem;
+      line-height: 1.6;
+    }
+
+    /* ---- Outputs ---- */
+    .output-file {
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      overflow: hidden;
+    }
+    .output-file + .output-file {
+      margin-top: 1rem;
+    }
+    .output-file-header {
+      padding: 0.5rem 0.75rem;
+      font-size: 0.8rem;
+      font-weight: 600;
+      color: var(--text-muted);
+      background: var(--bg);
+      border-bottom: 1px solid var(--border);
+      font-family: 'SF Mono', SFMono-Regular, Consolas, 'Liberation Mono', Menlo, monospace;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+    }
+    .output-file-header .dl-btn {
+      font-size: 0.7rem;
+      color: var(--accent);
+      text-decoration: none;
+      cursor: pointer;
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+      font-weight: 500;
+      opacity: 0.8;
+    }
+    .output-file-header .dl-btn:hover {
+      opacity: 1;
+      text-decoration: underline;
+    }
+    .output-file-content {
+      padding: 0.75rem;
+      overflow-x: auto;
+    }
+    .output-file-content pre {
+      font-size: 0.8125rem;
+      line-height: 1.5;
+      white-space: pre-wrap;
+      word-break: break-word;
+      font-family: 'SF Mono', SFMono-Regular, Consolas, 'Liberation Mono', Menlo, monospace;
+    }
+    .output-file-content img {
+      max-width: 100%;
+      height: auto;
+      border-radius: 4px;
+    }
+    .output-file-content iframe {
+      width: 100%;
+      height: 600px;
+      border: none;
+    }
+    .output-file-content table {
+      border-collapse: collapse;
+      font-size: 0.8125rem;
+      width: 100%;
+    }
+    .output-file-content table td,
+    .output-file-content table th {
+      border: 1px solid var(--border);
+      padding: 0.375rem 0.5rem;
+      text-align: left;
+    }
+    .output-file-content table th {
+      background: var(--bg);
+      font-weight: 600;
+    }
+    .output-file-content .download-link {
+      display: inline-flex;
+      align-items: center;
+      gap: 0.5rem;
+      padding: 0.5rem 1rem;
+      background: var(--bg);
+      border: 1px solid var(--border);
+      border-radius: 4px;
+      color: var(--accent);
+      text-decoration: none;
+      font-size: 0.875rem;
+      cursor: pointer;
+    }
+    .output-file-content .download-link:hover {
+      background: var(--border);
+    }
+    .empty-state {
+      color: var(--text-muted);
+      font-style: italic;
+      padding: 2rem;
+      text-align: center;
+    }
+
+    /* ---- Feedback ---- */
+    .prev-feedback {
+      background: var(--bg);
+      border: 1px solid var(--border);
+      border-radius: 4px;
+      padding: 0.625rem 0.75rem;
+      margin-top: 0.75rem;
+      font-size: 0.8125rem;
+      color: var(--text-muted);
+      line-height: 1.5;
+    }
+    .prev-feedback-label {
+      font-size: 0.7rem;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.04em;
+      margin-bottom: 0.25rem;
+      color: var(--text-muted);
+    }
+    .feedback-textarea {
+      width: 100%;
+      min-height: 100px;
+      padding: 0.75rem;
+      border: 1px solid var(--border);
+      border-radius: 4px;
+      font-family: inherit;
+      font-size: 0.9375rem;
+      line-height: 1.5;
+      resize: vertical;
+      color: var(--text);
+    }
+    .feedback-textarea:focus {
+      outline: none;
+      border-color: var(--accent);
+      box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.1);
+    }
+    .feedback-status {
+      font-size: 0.75rem;
+      color: var(--text-muted);
+      margin-top: 0.5rem;
+      min-height: 1.1em;
+    }
+
+    /* ---- Grades (collapsible) ---- */
+    .grades-toggle {
+      display: flex;
+      align-items: center;
+      cursor: pointer;
+      user-select: none;
+    }
+    .grades-toggle:hover {
+      color: var(--accent);
+    }
+    .grades-toggle .arrow {
+      margin-right: 0.5rem;
+      transition: transform 0.15s;
+      font-size: 0.75rem;
+    }
+    .grades-toggle .arrow.open {
+      transform: rotate(90deg);
+    }
+    .grades-content {
+      display: none;
+      margin-top: 0.75rem;
+    }
+    .grades-content.open {
+      display: block;
+    }
+    .grades-summary {
+      font-size: 0.875rem;
+      margin-bottom: 0.75rem;
+      display: flex;
+      align-items: center;
+      gap: 0.5rem;
+    }
+    .grade-badge {
+      display: inline-block;
+      padding: 0.125rem 0.5rem;
+      border-radius: 9999px;
+      font-size: 0.75rem;
+      font-weight: 600;
+    }
+    .grade-pass { background: var(--green-bg); color: var(--green); }
+    .grade-fail { background: var(--red-bg); color: var(--red); }
+    .assertion-list {
+      list-style: none;
+    }
+    .assertion-item {
+      padding: 0.625rem 0;
+      border-bottom: 1px solid var(--border);
+      font-size: 0.8125rem;
+    }
+    .assertion-item:last-child { border-bottom: none; }
+    .assertion-status {
+      font-weight: 600;
+      margin-right: 0.5rem;
+    }
+    .assertion-status.pass { color: var(--green); }
+    .assertion-status.fail { color: var(--red); }
+    .assertion-evidence {
+      color: var(--text-muted);
+      font-size: 0.75rem;
+      margin-top: 0.25rem;
+      padding-left: 1.5rem;
+    }
+
+    /* ---- View tabs ---- */
+    .view-tabs {
+      display: flex;
+      gap: 0;
+      padding: 0 2rem;
+      background: var(--bg);
+      border-bottom: 1px solid var(--border);
+      flex-shrink: 0;
+    }
+    .view-tab {
+      font-family: 'Poppins', sans-serif;
+      padding: 0.625rem 1.25rem;
+      font-size: 0.8125rem;
+      font-weight: 500;
+      cursor: pointer;
+      border: none;
+      background: none;
+      color: var(--text-muted);
+      border-bottom: 2px solid transparent;
+      transition: all 0.15s;
+    }
+    .view-tab:hover { color: var(--text); }
+    .view-tab.active {
+      color: var(--accent);
+      border-bottom-color: var(--accent);
+    }
+    .view-panel { display: none; }
+    .view-panel.active { display: flex; flex-direction: column; flex: 1; overflow: hidden; }
+
+    /* ---- Benchmark view ---- */
+    .benchmark-view {
+      padding: 1.5rem 2rem;
+      overflow-y: auto;
+      flex: 1;
+    }
+    .benchmark-table {
+      border-collapse: collapse;
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      font-size: 0.8125rem;
+      width: 100%;
+      margin-bottom: 1.5rem;
+    }
+    .benchmark-table th, .benchmark-table td {
+      padding: 0.625rem 0.75rem;
+      text-align: left;
+      border: 1px solid var(--border);
+    }
+    .benchmark-table th {
+      font-family: 'Poppins', sans-serif;
+      background: var(--header-bg);
+      color: var(--header-text);
+      font-weight: 500;
+      font-size: 0.75rem;
+      text-transform: uppercase;
+      letter-spacing: 0.04em;
+    }
+    .benchmark-table tr:hover { background: var(--bg); }
+    .benchmark-table tr.benchmark-row-with { background: rgba(33, 150, 243, 0.06); }
+    .benchmark-table tr.benchmark-row-without { background: rgba(255, 193, 7, 0.06); }
+    .benchmark-table tr.benchmark-row-with:hover { background: rgba(33, 150, 243, 0.12); }
+    .benchmark-table tr.benchmark-row-without:hover { background: rgba(255, 193, 7, 0.12); }
+    .benchmark-table tr.benchmark-row-avg { font-weight: 600; border-top: 2px solid var(--border); }
+    .benchmark-table tr.benchmark-row-avg.benchmark-row-with { background: rgba(33, 150, 243, 0.12); }
+    .benchmark-table tr.benchmark-row-avg.benchmark-row-without { background: rgba(255, 193, 7, 0.12); }
+    .benchmark-delta-positive { color: var(--green); font-weight: 600; }
+    .benchmark-delta-negative { color: var(--red); font-weight: 600; }
+    .benchmark-notes {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      padding: 1rem;
+    }
+    .benchmark-notes h3 {
+      font-family: 'Poppins', sans-serif;
+      font-size: 0.875rem;
+      margin-bottom: 0.75rem;
+    }
+    .benchmark-notes ul {
+      list-style: disc;
+      padding-left: 1.25rem;
+    }
+    .benchmark-notes li {
+      font-size: 0.8125rem;
+      line-height: 1.6;
+      margin-bottom: 0.375rem;
+    }
+    .benchmark-empty {
+      color: var(--text-muted);
+      font-style: italic;
+      text-align: center;
+      padding: 3rem;
+    }
+
+    /* ---- Navigation ---- */
+    .nav {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      padding: 1rem 2rem;
+      border-top: 1px solid var(--border);
+      background: var(--surface);
+      flex-shrink: 0;
+    }
+    .nav-btn {
+      font-family: 'Poppins', sans-serif;
+      padding: 0.5rem 1.25rem;
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      background: var(--surface);
+      cursor: pointer;
+      font-size: 0.875rem;
+      font-weight: 500;
+      color: var(--text);
+      transition: all 0.15s;
+    }
+    .nav-btn:hover:not(:disabled) {
+      background: var(--bg);
+      border-color: var(--text-muted);
+    }
+    .nav-btn:disabled {
+      opacity: 0.4;
+      cursor: not-allowed;
+    }
+    .done-btn {
+      font-family: 'Poppins', sans-serif;
+      padding: 0.5rem 1.5rem;
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      background: var(--surface);
+      color: var(--text);
+      cursor: pointer;
+      font-size: 0.875rem;
+      font-weight: 500;
+      transition: all 0.15s;
+    }
+    .done-btn:hover {
+      background: var(--bg);
+      border-color: var(--text-muted);
+    }
+    .done-btn.ready {
+      border: none;
+      background: var(--accent);
+      color: white;
+      font-weight: 600;
+    }
+    .done-btn.ready:hover {
+      background: var(--accent-hover);
+    }
+    /* ---- Done overlay ---- */
+    .done-overlay {
+      display: none;
+      position: fixed;
+      inset: 0;
+      background: rgba(0, 0, 0, 0.5);
+      z-index: 100;
+      justify-content: center;
+      align-items: center;
+    }
+    .done-overlay.visible {
+      display: flex;
+    }
+    .done-card {
+      background: var(--surface);
+      border-radius: 12px;
+      padding: 2rem 3rem;
+      text-align: center;
+      box-shadow: 0 20px 60px rgba(0, 0, 0, 0.3);
+      max-width: 500px;
+    }
+    .done-card h2 {
+      font-size: 1.5rem;
+      margin-bottom: 0.5rem;
+    }
+    .done-card p {
+      color: var(--text-muted);
+      margin-bottom: 1.5rem;
+      line-height: 1.5;
+    }
+    .done-card .btn-row {
+      display: flex;
+      gap: 0.5rem;
+      justify-content: center;
+    }
+    .done-card button {
+      padding: 0.5rem 1.25rem;
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      background: var(--surface);
+      cursor: pointer;
+      font-size: 0.875rem;
+    }
+    .done-card button:hover {
+      background: var(--bg);
+    }
+    /* ---- Toast ---- */
+    .toast {
+      position: fixed;
+      bottom: 5rem;
+      left: 50%;
+      transform: translateX(-50%);
+      background: var(--header-bg);
+      color: var(--header-text);
+      padding: 0.625rem 1.25rem;
+      border-radius: var(--radius);
+      font-size: 0.875rem;
+      opacity: 0;
+      transition: opacity 0.3s;
+      pointer-events: none;
+      z-index: 200;
+    }
+    .toast.visible {
+      opacity: 1;
+    }
+  </style>
+</head>
+<body>
+  <div id="app" style="height:100vh; display:flex; flex-direction:column;">
+    <div class="header">
+      <div>
+        <h1>Eval Review: <span id="skill-name"></span></h1>
+        <div class="instructions">Review each output and leave feedback below. Navigate with arrow keys or buttons. When done, copy feedback and paste into Claude Code.</div>
+      </div>
+      <div class="progress" id="progress"></div>
+    </div>
+
+    <!-- View tabs (only shown when benchmark data exists) -->
+    <div class="view-tabs" id="view-tabs" style="display:none;">
+      <button class="view-tab active" onclick="switchView('outputs')">Outputs</button>
+      <button class="view-tab" onclick="switchView('benchmark')">Benchmark</button>
+    </div>
+
+    <!-- Outputs panel (qualitative review) -->
+    <div class="view-panel active" id="panel-outputs">
+    <div class="main">
+      <!-- Prompt -->
+      <div class="section">
+        <div class="section-header">Prompt <span class="config-badge" id="config-badge" style="display:none;"></span></div>
+        <div class="section-body">
+          <div class="prompt-text" id="prompt-text"></div>
+        </div>
+      </div>
+
+      <!-- Outputs -->
+      <div class="section">
+        <div class="section-header">Output</div>
+        <div class="section-body" id="outputs-body">
+          <div class="empty-state">No output files found</div>
+        </div>
+      </div>
+
+      <!-- Previous Output (collapsible) -->
+      <div class="section" id="prev-outputs-section" style="display:none;">
+        <div class="section-header">
+          <div class="grades-toggle" onclick="togglePrevOutputs()">
+            <span class="arrow" id="prev-outputs-arrow">&#9654;</span>
+            Previous Output
+          </div>
+        </div>
+        <div class="grades-content" id="prev-outputs-content"></div>
+      </div>
+
+      <!-- Grades (collapsible) -->
+      <div class="section" id="grades-section" style="display:none;">
+        <div class="section-header">
+          <div class="grades-toggle" onclick="toggleGrades()">
+            <span class="arrow" id="grades-arrow">&#9654;</span>
+            Formal Grades
+          </div>
+        </div>
+        <div class="grades-content" id="grades-content"></div>
+      </div>
+
+      <!-- Feedback -->
+      <div class="section">
+        <div class="section-header">Your Feedback</div>
+        <div class="section-body">
+          <textarea
+            class="feedback-textarea"
+            id="feedback"
+            placeholder="What do you think of this output? Any issues, suggestions, or things that look great?"
+          ></textarea>
+          <div class="feedback-status" id="feedback-status"></div>
+          <div class="prev-feedback" id="prev-feedback" style="display:none;">
+            <div class="prev-feedback-label">Previous feedback</div>
+            <div id="prev-feedback-text"></div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="nav" id="outputs-nav">
+      <button class="nav-btn" id="prev-btn" onclick="navigate(-1)">&#8592; Previous</button>
+      <button class="done-btn" id="done-btn" onclick="showDoneDialog()">Submit All Reviews</button>
+      <button class="nav-btn" id="next-btn" onclick="navigate(1)">Next &#8594;</button>
+    </div>
+    </div><!-- end panel-outputs -->
+
+    <!-- Benchmark panel (quantitative stats) -->
+    <div class="view-panel" id="panel-benchmark">
+      <div class="benchmark-view" id="benchmark-content">
+        <div class="benchmark-empty">No benchmark data available. Run a benchmark to see quantitative results here.</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Done overlay -->
+  <div class="done-overlay" id="done-overlay">
+    <div class="done-card">
+      <h2>Review Complete</h2>
+      <p>Your feedback has been saved. Go back to your Claude Code session and tell Claude you're done reviewing.</p>
+      <div class="btn-row">
+        <button onclick="closeDoneDialog()">OK</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Toast -->
+  <div class="toast" id="toast"></div>
+
+  <script>
+    // ---- Embedded data (injected by generate_review.py) ----
+    const EMBEDDED_DATA = {"skill_name": "pixhaus-egui-wgpu", "runs": [{"id": "eval-0-with_skill", "prompt": "We're wiring up the Pixhaus canvas viewport. In the central panel I need to render our already-composited RGBA pixel buffer (it lives on the GPU as a wgpu::Texture) directly in a wgpu render pass embedded in the egui frame, and on each brush stroke only the dirty rectangle should be re-uploaded, not the whole 8192x8192 canvas. Show me the CallbackTrait implementation, where the GPU resources (pipeline, bind group, the canvas texture) should live, and how to push the callback from the panel. We're on egui-wgpu 0.34.", "eval_id": 0, "outputs": [{"name": "answer.md", "type": "text", "content": "# Wiring the Pixhaus canvas viewport (egui-wgpu 0.34)\n\nYou want the composited RGBA texture drawn in a raw wgpu pass spliced into the egui\nframe, and you want a brush stroke to re-upload only its dirty rectangle \u00e2\u20ac\u201d not the whole\n8192x8192 canvas. That is exactly what the `CallbackTrait` path is for, and the dirty-rect\nupload is the entire reason to use it over `register_native_texture`.\n\nThe split that makes it work:\n\n- The heavy GPU objects (pipeline, bind group, sampler, uniform buffer, and the canvas\n  `wgpu::Texture` itself) live in `egui_wgpu::CallbackResources` \u00e2\u20ac\u201d built once at startup,\n  not per frame. Rebuilding a pipeline per frame is a severe stall.\n- The per-frame `Callback` struct holds only what changes \u00e2\u20ac\u201d the camera transform and an\n  optional dirty rect to flush. It carries no GPU handles.\n- Uploads (uniform write, dirty-rect `write_texture`) happen in `prepare`, which gets\n  `&mut CallbackResources`. `paint` only reads (`&CallbackResources`) and issues draws.\n\n## 1. Where the GPU resources live \u00e2\u20ac\u201d `CanvasResources`\n\nThis struct is inserted once into the renderer's `callback_resources` type-map and persists\nfor the life of the app. Build the pipeline against `RenderState::target_format` or blending\nand format will mismatch.\n\n```rust\nuse wgpu::util::DeviceExt as _;\n\n/// All persistent GPU state for the canvas. Lives in `CallbackResources`, built once.\npub struct CanvasResources {\n    pipeline: wgpu::RenderPipeline,\n    uniform_buf: wgpu::Buffer,   // the MVP / camera transform\n    bind_group: wgpu::BindGroup, // uniform + canvas texture view + sampler\n    canvas_texture: wgpu::Texture, // the composited 8192x8192 RGBA8 pixels, kept on the GPU\n    canvas_size: (u32, u32),\n}\n\nimpl CanvasResources {\n    pub fn new(device: &wgpu::Device, target_format: wgpu::TextureFormat) -> Self {\n        let canvas_size = (8192, 8192);\n\n        // The composited canvas. Rgba8UnormSrgb so the shader samples linear and the\n        // surface presents gamma-correct. COPY_DST lets queue.write_texture target it.\n        let canvas_texture = device.create_texture(&wgpu::TextureDescriptor {\n            label: Some(\"pixhaus.canvas\"),\n            size: wgpu::Extent3d {\n                width: canvas_size.0,\n                height: canvas_size.1,\n                depth_or_array_layers: 1,\n            },\n            mip_level_count: 1,\n            sample_count: 1,\n            dimension: wgpu::TextureDimension::D2,\n            format: wgpu::TextureFormat::Rgba8UnormSrgb,\n            usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,\n            view_formats: &[],\n        });\n        let canvas_view = canvas_texture.create_view(&wgpu::TextureViewDescriptor::default());\n\n        // NEAREST in both directions \u00e2\u20ac\u201d pixel art must not blur when zoomed.\n        let sampler = device.create_sampler(&wgpu::SamplerDescriptor {\n            label: Some(\"pixhaus.canvas.sampler\"),\n            mag_filter: wgpu::FilterMode::Nearest,\n            min_filter: wgpu::FilterMode::Nearest,\n            mipmap_filter: wgpu::FilterMode::Nearest,\n            ..Default::default()\n        });\n\n        // 4x4 MVP matrix: 64 bytes.\n        let uniform_buf = device.create_buffer(&wgpu::BufferDescriptor {\n            label: Some(\"pixhaus.canvas.uniform\"),\n            size: std::mem::size_of::<[[f32; 4]; 4]>() as u64,\n            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,\n            mapped_at_creation: false,\n        });\n\n        let bind_group_layout =\n            device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {\n                label: Some(\"pixhaus.canvas.bgl\"),\n                entries: &[\n                    wgpu::BindGroupLayoutEntry {\n                        binding: 0,\n                        visibility: wgpu::ShaderStages::VERTEX,\n                        ty: wgpu::BindingType::Buffer {\n                            ty: wgpu::BufferBindingType::Uniform,\n                            has_dynamic_offset: false,\n                            min_binding_size: None,\n                        },\n                        count: None,\n                    },\n                    wgpu::BindGroupLayoutEntry {\n                        binding: 1,\n                        visibility: wgpu::ShaderStages::FRAGMENT,\n                        ty: wgpu::BindingType::Texture {\n                            sample_type: wgpu::TextureSampleType::Float { filterable: true },\n                            view_dimension: wgpu::TextureViewDimension::D2,\n                            multisampled: false,\n                        },\n                        count: None,\n                    },\n                    wgpu::BindGroupLayoutEntry {\n                        binding: 2,\n                        visibility: wgpu::ShaderStages::FRAGMENT,\n                        ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),\n                        count: None,\n                    },\n                ],\n            });\n\n        let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {\n            label: Some(\"pixhaus.canvas.bg\"),\n            layout: &bind_group_layout,\n            entries: &[\n                wgpu::BindGroupEntry {\n                    binding: 0,\n                    resource: uniform_buf.as_entire_binding(),\n                },\n                wgpu::BindGroupEntry {\n                    binding: 1,\n                    resource: wgpu::BindingResource::TextureView(&canvas_view),\n                },\n                wgpu::BindGroupEntry {\n                    binding: 2,\n                    resource: wgpu::BindingResource::Sampler(&sampler),\n                },\n            ],\n        });\n\n        let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {\n            label: Some(\"pixhaus.canvas.shader\"),\n            source: wgpu::ShaderSource::Wgsl(include_str!(\"canvas.wgsl\").into()),\n        });\n\n        let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {\n            label: Some(\"pixhaus.canvas.pl\"),\n            bind_group_layouts: &[&bind_group_layout],\n            push_constant_ranges: &[],\n        });\n\n        // A full-screen-quad shader generates 6 vertices from vertex_index, so there is no\n        // vertex buffer to bind. The fragment samples canvas_texture at the quad's UVs.\n        let pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {\n            label: Some(\"pixhaus.canvas.pipeline\"),\n            layout: Some(&pipeline_layout),\n            vertex: wgpu::VertexState {\n                module: &shader,\n                entry_point: Some(\"vs_main\"),\n                buffers: &[],\n                compilation_options: Default::default(),\n            },\n            fragment: Some(wgpu::FragmentState {\n                module: &shader,\n                entry_point: Some(\"fs_main\"),\n                targets: &[Some(wgpu::ColorTargetState {\n                    // BUILD AGAINST THE SURFACE FORMAT egui hands you, not a guessed one.\n                    format: target_format,\n                    blend: Some(wgpu::BlendState::ALPHA_BLENDING),\n                    write_mask: wgpu::ColorWrites::ALL,\n                })],\n                compilation_options: Default::default(),\n            }),\n            primitive: wgpu::PrimitiveState::default(),\n            depth_stencil: None,\n            multisample: wgpu::MultisampleState::default(),\n            multiview: None,\n            cache: None,\n        });\n\n        Self { pipeline, uniform_buf, bind_group, canvas_texture, canvas_size }\n    }\n}\n```\n\nInsert it once at startup, in `eframe`'s `CreationContext`, where you have the\n`RenderState` and thus `target_format`:\n\n```rust\nimpl Pixhaus {\n    fn new(cc: &eframe::CreationContext<'_>) -> Self {\n        let wgpu = cc\n            .wgpu_render_state\n            .as_ref()\n            .expect(\"run_native must select Renderer::Wgpu\");\n\n        let res = CanvasResources::new(&wgpu.device, wgpu.target_format);\n        // callback_resources is the one public field on Renderer; renderer is a\n        // parking_lot RwLock, so write() returns the guard directly \u00e2\u20ac\u201d no Result, no unwrap.\n        wgpu.renderer.write().callback_resources.insert(res);\n\n        Self { /* app state, camera, document, dirty tracking \u00e2\u20ac\u00a6 */ }\n    }\n}\n```\n\n`RenderState` for reference (from `wgpu_render_state`):\n\n```rust\npub struct RenderState {\n    pub device: wgpu::Device,\n    pub queue: wgpu::Queue,\n    pub target_format: wgpu::TextureFormat, // build the pipeline against THIS\n    pub renderer: Arc<RwLock<egui_wgpu::Renderer>>, // parking_lot RwLock\n    // ...adapter, available_adapters\n}\n```\n\n## 2. The `CallbackTrait` implementation\n\nThe per-frame struct carries the camera transform and an optional dirty rect captured from\nthe brush stroke this frame. `prepare` flushes both to the GPU; `paint` draws the quad.\n\n```rust\nuse egui_wgpu::{CallbackResources, CallbackTrait, ScreenDescriptor};\nuse egui::epaint::PaintCallbackInfo;\nuse wgpu::{\n    CommandBuffer, CommandEncoder, Device, Extent3d, Origin3d, Queue, RenderPass,\n    TexelCopyBufferLayout, TexelCopyTextureInfo, TextureAspect,\n};\n\n/// One dirty sub-rectangle to flush this frame: tight RGBA8, `w * h * 4` bytes,\n/// rows top-to-bottom. Produced by the brush/compositor for the touched region only.\npub struct DirtyRect {\n    pub x: u32,\n    pub y: u32,\n    pub w: u32,\n    pub h: u32,\n    pub pixels: Vec<u8>,\n}\n\n/// Per-frame, cheap. No GPU handles \u00e2\u20ac\u201d only what changes.\npub struct CanvasCallback {\n    /// Camera: canvas pixels -> clip space (scroll + zoom). Built each frame from the rect.\n    pub mvp: [[f32; 4]; 4],\n    /// `Some` only on frames where the user painted; `None` is the common case.\n    pub dirty: Option<DirtyRect>,\n}\n\nimpl CallbackTrait for CanvasCallback {\n    fn prepare(\n        &self,\n        _device: &Device,\n        queue: &Queue,\n        _screen: &ScreenDescriptor,\n        _egui_encoder: &mut CommandEncoder,\n        resources: &mut CallbackResources,\n    ) -> Vec<CommandBuffer> {\n        let res = resources\n            .get_mut::<CanvasResources>()\n            .expect(\"CanvasResources inserted at startup\");\n\n        // 1. Camera transform \u00e2\u20ac\u201d tiny, write every frame.\n        queue.write_buffer(&res.uniform_buf, 0, bytemuck::cast_slice(&[self.mvp]));\n\n        // 2. THE 8K PERF PATH: upload only the dirty sub-rectangle, never the whole canvas.\n        //    Work is bounded by the brush footprint, not by 8192x8192.\n        if let Some(d) = &self.dirty {\n            debug_assert_eq!(d.pixels.len(), (d.w * d.h * 4) as usize);\n            queue.write_texture(\n                TexelCopyTextureInfo {\n                    texture: &res.canvas_texture,\n                    mip_level: 0,\n                    origin: Origin3d { x: d.x, y: d.y, z: 0 },\n                    aspect: TextureAspect::All,\n                },\n                &d.pixels, // &[u8] \u00e2\u20ac\u201d write_texture stages it, so the 256-byte row rule does NOT apply\n                TexelCopyBufferLayout {\n                    offset: 0,\n                    bytes_per_row: Some(d.w * 4), // tight stride; any width works here\n                    rows_per_image: Some(d.h),    // required when height > 1\n                },\n                Extent3d { width: d.w, height: d.h, depth_or_array_layers: 1 },\n            );\n        }\n\n        // We submit nothing ourselves \u00e2\u20ac\u201d queue.write_* are queued on the shared queue and\n        // run before the egui pass. Return an empty Vec.\n        Vec::new()\n    }\n\n    fn paint(\n        &self,\n        _info: PaintCallbackInfo,\n        render_pass: &mut RenderPass<'static>,\n        resources: &CallbackResources,\n    ) {\n        let res = resources\n            .get::<CanvasResources>()\n            .expect(\"CanvasResources inserted at startup\");\n\n        // egui-wgpu already set the viewport and scissor to the callback rect, so we don't\n        // touch set_viewport / set_scissor_rect. Just draw the full-screen quad.\n        render_pass.set_pipeline(&res.pipeline);\n        render_pass.set_bind_group(0, &res.bind_group, &[]);\n        render_pass.draw(0..6, 0..1); // 2 triangles, vertices generated in the shader\n    }\n}\n```\n\nNotes that prevent real bugs here:\n\n- **Dirty upload goes in `prepare`, not `paint`.** `paint` gets `&CallbackResources`\n  (shared) and a `RenderPass<'static>` it must not mutate, end, or sub-pass. Only `prepare`\n  has `&mut` and can touch the queue.\n- **`write_texture` takes a plain `&[u8]`**, so wgpu stages it and the 256-byte\n  `bytes_per_row` alignment rule does **not** bind you \u00e2\u20ac\u201d a 4097-px-wide dirty region uploads\n  with `bytes_per_row = Some(4097 * 4)` directly, no padding math. (That rule only applies\n  to buffer-to-texture copies.)\n- **`rows_per_image` is required when `h > 1`.** Leaving it `None` is the classic \"only the\n  first row uploaded\" bug.\n- **Returning `Vec::new()` is correct here.** You only return command buffers from `prepare`\n  if you record into your *own* encoder. `queue.write_buffer` / `queue.write_texture` queue\n  work directly on the shared queue, which runs before the egui pass \u00e2\u20ac\u201d no encoder needed.\n\nThe WGSL is a standard full-screen quad that maps to canvas UVs (sketch for completeness):\n\n```wgsl\n@group(0) @binding(0) var<uniform> mvp: mat4x4<f32>;\n@group(0) @binding(1) var canvas_tex: texture_2d<f32>;\n@group(0) @binding(2) var canvas_smp: sampler;\n\nstruct VsOut { @builtin(position) clip: vec4<f32>, @location(0) uv: vec2<f32> };\n\n@vertex\nfn vs_main(@builtin(vertex_index) vi: u32) -> VsOut {\n    // Two triangles covering the canvas quad in canvas-local [0,1] space.\n    var corners = array<vec2<f32>, 6>(\n        vec2(0.0, 0.0), vec2(1.0, 0.0), vec2(0.0, 1.0),\n        vec2(0.0, 1.0), vec2(1.0, 0.0), vec2(1.0, 1.0),\n    );\n    let c = corners[vi];\n    var out: VsOut;\n    out.clip = mvp * vec4(c, 0.0, 1.0);\n    out.uv = c;\n    return out;\n}\n\n@fragment\nfn fs_main(in: VsOut) -> @location(0) vec4<f32> {\n    return textureSample(canvas_tex, canvas_smp, in.uv);\n}\n```\n\n## 3. Pushing the callback from the central panel\n\nAllocate the viewport rect with a `Sense` so you capture brush input on the same response,\nbuild this frame's dirty rect from the stroke, then add the callback to the painter.\nOverlays (brush cursor, marching ants) are egui shapes drawn over the same rect \u00e2\u20ac\u201d they\ncomposite on top of your wgpu pass in the same frame.\n\n```rust\nimpl eframe::App for Pixhaus {\n    fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {\n        egui::CentralPanel::default().show(ctx, |ui| {\n            self.canvas(ui);\n        });\n    }\n}\n\nimpl Pixhaus {\n    fn canvas(&mut self, ui: &mut egui::Ui) {\n        // Allocate the viewport rect and capture pointer input in one call.\n        let (response, painter) =\n            ui.allocate_painter(ui.available_size(), egui::Sense::click_and_drag());\n        let rect = response.rect;\n\n        // Route the brush. paint_at returns the touched sub-rect as fresh RGBA8 so we only\n        // re-upload that region. None on frames with no stroke \u00e2\u20ac\u201d the common case.\n        let dirty: Option<DirtyRect> = response\n            .interact_pointer_pos()\n            .filter(|_| response.dragged() || response.clicked())\n            .and_then(|pos| {\n                let canvas_pos = self.camera.screen_to_canvas(pos, rect);\n                self.paint_at(canvas_pos) // returns Option<DirtyRect> for the stamped region\n            });\n\n        // Push the GPU callback for this rect. egui-wgpu sets the viewport/scissor to `rect`.\n        painter.add(egui_wgpu::Callback::new_paint_callback(\n            rect,\n            CanvasCallback { mvp: self.camera.mvp(rect), dirty },\n        ));\n\n        // Overlays composite on top in the same frame.\n        if let Some(cursor) = response.hover_pos() {\n            painter.circle_stroke(\n                cursor,\n                self.brush_radius,\n                egui::Stroke::new(1.0, egui::Color32::WHITE),\n            );\n        }\n    }\n}\n```\n\n`new_paint_callback(rect, cb)` returns an `epaint::PaintCallback`; `painter.add(...)`\nqueues it as a shape. The rect you pass becomes `PaintCallbackInfo::viewport` downstream and\nis what egui-wgpu uses to set the pass viewport/scissor before calling `paint`.\n\n## Why the callback path and not `register_native_texture`\n\n`register_native_texture` + `painter.image(...)` would also display the texture, and it's\nfine for an offscreen preview. But it re-samples through egui's own shader and, more to the\npoint, gives you no clean place to do a bounded dirty upload tied to the frame's draw \u00e2\u20ac\u201d you'd\nbe uploading and registering outside the render flow. The callback path is the one that\nsatisfies your hard requirement: in `prepare` you `write_texture` exactly the dirty rect, so\nper-stroke GPU work scales with the brush footprint, not the 8192x8192 canvas. That bounded\nupload is the entire reason this path exists (see the 8K perf constraint).\n\n## Call-order and lifetime contract (so it doesn't panic)\n\nYou don't call the `Renderer` lifecycle yourself \u00e2\u20ac\u201d eframe drives\n`update_texture` \u00e2\u2020\u2019 `update_buffers` \u00e2\u2020\u2019 `render` for you, and `render` panics if\n`update_buffers` was skipped. Your only obligations are the three phases of `CallbackTrait`,\nwhich egui-wgpu calls in this order across all registered callbacks:\n\n```\nprepare (all)  ->  finish_prepare (all)  ->  egui render pass begins  ->  paint (all)\n```\n\n`finish_prepare` you can ignore (the default no-op). The `RenderPass<'static>` in `paint` is\nreal \u00e2\u20ac\u201d the pass is owned by egui-wgpu and must outlive your draws, so never store frame-local\nborrows in it, never call `end`, and never begin a sub-pass.\n"}], "grading": {"eval_id": 0, "eval_name": "canvas-paint-callback", "configuration": "with_skill", "expectations": [{"text": "Implements CallbackTrait with a paint method", "passed": true, "evidence": "8192x8192 canvas. That is exactly what the `CallbackTrait` path is for, and the dirty-rect"}, {"text": "paint takes RenderPass<'static> (the 'static-lifetime pass)", "passed": true, "evidence": "render_pass: &mut RenderPass<'static>,"}, {"text": "Uploads only the dirty sub-rect via queue.write_texture in prepare (no full-canvas reupload)", "passed": true, "evidence": "- Uploads (uniform write, dirty-rect `write_texture`) happen in `prepare`, which gets"}, {"text": "Stores GPU resources in the callback_resources / CallbackResources type-map (built once)", "passed": true, "evidence": "This struct is inserted once into the renderer's `callback_resources` type-map and persists"}, {"text": "Pushes the callback via Callback::new_paint_callback(rect, ...)", "passed": true, "evidence": "painter.add(egui_wgpu::Callback::new_paint_callback("}]}}, {"id": "eval-0-without_skill", "prompt": "We're wiring up the Pixhaus canvas viewport. In the central panel I need to render our already-composited RGBA pixel buffer (it lives on the GPU as a wgpu::Texture) directly in a wgpu render pass embedded in the egui frame, and on each brush stroke only the dirty rectangle should be re-uploaded, not the whole 8192x8192 canvas. Show me the CallbackTrait implementation, where the GPU resources (pipeline, bind group, the canvas texture) should live, and how to push the callback from the panel. We're on egui-wgpu 0.34.", "eval_id": 0, "outputs": [{"name": "answer.md", "type": "text", "content": "# Embedding the Pixhaus canvas as a wgpu render pass in egui 0.34\n\nThe whole point of going native was to keep pixel data on the GPU and never copy it\nacross a boundary. So the canvas texture is owned by your renderer, lives for the life\nof the app, and a brush stroke only touches the dirty rectangle via\n`queue.write_texture`. egui's job is purely to schedule a paint callback into the right\nscreen rectangle; the actual draw is your own `wgpu::RenderPass`.\n\nHere's how the pieces fit on egui-wgpu 0.34.\n\n## Where the GPU resources live\n\nThere are two distinct lifetimes, and conflating them is the usual mistake:\n\n1. **Persistent resources** \u00e2\u20ac\u201d the render pipeline, the sampler, the bind group layout,\n   the bind group, and above all the 8192x8192 canvas texture. These are created once\n   and reused every frame. They must NOT be rebuilt per paint. egui-wgpu gives you a\n   per-`Renderer` type map for exactly this: `RenderState::renderer`'s\n   `callback_resources` (a `TypeMap`). You insert your resource struct once at startup\n   and fetch it by type in the callback.\n\n2. **Per-frame data** \u00e2\u20ac\u201d the view transform (pan/zoom), the target rect size. This is\n   small, changes every frame, and goes in the `Callback` value itself (the thing you\n   hand to egui in the panel). It gets written to a uniform buffer in `prepare`.\n\nThe canvas texture belongs in category 1. You upload the composited RGBA8 buffer into\nit; egui never sees the pixels, only a paint instruction.\n\n### The resource struct\n\n```rust\n//! render/src/canvas.rs\n//! UI-agnostic. Knows wgpu, knows nothing about egui.\n\nuse wgpu::util::DeviceExt;\n\n/// Everything the canvas paint needs that outlives a single frame.\n/// Stored in egui's `callback_resources` type map, created once.\npub struct CanvasResources {\n    pipeline: wgpu::RenderPipeline,\n    /// The composited canvas. RGBA8, up to 8192x8192. Owned here, never copied to egui.\n    texture: wgpu::Texture,\n    /// Cached so the bind group survives across frames; rebuilt only on resize.\n    bind_group: wgpu::BindGroup,\n    bind_group_layout: wgpu::BindGroupLayout,\n    uniform_buffer: wgpu::Buffer,\n    texture_size: wgpu::Extent3d,\n}\n\n/// Per-frame uniform. Pan/zoom mapping canvas pixels into clip space.\n/// `#[repr(C)]` + Pod so it casts to bytes without unsafe (use bytemuck).\n#[repr(C)]\n#[derive(Clone, Copy, bytemuck::Pod, bytemuck::Zeroable)]\nstruct CanvasUniform {\n    /// Maps the unit quad to the canvas rect inside the viewport, in clip space.\n    /// offset.xy + scale.xy. Kept as two vec2s padded to a vec4 pair.\n    scale: [f32; 2],\n    offset: [f32; 2],\n}\n\nimpl CanvasResources {\n    pub fn new(\n        device: &wgpu::Device,\n        target_format: wgpu::TextureFormat,\n        canvas_width: u32,\n        canvas_height: u32,\n    ) -> Self {\n        let texture_size = wgpu::Extent3d {\n            width: canvas_width,\n            height: canvas_height,\n            depth_or_array_layers: 1,\n        };\n\n        let texture = device.create_texture(&wgpu::TextureDescriptor {\n            label: Some(\"pixhaus.canvas.composited\"),\n            size: texture_size,\n            mip_level_count: 1,\n            sample_count: 1,\n            dimension: wgpu::TextureDimension::D2,\n            // Rgba8UnormSrgb if your composite is in sRGB; pick one and be consistent.\n            format: wgpu::TextureFormat::Rgba8Unorm,\n            usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,\n            view_formats: &[],\n        });\n        let view = texture.create_view(&wgpu::TextureViewDescriptor::default());\n\n        let sampler = device.create_sampler(&wgpu::SamplerDescriptor {\n            label: Some(\"pixhaus.canvas.sampler\"),\n            // Nearest: this is pixel art. No bilinear smear on zoom-in.\n            mag_filter: wgpu::FilterMode::Nearest,\n            min_filter: wgpu::FilterMode::Nearest,\n            mipmap_filter: wgpu::FilterMode::Nearest,\n            ..Default::default()\n        });\n\n        let uniform_buffer = device.create_buffer(&wgpu::BufferDescriptor {\n            label: Some(\"pixhaus.canvas.uniform\"),\n            size: std::mem::size_of::<CanvasUniform>() as u64,\n            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,\n            mapped_at_creation: false,\n        });\n\n        let bind_group_layout =\n            device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {\n                label: Some(\"pixhaus.canvas.bgl\"),\n                entries: &[\n                    wgpu::BindGroupLayoutEntry {\n                        binding: 0,\n                        visibility: wgpu::ShaderStages::VERTEX,\n                        ty: wgpu::BindingType::Buffer {\n                            ty: wgpu::BufferBindingType::Uniform,\n                            has_dynamic_offset: false,\n                            min_binding_size: None,\n                        },\n                        count: None,\n                    },\n                    wgpu::BindGroupLayoutEntry {\n                        binding: 1,\n                        visibility: wgpu::ShaderStages::FRAGMENT,\n                        ty: wgpu::BindingType::Texture {\n                            sample_type: wgpu::TextureSampleType::Float { filterable: true },\n                            view_dimension: wgpu::TextureViewDimension::D2,\n                            multisampled: false,\n                        },\n                        count: None,\n                    },\n                    wgpu::BindGroupLayoutEntry {\n                        binding: 2,\n                        visibility: wgpu::ShaderStages::FRAGMENT,\n                        ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),\n                        count: None,\n                    },\n                ],\n            });\n\n        let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {\n            label: Some(\"pixhaus.canvas.bg\"),\n            layout: &bind_group_layout,\n            entries: &[\n                wgpu::BindGroupEntry {\n                    binding: 0,\n                    resource: uniform_buffer.as_entire_binding(),\n                },\n                wgpu::BindGroupEntry {\n                    binding: 1,\n                    resource: wgpu::BindingResource::TextureView(&view),\n                },\n                wgpu::BindGroupEntry {\n                    binding: 2,\n                    resource: wgpu::BindingResource::Sampler(&sampler),\n                },\n            ],\n        });\n\n        let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {\n            label: Some(\"pixhaus.canvas.shader\"),\n            source: wgpu::ShaderSource::Wgsl(include_str!(\"canvas.wgsl\").into()),\n        });\n\n        let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {\n            label: Some(\"pixhaus.canvas.pl\"),\n            bind_group_layouts: &[&bind_group_layout],\n            push_constant_ranges: &[],\n        });\n\n        let pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {\n            label: Some(\"pixhaus.canvas.pipeline\"),\n            layout: Some(&pipeline_layout),\n            vertex: wgpu::VertexState {\n                module: &shader,\n                entry_point: Some(\"vs_main\"),\n                buffers: &[], // fullscreen-style quad generated from vertex_index\n                compilation_options: Default::default(),\n            },\n            fragment: Some(wgpu::FragmentState {\n                module: &shader,\n                entry_point: Some(\"fs_main\"),\n                targets: &[Some(wgpu::ColorTargetState {\n                    format: target_format,\n                    // egui's pass has already cleared/painted; blend over it.\n                    blend: Some(wgpu::BlendState::ALPHA_BLENDING),\n                    write_mask: wgpu::ColorWrites::ALL,\n                })],\n                compilation_options: Default::default(),\n            }),\n            primitive: wgpu::PrimitiveState::default(),\n            depth_stencil: None,\n            multisample: wgpu::MultisampleState::default(),\n            multiview: None,\n            cache: None,\n        });\n\n        Self {\n            pipeline,\n            texture,\n            bind_group,\n            bind_group_layout,\n            uniform_buffer,\n            texture_size,\n        }\n    }\n\n    /// Re-upload ONLY the dirty rectangle. This is the perf-critical path:\n    /// a brush move uploads a few hundred bytes, not 256 MB.\n    ///\n    /// `rows` must be tightly packed RGBA8 for `w` pixels per row, `h` rows.\n    pub fn upload_dirty(\n        &self,\n        queue: &wgpu::Queue,\n        x: u32,\n        y: u32,\n        w: u32,\n        h: u32,\n        rows: &[u8],\n    ) {\n        debug_assert_eq!(rows.len(), (w * h * 4) as usize);\n        queue.write_texture(\n            wgpu::TexelCopyTextureInfo {\n                texture: &self.texture,\n                mip_level: 0,\n                origin: wgpu::Origin3d { x, y, z: 0 },\n                aspect: wgpu::TextureAspect::All,\n            },\n            rows,\n            wgpu::TexelCopyBufferLayout {\n                offset: 0,\n                // Per-row stride of the SOURCE slice. For a tight dirty-rect\n                // sub-buffer this is the rect width, not the canvas width.\n                bytes_per_row: Some(w * 4),\n                rows_per_image: Some(h),\n            },\n            wgpu::Extent3d {\n                width: w,\n                height: h,\n                depth_or_array_layers: 1,\n            },\n        );\n    }\n}\n```\n\nTwo things to note in `upload_dirty`:\n\n- `write_texture`'s `bytes_per_row` describes the **source** slice layout, not the\n  texture. If your dirty pixels are extracted into a tight `w*h*4` buffer, the stride is\n  `w*4`. There is no 256-byte alignment requirement on `write_texture` (that constraint\n  is `copy_buffer_to_texture` only), so you can upload any rectangle directly.\n- `origin` is the destination top-left in the big texture. That's how a dirty rect at\n  `(x, y)` lands in the right place without touching the rest.\n\nIf your composited buffer in `core` is one big `Vec<u8>` and the dirty pixels are NOT\ncontiguous (they're a sub-rect of a wider image), either copy the rect into a scratch\nbuffer first, or do one `write_texture` per row. For pixel-art brush sizes the scratch\ncopy is trivial. The rule from the 8K perf constraint holds: bound the work by the dirty\nregion, never by the canvas size.\n\n### The shader (`render/src/canvas.wgsl`)\n\n```wgsl\nstruct CanvasUniform {\n    scale: vec2<f32>,\n    offset: vec2<f32>,\n};\n\n@group(0) @binding(0) var<uniform> u: CanvasUniform;\n@group(0) @binding(1) var tex: texture_2d<f32>;\n@group(0) @binding(2) var samp: sampler;\n\nstruct VsOut {\n    @builtin(position) clip: vec4<f32>,\n    @location(0) uv: vec2<f32>,\n};\n\n@vertex\nfn vs_main(@builtin(vertex_index) vi: u32) -> VsOut {\n    // Two-triangle quad as a unit square in [0,1].\n    var quad = array<vec2<f32>, 4>(\n        vec2(0.0, 0.0), vec2(1.0, 0.0),\n        vec2(0.0, 1.0), vec2(1.0, 1.0),\n    );\n    var idx = array<u32, 6>(0u, 1u, 2u, 2u, 1u, 3u);\n    let p = quad[idx[vi]];\n\n    var out: VsOut;\n    // Map unit quad into clip space using the viewport-fit transform.\n    let pos = p * u.scale + u.offset;\n    out.clip = vec4(pos, 0.0, 1.0);\n    out.uv = vec2(p.x, p.y); // v already top-down to match texture rows\n    return out;\n}\n\n@fragment\nfn fs_main(in: VsOut) -> @location(0) vec4<f32> {\n    return textureSample(tex, samp, in.uv);\n}\n```\n\nDraw it with `draw(0..6, 0..1)` \u00e2\u20ac\u201d no vertex buffer, vertices come from `vertex_index`.\n\n## The CallbackTrait implementation\n\nOn egui-wgpu 0.34 the trait is `egui_wgpu::CallbackTrait`. You implement `prepare`\n(writes per-frame GPU state, runs before the render pass) and `paint` (records draw\ncommands into egui's render pass). Both fetch persistent resources out of\n`callback_resources` by type.\n\n```rust\n//! shell/src/canvas_callback.rs\nuse egui_wgpu::CallbackTrait;\nuse crate::canvas::CanvasResources; // from the render crate\n\n/// Per-frame payload. Small, recreated every frame in the panel.\n/// Carries the view transform; the heavy texture lives in callback_resources.\npub struct CanvasCallback {\n    pub scale: [f32; 2],\n    pub offset: [f32; 2],\n}\n\nimpl CallbackTrait for CanvasCallback {\n    /// Runs before egui's render pass begins. Use it to upload uniforms.\n    /// Return value is a list of command buffers to submit before paint; we\n    /// don't need extra encoders here, so return empty.\n    fn prepare(\n        &self,\n        _device: &wgpu::Device,\n        queue: &wgpu::Queue,\n        _screen_descriptor: &egui_wgpu::ScreenDescriptor,\n        _egui_encoder: &mut wgpu::CommandEncoder,\n        resources: &mut egui_wgpu::CallbackResources,\n    ) -> Vec<wgpu::CommandBuffer> {\n        let res: &CanvasResources = resources\n            .get()\n            .expect(\"CanvasResources inserted at startup\");\n\n        let uniform = CanvasUniform {\n            scale: self.scale,\n            offset: self.offset,\n        };\n        queue.write_buffer(res.uniform_buffer(), 0, bytemuck::bytes_of(&uniform));\n\n        Vec::new()\n    }\n\n    /// Runs INSIDE egui's render pass. You only record draw calls; you do not\n    /// own the pass and must not begin/end one. Note the `'static` lifetime on\n    /// the pass in 0.34 \u00e2\u20ac\u201d bind groups/pipelines you reference must outlive it,\n    /// which is exactly why they live in callback_resources, not in `self`.\n    fn paint(\n        &self,\n        _info: egui::PaintCallbackInfo,\n        render_pass: &mut wgpu::RenderPass<'static>,\n        resources: &egui_wgpu::CallbackResources,\n    ) {\n        let res: &CanvasResources = resources\n            .get()\n            .expect(\"CanvasResources inserted at startup\");\n\n        render_pass.set_pipeline(res.pipeline());\n        render_pass.set_bind_group(0, res.bind_group(), &[]);\n        render_pass.draw(0..6, 0..1);\n    }\n}\n```\n\nYou'll need small accessors on `CanvasResources` (`pub fn pipeline(&self) -> &wgpu::RenderPipeline`,\netc.) since the fields are private \u00e2\u20ac\u201d or make the fields `pub(crate)` if the callback\nlives in the same crate. Keep the `CanvasUniform` definition shared between the two\nfiles (move it to the render crate and re-export, or define it once and `use` it).\n\nThe `'static` on `RenderPass` in the `paint` signature is the thing that bites people\ncoming from older egui. It means you cannot capture a borrowed pipeline in the callback\nstruct and reference it inside the pass \u00e2\u20ac\u201d the borrow checker won't allow a non-`'static`\nreference to escape into a `'static` pass. The fix is structural: persistent GPU objects\ngo in `callback_resources` and are fetched by reference *inside* `paint`, where their\nlifetime is tied to `resources`, not to `self`.\n\n## Inserting the resources once at startup\n\nGrab the `RenderState` from eframe at app construction and insert your struct into the\nrenderer's type map. The `CallbackResources` map is `renderer.callback_resources`.\n\n```rust\n//! shell/src/app.rs (inside your App::new / creation context)\nfn install_canvas_resources(cc: &eframe::CreationContext<'_>) {\n    let render_state = cc\n        .wgpu_render_state\n        .as_ref()\n        .expect(\"app must run on the wgpu backend\");\n\n    let resources = CanvasResources::new(\n        &render_state.device,\n        render_state.target_format,\n        8192,\n        8192,\n    );\n\n    // One write lock at startup. Lives for the app's lifetime.\n    render_state\n        .renderer\n        .write()\n        .callback_resources\n        .insert(resources);\n}\n```\n\n`render_state.renderer` is an `Arc<RwLock<Renderer>>`. You take the write lock exactly\nonce here. During frames, egui takes it internally; you never touch it again from the\nupdate loop. The texture, pipeline, and bind group now persist across every frame for\nfree.\n\n## Pushing the callback from the central panel\n\nIn the egui update loop, you allocate a response rect for the viewport, compute the\nview transform from pan/zoom against that rect, build the per-frame `CanvasCallback`,\nand hand it to egui via `egui_wgpu::Callback::new_paint_callback`.\n\n```rust\n//! shell/src/app.rs (inside the App::update / panel code)\negui::CentralPanel::default().show(ctx, |ui| {\n    // Take the whole panel for the viewport.\n    let (rect, response) =\n        ui.allocate_exact_size(ui.available_size(), egui::Sense::click_and_drag());\n\n    // --- compute the view transform here ---\n    // Map the canvas (in its own pixel space, under pan/zoom) into clip space\n    // for the egui paint rect. egui clip space is NDC over the target; the\n    // viewport rect is given to the GPU via `info.viewport` automatically, so\n    // you map the canvas quad into [-1,1] of *that rect*.\n    //\n    // For a canvas of size (cw, ch) drawn at zoom z, panned by (px, py),\n    // inside a paint rect of size (rw, rh):\n    let z = self.zoom;\n    let (cw, ch) = (8192.0_f32, 8192.0_f32);\n    let (rw, rh) = (rect.width(), rect.height());\n\n    // size of the canvas in the rect, as a fraction of the rect, then *2 for NDC span\n    let sx = (cw * z / rw) * 2.0;\n    let sy = (ch * z / rh) * 2.0;\n    // top-left placement -> NDC offset (y flipped because NDC y is up)\n    let ox = (self.pan.x / rw) * 2.0 - 1.0;\n    let oy = 1.0 - (self.pan.y / rh) * 2.0;\n\n    let callback = CanvasCallback {\n        scale: [sx, -sy], // negative y so the quad grows downward in screen space\n        offset: [ox, oy],\n    };\n\n    // Queues the callback; prepare()/paint() fire during egui's render pass,\n    // and egui restricts the GPU viewport to `rect` for us.\n    ui.painter().add(egui_wgpu::Callback::new_paint_callback(\n        rect,\n        callback,\n    ));\n\n    // Brush input -> dirty-rect upload. This is the hot path on every drag move.\n    if response.dragged() {\n        if let Some(pos) = response.interact_pointer_pos() {\n            // 1. translate `pos` (screen) into canvas pixel coords via the inverse\n            //    of the transform above (omitted: your screen->canvas helper).\n            // 2. let core stamp the brush, returning the changed pixels + rect.\n            let dirty = self.document.stamp_brush(/* canvas coords, tool */);\n\n            // 3. upload ONLY that rect straight to the GPU texture.\n            let render_state = frame\n                .wgpu_render_state()\n                .expect(\"wgpu backend\");\n            let renderer = render_state.renderer.read();\n            let res: &CanvasResources = renderer\n                .callback_resources\n                .get()\n                .expect(\"canvas resources\");\n            res.upload_dirty(\n                &render_state.queue,\n                dirty.x, dirty.y, dirty.w, dirty.h,\n                &dirty.rgba,\n            );\n            // request another frame so the change shows immediately\n            ctx.request_repaint();\n        }\n    }\n});\n```\n\nA couple of clarifications on that panel code:\n\n- `egui_wgpu::Callback::new_paint_callback(rect, callback)` returns an\n  `egui::PaintCallback`-bearing `Shape`; you `add` it to the painter. egui clips the GPU\n  viewport to `rect` for you (`PaintCallbackInfo::viewport` reflects it), which is why\n  the shader only needs to map into the rect's NDC, not the whole window.\n- The brush upload reads the same `callback_resources` map, this time under a `read()`\n  lock, and calls `upload_dirty`. It does NOT go through `prepare`/`paint` \u00e2\u20ac\u201d uploading is\n  a plain queue operation you can do any time before the next submit. Doing it right at\n  input time keeps the dirty data path short.\n- `frame.wgpu_render_state()` (on `&mut eframe::Frame`) is the in-loop accessor for the\n  same `RenderState` you used at startup. If you prefer, stash an\n  `Arc<RwLock<Renderer>>` clone in your app struct at startup and skip the `frame`\n  argument entirely.\n\n## The shape of it\n\n- **render crate** owns `CanvasResources` and the WGSL. It knows wgpu and nothing about\n  egui \u00e2\u20ac\u201d this is the UI-agnostic boundary the project wants. The only egui-shaped thing\n  is that `CallbackTrait` impl, which is why it lives in **shell**, not render.\n- **shell crate** owns the `CanvasCallback` (`CallbackTrait` impl), inserts the resources\n  at startup, computes the transform each frame, pushes the callback, and routes brush\n  input to `upload_dirty`.\n- **The 8192x8192 texture is allocated once** and never reallocated for a stroke. Brush\n  strokes are `queue.write_texture` of the dirty sub-rect only. That is the entire reason\n  this architecture beats the old IPC-bound webview: the pixels are born on the GPU and\n  the only per-stroke traffic is the rectangle that changed.\n\n### Version notes for egui-wgpu 0.34\n\n- The trait is `egui_wgpu::CallbackTrait` with `prepare(&self, device, queue,\n  screen_descriptor, encoder, resources) -> Vec<CommandBuffer>` and `paint(&self, info,\n  render_pass: &mut RenderPass<'static>, resources)`. The `'static` render-pass lifetime\n  is current and is what forces the resources-in-typemap pattern.\n- `RenderState` exposes `device`, `queue`, `target_format`, and\n  `renderer: Arc<RwLock<Renderer>>`; `Renderer::callback_resources` is the `TypeMap`.\n- wgpu's copy descriptor types here are `TexelCopyTextureInfo` / `TexelCopyBufferLayout`\n  (the names that replaced the older `ImageCopyTexture` / `ImageDataLayout`). If your\n  pinned wgpu still uses the old names, swap them \u00e2\u20ac\u201d the fields are identical.\n- Use `bytemuck` for the uniform byte cast; the workspace forbids `unsafe`, so the derive\n  is the only sanctioned way to get `&[u8]` out of the uniform struct.\n"}], "grading": {"eval_id": 0, "eval_name": "canvas-paint-callback", "configuration": "without_skill", "expectations": [{"text": "Implements CallbackTrait with a paint method", "passed": true, "evidence": "## The CallbackTrait implementation"}, {"text": "paint takes RenderPass<'static> (the 'static-lifetime pass)", "passed": true, "evidence": "render_pass: &mut wgpu::RenderPass<'static>,"}, {"text": "Uploads only the dirty sub-rect via queue.write_texture in prepare (no full-canvas reupload)", "passed": true, "evidence": "`queue.write_texture`. egui's job is purely to schedule a paint callback into the right"}, {"text": "Stores GPU resources in the callback_resources / CallbackResources type-map (built once)", "passed": true, "evidence": "`callback_resources` (a `TypeMap`). You insert your resource struct once at startup"}, {"text": "Pushes the callback via Callback::new_paint_callback(rect, ...)", "passed": true, "evidence": "and hand it to egui via `egui_wgpu::Callback::new_paint_callback`."}]}}, {"id": "eval-1-with_skill", "prompt": "My render crate composites the document into its own wgpu::Texture. I just want egui to display that texture as an image in the viewport, crisp with no blurring when the user zooms in. How do I hand the texture to egui and draw it, and how do I update it when the texture's contents change each frame? I keep seeing references to register_native_texture and update_native_texture and I'm not sure which to call. egui-wgpu 0.34.", "eval_id": 1, "outputs": [{"name": "answer.md", "type": "text", "content": "# Displaying your render crate's `wgpu::Texture` as an egui image\n\nYou're on the right path. Since `render` already composites into its own `wgpu::Texture`, you don't need the `CallbackTrait` route at all \u00e2\u20ac\u201d that's for splicing a live wgpu pass *inside* the egui frame. You just want egui to sample your finished texture as an image. That's the `register_native_texture` path, and it's three moving parts: register once, update each frame, draw each frame.\n\n## First, clear up the naming \u00e2\u20ac\u201d there is no `update_native_texture`\n\nThis is the trap, and the reason you keep second-guessing. In egui-wgpu 0.34:\n\n- `register_native_texture` \u00e2\u20ac\u201d call **once** per texture. It allocates a bind group and hands you a `TextureId`. Calling it every frame leaks a `TextureId` per frame.\n- `update_egui_texture_from_wgpu_texture` \u00e2\u20ac\u201d the in-place updater. This is the function people mean when they say \"`update_native_texture`,\" which **does not exist** under that name. It re-points an existing `TextureId` at a (possibly new) `TextureView` without allocating a new id.\n\nThe full set on `egui_wgpu::Renderer`:\n\n```rust\npub fn register_native_texture(\n    &mut self, device: &wgpu::Device,\n    texture: &wgpu::TextureView, texture_filter: wgpu::FilterMode,\n) -> egui::TextureId\n\npub fn register_native_texture_with_sampler_options(\n    &mut self, device: &wgpu::Device,\n    texture: &wgpu::TextureView, sampler_descriptor: wgpu::SamplerDescriptor<'_>,\n) -> egui::TextureId\n\npub fn update_egui_texture_from_wgpu_texture(\n    &mut self, device: &wgpu::Device,\n    texture: &wgpu::TextureView, texture_filter: wgpu::FilterMode, id: egui::TextureId,\n)\n\npub fn update_egui_texture_from_wgpu_texture_with_sampler_options(\n    &mut self, device: &wgpu::Device,\n    texture: &wgpu::TextureView,\n    sampler_descriptor: wgpu::SamplerDescriptor<'_>, id: egui::TextureId,\n)\n\npub fn free_texture(&mut self, id: &egui::TextureId)\n```\n\n## Crisp, not blurry \u00e2\u20ac\u201d pass `FilterMode::Nearest`\n\nThis is the whole answer to \"no blurring when the user zooms in.\" Pixel art must sample with nearest-neighbor, so pass `wgpu::FilterMode::Nearest` to `register_native_texture` (and to `update_egui_texture_from_wgpu_texture` if you ever re-point). Magnifying with `Linear` is exactly what gives you the blurred-when-zoomed look you're trying to avoid.\n\nIf you need to be explicit about both min and mag filters, use the `_with_sampler_options` variants and set `mag_filter` and `min_filter` to `wgpu::FilterMode::Nearest`.\n\n## When do you actually call `update_egui_texture_from_wgpu_texture`?\n\nHere's the part the question is really circling. The `TextureId` is bound to a **bind group**, which references a **`TextureView`**. So:\n\n- If your render crate **writes into the same `wgpu::Texture` every frame** (same allocation \u00e2\u20ac\u201d `queue.write_texture`, or a render pass targeting the same texture), the contents change but the `TextureView` is still valid. egui samples the live GPU texture on the next frame **with no re-registration and no update call**. Register once, draw every frame, done. This is the common case and the cheapest one.\n\n- You only need `update_egui_texture_from_wgpu_texture` when the **`TextureView` itself changes** \u00e2\u20ac\u201d i.e. you reallocated the texture. That happens when the document resizes (canvas grows past the current texture, you swap to a bigger allocation). Then the old view is stale; call the updater to re-point the existing `TextureId` at the new view, so any UI holding that id keeps working.\n\nSo the rule: **register once; re-point only on reallocation.** Don't call the updater every frame \"to be safe\" \u00e2\u20ac\u201d it rebuilds a bind group for nothing.\n\n## The lock \u00e2\u20ac\u201d `parking_lot`, no `Result`, no `.unwrap()`\n\n`state.renderer` is `Arc<RwLock<Renderer>>` from `parking_lot`, so `.write()` returns the guard directly. No `Result`, nothing to unwrap (which keeps you clear of the no-unwrap rule). Take the guard, do the call, drop it before you do anything `.await`-y \u00e2\u20ac\u201d you won't be awaiting here anyway.\n\n## Putting it together\n\nGrab the `RenderState` once at startup (from `eframe::CreationContext::wgpu_render_state()`), register the texture, stash the `TextureId`. Then draw it in the viewport each frame.\n\n### Setup \u00e2\u20ac\u201d register once\n\n```rust\nuse std::sync::Arc;\n\npub struct ViewportState {\n    /// The egui-side handle to the render crate's composited texture.\n    canvas_id: egui::TextureId,\n    /// Texture dimensions in pixels, for aspect-correct sizing.\n    canvas_size: [u32; 2],\n}\n\nimpl ViewportState {\n    /// Call once, when you first have both the RenderState and the render\n    /// crate's texture view.\n    pub fn new(\n        render_state: &egui_wgpu::RenderState,\n        canvas_view: &wgpu::TextureView,\n        canvas_size: [u32; 2],\n    ) -> Self {\n        // NEAREST is the no-blur rule for pixel art \u00e2\u20ac\u201d without it, zooming in\n        // bilinearly interpolates and the sprite turns to mush.\n        let canvas_id = render_state.renderer.write().register_native_texture(\n            &render_state.device,\n            canvas_view,\n            wgpu::FilterMode::Nearest,\n        );\n\n        Self { canvas_id, canvas_size }\n    }\n}\n```\n\n### Each frame \u00e2\u20ac\u201d draw it in the viewport\n\nHold the `RenderState` clone (it's `Clone`) on your app so the update loop can reach it. The texture's *contents* updating each frame needs nothing here \u00e2\u20ac\u201d egui samples the live texture. You only touch the renderer again on reallocation (next section).\n\n```rust\nimpl ViewportState {\n    /// Draw the canvas inside the central panel, scaled by `zoom` and offset\n    /// by `pan`, with nearest-neighbor crispness preserved by the sampler.\n    pub fn show(&self, ui: &mut egui::Ui, zoom: f32, pan: egui::Vec2) {\n        let tex_w = self.canvas_size[0] as f32;\n        let tex_h = self.canvas_size[1] as f32;\n\n        // The on-screen rect: texel size times zoom, placed at the pan origin.\n        // CornerRadius::ZERO and an integer-ish zoom keep tile edges sharp.\n        let size = egui::vec2(tex_w * zoom, tex_h * zoom);\n        let min = ui.max_rect().min + pan;\n        let canvas_rect = egui::Rect::from_min_size(min, size);\n\n        // Full-image UV: (0,0)..(1,1). Crop here if you implement view culling.\n        let uv = egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1.0, 1.0));\n\n        ui.painter().image(\n            self.canvas_id,\n            canvas_rect,\n            uv,\n            egui::Color32::WHITE, // WHITE = no tint\n        );\n    }\n}\n```\n\n`Color32::WHITE` as the tint means \"draw the texture unmodified.\" `painter().image` gives you full control of the destination rect and UV, which is what you want for zoom and pan \u00e2\u20ac\u201d `ui.image(...)` auto-sizes and fights you on layout.\n\n### On document resize \u00e2\u20ac\u201d re-point the id\n\n```rust\nimpl ViewportState {\n    /// Call ONLY when the render crate reallocated its texture (e.g. the\n    /// document grew). Re-points the existing TextureId at the new view so the\n    /// UI keeps the same id. Do NOT call this every frame.\n    pub fn on_texture_reallocated(\n        &mut self,\n        render_state: &egui_wgpu::RenderState,\n        new_view: &wgpu::TextureView,\n        new_size: [u32; 2],\n    ) {\n        render_state.renderer.write().update_egui_texture_from_wgpu_texture(\n            &render_state.device,\n            new_view,\n            wgpu::FilterMode::Nearest,\n            self.canvas_id,\n        );\n        self.canvas_size = new_size;\n    }\n}\n```\n\n### Wiring into the eframe app\n\n```rust\nstruct PixhausApp {\n    render_state: egui_wgpu::RenderState, // RenderState is Clone\n    viewport: ViewportState,\n    zoom: f32,\n    pan: egui::Vec2,\n}\n\nimpl PixhausApp {\n    fn new(cc: &eframe::CreationContext<'_>, canvas_view: &wgpu::TextureView,\n           canvas_size: [u32; 2]) -> Self {\n        let render_state = cc\n            .wgpu_render_state()\n            .expect(\"eframe must be built with the wgpu backend\")\n            .clone();\n        let viewport = ViewportState::new(&render_state, canvas_view, canvas_size);\n        Self { render_state, viewport, zoom: 1.0, pan: egui::Vec2::ZERO }\n    }\n}\n\nimpl eframe::App for PixhausApp {\n    fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {\n        // render crate composites into its texture here (its own pass / write_texture),\n        // before egui samples it this frame.\n\n        egui::CentralPanel::default().show(ctx, |ui| {\n            self.viewport.show(ui, self.zoom, self.pan);\n        });\n\n        ctx.request_repaint(); // keep animating if playback is live\n    }\n}\n```\n\n(eframe 0.34's `App` method is `update`; if you're on the variant exposing `ui`, see `pixhaus-eframe` \u00e2\u20ac\u201d the texture wiring is identical either way.)\n\n## Ordering: composite before egui samples\n\nMake sure your render crate's submit (the pass or `queue.write_texture` that fills the texture) happens **before** egui's frame samples it. Inside `update`, that means run the composite at the top of the function, before `CentralPanel`. Since egui-wgpu records the egui draw on the same device/queue, a composite submitted earlier in the same frame is visible. If your render crate composites on a background thread, gate the egui draw on a \"frame ready\" signal so you're not sampling a half-written texture.\n\n## Native-texture path vs. the callback path \u00e2\u20ac\u201d pick deliberately\n\nYou chose right for your situation, but know the tradeoff:\n\n- **This path (`register_native_texture`)** \u00e2\u20ac\u201d render crate owns the texture, egui blits it as an image. Simple, clean separation, ideal because your `render` crate is already UI-agnostic and produces a finished texture. Cost: the composite result lives in a texture that egui samples; you can't interleave egui shapes *into* the wgpu pass.\n- **The `CallbackTrait` path** \u00e2\u20ac\u201d splice a raw wgpu pass directly into the egui frame, drawing into egui's target. Use it when you need per-frame GPU work fused with egui, or want overlays (selection, grid) painted in the same pass. More machinery (`prepare`/`paint` phases, the `CallbackResources` type-map, the `update_buffers`-or-panic contract).\n\nFor \"render crate makes a texture, egui shows it,\" the native-texture path is the correct, lighter choice. Reach for the callback only if you later need to merge GPU drawing with egui's own pass.\n\n## Checklist\n\n1. `register_native_texture(device, view, FilterMode::Nearest)` once \u00e2\u2020\u2019 keep the `TextureId`.\n2. Each frame: composite into the texture (render crate), then `painter().image(id, rect, uv, Color32::WHITE)`.\n3. Don't re-register or re-update if the texture allocation is unchanged \u00e2\u20ac\u201d egui samples the live texture.\n4. Only on reallocation: `update_egui_texture_from_wgpu_texture(device, new_view, FilterMode::Nearest, id)`.\n5. `Nearest` everywhere, `CornerRadius::ZERO` on the rect \u00e2\u20ac\u201d that's your no-blur guarantee.\n"}], "grading": {"eval_id": 1, "eval_name": "display-wgpu-texture", "configuration": "with_skill", "expectations": [{"text": "Uses register_native_texture to get a TextureId", "passed": true, "evidence": "You're on the right path. Since `render` already composites into its own `wgpu::Texture`, you don't need the `CallbackTrait` route at all \u2014 that's for splicing a live wgpu pass *inside* the egui frame"}, {"text": "Specifies FilterMode::Nearest for crisp pixel art", "passed": true, "evidence": "## Crisp, not blurry \u2014 pass `FilterMode::Nearest`"}, {"text": "Uses update_egui_texture_from_wgpu_texture and avoids the nonexistent update_native_texture", "passed": true, "evidence": "- `update_egui_texture_from_wgpu_texture` \u2014 the in-place updater. This is the function people mean when they say \"`update_native_texture`,\" which **does not exist** under that name. It re-points an ex"}, {"text": "Does NOT present the nonexistent update_native_texture as a real API", "passed": true, "evidence": "## First, clear up the naming \u2014 there is no `update_native_texture`"}, {"text": "Uses the correct sampler-options method name (register_native_texture_with_sampler_options), not the invented _with_sampler_descriptor", "passed": true, "evidence": "pub fn register_native_texture_with_sampler_options("}, {"text": "Draws the texture via painter.image / ui.image with the TextureId", "passed": true, "evidence": "ui.painter().image("}]}}, {"id": "eval-1-without_skill", "prompt": "My render crate composites the document into its own wgpu::Texture. I just want egui to display that texture as an image in the viewport, crisp with no blurring when the user zooms in. How do I hand the texture to egui and draw it, and how do I update it when the texture's contents change each frame? I keep seeing references to register_native_texture and update_native_texture and I'm not sure which to call. egui-wgpu 0.34.", "eval_id": 1, "outputs": [{"name": "answer.md", "type": "text", "content": "# Handing a wgpu texture to egui and drawing it crisply\n\nYou have a `wgpu::Texture` that your render crate fills each frame. To show it in\nthe egui viewport you do three things:\n\n1. Register the texture's view **once** with the egui-wgpu renderer to get a\n   `TextureId`.\n2. Draw it every frame as an `egui::Image` (or via `Painter::image`).\n3. When the texture's *contents* change in place, do nothing \u00e2\u20ac\u201d you already painted\n   the latest contents. When the texture *object* is replaced (resize \u00e2\u2020\u2019 new\n   `wgpu::Texture`), re-point the same `TextureId` at the new view.\n\nThe two functions you keep seeing answer two different questions:\n\n- `register_native_texture` \u00e2\u20ac\u201d \"give me a fresh `TextureId` for this view.\" Call\n  it **once per texture object**.\n- `update_native_texture` \u00e2\u20ac\u201d \"keep this *existing* `TextureId`, but it now points\n  at a *different* view.\" Call it only when you swapped the underlying texture.\n\nCrucial point that trips people up: **you do not call either of these every frame\njust because the pixels changed.** If your render crate writes into the same\n`wgpu::Texture` each frame (same texture, new contents), the `TextureId` already\nrefers to that texture. egui samples it live at paint time, so the new contents\nshow up with zero extra calls. You only touch `update_native_texture` when the\ntexture *handle itself* is a different object than last time.\n\n## Why a new texture only on resize\n\nThe cheap way to think about it: a `TextureId` is a stable handle into a\n`HashMap` inside egui-wgpu that maps to a `wgpu::TextureView` plus a bind group.\n`register_native_texture` inserts an entry. `update_native_texture` overwrites the\nview behind an existing entry (and rebuilds its bind group). Same-contents,\nsame-object: the entry is already correct.\n\nSo the only time you replace the texture object \u00e2\u20ac\u201d and therefore the only time you\ncall `update_native_texture` \u00e2\u20ac\u201d is when the document/viewport size changes and you\nallocate a new `wgpu::Texture` with new dimensions.\n\n## Crispness: it is all in the sampler filter\n\nA `TextureId` you register comes with a sampler. Default filtering is linear,\nwhich is exactly the blur you want to avoid when a user zooms a 32\u00c3\u201432 sprite to\nfill the screen. For pixel art you want **nearest** filtering. egui-wgpu's\n`register_native_texture_with_sampler_descriptor` lets you pick. Use\n`FilterMode::Nearest` for both `mag_filter` and `min_filter`.\n\n(There is a second, independent place egui can blur: if `Image::texture_options`\nor the `TextureOptions` you pass at paint time say `Linear`, egui's own shader\npath can still soften it. With a native texture the sampler descriptor is what\nmatters, but set both to nearest to be safe.)\n\n## Grabbing the renderer\n\nThe egui-wgpu `Renderer` lives behind a lock inside the `RenderState` that eframe\nhands you. In an eframe app you get it from `frame.wgpu_render_state()` (or stash\nthe `RenderState` clone at startup). The renderer must be locked mutably to\nregister/update, so do it in your `ui`/`update` method on the main thread.\n\n```rust\nuse eframe::egui;\nuse eframe::egui_wgpu;\nuse std::num::NonZeroU64; // not needed here; left as a reminder you may import wgpu types\n\nstruct Viewport {\n    /// The texture your render crate composites into. Same object across frames;\n    /// replaced only on resize.\n    texture: wgpu::Texture,\n    view: wgpu::TextureView,\n    /// Stable handle egui draws. None until first registration.\n    texture_id: Option<egui::TextureId>,\n    /// Track the size we registered at, so we know when a resize happened.\n    registered_size: [u32; 2],\n}\n\nimpl Viewport {\n    fn nearest_sampler() -> wgpu::SamplerDescriptor<'static> {\n        wgpu::SamplerDescriptor {\n            label: Some(\"pixhaus-viewport-nearest\"),\n            mag_filter: wgpu::FilterMode::Nearest,\n            min_filter: wgpu::FilterMode::Nearest,\n            mipmap_filter: wgpu::FilterMode::Nearest,\n            address_mode_u: wgpu::AddressMode::ClampToEdge,\n            address_mode_v: wgpu::AddressMode::ClampToEdge,\n            address_mode_w: wgpu::AddressMode::ClampToEdge,\n            ..Default::default()\n        }\n    }\n\n    /// Call once per frame, early, before you paint.\n    fn sync_registration(&mut self, render_state: &egui_wgpu::RenderState) {\n        let size = [self.texture.width(), self.texture.height()];\n        let mut renderer = render_state.renderer.write();\n\n        match self.texture_id {\n            // First time: register and remember the id.\n            None => {\n                let id = renderer.register_native_texture_with_sampler_descriptor(\n                    &render_state.device,\n                    &self.view,\n                    Self::nearest_sampler(),\n                );\n                self.texture_id = Some(id);\n                self.registered_size = size;\n            }\n            // Already registered. Only re-point the id if the texture object\n            // actually changed (we detect that via a size change here; if you\n            // ever swap the texture without changing size, track a generation\n            // counter instead and compare that).\n            Some(id) if size != self.registered_size => {\n                renderer.update_egui_texture_from_wgpu_texture(\n                    &render_state.device,\n                    &self.view,\n                    wgpu::FilterMode::Nearest,\n                    id,\n                );\n                self.registered_size = size;\n            }\n            // Same object, same size: nothing to do. New contents are sampled\n            // live at paint time.\n            Some(_) => {}\n        }\n    }\n}\n```\n\nTwo API names to be precise about in 0.34, because the older `update_native_texture`\nspelling shows up in stale examples:\n\n- Registration: `Renderer::register_native_texture` (default sampler) or\n  `register_native_texture_with_sampler_descriptor` (pick your filter). Returns\n  `egui::TextureId`.\n- Re-pointing an existing id: `Renderer::update_egui_texture_from_wgpu_texture`,\n  which takes the id, a `&TextureView`, and a `FilterMode`. This is the method\n  the \"`update_native_texture`\" references are gesturing at; use this exact name.\n\nBoth live on `egui_wgpu::Renderer`, reached through\n`render_state.renderer` (an `Arc<RwLock<Renderer>>` \u00e2\u20ac\u201d `.read()` / `.write()`).\n\n## Drawing it each frame\n\nOnce you have the `TextureId`, painting is plain egui. The texture's current\ncontents are whatever your render crate last wrote; egui samples them at draw\ntime.\n\n```rust\nimpl eframe::App for App {\n    fn update(&mut self, ctx: &egui::Context, frame: &mut eframe::Frame) {\n        // 1. Run your wgpu render pass that writes into self.viewport.texture.\n        //    (Either directly with a queue/encoder you own, or via an\n        //    egui_wgpu::Callback if you render inside egui's pass \u00e2\u20ac\u201d see note below.)\n\n        // 2. Make sure egui has a TextureId pointing at the current texture.\n        let render_state = frame\n            .wgpu_render_state()\n            .expect(\"eframe must be running on the wgpu backend\");\n        self.viewport.sync_registration(render_state);\n\n        // 3. Draw it.\n        egui::CentralPanel::default().show(ctx, |ui| {\n            if let Some(id) = self.viewport.texture_id {\n                let tex_size = egui::vec2(\n                    self.viewport.texture.width() as f32,\n                    self.viewport.texture.height() as f32,\n                );\n\n                // Scale by your zoom factor; this is where \"zoom in\" happens.\n                let draw_size = tex_size * self.zoom;\n\n                let image = egui::Image::new(egui::load::SizedTexture::new(id, draw_size))\n                    // Nearest at egui's level too, belt-and-suspenders with the\n                    // sampler. Keeps it crisp if the sampler ever defaults.\n                    .texture_options(egui::TextureOptions::NEAREST)\n                    .fit_to_exact_size(draw_size);\n\n                ui.add(image);\n            }\n        });\n    }\n}\n```\n\nIf you'd rather paint at an explicit rect (common for a pannable/zoomable canvas\nwhere you compute the rect from scroll + zoom yourself):\n\n```rust\nlet painter = ui.painter();\npainter.image(\n    id,\n    target_rect,                                   // where on screen, already zoomed\n    egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1.0, 1.0)), // full UV\n    egui::Color32::WHITE,                          // tint = no tint\n);\n```\n\n`Painter::image` uses the sampler you registered with, so with the nearest\ndescriptor above this stays crisp at any zoom.\n\n## Updating when contents change each frame\n\nTo answer the literal question: **when only the contents change, you call\nnothing.** The flow is:\n\n1. Your render crate writes new pixels into `self.viewport.texture` (via its own\n   `queue.write_texture` or a render pass).\n2. egui paints `texture_id`, which still points at that same texture.\n3. egui-wgpu's draw samples the texture as it stands during egui's render pass \u00e2\u20ac\u201d\n   it sees the new contents.\n\nThe only synchronization concern is ordering: your writes into the texture must\nbe submitted to the queue **before** egui's render pass runs, so egui sees the\nfresh data and not last frame's. In an eframe app, anything you submit during\n`update` is already queued before eframe submits the egui pass, so a direct\n`queue.write_texture` or your own encoder submission in `update` orders correctly.\n\nIf your render crate instead renders *inside* egui's pass (the\n`egui_wgpu::Callback` path, where you implement `CallbackTrait::paint` and draw\ndirectly into egui's render pass), then you are not using a `TextureId` for the\nviewport at all \u00e2\u20ac\u201d you draw your geometry straight into the surface and skip the\nregister/update dance. That's the other valid architecture. Pick one:\n\n- **Composite to your own texture, hand egui a `TextureId`** (what you asked\n  about): simplest, your renderer stays fully UI-agnostic, one extra full-screen\n  blit's worth of cost. Use the code above.\n- **`egui_wgpu::Callback`**: zero blit, but your render code runs inside egui's\n  pass and has to cope with egui's encoder/viewport. More coupling.\n\nFor a pixel editor the texture-handle path is the clean default, and it's what\nkeeps your render crate knowing nothing about egui.\n\n## Cleanup\n\nWhen you drop the viewport (or replace the texture and want to release the old\nbinding), free the entry so the bind group isn't leaked:\n\n```rust\nlet mut renderer = render_state.renderer.write();\nif let Some(id) = self.texture_id.take() {\n    renderer.free_texture(&id);\n}\n```\n\n`update_egui_texture_from_wgpu_texture` reuses the id and rebuilds its bind group,\nso you don't need to free on resize \u00e2\u20ac\u201d only when you're truly done with the id.\n\n## Summary\n\n- Register **once** with `register_native_texture_with_sampler_descriptor` using\n  `FilterMode::Nearest` \u00e2\u2020\u2019 get a `TextureId`.\n- Draw **every frame** with `egui::Image` / `Painter::image` using that id; set\n  `TextureOptions::NEAREST` too.\n- Contents changed in place: **call nothing**, just make sure your texture writes\n  are queued before egui's pass.\n- Texture object replaced (resize): call\n  `update_egui_texture_from_wgpu_texture` to re-point the same id at the new view.\n- `free_texture` only when you're done with the id.\n"}], "grading": {"eval_id": 1, "eval_name": "display-wgpu-texture", "configuration": "without_skill", "expectations": [{"text": "Uses register_native_texture to get a TextureId", "passed": true, "evidence": "- `register_native_texture` \u2014 \"give me a fresh `TextureId` for this view.\" Call"}, {"text": "Specifies FilterMode::Nearest for crisp pixel art", "passed": true, "evidence": "`FilterMode::Nearest` for both `mag_filter` and `min_filter`."}, {"text": "Uses update_egui_texture_from_wgpu_texture and avoids the nonexistent update_native_texture", "passed": true, "evidence": "renderer.update_egui_texture_from_wgpu_texture("}, {"text": "Does NOT present the nonexistent update_native_texture as a real API", "passed": false, "evidence": "- `update_native_texture` \u2014 \"keep this *existing* `TextureId`, but it now points"}, {"text": "Uses the correct sampler-options method name (register_native_texture_with_sampler_options), not the invented _with_sampler_descriptor", "passed": false, "evidence": "`register_native_texture_with_sampler_descriptor` lets you pick. Use"}, {"text": "Draws the texture via painter.image / ui.image with the TextureId", "passed": true, "evidence": "painter.image("}]}}, {"id": "eval-2-with_skill", "prompt": "For the Pixhaus eframe app I want to tune the egui-wgpu setup: prefer the discrete / high-performance GPU, keep vsync on but minimize input latency for brush strokes, and request higher texture-dimension limits so we can support an 8K canvas. Where do these settings live in egui-wgpu and how do I configure them? egui-wgpu 0.34.", "eval_id": 2, "outputs": [{"name": "answer.md", "type": "text", "content": "# Tuning the egui-wgpu setup for Pixhaus\n\nAll three knobs you want \u00e2\u20ac\u201d discrete-GPU preference, low-latency vsync, and raised\ntexture-dimension limits \u00e2\u20ac\u201d live in **one place**: `egui_wgpu::WgpuConfiguration`. On\nthe Pixhaus-on-eframe path you don't build a `RenderState` yourself; you hand the config\nto eframe through `NativeOptions.wgpu_options` and eframe creates the instance, adapter,\ndevice, and surface from it.\n\nThe important trap first: on the **wgpu** backend the glow-only top-level `NativeOptions`\nfields (`vsync`, `multisampling`, `hardware_acceleration`) do nothing. The wgpu\nequivalents \u00e2\u20ac\u201d present mode, power preference, device limits/features \u00e2\u20ac\u201d live inside\n`wgpu_options`. Set them there or they're silently ignored.\n\n## Where each setting maps\n\n| Goal | Field | Value |\n|---|---|---|\n| Prefer discrete / high-perf GPU | `wgpu_setup` \u00e2\u2020\u2019 `WgpuSetupCreateNew::power_preference` (and optionally `native_adapter_selector` to pin it hard) | `wgpu::PowerPreference::HighPerformance` |\n| Vsync on, no tearing | `WgpuConfiguration::present_mode` | `wgpu::PresentMode::AutoVsync` |\n| Minimize brush-stroke input latency | `WgpuConfiguration::desired_maximum_frame_latency` | `Some(1)` |\n| 8K texture support | `WgpuSetupCreateNew::device_descriptor` closure \u00e2\u2020\u2019 `DeviceDescriptor::required_limits` | raise `max_texture_dimension_2d` to \u00e2\u2030\u00a5 8192 |\n\n## The code\n\nThis goes in `main.rs` where you build `NativeOptions`. eframe 0.34.2 / egui-wgpu 0.34.2 /\nwgpu `=29.0.1`.\n\n```rust\nuse std::sync::Arc;\n\nuse eframe::egui_wgpu::{WgpuConfiguration, WgpuSetup, WgpuSetupCreateNew};\n\n/// Minimum 2D texture dimension Pixhaus needs for an 8K canvas. wgpu's\n/// downlevel default is 8192, so most desktop GPUs already clear this \u00e2\u20ac\u201d but we\n/// request it explicitly so a device that can't meet it fails loudly at startup\n/// instead of mysteriously refusing an 8192-wide texture later.\nconst MIN_TEXTURE_DIM: u32 = 8192;\n\nfn wgpu_config() -> WgpuConfiguration {\n    // CreateNew lets egui-wgpu build the instance/adapter/device. We tweak the\n    // power preference and the device descriptor closure; the display handle is\n    // injected by eframe at instance-creation time, so leave it default here.\n    let mut setup = WgpuSetupCreateNew::default();\n\n    // 1. Prefer the discrete / high-performance adapter. On a laptop with an\n    //    iGPU + dGPU this steers wgpu to the dGPU. This is the soft preference;\n    //    see native_adapter_selector below for a hard pin.\n    setup.power_preference = wgpu::PowerPreference::HighPerformance;\n\n    // 2. Request higher limits. The closure receives the chosen adapter, so we\n    //    start from the adapter's own limits (never request more than it offers\n    //    across the board) and only raise the one dimension we care about. This\n    //    is the documented place to ask for an 8K-capable device.\n    setup.device_descriptor = Arc::new(|adapter: &wgpu::Adapter| {\n        let adapter_limits = adapter.limits();\n\n        // Start from a sane baseline, then lift the texture dimension. Using the\n        // adapter's max as the ceiling avoids over-requesting on weaker GPUs.\n        let mut limits = wgpu::Limits::default();\n        limits.max_texture_dimension_2d =\n            adapter_limits.max_texture_dimension_2d.max(MIN_TEXTURE_DIM);\n\n        wgpu::DeviceDescriptor {\n            label: Some(\"pixhaus-device\"),\n            required_features: wgpu::Features::empty(),\n            required_limits: limits,\n            // Hint the allocator we'll keep large textures around.\n            memory_hints: wgpu::MemoryHints::Performance,\n            trace: wgpu::Trace::Off,\n        }\n    });\n\n    WgpuConfiguration {\n        // 3. Vsync on, no tearing, idle-friendly. egui repaints on demand so\n        //    vsync rarely adds latency that matters; combined with frame\n        //    latency = 1 below, this is the low-latency-and-no-tearing combo.\n        present_mode: wgpu::PresentMode::AutoVsync,\n\n        // 4. The brush-latency knob. One frame of queued work instead of the\n        //    driver default of 2 \u00e2\u20ac\u201d the painted pixel reaches the screen a frame\n        //    sooner. This is the single biggest win for stroke feel.\n        desired_maximum_frame_latency: Some(1),\n\n        wgpu_setup: WgpuSetup::CreateNew(setup),\n\n        // Recreate the surface on a non-Success acquire (resize/minimize/\n        // device-lost races) \u00e2\u20ac\u201d the right desktop default.\n        ..WgpuConfiguration::default()\n    }\n}\n\nfn main() -> eframe::Result {\n    let options = eframe::NativeOptions {\n        renderer: eframe::Renderer::Wgpu,\n        wgpu_options: wgpu_config(),\n        viewport: egui::ViewportBuilder::default().with_title(\"Pixhaus\"),\n        ..Default::default()\n    };\n\n    eframe::run_native(\n        \"pixhaus\",\n        options,\n        Box::new(|cc| Ok(Box::new(PixhausApp::new(cc)))),\n    )\n}\n```\n\n## Hard-pinning the discrete GPU (optional, recommended for a pro tool)\n\n`power_preference = HighPerformance` is a *hint* \u00e2\u20ac\u201d a driver can still hand back the iGPU.\nIf you want certainty, override selection entirely with `native_adapter_selector`. It\nreceives every adapter plus the optional surface and returns the one you choose (or an\nerror string that surfaces as `WgpuError::CustomNativeAdapterSelectionError`):\n\n```rust\nuse eframe::egui_wgpu::NativeAdapterSelectorMethod;\n\nsetup.native_adapter_selector = Some(Arc::new(\n    |adapters: &[wgpu::Adapter], surface: Option<&wgpu::Surface<'_>>|\n        -> Result<wgpu::Adapter, String> {\n        // Prefer a DiscreteGpu that can present to our surface.\n        let pick = adapters\n            .iter()\n            .filter(|a| surface.is_none_or(|s| a.is_surface_supported(s)))\n            .find(|a| a.get_info().device_type == wgpu::DeviceType::DiscreteGpu)\n            // Fall back to whatever HighPerformance would have chosen.\n            .or_else(|| adapters.iter().next())\n            .ok_or_else(|| \"no compatible GPU adapter found\".to_owned())?;\n\n        Ok(pick.clone())\n    },\n) as NativeAdapterSelectorMethod);\n```\n\nWhen `native_adapter_selector` is `Some`, it wins over `power_preference` on native\n(the preference only matters when the selector is `None`). Keep both set: the selector\nfor native certainty, the preference as the fallback path.\n\n## Confirm what actually got picked\n\nAdapter selection is the first thing to check when a user reports a render bug. Log the\nchosen adapter once at boot with the crate's helper \u00e2\u20ac\u201d grab the adapter from `RenderState`\nin your `App::new`:\n\n```rust\n// in PixhausApp::new(cc), with the wgpu render state available:\nif let Some(rs) = cc.wgpu_render_state.as_ref() {\n    let info = rs.adapter.get_info();\n    log::info!(\"gpu: {}\", eframe::egui_wgpu::adapter_info_summary(&info));\n}\n```\n\n## Notes and caveats\n\n- **8K is usually already available.** wgpu's downlevel-default `max_texture_dimension_2d`\n  is 8192, so on most desktop GPUs you don't strictly need to raise the limit for a single\n  8192\u00c3\u20148192 texture. Requesting it explicitly turns a silent \"texture too large\" failure\n  later into a loud `WgpuError::RequestDeviceError` at startup, which is the behavior you\n  want. If you ever need a canvas larger than 8192 on a side you'll have to tile it \u00e2\u20ac\u201d\n  `max_texture_dimension_2d` tops out at 16384 on most hardware and isn't unbounded.\n- **`AutoVsync` vs `AutoNoVsync`.** Stick with `AutoVsync` for the editor. `AutoNoVsync`\n  only makes sense when you're measuring raw throughput, and it costs you tearing and power.\n  The latency you care about for brush feel is governed by `desired_maximum_frame_latency`,\n  not by turning vsync off.\n- **The two latency knobs work together.** `present_mode` controls tearing/queueing policy;\n  `desired_maximum_frame_latency = Some(1)` shortens the queue depth. Both at once gives\n  no-tearing plus minimal lag.\n- **`device_descriptor` is a closure, called with the chosen adapter.** Branch on\n  `adapter.limits()` / `adapter.get_info()` inside it \u00e2\u20ac\u201d don't hard-code limits you haven't\n  checked the adapter can meet, or device creation fails with `RequestDeviceError`.\n- **`required_features`** stays `empty()` here \u00e2\u20ac\u201d Pixhaus's compositing doesn't need an\n  optional feature yet. Add to it from inside the same closure if a future verb needs one\n  (e.g. a compute-only feature), gating on `adapter.features().contains(...)`.\n- **Env-var escape hatch.** `WgpuSetup::CreateNew` honors `WGPU_POWER_PREF`, `WGPU_BACKEND`,\n  `WGPU_VALIDATION`, etc., so you can override adapter/backend selection at runtime for\n  debugging without recompiling.\n- **Errors.** In the `render` crate wrap `WgpuError` in your `thiserror` enum with\n  `#[from]`; in the binary `anyhow` swallows it. The two variants you'll actually hit are\n  `RequestAdapterError` (no compatible GPU) and `RequestDeviceError` (limits the adapter\n  can't meet \u00e2\u20ac\u201d e.g. you asked for more than `max_texture_dimension_2d` supports).\n- **Field-value caveat from the reference.** docs.rs didn't render the exact `Default`\n  values for every `WgpuConfiguration` field; the eframe defaults (auto-vsync,\n  recreate-surface-on-error) are sensible, but if a specific default is load-bearing for\n  you, confirm against the egui-wgpu 0.34.2 source.\n```\n"}], "grading": {"eval_id": 2, "eval_name": "wgpu-setup-config", "configuration": "with_skill", "expectations": [{"text": "Identifies WgpuConfiguration as the home for these settings", "passed": true, "evidence": "texture-dimension limits \u2014 live in **one place**: `egui_wgpu::WgpuConfiguration`. On"}, {"text": "Sets desired_maximum_frame_latency = Some(1) for low input latency", "passed": true, "evidence": "| Minimize brush-stroke input latency | `WgpuConfiguration::desired_maximum_frame_latency` | `Some(1)` |"}, {"text": "Uses an AutoVsync present_mode (vsync on)", "passed": true, "evidence": "| Vsync on, no tearing | `WgpuConfiguration::present_mode` | `wgpu::PresentMode::AutoVsync` |"}, {"text": "Prefers the discrete GPU via PowerPreference::HighPerformance or native_adapter_selector", "passed": true, "evidence": "| Prefer discrete / high-perf GPU | `wgpu_setup` \u2192 `WgpuSetupCreateNew::power_preference` (and optionally `native_adapter_selector` to pin it hard) | `wgpu::PowerPreference::HighPerformance` |"}, {"text": "Requests higher texture limits via the device_descriptor closure (max_texture_dimension_2d)", "passed": true, "evidence": "| 8K texture support | `WgpuSetupCreateNew::device_descriptor` closure \u2192 `DeviceDescriptor::required_limits` | raise `max_texture_dimension_2d` to \u2265 8192 |"}, {"text": "Routes config through eframe NativeOptions wgpu_options", "passed": true, "evidence": "to eframe through `NativeOptions.wgpu_options` and eframe creates the instance, adapter,"}]}}, {"id": "eval-2-without_skill", "prompt": "For the Pixhaus eframe app I want to tune the egui-wgpu setup: prefer the discrete / high-performance GPU, keep vsync on but minimize input latency for brush strokes, and request higher texture-dimension limits so we can support an 8K canvas. Where do these settings live in egui-wgpu and how do I configure them? egui-wgpu 0.34.", "eval_id": 2, "outputs": [{"name": "answer.md", "type": "text", "content": "# Tuning the egui-wgpu setup in an eframe app (egui-wgpu 0.34)\n\nAll four knobs you want live in `eframe::NativeOptions`, but in two different\nplaces:\n\n- **GPU selection, latency, and adapter/device options** live in\n  `NativeOptions::wgpu_options`, which is an `egui_wgpu::WgpuConfiguration`.\n- **vsync** is its own field on `NativeOptions` (`vsync: bool`), separate from\n  the wgpu config.\n\nThe texture-dimension limit is the subtle one: you can't just hand wgpu a\n`Limits` struct directly in 0.34. `WgpuConfiguration` exposes a\n`wgpu_setup` field (an `egui_wgpu::WgpuSetup` enum). The `CreateNew` variant\ncarries the `power_preference` and a `device_descriptor` closure where you set\n`Limits`. That closure is where the 8K texture limit goes.\n\nHere's the full setup.\n\n```rust\nuse std::sync::Arc;\n\nuse eframe::NativeOptions;\nuse egui_wgpu::{WgpuConfiguration, WgpuSetup, WgpuSetupCreateNew};\nuse wgpu::PowerPreference;\n\nfn native_options() -> NativeOptions {\n    let wgpu_setup = WgpuSetupCreateNew {\n        // 1. Prefer the discrete / high-performance GPU.\n        //    On a laptop with hybrid graphics this picks the dGPU over the iGPU.\n        instance_descriptor: wgpu::InstanceDescriptor {\n            // Keep the default backend set (Vulkan/Metal/DX12) unless you have a\n            // reason to narrow it. PRIMARY excludes GL, which is what you want\n            // for a wgpu-native canvas.\n            backends: wgpu::Backends::PRIMARY,\n            ..Default::default()\n        },\n        power_preference: PowerPreference::HighPerformance,\n\n        // 2. Device descriptor: raise the texture-dimension limit for 8K.\n        device_descriptor: Arc::new(|adapter| {\n            // Start from the adapter's real limits so you never request more\n            // than the hardware can give \u00e2\u20ac\u201d that would fail device creation.\n            let adapter_limits = adapter.limits();\n\n            let mut limits = wgpu::Limits {\n                // 8192 is enough for an 8K canvas as a single texture.\n                // The wgpu *default* is 8192 already, but downlevel/GL defaults\n                // are 2048, so set it explicitly and clamp to the adapter max.\n                max_texture_dimension_2d: 8192,\n                ..wgpu::Limits::default()\n            };\n\n            // Don't exceed what the adapter supports. If the adapter can't do\n            // 8192 you have a different problem (tile the canvas), but at least\n            // device creation won't hard-fail here.\n            limits.max_texture_dimension_2d = limits\n                .max_texture_dimension_2d\n                .min(adapter_limits.max_texture_dimension_2d);\n\n            // If you also store the canvas as one big buffer for readback,\n            // bump max_buffer_size / max_storage_buffer_binding_size too:\n            // 8192 * 8192 * 4 bytes = 256 MiB.\n            limits.max_buffer_size = limits\n                .max_buffer_size\n                .max(8192 * 8192 * 4)\n                .min(adapter_limits.max_buffer_size);\n\n            wgpu::DeviceDescriptor {\n                label: Some(\"pixhaus-device\"),\n                required_features: wgpu::Features::empty(),\n                required_limits: limits,\n                // Favor performance over low memory on a desktop editor.\n                memory_hints: wgpu::MemoryHints::Performance,\n                trace: wgpu::Trace::Off,\n            }\n        }),\n    };\n\n    let wgpu_options = WgpuConfiguration {\n        // The setup we just built. WgpuSetup is an enum:\n        //   - CreateNew: egui makes the instance/adapter/device (what we want)\n        //   - Existing:  you pass in an already-created instance/adapter/device/queue\n        wgpu_setup: WgpuSetup::CreateNew(wgpu_setup),\n\n        // 3. Minimize input latency for brush strokes.\n        //    desired_maximum_frame_latency caps how many frames the present\n        //    queue may buffer. The wgpu/egui default is effectively 2; setting\n        //    it to 1 means a freshly painted frame reaches the screen one\n        //    refresh sooner. This is the single biggest latency lever while\n        //    keeping vsync on. The trade-off is slightly less slack against\n        //    frame-time spikes, which is fine for a paint app where you control\n        //    your own draw cost.\n        desired_maximum_frame_latency: Some(1),\n\n        // present_mode is left at its default (AutoVsync) because we want vsync.\n        // See the vsync note below \u00e2\u20ac\u201d don't set Immediate here if you want vsync.\n        ..Default::default()\n    };\n\n    NativeOptions {\n        // 4. vsync lives on NativeOptions, NOT on WgpuConfiguration.\n        //    `true` lets eframe pick a vsync present mode (Fifo/AutoVsync).\n        //    Combined with desired_maximum_frame_latency: Some(1) above you get\n        //    \"vsync on, but as little buffered latency as possible\".\n        vsync: true,\n\n        wgpu_options,\n\n        // Make sure eframe actually uses the wgpu backend, not glow.\n        renderer: eframe::Renderer::Wgpu,\n\n        ..Default::default()\n    }\n}\n\nfn main() -> eframe::Result<()> {\n    eframe::run_native(\n        \"Pixhaus\",\n        native_options(),\n        Box::new(|_cc| Ok(Box::new(PixhausApp::default()))),\n    )\n}\n```\n\n## Field-by-field, so you know what does what\n\n### Discrete GPU \u00e2\u20ac\u201d `power_preference`\n`WgpuSetupCreateNew::power_preference = PowerPreference::HighPerformance`.\nThat's the hint the adapter request passes to the driver. On Windows/macOS\nlaptops with switchable graphics this is what gets you the dGPU. It's a hint,\nnot a guarantee \u00e2\u20ac\u201d pair it on Windows with the usual driver-side exports\n(`NvOptimusEnablement` / `AmdPowerXpressRequestHighPerformance`) if you must\nforce it, but `HighPerformance` covers the common case.\n\nYou can verify which adapter you actually got at startup from the\n`eframe::CreationContext`: read `cc.wgpu_render_state` and log\n`render_state.adapter.get_info()`. Do this once in your `App::new` so you can\nconfirm the dGPU was picked.\n\n### vsync \u00e2\u20ac\u201d `NativeOptions::vsync`\nThis is the one that trips people up: vsync is **not** in `WgpuConfiguration`.\nIt's a top-level `bool` on `NativeOptions`. `vsync: true` keeps tearing off.\nLeave `WgpuConfiguration::present_mode` at its default; if you forced it to\n`PresentMode::Immediate` you'd be turning vsync back off and contradicting the\n`vsync: true` flag.\n\n### Input latency \u00e2\u20ac\u201d `desired_maximum_frame_latency`\n`WgpuConfiguration::desired_maximum_frame_latency: Some(1)`. This is the\nvsync-friendly latency control. With vsync on, the present queue normally\nbuffers up to ~2 frames; capping it at 1 shaves roughly one refresh interval\n(~16 ms at 60 Hz) off the time between \"brush pixel painted\" and \"pixel on\nscreen\". This is the right lever for a drawing tool \u00e2\u20ac\u201d you keep vsync (no\ntearing) but stop the compositor from sitting on finished frames.\n\nTwo complementary things worth doing alongside it:\n- Call `ctx.request_repaint()` while a stroke is in progress so egui doesn't\n  idle between input events \u00e2\u20ac\u201d otherwise reduced frame latency buys nothing if\n  the app isn't redrawing.\n- If you later find 60 Hz vsync still feels laggy for fast strokes, the next\n  step is a higher-refresh present path, not turning vsync off. Keep `vsync:\n  true` as the default.\n\n### 8K textures \u00e2\u20ac\u201d the `device_descriptor` closure\n`required_limits.max_texture_dimension_2d` must be at least your canvas\ndimension. wgpu's plain `Limits::default()` is already 8192, but\n`Limits::downlevel_defaults()` (and the GL backend) cap at 2048, so set it\nexplicitly. Always clamp to `adapter.limits().max_texture_dimension_2d` so you\nnever request beyond hardware \u00e2\u20ac\u201d an over-large request makes device creation\nfail outright. Most desktop GPUs report 16384, so 8192 is safe.\n\nIf you keep the canvas as one large GPU buffer for compute or readback, also\nraise `max_buffer_size` (and `max_storage_buffer_binding_size` if you bind it\nas storage): 8192\u00c3\u20148192\u00c3\u20144 = 256 MiB, which exceeds some default buffer-size\nlimits.\n\n## 0.34 gotchas\n\n- `WgpuConfiguration` does **not** have a bare `power_preference` /\n  `device_descriptor` field at the top level. They moved inside\n  `WgpuSetup::CreateNew(WgpuSetupCreateNew { .. })`. Older examples that set\n  `WgpuConfiguration { power_preference, device_descriptor, .. }` directly are\n  pre-0.19-era and won't compile.\n- `device_descriptor` is an `Arc<dyn Fn(&wgpu::Adapter) -> wgpu::DeviceDescriptor>`,\n  so wrap your closure in `Arc::new(...)`.\n- `DeviceDescriptor` in current wgpu has `memory_hints` and `trace` fields and\n  uses `required_features` / `required_limits` (not the old `features` /\n  `limits`). If clippy complains about missing fields, that's the version skew\n  \u00e2\u20ac\u201d use `..` sparingly here since the struct is not `#[non_exhaustive]` in the\n  way you'd hope.\n- Set `renderer: eframe::Renderer::Wgpu` explicitly, and make sure the `wgpu`\n  feature is enabled on `eframe` in `Cargo.toml`. Otherwise `wgpu_options` is\n  silently ignored.\n\n## Where to confirm it worked\n\nIn `App::new`, pull the render state and log the adapter and limits:\n\n```rust\nif let Some(rs) = cc.wgpu_render_state.as_ref() {\n    let info = rs.adapter.get_info();\n    log::info!(\"gpu: {} ({:?}, {:?})\", info.name, info.device_type, info.backend);\n    log::info!(\"max_texture_2d: {}\", rs.device.limits().max_texture_dimension_2d);\n}\n```\n\n`device_type` should read `DiscreteGpu` and `max_texture_dimension_2d` should\nbe \u00e2\u2030\u00a5 8192. If `device_type` comes back `IntegratedGpu` on a hybrid machine,\nthe OS/driver overrode the preference \u00e2\u20ac\u201d that's a driver-profile issue, not a\ncode one.\n"}], "grading": {"eval_id": 2, "eval_name": "wgpu-setup-config", "configuration": "without_skill", "expectations": [{"text": "Identifies WgpuConfiguration as the home for these settings", "passed": true, "evidence": "`NativeOptions::wgpu_options`, which is an `egui_wgpu::WgpuConfiguration`."}, {"text": "Sets desired_maximum_frame_latency = Some(1) for low input latency", "passed": true, "evidence": "//    desired_maximum_frame_latency caps how many frames the present"}, {"text": "Uses an AutoVsync present_mode (vsync on)", "passed": true, "evidence": "// present_mode is left at its default (AutoVsync) because we want vsync."}, {"text": "Prefers the discrete GPU via PowerPreference::HighPerformance or native_adapter_selector", "passed": true, "evidence": "power_preference: PowerPreference::HighPerformance,"}, {"text": "Requests higher texture limits via the device_descriptor closure (max_texture_dimension_2d)", "passed": true, "evidence": "carries the `power_preference` and a `device_descriptor` closure where you set"}, {"text": "Routes config through eframe NativeOptions wgpu_options", "passed": true, "evidence": "`NativeOptions::wgpu_options`, which is an `egui_wgpu::WgpuConfiguration`."}]}}], "previous_feedback": {}, "previous_outputs": {}, "benchmark": {"metadata": {"skill_name": "pixhaus-egui-wgpu", "skill_path": "C:\\Users\\luism\\Documents\\GitHub\\pixhaus-worktrees\\v2\\.claude\\skills\\pixhaus-egui-wgpu", "executor_model": "claude-opus-4-7[1m]", "analyzer_model": "claude-opus-4-7[1m]", "timestamp": "2026-05-25T21:50:00Z", "evals_run": [0, 1, 2], "runs_per_configuration": 1}, "runs": [{"eval_id": 0, "eval_name": "canvas-paint-callback", "configuration": "with_skill", "run_number": 1, "result": {"pass_rate": 1.0, "passed": 5, "failed": 0, "total": 5, "time_seconds": 97.8, "tokens": 81048, "tool_calls": 0, "errors": 0}, "expectations": [{"text": "Implements CallbackTrait with a paint method", "passed": true, "evidence": "8192x8192 canvas. That is exactly what the `CallbackTrait` path is for, and the dirty-rect"}, {"text": "paint takes RenderPass<'static> (the 'static-lifetime pass)", "passed": true, "evidence": "render_pass: &mut RenderPass<'static>,"}, {"text": "Uploads only the dirty sub-rect via queue.write_texture in prepare (no full-canvas reupload)", "passed": true, "evidence": "- Uploads (uniform write, dirty-rect `write_texture`) happen in `prepare`, which gets"}, {"text": "Stores GPU resources in the callback_resources / CallbackResources type-map (built once)", "passed": true, "evidence": "This struct is inserted once into the renderer's `callback_resources` type-map and persists"}, {"text": "Pushes the callback via Callback::new_paint_callback(rect, ...)", "passed": true, "evidence": "painter.add(egui_wgpu::Callback::new_paint_callback("}], "notes": []}, {"eval_id": 0, "eval_name": "canvas-paint-callback", "configuration": "without_skill", "run_number": 1, "result": {"pass_rate": 1.0, "passed": 5, "failed": 0, "total": 5, "time_seconds": 100.7, "tokens": 51645, "tool_calls": 0, "errors": 0}, "expectations": [{"text": "Implements CallbackTrait with a paint method", "passed": true, "evidence": "## The CallbackTrait implementation"}, {"text": "paint takes RenderPass<'static> (the 'static-lifetime pass)", "passed": true, "evidence": "render_pass: &mut wgpu::RenderPass<'static>,"}, {"text": "Uploads only the dirty sub-rect via queue.write_texture in prepare (no full-canvas reupload)", "passed": true, "evidence": "`queue.write_texture`. egui's job is purely to schedule a paint callback into the right"}, {"text": "Stores GPU resources in the callback_resources / CallbackResources type-map (built once)", "passed": true, "evidence": "`callback_resources` (a `TypeMap`). You insert your resource struct once at startup"}, {"text": "Pushes the callback via Callback::new_paint_callback(rect, ...)", "passed": true, "evidence": "and hand it to egui via `egui_wgpu::Callback::new_paint_callback`."}], "notes": []}, {"eval_id": 1, "eval_name": "display-wgpu-texture", "configuration": "with_skill", "run_number": 1, "result": {"pass_rate": 1.0, "passed": 6, "failed": 0, "total": 6, "time_seconds": 65.5, "tokens": 49243, "tool_calls": 0, "errors": 0}, "expectations": [{"text": "Uses register_native_texture to get a TextureId", "passed": true, "evidence": "You're on the right path. Since `render` already composites into its own `wgpu::Texture`, you don't need the `CallbackTrait` route at all \u2014 that's for splicing a live wgpu pass *inside* the egui frame"}, {"text": "Specifies FilterMode::Nearest for crisp pixel art", "passed": true, "evidence": "## Crisp, not blurry \u2014 pass `FilterMode::Nearest`"}, {"text": "Uses update_egui_texture_from_wgpu_texture and avoids the nonexistent update_native_texture", "passed": true, "evidence": "- `update_egui_texture_from_wgpu_texture` \u2014 the in-place updater. This is the function people mean when they say \"`update_native_texture`,\" which **does not exist** under that name. It re-points an ex"}, {"text": "Does NOT present the nonexistent update_native_texture as a real API", "passed": true, "evidence": "## First, clear up the naming \u2014 there is no `update_native_texture`"}, {"text": "Uses the correct sampler-options method name (register_native_texture_with_sampler_options), not the invented _with_sampler_descriptor", "passed": true, "evidence": "pub fn register_native_texture_with_sampler_options("}, {"text": "Draws the texture via painter.image / ui.image with the TextureId", "passed": true, "evidence": "ui.painter().image("}], "notes": []}, {"eval_id": 1, "eval_name": "display-wgpu-texture", "configuration": "without_skill", "run_number": 1, "result": {"pass_rate": 0.667, "passed": 4, "failed": 2, "total": 6, "time_seconds": 54.6, "tokens": 35471, "tool_calls": 0, "errors": 0}, "expectations": [{"text": "Uses register_native_texture to get a TextureId", "passed": true, "evidence": "- `register_native_texture` \u2014 \"give me a fresh `TextureId` for this view.\" Call"}, {"text": "Specifies FilterMode::Nearest for crisp pixel art", "passed": true, "evidence": "`FilterMode::Nearest` for both `mag_filter` and `min_filter`."}, {"text": "Uses update_egui_texture_from_wgpu_texture and avoids the nonexistent update_native_texture", "passed": true, "evidence": "renderer.update_egui_texture_from_wgpu_texture("}, {"text": "Does NOT present the nonexistent update_native_texture as a real API", "passed": false, "evidence": "- `update_native_texture` \u2014 \"keep this *existing* `TextureId`, but it now points"}, {"text": "Uses the correct sampler-options method name (register_native_texture_with_sampler_options), not the invented _with_sampler_descriptor", "passed": false, "evidence": "`register_native_texture_with_sampler_descriptor` lets you pick. Use"}, {"text": "Draws the texture via painter.image / ui.image with the TextureId", "passed": true, "evidence": "painter.image("}], "notes": []}, {"eval_id": 2, "eval_name": "wgpu-setup-config", "configuration": "with_skill", "run_number": 1, "result": {"pass_rate": 1.0, "passed": 6, "failed": 0, "total": 6, "time_seconds": 61.9, "tokens": 46419, "tool_calls": 0, "errors": 0}, "expectations": [{"text": "Identifies WgpuConfiguration as the home for these settings", "passed": true, "evidence": "texture-dimension limits \u2014 live in **one place**: `egui_wgpu::WgpuConfiguration`. On"}, {"text": "Sets desired_maximum_frame_latency = Some(1) for low input latency", "passed": true, "evidence": "| Minimize brush-stroke input latency | `WgpuConfiguration::desired_maximum_frame_latency` | `Some(1)` |"}, {"text": "Uses an AutoVsync present_mode (vsync on)", "passed": true, "evidence": "| Vsync on, no tearing | `WgpuConfiguration::present_mode` | `wgpu::PresentMode::AutoVsync` |"}, {"text": "Prefers the discrete GPU via PowerPreference::HighPerformance or native_adapter_selector", "passed": true, "evidence": "| Prefer discrete / high-perf GPU | `wgpu_setup` \u2192 `WgpuSetupCreateNew::power_preference` (and optionally `native_adapter_selector` to pin it hard) | `wgpu::PowerPreference::HighPerformance` |"}, {"text": "Requests higher texture limits via the device_descriptor closure (max_texture_dimension_2d)", "passed": true, "evidence": "| 8K texture support | `WgpuSetupCreateNew::device_descriptor` closure \u2192 `DeviceDescriptor::required_limits` | raise `max_texture_dimension_2d` to \u2265 8192 |"}, {"text": "Routes config through eframe NativeOptions wgpu_options", "passed": true, "evidence": "to eframe through `NativeOptions.wgpu_options` and eframe creates the instance, adapter,"}], "notes": []}, {"eval_id": 2, "eval_name": "wgpu-setup-config", "configuration": "without_skill", "run_number": 1, "result": {"pass_rate": 1.0, "passed": 6, "failed": 0, "total": 6, "time_seconds": 48.2, "tokens": 35148, "tool_calls": 0, "errors": 0}, "expectations": [{"text": "Identifies WgpuConfiguration as the home for these settings", "passed": true, "evidence": "`NativeOptions::wgpu_options`, which is an `egui_wgpu::WgpuConfiguration`."}, {"text": "Sets desired_maximum_frame_latency = Some(1) for low input latency", "passed": true, "evidence": "//    desired_maximum_frame_latency caps how many frames the present"}, {"text": "Uses an AutoVsync present_mode (vsync on)", "passed": true, "evidence": "// present_mode is left at its default (AutoVsync) because we want vsync."}, {"text": "Prefers the discrete GPU via PowerPreference::HighPerformance or native_adapter_selector", "passed": true, "evidence": "power_preference: PowerPreference::HighPerformance,"}, {"text": "Requests higher texture limits via the device_descriptor closure (max_texture_dimension_2d)", "passed": true, "evidence": "carries the `power_preference` and a `device_descriptor` closure where you set"}, {"text": "Routes config through eframe NativeOptions wgpu_options", "passed": true, "evidence": "`NativeOptions::wgpu_options`, which is an `egui_wgpu::WgpuConfiguration`."}], "notes": []}], "run_summary": {"with_skill": {"pass_rate": {"mean": 1.0, "stddev": 0.0, "min": 1.0, "max": 1.0}, "time_seconds": {"mean": 75.067, "stddev": 16.142, "min": 61.9, "max": 97.8}, "tokens": {"mean": 58903, "stddev": 15701, "min": 46419, "max": 81048}}, "without_skill": {"pass_rate": {"mean": 0.889, "stddev": 0.157, "min": 0.667, "max": 1.0}, "time_seconds": {"mean": 67.833, "stddev": 23.387, "min": 48.2, "max": 100.7}, "tokens": {"mean": 40755, "stddev": 7702, "min": 35148, "max": 51645}}, "delta": {"pass_rate": "+0.111", "time_seconds": "+7.2", "tokens": "+18148"}}, "notes": ["1 run per eval per config (not repeated) - treat pass-rate deltas as directional, not statistically robust.", "eval-0 (canvas-paint-callback): TIE at 5/5 both. The base model already produces correct egui-wgpu 0.34 callback code (RenderPass<'static>, parking_lot lock, TexelCopyTextureInfo, dirty-rect write_texture). Assertions here are non-discriminating.", "eval-1 (display-wgpu-texture): CLEAR SKILL WIN (6/6 vs 4/6). Baseline hallucinated update_native_texture as a real function AND used the wrong name register_native_texture_with_sampler_descriptor; the skill run correctly states update_native_texture does not exist and uses register_native_texture_with_sampler_options.", "eval-2 (wgpu-setup-config): both 6/6 on keyword assertions, but baseline's WgpuSetupCreateNew struct literal omits display_handle and native_adapter_selector with no ..Default::default() (would not compile) - a subtle correctness gap the skill's full-field docs avoid; not captured by the assertions.", "Skill cost: +18k tokens and +7s average (reading SKILL.md + references). Worth it where it prevents a hallucinated API that wastes a debugging cycle."]}};
+
+    // ---- State ----
+    let feedbackMap = {};  // run_id -> feedback text
+    let currentIndex = 0;
+    let visitedRuns = new Set();
+
+    // ---- Init ----
+    async function init() {
+      // Load saved feedback from server — but only if this isn't a fresh
+      // iteration (indicated by previous_feedback being present). When
+      // previous feedback exists, the feedback.json on disk is stale from
+      // the prior iteration and should not pre-fill the textareas.
+      const hasPrevious = Object.keys(EMBEDDED_DATA.previous_feedback || {}).length > 0
+        || Object.keys(EMBEDDED_DATA.previous_outputs || {}).length > 0;
+      if (!hasPrevious) {
+        try {
+          const resp = await fetch("/api/feedback");
+          const data = await resp.json();
+          if (data.reviews) {
+            for (const r of data.reviews) feedbackMap[r.run_id] = r.feedback;
+          }
+        } catch { /* first run, no feedback yet */ }
+      }
+
+      document.getElementById("skill-name").textContent = EMBEDDED_DATA.skill_name;
+      showRun(0);
+
+      // Wire up feedback auto-save
+      const textarea = document.getElementById("feedback");
+      let saveTimeout = null;
+      textarea.addEventListener("input", () => {
+        clearTimeout(saveTimeout);
+        document.getElementById("feedback-status").textContent = "";
+        saveTimeout = setTimeout(() => saveCurrentFeedback(), 800);
+      });
+    }
+
+    // ---- Navigation ----
+    function navigate(delta) {
+      const newIndex = currentIndex + delta;
+      if (newIndex >= 0 && newIndex < EMBEDDED_DATA.runs.length) {
+        saveCurrentFeedback();
+        showRun(newIndex);
+      }
+    }
+
+    function updateNavButtons() {
+      document.getElementById("prev-btn").disabled = currentIndex === 0;
+      document.getElementById("next-btn").disabled =
+        currentIndex === EMBEDDED_DATA.runs.length - 1;
+    }
+
+    // ---- Show a run ----
+    function showRun(index) {
+      currentIndex = index;
+      const run = EMBEDDED_DATA.runs[index];
+
+      // Progress
+      document.getElementById("progress").textContent =
+        `${index + 1} of ${EMBEDDED_DATA.runs.length}`;
+
+      // Prompt
+      document.getElementById("prompt-text").textContent = run.prompt;
+
+      // Config badge
+      const badge = document.getElementById("config-badge");
+      const configMatch = run.id.match(/(with_skill|without_skill|new_skill|old_skill)/);
+      if (configMatch) {
+        const config = configMatch[1];
+        const isBaseline = config === "without_skill" || config === "old_skill";
+        badge.textContent = config.replace(/_/g, " ");
+        badge.className = "config-badge " + (isBaseline ? "config-baseline" : "config-primary");
+        badge.style.display = "inline-block";
+      } else {
+        badge.style.display = "none";
+      }
+
+      // Outputs
+      renderOutputs(run);
+
+      // Previous outputs
+      renderPrevOutputs(run);
+
+      // Grades
+      renderGrades(run);
+
+      // Previous feedback
+      const prevFb = (EMBEDDED_DATA.previous_feedback || {})[run.id];
+      const prevEl = document.getElementById("prev-feedback");
+      if (prevFb) {
+        document.getElementById("prev-feedback-text").textContent = prevFb;
+        prevEl.style.display = "block";
+      } else {
+        prevEl.style.display = "none";
+      }
+
+      // Feedback
+      document.getElementById("feedback").value = feedbackMap[run.id] || "";
+      document.getElementById("feedback-status").textContent = "";
+
+      updateNavButtons();
+
+      // Track visited runs and promote done button when all visited
+      visitedRuns.add(index);
+      const doneBtn = document.getElementById("done-btn");
+      if (visitedRuns.size >= EMBEDDED_DATA.runs.length) {
+        doneBtn.classList.add("ready");
+      }
+
+      // Scroll main content to top
+      document.querySelector(".main").scrollTop = 0;
+    }
+
+    // ---- Render outputs ----
+    function renderOutputs(run) {
+      const container = document.getElementById("outputs-body");
+      container.innerHTML = "";
+
+      const outputs = run.outputs || [];
+      if (outputs.length === 0) {
+        container.innerHTML = '<div class="empty-state">No output files</div>';
+        return;
+      }
+
+      for (const file of outputs) {
+        const fileDiv = document.createElement("div");
+        fileDiv.className = "output-file";
+
+        // Always show file header with download link
+        const header = document.createElement("div");
+        header.className = "output-file-header";
+        const nameSpan = document.createElement("span");
+        nameSpan.textContent = file.name;
+        header.appendChild(nameSpan);
+        const dlBtn = document.createElement("a");
+        dlBtn.className = "dl-btn";
+        dlBtn.textContent = "Download";
+        dlBtn.download = file.name;
+        dlBtn.href = getDownloadUri(file);
+        header.appendChild(dlBtn);
+        fileDiv.appendChild(header);
+
+        const content = document.createElement("div");
+        content.className = "output-file-content";
+
+        if (file.type === "text") {
+          const pre = document.createElement("pre");
+          pre.textContent = file.content;
+          content.appendChild(pre);
+        } else if (file.type === "image") {
+          const img = document.createElement("img");
+          img.src = file.data_uri;
+          img.alt = file.name;
+          content.appendChild(img);
+        } else if (file.type === "pdf") {
+          const iframe = document.createElement("iframe");
+          iframe.src = file.data_uri;
+          content.appendChild(iframe);
+        } else if (file.type === "xlsx") {
+          renderXlsx(content, file.data_b64);
+        } else if (file.type === "binary") {
+          const a = document.createElement("a");
+          a.className = "download-link";
+          a.href = file.data_uri;
+          a.download = file.name;
+          a.textContent = "Download " + file.name;
+          content.appendChild(a);
+        } else if (file.type === "error") {
+          const pre = document.createElement("pre");
+          pre.textContent = file.content;
+          pre.style.color = "var(--red)";
+          content.appendChild(pre);
+        }
+
+        fileDiv.appendChild(content);
+        container.appendChild(fileDiv);
+      }
+    }
+
+    // ---- XLSX rendering via SheetJS ----
+    function renderXlsx(container, b64Data) {
+      try {
+        const raw = Uint8Array.from(atob(b64Data), c => c.charCodeAt(0));
+        const wb = XLSX.read(raw, { type: "array" });
+
+        for (let i = 0; i < wb.SheetNames.length; i++) {
+          const sheetName = wb.SheetNames[i];
+          const ws = wb.Sheets[sheetName];
+
+          if (wb.SheetNames.length > 1) {
+            const sheetLabel = document.createElement("div");
+            sheetLabel.style.cssText =
+              "font-weight:600; font-size:0.8rem; color:#b0aea5; margin-top:0.5rem; margin-bottom:0.25rem;";
+            sheetLabel.textContent = "Sheet: " + sheetName;
+            container.appendChild(sheetLabel);
+          }
+
+          const htmlStr = XLSX.utils.sheet_to_html(ws, { editable: false });
+          const wrapper = document.createElement("div");
+          wrapper.innerHTML = htmlStr;
+          container.appendChild(wrapper);
+        }
+      } catch (err) {
+        container.textContent = "Error rendering spreadsheet: " + err.message;
+      }
+    }
+
+    // ---- Grades ----
+    function renderGrades(run) {
+      const section = document.getElementById("grades-section");
+      const content = document.getElementById("grades-content");
+
+      if (!run.grading) {
+        section.style.display = "none";
+        return;
+      }
+
+      const grading = run.grading;
+      section.style.display = "block";
+      // Reset to collapsed
+      content.classList.remove("open");
+      document.getElementById("grades-arrow").classList.remove("open");
+
+      const summary = grading.summary || {};
+      const expectations = grading.expectations || [];
+
+      let html = '<div style="padding: 1rem;">';
+
+      // Summary line
+      const passRate = summary.pass_rate != null
+        ? Math.round(summary.pass_rate * 100) + "%"
+        : "?";
+      const badgeClass = summary.pass_rate >= 0.8 ? "grade-pass" : summary.pass_rate >= 0.5 ? "" : "grade-fail";
+      html += '<div class="grades-summary">';
+      html += '<span class="grade-badge ' + badgeClass + '">' + passRate + '</span>';
+      html += '<span>' + (summary.passed || 0) + ' passed, ' + (summary.failed || 0) + ' failed of ' + (summary.total || 0) + '</span>';
+      html += '</div>';
+
+      // Assertions list
+      html += '<ul class="assertion-list">';
+      for (const exp of expectations) {
+        const statusClass = exp.passed ? "pass" : "fail";
+        const statusIcon = exp.passed ? "\u2713" : "\u2717";
+        html += '<li class="assertion-item">';
+        html += '<span class="assertion-status ' + statusClass + '">' + statusIcon + '</span>';
+        html += '<span>' + escapeHtml(exp.text) + '</span>';
+        if (exp.evidence) {
+          html += '<div class="assertion-evidence">' + escapeHtml(exp.evidence) + '</div>';
+        }
+        html += '</li>';
+      }
+      html += '</ul>';
+
+      html += '</div>';
+      content.innerHTML = html;
+    }
+
+    function toggleGrades() {
+      const content = document.getElementById("grades-content");
+      const arrow = document.getElementById("grades-arrow");
+      content.classList.toggle("open");
+      arrow.classList.toggle("open");
+    }
+
+    // ---- Previous outputs (collapsible) ----
+    function renderPrevOutputs(run) {
+      const section = document.getElementById("prev-outputs-section");
+      const content = document.getElementById("prev-outputs-content");
+      const prevOutputs = (EMBEDDED_DATA.previous_outputs || {})[run.id];
+
+      if (!prevOutputs || prevOutputs.length === 0) {
+        section.style.display = "none";
+        return;
+      }
+
+      section.style.display = "block";
+      // Reset to collapsed
+      content.classList.remove("open");
+      document.getElementById("prev-outputs-arrow").classList.remove("open");
+
+      // Render the files into the content area
+      content.innerHTML = "";
+      const wrapper = document.createElement("div");
+      wrapper.style.padding = "1rem";
+
+      for (const file of prevOutputs) {
+        const fileDiv = document.createElement("div");
+        fileDiv.className = "output-file";
+
+        const header = document.createElement("div");
+        header.className = "output-file-header";
+        const nameSpan = document.createElement("span");
+        nameSpan.textContent = file.name;
+        header.appendChild(nameSpan);
+        const dlBtn = document.createElement("a");
+        dlBtn.className = "dl-btn";
+        dlBtn.textContent = "Download";
+        dlBtn.download = file.name;
+        dlBtn.href = getDownloadUri(file);
+        header.appendChild(dlBtn);
+        fileDiv.appendChild(header);
+
+        const fc = document.createElement("div");
+        fc.className = "output-file-content";
+
+        if (file.type === "text") {
+          const pre = document.createElement("pre");
+          pre.textContent = file.content;
+          fc.appendChild(pre);
+        } else if (file.type === "image") {
+          const img = document.createElement("img");
+          img.src = file.data_uri;
+          img.alt = file.name;
+          fc.appendChild(img);
+        } else if (file.type === "pdf") {
+          const iframe = document.createElement("iframe");
+          iframe.src = file.data_uri;
+          fc.appendChild(iframe);
+        } else if (file.type === "xlsx") {
+          renderXlsx(fc, file.data_b64);
+        } else if (file.type === "binary") {
+          const a = document.createElement("a");
+          a.className = "download-link";
+          a.href = file.data_uri;
+          a.download = file.name;
+          a.textContent = "Download " + file.name;
+          fc.appendChild(a);
+        }
+
+        fileDiv.appendChild(fc);
+        wrapper.appendChild(fileDiv);
+      }
+
+      content.appendChild(wrapper);
+    }
+
+    function togglePrevOutputs() {
+      const content = document.getElementById("prev-outputs-content");
+      const arrow = document.getElementById("prev-outputs-arrow");
+      content.classList.toggle("open");
+      arrow.classList.toggle("open");
+    }
+
+    // ---- Feedback (saved to server -> feedback.json) ----
+    function saveCurrentFeedback() {
+      const run = EMBEDDED_DATA.runs[currentIndex];
+      const text = document.getElementById("feedback").value;
+
+      if (text.trim() === "") {
+        delete feedbackMap[run.id];
+      } else {
+        feedbackMap[run.id] = text;
+      }
+
+      // Build reviews array from map
+      const reviews = [];
+      for (const [run_id, feedback] of Object.entries(feedbackMap)) {
+        if (feedback.trim()) {
+          reviews.push({ run_id, feedback, timestamp: new Date().toISOString() });
+        }
+      }
+
+      fetch("/api/feedback", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ reviews, status: "in_progress" }),
+      }).then(() => {
+        document.getElementById("feedback-status").textContent = "Saved";
+      }).catch(() => {
+        // Static mode or server unavailable — no-op on auto-save,
+        // feedback will be downloaded on final submit
+        document.getElementById("feedback-status").textContent = "Will download on submit";
+      });
+    }
+
+    // ---- Done ----
+    function showDoneDialog() {
+      // Save current textarea to feedbackMap (but don't POST yet)
+      const run = EMBEDDED_DATA.runs[currentIndex];
+      const text = document.getElementById("feedback").value;
+      if (text.trim() === "") {
+        delete feedbackMap[run.id];
+      } else {
+        feedbackMap[run.id] = text;
+      }
+
+      // POST once with status: complete — include ALL runs so the model
+      // can distinguish "no feedback" (looks good) from "not reviewed"
+      const reviews = [];
+      const ts = new Date().toISOString();
+      for (const r of EMBEDDED_DATA.runs) {
+        reviews.push({ run_id: r.id, feedback: feedbackMap[r.id] || "", timestamp: ts });
+      }
+      const payload = JSON.stringify({ reviews, status: "complete" }, null, 2);
+      fetch("/api/feedback", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: payload,
+      }).then(() => {
+        document.getElementById("done-overlay").classList.add("visible");
+      }).catch(() => {
+        // Server not available (static mode) — download as file
+        const blob = new Blob([payload], { type: "application/json" });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement("a");
+        a.href = url;
+        a.download = "feedback.json";
+        a.click();
+        URL.revokeObjectURL(url);
+        document.getElementById("done-overlay").classList.add("visible");
+      });
+    }
+
+    function closeDoneDialog() {
+      // Reset status back to in_progress
+      saveCurrentFeedback();
+      document.getElementById("done-overlay").classList.remove("visible");
+    }
+
+    // ---- Toast ----
+    function showToast(message) {
+      const toast = document.getElementById("toast");
+      toast.textContent = message;
+      toast.classList.add("visible");
+      setTimeout(() => toast.classList.remove("visible"), 2000);
+    }
+
+    // ---- Keyboard nav ----
+    document.addEventListener("keydown", (e) => {
+      // Don't capture when typing in textarea
+      if (e.target.tagName === "TEXTAREA") return;
+
+      if (e.key === "ArrowLeft" || e.key === "ArrowUp") {
+        e.preventDefault();
+        navigate(-1);
+      } else if (e.key === "ArrowRight" || e.key === "ArrowDown") {
+        e.preventDefault();
+        navigate(1);
+      }
+    });
+
+    // ---- Util ----
+    function getDownloadUri(file) {
+      if (file.data_uri) return file.data_uri;
+      if (file.data_b64) return "data:application/octet-stream;base64," + file.data_b64;
+      if (file.type === "text") return "data:text/plain;charset=utf-8," + encodeURIComponent(file.content);
+      return "#";
+    }
+
+    function escapeHtml(text) {
+      const div = document.createElement("div");
+      div.textContent = text;
+      return div.innerHTML;
+    }
+
+    // ---- View switching ----
+    function switchView(view) {
+      document.querySelectorAll(".view-tab").forEach(t => t.classList.remove("active"));
+      document.querySelectorAll(".view-panel").forEach(p => p.classList.remove("active"));
+      document.querySelector(`[onclick="switchView('${view}')"]`).classList.add("active");
+      document.getElementById("panel-" + view).classList.add("active");
+    }
+
+    // ---- Benchmark rendering ----
+    function renderBenchmark() {
+      const data = EMBEDDED_DATA.benchmark;
+      if (!data) return;
+
+      // Show the tabs
+      document.getElementById("view-tabs").style.display = "flex";
+
+      const container = document.getElementById("benchmark-content");
+      const summary = data.run_summary || {};
+      const metadata = data.metadata || {};
+      const notes = data.notes || [];
+
+      let html = "";
+
+      // Header
+      html += "<h2 style='font-family: Poppins, sans-serif; margin-bottom: 0.5rem;'>Benchmark Results</h2>";
+      html += "<p style='color: var(--text-muted); font-size: 0.875rem; margin-bottom: 1.25rem;'>";
+      if (metadata.skill_name) html += "<strong>" + escapeHtml(metadata.skill_name) + "</strong> &mdash; ";
+      if (metadata.timestamp) html += metadata.timestamp + " &mdash; ";
+      if (metadata.evals_run) html += "Evals: " + metadata.evals_run.join(", ") + " &mdash; ";
+      html += (metadata.runs_per_configuration || "?") + " runs per configuration";
+      html += "</p>";
+
+      // Summary table
+      html += '<table class="benchmark-table">';
+
+      function fmtStat(stat, pct) {
+        if (!stat) return "—";
+        const suffix = pct ? "%" : "";
+        const m = pct ? (stat.mean * 100).toFixed(0) : stat.mean.toFixed(1);
+        const s = pct ? (stat.stddev * 100).toFixed(0) : stat.stddev.toFixed(1);
+        return m + suffix + " ± " + s + suffix;
+      }
+
+      function deltaClass(val) {
+        if (!val) return "";
+        const n = parseFloat(val);
+        if (n > 0) return "benchmark-delta-positive";
+        if (n < 0) return "benchmark-delta-negative";
+        return "";
+      }
+
+      // Discover config names dynamically (everything except "delta")
+      const configs = Object.keys(summary).filter(k => k !== "delta");
+      const configA = configs[0] || "config_a";
+      const configB = configs[1] || "config_b";
+      const labelA = configA.replace(/_/g, " ").replace(/\b\w/g, c => c.toUpperCase());
+      const labelB = configB.replace(/_/g, " ").replace(/\b\w/g, c => c.toUpperCase());
+      const a = summary[configA] || {};
+      const b = summary[configB] || {};
+      const delta = summary.delta || {};
+
+      html += "<thead><tr><th>Metric</th><th>" + escapeHtml(labelA) + "</th><th>" + escapeHtml(labelB) + "</th><th>Delta</th></tr></thead>";
+      html += "<tbody>";
+
+      html += "<tr><td><strong>Pass Rate</strong></td>";
+      html += "<td>" + fmtStat(a.pass_rate, true) + "</td>";
+      html += "<td>" + fmtStat(b.pass_rate, true) + "</td>";
+      html += '<td class="' + deltaClass(delta.pass_rate) + '">' + (delta.pass_rate || "—") + "</td></tr>";
+
+      // Time (only show row if data exists)
+      if (a.time_seconds || b.time_seconds) {
+        html += "<tr><td><strong>Time (s)</strong></td>";
+        html += "<td>" + fmtStat(a.time_seconds, false) + "</td>";
+        html += "<td>" + fmtStat(b.time_seconds, false) + "</td>";
+        html += '<td class="' + deltaClass(delta.time_seconds) + '">' + (delta.time_seconds ? delta.time_seconds + "s" : "—") + "</td></tr>";
+      }
+
+      // Tokens (only show row if data exists)
+      if (a.tokens || b.tokens) {
+        html += "<tr><td><strong>Tokens</strong></td>";
+        html += "<td>" + fmtStat(a.tokens, false) + "</td>";
+        html += "<td>" + fmtStat(b.tokens, false) + "</td>";
+        html += '<td class="' + deltaClass(delta.tokens) + '">' + (delta.tokens || "—") + "</td></tr>";
+      }
+
+      html += "</tbody></table>";
+
+      // Per-eval breakdown (if runs data available)
+      const runs = data.runs || [];
+      if (runs.length > 0) {
+        const evalIds = [...new Set(runs.map(r => r.eval_id))].sort((a, b) => a - b);
+
+        html += "<h3 style='font-family: Poppins, sans-serif; margin-bottom: 0.75rem;'>Per-Eval Breakdown</h3>";
+
+        const hasTime = runs.some(r => r.result && r.result.time_seconds != null);
+        const hasErrors = runs.some(r => r.result && r.result.errors > 0);
+
+        for (const evalId of evalIds) {
+          const evalRuns = runs.filter(r => r.eval_id === evalId);
+          const evalName = evalRuns[0] && evalRuns[0].eval_name ? evalRuns[0].eval_name : "Eval " + evalId;
+
+          html += "<h4 style='font-family: Poppins, sans-serif; margin: 1rem 0 0.5rem; color: var(--text);'>" + escapeHtml(evalName) + "</h4>";
+          html += '<table class="benchmark-table">';
+          html += "<thead><tr><th>Config</th><th>Run</th><th>Pass Rate</th>";
+          if (hasTime) html += "<th>Time (s)</th>";
+          if (hasErrors) html += "<th>Crashes During Execution</th>";
+          html += "</tr></thead>";
+          html += "<tbody>";
+
+          // Group by config and render with average rows
+          const configGroups = [...new Set(evalRuns.map(r => r.configuration))];
+          for (let ci = 0; ci < configGroups.length; ci++) {
+            const config = configGroups[ci];
+            const configRuns = evalRuns.filter(r => r.configuration === config);
+            if (configRuns.length === 0) continue;
+
+            const rowClass = ci === 0 ? "benchmark-row-with" : "benchmark-row-without";
+            const configLabel = config.replace(/_/g, " ").replace(/\b\w/g, c => c.toUpperCase());
+
+            for (const run of configRuns) {
+              const r = run.result || {};
+              const prClass = r.pass_rate >= 0.8 ? "benchmark-delta-positive" : r.pass_rate < 0.5 ? "benchmark-delta-negative" : "";
+              html += '<tr class="' + rowClass + '">';
+              html += "<td>" + configLabel + "</td>";
+              html += "<td>" + run.run_number + "</td>";
+              html += '<td class="' + prClass + '">' + ((r.pass_rate || 0) * 100).toFixed(0) + "% (" + (r.passed || 0) + "/" + (r.total || 0) + ")</td>";
+              if (hasTime) html += "<td>" + (r.time_seconds != null ? r.time_seconds.toFixed(1) : "—") + "</td>";
+              if (hasErrors) html += "<td>" + (r.errors || 0) + "</td>";
+              html += "</tr>";
+            }
+
+            // Average row
+            const rates = configRuns.map(r => (r.result || {}).pass_rate || 0);
+            const avgRate = rates.reduce((a, b) => a + b, 0) / rates.length;
+            const avgPrClass = avgRate >= 0.8 ? "benchmark-delta-positive" : avgRate < 0.5 ? "benchmark-delta-negative" : "";
+            html += '<tr class="benchmark-row-avg ' + rowClass + '">';
+            html += "<td>" + configLabel + "</td>";
+            html += "<td>Avg</td>";
+            html += '<td class="' + avgPrClass + '">' + (avgRate * 100).toFixed(0) + "%</td>";
+            if (hasTime) {
+              const times = configRuns.map(r => (r.result || {}).time_seconds).filter(t => t != null);
+              html += "<td>" + (times.length ? (times.reduce((a, b) => a + b, 0) / times.length).toFixed(1) : "—") + "</td>";
+            }
+            if (hasErrors) html += "<td></td>";
+            html += "</tr>";
+          }
+          html += "</tbody></table>";
+
+          // Per-assertion detail for this eval
+          const runsWithExpectations = {};
+          for (const config of configGroups) {
+            runsWithExpectations[config] = evalRuns.filter(r => r.configuration === config && r.expectations && r.expectations.length > 0);
+          }
+          const hasAnyExpectations = Object.values(runsWithExpectations).some(runs => runs.length > 0);
+          if (hasAnyExpectations) {
+            // Collect all unique assertion texts across all configs
+            const allAssertions = [];
+            const seen = new Set();
+            for (const config of configGroups) {
+              for (const run of runsWithExpectations[config]) {
+                for (const exp of (run.expectations || [])) {
+                  if (!seen.has(exp.text)) {
+                    seen.add(exp.text);
+                    allAssertions.push(exp.text);
+                  }
+                }
+              }
+            }
+
+            html += '<table class="benchmark-table" style="margin-top: 0.5rem;">';
+            html += "<thead><tr><th>Assertion</th>";
+            for (const config of configGroups) {
+              const label = config.replace(/_/g, " ").replace(/\b\w/g, c => c.toUpperCase());
+              html += "<th>" + escapeHtml(label) + "</th>";
+            }
+            html += "</tr></thead><tbody>";
+
+            for (const assertionText of allAssertions) {
+              html += "<tr><td>" + escapeHtml(assertionText) + "</td>";
+
+              for (const config of configGroups) {
+                html += "<td>";
+                for (const run of runsWithExpectations[config]) {
+                  const exp = (run.expectations || []).find(e => e.text === assertionText);
+                  if (exp) {
+                    const cls = exp.passed ? "benchmark-delta-positive" : "benchmark-delta-negative";
+                    const icon = exp.passed ? "\u2713" : "\u2717";
+                    html += '<span class="' + cls + '" title="Run ' + run.run_number + ': ' + escapeHtml(exp.evidence || "") + '">' + icon + "</span> ";
+                  } else {
+                    html += "— ";
+                  }
+                }
+                html += "</td>";
+              }
+              html += "</tr>";
+            }
+            html += "</tbody></table>";
+          }
+        }
+      }
+
+      // Notes
+      if (notes.length > 0) {
+        html += '<div class="benchmark-notes">';
+        html += "<h3>Analysis Notes</h3>";
+        html += "<ul>";
+        for (const note of notes) {
+          html += "<li>" + escapeHtml(note) + "</li>";
+        }
+        html += "</ul></div>";
+      }
+
+      container.innerHTML = html;
+    }
+
+    // ---- Start ----
+    init();
+    renderBenchmark();
+  </script>
+</body>
+</html>

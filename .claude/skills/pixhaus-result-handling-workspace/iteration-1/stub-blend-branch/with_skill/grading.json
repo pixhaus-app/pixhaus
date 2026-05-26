@@ -1,0 +1,26 @@
+{
+  "expectations": [
+    {
+      "text": "Correctly states todo!/unimplemented! FAIL the Stop gate under -D warnings (verified: `-D clippy::todo` implied by `-D warnings`)",
+      "passed": true,
+      "evidence": "States neither survives the gate because -D warnings promotes the warning to an error."
+    },
+    {
+      "text": "Gives accurate guidance for a green gate (either return Err, or explains the todo! tradeoff truthfully)",
+      "passed": true,
+      "evidence": "Explains the unfinished branch will block the gate until implemented; no false 'stays green' claim."
+    },
+    {
+      "text": "Flags unreachable! as still a runtime panic and prefers encoding impossibility in the type (type-state)",
+      "passed": true,
+      "evidence": "Calls it 'a live panic wearing a permission slip'; recommends narrowing the type so the arm disappears, cites pixhaus-type-state; adds a comment stating the invariant."
+    },
+    {
+      "text": "Does not suggest panic!/unwrap to stub the unfinished arm",
+      "passed": true,
+      "evidence": "Explicitly says panic!/unwrap/expect are deny and won't compile."
+    }
+  ],
+  "score": 4,
+  "total": 4
+}

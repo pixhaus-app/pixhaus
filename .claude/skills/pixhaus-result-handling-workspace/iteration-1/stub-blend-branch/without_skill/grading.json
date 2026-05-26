@@ -1,0 +1,26 @@
+{
+  "expectations": [
+    {
+      "text": "Correctly states todo!/unimplemented! FAIL the Stop gate under -D warnings (verified: `-D clippy::todo` implied by `-D warnings`)",
+      "passed": false,
+      "evidence": "WRONG: claimed '-D warnings does not override a lint level you've explicitly pinned in config, so a configured warn stays a warning -- the gate stays green.' Empirically false (EXIT_CODE=101)."
+    },
+    {
+      "text": "Gives accurate guidance for a green gate (either return Err, or explains the todo! tradeoff truthfully)",
+      "passed": false,
+      "evidence": "Advised todo! for Overlay on the false premise the gate stays green; a contributor following this would hit a surprise gate failure."
+    },
+    {
+      "text": "Flags unreachable! as still a runtime panic and prefers encoding impossibility in the type (type-state)",
+      "passed": false,
+      "evidence": "Used unreachable! framed as 'encodes the invariant'; mentioned the todo! becoming reachable as the only panic risk, did not flag unreachable! as a live panic nor suggest type-state."
+    },
+    {
+      "text": "Does not suggest panic!/unwrap to stub the unfinished arm",
+      "passed": true,
+      "evidence": "Warns against literal panic!(\"unreachable\") and unreachable_unchecked()."
+    }
+  ],
+  "score": 1,
+  "total": 4
+}

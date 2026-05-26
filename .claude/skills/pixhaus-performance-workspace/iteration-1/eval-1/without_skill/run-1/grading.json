@@ -1,0 +1,13 @@
+{
+  "eval_id": 1,
+  "configuration": "without_skill",
+  "summary": {"pass_rate": 0.8333, "passed": 5, "failed": 1, "total": 6},
+  "expectations": [
+    {"text": "Adds criterion as a dev-dependency", "passed": true, "evidence": "[dev-dependencies] criterion = { version = \"0.5\", features=[html_reports] }."},
+    {"text": "Specifies harness = false for the [[bench]] target", "passed": true, "evidence": "[[bench]] name=flood_fill harness=false with explanation."},
+    {"text": "Uses std::hint::black_box rather than deprecated criterion::black_box", "passed": false, "evidence": "Imports and uses criterion::black_box (the deprecated re-export), and pins criterion 0.5."},
+    {"text": "Benchmarks at a realistic (large) canvas size, not a toy input", "passed": true, "evidence": "256 -> 8192 size sweep with Throughput::Elements."},
+    {"text": "Says to compare before/after via cargo bench and keep only gains above noise", "passed": true, "evidence": "--save-baseline before / --baseline before workflow; reads p-value significance and 'No change detected'."},
+    {"text": "Notes timing must come from an optimized build, not dev", "passed": true, "evidence": "'Run in release ... never judge perf from cargo test or a debug build.'"}
+  ]
+}

@@ -1,0 +1,37 @@
+{
+  "eval_id": 1,
+  "eval_name": "display-wgpu-texture",
+  "configuration": "without_skill",
+  "expectations": [
+    {
+      "text": "Uses register_native_texture to get a TextureId",
+      "passed": true,
+      "evidence": "- `register_native_texture` \u2014 \"give me a fresh `TextureId` for this view.\" Call"
+    },
+    {
+      "text": "Specifies FilterMode::Nearest for crisp pixel art",
+      "passed": true,
+      "evidence": "`FilterMode::Nearest` for both `mag_filter` and `min_filter`."
+    },
+    {
+      "text": "Uses update_egui_texture_from_wgpu_texture and avoids the nonexistent update_native_texture",
+      "passed": true,
+      "evidence": "renderer.update_egui_texture_from_wgpu_texture("
+    },
+    {
+      "text": "Does NOT present the nonexistent update_native_texture as a real API",
+      "passed": false,
+      "evidence": "- `update_native_texture` \u2014 \"keep this *existing* `TextureId`, but it now points"
+    },
+    {
+      "text": "Uses the correct sampler-options method name (register_native_texture_with_sampler_options), not the invented _with_sampler_descriptor",
+      "passed": false,
+      "evidence": "`register_native_texture_with_sampler_descriptor` lets you pick. Use"
+    },
+    {
+      "text": "Draws the texture via painter.image / ui.image with the TextureId",
+      "passed": true,
+      "evidence": "painter.image("
+    }
+  ]
+}

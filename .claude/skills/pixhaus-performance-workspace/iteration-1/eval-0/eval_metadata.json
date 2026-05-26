@@ -1,0 +1,12 @@
+{
+  "eval_id": 0,
+  "eval_name": "guess-trap-optimize-blend",
+  "prompt": "This blend function in our core crate feels slow when I'm painting on big canvases. Can you optimize it?\n\n```rust\npub fn blend_normal(src: &PixelBuffer, dst: &mut PixelBuffer) {\n    for y in 0..dst.height {\n        for x in 0..dst.width {\n            let s = src.pixel(x, y).unwrap();\n            let d = dst.pixel(x, y).unwrap();\n            let out = alpha_over(s, d);\n            dst.set_pixel(x, y, out);\n        }\n    }\n}\n```",
+  "assertions": [
+    {"text": "Leads with measure-don't-guess: says to profile or benchmark to confirm this is the bottleneck before optimizing", "type": "qualitative"},
+    {"text": "Does not present a hand-optimized rewrite as the answer without a measurement caveat", "type": "qualitative"},
+    {"text": "Identifies bounding work to the dirty region (not the whole canvas) as the durable fix", "type": "qualitative"},
+    {"text": "Mentions building with --release / the correct profile for an honest timing", "type": "qualitative"},
+    {"text": "Suggests a criterion benchmark to verify any change clears a real margin", "type": "qualitative"}
+  ]
+}

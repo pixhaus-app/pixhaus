@@ -1,0 +1,30 @@
+{
+  "summary": {
+    "pass_rate": 1.0,
+    "passed": 4,
+    "failed": 0,
+    "total": 4
+  },
+  "expectations": [
+    {
+      "text": "Identifies the root cause: Encoder dropped without finish(), so the frame epilogue is never written",
+      "passed": true,
+      "evidence": "States the encoder is dropped at Ok(()) and finish() is never called, so no end marker is written."
+    },
+    {
+      "text": "Fix calls encoder.finish()? and propagates the error",
+      "passed": true,
+      "evidence": "Corrected code calls encoder.finish()? then flushes the returned writer."
+    },
+    {
+      "text": "Correctly explains the small-vs-large size correlation via internal buffering/blocks",
+      "passed": true,
+      "evidence": "Explains small frames may still fit in buffers while large ones have flushed blocks and lose the final block+epilogue."
+    },
+    {
+      "text": "Notes the auto_finish() caveat (Drop-based finish swallows the error) on the save path",
+      "passed": true,
+      "evidence": "Explicitly warns against auto_finish() here because Drop can't return the finish Result."
+    }
+  ]
+}

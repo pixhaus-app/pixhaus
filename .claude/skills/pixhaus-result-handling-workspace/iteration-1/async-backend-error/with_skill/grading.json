@@ -1,0 +1,31 @@
+{
+  "expectations": [
+    {
+      "text": "Identifies the spawned error must be Send + Sync + 'static",
+      "passed": true,
+      "evidence": "States spawn requires the output (incl. the error) to be Send + 'static, really Send + Sync + 'static."
+    },
+    {
+      "text": "Root cause = a non-Send field in the error type (Rc / Box<dyn Error> without Send+Sync bound / borrowed field)",
+      "passed": true,
+      "evidence": "Lists the exact culprits; notes a thiserror enum is Send/Sync iff every field is."
+    },
+    {
+      "text": "Sends the whole Result<T, E> over the channel",
+      "passed": true,
+      "evidence": "type DecodeOutcome = Result<Document, pixhaus_io::Error>; tx.send(outcome)."
+    },
+    {
+      "text": "Logs at the UI/drain boundary and does not misapply inspect_err",
+      "passed": true,
+      "evidence": "Logs in the drain's Ok(Err(e)) arm; explicitly reasons inspect_err is wrong here since the UI thread is the terminal consumer, not propagating with ?."
+    },
+    {
+      "text": "Does not paper over with Box<dyn Error> in a public API or a ?Send escape hatch",
+      "passed": true,
+      "evidence": "Explicitly warns against #[async_trait(?Send)], Box<dyn Error>, and 'spawn_blocking to dodge Send'."
+    }
+  ],
+  "score": 5,
+  "total": 5
+}

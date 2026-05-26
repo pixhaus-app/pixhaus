@@ -1,0 +1,12 @@
+{
+  "eval_id": 2,
+  "eval_name": "thumbnail-cache-bulk",
+  "prompt": "While scrubbing the timeline we read and write a lot of small cached thumbnail tiles \u00e2\u20ac\u201d about 800 of them, each a few KB of RGBA bytes. I want to zstd-compress each tile independently on the way to disk and decompress on the way back. Which zstd API fits this better than encode_all per tile, and why? Show compress and decompress helpers.",
+  "assertions": [
+    "Recommends zstd::bulk::Compressor/Decompressor as the fit, over per-tile encode_all",
+    "Rationale includes reusing one zstd context across the ~800 tiles",
+    "decompress is called with a capacity bound (correct bulk API)",
+    "All bulk/dict API names are real and correct",
+    "Calibrated to the ask: treats a trained dictionary as optional/later, not the headline requirement"
+  ]
+}

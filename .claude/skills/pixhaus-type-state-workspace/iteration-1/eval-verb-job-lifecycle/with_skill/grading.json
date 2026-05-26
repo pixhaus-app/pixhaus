@@ -1,0 +1,40 @@
+{
+  "expectations": [
+    {
+      "text": "Three distinct state types model draft, running, finished",
+      "passed": true,
+      "evidence": "Draft (marker), Running { handle }, Done { output }."
+    },
+    {
+      "text": "output accessor exists only on the finished state",
+      "passed": true,
+      "evidence": "output()/into_output() in impl Job<Done>; negative compile E0599 on Job<Running>."
+    },
+    {
+      "text": "submit() exists only on the draft state",
+      "passed": true,
+      "evidence": "submit() in impl Job<Draft>, takes self; E0599 on Job<Running>."
+    },
+    {
+      "text": "Transition methods take self by value",
+      "passed": true,
+      "evidence": "submit(self), await/into_output consume self."
+    },
+    {
+      "text": "State-specific data lives inside the state type, not Option+unreachable",
+      "passed": true,
+      "evidence": "handle and output are plain fields on Running/Done; no Option, no unwrap/unreachable."
+    },
+    {
+      "text": "No unwrap/expect/unreachable/panic; fallible transitions return Result",
+      "passed": true,
+      "evidence": "clippy deny set passes; real await_output documented as async returning Result<Job<Done>, JobError>."
+    }
+  ],
+  "summary": {
+    "pass_rate": 1.0,
+    "passed": 6,
+    "failed": 0,
+    "total": 6
+  }
+}

@@ -1,0 +1,35 @@
+{
+  "summary": {
+    "pass_rate": 0.6,
+    "passed": 3,
+    "failed": 2,
+    "total": 5
+  },
+  "expectations": [
+    {
+      "text": "Uses streaming zstd Encoder/Decoder for the large project file (not encode_all/decode_all)",
+      "passed": true,
+      "evidence": "Wires encode::write into Encoder and decode::from_read from Decoder; explains avoiding the full Vec<u8> at 8K."
+    },
+    {
+      "text": "Calls encoder.finish() so the frame is not left truncated",
+      "passed": true,
+      "evidence": "Calls encoder.finish()? then into_inner()+flush to surface late write errors."
+    },
+    {
+      "text": "All zstd API names used are real (no invented methods)",
+      "passed": false,
+      "evidence": "Suggests `Decoder::with_window_size_limit` / `take()` cap, but with_window_size_limit is not a real zstd-rs method (correct API is window_log_max)."
+    },
+    {
+      "text": "Uses a thiserror enum, no unwrap/anyhow, no leaked io::Error",
+      "passed": true,
+      "evidence": "ProjectIoError enum with path-carrying #[source] variants; no unwrap."
+    },
+    {
+      "text": "Gives the Pixhaus-specific rule to run save/load off the UI thread via spawn_blocking",
+      "passed": false,
+      "evidence": "No mention of the egui UI thread or spawn_blocking; treats it as a plain file function."
+    }
+  ]
+}

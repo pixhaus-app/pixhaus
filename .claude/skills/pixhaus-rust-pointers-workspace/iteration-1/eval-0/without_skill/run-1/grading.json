@@ -1,0 +1,35 @@
+{
+  "expectations": [
+    {
+      "text": "Recommends Arc<RwLock<...>> (RwLock, not Mutex, as the synchronizer)",
+      "passed": true,
+      "evidence": "Arc<RwLock<HashMap<BackendId, Arc<dyn Backend>>>>."
+    },
+    {
+      "text": "Chooses parking_lot for the lock",
+      "passed": true,
+      "evidence": "Leads with parking_lot::RwLock and explains the advantages."
+    },
+    {
+      "text": "Treats parking_lot-over-std as a firm repo convention, not optional",
+      "passed": false,
+      "evidence": "Hedges: 'std::sync::RwLock is fine if you want zero extra deps ... Either works.'"
+    },
+    {
+      "text": "Explains the never-hold-lock-across-await trap and the clone-the-Arc-out fix",
+      "passed": true,
+      "evidence": "'don't hold the lock across .await' with get() cloning the Arc out."
+    },
+    {
+      "text": "Rejects Arc<Mutex> citing read-dominant access",
+      "passed": true,
+      "evidence": "'A Mutex serializes readers against each other ... throws away free read concurrency.'"
+    }
+  ],
+  "summary": {
+    "pass_rate": 0.8,
+    "passed": 4,
+    "failed": 1,
+    "total": 5
+  }
+}

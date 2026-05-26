@@ -1,0 +1,40 @@
+{
+  "expectations": [
+    {
+      "text": "Three distinct state types model draft, running, finished",
+      "passed": true,
+      "evidence": "Draft { config }, Running { config, handle }, Finished { output }."
+    },
+    {
+      "text": "output accessor exists only on the finished state",
+      "passed": true,
+      "evidence": "output()/into_output() in impl Job<Finished>."
+    },
+    {
+      "text": "submit() exists only on the draft state",
+      "passed": true,
+      "evidence": "submit() in impl Job<Draft>, takes self by value."
+    },
+    {
+      "text": "Transition methods take self by value",
+      "passed": true,
+      "evidence": "submit consumes the draft; commented negative cases show re-submit of moved draft is rejected."
+    },
+    {
+      "text": "State-specific data lives inside the state type, not Option+unreachable",
+      "passed": true,
+      "evidence": "handle and output are plain fields; 0 Option fields; explicitly avoids the Option+unreachable anti-pattern."
+    },
+    {
+      "text": "No unwrap/expect/unreachable/panic; fallible transitions return Result",
+      "passed": true,
+      "evidence": "No panic paths; compiles clean under edition 2024. (Result-on-join-failure less explicitly modeled than the with-skill run, but no panic present.)"
+    }
+  ],
+  "summary": {
+    "pass_rate": 1.0,
+    "passed": 6,
+    "failed": 0,
+    "total": 6
+  }
+}

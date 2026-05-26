@@ -1,0 +1,35 @@
+{
+  "expectations": [
+    {
+      "text": "Recommends Arc<RwLock<...>> (RwLock, not Mutex, as the synchronizer)",
+      "passed": true,
+      "evidence": "Leads with Arc<parking_lot::RwLock<BackendRegistry>>."
+    },
+    {
+      "text": "Chooses parking_lot for the lock",
+      "passed": true,
+      "evidence": "use parking_lot::RwLock; in the snippet."
+    },
+    {
+      "text": "Treats parking_lot-over-std as a firm repo convention, not optional",
+      "passed": true,
+      "evidence": "'Use parking_lot ... This is a workspace convention, not a preference.'"
+    },
+    {
+      "text": "Explains the never-hold-lock-across-await trap and the clone-the-Arc-out fix",
+      "passed": true,
+      "evidence": "Dedicated section: guard is !Send, clone Arc out under the lock then drop before .await."
+    },
+    {
+      "text": "Rejects Arc<Mutex> citing read-dominant access",
+      "passed": true,
+      "evidence": "'Mutex serializes readers ... wrong fit when reads vastly outnumber writes.'"
+    }
+  ],
+  "summary": {
+    "pass_rate": 1.0,
+    "passed": 5,
+    "failed": 0,
+    "total": 5
+  }
+}

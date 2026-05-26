@@ -1,0 +1,30 @@
+{
+  "summary": {
+    "pass_rate": 1.0,
+    "passed": 4,
+    "failed": 0,
+    "total": 4
+  },
+  "expectations": [
+    {
+      "text": "Identifies the root cause: Encoder dropped without finish(), so the frame epilogue is never written",
+      "passed": true,
+      "evidence": "States it lets the encoder drop without finish(); Drop cannot finalize."
+    },
+    {
+      "text": "Fix calls encoder.finish()? and propagates the error",
+      "passed": true,
+      "evidence": "Corrected code calls finish()?, flushes, and sync_all()s the file."
+    },
+    {
+      "text": "Correctly explains the small-vs-large size correlation via internal buffering/blocks",
+      "passed": true,
+      "evidence": "Explains once data exceeds an internal block, a full block plus epilogue are stranded."
+    },
+    {
+      "text": "Notes the auto_finish() caveat (Drop-based finish swallows the error) on the save path",
+      "passed": true,
+      "evidence": "Dedicated section: avoid auto_finish() on a save path because the finalize error is swallowed."
+    }
+  ]
+}

@@ -1,0 +1,35 @@
+{
+  "expectations": [
+    {
+      "text": "Recommends against type-state here",
+      "passed": true,
+      "evidence": "'type-state is the wrong tool here'; pattern buys nothing."
+    },
+    {
+      "text": "Identifies the runtime-chosen-state boundary",
+      "passed": true,
+      "evidence": "'Which tool is active is decided at runtime by a user clicking the toolbar ... that's data, not a type'."
+    },
+    {
+      "text": "Explicitly rejects unsafe/transmute",
+      "passed": true,
+      "evidence": "'the unsafe plan can't work' + 'banned in this workspace anyway'; explains one fixed return type."
+    },
+    {
+      "text": "Suggests enum or trait object instead",
+      "passed": true,
+      "evidence": "Option A enum+match, Option B trait + Box<dyn Tool>."
+    },
+    {
+      "text": "Does not output a type-state design relying on unsafe",
+      "passed": true,
+      "evidence": "No unsafe; structs behind a narrow shared interface."
+    }
+  ],
+  "summary": {
+    "pass_rate": 1.0,
+    "passed": 5,
+    "failed": 0,
+    "total": 5
+  }
+}

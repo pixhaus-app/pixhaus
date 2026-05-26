@@ -73,6 +73,31 @@ it." Public surface shrinks the API; tests guard the contract.
   the example fails. Add one for any public function whose usage is
   non-obvious.
 
+  Lines prefixed with `#` compile but stay hidden from the rendered docs —
+  use them for imports, fixture setup, and the `Ok::<(), _>(())` wrapper so
+  the visible example shows only what a reader cares about. Hidden lines are
+  the lever that keeps an example both runnable and clean: a function that
+  reads a file can still have an executing example if the hidden lines write
+  a `tempfile` first, so prefer that over switching the example off. The
+  fence also takes attributes that change how the block runs:
+
+  - `no_run` — compile but don't execute. The fallback for an example that
+    genuinely can't run in CI: it opens a window, needs a GPU surface, hits
+    the network, or depends on a file the repo doesn't ship. Don't reach for
+    it just because there's a side effect — if you can make the example
+    self-contained with a hidden `tempfile` or in-memory fixture, a running
+    example proves more than one that only compiles.
+  - `should_panic` — the example is expected to panic; the test passes when
+    it does.
+  - `compile_fail` — the example is expected *not* to compile. Useful for
+    showing that a misuse is caught at compile time (a sealed trait, a
+    type-state guard).
+  - `ignore` — skip entirely. Avoid it; if you only want formatting, mark
+    the block `text` so it isn't a test at all.
+
+  Doc tests run under `cargo test --doc`, not `cargo nextest run` — see the
+  nextest section for why that split matters here.
+
 ## Unit test style
 
 A test reads top-to-bottom: arrange, act, assert. Name the test for the
@@ -91,6 +116,129 @@ Bad name: `test_pixel`. Good name: `out_of_bounds_pixel_returns_none`.
 Test the smallest unit that proves the behavior. Don't reach into a
 service to test a helper that has its own test; double-coverage adds noise
 without value.
+
+### Name tests like sentences
+
+A good test name names three things so the test report reads as a spec
+without opening the file:
+
+- **the unit** — the function under test (`blend_normal`, `decode_png`)
+- **the expected behavior** — what it does (`returns_none`, `clamps_alpha`)
+- **the state that triggers it** — the case (`when_out_of_bounds`, `for_empty_input`)
+
+`out_of_bounds_pixel_returns_none` carries all three. `test_pixel` carries
+none — a failure tells you nothing until you read the body. Tests are the
+first place someone looks to learn how a function is used, so the name is
+documentation, not a label.
+
+### Group a unit's tests in a nested module
+
+When one function grows several tests, nest them in a module named for the
+function. The module prefix shows up in the test report and gives editors a
+single run button for the whole group:
+
+```rust
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    mod blend_normal {
+        use super::*;
+
+        // reported as `blend_normal::opaque_src_replaces_dst`
+        #[test]
+        fn opaque_src_replaces_dst() { /* ... */ }
+
+        // reported as `blend_normal::transparent_src_keeps_dst`
+        #[test]
+        fn transparent_src_keeps_dst() { /* ... */ }
+    }
+}
+```
+
+The prefix replaces a repeated `blend_normal_` on every name. Reach for the
+nested module once a unit has three or more tests; a single test reads fine
+flat.
+
+### One behavior per test
+
+A test should prove one thing. When it fails, the name alone should tell you
+what broke. Packing several behaviors into one body hides which assertion
+fired and forces you to fix them one re-run at a time:
+
+```rust
+// Bad: a failure could be either line, and the name commits to neither.
+#[test]
+fn parse_works() {
+    assert!(Glyph::parse("abcd").is_ok());
+    assert!(Glyph::parse("ABCD").is_err());
+}
+
+// Good: each behavior is its own named test.
+#[test]
+fn lowercase_is_accepted() {
+    assert!(Glyph::parse("abcd").is_ok());
+}
+
+#[test]
+fn uppercase_is_rejected() {
+    assert!(Glyph::parse("ABCD").is_err());
+}
+```
+
+When the only thing that varies is the input, don't copy-paste bodies — use
+an `rstest` case table with a descriptive label per case (see below). One
+assertion per test is the target; more than one is a smell that you're
+testing more than one behavior.
+
+## How to assert
+
+Two macros cover almost everything: `assert!` for a boolean, `assert_eq!`
+for equality. Both take a trailing format string that prints only on
+failure — use it to say what the actual value was, so a red test explains
+itself instead of just saying "assertion failed":
+
+```rust
+assert!(value.is_ok(), "expected Ok, got {:?}", value.unwrap_err());
+assert_eq!(got, want, "blend diverged by {}", got.r as i16 - want.r as i16);
+```
+
+The `is_ok()` / `is_err()` path is the one that bites: the default message
+is a bare `false`, which tells you nothing. Always attach the error so the
+failure carries the reason.
+
+When you care that a value matches a *shape* but not its contents, pair
+`assert!` with `matches!` instead of destructuring by hand:
+
+```rust
+assert!(
+    matches!(err, DecodeError::BadHeader(_)),
+    "expected BadHeader, got {err:?}"
+);
+```
+
+For large `assert_eq!` comparisons, `pretty_assertions` renders a colored,
+line-by-line diff in place of Rust's wall-of-text default. Import it in the
+test module so the override is scoped to tests:
+
+```rust
+#[cfg(test)]
+mod tests {
+    use pretty_assertions::assert_eq; // shadows std's assert_eq! in this module
+    use super::*;
+    // ...
+}
+```
+
+Use `#[should_panic]` only when a panic is the documented contract (an
+assertion in a constructor, say). For ordinary failure paths, return a
+`Result` and assert on the `Err` — a panic is harder to pin to a cause and
+can't carry a typed error. When you do use it, match the message so the test
+can't pass on the wrong panic: `#[should_panic(expected = "stride must be")]`.
+
+Mark a test you've deliberately parked with `#[ignore = "reason"]`, never a
+bare `#[ignore]`. The reason — ideally a tracking issue — is what keeps a
+parked test from rotting into a permanently dead one.
 
 ## `rstest` for fixtures and parameterization
 
@@ -114,13 +262,18 @@ fn fill_changes_every_pixel(mut small_buffer: PixelBuffer) {
 }
 
 #[rstest]
-#[case(Rgba::new(255, 0, 0, 255), Rgba::new(0, 0, 0, 255), Rgba::new(255, 0, 0, 255))]
-#[case(Rgba::new(0, 0, 0, 0), Rgba::new(0, 0, 255, 255), Rgba::new(0, 0, 255, 255))]
-#[case(Rgba::new(255, 255, 255, 128), Rgba::new(0, 0, 0, 255), Rgba::new(128, 128, 128, 255))]
+#[case::opaque_src_wins(Rgba::new(255, 0, 0, 255), Rgba::new(0, 0, 0, 255), Rgba::new(255, 0, 0, 255))]
+#[case::transparent_src_keeps_dst(Rgba::new(0, 0, 0, 0), Rgba::new(0, 0, 255, 255), Rgba::new(0, 0, 255, 255))]
+#[case::half_alpha_blends_midpoint(Rgba::new(255, 255, 255, 128), Rgba::new(0, 0, 0, 255), Rgba::new(128, 128, 128, 255))]
 fn blend_normal(#[case] src: Rgba, #[case] dst: Rgba, #[case] expected: Rgba) {
     assert_eq!(blend_normal_fn(src, dst), expected);
 }
 ```
+
+Label every case with `#[case::name(...)]`. The label becomes the test name
+(`blend_normal::opaque_src_wins`), so a failing case reads like a sentence in
+the report instead of `blend_normal::case_1`. Without labels, a case table
+trades one unreadable name for several.
 
 When the same fixture appears in 3+ tests, lift it. Don't reach for
 fixtures for a single test — inline setup is clearer.
@@ -404,7 +557,9 @@ When reviewing a PR:
 
 - [ ] Every new public function has at least one test
 - [ ] Tests are named for the behavior they pin, not for the function
-- [ ] No `#[ignore]` without a referenced issue or TODO
+- [ ] Each test proves one behavior; multi-input cases use an `rstest` table
+- [ ] `is_ok()` / `is_err()` asserts carry a failure message with the actual value
+- [ ] No bare `#[ignore]` — every parked test has `#[ignore = "reason"]`
 - [ ] Snapshot files are committed and look reviewed (not auto-accepted)
 - [ ] `proptest-regressions/` files for new properties are committed
 - [ ] No real API calls — mock at the HTTP boundary with `wiremock`
@@ -416,6 +571,10 @@ When reviewing a PR:
 ## Anti-patterns
 
 - **`#[test] fn it_works()`** — placeholder name. Replace before merge.
+- **`assert!(x.is_ok())` with no message** — when it fails you get a bare
+  `false` and have to re-run to see the error. Print the `Err`.
+- **Several behaviors in one test** — `assert!(parse("a").is_ok());
+  assert!(parse("A").is_err());` hides which half broke. Split them.
 - **Asserting against the implementation** — `assert_eq!(state.cache.len(), 3)`
   ties tests to internal structure. Assert against observable behavior instead.
 - **Sleep-based synchronization** — `thread::sleep(100ms)` to wait for an

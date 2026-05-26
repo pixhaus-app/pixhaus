@@ -1,0 +1,30 @@
+{
+  "expectations": [
+    {
+      "text": "Recommends a recursive enum with children behind a Vec",
+      "passed": true,
+      "evidence": "enum LayerNode { Leaf, Group } with Group owning Vec<LayerNode>."
+    },
+    {
+      "text": "States no Box is needed because Vec is already heap-backed",
+      "passed": true,
+      "evidence": "'Vec ... already heap-allocated and owned, so they already break the recursion. You don't add a Box on top.'"
+    },
+    {
+      "text": "Rejects Rc<RefCell>/Arc<Mutex> as the GC-language reflex, citing single owner",
+      "passed": true,
+      "evidence": "'This is the reflex to resist ... a layer tree has a single owner: the document.'"
+    },
+    {
+      "text": "Names an index/arena (LayerId) approach as the legitimate alternative",
+      "passed": true,
+      "evidence": "'An arena: Vec<LayerNode> ... addressed by index/LayerId ... the legitimate alternative.'"
+    }
+  ],
+  "summary": {
+    "pass_rate": 1.0,
+    "passed": 4,
+    "failed": 0,
+    "total": 4
+  }
+}

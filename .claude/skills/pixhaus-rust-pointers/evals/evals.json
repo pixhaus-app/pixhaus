@@ -1,0 +1,26 @@
+{
+  "skill_name": "pixhaus-rust-pointers",
+  "evals": [
+    {
+      "id": 0,
+      "name": "cross-thread-registry",
+      "prompt": "I'm working in the Pixhaus repo on the shell crate. I'm building the backend registry that holds all the AI adapters (Anthropic, OpenAI, Replicate, etc). The egui UI thread reads it constantly to list which backends are available, and a settings flow occasionally adds or removes one. Background tasks spawned on the tokio runtime also need to look up a backend by id to run a request. What should I wrap the registry in, and why that and not the alternatives?",
+      "expected_output": "Recommends Arc<parking_lot::RwLock<BackendRegistry>>: Arc because genuinely shared across UI thread + tasks, RwLock because reads dominate and writes are rare, parking_lot over std::sync. Rejects Arc<Mutex> (reads dominate) and Rc (not Send). Notes the lock must not be held across .await.",
+      "files": []
+    },
+    {
+      "id": 1,
+      "name": "recursive-layer-hierarchy",
+      "prompt": "In the Pixhaus core crate I need a layer hierarchy where a group can contain other groups or leaf layers, nested arbitrarily deep. How should I represent this recursive structure in Rust?",
+      "expected_output": "Recommends an enum with a Vec for the children arm (Vec is already heap-backed) and Box only for a single recursive child. Mentions that an arena / indices (LayerId into a Vec) is often the better model and avoids Rc. Does NOT reach for Rc<RefCell> by reflex.",
+      "files": []
+    },
+    {
+      "id": 2,
+      "name": "lazy-default-palette",
+      "prompt": "I want a built-in default palette in Pixhaus that's computed once from an embedded asset and then read all over the app from multiple threads. It's a bit expensive to build, so I don't want to do it at startup if nothing ends up using it. How should I store it?",
+      "expected_output": "Recommends a `static DEFAULT_PALETTE: LazyLock<Palette> = LazyLock::new(|| ...)`. Thread-safe, lazy on first access, std (no lazy_static / once_cell crate). Rejects Mutex<Option<T>> and a single-threaded OnceCell/LazyCell.",
+      "files": []
+    }
+  ]
+}

@@ -1,0 +1,6 @@
+{
+  "eval_id": 2,
+  "eval_name": "async-backend-error",
+  "prompt": "In the shell binary I'm spawning a decode job on the tokio runtime and sending the result back to the egui update loop over a oneshot channel. The decode lives in pixhaus_io and returns its own error type. I keep getting a compile error about the error not being Send when I spawn the task. How should I set up the error type and the channel so this works, and where should I log the failure? Sketch the spawn + the receiver-drain side.",
+  "assertions": []
+}

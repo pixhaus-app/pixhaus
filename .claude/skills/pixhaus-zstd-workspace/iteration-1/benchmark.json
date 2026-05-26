@@ -1,0 +1,321 @@
+{
+  "metadata": {
+    "skill_name": "pixhaus-zstd",
+    "skill_path": "C:/Users/luism/Documents/GitHub/pixhaus-worktrees/v2/.claude/skills/pixhaus-zstd",
+    "executor_model": "claude-opus-4-7 (subagents)",
+    "analyzer_model": "<model-name>",
+    "timestamp": "2026-05-25T21:48:49Z",
+    "evals_run": [
+      0,
+      1,
+      2
+    ],
+    "runs_per_configuration": 1
+  },
+  "runs": [
+    {
+      "eval_id": 0,
+      "configuration": "with_skill",
+      "run_number": 1,
+      "result": {
+        "pass_rate": 1.0,
+        "passed": 5,
+        "failed": 0,
+        "total": 5,
+        "time_seconds": 35.9,
+        "tokens": 51707,
+        "tool_calls": 0,
+        "errors": 0
+      },
+      "expectations": [
+        {
+          "text": "Uses streaming zstd Encoder/Decoder for the large project file (not encode_all/decode_all)",
+          "passed": true,
+          "evidence": "Uses zstd::stream::write::Encoder + rmp_serde::encode::write, and stream::read::Decoder + decode::from_read; explicitly justifies streaming at 8K."
+        },
+        {
+          "text": "Calls encoder.finish() so the frame is not left truncated",
+          "passed": true,
+          "evidence": "Calls encoder.finish()? and explains the truncated-frame footgun."
+        },
+        {
+          "text": "All zstd API names used are real (no invented methods)",
+          "passed": true,
+          "evidence": "Untrusted-input guard uses the real method window_log_max(n)."
+        },
+        {
+          "text": "Uses a thiserror enum, no unwrap/anyhow, no leaked io::Error",
+          "passed": true,
+          "evidence": "ProjectIoError enum with #[from] arms; notes anyhow stays in the binary."
+        },
+        {
+          "text": "Gives the Pixhaus-specific rule to run save/load off the UI thread via spawn_blocking",
+          "passed": true,
+          "evidence": "Call-site notes: hand save/load to tokio::task::spawn_blocking, deliver over a channel the egui loop drains; never inline on the update loop."
+        }
+      ],
+      "notes": []
+    },
+    {
+      "eval_id": 1,
+      "configuration": "with_skill",
+      "run_number": 1,
+      "result": {
+        "pass_rate": 1.0,
+        "passed": 4,
+        "failed": 0,
+        "total": 4,
+        "time_seconds": 35.1,
+        "tokens": 51059,
+        "tool_calls": 0,
+        "errors": 0
+      },
+      "expectations": [
+        {
+          "text": "Identifies the root cause: Encoder dropped without finish(), so the frame epilogue is never written",
+          "passed": true,
+          "evidence": "States the encoder is dropped at Ok(()) and finish() is never called, so no end marker is written."
+        },
+        {
+          "text": "Fix calls encoder.finish()? and propagates the error",
+          "passed": true,
+          "evidence": "Corrected code calls encoder.finish()? then flushes the returned writer."
+        },
+        {
+          "text": "Correctly explains the small-vs-large size correlation via internal buffering/blocks",
+          "passed": true,
+          "evidence": "Explains small frames may still fit in buffers while large ones have flushed blocks and lose the final block+epilogue."
+        },
+        {
+          "text": "Notes the auto_finish() caveat (Drop-based finish swallows the error) on the save path",
+          "passed": true,
+          "evidence": "Explicitly warns against auto_finish() here because Drop can't return the finish Result."
+        }
+      ],
+      "notes": []
+    },
+    {
+      "eval_id": 2,
+      "configuration": "with_skill",
+      "run_number": 1,
+      "result": {
+        "pass_rate": 1.0,
+        "passed": 5,
+        "failed": 0,
+        "total": 5,
+        "time_seconds": 34.9,
+        "tokens": 51194,
+        "tool_calls": 0,
+        "errors": 0
+      },
+      "expectations": [
+        {
+          "text": "Recommends zstd::bulk::Compressor/Decompressor as the fit, over per-tile encode_all",
+          "passed": true,
+          "evidence": "Headline recommendation is bulk::{Compressor,Decompressor} reused across the ~800 tiles."
+        },
+        {
+          "text": "Rationale includes reusing one zstd context across the ~800 tiles",
+          "passed": true,
+          "evidence": "Explains encode_all allocates/tears down a context per call; Compressor holds one alive across calls."
+        },
+        {
+          "text": "decompress is called with a capacity bound (correct bulk API)",
+          "passed": true,
+          "evidence": "decompress_tile passes max_decompressed_len = w*h*4 to Decompressor::decompress; notes upper_bound is only a hint."
+        },
+        {
+          "text": "All bulk/dict API names are real and correct",
+          "passed": true,
+          "evidence": "Compressor::new/compress, Decompressor::new/decompress, with_prepared_dictionary, dict::from_samples \u2014 all correct."
+        },
+        {
+          "text": "Calibrated to the ask: treats a trained dictionary as optional/later, not the headline requirement",
+          "passed": true,
+          "evidence": "Frames a dictionary as a later option 'if profiling shows per-frame overhead dominates' \u2014 matches skill guidance."
+        }
+      ],
+      "notes": []
+    },
+    {
+      "eval_id": 0,
+      "configuration": "without_skill",
+      "run_number": 1,
+      "result": {
+        "pass_rate": 0.6,
+        "passed": 3,
+        "failed": 2,
+        "total": 5,
+        "time_seconds": 30.7,
+        "tokens": 45283,
+        "tool_calls": 0,
+        "errors": 0
+      },
+      "expectations": [
+        {
+          "text": "Uses streaming zstd Encoder/Decoder for the large project file (not encode_all/decode_all)",
+          "passed": true,
+          "evidence": "Wires encode::write into Encoder and decode::from_read from Decoder; explains avoiding the full Vec<u8> at 8K."
+        },
+        {
+          "text": "Calls encoder.finish() so the frame is not left truncated",
+          "passed": true,
+          "evidence": "Calls encoder.finish()? then into_inner()+flush to surface late write errors."
+        },
+        {
+          "text": "All zstd API names used are real (no invented methods)",
+          "passed": false,
+          "evidence": "Suggests `Decoder::with_window_size_limit` / `take()` cap, but with_window_size_limit is not a real zstd-rs method (correct API is window_log_max)."
+        },
+        {
+          "text": "Uses a thiserror enum, no unwrap/anyhow, no leaked io::Error",
+          "passed": true,
+          "evidence": "ProjectIoError enum with path-carrying #[source] variants; no unwrap."
+        },
+        {
+          "text": "Gives the Pixhaus-specific rule to run save/load off the UI thread via spawn_blocking",
+          "passed": false,
+          "evidence": "No mention of the egui UI thread or spawn_blocking; treats it as a plain file function."
+        }
+      ],
+      "notes": []
+    },
+    {
+      "eval_id": 1,
+      "configuration": "without_skill",
+      "run_number": 1,
+      "result": {
+        "pass_rate": 1.0,
+        "passed": 4,
+        "failed": 0,
+        "total": 4,
+        "time_seconds": 33.0,
+        "tokens": 45197,
+        "tool_calls": 0,
+        "errors": 0
+      },
+      "expectations": [
+        {
+          "text": "Identifies the root cause: Encoder dropped without finish(), so the frame epilogue is never written",
+          "passed": true,
+          "evidence": "States it lets the encoder drop without finish(); Drop cannot finalize."
+        },
+        {
+          "text": "Fix calls encoder.finish()? and propagates the error",
+          "passed": true,
+          "evidence": "Corrected code calls finish()?, flushes, and sync_all()s the file."
+        },
+        {
+          "text": "Correctly explains the small-vs-large size correlation via internal buffering/blocks",
+          "passed": true,
+          "evidence": "Explains once data exceeds an internal block, a full block plus epilogue are stranded."
+        },
+        {
+          "text": "Notes the auto_finish() caveat (Drop-based finish swallows the error) on the save path",
+          "passed": true,
+          "evidence": "Dedicated section: avoid auto_finish() on a save path because the finalize error is swallowed."
+        }
+      ],
+      "notes": []
+    },
+    {
+      "eval_id": 2,
+      "configuration": "without_skill",
+      "run_number": 1,
+      "result": {
+        "pass_rate": 0.8,
+        "passed": 4,
+        "failed": 1,
+        "total": 5,
+        "time_seconds": 37.8,
+        "tokens": 45659,
+        "tool_calls": 0,
+        "errors": 0
+      },
+      "expectations": [
+        {
+          "text": "Recommends zstd::bulk::Compressor/Decompressor as the fit, over per-tile encode_all",
+          "passed": true,
+          "evidence": "Uses bulk::{Compressor,Decompressor}; also offers the bulk-without-dictionary path as the smaller upgrade."
+        },
+        {
+          "text": "Rationale includes reusing one zstd context across the ~800 tiles",
+          "passed": true,
+          "evidence": "Explains reusing one CCtx/DCtx vs re-initialising 800 times per scrub pass."
+        },
+        {
+          "text": "decompress is called with a capacity bound (correct bulk API)",
+          "passed": true,
+          "evidence": "decompress(frame, capacity) with capacity = width*height*4."
+        },
+        {
+          "text": "All bulk/dict API names are real and correct",
+          "passed": true,
+          "evidence": "from_samples, EncoderDictionary::copy, DecoderDictionary::copy, with_prepared_dictionary \u2014 all correct."
+        },
+        {
+          "text": "Calibrated to the ask: treats a trained dictionary as optional/later, not the headline requirement",
+          "passed": false,
+          "evidence": "Leads with a trained dictionary as the primary recommendation and adds dictionary versioning/invalidation overhead the 'compress each independently' ask did not require."
+        }
+      ],
+      "notes": []
+    }
+  ],
+  "run_summary": {
+    "with_skill": {
+      "pass_rate": {
+        "mean": 1.0,
+        "stddev": 0.0,
+        "min": 1.0,
+        "max": 1.0
+      },
+      "time_seconds": {
+        "mean": 35.3,
+        "stddev": 0.5292,
+        "min": 34.9,
+        "max": 35.9
+      },
+      "tokens": {
+        "mean": 51320.0,
+        "stddev": 341.8816,
+        "min": 51059,
+        "max": 51707
+      }
+    },
+    "without_skill": {
+      "pass_rate": {
+        "mean": 0.8,
+        "stddev": 0.2,
+        "min": 0.6,
+        "max": 1.0
+      },
+      "time_seconds": {
+        "mean": 33.8333,
+        "stddev": 3.6226,
+        "min": 30.7,
+        "max": 37.8
+      },
+      "tokens": {
+        "mean": 45379.6667,
+        "stddev": 245.7017,
+        "min": 45197,
+        "max": 45659
+      }
+    },
+    "delta": {
+      "pass_rate": "+0.20",
+      "time_seconds": "+1.5",
+      "tokens": "+5940"
+    }
+  },
+  "notes": [
+    "Baseline is strong (80%): zstd is a well-documented crate, so capable models already know the finish() footgun and bulk-context reuse. The skill's value is concentrated in accuracy and repo-fit, not raw correctness.",
+    "Non-discriminating eval: eval-1 (truncated-save debug) scored 100% for BOTH configs. The missing-finish() bug is well-known enough that the skill didn't change a direct debugging answer \u2014 read this as 'skill does no harm', not a win.",
+    "Discriminator 1 (API accuracy): the eval-0 baseline invented `Decoder::with_window_size_limit` (not a real zstd-rs method); the skill run used the correct `window_log_max`. Preventing hallucinated API names is exactly the job of a reference skill.",
+    "Discriminator 2 (repo-fit): only the skill runs surfaced the spawn_blocking / keep-compression-off-the-egui-thread rule (eval-0), which is Pixhaus-specific and not derivable from the zstd docs alone.",
+    "Discriminator 3 (calibration): the eval-2 baseline led with a trained dictionary as the headline answer (over-engineered for 'compress each tile independently' and adds versioning/invalidation burden); the skill framed a dictionary as optional/later, matching its own 'if you're not sure you need one, you don't' guidance.",
+    "Cost: with-skill averaged ~+13% tokens (51.3k vs 45.4k) and ~+1.4s, the expected overhead of reading the skill file. Modest for the accuracy/fit gains.",
+    "Caveat: n=1 run per config (not the default 3), so stddev is 0 and these are point estimates. Adequate for a hand-authored reference skill; treat the +0.20 delta as directional, not a tight measurement."
+  ]
+}

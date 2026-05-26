@@ -1,0 +1,12 @@
+{
+  "eval_id": 0,
+  "configuration": "without_skill",
+  "summary": {"pass_rate": 0.2, "passed": 1, "failed": 4, "total": 5},
+  "expectations": [
+    {"text": "Leads with measure-don't-guess before optimizing", "passed": false, "evidence": "Opens 'Short answer: yes, and the speedup is large' and proceeds straight to a rewrite; no measure-first framing."},
+    {"text": "Does not present a hand-optimized rewrite without a measurement caveat", "passed": false, "evidence": "Presents the full byte-slice rewrite as the answer; benchmarking appears only as step 5 before parallelism."},
+    {"text": "Identifies bounding work to the dirty region as the durable fix", "passed": true, "evidence": "'Fix #3: blend only the dirty region' explicitly called the big one for painting."},
+    {"text": "Mentions building with --release / the correct profile for honest timing", "passed": false, "evidence": "Never mentions release builds, profiles, or profiling at all."},
+    {"text": "Suggests a criterion benchmark to verify the change clears a real margin", "passed": false, "evidence": "Mentions a criterion bench 'before adding any parallelism' but not as before/after verification with a margin/revert rule."}
+  ]
+}

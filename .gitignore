@@ -31,6 +31,11 @@ logs/
 # Worktrees
 ../pixhaus-worktrees/
 
+# Headless runner output (generated sprites)
+out/
+out_demo/
+out_gen/
+
 # Coverage
 coverage/
 *.lcov

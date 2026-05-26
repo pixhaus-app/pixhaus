@@ -42,14 +42,22 @@ ergonomics for heavy dialog UIs, which is a learning curve, not a blocker.
 
 ## Skills — load when relevant
 
-Three skills in `.claude/skills/` define how to write code in this repo:
+`.claude/skills/` holds two kinds of skill. They're auto-discovered: each one
+triggers off its own `description`, so this file states the policy, not the
+inventory — don't maintain a list here that would drift as skills come and go.
 
-- `pixhaus-rust-conventions` — Rust patterns, error handling, async, the no-unwrap rule
-- `pixhaus-testing-conventions` — rstest, proptest, insta, image-compare, mockall
-- `pixhaus-claude-code-workflow` — branches, commits, PRs, hook output handling
+- **Conventions** — how to write code in this repo, regardless of crate:
+  - `pixhaus-rust-conventions` — Rust patterns, error handling, async, the no-unwrap rule
+  - `pixhaus-testing-conventions` — rstest, proptest, insta, image-compare, mockall
+  - `pixhaus-claude-code-workflow` — branches, commits, PRs, hook output handling
+- **Per-dependency** — one skill per locked dependency (`pixhaus-egui`,
+  `pixhaus-wgpu`, `pixhaus-tokio`, `pixhaus-image`, …), each the verified API and
+  idioms for that crate at its pinned version. They fire when you work with that
+  crate; load the matching one before reaching for a dependency's API from memory,
+  since pinned versions drift from training data.
 
-Load `pixhaus-rust-conventions` for any Rust work. Load
-`pixhaus-claude-code-workflow` whenever you commit.
+Always load `pixhaus-rust-conventions` for Rust work and `pixhaus-claude-code-workflow`
+whenever you commit.
 
 ## Hooks
 

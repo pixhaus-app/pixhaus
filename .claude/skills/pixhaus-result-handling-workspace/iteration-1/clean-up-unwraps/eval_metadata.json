@@ -1,0 +1,6 @@
+{
+  "eval_id": 0,
+  "eval_name": "clean-up-unwraps",
+  "prompt": "This is in pixhaus_core. `cargo clippy` is failing on every one of these unwraps/expects and I can't commit. Rewrite the file so it passes the workspace lints, picking the right replacement at each call site (some of these can return an error, some have a sensible fallback). Keep the public signatures unless you have a good reason to change one. Show me the rewritten file and a one-line note per change explaining why you chose that replacement.",
+  "assertions": []
+}

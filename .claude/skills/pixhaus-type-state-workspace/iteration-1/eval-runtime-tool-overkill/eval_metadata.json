@@ -1,0 +1,12 @@
+{
+  "eval_id": 2,
+  "eval_name": "runtime-tool-overkill",
+  "prompt": "I'm thinking about using the type-state pattern for our editor tools. We have Pencil, Eraser, and Bucket, and the user switches between them by clicking the toolbar. The idea is each tool type would only expose the operations valid for it. I was going to use unsafe to return the right tool type from the toolbar click handler. Does this make sense?",
+  "assertions": [
+    {"text": "Recommends against full type-state here (or makes clear it is the wrong fit for this case)"},
+    {"text": "Identifies that the active tool is chosen at runtime, so a static type cannot be picked — the runtime-chosen-state boundary"},
+    {"text": "Explicitly rejects using unsafe/transmute (unsafe is forbidden workspace-wide)"},
+    {"text": "Suggests an enum (or trait object) as the right model instead"},
+    {"text": "Does not output a contrived type-state design that relies on unsafe"}
+  ]
+}

@@ -1,0 +1,26 @@
+{
+  "expectations": [
+    {
+      "text": "No unwrap()/expect() remain in the rewritten production code",
+      "passed": true,
+      "evidence": "All call sites converted."
+    },
+    {
+      "text": "rename_active propagates the parse error with `?` and turns the get_mut None into a typed error via ok_or_else",
+      "passed": true,
+      "evidence": "Uses ? and .ok_or(Error::NoActiveLayer)? (ok_or rather than ok_or_else, but equivalent intent)."
+    },
+    {
+      "text": "Respects 'keep the public signatures' \u2014 infallible getters kept infallible with an unwrap_or* fallback",
+      "passed": false,
+      "evidence": "Changed active_layer_name from -> String to -> Result<String>; only active_opacity kept infallible. Justified as corruption, but the prompt said keep signatures unless a strong reason and an empty-name fallback was available."
+    },
+    {
+      "text": "Per-change rationale tied to the chosen replacement",
+      "passed": true,
+      "evidence": "Per-change notes provided, including a keep-signature alternative."
+    }
+  ],
+  "score": 3,
+  "total": 4
+}

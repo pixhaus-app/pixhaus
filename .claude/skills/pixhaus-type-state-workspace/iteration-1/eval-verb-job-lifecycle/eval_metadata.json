@@ -1,0 +1,13 @@
+{
+  "eval_id": 1,
+  "eval_name": "verb-job-lifecycle",
+  "prompt": "We have an AI inference job in Pixhaus that goes through three stages: a draft you've configured but not sent, a running job with a spawned task handle, and a finished job that holds the output image. I want it to be impossible to read the output before the job is finished, and impossible to re-submit a job that's already running — enforced by the compiler, not by checking a status field at runtime. How should I model this? Show me the types.",
+  "assertions": [
+    {"text": "Three distinct state types model draft, running, and finished"},
+    {"text": "The output accessor exists only on the finished state"},
+    {"text": "submit()/send exists only on the draft state, so a running job cannot be re-submitted"},
+    {"text": "Transition methods take self by value (consume the previous state)"},
+    {"text": "State-specific data (task handle, output image) lives inside the state type, not Option fields unwrapped with unreachable!/expect"},
+    {"text": "No unwrap/expect/unreachable/panic; fallible transitions return Result"}
+  ]
+}

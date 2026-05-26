@@ -1,0 +1,32 @@
+{
+  "eval_id": 0,
+  "eval_name": "canvas-paint-callback",
+  "configuration": "with_skill",
+  "expectations": [
+    {
+      "text": "Implements CallbackTrait with a paint method",
+      "passed": true,
+      "evidence": "8192x8192 canvas. That is exactly what the `CallbackTrait` path is for, and the dirty-rect"
+    },
+    {
+      "text": "paint takes RenderPass<'static> (the 'static-lifetime pass)",
+      "passed": true,
+      "evidence": "render_pass: &mut RenderPass<'static>,"
+    },
+    {
+      "text": "Uploads only the dirty sub-rect via queue.write_texture in prepare (no full-canvas reupload)",
+      "passed": true,
+      "evidence": "- Uploads (uniform write, dirty-rect `write_texture`) happen in `prepare`, which gets"
+    },
+    {
+      "text": "Stores GPU resources in the callback_resources / CallbackResources type-map (built once)",
+      "passed": true,
+      "evidence": "This struct is inserted once into the renderer's `callback_resources` type-map and persists"
+    },
+    {
+      "text": "Pushes the callback via Callback::new_paint_callback(rect, ...)",
+      "passed": true,
+      "evidence": "painter.add(egui_wgpu::Callback::new_paint_callback("
+    }
+  ]
+}

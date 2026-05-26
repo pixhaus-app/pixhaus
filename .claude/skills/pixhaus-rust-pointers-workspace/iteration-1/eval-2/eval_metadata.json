@@ -1,0 +1,6 @@
+{
+  "eval_id": 2,
+  "eval_name": "lazy-default-palette",
+  "prompt": "I want a built-in default palette in Pixhaus that's computed once from an embedded asset and then read all over the app from multiple threads. It's a bit expensive to build, so I don't want to do it at startup if nothing ends up using it. How should I store it?",
+  "assertions": []
+}

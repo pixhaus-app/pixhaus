@@ -1,0 +1,6 @@
+{
+  "eval_id": 1,
+  "eval_name": "stub-blend-branch",
+  "prompt": "I'm filling in the blend-mode match in pixhaus_core. I've implemented Normal and Multiply, but Overlay isn't done yet and I want to come back to it. There's also a catch-all arm for a BlendMode variant that the dispatcher upstream already guarantees never reaches this function. What should I put in the unfinished Overlay arm and the catch-all arm? I want the session's Stop gate to stay green if possible, and I don't want a surprise panic in production. Give me the match with both arms filled in and explain the call.",
+  "assertions": []
+}

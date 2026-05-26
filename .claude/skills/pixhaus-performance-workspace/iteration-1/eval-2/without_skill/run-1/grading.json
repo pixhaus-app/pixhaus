@@ -1,0 +1,12 @@
+{
+  "eval_id": 2,
+  "configuration": "without_skill",
+  "summary": {"pass_rate": 0.6, "passed": 3, "failed": 2, "total": 5},
+  "expectations": [
+    {"text": "Recommends the release-with-debug profile for profiling", "passed": false, "evidence": "Recommends adding debug=true to [profile.release] or a new [profile.profiling] — the right concept, but reinvents it instead of using the repo's existing release-with-debug profile."},
+    {"text": "Recommends samply (cross-platform/Windows) with flamegraph as alternative", "passed": true, "evidence": "Recommends samply plus Windows-specific options (Superluminal, WPA, PIX, RenderDoc)."},
+    {"text": "Explains how to read a flamegraph (widest box = most CPU time)", "passed": false, "evidence": "Mentions flame graphs but never explains the x-axis = time / widest-box reading."},
+    {"text": "Diagnoses likely canvas-tool causes (dirty-rect, per-move clone, frame thread)", "passed": true, "evidence": "Names whole-buffer re-scan, full-texture re-upload, undo-path full-buffer clone, egui re-tessellation; recommends dirty-region bounding."},
+    {"text": "Does not jump straight to a code rewrite without profiling first", "passed": true, "evidence": "'Why not just start optimizing' section; measure-first ordered plan."}
+  ]
+}

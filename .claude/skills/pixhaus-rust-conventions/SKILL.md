@@ -1,6 +1,6 @@
 ---
 name: pixhaus-rust-conventions
-description: Use when writing or reviewing Rust in the Pixhaus repo — covers error handling, async, locks, ownership, common agent mistakes, and the PR review checklist
+description: Use when writing or reviewing Rust in the Pixhaus repo — the floor every contribution reaches for. Covers borrowing vs cloning, `Copy` and pass-by-value, error-handling policy (thiserror vs anyhow), iterators vs loops, async, locks, ownership, code comments, import ordering, common agent mistakes, and the PR review checklist. Load this for general Rust style and idioms questions here; for the call-site `Result`/`Option` toolbox see `pixhaus-result-handling`, for pointer and smart-pointer choice `pixhaus-rust-pointers`, for generics vs trait objects `pixhaus-generics-dispatch`.
 ---
 
 # Pixhaus Rust conventions
@@ -142,6 +142,16 @@ let pixels = buffer.read_pixels()
 
 Reach for `.with_context(|| format!(...))` to defer string formatting until
 the error path actually fires.
+
+### Picking the call-site combinator
+
+This section is the policy — typed errors in libraries, `anyhow` in the binary.
+*Which* combinator to type when you have a `Result`/`Option` in hand and need the
+`T` out without `unwrap()` — `?` vs `let-else` vs `match`, `unwrap_or_else`,
+`ok_or_else`, `map_err`, `inspect_err`, and the eager-vs-lazy rule behind the
+`_else` variants — is its own skill: `pixhaus-result-handling`. Reach for it at the
+call site; reach here for the policy and `pixhaus-thiserror` for defining the error
+type.
 
 ## Async patterns
 
@@ -347,6 +357,26 @@ poison handling.
 
 ## Memory and ownership
 
+### Borrow in signatures; own only what you keep
+
+Take the least-owning argument type that does the job. A borrow is free; an owned
+argument is a move or a clone the caller pays for, often without realizing it.
+
+- Accept `&str`, not `&String`; `&[T]`, not `&Vec<T>`. The borrowed forms accept
+  strictly more callers — `&str` takes literals and substrings, `&[T]` takes arrays,
+  slices, and `Vec`s — and coerce for free. Asking for `&Vec<T>` locks the caller
+  into owning a `Vec` for no benefit.
+- Don't take `&T` and then `.clone()` it in the body. If the function needs
+  ownership, say so in the signature (`fn consume(t: T)`) so the cost is visible at
+  the call site and the caller chooses whether to move or clone.
+- `&T` for readers, `&mut T` for the one writer. Which pointer past that — `Box`,
+  `Arc`, `Rc`, a lock, a cell — is its own decision procedure: `pixhaus-rust-pointers`.
+
+Cloning is the right call when you genuinely need a second owner: an undo snapshot,
+data moved into a spawned task, an `Arc` shared across threads, or an API that takes
+the value by owned `T`. Cloning to quiet the borrow checker is not — see
+"`clone()` to satisfy the borrow checker" below.
+
 ### `Vec<u8>` vs `Box<[u8]>`
 
 Default to `Vec<u8>` for pixel buffers. `Box<[u8]>` saves the capacity
@@ -497,6 +527,35 @@ or return the new buffer from a function that consumes the old.
 
 ## Idioms worth knowing
 
+### `Copy` for small, plain-data types
+
+Derive `Copy` (alongside `Clone`) when every field is itself `Copy`, the whole value
+is small — roughly two or three machine words, up to ~24 bytes — and it owns no heap
+allocation. Such a type then passes by value with no move-vs-borrow friction and no
+`.clone()` noise, and for something this size the copy is as cheap as the reference:
+
+```rust
+// GOOD — small, all-Copy fields, no heap: pass by value
+#[derive(Copy, Clone, Debug, PartialEq, Eq, Hash)]
+struct Rgba { r: u8, g: u8, b: u8, a: u8 }   // 4 bytes
+
+#[derive(Copy, Clone, Debug, PartialEq)]
+struct Point { x: f32, y: f32 }              // 8 bytes
+```
+
+Don't derive `Copy` when a field isn't `Copy` (a `String`, `Vec`, or `Arc` — the
+derive won't compile), or when the value is large enough that a silent per-use copy
+hides real cost. A struct wrapping a `Vec<u8>` pixel buffer is moved or borrowed,
+never `Copy`. The IDs and indices in "Newtype for unit safety" below are the
+canonical `Copy` types in this codebase.
+
+Two traps worth naming. An enum is sized by its largest variant, so a `Copy` enum
+carrying one fat variant copies that full width on every use — keep `Copy` enums to
+tag-like shapes (`enum Tool { Pen, Eraser, Fill }`), not ones holding buffers. And a
+`[u8; N]` array is `Copy` and lives on the stack: copying a large one is a silent
+stack blow-up, the opposite of what you want for pixel data — that goes in a heap
+`Vec<u8>`.
+
 ### Newtype for unit safety
 
 Wrap primitive types when they carry meaning:
@@ -557,6 +616,122 @@ impl Request<Submitted> {
 A `Request<Draft>` cannot be cancelled; a `Request<Submitted>` cannot be
 re-submitted. The compiler enforces the protocol.
 
+## Iterators vs loops
+
+A `for` loop and the equivalent iterator chain compile to the same machine code —
+adapters are lazy and fuse into a single pass, so this is a readability choice, not
+a speed one. Pick by what the code is doing.
+
+Reach for an **iterator chain** when you're transforming a collection or an
+`Option`/`Result`: mapping, filtering, zipping, `enumerate`, `windows`/`chunks`,
+collecting into a new shape. It reads as a pipeline and needs no mutable accumulator.
+
+```rust
+// transform: one expression, no mutable state to track
+let opaque: Vec<Rgba> = pixels.iter().copied().filter(|p| p.a == 255).collect();
+```
+
+Reach for a **`for` loop** when you need an early `break` / `continue` / `return`,
+when the body has real side effects (I/O, logging, mutating several things at once),
+or when a chain would read worse than the loop. Don't contort control flow to stay
+"functional".
+
+```rust
+// early exit + a fallible side effect: clearer than try_fold gymnastics
+for (i, tile) in tiles.iter().enumerate() {
+    if tile.is_dirty() {
+        upload(i, tile)?;   // `?` mid-iteration reads fine here
+    }
+}
+```
+
+The traps — clippy's `perf` lints catch these and the Stop gate fails on them:
+
+- Don't `collect()` into a `Vec` only to iterate it again; chain the adapters and
+  consume once. A throwaway allocation in a per-pixel path is exactly the cost the
+  native rewrite exists to delete — measure before you optimize (`pixhaus-performance`).
+- Prefer `.iter()` over `.into_iter()` unless you truly need to consume the
+  collection; for a `Vec<T: Copy>`, `.iter().copied()` beats taking ownership.
+- Use `.sum()` / `.product()`, not `.fold()`, when that's the intent — they're
+  specialized and optimize better than an opaque fold closure.
+- One adapter per line; let rustfmt format the chain. A chain you can't read at a
+  glance wants to be a loop.
+
+A genuinely hot per-pixel loop that must touch every pixel is a parallelism question,
+not an iterator-style one — see `pixhaus-rayon`.
+
+## Comments
+
+Comment the *why*, not the *what*. Expressive names and types already say what the
+code does; a comment that restates them goes stale the moment the code shifts and
+earns nothing while it's accurate. Spend comments where the reader can't recover the
+reason from the code: a non-obvious performance trade-off, an external constraint, an
+invariant that makes a branch correct.
+
+```rust
+// GOOD — the why, not the what
+// PERF: bound to the dirty rect, not a full-canvas pass — a full pass stalls at 8K.
+composite_region(&mut dst, &src, dirty);
+
+// PERF: off the egui thread — a 4K filter would block the frame.
+let result = tokio::task::spawn_blocking(move || filter.apply(&buf)).await??;
+```
+
+```rust
+// BAD — restates the code; delete it
+// increment the cursor
+cursor += 1;
+```
+
+When you catch yourself writing a comment that narrates *each step* of a function,
+that's the signal to split the function, not to annotate it. Named sub-functions turn
+the comment into a call you can read and a unit you can test:
+
+```rust
+// Instead of a paragraph explaining validate-then-decode-then-authorize:
+fn handle(req: &Request) -> Result<Response> {
+    validate(req)?;
+    let payload = decode(req)?;
+    authorize(&payload)?;
+    dispatch(payload)
+}
+```
+
+Two repo-specific notes. `unsafe` is forbidden workspace-wide, so there are no
+`SAFETY:` comments here — if you think you need one, you need a maintainer instead.
+And don't leave a prose `// TODO` in the tree: the Stop gate already fails on `todo!`,
+and a comment just rots. File an issue and, if the code needs a breadcrumb, point at
+it (`// see #123`). Doc comments (`///`, `//!`) are a different tool — runnable,
+checked by `cargo doc`, and the right home for usage examples.
+
+## Imports
+
+Group `use` declarations in this order, each group separated by a blank line:
+
+1. `std` (and `core` / `alloc`)
+2. external crates — your `Cargo.toml` `[dependencies]`
+3. workspace crates — `pixhaus_core`, `pixhaus_io`, …
+4. local paths — `crate::`, `super::`, `self::`
+
+```rust
+use std::sync::Arc;
+
+use egui::Context;
+use thiserror::Error;
+use tokio::sync::mpsc;
+
+use pixhaus_core::{Frame, LayerId, PixelBuffer};
+
+use crate::document::Document;
+```
+
+The repo's `rustfmt.toml` sets `reorder_imports = true`, so stable `cargo fmt` sorts
+entries alphabetically *within* each group — but it does not create the groups. The
+features that would (`group_imports = "StdExternalCrate"`, and `imports_granularity`
+for merging) are nightly-only and aren't enabled here, so add the blank lines between
+groups by hand and stable fmt will preserve them. Don't reach for `cargo +nightly fmt`
+to automate this — match the surrounding files manually.
+
 ## PR review checklist
 
 Run through this list when reviewing Rust PRs:
@@ -570,6 +745,11 @@ Run through this list when reviewing Rust PRs:
 - [ ] No `Vec<Vec<T>>` for 2D data
 - [ ] No premature `Arc<Mutex<>>` for single-owner data
 - [ ] No `clone()` on large buffers to dodge the borrow checker
+- [ ] Signatures borrow (`&str`, `&[T]`) rather than over-own (`&String`, `&Vec<T>`); no `.clone()` of a borrowed arg
+- [ ] `Copy` derived only on small, all-`Copy`, heap-free types
+- [ ] Iterator chains for transforms, `for` for early-exit/side-effects; no throwaway `collect()`
+- [ ] Comments explain why, not what; no prose `// TODO` (file an issue instead)
+- [ ] `use` declarations grouped std / external / workspace / local
 - [ ] Public functions have rustdoc; `# Errors` and `# Panics` sections where relevant
 - [ ] Every public function has at least one test (`pixhaus-testing-conventions`)
 - [ ] New crates added to the workspace `members` list

@@ -1,0 +1,13 @@
+{
+  "eval_id": 1,
+  "eval_name": "display-wgpu-texture",
+  "prompt": "My render crate composites the document into its own wgpu::Texture. I just want egui to display that texture as an image in the viewport, crisp with no blurring when the user zooms in. How do I hand the texture to egui and draw it, and how do I update it when the texture's contents change each frame? I keep seeing references to register_native_texture and update_native_texture and I'm not sure which to call. egui-wgpu 0.34.",
+  "assertions": [
+    "Uses register_native_texture to get a TextureId",
+    "Specifies FilterMode::Nearest for crisp pixel art",
+    "Uses update_egui_texture_from_wgpu_texture and avoids the nonexistent update_native_texture",
+    "Does NOT present the nonexistent update_native_texture as a real API",
+    "Uses the correct sampler-options method name (register_native_texture_with_sampler_options), not the invented _with_sampler_descriptor",
+    "Draws the texture via painter.image / ui.image with the TextureId"
+  ]
+}

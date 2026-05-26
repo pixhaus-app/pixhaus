@@ -1,0 +1,31 @@
+{
+  "expectations": [
+    {
+      "text": "Identifies the spawned error must be Send + Sync + 'static",
+      "passed": true,
+      "evidence": "Explains a future is Send only if values held across .await are Send; error must be Send."
+    },
+    {
+      "text": "Root cause = a non-Send field in the error type (Rc / Box<dyn Error> without Send+Sync bound / borrowed field)",
+      "passed": true,
+      "evidence": "Names Box<dyn Error> without Send+Sync, Rc, RefCell, raw pointers as poisoners."
+    },
+    {
+      "text": "Sends the whole Result<T, E> over the channel",
+      "passed": true,
+      "evidence": "oneshot::channel::<Result<DecodedImage, DecodeError>>()."
+    },
+    {
+      "text": "Logs at the UI/drain boundary and does not misapply inspect_err",
+      "passed": true,
+      "evidence": "Logs only at the binary's drain site; library returns the error and does not log. (Did not discuss inspect_err.)"
+    },
+    {
+      "text": "Does not paper over with Box<dyn Error> in a public API or a ?Send escape hatch",
+      "passed": true,
+      "evidence": "Recommends Box<dyn Error + Send + Sync> for opaque inner and a compile-time assert_send_sync test; no ?Send."
+    }
+  ],
+  "score": 5,
+  "total": 5
+}

@@ -1,0 +1,12 @@
+{
+  "eval_id": 2,
+  "configuration": "with_skill",
+  "summary": {"pass_rate": 1.0, "passed": 5, "failed": 0, "total": 5},
+  "expectations": [
+    {"text": "Recommends the release-with-debug profile for profiling", "passed": true, "evidence": "'For profiling you want release-with-debug, which keeps release optimizations but also keeps debug symbols and skips strip'; uses the repo's existing profile."},
+    {"text": "Recommends samply (cross-platform/Windows) with flamegraph as alternative", "passed": true, "evidence": "'Use samply here ... works the same on your Windows machine ... cargo flamegraph works too but on Windows its backend goes through ETW/blondie'."},
+    {"text": "Explains how to read a flamegraph (widest box = most CPU time)", "passed": true, "evidence": "X-axis is total CPU time, wider box = more time; hunt the widest box near the top."},
+    {"text": "Diagnoses likely canvas-tool causes (dirty-rect, per-move clone, frame thread)", "passed": true, "evidence": "Section 4 lists per-pixel full-canvas loop, 256MB buffer clone, work on egui frame thread, CPU compositing."},
+    {"text": "Does not jump straight to a code rewrite without profiling first", "passed": true, "evidence": "'don't apply any of them until the profile actually points there'; rewrite gated on samply output."}
+  ]
+}

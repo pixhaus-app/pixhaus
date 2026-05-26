@@ -1,0 +1,30 @@
+{
+  "expectations": [
+    {
+      "text": "Recommends a recursive enum with children behind a Vec",
+      "passed": true,
+      "evidence": "enum LayerNode { Leaf, Group } with Group { children: Vec<LayerNode> }."
+    },
+    {
+      "text": "States no Box is needed because Vec is already heap-backed",
+      "passed": true,
+      "evidence": "'Vec<T> stores its elements behind a heap pointer ... you do not need a Box here.'"
+    },
+    {
+      "text": "Rejects Rc<RefCell>/Arc<Mutex> as the GC-language reflex, citing single owner",
+      "passed": true,
+      "evidence": "'This is the reflex port from a GC language, and it's wrong here.'"
+    },
+    {
+      "text": "Names an index/arena (LayerId) approach as the legitimate alternative",
+      "passed": true,
+      "evidence": "'A flat arena / slotmap with id-based child lists ... legitimate and arguably better at scale.'"
+    }
+  ],
+  "summary": {
+    "pass_rate": 1.0,
+    "passed": 4,
+    "failed": 0,
+    "total": 4
+  }
+}
