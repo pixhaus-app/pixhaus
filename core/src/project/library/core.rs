@@ -59,11 +59,7 @@ impl Library {
     /// tags, and no AI metadata.
     #[must_use]
     pub fn is_empty(&self) -> bool {
-        self.entities.is_empty()
-            && self.groups.is_empty()
-            && self.palettes.is_empty()
-            && self.tags.is_empty()
-            && self.ai.is_empty()
+        self.entities.is_empty() && self.groups.is_empty() && self.palettes.is_empty() && self.tags.is_empty() && self.ai.is_empty()
     }
 }
 

@@ -5,12 +5,16 @@
 
 use std::collections::HashMap;
 
-use pixhaus_core::canvas::{composite_layers, LayerInput, PixelBuffer};
+use pixhaus_core::canvas::blend::blend;
+use pixhaus_core::canvas::{LayerInput, PixelBuffer, composite_layers, composite_onto};
 use pixhaus_core::project::{
-    ActiveTarget, AiMetadata, Animation, AnimationId, Cel, CelData, Entity, EntityContent,
-    EntityDefaults, EntityId, EntityKind, Frame, FrameIndex, FrameRange, FrameTag, Layer, LayerId,
-    LoopDirection, NamedSprite, PixelBufferId, Project, Size, Sprite, SpriteId, StateId, UserData,
+    ActiveTarget, AiMetadata, Animation, AnimationId, BlendMode, Cel, CelData, Entity, EntityContent, EntityDefaults, EntityId, EntityKind, Frame, FrameIndex,
+    FrameRange, FrameTag, Layer, LayerId, LayerKind, LoopDirection, NamedSprite, Palette, PaletteId, PixelBufferId, Project, Rgba, Size, Sprite, SpriteId,
+    StateId, UserData,
 };
+use pixhaus_core::transforms::normalize::{ChromaKey, chroma_key};
+
+use crate::editor::OnionConfig;
 
 /// Identifies a sprite by its containing entity and state, the address the
 /// library panel selects and the canvas targets.
@@ -46,6 +50,9 @@ pub struct DocumentStore {
     next_id: u32,
     /// Active frame index within the active sprite.
     pub active_frame: FrameIndex,
+    /// Active layer within the active sprite — the target for drawing. `None`
+    /// until a sprite is selected; set by [`Self::create_sprite`] / [`Self::select`].
+    pub active_layer: Option<LayerId>,
     /// Approved reference sheet per sprite, as PNG bytes. The "canonical sheet"
     /// the animation pipeline reads as its character anchor (P5).
     anchors: HashMap<SpriteId, Vec<u8>>,
@@ -60,6 +67,7 @@ impl DocumentStore {
             pixel_buffers: HashMap::new(),
             next_id: 1,
             active_frame: FrameIndex::new(0),
+            active_layer: None,
             anchors: HashMap::new(),
         }
     }
@@ -105,7 +113,23 @@ impl DocumentStore {
         let entity_id = EntityId::new(self.alloc_id());
         let state_id = StateId::new(self.alloc_id());
 
-        let sprite = Sprite::empty(sprite_id, name.clone(), canvas);
+        // Populate a fresh sprite with one raster layer, one frame, an empty
+        // cel bound to a transparent canvas-sized buffer, and a default
+        // palette — so the canvas is editable and the layer/palette panels are
+        // non-empty the moment the sprite is created.
+        let layer_id = LayerId::new(self.alloc_id());
+        let buffer_id = PixelBufferId::new(self.alloc_id());
+        let palette_id = PaletteId::new(self.alloc_id());
+        let mut sprite = Sprite::empty(sprite_id, name.clone(), canvas);
+        sprite.layers.push(Layer::raster(layer_id, "Layer 1"));
+        sprite.frames.push(Frame::default());
+        sprite.cels.push(Cel::raster(layer_id, FrameIndex::new(0), buffer_id, canvas));
+        sprite.palettes.push(Palette::from_colors(palette_id, "default", default_palette()));
+        if let Ok(buf) = PixelBuffer::new(canvas.width, canvas.height) {
+            self.pixel_buffers.insert(buffer_id, buf);
+        }
+        self.active_layer = Some(layer_id);
+
         self.project.library.entities.push(Entity {
             id: entity_id,
             kind: EntityKind::Custom("Sprite".into()),
@@ -128,21 +152,164 @@ impl DocumentStore {
             updated_at: 0,
         });
 
-        let sprite_ref = SpriteRef {
-            entity_id,
-            state_id,
-        };
+        let sprite_ref = SpriteRef { entity_id, state_id };
         self.select(sprite_ref);
         sprite_ref
     }
 
     /// Makes `sprite_ref` the active sprite and resets the frame cursor.
+    /// Picks the topmost raster layer as the active drawing layer.
     pub fn select(&mut self, sprite_ref: SpriteRef) {
         self.project.active = ActiveTarget::State {
             entity_id: sprite_ref.entity_id,
             state_id: sprite_ref.state_id,
         };
         self.active_frame = FrameIndex::new(0);
+        self.active_layer = self
+            .active_sprite()
+            .and_then(|s| s.layers.iter().rev().find(|l| matches!(l.kind, LayerKind::Raster)).map(|l| l.id));
+    }
+
+    /// The active sprite's first palette, if any.
+    #[must_use]
+    pub fn active_palette(&self) -> Option<&Palette> {
+        self.active_sprite().and_then(|s| s.palettes.first())
+    }
+
+    /// Ensures the active sprite has a frame, a raster layer, and a raster cel
+    /// at the active `(layer, frame)`, creating each as needed, and returns the
+    /// id of the buffer the active cel paints into. Linked cels resolve to
+    /// their source frame's buffer (editing the shared drawing, Aseprite-style).
+    /// Returns `None` when there is no active sprite or the active layer is not
+    /// a raster layer.
+    pub fn ensure_drawable(&mut self) -> Option<PixelBufferId> {
+        let sprite_id = self.project.active_sprite_id()?;
+        let canvas = self.project.sprite(sprite_id)?.canvas;
+
+        if self.project.sprite(sprite_id)?.frames.is_empty() {
+            if let Some(s) = self.project.sprite_mut(sprite_id) {
+                s.frames.push(Frame::default());
+            }
+            self.active_frame = FrameIndex::new(0);
+        }
+
+        let raster_active = self.active_layer.is_some_and(|l| {
+            self.project
+                .sprite(sprite_id)
+                .and_then(|s| s.layers.iter().find(|ly| ly.id == l))
+                .is_some_and(|ly| matches!(ly.kind, LayerKind::Raster))
+        });
+        let layer_id = if raster_active {
+            self.active_layer?
+        } else if let Some(existing) = self
+            .project
+            .sprite(sprite_id)?
+            .layers
+            .iter()
+            .find(|ly| matches!(ly.kind, LayerKind::Raster))
+            .map(|ly| ly.id)
+        {
+            existing
+        } else {
+            let new_id = LayerId::new(self.alloc_id());
+            if let Some(s) = self.project.sprite_mut(sprite_id) {
+                s.layers.push(Layer::raster(new_id, "Layer 1"));
+            }
+            new_id
+        };
+        self.active_layer = Some(layer_id);
+
+        let frame = self.active_frame;
+        let source = self.project.sprite(sprite_id)?.resolve_source_frame(layer_id, frame);
+
+        if let Some(cel) = self.project.sprite(sprite_id)?.cel(layer_id, source) {
+            return match cel.data {
+                CelData::Raster { buffer, .. } => Some(buffer),
+                _ => None,
+            };
+        }
+
+        let buffer_id = PixelBufferId::new(self.alloc_id());
+        let buf = PixelBuffer::new(canvas.width, canvas.height).ok()?;
+        self.pixel_buffers.insert(buffer_id, buf);
+        if let Some(s) = self.project.sprite_mut(sprite_id) {
+            s.cels.push(Cel::raster(layer_id, source, buffer_id, canvas));
+        }
+        Some(buffer_id)
+    }
+
+    /// The buffer id the active `(layer, frame)` paints into, without creating
+    /// anything. `None` if there is no raster cel there yet.
+    #[must_use]
+    pub fn active_buffer_id(&self) -> Option<PixelBufferId> {
+        let sprite = self.active_sprite()?;
+        let layer = self.active_layer?;
+        let source = sprite.resolve_source_frame(layer, self.active_frame);
+        match sprite.cel(layer, source)?.data {
+            CelData::Raster { buffer, .. } => Some(buffer),
+            _ => None,
+        }
+    }
+
+    /// Composites the active frame including onion-skin ghosts of neighbouring
+    /// frames when `onion.enabled`. Ghosts render behind the current frame,
+    /// tinted and faded by distance. Returns `None` when there is no active
+    /// sprite.
+    #[must_use]
+    pub fn composite_with_onion(&self, onion: &OnionConfig) -> Option<PixelBuffer> {
+        let base = self.composite_active_frame()?;
+        if !onion.enabled || (onion.prev == 0 && onion.next == 0) {
+            return Some(base);
+        }
+        let sprite = self.active_sprite()?;
+        let count = sprite.frames.len() as i64;
+        if count <= 1 {
+            return Some(base);
+        }
+        let here = i64::from(self.active_frame.get());
+        let mut stack = PixelBuffer::new(base.width(), base.height()).ok()?;
+
+        // Farthest ghosts first so nearer ones layer on top, current frame last.
+        let mut ghosts: Vec<(i64, bool)> = Vec::new();
+        for d in 1..=i64::from(onion.prev) {
+            ghosts.push((here - d, true));
+        }
+        for d in 1..=i64::from(onion.next) {
+            ghosts.push((here + d, false));
+        }
+        ghosts.sort_by_key(|(idx, _)| -(here - idx).abs());
+
+        for (idx, is_prev) in ghosts {
+            if idx < 0 || idx >= count {
+                continue;
+            }
+            let Some(ghost) = self.composite_frame(FrameIndex::new(idx as u32)) else {
+                continue;
+            };
+            let dist = (here - idx).unsigned_abs().max(1) as f32;
+            let factor = (onion.opacity / dist).clamp(0.0, 1.0);
+            let tint = if is_prev { onion.prev_tint } else { onion.next_tint };
+            let tinted = tint_ghost(&ghost, tint, factor);
+            let _ = composite_onto(
+                &mut stack,
+                &LayerInput {
+                    buffer: &tinted,
+                    mode: BlendMode::Normal,
+                    opacity: 255,
+                    visible: true,
+                },
+            );
+        }
+        let _ = composite_onto(
+            &mut stack,
+            &LayerInput {
+                buffer: &base,
+                mode: BlendMode::Normal,
+                opacity: 255,
+                visible: true,
+            },
+        );
+        Some(stack)
     }
 
     /// The active sprite, if any.
@@ -165,10 +332,7 @@ impl DocumentStore {
         self.project
             .sprites_iter()
             .map(|(named, entity_id)| SpriteListItem {
-                sprite_ref: SpriteRef {
-                    entity_id,
-                    state_id: named.id,
-                },
+                sprite_ref: SpriteRef { entity_id, state_id: named.id },
                 name: named.sprite.name.clone(),
                 canvas: named.sprite.canvas,
                 selected: active == Some(named.sprite.id),
@@ -224,6 +388,46 @@ impl DocumentStore {
         self.composite_frame(self.active_frame)
     }
 
+    /// Recomposites only the rectangle `(x, y, w, h)` of the active frame into
+    /// `dst` (a full-canvas buffer), blending every visible layer for those
+    /// pixels. This is the drawing hot path: after a brush dab edits a cel, the
+    /// shell recomposites just the dirty rect across layers and uploads that
+    /// rect — work bounded by the region, not the canvas (the 8K constraint).
+    pub fn composite_region_into(&self, dst: &mut PixelBuffer, x: u32, y: u32, w: u32, h: u32) {
+        let Some(sprite) = self.active_sprite() else {
+            return;
+        };
+        let frame = self.active_frame;
+        let x1 = (x + w).min(dst.width());
+        let y1 = (y + h).min(dst.height());
+        for py in y..y1 {
+            for px in x..x1 {
+                let mut acc = Rgba::transparent();
+                for layer in &sprite.layers {
+                    if !layer.visible || layer.opacity == 0 {
+                        continue;
+                    }
+                    let source = sprite.resolve_source_frame(layer.id, frame);
+                    let Some(cel) = sprite.cel(layer.id, source) else {
+                        continue;
+                    };
+                    let CelData::Raster { buffer, .. } = &cel.data else {
+                        continue;
+                    };
+                    let Some(buf) = self.pixel_buffers.get(buffer) else {
+                        continue;
+                    };
+                    let Some(src) = buf.pixel(px, py) else { continue };
+                    if src.a == 0 {
+                        continue;
+                    }
+                    acc = blend(layer.blend_mode, src, acc, layer.opacity);
+                }
+                dst.set_pixel(px, py, acc);
+            }
+        }
+    }
+
     /// Integrates a sequence of full-canvas frames into the active sprite as a
     /// new raster layer with one cel per frame, appends the frames to the
     /// timeline, and adds a [`FrameTag`] plus an [`Animation`] over the new
@@ -232,28 +436,45 @@ impl DocumentStore {
     ///
     /// Every frame buffer must match the sprite's canvas size.
     #[allow(clippy::cast_possible_truncation)] // frame counts fit u32
-    pub fn integrate_frames(
-        &mut self,
-        frames: Vec<PixelBuffer>,
-        frame_duration_ms: u32,
-        name: &str,
-        loop_direction: LoopDirection,
-    ) -> Option<FrameRange> {
+    pub fn integrate_frames(&mut self, frames: Vec<PixelBuffer>, frame_duration_ms: u32, name: &str, loop_direction: LoopDirection) -> Option<FrameRange> {
         if frames.is_empty() {
             return None;
         }
         let canvas = self.active_sprite()?.canvas;
 
+        // A pristine sprite (one frame, nothing drawn) hosts the animation from
+        // frame 0 so it carries no leading blank frame; a sprite the user has
+        // touched keeps the append behavior.
+        let replace_seed = self.active_sprite_is_pristine();
+
         // Allocate every id before borrowing the sprite mutably.
         let layer_id = LayerId::new(self.alloc_id());
         let animation_id = AnimationId::new(self.alloc_id());
-        let buffer_ids: Vec<PixelBufferId> = (0..frames.len())
-            .map(|_| PixelBufferId::new(self.alloc_id()))
-            .collect();
+        let buffer_ids: Vec<PixelBufferId> = (0..frames.len()).map(|_| PixelBufferId::new(self.alloc_id())).collect();
+
+        // Buffers of the discarded seed cel(s), removed after the borrow ends.
+        let mut orphaned: Vec<PixelBufferId> = Vec::new();
 
         let range = {
             let sprite = self.active_sprite_mut()?;
-            let start = sprite.frames.len() as u32;
+            let start = if replace_seed {
+                orphaned = sprite
+                    .cels
+                    .iter()
+                    .filter_map(|cel| match cel.data {
+                        CelData::Raster { buffer, .. } => Some(buffer),
+                        _ => None,
+                    })
+                    .collect();
+                sprite.frames.clear();
+                sprite.cels.clear();
+                sprite.layers.clear();
+                sprite.frame_tags.clear();
+                sprite.animations.clear();
+                0
+            } else {
+                sprite.frames.len() as u32
+            };
             sprite.layers.push(Layer::raster(layer_id, name));
             for (i, buffer_id) in buffer_ids.iter().enumerate() {
                 let frame_index = FrameIndex::new(start + i as u32);
@@ -262,9 +483,7 @@ impl DocumentStore {
                     duration_mul: 1.0,
                     user_data: UserData::default(),
                 });
-                sprite
-                    .cels
-                    .push(Cel::raster(layer_id, frame_index, *buffer_id, canvas));
+                sprite.cels.push(Cel::raster(layer_id, frame_index, *buffer_id, canvas));
             }
             let end = start + buffer_ids.len() as u32 - 1;
             let range = FrameRange::new(FrameIndex::new(start), FrameIndex::new(end));
@@ -290,9 +509,78 @@ impl DocumentStore {
         for (buffer_id, buffer) in buffer_ids.into_iter().zip(frames) {
             self.pixel_buffers.insert(buffer_id, buffer);
         }
+        // Drop the discarded seed buffers so they don't leak.
+        for buffer_id in orphaned {
+            self.pixel_buffers.remove(&buffer_id);
+        }
         // Show the first integrated frame.
         self.active_frame = range.start;
         Some(range)
+    }
+
+    /// Keys `key` out of `buffer_id` in place, returning the pre-key snapshot so
+    /// the caller can record an undo entry. `None` when the buffer is missing.
+    /// The keying itself is the pure [`chroma_key`](pixhaus_core::transforms::normalize::chroma_key);
+    /// this just swaps the stored buffer and hands back the original.
+    pub fn chroma_key_buffer(&mut self, buffer_id: PixelBufferId, key: ChromaKey) -> Option<PixelBuffer> {
+        let before = self.pixel_buffers.get(&buffer_id)?.clone();
+        let keyed = chroma_key(&before, key);
+        self.pixel_buffers.insert(buffer_id, keyed);
+        Some(before)
+    }
+
+    /// Replaces `buffer_id` with `new` (which must match the existing size),
+    /// returning the pre-replace snapshot for undo. `None` on a missing buffer
+    /// or a size mismatch. Used to land an AI background-removal result on a cel.
+    pub fn replace_buffer(&mut self, buffer_id: PixelBufferId, new: PixelBuffer) -> Option<PixelBuffer> {
+        let before = self.pixel_buffers.get(&buffer_id)?.clone();
+        if new.width() != before.width() || new.height() != before.height() {
+            return None;
+        }
+        self.pixel_buffers.insert(buffer_id, new);
+        Some(before)
+    }
+
+    /// The active-layer cel buffers across every frame, for a whole-animation
+    /// background-removal pass. Falls back to the single active cel when no
+    /// layer is active.
+    #[must_use]
+    pub fn active_layer_frame_buffers(&self) -> Vec<PixelBufferId> {
+        let Some(sprite) = self.active_sprite() else {
+            return Vec::new();
+        };
+        let Some(layer) = self.active_layer else {
+            return self.active_buffer_id().into_iter().collect();
+        };
+        let mut seen = std::collections::HashSet::new();
+        let mut out = Vec::new();
+        for frame in 0..sprite.frames.len() as u32 {
+            let source = sprite.resolve_source_frame(layer, FrameIndex::new(frame));
+            if let Some(cel) = sprite.cel(layer, source) {
+                if let CelData::Raster { buffer, .. } = cel.data {
+                    if seen.insert(buffer) {
+                        out.push(buffer);
+                    }
+                }
+            }
+        }
+        out
+    }
+
+    /// Whether the active sprite is untouched: a single frame whose raster cels
+    /// are all fully transparent. Such a sprite is safe to rebuild around an
+    /// integrated animation rather than appending behind its seed frame.
+    fn active_sprite_is_pristine(&self) -> bool {
+        let Some(sprite) = self.active_sprite() else {
+            return false;
+        };
+        if sprite.frames.len() != 1 {
+            return false;
+        }
+        sprite.cels.iter().all(|cel| match cel.data {
+            CelData::Raster { buffer, .. } => self.pixel_buffers.get(&buffer).is_none_or(|b| b.pixels().all(|p| p.a == 0)),
+            _ => true,
+        })
     }
 
     /// The frame order playback should follow for the active sprite: the first
@@ -310,9 +598,7 @@ impl DocumentStore {
                 .map(FrameIndex::new)
                 .collect()
         } else {
-            (0..sprite.frames.len() as u32)
-                .map(FrameIndex::new)
-                .collect()
+            (0..sprite.frames.len() as u32).map(FrameIndex::new).collect()
         }
     }
 
@@ -357,13 +643,52 @@ impl DocumentStore {
     }
 }
 
+/// Builds an onion ghost: every opaque pixel takes `tint`'s colour with its
+/// alpha scaled by `factor`. Transparent pixels stay transparent.
+#[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
+fn tint_ghost(frame: &PixelBuffer, tint: Rgba, factor: f32) -> PixelBuffer {
+    let mut out = frame.clone();
+    for y in 0..out.height() {
+        for x in 0..out.width() {
+            if let Some(p) = out.pixel(x, y) {
+                if p.a == 0 {
+                    continue;
+                }
+                let a = (f32::from(p.a) * factor).clamp(0.0, 255.0) as u8;
+                out.set_pixel(x, y, Rgba::new(tint.r, tint.g, tint.b, a));
+            }
+        }
+    }
+    out
+}
+
+/// A compact 16-colour starter palette (transparent index 0, then a balanced
+/// pixel-art ramp). New sprites get this so the palette panel and the
+/// foreground swatch have something to work with immediately.
+fn default_palette() -> Vec<Rgba> {
+    vec![
+        Rgba::transparent(),
+        Rgba::opaque(20, 20, 28),
+        Rgba::opaque(48, 52, 70),
+        Rgba::opaque(90, 100, 120),
+        Rgba::opaque(160, 170, 185),
+        Rgba::opaque(235, 240, 245),
+        Rgba::opaque(180, 60, 60),
+        Rgba::opaque(230, 110, 70),
+        Rgba::opaque(240, 190, 90),
+        Rgba::opaque(120, 200, 90),
+        Rgba::opaque(70, 160, 110),
+        Rgba::opaque(70, 130, 200),
+        Rgba::opaque(60, 80, 170),
+        Rgba::opaque(140, 90, 200),
+        Rgba::opaque(210, 110, 180),
+        Rgba::opaque(120, 80, 60),
+    ]
+}
+
 /// Maps `i/total` around the hue wheel to an approximate RGB triple. Only used
 /// by [`DocumentStore::add_demo_animation`].
-#[allow(
-    clippy::cast_possible_truncation,
-    clippy::cast_sign_loss,
-    clippy::many_single_char_names
-)]
+#[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss, clippy::many_single_char_names)]
 fn hue_rgb(i: u32, total: u32) -> (u8, u8, u8) {
     let h = (f32::from(i as u16) / f32::from(total as u16)) * 6.0;
     let x = (1.0 - (h % 2.0 - 1.0).abs()) * 255.0;
@@ -427,10 +752,10 @@ mod tests {
         let frames: Vec<PixelBuffer> = (0..4)
             .map(|_| PixelBuffer::filled(8, 8, pixhaus_core::project::Rgba::new(10, 20, 30, 255)).unwrap())
             .collect();
-        let range = doc
-            .integrate_frames(frames, 100, "walk", LoopDirection::Forward)
-            .expect("integrated range");
+        let range = doc.integrate_frames(frames, 100, "walk", LoopDirection::Forward).expect("integrated range");
 
+        // The fresh sprite is pristine, so the animation replaces its seed frame
+        // and occupies frames 0..=3 on a single layer — no leading blank.
         assert_eq!(range.start, FrameIndex::new(0));
         assert_eq!(range.end, FrameIndex::new(3));
 
@@ -440,6 +765,7 @@ mod tests {
         assert_eq!(sprite.cels.len(), 4);
         assert_eq!(sprite.frame_tags.len(), 1);
         assert_eq!(sprite.animations.len(), 1);
+        // The seed buffer was dropped; only the four integrated frames remain.
         assert_eq!(doc.pixel_buffers.len(), 4);
 
         // Each integrated frame composites to the solid color.
@@ -449,13 +775,146 @@ mod tests {
         // Forward play order over the tagged range.
         assert_eq!(
             doc.active_play_order(),
-            vec![
-                FrameIndex::new(0),
-                FrameIndex::new(1),
-                FrameIndex::new(2),
-                FrameIndex::new(3)
-            ]
+            vec![FrameIndex::new(0), FrameIndex::new(1), FrameIndex::new(2), FrameIndex::new(3)]
         );
         assert_eq!(doc.frame_duration_ms(FrameIndex::new(0)), 100);
+    }
+
+    #[test]
+    fn integrate_frames_appends_when_the_sprite_has_been_drawn_on() {
+        let mut doc = DocumentStore::new();
+        doc.create_sprite("hero", Size::new(8, 8));
+        // Drawing on the seed frame makes the sprite non-pristine, so the
+        // animation appends after it instead of replacing it.
+        let seed = doc.active_buffer_id().expect("seed buffer");
+        doc.pixel_buffers
+            .get_mut(&seed)
+            .expect("seed buffer present")
+            .set_pixel(0, 0, pixhaus_core::project::Rgba::new(1, 2, 3, 255));
+
+        let frames: Vec<PixelBuffer> = (0..4)
+            .map(|_| PixelBuffer::filled(8, 8, pixhaus_core::project::Rgba::new(10, 20, 30, 255)).unwrap())
+            .collect();
+        let range = doc.integrate_frames(frames, 100, "walk", LoopDirection::Forward).expect("integrated range");
+
+        assert_eq!(range.start, FrameIndex::new(1));
+        assert_eq!(range.end, FrameIndex::new(4));
+        let sprite = doc.active_sprite().expect("sprite");
+        assert_eq!(sprite.frames.len(), 5);
+        assert_eq!(sprite.layers.len(), 2);
+        assert_eq!(doc.pixel_buffers.len(), 5);
+    }
+
+    #[test]
+    fn ensure_drawable_returns_the_default_cel_buffer() {
+        let mut doc = DocumentStore::new();
+        doc.create_sprite("hero", Size::new(8, 8));
+        let id = doc.ensure_drawable().expect("drawable buffer");
+        assert!(doc.pixel_buffers.contains_key(&id));
+        assert_eq!(doc.active_buffer_id(), Some(id));
+    }
+
+    #[test]
+    fn pixel_region_edit_undo_redo_round_trips() {
+        use crate::commands::{PixelRegionEdit, extract_region};
+        use pixhaus_core::undo::History;
+
+        let mut doc = DocumentStore::new();
+        doc.create_sprite("hero", Size::new(8, 8));
+        let id = doc.ensure_drawable().unwrap();
+        let before = doc.pixel_buffers.get(&id).unwrap().clone();
+        let red = Rgba::opaque(255, 0, 0);
+        doc.pixel_buffers.get_mut(&id).unwrap().set_pixel(2, 3, red);
+
+        let cmd = PixelRegionEdit {
+            buffer_id: id,
+            x: 0,
+            y: 0,
+            w: 8,
+            h: 8,
+            before: extract_region(&before, 0, 0, 8, 8),
+            after: extract_region(doc.pixel_buffers.get(&id).unwrap(), 0, 0, 8, 8),
+            label: "test".into(),
+        };
+        let mut history: History<DocumentStore> = History::new();
+        history.push(Box::new(cmd), &mut doc).unwrap();
+        assert_eq!(doc.pixel_buffers.get(&id).unwrap().pixel(2, 3), Some(red));
+        history.undo(&mut doc).unwrap();
+        assert_eq!(doc.pixel_buffers.get(&id).unwrap().pixel(2, 3), Some(Rgba::transparent()));
+        history.redo(&mut doc).unwrap();
+        assert_eq!(doc.pixel_buffers.get(&id).unwrap().pixel(2, 3), Some(red));
+    }
+
+    #[test]
+    fn remove_background_keys_flat_buffer_and_undo_restores() {
+        use crate::commands::{PixelRegionEdit, extract_region};
+        use pixhaus_core::transforms::normalize::ChromaKey;
+        use pixhaus_core::undo::History;
+
+        let mut doc = DocumentStore::new();
+        doc.create_sprite("hero", Size::new(8, 8));
+        let id = doc.ensure_drawable().unwrap();
+        // Flat magenta background with one opaque subject pixel.
+        {
+            let buf = doc.pixel_buffers.get_mut(&id).unwrap();
+            for y in 0..8 {
+                for x in 0..8 {
+                    buf.set_pixel(x, y, Rgba::opaque(255, 0, 255));
+                }
+            }
+            buf.set_pixel(3, 3, Rgba::opaque(10, 20, 30));
+        }
+        let original = doc.pixel_buffers.get(&id).unwrap().clone();
+
+        // Key the magenta out, recording the pre-key snapshot.
+        let before = doc.chroma_key_buffer(id, ChromaKey::magenta()).expect("keyed buffer");
+        assert_eq!(doc.pixel_buffers.get(&id).unwrap().pixel(0, 0).unwrap().a, 0, "background cleared");
+        assert_eq!(doc.pixel_buffers.get(&id).unwrap().pixel(3, 3), Some(Rgba::opaque(10, 20, 30)), "subject kept");
+
+        // Wrap the change as an undo entry and confirm undo restores the buffer.
+        let cmd = PixelRegionEdit {
+            buffer_id: id,
+            x: 0,
+            y: 0,
+            w: 8,
+            h: 8,
+            before: extract_region(&before, 0, 0, 8, 8),
+            after: extract_region(doc.pixel_buffers.get(&id).unwrap(), 0, 0, 8, 8),
+            label: "Remove background".into(),
+        };
+        let mut history: History<DocumentStore> = History::new();
+        history.push(Box::new(cmd), &mut doc).unwrap();
+        history.undo(&mut doc).unwrap();
+        assert_eq!(
+            doc.pixel_buffers.get(&id).unwrap().as_bytes(),
+            original.as_bytes(),
+            "undo restores the background"
+        );
+    }
+
+    #[test]
+    fn composite_region_matches_full_composite() {
+        let mut doc = DocumentStore::new();
+        doc.create_sprite("hero", Size::new(8, 8));
+        let id = doc.ensure_drawable().unwrap();
+        doc.pixel_buffers.get_mut(&id).unwrap().set_pixel(4, 4, Rgba::opaque(10, 20, 30));
+        let full = doc.composite_active_frame().unwrap();
+        let mut region = PixelBuffer::new(8, 8).unwrap();
+        doc.composite_region_into(&mut region, 3, 3, 3, 3);
+        for y in 3..6 {
+            for x in 3..6 {
+                assert_eq!(region.pixel(x, y), full.pixel(x, y), "({x},{y})");
+            }
+        }
+    }
+
+    #[test]
+    fn onion_disabled_matches_base_composite() {
+        let mut doc = DocumentStore::new();
+        doc.create_sprite("hero", Size::new(8, 8));
+        let base = doc.composite_active_frame().unwrap();
+        let onion = crate::editor::OnionConfig::default();
+        let with = doc.composite_with_onion(&onion).unwrap();
+        assert_eq!(base.as_bytes(), with.as_bytes());
     }
 }

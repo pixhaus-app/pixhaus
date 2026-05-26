@@ -92,10 +92,7 @@ pub enum ExtractionError {
 ///
 /// Returns [`ExtractionError::Decode`] when `image::load_from_memory`
 /// rejects the bytes.
-pub fn extract_palette_from_image_bytes(
-    bytes: &[u8],
-    options: ExtractionOptions,
-) -> Result<Vec<PaletteEntry>, ExtractionError> {
+pub fn extract_palette_from_image_bytes(bytes: &[u8], options: ExtractionOptions) -> Result<Vec<PaletteEntry>, ExtractionError> {
     let img = image::load_from_memory(bytes)?;
     let (w, h) = img.dimensions();
     let rgba = img.into_rgba8();
@@ -107,15 +104,8 @@ pub fn extract_palette_from_image_bytes(
 /// `bytes.len()` must be `width * height * 4`; rows mismatched against
 /// that constraint return an empty palette rather than panicking.
 #[must_use]
-pub fn extract_palette_from_rgba8(
-    bytes: &[u8],
-    width: u32,
-    height: u32,
-    options: ExtractionOptions,
-) -> Vec<PaletteEntry> {
-    let expected = (width as usize)
-        .saturating_mul(height as usize)
-        .saturating_mul(4);
+pub fn extract_palette_from_rgba8(bytes: &[u8], width: u32, height: u32, options: ExtractionOptions) -> Vec<PaletteEntry> {
+    let expected = (width as usize).saturating_mul(height as usize).saturating_mul(4);
     if bytes.len() != expected || expected == 0 || options.max_colors == 0 {
         return Vec::new();
     }
@@ -141,8 +131,7 @@ pub fn extract_palette_from_rgba8(
         entry.0 += 1;
     }
 
-    let mut sorted: Vec<([u8; 4], u64, u32)> =
-        counts.into_iter().map(|(k, (c, o))| (k, c, o)).collect();
+    let mut sorted: Vec<([u8; 4], u64, u32)> = counts.into_iter().map(|(k, (c, o))| (k, c, o)).collect();
     sorted.sort_by(|a, b| b.1.cmp(&a.1).then(a.2.cmp(&b.2)));
     sorted.truncate(options.max_colors);
 
@@ -175,11 +164,7 @@ mod tests {
     use super::*;
 
     fn rgba8(width: u32, height: u32, pixels: &[(u8, u8, u8, u8)]) -> Vec<u8> {
-        assert_eq!(
-            pixels.len(),
-            (width * height) as usize,
-            "fixture pixel count must match dimensions"
-        );
+        assert_eq!(pixels.len(), (width * height) as usize, "fixture pixel count must match dimensions");
         let mut out = Vec::with_capacity(pixels.len() * 4);
         for &(r, g, b, a) in pixels {
             out.extend_from_slice(&[r, g, b, a]);
@@ -305,8 +290,7 @@ mod tests {
         );
         assert!(!pal.is_empty(), "must not produce empty palette");
         assert!(
-            pal.iter()
-                .any(|p| p.color.r > 0 || p.color.g > 0 || p.color.b > 0),
+            pal.iter().any(|p| p.color.r > 0 || p.color.g > 0 || p.color.b > 0),
             "must not collapse every swatch to black"
         );
     }
@@ -340,14 +324,7 @@ mod tests {
         };
         let pal = extract_palette_from_rgba8(&bytes, 3, 1, opts);
         let colors: Vec<Rgba> = pal.iter().map(|e| e.color).collect();
-        assert_eq!(
-            colors,
-            vec![
-                Rgba::opaque(10, 0, 0),
-                Rgba::opaque(0, 10, 0),
-                Rgba::opaque(0, 0, 10),
-            ]
-        );
+        assert_eq!(colors, vec![Rgba::opaque(10, 0, 0), Rgba::opaque(0, 10, 0), Rgba::opaque(0, 0, 10),]);
     }
 
     #[test]
@@ -360,8 +337,7 @@ mod tests {
         img.put_pixel(0, 0, image::Rgba([255, 0, 0, 255]));
         img.put_pixel(1, 0, image::Rgba([0, 255, 0, 255]));
         let mut buf = Vec::new();
-        img.write_to(&mut Cursor::new(&mut buf), ImageFormat::Png)
-            .unwrap();
+        img.write_to(&mut Cursor::new(&mut buf), ImageFormat::Png).unwrap();
 
         let pal = extract_palette_from_image_bytes(
             &buf,

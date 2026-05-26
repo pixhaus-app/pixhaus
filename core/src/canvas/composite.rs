@@ -112,10 +112,7 @@ fn blend_row(dst: &mut [u8], src: &[u8], mode: BlendMode, opacity: u8) {
     debug_assert_eq!(dst.len(), src.len());
     debug_assert_eq!(dst.len() % RGBA_BYTES_PER_PIXEL, 0);
 
-    for (d_chunk, s_chunk) in dst
-        .chunks_exact_mut(RGBA_BYTES_PER_PIXEL)
-        .zip(src.chunks_exact(RGBA_BYTES_PER_PIXEL))
-    {
+    for (d_chunk, s_chunk) in dst.chunks_exact_mut(RGBA_BYTES_PER_PIXEL).zip(src.chunks_exact(RGBA_BYTES_PER_PIXEL)) {
         let s = Rgba::new(s_chunk[0], s_chunk[1], s_chunk[2], s_chunk[3]);
         // Fast path: source pixel is fully transparent.
         if s.a == 0 {
@@ -276,22 +273,13 @@ mod tests {
             },
         )
         .unwrap_err();
-        assert_eq!(
-            err,
-            Error::DimensionMismatch {
-                bw: 4,
-                bh: 4,
-                sw: 2,
-                sh: 2,
-            }
-        );
+        assert_eq!(err, Error::DimensionMismatch { bw: 4, bh: 4, sw: 2, sh: 2 });
     }
 
     #[test]
     fn composite_handles_padded_stride() {
         // Backdrop with 8-byte row padding.
-        let mut padded =
-            PixelBuffer::from_raw(2, 2, 16, vec![0u8; 32]).expect("padded buffer constructs");
+        let mut padded = PixelBuffer::from_raw(2, 2, 16, vec![0u8; 32]).expect("padded buffer constructs");
         let layer = solid(2, 2, Rgba::opaque(10, 20, 30));
         composite_onto(
             &mut padded,

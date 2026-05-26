@@ -92,9 +92,7 @@ id_newtype! {
 ///
 /// Adapted from `OpenToonz` `toonz/sources/include/tpalette.h` under
 /// BSD-3-Clause. See `THIRD_PARTY_NOTICES.md`.
-#[derive(
-    Copy, Clone, Debug, Eq, PartialEq, Hash, Ord, PartialOrd, Default, Serialize, Deserialize,
-)]
+#[derive(Copy, Clone, Debug, Eq, PartialEq, Hash, Ord, PartialOrd, Default, Serialize, Deserialize)]
 #[serde(transparent)]
 pub struct PalettePageId(pub u32);
 

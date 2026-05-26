@@ -42,26 +42,16 @@ pub mod verb;
 
 pub use anchor::{AnchorPayload, DEFAULT_ANCHOR_STRENGTH};
 pub use backend::{BackendInfo, InferenceBackend};
-pub use context::{
-    CompositionLibraryView, PixelData, ProjectCompositionLibrary, ReferenceImage, StyleReference,
-    VerbContext, VerbContextBuilder,
-};
+pub use context::{CompositionLibraryView, PixelData, ProjectCompositionLibrary, ReferenceImage, StyleReference, VerbContext, VerbContextBuilder};
 pub use descriptor::{BackendCapabilities, CostEstimate, EffectKind, VerbDescriptor, VerbId};
 pub use error::{Result, VerbError};
 pub use inputs::VerbInputs;
-pub use output::{
-    ActualCost, CritiqueCategory, CritiqueFinding, CritiqueSeverity, NewPixelBuffer, VerbEffect,
-    VerbOutput,
-};
+pub use output::{ActualCost, CritiqueCategory, CritiqueFinding, CritiqueSeverity, NewPixelBuffer, VerbEffect, VerbOutput};
 pub use preview::{PreviewId, PreviewIdMinter, VerbCommit, VerbDiscard, VerbPreview};
-pub use progress::{
-    CostUpdate, LogLevel, PROGRESS_CHANNEL_CAPACITY, VerbProgress, VerbProgressEvent,
-};
+pub use progress::{CostUpdate, LogLevel, PROGRESS_CHANNEL_CAPACITY, VerbProgress, VerbProgressEvent};
 pub use runtime::{VerbInvocation, VerbRuntime};
 pub use verb::Verb;
 
 // Re-export the one built-in verb this slice ports so downstream crates can
 // register it via a single `use pixhaus_ai::plugin::*`.
-pub use crate::verbs::reference_sheet::{
-    GENERATE_REFERENCE_SHEET_VERB_ID, GenerateReferenceSheetInputs, GenerateReferenceSheetVerb,
-};
+pub use crate::verbs::reference_sheet::{GENERATE_REFERENCE_SHEET_VERB_ID, GenerateReferenceSheetInputs, GenerateReferenceSheetVerb};

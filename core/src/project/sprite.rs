@@ -94,9 +94,7 @@ impl Sprite {
     /// content on that frame.
     #[must_use]
     pub fn cel(&self, layer: LayerId, frame: FrameIndex) -> Option<&Cel> {
-        self.cels
-            .iter()
-            .find(|c| c.layer_id == layer && c.frame_index == frame)
+        self.cels.iter().find(|c| c.layer_id == layer && c.frame_index == frame)
     }
 
     /// Resolves a possibly-linked cel to the frame that actually owns its
@@ -164,12 +162,7 @@ mod tests {
         let layer = LayerId::new(1);
         // Frame 0 owns the drawing; frames 1 and 3 link to it; frame 2 is its
         // own raster cel (not part of the set).
-        s.cels.push(Cel::raster(
-            layer,
-            FrameIndex::new(0),
-            PixelBufferId::new(10),
-            Size::new(8, 8),
-        ));
+        s.cels.push(Cel::raster(layer, FrameIndex::new(0), PixelBufferId::new(10), Size::new(8, 8)));
         s.cels.push(Cel {
             layer_id: layer,
             frame_index: FrameIndex::new(1),
@@ -180,12 +173,7 @@ mod tests {
             },
             user_data: UserData::default(),
         });
-        s.cels.push(Cel::raster(
-            layer,
-            FrameIndex::new(2),
-            PixelBufferId::new(11),
-            Size::new(8, 8),
-        ));
+        s.cels.push(Cel::raster(layer, FrameIndex::new(2), PixelBufferId::new(11), Size::new(8, 8)));
         s.cels.push(Cel {
             layer_id: layer,
             frame_index: FrameIndex::new(3),
@@ -203,15 +191,9 @@ mod tests {
     fn resolve_source_frame_follows_link() {
         let s = sprite_with_link_set();
         let layer = LayerId::new(1);
-        assert_eq!(
-            s.resolve_source_frame(layer, FrameIndex::new(1)),
-            FrameIndex::new(0)
-        );
+        assert_eq!(s.resolve_source_frame(layer, FrameIndex::new(1)), FrameIndex::new(0));
         // An owning cel resolves to itself.
-        assert_eq!(
-            s.resolve_source_frame(layer, FrameIndex::new(2)),
-            FrameIndex::new(2)
-        );
+        assert_eq!(s.resolve_source_frame(layer, FrameIndex::new(2)), FrameIndex::new(2));
     }
 
     #[test]
@@ -219,13 +201,7 @@ mod tests {
         let s = sprite_with_link_set();
         let layer = LayerId::new(1);
         let from_link = s.cel_link_set(layer, FrameIndex::new(3));
-        assert_eq!(
-            from_link,
-            vec![FrameIndex::new(0), FrameIndex::new(1), FrameIndex::new(3)]
-        );
-        assert_eq!(
-            s.cel_link_set(layer, FrameIndex::new(2)),
-            vec![FrameIndex::new(2)]
-        );
+        assert_eq!(from_link, vec![FrameIndex::new(0), FrameIndex::new(1), FrameIndex::new(3)]);
+        assert_eq!(s.cel_link_set(layer, FrameIndex::new(2)), vec![FrameIndex::new(2)]);
     }
 }

@@ -28,21 +28,15 @@ pub mod core;
 pub mod reference_sheets;
 pub mod tags;
 
-pub use ai::{
-    AiMetadata, ModelId, OperationKind, ProjectAi, PromptHistoryEntry, Quality, TrainingJob,
-    TrainingStatus, default_reference_chroma,
-};
+pub use ai::{AiMetadata, ModelId, OperationKind, ProjectAi, PromptHistoryEntry, Quality, TrainingJob, TrainingStatus, default_reference_chroma};
 pub use assets::{AssetLibrary, CharacterCard, LoraAsset, LoraKind, ReferenceAsset, StyleSwatch};
 pub use core::{
-    ActiveTarget, Entity, EntityContent, EntityDefaults, EntityGroup, EntityKind, Library,
-    NamedSprite, TilemapLayer, TilemapScene, TilesetReference,
+    ActiveTarget, Entity, EntityContent, EntityDefaults, EntityGroup, EntityKind, Library, NamedSprite, TilemapLayer, TilemapScene, TilesetReference,
 };
 pub use reference_sheets::{
-    AnchorDirection, AnimationKind, AssetInfo, CharacterAnchor, ChatTranscript, ChatTurn,
-    DerivedSheet, DirectionalAnchors, GenerationProvenance, PromptEntry, PromptResult,
-    ReferenceImage, ReferenceRole, ReferenceSheet, ReferenceSheetTemplateDefinition,
-    ReferenceSheetTemplateId, ReferenceSlot, RefinementKind, RegionDefinition, SheetComposition,
-    SheetDimensions, SheetPanel, SheetVariant, VariantOrigin, built_in_reference_sheet_templates,
+    AnchorDirection, AnimationKind, AssetInfo, CharacterAnchor, ChatTranscript, ChatTurn, DerivedSheet, DirectionalAnchors, GenerationProvenance, PromptEntry,
+    PromptResult, ReferenceImage, ReferenceRole, ReferenceSheet, ReferenceSheetTemplateDefinition, ReferenceSheetTemplateId, ReferenceSlot, RefinementKind,
+    RegionDefinition, SheetComposition, SheetDimensions, SheetPanel, SheetVariant, VariantOrigin, built_in_reference_sheet_templates,
 };
 pub use tags::TagDefinition;
 
@@ -105,20 +99,10 @@ mod tests {
             .find(|template| template.id == ReferenceSheetTemplateId::Turnaround4View)
             .expect("turnaround template");
 
-        assert_eq!(
-            turnaround.default_dimensions,
-            SheetDimensions {
-                width: 2048,
-                height: 1024,
-            }
-        );
+        assert_eq!(turnaround.default_dimensions, SheetDimensions { width: 2048, height: 1024 });
         assert_eq!(turnaround.default_chroma, default_reference_chroma());
         assert!(!turnaround.benefits_from_text_labels);
-        assert!(
-            turnaround
-                .allowed_dimensions
-                .contains(&turnaround.default_dimensions)
-        );
+        assert!(turnaround.allowed_dimensions.contains(&turnaround.default_dimensions));
     }
 
     #[test]
@@ -149,9 +133,7 @@ mod tests {
         use std::io::Cursor;
 
         let mut bytes = Vec::new();
-        RgbaImage::new(7, 3)
-            .write_to(&mut Cursor::new(&mut bytes), ImageFormat::Png)
-            .unwrap();
+        RgbaImage::new(7, 3).write_to(&mut Cursor::new(&mut bytes), ImageFormat::Png).unwrap();
         let variant = SheetVariant::from_image(
             SheetVariantId::new(1),
             0,

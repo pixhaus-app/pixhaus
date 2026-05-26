@@ -117,9 +117,7 @@ mod tests {
         let l = Layer {
             id: LayerId::new(3),
             name: "ground".into(),
-            kind: LayerKind::Tilemap {
-                tileset: TilesetId::new(7),
-            },
+            kind: LayerKind::Tilemap { tileset: TilesetId::new(7) },
             blend_mode: BlendMode::Normal,
             opacity: 255,
             visible: true,

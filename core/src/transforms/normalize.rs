@@ -247,6 +247,110 @@ pub fn measure(buf: &PixelBuffer, alpha_threshold: u8) -> FrameMetrics {
     }
 }
 
+/// Auto-detects the likely background colour by sampling the 1px border of
+/// `buf` and returning the most common fully-opaque colour there.
+///
+/// A flat-background sheet has the same colour all around its edge, so the
+/// border's dominant opaque colour is a good first guess for the key. Returns
+/// `None` when the border has no opaque pixels (already-transparent edges).
+#[must_use]
+pub fn detect_key_color(buf: &PixelBuffer) -> Option<Rgba> {
+    let (w, h) = (buf.width(), buf.height());
+    if w == 0 || h == 0 {
+        return None;
+    }
+    // Tally opaque colours around the 1px border. Corners counted once.
+    let mut counts: std::collections::HashMap<(u8, u8, u8), u32> = std::collections::HashMap::new();
+    let mut tally = |px: Rgba| {
+        if px.a != 0 {
+            *counts.entry((px.r, px.g, px.b)).or_insert(0) += 1;
+        }
+    };
+    for x in 0..w {
+        if let Some(px) = buf.pixel(x, 0) {
+            tally(px);
+        }
+        if h > 1 {
+            if let Some(px) = buf.pixel(x, h - 1) {
+                tally(px);
+            }
+        }
+    }
+    for y in 1..h.saturating_sub(1) {
+        if let Some(px) = buf.pixel(0, y) {
+            tally(px);
+        }
+        if w > 1 {
+            if let Some(px) = buf.pixel(w - 1, y) {
+                tally(px);
+            }
+        }
+    }
+    counts.into_iter().max_by_key(|&(_, count)| count).map(|((r, g, b), _)| Rgba::opaque(r, g, b))
+}
+
+/// How a chroma-key attempt turned out, judged by how much opaque content it
+/// removed. Drives the "this frame still needs AI" flag in the UI.
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+pub enum KeyOutcome {
+    /// Keying removed a plausible slice of the frame; the result looks usable.
+    Ok,
+    /// Keying removed almost nothing — the key colour probably missed the
+    /// background. A likely candidate for the AI fallback.
+    Missed,
+    /// Keying removed almost everything — the key was too broad and ate the
+    /// subject. Also a candidate for the AI fallback (or a tighter tolerance).
+    TooBroad,
+}
+
+/// Judges a chroma-key result by comparing opaque coverage before and after.
+///
+/// `alpha_threshold` sets the opaque cutoff (alpha strictly greater counts).
+/// A key that clears under [`KEY_MISSED_PERCENT`] of the opaque pixels missed;
+/// one that leaves under [`KEY_TOO_BROAD_PERCENT`] of the canvas opaque was too
+/// broad. Anything between reads as a usable removal. Comparisons are integer
+/// (cross-multiplied) so there are no float casts on the pixel counts.
+#[must_use]
+pub fn judge_key(before: &PixelBuffer, after: &PixelBuffer, alpha_threshold: u8) -> KeyOutcome {
+    let total = u64::from(after.width()) * u64::from(after.height());
+    let before_opaque = opaque_count(before, alpha_threshold);
+    let after_opaque = opaque_count(after, alpha_threshold);
+    if before_opaque == 0 || total == 0 {
+        return KeyOutcome::Ok;
+    }
+    let removed = before_opaque.saturating_sub(after_opaque);
+    if removed * 100 < before_opaque * KEY_MISSED_PERCENT {
+        return KeyOutcome::Missed;
+    }
+    if after_opaque * 100 < total * KEY_TOO_BROAD_PERCENT {
+        return KeyOutcome::TooBroad;
+    }
+    KeyOutcome::Ok
+}
+
+/// A key that removes less than this percent of the opaque pixels is judged to
+/// have missed the background.
+pub const KEY_MISSED_PERCENT: u64 = 2;
+
+/// A key that leaves less than this percent of the canvas opaque is judged to
+/// have eaten the subject.
+pub const KEY_TOO_BROAD_PERCENT: u64 = 2;
+
+/// Counts pixels whose alpha is strictly greater than `alpha_threshold`.
+fn opaque_count(buf: &PixelBuffer, alpha_threshold: u8) -> u64 {
+    let mut count = 0u64;
+    for y in 0..buf.height() {
+        for x in 0..buf.width() {
+            if let Some(px) = buf.pixel(x, y)
+                && px.a > alpha_threshold
+            {
+                count += 1;
+            }
+        }
+    }
+    count
+}
+
 /// Re-pads `subject` onto a fresh transparent `canvas_width × canvas_height`
 /// buffer so the subject's horizontal centre lands on the canvas centre and
 /// its bottom row lands `bottom_margin` pixels above the canvas bottom.
@@ -257,12 +361,7 @@ pub fn measure(buf: &PixelBuffer, alpha_threshold: u8) -> FrameMetrics {
 /// # Errors
 ///
 /// Returns [`Error::EmptyBuffer`] if the canvas would be `0 × 0`.
-pub fn repad(
-    subject: &PixelBuffer,
-    canvas_width: u32,
-    canvas_height: u32,
-    bottom_margin: u32,
-) -> Result<PixelBuffer> {
+pub fn repad(subject: &PixelBuffer, canvas_width: u32, canvas_height: u32, bottom_margin: u32) -> Result<PixelBuffer> {
     if canvas_width == 0 || canvas_height == 0 {
         return Err(Error::EmptyBuffer);
     }
@@ -304,26 +403,15 @@ pub fn repad(
 /// subject still fits the output cell — i2v source frames are hundreds of
 /// pixels tall, and without the cap a subject keeps its native height,
 /// overhangs a small cell, and re-pad clips it to a blank strip.
-fn reference_height(
-    source_metrics: &[FrameMetrics],
-    max_visible: u32,
-    opts: &NormalizeOptions,
-) -> u32 {
-    let max_visible_width = source_metrics
-        .iter()
-        .map(|m| m.visible_width)
-        .max()
-        .unwrap_or(0);
+fn reference_height(source_metrics: &[FrameMetrics], max_visible: u32, opts: &NormalizeOptions) -> u32 {
+    let max_visible_width = source_metrics.iter().map(|m| m.visible_width).max().unwrap_or(0);
     let fit_height = fit_reference_height(
         max_visible_width,
         max_visible,
         opts.canvas_width,
         opts.canvas_height.saturating_sub(opts.bottom_margin),
     );
-    opts.reference_height
-        .unwrap_or(max_visible)
-        .min(fit_height)
-        .max(1)
+    opts.reference_height.unwrap_or(max_visible).min(fit_height).max(1)
 }
 
 /// Largest reference height that keeps a `w × h` subject inside a
@@ -336,8 +424,7 @@ fn fit_reference_height(w: u32, h: u32, canvas_w: u32, canvas_h: u32) -> u32 {
     if w == 0 || h == 0 {
         return canvas_h.max(1);
     }
-    let by_width =
-        u32::try_from(u64::from(h) * u64::from(canvas_w) / u64::from(w)).unwrap_or(canvas_h);
+    let by_width = u32::try_from(u64::from(h) * u64::from(canvas_w) / u64::from(w)).unwrap_or(canvas_h);
     canvas_h.min(by_width).max(1)
 }
 
@@ -358,12 +445,7 @@ fn crop(buf: &PixelBuffer, x: u32, y: u32, w: u32, h: u32) -> Result<PixelBuffer
 
 /// Crops one keyed frame to its subject, scales it to the reference height,
 /// and re-pads it onto the fixed canvas. Empty frames return a blank canvas.
-fn normalize_one(
-    frame: &PixelBuffer,
-    m: &FrameMetrics,
-    reference_height: u32,
-    opts: &NormalizeOptions,
-) -> Result<PixelBuffer> {
+fn normalize_one(frame: &PixelBuffer, m: &FrameMetrics, reference_height: u32, opts: &NormalizeOptions) -> Result<PixelBuffer> {
     if m.empty {
         return Ok(PixelBuffer::new(opts.canvas_width, opts.canvas_height)?);
     }
@@ -373,20 +455,12 @@ fn normalize_one(
     } else {
         // Preserve aspect: width scales by the same factor as height.
         let new_h = reference_height;
-        let new_w = u32::try_from(
-            (u64::from(m.visible_width) * u64::from(new_h) + u64::from(m.visible_height) / 2)
-                / u64::from(m.visible_height),
-        )
-        .unwrap_or(m.visible_width)
-        .max(1);
+        let new_w = u32::try_from((u64::from(m.visible_width) * u64::from(new_h) + u64::from(m.visible_height) / 2) / u64::from(m.visible_height))
+            .unwrap_or(m.visible_width)
+            .max(1);
         scale_nearest(&cropped, new_w, new_h)?
     };
-    repad(
-        &subject,
-        opts.canvas_width,
-        opts.canvas_height,
-        opts.bottom_margin,
-    )
+    repad(&subject, opts.canvas_width, opts.canvas_height, opts.bottom_margin)
 }
 
 /// Runs the full normalization pass over `frames`.
@@ -400,10 +474,7 @@ fn normalize_one(
 ///
 /// Returns an error if the canvas is degenerate or an internal scale /
 /// crop step fails.
-pub fn normalize_frames(
-    frames: &[PixelBuffer],
-    opts: &NormalizeOptions,
-) -> Result<NormalizeResult> {
+pub fn normalize_frames(frames: &[PixelBuffer], opts: &NormalizeOptions) -> Result<NormalizeResult> {
     if frames.is_empty() {
         return Ok(NormalizeResult {
             frames: Vec::new(),
@@ -426,16 +497,9 @@ pub fn normalize_frames(
             None => f.clone(),
         })
         .collect();
-    let source_metrics: Vec<FrameMetrics> = keyed
-        .iter()
-        .map(|f| measure(f, opts.alpha_threshold))
-        .collect();
+    let source_metrics: Vec<FrameMetrics> = keyed.iter().map(|f| measure(f, opts.alpha_threshold)).collect();
 
-    let max_visible = source_metrics
-        .iter()
-        .map(|m| m.visible_height)
-        .max()
-        .unwrap_or(0);
+    let max_visible = source_metrics.iter().map(|m| m.visible_height).max().unwrap_or(0);
     let reference_height = reference_height(&source_metrics, max_visible, opts);
 
     let mut warnings = Vec::new();
@@ -455,14 +519,8 @@ pub fn normalize_frames(
     }
 
     // Measure the normalized output to verify baseline lock.
-    let out_metrics: Vec<FrameMetrics> = out_frames
-        .iter()
-        .map(|f| measure(f, opts.alpha_threshold))
-        .collect();
-    let target_baseline = opts
-        .canvas_height
-        .saturating_sub(opts.bottom_margin)
-        .saturating_sub(1);
+    let out_metrics: Vec<FrameMetrics> = out_frames.iter().map(|f| measure(f, opts.alpha_threshold)).collect();
+    let target_baseline = opts.canvas_height.saturating_sub(opts.bottom_margin).saturating_sub(1);
     let baseline_drift_px = out_metrics
         .iter()
         .filter(|m| !m.empty)
@@ -470,9 +528,7 @@ pub fn normalize_frames(
         .max()
         .unwrap_or(0);
     if baseline_drift_px > 0 {
-        warnings.push(format!(
-            "foot baseline drifts up to {baseline_drift_px}px after normalization"
-        ));
+        warnings.push(format!("foot baseline drifts up to {baseline_drift_px}px after normalization"));
     }
 
     let scale_match_pct = if max_visible == 0 || min_visible == u32::MAX {
@@ -481,9 +537,7 @@ pub fn normalize_frames(
         u32::try_from(u64::from(min_visible) * 100 / u64::from(max_visible)).unwrap_or(100)
     };
     if scale_match_pct < 60 {
-        warnings.push(format!(
-            "subject heights vary widely ({scale_match_pct}% match) before scale correction"
-        ));
+        warnings.push(format!("subject heights vary widely ({scale_match_pct}% match) before scale correction"));
     }
 
     let seam = seam_match(out_frames.first(), out_frames.last());
@@ -555,11 +609,7 @@ mod tests {
         buf.set_pixel(1, 1, Rgba::opaque(10, 20, 30));
         let out = chroma_key(&buf, ChromaKey::magenta());
         assert_eq!(out.pixel(0, 0).unwrap().a, 0, "background keyed out");
-        assert_eq!(
-            out.pixel(1, 1),
-            Some(Rgba::opaque(10, 20, 30)),
-            "subject kept"
-        );
+        assert_eq!(out.pixel(1, 1), Some(Rgba::opaque(10, 20, 30)), "subject kept");
     }
 
     #[test]
@@ -625,6 +675,53 @@ mod tests {
         let res = normalize_frames(&[], &opts).unwrap();
         assert!(res.frames.is_empty());
         assert!(!res.report.warnings.is_empty());
+    }
+
+    #[test]
+    fn detect_key_color_picks_the_dominant_border_color() {
+        // Magenta border, a different-coloured subject in the middle.
+        let mut buf = solid(8, 8, Rgba::opaque(255, 0, 255));
+        for y in 2..6 {
+            for x in 2..6 {
+                buf.set_pixel(x, y, Rgba::opaque(10, 20, 30));
+            }
+        }
+        assert_eq!(detect_key_color(&buf), Some(Rgba::opaque(255, 0, 255)));
+    }
+
+    #[test]
+    fn detect_key_color_none_when_border_transparent() {
+        let buf = PixelBuffer::new(8, 8).unwrap();
+        assert_eq!(detect_key_color(&buf), None);
+    }
+
+    #[test]
+    fn judge_key_ok_when_flat_background_removed() {
+        let mut buf = solid(16, 16, Rgba::opaque(255, 0, 255));
+        for y in 4..12 {
+            for x in 4..12 {
+                buf.set_pixel(x, y, Rgba::opaque(10, 20, 30));
+            }
+        }
+        let keyed = chroma_key(&buf, ChromaKey::magenta());
+        assert_eq!(judge_key(&buf, &keyed, 8), KeyOutcome::Ok);
+    }
+
+    #[test]
+    fn judge_key_missed_when_key_clears_nothing() {
+        let mut buf = solid(16, 16, Rgba::opaque(255, 0, 255));
+        buf.set_pixel(8, 8, Rgba::opaque(10, 20, 30));
+        // Green key against a magenta sheet removes nothing.
+        let keyed = chroma_key(&buf, ChromaKey::green());
+        assert_eq!(judge_key(&buf, &keyed, 8), KeyOutcome::Missed);
+    }
+
+    #[test]
+    fn judge_key_too_broad_when_key_eats_the_subject() {
+        // The subject *is* magenta too, so a magenta key clears the whole frame.
+        let buf = solid(16, 16, Rgba::opaque(255, 0, 255));
+        let keyed = chroma_key(&buf, ChromaKey::magenta());
+        assert_eq!(judge_key(&buf, &keyed, 8), KeyOutcome::TooBroad);
     }
 
     #[test]

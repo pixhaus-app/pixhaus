@@ -53,9 +53,7 @@ mod tests {
     use super::VerbRuntime;
     use crate::plugin::backend::InferenceBackend;
     use crate::plugin::context::VerbContext;
-    use crate::plugin::descriptor::{
-        BackendCapabilities, CostEstimate, EffectKind, VerbDescriptor, VerbId,
-    };
+    use crate::plugin::descriptor::{BackendCapabilities, CostEstimate, EffectKind, VerbDescriptor, VerbId};
     use crate::plugin::error::{Result, VerbError};
     use crate::plugin::inputs::VerbInputs;
     use crate::plugin::output::{ActualCost, VerbOutput};
@@ -111,16 +109,8 @@ mod tests {
         fn descriptor(&self) -> &VerbDescriptor {
             &self.0
         }
-        async fn invoke(
-            &self,
-            _ctx: VerbContext,
-            _inputs: VerbInputs,
-            progress: VerbProgress,
-            _cancel: CancellationToken,
-        ) -> Result<VerbOutput> {
-            progress
-                .send(VerbProgressEvent::Started { backend: None })
-                .await;
+        async fn invoke(&self, _ctx: VerbContext, _inputs: VerbInputs, progress: VerbProgress, _cancel: CancellationToken) -> Result<VerbOutput> {
+            progress.send(VerbProgressEvent::Started { backend: None }).await;
             Ok(empty_output(Duration::ZERO))
         }
     }
@@ -131,13 +121,7 @@ mod tests {
         fn descriptor(&self) -> &VerbDescriptor {
             &self.0
         }
-        async fn invoke(
-            &self,
-            _ctx: VerbContext,
-            _inputs: VerbInputs,
-            _progress: VerbProgress,
-            cancel: CancellationToken,
-        ) -> Result<VerbOutput> {
+        async fn invoke(&self, _ctx: VerbContext, _inputs: VerbInputs, _progress: VerbProgress, cancel: CancellationToken) -> Result<VerbOutput> {
             cancel.cancelled().await;
             Err(VerbError::Cancelled)
         }
@@ -156,13 +140,7 @@ mod tests {
                 Err(VerbError::Schema("inputs must be an object".into()))
             }
         }
-        async fn invoke(
-            &self,
-            _ctx: VerbContext,
-            _inputs: VerbInputs,
-            _progress: VerbProgress,
-            _cancel: CancellationToken,
-        ) -> Result<VerbOutput> {
+        async fn invoke(&self, _ctx: VerbContext, _inputs: VerbInputs, _progress: VerbProgress, _cancel: CancellationToken) -> Result<VerbOutput> {
             Ok(empty_output(Duration::ZERO))
         }
     }
@@ -170,9 +148,7 @@ mod tests {
     #[tokio::test]
     async fn register_and_invoke_round_trip() {
         let runtime = VerbRuntime::new();
-        runtime
-            .register(ImmediateOk(descriptor("test.ok", true, true)))
-            .unwrap();
+        runtime.register(ImmediateOk(descriptor("test.ok", true, true))).unwrap();
 
         assert_eq!(runtime.len(), 1);
         assert!(!runtime.is_empty());
@@ -181,11 +157,7 @@ mod tests {
         assert_eq!(descs[0].id.as_str(), "test.ok");
 
         let mut inv = runtime
-            .invoke(
-                &VerbId::new("test.ok"),
-                VerbContext::empty(metadata()),
-                VerbInputs::empty(),
-            )
+            .invoke(&VerbId::new("test.ok"), VerbContext::empty(metadata()), VerbInputs::empty())
             .unwrap();
 
         let first = inv.next_progress().await.unwrap();
@@ -199,12 +171,8 @@ mod tests {
     #[tokio::test]
     async fn duplicate_registration_fails() {
         let runtime = VerbRuntime::new();
-        runtime
-            .register(ImmediateOk(descriptor("test.dup", true, false)))
-            .unwrap();
-        let err = runtime
-            .register(ImmediateOk(descriptor("test.dup", true, false)))
-            .unwrap_err();
+        runtime.register(ImmediateOk(descriptor("test.dup", true, false))).unwrap();
+        let err = runtime.register(ImmediateOk(descriptor("test.dup", true, false))).unwrap_err();
         assert!(matches!(err, VerbError::AlreadyRegistered(_)));
     }
 
@@ -212,11 +180,7 @@ mod tests {
     async fn unknown_verb_returns_not_found() {
         let runtime = VerbRuntime::new();
         let err = runtime
-            .invoke(
-                &VerbId::new("test.missing"),
-                VerbContext::empty(metadata()),
-                VerbInputs::empty(),
-            )
+            .invoke(&VerbId::new("test.missing"), VerbContext::empty(metadata()), VerbInputs::empty())
             .unwrap_err();
         assert!(matches!(err, VerbError::NotFound(_)));
     }
@@ -224,9 +188,7 @@ mod tests {
     #[tokio::test]
     async fn validate_failure_propagates() {
         let runtime = VerbRuntime::new();
-        runtime
-            .register(Validates(descriptor("test.validates", true, false)))
-            .unwrap();
+        runtime.register(Validates(descriptor("test.validates", true, false))).unwrap();
         let err = runtime
             .invoke(
                 &VerbId::new("test.validates"),
@@ -240,15 +202,9 @@ mod tests {
     #[tokio::test]
     async fn cancellation_propagates_to_verb() {
         let runtime = VerbRuntime::new();
-        runtime
-            .register(ObservesCancellation(descriptor("test.cancel", true, false)))
-            .unwrap();
+        runtime.register(ObservesCancellation(descriptor("test.cancel", true, false))).unwrap();
         let inv = runtime
-            .invoke(
-                &VerbId::new("test.cancel"),
-                VerbContext::empty(metadata()),
-                VerbInputs::empty(),
-            )
+            .invoke(&VerbId::new("test.cancel"), VerbContext::empty(metadata()), VerbInputs::empty())
             .unwrap();
         inv.cancel();
         let res = inv.finish().await;
@@ -263,28 +219,16 @@ mod tests {
             fn descriptor(&self) -> &VerbDescriptor {
                 &self.0
             }
-            async fn invoke(
-                &self,
-                _ctx: VerbContext,
-                _inputs: VerbInputs,
-                _progress: VerbProgress,
-                cancel: CancellationToken,
-            ) -> Result<VerbOutput> {
+            async fn invoke(&self, _ctx: VerbContext, _inputs: VerbInputs, _progress: VerbProgress, cancel: CancellationToken) -> Result<VerbOutput> {
                 cancel.cancel();
                 Ok(empty_output(Duration::ZERO))
             }
         }
 
         let runtime = VerbRuntime::new();
-        runtime
-            .register(OkButCancels(descriptor("test.ok-cancels", true, false)))
-            .unwrap();
+        runtime.register(OkButCancels(descriptor("test.ok-cancels", true, false))).unwrap();
         let inv = runtime
-            .invoke(
-                &VerbId::new("test.ok-cancels"),
-                VerbContext::empty(metadata()),
-                VerbInputs::empty(),
-            )
+            .invoke(&VerbId::new("test.ok-cancels"), VerbContext::empty(metadata()), VerbInputs::empty())
             .unwrap();
         let res = inv.finish().await;
         assert!(matches!(res, Err(VerbError::Cancelled)));
@@ -322,13 +266,7 @@ mod tests {
             fn descriptor(&self) -> &VerbDescriptor {
                 &self.descriptor
             }
-            async fn invoke(
-                &self,
-                _ctx: VerbContext,
-                _inputs: VerbInputs,
-                _progress: VerbProgress,
-                cancel: CancellationToken,
-            ) -> Result<VerbOutput> {
+            async fn invoke(&self, _ctx: VerbContext, _inputs: VerbInputs, _progress: VerbProgress, cancel: CancellationToken) -> Result<VerbOutput> {
                 cancel.cancelled().await;
                 self.observed.store(true, Ordering::SeqCst);
                 Err(VerbError::Cancelled)
@@ -346,11 +284,7 @@ mod tests {
 
         {
             let _inv = runtime
-                .invoke(
-                    &VerbId::new("test.drop-cancels"),
-                    VerbContext::empty(metadata()),
-                    VerbInputs::empty(),
-                )
+                .invoke(&VerbId::new("test.drop-cancels"), VerbContext::empty(metadata()), VerbInputs::empty())
                 .unwrap();
             // Drop at end of scope; Drop impl fires the cancel token.
         }
@@ -361,10 +295,7 @@ mod tests {
         while !observed.load(Ordering::SeqCst) && std::time::Instant::now() < deadline {
             tokio::task::yield_now().await;
         }
-        assert!(
-            observed.load(Ordering::SeqCst),
-            "drop did not cancel the in-flight verb"
-        );
+        assert!(observed.load(Ordering::SeqCst), "drop did not cancel the in-flight verb");
     }
 
     #[tokio::test]
@@ -385,13 +316,7 @@ mod tests {
             fn descriptor(&self) -> &VerbDescriptor {
                 &self.descriptor
             }
-            async fn invoke(
-                &self,
-                _ctx: VerbContext,
-                _inputs: VerbInputs,
-                _progress: VerbProgress,
-                cancel: CancellationToken,
-            ) -> Result<VerbOutput> {
+            async fn invoke(&self, _ctx: VerbContext, _inputs: VerbInputs, _progress: VerbProgress, cancel: CancellationToken) -> Result<VerbOutput> {
                 cancel.cancelled().await;
                 self.observed.store(true, Ordering::SeqCst);
                 Err(VerbError::Cancelled)
@@ -408,11 +333,7 @@ mod tests {
             .unwrap();
 
         let inv = runtime
-            .invoke(
-                &VerbId::new("test.abandon-finish"),
-                VerbContext::empty(metadata()),
-                VerbInputs::empty(),
-            )
+            .invoke(&VerbId::new("test.abandon-finish"), VerbContext::empty(metadata()), VerbInputs::empty())
             .unwrap();
 
         // finish() hangs because the worker waits on cancellation. Time out
@@ -424,18 +345,13 @@ mod tests {
         while !observed.load(Ordering::SeqCst) && std::time::Instant::now() < deadline {
             tokio::task::yield_now().await;
         }
-        assert!(
-            observed.load(Ordering::SeqCst),
-            "abandoning the finish future must cancel the worker"
-        );
+        assert!(observed.load(Ordering::SeqCst), "abandoning the finish future must cancel the worker");
     }
 
     #[tokio::test]
     async fn unregister_removes_verb() {
         let runtime = VerbRuntime::new();
-        runtime
-            .register(ImmediateOk(descriptor("test.un", true, false)))
-            .unwrap();
+        runtime.register(ImmediateOk(descriptor("test.un", true, false))).unwrap();
         runtime.unregister(&VerbId::new("test.un")).unwrap();
         assert!(runtime.is_empty());
         let err = runtime.unregister(&VerbId::new("test.un")).unwrap_err();
@@ -470,26 +386,14 @@ mod tests {
     }
 
     fn caps_backend(id: &'static str, caps: BackendCapabilities) -> StubBackend {
-        StubBackend {
-            id,
-            caps,
-            available: true,
-        }
+        StubBackend { id, caps, available: true }
     }
 
     #[test]
     fn register_and_list_backends() {
         let rt = VerbRuntime::new();
-        rt.register_backend(
-            caps_backend("local", BackendCapabilities::TEXT_GENERATION),
-            0,
-        )
-        .unwrap();
-        rt.register_backend(
-            caps_backend("cloud", BackendCapabilities::IMAGE_GENERATION),
-            10,
-        )
-        .unwrap();
+        rt.register_backend(caps_backend("local", BackendCapabilities::TEXT_GENERATION), 0).unwrap();
+        rt.register_backend(caps_backend("cloud", BackendCapabilities::IMAGE_GENERATION), 10).unwrap();
 
         let list = rt.list_backends();
         assert_eq!(list.len(), 2);
@@ -502,11 +406,8 @@ mod tests {
     #[test]
     fn duplicate_backend_registration_fails() {
         let rt = VerbRuntime::new();
-        rt.register_backend(caps_backend("b", BackendCapabilities::empty()), 0)
-            .unwrap();
-        let err = rt
-            .register_backend(caps_backend("b", BackendCapabilities::empty()), 1)
-            .unwrap_err();
+        rt.register_backend(caps_backend("b", BackendCapabilities::empty()), 0).unwrap();
+        let err = rt.register_backend(caps_backend("b", BackendCapabilities::empty()), 1).unwrap_err();
         // Dedicated variant — the backend-management UI must distinguish
         // backend duplicates from verb duplicates.
         assert!(
@@ -518,8 +419,7 @@ mod tests {
     #[test]
     fn unregister_backend_removes_entry() {
         let rt = VerbRuntime::new();
-        rt.register_backend(caps_backend("b", BackendCapabilities::empty()), 0)
-            .unwrap();
+        rt.register_backend(caps_backend("b", BackendCapabilities::empty()), 0).unwrap();
         rt.unregister_backend("b").unwrap();
         assert_eq!(rt.backend_count(), 0);
 
@@ -533,30 +433,19 @@ mod tests {
     #[test]
     fn select_backend_respects_capabilities() {
         let rt = VerbRuntime::new();
+        rt.register_backend(caps_backend("text-only", BackendCapabilities::TEXT_GENERATION), 0).unwrap();
         rt.register_backend(
-            caps_backend("text-only", BackendCapabilities::TEXT_GENERATION),
-            0,
-        )
-        .unwrap();
-        rt.register_backend(
-            caps_backend(
-                "multimodal",
-                BackendCapabilities::TEXT_GENERATION.union(BackendCapabilities::IMAGE_GENERATION),
-            ),
+            caps_backend("multimodal", BackendCapabilities::TEXT_GENERATION.union(BackendCapabilities::IMAGE_GENERATION)),
             10,
         )
         .unwrap();
 
         // text-only is tried first and satisfies TEXT_GENERATION.
-        let b = rt
-            .select_backend(BackendCapabilities::TEXT_GENERATION, &VerbId::new("v"))
-            .unwrap();
+        let b = rt.select_backend(BackendCapabilities::TEXT_GENERATION, &VerbId::new("v")).unwrap();
         assert_eq!(b.id(), "text-only");
 
         // IMAGE_GENERATION only available in multimodal.
-        let b = rt
-            .select_backend(BackendCapabilities::IMAGE_GENERATION, &VerbId::new("v"))
-            .unwrap();
+        let b = rt.select_backend(BackendCapabilities::IMAGE_GENERATION, &VerbId::new("v")).unwrap();
         assert_eq!(b.id(), "multimodal");
     }
 
@@ -584,24 +473,16 @@ mod tests {
         )
         .unwrap();
 
-        let b = rt
-            .select_backend(BackendCapabilities::TEXT_GENERATION, &VerbId::new("v"))
-            .unwrap();
+        let b = rt.select_backend(BackendCapabilities::TEXT_GENERATION, &VerbId::new("v")).unwrap();
         assert_eq!(b.id(), "up");
     }
 
     #[test]
     fn select_backend_returns_unsupported_when_none_match() {
         let rt = VerbRuntime::new();
-        rt.register_backend(
-            caps_backend("text-only", BackendCapabilities::TEXT_GENERATION),
-            0,
-        )
-        .unwrap();
+        rt.register_backend(caps_backend("text-only", BackendCapabilities::TEXT_GENERATION), 0).unwrap();
 
-        let err = rt
-            .select_backend(BackendCapabilities::IMAGE_GENERATION, &VerbId::new("v"))
-            .unwrap_err();
+        let err = rt.select_backend(BackendCapabilities::IMAGE_GENERATION, &VerbId::new("v")).unwrap_err();
         assert!(matches!(err, VerbError::UnsupportedCapability { .. }));
     }
 
@@ -623,9 +504,7 @@ mod tests {
         )
         .unwrap();
 
-        let err = rt
-            .select_backend(BackendCapabilities::TEXT_GENERATION, &VerbId::new("v"))
-            .unwrap_err();
+        let err = rt.select_backend(BackendCapabilities::TEXT_GENERATION, &VerbId::new("v")).unwrap_err();
         assert!(
             matches!(&err, VerbError::BackendUnavailable { id } if id == "ollama"),
             "expected BackendUnavailable, got {err:?}"
@@ -635,18 +514,10 @@ mod tests {
     #[test]
     fn select_backend_by_id_returns_named_backend() {
         let rt = VerbRuntime::new();
-        rt.register_backend(
-            caps_backend("google", BackendCapabilities::IMAGE_GENERATION),
-            0,
-        )
-        .unwrap();
+        rt.register_backend(caps_backend("google", BackendCapabilities::IMAGE_GENERATION), 0).unwrap();
 
         let backend = rt
-            .select_backend_by_id(
-                "google",
-                BackendCapabilities::IMAGE_GENERATION,
-                &VerbId::new("v"),
-            )
+            .select_backend_by_id("google", BackendCapabilities::IMAGE_GENERATION, &VerbId::new("v"))
             .unwrap();
 
         assert_eq!(backend.id(), "google");
@@ -657,11 +528,7 @@ mod tests {
         let rt = VerbRuntime::new();
 
         let err = rt
-            .select_backend_by_id(
-                "missing",
-                BackendCapabilities::IMAGE_GENERATION,
-                &VerbId::new("v"),
-            )
+            .select_backend_by_id("missing", BackendCapabilities::IMAGE_GENERATION, &VerbId::new("v"))
             .unwrap_err();
 
         assert!(
@@ -673,18 +540,10 @@ mod tests {
     #[test]
     fn select_backend_by_id_checks_capabilities() {
         let rt = VerbRuntime::new();
-        rt.register_backend(
-            caps_backend("text-only", BackendCapabilities::TEXT_GENERATION),
-            0,
-        )
-        .unwrap();
+        rt.register_backend(caps_backend("text-only", BackendCapabilities::TEXT_GENERATION), 0).unwrap();
 
         let err = rt
-            .select_backend_by_id(
-                "text-only",
-                BackendCapabilities::IMAGE_GENERATION,
-                &VerbId::new("v"),
-            )
+            .select_backend_by_id("text-only", BackendCapabilities::IMAGE_GENERATION, &VerbId::new("v"))
             .unwrap_err();
 
         assert!(
@@ -707,11 +566,7 @@ mod tests {
         .unwrap();
 
         let err = rt
-            .select_backend_by_id(
-                "down",
-                BackendCapabilities::IMAGE_GENERATION,
-                &VerbId::new("v"),
-            )
+            .select_backend_by_id("down", BackendCapabilities::IMAGE_GENERATION, &VerbId::new("v"))
             .unwrap_err();
 
         assert!(
@@ -736,26 +591,15 @@ mod tests {
             fn descriptor(&self) -> &VerbDescriptor {
                 &self.descriptor
             }
-            async fn invoke(
-                &self,
-                ctx: VerbContext,
-                _inputs: VerbInputs,
-                _progress: VerbProgress,
-                _cancel: CancellationToken,
-            ) -> Result<VerbOutput> {
-                self.saw_backend
-                    .store(ctx.backend.is_some(), Ordering::SeqCst);
+            async fn invoke(&self, ctx: VerbContext, _inputs: VerbInputs, _progress: VerbProgress, _cancel: CancellationToken) -> Result<VerbOutput> {
+                self.saw_backend.store(ctx.backend.is_some(), Ordering::SeqCst);
                 Ok(empty_output(Duration::ZERO))
             }
         }
 
         let saw = Arc::new(AtomicBool::new(false));
         let rt = VerbRuntime::new();
-        rt.register_backend(
-            caps_backend("text", BackendCapabilities::TEXT_GENERATION),
-            0,
-        )
-        .unwrap();
+        rt.register_backend(caps_backend("text", BackendCapabilities::TEXT_GENERATION), 0).unwrap();
 
         let desc = VerbDescriptor {
             id: VerbId::new("test.needs-backend"),
@@ -778,18 +622,11 @@ mod tests {
         .unwrap();
 
         let inv = rt
-            .invoke(
-                &VerbId::new("test.needs-backend"),
-                VerbContext::empty(metadata()),
-                VerbInputs::empty(),
-            )
+            .invoke(&VerbId::new("test.needs-backend"), VerbContext::empty(metadata()), VerbInputs::empty())
             .unwrap();
         inv.finish().await.unwrap();
 
-        assert!(
-            saw.load(Ordering::SeqCst),
-            "verb did not receive a backend in ctx"
-        );
+        assert!(saw.load(Ordering::SeqCst), "verb did not receive a backend in ctx");
     }
 
     #[tokio::test]
@@ -801,23 +638,13 @@ mod tests {
             fn descriptor(&self) -> &VerbDescriptor {
                 &self.0
             }
-            async fn invoke(
-                &self,
-                _ctx: VerbContext,
-                _inputs: VerbInputs,
-                _progress: VerbProgress,
-                _cancel: CancellationToken,
-            ) -> Result<VerbOutput> {
+            async fn invoke(&self, _ctx: VerbContext, _inputs: VerbInputs, _progress: VerbProgress, _cancel: CancellationToken) -> Result<VerbOutput> {
                 Ok(empty_output(Duration::ZERO))
             }
         }
 
         let rt = VerbRuntime::new();
-        rt.register_backend(
-            caps_backend("text-only", BackendCapabilities::TEXT_GENERATION),
-            0,
-        )
-        .unwrap();
+        rt.register_backend(caps_backend("text-only", BackendCapabilities::TEXT_GENERATION), 0).unwrap();
 
         let desc = VerbDescriptor {
             id: VerbId::new("test.img"),
@@ -836,11 +663,7 @@ mod tests {
         rt.register(NeedsImage(desc)).unwrap();
 
         let err = rt
-            .invoke(
-                &VerbId::new("test.img"),
-                VerbContext::empty(metadata()),
-                VerbInputs::empty(),
-            )
+            .invoke(&VerbId::new("test.img"), VerbContext::empty(metadata()), VerbInputs::empty())
             .unwrap_err();
         assert!(
             matches!(err, VerbError::UnsupportedCapability { .. }),

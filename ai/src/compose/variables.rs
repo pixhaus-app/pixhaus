@@ -87,15 +87,9 @@ pub fn substitute(text: &str, sources: &[&dyn VarSource]) -> Result<String, VarE
             }
             '{' => {
                 let start = i + 1;
-                let end = text[start..]
-                    .find('}')
-                    .map(|o| start + o)
-                    .ok_or(VarError::Malformed(i))?;
+                let end = text[start..].find('}').map(|o| start + o).ok_or(VarError::Malformed(i))?;
                 let key = &text[start..end];
-                let val = sources
-                    .iter()
-                    .find_map(|s| s.get(key))
-                    .ok_or_else(|| VarError::Unfilled(key.to_string()))?;
+                let val = sources.iter().find_map(|s| s.get(key)).ok_or_else(|| VarError::Unfilled(key.to_string()))?;
                 out.push_str(&val);
                 // Advance past the key and its closing `}` (at byte `end`).
                 while let Some(&(pos, _)) = chars.peek() {
@@ -117,18 +111,12 @@ mod tests {
     use proptest::prelude::*;
 
     fn map(pairs: &[(&str, &str)]) -> BTreeMap<String, String> {
-        pairs
-            .iter()
-            .map(|(k, v)| (k.to_string(), v.to_string()))
-            .collect()
+        pairs.iter().map(|(k, v)| (k.to_string(), v.to_string())).collect()
     }
 
     #[test]
     fn detects_tokens_in_order_without_duplicates() {
-        assert_eq!(
-            detect_tokens("a {species} {x} {species}"),
-            vec!["species", "x"]
-        );
+        assert_eq!(detect_tokens("a {species} {x} {species}"), vec!["species", "x"]);
     }
 
     #[test]
@@ -145,19 +133,13 @@ mod tests {
     #[test]
     fn substitution_preserves_non_ascii() {
         let vars = map(&[("x", "orc")]);
-        assert_eq!(
-            substitute("héllo {x} 世界 🎨", &[&vars]).unwrap(),
-            "héllo orc 世界 🎨"
-        );
+        assert_eq!(substitute("héllo {x} 世界 🎨", &[&vars]).unwrap(), "héllo orc 世界 🎨");
     }
 
     #[test]
     fn substitution_with_non_ascii_value_and_key_after() {
         let vars = map(&[("名前", "勇者")]);
-        assert_eq!(
-            substitute("名は {名前} です", &[&vars]).unwrap(),
-            "名は 勇者 です"
-        );
+        assert_eq!(substitute("名は {名前} です", &[&vars]).unwrap(), "名は 勇者 です");
     }
 
     #[test]
@@ -172,19 +154,13 @@ mod tests {
     fn falls_through_to_second_source() {
         let primary = map(&[]);
         let fallback = map(&[("species", "human")]);
-        assert_eq!(
-            substitute("a {species}", &[&primary, &fallback]).unwrap(),
-            "a human"
-        );
+        assert_eq!(substitute("a {species}", &[&primary, &fallback]).unwrap(), "a human");
     }
 
     #[test]
     fn errors_on_unfilled() {
         let empty = map(&[]);
-        assert_eq!(
-            substitute("a {x}", &[&empty]),
-            Err(VarError::Unfilled("x".into()))
-        );
+        assert_eq!(substitute("a {x}", &[&empty]), Err(VarError::Unfilled("x".into())));
     }
 
     #[test]
@@ -196,10 +172,7 @@ mod tests {
     #[test]
     fn errors_on_unterminated() {
         let empty = map(&[]);
-        assert!(matches!(
-            substitute("a {x", &[&empty]),
-            Err(VarError::Malformed(_))
-        ));
+        assert!(matches!(substitute("a {x", &[&empty]), Err(VarError::Malformed(_))));
     }
 
     proptest! {

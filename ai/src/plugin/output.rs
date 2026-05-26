@@ -27,10 +27,7 @@ use std::time::Duration;
 
 use serde::{Deserialize, Serialize};
 
-use pixhaus_core::project::{
-    Animation, Cel, EntityId, Frame, FrameIndex, FrameTag, Layer, LayerId, Palette, PixelBufferId,
-    Rect, Slice, SpriteId, Tileset,
-};
+use pixhaus_core::project::{Animation, Cel, EntityId, Frame, FrameIndex, FrameTag, Layer, LayerId, Palette, PixelBufferId, Rect, Slice, SpriteId, Tileset};
 
 use super::context::PixelData;
 

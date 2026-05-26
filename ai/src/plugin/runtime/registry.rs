@@ -22,9 +22,7 @@ use crate::plugin::descriptor::{BackendCapabilities, VerbDescriptor, VerbId};
 use crate::plugin::error::{Result, VerbError};
 use crate::plugin::inputs::VerbInputs;
 use crate::plugin::output::VerbOutput;
-use crate::plugin::preview::{
-    PreviewIdMinter, VerbCommit, VerbDiscard, VerbPreview, now_unix_seconds,
-};
+use crate::plugin::preview::{PreviewIdMinter, VerbCommit, VerbDiscard, VerbPreview, now_unix_seconds};
 use crate::plugin::progress::VerbProgress;
 use crate::plugin::verb::Verb;
 
@@ -164,17 +162,8 @@ impl VerbRuntime {
         }
         debug!(id = %id_str, priority, "registering backend");
         // Insert in sorted position so the list stays ordered.
-        let pos = backends
-            .iter()
-            .position(|e| e.priority > priority)
-            .unwrap_or(backends.len());
-        backends.insert(
-            pos,
-            BackendEntry {
-                backend: arc,
-                priority,
-            },
-        );
+        let pos = backends.iter().position(|e| e.priority > priority).unwrap_or(backends.len());
+        backends.insert(pos, BackendEntry { backend: arc, priority });
         Ok(())
     }
 
@@ -234,11 +223,7 @@ impl VerbRuntime {
     /// The search is linear over the priority-sorted list; for the
     /// expected registry size (< 10 backends) a sorted scan is faster
     /// than a heap.
-    pub fn select_backend(
-        &self,
-        required: BackendCapabilities,
-        verb: &VerbId,
-    ) -> Result<Arc<dyn InferenceBackend>> {
+    pub fn select_backend(&self, required: BackendCapabilities, verb: &VerbId) -> Result<Arc<dyn InferenceBackend>> {
         let backends = self.backends.read();
         // First pass: an available backend that matches.
         if let Some(entry) = backends
@@ -249,38 +234,24 @@ impl VerbRuntime {
         }
         // Second pass: any backend matches but isn't available — surface
         // the highest-priority match's id so the UI can guide the user.
-        if let Some(entry) = backends
-            .iter()
-            .find(|e| e.backend.capabilities().contains(required))
-        {
+        if let Some(entry) = backends.iter().find(|e| e.backend.capabilities().contains(required)) {
             return Err(VerbError::BackendUnavailable {
                 id: entry.backend.id().to_owned(),
             });
         }
         // No registered backend matches at all.
-        Err(VerbError::UnsupportedCapability {
-            verb: verb.clone(),
-            required,
-        })
+        Err(VerbError::UnsupportedCapability { verb: verb.clone(), required })
     }
 
     /// Selects a specific available backend by id and verifies that it
     /// satisfies the requested capabilities.
-    pub fn select_backend_by_id(
-        &self,
-        id: &str,
-        required: BackendCapabilities,
-        verb: &VerbId,
-    ) -> Result<Arc<dyn InferenceBackend>> {
+    pub fn select_backend_by_id(&self, id: &str, required: BackendCapabilities, verb: &VerbId) -> Result<Arc<dyn InferenceBackend>> {
         let backends = self.backends.read();
         let Some(entry) = backends.iter().find(|entry| entry.backend.id() == id) else {
             return Err(VerbError::BackendNotFound(id.to_owned()));
         };
         if !entry.backend.capabilities().contains(required) {
-            return Err(VerbError::UnsupportedCapability {
-                verb: verb.clone(),
-                required,
-            });
+            return Err(VerbError::UnsupportedCapability { verb: verb.clone(), required });
         }
         if !entry.backend.is_available() {
             return Err(VerbError::BackendUnavailable { id: id.to_owned() });
@@ -308,18 +279,8 @@ impl VerbRuntime {
     /// The caller drains progress through [`VerbInvocation::next_progress`]
     /// and awaits [`VerbInvocation::finish`] for the [`VerbPreview`].
     #[instrument(skip(self, ctx, inputs), fields(verb = %id))]
-    pub fn invoke(
-        &self,
-        id: &VerbId,
-        ctx: VerbContext,
-        inputs: VerbInputs,
-    ) -> Result<VerbInvocation> {
-        let verb = self
-            .verbs
-            .read()
-            .get(id)
-            .cloned()
-            .ok_or_else(|| VerbError::NotFound(id.clone()))?;
+    pub fn invoke(&self, id: &VerbId, ctx: VerbContext, inputs: VerbInputs) -> Result<VerbInvocation> {
+        let verb = self.verbs.read().get(id).cloned().ok_or_else(|| VerbError::NotFound(id.clone()))?;
         verb.validate(&inputs)?;
 
         // Capability check and backend injection. Verbs that need no
@@ -351,14 +312,8 @@ impl VerbRuntime {
         let cancel_for_task = cancel.clone();
         let join: JoinHandle<Result<VerbOutput>> = tokio::spawn(async move {
             trace!("verb worker entered");
-            let res = verb
-                .invoke(ctx, inputs, progress, cancel_for_task.clone())
-                .await;
-            trace!(
-                ok = res.is_ok(),
-                cancelled = cancel_for_task.is_cancelled(),
-                "verb worker exiting"
-            );
+            let res = verb.invoke(ctx, inputs, progress, cancel_for_task.clone()).await;
+            trace!(ok = res.is_ok(), cancelled = cancel_for_task.is_cancelled(), "verb worker exiting");
             // If the verb returned Ok but the token has fired, surface
             // cancellation rather than committing a partial preview.
             match res {

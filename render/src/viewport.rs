@@ -42,10 +42,7 @@ impl Viewport {
     /// A viewport scrolled to the origin at 100 % zoom.
     #[must_use]
     pub fn new() -> Self {
-        Self {
-            scroll: Vec2::ZERO,
-            zoom: 1.0,
-        }
+        Self { scroll: Vec2::ZERO, zoom: 1.0 }
     }
 
     /// Canvas pixel `canvas` -> screen pixel, given the viewport size `vp`.
@@ -97,18 +94,9 @@ impl Default for Viewport {
 #[must_use]
 pub fn snap_zoom(current: f32, dir: i32) -> f32 {
     if dir > 0 {
-        SNAP_ZOOMS
-            .iter()
-            .copied()
-            .find(|&z| z > current)
-            .unwrap_or(MAX_ZOOM)
+        SNAP_ZOOMS.iter().copied().find(|&z| z > current).unwrap_or(MAX_ZOOM)
     } else {
-        SNAP_ZOOMS
-            .iter()
-            .rev()
-            .copied()
-            .find(|&z| z < current)
-            .unwrap_or(MIN_ZOOM)
+        SNAP_ZOOMS.iter().rev().copied().find(|&z| z < current).unwrap_or(MIN_ZOOM)
     }
 }
 

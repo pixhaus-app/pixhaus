@@ -8,6 +8,5 @@
 pub mod extraction;
 
 pub use extraction::{
-    DEFAULT_MAX_COLORS, DEFAULT_QUANTIZE_BITS, ExtractionError, ExtractionOptions,
-    extract_palette_from_image_bytes, extract_palette_from_rgba8,
+    DEFAULT_MAX_COLORS, DEFAULT_QUANTIZE_BITS, ExtractionError, ExtractionOptions, extract_palette_from_image_bytes, extract_palette_from_rgba8,
 };

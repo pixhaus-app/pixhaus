@@ -23,7 +23,12 @@ struct Uniforms {
 
 /// The frame texture plus the bind group that references it. Recreated when the
 /// sprite's canvas size changes.
+///
+/// The `texture` handle is retained (not just the bind group) so
+/// [`ViewportRenderer::upload_dirty_rect`] can write a single dirty sub-rect in
+/// place rather than re-uploading the whole frame — the drawing hot path.
 struct FrameTexture {
+    texture: wgpu::Texture,
     bind_group: wgpu::BindGroup,
     width: u32,
     height: u32,
@@ -49,38 +54,37 @@ impl ViewportRenderer {
     /// the color target against `target_format` (egui-wgpu's surface format).
     #[must_use]
     pub fn new(device: &wgpu::Device, target_format: wgpu::TextureFormat) -> Self {
-        let bind_group_layout =
-            device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-                label: Some("sprite.bgl"),
-                entries: &[
-                    wgpu::BindGroupLayoutEntry {
-                        binding: 0,
-                        visibility: wgpu::ShaderStages::VERTEX_FRAGMENT,
-                        ty: wgpu::BindingType::Buffer {
-                            ty: wgpu::BufferBindingType::Uniform,
-                            has_dynamic_offset: false,
-                            min_binding_size: None,
-                        },
-                        count: None,
+        let bind_group_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+            label: Some("sprite.bgl"),
+            entries: &[
+                wgpu::BindGroupLayoutEntry {
+                    binding: 0,
+                    visibility: wgpu::ShaderStages::VERTEX_FRAGMENT,
+                    ty: wgpu::BindingType::Buffer {
+                        ty: wgpu::BufferBindingType::Uniform,
+                        has_dynamic_offset: false,
+                        min_binding_size: None,
                     },
-                    wgpu::BindGroupLayoutEntry {
-                        binding: 1,
-                        visibility: wgpu::ShaderStages::FRAGMENT,
-                        ty: wgpu::BindingType::Texture {
-                            sample_type: wgpu::TextureSampleType::Float { filterable: true },
-                            view_dimension: wgpu::TextureViewDimension::D2,
-                            multisampled: false,
-                        },
-                        count: None,
+                    count: None,
+                },
+                wgpu::BindGroupLayoutEntry {
+                    binding: 1,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Texture {
+                        sample_type: wgpu::TextureSampleType::Float { filterable: true },
+                        view_dimension: wgpu::TextureViewDimension::D2,
+                        multisampled: false,
                     },
-                    wgpu::BindGroupLayoutEntry {
-                        binding: 2,
-                        visibility: wgpu::ShaderStages::FRAGMENT,
-                        ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
-                        count: None,
-                    },
-                ],
-            });
+                    count: None,
+                },
+                wgpu::BindGroupLayoutEntry {
+                    binding: 2,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
+                    count: None,
+                },
+            ],
+        });
 
         let layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
             label: Some("sprite.layout"),
@@ -156,16 +160,12 @@ impl ViewportRenderer {
     /// Creates a 1x1 placeholder texture and its bind group. The placeholder is
     /// never sampled (`has_tile` stays 0 until a real frame lands); it exists
     /// only so the bind group is always valid and `paint` can run.
-    fn make_placeholder(
-        device: &wgpu::Device,
-        bgl: &wgpu::BindGroupLayout,
-        uniform_buf: &wgpu::Buffer,
-        sampler: &wgpu::Sampler,
-    ) -> FrameTexture {
+    fn make_placeholder(device: &wgpu::Device, bgl: &wgpu::BindGroupLayout, uniform_buf: &wgpu::Buffer, sampler: &wgpu::Sampler) -> FrameTexture {
         let texture = device.create_texture(&placeholder_descriptor());
         let view = texture.create_view(&wgpu::TextureViewDescriptor::default());
         let bind_group = make_bind_group(device, bgl, uniform_buf, &view, sampler);
         FrameTexture {
+            texture,
             bind_group,
             width: 1,
             height: 1,
@@ -183,68 +183,68 @@ impl ViewportRenderer {
             return;
         }
 
+        // Allocate a fresh texture only when the canvas size changes; otherwise
+        // keep the retained texture and overwrite its pixels in place so the
+        // handle that `upload_dirty_rect` writes to stays valid across frames.
         if self.frame.width != width || self.frame.height != height {
-            let texture = device.create_texture(&wgpu::TextureDescriptor {
-                label: Some("sprite.frame"),
-                size: wgpu::Extent3d {
-                    width,
-                    height,
-                    depth_or_array_layers: 1,
-                },
-                mip_level_count: 1,
-                sample_count: 1,
-                dimension: wgpu::TextureDimension::D2,
-                format: wgpu::TextureFormat::Rgba8Unorm,
-                usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
-                view_formats: &[],
-            });
+            let texture = device.create_texture(&frame_descriptor(width, height));
             let view = texture.create_view(&wgpu::TextureViewDescriptor::default());
-            let bind_group = make_bind_group(
-                device,
-                &self.bind_group_layout,
-                &self.uniform_buf,
-                &view,
-                &self.sampler,
-            );
+            let bind_group = make_bind_group(device, &self.bind_group_layout, &self.uniform_buf, &view, &self.sampler);
+            Self::upload_pixels(queue, &texture, frame);
             self.frame = FrameTexture {
+                texture,
                 bind_group,
                 width,
                 height,
             };
-            // Hold the texture alive via the bind group; the view+texture are
-            // captured there. Re-upload pixels below.
-            Self::upload_pixels(queue, &texture, frame);
         } else {
-            // Same size: rebuild the texture and bind group so the new pixels
-            // land. (A retained texture handle would let us write in place; the
-            // slice swaps whole frames, so a fresh upload is fine.)
-            let texture = device.create_texture(&wgpu::TextureDescriptor {
-                label: Some("sprite.frame"),
-                size: wgpu::Extent3d {
-                    width,
-                    height,
-                    depth_or_array_layers: 1,
-                },
-                mip_level_count: 1,
-                sample_count: 1,
-                dimension: wgpu::TextureDimension::D2,
-                format: wgpu::TextureFormat::Rgba8Unorm,
-                usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
-                view_formats: &[],
-            });
-            let view = texture.create_view(&wgpu::TextureViewDescriptor::default());
-            self.frame.bind_group = make_bind_group(
-                device,
-                &self.bind_group_layout,
-                &self.uniform_buf,
-                &view,
-                &self.sampler,
-            );
-            Self::upload_pixels(queue, &texture, frame);
+            Self::upload_pixels(queue, &self.frame.texture, frame);
         }
 
         self.sprite_size = [width as f32, height as f32];
         self.has_tile = 1.0;
+    }
+
+    /// Writes a single dirty sub-rect from `frame` into the retained frame
+    /// texture, touching only `(x, y)`–`(x+w, y+h)`. This is the drawing hot
+    /// path: a brush dab uploads its few dirty rows, never the whole canvas, so
+    /// per-stroke GPU work is bounded by the dirty region rather than the canvas
+    /// size — the 8K performance constraint.
+    ///
+    /// `frame` is the full-canvas buffer; the rect is read straight out of it at
+    /// the source stride (no intermediate copy). The rect is clamped to the
+    /// texture bounds; a rect fully outside the texture is a no-op. Call
+    /// [`Self::set_frame`] at least once first so the texture exists at the
+    /// right size.
+    pub fn upload_dirty_rect(&self, queue: &wgpu::Queue, frame: &PixelBuffer, x: u32, y: u32, w: u32, h: u32) {
+        if self.has_tile <= 0.0 || x >= self.frame.width || y >= self.frame.height {
+            return;
+        }
+        let w = w.min(self.frame.width - x).min(frame.width().saturating_sub(x));
+        let h = h.min(self.frame.height - y).min(frame.height().saturating_sub(y));
+        if w == 0 || h == 0 {
+            return;
+        }
+        let offset = u64::from(y) * u64::from(frame.stride()) + u64::from(x) * 4;
+        queue.write_texture(
+            wgpu::TexelCopyTextureInfo {
+                texture: &self.frame.texture,
+                mip_level: 0,
+                origin: wgpu::Origin3d { x, y, z: 0 },
+                aspect: wgpu::TextureAspect::All,
+            },
+            frame.as_bytes(),
+            wgpu::TexelCopyBufferLayout {
+                offset,
+                bytes_per_row: Some(frame.stride()),
+                rows_per_image: Some(h),
+            },
+            wgpu::Extent3d {
+                width: w,
+                height: h,
+                depth_or_array_layers: 1,
+            },
+        );
     }
 
     fn upload_pixels(queue: &wgpu::Queue, texture: &wgpu::Texture, frame: &PixelBuffer) {
@@ -272,13 +272,7 @@ impl ViewportRenderer {
     /// Writes the per-frame camera uniforms. `resolution` is the viewport size
     /// in physical pixels, `scroll` the canvas coord at the viewport centre,
     /// `zoom` physical pixels per canvas pixel.
-    pub fn write_uniforms(
-        &self,
-        queue: &wgpu::Queue,
-        resolution: [f32; 2],
-        scroll: [f32; 2],
-        zoom: f32,
-    ) {
+    pub fn write_uniforms(&self, queue: &wgpu::Queue, resolution: [f32; 2], scroll: [f32; 2], zoom: f32) {
         let uniforms = Uniforms {
             resolution,
             scroll,
@@ -298,6 +292,25 @@ impl ViewportRenderer {
         render_pass.set_pipeline(&self.pipeline);
         render_pass.set_bind_group(0, &self.frame.bind_group, &[]);
         render_pass.draw(0..6, 0..1);
+    }
+}
+
+fn frame_descriptor(width: u32, height: u32) -> wgpu::TextureDescriptor<'static> {
+    wgpu::TextureDescriptor {
+        label: Some("sprite.frame"),
+        size: wgpu::Extent3d {
+            width,
+            height,
+            depth_or_array_layers: 1,
+        },
+        mip_level_count: 1,
+        sample_count: 1,
+        dimension: wgpu::TextureDimension::D2,
+        format: wgpu::TextureFormat::Rgba8Unorm,
+        // COPY_SRC lets the frame be read back (screenshots, visual-regression
+        // tests). The dirty-rect upload uses COPY_DST.
+        usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST | wgpu::TextureUsages::COPY_SRC,
+        view_formats: &[],
     }
 }
 
@@ -353,11 +366,8 @@ mod tests {
     /// (CI without a GPU) — callers should skip rather than fail.
     fn headless() -> Option<(wgpu::Device, wgpu::Queue)> {
         let instance = wgpu::Instance::default();
-        let adapter =
-            pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions::default()))
-                .ok()?;
-        let (device, queue) =
-            pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor::default())).ok()?;
+        let adapter = pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions::default())).ok()?;
+        let (device, queue) = pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor::default())).ok()?;
         Some((device, queue))
     }
 
@@ -397,8 +407,7 @@ mod tests {
 
         renderer.write_uniforms(&queue, [SIZE as f32, SIZE as f32], [2.0, 2.0], 16.0);
 
-        let mut encoder =
-            device.create_command_encoder(&wgpu::CommandEncoderDescriptor { label: None });
+        let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor { label: None });
         {
             let mut pass = encoder
                 .begin_render_pass(&wgpu::RenderPassDescriptor {
@@ -467,5 +476,85 @@ mod tests {
         assert_eq!(data[centre], 255, "centre red channel");
         assert_eq!(data[centre + 1], 0, "centre green channel");
         assert_eq!(data[centre + 2], 0, "centre blue channel");
+    }
+
+    #[test]
+    fn dirty_rect_upload_touches_only_the_rect() {
+        let Some((device, queue)) = headless() else {
+            eprintln!("no wgpu adapter; skipping dirty-rect smoke test");
+            return;
+        };
+
+        let format = wgpu::TextureFormat::Rgba8Unorm;
+        let mut renderer = ViewportRenderer::new(&device, format);
+
+        // Start with a 16x16 opaque-red frame.
+        let mut pixels: Vec<u8> = (0..16 * 16).flat_map(|_| [255u8, 0, 0, 255]).collect();
+        let mut frame = PixelBuffer::from_raw(16, 16, 16 * 4, pixels.clone()).unwrap();
+        renderer.set_frame(&device, &queue, &frame);
+
+        // Paint a 2x2 green block at (3,4) into the CPU buffer, then upload only
+        // that sub-rect to the GPU texture.
+        for yy in 4..6u32 {
+            for xx in 3..5u32 {
+                let off = (yy as usize * 16 + xx as usize) * 4;
+                pixels[off..off + 4].copy_from_slice(&[0, 255, 0, 255]);
+            }
+        }
+        frame = PixelBuffer::from_raw(16, 16, 16 * 4, pixels).unwrap();
+        renderer.upload_dirty_rect(&queue, &frame, 3, 4, 2, 2);
+
+        // Read the texture back by copying it to a buffer (rows already aligned:
+        // 16*4 = 64, padded to 256 below).
+        let bytes_per_row = 256u32; // 16*4=64 rounded up to COPY alignment
+        let readback = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("dirty.readback"),
+            size: u64::from(bytes_per_row * 16),
+            usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
+            mapped_at_creation: false,
+        });
+        let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor { label: None });
+        encoder.copy_texture_to_buffer(
+            wgpu::TexelCopyTextureInfo {
+                texture: &renderer.frame.texture,
+                mip_level: 0,
+                origin: wgpu::Origin3d::ZERO,
+                aspect: wgpu::TextureAspect::All,
+            },
+            wgpu::TexelCopyBufferInfo {
+                buffer: &readback,
+                layout: wgpu::TexelCopyBufferLayout {
+                    offset: 0,
+                    bytes_per_row: Some(bytes_per_row),
+                    rows_per_image: Some(16),
+                },
+            },
+            wgpu::Extent3d {
+                width: 16,
+                height: 16,
+                depth_or_array_layers: 1,
+            },
+        );
+        queue.submit([encoder.finish()]);
+        let slice = readback.slice(..);
+        slice.map_async(wgpu::MapMode::Read, |_| {});
+        device
+            .poll(wgpu::PollType::Wait {
+                submission_index: None,
+                timeout: None,
+            })
+            .unwrap();
+        let data = slice.get_mapped_range();
+
+        let at = |x: usize, y: usize| {
+            let o = y * bytes_per_row as usize + x * 4;
+            [data[o], data[o + 1], data[o + 2], data[o + 3]]
+        };
+        // Inside the dirty rect: green.
+        assert_eq!(at(3, 4), [0, 255, 0, 255], "rect pixel should be green");
+        assert_eq!(at(4, 5), [0, 255, 0, 255], "rect pixel should be green");
+        // Outside the dirty rect: untouched red.
+        assert_eq!(at(0, 0), [255, 0, 0, 255], "pixel outside rect stays red");
+        assert_eq!(at(5, 5), [255, 0, 0, 255], "pixel just outside rect stays red");
     }
 }

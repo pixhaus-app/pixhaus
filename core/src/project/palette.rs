@@ -225,10 +225,7 @@ impl PaletteAnimation {
     /// `entry_index`, replacing any existing keyframe at the same
     /// position.
     pub fn set(&mut self, entry_index: u32, frame: FrameIndex, color: Rgba) {
-        self.keyframes
-            .entry(entry_index)
-            .or_default()
-            .insert(frame, color);
+        self.keyframes.entry(entry_index).or_default().insert(frame, color);
     }
 
     /// Returns the color the entry at `entry_index` resolves to at
@@ -242,10 +239,7 @@ impl PaletteAnimation {
         let Some(per_entry) = self.keyframes.get(&entry_index) else {
             return fallback;
         };
-        per_entry
-            .range(..=frame)
-            .next_back()
-            .map_or(fallback, |(_, color)| *color)
+        per_entry.range(..=frame).next_back().map_or(fallback, |(_, color)| *color)
     }
 }
 
@@ -259,11 +253,7 @@ mod tests {
 
     #[test]
     fn nearest_index_exact_match() {
-        let p = make_palette(vec![
-            Rgba::transparent(),
-            Rgba::opaque(255, 0, 0),
-            Rgba::opaque(0, 255, 0),
-        ]);
+        let p = make_palette(vec![Rgba::transparent(), Rgba::opaque(255, 0, 0), Rgba::opaque(0, 255, 0)]);
         assert_eq!(p.nearest_index(Rgba::opaque(255, 0, 0)), Some(1));
         assert_eq!(p.nearest_index(Rgba::opaque(0, 255, 0)), Some(2));
     }
@@ -300,22 +290,14 @@ mod tests {
 
     #[test]
     fn apply_cycle_zero_offset_is_noop() {
-        let p = make_palette(vec![
-            Rgba::opaque(1, 0, 0),
-            Rgba::opaque(2, 0, 0),
-            Rgba::opaque(3, 0, 0),
-        ]);
+        let p = make_palette(vec![Rgba::opaque(1, 0, 0), Rgba::opaque(2, 0, 0), Rgba::opaque(3, 0, 0)]);
         let cycled = p.apply_cycle(0, 2, 0);
         assert_eq!(cycled.colors, p.colors);
     }
 
     #[test]
     fn from_colors_builds_unnamed_entries() {
-        let p = Palette::from_colors(
-            PaletteId::new(1),
-            "default",
-            vec![Rgba::transparent(), Rgba::opaque(255, 0, 0)],
-        );
+        let p = Palette::from_colors(PaletteId::new(1), "default", vec![Rgba::transparent(), Rgba::opaque(255, 0, 0)]);
         assert_eq!(p.colors.len(), 2);
         assert!(p.colors[0].name.is_none());
         assert_eq!(p.color_at(1), Some(Rgba::opaque(255, 0, 0)));

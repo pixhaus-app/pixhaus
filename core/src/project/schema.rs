@@ -30,7 +30,7 @@ impl SchemaVersion {
     pub const MAJOR: u16 = 4;
 
     /// Minor version this build of Pixhaus writes.
-    pub const MINOR: u16 = 2;
+    pub const MINOR: u16 = 3;
 
     /// The version emitted by this build.
     #[must_use]
@@ -82,13 +82,7 @@ impl FeatureFlags {
     pub const VERB_HISTORY: Self = Self(1 << 4);
 
     /// All flags currently defined by this build.
-    pub const ALL: Self = Self(
-        Self::TILEMAPS.0
-            | Self::REFERENCES.0
-            | Self::ANIMATIONS.0
-            | Self::SLICES.0
-            | Self::VERB_HISTORY.0,
-    );
+    pub const ALL: Self = Self(Self::TILEMAPS.0 | Self::REFERENCES.0 | Self::ANIMATIONS.0 | Self::SLICES.0 | Self::VERB_HISTORY.0);
 
     /// Returns the empty set.
     #[must_use]
@@ -150,10 +144,10 @@ mod tests {
     }
 
     #[test]
-    fn current_version_is_major_4_minor_2() {
+    fn current_version_is_major_4_minor_3() {
         let v = SchemaVersion::current();
         assert_eq!(v.major, 4);
-        assert_eq!(v.minor, 2);
+        assert_eq!(v.minor, 3);
     }
 
     #[test]

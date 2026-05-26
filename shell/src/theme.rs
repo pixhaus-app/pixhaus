@@ -13,8 +13,7 @@
 use std::sync::Arc;
 
 use eframe::egui::{
-    self, Color32, CornerRadius, FontData, FontDefinitions, FontFamily, FontId, Margin, Shadow,
-    Stroke, Style, TextStyle, Theme, ThemePreference, Visuals,
+    self, Color32, CornerRadius, FontData, FontDefinitions, FontFamily, FontId, Margin, Shadow, Stroke, Style, TextStyle, Theme, ThemePreference, Visuals,
 };
 
 /// Semantic brand colors for one theme. Field meanings match the
@@ -195,28 +194,27 @@ const RADIUS_WINDOW: u8 = 8;
 /// Family name for the medium-weight Geist used by headings.
 const GEIST_MEDIUM: &str = "Geist-Medium";
 
-/// Registers the bundled Geist faces, keeping egui's default fallbacks (Latin
-/// extras, CJK, emoji) so existing symbol glyphs (▶ ⏸ ✓) still render.
+/// Registers the bundled Geist faces plus the Phosphor icon font.
+///
+/// Geist leads the proportional/monospace chains; `egui_phosphor::add_to_fonts`
+/// appends Phosphor as an early fallback so the icon glyphs used across the UI
+/// (see [`crate::icons`]) render inline. egui's default fallbacks (Latin
+/// extras, CJK) stay for ordinary text. Phosphor is MIT — see
+/// `THIRD_PARTY_NOTICES.md`.
 fn install_fonts(ctx: &egui::Context) {
     let mut fonts = FontDefinitions::default();
 
     fonts.font_data.insert(
         "Geist".to_owned(),
-        Arc::new(FontData::from_static(include_bytes!(
-            "../assets/fonts/Geist-Regular.ttf"
-        ))),
+        Arc::new(FontData::from_static(include_bytes!("../assets/fonts/Geist-Regular.ttf"))),
     );
     fonts.font_data.insert(
         GEIST_MEDIUM.to_owned(),
-        Arc::new(FontData::from_static(include_bytes!(
-            "../assets/fonts/Geist-Medium.ttf"
-        ))),
+        Arc::new(FontData::from_static(include_bytes!("../assets/fonts/Geist-Medium.ttf"))),
     );
     fonts.font_data.insert(
         "GeistMono".to_owned(),
-        Arc::new(FontData::from_static(include_bytes!(
-            "../assets/fonts/GeistMono-Regular.ttf"
-        ))),
+        Arc::new(FontData::from_static(include_bytes!("../assets/fonts/GeistMono-Regular.ttf"))),
     );
 
     if let Some(proportional) = fonts.families.get_mut(&FontFamily::Proportional) {
@@ -232,9 +230,11 @@ fn install_fonts(ctx: &egui::Context) {
     if let Some(proportional) = fonts.families.get(&FontFamily::Proportional) {
         heading.extend(proportional.iter().cloned());
     }
-    fonts
-        .families
-        .insert(FontFamily::Name(GEIST_MEDIUM.into()), heading);
+    fonts.families.insert(FontFamily::Name(GEIST_MEDIUM.into()), heading);
+
+    // Append Phosphor to the proportional fallback chain so icon codepoints
+    // render inside ordinary text runs.
+    egui_phosphor::add_to_fonts(&mut fonts, egui_phosphor::Variant::Regular);
 
     ctx.set_fonts(fonts);
 }
@@ -307,14 +307,8 @@ mod tests {
 
     #[test]
     fn for_theme_selects_the_right_palette() {
-        assert_eq!(
-            Palette::for_theme(Theme::Dark).bg_app,
-            Palette::dark().bg_app
-        );
-        assert_eq!(
-            Palette::for_theme(Theme::Light).bg_app,
-            Palette::light().bg_app
-        );
+        assert_eq!(Palette::for_theme(Theme::Dark).bg_app, Palette::dark().bg_app);
+        assert_eq!(Palette::for_theme(Theme::Light).bg_app, Palette::light().bg_app);
     }
 
     #[test]

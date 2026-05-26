@@ -107,21 +107,13 @@ pub trait Verb: Send + Sync + 'static {
     ///
     /// Returns the verb's [`VerbOutput`] — the description of effects
     /// the host will commit on accept.
-    async fn invoke(
-        &self,
-        ctx: VerbContext,
-        inputs: VerbInputs,
-        progress: VerbProgress,
-        cancel: CancellationToken,
-    ) -> Result<VerbOutput>;
+    async fn invoke(&self, ctx: VerbContext, inputs: VerbInputs, progress: VerbProgress, cancel: CancellationToken) -> Result<VerbOutput>;
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::plugin::descriptor::{
-        BackendCapabilities, CostEstimate, EffectKind, VerbDescriptor, VerbId,
-    };
+    use crate::plugin::descriptor::{BackendCapabilities, CostEstimate, EffectKind, VerbDescriptor, VerbId};
     use crate::plugin::error::VerbError;
     use crate::plugin::output::ActualCost;
     use std::time::Duration;
@@ -157,13 +149,7 @@ mod tests {
             &self.descriptor
         }
 
-        async fn invoke(
-            &self,
-            _ctx: VerbContext,
-            _inputs: VerbInputs,
-            _progress: VerbProgress,
-            _cancel: CancellationToken,
-        ) -> Result<VerbOutput> {
+        async fn invoke(&self, _ctx: VerbContext, _inputs: VerbInputs, _progress: VerbProgress, _cancel: CancellationToken) -> Result<VerbOutput> {
             Err(VerbError::Backend("always fails".into()))
         }
     }
@@ -181,14 +167,7 @@ mod tests {
             updated_at: 0,
             editor_version: "0".into(),
         });
-        let res = verb
-            .invoke(
-                ctx,
-                VerbInputs::empty(),
-                VerbProgress::discard(),
-                CancellationToken::new(),
-            )
-            .await;
+        let res = verb.invoke(ctx, VerbInputs::empty(), VerbProgress::discard(), CancellationToken::new()).await;
         assert!(matches!(res, Err(VerbError::Backend(_))));
     }
 

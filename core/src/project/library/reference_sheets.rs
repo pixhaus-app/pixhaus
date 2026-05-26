@@ -76,9 +76,7 @@ pub struct ReferenceSheetTemplateDefinition {
 /// Returns the built-in reference-sheet template definitions.
 #[must_use]
 pub fn built_in_reference_sheet_templates() -> Vec<ReferenceSheetTemplateDefinition> {
-    use ReferenceSheetTemplateId::{
-        ActionPoses, ExpressionSheet, Turnaround4View, Turnaround8Direction, TypographicTurnaround,
-    };
+    use ReferenceSheetTemplateId::{ActionPoses, ExpressionSheet, Turnaround4View, Turnaround8Direction, TypographicTurnaround};
 
     vec![
         template_definition(
@@ -95,20 +93,8 @@ pub fn built_in_reference_sheet_templates() -> Vec<ReferenceSheetTemplateDefinit
             0,
             false,
         ),
-        template_definition(
-            ExpressionSheet,
-            "Expression sheet",
-            &[(1024, 1024), (1536, 1024), (2048, 2048)],
-            0,
-            false,
-        ),
-        template_definition(
-            ActionPoses,
-            "Action poses",
-            &[(2048, 1024), (1024, 512), (3072, 1024)],
-            0,
-            false,
-        ),
+        template_definition(ExpressionSheet, "Expression sheet", &[(1024, 1024), (1536, 1024), (2048, 2048)], 0, false),
+        template_definition(ActionPoses, "Action poses", &[(2048, 1024), (1024, 512), (3072, 1024)], 0, false),
         template_definition(
             TypographicTurnaround,
             "Typographic turnaround",
@@ -126,18 +112,11 @@ fn template_definition(
     default_index: usize,
     benefits_from_text_labels: bool,
 ) -> ReferenceSheetTemplateDefinition {
-    let allowed_dimensions = dims
-        .iter()
-        .map(|&(width, height)| SheetDimensions { width, height })
-        .collect::<Vec<_>>();
-    let default_dimensions =
-        allowed_dimensions
-            .get(default_index)
-            .copied()
-            .unwrap_or(SheetDimensions {
-                width: 2048,
-                height: 1024,
-            });
+    let allowed_dimensions = dims.iter().map(|&(width, height)| SheetDimensions { width, height }).collect::<Vec<_>>();
+    let default_dimensions = allowed_dimensions
+        .get(default_index)
+        .copied()
+        .unwrap_or(SheetDimensions { width: 2048, height: 1024 });
     ReferenceSheetTemplateDefinition {
         id,
         label: label.into(),
@@ -430,10 +409,7 @@ impl CharacterAnchor {
             return true;
         }
         match self.directional.get(sheet.direction) {
-            Some(anchor) => {
-                self.is_directional_stale(sheet.direction, canonical)
-                    || sheet.derived_from != anchor.id
-            }
+            Some(anchor) => self.is_directional_stale(sheet.direction, canonical) || sheet.derived_from != anchor.id,
             None => match &self.neutral {
                 Some(neutral) => sheet.derived_from != neutral.id,
                 None => true,
@@ -519,10 +495,7 @@ pub struct SheetVariant {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub applied_lora: Option<AssetId>,
     /// Applied `LoRA` strength for Flux requests.
-    #[serde(
-        default = "default_lora_weight",
-        skip_serializing_if = "is_default_lora_weight"
-    )]
+    #[serde(default = "default_lora_weight", skip_serializing_if = "is_default_lora_weight")]
     pub lora_weight: f32,
     /// The composite sheet image.
     pub image: ReferenceImage,
@@ -572,8 +545,7 @@ impl SheetVariant {
         // Prefer the real encoded dimensions over the template defaults so
         // manual imports of non-default-sized images carry correct metadata.
         // Falls back to the defaults when the bytes aren't a decodable image.
-        let (width, height) =
-            image_dimensions(&image).unwrap_or((default_sheet_width(), default_sheet_height()));
+        let (width, height) = image_dimensions(&image).unwrap_or((default_sheet_width(), default_sheet_height()));
         Self {
             id,
             created_at,
@@ -629,11 +601,7 @@ impl SheetComposition {
     /// recorded.
     #[must_use]
     pub fn is_empty(&self) -> bool {
-        self.views.is_empty()
-            && self.expressions.is_empty()
-            && self.callouts.is_empty()
-            && self.outfits.is_empty()
-            && self.palette_swatch.is_none()
+        self.views.is_empty() && self.expressions.is_empty() && self.callouts.is_empty() && self.outfits.is_empty() && self.palette_swatch.is_none()
     }
 }
 
@@ -749,19 +717,13 @@ mod anchor_tests {
     #[test]
     fn neutral_stale_when_missing_or_wrong_parent() {
         let canonical = variant(1, None);
-        assert!(
-            CharacterAnchor::default().is_neutral_stale(&canonical),
-            "missing neutral is stale"
-        );
+        assert!(CharacterAnchor::default().is_neutral_stale(&canonical), "missing neutral is stale");
 
         let anchor = CharacterAnchor {
             neutral: Some(variant(2, Some(1))),
             ..Default::default()
         };
-        assert!(
-            !anchor.is_neutral_stale(&canonical),
-            "neutral derived from canonical"
-        );
+        assert!(!anchor.is_neutral_stale(&canonical), "neutral derived from canonical");
 
         let rerolled = variant(3, None);
         assert!(anchor.is_neutral_stale(&rerolled));
@@ -773,10 +735,7 @@ mod anchor_tests {
         dirs.set(AnchorDirection::West, variant(5, Some(2)));
         dirs.set(AnchorDirection::East, variant(99, Some(2)));
         assert!(dirs.east_from_west);
-        assert_eq!(
-            dirs.get(AnchorDirection::East).map(|v| v.id),
-            Some(SheetVariantId::new(5))
-        );
+        assert_eq!(dirs.get(AnchorDirection::East).map(|v| v.id), Some(SheetVariantId::new(5)));
         assert!(dirs.get(AnchorDirection::North).is_none());
     }
 }

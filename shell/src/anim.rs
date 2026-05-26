@@ -97,29 +97,20 @@ fn decode_mp4_h264(clip: &[u8], fps: u32) -> Result<Vec<VideoFrame>, DecodeError
         return Err(DecodeError::Decode("clip is empty".into()));
     }
     let size = clip.len() as u64;
-    let mut reader = Mp4Reader::read_header(Cursor::new(clip), size)
-        .map_err(|e| DecodeError::Decode(e.to_string()))?;
+    let mut reader = Mp4Reader::read_header(Cursor::new(clip), size).map_err(|e| DecodeError::Decode(e.to_string()))?;
 
     // Find the first H.264 video track and pull its SPS/PPS.
     let mut h264_track: Option<(u32, Vec<u8>, Vec<u8>)> = None;
     for track in reader.tracks().values() {
         if matches!(track.media_type(), Ok(MediaType::H264)) {
-            let sps = track
-                .sequence_parameter_set()
-                .map_err(|e| DecodeError::Decode(e.to_string()))?
-                .to_vec();
-            let pps = track
-                .picture_parameter_set()
-                .map_err(|e| DecodeError::Decode(e.to_string()))?
-                .to_vec();
+            let sps = track.sequence_parameter_set().map_err(|e| DecodeError::Decode(e.to_string()))?.to_vec();
+            let pps = track.picture_parameter_set().map_err(|e| DecodeError::Decode(e.to_string()))?.to_vec();
             h264_track = Some((track.track_id(), sps, pps));
             break;
         }
     }
     let Some((track_id, sps, pps)) = h264_track else {
-        return Err(DecodeError::Unsupported(
-            "no H.264 video track in clip".into(),
-        ));
+        return Err(DecodeError::Unsupported("no H.264 video track in clip".into()));
     };
 
     let mut decoder = Decoder::new().map_err(|e| DecodeError::Decode(e.to_string()))?;
@@ -129,16 +120,11 @@ fn decode_mp4_h264(clip: &[u8], fps: u32) -> Result<Vec<VideoFrame>, DecodeError
     push_annexb(&mut header, &pps);
     let _ = decoder.decode(&header);
 
-    let sample_count = reader
-        .sample_count(track_id)
-        .map_err(|e| DecodeError::Decode(e.to_string()))?;
+    let sample_count = reader.sample_count(track_id).map_err(|e| DecodeError::Decode(e.to_string()))?;
 
     let mut frames = Vec::with_capacity(sample_count as usize);
     for sample_id in 1..=sample_count {
-        let Some(sample) = reader
-            .read_sample(track_id, sample_id)
-            .map_err(|e| DecodeError::Decode(e.to_string()))?
-        else {
+        let Some(sample) = reader.read_sample(track_id, sample_id).map_err(|e| DecodeError::Decode(e.to_string()))? else {
             continue;
         };
         // Re-send SPS/PPS ahead of each keyframe so a mid-stream decode stays valid.
@@ -164,20 +150,13 @@ fn decode_mp4_h264(clip: &[u8], fps: u32) -> Result<Vec<VideoFrame>, DecodeError
     }
 
     if frames.is_empty() {
-        return Err(DecodeError::Decode(
-            "H.264 decode produced no frames".into(),
-        ));
+        return Err(DecodeError::Decode("H.264 decode produced no frames".into()));
     }
     Ok(frames)
 }
 
-fn collect_anim<'a, D: AnimationDecoder<'a>>(
-    decoder: D,
-) -> Result<Vec<VideoFrame>, DecodeError> {
-    let frames = decoder
-        .into_frames()
-        .collect_frames()
-        .map_err(|e| DecodeError::Decode(e.to_string()))?;
+fn collect_anim<'a, D: AnimationDecoder<'a>>(decoder: D) -> Result<Vec<VideoFrame>, DecodeError> {
+    let frames = decoder.into_frames().collect_frames().map_err(|e| DecodeError::Decode(e.to_string()))?;
     let mut out = Vec::with_capacity(frames.len());
     let mut ts = 0u32;
     for frame in frames {
@@ -197,8 +176,7 @@ fn collect_anim<'a, D: AnimationDecoder<'a>>(
 }
 
 fn decode_gif(clip: &[u8]) -> Result<Vec<VideoFrame>, DecodeError> {
-    let decoder = image::codecs::gif::GifDecoder::new(Cursor::new(clip))
-        .map_err(|e| DecodeError::Decode(e.to_string()))?;
+    let decoder = image::codecs::gif::GifDecoder::new(Cursor::new(clip)).map_err(|e| DecodeError::Decode(e.to_string()))?;
     collect_anim(decoder)
 }
 
@@ -214,8 +192,7 @@ fn decode_apng(clip: &[u8]) -> Result<Vec<VideoFrame>, DecodeError> {
 /// removal). Returns `None` if the buffer is malformed.
 #[must_use]
 pub fn encode_png(frame: &VideoFrame) -> Option<Vec<u8>> {
-    let img: image::RgbaImage =
-        image::ImageBuffer::from_raw(frame.width, frame.height, frame.pixels.clone())?;
+    let img: image::RgbaImage = image::ImageBuffer::from_raw(frame.width, frame.height, frame.pixels.clone())?;
     let mut out = Vec::new();
     image::DynamicImage::ImageRgba8(img)
         .write_to(&mut Cursor::new(&mut out), image::ImageFormat::Png)
@@ -242,8 +219,7 @@ pub fn decode_png(png: &[u8], timestamp_ms: u32) -> Option<VideoFrame> {
 /// `motion_magnitude`.
 #[must_use]
 pub fn motion_magnitude(a: &VideoFrame, b: &VideoFrame) -> f32 {
-    if a.width != b.width || a.height != b.height || a.width == 0 || a.pixels.len() != b.pixels.len()
-    {
+    if a.width != b.width || a.height != b.height || a.width == 0 || a.pixels.len() != b.pixels.len() {
         return 0.0;
     }
     let mut sum = 0.0_f64;
@@ -252,9 +228,7 @@ pub fn motion_magnitude(a: &VideoFrame, b: &VideoFrame) -> f32 {
         if u32::from(pa[3]) + u32::from(pb[3]) < 64 {
             continue;
         }
-        sum += (f64::from(pa[0]) - f64::from(pb[0])).abs()
-            + (f64::from(pa[1]) - f64::from(pb[1])).abs()
-            + (f64::from(pa[2]) - f64::from(pb[2])).abs();
+        sum += (f64::from(pa[0]) - f64::from(pb[0])).abs() + (f64::from(pa[1]) - f64::from(pb[1])).abs() + (f64::from(pa[2]) - f64::from(pb[2])).abs();
         counted += 1.0;
     }
     if counted == 0.0 {
@@ -291,13 +265,7 @@ pub fn auto_loop_markers(frames: &[VideoFrame]) -> LoopMarkers {
     }
 
     let motion: Vec<f32> = (0..n)
-        .map(|i| {
-            if i == 0 {
-                f32::MAX
-            } else {
-                motion_magnitude(&frames[i - 1], &frames[i])
-            }
-        })
+        .map(|i| if i == 0 { f32::MAX } else { motion_magnitude(&frames[i - 1], &frames[i]) })
         .collect();
 
     let half = (n / 2).max(2);
@@ -325,32 +293,37 @@ pub fn auto_loop_markers(frames: &[VideoFrame]) -> LoopMarkers {
     LoopMarkers { start, end }
 }
 
-/// Picks `target_count` evenly spaced frame indices in `[markers.start,
-/// markers.end)` (end excluded so a forward loop wraps to it without
-/// duplication). Ported from the ai frame picker.
+/// Picks exactly `target_count` evenly spaced, distinct frame indices to host
+/// the loop. Samples a half-open window `[lo, hi)` (`hi` excluded so a forward
+/// loop wraps to it without duplicating a frame). The window prefers the
+/// detected loop `[start, end)`; when that is too short to supply `target_count`
+/// distinct frames it widens to the clip tail, then to the whole clip. Only when
+/// even the whole clip is shorter than `target_count` does it return fewer.
 #[must_use]
 pub fn pick_loop_frames(frames: &[VideoFrame], markers: LoopMarkers, target_count: usize) -> Vec<usize> {
     let n = frames.len();
     if n == 0 {
         return Vec::new();
     }
-    let start = markers.start.min(n - 1);
-    let end = markers.end.min(n - 1);
-    if end <= start {
-        return vec![start];
+    let target = target_count.clamp(1, n);
+
+    // Start from the detected loop, then widen until the window can supply
+    // `target` distinct frames.
+    let mut lo = markers.start.min(n - 1);
+    let mut hi = if markers.end > lo { markers.end.min(n) } else { n };
+    if hi - lo < target {
+        hi = n; // widen to the clip tail
     }
-    let span = end - start;
-    let count = target_count.clamp(2, span.max(2)).min(span);
-    if count <= 1 {
-        return vec![start];
+    if hi - lo < target {
+        lo = 0; // widen to the whole clip
+        hi = n;
     }
-    let mut picks = Vec::with_capacity(count);
-    for i in 0..count {
-        let offset = (i * span) / count;
-        picks.push(start + offset);
-    }
-    picks.dedup();
-    picks
+
+    let span = hi - lo;
+    let count = target.min(span);
+    // With `span >= count` the offsets strictly increase, so the picks are
+    // distinct without a dedup pass.
+    (0..count).map(|i| lo + (i * span) / count).collect()
 }
 
 #[cfg(test)]
@@ -394,13 +367,30 @@ mod tests {
     }
 
     #[test]
+    fn pick_loop_frames_widens_a_short_loop_to_hit_the_target() {
+        // The detected loop spans only 3 frames [2, 5); a 6-frame request widens
+        // the window so it still yields exactly 6 distinct, ordered picks.
+        let frames: Vec<VideoFrame> = (0..10).map(|i| frame((i * 20) as u8, i * 100)).collect();
+        let picks = pick_loop_frames(&frames, LoopMarkers { start: 2, end: 5 }, 6);
+        assert_eq!(picks.len(), 6);
+        assert!(picks.windows(2).all(|w| w[0] < w[1]), "picks are strictly increasing: {picks:?}");
+        assert!(picks.iter().all(|&i| i < frames.len()));
+    }
+
+    #[test]
+    fn pick_loop_frames_clamps_target_to_the_clip_length() {
+        // Asking for more frames than the clip holds returns one distinct pick
+        // per available frame, not duplicates.
+        let frames: Vec<VideoFrame> = (0..4).map(|i| frame((i * 20) as u8, i * 100)).collect();
+        let picks = pick_loop_frames(&frames, LoopMarkers { start: 0, end: 3 }, 6);
+        assert_eq!(picks, vec![0, 1, 2, 3]);
+    }
+
+    #[test]
     fn garbage_mp4_fails_cleanly() {
         // Not a valid mp4: the demuxer rejects it with a clean error, no panic.
         let err = decode_clip(&[0, 1, 2, 3, 4, 5, 6, 7], "video/mp4", 12).unwrap_err();
-        assert!(matches!(
-            err,
-            DecodeError::Decode(_) | DecodeError::Unsupported(_)
-        ));
+        assert!(matches!(err, DecodeError::Decode(_) | DecodeError::Unsupported(_)));
     }
 
     #[test]
@@ -418,10 +408,7 @@ mod tests {
         ];
         let mut out = Vec::new();
         avcc_to_annexb(&avcc, &mut out);
-        assert_eq!(
-            out,
-            vec![0, 0, 0, 1, 0xAA, 0xBB, 0, 0, 0, 1, 0xCC, 0xDD, 0xEE]
-        );
+        assert_eq!(out, vec![0, 0, 0, 1, 0xAA, 0xBB, 0, 0, 0, 1, 0xCC, 0xDD, 0xEE]);
     }
 
     #[test]

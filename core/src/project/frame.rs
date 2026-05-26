@@ -50,11 +50,7 @@ impl Frame {
     /// Effective on-screen duration in milliseconds, `duration_ms` scaled by
     /// [`Self::duration_mul`] and floored at `1`.
     #[must_use]
-    #[allow(
-        clippy::cast_precision_loss,
-        clippy::cast_possible_truncation,
-        clippy::cast_sign_loss
-    )]
+    #[allow(clippy::cast_precision_loss, clippy::cast_possible_truncation, clippy::cast_sign_loss)]
     pub fn effective_duration_ms(&self) -> u32 {
         let scaled = (self.duration_ms as f32 * self.duration_mul).round();
         (scaled.max(1.0) as u32).max(1)
@@ -233,14 +229,8 @@ mod tests {
 
     #[test]
     fn play_order_ping_pong_no_duplicate_endpoints() {
-        assert_eq!(
-            LoopDirection::PingPong.play_order(0, 3),
-            vec![0, 1, 2, 3, 2, 1]
-        );
-        assert_eq!(
-            LoopDirection::PingPongReverse.play_order(0, 3),
-            vec![3, 2, 1, 0, 1, 2]
-        );
+        assert_eq!(LoopDirection::PingPong.play_order(0, 3), vec![0, 1, 2, 3, 2, 1]);
+        assert_eq!(LoopDirection::PingPongReverse.play_order(0, 3), vec![3, 2, 1, 0, 1, 2]);
     }
 
     #[test]
@@ -251,14 +241,8 @@ mod tests {
 
     #[test]
     fn play_order_ping_pong_single_frame_at_u32_max_does_not_overflow() {
-        assert_eq!(
-            LoopDirection::PingPong.play_order(u32::MAX, u32::MAX),
-            vec![u32::MAX]
-        );
-        assert_eq!(
-            LoopDirection::PingPongReverse.play_order(u32::MAX, u32::MAX),
-            vec![u32::MAX]
-        );
+        assert_eq!(LoopDirection::PingPong.play_order(u32::MAX, u32::MAX), vec![u32::MAX]);
+        assert_eq!(LoopDirection::PingPongReverse.play_order(u32::MAX, u32::MAX), vec![u32::MAX]);
     }
 
     #[test]

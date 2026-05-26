@@ -113,9 +113,7 @@ mod tests {
                         size: Size::new(24, 24),
                     },
                 }),
-                pivot: Some(Pivot {
-                    offset: IVec2::new(16, 16),
-                }),
+                pivot: Some(Pivot { offset: IVec2::new(16, 16) }),
             }],
             user_data: UserData::default(),
         };

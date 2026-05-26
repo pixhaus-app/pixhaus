@@ -152,11 +152,7 @@ pub fn channel_soft_light(b: u8, s: u8) -> u8 {
     let b = f64::from(b) / 255.0;
     let s = f64::from(s) / 255.0;
 
-    let d = if b <= 0.25 {
-        ((16.0 * b - 12.0) * b + 4.0) * b
-    } else {
-        b.sqrt()
-    };
+    let d = if b <= 0.25 { ((16.0 * b - 12.0) * b + 4.0) * b } else { b.sqrt() };
 
     let r = if s <= 0.5 {
         b - (1.0 - 2.0 * s) * b * (1.0 - b)
@@ -294,11 +290,7 @@ pub fn channel_pin_light(b: u8, s: u8) -> u8 {
 #[inline]
 #[must_use]
 pub fn channel_hard_mix(b: u8, s: u8) -> u8 {
-    if channel_vivid_light(b, s) < 128 {
-        0
-    } else {
-        255
-    }
+    if channel_vivid_light(b, s) < 128 { 0 } else { 255 }
 }
 
 /// Rec.709 luma in integer fixed-point (`Y = 54r + 183g + 19b`).
@@ -316,11 +308,7 @@ fn luma_rec709(c: Rgba) -> u32 {
 #[inline]
 #[must_use]
 pub fn rgba_darker_color(b: Rgba, s: Rgba) -> Rgba {
-    if luma_rec709(s) < luma_rec709(b) {
-        s
-    } else {
-        b
-    }
+    if luma_rec709(s) < luma_rec709(b) { s } else { b }
 }
 
 /// Picks the color with the higher Rec.709 luma. Ties go to the
@@ -328,11 +316,7 @@ pub fn rgba_darker_color(b: Rgba, s: Rgba) -> Rgba {
 #[inline]
 #[must_use]
 pub fn rgba_lighter_color(b: Rgba, s: Rgba) -> Rgba {
-    if luma_rec709(s) > luma_rec709(b) {
-        s
-    } else {
-        b
-    }
+    if luma_rec709(s) > luma_rec709(b) { s } else { b }
 }
 
 // -- HSL non-separable helpers (W3C compositing-1 reference) --------
@@ -740,12 +724,7 @@ mod tests {
     #[case(BlendMode::Addition, [200, 100, 50], [60, 100, 250], [255, 200, 255])]
     // Subtract: max(b - s, 0)
     #[case(BlendMode::Subtract, [200, 100, 50], [60, 100, 250], [140, 0, 0])]
-    fn separable_modes_match_known_outputs(
-        #[case] mode: BlendMode,
-        #[case] dst: [u8; 3],
-        #[case] src: [u8; 3],
-        #[case] expected: [u8; 3],
-    ) {
+    fn separable_modes_match_known_outputs(#[case] mode: BlendMode, #[case] dst: [u8; 3], #[case] src: [u8; 3], #[case] expected: [u8; 3]) {
         let s = Rgba::new(src[0], src[1], src[2], 255);
         let d = Rgba::new(dst[0], dst[1], dst[2], 255);
         let out = blend(mode, s, d, 255);
@@ -793,11 +772,7 @@ mod tests {
         // overlay(b, s) == hard_light(s, b)
         for b in [0u8, 64, 128, 192, 255] {
             for s in [0u8, 64, 128, 192, 255] {
-                assert_eq!(
-                    channel_overlay(b, s),
-                    channel_hard_light(s, b),
-                    "b={b}, s={s}"
-                );
+                assert_eq!(channel_overlay(b, s), channel_hard_light(s, b), "b={b}, s={s}");
             }
         }
     }
@@ -829,10 +804,7 @@ mod tests {
         let dst_lum = lum_f64(to_unit(dst[0]), to_unit(dst[1]), to_unit(dst[2]));
         let out = channels_hue(dst, src);
         let out_lum = lum_f64(to_unit(out[0]), to_unit(out[1]), to_unit(out[2]));
-        assert!(
-            (out_lum - dst_lum).abs() < 1.5 / 255.0,
-            "got {out_lum} want {dst_lum}"
-        );
+        assert!((out_lum - dst_lum).abs() < 1.5 / 255.0, "got {out_lum} want {dst_lum}");
     }
 
     #[test]
@@ -900,11 +872,7 @@ mod tests {
         // byte-for-byte.
         for b in 0u8..=255 {
             for s in 0u8..=255 {
-                assert_eq!(
-                    channel_linear_dodge(b, s),
-                    channel_addition(b, s),
-                    "b={b}, s={s}",
-                );
+                assert_eq!(channel_linear_dodge(b, s), channel_addition(b, s), "b={b}, s={s}");
             }
         }
     }

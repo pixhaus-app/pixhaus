@@ -7,9 +7,7 @@ use thiserror::Error;
 pub enum Error {
     /// A buffer constructor was given a `pixels` slice whose length
     /// does not match `stride * height`.
-    #[error(
-        "byte length mismatch: expected stride * height = {expected} bytes, got {actual} bytes"
-    )]
+    #[error("byte length mismatch: expected stride * height = {expected} bytes, got {actual} bytes")]
     ByteLengthMismatch {
         /// `stride * height` derived from the requested dimensions.
         expected: usize,

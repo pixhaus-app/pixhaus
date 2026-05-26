@@ -157,9 +157,7 @@ impl VerbProgress {
     /// to consume progress.
     #[must_use]
     pub const fn discard() -> Self {
-        Self {
-            inner: ProgressInner::Discard,
-        }
+        Self { inner: ProgressInner::Discard }
     }
 
     /// Returns `true` if the handle is the discard sink. Verbs may
@@ -186,10 +184,7 @@ impl VerbProgress {
 
     /// Non-blocking send. Returns `Ok(())` on success; `Err` if the
     /// channel is full or closed. Discard sinks always return `Ok`.
-    pub fn try_send(
-        &self,
-        event: VerbProgressEvent,
-    ) -> Result<(), mpsc::error::TrySendError<VerbProgressEvent>> {
+    pub fn try_send(&self, event: VerbProgressEvent) -> Result<(), mpsc::error::TrySendError<VerbProgressEvent>> {
         match &self.inner {
             ProgressInner::Live(tx) => tx.try_send(event),
             ProgressInner::Discard => {

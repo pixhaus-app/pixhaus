@@ -5,9 +5,7 @@ pub mod variables;
 
 use std::collections::BTreeMap;
 
-use pixhaus_core::project::library::composition::{
-    PanelSlot, PromptTemplate, Structure, StructureOutput, Style,
-};
+use pixhaus_core::project::library::composition::{PanelSlot, PromptTemplate, Structure, StructureOutput, Style};
 use pixhaus_core::project::{Rect, SheetComposition, SheetPanel};
 use thiserror::Error;
 
@@ -71,12 +69,7 @@ pub struct ComposedPrompt {
 
 /// Joins non-empty, trimmed segments with `sep`.
 fn join_nonempty(sep: &str, segments: &[String]) -> String {
-    segments
-        .iter()
-        .map(|s| s.trim())
-        .filter(|s| !s.is_empty())
-        .collect::<Vec<_>>()
-        .join(sep)
+    segments.iter().map(|s| s.trim()).filter(|s| !s.is_empty()).collect::<Vec<_>>().join(sep)
 }
 
 fn structure_prose(structure: &Structure) -> Result<(Vec<String>, Option<Canvas>), ComposeError> {
@@ -179,9 +172,7 @@ pub fn compose(req: &ComposeRequest) -> Result<ComposedPrompt, ComposeError> {
         ", ",
         &[
             req.structure.layout_negatives.clone(),
-            req.style
-                .map(|s| s.look_negatives.clone())
-                .unwrap_or_default(),
+            req.style.map(|s| s.look_negatives.clone()).unwrap_or_default(),
             req.inline_negatives.to_string(),
         ],
     );
@@ -197,27 +188,17 @@ pub fn compose(req: &ComposeRequest) -> Result<ComposedPrompt, ComposeError> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use pixhaus_core::project::library::composition::{
-        Dimensions, PanelRect, StructureId, StructurePanel, StyleId,
-    };
+    use pixhaus_core::project::library::composition::{Dimensions, PanelRect, StructureId, StructurePanel, StyleId};
 
     fn paneled() -> Structure {
         Structure {
             id: StructureId("test.character".into()),
             name: "Character".into(),
             output: StructureOutput::Paneled {
-                canvas: Dimensions {
-                    width: 1024,
-                    height: 480,
-                },
+                canvas: Dimensions { width: 1024, height: 480 },
                 panels: vec![StructurePanel {
                     label: "front".into(),
-                    rect: PanelRect {
-                        x: 0,
-                        y: 0,
-                        w: 200,
-                        h: 480,
-                    },
+                    rect: PanelRect { x: 0, y: 0, w: 200, h: 480 },
                     prose_fragment: "front view, {panel_w} by {panel_h}".into(),
                     slot: PanelSlot::View,
                 }],
@@ -247,13 +228,7 @@ mod tests {
         };
         let out = compose(&req).unwrap();
         assert!(out.positive.contains("front view, 200 by 480"));
-        assert_eq!(
-            out.canvas,
-            Some(Canvas {
-                width: 1024,
-                height: 480
-            })
-        );
+        assert_eq!(out.canvas, Some(Canvas { width: 1024, height: 480 }));
     }
 
     #[test]
@@ -324,10 +299,7 @@ mod tests {
             id: StructureId("bad".into()),
             name: "Bad".into(),
             output: StructureOutput::Paneled {
-                canvas: Dimensions {
-                    width: 10,
-                    height: 10,
-                },
+                canvas: Dimensions { width: 10, height: 10 },
                 panels: vec![],
             },
             layout_negatives: String::new(),
@@ -344,10 +316,7 @@ mod tests {
             operation_hint: None,
             context_fragments: &[],
         };
-        assert!(matches!(
-            compose(&req),
-            Err(ComposeError::EmptyPaneledStructure(_))
-        ));
+        assert!(matches!(compose(&req), Err(ComposeError::EmptyPaneledStructure(_))));
     }
 
     #[test]

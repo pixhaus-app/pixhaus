@@ -77,35 +77,22 @@ impl PixelBuffer {
             return Ok(Self::empty());
         }
         if width == 0 {
-            return Err(Error::StrideTooSmall {
-                stride: 0,
-                min_stride: 4,
-            });
+            return Err(Error::StrideTooSmall { stride: 0, min_stride: 4 });
         }
-        let stride = width
-            .checked_mul(RGBA_BYTES_PER_PIXEL_U32)
-            .ok_or(Error::StrideTooSmall {
-                stride: 0,
-                min_stride: u32::MAX,
-            })?;
-        let len =
-            (stride as usize)
-                .checked_mul(height as usize)
-                .ok_or(Error::ByteLengthMismatch {
-                    expected: usize::MAX,
-                    actual: 0,
-                })?;
+        let stride = width.checked_mul(RGBA_BYTES_PER_PIXEL_U32).ok_or(Error::StrideTooSmall {
+            stride: 0,
+            min_stride: u32::MAX,
+        })?;
+        let len = (stride as usize).checked_mul(height as usize).ok_or(Error::ByteLengthMismatch {
+            expected: usize::MAX,
+            actual: 0,
+        })?;
         let mut pixels = vec![0u8; len];
         let bytes = color.to_array();
         for chunk in pixels.chunks_exact_mut(RGBA_BYTES_PER_PIXEL) {
             chunk.copy_from_slice(&bytes);
         }
-        Ok(Self {
-            pixels,
-            width,
-            height,
-            stride,
-        })
+        Ok(Self { pixels, width, height, stride })
     }
 
     /// Constructs a buffer from raw pixel bytes laid out at the given
@@ -116,35 +103,23 @@ impl PixelBuffer {
     /// - [`Error::StrideTooSmall`] if `stride < width * 4`.
     /// - [`Error::ByteLengthMismatch`] if `pixels.len() != stride * height`.
     pub fn from_raw(width: u32, height: u32, stride: u32, pixels: Vec<u8>) -> Result<Self> {
-        let min_stride =
-            width
-                .checked_mul(RGBA_BYTES_PER_PIXEL_U32)
-                .ok_or(Error::StrideTooSmall {
-                    stride,
-                    min_stride: u32::MAX,
-                })?;
+        let min_stride = width
+            .checked_mul(RGBA_BYTES_PER_PIXEL_U32)
+            .ok_or(Error::StrideTooSmall { stride, min_stride: u32::MAX })?;
         if stride < min_stride {
             return Err(Error::StrideTooSmall { stride, min_stride });
         }
-        let expected =
-            (stride as usize)
-                .checked_mul(height as usize)
-                .ok_or(Error::ByteLengthMismatch {
-                    expected: usize::MAX,
-                    actual: pixels.len(),
-                })?;
+        let expected = (stride as usize).checked_mul(height as usize).ok_or(Error::ByteLengthMismatch {
+            expected: usize::MAX,
+            actual: pixels.len(),
+        })?;
         if pixels.len() != expected {
             return Err(Error::ByteLengthMismatch {
                 expected,
                 actual: pixels.len(),
             });
         }
-        Ok(Self {
-            pixels,
-            width,
-            height,
-            stride,
-        })
+        Ok(Self { pixels, width, height, stride })
     }
 
     /// Width in pixels.
@@ -336,19 +311,13 @@ impl IndexedBuffer {
             return Ok(Self::empty());
         }
         if width == 0 {
-            return Err(Error::StrideTooSmall {
-                stride: 0,
-                min_stride: 1,
-            });
+            return Err(Error::StrideTooSmall { stride: 0, min_stride: 1 });
         }
         let stride = width;
-        let len =
-            (stride as usize)
-                .checked_mul(height as usize)
-                .ok_or(Error::ByteLengthMismatch {
-                    expected: usize::MAX,
-                    actual: 0,
-                })?;
+        let len = (stride as usize).checked_mul(height as usize).ok_or(Error::ByteLengthMismatch {
+            expected: usize::MAX,
+            actual: 0,
+        })?;
         Ok(Self {
             indices: vec![index; len],
             width,
@@ -365,18 +334,12 @@ impl IndexedBuffer {
     /// - [`Error::ByteLengthMismatch`] if `indices.len() != stride * height`.
     pub fn from_raw(width: u32, height: u32, stride: u32, indices: Vec<u8>) -> Result<Self> {
         if stride < width {
-            return Err(Error::StrideTooSmall {
-                stride,
-                min_stride: width,
-            });
+            return Err(Error::StrideTooSmall { stride, min_stride: width });
         }
-        let expected =
-            (stride as usize)
-                .checked_mul(height as usize)
-                .ok_or(Error::ByteLengthMismatch {
-                    expected: usize::MAX,
-                    actual: indices.len(),
-                })?;
+        let expected = (stride as usize).checked_mul(height as usize).ok_or(Error::ByteLengthMismatch {
+            expected: usize::MAX,
+            actual: indices.len(),
+        })?;
         if indices.len() != expected {
             return Err(Error::ByteLengthMismatch {
                 expected,
@@ -454,12 +417,7 @@ impl IndexedBuffer {
                     expected: (self.stride as usize) * (self.height as usize),
                     actual: self.indices.len(),
                 })?;
-                let color = *palette
-                    .get(idx as usize)
-                    .ok_or(Error::PaletteIndexOutOfRange {
-                        index: idx,
-                        palette_len,
-                    })?;
+                let color = *palette.get(idx as usize).ok_or(Error::PaletteIndexOutOfRange { index: idx, palette_len })?;
                 out.set_pixel(x, y, color);
             }
         }
@@ -527,26 +485,14 @@ mod tests {
     fn from_raw_rejects_short_stride() {
         let pixels = vec![0u8; 16];
         let err = PixelBuffer::from_raw(4, 4, 4, pixels).unwrap_err();
-        assert_eq!(
-            err,
-            Error::StrideTooSmall {
-                stride: 4,
-                min_stride: 16
-            }
-        );
+        assert_eq!(err, Error::StrideTooSmall { stride: 4, min_stride: 16 });
     }
 
     #[test]
     fn from_raw_rejects_wrong_length() {
         let pixels = vec![0u8; 32];
         let err = PixelBuffer::from_raw(4, 4, 16, pixels).unwrap_err();
-        assert_eq!(
-            err,
-            Error::ByteLengthMismatch {
-                expected: 64,
-                actual: 32
-            }
-        );
+        assert_eq!(err, Error::ByteLengthMismatch { expected: 64, actual: 32 });
     }
 
     #[test]
@@ -591,9 +537,7 @@ mod tests {
     #[test]
     fn as_image_returns_view_for_packed_buffer() {
         let b = PixelBuffer::filled(4, 4, Rgba::opaque(10, 20, 30)).unwrap();
-        let view = b
-            .as_image()
-            .expect("packed buffer should expose image view");
+        let view = b.as_image().expect("packed buffer should expose image view");
         assert_eq!(view.dimensions(), (4, 4));
     }
 
@@ -617,11 +561,7 @@ mod tests {
 
     #[test]
     fn indexed_buffer_resolves_through_palette() {
-        let palette = vec![
-            Rgba::transparent(),
-            Rgba::opaque(255, 0, 0),
-            Rgba::opaque(0, 255, 0),
-        ];
+        let palette = vec![Rgba::transparent(), Rgba::opaque(255, 0, 0), Rgba::opaque(0, 255, 0)];
         let mut idx = IndexedBuffer::filled(2, 2, 0).unwrap();
         idx.set_index(0, 0, 1);
         idx.set_index(1, 1, 2);
@@ -638,12 +578,6 @@ mod tests {
         let mut idx = IndexedBuffer::filled(2, 1, 0).unwrap();
         idx.set_index(1, 0, 5);
         let err = idx.resolve(&palette).unwrap_err();
-        assert_eq!(
-            err,
-            Error::PaletteIndexOutOfRange {
-                index: 5,
-                palette_len: 2
-            }
-        );
+        assert_eq!(err, Error::PaletteIndexOutOfRange { index: 5, palette_len: 2 });
     }
 }

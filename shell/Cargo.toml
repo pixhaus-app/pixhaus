@@ -25,6 +25,7 @@ glam.workspace = true
 bytemuck.workspace = true
 anyhow.workspace = true
 base64.workspace = true
+serde.workspace = true
 serde_json.workspace = true
 thiserror.workspace = true
 tokio.workspace = true
@@ -37,6 +38,7 @@ rfd.workspace = true
 # animation path needs no external ffmpeg binary. openh264 is BSD-2; mp4 is MIT.
 mp4 = "0.14"
 openh264 = "0.9"
+egui-phosphor = "0.12.0"
 
 [lints]
 workspace = true

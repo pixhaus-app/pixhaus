@@ -52,8 +52,7 @@ pub(crate) fn ctx_fat_backend(ctx: &VerbContext) -> Result<&dyn OpsBackend> {
         Ok(p.fat())
     } else {
         Err(VerbError::Backend(
-            "ctx.backend type not recognised; register a known adapter or wrap in BackendProxy"
-                .into(),
+            "ctx.backend type not recognised; register a known adapter or wrap in BackendProxy".into(),
         ))
     }
 }
@@ -66,10 +65,7 @@ mod tests {
     #[test]
     fn generate_reference_sheet_verb_is_exported() {
         let verb = GenerateReferenceSheetVerb::new();
-        assert_eq!(
-            verb.descriptor().id.as_str(),
-            reference_sheet::GENERATE_REFERENCE_SHEET_VERB_ID
-        );
+        assert_eq!(verb.descriptor().id.as_str(), reference_sheet::GENERATE_REFERENCE_SHEET_VERB_ID);
     }
 
     #[test]
@@ -84,9 +80,6 @@ mod tests {
             updated_at: 0,
             editor_version: "0".into(),
         });
-        assert!(matches!(
-            ctx_fat_backend(&ctx),
-            Err(VerbError::Backend(_))
-        ));
+        assert!(matches!(ctx_fat_backend(&ctx), Err(VerbError::Backend(_))));
     }
 }

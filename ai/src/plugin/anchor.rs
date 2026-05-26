@@ -21,9 +21,7 @@
 use base64::Engine as _;
 use serde::{Deserialize, Serialize};
 
-use pixhaus_core::project::{
-    Entity, EntityContent, EntityId, PaletteEntry, SheetComposition, SheetVariant,
-};
+use pixhaus_core::project::{Entity, EntityContent, EntityId, PaletteEntry, SheetComposition, SheetVariant};
 
 /// The payload an AI verb consumes when it runs against an anchored
 /// entity.
@@ -103,22 +101,15 @@ impl AnchorPayload {
     /// [`DEFAULT_ANCHOR_STRENGTH`] when the host has no per-invocation
     /// override.
     #[must_use]
-    pub fn from_sprite_entity(
-        entity: &Entity,
-        strength: f32,
-        lora_path: Option<String>,
-    ) -> Option<Self> {
+    pub fn from_sprite_entity(entity: &Entity, strength: f32, lora_path: Option<String>) -> Option<Self> {
         let sheet = match &entity.content {
             EntityContent::Sprites {
-                reference_sheet: Some(sheet),
-                ..
+                reference_sheet: Some(sheet), ..
             } => sheet.as_ref(),
             _ => return None,
         };
         let canonical = sheet.canonical.as_ref()?;
-        Some(Self::from_canonical_variant(
-            entity.id, canonical, strength, lora_path,
-        ))
+        Some(Self::from_canonical_variant(entity.id, canonical, strength, lora_path))
     }
 
     /// Builds an [`AnchorPayload`] directly from a canonical
@@ -127,12 +118,7 @@ impl AnchorPayload {
     /// Lower-level constructor used by `from_sprite_entity` and by
     /// host code that already has the canonical variant in hand.
     #[must_use]
-    pub fn from_canonical_variant(
-        entity_id: EntityId,
-        variant: &SheetVariant,
-        strength: f32,
-        lora_path: Option<String>,
-    ) -> Self {
+    pub fn from_canonical_variant(entity_id: EntityId, variant: &SheetVariant, strength: f32, lora_path: Option<String>) -> Self {
         let canonical_hash = stable_hash(&variant.image.bytes);
         let image_b64 = base64::engine::general_purpose::STANDARD.encode(&variant.image.bytes);
         Self {
@@ -156,11 +142,7 @@ impl AnchorPayload {
     /// here than have the backend choke on a zero-length image).
     #[must_use]
     pub fn style_image_bytes(&self) -> Option<Vec<u8>> {
-        if self.image_bytes.is_empty() {
-            None
-        } else {
-            Some(self.image_bytes.clone())
-        }
+        if self.image_bytes.is_empty() { None } else { Some(self.image_bytes.clone()) }
     }
 }
 
@@ -195,8 +177,8 @@ mod tests {
 
     use pixhaus_core::project::PaletteEntry;
     use pixhaus_core::project::{
-        AiMetadata, AssetInfo, Entity, EntityContent, EntityDefaults, EntityKind, NamedSprite,
-        ReferenceImage, ReferenceSheet, Rgba, SheetVariant, SheetVariantId, UserData,
+        AiMetadata, AssetInfo, Entity, EntityContent, EntityDefaults, EntityKind, NamedSprite, ReferenceImage, ReferenceSheet, Rgba, SheetVariant,
+        SheetVariantId, UserData,
     };
 
     use super::*;
@@ -276,8 +258,7 @@ mod tests {
     fn from_sprite_with_draft_only_sheet_returns_none() {
         let mut entity = make_sprite_entity(vec![1, 2, 3]);
         if let EntityContent::Sprites {
-            reference_sheet: Some(sheet),
-            ..
+            reference_sheet: Some(sheet), ..
         } = &mut entity.content
         {
             let canonical = sheet.canonical.take().unwrap();
@@ -300,25 +281,15 @@ mod tests {
         let bytes = vec![1, 2, 3, 4, 5, 200, 255];
         let entity = make_sprite_entity(bytes.clone());
         let p = AnchorPayload::from_sprite_entity(&entity, 0.7, None).unwrap();
-        let decoded = base64::engine::general_purpose::STANDARD
-            .decode(p.image_b64)
-            .unwrap();
+        let decoded = base64::engine::general_purpose::STANDARD.decode(p.image_b64).unwrap();
         assert_eq!(decoded, bytes);
     }
 
     #[test]
     fn lora_path_round_trips() {
         let entity = make_sprite_entity(vec![1]);
-        let p = AnchorPayload::from_sprite_entity(
-            &entity,
-            0.7,
-            Some(".pixhaus_lora/hero.safetensors".into()),
-        )
-        .unwrap();
-        assert_eq!(
-            p.lora_path.as_deref(),
-            Some(".pixhaus_lora/hero.safetensors")
-        );
+        let p = AnchorPayload::from_sprite_entity(&entity, 0.7, Some(".pixhaus_lora/hero.safetensors".into())).unwrap();
+        assert_eq!(p.lora_path.as_deref(), Some(".pixhaus_lora/hero.safetensors"));
     }
 
     #[test]
@@ -350,8 +321,7 @@ mod tests {
     #[test]
     fn anchor_payload_round_trips_through_json() {
         let entity = make_sprite_entity(vec![1, 2, 3]);
-        let p = AnchorPayload::from_sprite_entity(&entity, 0.6, Some("path.safetensors".into()))
-            .unwrap();
+        let p = AnchorPayload::from_sprite_entity(&entity, 0.6, Some("path.safetensors".into())).unwrap();
         let json = serde_json::to_string(&p).unwrap();
         let back: AnchorPayload = serde_json::from_str(&json).unwrap();
         assert_eq!(back, p);

@@ -1446,6 +1446,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "egui-phosphor"
+version = "0.12.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "cb4e4b18e368ff336c8dd2102992e2631b118f29a2164b0d2be9d8889dcd367e"
+dependencies = [
+ "egui",
+]
+
+[[package]]
 name = "egui-wgpu"
 version = "0.34.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3988,6 +3997,7 @@ dependencies = [
  "bytemuck",
  "eframe",
  "egui",
+ "egui-phosphor",
  "egui-wgpu",
  "egui_extras",
  "glam",
@@ -3998,6 +4008,7 @@ dependencies = [
  "pixhaus-core",
  "pixhaus-render",
  "rfd",
+ "serde",
  "serde_json",
  "thiserror 2.0.18",
  "tokio",
@@ -4273,7 +4284,7 @@ dependencies = [
  "once_cell",
  "socket2",
  "tracing",
- "windows-sys 0.52.0",
+ "windows-sys 0.60.2",
 ]
 
 [[package]]

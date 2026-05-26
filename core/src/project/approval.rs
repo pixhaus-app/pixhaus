@@ -102,8 +102,7 @@ pub fn approve_sheet_variant(
         .find(|e| e.id == entity_id)
         .ok_or(ApprovalError::EntityNotFound(entity_id.get()))?;
 
-    let sheet = embedded_sheet_mut(&mut entity.content)
-        .ok_or(ApprovalError::NoReferenceSheet(entity_id.get()))?;
+    let sheet = embedded_sheet_mut(&mut entity.content).ok_or(ApprovalError::NoReferenceSheet(entity_id.get()))?;
 
     let previous_canonical_id = sheet.canonical.as_ref().map(|variant| variant.id);
 
@@ -127,10 +126,7 @@ pub fn approve_sheet_variant(
 
     promote_variant_to_canonical(sheet, pos);
 
-    let palette_size = sheet
-        .canonical
-        .as_mut()
-        .map_or(0, |variant| ensure_extracted_palette(variant, options));
+    let palette_size = sheet.canonical.as_mut().map_or(0, |variant| ensure_extracted_palette(variant, options));
 
     Ok(Approval {
         entity_id,
@@ -169,8 +165,7 @@ fn ensure_extracted_palette(variant: &mut SheetVariant, options: ExtractionOptio
 fn embedded_sheet_mut(content: &mut EntityContent) -> Option<&mut ReferenceSheet> {
     match content {
         EntityContent::Sprites {
-            reference_sheet: Some(sheet),
-            ..
+            reference_sheet: Some(sheet), ..
         } => Some(sheet.as_mut()),
         _ => None,
     }
@@ -182,9 +177,7 @@ mod tests {
 
     use image::{ImageBuffer, ImageFormat, RgbaImage};
 
-    use crate::project::library::{
-        AiMetadata, AssetInfo, Entity, EntityContent, EntityDefaults, EntityKind, ReferenceImage,
-    };
+    use crate::project::library::{AiMetadata, AssetInfo, Entity, EntityContent, EntityDefaults, EntityKind, ReferenceImage};
     use crate::project::user_data::UserData;
 
     use super::*;
@@ -192,8 +185,7 @@ mod tests {
     fn solid_png(r: u8, g: u8, b: u8) -> Vec<u8> {
         let img: RgbaImage = ImageBuffer::from_pixel(2, 2, image::Rgba([r, g, b, 255]));
         let mut buf = Vec::new();
-        img.write_to(&mut std::io::Cursor::new(&mut buf), ImageFormat::Png)
-            .unwrap();
+        img.write_to(&mut std::io::Cursor::new(&mut buf), ImageFormat::Png).unwrap();
         buf
     }
 
@@ -252,29 +244,19 @@ mod tests {
     fn promotes_history_variant_to_canonical() {
         let mut project = build_project_with_sheet(10, &[20, 30, 40]);
 
-        let receipt = approve_sheet_variant(
-            &mut project,
-            EntityId::new(1),
-            SheetVariantId::new(30),
-            ExtractionOptions::default(),
-        )
-        .unwrap();
+        let receipt = approve_sheet_variant(&mut project, EntityId::new(1), SheetVariantId::new(30), ExtractionOptions::default()).unwrap();
 
         assert_eq!(receipt.canonical_id, SheetVariantId::new(30));
         assert_eq!(receipt.previous_canonical_id, Some(SheetVariantId::new(10)));
 
         let entity = &project.library.entities[0];
         let EntityContent::Sprites {
-            reference_sheet: Some(sheet),
-            ..
+            reference_sheet: Some(sheet), ..
         } = &entity.content
         else {
             panic!("expected embedded reference sheet");
         };
-        assert_eq!(
-            sheet.canonical.as_ref().map(|variant| variant.id),
-            Some(SheetVariantId::new(30))
-        );
+        assert_eq!(sheet.canonical.as_ref().map(|variant| variant.id), Some(SheetVariantId::new(30)));
         assert_eq!(sheet.variants[0].id, SheetVariantId::new(10));
         assert_eq!(sheet.variants[1].id, SheetVariantId::new(20));
         assert_eq!(sheet.variants[2].id, SheetVariantId::new(40));
@@ -283,39 +265,21 @@ mod tests {
     #[test]
     fn extracts_palette_when_variant_has_none() {
         let mut project = build_project_with_sheet(1, &[2]);
-        let receipt = approve_sheet_variant(
-            &mut project,
-            EntityId::new(1),
-            SheetVariantId::new(2),
-            ExtractionOptions::default(),
-        )
-        .unwrap();
+        let receipt = approve_sheet_variant(&mut project, EntityId::new(1), SheetVariantId::new(2), ExtractionOptions::default()).unwrap();
         assert!(receipt.palette_size >= 1, "palette should have one swatch");
     }
 
     #[test]
     fn missing_entity_is_an_error() {
         let mut project = Project::new("empty");
-        let err = approve_sheet_variant(
-            &mut project,
-            EntityId::new(99),
-            SheetVariantId::new(1),
-            ExtractionOptions::default(),
-        )
-        .unwrap_err();
+        let err = approve_sheet_variant(&mut project, EntityId::new(99), SheetVariantId::new(1), ExtractionOptions::default()).unwrap_err();
         assert_eq!(err, ApprovalError::EntityNotFound(99));
     }
 
     #[test]
     fn unknown_variant_id_is_an_error() {
         let mut project = build_project_with_sheet(1, &[2]);
-        let err = approve_sheet_variant(
-            &mut project,
-            EntityId::new(1),
-            SheetVariantId::new(99),
-            ExtractionOptions::default(),
-        )
-        .unwrap_err();
+        let err = approve_sheet_variant(&mut project, EntityId::new(1), SheetVariantId::new(99), ExtractionOptions::default()).unwrap_err();
         assert_eq!(err, ApprovalError::VariantNotFound(99, 1));
     }
 
@@ -323,19 +287,12 @@ mod tests {
     fn corrupt_image_bytes_yield_zero_swatches_but_no_error() {
         let mut project = build_project_with_sheet(1, &[2]);
         if let EntityContent::Sprites {
-            reference_sheet: Some(sheet),
-            ..
+            reference_sheet: Some(sheet), ..
         } = &mut project.library.entities[0].content
         {
             sheet.variants[0].image.bytes = b"not a png".to_vec();
         }
-        let receipt = approve_sheet_variant(
-            &mut project,
-            EntityId::new(1),
-            SheetVariantId::new(2),
-            ExtractionOptions::default(),
-        )
-        .unwrap();
+        let receipt = approve_sheet_variant(&mut project, EntityId::new(1), SheetVariantId::new(2), ExtractionOptions::default()).unwrap();
         assert_eq!(receipt.palette_size, 0);
     }
 }

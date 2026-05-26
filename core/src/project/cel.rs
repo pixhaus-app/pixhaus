@@ -44,12 +44,7 @@ pub struct Cel {
 impl Cel {
     /// Constructs a raster cel at `(0, 0)` with full opacity.
     #[must_use]
-    pub fn raster(
-        layer_id: LayerId,
-        frame_index: FrameIndex,
-        buffer: PixelBufferId,
-        size: Size,
-    ) -> Self {
+    pub fn raster(layer_id: LayerId, frame_index: FrameIndex, buffer: PixelBufferId, size: Size) -> Self {
         Self {
             layer_id,
             frame_index,
@@ -98,12 +93,7 @@ mod tests {
 
     #[test]
     fn raster_constructor_sets_defaults() {
-        let c = Cel::raster(
-            LayerId::new(1),
-            FrameIndex::new(0),
-            PixelBufferId::new(7),
-            Size::new(32, 32),
-        );
+        let c = Cel::raster(LayerId::new(1), FrameIndex::new(0), PixelBufferId::new(7), Size::new(32, 32));
         assert_eq!(c.opacity, 255);
         assert_eq!(c.position, IVec2::zero());
         assert!(matches!(c.data, CelData::Raster { .. }));
@@ -111,12 +101,7 @@ mod tests {
 
     #[test]
     fn raster_cel_round_trip() {
-        let c = Cel::raster(
-            LayerId::new(1),
-            FrameIndex::new(2),
-            PixelBufferId::new(99),
-            Size::new(16, 16),
-        );
+        let c = Cel::raster(LayerId::new(1), FrameIndex::new(2), PixelBufferId::new(99), Size::new(16, 16));
         let json = serde_json::to_string(&c).unwrap();
         let back: Cel = serde_json::from_str(&json).unwrap();
         assert_eq!(c, back);

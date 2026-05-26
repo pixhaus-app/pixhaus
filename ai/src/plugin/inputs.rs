@@ -93,10 +93,7 @@ mod tests {
 
     #[test]
     fn from_struct_round_trips() {
-        let s = Sample {
-            name: "echo".into(),
-            count: 3,
-        };
+        let s = Sample { name: "echo".into(), count: 3 };
         let i = VerbInputs::from_struct(&s).unwrap();
         let back: Sample = i.deserialize().unwrap();
         assert_eq!(back, s);
@@ -118,10 +115,7 @@ mod tests {
 
     #[test]
     fn deserialize_owned_matches_borrowed() {
-        let s = Sample {
-            name: "echo".into(),
-            count: 7,
-        };
+        let s = Sample { name: "echo".into(), count: 7 };
         let i = VerbInputs::from_struct(&s).unwrap();
         let owned: Sample = i.deserialize_owned().unwrap();
         assert_eq!(owned, s);

@@ -23,15 +23,13 @@ use tokio::select;
 use tokio_util::sync::CancellationToken;
 
 use pixhaus_core::project::library::composition::{PromptId, StructureId, StyleId};
-use pixhaus_core::project::{EntityId, GenerationProvenance, SheetVariantId};
+use pixhaus_core::project::{EntityId, GenerationProvenance, ReferenceRole, SheetVariantId};
 
 use crate::backends::{ImageGenRequest, ImageQuality, InferenceRequest, InferenceResponse};
 use crate::compose::builtins::BUILTIN_DEFAULT_BASELINE;
 use crate::compose::{ComposeRequest, compose};
 use crate::plugin::context::VerbContext;
-use crate::plugin::descriptor::{
-    BackendCapabilities, CostEstimate, EffectKind, VerbDescriptor, VerbId,
-};
+use crate::plugin::descriptor::{BackendCapabilities, CostEstimate, EffectKind, VerbDescriptor, VerbId};
 use crate::plugin::error::{Result, VerbError};
 use crate::plugin::inputs::VerbInputs;
 use crate::plugin::output::{ActualCost, VerbEffect, VerbOutput};
@@ -96,6 +94,45 @@ pub struct GenerateReferenceSheetInputs {
     /// RNG seed for reproducible generation. `None` uses a random seed.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub seed: Option<u64>,
+
+    /// Ordered conditioning references (drag-in anchors). Each carries a role
+    /// and weight; the verb routes a `Style`-role reference to the backend's
+    /// `style_image` and the rest to `reference_images`.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub references: Vec<ReferenceInput>,
+
+    /// Hand-edited positive prompt. When `Some`, it is sent to the backend
+    /// verbatim in place of the composed positive — the structure is still
+    /// resolved for canvas size and panel geometry, so a hand-written prompt
+    /// still slices into a correct sheet.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub prompt_override: Option<String>,
+
+    /// Hand-edited negative prompt. When `Some`, it replaces the composed
+    /// negative verbatim.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub negative_override: Option<String>,
+}
+
+/// One conditioning reference handed to a generation request.
+///
+/// The image is a base64-encoded PNG so the inputs stay valid UTF-8 JSON, in
+/// line with the rest of this verb's wire format. `role` and `weight` are kept
+/// for provenance and for routing the reference to the right backend slot.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct ReferenceInput {
+    /// Base64-encoded PNG bytes.
+    pub image_b64: String,
+    /// What this reference contributes (Subject / Style / Pose / …).
+    #[serde(default)]
+    pub role: ReferenceRole,
+    /// Relative influence of this reference.
+    #[serde(default = "default_reference_weight")]
+    pub weight: f32,
+}
+
+fn default_reference_weight() -> f32 {
+    1.0
 }
 
 fn default_num_variants() -> u32 {
@@ -140,6 +177,10 @@ pub struct SheetVariantOutput {
     pub generated_at: i64,
     /// Base64-encoded PNG sheet image.
     pub image_b64: String,
+    /// The subject text the artist typed, kept distinct from the composed
+    /// prompt so the gallery can show both.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub user_prompt: String,
     /// Panel layout reflecting the template's expected composition.
     pub composition: pixhaus_core::project::SheetComposition,
     /// Generation provenance for reproducibility and audit.
@@ -270,9 +311,7 @@ impl Verb for GenerateReferenceSheetVerb {
     fn validate(&self, inputs: &VerbInputs) -> Result<()> {
         let parsed: GenerateReferenceSheetInputs = inputs.deserialize()?;
         if parsed.structure_id.0.trim().is_empty() {
-            return Err(VerbError::Schema(
-                "generate-reference-sheet: structure_id must not be blank".into(),
-            ));
+            return Err(VerbError::Schema("generate-reference-sheet: structure_id must not be blank".into()));
         }
         Ok(())
     }
@@ -282,53 +321,50 @@ impl Verb for GenerateReferenceSheetVerb {
     // assembly. Refactoring would split the cancel/progress contract across
     // helpers and obscure the flow.
     #[allow(clippy::too_many_lines)]
-    async fn invoke(
-        &self,
-        ctx: VerbContext,
-        inputs: VerbInputs,
-        progress: VerbProgress,
-        cancel: CancellationToken,
-    ) -> Result<VerbOutput> {
+    async fn invoke(&self, ctx: VerbContext, inputs: VerbInputs, progress: VerbProgress, cancel: CancellationToken) -> Result<VerbOutput> {
         let inputs: GenerateReferenceSheetInputs = inputs.deserialize_owned()?;
         let backend = crate::verbs::ctx_fat_backend(&ctx)?;
         let started = Instant::now();
 
         let num_variants = inputs.num_variants.clamp(1, 4);
 
+        // The project's style_notes are the prompt baseline when present, so the
+        // house style folds into every generation; otherwise the built-in default.
+        let baseline: &str = if ctx.composition_library.style_notes.trim().is_empty() {
+            BUILTIN_DEFAULT_BASELINE
+        } else {
+            ctx.composition_library.style_notes.as_str()
+        };
+
         // Resolve the picked records and run the composition resolver. The
         // resolved view borrows `ctx`; we extract owned values before the
         // backend await so nothing is held across the suspension point.
-        let (full_prompt, negative, composition, width, height, structure_name) = {
+        let (composed_positive, composed_negative, composition, width, height, structure_name) = {
             let library = ctx.library_view();
-            let structure = library.structure(&inputs.structure_id).ok_or_else(|| {
-                VerbError::Schema(format!(
-                    "generate-reference-sheet: unknown structure `{}`",
-                    inputs.structure_id.0
-                ))
-            })?;
+            let structure = library
+                .structure(&inputs.structure_id)
+                .ok_or_else(|| VerbError::Schema(format!("generate-reference-sheet: unknown structure `{}`", inputs.structure_id.0)))?;
             // A stale style/prompt id is an error, not a silent no-op — otherwise
             // the verb would generate a different composition than was picked.
             let style = match inputs.style_id.as_ref() {
-                Some(id) => Some(library.style(id).ok_or_else(|| {
-                    VerbError::Schema(format!(
-                        "generate-reference-sheet: unknown style `{}`",
-                        id.0
-                    ))
-                })?),
+                Some(id) => Some(
+                    library
+                        .style(id)
+                        .ok_or_else(|| VerbError::Schema(format!("generate-reference-sheet: unknown style `{}`", id.0)))?,
+                ),
                 None => None,
             };
             let prompt = match inputs.prompt_id.as_ref() {
-                Some(id) => Some(library.prompt(id).ok_or_else(|| {
-                    VerbError::Schema(format!(
-                        "generate-reference-sheet: unknown prompt `{}`",
-                        id.0
-                    ))
-                })?),
+                Some(id) => Some(
+                    library
+                        .prompt(id)
+                        .ok_or_else(|| VerbError::Schema(format!("generate-reference-sheet: unknown prompt `{}`", id.0)))?,
+                ),
                 None => None,
             };
             let entity_info: BTreeMap<String, String> = BTreeMap::new();
             let req = ComposeRequest {
-                baseline: BUILTIN_DEFAULT_BASELINE,
+                baseline,
                 structure,
                 style,
                 prompt,
@@ -340,9 +376,7 @@ impl Verb for GenerateReferenceSheetVerb {
                 context_fragments: &[],
             };
             let composed = compose(&req).map_err(|e| VerbError::Schema(e.to_string()))?;
-            let (width, height) = composed
-                .canvas
-                .map_or((1024, 1024), |c| (c.width, c.height));
+            let (width, height) = composed.canvas.map_or((1024, 1024), |c| (c.width, c.height));
             (
                 composed.positive,
                 composed.negative,
@@ -352,6 +386,12 @@ impl Verb for GenerateReferenceSheetVerb {
                 structure.name.clone(),
             )
         };
+
+        // A hand-edited prompt is sent verbatim; otherwise the composed text.
+        // Either way the structure already fixed canvas size and panel geometry
+        // above, so a hand-written prompt still slices into a correct sheet.
+        let full_prompt = inputs.prompt_override.clone().filter(|s| !s.trim().is_empty()).unwrap_or(composed_positive);
+        let negative = inputs.negative_override.clone().filter(|s| !s.trim().is_empty()).unwrap_or(composed_negative);
 
         let backend_id = backend.backend_id().to_owned();
         progress
@@ -364,10 +404,9 @@ impl Verb for GenerateReferenceSheetVerb {
             return Err(VerbError::Cancelled);
         }
 
-        progress
-            .step(Some(0.1), "sending to image generation backend")
-            .await;
+        progress.step(Some(0.1), "sending to image generation backend").await;
 
+        let (style_image, reference_images) = decode_references(&inputs.references);
         let negative_opt = (!negative.trim().is_empty()).then(|| negative.clone());
         let req = ImageGenRequest {
             model: None,
@@ -379,8 +418,8 @@ impl Verb for GenerateReferenceSheetVerb {
             seed: inputs.seed,
             num_images: num_variants,
             quality: inputs.quality,
-            style_image: None,
-            reference_images: Vec::new(),
+            style_image,
+            reference_images,
         };
 
         let response = select! {
@@ -400,14 +439,10 @@ impl Verb for GenerateReferenceSheetVerb {
         let (images, backend_model) = match response {
             InferenceResponse::Image(r) => (r.images, r.model),
             InferenceResponse::Text(_) => {
-                return Err(VerbError::Backend(
-                    "backend returned text for an image-generation request".into(),
-                ));
+                return Err(VerbError::Backend("backend returned text for an image-generation request".into()));
             }
             InferenceResponse::Frames(_) | InferenceResponse::Video(_) => {
-                return Err(VerbError::Backend(
-                    "backend returned frames/video for an image-generation request".into(),
-                ));
+                return Err(VerbError::Backend("backend returned frames/video for an image-generation request".into()));
             }
             InferenceResponse::Raw(_) => {
                 return Err(VerbError::Backend(
@@ -419,9 +454,7 @@ impl Verb for GenerateReferenceSheetVerb {
         };
 
         if images.is_empty() {
-            return Err(VerbError::Backend(
-                "backend returned zero images for image generation request".into(),
-            ));
+            return Err(VerbError::Backend("backend returned zero images for image generation request".into()));
         }
 
         progress.step(Some(0.9), "encoding variants").await;
@@ -432,6 +465,7 @@ impl Verb for GenerateReferenceSheetVerb {
             &backend_id,
             &backend_model,
             &full_prompt,
+            &inputs.inline_text,
             negative_opt.as_deref(),
             inputs.seed,
             &composition,
@@ -441,8 +475,7 @@ impl Verb for GenerateReferenceSheetVerb {
             entity_id: inputs.entity_id,
             variants,
         };
-        let payload_json = serde_json::to_value(&payload)
-            .map_err(|e| VerbError::Backend(format!("failed to serialise sheet payload: {e}")))?;
+        let payload_json = serde_json::to_value(&payload).map_err(|e| VerbError::Backend(format!("failed to serialise sheet payload: {e}")))?;
 
         let elapsed = started.elapsed();
         let summary = format!(
@@ -480,6 +513,26 @@ fn unix_now() -> i64 {
         .map_or(0, |d| i64::try_from(d.as_secs()).unwrap_or(i64::MAX))
 }
 
+/// Splits conditioning references into the backend's two slots: the first
+/// `Style`-role reference becomes `style_image`, every other decodable
+/// reference becomes a `reference_images` entry, preserving order. Undecodable
+/// base64 is skipped rather than failing the whole generation.
+fn decode_references(refs: &[ReferenceInput]) -> (Option<Vec<u8>>, Vec<Vec<u8>>) {
+    let mut style_image = None;
+    let mut reference_images = Vec::new();
+    for r in refs {
+        let Ok(bytes) = base64::engine::general_purpose::STANDARD.decode(&r.image_b64) else {
+            continue;
+        };
+        if r.role == ReferenceRole::Style && style_image.is_none() {
+            style_image = Some(bytes);
+        } else {
+            reference_images.push(bytes);
+        }
+    }
+    (style_image, reference_images)
+}
+
 // i is always 0..=3 (num_variants clamped to 1..=4); the truncation cannot fire.
 #[allow(clippy::cast_possible_truncation, clippy::too_many_arguments)]
 fn build_variants(
@@ -488,6 +541,7 @@ fn build_variants(
     backend_id: &str,
     model: &str,
     prompt: &str,
+    user_prompt: &str,
     negative_prompt: Option<&str>,
     seed: Option<u64>,
     composition: &pixhaus_core::project::SheetComposition,
@@ -499,6 +553,7 @@ fn build_variants(
             id: SheetVariantId::new(i as u32),
             generated_at: now,
             image_b64: base64::engine::general_purpose::STANDARD.encode(png_bytes),
+            user_prompt: user_prompt.to_owned(),
             composition: composition.clone(),
             generation: GenerationProvenance {
                 backend: backend_id.to_owned(),
@@ -523,9 +578,7 @@ mod tests {
     use pixhaus_core::project::ProjectMetadata;
 
     use crate::backends::bridge::BackendProxy;
-    use crate::backends::{
-        BackendError, ImageGenResponse, InferenceBackend, InferenceRequest, InferenceResponse,
-    };
+    use crate::backends::{BackendError, ImageGenResponse, InferenceBackend, InferenceRequest, InferenceResponse};
     use crate::plugin::context::VerbContext;
     use crate::plugin::descriptor::{BackendCapabilities, CostEstimate, VerbId};
     use crate::plugin::error::VerbError;
@@ -567,8 +620,7 @@ mod tests {
             use std::io::Cursor;
             let img: RgbaImage = ImageBuffer::from_pixel(1, 1, image::Rgba([255u8, 255, 255, 255]));
             let mut buf = Vec::new();
-            img.write_to(&mut Cursor::new(&mut buf), ImageFormat::Png)
-                .expect("encode stub PNG");
+            img.write_to(&mut Cursor::new(&mut buf), ImageFormat::Png).expect("encode stub PNG");
             buf
         }
     }
@@ -628,6 +680,9 @@ mod tests {
             num_variants,
             quality: None,
             seed: None,
+            references: Vec::new(),
+            prompt_override: None,
+            negative_override: None,
         })
         .unwrap()
     }
@@ -637,19 +692,14 @@ mod tests {
     #[test]
     fn verb_id_matches_constant() {
         let verb = GenerateReferenceSheetVerb::new();
-        assert_eq!(
-            verb.descriptor().id,
-            VerbId::new(GENERATE_REFERENCE_SHEET_VERB_ID)
-        );
+        assert_eq!(verb.descriptor().id, VerbId::new(GENERATE_REFERENCE_SHEET_VERB_ID));
     }
 
     #[test]
     fn verb_requires_image_generation_capability() {
         let verb = GenerateReferenceSheetVerb::new();
         assert!(
-            verb.descriptor()
-                .required_capabilities
-                .contains(BackendCapabilities::IMAGE_GENERATION),
+            verb.descriptor().required_capabilities.contains(BackendCapabilities::IMAGE_GENERATION),
             "verb must advertise IMAGE_GENERATION"
         );
     }
@@ -690,6 +740,9 @@ mod tests {
             num_variants: 1,
             quality: None,
             seed: None,
+            references: Vec::new(),
+            prompt_override: None,
+            negative_override: None,
         })
         .unwrap();
         assert!(matches!(verb.validate(&inputs), Err(VerbError::Schema(_))));
@@ -720,9 +773,7 @@ mod tests {
     #[tokio::test]
     async fn invocation_produces_custom_effect_with_payload() {
         let runtime = VerbRuntime::new();
-        runtime
-            .register_backend(BackendProxy::new(WhiteStub::new(4)), 0)
-            .unwrap();
+        runtime.register_backend(BackendProxy::new(WhiteStub::new(4)), 0).unwrap();
         runtime.register(GenerateReferenceSheetVerb::new()).unwrap();
 
         let inv = runtime
@@ -740,8 +791,7 @@ mod tests {
         match &preview.output.effects[0] {
             VerbEffect::Custom { name, payload } => {
                 assert_eq!(name, GENERATE_SHEET_EFFECT_NAME);
-                let decoded: GenerateSheetPayload =
-                    serde_json::from_value(payload.clone()).unwrap();
+                let decoded: GenerateSheetPayload = serde_json::from_value(payload.clone()).unwrap();
                 assert_eq!(decoded.entity_id, EntityId::new(42));
                 assert_eq!(decoded.variants.len(), 2);
             }
@@ -752,9 +802,7 @@ mod tests {
     #[tokio::test]
     async fn variants_carry_composition_panels() {
         let runtime = VerbRuntime::new();
-        runtime
-            .register_backend(BackendProxy::new(WhiteStub::new(4)), 0)
-            .unwrap();
+        runtime.register_backend(BackendProxy::new(WhiteStub::new(4)), 0).unwrap();
         runtime.register(GenerateReferenceSheetVerb::new()).unwrap();
 
         let inv = runtime
@@ -769,29 +817,16 @@ mod tests {
         if let VerbEffect::Custom { payload, .. } = &preview.output.effects[0] {
             let decoded: GenerateSheetPayload = serde_json::from_value(payload.clone()).unwrap();
             let variant = &decoded.variants[0];
-            assert_eq!(
-                variant.composition.views.len(),
-                5,
-                "character sheet must have 5 turnaround views"
-            );
-            assert_eq!(
-                variant.composition.expressions.len(),
-                3,
-                "character sheet must have 3 expressions"
-            );
-            assert!(
-                variant.composition.palette_swatch.is_some(),
-                "character sheet must have a palette swatch"
-            );
+            assert_eq!(variant.composition.views.len(), 5, "character sheet must have 5 turnaround views");
+            assert_eq!(variant.composition.expressions.len(), 3, "character sheet must have 3 expressions");
+            assert!(variant.composition.palette_swatch.is_some(), "character sheet must have a palette swatch");
         }
     }
 
     #[tokio::test]
     async fn variants_carry_valid_base64_png() {
         let runtime = VerbRuntime::new();
-        runtime
-            .register_backend(BackendProxy::new(WhiteStub::new(4)), 0)
-            .unwrap();
+        runtime.register_backend(BackendProxy::new(WhiteStub::new(4)), 0).unwrap();
         runtime.register(GenerateReferenceSheetVerb::new()).unwrap();
 
         let inv = runtime
@@ -811,20 +846,14 @@ mod tests {
                 .expect("image_b64 must be valid base64");
             assert!(!bytes.is_empty(), "decoded image bytes must be non-empty");
             // Verify PNG signature (first 8 bytes).
-            assert_eq!(
-                &bytes[..8],
-                &[137u8, 80, 78, 71, 13, 10, 26, 10],
-                "decoded bytes must start with PNG signature"
-            );
+            assert_eq!(&bytes[..8], &[137u8, 80, 78, 71, 13, 10, 26, 10], "decoded bytes must start with PNG signature");
         }
     }
 
     #[tokio::test]
     async fn num_variants_clamped_to_max_four() {
         let runtime = VerbRuntime::new();
-        runtime
-            .register_backend(BackendProxy::new(WhiteStub::new(4)), 0)
-            .unwrap();
+        runtime.register_backend(BackendProxy::new(WhiteStub::new(4)), 0).unwrap();
         runtime.register(GenerateReferenceSheetVerb::new()).unwrap();
 
         // Request 10 — the verb should clamp to 4.
@@ -839,24 +868,20 @@ mod tests {
             num_variants: 10,
             quality: None,
             seed: None,
+            references: Vec::new(),
+            prompt_override: None,
+            negative_override: None,
         })
         .unwrap();
 
         let inv = runtime
-            .invoke(
-                &VerbId::new(GENERATE_REFERENCE_SHEET_VERB_ID),
-                VerbContext::empty(meta()),
-                inputs,
-            )
+            .invoke(&VerbId::new(GENERATE_REFERENCE_SHEET_VERB_ID), VerbContext::empty(meta()), inputs)
             .unwrap();
         let preview = inv.finish().await.unwrap();
 
         if let VerbEffect::Custom { payload, .. } = &preview.output.effects[0] {
             let decoded: GenerateSheetPayload = serde_json::from_value(payload.clone()).unwrap();
-            assert!(
-                decoded.variants.len() <= 4,
-                "must not produce more than 4 variants"
-            );
+            assert!(decoded.variants.len() <= 4, "must not produce more than 4 variants");
         }
     }
 
@@ -867,12 +892,7 @@ mod tests {
         cancel.cancel();
 
         let result = verb
-            .invoke(
-                VerbContext::empty(meta()),
-                inputs_for(CUSTOM, 1),
-                VerbProgress::discard(),
-                cancel,
-            )
+            .invoke(VerbContext::empty(meta()), inputs_for(CUSTOM, 1), VerbProgress::discard(), cancel)
             .await;
         // Cancelled before the backend lookup because ctx has no backend,
         // so we expect either Cancelled or Backend error depending on order.
@@ -894,10 +914,7 @@ mod tests {
             .unwrap_err();
 
         assert!(
-            matches!(
-                err,
-                VerbError::UnsupportedCapability { .. } | VerbError::BackendUnavailable { .. }
-            ),
+            matches!(err, VerbError::UnsupportedCapability { .. } | VerbError::BackendUnavailable { .. }),
             "expected pre-flight failure when IMAGE_GENERATION backend is absent, got {err:?}"
         );
     }
@@ -905,9 +922,7 @@ mod tests {
     #[tokio::test]
     async fn generation_provenance_carries_backend_id() {
         let runtime = VerbRuntime::new();
-        runtime
-            .register_backend(BackendProxy::new(WhiteStub::new(4)), 0)
-            .unwrap();
+        runtime.register_backend(BackendProxy::new(WhiteStub::new(4)), 0).unwrap();
         runtime.register(GenerateReferenceSheetVerb::new()).unwrap();
 
         let inv = runtime
@@ -930,9 +945,7 @@ mod tests {
     #[tokio::test]
     async fn all_four_templates_produce_valid_output() {
         let runtime = VerbRuntime::new();
-        runtime
-            .register_backend(BackendProxy::new(WhiteStub::new(4)), 0)
-            .unwrap();
+        runtime.register_backend(BackendProxy::new(WhiteStub::new(4)), 0).unwrap();
         runtime.register(GenerateReferenceSheetVerb::new()).unwrap();
 
         for structure_id in [CHARACTER, ITEM, TILESET, CUSTOM] {
@@ -945,15 +958,8 @@ mod tests {
                 .unwrap();
             let preview = inv.finish().await.unwrap();
 
-            assert_eq!(
-                preview.output.effects.len(),
-                1,
-                "each template must produce exactly one effect"
-            );
-            assert!(
-                matches!(preview.output.effects[0], VerbEffect::Custom { .. }),
-                "output must be a Custom effect"
-            );
+            assert_eq!(preview.output.effects.len(), 1, "each template must produce exactly one effect");
+            assert!(matches!(preview.output.effects[0], VerbEffect::Custom { .. }), "output must be a Custom effect");
         }
     }
 
@@ -962,9 +968,7 @@ mod tests {
         // WhiteStub::new(0) returns an empty image list: num_images=0 causes
         // count = req.num_images.max(1).min(0) = 0.
         let runtime = VerbRuntime::new();
-        runtime
-            .register_backend(BackendProxy::new(WhiteStub::new(0)), 0)
-            .unwrap();
+        runtime.register_backend(BackendProxy::new(WhiteStub::new(0)), 0).unwrap();
         runtime.register(GenerateReferenceSheetVerb::new()).unwrap();
 
         let inv = runtime
@@ -985,9 +989,7 @@ mod tests {
     #[tokio::test]
     async fn generation_provenance_carries_model_from_backend() {
         let runtime = VerbRuntime::new();
-        runtime
-            .register_backend(BackendProxy::new(WhiteStub::new(1)), 0)
-            .unwrap();
+        runtime.register_backend(BackendProxy::new(WhiteStub::new(1)), 0).unwrap();
         runtime.register(GenerateReferenceSheetVerb::new()).unwrap();
 
         let inv = runtime
@@ -1002,19 +1004,14 @@ mod tests {
         if let VerbEffect::Custom { payload, .. } = &preview.output.effects[0] {
             let decoded: GenerateSheetPayload = serde_json::from_value(payload.clone()).unwrap();
             let prov = &decoded.variants[0].generation;
-            assert_eq!(
-                prov.model, "stub.white",
-                "model must be captured from backend response, not hardcoded"
-            );
+            assert_eq!(prov.model, "stub.white", "model must be captured from backend response, not hardcoded");
         }
     }
 
     #[tokio::test]
     async fn generation_provenance_carries_negative_prompt() {
         let runtime = VerbRuntime::new();
-        runtime
-            .register_backend(BackendProxy::new(WhiteStub::new(1)), 0)
-            .unwrap();
+        runtime.register_backend(BackendProxy::new(WhiteStub::new(1)), 0).unwrap();
         runtime.register(GenerateReferenceSheetVerb::new()).unwrap();
 
         let inputs = VerbInputs::from_struct(&GenerateReferenceSheetInputs {
@@ -1028,42 +1025,30 @@ mod tests {
             num_variants: 1,
             quality: None,
             seed: None,
+            references: Vec::new(),
+            prompt_override: None,
+            negative_override: None,
         })
         .unwrap();
 
         let inv = runtime
-            .invoke(
-                &VerbId::new(GENERATE_REFERENCE_SHEET_VERB_ID),
-                VerbContext::empty(meta()),
-                inputs,
-            )
+            .invoke(&VerbId::new(GENERATE_REFERENCE_SHEET_VERB_ID), VerbContext::empty(meta()), inputs)
             .unwrap();
         let preview = inv.finish().await.unwrap();
 
         if let VerbEffect::Custom { payload, .. } = &preview.output.effects[0] {
             let decoded: GenerateSheetPayload = serde_json::from_value(payload.clone()).unwrap();
             let prov = &decoded.variants[0].generation;
-            let neg = prov
-                .negative_prompt
-                .as_deref()
-                .expect("negative_prompt must be Some");
-            assert!(
-                neg.contains("user_neg"),
-                "user negative prompt must appear in provenance: {neg}"
-            );
-            assert!(
-                !neg.starts_with(','),
-                "negative prompt must not start with a bare comma"
-            );
+            let neg = prov.negative_prompt.as_deref().expect("negative_prompt must be Some");
+            assert!(neg.contains("user_neg"), "user negative prompt must appear in provenance: {neg}");
+            assert!(!neg.starts_with(','), "negative prompt must not start with a bare comma");
         }
     }
 
     #[tokio::test]
     async fn unknown_style_id_is_rejected() {
         let runtime = VerbRuntime::new();
-        runtime
-            .register_backend(BackendProxy::new(WhiteStub::new(1)), 0)
-            .unwrap();
+        runtime.register_backend(BackendProxy::new(WhiteStub::new(1)), 0).unwrap();
         runtime.register(GenerateReferenceSheetVerb::new()).unwrap();
 
         let inputs = VerbInputs::from_struct(&GenerateReferenceSheetInputs {
@@ -1077,20 +1062,225 @@ mod tests {
             num_variants: 1,
             quality: None,
             seed: None,
+            references: Vec::new(),
+            prompt_override: None,
+            negative_override: None,
         })
         .unwrap();
 
         let inv = runtime
-            .invoke(
-                &VerbId::new(GENERATE_REFERENCE_SHEET_VERB_ID),
-                VerbContext::empty(meta()),
-                inputs,
-            )
+            .invoke(&VerbId::new(GENERATE_REFERENCE_SHEET_VERB_ID), VerbContext::empty(meta()), inputs)
             .unwrap();
         let err = inv.finish().await.unwrap_err();
+        assert!(matches!(err, VerbError::Schema(_)), "an unknown style id must be rejected, got {err:?}");
+    }
+
+    // ── Cockpit contract: overrides, style_notes baseline, references ────────
+
+    use std::sync::{Arc, Mutex};
+
+    use pixhaus_core::project::ReferenceRole;
+
+    use crate::backends::ImageGenRequest;
+    use crate::plugin::context::ProjectCompositionLibrary;
+
+    /// Backend that records the last image-gen request it received into a shared
+    /// slot, so tests can assert what the verb actually sent. Returns one white PNG.
+    #[derive(Debug)]
+    struct CapturingStub {
+        last: Arc<Mutex<Option<ImageGenRequest>>>,
+    }
+
+    #[async_trait]
+    impl InferenceBackend for CapturingStub {
+        fn backend_id(&self) -> &'static str {
+            "stub.capture"
+        }
+        fn capabilities(&self) -> BackendCapabilities {
+            BackendCapabilities::IMAGE_GENERATION
+        }
+        fn supports_streaming(&self) -> bool {
+            false
+        }
+        fn estimate_cost(&self, _req: &InferenceRequest) -> CostEstimate {
+            CostEstimate::free()
+        }
+        async fn invoke(
+            &self,
+            request: InferenceRequest,
+            _progress: VerbProgress,
+            _cancel: CancellationToken,
+        ) -> std::result::Result<InferenceResponse, BackendError> {
+            match request {
+                InferenceRequest::ImageGeneration(req) => {
+                    *self.last.lock().expect("lock") = Some(req);
+                    Ok(InferenceResponse::Image(ImageGenResponse {
+                        images: vec![WhiteStub::white_png()],
+                        model: "stub.capture".into(),
+                    }))
+                }
+                _ => Err(BackendError::UnsupportedCapability),
+            }
+        }
+    }
+
+    fn decode_payload(output: &crate::plugin::output::VerbOutput) -> GenerateSheetPayload {
+        match &output.effects[0] {
+            VerbEffect::Custom { payload, .. } => serde_json::from_value(payload.clone()).expect("decode payload"),
+            other => panic!("expected Custom effect, got {other:?}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn prompt_override_is_sent_verbatim() {
+        let runtime = VerbRuntime::new();
+        runtime.register_backend(BackendProxy::new(WhiteStub::new(1)), 0).unwrap();
+        runtime.register(GenerateReferenceSheetVerb::new()).unwrap();
+
+        let inputs = VerbInputs::from_struct(&GenerateReferenceSheetInputs {
+            entity_id: EntityId::new(1),
+            structure_id: StructureId(CHARACTER.into()),
+            style_id: None,
+            prompt_id: None,
+            variable_values: BTreeMap::new(),
+            inline_text: "ignored when overridden".into(),
+            inline_negatives: String::new(),
+            num_variants: 1,
+            quality: None,
+            seed: None,
+            references: Vec::new(),
+            prompt_override: Some("EXACTLY THESE WORDS".into()),
+            negative_override: None,
+        })
+        .unwrap();
+
+        let inv = runtime
+            .invoke(&VerbId::new(GENERATE_REFERENCE_SHEET_VERB_ID), VerbContext::empty(meta()), inputs)
+            .unwrap();
+        let payload = decode_payload(&inv.finish().await.unwrap().output);
+        // The override is sent verbatim — no baseline/layout prose wraps it.
+        assert_eq!(payload.variants[0].generation.prompt, "EXACTLY THESE WORDS");
+        // The composition (panel geometry) still comes from the structure.
+        assert_eq!(payload.variants[0].composition.views.len(), 5, "structure geometry survives an override");
+    }
+
+    #[tokio::test]
+    async fn negative_override_is_sent_verbatim() {
+        let runtime = VerbRuntime::new();
+        runtime.register_backend(BackendProxy::new(WhiteStub::new(1)), 0).unwrap();
+        runtime.register(GenerateReferenceSheetVerb::new()).unwrap();
+
+        let inputs = VerbInputs::from_struct(&GenerateReferenceSheetInputs {
+            entity_id: EntityId::new(1),
+            structure_id: StructureId(CHARACTER.into()),
+            style_id: None,
+            prompt_id: None,
+            variable_values: BTreeMap::new(),
+            inline_text: "hero".into(),
+            inline_negatives: "ignored".into(),
+            num_variants: 1,
+            quality: None,
+            seed: None,
+            references: Vec::new(),
+            prompt_override: None,
+            negative_override: Some("only this negative".into()),
+        })
+        .unwrap();
+
+        let inv = runtime
+            .invoke(&VerbId::new(GENERATE_REFERENCE_SHEET_VERB_ID), VerbContext::empty(meta()), inputs)
+            .unwrap();
+        let payload = decode_payload(&inv.finish().await.unwrap().output);
+        assert_eq!(payload.variants[0].generation.negative_prompt.as_deref(), Some("only this negative"));
+    }
+
+    #[tokio::test]
+    async fn style_notes_become_the_prompt_baseline() {
+        let runtime = VerbRuntime::new();
+        runtime.register_backend(BackendProxy::new(WhiteStub::new(1)), 0).unwrap();
+        runtime.register(GenerateReferenceSheetVerb::new()).unwrap();
+
+        let ctx = VerbContext::builder(meta())
+            .with_composition_library(ProjectCompositionLibrary {
+                style_notes: "HOUSE STYLE: muted gameboy palette".into(),
+                ..Default::default()
+            })
+            .build();
+
+        let inv = runtime
+            .invoke(&VerbId::new(GENERATE_REFERENCE_SHEET_VERB_ID), ctx, inputs_for(CHARACTER, 1))
+            .unwrap();
+        let payload = decode_payload(&inv.finish().await.unwrap().output);
         assert!(
-            matches!(err, VerbError::Schema(_)),
-            "an unknown style id must be rejected, got {err:?}"
+            payload.variants[0].generation.prompt.starts_with("HOUSE STYLE: muted gameboy palette"),
+            "style_notes must lead the composed prompt: {}",
+            payload.variants[0].generation.prompt
+        );
+    }
+
+    #[tokio::test]
+    async fn references_route_to_style_image_and_reference_images() {
+        let captured = Arc::new(Mutex::new(None));
+        let stub = CapturingStub { last: captured.clone() };
+        let runtime = VerbRuntime::new();
+        runtime.register_backend(BackendProxy::new(stub), 0).unwrap();
+        runtime.register(GenerateReferenceSheetVerb::new()).unwrap();
+
+        let png_b64 = base64::engine::general_purpose::STANDARD.encode(WhiteStub::white_png());
+        let inputs = VerbInputs::from_struct(&GenerateReferenceSheetInputs {
+            entity_id: EntityId::new(1),
+            structure_id: StructureId(CHARACTER.into()),
+            style_id: None,
+            prompt_id: None,
+            variable_values: BTreeMap::new(),
+            inline_text: "hero".into(),
+            inline_negatives: String::new(),
+            num_variants: 1,
+            quality: None,
+            seed: None,
+            references: vec![
+                ReferenceInput {
+                    image_b64: png_b64.clone(),
+                    role: ReferenceRole::Style,
+                    weight: 1.0,
+                },
+                ReferenceInput {
+                    image_b64: png_b64.clone(),
+                    role: ReferenceRole::Subject,
+                    weight: 1.0,
+                },
+            ],
+            prompt_override: None,
+            negative_override: None,
+        })
+        .unwrap();
+
+        runtime
+            .invoke(&VerbId::new(GENERATE_REFERENCE_SHEET_VERB_ID), VerbContext::empty(meta()), inputs)
+            .unwrap()
+            .finish()
+            .await
+            .unwrap();
+
+        let captured = captured.lock().unwrap().clone().expect("backend was invoked");
+        assert!(captured.style_image.is_some(), "the Style-role reference routes to style_image");
+        assert_eq!(captured.reference_images.len(), 1, "the Subject reference routes to reference_images");
+    }
+
+    #[tokio::test]
+    async fn variants_carry_the_user_prompt_distinct_from_composed() {
+        let runtime = VerbRuntime::new();
+        runtime.register_backend(BackendProxy::new(WhiteStub::new(1)), 0).unwrap();
+        runtime.register(GenerateReferenceSheetVerb::new()).unwrap();
+
+        let inv = runtime
+            .invoke(&VerbId::new(GENERATE_REFERENCE_SHEET_VERB_ID), VerbContext::empty(meta()), inputs_for(CHARACTER, 1))
+            .unwrap();
+        let payload = decode_payload(&inv.finish().await.unwrap().output);
+        assert_eq!(payload.variants[0].user_prompt, "a fantasy hero with a sword");
+        assert_ne!(
+            payload.variants[0].user_prompt, payload.variants[0].generation.prompt,
+            "composed prompt wraps the user prompt with baseline/layout prose"
         );
     }
 

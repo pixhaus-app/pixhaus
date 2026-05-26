@@ -1,10 +1,11 @@
-//! Pixhaus core — vertical-slice subset.
+//! Pixhaus core — native editor model.
 //!
-//! Minimal port from the main checkout's `core` crate: the project model
-//! (sprite, layer, cel, frame, animation, frame tag, library), the
-//! `PixelBuffer` and compositor, and frame normalization. No drawing,
-//! undo, or selection — the slice displays and plays sprites, it does not
-//! edit pixels.
+//! Port from the main checkout's `core` crate: the project model (sprite,
+//! layer, cel, frame, animation, frame tag, library), the `PixelBuffer`
+//! and compositor, frame normalization, the drawing tools
+//! ([`canvas::tools`]), the branching [`undo`] history, and the
+//! [`selection`] subsystem. The native shell drives these directly — no
+//! IPC, no TypeScript.
 
 #![cfg_attr(
     test,
@@ -26,7 +27,9 @@
 pub mod canvas;
 pub mod color;
 pub mod project;
+pub mod selection;
 pub mod transforms;
+pub mod undo;
 
 /// Returns the crate name. Stable, public marker that downstream crates
 /// can use as a sanity check after a workspace-wide upgrade.

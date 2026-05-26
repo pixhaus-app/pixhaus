@@ -31,10 +31,7 @@ pub enum StructureOutput {
     /// One free-composition image; no panels.
     Single,
     /// Structured multi-panel sheet.
-    Paneled {
-        canvas: Dimensions,
-        panels: Vec<StructurePanel>,
-    },
+    Paneled { canvas: Dimensions, panels: Vec<StructurePanel> },
 }
 
 /// One named panel within a paneled structure.
@@ -81,18 +78,10 @@ mod tests {
             id: StructureId("test.s".into()),
             name: "Test".into(),
             output: StructureOutput::Paneled {
-                canvas: Dimensions {
-                    width: 100,
-                    height: 200,
-                },
+                canvas: Dimensions { width: 100, height: 200 },
                 panels: vec![StructurePanel {
                     label: "front".into(),
-                    rect: PanelRect {
-                        x: 0,
-                        y: 0,
-                        w: 50,
-                        h: 100,
-                    },
+                    rect: PanelRect { x: 0, y: 0, w: 50, h: 100 },
                     prose_fragment: "front view {panel_w}x{panel_h}".into(),
                     slot: PanelSlot::View,
                 }],
@@ -117,9 +106,6 @@ mod tests {
 
     #[test]
     fn panel_slot_serializes_as_snake_case() {
-        assert_eq!(
-            serde_json::to_string(&PanelSlot::PaletteSwatch).unwrap(),
-            r#""palette_swatch""#
-        );
+        assert_eq!(serde_json::to_string(&PanelSlot::PaletteSwatch).unwrap(), r#""palette_swatch""#);
     }
 }

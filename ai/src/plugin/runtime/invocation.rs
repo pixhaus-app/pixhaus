@@ -156,11 +156,6 @@ impl VerbInvocation {
             Ok(inner) => inner?,
             Err(join_err) => return Err(VerbError::Aborted(join_err.to_string())),
         };
-        Ok(VerbPreview::new(
-            self.preview_id,
-            self.verb_id.clone(),
-            output,
-            elapsed,
-        ))
+        Ok(VerbPreview::new(self.preview_id, self.verb_id.clone(), output, elapsed))
     }
 }

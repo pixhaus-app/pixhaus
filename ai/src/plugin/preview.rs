@@ -65,9 +65,7 @@ impl PreviewIdMinter {
     /// Constructs a fresh minter starting at `1`.
     #[must_use]
     pub const fn new() -> Self {
-        Self {
-            next: AtomicU64::new(1),
-        }
+        Self { next: AtomicU64::new(1) }
     }
 
     /// Issues the next ID. Skips `0` on wrap so the sentinel invariant

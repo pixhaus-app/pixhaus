@@ -48,31 +48,24 @@ pub use effect::LayerEffect;
 pub use frame::{Frame, FrameRange, FrameTag, LoopDirection};
 pub use geometry::{IVec2, Rect, Size};
 pub use id::{
-    AnimationId, AssetId, EntityId, FrameIndex, GroupId, LayerId, LoraId, PaletteId, PalettePageId,
-    PixelBufferId, SheetVariantId, SliceId, SpriteId, StateId, TagId, TileIndex, TilesetId,
-    TrainingJobId,
+    AnimationId, AssetId, EntityId, FrameIndex, GroupId, LayerId, LoraId, PaletteId, PalettePageId, PixelBufferId, SheetVariantId, SliceId, SpriteId, StateId,
+    TagId, TileIndex, TilesetId, TrainingJobId,
 };
 pub use layer::{Layer, LayerKind};
 pub use library::{
-    ActiveTarget, AiMetadata, AnchorDirection, AnimationKind, AssetInfo, AssetLibrary,
-    CharacterAnchor, CharacterCard, ChatTranscript, ChatTurn, DerivedSheet, DirectionalAnchors,
-    Entity, EntityContent, EntityDefaults, EntityGroup, EntityKind, GenerationProvenance, Library,
-    LoraAsset, LoraKind, ModelId, NamedSprite, OperationKind, ProjectAi, PromptEntry,
-    PromptHistoryEntry, PromptResult, Quality, ReferenceAsset, ReferenceImage, ReferenceRole,
-    ReferenceSheet, ReferenceSheetTemplateDefinition, ReferenceSheetTemplateId, ReferenceSlot,
-    RefinementKind, RegionDefinition, SheetComposition, SheetDimensions, SheetPanel, SheetVariant,
-    StyleSwatch, TagDefinition, TilemapLayer, TilemapScene, TilesetReference, TrainingJob,
-    TrainingStatus, VariantOrigin, built_in_reference_sheet_templates, default_reference_chroma,
+    ActiveTarget, AiMetadata, AnchorDirection, AnimationKind, AssetInfo, AssetLibrary, CharacterAnchor, CharacterCard, ChatTranscript, ChatTurn, DerivedSheet,
+    DirectionalAnchors, Entity, EntityContent, EntityDefaults, EntityGroup, EntityKind, GenerationProvenance, Library, LoraAsset, LoraKind, ModelId,
+    NamedSprite, OperationKind, ProjectAi, PromptEntry, PromptHistoryEntry, PromptResult, Quality, ReferenceAsset, ReferenceImage, ReferenceRole,
+    ReferenceSheet, ReferenceSheetTemplateDefinition, ReferenceSheetTemplateId, ReferenceSlot, RefinementKind, RegionDefinition, SheetComposition,
+    SheetDimensions, SheetPanel, SheetVariant, StyleSwatch, TagDefinition, TilemapLayer, TilemapScene, TilesetReference, TrainingJob, TrainingStatus,
+    VariantOrigin, built_in_reference_sheet_templates, default_reference_chroma,
 };
 pub use palette::{Palette, PaletteAnimation, PaletteEntry, PaletteFrameOverride, PalettePage};
 pub use schema::{FeatureFlags, SchemaError, SchemaVersion};
 pub use slice::{NineSlice, Pivot, Slice, SliceKey};
 pub use sprite::Sprite;
 pub use tilemap::{TileCell, TileFlags, TilemapData};
-pub use tileset::{
-    AnimLoopMode, CollisionShape, HexOffsetAxis, TileAnimation, TileAnimationFrame, TileProperties,
-    TileShape, Tileset, TilesetSource,
-};
+pub use tileset::{AnimLoopMode, CollisionShape, HexOffsetAxis, TileAnimation, TileAnimationFrame, TileProperties, TileShape, Tileset, TilesetSource};
 pub use user_data::UserData;
 
 use serde::{Deserialize, Serialize};
@@ -159,8 +152,7 @@ impl Project {
     /// matches.
     #[must_use]
     pub fn sprite(&self, id: SpriteId) -> Option<&Sprite> {
-        self.sprites_iter()
-            .find_map(|(named, _)| (named.sprite.id == id).then_some(&named.sprite))
+        self.sprites_iter().find_map(|(named, _)| (named.sprite.id == id).then_some(&named.sprite))
     }
 
     /// Mutable variant of [`Self::sprite`].
@@ -212,21 +204,14 @@ impl Project {
     /// active target).
     #[must_use]
     pub fn active_sprite_id(&self) -> Option<SpriteId> {
-        let ActiveTarget::State {
-            entity_id,
-            state_id,
-        } = self.active
-        else {
+        let ActiveTarget::State { entity_id, state_id } = self.active else {
             return None;
         };
         let entity = self.library.entities.iter().find(|e| e.id == entity_id)?;
         let EntityContent::Sprites { states, .. } = &entity.content else {
             return None;
         };
-        states
-            .iter()
-            .find(|s| s.id == state_id)
-            .map(|s| s.sprite.id)
+        states.iter().find(|s| s.id == state_id).map(|s| s.sprite.id)
     }
 }
 
@@ -322,9 +307,7 @@ mod tests {
     #[test]
     fn active_sprite_id_is_none_for_other_targets() {
         let mut p = project_with_one_state();
-        p.active = ActiveTarget::Tileset {
-            entity_id: EntityId::new(1),
-        };
+        p.active = ActiveTarget::Tileset { entity_id: EntityId::new(1) };
         assert!(p.active_sprite_id().is_none());
         p.active = ActiveTarget::None;
         assert!(p.active_sprite_id().is_none());

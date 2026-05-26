@@ -115,10 +115,7 @@ mod tests {
     #[test]
     fn not_found_renders_id() {
         let err = VerbError::NotFound(VerbId::new("pixhaus.builtin.echo"));
-        assert_eq!(
-            err.to_string(),
-            "no verb registered with id `pixhaus.builtin.echo`"
-        );
+        assert_eq!(err.to_string(), "no verb registered with id `pixhaus.builtin.echo`");
     }
 
     #[test]
@@ -141,42 +138,30 @@ mod tests {
         // capabilities were missing. Now the names appear directly.
         let err = VerbError::UnsupportedCapability {
             verb: VerbId::new("pixhaus.builtin.inbetween"),
-            required: BackendCapabilities::IMAGE_GENERATION
-                .union(BackendCapabilities::FRAME_INTERPOLATION),
+            required: BackendCapabilities::IMAGE_GENERATION.union(BackendCapabilities::FRAME_INTERPOLATION),
         };
         let msg = err.to_string();
         assert!(msg.contains("IMAGE_GENERATION"), "msg = {msg}");
         assert!(msg.contains("FRAME_INTERPOLATION"), "msg = {msg}");
-        assert!(
-            !msg.contains("0x"),
-            "named output must replace the hex bitfield: {msg}"
-        );
+        assert!(!msg.contains("0x"), "named output must replace the hex bitfield: {msg}");
         assert!(msg.contains("inbetween"));
     }
 
     #[test]
     fn backend_unavailable_renders_id() {
-        let err = VerbError::BackendUnavailable {
-            id: "ollama.llama3".into(),
-        };
+        let err = VerbError::BackendUnavailable { id: "ollama.llama3".into() };
         assert!(err.to_string().contains("ollama.llama3"));
     }
 
     #[test]
     fn backend_already_registered_renders_id() {
         let err = VerbError::BackendAlreadyRegistered("anthropic.claude".into());
-        assert_eq!(
-            err.to_string(),
-            "backend `anthropic.claude` is already registered"
-        );
+        assert_eq!(err.to_string(), "backend `anthropic.claude` is already registered");
     }
 
     #[test]
     fn backend_not_found_renders_id() {
         let err = VerbError::BackendNotFound("ollama.llama3".into());
-        assert_eq!(
-            err.to_string(),
-            "no backend registered with id `ollama.llama3`"
-        );
+        assert_eq!(err.to_string(), "no backend registered with id `ollama.llama3`");
     }
 }

@@ -199,8 +199,7 @@ mod tests {
         let info = BackendInfo {
             id: "anthropic.claude-sonnet-4-6".into(),
             display_name: "Anthropic Claude Sonnet".into(),
-            capabilities: BackendCapabilities::TEXT_GENERATION
-                .union(BackendCapabilities::VISION_LANGUAGE),
+            capabilities: BackendCapabilities::TEXT_GENERATION.union(BackendCapabilities::VISION_LANGUAGE),
             available: true,
             priority: 10,
         };

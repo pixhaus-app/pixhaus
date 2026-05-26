@@ -75,14 +75,8 @@ pub fn scale_integer(buf: &PixelBuffer, factor: u32) -> Result<PixelBuffer> {
         return Err(Error::InvalidScaleFactor(0));
     }
 
-    let new_w = buf
-        .width()
-        .checked_mul(factor)
-        .ok_or(Error::DimensionOverflow)?;
-    let new_h = buf
-        .height()
-        .checked_mul(factor)
-        .ok_or(Error::DimensionOverflow)?;
+    let new_w = buf.width().checked_mul(factor).ok_or(Error::DimensionOverflow)?;
+    let new_h = buf.height().checked_mul(factor).ok_or(Error::DimensionOverflow)?;
     let mut out = PixelBuffer::new(new_w, new_h)?;
 
     for sy in 0..buf.height() {
@@ -262,10 +256,7 @@ mod tests {
     #[test]
     fn integer_down_zero_divisor_errors() {
         let buf = PixelBuffer::new(2, 2).unwrap();
-        assert_eq!(
-            scale_integer_down(&buf, 0),
-            Err(Error::InvalidScaleFactor(0))
-        );
+        assert_eq!(scale_integer_down(&buf, 0), Err(Error::InvalidScaleFactor(0)));
     }
 
     #[test]

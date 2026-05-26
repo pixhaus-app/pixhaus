@@ -10,9 +10,8 @@ use tokio::select;
 use tokio_util::sync::CancellationToken;
 
 use super::{
-    BackendError, BackgroundRemovalRequest, ImageEditRequest, ImageGenRequest, ImageGenResponse,
-    ImageToVideoRequest, ImageToVideoResponse, InferenceBackend, InferenceRequest,
-    InferenceResponse, ReplicateRequest, Result, VerbProgress, check_http_status,
+    BackendError, BackgroundRemovalRequest, ImageEditRequest, ImageGenRequest, ImageGenResponse, ImageToVideoRequest, ImageToVideoResponse, InferenceBackend,
+    InferenceRequest, InferenceResponse, ReplicateRequest, Result, VerbProgress, check_http_status,
 };
 use crate::plugin::context::PixelData;
 use crate::plugin::descriptor::{BackendCapabilities, CostEstimate};
@@ -74,10 +73,7 @@ impl FalBackend {
     #[must_use]
     pub fn new(api_key: impl Into<String>) -> Self {
         Self {
-            client: reqwest::Client::builder()
-                .timeout(Duration::from_secs(180))
-                .build()
-                .unwrap_or_default(),
+            client: reqwest::Client::builder().timeout(Duration::from_secs(180)).build().unwrap_or_default(),
             api_key: api_key.into(),
             base_url: BASE_URL.into(),
             queue_base_url: QUEUE_BASE_URL.into(),
@@ -130,11 +126,7 @@ impl FalBackend {
             .diffusers_lora_file
             .or(raw.lora_file)
             .map(|file| file.url)
-            .ok_or_else(|| {
-                BackendError::InvalidResponse(
-                    "fal training response did not include a LoRA file URL".into(),
-                )
-            })?;
+            .ok_or_else(|| BackendError::InvalidResponse("fal training response did not include a LoRA file URL".into()))?;
         Ok(FalLoraTrainingResult { lora_url })
     }
 
@@ -145,16 +137,11 @@ impl FalBackend {
         progress: &VerbProgress,
         cancel: &CancellationToken,
     ) -> Result<ImageGenResponse> {
-        if let Some(resp) = self
-            .try_stream_image_endpoint(endpoint, &input, progress, cancel)
-            .await?
-        {
+        if let Some(resp) = self.try_stream_image_endpoint(endpoint, &input, progress, cancel).await? {
             return Ok(resp);
         }
         if self.base_url == BASE_URL {
-            return self
-                .call_queue_image_endpoint(endpoint, input, progress, cancel)
-                .await;
+            return self.call_queue_image_endpoint(endpoint, input, progress, cancel).await;
         }
         let http_req = self
             .client
@@ -206,9 +193,7 @@ impl FalBackend {
             res = self.client.execute(http_req) => res.map_err(BackendError::Network)?,
         };
         let status = http_resp.status();
-        if status == reqwest::StatusCode::NOT_FOUND
-            || status == reqwest::StatusCode::METHOD_NOT_ALLOWED
-        {
+        if status == reqwest::StatusCode::NOT_FOUND || status == reqwest::StatusCode::METHOD_NOT_ALLOWED {
             return Ok(None);
         }
         let http_resp = check_http_status(http_resp).await?;
@@ -250,13 +235,7 @@ impl FalBackend {
 
     /// Submits a queued fal request, waits for completion, and returns the raw
     /// result JSON. Shared by the image and video endpoints.
-    async fn run_queue(
-        &self,
-        endpoint: &str,
-        input: serde_json::Value,
-        progress: &VerbProgress,
-        cancel: &CancellationToken,
-    ) -> Result<serde_json::Value> {
+    async fn run_queue(&self, endpoint: &str, input: serde_json::Value, progress: &VerbProgress, cancel: &CancellationToken) -> Result<serde_json::Value> {
         let submit_req = self
             .client
             .post(format!("{}/{}", self.queue_base_url, endpoint))
@@ -270,27 +249,17 @@ impl FalBackend {
             res = self.client.execute(submit_req) => res.map_err(BackendError::Network)?,
         };
         let submit_resp = check_http_status(submit_resp).await?;
-        let raw: FalQueueSubmitResponse =
-            submit_resp.json().await.map_err(BackendError::Network)?;
+        let raw: FalQueueSubmitResponse = submit_resp.json().await.map_err(BackendError::Network)?;
         let request_id = raw.request_id;
-        let status_url = raw.status_url.unwrap_or_else(|| {
-            format!(
-                "{}/{}/requests/{}/status?logs=1",
-                self.queue_base_url, endpoint, request_id
-            )
-        });
-        let result_url = raw.response_url.unwrap_or_else(|| {
-            format!(
-                "{}/{}/requests/{}",
-                self.queue_base_url, endpoint, request_id
-            )
-        });
-        let cancel_url = raw.cancel_url.unwrap_or_else(|| {
-            format!(
-                "{}/{}/requests/{}",
-                self.queue_base_url, endpoint, request_id
-            )
-        });
+        let status_url = raw
+            .status_url
+            .unwrap_or_else(|| format!("{}/{}/requests/{}/status?logs=1", self.queue_base_url, endpoint, request_id));
+        let result_url = raw
+            .response_url
+            .unwrap_or_else(|| format!("{}/{}/requests/{}", self.queue_base_url, endpoint, request_id));
+        let cancel_url = raw
+            .cancel_url
+            .unwrap_or_else(|| format!("{}/{}/requests/{}", self.queue_base_url, endpoint, request_id));
 
         // fal's status endpoint is single-shot, not an SSE stream. Poll it
         // until the request reaches a terminal state — image-to-video jobs run
@@ -304,9 +273,7 @@ impl FalBackend {
         loop {
             if std::time::Instant::now() > deadline {
                 self.cancel_queue_request(&cancel_url).await;
-                return Err(BackendError::InvalidResponse(
-                    "fal queue timed out before completion".into(),
-                ));
+                return Err(BackendError::InvalidResponse("fal queue timed out before completion".into()));
             }
             let status_req = self
                 .client
@@ -323,8 +290,7 @@ impl FalBackend {
                 res = self.client.execute(status_req) => res.map_err(BackendError::Network)?,
             };
             let status_resp = check_http_status(status_resp).await?;
-            let value: serde_json::Value =
-                status_resp.json().await.map_err(BackendError::Network)?;
+            let value: serde_json::Value = status_resp.json().await.map_err(BackendError::Network)?;
             if report_fal_queue_status(&value, progress).await? {
                 break;
             }
@@ -384,12 +350,7 @@ impl FalBackend {
     }
 
     async fn cancel_queue_request(&self, cancel_url: &str) {
-        let _ = self
-            .client
-            .delete(cancel_url)
-            .header("Authorization", self.auth_value())
-            .send()
-            .await;
+        let _ = self.client.delete(cancel_url).header("Authorization", self.auth_value()).send().await;
     }
 }
 
@@ -421,54 +382,35 @@ impl InferenceBackend for FalBackend {
         }
     }
 
-    async fn invoke(
-        &self,
-        request: InferenceRequest,
-        progress: VerbProgress,
-        cancel: CancellationToken,
-    ) -> Result<InferenceResponse> {
-        progress
-            .send(VerbProgressEvent::Started {
-                backend: Some("fal".into()),
-            })
-            .await;
+    async fn invoke(&self, request: InferenceRequest, progress: VerbProgress, cancel: CancellationToken) -> Result<InferenceResponse> {
+        progress.send(VerbProgressEvent::Started { backend: Some("fal".into()) }).await;
         match request {
             InferenceRequest::ImageGeneration(req) => {
                 let endpoint = req.model.as_deref().unwrap_or(FAL_FLUX_LORA);
                 let body = build_fal_generation_body(&req);
-                let resp = self
-                    .call_image_endpoint(endpoint, body, &progress, &cancel)
-                    .await?;
+                let resp = self.call_image_endpoint(endpoint, body, &progress, &cancel).await?;
                 Ok(InferenceResponse::Image(resp))
             }
             InferenceRequest::ImageEdit(req) | InferenceRequest::ImageInpaint(req) => {
                 let endpoint = req.model.as_deref().unwrap_or(FAL_FLUX_KONTEXT);
                 let body = build_fal_edit_body(&req);
-                let resp = self
-                    .call_image_endpoint(endpoint, body, &progress, &cancel)
-                    .await?;
+                let resp = self.call_image_endpoint(endpoint, body, &progress, &cancel).await?;
                 Ok(InferenceResponse::Image(resp))
             }
             InferenceRequest::Replicate(req) => {
-                let resp = self
-                    .call_image_endpoint(&req.model, req.input, &progress, &cancel)
-                    .await?;
+                let resp = self.call_image_endpoint(&req.model, req.input, &progress, &cancel).await?;
                 Ok(InferenceResponse::Image(resp))
             }
             InferenceRequest::ImageToVideo(req) => {
                 let endpoint = req.model.as_deref().unwrap_or(FAL_SEEDANCE).to_owned();
                 let body = build_fal_i2v_body(&endpoint, &req);
-                let resp = self
-                    .call_video_endpoint(&endpoint, body, &progress, &cancel)
-                    .await?;
+                let resp = self.call_video_endpoint(&endpoint, body, &progress, &cancel).await?;
                 Ok(InferenceResponse::Video(resp))
             }
             InferenceRequest::BackgroundRemoval(req) => {
                 let endpoint = req.model.as_deref().unwrap_or(FAL_BRIA_REMOVE_BACKGROUND);
                 let body = build_bria_remove_bg_body(&req);
-                let resp = self
-                    .call_image_endpoint(endpoint, body, &progress, &cancel)
-                    .await?;
+                let resp = self.call_image_endpoint(endpoint, body, &progress, &cancel).await?;
                 Ok(InferenceResponse::Image(resp))
             }
             _ => Err(BackendError::UnsupportedCapability),
@@ -518,11 +460,7 @@ fn build_fal_generation_body(req: &ImageGenRequest) -> serde_json::Value {
         input["image_url"] = serde_json::json!(data_uri(style, "image/png"));
     }
     if !req.reference_images.is_empty() {
-        let refs = req
-            .reference_images
-            .iter()
-            .map(|bytes| data_uri(bytes, "image/png"))
-            .collect::<Vec<_>>();
+        let refs = req.reference_images.iter().map(|bytes| data_uri(bytes, "image/png")).collect::<Vec<_>>();
         input["reference_image_urls"] = serde_json::json!(refs);
     }
     input
@@ -543,11 +481,7 @@ fn build_fal_edit_body(req: &ImageEditRequest) -> serde_json::Value {
         input["reference_image_url"] = serde_json::json!(data_uri(style, "image/png"));
     }
     if !req.reference_images.is_empty() {
-        let refs = req
-            .reference_images
-            .iter()
-            .map(|bytes| data_uri(bytes, "image/png"))
-            .collect::<Vec<_>>();
+        let refs = req.reference_images.iter().map(|bytes| data_uri(bytes, "image/png")).collect::<Vec<_>>();
         input["reference_image_urls"] = serde_json::json!(refs);
     }
     input
@@ -628,24 +562,14 @@ fn build_bria_remove_bg_body(req: &BackgroundRemovalRequest) -> serde_json::Valu
 /// fal returns `{ "video": { "url": "…", "content_type": "video/mp4" } }`;
 /// some models nest it differently, so this falls back to the first URL-like
 /// `url` field found.
-async fn decode_fal_video(
-    client: &reqwest::Client,
-    raw: &serde_json::Value,
-    cancel: &CancellationToken,
-) -> Result<(Vec<u8>, String)> {
+async fn decode_fal_video(client: &reqwest::Client, raw: &serde_json::Value, cancel: &CancellationToken) -> Result<(Vec<u8>, String)> {
     let video = raw.get("video").unwrap_or(raw);
     let url = video
         .get("url")
         .and_then(serde_json::Value::as_str)
         .or_else(|| raw.get("url").and_then(serde_json::Value::as_str))
-        .ok_or_else(|| {
-            BackendError::InvalidResponse("fal i2v response contained no video URL".into())
-        })?;
-    let mime = video
-        .get("content_type")
-        .and_then(serde_json::Value::as_str)
-        .unwrap_or("video/mp4")
-        .to_owned();
+        .ok_or_else(|| BackendError::InvalidResponse("fal i2v response contained no video URL".into()))?;
+    let mime = video.get("content_type").and_then(serde_json::Value::as_str).unwrap_or("video/mp4").to_owned();
 
     if let Some(bytes) = decode_data_uri(url)? {
         return Ok((bytes, mime));
@@ -662,11 +586,7 @@ async fn decode_fal_video(
 }
 
 #[allow(clippy::disallowed_methods)]
-fn build_lora_training_body(
-    archive_zip: &[u8],
-    trigger_word: &str,
-    is_style: bool,
-) -> serde_json::Value {
+fn build_lora_training_body(archive_zip: &[u8], trigger_word: &str, is_style: bool) -> serde_json::Value {
     serde_json::json!({
         "images_data_url": format!(
             "data:application/zip;base64,{}",
@@ -680,17 +600,10 @@ fn build_lora_training_body(
 }
 
 fn data_uri(bytes: &[u8], mime: &str) -> String {
-    format!(
-        "data:{mime};base64,{}",
-        base64::engine::general_purpose::STANDARD.encode(bytes)
-    )
+    format!("data:{mime};base64,{}", base64::engine::general_purpose::STANDARD.encode(bytes))
 }
 
-async fn decode_fal_images(
-    client: &reqwest::Client,
-    raw: serde_json::Value,
-    cancel: &CancellationToken,
-) -> Result<Vec<Vec<u8>>> {
+async fn decode_fal_images(client: &reqwest::Client, raw: serde_json::Value, cancel: &CancellationToken) -> Result<Vec<Vec<u8>>> {
     if let Some(svg) = raw
         .get("svg")
         .and_then(serde_json::Value::as_str)
@@ -707,10 +620,7 @@ async fn decode_fal_images(
         if let Some(bytes) = decode_data_uri(&image_ref)? {
             out.push(bytes);
         } else {
-            let req = client
-                .get(&image_ref)
-                .build()
-                .map_err(BackendError::Network)?;
+            let req = client.get(&image_ref).build().map_err(BackendError::Network)?;
             let resp = select! {
                 biased;
                 () = cancel.cancelled() => return Err(BackendError::Cancelled),
@@ -721,9 +631,7 @@ async fn decode_fal_images(
         }
     }
     if out.is_empty() {
-        return Err(BackendError::InvalidResponse(
-            "fal response contained no image URL, data URI, or SVG".into(),
-        ));
+        return Err(BackendError::InvalidResponse("fal response contained no image URL, data URI, or SVG".into()));
     }
     Ok(out)
 }
@@ -754,9 +662,7 @@ async fn parse_fal_sse_images(
         handle_fal_image_sse_frame(client, &buffer, progress, cancel, &mut final_images).await?;
     }
     if final_images.is_empty() {
-        return Err(BackendError::InvalidResponse(
-            "fal stream ended without a final image".into(),
-        ));
+        return Err(BackendError::InvalidResponse("fal stream ended without a final image".into()));
     }
     Ok(final_images)
 }
@@ -784,11 +690,7 @@ async fn handle_fal_image_sse_frame(
     let value: serde_json::Value = serde_json::from_str(&data)?;
     if let Some(logs) = value.get("logs").and_then(serde_json::Value::as_array) {
         for log in logs {
-            if let Some(message) = log
-                .get("message")
-                .and_then(serde_json::Value::as_str)
-                .or_else(|| log.as_str())
-            {
+            if let Some(message) = log.get("message").and_then(serde_json::Value::as_str).or_else(|| log.as_str()) {
                 progress
                     .send(VerbProgressEvent::Log {
                         level: LogLevel::Info,
@@ -798,10 +700,7 @@ async fn handle_fal_image_sse_frame(
             }
         }
     }
-    let status = value
-        .get("status")
-        .and_then(serde_json::Value::as_str)
-        .unwrap_or_default();
+    let status = value.get("status").and_then(serde_json::Value::as_str).unwrap_or_default();
     if matches!(status, "IN_QUEUE" | "IN_PROGRESS") {
         progress
             .send(VerbProgressEvent::Step {
@@ -832,14 +731,8 @@ async fn handle_fal_image_sse_frame(
 /// # Errors
 ///
 /// Returns an error when the status is `FAILED` or `ERROR`.
-async fn report_fal_queue_status(
-    value: &serde_json::Value,
-    progress: &VerbProgress,
-) -> Result<bool> {
-    let status = value
-        .get("status")
-        .and_then(serde_json::Value::as_str)
-        .unwrap_or("IN_PROGRESS");
+async fn report_fal_queue_status(value: &serde_json::Value, progress: &VerbProgress) -> Result<bool> {
+    let status = value.get("status").and_then(serde_json::Value::as_str).unwrap_or("IN_PROGRESS");
     progress
         .send(VerbProgressEvent::Step {
             fraction: None,
@@ -848,11 +741,7 @@ async fn report_fal_queue_status(
         .await;
     if let Some(logs) = value.get("logs").and_then(serde_json::Value::as_array) {
         for log in logs {
-            if let Some(message) = log
-                .get("message")
-                .and_then(serde_json::Value::as_str)
-                .or_else(|| log.as_str())
-            {
+            if let Some(message) = log.get("message").and_then(serde_json::Value::as_str).or_else(|| log.as_str()) {
                 progress
                     .send(VerbProgressEvent::Log {
                         level: LogLevel::Info,
@@ -887,9 +776,7 @@ fn collect_image_refs(value: &serde_json::Value, refs: &mut Vec<String>) {
             for (key, value) in map {
                 if matches!(key.as_str(), "url" | "image_url" | "content")
                     && let Some(s) = value.as_str()
-                    && (s.starts_with("http://")
-                        || s.starts_with("https://")
-                        || s.starts_with("data:image/"))
+                    && (s.starts_with("http://") || s.starts_with("https://") || s.starts_with("data:image/"))
                 {
                     refs.push(s.to_owned());
                 }
@@ -974,12 +861,7 @@ mod tests {
     #[test]
     fn wan_i2v_body_carries_image_and_motion() {
         let body = build_fal_i2v_body(FAL_I2V, &sample_i2v_req());
-        assert!(
-            body["image_url"]
-                .as_str()
-                .unwrap()
-                .starts_with("data:image/png;base64,")
-        );
+        assert!(body["image_url"].as_str().unwrap().starts_with("data:image/png;base64,"));
         assert_eq!(body["prompt"], "walk in place");
         assert_eq!(body["num_frames"], 12);
         assert_eq!(body["frames_per_second"], 12);
@@ -990,12 +872,7 @@ mod tests {
     #[test]
     fn seedance_i2v_body_uses_duration_not_frames() {
         let body = build_fal_i2v_body(FAL_SEEDANCE, &sample_i2v_req());
-        assert!(
-            body["image_url"]
-                .as_str()
-                .unwrap()
-                .starts_with("data:image/png;base64,")
-        );
+        assert!(body["image_url"].as_str().unwrap().starts_with("data:image/png;base64,"));
         assert_eq!(body["prompt"], "walk in place");
         assert_eq!(body["resolution"], "480p");
         // Locked square so extraction/normalize keep the full subject.
@@ -1015,12 +892,7 @@ mod tests {
             image: b"frame".to_vec(),
         };
         let body = build_bria_remove_bg_body(&req);
-        assert!(
-            body["image_url"]
-                .as_str()
-                .unwrap()
-                .starts_with("data:image/png;base64,")
-        );
+        assert!(body["image_url"].as_str().unwrap().starts_with("data:image/png;base64,"));
         assert_eq!(body["sync_mode"], false);
     }
 
@@ -1038,18 +910,8 @@ mod tests {
         };
         let body = build_fal_edit_body(&req);
         assert_eq!(body["prompt"], "edit");
-        assert!(
-            body["image_url"]
-                .as_str()
-                .unwrap_or_default()
-                .starts_with("data:image/png;base64,")
-        );
-        assert!(
-            body["mask_url"]
-                .as_str()
-                .unwrap_or_default()
-                .contains("bWFzaw")
-        );
+        assert!(body["image_url"].as_str().unwrap_or_default().starts_with("data:image/png;base64,"));
+        assert!(body["mask_url"].as_str().unwrap_or_default().contains("bWFzaw"));
     }
 
     #[test]
@@ -1065,12 +927,7 @@ mod tests {
         let body = build_lora_training_body(b"zip", "wiztok", false);
         assert_eq!(body["trigger_word"], "wiztok");
         assert_eq!(body["create_masks"], true);
-        assert!(
-            body["images_data_url"]
-                .as_str()
-                .unwrap_or_default()
-                .starts_with("data:application/zip;base64,")
-        );
+        assert!(body["images_data_url"].as_str().unwrap_or_default().starts_with("data:application/zip;base64,"));
     }
 
     #[test]
@@ -1082,19 +939,11 @@ mod tests {
     #[tokio::test]
     async fn queue_status_reports_completion() {
         let (progress, mut rx) = VerbProgress::channel();
-        let value: serde_json::Value =
-            serde_json::from_str("{\"status\":\"COMPLETED\",\"logs\":[{\"message\":\"done\"}]}")
-                .unwrap();
+        let value: serde_json::Value = serde_json::from_str("{\"status\":\"COMPLETED\",\"logs\":[{\"message\":\"done\"}]}").unwrap();
         let done = report_fal_queue_status(&value, &progress).await.unwrap();
         assert!(done);
-        assert!(matches!(
-            rx.recv().await,
-            Some(VerbProgressEvent::Step { .. })
-        ));
-        assert!(matches!(
-            rx.recv().await,
-            Some(VerbProgressEvent::Log { .. })
-        ));
+        assert!(matches!(rx.recv().await, Some(VerbProgressEvent::Step { .. })));
+        assert!(matches!(rx.recv().await, Some(VerbProgressEvent::Log { .. })));
     }
 
     #[tokio::test]
@@ -1107,24 +956,15 @@ mod tests {
         let cancel = CancellationToken::new();
         let client = reqwest::Client::new();
         let mut finals = Vec::new();
-        handle_fal_image_sse_frame(&client, &raw, &progress, &cancel, &mut finals)
-            .await
-            .unwrap();
+        handle_fal_image_sse_frame(&client, &raw, &progress, &cancel, &mut finals).await.unwrap();
         assert_eq!(finals, vec![png]);
-        assert!(matches!(
-            rx.recv().await,
-            Some(VerbProgressEvent::PartialPixels { .. })
-        ));
+        assert!(matches!(rx.recv().await, Some(VerbProgressEvent::PartialPixels { .. })));
     }
 
     fn one_pixel_png() -> Vec<u8> {
         let img = image::RgbaImage::from_pixel(1, 1, image::Rgba([0, 255, 0, 255]));
         let mut bytes = Vec::new();
-        img.write_to(
-            &mut std::io::Cursor::new(&mut bytes),
-            image::ImageFormat::Png,
-        )
-        .unwrap();
+        img.write_to(&mut std::io::Cursor::new(&mut bytes), image::ImageFormat::Png).unwrap();
         bytes
     }
 }

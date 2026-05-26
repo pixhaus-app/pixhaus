@@ -13,8 +13,5 @@ pub mod normalize;
 pub mod scale;
 
 pub use error::{Error, Result};
-pub use normalize::{
-    ChromaKey, FrameMetrics, NormalizeOptions, NormalizeReport, NormalizeResult, SeamMatch,
-    chroma_key, measure, normalize_frames, repad,
-};
+pub use normalize::{ChromaKey, FrameMetrics, NormalizeOptions, NormalizeReport, NormalizeResult, SeamMatch, chroma_key, measure, normalize_frames, repad};
 pub use scale::{scale_integer, scale_integer_down, scale_nearest};

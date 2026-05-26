@@ -26,10 +26,7 @@ impl AssetLibrary {
     #[allow(missing_docs)]
     #[must_use]
     pub fn is_empty(&self) -> bool {
-        self.references.is_empty()
-            && self.character_cards.is_empty()
-            && self.style_swatches.is_empty()
-            && self.loras.is_empty()
+        self.references.is_empty() && self.character_cards.is_empty() && self.style_swatches.is_empty() && self.loras.is_empty()
     }
 }
 

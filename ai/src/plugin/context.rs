@@ -15,12 +15,8 @@ use std::sync::Arc;
 
 use serde::{Deserialize, Serialize};
 
-use pixhaus_core::project::library::composition::{
-    PromptId, PromptTemplate, Structure, StructureId, Style, StyleId,
-};
-use pixhaus_core::project::{
-    EntityId, FrameIndex, IVec2, LayerId, Palette, ProjectMetadata, Rect, Size, Sprite, SpriteId,
-};
+use pixhaus_core::project::library::composition::{PromptId, PromptTemplate, Structure, StructureId, Style, StyleId};
+use pixhaus_core::project::{EntityId, FrameIndex, IVec2, LayerId, Palette, ProjectMetadata, Rect, Size, Sprite, SpriteId};
 
 use super::anchor::AnchorPayload;
 use super::backend::InferenceBackend;
@@ -43,13 +39,18 @@ pub struct ProjectCompositionLibrary {
     /// Project-tier saved Prompts.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub prompts: Vec<PromptTemplate>,
+    /// The project's `style_notes` (`ProjectAi.style_notes`). Composing verbs
+    /// use this as the prompt baseline in place of the built-in default, so the
+    /// project's house style folds into every generation automatically.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub style_notes: String,
 }
 
 impl ProjectCompositionLibrary {
     /// Returns `true` when no project-tier records are present.
     #[must_use]
     pub fn is_empty(&self) -> bool {
-        self.structures.is_empty() && self.styles.is_empty() && self.prompts.is_empty()
+        self.structures.is_empty() && self.styles.is_empty() && self.prompts.is_empty() && self.style_notes.is_empty()
     }
 }
 
@@ -70,12 +71,7 @@ pub struct CompositionLibraryView<'a> {
 impl<'a> CompositionLibraryView<'a> {
     /// Constructs a view over the given project records and built-in registry.
     #[must_use]
-    pub fn new(
-        structures: &'a [Structure],
-        styles: &'a [Style],
-        prompts: &'a [PromptTemplate],
-        builtins: BuiltinLibrary,
-    ) -> Self {
+    pub fn new(structures: &'a [Structure], styles: &'a [Style], prompts: &'a [PromptTemplate], builtins: BuiltinLibrary) -> Self {
         Self {
             structures,
             styles,
@@ -87,28 +83,19 @@ impl<'a> CompositionLibraryView<'a> {
     /// Resolves a Structure id: project record first, then built-in.
     #[must_use]
     pub fn structure(&self, id: &StructureId) -> Option<&Structure> {
-        self.structures
-            .iter()
-            .find(|s| &s.id == id)
-            .or_else(|| self.builtins.structures.get(id))
+        self.structures.iter().find(|s| &s.id == id).or_else(|| self.builtins.structures.get(id))
     }
 
     /// Resolves a Style id: project record first, then built-in.
     #[must_use]
     pub fn style(&self, id: &StyleId) -> Option<&Style> {
-        self.styles
-            .iter()
-            .find(|s| &s.id == id)
-            .or_else(|| self.builtins.styles.get(id))
+        self.styles.iter().find(|s| &s.id == id).or_else(|| self.builtins.styles.get(id))
     }
 
     /// Resolves a Prompt id: project record first, then built-in.
     #[must_use]
     pub fn prompt(&self, id: &PromptId) -> Option<&PromptTemplate> {
-        self.prompts
-            .iter()
-            .find(|p| &p.id == id)
-            .or_else(|| self.builtins.prompts.get(id))
+        self.prompts.iter().find(|p| &p.id == id).or_else(|| self.builtins.prompts.get(id))
     }
 }
 
@@ -414,30 +401,25 @@ impl VerbContext {
     /// if the caller did not supply one. Verbs that *need* a sprite
     /// reach for this rather than handling `Option` themselves.
     pub fn require_sprite(&self) -> super::error::Result<&Sprite> {
-        self.sprite
-            .as_ref()
-            .ok_or(super::error::VerbError::MissingContext("active sprite"))
+        self.sprite.as_ref().ok_or(super::error::VerbError::MissingContext("active sprite"))
     }
 
     /// Returns the active sprite ID, or
     /// [`super::error::VerbError::MissingContext`] otherwise.
     pub fn require_sprite_id(&self) -> super::error::Result<SpriteId> {
-        self.active_sprite
-            .ok_or(super::error::VerbError::MissingContext("active sprite"))
+        self.active_sprite.ok_or(super::error::VerbError::MissingContext("active sprite"))
     }
 
     /// Returns the active layer, or [`super::error::VerbError::MissingContext`]
     /// otherwise.
     pub fn require_active_layer(&self) -> super::error::Result<LayerId> {
-        self.active_layer
-            .ok_or(super::error::VerbError::MissingContext("active layer"))
+        self.active_layer.ok_or(super::error::VerbError::MissingContext("active layer"))
     }
 
     /// Returns the active frame index, or
     /// [`super::error::VerbError::MissingContext`] otherwise.
     pub fn require_active_frame(&self) -> super::error::Result<FrameIndex> {
-        self.active_frame
-            .ok_or(super::error::VerbError::MissingContext("active frame"))
+        self.active_frame.ok_or(super::error::VerbError::MissingContext("active frame"))
     }
 }
 
@@ -634,20 +616,14 @@ mod tests {
         let ctx = VerbContext::empty(metadata());
         assert!(ctx.sprite.is_none());
         assert!(ctx.references.is_empty());
-        assert!(matches!(
-            ctx.require_sprite(),
-            Err(super::super::error::VerbError::MissingContext(_))
-        ));
+        assert!(matches!(ctx.require_sprite(), Err(super::super::error::VerbError::MissingContext(_))));
     }
 
     #[test]
     fn require_active_layer_surfaces_missing() {
         let ctx = VerbContext::empty(metadata());
         let err = ctx.require_active_layer().unwrap_err();
-        assert!(matches!(
-            err,
-            super::super::error::VerbError::MissingContext(_)
-        ));
+        assert!(matches!(err, super::super::error::VerbError::MissingContext(_)));
     }
 
     #[test]
@@ -711,9 +687,7 @@ mod tests {
 
     #[test]
     fn library_view_resolves_project_over_builtin() {
-        use pixhaus_core::project::library::composition::{
-            Structure, StructureId, StructureOutput,
-        };
+        use pixhaus_core::project::library::composition::{Structure, StructureId, StructureOutput};
 
         let project_struct = Structure {
             id: StructureId("pixhaus.builtin.structure.character".into()),
@@ -726,12 +700,11 @@ mod tests {
                 structures: vec![project_struct],
                 styles: Vec::new(),
                 prompts: Vec::new(),
+                style_notes: String::new(),
             })
             .build();
         let view = ctx.library_view();
-        let resolved = view
-            .structure(&StructureId("pixhaus.builtin.structure.character".into()))
-            .unwrap();
+        let resolved = view.structure(&StructureId("pixhaus.builtin.structure.character".into())).unwrap();
         assert_eq!(resolved.name, "Shadowed", "project record shadows built-in");
     }
 
@@ -742,10 +715,7 @@ mod tests {
         let ctx = VerbContext::empty(metadata());
         let view = ctx.library_view();
         // No project records: a built-in id still resolves.
-        assert!(
-            view.structure(&StructureId("pixhaus.builtin.structure.item".into()))
-                .is_some()
-        );
+        assert!(view.structure(&StructureId("pixhaus.builtin.structure.item".into())).is_some());
         assert!(view.structure(&StructureId("nonexistent".into())).is_none());
     }
 
@@ -766,12 +736,11 @@ mod tests {
                 structures: Vec::new(),
                 styles: vec![shadow],
                 prompts: Vec::new(),
+                style_notes: String::new(),
             })
             .build();
         let view = ctx.library_view();
-        let resolved = view
-            .style(&StyleId("pixhaus.builtin.style.default".into()))
-            .unwrap();
+        let resolved = view.style(&StyleId("pixhaus.builtin.style.default".into())).unwrap();
         assert_eq!(resolved.name, "Shadowed", "project style shadows built-in");
     }
 
@@ -781,10 +750,7 @@ mod tests {
 
         let view_owner = VerbContext::empty(metadata());
         let view = view_owner.library_view();
-        assert!(
-            view.style(&StyleId("pixhaus.builtin.style.default".into()))
-                .is_some()
-        );
+        assert!(view.style(&StyleId("pixhaus.builtin.style.default".into())).is_some());
         assert!(view.style(&StyleId("nope".into())).is_none());
     }
 
@@ -805,12 +771,11 @@ mod tests {
                 structures: Vec::new(),
                 styles: Vec::new(),
                 prompts: vec![project_prompt],
+                style_notes: String::new(),
             })
             .build();
         let view = ctx.library_view();
-        let resolved = view
-            .prompt(&PromptId("project.prompt.hero".into()))
-            .unwrap();
+        let resolved = view.prompt(&PromptId("project.prompt.hero".into())).unwrap();
         assert_eq!(resolved.name, "Hero");
         // No built-in prompts ship, so an unknown id resolves to nothing.
         assert!(view.prompt(&PromptId("nope".into())).is_none());

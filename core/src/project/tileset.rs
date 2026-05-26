@@ -186,9 +186,7 @@ impl Tileset {
     /// beyond the stored `properties` vec.
     #[must_use]
     pub fn tile_properties(&self, index: TileIndex) -> &TileProperties {
-        self.properties
-            .get(index.get() as usize)
-            .map_or(&DEFAULT_TILE_PROPS, |p| p)
+        self.properties.get(index.get() as usize).map_or(&DEFAULT_TILE_PROPS, |p| p)
     }
 }
 
@@ -256,9 +254,7 @@ mod tests {
 
     #[test]
     fn tileset_source_uses_kind_tag() {
-        let s = TilesetSource::External {
-            path: "x.png".into(),
-        };
+        let s = TilesetSource::External { path: "x.png".into() };
         let json = serde_json::to_string(&s).unwrap();
         assert_eq!(json, "{\"kind\":\"external\",\"path\":\"x.png\"}");
     }

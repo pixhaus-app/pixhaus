@@ -9,8 +9,8 @@
 use std::collections::BTreeMap;
 
 use pixhaus_core::project::library::composition::{
-    Dimensions, PanelRect, PanelSlot, PromptId, PromptTemplate, Structure, StructureId,
-    StructureOutput, StructurePanel, Style, StyleId,
+    Dimensions, PanelRect, PanelSlot, PromptId, PromptTemplate, PromptVariable, Structure, StructureId, StructureOutput, StructurePanel, Style, StyleId,
+    VarControl,
 };
 
 /// Default cascading baseline used when a project sets no `style_notes`.
@@ -18,6 +18,11 @@ pub const BUILTIN_DEFAULT_BASELINE: &str = "pixel art reference sheet";
 
 /// Id of the built-in Default Style carrying the shared look negatives.
 pub const STYLE_DEFAULT_ID: &str = "pixhaus.builtin.style.default";
+
+/// Id of the built-in free-form Single structure — one image, no panels. The
+/// cockpit's default output so the artist is never forced into a paneled sheet
+/// to make one image.
+pub const STRUCTURE_SINGLE_ID: &str = "pixhaus.builtin.structure.single";
 
 /// The read-only registry of built-in composition records, loaded once at
 /// startup. Project-tier records shadow these by id.
@@ -35,7 +40,7 @@ impl BuiltinLibrary {
     #[must_use]
     pub fn load() -> Self {
         let mut structures = BTreeMap::new();
-        for s in [character(), item(), tileset(), custom()] {
+        for s in [single(), character(), item(), tileset(), custom()] {
             structures.insert(s.id.clone(), s);
         }
         let mut styles = BTreeMap::new();
@@ -45,23 +50,11 @@ impl BuiltinLibrary {
         for p in example_prompts() {
             prompts.insert(p.id.clone(), p);
         }
-        Self {
-            structures,
-            styles,
-            prompts,
-        }
+        Self { structures, styles, prompts }
     }
 }
 
-fn panel(
-    label: &str,
-    x: u32,
-    y: u32,
-    w: u32,
-    h: u32,
-    slot: PanelSlot,
-    prose: &str,
-) -> StructurePanel {
+fn panel(label: &str, x: u32, y: u32, w: u32, h: u32, slot: PanelSlot, prose: &str) -> StructurePanel {
     StructurePanel {
         label: label.into(),
         rect: PanelRect { x, y, w, h },
@@ -106,15 +99,7 @@ fn character() -> Structure {
         } else {
             ""
         };
-        panels.push(panel(
-            label,
-            u32::try_from(i).unwrap_or(0) * 256,
-            480,
-            256,
-            192,
-            PanelSlot::Expression,
-            prose,
-        ));
+        panels.push(panel(label, u32::try_from(i).unwrap_or(0) * 256, 480, 256, 192, PanelSlot::Expression, prose));
     }
     panels.push(panel(
         "palette",
@@ -133,15 +118,7 @@ fn character() -> Structure {
         } else {
             ""
         };
-        panels.push(panel(
-            label,
-            u32::try_from(i).unwrap_or(0) * 512,
-            800,
-            512,
-            320,
-            PanelSlot::Callout,
-            prose,
-        ));
+        panels.push(panel(label, u32::try_from(i).unwrap_or(0) * 512, 800, 512, 320, PanelSlot::Callout, prose));
     }
     panels.push(panel(
         "outfit-variant",
@@ -159,26 +136,16 @@ fn character() -> Structure {
         id: StructureId("pixhaus.builtin.structure.character".into()),
         name: "Character".into(),
         output: StructureOutput::Paneled {
-            canvas: Dimensions {
-                width: 1024,
-                height: 1536,
-            },
+            canvas: Dimensions { width: 1024, height: 1536 },
             panels,
         },
-        layout_negatives:
-            "extra limbs, bad anatomy, duplicate characters, overlapping views, inconsistent scale"
-                .into(),
+        layout_negatives: "extra limbs, bad anatomy, duplicate characters, overlapping views, inconsistent scale".into(),
     }
 }
 
 fn item() -> Structure {
     let mut panels = Vec::new();
-    let views = [
-        ("front", 0, 0),
-        ("side-left", 512, 0),
-        ("back", 0, 384),
-        ("side-right", 512, 384),
-    ];
+    let views = [("front", 0, 0), ("side-left", 512, 0), ("back", 0, 384), ("side-right", 512, 384)];
     for (i, (label, x, y)) in views.iter().enumerate() {
         let prose = if i == 0 {
             "2×2 grid of orthographic views — top-left is front face, top-right \
@@ -205,24 +172,13 @@ fn item() -> Structure {
         } else {
             ""
         };
-        panels.push(panel(
-            label,
-            u32::try_from(i).unwrap_or(0) * 512,
-            896,
-            512,
-            128,
-            PanelSlot::Callout,
-            prose,
-        ));
+        panels.push(panel(label, u32::try_from(i).unwrap_or(0) * 512, 896, 512, 128, PanelSlot::Callout, prose));
     }
     Structure {
         id: StructureId("pixhaus.builtin.structure.item".into()),
         name: "Item".into(),
         output: StructureOutput::Paneled {
-            canvas: Dimensions {
-                width: 1024,
-                height: 1024,
-            },
+            canvas: Dimensions { width: 1024, height: 1024 },
             panels,
         },
         layout_negatives: "floating elements, inconsistent scale across views".into(),
@@ -278,10 +234,7 @@ fn tileset() -> Structure {
         id: StructureId("pixhaus.builtin.structure.tileset".into()),
         name: "Tileset".into(),
         output: StructureOutput::Paneled {
-            canvas: Dimensions {
-                width: 1024,
-                height: 1024,
-            },
+            canvas: Dimensions { width: 1024, height: 1024 },
             panels,
         },
         layout_negatives: "non-grid-aligned tiles, broken patterns, inconsistent tile size".into(),
@@ -313,12 +266,21 @@ fn custom() -> Structure {
         id: StructureId("pixhaus.builtin.structure.custom".into()),
         name: "Custom".into(),
         output: StructureOutput::Paneled {
-            canvas: Dimensions {
-                width: 1024,
-                height: 1024,
-            },
+            canvas: Dimensions { width: 1024, height: 1024 },
             panels,
         },
+        layout_negatives: String::new(),
+    }
+}
+
+fn single() -> Structure {
+    // Free-composition output: no panels, so the resolver emits no layout prose
+    // and the verb falls back to its default 1024² canvas. The artist's subject
+    // text and the project baseline carry the whole prompt.
+    Structure {
+        id: StructureId(STRUCTURE_SINGLE_ID.into()),
+        name: "Single image".into(),
+        output: StructureOutput::Single,
         layout_negatives: String::new(),
     }
 }
@@ -328,9 +290,7 @@ fn default_style() -> Style {
         id: StyleId(STYLE_DEFAULT_ID.into()),
         name: "Default".into(),
         modifiers: String::new(),
-        look_negatives:
-            "blurry, low quality, watermark, text label, logo, cropped, photo realistic, 3d render"
-                .into(),
+        look_negatives: "blurry, low quality, watermark, text label, logo, cropped, photo realistic, 3d render".into(),
         model_pref: None,
         quality: None,
     }
@@ -390,6 +350,47 @@ fn example_prompts() -> Vec<PromptTemplate> {
             default_style: None,
             default_structure: Some(tileset),
         },
+        // A parametric example whose variables exercise every typed control, so
+        // the cockpit's creative dials have something real to drive out of the box.
+        PromptTemplate {
+            id: PromptId("pixhaus.builtin.prompt.creature".into()),
+            name: "Creature — parametric".into(),
+            text: "a {size} {species} creature, {mood}, in a {palette} colour palette, crisp pixel art".into(),
+            variables: vec![
+                PromptVariable {
+                    key: "species".into(),
+                    label: "Species".into(),
+                    default: "slime".into(),
+                    control: VarControl::Select {
+                        choices: ["slime", "golem", "wisp", "beetle", "fox"].iter().map(|s| (*s).to_owned()).collect(),
+                    },
+                },
+                PromptVariable {
+                    key: "size".into(),
+                    label: "Size".into(),
+                    default: "small".into(),
+                    control: VarControl::Select {
+                        choices: ["tiny", "small", "hulking"].iter().map(|s| (*s).to_owned()).collect(),
+                    },
+                },
+                PromptVariable {
+                    key: "mood".into(),
+                    label: "Mood".into(),
+                    default: "curious".into(),
+                    control: VarControl::Text,
+                },
+                PromptVariable {
+                    key: "palette".into(),
+                    label: "Palette".into(),
+                    default: "emerald".into(),
+                    control: VarControl::Wildcard {
+                        choices: ["emerald", "ember", "cobalt", "amethyst", "bone"].iter().map(|s| (*s).to_owned()).collect(),
+                    },
+                },
+            ],
+            default_style: None,
+            default_structure: Some(StructureId(STRUCTURE_SINGLE_ID.into())),
+        },
     ]
 }
 
@@ -435,26 +436,32 @@ mod tests {
     }
 
     #[test]
-    fn loads_four_structures_and_default_style() {
+    fn loads_structures_and_default_style() {
         let lib = BuiltinLibrary::load();
-        assert_eq!(lib.structures.len(), 4);
+        // Single (free-form) plus the four paneled structures.
+        assert_eq!(lib.structures.len(), 5);
+        assert!(lib.structures.contains_key(&StructureId(STRUCTURE_SINGLE_ID.into())));
+        let single = &lib.structures[&StructureId(STRUCTURE_SINGLE_ID.into())];
+        assert!(matches!(single.output, StructureOutput::Single), "single structure has no panels");
         assert!(lib.styles.contains_key(&StyleId(STYLE_DEFAULT_ID.into())));
-        // Seeded example prompts — Bit's world.
-        assert_eq!(lib.prompts.len(), 4);
+        // Seeded example prompts — Bit's world plus one parametric example.
+        assert_eq!(lib.prompts.len(), 5);
         for id in [
             "pixhaus.builtin.prompt.bit",
             "pixhaus.builtin.prompt.byte",
             "pixhaus.builtin.prompt.floppy",
             "pixhaus.builtin.prompt.circuit_tiles",
+            "pixhaus.builtin.prompt.creature",
         ] {
             assert!(lib.prompts.contains_key(&PromptId(id.into())));
         }
+        // The parametric example exercises typed controls (Select + Wildcard).
+        let creature = &lib.prompts[&PromptId("pixhaus.builtin.prompt.creature".into())];
+        assert_eq!(creature.variables.len(), 4);
+        assert!(creature.variables.iter().any(|v| matches!(v.control, VarControl::Wildcard { .. })));
         // Every example points at a real built-in structure.
         for p in lib.prompts.values() {
-            let s = p
-                .default_structure
-                .as_ref()
-                .expect("example prompt names a structure");
+            let s = p.default_structure.as_ref().expect("example prompt names a structure");
             assert!(lib.structures.contains_key(s));
         }
     }
@@ -463,17 +470,9 @@ mod tests {
     fn character_geometry_matches_legacy() {
         let lib = BuiltinLibrary::load();
         let c = structure(&lib, "pixhaus.builtin.structure.character");
-        assert_eq!(
-            canvas(c),
-            Dimensions {
-                width: 1024,
-                height: 1536
-            }
-        );
+        assert_eq!(canvas(c), Dimensions { width: 1024, height: 1536 });
         // 5 views + 3 expressions + 1 palette + 2 callouts + 1 outfit = 12 panels.
-        let StructureOutput::Paneled { panels, .. } = &c.output else {
-            panic!()
-        };
+        let StructureOutput::Paneled { panels, .. } = &c.output else { panic!() };
         assert_eq!(panels.len(), 12);
         assert_eq!(count_slot(c, PanelSlot::View), 5);
         assert_eq!(count_slot(c, PanelSlot::Expression), 3);
@@ -481,32 +480,16 @@ mod tests {
         assert_eq!(count_slot(c, PanelSlot::Outfit), 1);
         assert_eq!(count_slot(c, PanelSlot::PaletteSwatch), 1);
         let outfit = panels.iter().find(|p| p.slot == PanelSlot::Outfit).unwrap();
-        assert_eq!(
-            (outfit.rect.x, outfit.rect.y, outfit.rect.w, outfit.rect.h),
-            (0, 1120, 256, 384)
-        );
-        let view_labels: Vec<&str> = panels
-            .iter()
-            .filter(|p| p.slot == PanelSlot::View)
-            .map(|p| p.label.as_str())
-            .collect();
-        assert_eq!(
-            view_labels,
-            ["front", "side-left", "three-quarter", "side-right", "back"]
-        );
+        assert_eq!((outfit.rect.x, outfit.rect.y, outfit.rect.w, outfit.rect.h), (0, 1120, 256, 384));
+        let view_labels: Vec<&str> = panels.iter().filter(|p| p.slot == PanelSlot::View).map(|p| p.label.as_str()).collect();
+        assert_eq!(view_labels, ["front", "side-left", "three-quarter", "side-right", "back"]);
     }
 
     #[test]
     fn item_geometry_matches_legacy() {
         let lib = BuiltinLibrary::load();
         let s = structure(&lib, "pixhaus.builtin.structure.item");
-        assert_eq!(
-            canvas(s),
-            Dimensions {
-                width: 1024,
-                height: 1024
-            }
-        );
+        assert_eq!(canvas(s), Dimensions { width: 1024, height: 1024 });
         assert_eq!(count_slot(s, PanelSlot::View), 4);
         assert_eq!(count_slot(s, PanelSlot::Callout), 2);
         assert_eq!(count_slot(s, PanelSlot::Expression), 0);
@@ -517,40 +500,19 @@ mod tests {
     fn tileset_geometry_matches_legacy() {
         let lib = BuiltinLibrary::load();
         let s = structure(&lib, "pixhaus.builtin.structure.tileset");
-        assert_eq!(
-            canvas(s),
-            Dimensions {
-                width: 1024,
-                height: 1024
-            }
-        );
+        assert_eq!(canvas(s), Dimensions { width: 1024, height: 1024 });
         assert_eq!(count_slot(s, PanelSlot::View), 3);
         assert_eq!(count_slot(s, PanelSlot::PaletteSwatch), 1);
-        let StructureOutput::Paneled { panels, .. } = &s.output else {
-            panic!()
-        };
-        let view_labels: Vec<&str> = panels
-            .iter()
-            .filter(|p| p.slot == PanelSlot::View)
-            .map(|p| p.label.as_str())
-            .collect();
-        assert_eq!(
-            view_labels,
-            ["tile-primitives", "transition-variants", "autotile-preview"]
-        );
+        let StructureOutput::Paneled { panels, .. } = &s.output else { panic!() };
+        let view_labels: Vec<&str> = panels.iter().filter(|p| p.slot == PanelSlot::View).map(|p| p.label.as_str()).collect();
+        assert_eq!(view_labels, ["tile-primitives", "transition-variants", "autotile-preview"]);
     }
 
     #[test]
     fn custom_geometry_matches_legacy() {
         let lib = BuiltinLibrary::load();
         let s = structure(&lib, "pixhaus.builtin.structure.custom");
-        assert_eq!(
-            canvas(s),
-            Dimensions {
-                width: 1024,
-                height: 1024
-            }
-        );
+        assert_eq!(canvas(s), Dimensions { width: 1024, height: 1024 });
         assert_eq!(count_slot(s, PanelSlot::View), 1);
         assert_eq!(count_slot(s, PanelSlot::PaletteSwatch), 1);
     }
@@ -639,9 +601,6 @@ mod tests {
         let out = compose(&req).unwrap();
         // Legacy character negative, recombined from look + layout negatives.
         assert!(out.negative.contains("blurry, low quality, watermark"));
-        assert!(
-            out.negative
-                .contains("overlapping views, inconsistent scale")
-        );
+        assert!(out.negative.contains("overlapping views, inconsistent scale"));
     }
 }

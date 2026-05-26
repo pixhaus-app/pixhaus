@@ -5,34 +5,50 @@
 //! flow (create sprite -> reference sheet -> animation -> playback) is built up
 //! over phases P0-P6; see `docs/native-ui-vertical-slice-plan.md`.
 
-#![cfg_attr(
-    test,
-    allow(
-        clippy::unwrap_used,
-        clippy::expect_used,
-        clippy::panic,
-        clippy::disallowed_methods,
-        clippy::cast_lossless,
-        clippy::cast_possible_truncation
-    )
+#![cfg_attr(test, allow(clippy::unwrap_used, clippy::expect_used, clippy::panic, clippy::disallowed_methods))]
+// Immediate-mode UI and canvas-coordinate code casts between integer pixel
+// coordinates and float screen space constantly; the editing panels carry wide
+// match arms and a few wide-signature helpers. These pedantic lints are noise
+// here, so they are allowed crate-wide for the shell binary.
+#![allow(
+    clippy::cast_possible_truncation,
+    clippy::cast_sign_loss,
+    clippy::cast_precision_loss,
+    clippy::cast_possible_wrap,
+    clippy::cast_lossless,
+    clippy::too_many_lines,
+    clippy::too_many_arguments,
+    clippy::struct_excessive_bools,
+    clippy::needless_range_loop,
+    clippy::many_single_char_names,
+    clippy::items_after_statements
 )]
 
 mod ai;
 mod anim;
 mod app;
+mod bg_removal;
 mod canvas;
+mod cockpit;
+mod commands;
+mod context_bar;
 mod document;
+mod editor;
 mod headless;
+mod icons;
+mod keymap;
+mod layers_panel;
+mod palette_panel;
+mod settings;
 mod theme;
+mod timeline_panel;
+mod tools_panel;
 
 use app::ShellApp;
 
 fn main() -> anyhow::Result<()> {
     tracing_subscriber::fmt()
-        .with_env_filter(
-            tracing_subscriber::EnvFilter::try_from_default_env()
-                .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("info")),
-        )
+        .with_env_filter(tracing_subscriber::EnvFilter::try_from_default_env().unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("info")))
         .init();
 
     // Headless subcommands (demo / gen) produce a looping sprite to disk without
@@ -45,9 +61,7 @@ fn main() -> anyhow::Result<()> {
     // The shell owns one tokio runtime; every AI verb invocation runs on it and
     // returns over a channel. Build it before the window so a failure here is a
     // clean startup error rather than a panic inside the event loop.
-    let runtime = tokio::runtime::Builder::new_multi_thread()
-        .enable_all()
-        .build()?;
+    let runtime = tokio::runtime::Builder::new_multi_thread().enable_all().build()?;
 
     let options = eframe::NativeOptions {
         renderer: eframe::Renderer::Wgpu,
@@ -58,10 +72,6 @@ fn main() -> anyhow::Result<()> {
         ..Default::default()
     };
 
-    eframe::run_native(
-        "pixhaus",
-        options,
-        Box::new(move |cc| Ok(Box::new(ShellApp::new(cc, runtime)))),
-    )
-    .map_err(|e| anyhow::anyhow!("eframe failed to launch: {e}"))
+    eframe::run_native("pixhaus", options, Box::new(move |cc| Ok(Box::new(ShellApp::new(cc, runtime)))))
+        .map_err(|e| anyhow::anyhow!("eframe failed to launch: {e}"))
 }

@@ -178,10 +178,7 @@ impl BackendCapabilities {
             (BackendCapabilities::IMAGE_GENERATION, "IMAGE_GENERATION"),
             (BackendCapabilities::IMAGE_EDIT, "IMAGE_EDIT"),
             (BackendCapabilities::IMAGE_INPAINT, "IMAGE_INPAINT"),
-            (
-                BackendCapabilities::FRAME_INTERPOLATION,
-                "FRAME_INTERPOLATION",
-            ),
+            (BackendCapabilities::FRAME_INTERPOLATION, "FRAME_INTERPOLATION"),
             (BackendCapabilities::POSE_ESTIMATION, "POSE_ESTIMATION"),
             (BackendCapabilities::SEGMENTATION, "SEGMENTATION"),
             (BackendCapabilities::AUDIO_ANALYSIS, "AUDIO_ANALYSIS"),
@@ -190,10 +187,7 @@ impl BackendCapabilities {
             (BackendCapabilities::EMBEDDINGS, "EMBEDDINGS"),
             (BackendCapabilities::VIEW_SYNTHESIS, "VIEW_SYNTHESIS"),
             (BackendCapabilities::IMAGE_TO_VIDEO, "IMAGE_TO_VIDEO"),
-            (
-                BackendCapabilities::BACKGROUND_REMOVAL,
-                "BACKGROUND_REMOVAL",
-            ),
+            (BackendCapabilities::BACKGROUND_REMOVAL, "BACKGROUND_REMOVAL"),
         ];
         let mut names = Vec::new();
         let mut covered: u32 = 0;
@@ -356,8 +350,7 @@ mod tests {
 
     #[test]
     fn capabilities_union_and_contain() {
-        let caps =
-            BackendCapabilities::IMAGE_GENERATION.union(BackendCapabilities::FRAME_INTERPOLATION);
+        let caps = BackendCapabilities::IMAGE_GENERATION.union(BackendCapabilities::FRAME_INTERPOLATION);
         assert!(caps.contains(BackendCapabilities::IMAGE_GENERATION));
         assert!(caps.contains(BackendCapabilities::FRAME_INTERPOLATION));
         assert!(!caps.contains(BackendCapabilities::VISION_LANGUAGE));

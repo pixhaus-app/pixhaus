@@ -5,10 +5,8 @@ mod prompt;
 mod structure;
 mod style;
 
-pub use prompt::{PromptId, PromptTemplate, PromptVariable};
-pub use structure::{
-    PanelRect, PanelSlot, Structure, StructureId, StructureOutput, StructurePanel,
-};
+pub use prompt::{PromptId, PromptTemplate, PromptVariable, VarControl};
+pub use structure::{PanelRect, PanelSlot, Structure, StructureId, StructureOutput, StructurePanel};
 pub use style::{Style, StyleId};
 
 use serde::{Deserialize, Serialize};
@@ -27,10 +25,7 @@ mod tests {
 
     #[test]
     fn dimensions_round_trip() {
-        let d = Dimensions {
-            width: 1024,
-            height: 1536,
-        };
+        let d = Dimensions { width: 1024, height: 1536 };
         let json = serde_json::to_string(&d).unwrap();
         let back: Dimensions = serde_json::from_str(&json).unwrap();
         assert_eq!(d, back);

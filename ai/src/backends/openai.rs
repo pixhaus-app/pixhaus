@@ -27,8 +27,8 @@ use tokio_util::sync::CancellationToken;
 use tracing::{debug, instrument, warn};
 
 use super::{
-    BackendError, ImageEditRequest, ImageGenRequest, ImageGenResponse, ImageQuality,
-    InferenceBackend, InferenceRequest, InferenceResponse, Result, VerbProgress, check_http_status,
+    BackendError, ImageEditRequest, ImageGenRequest, ImageGenResponse, ImageQuality, InferenceBackend, InferenceRequest, InferenceResponse, Result,
+    VerbProgress, check_http_status,
 };
 use crate::plugin::descriptor::{BackendCapabilities, CostEstimate};
 use crate::plugin::progress::{CostUpdate, VerbProgressEvent};
@@ -108,24 +108,13 @@ impl OpenAiBackend {
     }
 
     #[allow(clippy::cast_precision_loss)]
-    async fn generate_image(
-        &self,
-        req: &ImageGenRequest,
-        progress: &VerbProgress,
-        cancel: &CancellationToken,
-    ) -> Result<ImageGenResponse> {
-        let model = req
-            .model
-            .as_deref()
-            .unwrap_or(self.image_model.as_str())
-            .to_owned();
+    async fn generate_image(&self, req: &ImageGenRequest, progress: &VerbProgress, cancel: &CancellationToken) -> Result<ImageGenResponse> {
+        let model = req.model.as_deref().unwrap_or(self.image_model.as_str()).to_owned();
 
         debug!(model = %model, "sending OpenAI image generation request");
 
         if !req.reference_images.is_empty() {
-            return self
-                .generate_image_with_references(req, &model, progress, cancel)
-                .await;
+            return self.generate_image_with_references(req, &model, progress, cancel).await;
         }
 
         let body = build_image_generation_body(req, &model);
@@ -170,11 +159,7 @@ impl OpenAiBackend {
         progress: &VerbProgress,
         cancel: &CancellationToken,
     ) -> Result<ImageGenResponse> {
-        let image_field = if is_gpt_image_model(model) {
-            "image[]"
-        } else {
-            "image"
-        };
+        let image_field = if is_gpt_image_model(model) { "image[]" } else { "image" };
         let mut form = reqwest::multipart::Form::new()
             .text("prompt", req.prompt.clone())
             .text("n", req.num_images.to_string())
@@ -228,17 +213,8 @@ impl OpenAiBackend {
     }
 
     #[allow(clippy::cast_precision_loss)]
-    async fn edit_image(
-        &self,
-        req: &ImageEditRequest,
-        progress: &VerbProgress,
-        cancel: &CancellationToken,
-    ) -> Result<ImageGenResponse> {
-        let model = req
-            .model
-            .as_deref()
-            .unwrap_or(self.image_edit_model.as_str())
-            .to_owned();
+    async fn edit_image(&self, req: &ImageEditRequest, progress: &VerbProgress, cancel: &CancellationToken) -> Result<ImageGenResponse> {
+        let model = req.model.as_deref().unwrap_or(self.image_edit_model.as_str()).to_owned();
 
         debug!(model = %model, "sending OpenAI image edit request");
 
@@ -353,12 +329,7 @@ impl InferenceBackend for OpenAiBackend {
     }
 
     #[instrument(skip(self, request, progress, cancel), fields(backend = "openai"))]
-    async fn invoke(
-        &self,
-        request: InferenceRequest,
-        progress: VerbProgress,
-        cancel: CancellationToken,
-    ) -> Result<InferenceResponse> {
+    async fn invoke(&self, request: InferenceRequest, progress: VerbProgress, cancel: CancellationToken) -> Result<InferenceResponse> {
         match request {
             InferenceRequest::ImageGeneration(ref req) => {
                 progress
@@ -459,8 +430,7 @@ fn openai_size_param(req: &ImageGenRequest, model: &str) -> String {
 /// bytes. Used to downscale a snapped gpt-image result back to the requested
 /// size. A no-op (re-encode aside) when the image already matches.
 fn resize_png_to(bytes: &[u8], width: u32, height: u32) -> Result<Vec<u8>> {
-    let img = image::load_from_memory(bytes)
-        .map_err(|e| BackendError::InvalidResponse(format!("image decode failed: {e}")))?;
+    let img = image::load_from_memory(bytes).map_err(|e| BackendError::InvalidResponse(format!("image decode failed: {e}")))?;
     if img.width() == width && img.height() == height {
         return Ok(bytes.to_vec());
     }
@@ -475,11 +445,7 @@ fn resize_png_to(bytes: &[u8], width: u32, height: u32) -> Result<Vec<u8>> {
 /// Downscales each image back to the requested size when the API call used a
 /// snapped gpt-image size. No-op for non-gpt models or when sizes already
 /// match.
-fn fit_images_to_request(
-    images: Vec<Vec<u8>>,
-    req: &ImageGenRequest,
-    model: &str,
-) -> Result<Vec<Vec<u8>>> {
+fn fit_images_to_request(images: Vec<Vec<u8>>, req: &ImageGenRequest, model: &str) -> Result<Vec<Vec<u8>>> {
     if !is_gpt_image_model(model) {
         return Ok(images);
     }
@@ -487,10 +453,7 @@ fn fit_images_to_request(
     if snapped_w == req.width && snapped_h == req.height {
         return Ok(images);
     }
-    images
-        .into_iter()
-        .map(|bytes| resize_png_to(&bytes, req.width, req.height))
-        .collect()
+    images.into_iter().map(|bytes| resize_png_to(&bytes, req.width, req.height)).collect()
 }
 
 /// Builds the JSON body for an `/images/generations` call.
@@ -532,9 +495,7 @@ fn decode_image_data(data: Vec<ImageData>) -> Result<Vec<Vec<u8>>> {
                     .decode(b64.as_bytes())
                     .map_err(|e| BackendError::InvalidResponse(e.to_string()))
             } else {
-                Err(BackendError::InvalidResponse(
-                    "no b64_json in image response".into(),
-                ))
+                Err(BackendError::InvalidResponse("no b64_json in image response".into()))
             }
         })
         .collect()
@@ -702,8 +663,7 @@ mod tests {
 
     #[test]
     fn decode_image_data_errors_without_b64() {
-        let err = decode_image_data(vec![ImageData { b64_json: None }])
-            .expect_err("missing b64_json must error");
+        let err = decode_image_data(vec![ImageData { b64_json: None }]).expect_err("missing b64_json must error");
         assert!(matches!(err, BackendError::InvalidResponse(_)));
     }
 
@@ -711,21 +671,15 @@ mod tests {
     fn decode_image_data_round_trips_base64() {
         let png = one_pixel_png();
         let encoded = base64::engine::general_purpose::STANDARD.encode(&png);
-        let decoded = decode_image_data(vec![ImageData {
-            b64_json: Some(encoded),
-        }])
-        .expect("valid base64 decodes");
+        let decoded = decode_image_data(vec![ImageData { b64_json: Some(encoded) }]).expect("valid base64 decodes");
         assert_eq!(decoded, vec![png]);
     }
 
     fn one_pixel_png() -> Vec<u8> {
         let img = image::RgbaImage::from_pixel(1, 1, image::Rgba([255, 0, 0, 255]));
         let mut bytes = Vec::new();
-        img.write_to(
-            &mut std::io::Cursor::new(&mut bytes),
-            image::ImageFormat::Png,
-        )
-        .expect("encode one-pixel png");
+        img.write_to(&mut std::io::Cursor::new(&mut bytes), image::ImageFormat::Png)
+            .expect("encode one-pixel png");
         bytes
     }
 }

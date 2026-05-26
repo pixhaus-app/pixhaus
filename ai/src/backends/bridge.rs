@@ -88,9 +88,7 @@ impl BackendProxy {
 
 impl fmt::Debug for BackendProxy {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.debug_struct("BackendProxy")
-            .field("id", &self.cached_id)
-            .finish_non_exhaustive()
+        f.debug_struct("BackendProxy").field("id", &self.cached_id).finish_non_exhaustive()
     }
 }
 
@@ -122,9 +120,7 @@ impl ThinBackend for BackendProxy {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::backends::{
-        BackendError, InferenceRequest, InferenceResponse, Result, VerbProgress,
-    };
+    use crate::backends::{BackendError, InferenceRequest, InferenceResponse, Result, VerbProgress};
     use async_trait::async_trait;
     use tokio_util::sync::CancellationToken;
 
@@ -145,18 +141,10 @@ mod tests {
         fn supports_streaming(&self) -> bool {
             false
         }
-        fn estimate_cost(
-            &self,
-            _req: &InferenceRequest,
-        ) -> crate::plugin::descriptor::CostEstimate {
+        fn estimate_cost(&self, _req: &InferenceRequest) -> crate::plugin::descriptor::CostEstimate {
             CostEstimate::free()
         }
-        async fn invoke(
-            &self,
-            _req: InferenceRequest,
-            _progress: VerbProgress,
-            _cancel: CancellationToken,
-        ) -> Result<InferenceResponse> {
+        async fn invoke(&self, _req: InferenceRequest, _progress: VerbProgress, _cancel: CancellationToken) -> Result<InferenceResponse> {
             Err(BackendError::UnsupportedCapability)
         }
     }
@@ -168,11 +156,7 @@ mod tests {
             caps: BackendCapabilities::FRAME_INTERPOLATION,
         });
         assert_eq!(proxy.id(), "test.fake");
-        assert!(
-            proxy
-                .capabilities()
-                .contains(BackendCapabilities::FRAME_INTERPOLATION)
-        );
+        assert!(proxy.capabilities().contains(BackendCapabilities::FRAME_INTERPOLATION));
     }
 
     #[test]

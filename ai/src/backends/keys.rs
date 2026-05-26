@@ -44,10 +44,7 @@ fn should_use_mock_store(mock: bool, under_nextest: bool) -> bool {
 ///   silently ignored it, so the variable never reached the tests and every
 ///   one popped the macOS login Keychain dialog.)
 fn mock_store_requested() -> bool {
-    should_use_mock_store(
-        std::env::var_os("PIXHAUS_KEYRING_MOCK").is_some(),
-        std::env::var_os("NEXTEST").is_some(),
-    )
+    should_use_mock_store(std::env::var_os("PIXHAUS_KEYRING_MOCK").is_some(), std::env::var_os("NEXTEST").is_some())
 }
 
 /// Registers the platform credential store as `keyring_core`'s default,
@@ -124,9 +121,7 @@ impl ApiKeyStore {
     /// Overwrites an existing key without error.
     pub fn set(backend: &str, key: &str) -> Result<()> {
         let entry = Self::entry(backend)?;
-        entry
-            .set_password(key)
-            .map_err(|err| BackendError::Keychain(err.to_string()))
+        entry.set_password(key).map_err(|err| BackendError::Keychain(err.to_string()))
     }
 
     /// Deletes the stored key for `backend`.
@@ -170,10 +165,7 @@ mod tests {
             // path doesn't apply. PIXHAUS_KEYRING_MOCK remains the opt-in.
             return;
         }
-        assert!(
-            mock_store_requested(),
-            "expected nextest's NEXTEST marker to select the in-memory store"
-        );
+        assert!(mock_store_requested(), "expected nextest's NEXTEST marker to select the in-memory store");
     }
 
     #[test]
@@ -197,23 +189,16 @@ mod tests {
         // keychain access. `ensure_store()` early-returns when a store is
         // already set, so production lazy-init won't replace it — keeping
         // this test hermetic and prompt-free on every platform and in CI.
-        keyring::use_sample_store(&std::collections::HashMap::new())
-            .expect("sample store registers on all platforms");
+        keyring::use_sample_store(&std::collections::HashMap::new()).expect("sample store registers on all platforms");
 
         let backend = "pixhaus-test-sample-roundtrip";
         let _ = ApiKeyStore::delete(backend);
 
         ApiKeyStore::set(backend, "test-key-value").expect("set should succeed");
-        assert_eq!(
-            ApiKeyStore::get(backend).expect("get should succeed"),
-            "test-key-value"
-        );
+        assert_eq!(ApiKeyStore::get(backend).expect("get should succeed"), "test-key-value");
 
         ApiKeyStore::delete(backend).expect("delete should succeed");
-        assert!(matches!(
-            ApiKeyStore::get(backend),
-            Err(BackendError::ApiKeyNotFound(_))
-        ));
+        assert!(matches!(ApiKeyStore::get(backend), Err(BackendError::ApiKeyNotFound(_))));
     }
 
     // Exercises the real OS keychain, which can pop an interactive "allow

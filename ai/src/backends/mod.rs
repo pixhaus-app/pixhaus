@@ -541,12 +541,7 @@ pub trait InferenceBackend: Send + Sync + 'static {
     /// [`BackendError::Cancelled`] promptly when it fires.
     ///
     /// Progress (cost updates, step messages) is emitted via `progress`.
-    async fn invoke(
-        &self,
-        request: InferenceRequest,
-        progress: VerbProgress,
-        cancel: CancellationToken,
-    ) -> Result<InferenceResponse>;
+    async fn invoke(&self, request: InferenceRequest, progress: VerbProgress, cancel: CancellationToken) -> Result<InferenceResponse>;
 }
 
 // ── BackendRegistry ────────────────────────────────────────────────────────
@@ -602,9 +597,7 @@ impl BackendRegistry {
     pub fn all_capabilities(&self) -> BackendCapabilities {
         self.backends
             .iter()
-            .fold(BackendCapabilities::empty(), |acc, b| {
-                BackendCapabilities(acc.0 | b.capabilities().0)
-            })
+            .fold(BackendCapabilities::empty(), |acc, b| BackendCapabilities(acc.0 | b.capabilities().0))
     }
 
     /// Returns `true` if *any* registered backend satisfies all of `required`.
@@ -613,9 +606,7 @@ impl BackendRegistry {
         if required.is_empty() {
             return true;
         }
-        self.backends
-            .iter()
-            .any(|b| b.capabilities().contains(required))
+        self.backends.iter().any(|b| b.capabilities().contains(required))
     }
 
     /// Returns the first backend whose capabilities contain all of `required`.
@@ -645,10 +636,7 @@ impl BackendRegistry {
     /// Returns all registered backends, in registration order.
     #[must_use]
     pub fn all(&self) -> Vec<&dyn InferenceBackend> {
-        self.backends
-            .iter()
-            .map(std::convert::AsRef::as_ref)
-            .collect()
+        self.backends.iter().map(std::convert::AsRef::as_ref).collect()
     }
 }
 
@@ -660,9 +648,7 @@ impl BackendRegistry {
 /// On 401/403, wraps in [`BackendError::Auth`] instead for clearer
 /// error messages. On 429, returns [`BackendError::RateLimited`] with the
 /// `Retry-After` header value if present.
-pub(crate) async fn check_http_status(
-    response: reqwest::Response,
-) -> std::result::Result<reqwest::Response, BackendError> {
+pub(crate) async fn check_http_status(response: reqwest::Response) -> std::result::Result<reqwest::Response, BackendError> {
     let status = response.status();
     if status.is_success() {
         return Ok(response);
@@ -721,12 +707,7 @@ mod tests {
         fn estimate_cost(&self, _req: &InferenceRequest) -> CostEstimate {
             CostEstimate::free()
         }
-        async fn invoke(
-            &self,
-            _req: InferenceRequest,
-            _progress: VerbProgress,
-            _cancel: CancellationToken,
-        ) -> Result<InferenceResponse> {
+        async fn invoke(&self, _req: InferenceRequest, _progress: VerbProgress, _cancel: CancellationToken) -> Result<InferenceResponse> {
             Err(BackendError::UnsupportedCapability)
         }
     }

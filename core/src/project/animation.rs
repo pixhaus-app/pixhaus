@@ -61,11 +61,7 @@ mod tests {
 
     #[test]
     fn animation_round_trip() {
-        let a = Animation::forward(
-            AnimationId::new(1),
-            "walk",
-            FrameRange::new(FrameIndex::new(0), FrameIndex::new(3)),
-        );
+        let a = Animation::forward(AnimationId::new(1), "walk", FrameRange::new(FrameIndex::new(0), FrameIndex::new(3)));
         let json = serde_json::to_string(&a).unwrap();
         let back: Animation = serde_json::from_str(&json).unwrap();
         assert_eq!(a, back);

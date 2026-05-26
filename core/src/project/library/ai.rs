@@ -32,24 +32,15 @@ pub struct ProjectAi {
     pub per_operation_model_prefs: BTreeMap<OperationKind, ModelId>,
 
     /// Default chroma-key color for new sheet generations.
-    #[serde(
-        default = "default_reference_chroma",
-        skip_serializing_if = "is_default_reference_chroma"
-    )]
+    #[serde(default = "default_reference_chroma", skip_serializing_if = "is_default_reference_chroma")]
     pub default_chroma: Rgba,
 
     /// Default quality tier for new generation forms.
-    #[serde(
-        default = "default_project_quality",
-        skip_serializing_if = "Quality::is_medium"
-    )]
+    #[serde(default = "default_project_quality", skip_serializing_if = "Quality::is_medium")]
     pub default_quality: Quality,
 
     /// Default candidate count for new generation forms.
-    #[serde(
-        default = "default_candidate_count",
-        skip_serializing_if = "is_default_candidate_count"
-    )]
+    #[serde(default = "default_candidate_count", skip_serializing_if = "is_default_candidate_count")]
     pub default_candidate_count: u8,
 
     /// `LoRA` training jobs, including completed and failed jobs.
