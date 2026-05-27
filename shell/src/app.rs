@@ -24,7 +24,7 @@ use tokio_util::sync::CancellationToken;
 use crate::ai;
 use crate::anim::{self, LoopMarkers, VideoFrame};
 use crate::cockpit::{CockpitCandidate, CockpitReference, CreateView, PendingLineage};
-use crate::commands::{CanvasBufferSwap, CanvasEdit, CanvasOp};
+use crate::commands::{CanvasBufferSwap, CanvasEdit, CanvasOp, integrate_frames_undoable};
 use crate::document::{DocumentStore, LibraryRow, SpriteRef};
 use crate::keymap::{CommandId, Keymap};
 use crate::settings::SettingsTab;
@@ -1882,7 +1882,7 @@ impl ShellApp {
         let fps = self.anim_candidates[i].fps;
         let frame_ms = (1000 / fps.max(1)).max(1);
         let motion = self.anim_candidates[i].motion.clone();
-        self.doc.integrate_frames(frames, frame_ms, &motion, LoopDirection::Forward);
+        integrate_frames_undoable(&mut self.editor, &mut self.doc, frames, frame_ms, &motion, LoopDirection::Forward);
         // Drop the canvas preview back to the sprite/timeline; keep the gallery.
         self.anim_selected = None;
         self.anim_clip_playing = false;

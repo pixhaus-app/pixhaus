@@ -12,9 +12,11 @@
 //!   clone is cheap because pixel bytes live in the buffer store, not the
 //!   sprite — the clone copies handles and metadata only.
 
+use std::collections::HashSet;
+
 use pixhaus_core::canvas::PixelBuffer;
 use pixhaus_core::project::library::ai::ProjectAi;
-use pixhaus_core::project::{Entity, EntityId, PixelBufferId, Size, Sprite, SpriteId};
+use pixhaus_core::project::{CelData, Entity, EntityId, FrameRange, LoopDirection, PixelBufferId, Size, Sprite, SpriteId};
 use pixhaus_core::transforms::{self, CanvasAnchor};
 use pixhaus_core::undo::{Command, CommandError, CommandResult};
 
@@ -212,6 +214,61 @@ pub fn push_sprite_edit_with_buffers(
         label: label.to_owned(),
     };
     let _ = editor.history.push(Box::new(cmd), doc);
+}
+
+/// Runs [`DocumentStore::integrate_frames`] and records it as one undo entry,
+/// so dropping an AI-generated animation onto the timeline is reversible.
+///
+/// `integrate_frames` mutates the document directly (it is also called from the
+/// headless runner and the demo, which have no history). Here the buffer store
+/// is diffed around the call to learn which buffers the integration added (the
+/// new frames) and retired (the seed frame it replaced, whose bytes are
+/// captured beforehand). The resulting [`SpriteBufferEdit`] re-applies the
+/// already-applied state idempotently, so the push records the entry without
+/// doubling the effect, and undo restores the seed while removing the frames.
+pub fn integrate_frames_undoable(
+    editor: &mut EditorState,
+    doc: &mut DocumentStore,
+    frames: Vec<PixelBuffer>,
+    frame_duration_ms: u32,
+    name: &str,
+    loop_direction: LoopDirection,
+) -> Option<FrameRange> {
+    let sprite_id = doc.project.active_sprite_id()?;
+    let before = doc.project.sprite(sprite_id)?.clone();
+    let before_keys: HashSet<PixelBufferId> = doc.pixel_buffers.keys().copied().collect();
+    // Capture the bytes of the seed buffers the integration might retire, so
+    // undo can restore them. Superset of what is actually removed; filtered
+    // down once we know the post-integration store.
+    let seed_buffers: Vec<(PixelBufferId, PixelBuffer)> = before
+        .cels
+        .iter()
+        .filter_map(|cel| match cel.data {
+            CelData::Raster { buffer, .. } => doc.pixel_buffers.get(&buffer).map(|b| (buffer, b.clone())),
+            _ => None,
+        })
+        .collect();
+
+    let range = doc.integrate_frames(frames, frame_duration_ms, name, loop_direction)?;
+
+    let after = doc.project.sprite(sprite_id)?.clone();
+    let after_keys: HashSet<PixelBufferId> = doc.pixel_buffers.keys().copied().collect();
+    let added_buffers: Vec<(PixelBufferId, PixelBuffer)> = after_keys
+        .difference(&before_keys)
+        .filter_map(|id| doc.pixel_buffers.get(id).map(|b| (*id, b.clone())))
+        .collect();
+    let removed_buffers: Vec<(PixelBufferId, PixelBuffer)> = seed_buffers.into_iter().filter(|(id, _)| !after_keys.contains(id)).collect();
+
+    let cmd = SpriteBufferEdit {
+        sprite_id,
+        before,
+        after,
+        added_buffers,
+        removed_buffers,
+        label: "Integrate animation".to_owned(),
+    };
+    let _ = editor.history.push(Box::new(cmd), doc);
+    Some(range)
 }
 
 /// Snapshots a library entity, applies `f`, and — if anything changed — records
@@ -646,6 +703,29 @@ mod tests {
         editor.history.redo(&mut doc).expect("redo");
         assert!(doc.pixel_buffers.contains_key(&new_id), "redo restores the buffer");
         assert_eq!(doc.pixel_buffers.len(), before_count + 1);
+    }
+
+    #[test]
+    fn integrate_frames_undoable_round_trips() {
+        let mut doc = DocumentStore::new();
+        doc.create_sprite("hero", Size::new(8, 8));
+        let mut editor = EditorState::default();
+        let frames: Vec<PixelBuffer> = (0..3)
+            .map(|_| PixelBuffer::filled(8, 8, pixhaus_core::project::Rgba::new(9, 9, 9, 255)).expect("buffer"))
+            .collect();
+
+        integrate_frames_undoable(&mut editor, &mut doc, frames, 100, "walk", LoopDirection::Forward).expect("integrated range");
+        // The pristine seed is replaced, leaving exactly the three frames.
+        assert_eq!(doc.frame_count(), 3);
+        assert_eq!(doc.pixel_buffers.len(), 3);
+
+        editor.history.undo(&mut doc).expect("undo");
+        assert_eq!(doc.frame_count(), 1, "undo restores the single seed frame");
+        assert_eq!(doc.pixel_buffers.len(), 1, "undo restores the seed buffer and drops the integrated ones");
+
+        editor.history.redo(&mut doc).expect("redo");
+        assert_eq!(doc.frame_count(), 3, "redo re-integrates the animation");
+        assert_eq!(doc.pixel_buffers.len(), 3);
     }
 
     #[test]
