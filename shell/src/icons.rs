@@ -42,6 +42,15 @@ pub const DOWN: &str = p::CARET_DOWN;
 pub const LINK: &str = p::LINK;
 pub const UNLINK: &str = p::LINK_BREAK;
 
+// Canvas operations.
+pub const RESIZE: &str = p::RESIZE;
+pub const FLIP_H: &str = p::FLIP_HORIZONTAL;
+pub const FLIP_V: &str = p::FLIP_VERTICAL;
+pub const ROTATE_CW: &str = p::ARROWS_CLOCKWISE;
+pub const ROTATE_CCW: &str = p::ARROWS_COUNTER_CLOCKWISE;
+pub const RENAME: &str = p::PENCIL_SIMPLE;
+pub const DUPLICATE: &str = p::COPY;
+
 // Transport.
 pub const PLAY: &str = p::PLAY;
 pub const PAUSE: &str = p::PAUSE;

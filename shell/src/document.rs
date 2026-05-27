@@ -170,6 +170,158 @@ impl DocumentStore {
             .and_then(|s| s.layers.iter().rev().find(|l| matches!(l.kind, LayerKind::Raster)).map(|l| l.id));
     }
 
+    /// Renames the sprite at `sprite_ref`, updating both the library entity and
+    /// the sprite. A whitespace-only name is rejected (no-op), matching the
+    /// legacy `rename_entity_in_project` validation.
+    pub fn rename_sprite(&mut self, sprite_ref: SpriteRef, new_name: &str) {
+        let name = new_name.trim();
+        if name.is_empty() {
+            return;
+        }
+        let Some(entity) = self.project.library.entities.iter_mut().find(|e| e.id == sprite_ref.entity_id) else {
+            return;
+        };
+        name.clone_into(&mut entity.name);
+        if let EntityContent::Sprites { states, .. } = &mut entity.content {
+            if let Some(state) = states.iter_mut().find(|s| s.id == sprite_ref.state_id) {
+                name.clone_into(&mut state.sprite.name);
+            }
+        }
+    }
+
+    /// Deletes the sprite at `sprite_ref`: removes its state (and the containing
+    /// entity when that empties it), drops the cel pixel buffers, and reassigns
+    /// the active target when the deleted sprite was active — mirroring the
+    /// legacy `delete_entity_clears_active_target` behavior so the canvas never
+    /// points at freed data.
+    pub fn delete_sprite(&mut self, sprite_ref: SpriteRef) {
+        let Some(entity) = self.project.library.entities.iter_mut().find(|e| e.id == sprite_ref.entity_id) else {
+            return;
+        };
+        let EntityContent::Sprites { states, .. } = &mut entity.content else {
+            return;
+        };
+        let Some(pos) = states.iter().position(|s| s.id == sprite_ref.state_id) else {
+            return;
+        };
+        let orphaned: Vec<PixelBufferId> = states[pos]
+            .sprite
+            .cels
+            .iter()
+            .filter_map(|c| match c.data {
+                CelData::Raster { buffer, .. } => Some(buffer),
+                _ => None,
+            })
+            .collect();
+        states.remove(pos);
+        let entity_emptied = states.is_empty();
+
+        if entity_emptied {
+            self.project.library.entities.retain(|e| e.id != sprite_ref.entity_id);
+        }
+        for buffer in orphaned {
+            self.pixel_buffers.remove(&buffer);
+        }
+
+        let was_active = matches!(
+            self.project.active,
+            ActiveTarget::State { entity_id, state_id } if entity_id == sprite_ref.entity_id && state_id == sprite_ref.state_id
+        );
+        if was_active {
+            let next = self
+                .project
+                .sprites_iter()
+                .next()
+                .map(|(named, entity_id)| SpriteRef { entity_id, state_id: named.id });
+            if let Some(next) = next {
+                self.select(next);
+            } else {
+                self.project.active = ActiveTarget::None;
+                self.active_layer = None;
+            }
+        }
+    }
+
+    /// Deep-copies the sprite at `sprite_ref` into a new library entity, clones
+    /// its pixel buffers under fresh ids, makes the copy active, and returns its
+    /// address. Returns `None` if `sprite_ref` does not resolve.
+    pub fn duplicate_sprite(&mut self, sprite_ref: SpriteRef) -> Option<SpriteRef> {
+        let mut sprite = self
+            .project
+            .library
+            .entities
+            .iter()
+            .find(|e| e.id == sprite_ref.entity_id)
+            .and_then(|e| match &e.content {
+                EntityContent::Sprites { states, .. } => states.iter().find(|s| s.id == sprite_ref.state_id).map(|s| s.sprite.clone()),
+                _ => None,
+            })?;
+
+        let sprite_id = SpriteId::new(self.alloc_id());
+        let entity_id = EntityId::new(self.alloc_id());
+        let state_id = StateId::new(self.alloc_id());
+        sprite.id = sprite_id;
+        sprite.name = format!("{} copy", sprite.name);
+
+        // Clone each raster buffer under a fresh id so the copy shares no pixel
+        // data with the original.
+        for cel in &mut sprite.cels {
+            if let CelData::Raster { buffer, .. } = &mut cel.data {
+                let new_buffer = PixelBufferId::new(self.alloc_id());
+                if let Some(bytes) = self.pixel_buffers.get(buffer).cloned() {
+                    self.pixel_buffers.insert(new_buffer, bytes);
+                }
+                *buffer = new_buffer;
+            }
+        }
+
+        let name = sprite.name.clone();
+        self.project.library.entities.push(Entity {
+            id: entity_id,
+            kind: EntityKind::Custom("Sprite".into()),
+            name,
+            group_id: None,
+            tags: Vec::new(),
+            defaults: EntityDefaults::default(),
+            content: EntityContent::Sprites {
+                states: vec![NamedSprite {
+                    id: state_id,
+                    state_name: "primary".into(),
+                    sprite,
+                    engine_tags: Vec::new(),
+                }],
+                reference_sheet: None,
+            },
+            ai: AiMetadata::default(),
+            user_data: UserData::default(),
+            created_at: 0,
+            updated_at: 0,
+        });
+
+        let new_ref = SpriteRef { entity_id, state_id };
+        self.select(new_ref);
+        Some(new_ref)
+    }
+
+    /// Moves the sprite's library entity one slot toward the front (`up`) or
+    /// back, reordering the library list. A no-op at the ends.
+    pub fn move_sprite(&mut self, sprite_ref: SpriteRef, up: bool) {
+        let entities = &mut self.project.library.entities;
+        let Some(idx) = entities.iter().position(|e| e.id == sprite_ref.entity_id) else {
+            return;
+        };
+        let target = if up {
+            idx.checked_sub(1)
+        } else if idx + 1 < entities.len() {
+            Some(idx + 1)
+        } else {
+            None
+        };
+        if let Some(target) = target {
+            entities.swap(idx, target);
+        }
+    }
+
     /// The active sprite's first palette, if any.
     #[must_use]
     pub fn active_palette(&self) -> Option<&Palette> {
@@ -916,5 +1068,72 @@ mod tests {
         let onion = crate::editor::OnionConfig::default();
         let with = doc.composite_with_onion(&onion).unwrap();
         assert_eq!(base.as_bytes(), with.as_bytes());
+    }
+
+    #[test]
+    fn rename_sprite_updates_entity_and_sprite() {
+        let mut doc = DocumentStore::new();
+        let r = doc.create_sprite("hero", Size::new(8, 8));
+        doc.rename_sprite(r, "  villain  ");
+        assert_eq!(doc.active_sprite().unwrap().name, "villain");
+        assert_eq!(doc.sprite_list()[0].name, "villain");
+    }
+
+    #[test]
+    fn rename_sprite_rejects_whitespace_only() {
+        let mut doc = DocumentStore::new();
+        let r = doc.create_sprite("hero", Size::new(8, 8));
+        doc.rename_sprite(r, "   ");
+        assert_eq!(doc.active_sprite().unwrap().name, "hero");
+    }
+
+    #[test]
+    fn delete_sprite_drops_buffers_and_reassigns_active() {
+        let mut doc = DocumentStore::new();
+        doc.create_sprite("a", Size::new(8, 8));
+        let b = doc.create_sprite("b", Size::new(8, 8));
+        assert_eq!(doc.pixel_buffers.len(), 2);
+        doc.delete_sprite(b);
+        assert_eq!(doc.sprite_list().len(), 1);
+        assert_eq!(doc.pixel_buffers.len(), 1, "the deleted sprite's buffer is dropped");
+        assert_eq!(doc.active_sprite().unwrap().name, "a", "active reassigns to the survivor");
+    }
+
+    #[test]
+    fn delete_last_sprite_clears_active() {
+        let mut doc = DocumentStore::new();
+        let a = doc.create_sprite("only", Size::new(8, 8));
+        doc.delete_sprite(a);
+        assert!(doc.sprite_list().is_empty());
+        assert!(doc.active_sprite().is_none());
+        assert!(doc.pixel_buffers.is_empty());
+        assert!(doc.active_layer.is_none());
+    }
+
+    #[test]
+    fn duplicate_sprite_clones_independent_buffers() {
+        let mut doc = DocumentStore::new();
+        let a = doc.create_sprite("hero", Size::new(8, 8));
+        assert_eq!(doc.pixel_buffers.len(), 1);
+        let dup = doc.duplicate_sprite(a).expect("duplicate");
+        assert_ne!(dup.entity_id, a.entity_id);
+        assert_eq!(doc.sprite_list().len(), 2);
+        assert_eq!(doc.pixel_buffers.len(), 2, "the copy owns a fresh buffer");
+        assert_eq!(doc.active_sprite().unwrap().name, "hero copy");
+    }
+
+    #[test]
+    fn move_sprite_reorders_library() {
+        let mut doc = DocumentStore::new();
+        let a = doc.create_sprite("a", Size::new(8, 8));
+        doc.create_sprite("b", Size::new(8, 8));
+        assert_eq!(doc.sprite_list()[0].name, "a");
+        doc.move_sprite(a, false);
+        assert_eq!(doc.sprite_list()[0].name, "b");
+        assert_eq!(doc.sprite_list()[1].name, "a");
+        // Moving the front item up again is a no-op at the edge.
+        let b_ref = doc.sprite_list()[0].sprite_ref;
+        doc.move_sprite(b_ref, true);
+        assert_eq!(doc.sprite_list()[0].name, "b");
     }
 }

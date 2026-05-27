@@ -14,11 +14,144 @@
 
 use pixhaus_core::canvas::PixelBuffer;
 use pixhaus_core::project::library::ai::ProjectAi;
-use pixhaus_core::project::{Entity, EntityId, PixelBufferId, Sprite, SpriteId};
+use pixhaus_core::project::{Entity, EntityId, PixelBufferId, Size, Sprite, SpriteId};
+use pixhaus_core::transforms::{self, CanvasAnchor};
 use pixhaus_core::undo::{Command, CommandError, CommandResult};
 
 use crate::document::DocumentStore;
 use crate::editor::EditorState;
+
+/// A whole-canvas operation on the active sprite: resize, resample, flip, or
+/// 90°-multiple rotation. Every variant rewrites every raster cel buffer and,
+/// where dimensions change, the sprite's canvas [`Size`]. Carries only scalars,
+/// so it is cheap to copy into a `spawn_blocking` closure for large canvases.
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+pub enum CanvasOp {
+    /// Change the canvas dimensions without scaling pixels: pad transparent on
+    /// grow, crop on shrink, positioned by `anchor`.
+    Resize {
+        /// Target width in pixels.
+        width: u32,
+        /// Target height in pixels.
+        height: u32,
+        /// Where existing content anchors in the new extent.
+        anchor: CanvasAnchor,
+    },
+    /// Scale the pixels to a new size with nearest-neighbor sampling.
+    Resample {
+        /// Target width in pixels.
+        width: u32,
+        /// Target height in pixels.
+        height: u32,
+    },
+    /// Mirror left-to-right.
+    FlipHorizontal,
+    /// Mirror top-to-bottom.
+    FlipVertical,
+    /// Rotate 90° clockwise (swaps width and height).
+    Rotate90Cw,
+    /// Rotate 90° counter-clockwise (swaps width and height).
+    Rotate90Ccw,
+    /// Rotate 180°.
+    Rotate180,
+}
+
+impl CanvasOp {
+    /// The canvas size that results from applying this op to `current`.
+    #[must_use]
+    pub fn result_size(self, current: Size) -> Size {
+        match self {
+            Self::Resize { width, height, .. } | Self::Resample { width, height } => Size::new(width, height),
+            Self::FlipHorizontal | Self::FlipVertical | Self::Rotate180 => current,
+            Self::Rotate90Cw | Self::Rotate90Ccw => Size::new(current.height, current.width),
+        }
+    }
+
+    /// History label shown in the undo panel.
+    #[must_use]
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Resize { .. } => "Resize canvas",
+            Self::Resample { .. } => "Scale sprite",
+            Self::FlipHorizontal => "Flip horizontal",
+            Self::FlipVertical => "Flip vertical",
+            Self::Rotate90Cw => "Rotate 90° CW",
+            Self::Rotate90Ccw => "Rotate 90° CCW",
+            Self::Rotate180 => "Rotate 180°",
+        }
+    }
+
+    /// Applies the op to one buffer, returning the transformed buffer.
+    ///
+    /// # Errors
+    ///
+    /// Forwards the [`transforms::Error`] from the underlying operation (an
+    /// empty source buffer, a zero target dimension, or an allocation failure).
+    pub fn apply(self, buf: &PixelBuffer) -> Result<PixelBuffer, transforms::Error> {
+        match self {
+            Self::Resize { width, height, anchor } => transforms::resize_canvas(buf, width, height, anchor),
+            Self::Resample { width, height } => transforms::scale_nearest(buf, width, height),
+            Self::FlipHorizontal => transforms::flip_horizontal(buf),
+            Self::FlipVertical => transforms::flip_vertical(buf),
+            Self::Rotate90Cw => transforms::rotate_90_cw(buf),
+            Self::Rotate90Ccw => transforms::rotate_90_ccw(buf),
+            Self::Rotate180 => transforms::rotate_180(buf),
+        }
+    }
+}
+
+/// One buffer's before/after pair within a [`CanvasEdit`].
+pub struct CanvasBufferSwap {
+    /// Buffer being rewritten.
+    pub id: PixelBufferId,
+    /// Bytes before the op.
+    pub before: PixelBuffer,
+    /// Bytes after the op.
+    pub after: PixelBuffer,
+}
+
+/// A reversible whole-canvas op: swaps the sprite (for the canvas [`Size`] and
+/// per-cel sizes) and every affected raster buffer as one undo unit. Unlike
+/// [`PixelRegionEdit`], the buffers change dimensions, so the whole before/after
+/// buffer is retained rather than a bounded region.
+pub struct CanvasEdit {
+    /// Sprite whose canvas changed.
+    pub sprite_id: SpriteId,
+    /// Sprite value before the op.
+    pub before_sprite: Sprite,
+    /// Sprite value after the op.
+    pub after_sprite: Sprite,
+    /// Per-buffer before/after pairs.
+    pub buffers: Vec<CanvasBufferSwap>,
+    /// History label.
+    pub label: String,
+}
+
+impl Command<DocumentStore> for CanvasEdit {
+    fn label(&self) -> &str {
+        &self.label
+    }
+
+    fn apply(&mut self, doc: &mut DocumentStore) -> CommandResult {
+        replace_sprite(doc, self.sprite_id, self.after_sprite.clone())?;
+        for swap in &self.buffers {
+            doc.pixel_buffers.insert(swap.id, swap.after.clone());
+        }
+        Ok(())
+    }
+
+    fn undo(&mut self, doc: &mut DocumentStore) -> CommandResult {
+        replace_sprite(doc, self.sprite_id, self.before_sprite.clone())?;
+        for swap in &self.buffers {
+            doc.pixel_buffers.insert(swap.id, swap.before.clone());
+        }
+        Ok(())
+    }
+
+    fn estimated_size_bytes(&self) -> usize {
+        self.buffers.iter().map(|s| s.before.as_bytes().len() + s.after.as_bytes().len()).sum()
+    }
+}
 
 /// Snapshots the active sprite, applies `f`, and — if anything changed — records
 /// a [`SpriteEdit`] undo entry. The single entry point for every structural
@@ -292,7 +425,10 @@ impl Command<DocumentStore> for AiLibraryEdit {
 /// undo memory cap.
 fn sheet_bytes(entity: &Entity) -> usize {
     use pixhaus_core::project::EntityContent;
-    let EntityContent::Sprites { reference_sheet: Some(sheet), .. } = &entity.content else {
+    let EntityContent::Sprites {
+        reference_sheet: Some(sheet), ..
+    } = &entity.content
+    else {
         return 0;
     };
     let variant_bytes = |v: &pixhaus_core::project::SheetVariant| v.image.bytes.len();
@@ -389,5 +525,82 @@ mod tests {
         let mut editor = EditorState::default();
         push_ai_library_edit(&mut editor, &mut doc, "noop", |_ai| {});
         assert!(editor.history.undo(&mut doc).is_err(), "no entry was pushed");
+    }
+
+    #[test]
+    fn canvas_op_result_size_tracks_each_variant() {
+        let s = Size::new(16, 8);
+        assert_eq!(CanvasOp::Rotate90Cw.result_size(s), Size::new(8, 16));
+        assert_eq!(CanvasOp::Rotate90Ccw.result_size(s), Size::new(8, 16));
+        assert_eq!(CanvasOp::Rotate180.result_size(s), s);
+        assert_eq!(CanvasOp::FlipHorizontal.result_size(s), s);
+        assert_eq!(
+            CanvasOp::Resize {
+                width: 4,
+                height: 4,
+                anchor: CanvasAnchor::Center
+            }
+            .result_size(s),
+            Size::new(4, 4)
+        );
+        assert_eq!(CanvasOp::Resample { width: 32, height: 32 }.result_size(s), Size::new(32, 32));
+    }
+
+    #[test]
+    fn canvas_edit_resize_applies_and_undoes() {
+        use pixhaus_core::project::CelData;
+
+        let mut doc = DocumentStore::new();
+        doc.create_sprite("hero", Size::new(8, 8));
+        let sprite_id = doc.project.active_sprite_id().expect("active sprite");
+        let before_sprite = doc.project.sprite(sprite_id).expect("sprite").clone();
+        let buffer_id = before_sprite
+            .cels
+            .iter()
+            .find_map(|c| match c.data {
+                CelData::Raster { buffer, .. } => Some(buffer),
+                _ => None,
+            })
+            .expect("raster buffer");
+        let before_buf = doc.pixel_buffers.get(&buffer_id).expect("buffer").clone();
+        let after_buf = CanvasOp::Resize {
+            width: 16,
+            height: 16,
+            anchor: CanvasAnchor::Center,
+        }
+        .apply(&before_buf)
+        .expect("resize");
+
+        let mut after_sprite = before_sprite.clone();
+        after_sprite.canvas = Size::new(16, 16);
+        for cel in &mut after_sprite.cels {
+            if let CelData::Raster { size, .. } = &mut cel.data {
+                *size = Size::new(16, 16);
+            }
+        }
+
+        let edit = CanvasEdit {
+            sprite_id,
+            before_sprite,
+            after_sprite,
+            buffers: vec![CanvasBufferSwap {
+                id: buffer_id,
+                before: before_buf,
+                after: after_buf,
+            }],
+            label: "Resize canvas".into(),
+        };
+
+        let mut editor = EditorState::default();
+        editor.history.push(Box::new(edit), &mut doc).expect("push");
+        assert_eq!(doc.project.sprite(sprite_id).unwrap().canvas, Size::new(16, 16));
+        assert_eq!(doc.pixel_buffers.get(&buffer_id).unwrap().width(), 16);
+
+        editor.history.undo(&mut doc).expect("undo");
+        assert_eq!(doc.project.sprite(sprite_id).unwrap().canvas, Size::new(8, 8));
+        assert_eq!(doc.pixel_buffers.get(&buffer_id).unwrap().width(), 8);
+
+        editor.history.redo(&mut doc).expect("redo");
+        assert_eq!(doc.pixel_buffers.get(&buffer_id).unwrap().width(), 16);
     }
 }

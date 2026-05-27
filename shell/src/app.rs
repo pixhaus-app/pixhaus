@@ -14,7 +14,8 @@ use eframe::egui;
 use egui_wgpu::RenderState;
 use pixhaus_ai::plugin::{PixelData, VerbRuntime};
 use pixhaus_core::canvas::PixelBuffer;
-use pixhaus_core::project::{FrameIndex, LoopDirection, PixelBufferId, Rgba, Size};
+use pixhaus_core::project::{CelData, ColorMode, FrameIndex, LoopDirection, PixelBufferId, Rgba, Size};
+use pixhaus_core::transforms::CanvasAnchor;
 use pixhaus_core::transforms::normalize::{NormalizeOptions, normalize_frames};
 use pixhaus_render::{Viewport, ViewportRenderer};
 use tokio::runtime::Runtime;
@@ -23,12 +24,39 @@ use tokio_util::sync::CancellationToken;
 use crate::ai;
 use crate::anim::{self, LoopMarkers, VideoFrame};
 use crate::cockpit::{CockpitCandidate, CockpitReference, CreateView, PendingLineage};
+use crate::commands::{CanvasBufferSwap, CanvasEdit, CanvasOp};
 use crate::document::{DocumentStore, SpriteRef};
 use crate::keymap::{CommandId, Keymap};
 use crate::settings::SettingsTab;
 
 /// Default canvas size for a newly created sprite.
 const DEFAULT_CANVAS: Size = Size { width: 64, height: 64 };
+
+/// Largest canvas dimension on a side. Matches wgpu's default
+/// `max_texture_dimension_2d` of 8192 — a single texture larger than this needs
+/// tiling, which is out of scope. The size inputs clamp to this ceiling.
+const MAX_CANVAS_DIM: u32 = 8192;
+
+/// Pixel-count threshold above which a canvas op runs on a blocking thread
+/// rather than inline on the UI thread. Below it the work is instant; above it
+/// (~1 megapixel) a full-buffer pass is worth keeping off the frame loop.
+const TRANSFORM_OFFLOAD_PIXELS: u64 = 1024 * 1024;
+
+/// Common canvas sizes offered in the new-sprite and resize dialogs: square
+/// pixel-art presets, then a few game/sheet sizes. A `Custom…` entry covers
+/// anything else up to [`MAX_CANVAS_DIM`].
+const SIZE_PRESETS: &[(&str, u32, u32)] = &[
+    ("16 x 16", 16, 16),
+    ("32 x 32", 32, 32),
+    ("64 x 64", 64, 64),
+    ("128 x 128", 128, 128),
+    ("256 x 256", 256, 256),
+    ("512 x 512", 512, 512),
+    ("1024 x 1024", 1024, 1024),
+    ("320 x 180", 320, 180),
+    ("640 x 360", 640, 360),
+    ("1920 x 1080", 1920, 1080),
+];
 
 /// Results delivered from background tokio work to the UI thread.
 #[derive(Debug)]
@@ -344,6 +372,33 @@ pub struct ShellApp {
     pub(crate) settings_tab: SettingsTab,
     /// A pending keyboard zoom request, drained on the next canvas paint.
     pub(crate) pending_zoom: Option<ZoomAction>,
+    /// Whether the new-sprite dialog is open.
+    new_sprite_open: bool,
+    /// Draft canvas width for the new-sprite dialog; also the last-used size,
+    /// persisted across launches.
+    new_sprite_w: u32,
+    /// Draft canvas height for the new-sprite dialog.
+    new_sprite_h: u32,
+    /// Whether the new-sprite size is being entered as a custom W×H rather than
+    /// picked from a preset.
+    new_sprite_custom: bool,
+    /// Draft color mode for the new-sprite dialog.
+    new_sprite_color: ColorMode,
+    /// The sprite row being renamed inline, with its draft text.
+    renaming: Option<(SpriteRef, String)>,
+    /// The sprite awaiting delete confirmation.
+    confirm_delete: Option<SpriteRef>,
+    /// Whether the resize-canvas dialog is open.
+    resize_open: bool,
+    /// Draft target width for the resize dialog.
+    resize_w: u32,
+    /// Draft target height for the resize dialog.
+    resize_h: u32,
+    /// Anchor for an anchor-based (non-scaling) resize.
+    resize_anchor: CanvasAnchor,
+    /// Whether the resize dialog scales the pixels (resample) rather than
+    /// padding/cropping the canvas.
+    resize_resample: bool,
 }
 
 impl ShellApp {
@@ -366,6 +421,12 @@ impl ShellApp {
         // Restore the saved keybindings (preset + custom overrides), defaulting
         // to the Aseprite preset with no overrides.
         let keymap = cc.storage.and_then(|s| eframe::get_value::<Keymap>(s, "keymap")).unwrap_or_default();
+
+        // Restore the last-used new-sprite size, defaulting to 64×64.
+        let (last_w, last_h) = cc
+            .storage
+            .and_then(|s| eframe::get_value::<(u32, u32)>(s, "new_sprite_size"))
+            .unwrap_or((DEFAULT_CANVAS.width, DEFAULT_CANVAS.height));
 
         let mut app = Self {
             doc: DocumentStore::new(),
@@ -444,6 +505,18 @@ impl ShellApp {
             settings_open: false,
             settings_tab: SettingsTab::default(),
             pending_zoom: None,
+            new_sprite_open: false,
+            new_sprite_w: last_w.clamp(1, MAX_CANVAS_DIM),
+            new_sprite_h: last_h.clamp(1, MAX_CANVAS_DIM),
+            new_sprite_custom: !is_preset_size(last_w, last_h),
+            new_sprite_color: ColorMode::Rgba,
+            renaming: None,
+            confirm_delete: None,
+            resize_open: false,
+            resize_w: DEFAULT_CANVAS.width,
+            resize_h: DEFAULT_CANVAS.height,
+            resize_anchor: CanvasAnchor::Center,
+            resize_resample: false,
         };
         app.install_renderer();
         app.doc.create_sprite("untitled", DEFAULT_CANVAS);
@@ -581,30 +654,92 @@ impl ShellApp {
         ui.heading("Library");
         ui.add_space(4.0);
 
-        ui.horizontal(|ui| {
-            ui.add(egui::TextEdit::singleline(&mut self.new_sprite_name).hint_text("name").desired_width(120.0));
-            if ui.button("New sprite").clicked() {
-                let name = if self.new_sprite_name.trim().is_empty() {
-                    "untitled".to_owned()
-                } else {
-                    self.new_sprite_name.trim().to_owned()
-                };
-                self.exit_sheet_preview();
-                self.doc.create_sprite(name, DEFAULT_CANVAS);
-                self.new_sprite_name.clear();
-                self.refresh_canvas(true);
-            }
-        });
+        if ui.button(format!("{} New sprite", crate::icons::ADD)).clicked() {
+            self.open_new_sprite_dialog();
+        }
 
         ui.separator();
 
         let items = self.doc.sprite_list();
         let mut select: Option<SpriteRef> = None;
+        let mut rename_commit: Option<SpriteRef> = None;
+        let mut cancel_rename = false;
+        let mut to_rename: Option<(SpriteRef, String)> = None;
+        let mut to_duplicate: Option<SpriteRef> = None;
+        let mut to_move: Option<(SpriteRef, bool)> = None;
+        let mut to_delete: Option<SpriteRef> = None;
+
         for item in &items {
+            if let Some((rename_ref, draft)) = self.renaming.as_mut() {
+                if *rename_ref == item.sprite_ref {
+                    // Inline rename editor: Enter commits, Escape cancels.
+                    let resp = ui.add(egui::TextEdit::singleline(draft).desired_width(f32::INFINITY));
+                    resp.request_focus();
+                    if resp.lost_focus() {
+                        if ui.input(|i| i.key_pressed(egui::Key::Escape)) {
+                            cancel_rename = true;
+                        } else {
+                            rename_commit = Some(item.sprite_ref);
+                        }
+                    }
+                    continue;
+                }
+            }
+
             let label = format!("{}  ({}x{})", item.name, item.canvas.width, item.canvas.height);
-            if ui.selectable_label(item.selected, label).clicked() {
+            let resp = ui.selectable_label(item.selected, label);
+            if resp.clicked() {
                 select = Some(item.sprite_ref);
             }
+            resp.context_menu(|ui| {
+                if ui.button(format!("{} Rename", crate::icons::RENAME)).clicked() {
+                    to_rename = Some((item.sprite_ref, item.name.clone()));
+                    ui.close();
+                }
+                if ui.button(format!("{} Duplicate", crate::icons::DUPLICATE)).clicked() {
+                    to_duplicate = Some(item.sprite_ref);
+                    ui.close();
+                }
+                ui.separator();
+                if ui.button(format!("{} Move up", crate::icons::UP)).clicked() {
+                    to_move = Some((item.sprite_ref, true));
+                    ui.close();
+                }
+                if ui.button(format!("{} Move down", crate::icons::DOWN)).clicked() {
+                    to_move = Some((item.sprite_ref, false));
+                    ui.close();
+                }
+                ui.separator();
+                if ui.button(format!("{} Delete", crate::icons::TRASH)).clicked() {
+                    to_delete = Some(item.sprite_ref);
+                    ui.close();
+                }
+            });
+        }
+
+        if cancel_rename {
+            self.renaming = None;
+        }
+        if let Some(r) = rename_commit {
+            if let Some((_, name)) = self.renaming.take() {
+                self.doc.rename_sprite(r, &name);
+            }
+        }
+        if let Some((r, name)) = to_rename {
+            self.renaming = Some((r, name));
+        }
+        if let Some(r) = to_duplicate {
+            self.exit_sheet_preview();
+            if self.doc.duplicate_sprite(r).is_some() {
+                self.playing = false;
+                self.refresh_canvas(true);
+            }
+        }
+        if let Some((r, up)) = to_move {
+            self.doc.move_sprite(r, up);
+        }
+        if let Some(r) = to_delete {
+            self.confirm_delete = Some(r);
         }
         if let Some(sprite_ref) = select {
             self.rs_preview = None;
@@ -612,6 +747,310 @@ impl ShellApp {
             self.playing = false;
             self.refresh_canvas(true);
         }
+    }
+
+    /// Opens the new-sprite dialog, seeding the size from the active entity's
+    /// default canvas size when it declares one, else from the last-used size.
+    fn open_new_sprite_dialog(&mut self) {
+        if let Some(size) = self.active_entity_default_canvas() {
+            self.new_sprite_w = size.width.clamp(1, MAX_CANVAS_DIM);
+            self.new_sprite_h = size.height.clamp(1, MAX_CANVAS_DIM);
+            self.new_sprite_custom = !is_preset_size(size.width, size.height);
+        }
+        self.new_sprite_open = true;
+    }
+
+    /// The active library entity's default canvas size, if it declares one.
+    fn active_entity_default_canvas(&self) -> Option<Size> {
+        let entity_id = self.doc.active_entity_id()?;
+        self.doc
+            .project
+            .library
+            .entities
+            .iter()
+            .find(|e| e.id == entity_id)
+            .and_then(|e| e.defaults.canvas_size)
+    }
+
+    /// Creates the sprite described by the new-sprite dialog and closes it.
+    fn commit_new_sprite(&mut self) {
+        let name = if self.new_sprite_name.trim().is_empty() {
+            "untitled".to_owned()
+        } else {
+            self.new_sprite_name.trim().to_owned()
+        };
+        let w = self.new_sprite_w.clamp(1, MAX_CANVAS_DIM);
+        let h = self.new_sprite_h.clamp(1, MAX_CANVAS_DIM);
+        self.exit_sheet_preview();
+        self.doc.create_sprite(name, Size::new(w, h));
+        if self.new_sprite_color != ColorMode::Rgba {
+            if let Some(sprite) = self.doc.active_sprite_mut() {
+                sprite.color_mode = self.new_sprite_color;
+            }
+        }
+        self.new_sprite_name.clear();
+        self.new_sprite_open = false;
+        self.new_sprite_w = w;
+        self.new_sprite_h = h;
+        self.playing = false;
+        self.refresh_canvas(true);
+    }
+
+    /// Renders the new-sprite dialog: name, size preset/custom, and color mode.
+    fn show_new_sprite_dialog(&mut self, ctx: &egui::Context) {
+        if !self.new_sprite_open {
+            return;
+        }
+        let mut open = true;
+        let mut create = false;
+        egui::Window::new("New sprite")
+            .collapsible(false)
+            .resizable(false)
+            .open(&mut open)
+            .show(ctx, |ui| {
+                ui.horizontal(|ui| {
+                    ui.label("Name");
+                    ui.add(egui::TextEdit::singleline(&mut self.new_sprite_name).hint_text("untitled"));
+                });
+                ui.horizontal(|ui| {
+                    ui.label("Size");
+                    let current = if self.new_sprite_custom {
+                        "Custom…".to_owned()
+                    } else {
+                        format!("{} x {}", self.new_sprite_w, self.new_sprite_h)
+                    };
+                    egui::ComboBox::from_id_salt("new_sprite_preset").selected_text(current).show_ui(ui, |ui| {
+                        for (label, w, h) in SIZE_PRESETS {
+                            let selected = !self.new_sprite_custom && self.new_sprite_w == *w && self.new_sprite_h == *h;
+                            if ui.selectable_label(selected, *label).clicked() {
+                                self.new_sprite_w = *w;
+                                self.new_sprite_h = *h;
+                                self.new_sprite_custom = false;
+                            }
+                        }
+                        if ui.selectable_label(self.new_sprite_custom, "Custom…").clicked() {
+                            self.new_sprite_custom = true;
+                        }
+                    });
+                });
+                if self.new_sprite_custom {
+                    ui.horizontal(|ui| {
+                        ui.label("W");
+                        ui.add(egui::DragValue::new(&mut self.new_sprite_w).range(1..=MAX_CANVAS_DIM).suffix(" px"));
+                        ui.label("H");
+                        ui.add(egui::DragValue::new(&mut self.new_sprite_h).range(1..=MAX_CANVAS_DIM).suffix(" px"));
+                    });
+                }
+                ui.horizontal(|ui| {
+                    ui.label("Color");
+                    egui::ComboBox::from_id_salt("new_sprite_color")
+                        .selected_text(color_mode_label(self.new_sprite_color))
+                        .show_ui(ui, |ui| {
+                            ui.selectable_value(&mut self.new_sprite_color, ColorMode::Rgba, "RGBA");
+                            ui.selectable_value(&mut self.new_sprite_color, ColorMode::Grayscale, "Grayscale");
+                            ui.selectable_value(&mut self.new_sprite_color, ColorMode::Indexed, "Indexed");
+                        });
+                });
+                if let Some(text) = large_canvas_warning(self.new_sprite_w, self.new_sprite_h) {
+                    ui.colored_label(ui.visuals().warn_fg_color, text);
+                }
+                ui.separator();
+                ui.horizontal(|ui| {
+                    if ui.button("Create").clicked() {
+                        create = true;
+                    }
+                    if ui.button("Cancel").clicked() {
+                        self.new_sprite_open = false;
+                    }
+                });
+            });
+        if !open {
+            self.new_sprite_open = false;
+        }
+        if create {
+            self.commit_new_sprite();
+        }
+    }
+
+    /// Renders the delete-confirmation dialog. Deletion is not undoable, so it
+    /// asks first.
+    fn show_delete_confirm(&mut self, ctx: &egui::Context) {
+        let Some(sprite_ref) = self.confirm_delete else {
+            return;
+        };
+        let mut open = true;
+        let mut confirm = false;
+        egui::Window::new("Delete sprite")
+            .collapsible(false)
+            .resizable(false)
+            .open(&mut open)
+            .show(ctx, |ui| {
+                ui.label("Delete this sprite? This cannot be undone.");
+                ui.separator();
+                ui.horizontal(|ui| {
+                    if ui.button(format!("{} Delete", crate::icons::TRASH)).clicked() {
+                        confirm = true;
+                    }
+                    if ui.button("Cancel").clicked() {
+                        self.confirm_delete = None;
+                    }
+                });
+            });
+        if !open {
+            self.confirm_delete = None;
+        }
+        if confirm {
+            self.exit_sheet_preview();
+            self.doc.delete_sprite(sprite_ref);
+            self.confirm_delete = None;
+            self.playing = false;
+            self.refresh_canvas(true);
+        }
+    }
+
+    /// Opens the resize-canvas dialog, seeded from the active sprite's size.
+    fn open_resize_dialog(&mut self) {
+        if let Some(sprite) = self.doc.active_sprite() {
+            self.resize_w = sprite.canvas.width;
+            self.resize_h = sprite.canvas.height;
+        }
+        self.resize_open = true;
+    }
+
+    /// Renders the resize-canvas dialog: target size, scale-vs-anchor mode, and
+    /// the 3×3 anchor grid.
+    fn show_resize_dialog(&mut self, ctx: &egui::Context) {
+        if !self.resize_open {
+            return;
+        }
+        let mut open = true;
+        let mut apply = false;
+        egui::Window::new("Resize canvas")
+            .collapsible(false)
+            .resizable(false)
+            .open(&mut open)
+            .show(ctx, |ui| {
+                ui.horizontal(|ui| {
+                    ui.label("W");
+                    ui.add(egui::DragValue::new(&mut self.resize_w).range(1..=MAX_CANVAS_DIM).suffix(" px"));
+                    ui.label("H");
+                    ui.add(egui::DragValue::new(&mut self.resize_h).range(1..=MAX_CANVAS_DIM).suffix(" px"));
+                });
+                ui.checkbox(&mut self.resize_resample, "Scale image (nearest-neighbor)");
+                ui.add_enabled_ui(!self.resize_resample, |ui| {
+                    ui.label("Anchor");
+                    anchor_grid(ui, &mut self.resize_anchor);
+                });
+                if let Some(text) = large_canvas_warning(self.resize_w, self.resize_h) {
+                    ui.colored_label(ui.visuals().warn_fg_color, text);
+                }
+                ui.separator();
+                ui.horizontal(|ui| {
+                    if ui.button("Apply").clicked() {
+                        apply = true;
+                    }
+                    if ui.button("Cancel").clicked() {
+                        self.resize_open = false;
+                    }
+                });
+            });
+        if !open {
+            self.resize_open = false;
+        }
+        if apply {
+            let op = if self.resize_resample {
+                CanvasOp::Resample {
+                    width: self.resize_w,
+                    height: self.resize_h,
+                }
+            } else {
+                CanvasOp::Resize {
+                    width: self.resize_w,
+                    height: self.resize_h,
+                    anchor: self.resize_anchor,
+                }
+            };
+            self.resize_open = false;
+            self.run_canvas_transform(op);
+        }
+    }
+
+    /// Applies a whole-canvas op to the active sprite, recording it as one undo
+    /// entry. Rewrites every raster cel buffer and, where dimensions change, the
+    /// sprite canvas. Large canvases transform on a blocking thread so the frame
+    /// loop is not stalled (the 8K constraint).
+    pub(crate) fn run_canvas_transform(&mut self, op: CanvasOp) {
+        self.exit_sheet_preview();
+        let Some(sprite_id) = self.doc.project.active_sprite_id() else {
+            return;
+        };
+        let Some(before_sprite) = self.doc.project.sprite(sprite_id).cloned() else {
+            return;
+        };
+        let new_size = op.result_size(before_sprite.canvas);
+        if new_size.is_empty() || new_size.width > MAX_CANVAS_DIM || new_size.height > MAX_CANVAS_DIM {
+            return;
+        }
+
+        // Distinct raster buffers referenced by the sprite, in cel order.
+        let mut ids: Vec<PixelBufferId> = Vec::new();
+        let mut seen: HashSet<PixelBufferId> = HashSet::new();
+        for cel in &before_sprite.cels {
+            if let CelData::Raster { buffer, .. } = cel.data {
+                if seen.insert(buffer) {
+                    ids.push(buffer);
+                }
+            }
+        }
+        let before_buffers: Vec<(PixelBufferId, PixelBuffer)> = ids.iter().filter_map(|id| self.doc.pixel_buffers.get(id).map(|b| (*id, b.clone()))).collect();
+
+        // Transform every buffer; abort without recording if any fails.
+        let inputs = before_buffers.clone();
+        let compute =
+            move || -> Option<Vec<(PixelBufferId, PixelBuffer)>> { inputs.iter().map(|(id, buf)| op.apply(buf).ok().map(|out| (*id, out))).collect() };
+        let heavy = before_sprite.canvas.pixel_count() > TRANSFORM_OFFLOAD_PIXELS;
+        let after_buffers = if heavy {
+            // PERF: off the UI thread — a multi-megapixel pass would stall the frame.
+            self.runtime.block_on(async { tokio::task::spawn_blocking(compute).await.ok().flatten() })
+        } else {
+            compute()
+        };
+        let Some(after_buffers) = after_buffers else {
+            return;
+        };
+
+        // Build the after sprite: new canvas size and per-raster-cel size.
+        let mut after_sprite = before_sprite.clone();
+        after_sprite.canvas = new_size;
+        for cel in &mut after_sprite.cels {
+            if let CelData::Raster { size, .. } = &mut cel.data {
+                *size = new_size;
+            }
+        }
+
+        let swaps: Vec<CanvasBufferSwap> = before_buffers
+            .into_iter()
+            .zip(after_buffers)
+            .map(|((id, before), (_, after))| CanvasBufferSwap { id, before, after })
+            .collect();
+
+        // Skip recording a true no-op (e.g. flipping an empty canvas).
+        let unchanged = after_sprite == before_sprite && swaps.iter().all(|s| s.before == s.after);
+        if unchanged {
+            return;
+        }
+
+        let edit = CanvasEdit {
+            sprite_id,
+            before_sprite,
+            after_sprite,
+            buffers: swaps,
+            label: op.label().to_owned(),
+        };
+        let _ = self.editor.history.push(Box::new(edit), &mut self.doc);
+        // Selection coordinates may fall outside the new canvas.
+        self.editor.clear_selection();
+        self.refresh_canvas(true);
     }
 
     /// Starts or stops playback. Starting computes the play order from the
@@ -774,7 +1213,10 @@ impl ShellApp {
 
         let generating = matches!(self.anim_status, JobStatus::Running(_));
         if ui
-            .add_enabled(self.backend_ready && !generating, egui::Button::new(format!("{} Generate clip", crate::icons::FILM)))
+            .add_enabled(
+                self.backend_ready && !generating,
+                egui::Button::new(format!("{} Generate clip", crate::icons::FILM)),
+            )
             .clicked()
         {
             self.start_clip();
@@ -851,7 +1293,10 @@ impl ShellApp {
                         }
                     }
                     ui.vertical(|ui| {
-                        if ui.selectable_label(selected, egui::RichText::new(truncate_motion(&cand.motion, 36)).strong()).clicked() {
+                        if ui
+                            .selectable_label(selected, egui::RichText::new(truncate_motion(&cand.motion, 36)).strong())
+                            .clicked()
+                        {
                             select = Some(i);
                         }
                         ui.label(egui::RichText::new(format!("{} frames · {} fps", cand.frames.len(), cand.fps)).small().weak());
@@ -897,11 +1342,7 @@ impl ShellApp {
                 .weak(),
             );
             // Source clip provenance: the raw bytes kept for a future export.
-            ui.label(
-                egui::RichText::new(format!("source: {} · {} KB", c.mime, c.clip.len() / 1024))
-                    .small()
-                    .weak(),
-            );
+            ui.label(egui::RichText::new(format!("source: {} · {} KB", c.mime, c.clip.len() / 1024)).small().weak());
         }
 
         ui.horizontal(|ui| {
@@ -953,7 +1394,10 @@ impl ShellApp {
 
         ui.separator();
         ui.horizontal(|ui| {
-            if ui.add_enabled(picks_len > 0, egui::Button::new(format!("{} Integrate", crate::icons::CHECK))).clicked() {
+            if ui
+                .add_enabled(picks_len > 0, egui::Button::new(format!("{} Integrate", crate::icons::CHECK)))
+                .clicked()
+            {
                 self.integrate_picked();
             }
             if ui
@@ -1065,7 +1509,13 @@ impl ShellApp {
         // Snapshot what to draw so the closure borrows nothing mutable from self.
         let thumbs: Vec<(usize, egui::TextureId, egui::Vec2)> = picks
             .iter()
-            .filter_map(|&p| self.anim_candidates[i].thumbs.get(p).and_then(|t| t.as_ref()).map(|tex| (p, tex.id(), tex.size_vec2())))
+            .filter_map(|&p| {
+                self.anim_candidates[i]
+                    .thumbs
+                    .get(p)
+                    .and_then(|t| t.as_ref())
+                    .map(|tex| (p, tex.id(), tex.size_vec2()))
+            })
             .collect();
 
         let mut remove: Option<usize> = None;
@@ -1280,9 +1730,7 @@ impl ShellApp {
 
     /// Whether a selected clip card is driving the canvas with one of its frames.
     fn clip_preview_active(&self) -> bool {
-        self.workspace == Workspace::Create
-            && self.create_view == CreateView::Animate
-            && self.anim_card().is_some_and(|c| !c.frames.is_empty())
+        self.workspace == Workspace::Create && self.create_view == CreateView::Animate && self.anim_card().is_some_and(|c| !c.frames.is_empty())
     }
 
     /// Stops clip playback and drops the clip preview from the canvas — used
@@ -1329,9 +1777,8 @@ impl ShellApp {
             ui.separator();
 
             ui.menu_button("File", |ui| {
-                if ui.button("New sprite").clicked() {
-                    self.doc.create_sprite("untitled", DEFAULT_CANVAS);
-                    self.refresh_canvas(true);
+                if ui.button("New sprite…").clicked() {
+                    self.open_new_sprite_dialog();
                     ui.close();
                 }
                 ui.separator();
@@ -1343,6 +1790,38 @@ impl ShellApp {
                 if ui.button("Quit").clicked() {
                     ui.ctx().send_viewport_cmd(egui::ViewportCommand::Close);
                 }
+            });
+
+            ui.menu_button("Sprite", |ui| {
+                let has_sprite = self.doc.active_sprite().is_some();
+                ui.add_enabled_ui(has_sprite, |ui| {
+                    if ui.button(format!("{} Resize canvas…", crate::icons::RESIZE)).clicked() {
+                        self.open_resize_dialog();
+                        ui.close();
+                    }
+                    ui.separator();
+                    if ui.button(format!("{} Flip horizontal", crate::icons::FLIP_H)).clicked() {
+                        self.run_canvas_transform(CanvasOp::FlipHorizontal);
+                        ui.close();
+                    }
+                    if ui.button(format!("{} Flip vertical", crate::icons::FLIP_V)).clicked() {
+                        self.run_canvas_transform(CanvasOp::FlipVertical);
+                        ui.close();
+                    }
+                    ui.separator();
+                    if ui.button(format!("{} Rotate 90° CW", crate::icons::ROTATE_CW)).clicked() {
+                        self.run_canvas_transform(CanvasOp::Rotate90Cw);
+                        ui.close();
+                    }
+                    if ui.button(format!("{} Rotate 90° CCW", crate::icons::ROTATE_CCW)).clicked() {
+                        self.run_canvas_transform(CanvasOp::Rotate90Ccw);
+                        ui.close();
+                    }
+                    if ui.button("Rotate 180°").clicked() {
+                        self.run_canvas_transform(CanvasOp::Rotate180);
+                        ui.close();
+                    }
+                });
             });
 
             ui.menu_button("View", |ui| {
@@ -1502,8 +1981,7 @@ impl ShellApp {
 
         match command {
             CommandId::NewSprite => {
-                self.doc.create_sprite("untitled", DEFAULT_CANVAS);
-                self.refresh_canvas(true);
+                self.open_new_sprite_dialog();
             }
             CommandId::Undo => self.do_undo(),
             CommandId::Redo => self.do_redo(),
@@ -1570,6 +2048,54 @@ impl ShellApp {
     }
 }
 
+/// Whether `(w, h)` exactly matches one of the [`SIZE_PRESETS`] entries.
+fn is_preset_size(w: u32, h: u32) -> bool {
+    SIZE_PRESETS.iter().any(|(_, pw, ph)| *pw == w && *ph == h)
+}
+
+/// The dropdown label for a color mode.
+fn color_mode_label(mode: ColorMode) -> &'static str {
+    match mode {
+        ColorMode::Rgba => "RGBA",
+        ColorMode::Grayscale => "Grayscale",
+        ColorMode::Indexed => "Indexed",
+    }
+}
+
+/// A memory-cost warning for a large canvas, or `None` below the threshold.
+///
+/// Surfaces the per-buffer RGBA cost so the artist can confirm before
+/// allocating: an 8192×8192 buffer is 256 MB, and a sprite allocates one per
+/// cel. The threshold is ~4 megapixels (a 2048-square buffer is 16 MB).
+fn large_canvas_warning(w: u32, h: u32) -> Option<String> {
+    let pixels = u64::from(w) * u64::from(h);
+    if pixels < 2048 * 2048 {
+        return None;
+    }
+    let mb = pixels * 4 / (1024 * 1024);
+    Some(format!("Large canvas: ~{mb} MB per layer buffer"))
+}
+
+/// A 3×3 selectable grid for picking a [`CanvasAnchor`]. The cell position is
+/// the meaning (top-left cell pins to the top-left); the selected cell is
+/// highlighted. Kept glyph-free so it renders identically in any font.
+fn anchor_grid(ui: &mut egui::Ui, anchor: &mut CanvasAnchor) {
+    use CanvasAnchor::{Bottom, BottomLeft, BottomRight, Center, Left, Right, Top, TopLeft, TopRight};
+    let rows = [[TopLeft, Top, TopRight], [Left, Center, Right], [BottomLeft, Bottom, BottomRight]];
+    egui::Grid::new("resize_anchor_grid").spacing([2.0, 2.0]).show(ui, |ui| {
+        for row in rows {
+            for cell in row {
+                let selected = *anchor == cell;
+                let glyph = if selected { "*" } else { " " };
+                if ui.add_sized([20.0, 20.0], egui::Button::selectable(selected, glyph)).clicked() {
+                    *anchor = cell;
+                }
+            }
+            ui.end_row();
+        }
+    });
+}
+
 /// Truncates a motion prompt for a label, appending an ellipsis when clipped.
 fn truncate_motion(s: &str, max: usize) -> String {
     if s.chars().count() <= max {
@@ -1620,11 +2146,15 @@ impl eframe::App for ShellApp {
     fn save(&mut self, storage: &mut dyn eframe::Storage) {
         eframe::set_value(storage, "theme_preference", &self.theme_preference);
         eframe::set_value(storage, "keymap", &self.keymap);
+        eframe::set_value(storage, "new_sprite_size", &(self.new_sprite_w, self.new_sprite_h));
     }
 
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
         self.handle_shortcuts(ui.ctx());
         self.show_settings_window(ui.ctx());
+        self.show_new_sprite_dialog(ui.ctx());
+        self.show_delete_confirm(ui.ctx());
+        self.show_resize_dialog(ui.ctx());
 
         // Panel order matters: outer panels first, the central canvas last so
         // it fills the space the others leave. Two top strips (menu, then the
