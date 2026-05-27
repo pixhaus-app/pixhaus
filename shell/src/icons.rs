@@ -37,6 +37,7 @@ pub const ADD: &str = p::PLUS;
 pub const REMOVE: &str = p::MINUS;
 pub const UP: &str = p::CARET_UP;
 pub const DOWN: &str = p::CARET_DOWN;
+pub const RIGHT: &str = p::CARET_RIGHT;
 
 // Cels / linking.
 pub const LINK: &str = p::LINK;

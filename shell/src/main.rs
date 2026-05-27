@@ -32,6 +32,7 @@ mod canvas;
 mod cockpit;
 mod commands;
 mod context_bar;
+mod dnd;
 mod document;
 mod editor;
 mod headless;

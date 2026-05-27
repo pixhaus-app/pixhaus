@@ -81,6 +81,30 @@ pub fn paint_brush(buf: &mut PixelBuffer, cx: i32, cy: i32, color: Rgba, shape: 
     }
 }
 
+/// Whether the brush footprint covers the offset `(dx, dy)` from its centre.
+///
+/// The single source of truth for the brush shape: [`paint_brush`] paints
+/// exactly the offsets for which this returns `true`, and the editor's cursor
+/// gizmo traces the boundary of the same set, so the on-canvas outline always
+/// matches the painted pixels. A test below pins the two together.
+#[must_use]
+pub fn brush_covers(shape: BrushShape, size: u32, dx: i32, dy: i32) -> bool {
+    match shape {
+        BrushShape::Pixel => dx == 0 && dy == 0,
+        BrushShape::Circle => {
+            let r = (size.max(1) as i32) / 2;
+            dx * dx + dy * dy <= r * r
+        }
+        BrushShape::Square => {
+            let d = size.max(1) as i32;
+            let half = d / 2;
+            let lo = -half;
+            let hi = -half + d - 1;
+            dx >= lo && dx <= hi && dy >= lo && dy <= hi
+        }
+    }
+}
+
 /// Draw a Bresenham line from `(x0, y0)` to `(x1, y1)`, painting the
 /// brush footprint at every pixel on the line. Returns the number of
 /// brush stamps placed (one per line pixel, including both endpoints).
@@ -289,6 +313,27 @@ mod tests {
         paint_brush(&mut buf, 3, 3, c, BrushShape::Square, 6);
         // Pixels within bounds should be painted; no panic from out-of-bounds.
         assert_eq!(buf.pixel(3, 3), Some(c));
+    }
+
+    #[test]
+    fn brush_covers_matches_paint_brush() {
+        // The cursor gizmo traces `brush_covers`; it must agree with the pixels
+        // `paint_brush` actually sets, for every shape and size.
+        let color = Rgba::opaque(200, 30, 30);
+        let (cx, cy) = (100, 100);
+        for shape in [BrushShape::Pixel, BrushShape::Circle, BrushShape::Square] {
+            for size in [1u32, 2, 3, 5, 8, 40] {
+                let mut buf = transparent_buf(200, 200);
+                paint_brush(&mut buf, cx, cy, color, shape, size);
+                let range = size as i32 + 2;
+                for dy in -range..=range {
+                    for dx in -range..=range {
+                        let painted = buf.pixel((cx + dx) as u32, (cy + dy) as u32) == Some(color);
+                        assert_eq!(painted, brush_covers(shape, size, dx, dy), "{shape:?} size {size} at ({dx},{dy})");
+                    }
+                }
+            }
+        }
     }
 
     /// Stamps `points` in `chunk`-sized batches, bridging each batch to the

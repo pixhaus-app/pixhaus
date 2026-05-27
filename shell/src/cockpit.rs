@@ -162,7 +162,8 @@ impl ShellApp {
                         let color = egui::Color32::from_rgba_unmultiplied(c.r, c.g, c.b, c.a);
                         let (rect, _) = ui.allocate_exact_size(egui::vec2(14.0, 14.0), egui::Sense::hover());
                         ui.painter().rect_filled(rect, 2.0, color);
-                        ui.painter().rect_stroke(rect, 2.0, egui::Stroke::new(1.0, palette.border), egui::StrokeKind::Inside);
+                        ui.painter()
+                            .rect_stroke(rect, 2.0, egui::Stroke::new(1.0, palette.border), egui::StrokeKind::Inside);
                     }
                 });
             }
@@ -254,7 +255,11 @@ impl ShellApp {
 
         ui.horizontal(|ui| {
             ui.label(egui::RichText::new("Dials").strong());
-            if ui.small_button(format!("{} Surprise me", crate::icons::DICE)).on_hover_text("Randomize every unlocked dial").clicked() {
+            if ui
+                .small_button(format!("{} Surprise me", crate::icons::DICE))
+                .on_hover_text("Randomize every unlocked dial")
+                .clicked()
+            {
                 self.surprise_me(&vars);
             }
         });
@@ -278,14 +283,16 @@ impl ShellApp {
                         dirty |= ui.add(egui::TextEdit::singleline(&mut value).desired_width(130.0)).changed();
                     }
                     VarControl::Select { choices } | VarControl::Wildcard { choices } => {
-                        egui::ComboBox::from_id_salt(("ck_dial", var.key.as_str())).selected_text(value.clone()).show_ui(ui, |ui| {
-                            for c in choices {
-                                if ui.selectable_label(&value == c, c).clicked() {
-                                    value.clone_from(c);
-                                    dirty = true;
+                        egui::ComboBox::from_id_salt(("ck_dial", var.key.as_str()))
+                            .selected_text(value.clone())
+                            .show_ui(ui, |ui| {
+                                for c in choices {
+                                    if ui.selectable_label(&value == c, c).clicked() {
+                                        value.clone_from(c);
+                                        dirty = true;
+                                    }
                                 }
-                            }
-                        });
+                            });
                     }
                     VarControl::Number { min, max, step } => {
                         let mut n: f64 = value.parse().unwrap_or(*min);
@@ -435,7 +442,11 @@ impl ShellApp {
             ui.label(egui::RichText::new("The words we send").strong());
             if self.ck_prompt_edited {
                 ui.label(egui::RichText::new("edited").small().color(ui.visuals().warn_fg_color));
-                if ui.small_button(format!("{} re-sync", crate::icons::UNDO)).on_hover_text("Discard edits and recompose from the inputs").clicked() {
+                if ui
+                    .small_button(format!("{} re-sync", crate::icons::UNDO))
+                    .on_hover_text("Discard edits and recompose from the inputs")
+                    .clicked()
+                {
                     self.ck_prompt_edited = false;
                     self.ck_dirty = true;
                 }
@@ -520,16 +531,22 @@ impl ShellApp {
         if recent.is_empty() {
             return;
         }
-        egui::CollapsingHeader::new(format!("{} Recent prompts", crate::icons::UNDO)).id_salt("ck_history").show(ui, |ui| {
-            for prompt in recent {
-                let label = truncate(&prompt, 64);
-                if ui.add(egui::Label::new(egui::RichText::new(label).small()).sense(egui::Sense::click())).on_hover_text(&prompt).clicked() {
-                    self.rs_prompt = prompt;
-                    self.ck_prompt_edited = false;
-                    self.ck_dirty = true;
+        egui::CollapsingHeader::new(format!("{} Recent prompts", crate::icons::UNDO))
+            .id_salt("ck_history")
+            .show(ui, |ui| {
+                for prompt in recent {
+                    let label = truncate(&prompt, 64);
+                    if ui
+                        .add(egui::Label::new(egui::RichText::new(label).small()).sense(egui::Sense::click()))
+                        .on_hover_text(&prompt)
+                        .clicked()
+                    {
+                        self.rs_prompt = prompt;
+                        self.ck_prompt_edited = false;
+                        self.ck_dirty = true;
+                    }
                 }
-            }
-        });
+            });
     }
 
     /// The variant gallery: every generation lands as a card with a thumbnail,
@@ -572,7 +589,11 @@ impl ShellApp {
         }
 
         if self.sheet_preview_active() {
-            ui.label(egui::RichText::new("Showing on canvas — click the thumbnail again to return to the sprite.").small().weak());
+            ui.label(
+                egui::RichText::new("Showing on canvas — click the thumbnail again to return to the sprite.")
+                    .small()
+                    .weak(),
+            );
         }
 
         if let Some((i, act)) = action {
@@ -607,19 +628,39 @@ impl ShellApp {
 
         // Action row.
         ui.horizontal_wrapped(|ui| {
-            if ui.button(format!("{} Re-roll", crate::icons::DICE)).on_hover_text("Same inputs, a new seed").clicked() {
+            if ui
+                .button(format!("{} Re-roll", crate::icons::DICE))
+                .on_hover_text("Same inputs, a new seed")
+                .clicked()
+            {
                 action = Some(CardAction::Reroll);
             }
-            if ui.button(format!("{} More like this", crate::icons::IMAGE)).on_hover_text("Use this result as a Subject reference").clicked() {
+            if ui
+                .button(format!("{} More like this", crate::icons::IMAGE))
+                .on_hover_text("Use this result as a Subject reference")
+                .clicked()
+            {
                 action = Some(CardAction::MoreLikeThis);
             }
-            if ui.button(format!("{} Refine", crate::icons::PENCIL)).on_hover_text("Re-run with an adjusted prompt").clicked() {
+            if ui
+                .button(format!("{} Refine", crate::icons::PENCIL))
+                .on_hover_text("Re-run with an adjusted prompt")
+                .clicked()
+            {
                 action = Some(CardAction::Refine);
             }
-            if ui.button(format!("{} Branch", crate::icons::BRANCH)).on_hover_text("Start a new line from this result").clicked() {
+            if ui
+                .button(format!("{} Branch", crate::icons::BRANCH))
+                .on_hover_text("Start a new line from this result")
+                .clicked()
+            {
                 action = Some(CardAction::Branch);
             }
-            if ui.button(format!("{} Card", crate::icons::CARD)).on_hover_text("Save as a character card in the asset library").clicked() {
+            if ui
+                .button(format!("{} Card", crate::icons::CARD))
+                .on_hover_text("Save as a character card in the asset library")
+                .clicked()
+            {
                 action = Some(CardAction::SaveCard);
             }
             let approve = egui::Button::new(format!("{} Approve as anchor", crate::icons::ANCHOR));
@@ -985,7 +1026,6 @@ impl ShellApp {
             timestamp: 0,
         });
     }
-
 }
 
 /// A per-card action, resolved after the gallery's borrow ends.

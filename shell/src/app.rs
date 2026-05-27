@@ -14,7 +14,7 @@ use eframe::egui;
 use egui_wgpu::RenderState;
 use pixhaus_ai::plugin::{PixelData, VerbRuntime};
 use pixhaus_core::canvas::PixelBuffer;
-use pixhaus_core::project::{CelData, ColorMode, FrameIndex, LoopDirection, PixelBufferId, Rgba, Size};
+use pixhaus_core::project::{CelData, ColorMode, FrameIndex, GroupId, LoopDirection, PixelBufferId, Rgba, Size};
 use pixhaus_core::transforms::CanvasAnchor;
 use pixhaus_core::transforms::normalize::{NormalizeOptions, normalize_frames};
 use pixhaus_render::{Viewport, ViewportRenderer};
@@ -25,7 +25,7 @@ use crate::ai;
 use crate::anim::{self, LoopMarkers, VideoFrame};
 use crate::cockpit::{CockpitCandidate, CockpitReference, CreateView, PendingLineage};
 use crate::commands::{CanvasBufferSwap, CanvasEdit, CanvasOp};
-use crate::document::{DocumentStore, SpriteRef};
+use crate::document::{DocumentStore, LibraryRow, SpriteRef};
 use crate::keymap::{CommandId, Keymap};
 use crate::settings::SettingsTab;
 
@@ -384,8 +384,14 @@ pub struct ShellApp {
     new_sprite_custom: bool,
     /// Draft color mode for the new-sprite dialog.
     new_sprite_color: ColorMode,
-    /// The sprite row being renamed inline, with its draft text.
-    renaming: Option<(SpriteRef, String)>,
+    /// The sprite row being renamed inline: address, draft text, and a one-shot
+    /// "request focus on the next frame" flag (focus is requested once, not
+    /// every frame, so the editor's `lost_focus` can fire on Enter/click-away).
+    renaming: Option<(SpriteRef, String, bool)>,
+    /// The folder row being renamed inline: id, draft text, one-shot focus flag.
+    renaming_group: Option<(GroupId, String, bool)>,
+    /// Folders whose subtree is collapsed in the library panel (UI-only state).
+    collapsed_groups: HashSet<GroupId>,
     /// The sprite awaiting delete confirmation.
     confirm_delete: Option<SpriteRef>,
     /// Whether the resize-canvas dialog is open.
@@ -511,6 +517,8 @@ impl ShellApp {
             new_sprite_custom: !is_preset_size(last_w, last_h),
             new_sprite_color: ColorMode::Rgba,
             renaming: None,
+            renaming_group: None,
+            collapsed_groups: HashSet::new(),
             confirm_delete: None,
             resize_open: false,
             resize_w: DEFAULT_CANVAS.width,
@@ -649,84 +657,232 @@ impl ShellApp {
         applied
     }
 
-    /// Left panel: the sprite library — create and select sprites.
+    /// Left panel: the sprite library as a collapsible folder tree. Toolbar to
+    /// create sprites/folders; rows carry context-menu CRUD; drag a sprite onto
+    /// a folder to file it, or a folder onto another to nest it, or onto the
+    /// empty area to send it to the top level.
+    #[allow(clippy::too_many_lines)] // one cohesive panel: render loop + action dispatch
     fn library_panel(&mut self, ui: &mut egui::Ui) {
         ui.heading("Library");
         ui.add_space(4.0);
 
-        if ui.button(format!("{} New sprite", crate::icons::ADD)).clicked() {
-            self.open_new_sprite_dialog();
-        }
-
+        let mut new_sprite = false;
+        let mut new_folder = false;
+        ui.horizontal(|ui| {
+            new_sprite = ui.button(format!("{} New sprite", crate::icons::ADD)).clicked();
+            new_folder = ui.button(format!("{} New folder", crate::icons::GROUP)).clicked();
+        });
         ui.separator();
 
-        let items = self.doc.sprite_list();
+        // `library_rows` returns owned rows, so `self` is free to mutate inside
+        // the render closures. Collect actions, apply them after the loop.
+        let rows = self.doc.library_rows(&self.collapsed_groups);
         let mut select: Option<SpriteRef> = None;
-        let mut rename_commit: Option<SpriteRef> = None;
+        let mut toggle_collapse: Option<GroupId> = None;
         let mut cancel_rename = false;
-        let mut to_rename: Option<(SpriteRef, String)> = None;
+        let mut sprite_rename_commit: Option<SpriteRef> = None;
+        let mut group_rename_commit: Option<GroupId> = None;
+        let mut start_sprite_rename: Option<(SpriteRef, String)> = None;
+        let mut start_group_rename: Option<(GroupId, String)> = None;
         let mut to_duplicate: Option<SpriteRef> = None;
-        let mut to_move: Option<(SpriteRef, bool)> = None;
         let mut to_delete: Option<SpriteRef> = None;
+        let mut sprite_move: Option<(SpriteRef, bool)> = None;
+        let mut group_move: Option<(GroupId, bool)> = None;
+        let mut group_delete: Option<GroupId> = None;
+        let mut new_subfolder: Option<GroupId> = None;
+        let mut reparent_sprite: Option<(SpriteRef, Option<GroupId>)> = None;
+        let mut reparent_group: Option<(GroupId, Option<GroupId>)> = None;
 
-        for item in &items {
-            if let Some((rename_ref, draft)) = self.renaming.as_mut() {
-                if *rename_ref == item.sprite_ref {
-                    // Inline rename editor: Enter commits, Escape cancels.
-                    let resp = ui.add(egui::TextEdit::singleline(draft).desired_width(f32::INFINITY));
-                    resp.request_focus();
-                    if resp.lost_focus() {
-                        if ui.input(|i| i.key_pressed(egui::Key::Escape)) {
-                            cancel_rename = true;
-                        } else {
-                            rename_commit = Some(item.sprite_ref);
+        for row in &rows {
+            match row {
+                LibraryRow::Group {
+                    id,
+                    name,
+                    depth,
+                    collapsed,
+                    has_children,
+                } => {
+                    let (id, depth, collapsed, has_children) = (*id, *depth, *collapsed, *has_children);
+                    let ((), payload) = crate::dnd::drop_target::<LibraryDrag, _>(ui, crate::dnd::DropHint::Into, |ui| {
+                        ui.horizontal(|ui| {
+                            ui.add_space(f32::from(depth) * 14.0);
+                            let chevron = if collapsed { crate::icons::RIGHT } else { crate::icons::DOWN };
+                            if ui.add_enabled(has_children, egui::Button::new(chevron).frame(false)).clicked() {
+                                toggle_collapse = Some(id);
+                            }
+                            if let Some((gid, draft, needs_focus)) = self.renaming_group.as_mut() {
+                                if *gid == id {
+                                    let resp = ui.add(egui::TextEdit::singleline(draft).desired_width(f32::INFINITY));
+                                    if *needs_focus {
+                                        resp.request_focus();
+                                        *needs_focus = false;
+                                    }
+                                    if resp.lost_focus() {
+                                        if ui.input(|i| i.key_pressed(egui::Key::Escape)) {
+                                            cancel_rename = true;
+                                        } else {
+                                            group_rename_commit = Some(id);
+                                        }
+                                    }
+                                    return;
+                                }
+                            }
+                            let label = format!("{} {}", crate::icons::GROUP, name);
+                            // One widget senses both click (toggle) and drag (nest); a clean
+                            // click stays a click because `drag_started` needs pointer motion.
+                            let resp = ui.add(egui::Button::selectable(false, label).sense(egui::Sense::click_and_drag()));
+                            if resp.clicked() {
+                                toggle_collapse = Some(id);
+                            }
+                            resp.dnd_set_drag_payload(LibraryDrag::Group(id));
+                            resp.context_menu(|ui| {
+                                if ui.button(format!("{} Rename", crate::icons::RENAME)).clicked() {
+                                    start_group_rename = Some((id, name.clone()));
+                                    ui.close();
+                                }
+                                if ui.button(format!("{} New subfolder", crate::icons::ADD)).clicked() {
+                                    new_subfolder = Some(id);
+                                    ui.close();
+                                }
+                                ui.separator();
+                                if ui.button(format!("{} Move up", crate::icons::UP)).clicked() {
+                                    group_move = Some((id, true));
+                                    ui.close();
+                                }
+                                if ui.button(format!("{} Move down", crate::icons::DOWN)).clicked() {
+                                    group_move = Some((id, false));
+                                    ui.close();
+                                }
+                                ui.separator();
+                                if ui.button(format!("{} Delete folder", crate::icons::TRASH)).clicked() {
+                                    group_delete = Some(id);
+                                    ui.close();
+                                }
+                            });
+                        });
+                    });
+                    if let Some(payload) = payload {
+                        match *payload {
+                            LibraryDrag::Sprite(s) => reparent_sprite = Some((s, Some(id))),
+                            LibraryDrag::Group(g) => reparent_group = Some((g, Some(id))),
                         }
                     }
-                    continue;
+                }
+                LibraryRow::Sprite {
+                    sprite_ref,
+                    name,
+                    canvas,
+                    selected,
+                    depth,
+                } => {
+                    let (sprite_ref, depth) = (*sprite_ref, *depth);
+                    ui.horizontal(|ui| {
+                        // Indent past the chevron column so sprites line up under folders.
+                        ui.add_space(f32::from(depth) * 14.0 + 14.0);
+                        if let Some((rref, draft, needs_focus)) = self.renaming.as_mut() {
+                            if *rref == sprite_ref {
+                                let resp = ui.add(egui::TextEdit::singleline(draft).desired_width(f32::INFINITY));
+                                if *needs_focus {
+                                    resp.request_focus();
+                                    *needs_focus = false;
+                                }
+                                if resp.lost_focus() {
+                                    if ui.input(|i| i.key_pressed(egui::Key::Escape)) {
+                                        cancel_rename = true;
+                                    } else {
+                                        sprite_rename_commit = Some(sprite_ref);
+                                    }
+                                }
+                                return;
+                            }
+                        }
+                        let label = format!("{}  ({}x{})", name, canvas.width, canvas.height);
+                        // One widget senses both click (select) and drag (file into a folder).
+                        let resp = ui.add(egui::Button::selectable(*selected, label).sense(egui::Sense::click_and_drag()));
+                        if resp.clicked() {
+                            select = Some(sprite_ref);
+                        }
+                        resp.dnd_set_drag_payload(LibraryDrag::Sprite(sprite_ref));
+                        resp.context_menu(|ui| {
+                            if ui.button(format!("{} Rename", crate::icons::RENAME)).clicked() {
+                                start_sprite_rename = Some((sprite_ref, name.clone()));
+                                ui.close();
+                            }
+                            if ui.button(format!("{} Duplicate", crate::icons::DUPLICATE)).clicked() {
+                                to_duplicate = Some(sprite_ref);
+                                ui.close();
+                            }
+                            ui.separator();
+                            if ui.button(format!("{} Move up", crate::icons::UP)).clicked() {
+                                sprite_move = Some((sprite_ref, true));
+                                ui.close();
+                            }
+                            if ui.button(format!("{} Move down", crate::icons::DOWN)).clicked() {
+                                sprite_move = Some((sprite_ref, false));
+                                ui.close();
+                            }
+                            ui.separator();
+                            if ui.button(format!("{} Delete", crate::icons::TRASH)).clicked() {
+                                to_delete = Some(sprite_ref);
+                                ui.close();
+                            }
+                        });
+                    });
                 }
             }
-
-            let label = format!("{}  ({}x{})", item.name, item.canvas.width, item.canvas.height);
-            let resp = ui.selectable_label(item.selected, label);
-            if resp.clicked() {
-                select = Some(item.sprite_ref);
-            }
-            resp.context_menu(|ui| {
-                if ui.button(format!("{} Rename", crate::icons::RENAME)).clicked() {
-                    to_rename = Some((item.sprite_ref, item.name.clone()));
-                    ui.close();
-                }
-                if ui.button(format!("{} Duplicate", crate::icons::DUPLICATE)).clicked() {
-                    to_duplicate = Some(item.sprite_ref);
-                    ui.close();
-                }
-                ui.separator();
-                if ui.button(format!("{} Move up", crate::icons::UP)).clicked() {
-                    to_move = Some((item.sprite_ref, true));
-                    ui.close();
-                }
-                if ui.button(format!("{} Move down", crate::icons::DOWN)).clicked() {
-                    to_move = Some((item.sprite_ref, false));
-                    ui.close();
-                }
-                ui.separator();
-                if ui.button(format!("{} Delete", crate::icons::TRASH)).clicked() {
-                    to_delete = Some(item.sprite_ref);
-                    ui.close();
-                }
-            });
         }
 
+        // A slim strip, shown only while dragging, files the item at top level.
+        if let Some(payload) = crate::dnd::top_level_strip::<LibraryDrag>(ui, "Move to top level") {
+            match *payload {
+                LibraryDrag::Sprite(s) => reparent_sprite = Some((s, None)),
+                LibraryDrag::Group(g) => reparent_group = Some((g, None)),
+            }
+        }
+
+        // ---- apply collected actions ----
+        if new_sprite {
+            self.open_new_sprite_dialog();
+        }
+        if new_folder {
+            if let Some(id) = self.doc.create_group("New folder", None) {
+                self.renaming = None;
+                self.renaming_group = Some((id, "New folder".to_owned(), true));
+            }
+        }
+        if let Some(parent) = new_subfolder {
+            if let Some(id) = self.doc.create_group("New folder", Some(parent)) {
+                self.collapsed_groups.remove(&parent);
+                self.renaming = None;
+                self.renaming_group = Some((id, "New folder".to_owned(), true));
+            }
+        }
         if cancel_rename {
             self.renaming = None;
+            self.renaming_group = None;
         }
-        if let Some(r) = rename_commit {
-            if let Some((_, name)) = self.renaming.take() {
+        if let Some(r) = sprite_rename_commit {
+            if let Some((_, name, _)) = self.renaming.take() {
                 self.doc.rename_sprite(r, &name);
             }
         }
-        if let Some((r, name)) = to_rename {
-            self.renaming = Some((r, name));
+        if let Some(g) = group_rename_commit {
+            if let Some((_, name, _)) = self.renaming_group.take() {
+                self.doc.rename_group(g, &name);
+            }
+        }
+        if let Some((r, name)) = start_sprite_rename {
+            self.renaming = Some((r, name, true));
+            self.renaming_group = None;
+        }
+        if let Some((g, name)) = start_group_rename {
+            self.renaming_group = Some((g, name, true));
+            self.renaming = None;
+        }
+        if let Some(g) = toggle_collapse {
+            if !self.collapsed_groups.remove(&g) {
+                self.collapsed_groups.insert(g);
+            }
         }
         if let Some(r) = to_duplicate {
             self.exit_sheet_preview();
@@ -735,8 +891,20 @@ impl ShellApp {
                 self.refresh_canvas(true);
             }
         }
-        if let Some((r, up)) = to_move {
+        if let Some((r, up)) = sprite_move {
             self.doc.move_sprite(r, up);
+        }
+        if let Some((g, up)) = group_move {
+            self.doc.move_group(g, up);
+        }
+        if let Some(g) = group_delete {
+            self.doc.delete_group(g);
+        }
+        if let Some((s, group)) = reparent_sprite {
+            self.doc.move_sprite_to_group(s, group);
+        }
+        if let Some((g, parent)) = reparent_group {
+            self.doc.set_group_parent(g, parent);
         }
         if let Some(r) = to_delete {
             self.confirm_delete = Some(r);
@@ -2046,6 +2214,14 @@ impl ShellApp {
         }
         self.refresh_canvas(false);
     }
+}
+
+/// A library drag payload: a sprite (filed into a folder) or a folder (nested
+/// under another). One type so a drop zone accepts either via `dnd_drop_zone`.
+#[derive(Clone, Copy)]
+enum LibraryDrag {
+    Sprite(SpriteRef),
+    Group(GroupId),
 }
 
 /// Whether `(w, h)` exactly matches one of the [`SIZE_PRESETS`] entries.

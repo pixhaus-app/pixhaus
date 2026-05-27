@@ -3,14 +3,13 @@
 //! owner, mutated through `&mut self` — no locks (matches the repo rule against
 //! `Arc<Mutex<>>` away from the app boundary).
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
-use pixhaus_core::canvas::blend::blend;
-use pixhaus_core::canvas::{LayerInput, PixelBuffer, composite_layers, composite_onto};
+use pixhaus_core::canvas::{LayerInput, PixelBuffer, composite_layers, composite_onto, composite_region};
 use pixhaus_core::project::{
-    ActiveTarget, AiMetadata, Animation, AnimationId, BlendMode, Cel, CelData, Entity, EntityContent, EntityDefaults, EntityId, EntityKind, Frame, FrameIndex,
-    FrameRange, FrameTag, Layer, LayerId, LayerKind, LoopDirection, NamedSprite, Palette, PaletteId, PixelBufferId, Project, Rgba, Size, Sprite, SpriteId,
-    StateId, UserData,
+    ActiveTarget, AiMetadata, Animation, AnimationId, BlendMode, Cel, CelData, Entity, EntityContent, EntityDefaults, EntityGroup, EntityId, EntityKind, Frame,
+    FrameIndex, FrameRange, FrameTag, GroupId, Layer, LayerId, LayerKind, LoopDirection, NamedSprite, Palette, PaletteId, PixelBufferId, Project, Rgba, Size,
+    Sprite, SpriteId, StateId, UserData,
 };
 use pixhaus_core::transforms::normalize::{ChromaKey, chroma_key};
 
@@ -26,16 +25,35 @@ pub struct SpriteRef {
     pub state_id: StateId,
 }
 
-/// One row in the library panel.
-pub struct SpriteListItem {
-    /// Address used to select the sprite.
-    pub sprite_ref: SpriteRef,
-    /// Display name.
-    pub name: String,
-    /// Canvas size.
-    pub canvas: Size,
-    /// Whether this is the active sprite.
-    pub selected: bool,
+/// One rendered row of the library tree, flattened depth-first with folders
+/// before sprites at each level. Built by [`DocumentStore::library_rows`].
+pub enum LibraryRow {
+    /// A folder header.
+    Group {
+        /// Folder id.
+        id: GroupId,
+        /// Display name.
+        name: String,
+        /// Indent depth (0 = top level).
+        depth: u16,
+        /// Whether the folder is collapsed (its subtree is omitted).
+        collapsed: bool,
+        /// Whether the folder contains any sprites or sub-folders.
+        has_children: bool,
+    },
+    /// A sprite row.
+    Sprite {
+        /// Address used to select the sprite.
+        sprite_ref: SpriteRef,
+        /// Display name.
+        name: String,
+        /// Canvas size.
+        canvas: Size,
+        /// Whether this is the active sprite.
+        selected: bool,
+        /// Indent depth (0 = top level).
+        depth: u16,
+    },
 }
 
 /// UI-thread document state. Single owner of the project.
@@ -303,22 +321,138 @@ impl DocumentStore {
         Some(new_ref)
     }
 
-    /// Moves the sprite's library entity one slot toward the front (`up`) or
-    /// back, reordering the library list. A no-op at the ends.
+    /// Moves the sprite one slot toward the front (`up`) or back **among its
+    /// folder siblings** — entities sharing the same `group_id` — so ordering
+    /// stays sane once sprites live in folders. A no-op at the ends.
     pub fn move_sprite(&mut self, sprite_ref: SpriteRef, up: bool) {
         let entities = &mut self.project.library.entities;
         let Some(idx) = entities.iter().position(|e| e.id == sprite_ref.entity_id) else {
             return;
         };
+        let group = entities[idx].group_id;
         let target = if up {
-            idx.checked_sub(1)
-        } else if idx + 1 < entities.len() {
-            Some(idx + 1)
+            entities[..idx].iter().rposition(|e| e.group_id == group)
         } else {
-            None
+            entities[idx + 1..].iter().position(|e| e.group_id == group).map(|off| idx + 1 + off)
         };
         if let Some(target) = target {
             entities.swap(idx, target);
+        }
+    }
+
+    /// Creates a folder under `parent_id` (or top level when `None`) and returns
+    /// its id. Rejects an empty name or a missing parent.
+    pub fn create_group(&mut self, name: impl Into<String>, parent_id: Option<GroupId>) -> Option<GroupId> {
+        let name = name.into();
+        if name.trim().is_empty() {
+            return None;
+        }
+        if let Some(pid) = parent_id {
+            if !self.project.library.groups.iter().any(|g| g.id == pid) {
+                return None;
+            }
+        }
+        let id = GroupId::new(self.alloc_id());
+        self.project.library.groups.push(EntityGroup {
+            id,
+            name,
+            parent_id,
+            user_data: UserData::default(),
+        });
+        Some(id)
+    }
+
+    /// Renames a folder. A whitespace-only name is rejected (no-op).
+    pub fn rename_group(&mut self, group_id: GroupId, new_name: &str) {
+        let name = new_name.trim();
+        if name.is_empty() {
+            return;
+        }
+        if let Some(group) = self.project.library.groups.iter_mut().find(|g| g.id == group_id) {
+            name.clone_into(&mut group.name);
+        }
+    }
+
+    /// Deletes a folder without losing its contents: sprites and sub-folders are
+    /// re-parented to the deleted folder's parent (the legacy keep-entities
+    /// behavior), then the folder is removed.
+    pub fn delete_group(&mut self, group_id: GroupId) {
+        let Some(parent) = self.project.library.groups.iter().find(|g| g.id == group_id).map(|g| g.parent_id) else {
+            return;
+        };
+        for entity in &mut self.project.library.entities {
+            if entity.group_id == Some(group_id) {
+                entity.group_id = parent;
+            }
+        }
+        for group in &mut self.project.library.groups {
+            if group.parent_id == Some(group_id) {
+                group.parent_id = parent;
+            }
+        }
+        self.project.library.groups.retain(|g| g.id != group_id);
+    }
+
+    /// Re-parents a folder (drag-to-nest). Rejects a self-parent, a missing
+    /// parent, or any move that would create a cycle. Returns whether it applied.
+    pub fn set_group_parent(&mut self, group_id: GroupId, parent_id: Option<GroupId>) -> bool {
+        if !self.project.library.groups.iter().any(|g| g.id == group_id) {
+            return false;
+        }
+        if let Some(pid) = parent_id {
+            if pid == group_id {
+                return false;
+            }
+            // Walk the prospective parent's ancestry; hitting `group_id` is a cycle.
+            let mut cursor = Some(pid);
+            while let Some(cid) = cursor {
+                if cid == group_id {
+                    return false;
+                }
+                cursor = self.project.library.groups.iter().find(|g| g.id == cid).and_then(|g| g.parent_id);
+            }
+            if !self.project.library.groups.iter().any(|g| g.id == pid) {
+                return false;
+            }
+        }
+        if let Some(group) = self.project.library.groups.iter_mut().find(|g| g.id == group_id) {
+            group.parent_id = parent_id;
+        }
+        true
+    }
+
+    /// Moves a sprite into a folder (drag-to-organize), or to top level when
+    /// `group_id` is `None`. Rejects a missing target folder. Returns whether
+    /// it applied.
+    pub fn move_sprite_to_group(&mut self, sprite_ref: SpriteRef, group_id: Option<GroupId>) -> bool {
+        if let Some(gid) = group_id {
+            if !self.project.library.groups.iter().any(|g| g.id == gid) {
+                return false;
+            }
+        }
+        if let Some(entity) = self.project.library.entities.iter_mut().find(|e| e.id == sprite_ref.entity_id) {
+            entity.group_id = group_id;
+            true
+        } else {
+            false
+        }
+    }
+
+    /// Moves a folder one slot toward the front (`up`) or back among its sibling
+    /// folders (those sharing the same parent). A no-op at the ends.
+    pub fn move_group(&mut self, group_id: GroupId, up: bool) {
+        let groups = &mut self.project.library.groups;
+        let Some(idx) = groups.iter().position(|g| g.id == group_id) else {
+            return;
+        };
+        let parent = groups[idx].parent_id;
+        let target = if up {
+            groups[..idx].iter().rposition(|g| g.parent_id == parent)
+        } else {
+            groups[idx + 1..].iter().position(|g| g.parent_id == parent).map(|off| idx + 1 + off)
+        };
+        if let Some(target) = target {
+            groups.swap(idx, target);
         }
     }
 
@@ -477,19 +611,63 @@ impl DocumentStore {
         self.project.sprite_mut(id)
     }
 
-    /// Rows for the library panel, in library order.
+    /// The library flattened into renderable rows: folders before sprites at
+    /// each level, depth-first, skipping the subtrees of folders in `collapsed`.
+    /// Folder order follows the `groups` Vec; sprite order follows the
+    /// `entities` Vec. A folder or sprite whose parent group no longer exists is
+    /// shown at top level (defensive against a dangling `parent_id`/`group_id`).
     #[must_use]
-    pub fn sprite_list(&self) -> Vec<SpriteListItem> {
+    pub fn library_rows(&self, collapsed: &HashSet<GroupId>) -> Vec<LibraryRow> {
         let active = self.project.active_sprite_id();
-        self.project
-            .sprites_iter()
-            .map(|(named, entity_id)| SpriteListItem {
-                sprite_ref: SpriteRef { entity_id, state_id: named.id },
-                name: named.sprite.name.clone(),
-                canvas: named.sprite.canvas,
-                selected: active == Some(named.sprite.id),
-            })
-            .collect()
+        let mut rows = Vec::new();
+        self.push_library_level(None, 0, collapsed, active, &mut rows);
+        rows
+    }
+
+    /// Recursive helper for [`Self::library_rows`]: emit the folders and sprites
+    /// whose effective parent is `parent`, recursing into expanded folders.
+    fn push_library_level(&self, parent: Option<GroupId>, depth: u16, collapsed: &HashSet<GroupId>, active: Option<SpriteId>, rows: &mut Vec<LibraryRow>) {
+        let lib = &self.project.library;
+        for group in lib.groups.iter().filter(|g| self.effective_parent(g) == parent) {
+            let is_collapsed = collapsed.contains(&group.id);
+            let has_children = lib.groups.iter().any(|c| c.parent_id == Some(group.id)) || lib.entities.iter().any(|e| e.group_id == Some(group.id));
+            rows.push(LibraryRow::Group {
+                id: group.id,
+                name: group.name.clone(),
+                depth,
+                collapsed: is_collapsed,
+                has_children,
+            });
+            if !is_collapsed {
+                self.push_library_level(Some(group.id), depth + 1, collapsed, active, rows);
+            }
+        }
+        for (named, entity_id) in self.project.sprites_iter() {
+            let group = lib
+                .entities
+                .iter()
+                .find(|e| e.id == entity_id)
+                .and_then(|e| e.group_id)
+                .filter(|gid| lib.groups.iter().any(|g| g.id == *gid));
+            if group == parent {
+                rows.push(LibraryRow::Sprite {
+                    sprite_ref: SpriteRef { entity_id, state_id: named.id },
+                    name: named.sprite.name.clone(),
+                    canvas: named.sprite.canvas,
+                    selected: active == Some(named.sprite.id),
+                    depth,
+                });
+            }
+        }
+    }
+
+    /// A group's parent, treating a dangling `parent_id` (parent removed) as
+    /// top level so no folder is ever orphaned out of the tree.
+    fn effective_parent(&self, group: &EntityGroup) -> Option<GroupId> {
+        match group.parent_id {
+            Some(pid) if self.project.library.groups.iter().any(|g| g.id == pid) => Some(pid),
+            _ => None,
+        }
     }
 
     /// Composites the active sprite's frame at `frame` into a flat RGBA buffer
@@ -506,9 +684,9 @@ impl DocumentStore {
         let height = sprite.canvas.height;
 
         let mut inputs: Vec<LayerInput<'_>> = Vec::new();
-        for layer in &sprite.layers {
-            let source = sprite.resolve_source_frame(layer.id, frame);
-            let Some(cel) = sprite.cel(layer.id, source) else {
+        for entry in sprite.composite_order() {
+            let source = sprite.resolve_source_frame(entry.layer, frame);
+            let Some(cel) = sprite.cel(entry.layer, source) else {
                 continue;
             };
             let CelData::Raster { buffer, .. } = &cel.data else {
@@ -519,9 +697,9 @@ impl DocumentStore {
             };
             inputs.push(LayerInput {
                 buffer: pixels,
-                mode: layer.blend_mode,
-                opacity: layer.opacity,
-                visible: layer.visible,
+                mode: entry.mode,
+                opacity: entry.opacity,
+                visible: entry.visible,
             });
         }
 
@@ -550,34 +728,30 @@ impl DocumentStore {
             return;
         };
         let frame = self.active_frame;
-        let x1 = (x + w).min(dst.width());
-        let y1 = (y + h).min(dst.height());
-        for py in y..y1 {
-            for px in x..x1 {
-                let mut acc = Rgba::transparent();
-                for layer in &sprite.layers {
-                    if !layer.visible || layer.opacity == 0 {
-                        continue;
-                    }
-                    let source = sprite.resolve_source_frame(layer.id, frame);
-                    let Some(cel) = sprite.cel(layer.id, source) else {
-                        continue;
-                    };
-                    let CelData::Raster { buffer, .. } = &cel.data else {
-                        continue;
-                    };
-                    let Some(buf) = self.pixel_buffers.get(buffer) else {
-                        continue;
-                    };
-                    let Some(src) = buf.pixel(px, py) else { continue };
-                    if src.a == 0 {
-                        continue;
-                    }
-                    acc = blend(layer.blend_mode, src, acc, layer.opacity);
-                }
-                dst.set_pixel(px, py, acc);
-            }
+
+        // Build the layer inputs once (mirroring `composite_frame`), then let
+        // `core` composite just the rect — fanning rows across rayon when the
+        // rect is large enough to be worth it.
+        let mut inputs: Vec<LayerInput<'_>> = Vec::new();
+        for entry in sprite.composite_order() {
+            let source = sprite.resolve_source_frame(entry.layer, frame);
+            let Some(cel) = sprite.cel(entry.layer, source) else {
+                continue;
+            };
+            let CelData::Raster { buffer, .. } = &cel.data else {
+                continue;
+            };
+            let Some(pixels) = self.pixel_buffers.get(buffer) else {
+                continue;
+            };
+            inputs.push(LayerInput {
+                buffer: pixels,
+                mode: entry.mode,
+                opacity: entry.opacity,
+                visible: entry.visible,
+            });
         }
+        composite_region(dst, &inputs, x, y, w, h);
     }
 
     /// Integrates a sequence of full-canvas frames into the active sprite as a
@@ -865,6 +1039,20 @@ impl Default for DocumentStore {
 mod tests {
     use super::*;
 
+    /// Flat `(sprite_ref, name, selected)` view of the visible sprite rows
+    /// (all folders expanded), the test stand-in for the old `sprite_list`.
+    fn sprites(doc: &DocumentStore) -> Vec<(SpriteRef, String, bool)> {
+        doc.library_rows(&HashSet::new())
+            .into_iter()
+            .filter_map(|row| match row {
+                LibraryRow::Sprite {
+                    sprite_ref, name, selected, ..
+                } => Some((sprite_ref, name, selected)),
+                LibraryRow::Group { .. } => None,
+            })
+            .collect()
+    }
+
     #[test]
     fn create_sprite_makes_it_active() {
         let mut doc = DocumentStore::new();
@@ -872,9 +1060,10 @@ mod tests {
         let sprite = doc.active_sprite().expect("active sprite");
         assert_eq!(sprite.name, "hero");
         assert_eq!(sprite.canvas, Size::new(32, 32));
-        assert_eq!(doc.sprite_list().len(), 1);
-        assert!(doc.sprite_list()[0].selected);
-        assert_eq!(doc.sprite_list()[0].sprite_ref, r);
+        let rows = sprites(&doc);
+        assert_eq!(rows.len(), 1);
+        assert!(rows[0].2, "new sprite is selected");
+        assert_eq!(rows[0].0, r);
     }
 
     #[test]
@@ -882,8 +1071,8 @@ mod tests {
         let mut doc = DocumentStore::new();
         doc.create_sprite("a", Size::new(8, 8));
         doc.create_sprite("b", Size::new(8, 8));
-        assert_eq!(doc.sprite_list().len(), 2);
-        let refs: Vec<_> = doc.sprite_list().iter().map(|i| i.sprite_ref).collect();
+        let refs: Vec<_> = sprites(&doc).into_iter().map(|s| s.0).collect();
+        assert_eq!(refs.len(), 2);
         assert_ne!(refs[0].entity_id, refs[1].entity_id);
         assert_ne!(refs[0].state_id, refs[1].state_id);
     }
@@ -1076,7 +1265,7 @@ mod tests {
         let r = doc.create_sprite("hero", Size::new(8, 8));
         doc.rename_sprite(r, "  villain  ");
         assert_eq!(doc.active_sprite().unwrap().name, "villain");
-        assert_eq!(doc.sprite_list()[0].name, "villain");
+        assert_eq!(sprites(&doc)[0].1, "villain");
     }
 
     #[test]
@@ -1094,7 +1283,7 @@ mod tests {
         let b = doc.create_sprite("b", Size::new(8, 8));
         assert_eq!(doc.pixel_buffers.len(), 2);
         doc.delete_sprite(b);
-        assert_eq!(doc.sprite_list().len(), 1);
+        assert_eq!(sprites(&doc).len(), 1);
         assert_eq!(doc.pixel_buffers.len(), 1, "the deleted sprite's buffer is dropped");
         assert_eq!(doc.active_sprite().unwrap().name, "a", "active reassigns to the survivor");
     }
@@ -1104,7 +1293,7 @@ mod tests {
         let mut doc = DocumentStore::new();
         let a = doc.create_sprite("only", Size::new(8, 8));
         doc.delete_sprite(a);
-        assert!(doc.sprite_list().is_empty());
+        assert!(sprites(&doc).is_empty());
         assert!(doc.active_sprite().is_none());
         assert!(doc.pixel_buffers.is_empty());
         assert!(doc.active_layer.is_none());
@@ -1117,7 +1306,7 @@ mod tests {
         assert_eq!(doc.pixel_buffers.len(), 1);
         let dup = doc.duplicate_sprite(a).expect("duplicate");
         assert_ne!(dup.entity_id, a.entity_id);
-        assert_eq!(doc.sprite_list().len(), 2);
+        assert_eq!(sprites(&doc).len(), 2);
         assert_eq!(doc.pixel_buffers.len(), 2, "the copy owns a fresh buffer");
         assert_eq!(doc.active_sprite().unwrap().name, "hero copy");
     }
@@ -1127,13 +1316,78 @@ mod tests {
         let mut doc = DocumentStore::new();
         let a = doc.create_sprite("a", Size::new(8, 8));
         doc.create_sprite("b", Size::new(8, 8));
-        assert_eq!(doc.sprite_list()[0].name, "a");
+        assert_eq!(sprites(&doc)[0].1, "a");
         doc.move_sprite(a, false);
-        assert_eq!(doc.sprite_list()[0].name, "b");
-        assert_eq!(doc.sprite_list()[1].name, "a");
+        assert_eq!(sprites(&doc)[0].1, "b");
+        assert_eq!(sprites(&doc)[1].1, "a");
         // Moving the front item up again is a no-op at the edge.
-        let b_ref = doc.sprite_list()[0].sprite_ref;
+        let b_ref = sprites(&doc)[0].0;
         doc.move_sprite(b_ref, true);
-        assert_eq!(doc.sprite_list()[0].name, "b");
+        assert_eq!(sprites(&doc)[0].1, "b");
+    }
+
+    #[test]
+    fn create_group_validates_name_and_parent() {
+        let mut doc = DocumentStore::new();
+        assert!(doc.create_group("   ", None).is_none(), "empty name rejected");
+        let g = doc.create_group("Characters", None).expect("group created");
+        assert!(doc.create_group("child", Some(g)).is_some(), "valid parent accepted");
+        assert!(doc.create_group("orphan", Some(GroupId::new(9999))).is_none(), "missing parent rejected");
+    }
+
+    #[test]
+    fn delete_group_reparents_contents_to_parent() {
+        let mut doc = DocumentStore::new();
+        let outer = doc.create_group("outer", None).unwrap();
+        let inner = doc.create_group("inner", Some(outer)).unwrap();
+        let sprite = doc.create_sprite("hero", Size::new(8, 8));
+        assert!(doc.move_sprite_to_group(sprite, Some(inner)));
+        // Deleting the inner folder moves its sprite and any child groups up to
+        // `outer` — nothing is lost.
+        doc.delete_group(inner);
+        assert!(doc.project.library.groups.iter().all(|grp| grp.id != inner));
+        let entity_group = doc.project.library.entities.iter().find(|e| e.id == sprite.entity_id).and_then(|e| e.group_id);
+        assert_eq!(entity_group, Some(outer), "sprite re-parented to the deleted folder's parent");
+    }
+
+    #[test]
+    fn set_group_parent_rejects_self_and_cycles() {
+        let mut doc = DocumentStore::new();
+        let a = doc.create_group("a", None).unwrap();
+        let b = doc.create_group("b", Some(a)).unwrap();
+        assert!(!doc.set_group_parent(a, Some(a)), "self-parent rejected");
+        assert!(!doc.set_group_parent(a, Some(b)), "cycle (a under its own descendant b) rejected");
+        let c = doc.create_group("c", None).unwrap();
+        assert!(doc.set_group_parent(c, Some(a)), "valid nest accepted");
+    }
+
+    #[test]
+    fn library_rows_orders_folders_then_sprites_and_honors_collapse() {
+        let mut doc = DocumentStore::new();
+        let folder = doc.create_group("folder", None).unwrap();
+        let loose = doc.create_sprite("loose", Size::new(8, 8));
+        let _ = loose;
+        let inside = doc.create_sprite("inside", Size::new(8, 8));
+        assert!(doc.move_sprite_to_group(inside, Some(folder)));
+
+        // Expanded: folder header (depth 0), its sprite (depth 1), then the
+        // top-level loose sprite.
+        let rows = doc.library_rows(&HashSet::new());
+        assert!(matches!(
+            &rows[0],
+            LibraryRow::Group {
+                depth: 0,
+                has_children: true,
+                ..
+            }
+        ));
+        assert!(matches!(&rows[1], LibraryRow::Sprite { depth: 1, name, .. } if name == "inside"));
+        assert!(matches!(&rows[2], LibraryRow::Sprite { depth: 0, name, .. } if name == "loose"));
+
+        // Collapsed: the folder's subtree is omitted.
+        let collapsed: HashSet<GroupId> = [folder].into_iter().collect();
+        let rows = doc.library_rows(&collapsed);
+        assert!(matches!(&rows[0], LibraryRow::Group { collapsed: true, .. }));
+        assert!(!rows.iter().any(|r| matches!(r, LibraryRow::Sprite { name, .. } if name == "inside")));
     }
 }

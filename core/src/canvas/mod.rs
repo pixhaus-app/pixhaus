@@ -23,6 +23,8 @@ pub mod tools;
 
 pub use blend::{blend, blend_normal, mul_un8, premix};
 pub use buffer::{IndexedBuffer, PixelBuffer, RGBA_BYTES_PER_PIXEL};
-pub use composite::{LayerInput, composite_layers, composite_onto};
+pub use composite::{LayerInput, composite_layers, composite_onto, composite_region};
 pub use error::{Error, Result};
-pub use tools::{BrushShape, draw_ellipse, draw_filled_ellipse, draw_filled_rect, draw_line, draw_rect, draw_stroke, flood_fill, paint_brush, stamp_segment};
+pub use tools::{
+    BrushShape, brush_covers, draw_ellipse, draw_filled_ellipse, draw_filled_rect, draw_line, draw_rect, draw_stroke, flood_fill, paint_brush, stamp_segment,
+};

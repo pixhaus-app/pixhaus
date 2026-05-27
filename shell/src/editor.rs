@@ -46,15 +46,6 @@ pub enum Tool {
     Move,
 }
 
-impl Tool {
-    /// Whether the tool paints into a cel (so it needs a drawable cel and an
-    /// undo entry on commit).
-    #[must_use]
-    pub fn paints(self) -> bool {
-        matches!(self, Tool::Pencil | Tool::Eraser | Tool::Fill | Tool::Line | Tool::Rectangle | Tool::Ellipse)
-    }
-}
-
 /// How the palette panel sorts swatches when asked.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum PaletteSort {
@@ -124,21 +115,42 @@ pub struct StrokeSession {
     pub erase: bool,
     /// Whether the pencil pixel-perfect pass applies on commit.
     pub pixel_perfect: bool,
-    /// Inclusive dirty bounds in canvas pixels, or `None` until first stamp.
+    /// Inclusive dirty bounds in canvas pixels over the whole stroke, or `None`
+    /// until first stamp. Read once at commit to bound the undo snapshot.
     pub dirty: Option<(u32, u32, u32, u32)>,
+    /// Inclusive dirty bounds accumulated *since the last upload*, or `None`
+    /// when nothing is pending. Separate from [`Self::dirty`] so the per-move
+    /// GPU upload and recomposite are bounded by the latest dab's footprint, not
+    /// the whole stroke — drawing stays O(brush), not O(stroke), at any canvas
+    /// size (the 8K constraint).
+    pub pending: Option<(u32, u32, u32, u32)>,
 }
 
 impl StrokeSession {
-    /// Expands the dirty bounds to include the rect `(x, y, w, h)`.
+    /// Expands both the cumulative dirty bounds and the pending (since-last-
+    /// upload) bounds to include the rect `(x, y, w, h)`.
     pub fn mark_dirty(&mut self, x: u32, y: u32, w: u32, h: u32) {
         if w == 0 || h == 0 {
             return;
         }
         let (x1, y1) = (x + w - 1, y + h - 1);
-        self.dirty = Some(match self.dirty {
-            None => (x, y, x1, y1),
-            Some((ax, ay, bx, by)) => (ax.min(x), ay.min(y), bx.max(x1), by.max(y1)),
-        });
+        self.dirty = Some(union_bounds(self.dirty, (x, y, x1, y1)));
+        self.pending = Some(union_bounds(self.pending, (x, y, x1, y1)));
+    }
+
+    /// Returns the pending dirty rect as `(x, y, w, h)` and clears it, so the
+    /// next move starts fresh. `None` when nothing is pending.
+    pub fn take_pending(&mut self) -> Option<(u32, u32, u32, u32)> {
+        let (x, y, x1, y1) = self.pending.take()?;
+        Some((x, y, x1 - x + 1, y1 - y + 1))
+    }
+}
+
+/// Unions an optional inclusive bounds box with `(x, y, x1, y1)`.
+fn union_bounds(current: Option<(u32, u32, u32, u32)>, (x, y, x1, y1): (u32, u32, u32, u32)) -> (u32, u32, u32, u32) {
+    match current {
+        None => (x, y, x1, y1),
+        Some((ax, ay, bx, by)) => (ax.min(x), ay.min(y), bx.max(x1), by.max(y1)),
     }
 }
 
@@ -148,23 +160,39 @@ impl StrokeSession {
 pub struct ShapeDrag {
     /// Buffer being drawn into.
     pub buffer_id: PixelBufferId,
+    /// The shape tool driving this drag (Line / Rectangle / Ellipse), so the
+    /// preview overlay can draw the matching geometry.
+    pub tool: Tool,
     /// Clean snapshot restored before each preview redraw.
     pub before: PixelBuffer,
     /// Press point in canvas pixels.
     pub start: [i32; 2],
     /// Current pointer point in canvas pixels.
     pub current: [i32; 2],
+    /// Inclusive bounds of the previous preview, restored from `before` before
+    /// the next redraw so each move touches only the old and new footprints,
+    /// not the whole canvas.
+    pub last_dirty: Option<(u32, u32, u32, u32)>,
 }
 
 /// An in-progress move of the selected pixels.
 pub struct MoveDrag {
     /// Buffer being moved within.
     pub buffer_id: PixelBufferId,
-    /// Buffer contents before the move (for undo and per-frame restore).
+    /// Buffer contents before the move (for the undo "before" snapshot).
     pub before: PixelBuffer,
+    /// The background with the selection lifted out (transparent in the
+    /// selection). Per-move restore reads from this so the move never recopies
+    /// the whole buffer.
+    pub base: PixelBuffer,
     /// Lifted pixels (the selection's content at press), as a full-canvas
     /// buffer with everything outside the selection transparent.
     pub lifted: PixelBuffer,
+    /// Inclusive bounds of the selection at press (pre-offset), used to bound
+    /// per-move stamping and the dirty rect. `None` for an empty selection.
+    pub sel_bounds: Option<(u32, u32, u32, u32)>,
+    /// Inclusive bounds of the previous frame's stamped footprint.
+    pub last_dirty: Option<(u32, u32, u32, u32)>,
     /// Press point in canvas pixels.
     pub start: [i32; 2],
     /// Accumulated integer offset.
@@ -224,8 +252,10 @@ pub struct EditorState {
     pub cel_size: f32,
     /// Timeline: draft name for a new frame tag.
     pub new_tag_name: String,
-    /// Layers panel: in-progress inline rename `(layer, draft)`.
-    pub layer_rename: Option<(LayerId, String)>,
+    /// Layers panel: in-progress inline rename `(layer, draft, needs_focus)`.
+    /// `needs_focus` is set when the rename starts so the text field grabs
+    /// focus on its first frame.
+    pub layer_rename: Option<(LayerId, String, bool)>,
 }
 
 impl Default for EditorState {
@@ -298,4 +328,57 @@ pub fn to_color32(c: Rgba) -> egui::Color32 {
 pub fn from_color32(c: egui::Color32) -> Rgba {
     let [r, g, b, a] = c.to_array();
     Rgba::new(r, g, b, a)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn session() -> StrokeSession {
+        StrokeSession {
+            buffer_id: PixelBufferId::new(1),
+            before: PixelBuffer::empty(),
+            points: Vec::new(),
+            last_point: None,
+            color: Rgba::opaque(255, 0, 0),
+            shape: BrushShape::Circle,
+            size: 40,
+            mirror_x: false,
+            mirror_y: false,
+            erase: false,
+            pixel_perfect: false,
+            dirty: None,
+            pending: None,
+        }
+    }
+
+    #[test]
+    fn pending_is_bounded_per_move_while_dirty_accumulates() {
+        // The bug this guards: per-move upload must track only the footprint
+        // since the last upload, not the whole-stroke bounding box.
+        let mut s = session();
+
+        // Move 1: a dab near the origin.
+        s.mark_dirty(0, 0, 48, 48);
+        assert_eq!(s.take_pending(), Some((0, 0, 48, 48)), "first move uploads its own footprint");
+        assert!(s.take_pending().is_none(), "pending resets after it is taken");
+
+        // Move 2: a dab far away. Pending must be only this dab — NOT the union
+        // spanning back to the origin (that union is what caused O(stroke) lag).
+        s.mark_dirty(900, 900, 48, 48);
+        assert_eq!(s.take_pending(), Some((900, 900, 48, 48)), "second move uploads only its own footprint");
+
+        // The cumulative dirty (used for the undo snapshot at commit) spans the
+        // whole stroke, from the first dab to the last.
+        assert_eq!(s.dirty, Some((0, 0, 947, 947)), "cumulative dirty still covers the whole stroke");
+    }
+
+    #[test]
+    fn pending_unions_stamps_made_before_an_upload() {
+        let mut s = session();
+        // Two stamps with no take between them union into one pending rect.
+        s.mark_dirty(0, 0, 10, 10);
+        s.mark_dirty(20, 20, 10, 10);
+        assert_eq!(s.take_pending(), Some((0, 0, 30, 30)));
+    }
 }

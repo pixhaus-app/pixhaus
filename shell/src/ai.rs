@@ -73,7 +73,10 @@ pub fn structure_options() -> Vec<(String, String)> {
 #[must_use]
 pub fn prompt_variables(prompt_id: &str) -> Vec<PromptVariable> {
     let lib = BuiltinLibrary::load();
-    lib.prompts.get(&PromptId(prompt_id.to_owned())).map(|p| p.variables.clone()).unwrap_or_default()
+    lib.prompts
+        .get(&PromptId(prompt_id.to_owned()))
+        .map(|p| p.variables.clone())
+        .unwrap_or_default()
 }
 
 /// The (id, name) of every saved/built-in prompt template, name-sorted, for the
@@ -92,14 +95,24 @@ pub fn prompt_options() -> Vec<(String, String)> {
 /// prose, the picked template (with variables substituted), then the subject.
 /// Returns empty strings for an unknown structure.
 #[must_use]
-pub fn compose_preview(structure_id: &str, subject: &str, style_notes: &str, prompt_id: Option<&str>, variables: &BTreeMap<String, String>) -> (String, String) {
+pub fn compose_preview(
+    structure_id: &str,
+    subject: &str,
+    style_notes: &str,
+    prompt_id: Option<&str>,
+    variables: &BTreeMap<String, String>,
+) -> (String, String) {
     let builtins = BuiltinLibrary::load();
     let view = CompositionLibraryView::new(&[], &[], &[], builtins);
     let Some(structure) = view.structure(&StructureId(structure_id.to_owned())) else {
         return (String::new(), String::new());
     };
     let prompt = prompt_id.and_then(|id| view.prompt(&PromptId(id.to_owned())));
-    let baseline = if style_notes.trim().is_empty() { BUILTIN_DEFAULT_BASELINE } else { style_notes };
+    let baseline = if style_notes.trim().is_empty() {
+        BUILTIN_DEFAULT_BASELINE
+    } else {
+        style_notes
+    };
     let empty = BTreeMap::new();
     let req = ComposeRequest {
         baseline,

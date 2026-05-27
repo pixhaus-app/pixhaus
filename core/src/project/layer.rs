@@ -62,6 +62,27 @@ impl Layer {
             user_data: UserData::default(),
         }
     }
+
+    /// Whether this layer is a group (a folder that holds child layers and
+    /// contributes no pixels of its own).
+    #[must_use]
+    pub fn is_group(&self) -> bool {
+        matches!(self.kind, LayerKind::Group { .. })
+    }
+
+    /// Whether this is a group rendered collapsed in the layer panel. Always
+    /// `false` for non-group layers.
+    #[must_use]
+    pub fn collapsed(&self) -> bool {
+        matches!(self.kind, LayerKind::Group { collapsed: true })
+    }
+
+    /// Sets the collapsed state. A no-op on non-group layers.
+    pub fn set_collapsed(&mut self, value: bool) {
+        if let LayerKind::Group { collapsed } = &mut self.kind {
+            *collapsed = value;
+        }
+    }
 }
 
 /// Variant payload for a [`Layer`].

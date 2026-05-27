@@ -9,7 +9,9 @@
 
 use eframe::egui;
 use glam::Vec2;
-use pixhaus_core::canvas::{BrushShape, PixelBuffer, draw_filled_ellipse, draw_filled_rect, draw_line, draw_rect, draw_stroke, flood_fill, paint_brush};
+use pixhaus_core::canvas::{
+    BrushShape, PixelBuffer, brush_covers, draw_filled_ellipse, draw_filled_rect, draw_line, draw_rect, draw_stroke, flood_fill, paint_brush,
+};
 use pixhaus_core::project::Rgba;
 use pixhaus_core::project::{IVec2, Rect, Size};
 use pixhaus_core::selection::{Connectivity, magic_wand, select_ellipse, select_polygon, select_rect};
@@ -214,7 +216,7 @@ impl ShellApp {
     fn begin_gesture(&mut self, tool: Tool, color: Rgba, p: [i32; 2]) {
         match tool {
             Tool::Pencil | Tool::Eraser => self.begin_stroke(tool, color, p),
-            Tool::Line | Tool::Rectangle | Tool::Ellipse => self.begin_shape(p),
+            Tool::Line | Tool::Rectangle | Tool::Ellipse => self.begin_shape(tool, p),
             Tool::SelectRect | Tool::SelectEllipse => {
                 self.editor.sel_drag = Some((p, p));
             }
@@ -299,6 +301,7 @@ impl ShellApp {
             erase,
             pixel_perfect: self.editor.pixel_perfect,
             dirty: None,
+            pending: None,
         };
         if let Some(buf) = self.doc.pixel_buffers.get_mut(&buffer_id) {
             stamp_point(buf, &mut session, p[0], p[1]);
@@ -391,7 +394,7 @@ impl ShellApp {
 
     // --- shapes (line / rect / ellipse) --------------------------------------
 
-    fn begin_shape(&mut self, p: [i32; 2]) {
+    fn begin_shape(&mut self, tool: Tool, p: [i32; 2]) {
         let Some(buffer_id) = self.doc.ensure_drawable() else {
             return;
         };
@@ -400,27 +403,46 @@ impl ShellApp {
         };
         self.editor.shape_drag = Some(ShapeDrag {
             buffer_id,
+            tool,
             before,
             start: p,
             current: p,
+            last_dirty: None,
         });
     }
 
     fn update_shape(&mut self, tool: Tool, p: [i32; 2]) {
-        let Some(drag) = self.editor.shape_drag.as_mut() else {
-            return;
+        // Read what we need, then drop the drag borrow so the disjoint
+        // editor/doc field borrows below are allowed.
+        let (buffer_id, start, last_dirty, cw, ch) = {
+            let Some(drag) = self.editor.shape_drag.as_mut() else {
+                return;
+            };
+            drag.current = p;
+            (drag.buffer_id, drag.start, drag.last_dirty, drag.before.width(), drag.before.height())
         };
-        drag.current = p;
-        let buffer_id = drag.buffer_id;
-        let start = drag.start;
-        let before = drag.before.clone();
         let color = self.editor.fg;
-        let filled = false;
-        if let Some(buf) = self.doc.pixel_buffers.get_mut(&buffer_id) {
-            *buf = before;
-            rasterize_shape(buf, tool, start, p, color, filled);
+        let new_bounds = shape_bounds(start, p, cw, ch);
+        // Repaint only the previous preview footprint (to erase it) unioned with
+        // the new one — never the whole canvas.
+        let dirty = union_opt(last_dirty, new_bounds);
+
+        if let Some(drag) = self.editor.shape_drag.as_ref() {
+            let before = &drag.before;
+            if let Some(buf) = self.doc.pixel_buffers.get_mut(&buffer_id) {
+                if let Some((rx, ry, rx1, ry1)) = last_dirty {
+                    restore_region(buf, before, rx, ry, rx1 - rx + 1, ry1 - ry + 1);
+                }
+                rasterize_shape(buf, tool, start, p, color, false);
+            }
         }
-        self.refresh_canvas(false);
+
+        if let Some((x, y, x1, y1)) = dirty {
+            self.upload_region(x, y, x1 - x + 1, y1 - y + 1);
+        }
+        if let Some(drag) = self.editor.shape_drag.as_mut() {
+            drag.last_dirty = new_bounds;
+        }
     }
 
     fn commit_shape(&mut self) {
@@ -497,10 +519,12 @@ impl ShellApp {
         let Some(before) = self.doc.pixel_buffers.get(&buffer_id).cloned() else {
             return;
         };
-        // Lift selected pixels into a canvas-sized buffer; clear them in place.
+        // Lift selected pixels into a canvas-sized buffer, clear them in place,
+        // and track the selection's bounding box for bounded per-move work.
         let Ok(mut lifted) = PixelBuffer::new(before.width(), before.height()) else {
             return;
         };
+        let mut sel: Option<(u32, u32, u32, u32)> = None;
         if let Some(buf) = self.doc.pixel_buffers.get_mut(&buffer_id) {
             for y in 0..before.height() {
                 for x in 0..before.width() {
@@ -509,14 +533,26 @@ impl ShellApp {
                             lifted.set_pixel(x, y, c);
                         }
                         buf.set_pixel(x, y, Rgba::transparent());
+                        sel = Some(match sel {
+                            None => (x, y, x, y),
+                            Some((ax, ay, bx, by)) => (ax.min(x), ay.min(y), bx.max(x), by.max(y)),
+                        });
                     }
                 }
             }
         }
+        // The live buffer now holds the cleared background — keep a copy as the
+        // per-move restore source so the move never recopies the whole buffer.
+        let Some(base) = self.doc.pixel_buffers.get(&buffer_id).cloned() else {
+            return;
+        };
         self.editor.move_drag = Some(MoveDrag {
             buffer_id,
             before,
+            base,
             lifted,
+            sel_bounds: sel,
+            last_dirty: sel,
             start: p,
             offset: [0, 0],
         });
@@ -524,31 +560,44 @@ impl ShellApp {
     }
 
     fn update_move(&mut self, p: [i32; 2]) {
-        let Some(drag) = self.editor.move_drag.as_mut() else {
-            return;
+        let (buffer_id, offset, sel_bounds, last_dirty, cw, ch) = {
+            let Some(drag) = self.editor.move_drag.as_mut() else {
+                return;
+            };
+            drag.offset = [p[0] - drag.start[0], p[1] - drag.start[1]];
+            (
+                drag.buffer_id,
+                drag.offset,
+                drag.sel_bounds,
+                drag.last_dirty,
+                drag.base.width(),
+                drag.base.height(),
+            )
         };
-        drag.offset = [p[0] - drag.start[0], p[1] - drag.start[1]];
-        let buffer_id = drag.buffer_id;
-        let offset = drag.offset;
-        let cleared = drag.before.clone();
-        let lifted = drag.lifted.clone();
-        let mask_cleared = self.editor.selection.clone();
-        if let Some(buf) = self.doc.pixel_buffers.get_mut(&buffer_id) {
-            // Reset to the pre-move buffer with the selection cleared, then
-            // stamp the lifted pixels at the offset.
-            *buf = cleared;
-            if let Some(mask) = &mask_cleared {
-                for y in 0..buf.height() {
-                    for x in 0..buf.width() {
-                        if mask.is_selected(x, y) {
-                            buf.set_pixel(x, y, Rgba::transparent());
-                        }
-                    }
+        // The footprint the lifted pixels now occupy, clamped to the canvas.
+        let new_dirty = sel_bounds.and_then(|b| translate_clamp(b, offset, cw, ch));
+        // Restore the previous footprint and the new one, then stamp.
+        let dirty = union_opt(last_dirty, new_dirty);
+
+        if let Some(drag) = self.editor.move_drag.as_ref() {
+            let base = &drag.base;
+            let lifted = &drag.lifted;
+            if let Some(buf) = self.doc.pixel_buffers.get_mut(&buffer_id) {
+                if let Some((rx, ry, rx1, ry1)) = dirty {
+                    restore_region(buf, base, rx, ry, rx1 - rx + 1, ry1 - ry + 1);
+                }
+                if let Some(b) = sel_bounds {
+                    stamp_lifted_region(buf, lifted, b, offset);
                 }
             }
-            stamp_lifted(buf, &lifted, offset);
         }
-        self.refresh_canvas(false);
+
+        if let Some((x, y, x1, y1)) = dirty {
+            self.upload_region(x, y, x1 - x + 1, y1 - y + 1);
+        }
+        if let Some(drag) = self.editor.move_drag.as_mut() {
+            drag.last_dirty = new_dirty;
+        }
     }
 
     fn commit_move(&mut self) {
@@ -565,12 +614,11 @@ impl ShellApp {
 
     // --- shared helpers ------------------------------------------------------
 
-    /// Takes the current stroke session's dirty rect (as `x, y, w, h`) without
-    /// consuming the session.
+    /// Takes the stroke session's *pending* dirty rect (the footprint stamped
+    /// since the last upload) as `x, y, w, h`, clearing it. Bounds the per-move
+    /// recomposite and GPU upload to the latest dab, not the whole stroke.
     fn take_session_dirty(&mut self) -> Option<(u32, u32, u32, u32)> {
-        let s = self.editor.stroke.as_ref()?;
-        let (x, y, x1, y1) = s.dirty?;
-        Some((x, y, x1 - x + 1, y1 - y + 1))
+        self.editor.stroke.as_mut()?.take_pending()
     }
 
     /// Builds and pushes a [`PixelRegionEdit`] for the rect `(x, y, w, h)` of
@@ -635,45 +683,61 @@ impl ShellApp {
             egui::pos2(rect.min.x + s.x / ppp, rect.min.y + s.y / ppp)
         };
 
-        // Brush-cursor footprint outline at the hovered pixel.
+        // Cursor gizmo at the hovered pixel: the exact brush footprint for the
+        // paint brushes, a single target cell for click/shape/selection tools.
         if let Some([hx, hy]) = hover_canvas {
-            let tool = self.editor.left_tool;
-            if tool.paints() {
-                let size = self.editor.brush_size.max(1) as i32;
-                let half = size / 2;
-                let min = c2s((hx - half) as f32, (hy - half) as f32);
-                let max = c2s((hx - half + size) as f32, (hy - half + size) as f32);
-                painter.rect_stroke(
-                    egui::Rect::from_two_pos(min, max),
-                    0.0,
-                    egui::Stroke::new(1.0, egui::Color32::from_white_alpha(160)),
-                    egui::StrokeKind::Middle,
-                );
+            let cursor = egui::Stroke::new(1.0, egui::Color32::from_white_alpha(160));
+            match self.editor.left_tool {
+                Tool::Pencil | Tool::Eraser => {
+                    for [a, b] in brush_outline_segments(self.editor.brush_shape, self.editor.brush_size, hx, hy) {
+                        painter.line_segment([c2s(a.0 as f32, a.1 as f32), c2s(b.0 as f32, b.1 as f32)], cursor);
+                    }
+                }
+                // Move acts on an existing selection, not a pixel under the cursor.
+                Tool::Move => {}
+                _ => {
+                    let min = c2s(hx as f32, hy as f32);
+                    let max = c2s((hx + 1) as f32, (hy + 1) as f32);
+                    painter.rect_stroke(egui::Rect::from_two_pos(min, max), 0.0, cursor, egui::StrokeKind::Middle);
+                }
             }
         }
 
-        // Live shape preview bounds.
+        // Live shape preview: the real geometry the tool will draw.
         if let Some(drag) = &self.editor.shape_drag {
-            let min = c2s(drag.start[0] as f32, drag.start[1] as f32);
-            let max = c2s((drag.current[0] + 1) as f32, (drag.current[1] + 1) as f32);
-            painter.rect_stroke(
-                egui::Rect::from_two_pos(min, max),
-                0.0,
-                egui::Stroke::new(1.0, egui::Color32::from_rgb(120, 180, 255)),
-                egui::StrokeKind::Middle,
-            );
+            let stroke = egui::Stroke::new(1.0, egui::Color32::from_rgb(120, 180, 255));
+            match drag.tool {
+                Tool::Line => {
+                    // Pixel centres, so the gizmo sits over the rasterized line.
+                    let a = c2s(drag.start[0] as f32 + 0.5, drag.start[1] as f32 + 0.5);
+                    let b = c2s(drag.current[0] as f32 + 0.5, drag.current[1] as f32 + 0.5);
+                    painter.line_segment([a, b], stroke);
+                }
+                Tool::Ellipse => {
+                    let pts: Vec<egui::Pos2> = ellipse_points(drag.start, drag.current).into_iter().map(|(x, y)| c2s(x, y)).collect();
+                    painter.add(egui::Shape::closed_line(pts, stroke));
+                }
+                _ => {
+                    let min = c2s(drag.start[0] as f32, drag.start[1] as f32);
+                    let max = c2s((drag.current[0] + 1) as f32, (drag.current[1] + 1) as f32);
+                    painter.rect_stroke(egui::Rect::from_two_pos(min, max), 0.0, stroke, egui::StrokeKind::Middle);
+                }
+            }
         }
 
-        // Marquee preview while dragging.
+        // Marquee preview while dragging: an ellipse for the ellipse-select tool
+        // (its only feedback — selection tools draw no pixels), else a rect.
         if let Some((start, end)) = self.editor.sel_drag {
-            let min = c2s(start[0] as f32, start[1] as f32);
-            let max = c2s((end[0] + 1) as f32, (end[1] + 1) as f32);
-            painter.rect_stroke(
-                egui::Rect::from_two_pos(min, max),
-                0.0,
-                egui::Stroke::new(1.0, egui::Color32::from_rgb(255, 220, 120)),
-                egui::StrokeKind::Middle,
-            );
+            let stroke = egui::Stroke::new(1.0, egui::Color32::from_rgb(255, 220, 120));
+            let ellipse = self.editor.left_tool == Tool::SelectEllipse || self.editor.right_tool == Tool::SelectEllipse;
+            if ellipse {
+                let pts: Vec<egui::Pos2> = ellipse_points(start, end).into_iter().map(|(x, y)| c2s(x, y)).collect();
+                painter.add(egui::Shape::closed_line(pts, stroke));
+            } else {
+                let min = c2s(start[0] as f32, start[1] as f32);
+                let max = c2s((end[0] + 1) as f32, (end[1] + 1) as f32);
+                painter.rect_stroke(egui::Rect::from_two_pos(min, max), 0.0, stroke, egui::StrokeKind::Middle);
+            }
         }
 
         // Lasso polyline preview.
@@ -789,11 +853,13 @@ fn rasterize_shape(buf: &mut PixelBuffer, tool: Tool, start: [i32; 2], end: [i32
     }
 }
 
-/// Stamps `lifted` (a canvas-sized buffer of selected pixels) into `buf` shifted
-/// by `offset`, skipping transparent pixels.
-fn stamp_lifted(buf: &mut PixelBuffer, lifted: &PixelBuffer, offset: [i32; 2]) {
-    for y in 0..lifted.height() {
-        for x in 0..lifted.width() {
+/// Stamps the lifted pixels into `buf` shifted by `offset`, skipping transparent
+/// pixels. Iteration is bounded to `sel_bounds` (the inclusive pre-offset
+/// selection box) so move previews cost O(selection), not O(canvas).
+fn stamp_lifted_region(buf: &mut PixelBuffer, lifted: &PixelBuffer, sel_bounds: (u32, u32, u32, u32), offset: [i32; 2]) {
+    let (x0, y0, x1, y1) = sel_bounds;
+    for y in y0..=y1 {
+        for x in x0..=x1 {
             let Some(c) = lifted.pixel(x, y) else { continue };
             if c.a == 0 {
                 continue;
@@ -805,6 +871,119 @@ fn stamp_lifted(buf: &mut PixelBuffer, lifted: &PixelBuffer, offset: [i32; 2]) {
             }
         }
     }
+}
+
+/// Copies the rect `(x, y, w, h)` from `src` into `dst` (both full-canvas, same
+/// dims). Bounded by the rect, the per-move restore primitive for shape and
+/// move previews.
+fn restore_region(dst: &mut PixelBuffer, src: &PixelBuffer, x: u32, y: u32, w: u32, h: u32) {
+    let x1 = (x + w).min(dst.width());
+    let y1 = (y + h).min(dst.height());
+    for py in y..y1 {
+        for px in x..x1 {
+            if let Some(c) = src.pixel(px, py) {
+                dst.set_pixel(px, py, c);
+            }
+        }
+    }
+}
+
+/// Inclusive canvas-pixel bounds touched by a shape drawn between two corners,
+/// padded one pixel for outline safety and clamped to the canvas. `None` when
+/// the box falls fully off-canvas.
+#[allow(clippy::cast_possible_wrap, clippy::cast_sign_loss)]
+fn shape_bounds(a: [i32; 2], b: [i32; 2], cw: u32, ch: u32) -> Option<(u32, u32, u32, u32)> {
+    let x0 = (a[0].min(b[0]) - 1).clamp(0, cw as i32 - 1);
+    let y0 = (a[1].min(b[1]) - 1).clamp(0, ch as i32 - 1);
+    let x1 = (a[0].max(b[0]) + 1).clamp(0, cw as i32 - 1);
+    let y1 = (a[1].max(b[1]) + 1).clamp(0, ch as i32 - 1);
+    if x1 < x0 || y1 < y0 {
+        return None;
+    }
+    Some((x0 as u32, y0 as u32, x1 as u32, y1 as u32))
+}
+
+/// Translates an inclusive bounds box by `offset` and clamps it to the canvas.
+/// `None` when the translated box no longer overlaps the canvas.
+#[allow(clippy::cast_possible_wrap, clippy::cast_sign_loss)]
+fn translate_clamp(bounds: (u32, u32, u32, u32), offset: [i32; 2], cw: u32, ch: u32) -> Option<(u32, u32, u32, u32)> {
+    let (bx0, by0, bx1, by1) = bounds;
+    let nx0 = bx0 as i32 + offset[0];
+    let ny0 = by0 as i32 + offset[1];
+    let nx1 = bx1 as i32 + offset[0];
+    let ny1 = by1 as i32 + offset[1];
+    if nx1 < 0 || ny1 < 0 || nx0 > cw as i32 - 1 || ny0 > ch as i32 - 1 {
+        return None;
+    }
+    Some((
+        nx0.clamp(0, cw as i32 - 1) as u32,
+        ny0.clamp(0, ch as i32 - 1) as u32,
+        nx1.clamp(0, cw as i32 - 1) as u32,
+        ny1.clamp(0, ch as i32 - 1) as u32,
+    ))
+}
+
+/// Unions two optional inclusive bounds boxes.
+fn union_opt(a: Option<(u32, u32, u32, u32)>, b: Option<(u32, u32, u32, u32)>) -> Option<(u32, u32, u32, u32)> {
+    match (a, b) {
+        (Some((ax, ay, ax1, ay1)), Some((bx, by, bx1, by1))) => Some((ax.min(bx), ay.min(by), ax1.max(bx1), ay1.max(by1))),
+        (some, None) | (None, some) => some,
+    }
+}
+
+/// The boundary edges of the brush footprint centred at `(cx, cy)`, as
+/// canvas-grid segments `[(x0, y0), (x1, y1)]`. Traces the exact set of pixels
+/// [`brush_covers`] reports painted: an edge is emitted wherever a painted cell
+/// borders an unpainted one, so the cursor outline hugs the real footprint
+/// (round for Circle, square for Square, one cell for Pixel).
+#[allow(clippy::cast_possible_wrap)]
+fn brush_outline_segments(shape: BrushShape, size: u32, cx: i32, cy: i32) -> Vec<[(i32, i32); 2]> {
+    // One cell beyond the half-extent covers every painted cell plus the
+    // unpainted neighbours the boundary test needs.
+    let ext = (size.max(1) as i32) / 2 + 1;
+    let mut segments = Vec::new();
+    for dy in -ext..=ext {
+        for dx in -ext..=ext {
+            if !brush_covers(shape, size, dx, dy) {
+                continue;
+            }
+            let (gx, gy) = (cx + dx, cy + dy);
+            if !brush_covers(shape, size, dx, dy - 1) {
+                segments.push([(gx, gy), (gx + 1, gy)]); // top
+            }
+            if !brush_covers(shape, size, dx, dy + 1) {
+                segments.push([(gx, gy + 1), (gx + 1, gy + 1)]); // bottom
+            }
+            if !brush_covers(shape, size, dx - 1, dy) {
+                segments.push([(gx, gy), (gx, gy + 1)]); // left
+            }
+            if !brush_covers(shape, size, dx + 1, dy) {
+                segments.push([(gx + 1, gy), (gx + 1, gy + 1)]); // right
+            }
+        }
+    }
+    segments
+}
+
+/// A closed polyline approximating the ellipse inscribed in the inclusive cell
+/// box spanned by corners `a` and `b`, in canvas coordinates. Used for the
+/// ellipse-draw and ellipse-select previews.
+#[allow(clippy::cast_precision_loss)]
+fn ellipse_points(a: [i32; 2], b: [i32; 2]) -> Vec<(f32, f32)> {
+    const N: usize = 64;
+    let x0 = a[0].min(b[0]) as f32;
+    let y0 = a[1].min(b[1]) as f32;
+    // +1 so the box spans the far cells' outer edges, matching the rect preview.
+    let x1 = (a[0].max(b[0]) + 1) as f32;
+    let y1 = (a[1].max(b[1]) + 1) as f32;
+    let (cx, cy) = (f32::midpoint(x0, x1), f32::midpoint(y0, y1));
+    let (rx, ry) = ((x1 - x0) / 2.0, (y1 - y0) / 2.0);
+    (0..N)
+        .map(|i| {
+            let t = i as f32 / N as f32 * std::f32::consts::TAU;
+            (cx + rx * t.cos(), cy + ry * t.sin())
+        })
+        .collect()
 }
 
 /// Builds an inclusive-pixel [`Rect`] from two canvas corners.
@@ -832,5 +1011,71 @@ fn paint_selection_ants(painter: &egui::Painter, segments: &[[(i32, i32); 2]], c
         let cell = (a.0 + a.1 + phase).rem_euclid(CELL * 2);
         let stroke = if cell < CELL { white } else { black };
         painter.line_segment([pa, pb], stroke);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A closed outline visits every grid point an even number of times (each
+    /// vertex is shared by an incoming and outgoing edge).
+    fn is_closed(segments: &[[(i32, i32); 2]]) -> bool {
+        let mut degree: std::collections::HashMap<(i32, i32), i32> = std::collections::HashMap::new();
+        for [a, b] in segments {
+            *degree.entry(*a).or_default() += 1;
+            *degree.entry(*b).or_default() += 1;
+        }
+        !segments.is_empty() && degree.values().all(|d| d % 2 == 0)
+    }
+
+    #[test]
+    fn pixel_brush_outline_is_one_cell() {
+        let segs = brush_outline_segments(BrushShape::Pixel, 1, 5, 7);
+        // Four edges around the single cell (5,7)-(6,8).
+        assert_eq!(segs.len(), 4);
+        assert!(is_closed(&segs));
+    }
+
+    #[test]
+    fn square_brush_outline_is_rect_perimeter() {
+        // Size 2 square: a 2x2 block -> 8 unit boundary edges, closed.
+        let segs = brush_outline_segments(BrushShape::Square, 2, 0, 0);
+        assert_eq!(segs.len(), 8);
+        assert!(is_closed(&segs));
+    }
+
+    #[test]
+    fn circle_brush_outline_is_closed_and_symmetric() {
+        let segs = brush_outline_segments(BrushShape::Circle, 8, 0, 0);
+        assert!(is_closed(&segs), "circle outline forms a closed loop");
+        // The footprint is symmetric across the cell-row centre line y = 0.5
+        // (covers(dx, dy) == covers(dx, -dy)), so reflecting a boundary edge by
+        // y -> 1 - y yields another boundary edge (endpoints may be swapped).
+        let set: std::collections::HashSet<[(i32, i32); 2]> = segs.iter().copied().collect();
+        for [a, b] in &segs {
+            let ma = (a.0, 1 - a.1);
+            let mb = (b.0, 1 - b.1);
+            assert!(set.contains(&[ma, mb]) || set.contains(&[mb, ma]), "missing mirror of {a:?}-{b:?}");
+        }
+    }
+
+    #[test]
+    fn circle_outline_differs_from_square_outline() {
+        // The bug was a square gizmo for a circle brush; the two must differ.
+        let circle = brush_outline_segments(BrushShape::Circle, 8, 0, 0);
+        let square = brush_outline_segments(BrushShape::Square, 8, 0, 0);
+        assert_ne!(circle.len(), square.len());
+    }
+
+    #[test]
+    fn ellipse_points_form_closed_ring_centered_on_bbox() {
+        let pts = ellipse_points([0, 0], [9, 5]);
+        assert_eq!(pts.len(), 64);
+        // Centre of the inclusive box [0,10) x [0,6) is (5, 3).
+        let cx = pts.iter().map(|p| p.0).sum::<f32>() / pts.len() as f32;
+        let cy = pts.iter().map(|p| p.1).sum::<f32>() / pts.len() as f32;
+        assert!((cx - 5.0).abs() < 0.01, "cx={cx}");
+        assert!((cy - 3.0).abs() < 0.01, "cy={cy}");
     }
 }
