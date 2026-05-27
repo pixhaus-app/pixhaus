@@ -54,6 +54,15 @@ use tokio_util::sync::CancellationToken;
 use crate::plugin::descriptor::{BackendCapabilities, CostEstimate};
 use crate::plugin::progress::VerbProgress;
 
+/// Builds an HTTP client with the given request timeout, shared by the cloud
+/// adapters. Surfaces a build failure (e.g. a TLS backend that won't
+/// initialize) as [`BackendError::Network`] rather than silently falling back
+/// to a timeout-less client, which would let a stalled request hang a worker
+/// forever.
+pub(crate) fn build_http_client(timeout: Duration) -> Result<reqwest::Client> {
+    Ok(reqwest::Client::builder().timeout(timeout).build()?)
+}
+
 // ── Request types ──────────────────────────────────────────────────────────
 
 /// Role of a message in a chat thread.

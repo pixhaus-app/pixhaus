@@ -11,7 +11,7 @@ use tokio_util::sync::CancellationToken;
 
 use super::{
     BackendError, BackgroundRemovalRequest, ImageEditRequest, ImageGenRequest, ImageGenResponse, ImageToVideoRequest, ImageToVideoResponse, InferenceBackend,
-    InferenceRequest, InferenceResponse, Result, VerbProgress, check_http_status,
+    InferenceRequest, InferenceResponse, Result, VerbProgress, build_http_client, check_http_status,
 };
 use crate::plugin::context::PixelData;
 use crate::plugin::descriptor::{BackendCapabilities, CostEstimate};
@@ -70,28 +70,41 @@ impl std::fmt::Debug for FalBackend {
 
 impl FalBackend {
     /// Constructs an adapter with an explicit API key.
-    #[must_use]
-    pub fn new(api_key: impl Into<String>) -> Self {
-        Self {
-            client: reqwest::Client::builder().timeout(Duration::from_secs(180)).build().unwrap_or_default(),
+    ///
+    /// # Errors
+    ///
+    /// Returns [`BackendError::Network`] if the HTTP client cannot be built
+    /// (for instance, the TLS backend fails to initialize).
+    pub fn new(api_key: impl Into<String>) -> Result<Self> {
+        Ok(Self {
+            client: build_http_client(Duration::from_secs(180))?,
             api_key: api_key.into(),
             base_url: BASE_URL.into(),
             queue_base_url: QUEUE_BASE_URL.into(),
-        }
+        })
     }
 
     /// Constructs an adapter by reading the API key from the OS keychain.
     pub fn from_keychain() -> Result<Self> {
         let key = super::ApiKeyStore::get("fal")?;
-        Ok(Self::new(key))
+        Self::new(key)
     }
 
-    /// Overrides the API base URL for tests.
+    /// Overrides the synchronous/streaming API base URL (`fal.run`) for tests.
+    /// Leaves the queue base URL untouched; use [`Self::with_queue_base_url`]
+    /// to point the queue endpoints independently. fal serves the two from
+    /// distinct hosts, so collapsing them hid the queue path from tests.
     #[must_use]
     pub fn with_base_url(mut self, url: impl Into<String>) -> Self {
-        let url = url.into();
-        self.base_url.clone_from(&url);
-        self.queue_base_url = url;
+        self.base_url = url.into();
+        self
+    }
+
+    /// Overrides the queue API base URL (`queue.fal.run`) for tests, leaving
+    /// the synchronous base URL untouched.
+    #[must_use]
+    pub fn with_queue_base_url(mut self, url: impl Into<String>) -> Self {
+        self.queue_base_url = url.into();
         self
     }
 
@@ -837,9 +850,25 @@ mod tests {
 
     #[test]
     fn capabilities_include_image_to_video() {
-        let caps = <FalBackend as InferenceBackend>::capabilities(&FalBackend::new("k"));
+        let caps = <FalBackend as InferenceBackend>::capabilities(&FalBackend::new("k").unwrap());
         assert!(caps.contains(BackendCapabilities::IMAGE_GENERATION));
         assert!(caps.contains(BackendCapabilities::IMAGE_TO_VIDEO));
+    }
+
+    #[test]
+    fn base_url_overrides_are_independent() {
+        // The two builders must set distinct fields: fal serves sync/streaming
+        // from fal.run and the queue from queue.fal.run, so a test pointing one
+        // at a mock must not silently redirect the other.
+        let only_base = FalBackend::new("k").unwrap().with_base_url("http://sync.test");
+        let dbg = format!("{only_base:?}");
+        assert!(dbg.contains("http://sync.test"), "base_url overridden");
+        assert!(dbg.contains(QUEUE_BASE_URL), "queue_base_url left at its default");
+
+        let only_queue = FalBackend::new("k").unwrap().with_queue_base_url("http://queue.test");
+        let dbg = format!("{only_queue:?}");
+        assert!(dbg.contains("http://queue.test"), "queue_base_url overridden");
+        assert!(dbg.contains(BASE_URL), "base_url left at its default");
     }
 
     fn sample_i2v_req() -> ImageToVideoRequest {
@@ -928,7 +957,7 @@ mod tests {
 
     #[test]
     fn fal_backend_advertises_lora_training() {
-        let caps = FalBackend::new("key").capabilities();
+        let caps = FalBackend::new("key").unwrap().capabilities();
         assert!(caps.contains(BackendCapabilities::STYLE_TRAINING));
     }
 

@@ -29,7 +29,7 @@ use tracing::{debug, instrument, warn};
 
 use super::{
     BackendError, ImageEditRequest, ImageGenRequest, ImageGenResponse, InferenceBackend, InferenceRequest, InferenceResponse, Result, VerbProgress,
-    check_http_status,
+    build_http_client, check_http_status,
 };
 use crate::plugin::context::PixelData;
 use crate::plugin::descriptor::{BackendCapabilities, CostEstimate};
@@ -66,26 +66,27 @@ impl std::fmt::Debug for OpenAiBackend {
 
 impl OpenAiBackend {
     /// Constructs an adapter with an explicit API key.
-    #[must_use]
-    pub fn new(api_key: impl Into<String>) -> Self {
-        Self {
-            client: reqwest::Client::builder()
-                // Image generation can run for minutes; the reference-sheet
-                // verb advertises a 300s max latency. 120s aborted mid-gen.
-                .timeout(Duration::from_secs(300))
-                .build()
-                .unwrap_or_default(),
+    ///
+    /// # Errors
+    ///
+    /// Returns [`BackendError::Network`] if the HTTP client cannot be built
+    /// (for instance, the TLS backend fails to initialize).
+    pub fn new(api_key: impl Into<String>) -> Result<Self> {
+        Ok(Self {
+            // Image generation can run for minutes; the reference-sheet verb
+            // advertises a 300s max latency. 120s aborted mid-gen.
+            client: build_http_client(Duration::from_secs(300))?,
             api_key: api_key.into(),
             base_url: BASE_URL.into(),
             image_model: DEFAULT_IMAGE_MODEL.into(),
             image_edit_model: DEFAULT_IMAGE_EDIT_MODEL.into(),
-        }
+        })
     }
 
     /// Constructs an adapter by reading the API key from the OS keychain.
     pub fn from_keychain() -> Result<Self> {
         let key = super::ApiKeyStore::get("openai")?;
-        Ok(Self::new(key))
+        Self::new(key)
     }
 
     /// Overrides the default image generation model.
@@ -672,7 +673,7 @@ mod tests {
 
     #[test]
     fn capabilities_are_image_only() {
-        let b = OpenAiBackend::new("k");
+        let b = OpenAiBackend::new("k").unwrap();
         let caps = <OpenAiBackend as InferenceBackend>::capabilities(&b);
         assert!(caps.contains(BackendCapabilities::IMAGE_GENERATION));
         assert!(caps.contains(BackendCapabilities::IMAGE_EDIT));
@@ -686,13 +687,13 @@ mod tests {
     #[test]
     fn is_available_tracks_api_key() {
         use crate::plugin::backend::InferenceBackend as _;
-        assert!(OpenAiBackend::new("k").is_available());
-        assert!(!OpenAiBackend::new("").is_available());
+        assert!(OpenAiBackend::new("k").unwrap().is_available());
+        assert!(!OpenAiBackend::new("").unwrap().is_available());
     }
 
     #[test]
     fn estimate_cost_image_is_nonzero() {
-        let b = OpenAiBackend::new("k");
+        let b = OpenAiBackend::new("k").unwrap();
         let req = InferenceRequest::ImageGeneration(ImageGenRequest {
             model: None,
             prompt: "a cat".into(),
@@ -867,7 +868,7 @@ mod tests {
             eprintln!("OPENAI_API_KEY not set; skipping live streaming test");
             return;
         };
-        let backend = OpenAiBackend::new(key);
+        let backend = OpenAiBackend::new(key).unwrap();
         let (progress, mut rx) = VerbProgress::channel();
 
         // Drain progress on a task so a full channel never blocks the request.
