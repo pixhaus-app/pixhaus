@@ -25,6 +25,8 @@ pub(crate) enum SettingsTab {
     Keybinds,
     /// API-key entry and provider status.
     AiBackends,
+    /// GPU adapter selection.
+    Graphics,
 }
 
 impl ShellApp {
@@ -64,6 +66,7 @@ impl ShellApp {
             ui.selectable_value(&mut self.settings_tab, SettingsTab::General, "General");
             ui.selectable_value(&mut self.settings_tab, SettingsTab::Keybinds, "Keybinds");
             ui.selectable_value(&mut self.settings_tab, SettingsTab::AiBackends, "AI backends");
+            ui.selectable_value(&mut self.settings_tab, SettingsTab::Graphics, "Graphics");
         });
         ui.separator();
         ui.add_space(4.0);
@@ -71,6 +74,59 @@ impl ShellApp {
             SettingsTab::General => self.general_tab(ui),
             SettingsTab::Keybinds => self.keybinds_tab(ui),
             SettingsTab::AiBackends => self.ai_backends_tab(ui),
+            SettingsTab::Graphics => self.graphics_tab(ui),
+        }
+    }
+
+    /// Graphics tab: pick the GPU adapter the editor runs on. The choice is
+    /// saved and applied on the next launch (eframe creates the device once at
+    /// startup), so a change shows a restart hint rather than switching live.
+    fn graphics_tab(&mut self, ui: &mut egui::Ui) {
+        ui.heading("GPU");
+        if let Some(active) = &self.active_adapter {
+            ui.label(egui::RichText::new(format!("Active: {}", crate::gpu::label(active))).small().weak());
+        }
+        ui.add_space(6.0);
+
+        if self.available_adapters.len() <= 1 {
+            ui.label(egui::RichText::new("Only one GPU is available.").small().weak());
+            return;
+        }
+
+        // "Automatic" plus one row per adapter. Defer the mutation until after
+        // the loop so the click handlers don't borrow `self` while iterating.
+        let mut pick: Option<Option<wgpu::AdapterInfo>> = None; // Some(None) = automatic
+        let automatic = self.gpu_pref.is_none();
+        if ui.radio(automatic, "Automatic (recommended)").clicked() && !automatic {
+            pick = Some(None);
+        }
+        for info in &self.available_adapters {
+            let selected = self.gpu_pref.as_ref().is_some_and(|p| p.matches(info));
+            if ui.radio(selected, crate::gpu::label(info)).clicked() && !selected {
+                pick = Some(Some(info.clone()));
+            }
+        }
+        match pick {
+            Some(Some(info)) => self.select_gpu(&info),
+            Some(None) => self.clear_gpu_pref(),
+            None => {}
+        }
+
+        // A restart is pending whenever the saved choice differs from what is
+        // actually running.
+        let pending = match (&self.gpu_pref, &self.active_adapter) {
+            (Some(pref), Some(active)) => !pref.matches(active),
+            (Some(_), None) => true,
+            (None, _) => false,
+        };
+        if pending {
+            ui.add_space(6.0);
+            let palette = crate::theme::Palette::for_theme(ui.ctx().theme());
+            ui.label(
+                egui::RichText::new("Takes effect on the next launch — restart Pixhaus.")
+                    .small()
+                    .color(palette.warning),
+            );
         }
     }
 

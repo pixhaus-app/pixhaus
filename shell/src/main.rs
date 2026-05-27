@@ -35,6 +35,7 @@ mod context_bar;
 mod dnd;
 mod document;
 mod editor;
+mod gpu;
 mod headless;
 mod icons;
 mod keymap;
@@ -65,7 +66,29 @@ fn main() -> anyhow::Result<()> {
     // clean startup error rather than a panic inside the event loop.
     let runtime = tokio::runtime::Builder::new_multi_thread().enable_all().build()?;
 
-    let options = eframe::NativeOptions {
+    // A saved GPU preference pins a specific adapter (chosen in Settings). It is
+    // applied before the window exists; absent one, egui-wgpu picks the default.
+    let saved_gpu = gpu::load();
+    let selector = saved_gpu.clone().map(gpu::adapter_selector);
+
+    match run_gui(runtime, selector) {
+        Ok(()) => Ok(()),
+        // A pinned adapter the machine can't actually drive would otherwise brick
+        // every launch. Clear it and retry once on the default adapter.
+        Err(err) if saved_gpu.is_some() => {
+            tracing::warn!(%err, "launch failed with the saved GPU preference; clearing it and retrying on the default adapter");
+            let _ = gpu::save(None);
+            let runtime = tokio::runtime::Builder::new_multi_thread().enable_all().build()?;
+            run_gui(runtime, None).map_err(|err| anyhow::anyhow!("eframe failed to launch: {err}"))
+        }
+        Err(err) => Err(anyhow::anyhow!("eframe failed to launch: {err}")),
+    }
+}
+
+/// Launches the GUI, optionally pinning the wgpu adapter via `selector`. Takes
+/// the tokio runtime by value because the app owns it; a retry builds a fresh one.
+fn run_gui(runtime: tokio::runtime::Runtime, selector: Option<egui_wgpu::NativeAdapterSelectorMethod>) -> eframe::Result<()> {
+    let mut options = eframe::NativeOptions {
         renderer: eframe::Renderer::Wgpu,
         viewport: egui::ViewportBuilder::default()
             .with_title("Pixhaus")
@@ -73,7 +96,13 @@ fn main() -> anyhow::Result<()> {
             .with_min_inner_size([900.0, 600.0]),
         ..Default::default()
     };
-
+    if let Some(selector) = selector {
+        // Keep eframe's WgpuConfiguration defaults (present mode, surface-error
+        // policy); only swap in a CreateNew setup that pins the adapter. eframe
+        // injects the display handle when it builds the instance.
+        let mut setup = egui_wgpu::WgpuSetupCreateNew::without_display_handle();
+        setup.native_adapter_selector = Some(selector);
+        options.wgpu_options.wgpu_setup = egui_wgpu::WgpuSetup::CreateNew(setup);
+    }
     eframe::run_native("pixhaus", options, Box::new(move |cc| Ok(Box::new(ShellApp::new(cc, runtime)))))
-        .map_err(|e| anyhow::anyhow!("eframe failed to launch: {e}"))
 }

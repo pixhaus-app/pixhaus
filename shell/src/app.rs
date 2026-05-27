@@ -293,6 +293,13 @@ pub struct ShellApp {
     /// Set while a heavy canvas transform runs off-thread, to block re-entry and
     /// to disable the transform controls until the result lands.
     pub(crate) transform_in_flight: bool,
+    /// Adapter currently driving the canvas, read from the live render state.
+    pub(crate) active_adapter: Option<wgpu::AdapterInfo>,
+    /// Every adapter wgpu enumerated at startup, for the Settings GPU picker.
+    pub(crate) available_adapters: Vec<wgpu::AdapterInfo>,
+    /// Saved GPU preference (the pinned adapter), or `None` for automatic. Takes
+    /// effect on the next launch.
+    pub(crate) gpu_pref: Option<crate::gpu::GpuPreference>,
     /// egui context clone handed to background tasks to wake the idle UI.
     pub(crate) egui_ctx: egui::Context,
     /// Which Create-mode surface is showing (cockpit / library / animate).
@@ -456,6 +463,14 @@ impl ShellApp {
     pub fn new(cc: &eframe::CreationContext<'_>, runtime: Runtime) -> Self {
         let (tx, rx) = mpsc::channel();
         let render_state = cc.wgpu_render_state.clone();
+        // Snapshot the active adapter and the full enumerated list for the GPU
+        // picker, before `render_state` is moved into the struct below.
+        let active_adapter = render_state.as_ref().map(|rs| rs.adapter.get_info());
+        let available_adapters: Vec<wgpu::AdapterInfo> = render_state
+            .as_ref()
+            .map(|rs| rs.available_adapters.iter().map(wgpu::Adapter::get_info).collect())
+            .unwrap_or_default();
+        let gpu_pref = crate::gpu::load();
         let verb_runtime = ai::build_runtime();
 
         // Restore the saved theme preference (defaults to following the OS) and
@@ -500,6 +515,9 @@ impl ShellApp {
             openai_key_configured: false,
             fal_key_configured: false,
             transform_in_flight: false,
+            active_adapter,
+            available_adapters,
+            gpu_pref,
             egui_ctx: cc.egui_ctx.clone(),
             create_view: CreateView::Cockpit,
             library_tab: crate::library::LibraryTab::Templates,
@@ -1459,6 +1477,23 @@ impl ShellApp {
             ai::OPENAI_BACKEND_ID => self.openai_key_configured,
             ai::FAL_BACKEND_ID => self.fal_key_configured,
             _ => false,
+        }
+    }
+
+    /// Pins `info` as the adapter to use on the next launch and persists it.
+    pub(crate) fn select_gpu(&mut self, info: &wgpu::AdapterInfo) {
+        let pref = crate::gpu::from_info(info);
+        match crate::gpu::save(Some(&pref)) {
+            Ok(()) => self.gpu_pref = Some(pref),
+            Err(err) => self.rs_status = JobStatus::Failed(format!("GPU preference: {err}")),
+        }
+    }
+
+    /// Clears the GPU preference so the next launch uses the default adapter.
+    pub(crate) fn clear_gpu_pref(&mut self) {
+        match crate::gpu::save(None) {
+            Ok(()) => self.gpu_pref = None,
+            Err(err) => self.rs_status = JobStatus::Failed(format!("GPU preference: {err}")),
         }
     }
 
