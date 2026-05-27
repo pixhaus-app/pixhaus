@@ -97,7 +97,8 @@ fn run_sheet(args: &[String]) -> Result<()> {
     let prompt = arg_value(args, "--prompt").unwrap_or(ai::DEFAULT_SHEET_PROMPT).to_owned();
     let out = out_dir(args);
 
-    let (runtime, ready) = ai::build_runtime();
+    let runtime = ai::build_runtime();
+    let ready = ai::register_backends_blocking(&runtime);
     if !ready {
         return Err(anyhow!("no generation backend configured — store a key: shell set-key openai <key>"));
     }
@@ -135,7 +136,8 @@ fn run_gen(args: &[String]) -> Result<()> {
     let motion = arg_value(args, "--motion").unwrap_or("walk cycle, side view").to_owned();
     let out = out_dir(args);
 
-    let (runtime, ready) = ai::build_runtime();
+    let runtime = ai::build_runtime();
+    let ready = ai::register_backends_blocking(&runtime);
     if !ready {
         return Err(anyhow!(
             "no FAL backend configured — store a key first (run the GUI once and paste it, \

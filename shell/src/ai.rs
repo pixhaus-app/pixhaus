@@ -129,22 +129,32 @@ pub fn compose_preview(
     compose(&req).map_or_else(|_| (String::new(), String::new()), |c| (c.positive, c.negative))
 }
 
-/// Builds the verb runtime with the reference-sheet verb registered, and tries
-/// to register the `OpenAI` and FAL backends from the OS keychain. Returns the
-/// runtime and whether at least one image-generation backend is ready.
+/// Builds the verb runtime with the reference-sheet verb registered. Backend
+/// registration from the keychain is deferred to a [`spawn_backend_key_op`]
+/// with [`KeyOp::RegisterFromKeychain`] so the blocking keychain reads do not
+/// stall the first paint; readiness arrives later over the channel.
 ///
-/// `OpenAI` (gpt-image-2) is registered at higher priority for image generation
+/// `OpenAI` (gpt-image-2) registers at higher priority for image generation
 /// (reference sheets); FAL is the only backend that also covers image-to-video
 /// and background removal (the animation pipeline).
 #[must_use]
-pub fn build_runtime() -> (Arc<VerbRuntime>, bool) {
+pub fn build_runtime() -> Arc<VerbRuntime> {
     let runtime = VerbRuntime::new();
     if let Err(err) = runtime.register(GenerateReferenceSheetVerb::new()) {
         tracing::error!(%err, "failed to register reference-sheet verb");
     }
-    let openai = try_register_openai(&runtime);
-    let fal = try_register_fal(&runtime);
-    (Arc::new(runtime), openai || fal)
+    Arc::new(runtime)
+}
+
+/// Registers backends from the keychain synchronously, returning whether at
+/// least one is ready. For the headless CLI runner, which has no UI thread to
+/// protect and must have its backends ready before it proceeds; the GUI defers
+/// registration via [`spawn_backend_key_op`] instead.
+#[must_use]
+pub fn register_backends_blocking(runtime: &VerbRuntime) -> bool {
+    let openai = try_register_openai(runtime);
+    let fal = try_register_fal(runtime);
+    openai || fal
 }
 
 /// Tries to register the `OpenAI` backend from the keychain (priority 0 — preferred
@@ -220,6 +230,58 @@ pub fn key_configured(backend: &str) -> bool {
 #[must_use]
 pub fn backend_registered(runtime: &VerbRuntime, backend: &str) -> bool {
     runtime.list_backends().iter().any(|b| b.id == backend)
+}
+
+/// A keychain mutation to run off the UI thread, followed by backend
+/// re-registration and a [`ShellMsg::BackendsRefreshed`] report.
+pub enum KeyOp {
+    /// Store `key` for `backend`, then register backends from the keychain.
+    Save {
+        /// Backend id ("openai" or "fal").
+        backend: String,
+        /// API key to store.
+        key: String,
+    },
+    /// Clear `backend`'s stored key and unregister it.
+    Clear {
+        /// Backend id to clear.
+        backend: String,
+    },
+    /// Register whatever keys already sit in the keychain (startup).
+    RegisterFromKeychain,
+}
+
+/// Runs a keychain [`KeyOp`] on a blocking thread, then reports the resulting
+/// per-backend configured state and readiness over `tx`. Keychain I/O blocks
+/// (on Linux it can even pop a system unlock dialog), so it must never run on
+/// the egui update thread; this keeps the window responsive and the first paint
+/// from waiting on the credential store.
+pub fn spawn_backend_key_op(handle: &Handle, runtime: Arc<VerbRuntime>, ctx: egui::Context, tx: Sender<ShellMsg>, op: KeyOp) {
+    handle.spawn_blocking(move || {
+        let error = match op {
+            KeyOp::Save { backend, key } => match store_key(&backend, &key) {
+                Ok(()) => {
+                    try_register_openai(&runtime);
+                    try_register_fal(&runtime);
+                    None
+                }
+                Err(err) => Some(err),
+            },
+            KeyOp::Clear { backend } => clear_key(&runtime, &backend).err(),
+            KeyOp::RegisterFromKeychain => {
+                try_register_openai(&runtime);
+                try_register_fal(&runtime);
+                None
+            }
+        };
+        let _ = tx.send(ShellMsg::BackendsRefreshed {
+            openai_configured: key_configured(OPENAI_BACKEND_ID),
+            fal_configured: key_configured(FAL_BACKEND_ID),
+            ready: backend_registered(&runtime, OPENAI_BACKEND_ID) || backend_registered(&runtime, FAL_BACKEND_ID),
+            error,
+        });
+        ctx.request_repaint();
+    });
 }
 
 /// Parameters for a reference-sheet generation from the cockpit.

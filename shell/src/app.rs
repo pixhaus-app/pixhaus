@@ -14,7 +14,7 @@ use eframe::egui;
 use egui_wgpu::RenderState;
 use pixhaus_ai::plugin::{PixelData, VerbRuntime};
 use pixhaus_core::canvas::PixelBuffer;
-use pixhaus_core::project::{CelData, ColorMode, FrameIndex, GroupId, LoopDirection, PixelBufferId, Rgba, Size};
+use pixhaus_core::project::{CelData, ColorMode, FrameIndex, GroupId, LoopDirection, PixelBufferId, Rgba, Size, Sprite, SpriteId};
 use pixhaus_core::transforms::CanvasAnchor;
 use pixhaus_core::transforms::normalize::{NormalizeOptions, normalize_frames};
 use pixhaus_render::{Viewport, ViewportRenderer};
@@ -125,6 +125,40 @@ pub enum ShellMsg {
         /// Failure reason.
         error: String,
     },
+    /// A heavy canvas transform finished off-thread. Boxed because the payload
+    /// (a whole sprite plus buffers) dwarfs every other message.
+    TransformDone(Box<TransformResult>),
+    /// A keychain key-op finished off-thread: refreshed per-backend configured
+    /// state, overall readiness, and any keychain error to surface.
+    BackendsRefreshed {
+        /// Whether an `OpenAI` key is stored.
+        openai_configured: bool,
+        /// Whether a FAL key is stored.
+        fal_configured: bool,
+        /// Whether at least one backend is registered and ready.
+        ready: bool,
+        /// Keychain error from the op, if any.
+        error: Option<String>,
+    },
+}
+
+/// Result of an off-thread canvas transform, carried by
+/// [`ShellMsg::TransformDone`]. Holds the inputs the transform ran against so
+/// the UI thread can detect a document change that happened meanwhile.
+#[derive(Debug)]
+pub struct TransformResult {
+    /// Sprite the transform ran against.
+    pub sprite_id: SpriteId,
+    /// Sprite value captured before the transform.
+    pub before_sprite: Sprite,
+    /// Buffers (id + bytes) the transform ran against.
+    pub before_buffers: Vec<(PixelBufferId, PixelBuffer)>,
+    /// Transformed buffers, in the same order, or `None` if the op failed.
+    pub after_buffers: Option<Vec<(PixelBufferId, PixelBuffer)>>,
+    /// Resulting canvas size.
+    pub new_size: Size,
+    /// History label.
+    pub label: String,
 }
 
 /// What the selected clip card's Play button cycles.
@@ -251,6 +285,14 @@ pub struct ShellApp {
     pub(crate) verb_runtime: Arc<VerbRuntime>,
     /// Whether a generation backend is registered and ready.
     pub(crate) backend_ready: bool,
+    /// Cached "`OpenAI` key is stored" flag, refreshed off-thread after a save
+    /// or clear so the settings panel never reads the keychain on the UI thread.
+    pub(crate) openai_key_configured: bool,
+    /// Cached "FAL key is stored" flag; see [`Self::openai_key_configured`].
+    pub(crate) fal_key_configured: bool,
+    /// Set while a heavy canvas transform runs off-thread, to block re-entry and
+    /// to disable the transform controls until the result lands.
+    pub(crate) transform_in_flight: bool,
     /// egui context clone handed to background tasks to wake the idle UI.
     pub(crate) egui_ctx: egui::Context,
     /// Which Create-mode surface is showing (cockpit / library / animate).
@@ -414,7 +456,7 @@ impl ShellApp {
     pub fn new(cc: &eframe::CreationContext<'_>, runtime: Runtime) -> Self {
         let (tx, rx) = mpsc::channel();
         let render_state = cc.wgpu_render_state.clone();
-        let (verb_runtime, backend_ready) = ai::build_runtime();
+        let verb_runtime = ai::build_runtime();
 
         // Restore the saved theme preference (defaults to following the OS) and
         // install the brand theme and fonts before the first frame draws.
@@ -454,7 +496,10 @@ impl ShellApp {
             right_tab: RightTab::Color,
             timeline_expanded: false,
             verb_runtime,
-            backend_ready,
+            backend_ready: false,
+            openai_key_configured: false,
+            fal_key_configured: false,
+            transform_in_flight: false,
             egui_ctx: cc.egui_ctx.clone(),
             create_view: CreateView::Cockpit,
             library_tab: crate::library::LibraryTab::Templates,
@@ -529,6 +574,15 @@ impl ShellApp {
         app.install_renderer();
         app.doc.create_sprite("untitled", DEFAULT_CANVAS);
         app.refresh_canvas(true);
+        // Register backends from the keychain off-thread so the blocking reads
+        // never delay the first paint; readiness arrives over the channel.
+        ai::spawn_backend_key_op(
+            app.runtime.handle(),
+            app.verb_runtime.clone(),
+            app.egui_ctx.clone(),
+            app.tx.clone(),
+            ai::KeyOp::RegisterFromKeychain,
+        );
         app
     }
 
@@ -651,6 +705,31 @@ impl ShellApp {
                 ShellMsg::BgRemovalFailed { buffer_id, error } => {
                     self.bg_remove_pending.remove(&buffer_id);
                     self.bg_status = JobStatus::Failed(error);
+                }
+                ShellMsg::TransformDone(result) => {
+                    self.transform_in_flight = false;
+                    let TransformResult {
+                        sprite_id,
+                        before_sprite,
+                        before_buffers,
+                        after_buffers,
+                        new_size,
+                        label,
+                    } = *result;
+                    self.finish_canvas_transform(sprite_id, before_sprite, before_buffers, after_buffers, new_size, label);
+                }
+                ShellMsg::BackendsRefreshed {
+                    openai_configured,
+                    fal_configured,
+                    ready,
+                    error,
+                } => {
+                    self.openai_key_configured = openai_configured;
+                    self.fal_key_configured = fal_configured;
+                    self.backend_ready = ready;
+                    if let Some(err) = error {
+                        self.rs_status = JobStatus::Failed(format!("keychain: {err}"));
+                    }
                 }
             }
         }
@@ -1148,6 +1227,9 @@ impl ShellApp {
     /// sprite canvas. Large canvases transform on a blocking thread so the frame
     /// loop is not stalled (the 8K constraint).
     pub(crate) fn run_canvas_transform(&mut self, op: CanvasOp) {
+        if self.transform_in_flight {
+            return;
+        }
         self.exit_sheet_preview();
         let Some(sprite_id) = self.doc.project.active_sprite_id() else {
             return;
@@ -1172,20 +1254,63 @@ impl ShellApp {
         }
         let before_buffers: Vec<(PixelBufferId, PixelBuffer)> = ids.iter().filter_map(|id| self.doc.pixel_buffers.get(id).map(|b| (*id, b.clone()))).collect();
 
-        // Transform every buffer; abort without recording if any fails.
         let inputs = before_buffers.clone();
         let compute =
             move || -> Option<Vec<(PixelBufferId, PixelBuffer)>> { inputs.iter().map(|(id, buf)| op.apply(buf).ok().map(|out| (*id, out))).collect() };
-        let heavy = before_sprite.canvas.pixel_count() > TRANSFORM_OFFLOAD_PIXELS;
-        let after_buffers = if heavy {
-            // PERF: off the UI thread — a multi-megapixel pass would stall the frame.
-            self.runtime.block_on(async { tokio::task::spawn_blocking(compute).await.ok().flatten() })
+        let label = op.label().to_owned();
+
+        if before_sprite.canvas.pixel_count() > TRANSFORM_OFFLOAD_PIXELS {
+            // A multi-megapixel pass would stall the frame, so run it on a
+            // blocking thread and record the edit when the result arrives
+            // (drained as ShellMsg::TransformDone). The in-flight flag blocks
+            // re-entry; finish_canvas_transform drops the result if the
+            // document changed meanwhile.
+            self.transform_in_flight = true;
+            let tx = self.tx.clone();
+            let ctx = self.egui_ctx.clone();
+            self.runtime.handle().spawn_blocking(move || {
+                let after_buffers = compute();
+                let _ = tx.send(ShellMsg::TransformDone(Box::new(TransformResult {
+                    sprite_id,
+                    before_sprite,
+                    before_buffers,
+                    after_buffers,
+                    new_size,
+                    label,
+                })));
+                ctx.request_repaint();
+            });
         } else {
-            compute()
-        };
+            let after_buffers = compute();
+            self.finish_canvas_transform(sprite_id, before_sprite, before_buffers, after_buffers, new_size, label);
+        }
+    }
+
+    /// Records a completed canvas transform as a [`CanvasEdit`]. Shared by the
+    /// synchronous (small canvas) and off-thread (heavy) paths. Drops the result
+    /// when the op failed, was a no-op, or the document changed under an
+    /// off-thread run (an interim draw or structural edit), so a stale transform
+    /// never clobbers newer work.
+    fn finish_canvas_transform(
+        &mut self,
+        sprite_id: SpriteId,
+        before_sprite: Sprite,
+        before_buffers: Vec<(PixelBufferId, PixelBuffer)>,
+        after_buffers: Option<Vec<(PixelBufferId, PixelBuffer)>>,
+        new_size: Size,
+        label: String,
+    ) {
         let Some(after_buffers) = after_buffers else {
             return;
         };
+
+        // Stale-result guard: the sprite value and every input buffer must still
+        // match what the transform ran against.
+        let unchanged_since = self.doc.project.sprite(sprite_id) == Some(&before_sprite)
+            && before_buffers.iter().all(|(id, before)| self.doc.pixel_buffers.get(id) == Some(before));
+        if !unchanged_since {
+            return;
+        }
 
         // Build the after sprite: new canvas size and per-raster-cel size.
         let mut after_sprite = before_sprite.clone();
@@ -1213,7 +1338,7 @@ impl ShellApp {
             before_sprite,
             after_sprite,
             buffers: swaps,
-            label: op.label().to_owned(),
+            label,
         };
         let _ = self.editor.history.push(Box::new(edit), &mut self.doc);
         // Selection coordinates may fall outside the new canvas.
@@ -1302,29 +1427,39 @@ impl ShellApp {
 
     /// Stores a key and re-registers backends, updating readiness.
     pub(crate) fn save_key(&mut self, backend: &str, key: &str) {
-        match ai::store_key(backend, key) {
-            Ok(()) => {
-                ai::try_register_openai(&self.verb_runtime);
-                ai::try_register_fal(&self.verb_runtime);
-                self.recompute_backend_ready();
-            }
-            Err(err) => self.rs_status = JobStatus::Failed(format!("keychain: {err}")),
-        }
+        ai::spawn_backend_key_op(
+            self.runtime.handle(),
+            self.verb_runtime.clone(),
+            self.egui_ctx.clone(),
+            self.tx.clone(),
+            ai::KeyOp::Save {
+                backend: backend.to_owned(),
+                key: key.to_owned(),
+            },
+        );
     }
 
-    /// Clears a backend's stored key, unregisters it, and recomputes readiness.
+    /// Clears a backend's stored key and unregisters it, off the UI thread. The
+    /// refreshed readiness and configured flags land over the channel.
     pub(crate) fn clear_backend(&mut self, backend: &str) {
-        match ai::clear_key(&self.verb_runtime, backend) {
-            Ok(()) => self.recompute_backend_ready(),
-            Err(err) => self.rs_status = JobStatus::Failed(format!("keychain: {err}")),
-        }
+        ai::spawn_backend_key_op(
+            self.runtime.handle(),
+            self.verb_runtime.clone(),
+            self.egui_ctx.clone(),
+            self.tx.clone(),
+            ai::KeyOp::Clear { backend: backend.to_owned() },
+        );
     }
 
-    /// Recomputes [`Self::backend_ready`] from the runtime's registered
-    /// backends.
-    fn recompute_backend_ready(&mut self) {
-        self.backend_ready =
-            ai::backend_registered(&self.verb_runtime, ai::OPENAI_BACKEND_ID) || ai::backend_registered(&self.verb_runtime, ai::FAL_BACKEND_ID);
+    /// Cached "is a key stored for `backend`" flag, refreshed off-thread. Reads
+    /// no keychain, so the settings panel can call it every frame.
+    #[must_use]
+    pub(crate) fn key_configured(&self, backend: &str) -> bool {
+        match backend {
+            ai::OPENAI_BACKEND_ID => self.openai_key_configured,
+            ai::FAL_BACKEND_ID => self.fal_key_configured,
+            _ => false,
+        }
     }
 
     /// Animation surface: the staged wizard. Generate a clip, scrub the raw

@@ -103,7 +103,7 @@ impl ShellApp {
 
     /// One provider row: a status badge, a password field with Save, and Clear.
     fn backend_row(&mut self, ui: &mut egui::Ui, display: &str, backend_id: &'static str, hint: &str) {
-        let configured = ai::key_configured(backend_id);
+        let configured = self.key_configured(backend_id);
         let registered = ai::backend_registered(&self.verb_runtime, backend_id);
         let palette = crate::theme::Palette::for_theme(ui.ctx().theme());
 
