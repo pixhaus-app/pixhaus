@@ -179,6 +179,14 @@ impl<T: 'static> History<T> {
             && let Some(node) = self.nodes.get_mut(&cur)
             && matches!(node.command.coalesce(command.as_ref()), CoalesceResult::Merged)
         {
+            // A merge can grow the absorbing command (a coalesced stroke
+            // keeps accumulating dirty pixels), so refresh this node's byte
+            // tally and re-check the cap rather than letting `total_bytes`
+            // drift below the real footprint.
+            let new_size = node.command.estimated_size_bytes();
+            let old_size = std::mem::replace(&mut node.size_bytes, new_size);
+            self.total_bytes = self.total_bytes.saturating_sub(old_size).saturating_add(new_size);
+            self.enforce_cap();
             return Ok(());
         }
 
@@ -401,6 +409,12 @@ mod tests {
                 CoalesceResult::Keep
             }
         }
+
+        // Footprint grows with each coalesced stroke, so the history's byte
+        // tally must be refreshed on merge, not just at first insertion.
+        fn estimated_size_bytes(&self) -> usize {
+            self.chars.len() * 100
+        }
     }
 
     fn make_project() -> Project {
@@ -512,6 +526,27 @@ mod tests {
 
         assert!(h.node_count() <= 3);
         assert_eq!(p.metadata.name, "abcd");
+    }
+
+    #[test]
+    fn coalesced_growth_re_enforces_the_byte_cap() {
+        // A coalescing stroke grows by 100 bytes per merge. With a 250-byte
+        // cap, the third stroke pushes the live footprint over budget, which
+        // must evict the older node. Before the fix the merge path skipped the
+        // byte-tally refresh and enforce_cap, so the eviction never fired.
+        let config = HistoryConfig::new(nz(usize::MAX), nz(250));
+        let mut h = History::<Project>::with_config(config);
+        let mut p = make_project();
+
+        h.push(Box::new(AppendChar('a')), &mut p).unwrap(); // node0, 0 bytes
+        h.push(Box::new(CoalescingStroke::new('s')), &mut p).unwrap(); // node1, 100 bytes
+        assert_eq!(h.node_count(), 2);
+
+        h.push(Box::new(CoalescingStroke::new('s')), &mut p).unwrap(); // node1 -> 200 bytes
+        assert_eq!(h.node_count(), 2, "still within the 250-byte cap");
+
+        h.push(Box::new(CoalescingStroke::new('s')), &mut p).unwrap(); // node1 -> 300 bytes
+        assert_eq!(h.node_count(), 1, "coalesced growth past the cap evicts the older node");
     }
 
     /// A command whose `apply` always fails; used to trigger poisoning.
