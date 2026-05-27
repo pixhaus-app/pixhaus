@@ -696,7 +696,11 @@ mod tests {
         assert!(!doc.pixel_buffers.contains_key(&new_id), "undo removes the buffer instead of leaking it");
         assert_eq!(doc.pixel_buffers.len(), before_count);
         assert!(
-            !doc.active_sprite().expect("sprite").cels.iter().any(|c| matches!(c.data, CelData::Raster { buffer, .. } if buffer == new_id)),
+            !doc.active_sprite()
+                .expect("sprite")
+                .cels
+                .iter()
+                .any(|c| matches!(c.data, CelData::Raster { buffer, .. } if buffer == new_id)),
             "undo also drops the cel"
         );
 
