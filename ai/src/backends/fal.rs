@@ -11,7 +11,7 @@ use tokio_util::sync::CancellationToken;
 
 use super::{
     BackendError, BackgroundRemovalRequest, ImageEditRequest, ImageGenRequest, ImageGenResponse, ImageToVideoRequest, ImageToVideoResponse, InferenceBackend,
-    InferenceRequest, InferenceResponse, ReplicateRequest, Result, VerbProgress, check_http_status,
+    InferenceRequest, InferenceResponse, Result, VerbProgress, check_http_status,
 };
 use crate::plugin::context::PixelData;
 use crate::plugin::descriptor::{BackendCapabilities, CostEstimate};
@@ -809,7 +809,6 @@ fn decode_data_uri(uri: &str) -> Result<Option<Vec<u8>>> {
         .map_err(|err| BackendError::InvalidResponse(err.to_string()))
 }
 
-#[allow(dead_code)]
 #[derive(Deserialize)]
 struct FalQueueSubmitResponse {
     request_id: String,
@@ -831,9 +830,6 @@ struct FalTrainingResponse {
 struct FalFile {
     url: String,
 }
-
-// Preserve the raw request type in this module's public adapter surface.
-fn _assert_raw_req(_: &ReplicateRequest) {}
 
 #[cfg(test)]
 mod tests {

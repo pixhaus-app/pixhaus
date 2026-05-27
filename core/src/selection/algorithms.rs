@@ -222,8 +222,8 @@ pub fn magic_wand(buffer: &PixelBuffer, seed_x: u32, seed_y: u32, tolerance: u8,
     let h = buffer.height();
     if seed_x >= w || seed_y >= h {
         return Err(Error::SeedOutOfBounds {
-            x: seed_x,
-            y: seed_y,
+            x: i64::from(seed_x),
+            y: i64::from(seed_y),
             width: w,
             height: h,
         });
@@ -252,7 +252,7 @@ pub fn magic_wand(buffer: &PixelBuffer, seed_x: u32, seed_y: u32, tolerance: u8,
         let Some(color) = buffer.pixel(x, y) else {
             continue;
         };
-        if !colors_match(color, seed_color, tolerance) {
+        if !color.within_tolerance(seed_color, tolerance) {
             continue;
         }
 
@@ -299,14 +299,14 @@ pub fn magic_wand_with_gap_close(
     gap_config: Option<GapCloseConfig>,
 ) -> Result<SelectionMask> {
     let seed_x = u32::try_from(seed.x).map_err(|_| Error::SeedOutOfBounds {
-        x: 0,
-        y: 0,
+        x: i64::from(seed.x),
+        y: i64::from(seed.y),
         width: buffer.width(),
         height: buffer.height(),
     })?;
     let seed_y = u32::try_from(seed.y).map_err(|_| Error::SeedOutOfBounds {
-        x: 0,
-        y: 0,
+        x: i64::from(seed.x),
+        y: i64::from(seed.y),
         width: buffer.width(),
         height: buffer.height(),
     })?;
@@ -356,19 +356,13 @@ pub fn color_range(buffer: &PixelBuffer, reference: Rgba, tolerance: u8) -> Resu
             let Some(color) = buffer.pixel(x, y) else {
                 continue;
             };
-            if colors_match(color, reference, tolerance) {
+            if color.within_tolerance(reference, tolerance) {
                 mask.set(x, y, 255);
             }
         }
     }
 
     Ok(mask)
-}
-
-/// Returns `true` when every channel of `a` and `b` differs by at most
-/// `tolerance`.
-fn colors_match(a: Rgba, b: Rgba, tolerance: u8) -> bool {
-    a.r.abs_diff(b.r) <= tolerance && a.g.abs_diff(b.g) <= tolerance && a.b.abs_diff(b.b) <= tolerance && a.a.abs_diff(b.a) <= tolerance
 }
 
 #[cfg(test)]
@@ -609,6 +603,18 @@ mod tests {
             buf.set_pixel(right, y, ink);
         }
         buf
+    }
+
+    #[test]
+    fn magic_wand_with_gap_close_negative_seed_reports_real_coords() {
+        let buf = make_two_color_buffer();
+        let err = magic_wand_with_gap_close(&buf, IVec2 { x: -3, y: -7 }, 0, Connectivity::Four, None).unwrap_err();
+        match err {
+            Error::SeedOutOfBounds { x, y, .. } => {
+                assert_eq!((x, y), (-3, -7), "negative seed must report its real position, not a clamped zero");
+            }
+            other => panic!("expected SeedOutOfBounds, got {other:?}"),
+        }
     }
 
     #[test]
