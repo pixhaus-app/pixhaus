@@ -198,6 +198,11 @@ pub struct ShellApp {
     pub(crate) egui_ctx: egui::Context,
     /// Which Create-mode surface is showing (cockpit / library / animate).
     pub(crate) create_view: CreateView,
+    /// Which composition-library tab shows in the Library view.
+    pub(crate) library_tab: crate::library::LibraryTab,
+    /// The composition-library record currently open in the editor, if any.
+    /// Acts as the browser's selection: the row whose id matches is highlighted.
+    pub(crate) library_draft: Option<crate::library::LibraryDraft>,
     /// Cockpit subject prompt draft.
     pub(crate) rs_prompt: String,
     /// Selected composition Structure id (free-form `Single` by default).
@@ -358,6 +363,8 @@ impl ShellApp {
             backend_ready,
             egui_ctx: cc.egui_ctx.clone(),
             create_view: CreateView::Cockpit,
+            library_tab: crate::library::LibraryTab::Templates,
+            library_draft: None,
             rs_prompt: ai::DEFAULT_SHEET_PROMPT.to_owned(),
             ck_structure: ai::SINGLE_STRUCTURE_ID.to_owned(),
             rs_num_variants: 2,
@@ -1480,7 +1487,13 @@ impl eframe::App for ShellApp {
             .show_inside(ui, |ui| self.timeline_dock(ui));
 
         egui::CentralPanel::default().show_inside(ui, |ui| {
-            self.canvas_ui(ui);
+            // The composition library takes over the canvas area while editing
+            // presets; everything else paints the sprite canvas.
+            if self.workspace == Workspace::Create && self.create_view == CreateView::Library {
+                self.library_view(ui);
+            } else {
+                self.canvas_ui(ui);
+            }
         });
     }
 }

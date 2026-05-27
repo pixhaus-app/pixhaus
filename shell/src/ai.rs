@@ -68,23 +68,6 @@ pub fn structure_options() -> Vec<(String, String)> {
     out
 }
 
-/// The built-in example prompts as `(name, text, structure_id)`, for the
-/// library save-shelf. Each names the structure it reads best in.
-#[must_use]
-pub fn example_prompts() -> Vec<(String, String, String)> {
-    let lib = BuiltinLibrary::load();
-    let mut out: Vec<(String, String, String)> = lib
-        .prompts
-        .values()
-        .map(|p| {
-            let structure = p.default_structure.as_ref().map_or_else(|| STRUCTURE_SINGLE_ID.to_owned(), |s| s.0.clone());
-            (p.name.clone(), p.text.clone(), structure)
-        })
-        .collect();
-    out.sort_by(|a, b| a.0.cmp(&b.0));
-    out
-}
-
 /// The variables of a saved/built-in prompt template, for the cockpit dials.
 /// Empty for an unknown id or a template with no variables.
 #[must_use]

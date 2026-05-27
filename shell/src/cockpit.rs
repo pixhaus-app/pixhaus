@@ -112,7 +112,7 @@ impl ShellApp {
         ui.separator();
         match self.create_view {
             CreateView::Cockpit => self.cockpit_panel(ui),
-            CreateView::Library => self.library_shelf(ui),
+            CreateView::Library => self.library_editor(ui),
             CreateView::Animate => self.animation_tab(ui),
         }
     }
@@ -430,6 +430,7 @@ impl ShellApp {
             self.ck_dirty = false;
         }
 
+        let mut save_template = false;
         ui.horizontal(|ui| {
             ui.label(egui::RichText::new("The words we send").strong());
             if self.ck_prompt_edited {
@@ -441,7 +442,19 @@ impl ShellApp {
             } else {
                 ui.label(egui::RichText::new("yours to change").small().weak());
             }
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                if ui
+                    .small_button(format!("{} Save as template", crate::icons::CARD))
+                    .on_hover_text("Save these inputs as a reusable template in the library")
+                    .clicked()
+                {
+                    save_template = true;
+                }
+            });
         });
+        if save_template {
+            self.save_prompt_as_template();
+        }
         let pos = ui.add(
             egui::TextEdit::multiline(&mut self.ck_positive)
                 .desired_rows(3)
@@ -964,40 +977,6 @@ impl ShellApp {
         });
     }
 
-    /// The library save-shelf: a read-only-ish view of saved prompts and asset
-    /// cards reached from the cockpit. Authoring lives here, never blocking the
-    /// create path.
-    fn library_shelf(&mut self, ui: &mut egui::Ui) {
-        egui::ScrollArea::vertical().auto_shrink([false, false]).show(ui, |ui| {
-            ui.label(egui::RichText::new(format!("{} Saved prompts", crate::icons::SPARKLE)).strong());
-            ui.label(egui::RichText::new("Built-in examples and your saved prompts. Click to load into the cockpit.").small().weak());
-            ui.add_space(4.0);
-            let prompts = ai::example_prompts();
-            let mut load: Option<(String, String)> = None;
-            for (name, text, structure) in &prompts {
-                egui::Frame::group(ui.style()).show(ui, |ui| {
-                    ui.label(egui::RichText::new(name).strong());
-                    ui.label(egui::RichText::new(truncate(text, 90)).small().weak());
-                    if ui.small_button("Load").clicked() {
-                        load = Some((text.clone(), structure.clone()));
-                    }
-                });
-            }
-            if let Some((text, structure)) = load {
-                self.rs_prompt = text;
-                self.ck_structure = structure;
-                self.ck_prompt_edited = false;
-                self.ck_dirty = true;
-                self.create_view = CreateView::Cockpit;
-            }
-
-            ui.add_space(10.0);
-            let cards = self.doc.project.library.ai.asset_library.character_cards.len();
-            let refs = self.doc.project.library.ai.asset_library.references.len();
-            ui.label(egui::RichText::new(format!("{} Asset library", crate::icons::CARD)).strong());
-            ui.label(egui::RichText::new(format!("{cards} character card(s), {refs} reference(s)")).small().weak());
-        });
-    }
 }
 
 /// A per-card action, resolved after the gallery's borrow ends.
