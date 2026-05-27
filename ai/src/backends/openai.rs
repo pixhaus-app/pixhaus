@@ -28,7 +28,7 @@ use tokio_util::sync::CancellationToken;
 use tracing::{debug, instrument, warn};
 
 use super::{
-    BackendError, ImageEditRequest, ImageGenRequest, ImageGenResponse, ImageQuality, InferenceBackend, InferenceRequest, InferenceResponse, Result,
+    BackendError, ImageEditRequest, ImageGenRequest, ImageGenResponse, InferenceBackend, InferenceRequest, InferenceResponse, Result,
     VerbProgress, check_http_status,
 };
 use crate::plugin::context::PixelData;
@@ -659,9 +659,6 @@ struct OpenAiImageResponse {
 struct ImageData {
     b64_json: Option<String>,
 }
-
-// Preserve the quality enum in this module's adapter surface.
-fn _assert_quality(_: ImageQuality) {}
 
 #[cfg(test)]
 mod tests {
