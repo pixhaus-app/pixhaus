@@ -110,6 +110,34 @@ pub enum ShellMsg {
         /// Failure reason.
         error: String,
     },
+    /// First-frame (studio seed-pose) generation progress.
+    FirstFrameProgress {
+        /// Generation epoch this message belongs to; stale ones are dropped.
+        epoch: u64,
+        /// One-line status.
+        message: String,
+    },
+    /// First-frame generation finished: one or more candidate seed poses, as
+    /// PNG bytes, to land in the studio's first-frame gallery.
+    FirstFrameDone {
+        /// Generation epoch this result belongs to; stale ones are dropped.
+        epoch: u64,
+        /// Candidate seed poses as PNG bytes.
+        images: Vec<Vec<u8>>,
+        /// Gallery index this batch descends from (an inpaint's source), or
+        /// `None` for a from-scratch text-to-image batch.
+        parent: Option<usize>,
+        /// Whether the batch appends to the gallery (refinement) or replaces it
+        /// (a fresh generation).
+        append: bool,
+    },
+    /// First-frame generation failed (or was canceled).
+    FirstFrameFailed {
+        /// Generation epoch this failure belongs to; stale ones are dropped.
+        epoch: u64,
+        /// Failure reason.
+        error: String,
+    },
     /// AI background removal of one cel finished: the stripped PNG to apply to
     /// `buffer_id`.
     BgRemovalDone {
@@ -163,7 +191,7 @@ pub struct TransformResult {
 
 /// What the selected clip card's Play button cycles.
 #[derive(Clone, Copy, PartialEq, Eq)]
-enum AnimPlayMode {
+pub(crate) enum AnimPlayMode {
     /// Every decoded frame, in order.
     Clip,
     /// Only the marked `[start, end)` loop.
@@ -195,6 +223,10 @@ pub(crate) struct ClipCandidate {
     pub fps: u32,
     /// Seed used, if the run pinned one (provenance).
     pub seed: Option<u64>,
+    /// The gallery index this clip was re-rolled or branched from, if any —
+    /// the clip's lineage, mirroring `CockpitCandidate::parent`, so the studio
+    /// can show where a clip came from.
+    pub parent: Option<usize>,
     /// Lazily-built first-frame thumbnail for the gallery card.
     pub card_texture: Option<egui::TextureHandle>,
 }
@@ -356,32 +388,32 @@ pub struct ShellApp {
     /// FAL API key draft (entered in the AI-backends settings tab).
     pub(crate) fal_key_input: String,
     /// Animation motion prompt draft.
-    anim_motion: String,
+    pub(crate) anim_motion: String,
     /// Requested loop frame count.
-    anim_target_frames: u32,
+    pub(crate) anim_target_frames: u32,
     /// Playback FPS for the generated animation.
-    anim_fps: u32,
+    pub(crate) anim_fps: u32,
     /// Whether the Generate stage pins a fixed RNG seed (vs random each run).
-    anim_seed_fixed: bool,
+    pub(crate) anim_seed_fixed: bool,
     /// The fixed seed value, used when [`Self::anim_seed_fixed`] is set.
-    anim_seed: u64,
+    pub(crate) anim_seed: u64,
     /// Generate-stage job status (progress / failure).
-    anim_status: JobStatus,
+    pub(crate) anim_status: JobStatus,
     /// Generated clips, oldest first; the gallery lists them newest-first.
-    anim_candidates: Vec<ClipCandidate>,
+    pub(crate) anim_candidates: Vec<ClipCandidate>,
     /// Index into [`Self::anim_candidates`] of the card being edited/previewed.
-    anim_selected: Option<usize>,
+    pub(crate) anim_selected: Option<usize>,
     /// What the selected card's Play cycles (whole clip / loop / picks).
-    anim_play_mode: AnimPlayMode,
+    pub(crate) anim_play_mode: AnimPlayMode,
     /// Recent motion prompts, newest first, for quick recall.
-    anim_recent_motions: Vec<String>,
+    pub(crate) anim_recent_motions: Vec<String>,
     /// Scrub cursor into the selected card's frames.
-    anim_scrub: usize,
+    pub(crate) anim_scrub: usize,
     /// Which decoded-frame index is currently uploaded to the GPU, if any. Lets
     /// the preview re-upload only when the shown frame changes.
     anim_shown: Option<usize>,
     /// Whether the clip transport is playing.
-    anim_clip_playing: bool,
+    pub(crate) anim_clip_playing: bool,
     /// The frame indices the current Play cycles, and a cursor into them.
     anim_play_indices: Vec<usize>,
     /// Cursor into [`Self::anim_play_indices`].
@@ -393,6 +425,15 @@ pub struct ShellApp {
     /// Monotonic generation id. Bumped on every Generate and on Cancel so a
     /// canceled or superseded clip's late messages are dropped.
     anim_gen_epoch: u64,
+    /// Lineage parent captured by a re-roll/branch, stamped on the next clip
+    /// card when it lands. `None` for a from-scratch generation.
+    anim_pending_parent: Option<usize>,
+    /// Animation-studio session state: the current stage, the anchor framing,
+    /// the first-frame gallery and approved seed pose, the inpaint mask, and the
+    /// motion-model pick. The clip candidates themselves live in `anim_*`, which
+    /// the studio's clip/pick/land stages drive unchanged. All of it lives off
+    /// the document until Land, so Cancel and restart are clean at every stage.
+    pub(crate) studio: crate::studio::StudioState,
     /// Background-removal panel: the key colour (auto-detected or eyedropped).
     pub(crate) bg_key_color: Rgba,
     /// Background-removal panel: per-channel keying tolerance.
@@ -561,6 +602,8 @@ impl ShellApp {
             anim_clip_last_advance: Instant::now(),
             anim_cancel: None,
             anim_gen_epoch: 0,
+            anim_pending_parent: None,
+            studio: crate::studio::StudioState::default(),
             bg_key_color: Rgba::opaque(255, 0, 255),
             bg_tolerance: 24,
             bg_preview: false,
@@ -715,6 +758,22 @@ impl ShellApp {
                     if epoch == self.anim_gen_epoch {
                         self.anim_status = JobStatus::Failed(error);
                         self.anim_cancel = None;
+                    }
+                }
+                ShellMsg::FirstFrameProgress { epoch, message } => {
+                    if epoch == self.studio.ff_epoch {
+                        self.studio.ff_status = JobStatus::Running(message);
+                    }
+                }
+                ShellMsg::FirstFrameDone { epoch, images, parent, append } => {
+                    if epoch == self.studio.ff_epoch {
+                        self.on_first_frame_ready(images, parent, append);
+                    }
+                }
+                ShellMsg::FirstFrameFailed { epoch, error } => {
+                    if epoch == self.studio.ff_epoch {
+                        self.studio.ff_status = JobStatus::Failed(error);
+                        self.studio.ff_cancel = None;
                     }
                 }
                 ShellMsg::BgRemovalDone { buffer_id, png } => {
@@ -1497,259 +1556,13 @@ impl ShellApp {
         }
     }
 
-    /// Animation surface: the staged wizard. Generate a clip, scrub the raw
-    /// video, mark and preview the loop, pick frames, integrate. Nothing touches
-    /// the sprite until Integrate, so Cancel is clean at every step.
-    pub(crate) fn animation_tab(&mut self, ui: &mut egui::Ui) {
-        if self.doc.active_anchor().is_none() {
-            ui.label("Approve a result as an anchor first (Cockpit).");
-            return;
-        }
-        // Keep the canvas showing the selected card's current scrub frame.
-        self.sync_clip_preview();
-
-        egui::ScrollArea::vertical().auto_shrink([false, false]).show(ui, |ui| {
-            self.anim_prompt_form(ui);
-            ui.add_space(10.0);
-            self.anim_gallery(ui);
-            if self.anim_selected.is_some() {
-                ui.add_space(10.0);
-                ui.separator();
-                self.anim_card_editor(ui);
-            }
-        });
-    }
-
     /// The selected clip card, if any.
-    fn anim_card(&self) -> Option<&ClipCandidate> {
+    pub(crate) fn anim_card(&self) -> Option<&ClipCandidate> {
         self.anim_selected.and_then(|i| self.anim_candidates.get(i))
     }
 
-    /// The motion prompt, presets, generation controls, and run status. Generate
-    /// appends a clip card to the gallery; nothing here touches the sprite.
-    fn anim_prompt_form(&mut self, ui: &mut egui::Ui) {
-        ui.label("Motion");
-        ui.add(
-            egui::TextEdit::singleline(&mut self.anim_motion)
-                .hint_text("walk cycle, side view")
-                .desired_width(f32::INFINITY),
-        );
-        ui.horizontal_wrapped(|ui| {
-            for preset in ["walk cycle, side view", "idle breathing", "run cycle, side view", "attack swing"] {
-                if ui.small_button(preset).clicked() {
-                    preset.clone_into(&mut self.anim_motion);
-                }
-            }
-        });
-        ui.add(egui::Slider::new(&mut self.anim_target_frames, 2..=16).text("loop frames"));
-        ui.add(egui::Slider::new(&mut self.anim_fps, 4..=24).text("fps"));
-        ui.horizontal(|ui| {
-            ui.checkbox(&mut self.anim_seed_fixed, "Fixed seed")
-                .on_hover_text("Pin the RNG seed for a reproducible clip; off uses a random seed each run");
-            ui.add_enabled(self.anim_seed_fixed, egui::DragValue::new(&mut self.anim_seed));
-        });
-
-        let generating = matches!(self.anim_status, JobStatus::Running(_));
-        if ui
-            .add_enabled(
-                self.backend_ready && !generating,
-                egui::Button::new(format!("{} Generate clip", crate::icons::FILM)),
-            )
-            .clicked()
-        {
-            self.start_clip();
-        }
-        if !self.backend_ready {
-            ui.colored_label(egui::Color32::LIGHT_YELLOW, "No generation backend configured.");
-        }
-        match &self.anim_status {
-            JobStatus::Running(m) => {
-                ui.horizontal(|ui| {
-                    ui.spinner();
-                    ui.label(m.clone());
-                });
-            }
-            JobStatus::Failed(e) => {
-                ui.colored_label(egui::Color32::LIGHT_RED, format!("failed: {e}"));
-            }
-            JobStatus::Idle => {}
-        }
-        if generating && ui.button("Cancel").clicked() {
-            self.cancel_clip();
-        }
-
-        if !self.anim_recent_motions.is_empty() {
-            let recent = self.anim_recent_motions.clone();
-            let mut pick: Option<String> = None;
-            egui::CollapsingHeader::new(format!("{} Recent motions", crate::icons::UNDO))
-                .id_salt("anim_history")
-                .show(ui, |ui| {
-                    for m in &recent {
-                        if ui
-                            .add(egui::Label::new(egui::RichText::new(truncate_motion(m, 48)).small()).sense(egui::Sense::click()))
-                            .on_hover_text(m)
-                            .clicked()
-                        {
-                            pick = Some(m.clone());
-                        }
-                    }
-                });
-            if let Some(m) = pick {
-                self.anim_motion = m;
-            }
-        }
-    }
-
-    /// The clip-card gallery, newest first. Clicking a card selects it for
-    /// editing and drives the canvas preview from its frames.
-    #[allow(clippy::cast_precision_loss)]
-    fn anim_gallery(&mut self, ui: &mut egui::Ui) {
-        if self.anim_candidates.is_empty() {
-            ui.label(egui::RichText::new("Generated clips appear here as cards.").small().weak());
-            return;
-        }
-        ui.label(egui::RichText::new("Clips").strong());
-        let ctx = ui.ctx().clone();
-        let mut select: Option<usize> = None;
-        let mut remove: Option<usize> = None;
-        for i in (0..self.anim_candidates.len()).rev() {
-            if self.anim_candidates[i].card_texture.is_none() {
-                if let Some(frame) = self.anim_candidates[i].frames.first() {
-                    let tex = video_frame_to_texture(&ctx, frame);
-                    self.anim_candidates[i].card_texture = Some(tex);
-                }
-            }
-            let selected = self.anim_selected == Some(i);
-            let cand = &self.anim_candidates[i];
-            egui::Frame::group(ui.style()).show(ui, |ui| {
-                ui.horizontal(|ui| {
-                    if let Some(tex) = &cand.card_texture {
-                        let size = tex.size_vec2();
-                        let scale = (72.0 / size.x.max(1.0)).min(1.0);
-                        if ui.add(egui::Button::image((tex.id(), size * scale))).clicked() {
-                            select = Some(i);
-                        }
-                    }
-                    ui.vertical(|ui| {
-                        if ui
-                            .selectable_label(selected, egui::RichText::new(truncate_motion(&cand.motion, 36)).strong())
-                            .clicked()
-                        {
-                            select = Some(i);
-                        }
-                        ui.label(egui::RichText::new(format!("{} frames · {} fps", cand.frames.len(), cand.fps)).small().weak());
-                        if ui.small_button(crate::icons::TRASH).on_hover_text("Discard this clip").clicked() {
-                            remove = Some(i);
-                        }
-                    });
-                });
-            });
-        }
-        if let Some(i) = select {
-            self.select_clip(i);
-        }
-        if let Some(i) = remove {
-            self.remove_clip(i);
-        }
-    }
-
-    /// The selected card's editor: provenance, play-mode, transport, loop
-    /// markers, frame picks, and the Integrate / Re-roll actions.
-    #[allow(clippy::cast_possible_truncation)]
-    fn anim_card_editor(&mut self, ui: &mut egui::Ui) {
-        let Some(i) = self.anim_selected else {
-            return;
-        };
-        let n = self.anim_candidates[i].frames.len();
-        if n == 0 {
-            return;
-        }
-        let last = (n - 1) as u32;
-
-        {
-            let c = &self.anim_candidates[i];
-            let seed = c.seed.map_or_else(|| "random".to_owned(), |s| s.to_string());
-            ui.label(
-                egui::RichText::new(format!(
-                    "\"{}\" — {} frames · {} fps · seed {seed}",
-                    truncate_motion(&c.motion, 36),
-                    c.frames.len(),
-                    c.fps
-                ))
-                .small()
-                .weak(),
-            );
-            // Source clip provenance: the raw bytes kept for a future export.
-            ui.label(egui::RichText::new(format!("source: {} · {} KB", c.mime, c.clip.len() / 1024)).small().weak());
-        }
-
-        ui.horizontal(|ui| {
-            ui.label("Play");
-            ui.selectable_value(&mut self.anim_play_mode, AnimPlayMode::Clip, "Clip");
-            ui.selectable_value(&mut self.anim_play_mode, AnimPlayMode::Loop, "Loop");
-            ui.selectable_value(&mut self.anim_play_mode, AnimPlayMode::Picks, "Picks");
-        });
-        self.anim_transport(ui);
-
-        ui.label(egui::RichText::new("Loop — Play cycles only the marked span").small().weak());
-        let mut start = self.anim_candidates[i].markers.start as u32;
-        if ui.add(egui::Slider::new(&mut start, 0..=last).text("start")).changed() {
-            self.anim_clip_playing = false;
-            let end = self.anim_candidates[i].markers.end;
-            let s = (start as usize).min(end.saturating_sub(1));
-            self.anim_candidates[i].markers.start = s;
-            self.set_scrub(s);
-        }
-        let mut end = self.anim_candidates[i].markers.end as u32;
-        if ui.add(egui::Slider::new(&mut end, 1..=(n as u32)).text("end (excluded)")).changed() {
-            self.anim_clip_playing = false;
-            let start = self.anim_candidates[i].markers.start;
-            let e = (end as usize).max(start + 1).min(n);
-            self.anim_candidates[i].markers.end = e;
-            self.set_scrub(e - 1);
-        }
-
-        ui.label(egui::RichText::new("Frames — the picks that land on the timeline").small().weak());
-        let mut count = self.anim_target_frames;
-        if ui.add(egui::Slider::new(&mut count, 2..=16).text("count")).changed() {
-            self.anim_target_frames = count;
-            let markers = self.anim_candidates[i].markers;
-            self.anim_candidates[i].picks = anim::pick_loop_frames(&self.anim_candidates[i].frames, markers, count as usize);
-        }
-        let picks_len = self.anim_candidates[i].picks.len();
-        if picks_len < self.anim_target_frames as usize {
-            ui.colored_label(
-                egui::Color32::LIGHT_YELLOW,
-                "The clip can't supply that many distinct frames — widen the loop or lower the count.",
-            );
-        }
-        let cur = self.anim_scrub;
-        let included = self.anim_candidates[i].picks.contains(&cur);
-        if ui.button(if included { "Remove current frame" } else { "Add current frame" }).clicked() {
-            self.toggle_pick(cur);
-        }
-        self.pick_strip(ui);
-
-        ui.separator();
-        ui.horizontal(|ui| {
-            if ui
-                .add_enabled(picks_len > 0, egui::Button::new(format!("{} Integrate", crate::icons::CHECK)))
-                .clicked()
-            {
-                self.integrate_picked();
-            }
-            if ui
-                .button(format!("{} Re-roll", crate::icons::DICE))
-                .on_hover_text("Generate again from this motion with a new random seed")
-                .clicked()
-            {
-                self.reroll_clip(i);
-            }
-        });
-    }
-
     /// Selects clip card `i` for editing and resets the scrub/preview to it.
-    fn select_clip(&mut self, i: usize) {
+    pub(crate) fn select_clip(&mut self, i: usize) {
         self.anim_selected = Some(i);
         self.anim_scrub = 0;
         self.anim_shown = None;
@@ -1758,7 +1571,7 @@ impl ShellApp {
     }
 
     /// Discards clip card `i`, fixing the selection and the canvas preview.
-    fn remove_clip(&mut self, i: usize) {
+    pub(crate) fn remove_clip(&mut self, i: usize) {
         if i >= self.anim_candidates.len() {
             return;
         }
@@ -1779,12 +1592,19 @@ impl ShellApp {
     }
 
     /// Re-runs generation from card `i`'s motion with a fresh random seed; the
-    /// result lands as a new card.
-    fn reroll_clip(&mut self, i: usize) {
+    /// result lands as a new card that records `i` as its lineage parent.
+    pub(crate) fn reroll_clip(&mut self, i: usize) {
         let motion = self.anim_candidates[i].motion.clone();
         self.anim_motion = motion;
         self.anim_seed_fixed = false;
+        self.anim_pending_parent = Some(i);
         self.start_clip();
+    }
+
+    /// Clears the pending clip-lineage parent so the next clip lands as a
+    /// from-scratch generation (no re-roll/branch ancestry).
+    pub(crate) fn clear_clip_lineage(&mut self) {
+        self.anim_pending_parent = None;
     }
 
     /// Records `motion` at the head of the recent list, de-duplicated and capped.
@@ -1801,8 +1621,7 @@ impl ShellApp {
     /// Shared scrub track + transport across Review, Mark loop, and Pick frames.
     /// Play cycles whatever subset the current stage defines.
     #[allow(clippy::cast_possible_truncation)]
-    #[allow(clippy::cast_possible_truncation)]
-    fn anim_transport(&mut self, ui: &mut egui::Ui) {
+    pub(crate) fn anim_transport(&mut self, ui: &mut egui::Ui) {
         let n = self.anim_card().map_or(0, |c| c.frames.len());
         if n == 0 {
             return;
@@ -1823,7 +1642,7 @@ impl ShellApp {
 
     /// The picked-frame thumbnail strip for the selected card; click to drop.
     #[allow(clippy::cast_precision_loss)]
-    fn pick_strip(&mut self, ui: &mut egui::Ui) {
+    pub(crate) fn pick_strip(&mut self, ui: &mut egui::Ui) {
         let Some(i) = self.anim_selected else {
             return;
         };
@@ -1874,7 +1693,7 @@ impl ShellApp {
     }
 
     /// Adds or removes `i` from the selected card's picked set, keeping it sorted.
-    fn toggle_pick(&mut self, i: usize) {
+    pub(crate) fn toggle_pick(&mut self, i: usize) {
         let Some(c) = self.anim_selected.and_then(|s| self.anim_candidates.get_mut(s)) else {
             return;
         };
@@ -1887,7 +1706,7 @@ impl ShellApp {
     }
 
     /// Starts or stops clip playback for the current stage's frame subset.
-    fn toggle_clip_play(&mut self) {
+    pub(crate) fn toggle_clip_play(&mut self) {
         if self.anim_clip_playing {
             self.anim_clip_playing = false;
             return;
@@ -1906,7 +1725,7 @@ impl ShellApp {
 
     /// The frame indices the selected card's Play cycles, per the play mode:
     /// the whole clip, the marked `[start, end)`, or the picks.
-    fn current_play_indices(&self) -> Vec<usize> {
+    pub(crate) fn current_play_indices(&self) -> Vec<usize> {
         let Some(c) = self.anim_card() else {
             return Vec::new();
         };
@@ -1927,7 +1746,7 @@ impl ShellApp {
 
     /// Kicks off a clip generation on the tokio runtime, with a cancel
     /// handle stored so the Cancel button can abort it.
-    fn start_clip(&mut self) {
+    pub(crate) fn start_clip(&mut self) {
         let Some(anchor) = self.doc.active_anchor().map(<[u8]>::to_vec) else {
             return;
         };
@@ -1937,7 +1756,11 @@ impl ShellApp {
         let job = ai::AnimJob {
             canvas: (sprite.canvas.width, sprite.canvas.height),
             anchor_png: anchor,
+            // The studio's approved seed pose drives the i2v call; without one
+            // the clip path generates its own first frame from the anchor.
+            first_frame_png: self.studio.approved_first_frame.clone(),
             motion_prompt: self.anim_motion.clone(),
+            i2v_model: Some(self.studio.i2v_model.model_id()),
             target_frames: self.anim_target_frames,
             fps: self.anim_fps,
             seed: self.anim_seed_fixed.then_some(self.anim_seed),
@@ -1978,7 +1801,7 @@ impl ShellApp {
     }
 
     /// Cancels a running clip generation and clears the busy status.
-    fn cancel_clip(&mut self) {
+    pub(crate) fn cancel_clip(&mut self) {
         if let Some(cancel) = self.anim_cancel.take() {
             cancel.cancel();
         }
@@ -2004,6 +1827,7 @@ impl ShellApp {
             motion: self.anim_motion.clone(),
             fps: self.anim_fps,
             seed: self.anim_seed_fixed.then_some(self.anim_seed),
+            parent: self.anim_pending_parent.take(),
             card_texture: None,
             frames,
         });
@@ -2014,7 +1838,7 @@ impl ShellApp {
     /// Normalizes and integrates the selected card's picked frames onto the
     /// timeline. The frames still carry their background — removal is a separate
     /// timeline op. The clip stays in the gallery; the canvas returns to the sprite.
-    fn integrate_picked(&mut self) {
+    pub(crate) fn integrate_picked(&mut self) {
         let Some(i) = self.anim_selected else {
             return;
         };
@@ -2060,15 +1884,20 @@ impl ShellApp {
     }
 
     /// Moves the scrub cursor within the selected card and re-shows that frame.
-    fn set_scrub(&mut self, idx: usize) {
+    pub(crate) fn set_scrub(&mut self, idx: usize) {
         let n = self.anim_card().map_or(0, |c| c.frames.len());
         self.anim_scrub = idx.min(n.saturating_sub(1));
         self.sync_clip_preview();
     }
 
-    /// Whether a selected clip card is driving the canvas with one of its frames.
+    /// Whether the wgpu canvas is currently showing a clip frame (the
+    /// canvas-preview marker is set). The animation studio is a full-screen
+    /// takeover that renders clip frames as egui textures in its own surface, so
+    /// it never sets this — but the marker stays the honest source of truth, so
+    /// the preview machinery (`sync_clip_preview` / `exit_clip_preview`) remains
+    /// coherent if a non-studio caller ever drives the canvas again.
     fn clip_preview_active(&self) -> bool {
-        self.workspace == Workspace::Create && self.create_view == CreateView::Animate && self.anim_card().is_some_and(|c| !c.frames.is_empty())
+        self.anim_shown.is_some()
     }
 
     /// Stops clip playback and drops the clip preview from the canvas — used
@@ -2230,7 +2059,7 @@ impl ShellApp {
 
     /// Switches workspace mode, expanding the timeline for Animate and showing
     /// the AI surface for Create.
-    fn set_workspace(&mut self, workspace: Workspace) {
+    pub(crate) fn set_workspace(&mut self, workspace: Workspace) {
         if workspace != Workspace::Create {
             self.exit_sheet_preview();
             self.anim_clip_playing = false;
@@ -2443,7 +2272,7 @@ fn anchor_grid(ui: &mut egui::Ui, anchor: &mut CanvasAnchor) {
 }
 
 /// Truncates a motion prompt for a label, appending an ellipsis when clipped.
-fn truncate_motion(s: &str, max: usize) -> String {
+pub(crate) fn truncate_motion(s: &str, max: usize) -> String {
     if s.chars().count() <= max {
         s.to_owned()
     } else {
@@ -2474,7 +2303,7 @@ fn video_frame_to_pixel_buffer(frame: &VideoFrame) -> Option<PixelBuffer> {
 }
 
 /// Loads a clip frame as a NEAREST-sampled egui texture for the pick strip.
-fn video_frame_to_texture(ctx: &egui::Context, frame: &VideoFrame) -> egui::TextureHandle {
+pub(crate) fn video_frame_to_texture(ctx: &egui::Context, frame: &VideoFrame) -> egui::TextureHandle {
     let size = [frame.width as usize, frame.height as usize];
     let image = egui::ColorImage::from_rgba_unmultiplied(size, &frame.pixels);
     ctx.load_texture("anim_thumb", image, egui::TextureOptions::NEAREST)
@@ -2503,37 +2332,46 @@ impl eframe::App for ShellApp {
         self.show_resize_dialog(ui.ctx());
 
         // Panel order matters: outer panels first, the central canvas last so
-        // it fills the space the others leave. Two top strips (menu, then the
-        // tool context bar); two bottom strips (status at the edge, timeline
-        // above it).
+        // it fills the space the others leave. The menu bar is always shown;
+        // the rest of the editor chrome yields when the animation studio takes
+        // over full-screen.
         egui::Panel::top("menu_bar").show_inside(ui, |ui| self.menu_bar(ui));
-        egui::Panel::top("context_bar").resizable(false).show_inside(ui, |ui| self.context_bar(ui));
 
-        egui::Panel::bottom("status_bar").resizable(false).show_inside(ui, |ui| self.status_bar(ui));
+        let studio = self.studio_active();
+        if !studio {
+            // Two top strips (menu, then the tool context bar); two bottom strips
+            // (status at the edge, timeline above it).
+            egui::Panel::top("context_bar").resizable(false).show_inside(ui, |ui| self.context_bar(ui));
 
-        // Slim icon tool strip on the far left.
-        egui::Panel::left("tools")
-            .resizable(false)
-            .exact_size(48.0)
-            .show_inside(ui, |ui| self.tools_panel(ui));
+            egui::Panel::bottom("status_bar").resizable(false).show_inside(ui, |ui| self.status_bar(ui));
 
-        // One side dock on the right: Colour/Layers/Sprites tabs in Draw and
-        // Animate, the AI surface in Create.
-        egui::Panel::right("dock")
-            .resizable(true)
-            .default_size(300.0)
-            .show_inside(ui, |ui| self.dock_panel(ui));
+            // Slim icon tool strip on the far left.
+            egui::Panel::left("tools")
+                .resizable(false)
+                .exact_size(48.0)
+                .show_inside(ui, |ui| self.tools_panel(ui));
 
-        // Collapsible timeline: a slim transport line, or the full cel matrix.
-        egui::Panel::bottom("timeline")
-            .resizable(self.timeline_expanded)
-            .default_size(if self.timeline_expanded { 240.0 } else { 40.0 })
-            .show_inside(ui, |ui| self.timeline_dock(ui));
+            // One side dock on the right: Colour/Layers/Sprites tabs in Draw and
+            // Animate, the AI surface in Create.
+            egui::Panel::right("dock")
+                .resizable(true)
+                .default_size(300.0)
+                .show_inside(ui, |ui| self.dock_panel(ui));
+
+            // Collapsible timeline: a slim transport line, or the full cel matrix.
+            egui::Panel::bottom("timeline")
+                .resizable(self.timeline_expanded)
+                .default_size(if self.timeline_expanded { 240.0 } else { 40.0 })
+                .show_inside(ui, |ui| self.timeline_dock(ui));
+        }
 
         egui::CentralPanel::default().show_inside(ui, |ui| {
-            // The composition library takes over the canvas area while editing
-            // presets; everything else paints the sprite canvas.
-            if self.workspace == Workspace::Create && self.create_view == CreateView::Library {
+            // Create-mode takes over the canvas area: the studio full-screen, or
+            // the composition library while editing presets. Everything else
+            // paints the sprite canvas.
+            if studio {
+                self.studio_view(ui);
+            } else if self.workspace == Workspace::Create && self.create_view == CreateView::Library {
                 self.library_view(ui);
             } else {
                 self.canvas_ui(ui);

@@ -170,7 +170,9 @@ fn run_gen(args: &[String]) -> Result<()> {
     let anim_job = ai::AnimJob {
         canvas: (CANVAS.width, CANVAS.height),
         anchor_png: anchor,
+        first_frame_png: None,
         motion_prompt: motion,
+        i2v_model: None,
         target_frames: 6,
         fps: 10,
         seed: None,

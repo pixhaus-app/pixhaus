@@ -20,16 +20,18 @@ use crate::ai;
 use crate::app::{JobStatus, ShellApp};
 
 /// Which surface the Create-mode dock shows. The cockpit is the default front
-/// door; the library is the save-shelf back room; animate is the staged clip
-/// wizard (an approved anchor feeds it).
+/// door; the library is the save-shelf back room; the studio is the full-screen
+/// animation workspace (an approved anchor feeds it).
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub(crate) enum CreateView {
     /// The creation cockpit — type, generate, refine, branch.
     Cockpit,
     /// The save-shelf: saved prompts, structures, styles, and asset cards.
     Library,
-    /// The staged animation wizard (needs an approved anchor).
-    Animate,
+    /// The animation studio — a full-screen takeover (needs an approved anchor).
+    /// Unlike the other views it does not render inside the dock; the central
+    /// panel renders it across the whole canvas area (see `crate::studio`).
+    Studio,
 }
 
 /// One generated candidate in the gallery, with its decoded image, provenance,
@@ -100,12 +102,12 @@ impl ShellApp {
         ui.horizontal(|ui| {
             ui.selectable_value(&mut self.create_view, CreateView::Cockpit, format!("{} Cockpit", crate::icons::SPARKLE));
             ui.selectable_value(&mut self.create_view, CreateView::Library, format!("{} Library", crate::icons::LIBRARY));
-            ui.selectable_value(&mut self.create_view, CreateView::Animate, format!("{} Animate", crate::icons::FILM));
+            ui.selectable_value(&mut self.create_view, CreateView::Studio, format!("{} Studio", crate::icons::FILM));
         });
         if self.create_view != prev {
             // Leaving a surface returns the canvas from whatever preview it drove.
             self.exit_sheet_preview();
-            if self.create_view != CreateView::Animate {
+            if self.create_view != CreateView::Studio {
                 self.leave_animation_preview();
             }
         }
@@ -113,7 +115,13 @@ impl ShellApp {
         match self.create_view {
             CreateView::Cockpit => self.cockpit_panel(ui),
             CreateView::Library => self.library_editor(ui),
-            CreateView::Animate => self.animation_tab(ui),
+            // The studio is a full-screen takeover rendered from the central
+            // panel, not inside the dock; the dock is hidden while it is active,
+            // so this arm only shows if the dock is somehow visible with the
+            // studio selected.
+            CreateView::Studio => {
+                ui.label(egui::RichText::new("The animation studio fills the canvas area.").weak());
+            }
         }
     }
 
@@ -964,7 +972,9 @@ impl ShellApp {
         });
         self.exit_sheet_preview();
         self.doc.set_active_anchor(png);
-        self.create_view = CreateView::Animate;
+        // Approving an anchor jumps straight into the studio, seeded from this
+        // anchor; the studio is a full-screen takeover from here on.
+        self.enter_studio();
     }
 
     /// Saves candidate `i` into the project asset library as a character card,

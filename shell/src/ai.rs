@@ -14,7 +14,8 @@ use eframe::egui;
 use pixhaus_ai::backends::fal::FalBackend;
 use pixhaus_ai::backends::openai::OpenAiBackend;
 use pixhaus_ai::backends::{
-    ApiKeyStore, BackendError, BackendProxy, BackgroundRemovalRequest, ImageGenRequest, ImageToVideoRequest, InferenceRequest, InferenceResponse,
+    ApiKeyStore, BackendError, BackendProxy, BackgroundRemovalRequest, ImageEditRequest, ImageGenRequest, ImageToVideoRequest, InferenceRequest,
+    InferenceResponse,
 };
 use pixhaus_ai::compose::builtins::{BUILTIN_DEFAULT_BASELINE, BuiltinLibrary, STRUCTURE_SINGLE_ID};
 use pixhaus_ai::compose::{ComposeRequest, compose};
@@ -468,8 +469,16 @@ pub struct AnimJob {
     pub canvas: (u32, u32),
     /// Approved reference-sheet PNG used as the character anchor.
     pub anchor_png: Vec<u8>,
+    /// Approved seed pose driving the image-to-video call. When `Some`, the
+    /// studio's first-frame stage already produced and locked it, so
+    /// [`generate_clip`] skips its own text-to-image step and animates this
+    /// frame directly. When `None`, the clip path generates a seed itself.
+    pub first_frame_png: Option<Vec<u8>>,
     /// Motion description (e.g. "walk cycle, side view").
     pub motion_prompt: String,
+    /// Image-to-video model override (e.g. Seedance, Wan), or `None` for the
+    /// backend default.
+    pub i2v_model: Option<String>,
     /// Number of loop frames to land in the timeline.
     pub target_frames: u32,
     /// Playback frames per second.
@@ -542,6 +551,125 @@ pub fn spawn_bg_removal(
     });
 }
 
+/// A first-frame request from the studio: generate (text-to-image from the
+/// anchor) or refine (inpaint a masked region of a base image).
+pub enum FirstFrameJob {
+    /// Generate `num_variants` seed poses from the anchor via text-to-image.
+    Generate {
+        /// Approved reference-sheet PNG used as the character anchor.
+        anchor_png: Vec<u8>,
+        /// Target canvas size (width, height).
+        canvas: (u32, u32),
+        /// Positive prompt describing the desired pose.
+        prompt: String,
+        /// Candidate count (clamped 1-4).
+        num_variants: u32,
+        /// Fixed RNG seed, or `None` for a fresh random seed.
+        seed: Option<u64>,
+    },
+    /// Repaint a masked region of `base` via inpaint, conditioned on the anchor.
+    Inpaint {
+        /// The candidate being corrected, as PNG bytes.
+        base: Vec<u8>,
+        /// Edit mask as PNG bytes — white marks the region to repaint.
+        mask: Vec<u8>,
+        /// Approved reference-sheet PNG used as the character anchor.
+        anchor_png: Vec<u8>,
+        /// Instruction describing the fix.
+        prompt: String,
+        /// Candidate count (clamped 1-4).
+        num_variants: u32,
+    },
+}
+
+/// Runs a [`FirstFrameJob`] to completion, returning the candidate PNGs. The
+/// generate arm needs `IMAGE_GENERATION`; the inpaint arm needs `IMAGE_INPAINT`.
+/// Both condition on the anchor so the seed pose stays on-model.
+pub async fn run_first_frame(runtime: &VerbRuntime, job: FirstFrameJob, cancel: &CancellationToken) -> Result<Vec<Vec<u8>>, String> {
+    let (capability, request) = match job {
+        FirstFrameJob::Generate {
+            anchor_png,
+            canvas,
+            prompt,
+            num_variants,
+            seed,
+        } => {
+            let (width, height) = canvas;
+            let req = ImageGenRequest {
+                model: None,
+                prompt: format!("{prompt}, single sprite frame, side view, transparent background"),
+                negative_prompt: Some("background, particles, glow, motion blur".into()),
+                width,
+                height,
+                steps: None,
+                seed,
+                num_images: num_variants.clamp(1, 4),
+                quality: None,
+                style_image: None,
+                reference_images: vec![anchor_png],
+            };
+            (BackendCapabilities::IMAGE_GENERATION, InferenceRequest::ImageGeneration(req))
+        }
+        FirstFrameJob::Inpaint {
+            base,
+            mask,
+            anchor_png,
+            prompt,
+            num_variants,
+        } => {
+            let req = ImageEditRequest {
+                model: None,
+                image: base,
+                mask: Some(mask),
+                prompt,
+                negative_prompt: Some("background, particles, glow, motion blur".into()),
+                num_images: num_variants.clamp(1, 4),
+                style_image: None,
+                reference_images: vec![anchor_png],
+            };
+            (BackendCapabilities::IMAGE_INPAINT, InferenceRequest::ImageInpaint(req))
+        }
+    };
+    match invoke_fat(runtime, capability, request, cancel).await? {
+        InferenceResponse::Image(r) if !r.images.is_empty() => Ok(r.images),
+        InferenceResponse::Image(_) => Err("first-frame backend returned no image".into()),
+        _ => Err("unexpected response for first-frame generation".into()),
+    }
+}
+
+/// Spawns a [`FirstFrameJob`] on the tokio runtime. Progress and the final
+/// candidate PNGs arrive over `tx`, tagged with `epoch` so a superseded or
+/// canceled run's results can be dropped. `parent` and `append` thread the
+/// lineage back so the studio gallery records where each candidate came from.
+pub fn spawn_first_frame(
+    handle: &Handle,
+    runtime: Arc<VerbRuntime>,
+    ctx: egui::Context,
+    tx: Sender<ShellMsg>,
+    job: FirstFrameJob,
+    cancel: CancellationToken,
+    epoch: u64,
+    parent: Option<usize>,
+    append: bool,
+) {
+    handle.spawn(async move {
+        let _ = tx.send(ShellMsg::FirstFrameProgress {
+            epoch,
+            message: "generating first frame".to_owned(),
+        });
+        ctx.request_repaint();
+        match run_first_frame(&runtime, job, &cancel).await {
+            Ok(images) => {
+                let _ = tx.send(ShellMsg::FirstFrameDone { epoch, images, parent, append });
+            }
+            Err(error) => {
+                let _ = tx.send(ShellMsg::FirstFrameFailed { epoch, error });
+            }
+        }
+        ctx.request_repaint();
+    });
+}
+
 /// The Generate stage in isolation: first frame -> image-to-video clip ->
 /// decode, retaining the raw clip bytes, the mime, and the decoded frames. It
 /// does **not** detect a loop, pick frames, remove backgrounds, or normalize —
@@ -549,8 +677,13 @@ pub fn spawn_bg_removal(
 pub async fn generate_clip(runtime: &VerbRuntime, job: &AnimJob, cancel: &CancellationToken, progress: &(dyn Fn(&str) + Sync)) -> Result<ClipResult, String> {
     let (width, height) = job.canvas;
 
-    progress("generating first frame");
-    let first_frame = {
+    // The studio's first-frame stage hands an approved seed pose down; honour
+    // it and skip the text-to-image step. Only when none was supplied (the
+    // headless path) does the clip generate its own seed frame.
+    let first_frame = if let Some(approved) = job.first_frame_png.clone() {
+        approved
+    } else {
+        progress("generating first frame");
         let req = ImageGenRequest {
             model: None,
             prompt: format!("{}, single sprite frame, side view, transparent background", job.motion_prompt),
@@ -573,7 +706,7 @@ pub async fn generate_clip(runtime: &VerbRuntime, job: &AnimJob, cancel: &Cancel
     progress("generating clip (image-to-video)");
     let (clip, mime) = {
         let req = ImageToVideoRequest {
-            model: None,
+            model: job.i2v_model.clone(),
             image: first_frame,
             prompt: job.motion_prompt.clone(),
             negative_prompt: Some("pivots, quarter-turns, background, particles, glow".into()),

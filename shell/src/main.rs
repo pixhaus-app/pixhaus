@@ -43,6 +43,7 @@ mod layers_panel;
 mod library;
 mod palette_panel;
 mod settings;
+mod studio;
 mod theme;
 mod timeline_panel;
 mod tools_panel;
