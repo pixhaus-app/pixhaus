@@ -35,7 +35,7 @@ pub fn flood_fill(buf: &mut PixelBuffer, x: i32, y: i32, fill_color: Rgba, toler
 
     // Skip if the seed is already within tolerance of the fill color to
     // avoid a full-canvas repaint when the user clicks an already-filled area.
-    if colors_match(target, fill_color, tolerance) {
+    if target.within_tolerance(fill_color, tolerance) {
         return;
     }
 
@@ -56,7 +56,7 @@ pub fn flood_fill(buf: &mut PixelBuffer, x: i32, y: i32, fill_color: Rgba, toler
             continue;
         };
 
-        if !colors_match(current, target, tolerance) {
+        if !current.within_tolerance(target, tolerance) {
             continue;
         }
 
@@ -75,17 +75,6 @@ pub fn flood_fill(buf: &mut PixelBuffer, x: i32, y: i32, fill_color: Rgba, toler
             queue.push_back((cx, cy + 1));
         }
     }
-}
-
-/// Returns `true` when every channel of `a` differs from `b` by at most
-/// `tolerance`.
-fn colors_match(a: Rgba, b: Rgba, tolerance: u8) -> bool {
-    let t = i32::from(tolerance);
-    channel_diff(a.r, b.r) <= t && channel_diff(a.g, b.g) <= t && channel_diff(a.b, b.b) <= t && channel_diff(a.a, b.a) <= t
-}
-
-fn channel_diff(a: u8, b: u8) -> i32 {
-    (i32::from(a) - i32::from(b)).abs()
 }
 
 #[cfg(test)]

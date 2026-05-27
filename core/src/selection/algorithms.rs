@@ -252,7 +252,7 @@ pub fn magic_wand(buffer: &PixelBuffer, seed_x: u32, seed_y: u32, tolerance: u8,
         let Some(color) = buffer.pixel(x, y) else {
             continue;
         };
-        if !colors_match(color, seed_color, tolerance) {
+        if !color.within_tolerance(seed_color, tolerance) {
             continue;
         }
 
@@ -356,19 +356,13 @@ pub fn color_range(buffer: &PixelBuffer, reference: Rgba, tolerance: u8) -> Resu
             let Some(color) = buffer.pixel(x, y) else {
                 continue;
             };
-            if colors_match(color, reference, tolerance) {
+            if color.within_tolerance(reference, tolerance) {
                 mask.set(x, y, 255);
             }
         }
     }
 
     Ok(mask)
-}
-
-/// Returns `true` when every channel of `a` and `b` differs by at most
-/// `tolerance`.
-fn colors_match(a: Rgba, b: Rgba, tolerance: u8) -> bool {
-    a.r.abs_diff(b.r) <= tolerance && a.g.abs_diff(b.g) <= tolerance && a.b.abs_diff(b.b) <= tolerance && a.a.abs_diff(b.a) <= tolerance
 }
 
 #[cfg(test)]

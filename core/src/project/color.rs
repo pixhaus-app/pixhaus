@@ -48,6 +48,18 @@ impl Rgba {
     pub const fn to_array(self) -> [u8; 4] {
         [self.r, self.g, self.b, self.a]
     }
+
+    /// Returns `true` when every channel is within `tolerance` of `other`'s,
+    /// measured as a per-channel absolute difference. `tolerance == 0` is an
+    /// exact match; `255` matches anything. This is the shared color test
+    /// behind flood-fill and magic-wand selection.
+    #[must_use]
+    pub const fn within_tolerance(self, other: Self, tolerance: u8) -> bool {
+        self.r.abs_diff(other.r) <= tolerance
+            && self.g.abs_diff(other.g) <= tolerance
+            && self.b.abs_diff(other.b) <= tolerance
+            && self.a.abs_diff(other.a) <= tolerance
+    }
 }
 
 /// The color authoring mode of a sprite.
@@ -97,5 +109,17 @@ mod tests {
         let json = serde_json::to_string(&c).unwrap();
         let back: Rgba = serde_json::from_str(&json).unwrap();
         assert_eq!(c, back);
+    }
+
+    #[test]
+    fn within_tolerance_matches_per_channel() {
+        let base = Rgba::new(100, 100, 100, 255);
+        assert!(base.within_tolerance(base, 0), "exact match at tolerance 0");
+        assert!(base.within_tolerance(Rgba::new(105, 95, 100, 255), 5), "all channels within 5");
+        assert!(!base.within_tolerance(Rgba::new(106, 100, 100, 255), 5), "one channel over 5 fails");
+        // Symmetric, and alpha participates.
+        assert!(base.within_tolerance(Rgba::new(100, 100, 100, 250), 5));
+        assert!(!base.within_tolerance(Rgba::new(100, 100, 100, 249), 5));
+        assert!(base.within_tolerance(Rgba::new(0, 0, 0, 0), 255), "tolerance 255 matches anything");
     }
 }
