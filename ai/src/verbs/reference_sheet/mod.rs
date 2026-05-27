@@ -1276,7 +1276,11 @@ mod tests {
         runtime.register(GenerateReferenceSheetVerb::new()).unwrap();
 
         let inv = runtime
-            .invoke(&VerbId::new(GENERATE_REFERENCE_SHEET_VERB_ID), VerbContext::empty(meta()), inputs_for(CHARACTER, 1))
+            .invoke(
+                &VerbId::new(GENERATE_REFERENCE_SHEET_VERB_ID),
+                VerbContext::empty(meta()),
+                inputs_for(CHARACTER, 1),
+            )
             .unwrap();
         let payload = decode_payload(&inv.finish().await.unwrap().output);
         assert_eq!(payload.variants[0].user_prompt, "a fantasy hero with a sword");

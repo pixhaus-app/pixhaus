@@ -28,8 +28,8 @@ use tokio_util::sync::CancellationToken;
 use tracing::{debug, instrument, warn};
 
 use super::{
-    BackendError, ImageEditRequest, ImageGenRequest, ImageGenResponse, InferenceBackend, InferenceRequest, InferenceResponse, Result,
-    VerbProgress, check_http_status,
+    BackendError, ImageEditRequest, ImageGenRequest, ImageGenResponse, InferenceBackend, InferenceRequest, InferenceResponse, Result, VerbProgress,
+    check_http_status,
 };
 use crate::plugin::context::PixelData;
 use crate::plugin::descriptor::{BackendCapabilities, CostEstimate};
@@ -574,7 +574,12 @@ async fn parse_openai_image_stream(response: reqwest::Response, progress: &VerbP
 /// Returns [`BackendError::InvalidResponse`] when the frame is not valid JSON
 /// or carries a provider-side error event.
 async fn handle_openai_sse_frame(frame: &str, progress: &VerbProgress, final_images: &mut Vec<Vec<u8>>) -> Result<()> {
-    let data = frame.lines().filter_map(|line| line.strip_prefix("data:")).map(str::trim).collect::<Vec<_>>().join("\n");
+    let data = frame
+        .lines()
+        .filter_map(|line| line.strip_prefix("data:"))
+        .map(str::trim)
+        .collect::<Vec<_>>()
+        .join("\n");
     if data.is_empty() || data == "[DONE]" {
         return Ok(());
     }

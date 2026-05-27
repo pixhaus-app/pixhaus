@@ -1,0 +1,13 @@
+# Normalize line endings to LF in the repository and on checkout. rustfmt is
+# configured with newline_style = "Unix", so a CRLF working tree (which
+# core.autocrlf = true produces on Windows) makes `cargo fmt --check` -- the
+# Stop gate's first command -- fail on files it would otherwise accept. Forcing
+# eol=lf keeps the gate meaningful across platforms.
+* text=auto eol=lf
+
+# Binary assets git should never touch.
+*.png binary
+*.gif binary
+*.webp binary
+*.ico binary
+*.pixhaus binary
