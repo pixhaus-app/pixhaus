@@ -13,6 +13,7 @@
 //!   sprite — the clone copies handles and metadata only.
 
 use pixhaus_core::canvas::PixelBuffer;
+use pixhaus_core::project::library::ai::ProjectAi;
 use pixhaus_core::project::{Entity, EntityId, PixelBufferId, Sprite, SpriteId};
 use pixhaus_core::undo::{Command, CommandError, CommandResult};
 
@@ -61,6 +62,25 @@ pub fn push_library_edit(editor: &mut EditorState, doc: &mut DocumentStore, labe
     }
     let cmd = EntityEdit {
         entity_id,
+        before,
+        after,
+        label: label.to_owned(),
+    };
+    let _ = editor.history.push(Box::new(cmd), doc);
+}
+
+/// Snapshots the project's composition/AI library, applies `f`, and — if
+/// anything changed — records an [`AiLibraryEdit`] undo entry. The entry point
+/// for composition-preset CRUD (saved prompts, structures, styles), which live
+/// on `project.library.ai` rather than on a sprite or entity.
+pub fn push_ai_library_edit(editor: &mut EditorState, doc: &mut DocumentStore, label: &str, f: impl FnOnce(&mut ProjectAi)) {
+    let before = doc.project.library.ai.clone();
+    let mut after = before.clone();
+    f(&mut after);
+    if after == before {
+        return;
+    }
+    let cmd = AiLibraryEdit {
         before,
         after,
         label: label.to_owned(),
@@ -233,6 +253,41 @@ fn replace_entity(doc: &mut DocumentStore, id: EntityId, value: Entity) -> Comma
     Ok(())
 }
 
+/// A reversible edit of the project's composition/AI library: swaps the whole
+/// [`ProjectAi`] value. Carries the saved prompts, structures, and styles so a
+/// preset add/edit/remove undoes and redoes as a unit.
+pub struct AiLibraryEdit {
+    /// Value before the edit.
+    pub before: ProjectAi,
+    /// Value after the edit.
+    pub after: ProjectAi,
+    /// History label.
+    pub label: String,
+}
+
+impl Command<DocumentStore> for AiLibraryEdit {
+    fn label(&self) -> &str {
+        &self.label
+    }
+
+    fn apply(&mut self, doc: &mut DocumentStore) -> CommandResult {
+        doc.project.library.ai = self.after.clone();
+        Ok(())
+    }
+
+    fn undo(&mut self, doc: &mut DocumentStore) -> CommandResult {
+        doc.project.library.ai = self.before.clone();
+        Ok(())
+    }
+
+    fn estimated_size_bytes(&self) -> usize {
+        // Rough per-record estimate; the bytes live in prompt/structure/style
+        // text, not pixel buffers. Enough for the undo memory cap.
+        let count = |ai: &ProjectAi| ai.prompts.len() + ai.structures.len() + ai.styles.len();
+        (count(&self.before) + count(&self.after)) * 256
+    }
+}
+
 /// Rough byte cost of an entity's embedded reference-sheet images, for the
 /// undo memory cap.
 fn sheet_bytes(entity: &Entity) -> usize {
@@ -298,6 +353,41 @@ mod tests {
 
         // A closure that changes nothing must not record an undo entry.
         push_library_edit(&mut editor, &mut doc, "noop", entity_id, |_entity| {});
+        assert!(editor.history.undo(&mut doc).is_err(), "no entry was pushed");
+    }
+
+    #[test]
+    fn ai_library_edit_persists_prompt_and_undo_redo_round_trips() {
+        use pixhaus_core::project::library::composition::{PromptId, PromptTemplate};
+
+        let mut doc = DocumentStore::new();
+        let mut editor = EditorState::default();
+        let prompt_count = |doc: &DocumentStore| doc.project.library.ai.prompts.len();
+
+        assert_eq!(prompt_count(&doc), 0);
+        push_ai_library_edit(&mut editor, &mut doc, "Save template", |ai| {
+            ai.prompts.push(PromptTemplate {
+                id: PromptId("project.prompt.1".into()),
+                name: "Hero".into(),
+                text: "a {species} hero".into(),
+                variables: Vec::new(),
+                default_style: None,
+                default_structure: None,
+            });
+        });
+
+        assert_eq!(prompt_count(&doc), 1, "template persisted");
+        editor.history.undo(&mut doc).expect("undo");
+        assert_eq!(prompt_count(&doc), 0, "undo removes the template");
+        editor.history.redo(&mut doc).expect("redo");
+        assert_eq!(prompt_count(&doc), 1, "redo restores the template");
+    }
+
+    #[test]
+    fn ai_library_edit_with_no_change_pushes_nothing() {
+        let mut doc = DocumentStore::new();
+        let mut editor = EditorState::default();
+        push_ai_library_edit(&mut editor, &mut doc, "noop", |_ai| {});
         assert!(editor.history.undo(&mut doc).is_err(), "no entry was pushed");
     }
 }

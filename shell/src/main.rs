@@ -38,6 +38,7 @@ mod headless;
 mod icons;
 mod keymap;
 mod layers_panel;
+mod library;
 mod palette_panel;
 mod settings;
 mod theme;
