@@ -819,6 +819,9 @@ impl ShellApp {
     pub(crate) fn cockpit_on_done(&mut self, variants: Vec<ai::GeneratedVariant>, cost_usd: Option<f64>) {
         self.rs_status = JobStatus::Idle;
         self.exit_sheet_preview();
+        // A streamed run leaves the last (still-coarse) partial frame on the
+        // canvas; settle it onto the crisp final candidate below.
+        let streamed_preview = std::mem::take(&mut self.rs_partial_preview);
         let lineage = std::mem::take(&mut self.ck_pending);
         if lineage.replace {
             self.rs_candidates.clear();
@@ -860,7 +863,13 @@ impl ShellApp {
         }
 
         self.persist_variants(core_variants);
+        let first_new = self.rs_candidates.len();
         self.rs_candidates.extend(new_cards);
+        // If the canvas was showing streamed partials, replace them with the
+        // first crisp candidate from this run so it settles in place.
+        if streamed_preview && first_new < self.rs_candidates.len() {
+            self.show_sheet_preview(first_new);
+        }
     }
 
     /// Persists `variants` as candidates under the active entity's reference

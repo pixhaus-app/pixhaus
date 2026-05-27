@@ -12,7 +12,7 @@ use std::time::{Duration, Instant};
 
 use eframe::egui;
 use egui_wgpu::RenderState;
-use pixhaus_ai::plugin::VerbRuntime;
+use pixhaus_ai::plugin::{PixelData, VerbRuntime};
 use pixhaus_core::canvas::PixelBuffer;
 use pixhaus_core::project::{FrameIndex, LoopDirection, PixelBufferId, Rgba, Size};
 use pixhaus_core::transforms::normalize::{NormalizeOptions, normalize_frames};
@@ -39,6 +39,13 @@ pub enum ShellMsg {
         fraction: Option<f32>,
         /// One-line status.
         message: String,
+    },
+    /// A streamed partial preview frame for the in-flight reference-sheet
+    /// generation: a progressively sharper image to paint on the canvas before
+    /// the final candidates land.
+    SheetPartial {
+        /// Decoded RGBA preview pixels.
+        pixels: PixelData,
     },
     /// Reference-sheet generation finished: candidates with full provenance.
     SheetDone {
@@ -211,6 +218,10 @@ pub struct ShellApp {
     /// Index of the candidate currently previewed on the canvas, if any.
     /// `None` means the canvas shows the active sprite.
     pub(crate) rs_preview: Option<usize>,
+    /// Whether the canvas is showing a streamed partial-generation frame. Set
+    /// while a reference-sheet run streams previews, before any candidate
+    /// exists to index via [`Self::rs_preview`].
+    pub(crate) rs_partial_preview: bool,
     /// Whether the seed is pinned for a reproducible result.
     pub(crate) ck_seed_fixed: bool,
     /// The pinned seed value, used when [`Self::ck_seed_fixed`].
@@ -364,6 +375,7 @@ impl ShellApp {
             rs_status: JobStatus::Idle,
             rs_candidates: Vec::new(),
             rs_preview: None,
+            rs_partial_preview: false,
             ck_seed_fixed: false,
             ck_seed: 0,
             ck_positive: String::new(),
@@ -445,7 +457,7 @@ impl ShellApp {
     /// Whether the canvas is showing a reference-sheet preview rather than the
     /// active sprite. Editing tools are suppressed while this is true.
     pub(crate) fn sheet_preview_active(&self) -> bool {
-        self.rs_preview.is_some()
+        self.rs_preview.is_some() || self.rs_partial_preview
     }
 
     /// Whether the canvas is showing any view-only preview — a reference sheet,
@@ -474,6 +486,27 @@ impl ShellApp {
         }
     }
 
+    /// Paints a streamed partial-generation frame on the canvas as a live
+    /// preview. Non-destructive: the sprite document is untouched. Re-fits the
+    /// viewport only on the first frame of a run so later frames don't jump.
+    fn show_partial_preview(&mut self, pixels: &PixelData) {
+        let Some(buffer) = pixel_data_to_pixel_buffer(pixels) else {
+            return;
+        };
+        let first = !self.rs_partial_preview;
+        self.upload_frame(&buffer, first);
+        self.rs_partial_preview = true;
+        self.anim_shown = None;
+    }
+
+    /// Drops a streamed partial preview and returns the canvas to the active
+    /// sprite. Used when a streamed run fails so a half-drawn frame doesn't linger.
+    fn clear_partial_preview(&mut self) {
+        if std::mem::take(&mut self.rs_partial_preview) {
+            self.refresh_canvas(true);
+        }
+    }
+
     /// Drains background results into the document. Returns true if any message
     /// was applied, so the caller can request a repaint.
     fn drain_results(&mut self) -> bool {
@@ -485,10 +518,14 @@ impl ShellApp {
                     let pct = fraction.map_or_else(String::new, |f| format!("{:.0}% ", f * 100.0));
                     self.rs_status = JobStatus::Running(format!("{pct}{message}"));
                 }
+                ShellMsg::SheetPartial { pixels } => {
+                    self.show_partial_preview(&pixels);
+                }
                 ShellMsg::SheetDone { variants, cost_usd } => {
                     self.cockpit_on_done(variants, cost_usd);
                 }
                 ShellMsg::SheetFailed(err) => {
+                    self.clear_partial_preview();
                     self.rs_status = JobStatus::Failed(err);
                 }
                 ShellMsg::ClipProgress { epoch, message } => {
@@ -1418,6 +1455,13 @@ fn png_to_pixel_buffer(png: &[u8]) -> Option<PixelBuffer> {
     let rgba = image::load_from_memory(png).ok()?.to_rgba8();
     let (width, height) = (rgba.width(), rgba.height());
     PixelBuffer::from_raw(width, height, width * 4, rgba.into_raw()).ok()
+}
+
+/// Wraps a streamed [`PixelData`] preview frame into a display [`PixelBuffer`]
+/// for the wgpu canvas. Returns `None` if the bytes don't form a valid buffer,
+/// so a malformed partial frame is skipped rather than crashing the UI.
+fn pixel_data_to_pixel_buffer(pixels: &PixelData) -> Option<PixelBuffer> {
+    PixelBuffer::from_raw(pixels.width, pixels.height, pixels.stride, pixels.bytes.clone()).ok()
 }
 
 /// Converts a decoded clip frame into a [`PixelBuffer`] for the canvas, reusing

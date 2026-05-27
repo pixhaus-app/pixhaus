@@ -19,8 +19,8 @@ use pixhaus_ai::backends::{
 use pixhaus_ai::compose::builtins::{BUILTIN_DEFAULT_BASELINE, BuiltinLibrary, STRUCTURE_SINGLE_ID};
 use pixhaus_ai::compose::{ComposeRequest, compose};
 use pixhaus_ai::plugin::{
-    BackendCapabilities, CompositionLibraryView, ProjectCompositionLibrary, VerbContext, VerbEffect, VerbId, VerbInputs, VerbProgress, VerbProgressEvent,
-    VerbRuntime,
+    BackendCapabilities, CompositionLibraryView, PixelData, ProjectCompositionLibrary, VerbContext, VerbEffect, VerbId, VerbInputs, VerbProgress,
+    VerbProgressEvent, VerbRuntime,
 };
 use pixhaus_ai::verbs::reference_sheet::{
     GENERATE_REFERENCE_SHEET_VERB_ID, GENERATE_SHEET_EFFECT_NAME, GenerateReferenceSheetInputs, GenerateReferenceSheetVerb, GenerateSheetPayload,
@@ -322,16 +322,32 @@ pub struct SheetGeneration {
     pub cost_usd: Option<f64>,
 }
 
+/// A progress update from a running reference-sheet generation, delivered to
+/// the caller's callback as the verb streams. Status text drives the spinner;
+/// partial frames are progressively sharper previews for the canvas.
+pub enum SheetUpdate {
+    /// One-line status text.
+    Status(String),
+    /// A streamed partial preview frame, decoded to RGBA.
+    Partial(PixelData),
+}
+
 /// Runs the reference-sheet verb to completion and returns the candidate PNGs.
 /// The headless runner uses this; the GUI uses [`run_sheet_rich`] for provenance.
 pub async fn run_reference_sheet(runtime: &VerbRuntime, job: SheetJob, progress: &(dyn Fn(&str) + Sync)) -> Result<Vec<Vec<u8>>, String> {
-    let generated = run_sheet_rich(runtime, job, progress).await?;
+    // The headless path only wants status text; drop streamed partial frames.
+    let adapter = |update: SheetUpdate| {
+        if let SheetUpdate::Status(message) = update {
+            progress(&message);
+        }
+    };
+    let generated = run_sheet_rich(runtime, job, &adapter).await?;
     Ok(generated.variants.into_iter().map(|v| v.png).collect())
 }
 
 /// Runs the reference-sheet verb and returns each candidate with full provenance
 /// (composed prompt, user prompt, backend, model, seed) plus the run cost.
-pub async fn run_sheet_rich(runtime: &VerbRuntime, job: SheetJob, progress: &(dyn Fn(&str) + Sync)) -> Result<SheetGeneration, String> {
+pub async fn run_sheet_rich(runtime: &VerbRuntime, job: SheetJob, progress: &(dyn Fn(SheetUpdate) + Sync)) -> Result<SheetGeneration, String> {
     let (inputs, vctx) = job.into_inputs();
     let verb_inputs = VerbInputs::from_struct(&inputs).map_err(|e| e.to_string())?;
     let mut invocation = runtime
@@ -341,9 +357,10 @@ pub async fn run_sheet_rich(runtime: &VerbRuntime, job: SheetJob, progress: &(dy
     while let Some(event) = invocation.next_progress().await {
         match event {
             VerbProgressEvent::Started { backend } => {
-                progress(&format!("started on {}", backend.unwrap_or_else(|| "backend".into())));
+                progress(SheetUpdate::Status(format!("started on {}", backend.unwrap_or_else(|| "backend".into()))));
             }
-            VerbProgressEvent::Step { message, .. } => progress(&message),
+            VerbProgressEvent::Step { message, .. } => progress(SheetUpdate::Status(message)),
+            VerbProgressEvent::PartialPixels { pixels, .. } => progress(SheetUpdate::Partial(pixels)),
             _ => {}
         }
     }
@@ -364,11 +381,12 @@ pub fn spawn_reference_sheet(handle: &Handle, runtime: Arc<VerbRuntime>, ctx: eg
     handle.spawn(async move {
         let progress_tx = tx.clone();
         let progress_ctx = ctx.clone();
-        let progress = move |msg: &str| {
-            let _ = progress_tx.send(ShellMsg::SheetProgress {
-                fraction: None,
-                message: msg.to_owned(),
-            });
+        let progress = move |update: SheetUpdate| {
+            let msg = match update {
+                SheetUpdate::Status(message) => ShellMsg::SheetProgress { fraction: None, message },
+                SheetUpdate::Partial(pixels) => ShellMsg::SheetPartial { pixels },
+            };
+            let _ = progress_tx.send(msg);
             progress_ctx.request_repaint();
         };
         match run_sheet_rich(&runtime, job, &progress).await {

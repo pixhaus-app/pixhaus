@@ -21,6 +21,7 @@ use std::time::Duration;
 
 use async_trait::async_trait;
 use base64::Engine as _;
+use futures::StreamExt as _;
 use serde::Deserialize;
 use tokio::select;
 use tokio_util::sync::CancellationToken;
@@ -30,6 +31,7 @@ use super::{
     BackendError, ImageEditRequest, ImageGenRequest, ImageGenResponse, ImageQuality, InferenceBackend, InferenceRequest, InferenceResponse, Result,
     VerbProgress, check_http_status,
 };
+use crate::plugin::context::PixelData;
 use crate::plugin::descriptor::{BackendCapabilities, CostEstimate};
 use crate::plugin::progress::{CostUpdate, VerbProgressEvent};
 
@@ -118,14 +120,22 @@ impl OpenAiBackend {
         }
 
         let body = build_image_generation_body(req, &model);
+        let streaming = use_image_stream(&model, req.num_images);
 
-        let http_req = self
+        let mut builder = self
             .client
             .post(format!("{}/images/generations", self.base_url))
             .bearer_auth(&self.api_key)
-            .json(&body)
-            .build()
-            .map_err(BackendError::Network)?;
+            .json(&body);
+        if streaming {
+            // The client negotiates gzip/brotli; reqwest then tries to
+            // decompress incrementally, and a chunked compressed
+            // text/event-stream fails mid-body with "error decoding response
+            // body". Opt this one request out of compression so bytes_stream
+            // yields raw SSE frames.
+            builder = builder.header(reqwest::header::ACCEPT_ENCODING, "identity");
+        }
+        let http_req = builder.build().map_err(BackendError::Network)?;
 
         let http_resp = select! {
             biased;
@@ -134,8 +144,12 @@ impl OpenAiBackend {
         };
 
         let http_resp = check_http_status(http_resp).await?;
-        let raw: OpenAiImageResponse = http_resp.json().await.map_err(BackendError::Network)?;
-        let images = decode_image_data(raw.data)?;
+        let images = if streaming {
+            parse_openai_image_stream(http_resp, progress, cancel).await?
+        } else {
+            let raw: OpenAiImageResponse = http_resp.json().await.map_err(BackendError::Network)?;
+            decode_image_data(raw.data)?
+        };
         // The request size may have been snapped to a valid gpt-image size;
         // downscale back to what the caller asked for.
         let images = fit_images_to_request(images, req, &model)?;
@@ -473,6 +487,12 @@ fn build_image_generation_body(req: &ImageGenRequest, model: &str) -> serde_json
 
     if is_gpt_image_model(model) {
         body["output_format"] = serde_json::json!("png");
+        if use_image_stream(model, req.num_images) {
+            body["stream"] = serde_json::json!(true);
+            // 0 yields only the final image; 2 gives two progressively
+            // sharper previews before it, which is plenty for a live canvas.
+            body["partial_images"] = serde_json::json!(2);
+        }
         if let Some(quality) = req.quality {
             body["quality"] = serde_json::json!(quality.as_openai());
         }
@@ -487,6 +507,16 @@ fn is_gpt_image_model(model: &str) -> bool {
     model.starts_with("gpt-image-") || model == "chatgpt-image-latest"
 }
 
+/// Whether to request server-sent partial frames for an image call.
+///
+/// Limited to a single gpt-image request: multi-image streaming interleaves
+/// `partial_image_index` across images, which the canvas preview has no way to
+/// disentangle, and only gpt-image models support `stream: true` (dall-e does
+/// not). The buffered JSON path stays the default for every other case.
+fn use_image_stream(model: &str, num_images: u32) -> bool {
+    is_gpt_image_model(model) && num_images == 1
+}
+
 fn decode_image_data(data: Vec<ImageData>) -> Result<Vec<Vec<u8>>> {
     data.into_iter()
         .map(|d| {
@@ -499,6 +529,123 @@ fn decode_image_data(data: Vec<ImageData>) -> Result<Vec<Vec<u8>>> {
             }
         })
         .collect()
+}
+
+/// Reads an `OpenAI` image generation server-sent event stream, emitting each
+/// partial frame as [`VerbProgressEvent::PartialPixels`] and collecting the
+/// completed image(s) for the final result.
+///
+/// # Errors
+///
+/// Returns [`BackendError::Network`] on a transport failure, parse errors from
+/// [`handle_openai_sse_frame`], and [`BackendError::InvalidResponse`] if the
+/// stream ends without a completed image.
+async fn parse_openai_image_stream(response: reqwest::Response, progress: &VerbProgress, cancel: &CancellationToken) -> Result<Vec<Vec<u8>>> {
+    let mut stream = response.bytes_stream();
+    let mut buffer = String::new();
+    let mut final_images = Vec::new();
+    while let Some(chunk) = select! {
+        biased;
+        () = cancel.cancelled() => return Err(BackendError::Cancelled),
+        next = stream.next() => next,
+    } {
+        let chunk = chunk.map_err(BackendError::Network)?;
+        buffer.push_str(&String::from_utf8_lossy(&chunk));
+        while let Some(index) = buffer.find("\n\n") {
+            let frame = buffer[..index].to_owned();
+            buffer.drain(..index + 2);
+            handle_openai_sse_frame(&frame, progress, &mut final_images).await?;
+        }
+    }
+    if !buffer.trim().is_empty() {
+        handle_openai_sse_frame(&buffer, progress, &mut final_images).await?;
+    }
+    if final_images.is_empty() {
+        return Err(BackendError::InvalidResponse("OpenAI image stream ended without a final image".into()));
+    }
+    Ok(final_images)
+}
+
+/// Parses one SSE frame: routes `*partial*` events to the progress channel as
+/// live previews and `*completed*` events into `final_images`.
+///
+/// # Errors
+///
+/// Returns [`BackendError::InvalidResponse`] when the frame is not valid JSON
+/// or carries a provider-side error event.
+async fn handle_openai_sse_frame(frame: &str, progress: &VerbProgress, final_images: &mut Vec<Vec<u8>>) -> Result<()> {
+    let data = frame.lines().filter_map(|line| line.strip_prefix("data:")).map(str::trim).collect::<Vec<_>>().join("\n");
+    if data.is_empty() || data == "[DONE]" {
+        return Ok(());
+    }
+    let value: serde_json::Value = serde_json::from_str(&data).map_err(|e| BackendError::InvalidResponse(e.to_string()))?;
+    let event_type = value.get("type").and_then(serde_json::Value::as_str).unwrap_or_default();
+    // Surface a provider-side error event instead of swallowing it (it carries
+    // no `b64` key, so it would otherwise end as the generic "no final image").
+    if event_type.contains("error") || value.get("error").is_some() {
+        let msg = value
+            .get("error")
+            .and_then(|e| e.get("message"))
+            .and_then(serde_json::Value::as_str)
+            .or_else(|| value.get("message").and_then(serde_json::Value::as_str))
+            .unwrap_or(event_type);
+        return Err(BackendError::InvalidResponse(format!("OpenAI image error: {msg}")));
+    }
+    let mut images = Vec::new();
+    collect_base64_images(&value, &mut images);
+    if images.is_empty() {
+        return Ok(());
+    }
+    if event_type.contains("partial") {
+        for (index, image) in images.into_iter().enumerate() {
+            if let Some(pixels) = image_bytes_to_pixel_data(&image) {
+                progress
+                    .send(VerbProgressEvent::PartialPixels {
+                        effect_index: u32::try_from(index).unwrap_or(u32::MAX),
+                        pixels,
+                    })
+                    .await;
+            }
+        }
+    } else {
+        final_images.extend(images);
+    }
+    Ok(())
+}
+
+/// Walks a JSON value collecting every base64-decodable `*b64*` string as image
+/// bytes. `OpenAI` puts the image under `b64_json` at the top level for partial
+/// events and inside `data[]` for completed events; this finds both.
+fn collect_base64_images(value: &serde_json::Value, images: &mut Vec<Vec<u8>>) {
+    match value {
+        serde_json::Value::Object(map) => {
+            for (key, value) in map {
+                if key.contains("b64")
+                    && let Some(encoded) = value.as_str()
+                    && let Ok(bytes) = base64::engine::general_purpose::STANDARD.decode(encoded.as_bytes())
+                {
+                    images.push(bytes);
+                    continue;
+                }
+                collect_base64_images(value, images);
+            }
+        }
+        serde_json::Value::Array(values) => {
+            for value in values {
+                collect_base64_images(value, images);
+            }
+        }
+        _ => {}
+    }
+}
+
+/// Decodes PNG (or any image) bytes into tightly-packed RGBA8 [`PixelData`].
+/// Returns `None` if the bytes don't decode, so a malformed partial frame is
+/// skipped rather than aborting the stream.
+fn image_bytes_to_pixel_data(bytes: &[u8]) -> Option<PixelData> {
+    let image = image::load_from_memory(bytes).ok()?.to_rgba8();
+    let (width, height) = image.dimensions();
+    Some(PixelData::rgba8(width, height, image.into_raw()))
 }
 
 // ── Wire types ─────────────────────────────────────────────────────────────
@@ -562,7 +709,7 @@ mod tests {
     }
 
     #[test]
-    fn gpt_image_body_is_non_streaming_png() {
+    fn gpt_image_body_streams_single_image_png() {
         let req = ImageGenRequest {
             model: None,
             prompt: "a reference sheet".into(),
@@ -583,14 +730,37 @@ mod tests {
         assert_eq!(body["size"], "1024x1536");
         assert_eq!(body["quality"], "medium");
         assert_eq!(body["output_format"], "png");
-        // Streaming is not used on the image path; the buffered JSON image
-        // response is the only path.
-        assert!(body.get("stream").is_none());
-        assert!(body.get("partial_images").is_none());
+        // A single gpt-image request streams partial previews for a live canvas.
+        assert_eq!(body["stream"], true);
+        assert_eq!(body["partial_images"], 2);
         assert!(body.get("response_format").is_none());
         // Unsupported gpt-image fields are dropped, not forwarded.
         assert!(body.get("negative_prompt").is_none());
         assert!(body.get("seed").is_none());
+    }
+
+    #[test]
+    fn gpt_image_body_multi_image_is_non_streaming() {
+        let req = ImageGenRequest {
+            model: None,
+            prompt: "a reference sheet".into(),
+            negative_prompt: None,
+            width: 1024,
+            height: 1024,
+            steps: None,
+            seed: None,
+            num_images: 4,
+            quality: None,
+            style_image: None,
+            reference_images: Vec::new(),
+        };
+
+        let body = build_image_generation_body(&req, "gpt-image-2");
+
+        // Multi-image streaming interleaves partials across images; stay buffered.
+        assert!(body.get("stream").is_none());
+        assert!(body.get("partial_images").is_none());
+        assert_eq!(body["output_format"], "png");
     }
 
     #[test]
@@ -673,6 +843,108 @@ mod tests {
         let encoded = base64::engine::general_purpose::STANDARD.encode(&png);
         let decoded = decode_image_data(vec![ImageData { b64_json: Some(encoded) }]).expect("valid base64 decodes");
         assert_eq!(decoded, vec![png]);
+    }
+
+    #[test]
+    fn use_image_stream_only_for_single_gpt_image() {
+        assert!(use_image_stream("gpt-image-2", 1));
+        assert!(!use_image_stream("gpt-image-2", 4));
+        assert!(!use_image_stream("dall-e-3", 1));
+    }
+
+    /// Live smoke test against the real `OpenAI` image API. Ignored by default: it
+    /// needs `OPENAI_API_KEY` in the environment and spends real money on one
+    /// gpt-image generation. Confirms the streaming SSE path decodes (no "error
+    /// decoding response body") and that partial previews arrive before the
+    /// final image. Run with:
+    ///   `OPENAI_API_KEY=sk-... cargo nextest run -p pixhaus-ai --run-ignored all openai_stream_live`
+    #[tokio::test]
+    #[ignore = "hits the live OpenAI API; needs OPENAI_API_KEY and costs money"]
+    async fn openai_stream_live_emits_partials_then_final() {
+        let Ok(key) = std::env::var("OPENAI_API_KEY") else {
+            eprintln!("OPENAI_API_KEY not set; skipping live streaming test");
+            return;
+        };
+        let backend = OpenAiBackend::new(key);
+        let (progress, mut rx) = VerbProgress::channel();
+
+        // Drain progress on a task so a full channel never blocks the request.
+        let drain = tokio::spawn(async move {
+            let mut partials = 0_usize;
+            while let Some(event) = rx.recv().await {
+                if matches!(event, VerbProgressEvent::PartialPixels { .. }) {
+                    partials += 1;
+                }
+            }
+            partials
+        });
+
+        let req = ImageGenRequest {
+            model: None,
+            prompt: "a small pixel-art mushroom on a white background".to_owned(),
+            negative_prompt: None,
+            width: 1024,
+            height: 1024,
+            steps: None,
+            seed: None,
+            num_images: 1,
+            quality: Some(ImageQuality::Medium),
+            style_image: None,
+            reference_images: Vec::new(),
+        };
+
+        let resp = backend
+            .invoke(InferenceRequest::ImageGeneration(req), progress, CancellationToken::new())
+            .await
+            .expect("live image generation succeeds");
+
+        let InferenceResponse::Image(image) = resp else {
+            panic!("expected an image response from an image-generation request");
+        };
+        assert!(!image.images.is_empty(), "a final image must be returned");
+
+        let partials = drain.await.expect("drain task joins");
+        assert!(partials > 0, "at least one partial preview frame should stream in");
+    }
+
+    #[tokio::test]
+    async fn openai_image_stream_frame_separates_partial_from_final() {
+        let (progress, mut rx) = VerbProgress::channel();
+        let png = one_pixel_png();
+        let encoded = base64::engine::general_purpose::STANDARD.encode(&png);
+        let mut finals = Vec::new();
+        handle_openai_sse_frame(
+            &format!("data: {{\"type\":\"image_generation.partial_image\",\"b64_json\":\"{encoded}\"}}\n\n"),
+            &progress,
+            &mut finals,
+        )
+        .await
+        .expect("partial frame parses");
+        assert!(finals.is_empty());
+        assert!(matches!(rx.recv().await, Some(VerbProgressEvent::PartialPixels { .. })));
+        handle_openai_sse_frame(
+            &format!("data: {{\"type\":\"image_generation.completed\",\"data\":[{{\"b64_json\":\"{encoded}\"}}]}}\n\n"),
+            &progress,
+            &mut finals,
+        )
+        .await
+        .expect("completed frame parses");
+        assert_eq!(finals, vec![png]);
+    }
+
+    #[tokio::test]
+    async fn openai_image_stream_frame_surfaces_error_event() {
+        let (progress, _rx) = VerbProgress::channel();
+        let mut finals = Vec::new();
+        let err = handle_openai_sse_frame(
+            "data: {\"type\":\"error\",\"error\":{\"message\":\"Invalid size 256x256\"}}\n\n",
+            &progress,
+            &mut finals,
+        )
+        .await
+        .expect_err("error event must surface");
+        assert!(matches!(err, BackendError::InvalidResponse(ref m) if m.contains("Invalid size 256x256")));
+        assert!(finals.is_empty());
     }
 
     fn one_pixel_png() -> Vec<u8> {

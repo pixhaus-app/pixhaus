@@ -427,7 +427,9 @@ impl Verb for GenerateReferenceSheetVerb {
             () = cancel.cancelled() => return Err(VerbError::Cancelled),
             res = backend.invoke(
                 InferenceRequest::ImageGeneration(req),
-                VerbProgress::discard(),
+                // Forward the verb's progress channel so the backend's
+                // streamed partial frames reach the UI for a live preview.
+                progress.clone(),
                 cancel.clone(),
             ) => res.map_err(|e| VerbError::Backend(e.to_string()))?,
         };
