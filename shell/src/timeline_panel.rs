@@ -314,39 +314,33 @@ impl ShellApp {
         self.refresh_canvas(false);
     }
 
-    /// Duplicates the active frame (independent pixel copies) and selects the
-    /// new frame.
+    /// Duplicates the active frame and selects the new frame. Raster cels get
+    /// independent pixel copies; linked and tilemap cels carry over so the new
+    /// frame looks identical. Per-cel position, opacity, and user data are
+    /// preserved rather than reset to defaults.
     #[allow(clippy::cast_possible_truncation)]
     fn duplicate_frame(&mut self) {
         let idx = self.doc.active_frame.get();
-        let Some(sprite) = self.doc.active_sprite() else {
-            return;
-        };
-        // Collect raster cels on this frame and the bytes to copy.
-        let mut copies: Vec<(LayerId, PixelBufferId, pixhaus_core::project::Size)> = Vec::new();
-        for cel in &sprite.cels {
-            if cel.frame_index.get() == idx {
-                if let CelData::Raster { buffer, size } = &cel.data {
-                    copies.push((cel.layer_id, *buffer, *size));
-                }
-            }
-        }
-        // Allocate new buffers and clone the bytes (side effect, not undone).
-        let mut new_cels: Vec<(LayerId, PixelBufferId, pixhaus_core::project::Size)> = Vec::new();
-        for (layer, src_id, size) in copies {
-            if let Some(src) = self.doc.pixel_buffers.get(&src_id).cloned() {
-                let new_id = PixelBufferId::new(self.doc.alloc_id());
-                self.doc.pixel_buffers.insert(new_id, src);
-                new_cels.push((layer, new_id, size));
-            }
-        }
         let insert_at = idx + 1;
+        // Clone every cel on the active frame, releasing the sprite borrow
+        // before touching the pixel-buffer registry below.
+        let cels_on_frame: Vec<Cel> = match self.doc.active_sprite() {
+            Some(sprite) => sprite.cels.iter().filter(|c| c.frame_index.get() == idx).cloned().collect(),
+            None => return,
+        };
+        // Copy raster bytes into fresh buffers (a side effect outside the undo
+        // record); linked sources are shifted to track `shift_frames` below.
+        let new_cels = retarget_duplicated_cels(cels_on_frame, insert_at, |src| {
+            let bytes = self.doc.pixel_buffers.get(&src).cloned()?;
+            let new_id = PixelBufferId::new(self.doc.alloc_id());
+            self.doc.pixel_buffers.insert(new_id, bytes);
+            Some(new_id)
+        });
+
         push_sprite_edit(&mut self.editor, &mut self.doc, "Duplicate frame", |sprite| {
             shift_frames(sprite, insert_at, 1);
             sprite.frames.insert(insert_at as usize, Frame::default());
-            for (layer, buf, size) in &new_cels {
-                sprite.cels.push(Cel::raster(*layer, FrameIndex::new(insert_at), *buf, *size));
-            }
+            sprite.cels.extend(new_cels.iter().cloned());
         });
         self.doc.active_frame = FrameIndex::new(insert_at);
         self.refresh_canvas(false);
@@ -485,6 +479,36 @@ fn shift_frames(sprite: &mut pixhaus_core::project::Sprite, at: u32, delta: i32)
     }
 }
 
+/// Retargets a frame's cels onto the duplicate inserted at `insert_at`.
+///
+/// Each cel keeps its position, opacity, and user data. Raster cels get an
+/// independent buffer via `alloc_buffer` (which copies the source bytes and
+/// returns a fresh id); a raster cel whose buffer cannot be resolved is
+/// dropped. Linked sources are shifted by `+1` when they sit at or past
+/// `insert_at`, mirroring what `shift_frames(insert_at, 1)` does to the
+/// existing cels, so old and new linked cels resolve to the same content.
+fn retarget_duplicated_cels(cels_on_frame: Vec<Cel>, insert_at: u32, mut alloc_buffer: impl FnMut(PixelBufferId) -> Option<PixelBufferId>) -> Vec<Cel> {
+    let mut out = cels_on_frame;
+    out.retain_mut(|cel| {
+        cel.frame_index = FrameIndex::new(insert_at);
+        match &mut cel.data {
+            CelData::Raster { buffer, .. } => match alloc_buffer(*buffer) {
+                Some(new_id) => {
+                    *buffer = new_id;
+                    true
+                }
+                None => false,
+            },
+            CelData::Linked { source_frame } if source_frame.get() >= insert_at => {
+                *source_frame = FrameIndex::new(source_frame.get() + 1);
+                true
+            }
+            _ => true,
+        }
+    });
+    out
+}
+
 /// Clamps tag/animation ranges to the current frame count, dropping any that
 /// fall entirely off the end.
 fn clamp_tags(sprite: &mut pixhaus_core::project::Sprite) {
@@ -523,4 +547,80 @@ fn tag_color(i: usize) -> egui::Color32 {
         egui::Color32::from_rgb(110, 210, 200),
     ];
     COLORS[i % COLORS.len()]
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use pixhaus_core::project::{IVec2, Size, UserData};
+
+    fn raster_cel(layer: u32, frame: u32, buffer: u32, opacity: u8, position: IVec2) -> Cel {
+        Cel {
+            layer_id: LayerId::new(layer),
+            frame_index: FrameIndex::new(frame),
+            position,
+            opacity,
+            data: CelData::Raster {
+                buffer: PixelBufferId::new(buffer),
+                size: Size::new(8, 8),
+            },
+            user_data: UserData::default(),
+        }
+    }
+
+    fn linked_cel(layer: u32, frame: u32, source: u32) -> Cel {
+        Cel {
+            layer_id: LayerId::new(layer),
+            frame_index: FrameIndex::new(frame),
+            position: IVec2::zero(),
+            opacity: 255,
+            data: CelData::Linked {
+                source_frame: FrameIndex::new(source),
+            },
+            user_data: UserData::default(),
+        }
+    }
+
+    #[test]
+    fn retarget_preserves_attributes_and_remaps_raster_buffer() {
+        let cel = raster_cel(1, 2, 7, 128, IVec2 { x: 5, y: 6 });
+        let out = retarget_duplicated_cels(vec![cel], 3, |src| {
+            assert_eq!(src, PixelBufferId::new(7), "the source buffer must be the one to copy");
+            Some(PixelBufferId::new(99))
+        });
+        assert_eq!(out.len(), 1);
+        let new = &out[0];
+        assert_eq!(new.frame_index, FrameIndex::new(3), "cel moves to the inserted frame");
+        assert_eq!(new.opacity, 128, "per-cel opacity is preserved, not reset to 255");
+        assert_eq!(new.position, IVec2 { x: 5, y: 6 }, "per-cel position is preserved");
+        match new.data {
+            CelData::Raster { buffer, .. } => assert_eq!(buffer, PixelBufferId::new(99), "raster cel points at the fresh buffer"),
+            ref other => panic!("expected raster cel, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn retarget_shifts_only_forward_links() {
+        // A back-link (source < insert_at) stays put; a forward-link
+        // (source >= insert_at) shifts +1 to track shift_frames.
+        let back = linked_cel(1, 2, 0);
+        let forward = linked_cel(2, 2, 5);
+        let out = retarget_duplicated_cels(vec![back, forward], 3, |_| panic!("links must not allocate buffers"));
+        assert_eq!(out.len(), 2, "linked cels are carried over, not dropped");
+        let sources: Vec<u32> = out
+            .iter()
+            .map(|c| match &c.data {
+                CelData::Linked { source_frame } => source_frame.get(),
+                other => panic!("expected linked cel, got {other:?}"),
+            })
+            .collect();
+        assert_eq!(sources, vec![0, 6], "back-link unchanged; forward-link shifted +1");
+    }
+
+    #[test]
+    fn retarget_drops_raster_cels_with_unresolvable_buffers() {
+        let cel = raster_cel(1, 2, 7, 255, IVec2::zero());
+        let out = retarget_duplicated_cels(vec![cel], 3, |_| None);
+        assert!(out.is_empty(), "a raster cel whose buffer cannot be copied is dropped");
+    }
 }
