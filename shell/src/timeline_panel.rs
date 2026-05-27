@@ -8,8 +8,10 @@
 use eframe::egui;
 use pixhaus_core::project::{Cel, CelData, Frame, FrameIndex, FrameRange, FrameTag, LayerId, LoopDirection, PixelBufferId};
 
+use pixhaus_core::canvas::PixelBuffer;
+
 use crate::app::ShellApp;
-use crate::commands::push_sprite_edit;
+use crate::commands::{push_sprite_edit, push_sprite_edit_with_buffers};
 use crate::icons;
 
 impl ShellApp {
@@ -328,16 +330,18 @@ impl ShellApp {
             Some(sprite) => sprite.cels.iter().filter(|c| c.frame_index.get() == idx).cloned().collect(),
             None => return,
         };
-        // Copy raster bytes into fresh buffers (a side effect outside the undo
-        // record); linked sources are shifted to track `shift_frames` below.
+        // Copy raster bytes into fresh buffers and hand them to the command so
+        // undo removes them instead of leaking; linked sources are shifted to
+        // track `shift_frames` below.
+        let mut added: Vec<(PixelBufferId, PixelBuffer)> = Vec::new();
         let new_cels = retarget_duplicated_cels(cels_on_frame, insert_at, |src| {
             let bytes = self.doc.pixel_buffers.get(&src).cloned()?;
             let new_id = PixelBufferId::new(self.doc.alloc_id());
-            self.doc.pixel_buffers.insert(new_id, bytes);
+            added.push((new_id, bytes));
             Some(new_id)
         });
 
-        push_sprite_edit(&mut self.editor, &mut self.doc, "Duplicate frame", |sprite| {
+        push_sprite_edit_with_buffers(&mut self.editor, &mut self.doc, "Duplicate frame", added, |sprite| {
             shift_frames(sprite, insert_at, 1);
             sprite.frames.insert(insert_at as usize, Frame::default());
             sprite.cels.extend(new_cels.iter().cloned());
@@ -427,8 +431,7 @@ impl ShellApp {
             return;
         };
         let new_id = PixelBufferId::new(self.doc.alloc_id());
-        self.doc.pixel_buffers.insert(new_id, bytes);
-        push_sprite_edit(&mut self.editor, &mut self.doc, "Unlink cel", |sprite| {
+        push_sprite_edit_with_buffers(&mut self.editor, &mut self.doc, "Unlink cel", vec![(new_id, bytes)], |sprite| {
             sprite.cels.retain(|c| !(c.layer_id == layer && c.frame_index == frame));
             sprite.cels.push(Cel::raster(layer, frame, new_id, canvas));
         });

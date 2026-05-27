@@ -178,6 +178,42 @@ pub fn push_sprite_edit(editor: &mut EditorState, doc: &mut DocumentStore, label
     let _ = editor.history.push(Box::new(cmd), doc);
 }
 
+/// Like [`push_sprite_edit`], but for structural edits that also allocate new
+/// pixel buffers (duplicate-frame, unlink-cel). The `added_buffers` are inserted
+/// into the buffer store as part of the recorded command, so an undo removes
+/// them instead of leaking them, and a redo re-inserts them. Pass buffers that
+/// are *not yet* in the store; allocate their ids from the document first and
+/// reference them inside `f`.
+pub fn push_sprite_edit_with_buffers(
+    editor: &mut EditorState,
+    doc: &mut DocumentStore,
+    label: &str,
+    added_buffers: Vec<(PixelBufferId, PixelBuffer)>,
+    f: impl FnOnce(&mut Sprite),
+) {
+    let Some(id) = doc.project.active_sprite_id() else {
+        return;
+    };
+    let Some(before) = doc.project.sprite(id).cloned() else {
+        return;
+    };
+    let mut after = before.clone();
+    f(&mut after);
+    if after == before {
+        // Nothing references the new buffers; drop them rather than leak.
+        return;
+    }
+    let cmd = SpriteBufferEdit {
+        sprite_id: id,
+        before,
+        after,
+        added_buffers,
+        removed_buffers: Vec::new(),
+        label: label.to_owned(),
+    };
+    let _ = editor.history.push(Box::new(cmd), doc);
+}
+
 /// Snapshots a library entity, applies `f`, and — if anything changed — records
 /// an [`EntityEdit`] undo entry. The entry point for library-tier edits the
 /// cockpit makes: saving generated reference-sheet variants, approving a
@@ -330,6 +366,59 @@ impl Command<DocumentStore> for SpriteEdit {
     fn estimated_size_bytes(&self) -> usize {
         // Rough: cels + layers + frames metadata. Pixel bytes are not here.
         (self.before.cels.len() + self.after.cels.len()) * 64
+    }
+}
+
+/// A structural edit that also adds and/or retires pixel buffers, so the sprite
+/// value and the buffer-store membership move as one undo unit. Without this,
+/// edits that allocate buffers (duplicate-frame, unlink-cel) or retire them
+/// (animation integration replacing a seed frame) leaked or lost buffers on
+/// undo, because the sprite snapshot only carries handles, not the bytes.
+pub struct SpriteBufferEdit {
+    /// Sprite being replaced.
+    pub sprite_id: SpriteId,
+    /// Value before the edit.
+    pub before: Sprite,
+    /// Value after the edit.
+    pub after: Sprite,
+    /// Buffers the edit allocates: inserted on apply/redo, removed on undo.
+    pub added_buffers: Vec<(PixelBufferId, PixelBuffer)>,
+    /// Buffers the edit retires: removed on apply/redo, restored on undo.
+    pub removed_buffers: Vec<(PixelBufferId, PixelBuffer)>,
+    /// History label.
+    pub label: String,
+}
+
+impl Command<DocumentStore> for SpriteBufferEdit {
+    fn label(&self) -> &str {
+        &self.label
+    }
+
+    fn apply(&mut self, doc: &mut DocumentStore) -> CommandResult {
+        replace_sprite(doc, self.sprite_id, self.after.clone())?;
+        for (id, buf) in &self.added_buffers {
+            doc.pixel_buffers.insert(*id, buf.clone());
+        }
+        for (id, _) in &self.removed_buffers {
+            doc.pixel_buffers.remove(id);
+        }
+        Ok(())
+    }
+
+    fn undo(&mut self, doc: &mut DocumentStore) -> CommandResult {
+        replace_sprite(doc, self.sprite_id, self.before.clone())?;
+        for (id, _) in &self.added_buffers {
+            doc.pixel_buffers.remove(id);
+        }
+        for (id, buf) in &self.removed_buffers {
+            doc.pixel_buffers.insert(*id, buf.clone());
+        }
+        Ok(())
+    }
+
+    fn estimated_size_bytes(&self) -> usize {
+        let buf_bytes = |list: &[(PixelBufferId, PixelBuffer)]| list.iter().map(|(_, b)| b.as_bytes().len()).sum::<usize>();
+        buf_bytes(&self.added_buffers) + buf_bytes(&self.removed_buffers) + (self.before.cels.len() + self.after.cels.len()) * 64
     }
 }
 
@@ -525,6 +614,38 @@ mod tests {
         let mut editor = EditorState::default();
         push_ai_library_edit(&mut editor, &mut doc, "noop", |_ai| {});
         assert!(editor.history.undo(&mut doc).is_err(), "no entry was pushed");
+    }
+
+    #[test]
+    fn sprite_buffer_edit_adds_and_removes_buffer_with_undo() {
+        use pixhaus_core::project::{Cel, CelData, FrameIndex, PixelBufferId};
+
+        let mut doc = DocumentStore::new();
+        doc.create_sprite("hero", Size::new(8, 8));
+        let layer = doc.active_sprite().expect("sprite").layers[0].id;
+        let before_count = doc.pixel_buffers.len();
+        let new_id = PixelBufferId::new(doc.alloc_id());
+        let buf = PixelBuffer::filled(8, 8, pixhaus_core::project::Rgba::new(1, 2, 3, 255)).expect("buffer");
+
+        let mut editor = EditorState::default();
+        push_sprite_edit_with_buffers(&mut editor, &mut doc, "Add cel", vec![(new_id, buf)], |sprite| {
+            sprite.cels.push(Cel::raster(layer, FrameIndex::new(0), new_id, Size::new(8, 8)));
+        });
+
+        assert!(doc.pixel_buffers.contains_key(&new_id), "buffer inserted by the command");
+        assert_eq!(doc.pixel_buffers.len(), before_count + 1);
+
+        editor.history.undo(&mut doc).expect("undo");
+        assert!(!doc.pixel_buffers.contains_key(&new_id), "undo removes the buffer instead of leaking it");
+        assert_eq!(doc.pixel_buffers.len(), before_count);
+        assert!(
+            !doc.active_sprite().expect("sprite").cels.iter().any(|c| matches!(c.data, CelData::Raster { buffer, .. } if buffer == new_id)),
+            "undo also drops the cel"
+        );
+
+        editor.history.redo(&mut doc).expect("redo");
+        assert!(doc.pixel_buffers.contains_key(&new_id), "redo restores the buffer");
+        assert_eq!(doc.pixel_buffers.len(), before_count + 1);
     }
 
     #[test]
