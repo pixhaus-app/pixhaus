@@ -18,13 +18,15 @@ pub enum Error {
         actual_h: u32,
     },
 
-    /// Seed point for a flood-fill was outside the buffer bounds.
+    /// Seed point for a flood-fill was outside the buffer bounds. The
+    /// coordinates are signed so a negative seed (off the top or left
+    /// edge) reports its real position rather than a clamped zero.
     #[error("seed ({x}, {y}) is outside buffer bounds {width}x{height}")]
     SeedOutOfBounds {
         /// Seed x coordinate.
-        x: u32,
+        x: i64,
         /// Seed y coordinate.
-        y: u32,
+        y: i64,
         /// Buffer width.
         width: u32,
         /// Buffer height.
