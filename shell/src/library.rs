@@ -294,13 +294,13 @@ impl ShellApp {
             LibraryDraft::Template(p) => {
                 let value = p.clone();
                 push_ai_library_edit(&mut self.editor, &mut self.doc, "Save prompt template", |ai| {
-                    upsert(&mut ai.prompts, value, |x| &x.id)
+                    upsert(&mut ai.prompts, value, |x| &x.id);
                 });
             }
             LibraryDraft::Structure(s) => {
                 let value = s.clone();
                 push_ai_library_edit(&mut self.editor, &mut self.doc, "Save structure", |ai| {
-                    upsert(&mut ai.structures, value, |x| &x.id)
+                    upsert(&mut ai.structures, value, |x| &x.id);
                 });
             }
             LibraryDraft::Style(s) => {
@@ -445,7 +445,7 @@ impl ShellApp {
         };
         let value = template.clone();
         push_ai_library_edit(&mut self.editor, &mut self.doc, "Save prompt as template", |ai| {
-            upsert(&mut ai.prompts, value, |x| &x.id)
+            upsert(&mut ai.prompts, value, |x| &x.id);
         });
         self.library_tab = LibraryTab::Templates;
         self.library_draft = Some(LibraryDraft::Template(template));
