@@ -449,7 +449,7 @@ impl ShellApp {
         });
         self.library_tab = LibraryTab::Templates;
         self.library_draft = Some(LibraryDraft::Template(template));
-        self.create_view = crate::cockpit::CreateView::Library;
+        self.studio_library_open = true;
     }
 }
 

@@ -23,7 +23,7 @@ use tokio_util::sync::CancellationToken;
 
 use crate::ai;
 use crate::anim::{self, LoopMarkers, VideoFrame};
-use crate::cockpit::{CockpitCandidate, CockpitReference, CreateView, PendingLineage};
+use crate::cockpit::{CockpitCandidate, CockpitReference, PendingLineage};
 use crate::commands::{CanvasBufferSwap, CanvasEdit, CanvasOp, integrate_frames_undoable};
 use crate::document::{DocumentStore, LibraryRow, SpriteRef};
 use crate::keymap::{CommandId, Keymap};
@@ -110,20 +110,16 @@ pub enum ShellMsg {
         /// Failure reason.
         error: String,
     },
-    /// Studio generation progress (anchor or first-frame thread).
+    /// First-frame (studio seed-pose) generation progress.
     FirstFrameProgress {
-        /// Which thread this message belongs to.
-        target: crate::studio::GenTarget,
         /// Generation epoch this message belongs to; stale ones are dropped.
         epoch: u64,
         /// One-line status.
         message: String,
     },
-    /// Studio generation finished: one or more candidate images, as PNG bytes,
-    /// to land in the targeted thread.
+    /// First-frame generation finished: one or more candidate images, as PNG
+    /// bytes, to land in the first-frame thread.
     FirstFrameDone {
-        /// Which thread this result belongs to.
-        target: crate::studio::GenTarget,
         /// Generation epoch this result belongs to; stale ones are dropped.
         epoch: u64,
         /// Candidate images as PNG bytes.
@@ -135,10 +131,8 @@ pub enum ShellMsg {
         /// (a fresh generation).
         append: bool,
     },
-    /// Studio generation failed (or was canceled).
+    /// First-frame generation failed (or was canceled).
     FirstFrameFailed {
-        /// Which thread this failure belongs to.
-        target: crate::studio::GenTarget,
         /// Generation epoch this failure belongs to; stale ones are dropped.
         epoch: u64,
         /// Failure reason.
@@ -337,8 +331,8 @@ pub struct ShellApp {
     pub(crate) gpu_pref: Option<crate::gpu::GpuPreference>,
     /// egui context clone handed to background tasks to wake the idle UI.
     pub(crate) egui_ctx: egui::Context,
-    /// Which Create-mode surface is showing (cockpit / library / animate).
-    pub(crate) create_view: CreateView,
+    /// Whether the composition-library overlay is open over the studio.
+    pub(crate) studio_library_open: bool,
     /// Which composition-library tab shows in the Library view.
     pub(crate) library_tab: crate::library::LibraryTab,
     /// The composition-library record currently open in the editor, if any.
@@ -565,7 +559,7 @@ impl ShellApp {
             available_adapters,
             gpu_pref,
             egui_ctx: cc.egui_ctx.clone(),
-            create_view: CreateView::Cockpit,
+            studio_library_open: false,
             library_tab: crate::library::LibraryTab::Templates,
             library_draft: None,
             rs_prompt: ai::DEFAULT_SHEET_PROMPT.to_owned(),
@@ -766,28 +760,20 @@ impl ShellApp {
                         self.anim_cancel = None;
                     }
                 }
-                ShellMsg::FirstFrameProgress { target, epoch, message } => {
-                    let thread = self.studio.gen_thread_mut(target);
-                    if epoch == thread.epoch {
-                        thread.status = JobStatus::Running(message);
+                ShellMsg::FirstFrameProgress { epoch, message } => {
+                    if epoch == self.studio.frame_gen.epoch {
+                        self.studio.frame_gen.status = JobStatus::Running(message);
                     }
                 }
-                ShellMsg::FirstFrameDone {
-                    target,
-                    epoch,
-                    images,
-                    parent,
-                    append,
-                } => {
-                    if epoch == self.studio.gen_thread(target).epoch {
-                        self.on_gen_ready(target, images, parent, append);
+                ShellMsg::FirstFrameDone { epoch, images, parent, append } => {
+                    if epoch == self.studio.frame_gen.epoch {
+                        self.on_gen_ready(images, parent, append);
                     }
                 }
-                ShellMsg::FirstFrameFailed { target, epoch, error } => {
-                    let thread = self.studio.gen_thread_mut(target);
-                    if epoch == thread.epoch {
-                        thread.status = JobStatus::Failed(error);
-                        thread.cancel = None;
+                ShellMsg::FirstFrameFailed { epoch, error } => {
+                    if epoch == self.studio.frame_gen.epoch {
+                        self.studio.frame_gen.status = JobStatus::Failed(error);
+                        self.studio.frame_gen.cancel = None;
                     }
                 }
                 ShellMsg::BgRemovalDone { buffer_id, png } => {
@@ -2053,13 +2039,9 @@ impl ShellApp {
 
     /// The right-side dock in Draw and Animate: Palette and Layers stacked as
     /// collapsing sections so a colour and the layer stack are usable at once,
-    /// with Sprites collapsed below. Create shows the AI surface instead. The
-    /// full sprite gallery lives in the Create-mode studio.
+    /// with Sprites collapsed below. Create has no dock — the full-screen studio
+    /// owns the whole canvas area.
     fn dock_panel(&mut self, ui: &mut egui::Ui) {
-        if self.workspace == Workspace::Create {
-            self.create_dock(ui);
-            return;
-        }
         egui::ScrollArea::vertical().auto_shrink([false, false]).show(ui, |ui| {
             egui::CollapsingHeader::new(format!("{} Palette", crate::icons::PALETTE))
                 .default_open(true)
@@ -2388,13 +2370,11 @@ impl eframe::App for ShellApp {
         }
 
         egui::CentralPanel::default().show_inside(ui, |ui| {
-            // Create-mode takes over the canvas area: the studio full-screen, or
-            // the composition library while editing presets. Everything else
-            // paints the sprite canvas.
+            // Create-mode takes over the canvas area with the full-screen studio
+            // (which hosts the composition library as an overlay). Everything
+            // else paints the sprite canvas.
             if studio {
                 self.studio_view(ui);
-            } else if self.workspace == Workspace::Create && self.create_view == CreateView::Library {
-                self.library_view(ui);
             } else {
                 self.canvas_ui(ui);
             }

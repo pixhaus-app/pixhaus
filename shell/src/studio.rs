@@ -1,11 +1,13 @@
-//! The Create-mode **animation studio**: a full-screen, focused workspace for
-//! the whole generate-and-refine animation loop.
+//! The Create-mode **AI studio**: the full-screen workspace for the whole
+//! generate-and-refine loop — the anchor (cockpit composition + variant
+//! gallery), the seed pose, and the animation.
 //!
-//! The studio is a [`crate::cockpit::CreateView::Studio`] takeover. When active,
-//! `app.rs` routes the central panel here and hides the tools rail, side dock,
-//! and timeline, so the studio owns the whole canvas area. Inside, it lays out
-//! three regions — a stages rail (left), a stage surface (center), and an
-//! inspector (right) — under a header with a back-to-editor exit.
+//! The studio is the entire Create workspace: `app.rs` routes the central panel
+//! here whenever [`ShellApp::studio_active`] (i.e. `Workspace::Create`) and hides
+//! the tools rail, side dock, and timeline, so the studio owns the whole canvas
+//! area. Inside, the left panel holds the sprite gallery and the stages rail, the
+//! center is the stage surface, and the right is the stage inspector — under a
+//! header with a back-to-editor exit and a composition-library overlay toggle.
 //!
 //! It is mostly assembly over parts that already exist. The clip mechanics —
 //! decode, loop detection, frame picking, normalize, background removal — live
@@ -341,32 +343,19 @@ impl MaskGizmo {
     }
 }
 
-/// Which conversational generation thread a request targets. The Anchor stage
-/// and the First-frame stage each own a [`GenThread`]; the shared generation UI
-/// and the spawn/result plumbing route by this tag.
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
-pub(crate) enum GenTarget {
-    /// The reference-sheet anchor that conditions everything downstream.
-    Anchor,
-    /// The seed pose that drives the clip.
-    FirstFrame,
-}
-
-/// Breadcrumb for a hand-edit round trip: the thread the edited image returns
-/// to, the sprite to re-select on return, and the temporary edit sprite to drop.
+/// Breadcrumb for a hand-edit round trip: the sprite to re-select on return and
+/// the temporary edit sprite to drop. The edited image lands in the first-frame
+/// thread.
 pub(crate) struct StudioReturn {
-    /// The thread the edited image lands back in as a new candidate.
-    pub target: GenTarget,
     /// The sprite that was active before hand-editing, restored on return.
     pub origin: Option<SpriteRef>,
     /// The scratch sprite created for the edit, deleted on return.
     pub edit: SpriteRef,
 }
 
-/// One conversational generate-and-refine thread: a prompt, the candidate
-/// images it produced (newest last, with lineage), the selected candidate, and
-/// the inpaint refinement state for it. The Anchor and First-frame stages each
-/// own one; the same UI and plumbing drive both.
+/// The first-frame stage's conversational generate-and-refine thread: a prompt,
+/// the candidate images it produced (newest last, with lineage), the selected
+/// candidate, and the inpaint refinement state for it.
 pub(crate) struct GenThread {
     /// The positive prompt for the next text-to-image generation.
     pub prompt: String,
@@ -429,9 +418,7 @@ pub(crate) struct StudioState {
     pub kind: AnimKind,
     /// Facing direction the generation conditions on.
     pub facing: Facing,
-    /// Conversational generation thread for the Anchor stage.
-    pub anchor_gen: GenThread,
-    /// Conversational generation thread for the First-frame stage.
+    /// The first-frame stage's conversational generation thread.
     pub frame_gen: GenThread,
     /// The approved seed pose (PNG), the single input that drives the clip.
     pub approved_first_frame: Option<Vec<u8>>,
@@ -477,7 +464,6 @@ impl Default for StudioState {
             stage: StudioStage::Anchor,
             kind: AnimKind::Walk,
             facing: Facing::East,
-            anchor_gen: GenThread::default(),
             frame_gen: GenThread::default(),
             approved_first_frame: None,
             i2v_model: I2vModel::Seedance,
@@ -512,22 +498,6 @@ impl StudioState {
     fn framing_label(&self) -> String {
         format!("{} · {}", self.kind.label(), self.facing.label())
     }
-
-    /// The generation thread for `target`.
-    pub(crate) fn gen_thread(&self, target: GenTarget) -> &GenThread {
-        match target {
-            GenTarget::Anchor => &self.anchor_gen,
-            GenTarget::FirstFrame => &self.frame_gen,
-        }
-    }
-
-    /// The generation thread for `target`, mutably.
-    pub(crate) fn gen_thread_mut(&mut self, target: GenTarget) -> &mut GenThread {
-        match target {
-            GenTarget::Anchor => &mut self.anchor_gen,
-            GenTarget::FirstFrame => &mut self.frame_gen,
-        }
-    }
 }
 
 impl ShellApp {
@@ -535,14 +505,14 @@ impl ShellApp {
     /// `Studio` view). Drives the full-screen takeover in `app.rs`.
     #[must_use]
     pub(crate) fn studio_active(&self) -> bool {
-        self.workspace == Workspace::Create && self.create_view == crate::cockpit::CreateView::Studio
+        self.workspace == Workspace::Create
     }
 
     /// Enters the studio full-screen, seeding the first-frame prompt from the
     /// anchor framing when it is still blank.
     pub(crate) fn enter_studio(&mut self) {
         self.workspace = Workspace::Create;
-        self.create_view = crate::cockpit::CreateView::Studio;
+        self.studio_library_open = false;
         self.studio.stage = StudioStage::Anchor;
         self.studio.landed = false;
         if self.studio.frame_gen.prompt.trim().is_empty() {
@@ -556,10 +526,8 @@ impl ShellApp {
     /// Leaves the studio for the normal drawing editor, dropping any in-progress
     /// preview. Studio session state is kept so re-entering resumes where it left.
     pub(crate) fn exit_studio(&mut self) {
-        self.studio.anchor_gen.painting = false;
         self.studio.frame_gen.painting = false;
         self.leave_animation_preview();
-        self.create_view = crate::cockpit::CreateView::Cockpit;
         self.set_workspace(Workspace::Draw);
     }
 
@@ -569,6 +537,21 @@ impl ShellApp {
     pub(crate) fn studio_view(&mut self, ui: &mut egui::Ui) {
         self.sync_studio_owner();
         egui::Panel::top("studio_header").resizable(false).show_inside(ui, |ui| self.studio_header(ui));
+        if self.studio_library_open {
+            // The composition-library overlay: the browser fills the center, the
+            // record editor the right dock, over the rest of the studio.
+            egui::Panel::right("studio_inspector")
+                .resizable(true)
+                .default_size(340.0)
+                .show_inside(ui, |ui| {
+                    egui::ScrollArea::vertical()
+                        .auto_shrink([false, false])
+                        .id_salt("library_editor_scroll")
+                        .show(ui, |ui| self.library_editor(ui));
+                });
+            egui::CentralPanel::default().show_inside(ui, |ui| self.library_view(ui));
+            return;
+        }
         egui::Panel::left("studio_left")
             .resizable(true)
             .default_size(240.0)
@@ -584,7 +567,8 @@ impl ShellApp {
         egui::CentralPanel::default().show_inside(ui, |ui| self.studio_surface(ui));
     }
 
-    /// The header: back-to-editor exit, the title, and the framing summary.
+    /// The header: back-to-editor exit, the title, the Library overlay toggle,
+    /// and the framing summary.
     fn studio_header(&mut self, ui: &mut egui::Ui) {
         let mut back = false;
         ui.horizontal(|ui| {
@@ -593,6 +577,18 @@ impl ShellApp {
             }
             ui.separator();
             ui.heading(format!("{} AI studio", crate::icons::SPARKLE));
+            ui.separator();
+            if self.studio_library_open {
+                if ui.button(format!("{} Done", crate::icons::CHECK)).clicked() {
+                    self.studio_library_open = false;
+                }
+            } else if ui
+                .button(format!("{} Library", crate::icons::LIBRARY))
+                .on_hover_text("Saved prompt templates, structures, and styles")
+                .clicked()
+            {
+                self.studio_library_open = true;
+            }
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                 ui.label(egui::RichText::new(self.studio.framing_label()).weak());
             });
@@ -626,9 +622,6 @@ impl ShellApp {
         let active = self.doc.active_sprite().map(|s| s.id);
         if self.studio.owner == active {
             return;
-        }
-        if let Some(token) = self.studio.anchor_gen.cancel.take() {
-            token.cancel();
         }
         if let Some(token) = self.studio.frame_gen.cancel.take() {
             token.cancel();
@@ -745,25 +738,13 @@ impl ShellApp {
 
     // ── Anchor stage ────────────────────────────────────────────────────────
 
-    /// Shows the anchor generation thread, or — once an anchor is approved and
-    /// the thread is empty (e.g. it was set in the cockpit) — the anchor large.
+    /// The Anchor stage's center surface is the cockpit's variant gallery.
     fn studio_anchor_surface(&mut self, ui: &mut egui::Ui) {
-        if self.gen_ref(GenTarget::Anchor).candidates.is_empty() {
-            if let Some(anchor) = self.doc.active_anchor().map(<[u8]>::to_vec) {
-                let ctx = ui.ctx().clone();
-                if let Some(tex) = load_png_texture(&ctx, "studio_anchor", &anchor) {
-                    fit_image(ui, &tex);
-                } else {
-                    centered_hint(ui, "The anchor image could not be decoded.");
-                }
-                return;
-            }
-        }
-        self.studio_gen_surface(ui, GenTarget::Anchor);
+        self.anchor_gallery(ui);
     }
 
-    /// The anchor inspector: framing dials, the conversational generator, and a
-    /// link to the cockpit for prompt-template composition.
+    /// The Anchor stage's inspector: the framing dials that scaffold the
+    /// seed-pose and motion prompts, then the cockpit composition controls.
     fn studio_anchor_inspector(&mut self, ui: &mut egui::Ui) {
         ui.label(egui::RichText::new("Animation kind").strong());
         ui.horizontal_wrapped(|ui| {
@@ -789,50 +770,42 @@ impl ShellApp {
         }
         ui.add_space(8.0);
         ui.separator();
-        self.studio_gen_inspector(ui, GenTarget::Anchor);
-        ui.add_space(6.0);
-        if ui
-            .small_button(format!("{} Advanced: composition cockpit", crate::icons::LIBRARY))
-            .on_hover_text("Prompt templates, structures, styles, and reference drag-in")
-            .clicked()
-        {
-            self.create_view = crate::cockpit::CreateView::Cockpit;
-        }
+        self.anchor_inspector(ui);
     }
 
     // ── First-frame stage ─────────────────────────────────────────────────────
 
     /// The selected candidate large with the mask overlay, then the gallery strip.
     fn studio_first_frame_surface(&mut self, ui: &mut egui::Ui) {
-        self.studio_gen_surface(ui, GenTarget::FirstFrame);
+        self.studio_gen_surface(ui);
     }
 
-    /// The first-frame inspector delegates to the shared generation composer.
+    /// The first-frame inspector delegates to the generation composer.
     fn studio_first_frame_inspector(&mut self, ui: &mut egui::Ui) {
-        self.studio_gen_inspector(ui, GenTarget::FirstFrame);
+        self.studio_gen_inspector(ui);
     }
 
-    // ── Shared conversational generation (Anchor + First-frame) ───────────────
+    // ── First-frame conversational generation ─────────────────────────────────
 
-    /// The active generation thread for `target`.
-    fn gen_ref(&self, target: GenTarget) -> &GenThread {
-        self.studio.gen_thread(target)
+    /// The first-frame generation thread.
+    fn gen_ref(&self) -> &GenThread {
+        &self.studio.frame_gen
     }
 
-    /// The active generation thread for `target`, mutably.
-    fn gen_mut(&mut self, target: GenTarget) -> &mut GenThread {
-        self.studio.gen_thread_mut(target)
+    /// The first-frame generation thread, mutably.
+    fn gen_mut(&mut self) -> &mut GenThread {
+        &mut self.studio.frame_gen
     }
 
-    /// The center surface for a generation stage: the selected candidate large
-    /// with its mask overlay. The candidate thread lives in the inspector.
-    fn studio_gen_surface(&mut self, ui: &mut egui::Ui, target: GenTarget) {
-        if self.gen_ref(target).candidates.is_empty() {
+    /// The center surface: the selected candidate large with its mask overlay.
+    /// The candidate thread lives in the inspector.
+    fn studio_gen_surface(&mut self, ui: &mut egui::Ui) {
+        if self.gen_ref().candidates.is_empty() {
             centered_hint(ui, "Describe what you want in the inspector and generate. Results appear in the thread.");
             return;
         }
-        if let Some(i) = self.gen_ref(target).selected {
-            self.studio_mask_canvas(ui, target, i);
+        if let Some(i) = self.gen_ref().selected {
+            self.studio_mask_canvas(ui, i);
         } else {
             centered_hint(ui, "Select a result from the thread to preview and refine it.");
         }
@@ -840,21 +813,21 @@ impl ShellApp {
 
     /// Draws the selected candidate with the mask overlay, and stamps the mask
     /// while the paint tool is armed and the pointer drags over it.
-    fn studio_mask_canvas(&mut self, ui: &mut egui::Ui, target: GenTarget, i: usize) {
+    fn studio_mask_canvas(&mut self, ui: &mut egui::Ui, i: usize) {
         let ctx = ui.ctx().clone();
         {
-            let thread = self.gen_mut(target);
+            let thread = self.gen_mut();
             if thread.candidates[i].texture.is_none() {
                 thread.candidates[i].texture = load_png_texture(&ctx, "studio_gen", &thread.candidates[i].png);
             }
         }
-        let Some(tex) = self.gen_ref(target).candidates[i].texture.clone() else {
+        let Some(tex) = self.gen_ref().candidates[i].texture.clone() else {
             centered_hint(ui, "This candidate could not be decoded.");
             return;
         };
         let img_size = tex.size_vec2();
         let (iw, ih) = (tex.size()[0] as u32, tex.size()[1] as u32);
-        self.ensure_mask(target, iw, ih);
+        self.ensure_mask(iw, ih);
 
         // Fit the image into the available area, preserving aspect.
         let avail = ui.available_size();
@@ -866,40 +839,40 @@ impl ShellApp {
         let to_screen = |ix: f32, iy: f32| egui::pos2(rect.left() + ix / iw as f32 * rect.width(), rect.top() + iy / ih as f32 * rect.height());
         let to_image = |p: egui::Pos2| ((p.x - rect.left()) / rect.width() * iw as f32, (p.y - rect.top()) / rect.height() * ih as f32);
 
-        match self.gen_ref(target).mask_tool {
+        match self.gen_ref().mask_tool {
             MaskTool::Brush => {
                 // Paint into the mask while armed and dragging over the image.
-                if self.gen_ref(target).painting {
+                if self.gen_ref().painting {
                     if let Some(pos) = resp.interact_pointer_pos() {
                         if rect.contains(pos) {
                             let (mx, my) = to_image(pos);
-                            let brush = self.gen_ref(target).brush;
-                            if let Some(mask) = self.gen_mut(target).mask.as_mut() {
+                            let brush = self.gen_ref().brush;
+                            if let Some(mask) = self.gen_mut().mask.as_mut() {
                                 mask.stamp(mx, my, brush);
                             }
                         }
                     }
                 }
             }
-            MaskTool::Box => self.gizmo_interact(target, &resp, iw, ih, &to_screen, &to_image),
+            MaskTool::Box => self.gizmo_interact(&resp, iw, ih, &to_screen, &to_image),
         }
 
         // Rebuild the mask overlay texture if it changed.
-        self.rebuild_mask_texture(target, &ctx);
+        self.rebuild_mask_texture(&ctx);
 
         let stroke_color = ui.visuals().widgets.noninteractive.bg_stroke.color;
         let accent = ui.visuals().selection.stroke.color;
         let painter = ui.painter_at(rect);
         let uv = egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1.0, 1.0));
         painter.image(tex.id(), rect, uv, egui::Color32::WHITE);
-        if let Some(mask) = &self.gen_ref(target).mask {
+        if let Some(mask) = &self.gen_ref().mask {
             if let Some(mtex) = &mask.texture {
                 painter.image(mtex.id(), rect, uv, egui::Color32::WHITE);
             }
         }
         // The box gizmo: outline, corner handles, and a rotate stem.
-        if self.gen_ref(target).mask_tool == MaskTool::Box {
-            if let Some(giz) = self.gen_ref(target).gizmo {
+        if self.gen_ref().mask_tool == MaskTool::Box {
+            if let Some(giz) = self.gen_ref().gizmo {
                 let corners = giz.corners();
                 let pts: Vec<egui::Pos2> = corners.iter().map(|&(x, y)| to_screen(x, y)).collect();
                 for k in 0..4 {
@@ -922,17 +895,16 @@ impl ShellApp {
     /// while dragging, and rasterize the rotated rectangle into the mask.
     fn gizmo_interact(
         &mut self,
-        target: GenTarget,
         resp: &egui::Response,
         iw: u32,
         ih: u32,
         to_screen: &impl Fn(f32, f32) -> egui::Pos2,
         to_image: &impl Fn(egui::Pos2) -> (f32, f32),
     ) {
-        if self.gen_ref(target).gizmo.is_none() {
-            self.gen_mut(target).gizmo = Some(MaskGizmo::centered(iw, ih));
+        if self.gen_ref().gizmo.is_none() {
+            self.gen_mut().gizmo = Some(MaskGizmo::centered(iw, ih));
         }
-        let Some(mut giz) = self.gen_ref(target).gizmo else {
+        let Some(mut giz) = self.gen_ref().gizmo else {
             return;
         };
 
@@ -952,10 +924,10 @@ impl ShellApp {
                 let (ix, iy) = to_image(p);
                 giz.contains(ix, iy).then_some(GizmoHandle::Move)
             });
-            self.gen_mut(target).gizmo_drag = handle;
+            self.gen_mut().gizmo_drag = handle;
         }
         if resp.dragged() {
-            if let (Some(handle), Some(p)) = (self.gen_ref(target).gizmo_drag, resp.interact_pointer_pos()) {
+            if let (Some(handle), Some(p)) = (self.gen_ref().gizmo_drag, resp.interact_pointer_pos()) {
                 let (ix, iy) = to_image(p);
                 match handle {
                     GizmoHandle::Move => {
@@ -975,30 +947,30 @@ impl ShellApp {
                 }
                 giz.cx = giz.cx.clamp(0.0, iw as f32);
                 giz.cy = giz.cy.clamp(0.0, ih as f32);
-                self.gen_mut(target).gizmo = Some(giz);
-                if let Some(mask) = self.gen_mut(target).mask.as_mut() {
+                self.gen_mut().gizmo = Some(giz);
+                if let Some(mask) = self.gen_mut().mask.as_mut() {
                     giz.rasterize(mask);
                 }
             }
         }
         if resp.drag_stopped() {
-            self.gen_mut(target).gizmo_drag = None;
+            self.gen_mut().gizmo_drag = None;
         }
     }
 
-    /// Ensures `target`'s mask is sized to `(w, h)`; replaces it when the
-    /// dimensions changed (a different candidate was selected).
-    fn ensure_mask(&mut self, target: GenTarget, w: u32, h: u32) {
-        let thread = self.gen_mut(target);
+    /// Ensures the mask is sized to `(w, h)`; replaces it when the dimensions
+    /// changed (a different candidate was selected).
+    fn ensure_mask(&mut self, w: u32, h: u32) {
+        let thread = self.gen_mut();
         let needs = thread.mask.as_ref().is_none_or(|m| m.width != w || m.height != h);
         if needs {
             thread.mask = Some(MaskOverlay::new(w, h));
         }
     }
 
-    /// Rebuilds `target`'s mask overlay texture from the cells when it is dirty.
-    fn rebuild_mask_texture(&mut self, target: GenTarget, ctx: &egui::Context) {
-        let thread = self.gen_mut(target);
+    /// Rebuilds the mask overlay texture from the cells when it is dirty.
+    fn rebuild_mask_texture(&mut self, ctx: &egui::Context) {
+        let thread = self.gen_mut();
         let Some(mask) = thread.mask.as_mut() else {
             return;
         };
@@ -1020,9 +992,9 @@ impl ShellApp {
         mask.dirty = false;
     }
 
-    /// Selects candidate `i` in `target`'s thread and resets its mask.
-    fn select_candidate(&mut self, target: GenTarget, i: usize) {
-        let thread = self.gen_mut(target);
+    /// Selects candidate `i` and resets the mask.
+    fn select_candidate(&mut self, i: usize) {
+        let thread = self.gen_mut();
         thread.selected = Some(i);
         thread.mask = None;
         thread.painting = false;
@@ -1030,17 +1002,12 @@ impl ShellApp {
         thread.gizmo_drag = None;
     }
 
-    /// The shared generation composer: a prompt and Generate, the inpaint mask
-    /// controls, the candidate thread (newest last), and the Approve action.
-    /// Both the Anchor and First-frame stages drive this against their thread.
-    fn studio_gen_inspector(&mut self, ui: &mut egui::Ui, target: GenTarget) {
+    /// The first-frame generation composer: a prompt and Generate, the inpaint
+    /// mask controls, the candidate thread (newest last), and the Approve action.
+    fn studio_gen_inspector(&mut self, ui: &mut egui::Ui) {
         let backend_ready = self.backend_ready;
         let ctx = ui.ctx().clone();
         let success = crate::theme::Palette::for_theme(ui.ctx().theme()).success;
-        let (gen_label, prompt_hint, thread_id) = match target {
-            GenTarget::Anchor => ("Generate anchor", "a small knight, full body, side view", "anchor_thread"),
-            GenTarget::FirstFrame => ("Generate seed pose", "a small knight standing, neutral pose", "frame_thread"),
-        };
 
         let do_generate;
         let mut do_cancel = false;
@@ -1048,18 +1015,21 @@ impl ShellApp {
         let mut clear_mask = false;
         let mut select: Option<usize> = None;
         {
-            let thread = self.gen_mut(target);
+            let thread = self.gen_mut();
             let busy = matches!(thread.status, JobStatus::Running(_));
             ui.label(egui::RichText::new("Prompt").strong());
             ui.add(
                 egui::TextEdit::multiline(&mut thread.prompt)
-                    .hint_text(prompt_hint)
+                    .hint_text("a small knight standing, neutral pose")
                     .desired_rows(2)
                     .desired_width(f32::INFINITY),
             );
             ui.add(egui::Slider::new(&mut thread.variants, 1..=4).text("variants"));
             do_generate = ui
-                .add_enabled(backend_ready && !busy, egui::Button::new(format!("{} {gen_label}", crate::icons::SPARKLE)))
+                .add_enabled(
+                    backend_ready && !busy,
+                    egui::Button::new(format!("{} Generate seed pose", crate::icons::SPARKLE)),
+                )
                 .clicked();
             studio_status_line(ui, &thread.status);
             if busy {
@@ -1119,7 +1089,7 @@ impl ShellApp {
             }
             for (i, cand) in thread.candidates.iter().enumerate() {
                 let selected = thread.selected == Some(i);
-                ui.push_id((thread_id, i), |ui| {
+                ui.push_id(("frame_thread", i), |ui| {
                     ui.horizontal(|ui| {
                         if let Some(tex) = &cand.texture {
                             let size = tex.size_vec2();
@@ -1138,94 +1108,84 @@ impl ShellApp {
 
         ui.add_space(8.0);
         ui.separator();
-        let can_approve = self.gen_ref(target).selected.is_some();
-        let approve_label = match target {
-            GenTarget::Anchor => "Approve as anchor",
-            GenTarget::FirstFrame => "Approve pose",
-        };
+        let can_approve = self.gen_ref().selected.is_some();
         let do_approve = ui
-            .add_enabled(can_approve, egui::Button::new(format!("{} {approve_label}", crate::icons::CHECK)))
+            .add_enabled(can_approve, egui::Button::new(format!("{} Approve pose", crate::icons::CHECK)))
             .clicked();
         let do_hand_edit = ui
             .add_enabled(can_approve, egui::Button::new(format!("{} Hand-edit", crate::icons::PENCIL)))
             .on_hover_text("Open the selected result in the drawing editor; return adds the edit to the thread")
             .clicked();
-        let approved = match target {
-            GenTarget::Anchor => self.doc.active_anchor().is_some(),
-            GenTarget::FirstFrame => self.studio.approved_first_frame.is_some(),
-        };
-        if approved {
+        if self.studio.approved_first_frame.is_some() {
             ui.colored_label(success, format!("{} approved", crate::icons::CHECK));
         }
 
         if do_hand_edit {
-            self.hand_edit(target);
+            self.hand_edit();
         }
         if clear_mask {
-            let thread = self.gen_mut(target);
+            let thread = self.gen_mut();
             if let Some(mask) = thread.mask.as_mut() {
                 mask.clear();
             }
             thread.gizmo = None;
         }
         if let Some(i) = select {
-            self.select_candidate(target, i);
+            self.select_candidate(i);
         }
         if do_generate {
-            self.start_gen(target);
+            self.start_gen();
         }
         if do_cancel {
-            self.cancel_gen(target);
+            self.cancel_gen();
         }
         if do_inpaint {
-            self.start_inpaint(target);
+            self.start_inpaint();
         }
         if do_approve {
-            self.approve_gen(target);
+            self.approve_gen();
         }
     }
 
-    /// Kicks off a from-scratch text-to-image generation for `target`. The
-    /// first-frame thread conditions on the approved anchor; the anchor thread
-    /// generates from the prompt alone.
-    fn start_gen(&mut self, target: GenTarget) {
+    /// Kicks off a from-scratch seed-pose generation conditioned on the anchor.
+    fn start_gen(&mut self) {
         let Some(canvas) = self.doc.active_sprite().map(|s| (s.canvas.width, s.canvas.height)) else {
             return;
         };
-        let references = self.gen_references(target);
-        if matches!(target, GenTarget::FirstFrame) && references.is_empty() {
+        let references = self.gen_references();
+        if references.is_empty() {
             return;
         }
         let job = FirstFrameJob::Generate {
             reference_images: references,
             canvas,
-            prompt: self.gen_ref(target).prompt.clone(),
-            num_variants: self.gen_ref(target).variants,
+            prompt: self.gen_ref().prompt.clone(),
+            num_variants: self.gen_ref().variants,
             seed: None,
         };
-        self.spawn_gen(target, job, None, false);
+        self.spawn_gen(job, None, false);
     }
 
-    /// Kicks off an inpaint refinement of `target`'s selected candidate.
-    fn start_inpaint(&mut self, target: GenTarget) {
-        let Some(i) = self.gen_ref(target).selected else {
+    /// Kicks off an inpaint refinement of the selected candidate.
+    fn start_inpaint(&mut self) {
+        let Some(i) = self.gen_ref().selected else {
             return;
         };
-        let references = self.gen_references(target);
-        if matches!(target, GenTarget::FirstFrame) && references.is_empty() {
+        let references = self.gen_references();
+        if references.is_empty() {
             return;
         }
-        let Some(mask) = self.gen_ref(target).mask.as_ref() else {
+        let Some(mask) = self.gen_ref().mask.as_ref() else {
             return;
         };
         let mask_png = mask_overlay_png(mask);
         let Some(mask_png) = mask_png else {
-            self.gen_mut(target).status = JobStatus::Failed("could not encode the mask".to_owned());
+            self.gen_mut().status = JobStatus::Failed("could not encode the mask".to_owned());
             return;
         };
-        let base = self.gen_ref(target).candidates[i].png.clone();
+        let base = self.gen_ref().candidates[i].png.clone();
         let prompt = {
-            let thread = self.gen_ref(target);
+            let thread = self.gen_ref();
             if thread.inpaint_prompt.trim().is_empty() {
                 thread.prompt.clone()
             } else {
@@ -1239,23 +1199,20 @@ impl ShellApp {
             prompt,
             num_variants: 1,
         };
-        self.spawn_gen(target, job, Some(i), true);
+        self.spawn_gen(job, Some(i), true);
     }
 
-    /// The reference images a generation conditions on: the anchor for the
-    /// first-frame thread, nothing for the anchor thread (which makes the anchor).
-    fn gen_references(&self, target: GenTarget) -> Vec<Vec<u8>> {
-        match target {
-            GenTarget::Anchor => Vec::new(),
-            GenTarget::FirstFrame => self.doc.active_anchor().map(<[u8]>::to_vec).into_iter().collect(),
-        }
+    /// The reference images the seed-pose generation conditions on: the approved
+    /// anchor.
+    fn gen_references(&self) -> Vec<Vec<u8>> {
+        self.doc.active_anchor().map(<[u8]>::to_vec).into_iter().collect()
     }
 
-    /// Spawns `job` for `target` on the runtime with a fresh epoch and cancel.
-    fn spawn_gen(&mut self, target: GenTarget, job: FirstFrameJob, parent: Option<usize>, append: bool) {
+    /// Spawns `job` on the runtime with a fresh epoch and cancel.
+    fn spawn_gen(&mut self, job: FirstFrameJob, parent: Option<usize>, append: bool) {
         let cancel = CancellationToken::new();
         let epoch = {
-            let thread = self.gen_mut(target);
+            let thread = self.gen_mut();
             thread.cancel = Some(cancel.clone());
             thread.epoch += 1;
             thread.status = JobStatus::Running("starting".to_owned());
@@ -1271,13 +1228,12 @@ impl ShellApp {
             epoch,
             parent,
             append,
-            target,
         );
     }
 
-    /// Cancels an in-flight generation for `target`.
-    fn cancel_gen(&mut self, target: GenTarget) {
-        let thread = self.gen_mut(target);
+    /// Cancels an in-flight seed-pose generation.
+    fn cancel_gen(&mut self) {
+        let thread = self.gen_mut();
         if let Some(cancel) = thread.cancel.take() {
             cancel.cancel();
         }
@@ -1285,11 +1241,11 @@ impl ShellApp {
         thread.status = JobStatus::Idle;
     }
 
-    /// Lands generated candidates into `target`'s thread. Decodes each PNG
-    /// (dropping any that fail), stamps lineage, and selects the first new one.
-    pub(crate) fn on_gen_ready(&mut self, target: GenTarget, images: Vec<Vec<u8>>, parent: Option<usize>, append: bool) {
+    /// Lands generated candidates into the thread. Decodes each PNG (dropping any
+    /// that fail), stamps lineage, and selects the first new one.
+    pub(crate) fn on_gen_ready(&mut self, images: Vec<Vec<u8>>, parent: Option<usize>, append: bool) {
         let first_new = {
-            let thread = self.gen_mut(target);
+            let thread = self.gen_mut();
             thread.status = JobStatus::Idle;
             thread.cancel = None;
             if !append {
@@ -1313,54 +1269,43 @@ impl ShellApp {
             (thread.candidates.len() > first_new).then_some(first_new)
         };
         if let Some(i) = first_new {
-            self.select_candidate(target, i);
+            self.select_candidate(i);
         }
     }
 
-    /// Approves the selected candidate. The anchor thread sets the active anchor
-    /// and advances to first frame; the first-frame thread locks the seed pose
-    /// and advances to Motion.
-    fn approve_gen(&mut self, target: GenTarget) {
-        let Some(i) = self.gen_ref(target).selected else {
+    /// Approves the selected candidate as the seed pose and advances to Motion.
+    fn approve_gen(&mut self) {
+        let Some(i) = self.gen_ref().selected else {
             return;
         };
-        let png = self.gen_ref(target).candidates[i].png.clone();
-        self.gen_mut(target).painting = false;
-        match target {
-            GenTarget::Anchor => {
-                self.doc.set_active_anchor(png);
-                self.studio.stage = StudioStage::FirstFrame;
-            }
-            GenTarget::FirstFrame => {
-                self.studio.approved_first_frame = Some(png);
-                self.studio.stage = StudioStage::Motion;
-            }
-        }
+        let png = self.gen_ref().candidates[i].png.clone();
+        self.gen_mut().painting = false;
+        self.studio.approved_first_frame = Some(png);
+        self.studio.stage = StudioStage::Motion;
     }
 
     /// Opens the selected candidate in the drawing editor as a scratch sprite
     /// and leaves the studio for Draw. [`Self::finish_hand_edit`] brings the
     /// edited pixels back as a new thread candidate.
-    fn hand_edit(&mut self, target: GenTarget) {
-        let Some(i) = self.gen_ref(target).selected else {
+    fn hand_edit(&mut self) {
+        let Some(i) = self.gen_ref().selected else {
             return;
         };
-        let png = self.gen_ref(target).candidates[i].png.clone();
+        let png = self.gen_ref().candidates[i].png.clone();
         let Some(buffer) = crate::app::png_to_pixel_buffer(&png) else {
             return;
         };
         let origin = self.doc.active_sprite_ref();
         let edit = self.doc.create_sprite_from_buffer("Hand-edit", buffer);
-        self.studio_return = Some(StudioReturn { target, origin, edit });
-        self.studio.anchor_gen.painting = false;
+        self.studio_return = Some(StudioReturn { origin, edit });
         self.studio.frame_gen.painting = false;
         self.set_workspace(Workspace::Draw);
         self.refresh_canvas(true);
     }
 
-    /// Returns from a hand-edit: captures the edited pixels as a new candidate
-    /// in the originating thread, restores the original sprite, drops the
-    /// scratch sprite, and re-enters the studio at that thread's stage.
+    /// Returns from a hand-edit: captures the edited pixels as a new candidate in
+    /// the first-frame thread, restores the original sprite, drops the scratch
+    /// sprite, and re-enters the studio at the first-frame stage.
     pub(crate) fn finish_hand_edit(&mut self) {
         let Some(ret) = self.studio_return.take() else {
             return;
@@ -1371,15 +1316,11 @@ impl ShellApp {
         }
         self.doc.delete_sprite(ret.edit);
         if let Some(png) = png {
-            let parent = self.gen_ref(ret.target).selected;
-            self.on_gen_ready(ret.target, vec![png], parent, true);
+            let parent = self.gen_ref().selected;
+            self.on_gen_ready(vec![png], parent, true);
         }
         self.workspace = Workspace::Create;
-        self.create_view = crate::cockpit::CreateView::Studio;
-        self.studio.stage = match ret.target {
-            GenTarget::Anchor => StudioStage::Anchor,
-            GenTarget::FirstFrame => StudioStage::FirstFrame,
-        };
+        self.studio.stage = StudioStage::FirstFrame;
         self.refresh_canvas(true);
     }
 
@@ -2268,18 +2209,6 @@ pub(crate) fn mask_overlay_png(mask: &MaskOverlay) -> Option<Vec<u8>> {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn gen_thread_routes_by_target() {
-        let mut state = StudioState::default();
-        state.anchor_gen.epoch = 1;
-        state.frame_gen.epoch = 2;
-        assert_eq!(state.gen_thread(GenTarget::Anchor).epoch, 1);
-        assert_eq!(state.gen_thread(GenTarget::FirstFrame).epoch, 2);
-        state.gen_thread_mut(GenTarget::Anchor).epoch = 9;
-        assert_eq!(state.anchor_gen.epoch, 9);
-        assert_eq!(state.frame_gen.epoch, 2);
-    }
 
     #[test]
     fn gizmo_rasterizes_and_contains() {

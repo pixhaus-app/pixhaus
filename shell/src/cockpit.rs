@@ -19,21 +19,6 @@ use pixhaus_core::project::{EntityContent, ReferenceImage, ReferenceRole, Refere
 use crate::ai;
 use crate::app::{JobStatus, ShellApp};
 
-/// Which surface the Create-mode dock shows. The cockpit is the default front
-/// door; the library is the save-shelf back room; the studio is the full-screen
-/// animation workspace (an approved anchor feeds it).
-#[derive(Clone, Copy, PartialEq, Eq)]
-pub(crate) enum CreateView {
-    /// The creation cockpit — type, generate, refine, branch.
-    Cockpit,
-    /// The save-shelf: saved prompts, structures, styles, and asset cards.
-    Library,
-    /// The animation studio — a full-screen takeover (needs an approved anchor).
-    /// Unlike the other views it does not render inside the dock; the central
-    /// panel renders it across the whole canvas area (see `crate::studio`).
-    Studio,
-}
-
 /// One generated candidate in the gallery, with its decoded image, provenance,
 /// lineage, and lazily-built preview texture.
 pub(crate) struct CockpitCandidate {
@@ -95,61 +80,38 @@ impl Default for PendingLineage {
 }
 
 impl ShellApp {
-    /// The Create-mode dock: a view selector across the top, then the chosen
-    /// surface. Replaces the old Reference-sheet/Animation tab pair.
-    pub(crate) fn create_dock(&mut self, ui: &mut egui::Ui) {
-        let prev = self.create_view;
-        ui.horizontal(|ui| {
-            ui.selectable_value(&mut self.create_view, CreateView::Cockpit, format!("{} Cockpit", crate::icons::SPARKLE));
-            ui.selectable_value(&mut self.create_view, CreateView::Library, format!("{} Library", crate::icons::LIBRARY));
-            ui.selectable_value(&mut self.create_view, CreateView::Studio, format!("{} Studio", crate::icons::FILM));
-        });
-        if self.create_view != prev {
-            // Leaving a surface returns the canvas from whatever preview it drove.
-            self.exit_sheet_preview();
-            if self.create_view != CreateView::Studio {
-                self.leave_animation_preview();
-            }
-        }
-        ui.separator();
-        match self.create_view {
-            CreateView::Cockpit => self.cockpit_panel(ui),
-            CreateView::Library => self.library_editor(ui),
-            // The studio is a full-screen takeover rendered from the central
-            // panel, not inside the dock; the dock is hidden while it is active,
-            // so this arm only shows if the dock is somehow visible with the
-            // studio selected.
-            CreateView::Studio => {
-                ui.label(egui::RichText::new("The animation studio fills the canvas area.").weak());
-            }
-        }
-    }
-
-    /// The cockpit surface: context, prompt + dials, the composed prompt, the
-    /// Generate action, and the variant gallery.
-    fn cockpit_panel(&mut self, ui: &mut egui::Ui) {
+    /// The Anchor stage's right inspector: the composition controls — context,
+    /// subject prompt + dials, drag-in references, the composed prompt, Generate,
+    /// and recent prompts. The studio hosts this; the results gallery is the
+    /// center surface ([`Self::anchor_gallery`]).
+    pub(crate) fn anchor_inspector(&mut self, ui: &mut egui::Ui) {
         if !self.backend_ready {
             self.key_entry(ui);
             ui.separator();
         }
+        self.cockpit_context(ui);
+        ui.add_space(8.0);
+        self.cockpit_inputs(ui);
+        ui.add_space(8.0);
+        self.cockpit_dials(ui);
+        ui.add_space(8.0);
+        self.cockpit_references(ui);
+        ui.add_space(8.0);
+        self.cockpit_composed_prompt(ui);
+        ui.add_space(10.0);
+        self.cockpit_generate_row(ui);
+        ui.add_space(6.0);
+        self.cockpit_history(ui);
+    }
 
-        egui::ScrollArea::vertical().auto_shrink([false, false]).show(ui, |ui| {
-            self.cockpit_context(ui);
-            ui.add_space(8.0);
-            self.cockpit_inputs(ui);
-            ui.add_space(8.0);
-            self.cockpit_dials(ui);
-            ui.add_space(8.0);
-            self.cockpit_references(ui);
-            ui.add_space(8.0);
-            self.cockpit_composed_prompt(ui);
-            ui.add_space(10.0);
-            self.cockpit_generate_row(ui);
-            ui.add_space(6.0);
-            self.cockpit_history(ui);
-            ui.add_space(12.0);
-            self.cockpit_gallery(ui);
-        });
+    /// The Anchor stage's center surface: the variant gallery (cards with
+    /// re-roll / more-like-this / refine / branch / save-as-card / approve /
+    /// provenance), scrolled.
+    pub(crate) fn anchor_gallery(&mut self, ui: &mut egui::Ui) {
+        egui::ScrollArea::vertical()
+            .auto_shrink([false, false])
+            .id_salt("anchor_gallery")
+            .show(ui, |ui| self.cockpit_gallery(ui));
     }
 
     /// Context band: the active palette and the project style notes, shown and
@@ -972,9 +934,9 @@ impl ShellApp {
         });
         self.exit_sheet_preview();
         self.doc.set_active_anchor(png);
-        // Approving an anchor jumps straight into the studio, seeded from this
-        // anchor; the studio is a full-screen takeover from here on.
-        self.enter_studio();
+        // Already in the studio (the Anchor stage); advance to the first frame,
+        // which the approved anchor now conditions.
+        self.studio.stage = crate::studio::StudioStage::FirstFrame;
     }
 
     /// Saves candidate `i` into the project asset library as a character card,

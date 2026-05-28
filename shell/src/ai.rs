@@ -36,7 +36,6 @@ use tokio_util::sync::CancellationToken;
 
 use crate::anim::{self, VideoFrame};
 use crate::app::ShellMsg;
-use crate::studio::GenTarget;
 
 /// Backend id FAL keys are stored under (keychain service `pixhaus.fal`).
 pub const FAL_BACKEND_ID: &str = "fal";
@@ -656,27 +655,19 @@ pub fn spawn_first_frame(
     epoch: u64,
     parent: Option<usize>,
     append: bool,
-    target: GenTarget,
 ) {
     handle.spawn(async move {
         let _ = tx.send(ShellMsg::FirstFrameProgress {
-            target,
             epoch,
             message: "generating".to_owned(),
         });
         ctx.request_repaint();
         match run_first_frame(&runtime, job, &cancel).await {
             Ok(images) => {
-                let _ = tx.send(ShellMsg::FirstFrameDone {
-                    target,
-                    epoch,
-                    images,
-                    parent,
-                    append,
-                });
+                let _ = tx.send(ShellMsg::FirstFrameDone { epoch, images, parent, append });
             }
             Err(error) => {
-                let _ = tx.send(ShellMsg::FirstFrameFailed { target, epoch, error });
+                let _ = tx.send(ShellMsg::FirstFrameFailed { epoch, error });
             }
         }
         ctx.request_repaint();
