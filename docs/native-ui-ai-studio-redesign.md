@@ -31,6 +31,20 @@ mask-inpaint, the box gizmo, and hand-edit). Saved **project records now feed
 generation** — the pickers, the composed-prompt preview, and the verb merge
 project structures/styles/prompts over built-ins (shadow by id).
 
+### Follow-up phase — shared pan/zoom center viewport (done)
+
+Both generation stages share one center viewport (`RefineView` + the free
+`refine_surface` / `refine_canvas` in `studio.rs`): the selected result is shown
+large with wheel-zoom about the cursor, drag-to-pan, and a Fit reset, plus the
+inpaint mask (brush or box gizmo) and a Regenerate-masked-region action in a
+center toolbar. The **Anchor stage's results gallery moves into the right
+inspector** (cockpit cards); clicking a card selects it for the center
+(`anchor_selected`). The **First-frame stage gains pan/zoom** via the same
+viewport. Inpaint-refining a selected anchor result lands a **new linked
+`CockpitCandidate`** (inheriting the parent's provenance) via
+`ai::spawn_anchor_refine` -> `ShellMsg::AnchorRefineDone` -> `land_anchor_refine`.
+The unused sprite-canvas preview (`show_sheet_preview`) is dropped.
+
 ## Verbatim intent
 
 Pixhaus is an AI-native tool for creating game sprites. Today it opens on an
