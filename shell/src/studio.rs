@@ -1043,7 +1043,7 @@ impl ShellApp {
         let job = FirstFrameJob::Generate {
             reference_images: references,
             canvas,
-            prompt: self.gen_ref().prompt.clone(),
+            prompt: key_color_prompt(&self.gen_ref().prompt, self.bg_key_color),
             num_variants: self.gen_ref().variants,
             seed: None,
         };
@@ -2359,6 +2359,16 @@ pub(crate) fn land_chroma(remove_on_land: bool, color: Rgba, tolerance: u8) -> O
     remove_on_land.then_some(ChromaKey { color, tolerance })
 }
 
+/// Builds the first-frame generation prompt: the user's text plus a request to
+/// place the sprite on a flat key-colour background. The colour is the studio's
+/// chroma key, so the deferred background-removal step has a known colour to
+/// strip.
+fn key_color_prompt(prompt: &str, key: Rgba) -> String {
+    let bg = format!("isolated on a solid #{:02x}{:02x}{:02x} background", key.r, key.g, key.b);
+    let base = prompt.trim();
+    if base.is_empty() { bg } else { format!("{base}, {bg}") }
+}
+
 /// Renders a spinner+message for a running job, or an error line for a failure.
 fn studio_status_line(ui: &mut egui::Ui, status: &JobStatus) {
     match status {
@@ -2417,6 +2427,18 @@ pub(crate) fn mask_overlay_png(mask: &MaskOverlay) -> Option<Vec<u8>> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn key_color_prompt_appends_the_hex_background() {
+        let p = key_color_prompt("a knight", Rgba::opaque(255, 0, 255));
+        assert_eq!(p, "a knight, isolated on a solid #ff00ff background");
+    }
+
+    #[test]
+    fn key_color_prompt_handles_an_empty_prompt() {
+        let p = key_color_prompt("   ", Rgba::opaque(0, 128, 64));
+        assert_eq!(p, "isolated on a solid #008040 background");
+    }
 
     #[test]
     fn gizmo_rasterizes_and_contains() {

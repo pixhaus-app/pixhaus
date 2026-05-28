@@ -625,10 +625,13 @@ pub async fn run_first_frame(runtime: &VerbRuntime, job: FirstFrameJob, cancel: 
             seed,
         } => {
             let (width, height) = canvas;
+            // The background is requested in the positive prompt (a flat key
+            // colour, built in the studio); keep "background" out of the
+            // negatives so the model actually paints the solid fill.
             let req = ImageGenRequest {
                 model: None,
-                prompt: format!("{prompt}, single sprite frame, side view, transparent background"),
-                negative_prompt: Some("background, particles, glow, motion blur".into()),
+                prompt: format!("{prompt}, single sprite frame, side view"),
+                negative_prompt: Some("scenery, environment, particles, glow, motion blur, gradient, drop shadow".into()),
                 width,
                 height,
                 steps: None,
