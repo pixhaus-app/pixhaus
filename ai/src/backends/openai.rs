@@ -355,6 +355,9 @@ impl OpenAiBackend {
         let http_resp = check_http_status(http_resp).await?;
         let raw: OpenAiImageResponse = http_resp.json().await.map_err(BackendError::Network)?;
         let images = decode_image_data(raw.data)?;
+        // gpt-image returns its own snapped size (e.g. 1024x1024) regardless of
+        // the base; resize back so an edit preserves the input's size and ratio.
+        let images = fit_edit_images_to_base(images, &req.image)?;
 
         progress
             .send(VerbProgressEvent::Cost(CostUpdate {
@@ -533,6 +536,16 @@ fn fit_images_to_request(images: Vec<Vec<u8>>, req: &ImageGenRequest, model: &st
         return Ok(images);
     }
     images.into_iter().map(|bytes| resize_png_to(&bytes, req.width, req.height)).collect()
+}
+
+/// Resizes each edit result to the base image's dimensions, so an edit returns
+/// the same size and aspect as its input. gpt-image otherwise returns its own
+/// snapped size (e.g. `1024x1024`) regardless of the base, which left
+/// first-frame inpaints the wrong size.
+fn fit_edit_images_to_base(images: Vec<Vec<u8>>, base: &[u8]) -> Result<Vec<Vec<u8>>> {
+    let base_img = image::load_from_memory(base).map_err(|e| BackendError::InvalidResponse(format!("base image decode failed: {e}")))?;
+    let (width, height) = (base_img.width(), base_img.height());
+    images.into_iter().map(|bytes| resize_png_to(&bytes, width, height)).collect()
 }
 
 /// Builds the JSON body for an `/images/generations` call.
@@ -899,6 +912,15 @@ mod tests {
     }
 
     #[test]
+    fn fit_edit_images_to_base_resizes_to_base_dims() {
+        let base = sized_png(5, 7);
+        let result = sized_png(16, 16);
+        let fitted = fit_edit_images_to_base(vec![result], &base).expect("fit should succeed");
+        let img = image::load_from_memory(&fitted[0]).expect("decode fitted");
+        assert_eq!((img.width(), img.height()), (5, 7));
+    }
+
+    #[test]
     fn decode_image_data_errors_without_b64() {
         let err = decode_image_data(vec![ImageData { b64_json: None }]).expect_err("missing b64_json must error");
         assert!(matches!(err, BackendError::InvalidResponse(_)));
@@ -1019,6 +1041,14 @@ mod tests {
         let mut bytes = Vec::new();
         img.write_to(&mut std::io::Cursor::new(&mut bytes), image::ImageFormat::Png)
             .expect("encode one-pixel png");
+        bytes
+    }
+
+    fn sized_png(width: u32, height: u32) -> Vec<u8> {
+        let img = image::RgbaImage::from_pixel(width, height, image::Rgba([0, 128, 255, 255]));
+        let mut bytes = Vec::new();
+        img.write_to(&mut std::io::Cursor::new(&mut bytes), image::ImageFormat::Png)
+            .expect("encode sized png");
         bytes
     }
 }

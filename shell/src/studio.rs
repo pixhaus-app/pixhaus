@@ -1055,10 +1055,6 @@ impl ShellApp {
         let Some(i) = self.gen_ref().selected else {
             return;
         };
-        let references = self.gen_references();
-        if references.is_empty() {
-            return;
-        }
         let Some(mask) = self.gen_ref().view.mask.as_ref() else {
             return;
         };
@@ -1079,7 +1075,10 @@ impl ShellApp {
         let job = FirstFrameJob::Inpaint {
             base,
             mask: mask_png,
-            reference_images: references,
+            // The base pose already carries the character; passing the anchor
+            // sheet as an edit reference makes gpt-image composite toward the
+            // sheet instead of repainting the masked region.
+            reference_images: Vec::new(),
             prompt,
             num_variants: 1,
         };
@@ -2026,20 +2025,24 @@ fn refine_surface(ui: &mut egui::Ui, png: &[u8], texture: &mut Option<egui::Text
         }
     });
     ui.horizontal(|ui| {
-        let width = (ui.available_width() - 180.0).max(60.0);
-        ui.add(
-            egui::TextEdit::singleline(&mut view.inpaint_prompt)
-                .hint_text("fix the masked region")
-                .desired_width(width),
-        );
         let has_mask = view.mask.as_ref().is_some_and(|m| !m.is_empty());
-        do_inpaint = ui
-            .add_enabled(
-                enabled && has_mask,
-                egui::Button::new(format!("{} Regenerate masked region", crate::icons::SPARKLE)),
-            )
-            .on_hover_text("Repaint only the masked pixels")
-            .clicked();
+        // Right-to-left so the button keeps its natural width and the prompt
+        // field fills whatever is left, instead of reserving a fixed slice that
+        // clipped the button on narrower panels.
+        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+            do_inpaint = ui
+                .add_enabled(
+                    enabled && has_mask,
+                    egui::Button::new(format!("{} Regenerate masked region", crate::icons::SPARKLE)),
+                )
+                .on_hover_text("Repaint only the masked pixels")
+                .clicked();
+            ui.add(
+                egui::TextEdit::singleline(&mut view.inpaint_prompt)
+                    .hint_text("fix the masked region")
+                    .desired_width(ui.available_width()),
+            );
+        });
     });
     ui.separator();
     refine_canvas(ui, png, texture, view);
