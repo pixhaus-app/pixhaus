@@ -14,7 +14,7 @@ use pixhaus_core::canvas::{
 };
 use pixhaus_core::project::Rgba;
 use pixhaus_core::project::{IVec2, Rect, Size};
-use pixhaus_core::selection::{Connectivity, magic_wand, select_ellipse, select_polygon, select_rect};
+use pixhaus_core::selection::{Connectivity, SelectionMask, magic_wand, select_ellipse, select_polygon, select_rect};
 use pixhaus_render::{ViewportRenderer, viewport::clamp_zoom, viewport::snap_zoom};
 
 use crate::app::{ShellApp, ZoomAction};
@@ -346,6 +346,13 @@ impl ShellApp {
         let Some((x, y, x1, y1)) = session.dirty else {
             return;
         };
+        // Clip the painted footprint to the active selection: outside the mask,
+        // restore the pre-stroke bytes. Bounded to the stroke's dirty rect.
+        if let Some(mask) = self.editor.selection.clone() {
+            if let Some(buf) = self.doc.pixel_buffers.get_mut(&session.buffer_id) {
+                clip_to_mask(buf, &session.before, &mask, (x, y, x1, y1));
+            }
+        }
         let (w, h) = (x1 - x + 1, y1 - y + 1);
         self.finish_pixel_edit(&session.before, session.buffer_id, x, y, w, h, "Brush stroke");
         if !session.erase {
@@ -372,6 +379,12 @@ impl ShellApp {
             Some(s) => (s.width, s.height),
             None => return,
         };
+        // Flood fill is unbounded, so clip over the whole canvas.
+        if let Some(mask) = self.editor.selection.clone() {
+            if let Some(buf) = self.doc.pixel_buffers.get_mut(&buffer_id) {
+                clip_to_mask(buf, &before, &mask, (0, 0, cw - 1, ch - 1));
+            }
+        }
         self.finish_pixel_edit(&before, buffer_id, 0, 0, cw, ch, "Fill");
         self.maybe_add_palette(color);
         self.refresh_canvas(false);
@@ -453,6 +466,12 @@ impl ShellApp {
             Some(s) => (s.width, s.height),
             None => return,
         };
+        // Shapes can span the canvas, so clip over the canvas bounds.
+        if let Some(mask) = self.editor.selection.clone() {
+            if let Some(buf) = self.doc.pixel_buffers.get_mut(&drag.buffer_id) {
+                clip_to_mask(buf, &drag.before, &mask, (0, 0, cw - 1, ch - 1));
+            }
+        }
         self.finish_pixel_edit(&drag.before, drag.buffer_id, 0, 0, cw, ch, "Shape");
         self.maybe_add_palette(self.editor.fg);
         self.refresh_canvas(false);
@@ -888,6 +907,49 @@ fn restore_region(dst: &mut PixelBuffer, src: &PixelBuffer, x: u32, y: u32, w: u
     }
 }
 
+/// Restores every pixel of `buf` that `mask` does not select to its value in
+/// `before`, bounded to the inclusive rect `(x0, y0, x1, y1)`. The single clip
+/// primitive for stroke/fill/shape commits: paint runs unclipped, then this
+/// reverts the bytes the selection does not cover. Work is O(rect ∩ mask),
+/// never O(canvas) — the iteration is the intersection of the passed bounds
+/// with `mask.bounds()`, so a small selection or a small gesture stays cheap at
+/// 8K. The eraser flows through the same path: pixels outside the mask keep
+/// their original (non-erased) value from `before`.
+fn clip_to_mask(buf: &mut PixelBuffer, before: &PixelBuffer, mask: &SelectionMask, bounds: (u32, u32, u32, u32)) {
+    let (bx0, by0, bx1, by1) = bounds;
+    let mb = mask.bounds();
+    // An empty mask selects nothing: restore the whole gesture footprint.
+    if mb.is_empty() {
+        for y in by0..=by1 {
+            for x in bx0..=bx1 {
+                if let Some(c) = before.pixel(x, y) {
+                    buf.set_pixel(x, y, c);
+                }
+            }
+        }
+        return;
+    }
+    // Intersect the gesture bounds with the mask's bounding box. Pixels outside
+    // the mask box are never selected, so they always restore — handled by the
+    // is_selected test below over the full gesture bounds. Iterate only the
+    // gesture bounds (already the dirty rect); the mask box only tightens it.
+    let mx0 = mb.origin.x.max(0) as u32;
+    let my0 = mb.origin.y.max(0) as u32;
+    let mx1 = mx0 + mb.size.width.saturating_sub(1);
+    let my1 = my0 + mb.size.height.saturating_sub(1);
+    for y in by0..=by1 {
+        for x in bx0..=bx1 {
+            // Inside the mask box and selected: keep the painted pixel.
+            if x >= mx0 && x <= mx1 && y >= my0 && y <= my1 && mask.is_selected(x, y) {
+                continue;
+            }
+            if let Some(c) = before.pixel(x, y) {
+                buf.set_pixel(x, y, c);
+            }
+        }
+    }
+}
+
 /// Inclusive canvas-pixel bounds touched by a shape drawn between two corners,
 /// padded one pixel for outline safety and clamped to the canvas. `None` when
 /// the box falls fully off-canvas.
@@ -1077,5 +1139,202 @@ mod tests {
         let cy = pts.iter().map(|p| p.1).sum::<f32>() / pts.len() as f32;
         assert!((cx - 5.0).abs() < 0.01, "cx={cx}");
         assert!((cy - 3.0).abs() < 0.01, "cy={cy}");
+    }
+
+    // --- clip_to_mask: selection-constrained drawing ------------------------
+
+    const RED: Rgba = Rgba::opaque(220, 40, 40);
+    const BLANK: Rgba = Rgba::transparent();
+
+    /// A canvas-sized buffer filled with `fill`.
+    fn buf(w: u32, h: u32, fill: Rgba) -> PixelBuffer {
+        PixelBuffer::filled(w, h, fill).expect("buffer")
+    }
+
+    /// A rect mask selecting the inclusive box `(x0, y0, x1, y1)` on a `w x h`
+    /// canvas.
+    fn rect_mask(w: u32, h: u32, x0: i32, y0: i32, x1: i32, y1: i32) -> SelectionMask {
+        select_rect(w, h, Rect::from_xywh(x0, y0, (x1 - x0 + 1) as u32, (y1 - y0 + 1) as u32)).expect("rect mask")
+    }
+
+    #[test]
+    fn clip_keeps_paint_inside_mask_restores_outside() {
+        // Paint a horizontal red row across a 16x16 canvas, with a rect mask
+        // covering the left half (x 0..=7). After clipping, only the masked
+        // half keeps paint; the right half reverts to the pre-paint blank.
+        let before = buf(16, 16, BLANK);
+        let mut after = before.clone();
+        for x in 0..16 {
+            after.set_pixel(x, 8, RED);
+        }
+        let mask = rect_mask(16, 16, 0, 0, 7, 15);
+        clip_to_mask(&mut after, &before, &mask, (0, 8, 15, 8));
+
+        for x in 0..16 {
+            let got = after.pixel(x, 8).expect("pixel");
+            if x <= 7 {
+                assert_eq!(got, RED, "masked pixel ({x}, 8) keeps paint");
+            } else {
+                assert_eq!(got, BLANK, "unmasked pixel ({x}, 8) reverts to before");
+            }
+        }
+    }
+
+    #[test]
+    fn clip_to_ellipse_mask_fills_only_inside() {
+        // Flood-fill a blank canvas red, then clip to an ellipse mask. Only the
+        // ellipse interior stays red; everything else reverts to blank.
+        let before = buf(24, 24, BLANK);
+        let mut after = before.clone();
+        flood_fill(&mut after, 0, 0, RED, 0);
+        let mask = select_ellipse(24, 24, Rect::from_xywh(4, 4, 16, 16)).expect("ellipse mask");
+        clip_to_mask(&mut after, &before, &mask, (0, 0, 23, 23));
+
+        for y in 0..24 {
+            for x in 0..24 {
+                let got = after.pixel(x, y).expect("pixel");
+                if mask.is_selected(x, y) {
+                    assert_eq!(got, RED, "inside-ellipse ({x}, {y}) is filled");
+                } else {
+                    assert_eq!(got, BLANK, "outside-ellipse ({x}, {y}) reverts");
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn clip_crops_rect_at_mask_edge() {
+        // A filled rect spanning x 2..=12 crossing a mask that ends at x=7.
+        // The committed rect is cropped to the mask boundary.
+        let before = buf(16, 16, BLANK);
+        let mut after = before.clone();
+        draw_filled_rect(&mut after, 2, 2, 12, 12, RED);
+        let mask = rect_mask(16, 16, 0, 0, 7, 15);
+        clip_to_mask(&mut after, &before, &mask, (0, 0, 15, 15));
+
+        // The last painted column inside the mask is x=7; x=8 onward is cropped.
+        assert_eq!(after.pixel(7, 6).expect("pixel"), RED, "rect kept up to the mask edge");
+        assert_eq!(after.pixel(8, 6).expect("pixel"), BLANK, "rect cropped past the mask edge");
+    }
+
+    #[test]
+    fn empty_mask_restores_everything_in_bounds() {
+        // An empty (nothing-selected) mask reverts the whole gesture footprint.
+        let before = buf(8, 8, BLANK);
+        let mut after = before.clone();
+        for x in 0..8 {
+            after.set_pixel(x, 3, RED);
+        }
+        let empty = SelectionMask::new(8, 8).expect("empty mask");
+        assert_eq!(empty.selected_count(), 0);
+        clip_to_mask(&mut after, &before, &empty, (0, 3, 7, 3));
+        for x in 0..8 {
+            assert_eq!(after.pixel(x, 3).expect("pixel"), BLANK, "empty mask reverts ({x}, 3)");
+        }
+    }
+
+    #[test]
+    fn no_selection_leaves_paint_unclipped() {
+        // Regression guard for the call-site short-circuit: when the editor has
+        // no selection, clip_to_mask is never invoked, so paint survives whole.
+        // This mirrors the `if let Some(mask) = self.editor.selection` guard in
+        // commit_stroke / do_fill / commit_shape.
+        let selection: Option<SelectionMask> = None;
+        let before = buf(8, 8, BLANK);
+        let mut after = before.clone();
+        for x in 0..8 {
+            after.set_pixel(x, 3, RED);
+        }
+        if let Some(mask) = selection {
+            clip_to_mask(&mut after, &before, &mask, (0, 3, 7, 3));
+        }
+        for x in 0..8 {
+            assert_eq!(after.pixel(x, 3).expect("pixel"), RED, "no selection paints unclipped ({x}, 3)");
+        }
+    }
+
+    /// Converts a tightly-packed [`PixelBuffer`] to an owned [`image::RgbaImage`]
+    /// for `image-compare`.
+    fn to_rgba_image(b: &PixelBuffer) -> image::RgbaImage {
+        let mut bytes = Vec::with_capacity((b.width() as usize) * (b.height() as usize) * 4);
+        for y in 0..b.height() {
+            bytes.extend_from_slice(b.row(y).expect("row"));
+        }
+        image::RgbaImage::from_raw(b.width(), b.height(), bytes).expect("rgba image")
+    }
+
+    #[test]
+    fn clipped_stroke_matches_expected_render() {
+        // image-compare visual regression: a diagonal stroke clipped to a rect
+        // mask must match an independently-built reference that paints only the
+        // masked pixels. Catches boundary off-by-one in the clip.
+        let (w, h) = (32u32, 32u32);
+        let before = buf(w, h, BLANK);
+        let points: Vec<[f32; 2]> = (0..32).map(|i| [i as f32, i as f32]).collect();
+        let mask = rect_mask(w, h, 8, 8, 23, 23);
+
+        let mut actual = before.clone();
+        draw_stroke(&mut actual, &points, RED, BrushShape::Pixel, 1, true);
+        clip_to_mask(&mut actual, &before, &mask, (0, 0, w - 1, h - 1));
+
+        // Reference: the same stroke, then hand-revert every unselected pixel.
+        let mut expected = before.clone();
+        draw_stroke(&mut expected, &points, RED, BrushShape::Pixel, 1, true);
+        for y in 0..h {
+            for x in 0..w {
+                if !mask.is_selected(x, y) {
+                    expected.set_pixel(x, y, before.pixel(x, y).expect("pixel"));
+                }
+            }
+        }
+
+        let score = image_compare::rgba_hybrid_compare(&to_rgba_image(&actual), &to_rgba_image(&expected))
+            .expect("compare")
+            .score;
+        assert!(score >= 0.999, "clipped stroke diverged from reference: score = {score}");
+    }
+
+    proptest::proptest! {
+        /// The load-bearing property: clip_to_mask never changes a pixel the
+        /// mask does not select, and leaves every selected pixel equal to the
+        /// unclipped paint.
+        #[test]
+        fn clip_never_touches_unselected_and_keeps_selected(
+            mx0 in 0u32..16, my0 in 0u32..16, mw in 1u32..16, mh in 1u32..16,
+            seed in 0u64..1_000_000,
+        ) {
+            const W: u32 = 16;
+            const H: u32 = 16;
+            // A deterministic pseudo-random paint over a blank canvas.
+            let before = buf(W, H, BLANK);
+            let mut painted = before.clone();
+            let mut state = seed.wrapping_add(1);
+            for y in 0..H {
+                for x in 0..W {
+                    state = state.wrapping_mul(6_364_136_223_846_793_005).wrapping_add(1_442_695_040_888_963_407);
+                    if (state >> 33) & 1 == 1 {
+                        let r = (state >> 8) as u8;
+                        let g = (state >> 16) as u8;
+                        let b = (state >> 24) as u8;
+                        painted.set_pixel(x, y, Rgba::opaque(r, g, b));
+                    }
+                }
+            }
+            let mask = rect_mask(W, H, mx0 as i32, my0 as i32, (mx0 + mw - 1) as i32, (my0 + mh - 1) as i32);
+
+            let mut clipped = painted.clone();
+            clip_to_mask(&mut clipped, &before, &mask, (0, 0, W - 1, H - 1));
+
+            for y in 0..H {
+                for x in 0..W {
+                    let got = clipped.pixel(x, y).expect("pixel");
+                    if mask.is_selected(x, y) {
+                        proptest::prop_assert_eq!(got, painted.pixel(x, y).expect("pixel"), "selected pixel matches unclipped paint at ({}, {})", x, y);
+                    } else {
+                        proptest::prop_assert_eq!(got, before.pixel(x, y).expect("pixel"), "unselected pixel is untouched at ({}, {})", x, y);
+                    }
+                }
+            }
+        }
     }
 }
