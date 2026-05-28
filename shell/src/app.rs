@@ -766,7 +766,7 @@ impl ShellApp {
                     self.rs_status = JobStatus::Running(format!("{pct}{message}"));
                 }
                 ShellMsg::SheetPartial { pixels } => {
-                    if self.reveal_effect_enabled {
+                    if self.studio.anchor_reveal.is_active() {
                         if let Some((rgba, w, h)) = rgba_from_pixel_data(&pixels) {
                             let now = self.egui_ctx.input(|i| i.time);
                             self.studio.anchor_reveal.on_partial(rgba, w, h, now);
@@ -775,10 +775,11 @@ impl ShellApp {
                     self.show_partial_preview(&pixels);
                 }
                 ShellMsg::SheetDone { variants, cost_usd } => {
-                    if self.reveal_effect_enabled {
-                        if let Some((rgba, w, h)) = variants.first().and_then(|v| crate::reveal::decode_png_rgba(&v.png)) {
-                            let now = self.egui_ctx.input(|i| i.time);
-                            self.studio.anchor_reveal.on_final(rgba, w, h, now);
+                    if self.studio.anchor_reveal.is_active() {
+                        let now = self.egui_ctx.input(|i| i.time);
+                        match variants.first().and_then(|v| crate::reveal::decode_png_rgba(&v.png)) {
+                            Some((rgba, w, h)) => self.studio.anchor_reveal.on_final(rgba, w, h, now),
+                            None => self.studio.anchor_reveal.finish(now),
                         }
                     }
                     self.cockpit_on_done(variants, cost_usd);
@@ -811,10 +812,11 @@ impl ShellApp {
                 }
                 ShellMsg::FirstFrameDone { epoch, images, parent, append } => {
                     if epoch == self.studio.frame_gen.epoch {
-                        if self.reveal_effect_enabled {
-                            if let Some((rgba, w, h)) = images.first().and_then(|png| crate::reveal::decode_png_rgba(png)) {
-                                let now = self.egui_ctx.input(|i| i.time);
-                                self.studio.frame_gen.reveal.on_final(rgba, w, h, now);
+                        if self.studio.frame_gen.reveal.is_active() {
+                            let now = self.egui_ctx.input(|i| i.time);
+                            match images.first().and_then(|png| crate::reveal::decode_png_rgba(png)) {
+                                Some((rgba, w, h)) => self.studio.frame_gen.reveal.on_final(rgba, w, h, now),
+                                None => self.studio.frame_gen.reveal.finish(now),
                             }
                         }
                         self.on_gen_ready(images, parent, append);

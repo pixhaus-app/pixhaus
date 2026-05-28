@@ -1141,6 +1141,8 @@ impl ShellApp {
         }
         thread.epoch += 1;
         thread.status = JobStatus::Idle;
+        // Drop the reveal so it doesn't strand on the scatter cloud after a cancel.
+        thread.reveal.fail();
     }
 
     /// Lands generated candidates into the thread. Decodes each PNG (dropping any

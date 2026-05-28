@@ -148,6 +148,17 @@ impl RevealState {
         self.enter(RevealPhase::Snap, now);
     }
 
+    /// Starts the snap without a new source — used when the final landed but its
+    /// image could not be decoded, so the effect still completes and hands back
+    /// to the static viewport (which shows the real result) instead of stranding
+    /// on the scatter cloud. Ignored when inactive.
+    pub(crate) fn finish(&mut self, now: f64) {
+        if !self.active {
+            return;
+        }
+        self.enter(RevealPhase::Snap, now);
+    }
+
     /// Drops the effect (a generation failed or was canceled), so the surface
     /// falls back to its static state.
     pub(crate) fn fail(&mut self) {
@@ -699,6 +710,18 @@ mod tests {
         r.on_final(vec![0; 4], 1, 1, 2.0);
         assert_eq!(r.phase(), RevealPhase::Snap);
         r.tick(2.0 + SNAP_SECS);
+        assert!(!r.is_active());
+    }
+
+    #[test]
+    fn finish_snaps_without_a_source_so_the_effect_never_strands() {
+        // The final landed but its image could not be decoded: the effect must
+        // still snap and deactivate, handing back to the static viewport.
+        let mut r = RevealState::default();
+        r.begin((100, 100), 0.0);
+        r.finish(1.0);
+        assert_eq!(r.phase(), RevealPhase::Snap);
+        r.tick(1.0 + SNAP_SECS + 0.01);
         assert!(!r.is_active());
     }
 
