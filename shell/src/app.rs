@@ -437,6 +437,9 @@ pub struct ShellApp {
     /// the studio's clip/pick/land stages drive unchanged. All of it lives off
     /// the document until Land, so Cancel and restart are clean at every stage.
     pub(crate) studio: crate::studio::StudioState,
+    /// Set while hand-editing a generated image in the drawing editor: the
+    /// breadcrumb back to the studio thread the edit returns to.
+    pub(crate) studio_return: Option<crate::studio::StudioReturn>,
     /// Background-removal panel: the key colour (auto-detected or eyedropped).
     pub(crate) bg_key_color: Rgba,
     /// Background-removal panel: per-channel keying tolerance.
@@ -606,6 +609,7 @@ impl ShellApp {
             anim_gen_epoch: 0,
             anim_pending_parent: None,
             studio: crate::studio::StudioState::default(),
+            studio_return: None,
             bg_key_color: Rgba::opaque(255, 0, 255),
             bg_tolerance: 24,
             bg_preview: false,
@@ -2021,6 +2025,19 @@ impl ShellApp {
                 self.enter_studio();
             }
 
+            // A hand-edit round trip: a prominent way back to the studio that
+            // lands the edited pixels as a new candidate.
+            if self.studio_return.is_some() {
+                ui.separator();
+                if ui
+                    .button(format!("{} Finish hand-edit", crate::icons::CHECK))
+                    .on_hover_text("Return to the AI studio and add this edit to the thread")
+                    .clicked()
+                {
+                    self.finish_hand_edit();
+                }
+            }
+
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                 if ui
                     .button(crate::theme::preference_label(self.theme_preference))
@@ -2288,7 +2305,7 @@ pub(crate) fn truncate_motion(s: &str, max: usize) -> String {
 
 /// Decodes PNG bytes into a tightly packed RGBA [`PixelBuffer`] for display on
 /// the wgpu canvas. Returns `None` on a decode failure or an invalid size.
-fn png_to_pixel_buffer(png: &[u8]) -> Option<PixelBuffer> {
+pub(crate) fn png_to_pixel_buffer(png: &[u8]) -> Option<PixelBuffer> {
     let rgba = image::load_from_memory(png).ok()?.to_rgba8();
     let (width, height) = (rgba.width(), rgba.height());
     PixelBuffer::from_raw(width, height, width * 4, rgba.into_raw()).ok()

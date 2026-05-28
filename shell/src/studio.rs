@@ -30,8 +30,9 @@ use pixhaus_core::project::{Rgba, SpriteId};
 use pixhaus_core::transforms::normalize::{ChromaKey, chroma_key, detect_key_color};
 
 use crate::ai::{self, FirstFrameJob};
-use crate::anim::VideoFrame;
+use crate::anim::{self, VideoFrame};
 use crate::app::{AnimPlayMode, JobStatus, ShellApp, Workspace};
+use crate::document::SpriteRef;
 
 /// The studio's ordered stages. Navigation is free — the rail lets you step back
 /// to an earlier stage without losing later work — so this is a position in a
@@ -249,6 +250,97 @@ impl MaskOverlay {
     }
 }
 
+/// How the inpaint mask is shaped: a freeform brush, or a transformable box.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(crate) enum MaskTool {
+    /// Paint cells with a round brush.
+    Brush,
+    /// A rectangle you move, scale, and rotate; its interior is the mask.
+    Box,
+}
+
+/// A transformable rectangular mask region in mask-pixel coordinates. Its filled
+/// (rotated) interior becomes the inpaint mask.
+#[derive(Clone, Copy)]
+pub(crate) struct MaskGizmo {
+    /// Center x in mask pixels.
+    pub cx: f32,
+    /// Center y in mask pixels.
+    pub cy: f32,
+    /// Half-width in mask pixels.
+    pub hw: f32,
+    /// Half-height in mask pixels.
+    pub hh: f32,
+    /// Rotation in radians.
+    pub angle: f32,
+}
+
+/// Which gizmo handle a drag is moving.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(crate) enum GizmoHandle {
+    /// Drag the body to translate.
+    Move,
+    /// Drag a corner (0=TL, 1=TR, 2=BR, 3=BL) to scale about the center.
+    Corner(usize),
+    /// Drag the stem to rotate.
+    Rotate,
+}
+
+impl MaskGizmo {
+    /// A box a quarter of the image, centered.
+    fn centered(w: u32, h: u32) -> Self {
+        Self {
+            cx: w as f32 / 2.0,
+            cy: h as f32 / 2.0,
+            hw: (w as f32 / 4.0).max(1.0),
+            hh: (h as f32 / 4.0).max(1.0),
+            angle: 0.0,
+        }
+    }
+
+    /// A local offset rotated into image space and added to the center.
+    fn point(&self, lx: f32, ly: f32) -> (f32, f32) {
+        let (s, c) = self.angle.sin_cos();
+        (self.cx + lx * c - ly * s, self.cy + lx * s + ly * c)
+    }
+
+    /// The four corner points in image space: TL, TR, BR, BL.
+    fn corners(&self) -> [(f32, f32); 4] {
+        [
+            self.point(-self.hw, -self.hh),
+            self.point(self.hw, -self.hh),
+            self.point(self.hw, self.hh),
+            self.point(-self.hw, self.hh),
+        ]
+    }
+
+    /// The rotate-handle point, set off above the top edge.
+    fn rotate_handle(&self) -> (f32, f32) {
+        self.point(0.0, -self.hh - self.hh.max(self.hw).mul_add(0.4, 8.0))
+    }
+
+    /// Whether image-space `(px, py)` is inside the rotated rectangle.
+    fn contains(&self, px: f32, py: f32) -> bool {
+        let (s, c) = self.angle.sin_cos();
+        let dx = px - self.cx;
+        let dy = py - self.cy;
+        let lx = dx * c + dy * s;
+        let ly = -dx * s + dy * c;
+        lx.abs() <= self.hw && ly.abs() <= self.hh
+    }
+
+    /// Fills `mask` with the rotated rectangle's interior, clearing the rest.
+    fn rasterize(&self, mask: &mut MaskOverlay) {
+        for y in 0..mask.height {
+            for x in 0..mask.width {
+                let inside = self.contains(x as f32 + 0.5, y as f32 + 0.5);
+                mask.cells[(y as usize) * (mask.width as usize) + x as usize] = inside;
+            }
+        }
+        mask.dirty = true;
+    }
+}
+
 /// Which conversational generation thread a request targets. The Anchor stage
 /// and the First-frame stage each own a [`GenThread`]; the shared generation UI
 /// and the spawn/result plumbing route by this tag.
@@ -258,6 +350,17 @@ pub(crate) enum GenTarget {
     Anchor,
     /// The seed pose that drives the clip.
     FirstFrame,
+}
+
+/// Breadcrumb for a hand-edit round trip: the thread the edited image returns
+/// to, the sprite to re-select on return, and the temporary edit sprite to drop.
+pub(crate) struct StudioReturn {
+    /// The thread the edited image lands back in as a new candidate.
+    pub target: GenTarget,
+    /// The sprite that was active before hand-editing, restored on return.
+    pub origin: Option<SpriteRef>,
+    /// The scratch sprite created for the edit, deleted on return.
+    pub edit: SpriteRef,
 }
 
 /// One conversational generate-and-refine thread: a prompt, the candidate
@@ -286,6 +389,12 @@ pub(crate) struct GenThread {
     pub mask: Option<MaskOverlay>,
     /// Mask brush radius in mask pixels.
     pub brush: f32,
+    /// Which mask tool shapes the mask.
+    pub mask_tool: MaskTool,
+    /// The box gizmo, when the box tool is in use (sized to the candidate).
+    pub gizmo: Option<MaskGizmo>,
+    /// The gizmo handle currently being dragged.
+    pub gizmo_drag: Option<GizmoHandle>,
     /// Prompt for the inpaint refinement.
     pub inpaint_prompt: String,
 }
@@ -303,6 +412,9 @@ impl Default for GenThread {
             painting: false,
             mask: None,
             brush: 4.0,
+            mask_tool: MaskTool::Brush,
+            gizmo: None,
+            gizmo_drag: None,
             inpaint_prompt: String::new(),
         }
     }
@@ -750,24 +862,33 @@ impl ShellApp {
         let draw = img_size * scale;
         let (rect, resp) = ui.allocate_exact_size(draw, egui::Sense::click_and_drag());
 
-        // Paint into the mask while armed and dragging over the image.
-        if self.gen_ref(target).painting {
-            if let Some(pos) = resp.interact_pointer_pos() {
-                if rect.contains(pos) {
-                    let mx = (pos.x - rect.left()) / rect.width() * iw as f32;
-                    let my = (pos.y - rect.top()) / rect.height() * ih as f32;
-                    let brush = self.gen_ref(target).brush;
-                    if let Some(mask) = self.gen_mut(target).mask.as_mut() {
-                        mask.stamp(mx, my, brush);
+        // Image-pixel <-> screen mapping for this fitted rect.
+        let to_screen = |ix: f32, iy: f32| egui::pos2(rect.left() + ix / iw as f32 * rect.width(), rect.top() + iy / ih as f32 * rect.height());
+        let to_image = |p: egui::Pos2| ((p.x - rect.left()) / rect.width() * iw as f32, (p.y - rect.top()) / rect.height() * ih as f32);
+
+        match self.gen_ref(target).mask_tool {
+            MaskTool::Brush => {
+                // Paint into the mask while armed and dragging over the image.
+                if self.gen_ref(target).painting {
+                    if let Some(pos) = resp.interact_pointer_pos() {
+                        if rect.contains(pos) {
+                            let (mx, my) = to_image(pos);
+                            let brush = self.gen_ref(target).brush;
+                            if let Some(mask) = self.gen_mut(target).mask.as_mut() {
+                                mask.stamp(mx, my, brush);
+                            }
+                        }
                     }
                 }
             }
+            MaskTool::Box => self.gizmo_interact(target, &resp, iw, ih, &to_screen, &to_image),
         }
 
         // Rebuild the mask overlay texture if it changed.
         self.rebuild_mask_texture(target, &ctx);
 
         let stroke_color = ui.visuals().widgets.noninteractive.bg_stroke.color;
+        let accent = ui.visuals().selection.stroke.color;
         let painter = ui.painter_at(rect);
         let uv = egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1.0, 1.0));
         painter.image(tex.id(), rect, uv, egui::Color32::WHITE);
@@ -776,7 +897,93 @@ impl ShellApp {
                 painter.image(mtex.id(), rect, uv, egui::Color32::WHITE);
             }
         }
+        // The box gizmo: outline, corner handles, and a rotate stem.
+        if self.gen_ref(target).mask_tool == MaskTool::Box {
+            if let Some(giz) = self.gen_ref(target).gizmo {
+                let corners = giz.corners();
+                let pts: Vec<egui::Pos2> = corners.iter().map(|&(x, y)| to_screen(x, y)).collect();
+                for k in 0..4 {
+                    painter.line_segment([pts[k], pts[(k + 1) % 4]], egui::Stroke::new(1.5, accent));
+                }
+                for p in &pts {
+                    painter.circle_filled(*p, 4.0, accent);
+                }
+                let top_mid = to_screen(f32::midpoint(corners[0].0, corners[1].0), f32::midpoint(corners[0].1, corners[1].1));
+                let (rx, ry) = giz.rotate_handle();
+                let rh = to_screen(rx, ry);
+                painter.line_segment([top_mid, rh], egui::Stroke::new(1.5, accent));
+                painter.circle_filled(rh, 4.0, accent);
+            }
+        }
         painter.rect_stroke(rect, 2.0, egui::Stroke::new(1.0, stroke_color), egui::StrokeKind::Inside);
+    }
+
+    /// Handles a drag on the box gizmo: pick a handle on press, transform it
+    /// while dragging, and rasterize the rotated rectangle into the mask.
+    fn gizmo_interact(
+        &mut self,
+        target: GenTarget,
+        resp: &egui::Response,
+        iw: u32,
+        ih: u32,
+        to_screen: &impl Fn(f32, f32) -> egui::Pos2,
+        to_image: &impl Fn(egui::Pos2) -> (f32, f32),
+    ) {
+        if self.gen_ref(target).gizmo.is_none() {
+            self.gen_mut(target).gizmo = Some(MaskGizmo::centered(iw, ih));
+        }
+        let Some(mut giz) = self.gen_ref(target).gizmo else {
+            return;
+        };
+
+        if resp.drag_started() {
+            let handle = resp.interact_pointer_pos().and_then(|p| {
+                // Corners and the rotate stem hit-test in screen space (fixed
+                // tolerance); the body falls back to a point-in-rect test.
+                for (k, &(cx, cy)) in giz.corners().iter().enumerate() {
+                    if to_screen(cx, cy).distance(p) <= 8.0 {
+                        return Some(GizmoHandle::Corner(k));
+                    }
+                }
+                let (rx, ry) = giz.rotate_handle();
+                if to_screen(rx, ry).distance(p) <= 8.0 {
+                    return Some(GizmoHandle::Rotate);
+                }
+                let (ix, iy) = to_image(p);
+                giz.contains(ix, iy).then_some(GizmoHandle::Move)
+            });
+            self.gen_mut(target).gizmo_drag = handle;
+        }
+        if resp.dragged() {
+            if let (Some(handle), Some(p)) = (self.gen_ref(target).gizmo_drag, resp.interact_pointer_pos()) {
+                let (ix, iy) = to_image(p);
+                match handle {
+                    GizmoHandle::Move => {
+                        let d = resp.drag_delta();
+                        giz.cx += d.x / resp.rect.width().max(1.0) * iw as f32;
+                        giz.cy += d.y / resp.rect.height().max(1.0) * ih as f32;
+                    }
+                    GizmoHandle::Corner(_) => {
+                        let (s, c) = giz.angle.sin_cos();
+                        let (dx, dy) = (ix - giz.cx, iy - giz.cy);
+                        giz.hw = (dx * c + dy * s).abs().max(2.0);
+                        giz.hh = (-dx * s + dy * c).abs().max(2.0);
+                    }
+                    GizmoHandle::Rotate => {
+                        giz.angle = (ix - giz.cx).atan2(-(iy - giz.cy));
+                    }
+                }
+                giz.cx = giz.cx.clamp(0.0, iw as f32);
+                giz.cy = giz.cy.clamp(0.0, ih as f32);
+                self.gen_mut(target).gizmo = Some(giz);
+                if let Some(mask) = self.gen_mut(target).mask.as_mut() {
+                    giz.rasterize(mask);
+                }
+            }
+        }
+        if resp.drag_stopped() {
+            self.gen_mut(target).gizmo_drag = None;
+        }
     }
 
     /// Ensures `target`'s mask is sized to `(w, h)`; replaces it when the
@@ -819,6 +1026,8 @@ impl ShellApp {
         thread.selected = Some(i);
         thread.mask = None;
         thread.painting = false;
+        thread.gizmo = None;
+        thread.gizmo_drag = None;
     }
 
     /// The shared generation composer: a prompt and Generate, the inpaint mask
@@ -861,10 +1070,22 @@ impl ShellApp {
             ui.separator();
             ui.label(egui::RichText::new(format!("{} Refine by inpaint", crate::icons::PENCIL)).strong());
             if thread.selected.is_none() {
-                ui.label(egui::RichText::new("Select a result to paint a mask over what's wrong.").small().weak());
+                ui.label(egui::RichText::new("Select a result to mask over what's wrong.").small().weak());
             } else {
-                ui.checkbox(&mut thread.painting, "Paint mask");
-                ui.add(egui::Slider::new(&mut thread.brush, 1.0..=24.0).text("brush"));
+                ui.horizontal(|ui| {
+                    ui.label("Mask:");
+                    ui.selectable_value(&mut thread.mask_tool, MaskTool::Brush, "Brush");
+                    ui.selectable_value(&mut thread.mask_tool, MaskTool::Box, "Box");
+                });
+                match thread.mask_tool {
+                    MaskTool::Brush => {
+                        ui.checkbox(&mut thread.painting, "Paint mask");
+                        ui.add(egui::Slider::new(&mut thread.brush, 1.0..=24.0).text("brush"));
+                    }
+                    MaskTool::Box => {
+                        ui.label(egui::RichText::new("Drag the box to move; corners scale; the stem rotates.").small().weak());
+                    }
+                }
                 clear_mask = ui.button(format!("{} Clear mask", crate::icons::REMOVE)).clicked();
                 ui.add(
                     egui::TextEdit::multiline(&mut thread.inpaint_prompt)
@@ -925,6 +1146,10 @@ impl ShellApp {
         let do_approve = ui
             .add_enabled(can_approve, egui::Button::new(format!("{} {approve_label}", crate::icons::CHECK)))
             .clicked();
+        let do_hand_edit = ui
+            .add_enabled(can_approve, egui::Button::new(format!("{} Hand-edit", crate::icons::PENCIL)))
+            .on_hover_text("Open the selected result in the drawing editor; return adds the edit to the thread")
+            .clicked();
         let approved = match target {
             GenTarget::Anchor => self.doc.active_anchor().is_some(),
             GenTarget::FirstFrame => self.studio.approved_first_frame.is_some(),
@@ -933,10 +1158,15 @@ impl ShellApp {
             ui.colored_label(success, format!("{} approved", crate::icons::CHECK));
         }
 
+        if do_hand_edit {
+            self.hand_edit(target);
+        }
         if clear_mask {
-            if let Some(mask) = self.gen_mut(target).mask.as_mut() {
+            let thread = self.gen_mut(target);
+            if let Some(mask) = thread.mask.as_mut() {
                 mask.clear();
             }
+            thread.gizmo = None;
         }
         if let Some(i) = select {
             self.select_candidate(target, i);
@@ -1106,6 +1336,51 @@ impl ShellApp {
                 self.studio.stage = StudioStage::Motion;
             }
         }
+    }
+
+    /// Opens the selected candidate in the drawing editor as a scratch sprite
+    /// and leaves the studio for Draw. [`Self::finish_hand_edit`] brings the
+    /// edited pixels back as a new thread candidate.
+    fn hand_edit(&mut self, target: GenTarget) {
+        let Some(i) = self.gen_ref(target).selected else {
+            return;
+        };
+        let png = self.gen_ref(target).candidates[i].png.clone();
+        let Some(buffer) = crate::app::png_to_pixel_buffer(&png) else {
+            return;
+        };
+        let origin = self.doc.active_sprite_ref();
+        let edit = self.doc.create_sprite_from_buffer("Hand-edit", buffer);
+        self.studio_return = Some(StudioReturn { target, origin, edit });
+        self.studio.anchor_gen.painting = false;
+        self.studio.frame_gen.painting = false;
+        self.set_workspace(Workspace::Draw);
+        self.refresh_canvas(true);
+    }
+
+    /// Returns from a hand-edit: captures the edited pixels as a new candidate
+    /// in the originating thread, restores the original sprite, drops the
+    /// scratch sprite, and re-enters the studio at that thread's stage.
+    pub(crate) fn finish_hand_edit(&mut self) {
+        let Some(ret) = self.studio_return.take() else {
+            return;
+        };
+        let png = self.doc.composite_active_frame().and_then(|buf| pixel_buffer_to_png(&buf));
+        if let Some(origin) = ret.origin {
+            self.doc.select(origin);
+        }
+        self.doc.delete_sprite(ret.edit);
+        if let Some(png) = png {
+            let parent = self.gen_ref(ret.target).selected;
+            self.on_gen_ready(ret.target, vec![png], parent, true);
+        }
+        self.workspace = Workspace::Create;
+        self.create_view = crate::cockpit::CreateView::Studio;
+        self.studio.stage = match ret.target {
+            GenTarget::Anchor => StudioStage::Anchor,
+            GenTarget::FirstFrame => StudioStage::FirstFrame,
+        };
+        self.refresh_canvas(true);
     }
 
     // ── Motion stage ───────────────────────────────────────────────────────────
@@ -1863,6 +2138,23 @@ fn fit_image_sized(ui: &mut egui::Ui, id: egui::TextureId, size: egui::Vec2) {
     });
 }
 
+/// Encodes a [`PixelBuffer`] to PNG, dropping any row padding. `None` if the
+/// rows don't form a tight RGBA image.
+fn pixel_buffer_to_png(buf: &PixelBuffer) -> Option<Vec<u8>> {
+    let (w, h) = (buf.width(), buf.height());
+    let row_bytes = (w * 4) as usize;
+    let mut pixels = Vec::with_capacity(row_bytes * h as usize);
+    for y in 0..h {
+        pixels.extend_from_slice(buf.row(y)?.get(..row_bytes)?);
+    }
+    anim::encode_png(&VideoFrame {
+        pixels,
+        width: w,
+        height: h,
+        timestamp_ms: 0,
+    })
+}
+
 /// Builds a NEAREST egui texture from a [`PixelBuffer`], dropping any row
 /// padding. `None` if the buffer's rows don't form a tight RGBA image.
 fn pixel_buffer_to_texture(ctx: &egui::Context, name: &str, buf: &PixelBuffer) -> Option<egui::TextureHandle> {
@@ -1987,6 +2279,25 @@ mod tests {
         state.gen_thread_mut(GenTarget::Anchor).epoch = 9;
         assert_eq!(state.anchor_gen.epoch, 9);
         assert_eq!(state.frame_gen.epoch, 2);
+    }
+
+    #[test]
+    fn gizmo_rasterizes_and_contains() {
+        let giz = MaskGizmo {
+            cx: 4.0,
+            cy: 4.0,
+            hw: 2.0,
+            hh: 2.0,
+            angle: 0.0,
+        };
+        assert!(giz.contains(4.0, 4.0));
+        assert!(!giz.contains(0.5, 0.5));
+        let mut mask = MaskOverlay::new(8, 8);
+        giz.rasterize(&mut mask);
+        assert!(!mask.is_empty());
+        assert!(mask.cells[4 * 8 + 4]);
+        assert!(!mask.cells[0]);
+        assert!(mask.dirty);
     }
 
     #[test]

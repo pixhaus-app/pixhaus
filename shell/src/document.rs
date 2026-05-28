@@ -100,6 +100,15 @@ impl DocumentStore {
         }
     }
 
+    /// The active sprite's reference (entity + state), if a sprite is active.
+    #[must_use]
+    pub fn active_sprite_ref(&self) -> Option<SpriteRef> {
+        match self.project.active {
+            ActiveTarget::State { entity_id, state_id } => Some(SpriteRef { entity_id, state_id }),
+            _ => None,
+        }
+    }
+
     /// Stores `png` as the active sprite's approved reference sheet (anchor).
     pub fn set_active_anchor(&mut self, png: Vec<u8>) {
         if let Some(id) = self.project.active_sprite_id() {
@@ -172,6 +181,25 @@ impl DocumentStore {
 
         let sprite_ref = SpriteRef { entity_id, state_id };
         self.select(sprite_ref);
+        sprite_ref
+    }
+
+    /// Creates a sprite sized to `buf` and fills its single cel with those
+    /// pixels — the entry point for hand-editing a generated image in the
+    /// drawing editor. Returns the new sprite and leaves it active.
+    pub fn create_sprite_from_buffer(&mut self, name: impl Into<String>, buf: PixelBuffer) -> SpriteRef {
+        let size = Size {
+            width: buf.width(),
+            height: buf.height(),
+        };
+        let sprite_ref = self.create_sprite(name, size);
+        let buffer_id = self.active_sprite().and_then(|s| s.cels.first()).and_then(|c| match c.data {
+            CelData::Raster { buffer, .. } => Some(buffer),
+            _ => None,
+        });
+        if let Some(buffer_id) = buffer_id {
+            self.pixel_buffers.insert(buffer_id, buf);
+        }
         sprite_ref
     }
 
