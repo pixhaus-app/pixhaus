@@ -112,6 +112,13 @@ pub struct GenerateReferenceSheetInputs {
     /// negative verbatim.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub negative_override: Option<String>,
+
+    /// Optional explicit output size `(width, height)`. Applies only to
+    /// free-form (`Single`) output, which has no structure-declared canvas;
+    /// Paneled structures keep their own canvas because the layout prose bakes
+    /// in pixel dimensions. Lets the host request a high-resolution anchor.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub target_size: Option<(u32, u32)>,
 }
 
 /// One conditioning reference handed to a generation request.
@@ -376,7 +383,11 @@ impl Verb for GenerateReferenceSheetVerb {
                 context_fragments: &[],
             };
             let composed = compose(&req).map_err(|e| VerbError::Schema(e.to_string()))?;
-            let (width, height) = composed.canvas.map_or((1024, 1024), |c| (c.width, c.height));
+            // Paneled output keeps its declared canvas (the prose bakes in pixel
+            // dims); free-form output honours a host-requested size, else 1024².
+            let (width, height) = composed
+                .canvas
+                .map_or_else(|| inputs.target_size.unwrap_or((1024, 1024)), |c| (c.width, c.height));
             (
                 composed.positive,
                 composed.negative,
@@ -668,6 +679,7 @@ mod tests {
     const CHARACTER: &str = "pixhaus.builtin.structure.character";
     const ITEM: &str = "pixhaus.builtin.structure.item";
     const TILESET: &str = "pixhaus.builtin.structure.tileset";
+    const SINGLE: &str = "pixhaus.builtin.structure.single";
     const CUSTOM: &str = "pixhaus.builtin.structure.custom";
 
     fn inputs_for(structure_id: &str, num_variants: u32) -> VerbInputs {
@@ -677,6 +689,7 @@ mod tests {
             style_id: None,
             prompt_id: None,
             variable_values: BTreeMap::new(),
+            target_size: None,
             inline_text: "a fantasy hero with a sword".into(),
             inline_negatives: String::new(),
             num_variants,
@@ -737,6 +750,7 @@ mod tests {
             style_id: None,
             prompt_id: None,
             variable_values: BTreeMap::new(),
+            target_size: None,
             inline_text: String::new(),
             inline_negatives: String::new(),
             num_variants: 1,
@@ -865,6 +879,7 @@ mod tests {
             style_id: None,
             prompt_id: None,
             variable_values: BTreeMap::new(),
+            target_size: None,
             inline_text: "treasure chest".into(),
             inline_negatives: String::new(),
             num_variants: 10,
@@ -1022,6 +1037,7 @@ mod tests {
             style_id: None,
             prompt_id: None,
             variable_values: BTreeMap::new(),
+            target_size: None,
             inline_text: "test subject".into(),
             inline_negatives: "user_neg".into(),
             num_variants: 1,
@@ -1059,6 +1075,7 @@ mod tests {
             style_id: Some(StyleId("does.not.exist".into())),
             prompt_id: None,
             variable_values: BTreeMap::new(),
+            target_size: None,
             inline_text: "a hero".into(),
             inline_negatives: String::new(),
             num_variants: 1,
@@ -1145,6 +1162,7 @@ mod tests {
             style_id: None,
             prompt_id: None,
             variable_values: BTreeMap::new(),
+            target_size: None,
             inline_text: "ignored when overridden".into(),
             inline_negatives: String::new(),
             num_variants: 1,
@@ -1178,6 +1196,7 @@ mod tests {
             style_id: None,
             prompt_id: None,
             variable_values: BTreeMap::new(),
+            target_size: None,
             inline_text: "hero".into(),
             inline_negatives: "ignored".into(),
             num_variants: 1,
@@ -1235,6 +1254,7 @@ mod tests {
             style_id: None,
             prompt_id: None,
             variable_values: BTreeMap::new(),
+            target_size: None,
             inline_text: "hero".into(),
             inline_negatives: String::new(),
             num_variants: 1,
@@ -1267,6 +1287,44 @@ mod tests {
         let captured = captured.lock().unwrap().clone().expect("backend was invoked");
         assert!(captured.style_image.is_some(), "the Style-role reference routes to style_image");
         assert_eq!(captured.reference_images.len(), 1, "the Subject reference routes to reference_images");
+    }
+
+    #[tokio::test]
+    async fn target_size_sets_free_form_output_dimensions() {
+        let captured = Arc::new(Mutex::new(None));
+        let runtime = VerbRuntime::new();
+        runtime
+            .register_backend(BackendProxy::new(CapturingStub { last: captured.clone() }), 0)
+            .unwrap();
+        runtime.register(GenerateReferenceSheetVerb::new()).unwrap();
+
+        let inputs = VerbInputs::from_struct(&GenerateReferenceSheetInputs {
+            entity_id: EntityId::new(1),
+            structure_id: StructureId(SINGLE.into()),
+            style_id: None,
+            prompt_id: None,
+            variable_values: BTreeMap::new(),
+            target_size: Some((1536, 1536)),
+            inline_text: "a hero".into(),
+            inline_negatives: String::new(),
+            num_variants: 1,
+            quality: None,
+            seed: None,
+            references: Vec::new(),
+            prompt_override: None,
+            negative_override: None,
+        })
+        .unwrap();
+
+        runtime
+            .invoke(&VerbId::new(GENERATE_REFERENCE_SHEET_VERB_ID), VerbContext::empty(meta()), inputs)
+            .unwrap()
+            .finish()
+            .await
+            .unwrap();
+
+        let captured = captured.lock().unwrap().clone().expect("backend was invoked");
+        assert_eq!((captured.width, captured.height), (1536, 1536), "free-form output honours the target size");
     }
 
     #[tokio::test]
