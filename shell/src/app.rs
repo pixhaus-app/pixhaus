@@ -359,6 +359,14 @@ pub struct ShellApp {
     pub(crate) rs_prompt: String,
     /// Selected composition Structure id (free-form `Single` by default).
     pub(crate) ck_structure: String,
+    /// Anchor output aspect ratio. Applies to free-form output only; Paneled
+    /// structures fix their own canvas.
+    pub(crate) ck_aspect: crate::cockpit::AnchorAspect,
+    /// Anchor output resolution on the long edge, in pixels (free-form only).
+    pub(crate) ck_resolution: u32,
+    /// Custom anchor output `(width, height)`, used when [`Self::ck_aspect`] is
+    /// [`crate::cockpit::AnchorAspect::Custom`].
+    pub(crate) ck_custom: (u32, u32),
     /// Requested candidate count (1-4).
     pub(crate) rs_num_variants: u32,
     /// Cockpit job status.
@@ -584,6 +592,9 @@ impl ShellApp {
             library_draft: None,
             rs_prompt: ai::DEFAULT_SHEET_PROMPT.to_owned(),
             ck_structure: ai::SINGLE_STRUCTURE_ID.to_owned(),
+            ck_aspect: crate::cockpit::AnchorAspect::Square,
+            ck_resolution: 1536,
+            ck_custom: (1536, 1536),
             rs_num_variants: 2,
             rs_status: JobStatus::Idle,
             rs_candidates: Vec::new(),

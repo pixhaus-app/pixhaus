@@ -338,6 +338,9 @@ pub struct SheetJob {
     pub negative_override: Option<String>,
     /// Fixed RNG seed, or `None` for a fresh random seed each run.
     pub seed: Option<u64>,
+    /// Explicit output size `(width, height)` for free-form anchors. Ignored by
+    /// Paneled structures, which keep their declared canvas.
+    pub target_size: Option<(u32, u32)>,
 }
 
 impl SheetJob {
@@ -359,6 +362,7 @@ impl SheetJob {
             prompt_override: None,
             negative_override: None,
             seed: None,
+            target_size: None,
         }
     }
 
@@ -377,6 +381,7 @@ impl SheetJob {
             references: self.references,
             prompt_override: self.prompt_override,
             negative_override: self.negative_override,
+            target_size: self.target_size,
         };
         let ctx = VerbContext::builder(self.meta)
             .with_composition_library(ProjectCompositionLibrary {

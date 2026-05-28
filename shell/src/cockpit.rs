@@ -179,6 +179,12 @@ impl ShellApp {
             });
         });
 
+        // Resolution applies to free-form output only; a Paneled structure fixes
+        // its own canvas from the layout, so the picker would be a no-op there.
+        if self.ck_structure == ai::SINGLE_STRUCTURE_ID {
+            self.cockpit_resolution(ui);
+        }
+
         ui.add(egui::Slider::new(&mut self.rs_num_variants, 1..=4).text("variants"));
 
         ui.horizontal(|ui| {
@@ -186,6 +192,37 @@ impl ShellApp {
                 .on_hover_text("Pin the seed for a reproducible result; off draws a fresh seed each run");
             ui.add_enabled(self.ck_seed_fixed, egui::DragValue::new(&mut self.ck_seed));
         });
+    }
+
+    /// Resolution + aspect picker for a free-form anchor, with a resolved-size
+    /// hint. Drives [`Self::ck_aspect`] / [`Self::ck_resolution`] / custom dims.
+    fn cockpit_resolution(&mut self, ui: &mut egui::Ui) {
+        ui.horizontal(|ui| {
+            ui.label("Size");
+            egui::ComboBox::from_id_salt("ck_resolution")
+                .selected_text(format!("{}px", self.ck_resolution))
+                .show_ui(ui, |ui| {
+                    for px in [1024_u32, 1536, 2048] {
+                        ui.selectable_value(&mut self.ck_resolution, px, format!("{px}px"));
+                    }
+                });
+            egui::ComboBox::from_id_salt("ck_aspect")
+                .selected_text(self.ck_aspect.label())
+                .show_ui(ui, |ui| {
+                    for aspect in AnchorAspect::ALL {
+                        ui.selectable_value(&mut self.ck_aspect, aspect, aspect.label());
+                    }
+                });
+        });
+        if self.ck_aspect == AnchorAspect::Custom {
+            ui.horizontal(|ui| {
+                ui.label("Custom");
+                ui.add(egui::DragValue::new(&mut self.ck_custom.0).range(256..=2048).suffix(" w"));
+                ui.add(egui::DragValue::new(&mut self.ck_custom.1).range(256..=2048).suffix(" h"));
+            });
+        }
+        let (w, h) = anchor_target_dims(self.ck_aspect, self.ck_resolution, self.ck_custom);
+        ui.label(egui::RichText::new(format!("{w} \u{00d7} {h}")).small().weak());
     }
 
     /// Creative dials: an optional saved-prompt template, its typed-control
@@ -818,6 +855,7 @@ impl ShellApp {
             prompt_override,
             negative_override,
             seed,
+            target_size: Some(anchor_target_dims(self.ck_aspect, self.ck_resolution, self.ck_custom)),
         };
         self.ck_pending = lineage;
         self.rs_status = JobStatus::Running("starting".into());
@@ -1049,6 +1087,56 @@ enum CardAction {
 }
 
 /// A short lineage caption for a card ("fresh", "re-roll of #1", …).
+/// Output aspect ratio for a free-form anchor. The cockpit pairs this with a
+/// long-edge resolution to resolve the request size (see [`anchor_target_dims`]).
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+pub(crate) enum AnchorAspect {
+    /// 1:1.
+    Square,
+    /// 4:3 landscape.
+    Landscape,
+    /// 3:4 portrait.
+    Portrait,
+    /// 16:9 widescreen.
+    Wide,
+    /// 9:16 tall.
+    Tall,
+    /// Explicit width/height dragged by the artist.
+    Custom,
+}
+
+impl AnchorAspect {
+    /// The pickable aspects, in display order.
+    pub(crate) const ALL: [Self; 6] = [Self::Square, Self::Landscape, Self::Portrait, Self::Wide, Self::Tall, Self::Custom];
+
+    /// The dropdown label.
+    pub(crate) fn label(self) -> &'static str {
+        match self {
+            Self::Square => "1:1",
+            Self::Landscape => "4:3",
+            Self::Portrait => "3:4",
+            Self::Wide => "16:9",
+            Self::Tall => "9:16",
+            Self::Custom => "Custom",
+        }
+    }
+}
+
+/// Resolves the anchor target `(width, height)` from the aspect, the long-edge
+/// resolution, and the custom dims. Non-custom aspects scale `long_edge` to the
+/// ratio; the backend rounds to /16 and clamps the result, so this stays exact.
+fn anchor_target_dims(aspect: AnchorAspect, long_edge: u32, custom: (u32, u32)) -> (u32, u32) {
+    let short = |num: u32, den: u32| long_edge * num / den;
+    match aspect {
+        AnchorAspect::Square => (long_edge, long_edge),
+        AnchorAspect::Landscape => (long_edge, short(3, 4)),
+        AnchorAspect::Portrait => (short(3, 4), long_edge),
+        AnchorAspect::Wide => (long_edge, short(9, 16)),
+        AnchorAspect::Tall => (short(9, 16), long_edge),
+        AnchorAspect::Custom => custom,
+    }
+}
+
 fn lineage_label(cand: &CockpitCandidate) -> String {
     match (cand.origin, cand.parent) {
         (VariantOrigin::FreshGeneration, Some(p)) => format!("branch of #{}", p + 1),
@@ -1164,4 +1252,23 @@ fn load_png_texture(ctx: &egui::Context, name: &str, png: &[u8]) -> Option<egui:
     let size = [rgba.width() as usize, rgba.height() as usize];
     let color = egui::ColorImage::from_rgba_unmultiplied(size, rgba.as_raw());
     Some(ctx.load_texture(name, color, egui::TextureOptions::NEAREST))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{AnchorAspect, anchor_target_dims};
+
+    #[test]
+    fn anchor_target_dims_scales_each_aspect_to_the_long_edge() {
+        assert_eq!(anchor_target_dims(AnchorAspect::Square, 1536, (0, 0)), (1536, 1536));
+        assert_eq!(anchor_target_dims(AnchorAspect::Landscape, 1536, (0, 0)), (1536, 1152));
+        assert_eq!(anchor_target_dims(AnchorAspect::Portrait, 1536, (0, 0)), (1152, 1536));
+        assert_eq!(anchor_target_dims(AnchorAspect::Wide, 1536, (0, 0)), (1536, 864));
+        assert_eq!(anchor_target_dims(AnchorAspect::Tall, 1536, (0, 0)), (864, 1536));
+    }
+
+    #[test]
+    fn anchor_target_dims_passes_custom_through_verbatim() {
+        assert_eq!(anchor_target_dims(AnchorAspect::Custom, 1536, (640, 1280)), (640, 1280));
+    }
 }

@@ -43,13 +43,16 @@
 //!
 //! gpt-image-1 accepts only `1024x1024`, `1536x1024`, `1024x1536`. gpt-image-2
 //! also accepts arbitrary `WIDTHxHEIGHT` as long as both are divisible by 16, the
-//! aspect is within 1:3..3:1, and it is <= 3840x2160. To stay safe across models
-//! this adapter snaps every gpt-image request to the nearest of the three
-//! standard sizes by aspect (`snap_gpt_image_size`), then downscales the result
-//! back to the caller's exact width/height (`fit_images_to_request`) so the
-//! `ImageGenRequest` width/height contract holds. dall-e sizes pass through
-//! verbatim. (To honor true arbitrary gpt-image-2 sizes, relax the snap — it is
-//! deliberately conservative today.)
+//! aspect is within 1:3..3:1, and it is <= 3840x2160. So sizing is per-model
+//! (`api_size_for`): gpt-image-1 snaps to the nearest of its three sizes by
+//! aspect (`snap_gpt_image_size`); gpt-image-2 rounds the request to /16 and
+//! clamps it to `[1024, 2048]` per side (`gpt_image_2_size`) so a high-resolution
+//! or non-square anchor renders natively. The floor stays at 1024 because the
+//! API still rejects small sizes (the animation verb's 256x256); the ceiling is
+//! capped below the API max to bound cost. Either way the result is downscaled
+//! back to the caller's exact width/height (`fit_images_to_request`) when the API
+//! size differs, so the `ImageGenRequest` width/height contract holds. dall-e
+//! sizes pass through verbatim.
 //!
 //! ## Streaming
 //!
@@ -473,8 +476,9 @@ impl crate::plugin::backend::InferenceBackend for OpenAiBackend {
 
 // ── Helpers ────────────────────────────────────────────────────────────────
 
-/// Maps a requested image size to the nearest size `gpt-image-*` actually
+/// Maps a requested image size to the nearest size `gpt-image-1` actually
 /// accepts (`1024x1024`, `1024x1536`, `1536x1024`), chosen by aspect ratio.
+/// gpt-image-2 takes arbitrary sizes and uses [`gpt_image_2_size`] instead.
 ///
 /// `OpenAI` rejects any other size (e.g. the animation verb's `256x256`) with
 /// an error event. Callers snap for the API call, then downscale the returned
@@ -496,16 +500,52 @@ fn snap_gpt_image_size(width: u32, height: u32) -> (u32, u32) {
     }
 }
 
-/// The `OpenAI` `size` string for a request: snapped to a valid gpt-image size
-/// for gpt-image models, or the verbatim request size otherwise (`dall-e`
-/// accepts a wider range and is left as-is).
-fn openai_size_param(req: &ImageGenRequest, model: &str) -> String {
-    if is_gpt_image_model(model) {
-        let (w, h) = snap_gpt_image_size(req.width, req.height);
-        format!("{w}x{h}")
+/// Whether `model` is a gpt-image-2 variant, which accepts arbitrary sizes
+/// rather than only the three gpt-image-1 sizes.
+fn is_gpt_image_2(model: &str) -> bool {
+    model.starts_with("gpt-image-2")
+}
+
+/// gpt-image-2's accepted side range, in pixels. The API documents arbitrary
+/// sizes divisible by 16 up to 3840x2160, but rejects small sizes (the 256x256
+/// the animation verb asks for), so the floor stays at the smallest known-good
+/// gpt-image-1 size; the ceiling is capped below the API max to bound cost and
+/// latency. Both bounds are multiples of 16, so clamping preserves divisibility.
+const GPT_IMAGE_2_MIN: u32 = 1024;
+const GPT_IMAGE_2_MAX: u32 = 2048;
+
+/// Rounds a dimension to the nearest multiple of 16, then clamps it into
+/// gpt-image-2's accepted range. With both bounds in `[1024, 2048]` the aspect
+/// can never exceed 2:1, so it stays well inside the API's 1:3..3:1 limit.
+fn clamp_gpt_image_2_dim(value: u32) -> u32 {
+    let rounded = value.div_ceil(16) * 16;
+    rounded.clamp(GPT_IMAGE_2_MIN, GPT_IMAGE_2_MAX)
+}
+
+/// The size gpt-image-2 should render: the request rounded to /16 and clamped to
+/// the accepted range, so a high-resolution or non-square anchor renders
+/// natively instead of snapping to 1024 and upscaling.
+fn gpt_image_2_size(width: u32, height: u32) -> (u32, u32) {
+    (clamp_gpt_image_2_dim(width), clamp_gpt_image_2_dim(height))
+}
+
+/// The `(width, height)` to ask the API for: arbitrary (clamped) sizes for
+/// gpt-image-2, the three fixed sizes for older gpt-image, and the verbatim
+/// request size for `dall-e` (which accepts a wider range).
+fn api_size_for(width: u32, height: u32, model: &str) -> (u32, u32) {
+    if !is_gpt_image_model(model) {
+        (width, height)
+    } else if is_gpt_image_2(model) {
+        gpt_image_2_size(width, height)
     } else {
-        format!("{}x{}", req.width, req.height)
+        snap_gpt_image_size(width, height)
     }
+}
+
+/// The `OpenAI` `size` string for a request (see [`api_size_for`]).
+fn openai_size_param(req: &ImageGenRequest, model: &str) -> String {
+    let (w, h) = api_size_for(req.width, req.height, model);
+    format!("{w}x{h}")
 }
 
 /// Resizes a PNG to `(width, height)` if it differs, returning re-encoded PNG
@@ -531,8 +571,8 @@ fn fit_images_to_request(images: Vec<Vec<u8>>, req: &ImageGenRequest, model: &st
     if !is_gpt_image_model(model) {
         return Ok(images);
     }
-    let (snapped_w, snapped_h) = snap_gpt_image_size(req.width, req.height);
-    if snapped_w == req.width && snapped_h == req.height {
+    let (api_w, api_h) = api_size_for(req.width, req.height, model);
+    if api_w == req.width && api_h == req.height {
         return Ok(images);
     }
     images.into_iter().map(|bytes| resize_png_to(&bytes, req.width, req.height)).collect()
@@ -851,6 +891,27 @@ mod tests {
         assert_eq!(snap_gpt_image_size(1024, 1024), (1024, 1024));
         // Degenerate height falls back to the square size.
         assert_eq!(snap_gpt_image_size(256, 0), (1024, 1024));
+    }
+
+    #[test]
+    fn gpt_image_2_size_honors_arbitrary_sizes_within_range() {
+        // A high-resolution square is honoured natively, not snapped to 1024.
+        assert_eq!(gpt_image_2_size(1536, 1536), (1536, 1536));
+        // Non-square is preserved (no aspect snapping).
+        assert_eq!(gpt_image_2_size(1024, 1536), (1024, 1536));
+        // Oversized clamps to the 2048 ceiling; tiny clamps up to the 1024 floor.
+        assert_eq!(gpt_image_2_size(4096, 4096), (2048, 2048));
+        assert_eq!(gpt_image_2_size(256, 256), (1024, 1024));
+        // Off-grid sizes round up to the nearest multiple of 16.
+        assert_eq!(gpt_image_2_size(1500, 1500), (1504, 1504));
+    }
+
+    #[test]
+    fn api_size_for_routes_by_model() {
+        // gpt-image-2 honours the request; gpt-image-1 snaps; dall-e passes through.
+        assert_eq!(api_size_for(1536, 1536, "gpt-image-2"), (1536, 1536));
+        assert_eq!(api_size_for(1536, 1536, "gpt-image-1"), (1024, 1024));
+        assert_eq!(api_size_for(640, 480, "dall-e-3"), (640, 480));
     }
 
     #[test]
