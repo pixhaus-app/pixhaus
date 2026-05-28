@@ -42,6 +42,7 @@ mod keymap;
 mod layers_panel;
 mod library;
 mod palette_panel;
+mod reveal;
 mod settings;
 mod studio;
 mod theme;

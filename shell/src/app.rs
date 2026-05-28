@@ -480,6 +480,9 @@ pub struct ShellApp {
     pub(crate) bg_status: JobStatus,
     /// Light/dark/system theme preference; persisted across launches.
     pub(crate) theme_preference: egui::ThemePreference,
+    /// Whether the studio plays the generation reveal effect (default on);
+    /// persisted across launches.
+    pub(crate) reveal_effect_enabled: bool,
     /// Keyboard bindings: active preset plus custom overrides; persisted.
     pub(crate) keymap: Keymap,
     /// The command currently capturing its next key press in the Keybinds tab.
@@ -549,6 +552,9 @@ impl ShellApp {
             .and_then(|s| eframe::get_value::<egui::ThemePreference>(s, "theme_preference"))
             .unwrap_or_default();
         crate::theme::install(&cc.egui_ctx, theme_preference);
+
+        // Restore the reveal-effect preference (on by default).
+        let reveal_effect_enabled = cc.storage.and_then(|s| eframe::get_value::<bool>(s, "reveal_effect_enabled")).unwrap_or(true);
 
         // Restore the saved keybindings (preset + custom overrides), defaulting
         // to the Aseprite preset with no overrides.
@@ -644,6 +650,7 @@ impl ShellApp {
             bg_flagged: Vec::new(),
             bg_status: JobStatus::Idle,
             theme_preference,
+            reveal_effect_enabled,
             keymap,
             capturing: None,
             settings_open: false,
@@ -679,15 +686,19 @@ impl ShellApp {
         app
     }
 
-    /// Inserts the [`ViewportRenderer`] into egui-wgpu's callback resources so
-    /// the paint callback can reach it.
+    /// Inserts the [`ViewportRenderer`] and the studio reveal effect's
+    /// [`crate::reveal::RevealRenderer`] into egui-wgpu's callback resources so
+    /// their paint callbacks can reach them.
     fn install_renderer(&self) {
         let Some(rs) = self.render_state.as_ref() else {
             tracing::error!("no wgpu render state; canvas will be blank");
             return;
         };
         let renderer = ViewportRenderer::new(&rs.device, rs.target_format);
-        rs.renderer.write().callback_resources.insert(renderer);
+        let reveal = crate::reveal::RevealRenderer::new(&rs.device, rs.target_format);
+        let mut guard = rs.renderer.write();
+        guard.callback_resources.insert(renderer);
+        guard.callback_resources.insert(reveal);
     }
 
     /// Composites the active frame (with onion-skin ghosts when enabled),
@@ -755,12 +766,25 @@ impl ShellApp {
                     self.rs_status = JobStatus::Running(format!("{pct}{message}"));
                 }
                 ShellMsg::SheetPartial { pixels } => {
+                    if self.reveal_effect_enabled {
+                        if let Some((rgba, w, h)) = rgba_from_pixel_data(&pixels) {
+                            let now = self.egui_ctx.input(|i| i.time);
+                            self.studio.anchor_reveal.on_partial(rgba, w, h, now);
+                        }
+                    }
                     self.show_partial_preview(&pixels);
                 }
                 ShellMsg::SheetDone { variants, cost_usd } => {
+                    if self.reveal_effect_enabled {
+                        if let Some((rgba, w, h)) = variants.first().and_then(|v| crate::reveal::decode_png_rgba(&v.png)) {
+                            let now = self.egui_ctx.input(|i| i.time);
+                            self.studio.anchor_reveal.on_final(rgba, w, h, now);
+                        }
+                    }
                     self.cockpit_on_done(variants, cost_usd);
                 }
                 ShellMsg::SheetFailed(err) => {
+                    self.studio.anchor_reveal.fail();
                     self.clear_partial_preview();
                     self.rs_status = JobStatus::Failed(err);
                 }
@@ -787,11 +811,18 @@ impl ShellApp {
                 }
                 ShellMsg::FirstFrameDone { epoch, images, parent, append } => {
                     if epoch == self.studio.frame_gen.epoch {
+                        if self.reveal_effect_enabled {
+                            if let Some((rgba, w, h)) = images.first().and_then(|png| crate::reveal::decode_png_rgba(png)) {
+                                let now = self.egui_ctx.input(|i| i.time);
+                                self.studio.frame_gen.reveal.on_final(rgba, w, h, now);
+                            }
+                        }
                         self.on_gen_ready(images, parent, append);
                     }
                 }
                 ShellMsg::FirstFrameFailed { epoch, error } => {
                     if epoch == self.studio.frame_gen.epoch {
+                        self.studio.frame_gen.reveal.fail();
                         self.studio.frame_gen.status = JobStatus::Failed(error);
                         self.studio.frame_gen.cancel = None;
                     }
@@ -2330,6 +2361,25 @@ fn pixel_data_to_pixel_buffer(pixels: &PixelData) -> Option<PixelBuffer> {
     PixelBuffer::from_raw(pixels.width, pixels.height, pixels.stride, pixels.bytes.clone()).ok()
 }
 
+/// Repacks a streamed [`PixelData`] partial into tightly packed RGBA8 plus
+/// dimensions for the reveal effect. Returns `None` for non-RGBA data or a
+/// buffer too short for its declared stride and height.
+fn rgba_from_pixel_data(pixels: &PixelData) -> Option<(Vec<u8>, u32, u32)> {
+    if pixels.bytes_per_pixel != 4 {
+        return None;
+    }
+    let (w, h, stride) = (pixels.width as usize, pixels.height as usize, pixels.stride as usize);
+    if w == 0 || h == 0 || stride < w * 4 || pixels.bytes.len() < stride * h {
+        return None;
+    }
+    let mut rgba = Vec::with_capacity(w * h * 4);
+    for row in 0..h {
+        let start = row * stride;
+        rgba.extend_from_slice(&pixels.bytes[start..start + w * 4]);
+    }
+    Some((rgba, pixels.width, pixels.height))
+}
+
 /// Converts a decoded clip frame into a [`PixelBuffer`] for the canvas, reusing
 /// the exact mechanism the reference-sheet preview uses.
 pub(crate) fn video_frame_to_pixel_buffer(frame: &VideoFrame) -> Option<PixelBuffer> {
@@ -2354,6 +2404,7 @@ impl eframe::App for ShellApp {
 
     fn save(&mut self, storage: &mut dyn eframe::Storage) {
         eframe::set_value(storage, "theme_preference", &self.theme_preference);
+        eframe::set_value(storage, "reveal_effect_enabled", &self.reveal_effect_enabled);
         eframe::set_value(storage, "keymap", &self.keymap);
         eframe::set_value(storage, "new_sprite_size", &(self.new_sprite_w, self.new_sprite_h));
     }

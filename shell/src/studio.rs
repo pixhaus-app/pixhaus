@@ -476,6 +476,8 @@ pub(crate) struct GenThread {
     pub epoch: u64,
     /// The center-viewport refine state for the selected candidate.
     pub view: RefineView,
+    /// The generation reveal effect for this stage's center viewport.
+    pub reveal: crate::reveal::RevealState,
 }
 
 impl Default for GenThread {
@@ -489,6 +491,7 @@ impl Default for GenThread {
             cancel: None,
             epoch: 0,
             view: RefineView::default(),
+            reveal: crate::reveal::RevealState::default(),
         }
     }
 }
@@ -510,6 +513,8 @@ pub(crate) struct StudioState {
     /// The cockpit result selected for the Anchor stage's center viewport, an
     /// index into `rs_candidates`.
     pub anchor_selected: Option<usize>,
+    /// The Anchor stage's generation reveal effect for its center viewport.
+    pub anchor_reveal: crate::reveal::RevealState,
     /// The approved seed pose (PNG), the single input that drives the clip.
     pub approved_first_frame: Option<Vec<u8>>,
     /// The image-to-video model the Motion stage drives.
@@ -557,6 +562,7 @@ impl Default for StudioState {
             frame_gen: GenThread::default(),
             anchor_view: RefineView::default(),
             anchor_selected: None,
+            anchor_reveal: crate::reveal::RevealState::default(),
             approved_first_frame: None,
             i2v_model: I2vModel::Seedance,
             compare: false,
@@ -834,6 +840,11 @@ impl ShellApp {
     /// The Anchor stage's center surface: the selected cockpit result large in
     /// the shared pan/zoom viewport with its inpaint mask, or a hint.
     fn studio_anchor_surface(&mut self, ui: &mut egui::Ui) {
+        // While a generation is in flight, the reveal effect takes the center;
+        // it hands back to the static viewport the frame its snap completes.
+        if self.reveal_effect_enabled && crate::reveal::render_reveal(&mut self.studio.anchor_reveal, ui, self.render_state.is_some()) {
+            return;
+        }
         let Some(i) = self.studio.anchor_selected else {
             let hint = if self.rs_candidates.is_empty() {
                 "Describe the character in the inspector and Generate. Results appear there; pick one to refine here."
@@ -895,6 +906,9 @@ impl ShellApp {
     /// The center surface: the selected candidate large in the shared pan/zoom
     /// viewport with its inpaint mask, or a hint when nothing is selected.
     fn studio_first_frame_surface(&mut self, ui: &mut egui::Ui) {
+        if self.reveal_effect_enabled && crate::reveal::render_reveal(&mut self.studio.frame_gen.reveal, ui, self.render_state.is_some()) {
+            return;
+        }
         let Some(i) = self.studio.frame_gen.selected else {
             let hint = if self.studio.frame_gen.candidates.is_empty() {
                 "Describe the pose in the inspector and generate. Results appear in the thread."
@@ -1048,6 +1062,11 @@ impl ShellApp {
             seed: None,
         };
         self.spawn_gen(job, None, false);
+        // The seed pose renders at the sprite's size; play the reveal there.
+        if self.reveal_effect_enabled {
+            let now = self.egui_ctx.input(|i| i.time);
+            self.studio.frame_gen.reveal.begin(canvas, now);
+        }
     }
 
     /// Kicks off an inpaint refinement of the selected candidate.

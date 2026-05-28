@@ -128,6 +128,17 @@ impl ShellApp {
                     .color(palette.warning),
             );
         }
+
+        ui.add_space(12.0);
+        ui.separator();
+        ui.add_space(6.0);
+        ui.heading("Effects");
+        ui.checkbox(&mut self.reveal_effect_enabled, "Generation reveal animation");
+        ui.label(
+            egui::RichText::new("Play a particle reveal in the studio while images generate. Off shows a static view.")
+                .small()
+                .weak(),
+        );
     }
 
     /// General tab: the theme control. The home for later app-global prefs

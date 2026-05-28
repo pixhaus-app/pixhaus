@@ -839,6 +839,7 @@ impl ShellApp {
             }
         }
 
+        let target = anchor_target_dims(self.ck_aspect, self.ck_resolution, self.ck_custom);
         let job = ai::SheetJob {
             meta: self.doc.project.metadata.clone(),
             entity_id,
@@ -855,7 +856,7 @@ impl ShellApp {
             prompt_override,
             negative_override,
             seed,
-            target_size: Some(anchor_target_dims(self.ck_aspect, self.ck_resolution, self.ck_custom)),
+            target_size: Some(target),
         };
         self.ck_pending = lineage;
         self.rs_status = JobStatus::Running("starting".into());
@@ -864,6 +865,11 @@ impl ShellApp {
             self.rs_candidates.clear();
         }
         ai::spawn_reference_sheet(self.runtime.handle(), self.verb_runtime.clone(), self.egui_ctx.clone(), self.tx.clone(), job);
+        // Play the reveal in the Anchor center viewport at the chosen output size.
+        if self.reveal_effect_enabled {
+            let now = self.egui_ctx.input(|i| i.time);
+            self.studio.anchor_reveal.begin(target, now);
+        }
     }
 
     /// Lands generated candidates: stamps lineage, persists them into the core

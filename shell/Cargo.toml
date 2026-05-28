@@ -40,5 +40,9 @@ mp4 = "0.14"
 openh264 = "0.9"
 egui-phosphor = "0.12.0"
 
+[dev-dependencies]
+# Blocks on async wgpu init in the reveal effect's headless GPU smoke test.
+pollster.workspace = true
+
 [lints]
 workspace = true
