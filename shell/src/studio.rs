@@ -191,8 +191,10 @@ pub(crate) struct FirstFrameCandidate {
     pub origin: FfOrigin,
 }
 
-/// A paint-over mask aligned to the selected first-frame candidate. White cells
-/// mark the region to repaint; exported to a PNG for the inpaint call.
+/// A paint-over mask aligned to the selected result. White cells mark the region
+/// to repaint; exported to a PNG for the inpaint call. Edits accumulate a dirty
+/// rect so the overlay texture is updated by sub-region ([`rebuild_mask_overlay`])
+/// rather than re-uploaded whole each frame — the canvas's dirty-region pattern.
 pub(crate) struct MaskOverlay {
     /// Mask width in pixels (matches the candidate image).
     pub width: u32,
@@ -200,20 +202,35 @@ pub(crate) struct MaskOverlay {
     pub height: u32,
     /// One flag per pixel, row-major; `true` means "repaint here".
     pub cells: Vec<bool>,
-    /// Set when [`Self::cells`] changed so the overlay texture is rebuilt.
-    pub dirty: bool,
+    /// The region of `cells` changed since the last texture update, as
+    /// `[x, y, w, h]` in mask pixels. `None` means nothing to upload.
+    pub dirty: Option<[u32; 4]>,
+    /// The box gizmo's last-rasterized bounding box, so the next rasterize can
+    /// clear the cells it vacated without scanning the whole mask.
+    pub box_bbox: Option<[u32; 4]>,
     /// Lazily-built overlay texture (red where set), drawn over the candidate.
     pub texture: Option<egui::TextureHandle>,
 }
 
+/// The smallest `[x, y, w, h]` rect covering both `a` and `b`.
+fn rect_union(a: [u32; 4], b: [u32; 4]) -> [u32; 4] {
+    let min_x = a[0].min(b[0]);
+    let min_y = a[1].min(b[1]);
+    let max_x = (a[0] + a[2]).max(b[0] + b[2]);
+    let max_y = (a[1] + a[3]).max(b[1] + b[3]);
+    [min_x, min_y, max_x - min_x, max_y - min_y]
+}
+
 impl MaskOverlay {
-    /// An empty mask sized to `width` x `height`.
+    /// An empty mask sized to `width` x `height`, dirty over its full extent so
+    /// the first rebuild allocates the texture at the right size.
     fn new(width: u32, height: u32) -> Self {
         Self {
             width,
             height,
             cells: vec![false; (width as usize) * (height as usize)],
-            dirty: true,
+            dirty: Some([0, 0, width, height]),
+            box_bbox: None,
             texture: None,
         }
     }
@@ -223,22 +240,36 @@ impl MaskOverlay {
         !self.cells.iter().any(|&c| c)
     }
 
-    /// Clears every marked pixel.
+    /// Unions `[x, y, w, h]` into the pending dirty rect. A zero-area rect is a
+    /// no-op.
+    fn mark(&mut self, x: u32, y: u32, w: u32, h: u32) {
+        if w == 0 || h == 0 {
+            return;
+        }
+        let rect = [x, y, w, h];
+        self.dirty = Some(self.dirty.map_or(rect, |prev| rect_union(prev, rect)));
+    }
+
+    /// Clears every marked pixel and dirties the whole mask.
     fn clear(&mut self) {
         self.cells.iter_mut().for_each(|c| *c = false);
-        self.dirty = true;
+        self.box_bbox = None;
+        self.mark(0, 0, self.width, self.height);
     }
 
     /// Marks a filled disc of `radius` mask-pixels centred on `(cx, cy)` in
-    /// mask-pixel coordinates.
+    /// mask-pixel coordinates, dirtying just that disc's bounding box.
     fn stamp(&mut self, cx: f32, cy: f32, radius: f32) {
         let r = radius.max(0.5);
         let (w, h) = (self.width as i32, self.height as i32);
         let r2 = r * r;
-        let min_x = ((cx - r).floor() as i32).max(0);
-        let max_x = ((cx + r).ceil() as i32).min(w - 1);
-        let min_y = ((cy - r).floor() as i32).max(0);
-        let max_y = ((cy + r).ceil() as i32).min(h - 1);
+        let min_x = ((cx - r).floor() as i32).clamp(0, w - 1);
+        let max_x = ((cx + r).ceil() as i32).clamp(0, w - 1);
+        let min_y = ((cy - r).floor() as i32).clamp(0, h - 1);
+        let max_y = ((cy + r).ceil() as i32).clamp(0, h - 1);
+        if max_x < min_x || max_y < min_y {
+            return;
+        }
         for y in min_y..=max_y {
             for x in min_x..=max_x {
                 let dx = x as f32 + 0.5 - cx;
@@ -248,7 +279,7 @@ impl MaskOverlay {
                 }
             }
         }
-        self.dirty = true;
+        self.mark(min_x as u32, min_y as u32, (max_x - min_x + 1) as u32, (max_y - min_y + 1) as u32);
     }
 }
 
@@ -331,15 +362,33 @@ impl MaskGizmo {
         lx.abs() <= self.hw && ly.abs() <= self.hh
     }
 
-    /// Fills `mask` with the rotated rectangle's interior, clearing the rest.
+    /// The rectangle's axis-aligned bounding box, clamped to `w` x `h`, as
+    /// `[x, y, w, h]`.
+    fn aabb(&self, w: u32, h: u32) -> [u32; 4] {
+        let xs = self.corners().map(|p| p.0);
+        let ys = self.corners().map(|p| p.1);
+        let min_x = xs.iter().copied().fold(f32::INFINITY, f32::min).floor().clamp(0.0, w as f32);
+        let max_x = xs.iter().copied().fold(f32::NEG_INFINITY, f32::max).ceil().clamp(0.0, w as f32);
+        let min_y = ys.iter().copied().fold(f32::INFINITY, f32::min).floor().clamp(0.0, h as f32);
+        let max_y = ys.iter().copied().fold(f32::NEG_INFINITY, f32::max).ceil().clamp(0.0, h as f32);
+        [min_x as u32, min_y as u32, (max_x - min_x) as u32, (max_y - min_y) as u32]
+    }
+
+    /// Fills `mask` with the rotated rectangle's interior. Only the union of the
+    /// previous and new bounding box is rewritten, so per-drag cost is the rect's
+    /// area rather than the whole mask.
     fn rasterize(&self, mask: &mut MaskOverlay) {
-        for y in 0..mask.height {
-            for x in 0..mask.width {
+        let new_bbox = self.aabb(mask.width, mask.height);
+        let region = mask.box_bbox.map_or(new_bbox, |prev| rect_union(prev, new_bbox));
+        let [rx, ry, rw, rh] = region;
+        for y in ry..ry + rh {
+            for x in rx..rx + rw {
                 let inside = self.contains(x as f32 + 0.5, y as f32 + 0.5);
                 mask.cells[(y as usize) * (mask.width as usize) + x as usize] = inside;
             }
         }
-        mask.dirty = true;
+        mask.box_bbox = Some(new_bbox);
+        mask.mark(rx, ry, rw, rh);
     }
 }
 
@@ -2071,21 +2120,32 @@ fn refine_canvas(ui: &mut egui::Ui, png: &[u8], texture: &mut Option<egui::Textu
             painter.image(mtex.id(), rect, uv, egui::Color32::WHITE);
         }
     }
-    if view.mask_tool == MaskTool::Box {
-        if let Some(giz) = view.gizmo {
-            let corners = giz.corners();
-            let pts: Vec<egui::Pos2> = corners.iter().map(|&(x, y)| to_screen(x, y)).collect();
-            for k in 0..4 {
-                painter.line_segment([pts[k], pts[(k + 1) % 4]], egui::Stroke::new(1.5, accent));
+    match view.mask_tool {
+        MaskTool::Box => {
+            if let Some(giz) = view.gizmo {
+                let corners = giz.corners();
+                let pts: Vec<egui::Pos2> = corners.iter().map(|&(x, y)| to_screen(x, y)).collect();
+                for k in 0..4 {
+                    painter.line_segment([pts[k], pts[(k + 1) % 4]], egui::Stroke::new(1.5, accent));
+                }
+                for p in &pts {
+                    painter.circle_filled(*p, 4.0, accent);
+                }
+                let top_mid = to_screen(f32::midpoint(corners[0].0, corners[1].0), f32::midpoint(corners[0].1, corners[1].1));
+                let (rx, ry) = giz.rotate_handle();
+                let rh = to_screen(rx, ry);
+                painter.line_segment([top_mid, rh], egui::Stroke::new(1.5, accent));
+                painter.circle_filled(rh, 4.0, accent);
             }
-            for p in &pts {
-                painter.circle_filled(*p, 4.0, accent);
+        }
+        MaskTool::Brush => {
+            // A sizing cursor at the pointer so the brush radius is visible.
+            if let Some(pos) = resp.hover_pos() {
+                if rect.contains(pos) {
+                    let screen_radius = (view.brush / iw as f32 * rect.width()).max(1.0);
+                    painter.circle_stroke(pos, screen_radius, egui::Stroke::new(1.5, accent));
+                }
             }
-            let top_mid = to_screen(f32::midpoint(corners[0].0, corners[1].0), f32::midpoint(corners[0].1, corners[1].1));
-            let (rx, ry) = giz.rotate_handle();
-            let rh = to_screen(rx, ry);
-            painter.line_segment([top_mid, rh], egui::Stroke::new(1.5, accent));
-            painter.circle_filled(rh, 4.0, accent);
         }
     }
     painter.rect_stroke(rect, 2.0, egui::Stroke::new(1.0, stroke_color), egui::StrokeKind::Inside);
@@ -2178,25 +2238,36 @@ fn gizmo_drag_update(resp: &egui::Response, view: &mut RefineView, iw: u32, ih: 
 }
 
 /// Rebuilds a mask overlay texture (translucent red where set) when it is dirty.
+/// Updates the mask's overlay texture for its pending dirty rect. The handle is
+/// allocated once (the first dirty rect is the full extent) and thereafter only
+/// the changed sub-rect is re-uploaded with `set_partial` — never a full
+/// per-frame `load_texture`, which is what made painting lag.
 fn rebuild_mask_overlay(ctx: &egui::Context, mask: Option<&mut MaskOverlay>) {
     let Some(mask) = mask else {
         return;
     };
-    if !mask.dirty {
+    let Some([rx, ry, rw, rh]) = mask.dirty.take() else {
+        return;
+    };
+    if rw == 0 || rh == 0 {
         return;
     }
-    let size = [mask.width as usize, mask.height as usize];
-    let mut bytes = Vec::with_capacity(mask.cells.len() * 4);
-    for &set in &mask.cells {
-        if set {
-            bytes.extend_from_slice(&[220, 40, 40, 120]);
-        } else {
-            bytes.extend_from_slice(&[0, 0, 0, 0]);
+    // Pack just the dirty rect, red where set and transparent elsewhere.
+    let mut bytes = Vec::with_capacity((rw * rh) as usize * 4);
+    for y in ry..ry + rh {
+        for x in rx..rx + rw {
+            let set = mask.cells[(y as usize) * (mask.width as usize) + (x as usize)];
+            bytes.extend_from_slice(if set { &[220, 40, 40, 120] } else { &[0, 0, 0, 0] });
         }
     }
-    let image = egui::ColorImage::from_rgba_unmultiplied(size, &bytes);
-    mask.texture = Some(ctx.load_texture("studio_mask", image, egui::TextureOptions::NEAREST));
-    mask.dirty = false;
+    let sub = egui::ColorImage::from_rgba_unmultiplied([rw as usize, rh as usize], &bytes);
+    if let Some(handle) = &mut mask.texture {
+        handle.set_partial([rx as usize, ry as usize], sub, egui::TextureOptions::NEAREST);
+    } else {
+        // First build dirties the full extent, so `sub` is the whole image and
+        // this allocates the texture at full size for later partial updates.
+        mask.texture = Some(ctx.load_texture("studio_mask", sub, egui::TextureOptions::NEAREST));
+    }
 }
 
 /// Draws `tex` scaled to fit the available area, preserving aspect, centered.
@@ -2360,7 +2431,61 @@ mod tests {
         assert!(!mask.is_empty());
         assert!(mask.cells[4 * 8 + 4]);
         assert!(!mask.cells[0]);
-        assert!(mask.dirty);
+        assert!(mask.dirty.is_some());
+        assert!(mask.box_bbox.is_some());
+    }
+
+    #[test]
+    fn stamp_marks_only_its_disc_bbox() {
+        let mut mask = MaskOverlay::new(64, 64);
+        mask.dirty = None; // simulate a state already uploaded
+        mask.stamp(32.0, 32.0, 3.0);
+        let [x, y, w, h] = mask.dirty.expect("stamp dirties");
+        // The dirty rect is the small disc bbox, not the whole 64x64 mask.
+        assert!(x >= 28 && y >= 28);
+        assert!(w <= 9 && h <= 9);
+        // The stamped centre is inside the rect.
+        assert!(x <= 32 && 32 < x + w && y <= 32 && 32 < y + h);
+    }
+
+    #[test]
+    fn box_rasterize_clears_the_trail_when_it_moves() {
+        let mut mask = MaskOverlay::new(64, 64);
+        let a = MaskGizmo {
+            cx: 16.0,
+            cy: 16.0,
+            hw: 6.0,
+            hh: 6.0,
+            angle: 0.0,
+        };
+        a.rasterize(&mut mask);
+        assert!(mask.cells[16 * 64 + 16]);
+        // Move the box away; the old cells must clear (no trail).
+        mask.dirty = None;
+        let b = MaskGizmo {
+            cx: 48.0,
+            cy: 48.0,
+            hw: 6.0,
+            hh: 6.0,
+            angle: 0.0,
+        };
+        b.rasterize(&mut mask);
+        assert!(!mask.cells[16 * 64 + 16], "vacated cells should clear");
+        assert!(mask.cells[48 * 64 + 48]);
+        // The re-uploaded region spans both the old and new boxes.
+        let [x, y, w, h] = mask.dirty.expect("rasterize dirties");
+        assert!(x <= 16 && y <= 16 && x + w >= 48 && y + h >= 48);
+    }
+
+    #[test]
+    fn clear_empties_and_dirties_the_whole_mask() {
+        let mut mask = MaskOverlay::new(8, 8);
+        mask.stamp(4.0, 4.0, 2.0);
+        mask.dirty = None;
+        mask.clear();
+        assert!(mask.is_empty());
+        assert_eq!(mask.dirty, Some([0, 0, 8, 8]));
+        assert!(mask.box_bbox.is_none());
     }
 
     #[test]
