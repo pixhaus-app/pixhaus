@@ -6,8 +6,14 @@ is the durable record across sessions — read it first when resuming.
 
 ## Current state
 
-Design approved 2026-05-28. No code written yet. This document is the design of
-record; implementation has not started.
+All four workstreams implemented on branch `feat/ai-studio-redesign` (2026-05-28).
+Gate suite green: `cargo fmt --check`, `cargo clippy --workspace --all-targets -- -D
+warnings`, `cargo nextest run --workspace` (646 passed), `cargo test --doc`, and
+`cargo doc` all pass. `cargo deny` still reports the pre-existing license failure
+(`Ubuntu-font-1.0` from the egui fonts and the null-license `cfg_block` pulled via
+keyring 4.x → turso) — unchanged by this work, which added no dependencies.
+Manual, in-app verification of each workstream (the steps below) still needs a
+human at the running binary; it was not performed in the implementing session.
 
 ## Verbatim intent
 
@@ -205,10 +211,13 @@ Files: `shell/src/studio.rs` (gizmo and hop trigger), `shell/src/app.rs`
 
 Each workstream ships on its own `feat/<slug>` branch and PR per the repo workflow.
 
-- [ ] W1 — unified dock. Small, self-contained, immediate daily-use win.
-- [ ] W2 — studio shell + gallery + gating. The structural backbone.
-- [ ] W3 — conversational generation. The core new capability; builds on W2.
-- [ ] W4 — gizmo inpaint + hand-edit hop. Refinement; builds on W3.
+- [x] W1 — unified dock. Palette + Layers stacked as collapsing sections.
+- [x] W2 — studio shell + gallery + gating. Create lands in the full-screen
+  studio; the left panel hosts the sprite browser; stages guide anchor-first.
+- [x] W3 — conversational generation. A shared `GenThread` drives the Anchor and
+  First-frame stages: prompt, candidate thread, inpaint, approve.
+- [x] W4 — gizmo inpaint + hand-edit hop. A move/scale/rotate box mask and a
+  round trip into the drawing editor that lands the edit as a new candidate.
 
 ## Risks and open questions
 
