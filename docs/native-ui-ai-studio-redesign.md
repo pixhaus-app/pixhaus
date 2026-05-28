@@ -6,14 +6,30 @@ is the durable record across sessions — read it first when resuming.
 
 ## Current state
 
-All four workstreams implemented on branch `feat/ai-studio-redesign` (2026-05-28).
-Gate suite green: `cargo fmt --check`, `cargo clippy --workspace --all-targets -- -D
-warnings`, `cargo nextest run --workspace` (646 passed), `cargo test --doc`, and
-`cargo doc` all pass. `cargo deny` still reports the pre-existing license failure
-(`Ubuntu-font-1.0` from the egui fonts and the null-license `cfg_block` pulled via
-keyring 4.x → turso) — unchanged by this work, which added no dependencies.
-Manual, in-app verification of each workstream (the steps below) still needs a
-human at the running binary; it was not performed in the implementing session.
+All four workstreams plus the cockpit/library integration are implemented on
+branch `feat/ai-studio-redesign` (2026-05-28). Gate suite green: `cargo fmt
+--check`, `cargo clippy --workspace --all-targets -- -D warnings`, `cargo nextest
+run --workspace` (646 passed), `cargo test --doc`, and `cargo doc` all pass.
+`cargo deny` still reports the pre-existing license failure (`Ubuntu-font-1.0`
+from the egui fonts and the null-license `cfg_block` pulled via keyring 4.x →
+turso) — unchanged by this work, which added no dependencies. Manual, in-app
+verification still needs a human at the running binary.
+
+### Follow-up phase — cockpit + library folded in (done)
+
+The cockpit and composition library are no longer separate Create surfaces.
+Create is always the full-screen AI studio. The studio's **Anchor stage is the
+cockpit**: its inspector hosts the composition controls (context,
+structure/template/dials, references, composed prompt, generate, history); its
+center is the variant gallery (re-roll / more-like-this / refine / branch / card
+/ provenance / approve). The composition **library opens as an overlay** from a
+header button (browser + record editor), and "Save as template" routes there.
+`CreateView`, `create_dock`, and the dock/central cockpit-or-library routing are
+gone; the anchor's `GenThread` and the `GenTarget` generalization are removed
+(only the first-frame stage uses the chat-style generator, which keeps
+mask-inpaint, the box gizmo, and hand-edit). Saved **project records now feed
+generation** — the pickers, the composed-prompt preview, and the verb merge
+project structures/styles/prompts over built-ins (shadow by id).
 
 ## Verbatim intent
 
