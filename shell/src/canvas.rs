@@ -14,12 +14,14 @@ use pixhaus_core::canvas::{
 };
 use pixhaus_core::project::Rgba;
 use pixhaus_core::project::{IVec2, Rect, Size};
-use pixhaus_core::selection::{Connectivity, SelectionMask, magic_wand, select_ellipse, select_polygon, select_rect};
+use pixhaus_core::selection::{
+    Connectivity, GapCloseConfig, SelectionMask, color_range, magic_wand_with_gap_close, select_ellipse, select_polygon, select_rect,
+};
 use pixhaus_render::{ViewportRenderer, viewport::clamp_zoom, viewport::snap_zoom};
 
 use crate::app::{ShellApp, ZoomAction};
 use crate::commands::{PixelRegionEdit, extract_region};
-use crate::editor::{MoveDrag, ShapeDrag, StrokeSession, Tool};
+use crate::editor::{MoveDrag, SelectionMode, ShapeDrag, StrokeSession, Tool};
 
 /// Per-frame paint command for the SPRITE program. Cheap to build; holds only
 /// the camera state, never GPU handles.
@@ -188,10 +190,19 @@ impl ShellApp {
             return;
         };
 
+        // Resolve the selection-combine mode the gesture will commit with. A held
+        // Shift/Alt overrides the context-bar default for this gesture; with no
+        // modifier the current (UI-set) mode applies. Capture it at the gesture's
+        // start — egui reports modifiers per-frame, so reading them at the commit
+        // would miss a Shift/Alt released before the pointer.
+        let modifiers = response.ctx.input(|i| i.modifiers);
         for (btn, primary) in [(egui::PointerButton::Primary, true), (egui::PointerButton::Secondary, false)] {
             let tool = self.editor.tool_for(primary);
             let color = self.editor.color_for(primary);
             if response.drag_started_by(btn) {
+                if is_marquee_or_lasso(tool) {
+                    self.resolve_selection_mode(modifiers);
+                }
                 self.begin_gesture(tool, color, p);
             }
             if response.dragged_by(btn) {
@@ -201,6 +212,9 @@ impl ShellApp {
                 self.commit_gesture();
             }
             if response.clicked_by(btn) {
+                if matches!(tool, Tool::Wand | Tool::ColorRange) {
+                    self.resolve_selection_mode(modifiers);
+                }
                 self.click_gesture(tool, color, p);
             }
         }
@@ -225,7 +239,7 @@ impl ShellApp {
                 self.editor.lasso.push(IVec2::new(p[0], p[1]));
             }
             Tool::Move => self.begin_move(p),
-            Tool::Fill | Tool::Wand | Tool::Picker => {}
+            Tool::Fill | Tool::Wand | Tool::ColorRange | Tool::Picker => {}
         }
     }
 
@@ -240,7 +254,7 @@ impl ShellApp {
             }
             Tool::Lasso => self.editor.lasso.push(IVec2::new(p[0], p[1])),
             Tool::Move => self.update_move(p),
-            Tool::Fill | Tool::Wand | Tool::Picker => {}
+            Tool::Fill | Tool::Wand | Tool::ColorRange | Tool::Picker => {}
         }
     }
 
@@ -254,6 +268,7 @@ impl ShellApp {
             Tool::Fill => self.do_fill(color, p),
             Tool::Picker => self.do_pick(p),
             Tool::Wand => self.do_wand(p),
+            Tool::ColorRange => self.do_color_range(p),
             Tool::SelectRect | Tool::SelectEllipse | Tool::Lasso => {
                 // A click with no drag clears the selection.
                 self.editor.clear_selection();
@@ -496,7 +511,7 @@ impl ShellApp {
             select_rect(size.width, size.height, bounds)
         };
         if let Ok(mask) = mask {
-            self.editor.selection = Some(mask);
+            self.combine_selection(mask);
         }
     }
 
@@ -505,7 +520,7 @@ impl ShellApp {
         let Some(size) = self.canvas_size() else { return };
         if let Ok(mask) = select_polygon(size.width, size.height, &pts) {
             if mask.selected_count() > 0 {
-                self.editor.selection = Some(mask);
+                self.combine_selection(mask);
             }
         }
     }
@@ -518,12 +533,77 @@ impl ShellApp {
             return;
         };
         let tolerance = self.editor.tolerance;
+        let connectivity = if self.editor.wand_eight { Connectivity::Eight } else { Connectivity::Four };
+        let gap_config = self.editor.wand_gap_close.then(|| GapCloseConfig {
+            closing_distance: self.editor.wand_gap_distance,
+            ..GapCloseConfig::default()
+        });
         let Some(buf) = self.doc.pixel_buffers.get(&buffer_id) else {
             return;
         };
-        if let Ok(mask) = magic_wand(buf, p[0] as u32, p[1] as u32, tolerance, Connectivity::Four) {
+        if let Ok(mask) = magic_wand_with_gap_close(buf, IVec2::new(p[0], p[1]), tolerance, connectivity, gap_config) {
+            self.combine_selection(mask);
+        }
+    }
+
+    /// Selects every pixel matching the clicked colour within
+    /// [`crate::editor::EditorState::color_range_tolerance`], canvas-wide and
+    /// regardless of contiguity (the wand's contiguous twin). Samples the
+    /// reference colour from the active buffer, not the composited
+    /// `display_frame`, so onion skins and other layers do not pollute it.
+    fn do_color_range(&mut self, p: [i32; 2]) {
+        if p[0] < 0 || p[1] < 0 {
+            return;
+        }
+        let Some(buffer_id) = self.doc.active_buffer_id() else {
+            return;
+        };
+        let tolerance = self.editor.color_range_tolerance;
+        let Some(buf) = self.doc.pixel_buffers.get(&buffer_id) else {
+            return;
+        };
+        let Some(reference) = buf.pixel(p[0] as u32, p[1] as u32) else {
+            return;
+        };
+        if let Ok(mask) = color_range(buf, reference, tolerance) {
+            self.combine_selection(mask);
+        }
+    }
+
+    /// Sets [`crate::editor::EditorState::selection_mode`] from held modifiers
+    /// at gesture start. A held Shift/Alt picks the mode (Shift -> Add, Alt ->
+    /// Subtract, Shift+Alt -> Intersect); with neither held the mode is left as
+    /// the context-bar default, so a keyboard-free user can still pick a mode.
+    fn resolve_selection_mode(&mut self, modifiers: egui::Modifiers) {
+        if modifiers.shift || modifiers.alt {
+            self.editor.selection_mode = SelectionMode::from_modifiers(modifiers);
+        }
+    }
+
+    /// Stores `new_mask` combined with the existing selection per
+    /// [`crate::editor::EditorState::selection_mode`], via [`combine_masks`].
+    /// Clears the selection to `None` when the combine leaves nothing selected.
+    fn combine_selection(&mut self, new_mask: SelectionMask) {
+        self.editor.selection = combine_masks(self.editor.selection.as_ref(), new_mask, self.editor.selection_mode);
+    }
+
+    /// Selects the whole canvas (the Ctrl+A / Select menu command). Builds a
+    /// fully-covered mask at the active sprite's size and replaces the current
+    /// selection. A no-op when there is no sprite or the dimensions overflow.
+    pub(crate) fn select_all(&mut self) {
+        let Some(size) = self.canvas_size() else { return };
+        if let Ok(mask) = SelectionMask::full(size.width, size.height) {
             self.editor.selection = Some(mask);
         }
+    }
+
+    /// Inverts the selection (the Ctrl+Shift+I / Select menu command). Flips an
+    /// existing mask's coverage; with nothing selected, the invert of the empty
+    /// selection is the whole canvas (the Photoshop model), so this selects all.
+    /// A no-op when there is no sprite or the dimensions overflow.
+    pub(crate) fn invert_selection(&mut self) {
+        let Some(size) = self.canvas_size() else { return };
+        self.editor.selection = inverted_selection(self.editor.selection.as_ref(), size);
     }
 
     // --- move ----------------------------------------------------------------
@@ -789,6 +869,42 @@ impl ShellApp {
                 }
             }
         }
+    }
+}
+
+/// Whether `tool` is a drag-to-select tool whose combine mode is captured at
+/// `drag_started_by` (marquee rect/ellipse, lasso). The wand combines on click,
+/// so it captures its mode separately.
+fn is_marquee_or_lasso(tool: Tool) -> bool {
+    matches!(tool, Tool::SelectRect | Tool::SelectEllipse | Tool::Lasso)
+}
+
+/// Combines `new_mask` with the `current` selection per `mode` and returns the
+/// resulting selection: `Some(mask)` when something stays selected, `None` when
+/// the combine leaves nothing (so the caller clears the selection and drawing is
+/// unclipped again). Replace, or any mode with no current selection, keeps
+/// `new_mask`. The set ops need equal dimensions; both masks are canvas-sized so
+/// they always match, but an `Err(SizeMismatch)` falls back to `new_mask` rather
+/// than panicking.
+fn combine_masks(current: Option<&SelectionMask>, new_mask: SelectionMask, mode: SelectionMode) -> Option<SelectionMask> {
+    let combined = match (current, mode) {
+        (Some(cur), SelectionMode::Add) => cur.union(&new_mask),
+        (Some(cur), SelectionMode::Subtract) => cur.subtract(&new_mask),
+        (Some(cur), SelectionMode::Intersect) => cur.intersect(&new_mask),
+        _ => Ok(new_mask.clone()),
+    };
+    let mask = combined.unwrap_or(new_mask);
+    (mask.selected_count() > 0).then_some(mask)
+}
+
+/// The inverted selection for a canvas of `size`. An existing mask flips its
+/// coverage; with nothing selected the invert of the empty set is the whole
+/// canvas (the Photoshop model), so this returns a full mask. `None` only when
+/// the canvas dimensions overflow `usize`, which the caller treats as a no-op.
+fn inverted_selection(current: Option<&SelectionMask>, size: Size) -> Option<SelectionMask> {
+    match current {
+        Some(mask) => Some(mask.invert()),
+        None => SelectionMask::full(size.width, size.height).ok(),
     }
 }
 
@@ -1253,6 +1369,110 @@ mod tests {
         }
     }
 
+    // --- combine_masks / selection modifiers --------------------------------
+
+    #[test]
+    fn replace_mode_keeps_only_the_new_mask() {
+        // Replace ignores the current selection entirely.
+        let current = rect_mask(16, 16, 0, 0, 7, 15); // left half, 128 px
+        let new = rect_mask(16, 16, 8, 0, 15, 15); // right half, 128 px
+        let out = combine_masks(Some(&current), new, SelectionMode::Replace).expect("non-empty");
+        assert_eq!(out.selected_count(), 128, "replace yields just the new mask");
+    }
+
+    #[test]
+    fn add_mode_unions_overlapping_masks() {
+        // Two 8x8 boxes overlapping in a 4x4 corner: union = 64 + 64 - 16 = 112.
+        let current = rect_mask(16, 16, 0, 0, 7, 7);
+        let new = rect_mask(16, 16, 4, 4, 11, 11);
+        let out = combine_masks(Some(&current), new, SelectionMode::Add).expect("non-empty");
+        assert_eq!(out.selected_count(), 112, "add yields the union count");
+    }
+
+    #[test]
+    fn subtract_mode_removes_the_overlap() {
+        // Subtract the second box from the first leaves 64 - 16 = 48 px.
+        let current = rect_mask(16, 16, 0, 0, 7, 7);
+        let new = rect_mask(16, 16, 4, 4, 11, 11);
+        let out = combine_masks(Some(&current), new, SelectionMode::Subtract).expect("non-empty");
+        assert_eq!(out.selected_count(), 48, "subtract removes the overlap");
+    }
+
+    #[test]
+    fn intersect_mode_keeps_only_the_overlap() {
+        // Intersect keeps just the shared 4x4 corner: 16 px.
+        let current = rect_mask(16, 16, 0, 0, 7, 7);
+        let new = rect_mask(16, 16, 4, 4, 11, 11);
+        let out = combine_masks(Some(&current), new, SelectionMode::Intersect).expect("non-empty");
+        assert_eq!(out.selected_count(), 16, "intersect keeps only the overlap");
+    }
+
+    #[test]
+    fn subtract_to_empty_clears_the_selection() {
+        // Subtracting a superset of the current selection empties it, which
+        // combine_masks reports as None so the caller drops the selection and
+        // drawing is unclipped again.
+        let current = rect_mask(16, 16, 4, 4, 11, 11);
+        let cover_all = rect_mask(16, 16, 0, 0, 15, 15);
+        let out = combine_masks(Some(&current), cover_all, SelectionMode::Subtract);
+        assert!(out.is_none(), "subtracting everything clears the selection");
+    }
+
+    #[test]
+    fn combine_with_no_current_selection_keeps_the_new_mask() {
+        // Add/Subtract/Intersect with nothing selected fall through to the new
+        // mask (there is nothing to combine against).
+        let new = rect_mask(16, 16, 0, 0, 7, 7);
+        for mode in [SelectionMode::Add, SelectionMode::Subtract, SelectionMode::Intersect] {
+            let out = combine_masks(None, new.clone(), mode).expect("non-empty");
+            assert_eq!(out.selected_count(), 64, "{mode:?} with no current keeps the new mask");
+        }
+    }
+
+    #[test]
+    fn selection_mode_resolves_from_modifiers() {
+        use egui::Modifiers;
+        let none = Modifiers::default();
+        let shift = Modifiers { shift: true, ..Modifiers::default() };
+        let alt = Modifiers { alt: true, ..Modifiers::default() };
+        let both = Modifiers { shift: true, alt: true, ..Modifiers::default() };
+        assert_eq!(SelectionMode::from_modifiers(none), SelectionMode::Replace);
+        assert_eq!(SelectionMode::from_modifiers(shift), SelectionMode::Add);
+        assert_eq!(SelectionMode::from_modifiers(alt), SelectionMode::Subtract);
+        assert_eq!(SelectionMode::from_modifiers(both), SelectionMode::Intersect);
+    }
+
+    // --- select all / invert -----------------------------------------------
+
+    #[test]
+    fn select_all_covers_the_whole_canvas() {
+        // The full mask over a 16x16 canvas selects every one of its 256 pixels
+        // (the body of select_all, minus the ShellApp size lookup).
+        let mask = SelectionMask::full(16, 16).expect("full mask");
+        assert_eq!(mask.selected_count(), 256, "select all covers the whole canvas");
+    }
+
+    #[test]
+    fn invert_flips_a_half_canvas_mask_to_the_complement() {
+        // A left-half mask (128 of 256 px) inverts to the right half.
+        let left = rect_mask(16, 16, 0, 0, 7, 15);
+        assert_eq!(left.selected_count(), 128);
+        let out = inverted_selection(Some(&left), Size::new(16, 16)).expect("inverted mask");
+        assert_eq!(out.selected_count(), 128, "invert keeps the complementary count");
+        for y in 0..16 {
+            for x in 0..16 {
+                assert_eq!(out.is_selected(x, y), !left.is_selected(x, y), "({x}, {y}) flips coverage");
+            }
+        }
+    }
+
+    #[test]
+    fn invert_with_no_selection_yields_full() {
+        // Inverting the empty selection selects everything (the Photoshop model).
+        let out = inverted_selection(None, Size::new(16, 16)).expect("full mask");
+        assert_eq!(out.selected_count(), 256, "invert of nothing selects all");
+    }
+
     /// Converts a tightly-packed [`PixelBuffer`] to an owned [`image::RgbaImage`]
     /// for `image-compare`.
     fn to_rgba_image(b: &PixelBuffer) -> image::RgbaImage {
@@ -1336,5 +1556,153 @@ mod tests {
                 }
             }
         }
+    }
+
+    // --- magic-wand connectivity + gap-close --------------------------------
+
+    /// Builds the connectivity / gap-config exactly as `do_wand` does, then
+    /// runs the core flood. Keeps these tests honest about the wiring `do_wand`
+    /// uses without booting a full `ShellApp`/`DocumentStore`.
+    fn wand(buf: &PixelBuffer, seed: [i32; 2], tolerance: u8, eight: bool, gap_close: bool, gap_distance: u32) -> SelectionMask {
+        let connectivity = if eight { Connectivity::Eight } else { Connectivity::Four };
+        let gap_config = gap_close.then(|| GapCloseConfig {
+            closing_distance: gap_distance,
+            ..GapCloseConfig::default()
+        });
+        magic_wand_with_gap_close(buf, IVec2::new(seed[0], seed[1]), tolerance, connectivity, gap_config).expect("wand")
+    }
+
+    /// Two same-colour regions that touch only at a single diagonal corner. A
+    /// 4-connected flood from one region cannot reach the other; an 8-connected
+    /// flood can cross the diagonal. The corner pixel between them is a
+    /// different colour so the two regions are distinct masses.
+    ///
+    /// Layout (R = region colour, X = barrier):
+    ///   R X
+    ///   X R
+    fn diagonal_two_region() -> PixelBuffer {
+        let region = Rgba::opaque(40, 120, 220);
+        let barrier = Rgba::opaque(220, 40, 40);
+        let mut b = PixelBuffer::filled(2, 2, barrier).expect("buffer");
+        b.set_pixel(0, 0, region);
+        b.set_pixel(1, 1, region);
+        b
+    }
+
+    #[test]
+    fn wand_four_does_not_cross_the_diagonal() {
+        // 4-connectivity treats the two region pixels as separate masses, so
+        // flooding from (0,0) selects only that pixel.
+        let buf = diagonal_two_region();
+        let m = wand(&buf, [0, 0], 0, false, false, 10);
+        assert!(m.is_selected(0, 0), "seed pixel is selected");
+        assert!(!m.is_selected(1, 1), "Four does not cross the diagonal");
+        assert_eq!(m.selected_count(), 1);
+    }
+
+    #[test]
+    fn wand_eight_crosses_the_diagonal() {
+        // 8-connectivity bridges the diagonal corner, so both region pixels
+        // join one mass.
+        let buf = diagonal_two_region();
+        let m = wand(&buf, [0, 0], 0, true, false, 10);
+        assert!(m.is_selected(0, 0), "seed pixel is selected");
+        assert!(m.is_selected(1, 1), "Eight crosses the diagonal");
+        assert_eq!(m.selected_count(), 2);
+    }
+
+    /// A black square outline on a white field with a `gap_pixels`-wide break in
+    /// the top edge, leaving `margin` of exterior white above it. Mirrors the
+    /// core `square_outline_with_top_gap` fixture.
+    fn square_outline_with_top_gap(size: u32, margin: u32, gap_pixels: u32) -> PixelBuffer {
+        let white = Rgba::opaque(255, 255, 255);
+        let ink = Rgba::opaque(0, 0, 0);
+        let mut b = PixelBuffer::filled(size, size, white).expect("buffer");
+        let top = margin;
+        let bottom = size - margin - 1;
+        let left = margin;
+        let right = size - margin - 1;
+        let gap_start = size / 2 - gap_pixels / 2;
+        let gap_end = gap_start + gap_pixels;
+        for x in left..=right {
+            if !(gap_start..gap_end).contains(&x) {
+                b.set_pixel(x, top, ink);
+            }
+            b.set_pixel(x, bottom, ink);
+        }
+        for y in top..=bottom {
+            b.set_pixel(left, y, ink);
+            b.set_pixel(right, y, ink);
+        }
+        b
+    }
+
+    #[test]
+    fn wand_gap_close_stops_the_leak_a_plain_wand_shows() {
+        // A plain wand from the interior leaks through the 2px top gap into the
+        // exterior white margin; turning gap-close on bridges the gap so the
+        // flood stays inside the outline.
+        let buf = square_outline_with_top_gap(20, 3, 2);
+        let seed = [10, 10];
+
+        let leaked = wand(&buf, seed, 0, false, false, 10);
+        assert!(leaked.is_selected(10, 10), "baseline fill selects the interior");
+        assert!(leaked.is_selected(0, 0), "baseline fill leaks to the exterior corner");
+
+        let closed = wand(&buf, seed, 0, false, true, 10);
+        assert!(closed.is_selected(10, 10), "gap-close still selects the interior");
+        assert!(!closed.is_selected(0, 0), "gap-close stops the leak to the exterior");
+    }
+
+    // --- colour range (select-by-colour) ------------------------------------
+
+    /// Samples the reference colour at `seed` from `buf` and runs the core
+    /// `color_range`, exactly as `do_color_range` wires it — keeps the test
+    /// honest about the wiring without booting a `ShellApp`.
+    fn select_color_range(buf: &PixelBuffer, seed: [u32; 2], tolerance: u8) -> SelectionMask {
+        let reference = buf.pixel(seed[0], seed[1]).expect("reference pixel");
+        color_range(buf, reference, tolerance).expect("color_range")
+    }
+
+    /// A two-colour checkerboard: red on the even cells, blue on the odd. Red
+    /// pixels never touch each other 4-connected, so a contiguous wand would
+    /// catch only one — `color_range` must catch them all.
+    fn two_color_checkerboard(w: u32, h: u32) -> PixelBuffer {
+        let red = Rgba::opaque(220, 40, 40);
+        let blue = Rgba::opaque(40, 80, 220);
+        let mut b = PixelBuffer::filled(w, h, blue).expect("buffer");
+        for y in 0..h {
+            for x in 0..w {
+                if (x + y) % 2 == 0 {
+                    b.set_pixel(x, y, red);
+                }
+            }
+        }
+        b
+    }
+
+    #[test]
+    fn color_range_selects_all_matching_regardless_of_contiguity() {
+        // Click a red cell; every red cell must select even though no two red
+        // cells touch, and no blue cell may.
+        let buf = two_color_checkerboard(8, 8);
+        let mask = select_color_range(&buf, [0, 0], 0);
+        for y in 0..8 {
+            for x in 0..8 {
+                let red = (x + y) % 2 == 0;
+                assert_eq!(mask.is_selected(x, y), red, "({x}, {y}) selected == is-red");
+            }
+        }
+        // 8x8 board, half the cells are red.
+        assert_eq!(mask.selected_count(), 32);
+    }
+
+    #[test]
+    fn color_range_tolerance_255_selects_everything() {
+        // Maximum tolerance treats every colour as a match, so the whole canvas
+        // selects regardless of the clicked colour.
+        let buf = two_color_checkerboard(8, 8);
+        let mask = select_color_range(&buf, [0, 0], 255);
+        assert_eq!(mask.selected_count(), 64);
     }
 }

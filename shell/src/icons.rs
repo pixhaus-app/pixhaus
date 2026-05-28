@@ -24,7 +24,22 @@ pub const MARQUEE: &str = p::SELECTION;
 pub const ELLIPSE_SELECT: &str = p::SELECTION_INVERSE;
 pub const LASSO: &str = p::LASSO;
 pub const WAND: &str = p::MAGIC_WAND;
+pub const COLOR_RANGE: &str = p::EYEDROPPER_SAMPLE;
 pub const MOVE: &str = p::ARROWS_OUT_CARDINAL;
+
+// Selection-combine modes (the add/subtract/intersect segmented control).
+pub const SELECT_REPLACE: &str = p::SELECTION;
+pub const SELECT_ADD: &str = p::SELECTION_PLUS;
+pub const SELECT_SUBTRACT: &str = p::SUBTRACT;
+pub const SELECT_INTERSECT: &str = p::INTERSECT;
+
+// Select menu commands.
+pub const SELECT_ALL: &str = p::SELECTION_ALL;
+pub const SELECT_NONE: &str = p::SELECTION_SLASH;
+pub const SELECT_INVERT: &str = p::SELECTION_INVERSE;
+pub const SELECT_GROW: &str = p::ARROWS_OUT;
+pub const SELECT_SHRINK: &str = p::ARROWS_IN;
+pub const SELECT_FEATHER: &str = p::FEATHER;
 
 // Layers.
 pub const EYE: &str = p::EYE;

@@ -2045,6 +2045,41 @@ impl ShellApp {
                 });
             });
 
+            ui.menu_button("Select", |ui| {
+                let has_sprite = self.doc.active_sprite().is_some();
+                let has_selection = self.editor.selection.is_some();
+                ui.add_enabled_ui(has_sprite, |ui| {
+                    if ui.button(format!("{} Select all", crate::icons::SELECT_ALL)).clicked() {
+                        self.select_all();
+                        ui.close();
+                    }
+                    if ui
+                        .add_enabled(has_selection, egui::Button::new(format!("{} Deselect", crate::icons::SELECT_NONE)))
+                        .clicked()
+                    {
+                        self.editor.clear_selection();
+                        ui.close();
+                    }
+                    if ui.button(format!("{} Invert", crate::icons::SELECT_INVERT)).clicked() {
+                        self.invert_selection();
+                        ui.close();
+                    }
+                    ui.separator();
+                    // Grow / Shrink / Feather land their handlers in a follow-up;
+                    // the entries exist now as the discovery surface.
+                    ui.add_enabled_ui(false, |ui| {
+                        let _ = ui.button(format!("{} Grow…", crate::icons::SELECT_GROW));
+                        let _ = ui.button(format!("{} Shrink…", crate::icons::SELECT_SHRINK));
+                        let _ = ui.button(format!("{} Feather…", crate::icons::SELECT_FEATHER));
+                    });
+                    ui.separator();
+                    if ui.button(format!("{} Color range", crate::icons::COLOR_RANGE)).clicked() {
+                        self.editor.left_tool = crate::editor::Tool::ColorRange;
+                        ui.close();
+                    }
+                });
+            });
+
             ui.menu_button("View", |ui| {
                 ui.label("Theme");
                 let mut pref = self.theme_preference;
@@ -2222,7 +2257,9 @@ impl ShellApp {
             CommandId::SwapColors => self.editor.swap_colors(),
             CommandId::BrushSizeDecrease => self.editor.brush_size = self.editor.brush_size.saturating_sub(1).max(1),
             CommandId::BrushSizeIncrease => self.editor.brush_size = (self.editor.brush_size + 1).min(256),
+            CommandId::SelectAll => self.select_all(),
             CommandId::Deselect => self.editor.clear_selection(),
+            CommandId::InvertSelection => self.invert_selection(),
             CommandId::DeleteSelection => self.delete_selection(),
             CommandId::ZoomIn => self.pending_zoom = Some(ZoomAction::In),
             CommandId::ZoomOut => self.pending_zoom = Some(ZoomAction::Out),
@@ -2239,6 +2276,7 @@ impl ShellApp {
             CommandId::ToolSelectRect => self.editor.left_tool = Tool::SelectRect,
             CommandId::ToolLasso => self.editor.left_tool = Tool::Lasso,
             CommandId::ToolWand => self.editor.left_tool = Tool::Wand,
+            CommandId::ToolColorRange => self.editor.left_tool = Tool::ColorRange,
             CommandId::ToolMove => self.editor.left_tool = Tool::Move,
             CommandId::OpenSettings => self.open_settings(SettingsTab::General),
         }

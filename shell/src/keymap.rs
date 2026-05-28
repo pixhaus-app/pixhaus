@@ -37,8 +37,12 @@ pub enum CommandId {
     /// Increase the brush size by one pixel.
     BrushSizeIncrease,
     // Selection
+    /// Select the whole canvas.
+    SelectAll,
     /// Drop the current selection.
     Deselect,
+    /// Invert the current selection.
+    InvertSelection,
     /// Clear the selected pixels on the active cel.
     DeleteSelection,
     // View
@@ -73,6 +77,8 @@ pub enum CommandId {
     ToolLasso,
     /// Select the magic-wand tool.
     ToolWand,
+    /// Select the colour-range (select-by-colour) tool.
+    ToolColorRange,
     /// Select the move tool.
     ToolMove,
     // Window
@@ -90,7 +96,9 @@ impl CommandId {
         CommandId::SwapColors,
         CommandId::BrushSizeDecrease,
         CommandId::BrushSizeIncrease,
+        CommandId::SelectAll,
         CommandId::Deselect,
+        CommandId::InvertSelection,
         CommandId::DeleteSelection,
         CommandId::ZoomIn,
         CommandId::ZoomOut,
@@ -107,6 +115,7 @@ impl CommandId {
         CommandId::ToolSelectRect,
         CommandId::ToolLasso,
         CommandId::ToolWand,
+        CommandId::ToolColorRange,
         CommandId::ToolMove,
         CommandId::OpenSettings,
     ];
@@ -121,7 +130,9 @@ impl CommandId {
             CommandId::SwapColors => "Swap colours",
             CommandId::BrushSizeDecrease => "Decrease brush size",
             CommandId::BrushSizeIncrease => "Increase brush size",
+            CommandId::SelectAll => "Select all",
             CommandId::Deselect => "Deselect",
+            CommandId::InvertSelection => "Invert selection",
             CommandId::DeleteSelection => "Delete selection",
             CommandId::ZoomIn => "Zoom in",
             CommandId::ZoomOut => "Zoom out",
@@ -138,6 +149,7 @@ impl CommandId {
             CommandId::ToolSelectRect => "Rectangular marquee",
             CommandId::ToolLasso => "Lasso",
             CommandId::ToolWand => "Magic wand",
+            CommandId::ToolColorRange => "Colour range",
             CommandId::ToolMove => "Move",
             CommandId::OpenSettings => "Settings…",
         }
@@ -149,7 +161,7 @@ impl CommandId {
         match self {
             CommandId::NewSprite => CommandCategory::File,
             CommandId::Undo | CommandId::Redo | CommandId::SwapColors | CommandId::BrushSizeDecrease | CommandId::BrushSizeIncrease => CommandCategory::Edit,
-            CommandId::Deselect | CommandId::DeleteSelection => CommandCategory::Selection,
+            CommandId::SelectAll | CommandId::Deselect | CommandId::InvertSelection | CommandId::DeleteSelection => CommandCategory::Selection,
             CommandId::ZoomIn | CommandId::ZoomOut | CommandId::ZoomFit | CommandId::ZoomReset | CommandId::PlayPause => CommandCategory::View,
             CommandId::ToolPencil
             | CommandId::ToolEraser
@@ -161,6 +173,7 @@ impl CommandId {
             | CommandId::ToolSelectRect
             | CommandId::ToolLasso
             | CommandId::ToolWand
+            | CommandId::ToolColorRange
             | CommandId::ToolMove => CommandCategory::Tools,
             CommandId::OpenSettings => CommandCategory::Window,
         }
@@ -435,7 +448,9 @@ fn aseprite_default(command: CommandId) -> Chord {
         C::SwapColors => Chord::key(Key::X),
         C::BrushSizeDecrease => Chord::key(Key::OpenBracket),
         C::BrushSizeIncrease => Chord::key(Key::CloseBracket),
+        C::SelectAll => Chord::ctrl(Key::A),
         C::Deselect => Chord::key(Key::Escape),
+        C::InvertSelection => Chord::ctrl_shift(Key::I),
         C::DeleteSelection => Chord::key(Key::Delete),
         C::ZoomIn => Chord::ctrl(Key::Equals),
         C::ZoomOut => Chord::ctrl(Key::Minus),
@@ -452,6 +467,8 @@ fn aseprite_default(command: CommandId) -> Chord {
         C::ToolSelectRect => Chord::key(Key::M),
         C::ToolLasso => Chord::key(Key::Q),
         C::ToolWand => Chord::key(Key::W),
+        // No standard Aseprite letter; A is free in the preset.
+        C::ToolColorRange => Chord::key(Key::A),
         C::ToolMove => Chord::key(Key::V),
         C::OpenSettings => Chord::ctrl(Key::Comma),
     }
@@ -598,5 +615,16 @@ mod tests {
             let count = CommandId::ALL.iter().filter(|&&c| c == command).count();
             assert_eq!(count, 1, "{command:?} listed once");
         }
+        // The Selection category carries select-all and invert alongside the
+        // pre-existing deselect / delete, each with an Aseprite binding.
+        for command in [CommandId::SelectAll, CommandId::InvertSelection] {
+            assert!(CommandId::ALL.contains(&command), "{command:?} is catalogued");
+            assert_eq!(command.category(), CommandCategory::Selection);
+        }
+        assert_eq!(aseprite_default(CommandId::SelectAll), Chord::ctrl(Key::A));
+        assert_eq!(aseprite_default(CommandId::InvertSelection), Chord::ctrl_shift(Key::I));
+        // Photoshop falls through to the same select/invert chords.
+        assert_eq!(photoshop_default(CommandId::SelectAll), Some(Chord::ctrl(Key::A)));
+        assert_eq!(photoshop_default(CommandId::InvertSelection), Some(Chord::ctrl_shift(Key::I)));
     }
 }
