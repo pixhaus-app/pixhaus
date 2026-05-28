@@ -7,7 +7,7 @@
 //! request it cannot satisfy. Implemented as a raw HTTP client for
 //! consistency with the other adapters.
 //!
-//! # How the OpenAI image API works
+//! # How the `OpenAI` image API works
 //!
 //! Two endpoints, and the split is the thing to remember:
 //!
@@ -26,7 +26,7 @@
 //! passes the approved anchor as a reference — actually reaches the model even
 //! though `/images/generations` has no reference parameter.
 //!
-//! Fields with no OpenAI wire equivalent are dropped: `style_image` (a
+//! Fields with no `OpenAI` wire equivalent are dropped: `style_image` (a
 //! FAL/IP-adapter concept), `negative_prompt`, `seed`, and `steps`.
 //!
 //! ## gpt-image vs dall-e
@@ -222,10 +222,10 @@ impl OpenAiBackend {
     }
 
     /// Generates an image conditioned on `req.reference_images` via the
-    /// `/images/edits` endpoint — the only OpenAI image endpoint that accepts
+    /// `/images/edits` endpoint — the only `OpenAI` image endpoint that accepts
     /// input images. There is no reference parameter on `/images/generations`, so
     /// the references are sent as multipart `image[]` parts (gpt-image) / `image`
-    /// (dall-e). `style_image` is intentionally not sent (no OpenAI equivalent).
+    /// (dall-e). `style_image` is intentionally not sent (no `OpenAI` equivalent).
     #[allow(clippy::cast_precision_loss)]
     async fn generate_image_with_references(
         &self,
@@ -290,7 +290,7 @@ impl OpenAiBackend {
     /// Edits/inpaints `req.image` via `/images/edits`: the base image plus an
     /// optional `mask` (white = repaint) and any extra `reference_images`, all as
     /// multipart `image[]` parts. gpt-image returns base64 `png`; dall-e takes
-    /// `response_format: b64_json`. `style_image` has no OpenAI equivalent.
+    /// `response_format: b64_json`. `style_image` has no `OpenAI` equivalent.
     #[allow(clippy::cast_precision_loss)]
     async fn edit_image(&self, req: &ImageEditRequest, progress: &VerbProgress, cancel: &CancellationToken) -> Result<ImageGenResponse> {
         let model = req.model.as_deref().unwrap_or(self.image_edit_model.as_str()).to_owned();
