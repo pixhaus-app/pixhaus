@@ -104,14 +104,12 @@ impl ShellApp {
         self.cockpit_history(ui);
     }
 
-    /// The Anchor stage's center surface: the variant gallery (cards with
-    /// re-roll / more-like-this / refine / branch / save-as-card / approve /
-    /// provenance), scrolled.
+    /// The Anchor stage's results gallery (cards with re-roll / more-like-this /
+    /// refine / branch / save-as-card / approve / provenance). Rendered in the
+    /// inspector, which already scrolls; clicking a card selects it for the
+    /// center viewport.
     pub(crate) fn anchor_gallery(&mut self, ui: &mut egui::Ui) {
-        egui::ScrollArea::vertical()
-            .auto_shrink([false, false])
-            .id_salt("anchor_gallery")
-            .show(ui, |ui| self.cockpit_gallery(ui));
+        self.cockpit_gallery(ui);
     }
 
     /// Context band: the active palette and the project style notes, shown and
@@ -537,8 +535,8 @@ impl ShellApp {
         ui.horizontal(|ui| {
             ui.label(egui::RichText::new(format!("Results · {}", self.rs_candidates.len())).strong());
             if ui.small_button("clear").clicked() {
-                self.exit_sheet_preview();
                 self.rs_candidates.clear();
+                self.studio.anchor_selected = None;
             }
         });
         ui.add_space(4.0);
@@ -546,9 +544,9 @@ impl ShellApp {
         let accent = crate::theme::Palette::for_theme(ui.ctx().theme()).accent;
         let mut action: Option<(usize, CardAction)> = None;
         for i in 0..self.rs_candidates.len() {
-            let previewing = self.rs_preview == Some(i);
+            let selected = self.studio.anchor_selected == Some(i);
             let mut frame = egui::Frame::group(ui.style());
-            if previewing {
+            if selected {
                 frame = frame.stroke(egui::Stroke::new(2.0, accent));
             }
             frame.show(ui, |ui| {
@@ -557,14 +555,6 @@ impl ShellApp {
                 }
             });
             ui.add_space(6.0);
-        }
-
-        if self.sheet_preview_active() {
-            ui.label(
-                egui::RichText::new("Showing on canvas — click the thumbnail again to return to the sprite.")
-                    .small()
-                    .weak(),
-            );
         }
 
         if let Some((i, act)) = action {
@@ -584,8 +574,8 @@ impl ShellApp {
                 let size = tex.size_vec2();
                 let scale = (96.0 / size.x.max(1.0)).min(1.0);
                 let image = egui::Image::new((tex.id(), size * scale)).sense(egui::Sense::click());
-                if ui.add(image).on_hover_text("Click to view on the canvas").clicked() {
-                    action = Some(CardAction::TogglePreview);
+                if ui.add(image).on_hover_text("Click to view large in the center").clicked() {
+                    action = Some(CardAction::Select);
                 }
             } else {
                 ui.label("(decode failed)");
@@ -684,12 +674,9 @@ impl ShellApp {
     fn run_card_action(&mut self, i: usize, action: CardAction) {
         match action {
             CardAction::None => {}
-            CardAction::TogglePreview => {
-                if self.rs_preview == Some(i) {
-                    self.exit_sheet_preview();
-                } else {
-                    self.show_sheet_preview(i);
-                }
+            CardAction::Select => {
+                self.studio.anchor_selected = Some(i);
+                self.studio.anchor_view.reset();
             }
             CardAction::Reroll => {
                 let parent_core = self.rs_candidates.get(i).map(|c| c.core_id);
@@ -846,10 +833,9 @@ impl ShellApp {
     /// gallery. Called from the results drain.
     pub(crate) fn cockpit_on_done(&mut self, variants: Vec<ai::GeneratedVariant>, cost_usd: Option<f64>) {
         self.rs_status = JobStatus::Idle;
-        self.exit_sheet_preview();
-        // A streamed run leaves the last (still-coarse) partial frame on the
-        // canvas; settle it onto the crisp final candidate below.
-        let streamed_preview = std::mem::take(&mut self.rs_partial_preview);
+        // The studio shows results in the center viewport, not on the sprite
+        // canvas; clear any leftover streamed-partial flag.
+        self.rs_partial_preview = false;
         let lineage = std::mem::take(&mut self.ck_pending);
         if lineage.replace {
             self.rs_candidates.clear();
@@ -893,10 +879,10 @@ impl ShellApp {
         self.persist_variants(core_variants);
         let first_new = self.rs_candidates.len();
         self.rs_candidates.extend(new_cards);
-        // If the canvas was showing streamed partials, replace them with the
-        // first crisp candidate from this run so it settles in place.
-        if streamed_preview && first_new < self.rs_candidates.len() {
-            self.show_sheet_preview(first_new);
+        // Auto-select the first new result so it appears in the center viewport.
+        if first_new < self.rs_candidates.len() {
+            self.studio.anchor_selected = Some(first_new);
+            self.studio.anchor_view.reset();
         }
     }
 
@@ -915,6 +901,51 @@ impl ShellApp {
                 }
             }
         });
+    }
+
+    /// Lands an inpaint-refined anchor image as a new result linked to `parent`,
+    /// inheriting the parent's provenance and persisting it like a fresh variant.
+    pub(crate) fn land_anchor_refine(&mut self, parent: usize, image: Vec<u8>) {
+        self.rs_status = JobStatus::Idle;
+        if image::load_from_memory(&image).is_err() {
+            self.rs_status = JobStatus::Failed("the refined image could not be decoded".to_owned());
+            return;
+        }
+        let (output, parent_core) = match self.rs_candidates.get(parent) {
+            Some(c) => (c.output.clone(), c.core_id),
+            None => return,
+        };
+        let core_id = SheetVariantId::new(self.doc.alloc_id());
+        let mut variant = SheetVariant::from_image(
+            core_id,
+            output.generated_at,
+            ReferenceImage {
+                bytes: image.clone(),
+                mime: "image/png".to_owned(),
+            },
+        );
+        variant.user_prompt.clone_from(&output.user_prompt);
+        variant.composed_prompt.clone_from(&output.generation.prompt);
+        variant.composition = output.composition.clone();
+        variant.generation = Some(output.generation.clone());
+        variant.origin = VariantOrigin::Refinement;
+        variant.parent_variant_id = Some(parent_core);
+        variant.cost_usd = None;
+        self.persist_variants(vec![variant]);
+
+        let idx = self.rs_candidates.len();
+        self.rs_candidates.push(CockpitCandidate {
+            png: image,
+            output,
+            cost_usd: None,
+            parent: Some(parent),
+            origin: VariantOrigin::Refinement,
+            core_id,
+            texture: None,
+            expanded: false,
+        });
+        self.studio.anchor_selected = Some(idx);
+        self.studio.anchor_view.reset();
     }
 
     /// Approves candidate `i` as the canonical anchor: sets it canonical in the
@@ -1008,7 +1039,7 @@ impl ShellApp {
 #[derive(Clone, Copy)]
 enum CardAction {
     None,
-    TogglePreview,
+    Select,
     Reroll,
     MoreLikeThis,
     Refine,

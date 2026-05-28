@@ -138,6 +138,23 @@ pub enum ShellMsg {
         /// Failure reason.
         error: String,
     },
+    /// An anchor inpaint-refine finished: the repainted image, to land as a new
+    /// linked result under `parent`.
+    AnchorRefineDone {
+        /// Refine epoch this result belongs to; stale ones are dropped.
+        epoch: u64,
+        /// Gallery index the refine descends from.
+        parent: usize,
+        /// The repainted image as PNG bytes.
+        image: Vec<u8>,
+    },
+    /// An anchor inpaint-refine failed.
+    AnchorRefineFailed {
+        /// Refine epoch this failure belongs to; stale ones are dropped.
+        epoch: u64,
+        /// Failure reason.
+        error: String,
+    },
     /// AI background removal of one cel finished: the stripped PNG to apply to
     /// `buffer_id`.
     BgRemovalDone {
@@ -355,6 +372,9 @@ pub struct ShellApp {
     /// while a reference-sheet run streams previews, before any candidate
     /// exists to index via [`Self::rs_preview`].
     pub(crate) rs_partial_preview: bool,
+    /// Monotonic id for anchor inpaint-refine jobs; a superseded run's late
+    /// result is dropped by epoch.
+    pub(crate) rs_refine_epoch: u64,
     /// Whether the seed is pinned for a reproducible result.
     pub(crate) ck_seed_fixed: bool,
     /// The pinned seed value, used when [`Self::ck_seed_fixed`].
@@ -569,6 +589,7 @@ impl ShellApp {
             rs_candidates: Vec::new(),
             rs_preview: None,
             rs_partial_preview: false,
+            rs_refine_epoch: 0,
             ck_seed_fixed: false,
             ck_seed: 0,
             ck_positive: String::new(),
@@ -683,18 +704,6 @@ impl ShellApp {
         self.sheet_preview_active() || self.clip_preview_active() || self.bg_preview
     }
 
-    /// Shows candidate `i` on the canvas at its native resolution, fit to the
-    /// viewport. Non-destructive: the sprite document is untouched. A failed
-    /// decode leaves the current view in place.
-    pub(crate) fn show_sheet_preview(&mut self, i: usize) {
-        let Some(buffer) = self.rs_candidates.get(i).and_then(|c| png_to_pixel_buffer(&c.png)) else {
-            return;
-        };
-        self.upload_frame(&buffer, true);
-        self.rs_preview = Some(i);
-        self.anim_shown = None;
-    }
-
     /// Returns the canvas to the active sprite if a preview is showing.
     pub(crate) fn exit_sheet_preview(&mut self) {
         if self.rs_preview.take().is_some() {
@@ -774,6 +783,16 @@ impl ShellApp {
                     if epoch == self.studio.frame_gen.epoch {
                         self.studio.frame_gen.status = JobStatus::Failed(error);
                         self.studio.frame_gen.cancel = None;
+                    }
+                }
+                ShellMsg::AnchorRefineDone { epoch, parent, image } => {
+                    if epoch == self.rs_refine_epoch {
+                        self.land_anchor_refine(parent, image);
+                    }
+                }
+                ShellMsg::AnchorRefineFailed { epoch, error } => {
+                    if epoch == self.rs_refine_epoch {
+                        self.rs_status = JobStatus::Failed(error);
                     }
                 }
                 ShellMsg::BgRemovalDone { buffer_id, png } => {

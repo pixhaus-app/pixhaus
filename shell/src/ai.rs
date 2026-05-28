@@ -700,6 +700,35 @@ pub fn spawn_first_frame(
     });
 }
 
+/// Spawns an anchor inpaint-refine (`job` must be a [`FirstFrameJob::Inpaint`]).
+/// The single repainted image arrives over `tx` as a [`ShellMsg::AnchorRefineDone`]
+/// tagged with `epoch`; `parent` is the gallery index it descends from.
+pub fn spawn_anchor_refine(
+    handle: &Handle,
+    runtime: Arc<VerbRuntime>,
+    ctx: egui::Context,
+    tx: Sender<ShellMsg>,
+    job: FirstFrameJob,
+    epoch: u64,
+    parent: usize,
+) {
+    handle.spawn(async move {
+        let cancel = CancellationToken::new();
+        let msg = match run_first_frame(&runtime, job, &cancel).await {
+            Ok(images) => match images.into_iter().next() {
+                Some(image) => ShellMsg::AnchorRefineDone { epoch, parent, image },
+                None => ShellMsg::AnchorRefineFailed {
+                    epoch,
+                    error: "the backend returned no image".to_owned(),
+                },
+            },
+            Err(error) => ShellMsg::AnchorRefineFailed { epoch, error },
+        };
+        let _ = tx.send(msg);
+        ctx.request_repaint();
+    });
+}
+
 /// The Generate stage in isolation: first frame -> image-to-video clip ->
 /// decode, retaining the raw clip bytes, the mime, and the decoded frames. It
 /// does **not** detect a loop, pick frames, remove backgrounds, or normalize —
