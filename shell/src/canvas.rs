@@ -1023,18 +1023,24 @@ fn restore_region(dst: &mut PixelBuffer, src: &PixelBuffer, x: u32, y: u32, w: u
     }
 }
 
-/// Restores every pixel of `buf` that `mask` does not select to its value in
-/// `before`, bounded to the inclusive rect `(x0, y0, x1, y1)`. The single clip
-/// primitive for stroke/fill/shape commits: paint runs unclipped, then this
-/// reverts the bytes the selection does not cover. Work is O(rect ∩ mask),
-/// never O(canvas) — the iteration is the intersection of the passed bounds
-/// with `mask.bounds()`, so a small selection or a small gesture stays cheap at
-/// 8K. The eraser flows through the same path: pixels outside the mask keep
-/// their original (non-erased) value from `before`.
+/// Blends every painted pixel of `buf` toward its pre-gesture value in `before`
+/// by the inverse of the mask's coverage, bounded to the inclusive rect
+/// `(x0, y0, x1, y1)`. The single clip primitive for stroke/fill/shape commits:
+/// paint runs unclipped, then this reconciles each pixel with the selection —
+/// `out = lerp(before, painted, coverage / 255)`. Full coverage (255) keeps the
+/// painted pixel, zero coverage restores `before`, and a feathered edge lands
+/// partway, so soft selections soften the clipped paint with no separate branch.
+/// For a hard-edged (binary 0/255) mask the blend reduces to the keep/restore
+/// case and is byte-identical to it.
+///
+/// Work is O(rect ∩ mask), never O(canvas) — pixels outside `mask.bounds()` have
+/// zero coverage and restore `before` directly, so a small selection or a small
+/// gesture stays cheap at 8K. The eraser flows through the same path: pixels
+/// outside the mask keep their original (non-erased) value from `before`.
 fn clip_to_mask(buf: &mut PixelBuffer, before: &PixelBuffer, mask: &SelectionMask, bounds: (u32, u32, u32, u32)) {
     let (bx0, by0, bx1, by1) = bounds;
     let mb = mask.bounds();
-    // An empty mask selects nothing: restore the whole gesture footprint.
+    // An empty mask covers nothing: restore the whole gesture footprint.
     if mb.is_empty() {
         for y in by0..=by1 {
             for x in bx0..=bx1 {
@@ -1045,25 +1051,62 @@ fn clip_to_mask(buf: &mut PixelBuffer, before: &PixelBuffer, mask: &SelectionMas
         }
         return;
     }
-    // Intersect the gesture bounds with the mask's bounding box. Pixels outside
-    // the mask box are never selected, so they always restore — handled by the
-    // is_selected test below over the full gesture bounds. Iterate only the
-    // gesture bounds (already the dirty rect); the mask box only tightens it.
+    // The mask's bounding box. Pixels outside it have zero coverage, so they
+    // restore `before` without reading the coverage byte. The box only tightens
+    // the per-pixel blend to the selected region; iteration stays over the
+    // gesture bounds (already the dirty rect).
     let mx0 = mb.origin.x.max(0) as u32;
     let my0 = mb.origin.y.max(0) as u32;
     let mx1 = mx0 + mb.size.width.saturating_sub(1);
     let my1 = my0 + mb.size.height.saturating_sub(1);
     for y in by0..=by1 {
         for x in bx0..=bx1 {
-            // Inside the mask box and selected: keep the painted pixel.
-            if x >= mx0 && x <= mx1 && y >= my0 && y <= my1 && mask.is_selected(x, y) {
+            let coverage = if x >= mx0 && x <= mx1 && y >= my0 && y <= my1 {
+                mask.get(x, y).unwrap_or(0)
+            } else {
+                0
+            };
+            // Fully covered: keep the painted pixel untouched.
+            if coverage == 255 {
                 continue;
             }
-            if let Some(c) = before.pixel(x, y) {
-                buf.set_pixel(x, y, c);
+            let Some(was) = before.pixel(x, y) else { continue };
+            // Zero coverage: restore the pre-gesture pixel outright.
+            if coverage == 0 {
+                buf.set_pixel(x, y, was);
+                continue;
             }
+            // Partial (feathered) coverage: blend painted toward `was`.
+            let Some(now) = buf.pixel(x, y) else { continue };
+            buf.set_pixel(x, y, blend_coverage(was, now, coverage));
         }
     }
+}
+
+/// Linearly blends `painted` toward `before` by `coverage`:
+/// `out = lerp(before, painted, coverage / 255)`, per channel. `coverage == 255`
+/// returns `painted`, `0` returns `before`, `128` lands halfway. Channels are
+/// non-premultiplied, so the blend runs straight on each component including
+/// alpha — matching how the rest of the shell treats `Rgba`.
+fn blend_coverage(before: Rgba, painted: Rgba, coverage: u8) -> Rgba {
+    Rgba::new(
+        lerp_u8(before.r, painted.r, coverage),
+        lerp_u8(before.g, painted.g, coverage),
+        lerp_u8(before.b, painted.b, coverage),
+        lerp_u8(before.a, painted.a, coverage),
+    )
+}
+
+/// Rounds `a + (b - a) * t / 255` to the nearest `u8`, with `t` the coverage in
+/// `0..=255`. Symmetric and exact at the endpoints (`t == 0` -> `a`,
+/// `t == 255` -> `b`); `t == 128` lands on the rounded midpoint.
+fn lerp_u8(a: u8, b: u8, t: u8) -> u8 {
+    let a = i32::from(a);
+    let b = i32::from(b);
+    let t = i32::from(t);
+    // Round-to-nearest: add half the divisor before the integer divide.
+    let v = a + ((b - a) * t + 127) / 255;
+    v.clamp(0, 255) as u8
 }
 
 /// Inclusive canvas-pixel bounds touched by a shape drawn between two corners,
@@ -1367,6 +1410,101 @@ mod tests {
         for x in 0..8 {
             assert_eq!(after.pixel(x, 3).expect("pixel"), RED, "no selection paints unclipped ({x}, 3)");
         }
+    }
+
+    // --- coverage-weighted clip blend (feather) -----------------------------
+
+    #[test]
+    fn lerp_u8_hits_endpoints_and_midpoint() {
+        // The blend weight is exact at the ends and rounds the midpoint.
+        assert_eq!(lerp_u8(0, 255, 0), 0, "coverage 0 keeps `before`");
+        assert_eq!(lerp_u8(0, 255, 255), 255, "coverage 255 keeps `painted`");
+        assert_eq!(lerp_u8(0, 255, 128), 128, "coverage 128 lands on the rounded midpoint");
+        assert_eq!(lerp_u8(40, 200, 0), 40);
+        assert_eq!(lerp_u8(40, 200, 255), 200);
+    }
+
+    #[test]
+    fn blend_clip_at_coverage_128_lands_halfway() {
+        // A single pixel painted RED over a BLACK `before`, with the mask at
+        // half coverage (128), commits to the rounded midpoint of the two —
+        // the soft-edge case feathering produces.
+        let black = Rgba::opaque(0, 0, 0);
+        let before = buf(4, 4, black);
+        let mut after = before.clone();
+        after.set_pixel(1, 1, RED);
+
+        let mut mask = SelectionMask::new(4, 4).expect("mask");
+        mask.set(1, 1, 128);
+        clip_to_mask(&mut after, &before, &mask, (1, 1, 1, 1));
+
+        let got = after.pixel(1, 1).expect("pixel");
+        // lerp(black, RED, 128/255): each channel halfway (rounded).
+        assert_eq!(got, Rgba::opaque(110, 20, 20), "coverage-128 paint lands halfway: got {got:?}");
+    }
+
+    #[test]
+    fn feathered_boundary_pixel_keeps_intermediate_coverage() {
+        // Feather a left-half row mask, then paint a full red row and clip. The
+        // boundary pixel the feather softened (coverage neither 0 nor 255) must
+        // commit to a colour strictly between `before` and the paint, not a hard
+        // snap to either.
+        use pixhaus_core::selection::feather;
+        let before = buf(10, 1, BLANK);
+        let mut hard = SelectionMask::new(10, 1).expect("mask");
+        for x in 0..5u32 {
+            hard.set(x, 0, 255);
+        }
+        let soft = feather(&hard, 2).expect("feather");
+        // Find a boundary pixel the feather left partially covered.
+        let edge = (0..10u32).find(|&x| matches!(soft.get(x, 0), Some(c) if c > 0 && c < 255)).expect("a softened edge pixel");
+        let coverage = soft.get(edge, 0).expect("coverage");
+
+        let mut after = before.clone();
+        for x in 0..10 {
+            after.set_pixel(x, 0, RED);
+        }
+        clip_to_mask(&mut after, &before, &soft, (0, 0, 9, 0));
+
+        let got = after.pixel(edge, 0).expect("pixel");
+        assert_eq!(got, blend_coverage(BLANK, RED, coverage), "edge pixel blends by its coverage");
+        assert!(got != BLANK && got != RED, "softened edge is neither fully reverted nor fully painted: {got:?}");
+    }
+
+    #[test]
+    fn hard_edged_clip_is_byte_identical_under_the_blend() {
+        // Switching clip_to_mask to a coverage blend must not change the binary
+        // (0/255) path. Paint a diagonal stroke, clip it to a hard rect mask,
+        // and prove every byte matches a hand-built keep/restore reference —
+        // the image-compare guard the plan asks for.
+        let (w, h) = (32u32, 32u32);
+        let before = buf(w, h, BLANK);
+        let points: Vec<[f32; 2]> = (0..32).map(|i| [i as f32, i as f32]).collect();
+        let mask = rect_mask(w, h, 8, 8, 23, 23);
+
+        let mut actual = before.clone();
+        draw_stroke(&mut actual, &points, RED, BrushShape::Pixel, 1, true);
+        clip_to_mask(&mut actual, &before, &mask, (0, 0, w - 1, h - 1));
+
+        // Reference: paint, then hard keep/restore by is_selected (the pre-blend
+        // semantics). The blend must reproduce this exactly for a binary mask.
+        let mut expected = before.clone();
+        draw_stroke(&mut expected, &points, RED, BrushShape::Pixel, 1, true);
+        for y in 0..h {
+            for x in 0..w {
+                if !mask.is_selected(x, y) {
+                    expected.set_pixel(x, y, before.pixel(x, y).expect("pixel"));
+                }
+            }
+        }
+
+        // Byte-for-byte equality, stronger than an image-compare score.
+        assert_eq!(actual.as_bytes(), expected.as_bytes(), "hard-edged clip is byte-identical under the blend");
+        // And confirm via image-compare for the visual-regression record.
+        let score = image_compare::rgba_hybrid_compare(&to_rgba_image(&actual), &to_rgba_image(&expected))
+            .expect("compare")
+            .score;
+        assert!((score - 1.0).abs() < f64::EPSILON, "hard-edged clip score is exactly 1.0: {score}");
     }
 
     // --- combine_masks / selection modifiers --------------------------------

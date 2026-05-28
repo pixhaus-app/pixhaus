@@ -15,6 +15,7 @@ use egui_wgpu::RenderState;
 use pixhaus_ai::plugin::{PixelData, VerbRuntime};
 use pixhaus_core::canvas::PixelBuffer;
 use pixhaus_core::project::{CelData, ColorMode, FrameIndex, GroupId, LoopDirection, PixelBufferId, Rgba, Size, Sprite, SpriteId};
+use pixhaus_core::selection::SelectionMask;
 use pixhaus_core::transforms::CanvasAnchor;
 use pixhaus_core::transforms::normalize::{NormalizeOptions, normalize_frames};
 use pixhaus_render::{Viewport, ViewportRenderer};
@@ -526,7 +527,55 @@ pub struct ShellApp {
     /// Whether the resize dialog scales the pixels (resample) rather than
     /// padding/cropping the canvas.
     resize_resample: bool,
+    /// The selection-morphology dialog (Grow / Shrink / Feather), or `None` when
+    /// closed. Carries which op runs and its current pixel amount.
+    morph_dialog: Option<MorphDialog>,
 }
+
+/// The pending selection-morphology operation and its amount, driven by the
+/// Grow / Shrink / Feather dialog. The amount is bounded to `1..=64` so the
+/// `O(area * by^2)` morphology stays in budget at 8K.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct MorphDialog {
+    /// Which morphology op the dialog applies on Apply.
+    op: MorphOp,
+    /// Pixel amount: grow/shrink radius, or feather radius.
+    amount: u32,
+}
+
+/// The three selection-morphology commands the dialog drives.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum MorphOp {
+    /// Dilate the mask outward by the amount (`expand`).
+    Grow,
+    /// Erode the mask inward by the amount (`contract`).
+    Shrink,
+    /// Soften the mask edges over the radius (`feather`).
+    Feather,
+}
+
+impl MorphOp {
+    /// The dialog title for this op.
+    const fn title(self) -> &'static str {
+        match self {
+            Self::Grow => "Grow selection",
+            Self::Shrink => "Shrink selection",
+            Self::Feather => "Feather selection",
+        }
+    }
+
+    /// The amount-field label for this op.
+    const fn amount_label(self) -> &'static str {
+        match self {
+            Self::Grow | Self::Shrink => "Amount",
+            Self::Feather => "Radius",
+        }
+    }
+}
+
+/// The inclusive amount range the morphology dialog clamps to. Bounds the
+/// `O(area * by^2)` cost of grow/shrink so the pass stays responsive at 8K.
+const MORPH_AMOUNT_RANGE: std::ops::RangeInclusive<u32> = 1..=64;
 
 impl ShellApp {
     /// Builds the app from the eframe creation context, taking ownership of the
@@ -670,6 +719,7 @@ impl ShellApp {
             resize_h: DEFAULT_CANVAS.height,
             resize_anchor: CanvasAnchor::Center,
             resize_resample: false,
+            morph_dialog: None,
         };
         app.install_renderer();
         app.doc.create_sprite("untitled", DEFAULT_CANVAS);
@@ -1356,6 +1406,79 @@ impl ShellApp {
             };
             self.resize_open = false;
             self.run_canvas_transform(op);
+        }
+    }
+
+    /// Opens the selection-morphology dialog for `op`, seeding its amount: grow
+    /// and shrink default to 1 pixel, feather to 0 (off). A no-op with no active
+    /// selection — the menu items are disabled in that case.
+    fn open_morph_dialog(&mut self, op: MorphOp) {
+        if self.editor.selection.is_none() {
+            return;
+        }
+        let amount = match op {
+            MorphOp::Grow | MorphOp::Shrink => 1,
+            MorphOp::Feather => 0,
+        };
+        self.morph_dialog = Some(MorphDialog { op, amount });
+    }
+
+    /// Draws the Grow / Shrink / Feather dialog: an amount field and Apply /
+    /// Cancel. Apply runs the op on the current mask and closes the dialog.
+    fn show_morph_dialog(&mut self, ctx: &egui::Context) {
+        let Some(dialog) = self.morph_dialog else {
+            return;
+        };
+        let mut open = true;
+        let mut apply = false;
+        let mut amount = dialog.amount;
+        // Feather goes off at 0; grow/shrink need at least 1 to do anything.
+        let range = if dialog.op == MorphOp::Feather { 0..=*MORPH_AMOUNT_RANGE.end() } else { MORPH_AMOUNT_RANGE };
+        egui::Window::new(dialog.op.title())
+            .collapsible(false)
+            .resizable(false)
+            .open(&mut open)
+            .show(ctx, |ui| {
+                ui.horizontal(|ui| {
+                    ui.label(dialog.op.amount_label());
+                    ui.add(egui::DragValue::new(&mut amount).range(range).suffix(" px"));
+                });
+                ui.separator();
+                ui.horizontal(|ui| {
+                    if ui.button("Apply").clicked() {
+                        apply = true;
+                    }
+                    if ui.button("Cancel").clicked() {
+                        self.morph_dialog = None;
+                    }
+                });
+            });
+        if !open {
+            self.morph_dialog = None;
+        }
+        // Persist a live edit to the amount even if Apply isn't pressed yet.
+        if let Some(d) = self.morph_dialog.as_mut() {
+            d.amount = amount;
+        }
+        if apply {
+            self.morph_dialog = None;
+            self.apply_morphology(dialog.op, amount);
+        }
+    }
+
+    /// Runs the chosen morphology op on the active selection in place. Grow and
+    /// shrink replace the mask with the dilated/eroded result; feather replaces
+    /// it with the softened (coverage-graded) mask the clip blend then honours.
+    /// A no-op with no selection or on `Err(DimensionOverflow)` — the mask is
+    /// left untouched rather than cleared.
+    pub(crate) fn apply_morphology(&mut self, op: MorphOp, amount: u32) {
+        let Some(mask) = self.editor.selection.as_ref() else {
+            return;
+        };
+        match morph_mask(mask, op, amount) {
+            MorphResult::Unchanged => {}
+            MorphResult::Cleared => self.editor.selection = None,
+            MorphResult::Replaced(out) => self.editor.selection = Some(out),
         }
     }
 
@@ -2065,12 +2188,21 @@ impl ShellApp {
                         ui.close();
                     }
                     ui.separator();
-                    // Grow / Shrink / Feather land their handlers in a follow-up;
-                    // the entries exist now as the discovery surface.
-                    ui.add_enabled_ui(false, |ui| {
-                        let _ = ui.button(format!("{} Grow…", crate::icons::SELECT_GROW));
-                        let _ = ui.button(format!("{} Shrink…", crate::icons::SELECT_SHRINK));
-                        let _ = ui.button(format!("{} Feather…", crate::icons::SELECT_FEATHER));
+                    // Grow / Shrink / Feather edit the current mask. Each opens a
+                    // small amount dialog; they need an active selection.
+                    ui.add_enabled_ui(has_selection, |ui| {
+                        if ui.button(format!("{} Grow…", crate::icons::SELECT_GROW)).clicked() {
+                            self.open_morph_dialog(MorphOp::Grow);
+                            ui.close();
+                        }
+                        if ui.button(format!("{} Shrink…", crate::icons::SELECT_SHRINK)).clicked() {
+                            self.open_morph_dialog(MorphOp::Shrink);
+                            ui.close();
+                        }
+                        if ui.button(format!("{} Feather…", crate::icons::SELECT_FEATHER)).clicked() {
+                            self.open_morph_dialog(MorphOp::Feather);
+                            ui.close();
+                        }
                     });
                     ui.separator();
                     if ui.button(format!("{} Color range", crate::icons::COLOR_RANGE)).clicked() {
@@ -2333,6 +2465,37 @@ fn is_preset_size(w: u32, h: u32) -> bool {
     SIZE_PRESETS.iter().any(|(_, pw, ph)| *pw == w && *ph == h)
 }
 
+/// The outcome of a morphology pass over a selection mask.
+#[derive(Clone, Debug, PartialEq, Eq)]
+enum MorphResult {
+    /// The core op overflowed (`Err(DimensionOverflow)`); leave the existing
+    /// selection untouched.
+    Unchanged,
+    /// The op left nothing selected (a contract that ate the whole mask); clear
+    /// the selection so the ants vanish and drawing is unclipped again, the same
+    /// convention `combine_masks` uses for a subtract-to-empty.
+    Cleared,
+    /// The new, non-empty mask.
+    Replaced(SelectionMask),
+}
+
+/// Runs `op` on `mask` at the given pixel `amount` and reports the new
+/// selection state. Feather grades coverage rather than toggling it; the
+/// resulting partial bytes are what the canvas clip blend honours to soften
+/// painted edges.
+fn morph_mask(mask: &SelectionMask, op: MorphOp, amount: u32) -> MorphResult {
+    let out = match op {
+        MorphOp::Grow => pixhaus_core::selection::expand(mask, amount),
+        MorphOp::Shrink => pixhaus_core::selection::contract(mask, amount),
+        MorphOp::Feather => pixhaus_core::selection::feather(mask, amount),
+    };
+    match out {
+        Err(_) => MorphResult::Unchanged,
+        Ok(out) if out.selected_count() > 0 => MorphResult::Replaced(out),
+        Ok(_) => MorphResult::Cleared,
+    }
+}
+
 /// The dropdown label for a color mode.
 fn color_mode_label(mode: ColorMode) -> &'static str {
     match mode {
@@ -2455,6 +2618,7 @@ impl eframe::App for ShellApp {
         self.show_new_sprite_dialog(ui.ctx());
         self.show_delete_confirm(ui.ctx());
         self.show_resize_dialog(ui.ctx());
+        self.show_morph_dialog(ui.ctx());
 
         // Panel order matters: outer panels first, the central canvas last so
         // it fills the space the others leave. The menu bar is always shown;
@@ -2505,7 +2669,82 @@ impl eframe::App for ShellApp {
 
 #[cfg(test)]
 mod tests {
-    use super::{png_to_pixel_buffer, truncate_motion};
+    use super::{MorphOp, MorphResult, SelectionMask, morph_mask, png_to_pixel_buffer, truncate_motion};
+
+    // --- selection morphology: grow / shrink / feather ----------------------
+
+    #[test]
+    fn shrink_full_5x5_to_interior_3x3() {
+        // A full 5x5 mask contracted by 1 erodes its border to the 3x3 centre,
+        // mirroring the core `contract_erodes_edges` fixture.
+        let mask = SelectionMask::full(5, 5).expect("full mask");
+        let MorphResult::Replaced(out) = morph_mask(&mask, MorphOp::Shrink, 1) else {
+            panic!("shrink of a full mask is non-empty");
+        };
+        assert_eq!(out.selected_count(), 9, "5x5 shrinks to a 3x3 interior");
+        for y in 0..5 {
+            for x in 0..5 {
+                let interior = (1..=3).contains(&x) && (1..=3).contains(&y);
+                assert_eq!(out.is_selected(x, y), interior, "({x}, {y}) selected == interior");
+            }
+        }
+    }
+
+    #[test]
+    fn grow_single_pixel_to_a_plus() {
+        // A single selected pixel grown by 1 dilates to a plus (centre + four
+        // cardinal neighbours), mirroring the core `expand_grows_single_pixel`.
+        let mut mask = SelectionMask::new(8, 8).expect("mask");
+        mask.set(4, 4, 255);
+        let MorphResult::Replaced(out) = morph_mask(&mask, MorphOp::Grow, 1) else {
+            panic!("grow of a single pixel is non-empty");
+        };
+        let plus = [(4, 4), (3, 4), (5, 4), (4, 3), (4, 5)];
+        assert_eq!(out.selected_count() as usize, plus.len(), "grow yields a five-pixel plus");
+        for (x, y) in plus {
+            assert!(out.is_selected(x, y), "plus arm ({x}, {y}) is selected");
+        }
+        // Diagonals stay out — the structuring element is a disc, not a square.
+        assert!(!out.is_selected(3, 3), "diagonal (3, 3) is not selected");
+    }
+
+    #[test]
+    fn feather_grades_a_boundary_to_intermediate_coverage() {
+        // Feathering a left-half row leaves the boundary pixel at partial
+        // coverage (neither 0 nor 255) — the soft edge the clip blend honours.
+        let mut mask = SelectionMask::new(10, 1).expect("mask");
+        for x in 0..5u32 {
+            mask.set(x, 0, 255);
+        }
+        let MorphResult::Replaced(out) = morph_mask(&mask, MorphOp::Feather, 2) else {
+            panic!("feather of a half mask is non-empty");
+        };
+        let edge = out.get(4, 0).expect("edge coverage");
+        assert!(edge > 0 && edge < 255, "feathered boundary has intermediate coverage: {edge}");
+    }
+
+    #[test]
+    fn shrink_that_empties_the_mask_clears_the_selection() {
+        // A single-row selection contracted by 1 erodes to nothing (every pixel
+        // borders the out-of-canvas edge). morph_mask reports Cleared so the
+        // caller drops the selection entirely.
+        let mut mask = SelectionMask::new(6, 1).expect("mask");
+        for x in 0..6u32 {
+            mask.set(x, 0, 255);
+        }
+        assert_eq!(morph_mask(&mask, MorphOp::Shrink, 1), MorphResult::Cleared, "an emptied contract clears the selection");
+    }
+
+    #[test]
+    fn feather_radius_zero_is_a_no_op() {
+        // Feather at radius 0 (the off default) returns the mask unchanged.
+        let mut mask = SelectionMask::new(4, 4).expect("mask");
+        mask.set(1, 1, 255);
+        let MorphResult::Replaced(out) = morph_mask(&mask, MorphOp::Feather, 0) else {
+            panic!("feather of a non-empty mask is non-empty");
+        };
+        assert_eq!(out, mask, "feather radius 0 leaves the mask untouched");
+    }
 
     #[test]
     fn truncate_motion_keeps_short_and_ellipsizes_long() {
