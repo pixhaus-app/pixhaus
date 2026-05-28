@@ -249,6 +249,65 @@ impl MaskOverlay {
     }
 }
 
+/// Which conversational generation thread a request targets. The Anchor stage
+/// and the First-frame stage each own a [`GenThread`]; the shared generation UI
+/// and the spawn/result plumbing route by this tag.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub(crate) enum GenTarget {
+    /// The reference-sheet anchor that conditions everything downstream.
+    Anchor,
+    /// The seed pose that drives the clip.
+    FirstFrame,
+}
+
+/// One conversational generate-and-refine thread: a prompt, the candidate
+/// images it produced (newest last, with lineage), the selected candidate, and
+/// the inpaint refinement state for it. The Anchor and First-frame stages each
+/// own one; the same UI and plumbing drive both.
+pub(crate) struct GenThread {
+    /// The positive prompt for the next text-to-image generation.
+    pub prompt: String,
+    /// Requested candidate count (1-4).
+    pub variants: u32,
+    /// The candidate gallery, newest last.
+    pub candidates: Vec<FirstFrameCandidate>,
+    /// Selected gallery index, shown large with the mask overlay.
+    pub selected: Option<usize>,
+    /// Job status for this thread.
+    pub status: JobStatus,
+    /// Cancel handle for an in-flight generation.
+    pub cancel: Option<CancellationToken>,
+    /// Monotonic generation id; bumped per generate and cancel so a superseded
+    /// run's late messages are dropped.
+    pub epoch: u64,
+    /// Whether the mask paint tool is armed.
+    pub painting: bool,
+    /// Inpaint mask aligned to the selected candidate.
+    pub mask: Option<MaskOverlay>,
+    /// Mask brush radius in mask pixels.
+    pub brush: f32,
+    /// Prompt for the inpaint refinement.
+    pub inpaint_prompt: String,
+}
+
+impl Default for GenThread {
+    fn default() -> Self {
+        Self {
+            prompt: String::new(),
+            variants: 2,
+            candidates: Vec::new(),
+            selected: None,
+            status: JobStatus::Idle,
+            cancel: None,
+            epoch: 0,
+            painting: false,
+            mask: None,
+            brush: 4.0,
+            inpaint_prompt: String::new(),
+        }
+    }
+}
+
 /// The studio's whole session state. Lives on [`ShellApp`]; the clip candidates
 /// themselves live in `anim_*`, which the clip/pick/land stages drive.
 pub(crate) struct StudioState {
@@ -258,31 +317,12 @@ pub(crate) struct StudioState {
     pub kind: AnimKind,
     /// Facing direction the generation conditions on.
     pub facing: Facing,
-    /// Seed-pose prompt for the first-frame text-to-image step.
-    pub ff_prompt: String,
-    /// Requested seed-pose candidate count (1-4).
-    pub ff_variants: u32,
-    /// The first-frame gallery, newest last.
-    pub ff_candidates: Vec<FirstFrameCandidate>,
-    /// Selected gallery index, the one shown large with the mask overlay.
-    pub ff_selected: Option<usize>,
+    /// Conversational generation thread for the Anchor stage.
+    pub anchor_gen: GenThread,
+    /// Conversational generation thread for the First-frame stage.
+    pub frame_gen: GenThread,
     /// The approved seed pose (PNG), the single input that drives the clip.
     pub approved_first_frame: Option<Vec<u8>>,
-    /// First-frame job status.
-    pub ff_status: JobStatus,
-    /// Cancel handle for an in-flight first-frame generation.
-    pub ff_cancel: Option<CancellationToken>,
-    /// Monotonic first-frame generation id; bumped on each generate and cancel
-    /// so a superseded run's late messages are dropped.
-    pub ff_epoch: u64,
-    /// Whether the mask paint tool is armed (drags paint instead of nothing).
-    pub painting: bool,
-    /// Inpaint mask aligned to the selected candidate.
-    pub mask: Option<MaskOverlay>,
-    /// Mask brush radius in mask pixels.
-    pub brush: f32,
-    /// Fix prompt for the inpaint refinement.
-    pub inpaint_prompt: String,
     /// The image-to-video model the Motion stage drives.
     pub i2v_model: I2vModel,
     /// Whether the second clip is shown beside the first for comparison.
@@ -325,18 +365,9 @@ impl Default for StudioState {
             stage: StudioStage::Anchor,
             kind: AnimKind::Walk,
             facing: Facing::East,
-            ff_prompt: String::new(),
-            ff_variants: 2,
-            ff_candidates: Vec::new(),
-            ff_selected: None,
+            anchor_gen: GenThread::default(),
+            frame_gen: GenThread::default(),
             approved_first_frame: None,
-            ff_status: JobStatus::Idle,
-            ff_cancel: None,
-            ff_epoch: 0,
-            painting: false,
-            mask: None,
-            brush: 4.0,
-            inpaint_prompt: String::new(),
             i2v_model: I2vModel::Seedance,
             compare: false,
             compare_other: None,
@@ -369,6 +400,22 @@ impl StudioState {
     fn framing_label(&self) -> String {
         format!("{} · {}", self.kind.label(), self.facing.label())
     }
+
+    /// The generation thread for `target`.
+    pub(crate) fn gen_thread(&self, target: GenTarget) -> &GenThread {
+        match target {
+            GenTarget::Anchor => &self.anchor_gen,
+            GenTarget::FirstFrame => &self.frame_gen,
+        }
+    }
+
+    /// The generation thread for `target`, mutably.
+    pub(crate) fn gen_thread_mut(&mut self, target: GenTarget) -> &mut GenThread {
+        match target {
+            GenTarget::Anchor => &mut self.anchor_gen,
+            GenTarget::FirstFrame => &mut self.frame_gen,
+        }
+    }
 }
 
 impl ShellApp {
@@ -386,8 +433,8 @@ impl ShellApp {
         self.create_view = crate::cockpit::CreateView::Studio;
         self.studio.stage = StudioStage::Anchor;
         self.studio.landed = false;
-        if self.studio.ff_prompt.trim().is_empty() {
-            self.studio.ff_prompt = self.studio.default_pose_prompt();
+        if self.studio.frame_gen.prompt.trim().is_empty() {
+            self.studio.frame_gen.prompt = self.studio.default_pose_prompt();
         }
         if self.anim_motion.trim().is_empty() {
             self.anim_motion = self.studio.motion_scaffold();
@@ -397,7 +444,8 @@ impl ShellApp {
     /// Leaves the studio for the normal drawing editor, dropping any in-progress
     /// preview. Studio session state is kept so re-entering resumes where it left.
     pub(crate) fn exit_studio(&mut self) {
-        self.studio.painting = false;
+        self.studio.anchor_gen.painting = false;
+        self.studio.frame_gen.painting = false;
         self.leave_animation_preview();
         self.create_view = crate::cockpit::CreateView::Cockpit;
         self.set_workspace(Workspace::Draw);
@@ -467,7 +515,10 @@ impl ShellApp {
         if self.studio.owner == active {
             return;
         }
-        if let Some(token) = self.studio.ff_cancel.take() {
+        if let Some(token) = self.studio.anchor_gen.cancel.take() {
+            token.cancel();
+        }
+        if let Some(token) = self.studio.frame_gen.cancel.take() {
             token.cancel();
         }
         self.leave_animation_preview();
@@ -475,8 +526,8 @@ impl ShellApp {
         self.anim_selected = None;
         self.studio = StudioState::default();
         self.studio.owner = active;
-        if self.studio.ff_prompt.trim().is_empty() {
-            self.studio.ff_prompt = self.studio.default_pose_prompt();
+        if self.studio.frame_gen.prompt.trim().is_empty() {
+            self.studio.frame_gen.prompt = self.studio.default_pose_prompt();
         }
     }
 
@@ -582,34 +633,25 @@ impl ShellApp {
 
     // ── Anchor stage ────────────────────────────────────────────────────────
 
-    /// Shows the approved anchor large, or a call-to-action to generate one. The
-    /// anchor conditions everything the studio generates, so it comes first.
+    /// Shows the anchor generation thread, or — once an anchor is approved and
+    /// the thread is empty (e.g. it was set in the cockpit) — the anchor large.
     fn studio_anchor_surface(&mut self, ui: &mut egui::Ui) {
-        let Some(anchor) = self.doc.active_anchor().map(<[u8]>::to_vec) else {
-            let mut generate = false;
-            ui.vertical_centered(|ui| {
-                ui.add_space(ui.available_height() * 0.35);
-                ui.label("No anchor yet. The anchor conditions everything the studio generates, so make one first.");
-                ui.add_space(8.0);
-                if ui.button(format!("{} Generate an anchor", crate::icons::SPARKLE)).clicked() {
-                    generate = true;
+        if self.gen_ref(GenTarget::Anchor).candidates.is_empty() {
+            if let Some(anchor) = self.doc.active_anchor().map(<[u8]>::to_vec) {
+                let ctx = ui.ctx().clone();
+                if let Some(tex) = load_png_texture(&ctx, "studio_anchor", &anchor) {
+                    fit_image(ui, &tex);
+                } else {
+                    centered_hint(ui, "The anchor image could not be decoded.");
                 }
-            });
-            if generate {
-                self.create_view = crate::cockpit::CreateView::Cockpit;
+                return;
             }
-            return;
-        };
-        let ctx = ui.ctx().clone();
-        let tex = load_png_texture(&ctx, "studio_anchor", &anchor);
-        if let Some(tex) = tex {
-            fit_image(ui, &tex);
-        } else {
-            centered_hint(ui, "The anchor image could not be decoded.");
         }
+        self.studio_gen_surface(ui, GenTarget::Anchor);
     }
 
-    /// Direction + animation-kind dials, which scaffold the motion prompt.
+    /// The anchor inspector: framing dials, the conversational generator, and a
+    /// link to the cockpit for prompt-template composition.
     fn studio_anchor_inspector(&mut self, ui: &mut egui::Ui) {
         ui.label(egui::RichText::new("Animation kind").strong());
         ui.horizontal_wrapped(|ui| {
@@ -624,22 +666,25 @@ impl ShellApp {
                 ui.selectable_value(&mut self.studio.facing, facing, facing.label());
             }
         });
-        ui.add_space(10.0);
+        ui.add_space(8.0);
         if ui
-            .button("Apply to prompts")
+            .button("Apply framing to prompts")
             .on_hover_text("Scaffold the seed-pose and motion prompts from this framing")
             .clicked()
         {
-            self.studio.ff_prompt = self.studio.default_pose_prompt();
+            self.studio.frame_gen.prompt = self.studio.default_pose_prompt();
             self.anim_motion = self.studio.motion_scaffold();
         }
-        ui.add_space(10.0);
-        if self.doc.active_anchor().is_some() {
-            if ui.button(format!("{} Next: first frame", crate::icons::RIGHT)).clicked() {
-                self.studio.stage = StudioStage::FirstFrame;
-            }
-        } else {
-            ui.colored_label(ui.visuals().warn_fg_color, "No anchor approved yet.");
+        ui.add_space(8.0);
+        ui.separator();
+        self.studio_gen_inspector(ui, GenTarget::Anchor);
+        ui.add_space(6.0);
+        if ui
+            .small_button(format!("{} Advanced: composition cockpit", crate::icons::LIBRARY))
+            .on_hover_text("Prompt templates, structures, styles, and reference drag-in")
+            .clicked()
+        {
+            self.create_view = crate::cockpit::CreateView::Cockpit;
         }
     }
 
@@ -647,75 +692,57 @@ impl ShellApp {
 
     /// The selected candidate large with the mask overlay, then the gallery strip.
     fn studio_first_frame_surface(&mut self, ui: &mut egui::Ui) {
-        if self.studio.ff_candidates.is_empty() {
-            centered_hint(ui, "Generate a seed pose from the anchor in the inspector. Candidates appear here.");
-            return;
-        }
-        // Reserve the gallery strip at the bottom, then the rest for the big view.
-        let strip_h = 96.0;
-        let total = ui.available_size();
-        let big_h = (total.y - strip_h - 12.0).max(80.0);
-        ui.allocate_ui(egui::vec2(total.x, big_h), |ui| {
-            if let Some(i) = self.studio.ff_selected {
-                self.studio_mask_canvas(ui, i);
-            } else {
-                centered_hint(ui, "Select a candidate below to preview and refine it.");
-            }
-        });
-        ui.separator();
-        self.studio_ff_gallery(ui);
+        self.studio_gen_surface(ui, GenTarget::FirstFrame);
     }
 
-    /// The horizontal first-frame candidate gallery; click to select.
-    fn studio_ff_gallery(&mut self, ui: &mut egui::Ui) {
-        let ctx = ui.ctx().clone();
-        for cand in &mut self.studio.ff_candidates {
-            if cand.texture.is_none() {
-                cand.texture = load_png_texture(&ctx, "studio_ff", &cand.png);
-            }
+    /// The first-frame inspector delegates to the shared generation composer.
+    fn studio_first_frame_inspector(&mut self, ui: &mut egui::Ui) {
+        self.studio_gen_inspector(ui, GenTarget::FirstFrame);
+    }
+
+    // ── Shared conversational generation (Anchor + First-frame) ───────────────
+
+    /// The active generation thread for `target`.
+    fn gen_ref(&self, target: GenTarget) -> &GenThread {
+        self.studio.gen_thread(target)
+    }
+
+    /// The active generation thread for `target`, mutably.
+    fn gen_mut(&mut self, target: GenTarget) -> &mut GenThread {
+        self.studio.gen_thread_mut(target)
+    }
+
+    /// The center surface for a generation stage: the selected candidate large
+    /// with its mask overlay. The candidate thread lives in the inspector.
+    fn studio_gen_surface(&mut self, ui: &mut egui::Ui, target: GenTarget) {
+        if self.gen_ref(target).candidates.is_empty() {
+            centered_hint(ui, "Describe what you want in the inspector and generate. Results appear in the thread.");
+            return;
         }
-        let mut select: Option<usize> = None;
-        egui::ScrollArea::horizontal().id_salt("studio_ff_strip").show(ui, |ui| {
-            ui.horizontal(|ui| {
-                for (i, cand) in self.studio.ff_candidates.iter().enumerate() {
-                    let selected = self.studio.ff_selected == Some(i);
-                    egui::Frame::group(ui.style()).show(ui, |ui| {
-                        ui.vertical(|ui| {
-                            if let Some(tex) = &cand.texture {
-                                let size = tex.size_vec2();
-                                let scale = (72.0 / size.x.max(1.0)).min(72.0 / size.y.max(1.0));
-                                let img = egui::Image::new((tex.id(), size * scale)).sense(egui::Sense::click());
-                                if ui.add(img).clicked() {
-                                    select = Some(i);
-                                }
-                            }
-                            if ui.selectable_label(selected, ff_lineage_label(cand)).clicked() {
-                                select = Some(i);
-                            }
-                        });
-                    });
-                }
-            });
-        });
-        if let Some(i) = select {
-            self.select_first_frame(i);
+        if let Some(i) = self.gen_ref(target).selected {
+            self.studio_mask_canvas(ui, target, i);
+        } else {
+            centered_hint(ui, "Select a result from the thread to preview and refine it.");
         }
     }
 
     /// Draws the selected candidate with the mask overlay, and stamps the mask
     /// while the paint tool is armed and the pointer drags over it.
-    fn studio_mask_canvas(&mut self, ui: &mut egui::Ui, i: usize) {
+    fn studio_mask_canvas(&mut self, ui: &mut egui::Ui, target: GenTarget, i: usize) {
         let ctx = ui.ctx().clone();
-        if self.studio.ff_candidates[i].texture.is_none() {
-            self.studio.ff_candidates[i].texture = load_png_texture(&ctx, "studio_ff", &self.studio.ff_candidates[i].png);
+        {
+            let thread = self.gen_mut(target);
+            if thread.candidates[i].texture.is_none() {
+                thread.candidates[i].texture = load_png_texture(&ctx, "studio_gen", &thread.candidates[i].png);
+            }
         }
-        let Some(tex) = self.studio.ff_candidates[i].texture.clone() else {
+        let Some(tex) = self.gen_ref(target).candidates[i].texture.clone() else {
             centered_hint(ui, "This candidate could not be decoded.");
             return;
         };
         let img_size = tex.size_vec2();
         let (iw, ih) = (tex.size()[0] as u32, tex.size()[1] as u32);
-        self.ensure_mask(iw, ih);
+        self.ensure_mask(target, iw, ih);
 
         // Fit the image into the available area, preserving aspect.
         let avail = ui.available_size();
@@ -724,13 +751,13 @@ impl ShellApp {
         let (rect, resp) = ui.allocate_exact_size(draw, egui::Sense::click_and_drag());
 
         // Paint into the mask while armed and dragging over the image.
-        if self.studio.painting {
+        if self.gen_ref(target).painting {
             if let Some(pos) = resp.interact_pointer_pos() {
                 if rect.contains(pos) {
                     let mx = (pos.x - rect.left()) / rect.width() * iw as f32;
                     let my = (pos.y - rect.top()) / rect.height() * ih as f32;
-                    let brush = self.studio.brush;
-                    if let Some(mask) = self.studio.mask.as_mut() {
+                    let brush = self.gen_ref(target).brush;
+                    if let Some(mask) = self.gen_mut(target).mask.as_mut() {
                         mask.stamp(mx, my, brush);
                     }
                 }
@@ -738,36 +765,34 @@ impl ShellApp {
         }
 
         // Rebuild the mask overlay texture if it changed.
-        self.rebuild_mask_texture(&ctx);
+        self.rebuild_mask_texture(target, &ctx);
 
+        let stroke_color = ui.visuals().widgets.noninteractive.bg_stroke.color;
         let painter = ui.painter_at(rect);
         let uv = egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1.0, 1.0));
         painter.image(tex.id(), rect, uv, egui::Color32::WHITE);
-        if let Some(mask) = &self.studio.mask {
+        if let Some(mask) = &self.gen_ref(target).mask {
             if let Some(mtex) = &mask.texture {
                 painter.image(mtex.id(), rect, uv, egui::Color32::WHITE);
             }
         }
-        painter.rect_stroke(
-            rect,
-            2.0,
-            egui::Stroke::new(1.0, ui.visuals().widgets.noninteractive.bg_stroke.color),
-            egui::StrokeKind::Inside,
-        );
+        painter.rect_stroke(rect, 2.0, egui::Stroke::new(1.0, stroke_color), egui::StrokeKind::Inside);
     }
 
-    /// Ensures a mask sized to `(w, h)` exists; replaces it when the dimensions
-    /// changed (a different candidate was selected).
-    fn ensure_mask(&mut self, w: u32, h: u32) {
-        let needs = self.studio.mask.as_ref().is_none_or(|m| m.width != w || m.height != h);
+    /// Ensures `target`'s mask is sized to `(w, h)`; replaces it when the
+    /// dimensions changed (a different candidate was selected).
+    fn ensure_mask(&mut self, target: GenTarget, w: u32, h: u32) {
+        let thread = self.gen_mut(target);
+        let needs = thread.mask.as_ref().is_none_or(|m| m.width != w || m.height != h);
         if needs {
-            self.studio.mask = Some(MaskOverlay::new(w, h));
+            thread.mask = Some(MaskOverlay::new(w, h));
         }
     }
 
-    /// Rebuilds the mask overlay texture from the cells when it is dirty.
-    fn rebuild_mask_texture(&mut self, ctx: &egui::Context) {
-        let Some(mask) = self.studio.mask.as_mut() else {
+    /// Rebuilds `target`'s mask overlay texture from the cells when it is dirty.
+    fn rebuild_mask_texture(&mut self, target: GenTarget, ctx: &egui::Context) {
+        let thread = self.gen_mut(target);
+        let Some(mask) = thread.mask.as_mut() else {
             return;
         };
         if !mask.dirty {
@@ -788,157 +813,224 @@ impl ShellApp {
         mask.dirty = false;
     }
 
-    /// Selects first-frame candidate `i` and resets the mask to its dimensions.
-    fn select_first_frame(&mut self, i: usize) {
-        self.studio.ff_selected = Some(i);
-        self.studio.mask = None;
-        self.studio.painting = false;
+    /// Selects candidate `i` in `target`'s thread and resets its mask.
+    fn select_candidate(&mut self, target: GenTarget, i: usize) {
+        let thread = self.gen_mut(target);
+        thread.selected = Some(i);
+        thread.mask = None;
+        thread.painting = false;
     }
 
-    /// The first-frame inspector: the seed-pose prompt and Generate, then the
-    /// inpaint mask controls and the Approve action.
-    fn studio_first_frame_inspector(&mut self, ui: &mut egui::Ui) {
-        if self.doc.active_anchor().is_none() {
-            ui.colored_label(ui.visuals().warn_fg_color, "Approve an anchor first (Anchor stage).");
-            return;
-        }
-        ui.label(egui::RichText::new("Seed pose").strong());
-        ui.add(
-            egui::TextEdit::multiline(&mut self.studio.ff_prompt)
-                .hint_text("a small knight standing, neutral pose")
-                .desired_rows(2)
-                .desired_width(f32::INFINITY),
-        );
-        ui.add(egui::Slider::new(&mut self.studio.ff_variants, 1..=4).text("variants"));
+    /// The shared generation composer: a prompt and Generate, the inpaint mask
+    /// controls, the candidate thread (newest last), and the Approve action.
+    /// Both the Anchor and First-frame stages drive this against their thread.
+    fn studio_gen_inspector(&mut self, ui: &mut egui::Ui, target: GenTarget) {
+        let backend_ready = self.backend_ready;
+        let ctx = ui.ctx().clone();
+        let success = crate::theme::Palette::for_theme(ui.ctx().theme()).success;
+        let (gen_label, prompt_hint, thread_id) = match target {
+            GenTarget::Anchor => ("Generate anchor", "a small knight, full body, side view", "anchor_thread"),
+            GenTarget::FirstFrame => ("Generate seed pose", "a small knight standing, neutral pose", "frame_thread"),
+        };
 
-        let busy = matches!(self.studio.ff_status, JobStatus::Running(_));
-        if ui
-            .add_enabled(
-                self.backend_ready && !busy,
-                egui::Button::new(format!("{} Generate seed pose", crate::icons::SPARKLE)),
-            )
-            .clicked()
+        let do_generate;
+        let mut do_cancel = false;
+        let mut do_inpaint = false;
+        let mut clear_mask = false;
+        let mut select: Option<usize> = None;
         {
-            self.start_first_frame();
-        }
-        studio_status_line(ui, &self.studio.ff_status);
-        if busy && ui.button("Cancel").clicked() {
-            self.cancel_first_frame();
-        }
-
-        ui.add_space(8.0);
-        ui.separator();
-        ui.label(egui::RichText::new(format!("{} Refine by inpaint", crate::icons::PENCIL)).strong());
-        if self.studio.ff_selected.is_none() {
-            ui.label(egui::RichText::new("Select a candidate to paint a mask over what's wrong.").small().weak());
-        } else {
-            let mut painting = self.studio.painting;
-            if ui.checkbox(&mut painting, "Paint mask").changed() {
-                self.studio.painting = painting;
-            }
-            ui.add(egui::Slider::new(&mut self.studio.brush, 1.0..=24.0).text("brush"));
-            if ui.button(format!("{} Clear mask", crate::icons::REMOVE)).clicked() {
-                if let Some(mask) = self.studio.mask.as_mut() {
-                    mask.clear();
-                }
-            }
+            let thread = self.gen_mut(target);
+            let busy = matches!(thread.status, JobStatus::Running(_));
+            ui.label(egui::RichText::new("Prompt").strong());
             ui.add(
-                egui::TextEdit::multiline(&mut self.studio.inpaint_prompt)
-                    .hint_text("fix the face — make it a single glowing screen")
+                egui::TextEdit::multiline(&mut thread.prompt)
+                    .hint_text(prompt_hint)
                     .desired_rows(2)
                     .desired_width(f32::INFINITY),
             );
-            let has_mask = self.studio.mask.as_ref().is_some_and(|m| !m.is_empty());
-            if ui
-                .add_enabled(
-                    self.backend_ready && !busy && has_mask,
-                    egui::Button::new(format!("{} Regenerate masked region", crate::icons::SPARKLE)),
-                )
-                .on_hover_text("Repaint only the masked pixels, conditioned on the anchor")
-                .clicked()
-            {
-                self.start_inpaint();
+            ui.add(egui::Slider::new(&mut thread.variants, 1..=4).text("variants"));
+            do_generate = ui
+                .add_enabled(backend_ready && !busy, egui::Button::new(format!("{} {gen_label}", crate::icons::SPARKLE)))
+                .clicked();
+            studio_status_line(ui, &thread.status);
+            if busy {
+                do_cancel = ui.button("Cancel").clicked();
             }
-            if !has_mask {
-                ui.label(egui::RichText::new("Paint a mask first.").small().weak());
+
+            ui.add_space(8.0);
+            ui.separator();
+            ui.label(egui::RichText::new(format!("{} Refine by inpaint", crate::icons::PENCIL)).strong());
+            if thread.selected.is_none() {
+                ui.label(egui::RichText::new("Select a result to paint a mask over what's wrong.").small().weak());
+            } else {
+                ui.checkbox(&mut thread.painting, "Paint mask");
+                ui.add(egui::Slider::new(&mut thread.brush, 1.0..=24.0).text("brush"));
+                clear_mask = ui.button(format!("{} Clear mask", crate::icons::REMOVE)).clicked();
+                ui.add(
+                    egui::TextEdit::multiline(&mut thread.inpaint_prompt)
+                        .hint_text("fix the masked region")
+                        .desired_rows(2)
+                        .desired_width(f32::INFINITY),
+                );
+                let has_mask = thread.mask.as_ref().is_some_and(|m| !m.is_empty());
+                do_inpaint = ui
+                    .add_enabled(
+                        backend_ready && !busy && has_mask,
+                        egui::Button::new(format!("{} Regenerate masked region", crate::icons::SPARKLE)),
+                    )
+                    .on_hover_text("Repaint only the masked pixels")
+                    .clicked();
+                if !has_mask {
+                    ui.label(egui::RichText::new("Paint a mask first.").small().weak());
+                }
+            }
+
+            ui.add_space(8.0);
+            ui.separator();
+            ui.label(egui::RichText::new("Thread").strong());
+            for cand in &mut thread.candidates {
+                if cand.texture.is_none() {
+                    cand.texture = load_png_texture(&ctx, "studio_gen", &cand.png);
+                }
+            }
+            if thread.candidates.is_empty() {
+                ui.label(egui::RichText::new("No results yet.").small().weak());
+            }
+            for (i, cand) in thread.candidates.iter().enumerate() {
+                let selected = thread.selected == Some(i);
+                ui.push_id((thread_id, i), |ui| {
+                    ui.horizontal(|ui| {
+                        if let Some(tex) = &cand.texture {
+                            let size = tex.size_vec2();
+                            let scale = (56.0 / size.x.max(1.0)).min(56.0 / size.y.max(1.0));
+                            if ui.add(egui::Image::new((tex.id(), size * scale)).sense(egui::Sense::click())).clicked() {
+                                select = Some(i);
+                            }
+                        }
+                        if ui.selectable_label(selected, ff_lineage_label(cand)).clicked() {
+                            select = Some(i);
+                        }
+                    });
+                });
             }
         }
 
         ui.add_space(8.0);
         ui.separator();
-        let can_approve = self.studio.ff_selected.is_some();
-        if ui
-            .add_enabled(can_approve, egui::Button::new(format!("{} Approve pose", crate::icons::CHECK)))
-            .on_hover_text("Lock this pose as the seed that drives the clip")
-            .clicked()
-        {
-            self.approve_first_frame();
+        let can_approve = self.gen_ref(target).selected.is_some();
+        let approve_label = match target {
+            GenTarget::Anchor => "Approve as anchor",
+            GenTarget::FirstFrame => "Approve pose",
+        };
+        let do_approve = ui
+            .add_enabled(can_approve, egui::Button::new(format!("{} {approve_label}", crate::icons::CHECK)))
+            .clicked();
+        let approved = match target {
+            GenTarget::Anchor => self.doc.active_anchor().is_some(),
+            GenTarget::FirstFrame => self.studio.approved_first_frame.is_some(),
+        };
+        if approved {
+            ui.colored_label(success, format!("{} approved", crate::icons::CHECK));
         }
-        if self.studio.approved_first_frame.is_some() {
-            ui.colored_label(
-                crate::theme::Palette::for_theme(ui.ctx().theme()).success,
-                format!("{} pose approved", crate::icons::CHECK),
-            );
+
+        if clear_mask {
+            if let Some(mask) = self.gen_mut(target).mask.as_mut() {
+                mask.clear();
+            }
+        }
+        if let Some(i) = select {
+            self.select_candidate(target, i);
+        }
+        if do_generate {
+            self.start_gen(target);
+        }
+        if do_cancel {
+            self.cancel_gen(target);
+        }
+        if do_inpaint {
+            self.start_inpaint(target);
+        }
+        if do_approve {
+            self.approve_gen(target);
         }
     }
 
-    /// Kicks off a from-scratch first-frame text-to-image generation on the
-    /// tokio runtime. Inpaint refinements go through [`Self::start_inpaint`].
-    fn start_first_frame(&mut self) {
-        let Some(anchor) = self.doc.active_anchor().map(<[u8]>::to_vec) else {
+    /// Kicks off a from-scratch text-to-image generation for `target`. The
+    /// first-frame thread conditions on the approved anchor; the anchor thread
+    /// generates from the prompt alone.
+    fn start_gen(&mut self, target: GenTarget) {
+        let Some(canvas) = self.doc.active_sprite().map(|s| (s.canvas.width, s.canvas.height)) else {
             return;
         };
-        let Some(sprite) = self.doc.active_sprite() else {
+        let references = self.gen_references(target);
+        if matches!(target, GenTarget::FirstFrame) && references.is_empty() {
             return;
-        };
+        }
         let job = FirstFrameJob::Generate {
-            anchor_png: anchor,
-            canvas: (sprite.canvas.width, sprite.canvas.height),
-            prompt: self.studio.ff_prompt.clone(),
-            num_variants: self.studio.ff_variants,
+            reference_images: references,
+            canvas,
+            prompt: self.gen_ref(target).prompt.clone(),
+            num_variants: self.gen_ref(target).variants,
             seed: None,
         };
-        self.spawn_first_frame(job, None, false);
+        self.spawn_gen(target, job, None, false);
     }
 
-    /// Kicks off an inpaint refinement of the selected candidate.
-    fn start_inpaint(&mut self) {
-        let Some(i) = self.studio.ff_selected else {
+    /// Kicks off an inpaint refinement of `target`'s selected candidate.
+    fn start_inpaint(&mut self, target: GenTarget) {
+        let Some(i) = self.gen_ref(target).selected else {
             return;
         };
-        let Some(anchor) = self.doc.active_anchor().map(<[u8]>::to_vec) else {
+        let references = self.gen_references(target);
+        if matches!(target, GenTarget::FirstFrame) && references.is_empty() {
+            return;
+        }
+        let Some(mask) = self.gen_ref(target).mask.as_ref() else {
             return;
         };
-        let Some(mask) = self.studio.mask.as_ref() else {
+        let mask_png = mask_overlay_png(mask);
+        let Some(mask_png) = mask_png else {
+            self.gen_mut(target).status = JobStatus::Failed("could not encode the mask".to_owned());
             return;
         };
-        let Some(mask_png) = mask_overlay_png(mask) else {
-            self.studio.ff_status = JobStatus::Failed("could not encode the mask".to_owned());
-            return;
-        };
-        let base = self.studio.ff_candidates[i].png.clone();
-        let prompt = if self.studio.inpaint_prompt.trim().is_empty() {
-            self.studio.ff_prompt.clone()
-        } else {
-            self.studio.inpaint_prompt.clone()
+        let base = self.gen_ref(target).candidates[i].png.clone();
+        let prompt = {
+            let thread = self.gen_ref(target);
+            if thread.inpaint_prompt.trim().is_empty() {
+                thread.prompt.clone()
+            } else {
+                thread.inpaint_prompt.clone()
+            }
         };
         let job = FirstFrameJob::Inpaint {
             base,
             mask: mask_png,
-            anchor_png: anchor,
+            reference_images: references,
             prompt,
             num_variants: 1,
         };
-        self.spawn_first_frame(job, Some(i), true);
+        self.spawn_gen(target, job, Some(i), true);
     }
 
-    /// Spawns `job` on the runtime with a fresh epoch and cancel handle.
-    fn spawn_first_frame(&mut self, job: FirstFrameJob, parent: Option<usize>, append: bool) {
+    /// The reference images a generation conditions on: the anchor for the
+    /// first-frame thread, nothing for the anchor thread (which makes the anchor).
+    fn gen_references(&self, target: GenTarget) -> Vec<Vec<u8>> {
+        match target {
+            GenTarget::Anchor => Vec::new(),
+            GenTarget::FirstFrame => self.doc.active_anchor().map(<[u8]>::to_vec).into_iter().collect(),
+        }
+    }
+
+    /// Spawns `job` for `target` on the runtime with a fresh epoch and cancel.
+    fn spawn_gen(&mut self, target: GenTarget, job: FirstFrameJob, parent: Option<usize>, append: bool) {
         let cancel = CancellationToken::new();
-        self.studio.ff_cancel = Some(cancel.clone());
-        self.studio.ff_epoch += 1;
-        let epoch = self.studio.ff_epoch;
-        self.studio.ff_status = JobStatus::Running("starting".to_owned());
+        let epoch = {
+            let thread = self.gen_mut(target);
+            thread.cancel = Some(cancel.clone());
+            thread.epoch += 1;
+            thread.status = JobStatus::Running("starting".to_owned());
+            thread.epoch
+        };
         ai::spawn_first_frame(
             self.runtime.handle(),
             self.verb_runtime.clone(),
@@ -949,54 +1041,71 @@ impl ShellApp {
             epoch,
             parent,
             append,
+            target,
         );
     }
 
-    /// Cancels an in-flight first-frame generation.
-    fn cancel_first_frame(&mut self) {
-        if let Some(cancel) = self.studio.ff_cancel.take() {
+    /// Cancels an in-flight generation for `target`.
+    fn cancel_gen(&mut self, target: GenTarget) {
+        let thread = self.gen_mut(target);
+        if let Some(cancel) = thread.cancel.take() {
             cancel.cancel();
         }
-        self.studio.ff_epoch += 1;
-        self.studio.ff_status = JobStatus::Idle;
+        thread.epoch += 1;
+        thread.status = JobStatus::Idle;
     }
 
-    /// Lands generated first-frame candidates into the gallery. Decodes each PNG
+    /// Lands generated candidates into `target`'s thread. Decodes each PNG
     /// (dropping any that fail), stamps lineage, and selects the first new one.
-    pub(crate) fn on_first_frame_ready(&mut self, images: Vec<Vec<u8>>, parent: Option<usize>, append: bool) {
-        self.studio.ff_status = JobStatus::Idle;
-        self.studio.ff_cancel = None;
-        if !append {
-            self.studio.ff_candidates.clear();
-            self.studio.ff_selected = None;
-        }
-        let origin = if parent.is_some() { FfOrigin::Inpaint } else { FfOrigin::Fresh };
-        let first_new = self.studio.ff_candidates.len();
-        for png in images {
-            // Skip a candidate whose bytes don't decode rather than show a broken card.
-            if image::load_from_memory(&png).is_err() {
-                continue;
+    pub(crate) fn on_gen_ready(&mut self, target: GenTarget, images: Vec<Vec<u8>>, parent: Option<usize>, append: bool) {
+        let first_new = {
+            let thread = self.gen_mut(target);
+            thread.status = JobStatus::Idle;
+            thread.cancel = None;
+            if !append {
+                thread.candidates.clear();
+                thread.selected = None;
             }
-            self.studio.ff_candidates.push(FirstFrameCandidate {
-                png,
-                texture: None,
-                parent,
-                origin,
-            });
-        }
-        if self.studio.ff_candidates.len() > first_new {
-            self.select_first_frame(first_new);
+            let origin = if parent.is_some() { FfOrigin::Inpaint } else { FfOrigin::Fresh };
+            let first_new = thread.candidates.len();
+            for png in images {
+                // Skip a candidate whose bytes don't decode rather than show a broken card.
+                if image::load_from_memory(&png).is_err() {
+                    continue;
+                }
+                thread.candidates.push(FirstFrameCandidate {
+                    png,
+                    texture: None,
+                    parent,
+                    origin,
+                });
+            }
+            (thread.candidates.len() > first_new).then_some(first_new)
+        };
+        if let Some(i) = first_new {
+            self.select_candidate(target, i);
         }
     }
 
-    /// Approves the selected candidate as the seed pose and advances to Motion.
-    fn approve_first_frame(&mut self) {
-        let Some(i) = self.studio.ff_selected else {
+    /// Approves the selected candidate. The anchor thread sets the active anchor
+    /// and advances to first frame; the first-frame thread locks the seed pose
+    /// and advances to Motion.
+    fn approve_gen(&mut self, target: GenTarget) {
+        let Some(i) = self.gen_ref(target).selected else {
             return;
         };
-        self.studio.approved_first_frame = Some(self.studio.ff_candidates[i].png.clone());
-        self.studio.painting = false;
-        self.studio.stage = StudioStage::Motion;
+        let png = self.gen_ref(target).candidates[i].png.clone();
+        self.gen_mut(target).painting = false;
+        match target {
+            GenTarget::Anchor => {
+                self.doc.set_active_anchor(png);
+                self.studio.stage = StudioStage::FirstFrame;
+            }
+            GenTarget::FirstFrame => {
+                self.studio.approved_first_frame = Some(png);
+                self.studio.stage = StudioStage::Motion;
+            }
+        }
     }
 
     // ── Motion stage ───────────────────────────────────────────────────────────
@@ -1867,6 +1976,27 @@ pub(crate) fn mask_overlay_png(mask: &MaskOverlay) -> Option<Vec<u8>> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn gen_thread_routes_by_target() {
+        let mut state = StudioState::default();
+        state.anchor_gen.epoch = 1;
+        state.frame_gen.epoch = 2;
+        assert_eq!(state.gen_thread(GenTarget::Anchor).epoch, 1);
+        assert_eq!(state.gen_thread(GenTarget::FirstFrame).epoch, 2);
+        state.gen_thread_mut(GenTarget::Anchor).epoch = 9;
+        assert_eq!(state.anchor_gen.epoch, 9);
+        assert_eq!(state.frame_gen.epoch, 2);
+    }
+
+    #[test]
+    fn gen_thread_defaults_are_sane() {
+        let thread = GenThread::default();
+        assert_eq!(thread.variants, 2);
+        assert!((thread.brush - 4.0).abs() < f32::EPSILON);
+        assert!(thread.candidates.is_empty());
+        assert!(thread.selected.is_none());
+    }
 
     #[test]
     fn mask_stamp_marks_a_disc_and_reports_non_empty() {

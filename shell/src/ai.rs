@@ -36,6 +36,7 @@ use tokio_util::sync::CancellationToken;
 
 use crate::anim::{self, VideoFrame};
 use crate::app::ShellMsg;
+use crate::studio::GenTarget;
 
 /// Backend id FAL keys are stored under (keychain service `pixhaus.fal`).
 pub const FAL_BACKEND_ID: &str = "fal";
@@ -551,30 +552,34 @@ pub fn spawn_bg_removal(
     });
 }
 
-/// A first-frame request from the studio: generate (text-to-image from the
-/// anchor) or refine (inpaint a masked region of a base image).
+/// A studio generation request: generate (text-to-image) or refine (inpaint a
+/// masked region of a base image). Used by both the anchor and first-frame
+/// threads — the anchor thread passes no reference images (it makes the anchor),
+/// the first-frame thread passes the approved anchor.
 pub enum FirstFrameJob {
-    /// Generate `num_variants` seed poses from the anchor via text-to-image.
+    /// Generate `num_variants` candidates via text-to-image.
     Generate {
-        /// Approved reference-sheet PNG used as the character anchor.
-        anchor_png: Vec<u8>,
+        /// Images the generation conditions on (the anchor for first frames,
+        /// empty when generating the anchor itself).
+        reference_images: Vec<Vec<u8>>,
         /// Target canvas size (width, height).
         canvas: (u32, u32),
-        /// Positive prompt describing the desired pose.
+        /// Positive prompt describing the desired image.
         prompt: String,
         /// Candidate count (clamped 1-4).
         num_variants: u32,
         /// Fixed RNG seed, or `None` for a fresh random seed.
         seed: Option<u64>,
     },
-    /// Repaint a masked region of `base` via inpaint, conditioned on the anchor.
+    /// Repaint a masked region of `base` via inpaint.
     Inpaint {
         /// The candidate being corrected, as PNG bytes.
         base: Vec<u8>,
         /// Edit mask as PNG bytes — white marks the region to repaint.
         mask: Vec<u8>,
-        /// Approved reference-sheet PNG used as the character anchor.
-        anchor_png: Vec<u8>,
+        /// Images the refinement conditions on (the anchor for first frames,
+        /// empty when refining the anchor itself).
+        reference_images: Vec<Vec<u8>>,
         /// Instruction describing the fix.
         prompt: String,
         /// Candidate count (clamped 1-4).
@@ -588,7 +593,7 @@ pub enum FirstFrameJob {
 pub async fn run_first_frame(runtime: &VerbRuntime, job: FirstFrameJob, cancel: &CancellationToken) -> Result<Vec<Vec<u8>>, String> {
     let (capability, request) = match job {
         FirstFrameJob::Generate {
-            anchor_png,
+            reference_images,
             canvas,
             prompt,
             num_variants,
@@ -606,14 +611,14 @@ pub async fn run_first_frame(runtime: &VerbRuntime, job: FirstFrameJob, cancel: 
                 num_images: num_variants.clamp(1, 4),
                 quality: None,
                 style_image: None,
-                reference_images: vec![anchor_png],
+                reference_images,
             };
             (BackendCapabilities::IMAGE_GENERATION, InferenceRequest::ImageGeneration(req))
         }
         FirstFrameJob::Inpaint {
             base,
             mask,
-            anchor_png,
+            reference_images,
             prompt,
             num_variants,
         } => {
@@ -625,7 +630,7 @@ pub async fn run_first_frame(runtime: &VerbRuntime, job: FirstFrameJob, cancel: 
                 negative_prompt: Some("background, particles, glow, motion blur".into()),
                 num_images: num_variants.clamp(1, 4),
                 style_image: None,
-                reference_images: vec![anchor_png],
+                reference_images,
             };
             (BackendCapabilities::IMAGE_INPAINT, InferenceRequest::ImageInpaint(req))
         }
@@ -651,19 +656,27 @@ pub fn spawn_first_frame(
     epoch: u64,
     parent: Option<usize>,
     append: bool,
+    target: GenTarget,
 ) {
     handle.spawn(async move {
         let _ = tx.send(ShellMsg::FirstFrameProgress {
+            target,
             epoch,
-            message: "generating first frame".to_owned(),
+            message: "generating".to_owned(),
         });
         ctx.request_repaint();
         match run_first_frame(&runtime, job, &cancel).await {
             Ok(images) => {
-                let _ = tx.send(ShellMsg::FirstFrameDone { epoch, images, parent, append });
+                let _ = tx.send(ShellMsg::FirstFrameDone {
+                    target,
+                    epoch,
+                    images,
+                    parent,
+                    append,
+                });
             }
             Err(error) => {
-                let _ = tx.send(ShellMsg::FirstFrameFailed { epoch, error });
+                let _ = tx.send(ShellMsg::FirstFrameFailed { target, epoch, error });
             }
         }
         ctx.request_repaint();

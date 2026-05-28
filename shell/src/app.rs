@@ -110,29 +110,35 @@ pub enum ShellMsg {
         /// Failure reason.
         error: String,
     },
-    /// First-frame (studio seed-pose) generation progress.
+    /// Studio generation progress (anchor or first-frame thread).
     FirstFrameProgress {
+        /// Which thread this message belongs to.
+        target: crate::studio::GenTarget,
         /// Generation epoch this message belongs to; stale ones are dropped.
         epoch: u64,
         /// One-line status.
         message: String,
     },
-    /// First-frame generation finished: one or more candidate seed poses, as
-    /// PNG bytes, to land in the studio's first-frame gallery.
+    /// Studio generation finished: one or more candidate images, as PNG bytes,
+    /// to land in the targeted thread.
     FirstFrameDone {
+        /// Which thread this result belongs to.
+        target: crate::studio::GenTarget,
         /// Generation epoch this result belongs to; stale ones are dropped.
         epoch: u64,
-        /// Candidate seed poses as PNG bytes.
+        /// Candidate images as PNG bytes.
         images: Vec<Vec<u8>>,
-        /// Gallery index this batch descends from (an inpaint's source), or
+        /// Thread index this batch descends from (an inpaint's source), or
         /// `None` for a from-scratch text-to-image batch.
         parent: Option<usize>,
-        /// Whether the batch appends to the gallery (refinement) or replaces it
+        /// Whether the batch appends to the thread (refinement) or replaces it
         /// (a fresh generation).
         append: bool,
     },
-    /// First-frame generation failed (or was canceled).
+    /// Studio generation failed (or was canceled).
     FirstFrameFailed {
+        /// Which thread this failure belongs to.
+        target: crate::studio::GenTarget,
         /// Generation epoch this failure belongs to; stale ones are dropped.
         epoch: u64,
         /// Failure reason.
@@ -756,20 +762,28 @@ impl ShellApp {
                         self.anim_cancel = None;
                     }
                 }
-                ShellMsg::FirstFrameProgress { epoch, message } => {
-                    if epoch == self.studio.ff_epoch {
-                        self.studio.ff_status = JobStatus::Running(message);
+                ShellMsg::FirstFrameProgress { target, epoch, message } => {
+                    let thread = self.studio.gen_thread_mut(target);
+                    if epoch == thread.epoch {
+                        thread.status = JobStatus::Running(message);
                     }
                 }
-                ShellMsg::FirstFrameDone { epoch, images, parent, append } => {
-                    if epoch == self.studio.ff_epoch {
-                        self.on_first_frame_ready(images, parent, append);
+                ShellMsg::FirstFrameDone {
+                    target,
+                    epoch,
+                    images,
+                    parent,
+                    append,
+                } => {
+                    if epoch == self.studio.gen_thread(target).epoch {
+                        self.on_gen_ready(target, images, parent, append);
                     }
                 }
-                ShellMsg::FirstFrameFailed { epoch, error } => {
-                    if epoch == self.studio.ff_epoch {
-                        self.studio.ff_status = JobStatus::Failed(error);
-                        self.studio.ff_cancel = None;
+                ShellMsg::FirstFrameFailed { target, epoch, error } => {
+                    let thread = self.studio.gen_thread_mut(target);
+                    if epoch == thread.epoch {
+                        thread.status = JobStatus::Failed(error);
+                        thread.cancel = None;
                     }
                 }
                 ShellMsg::BgRemovalDone { buffer_id, png } => {
