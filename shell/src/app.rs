@@ -250,14 +250,6 @@ pub(crate) enum Workspace {
     Create,
 }
 
-/// Which tab the side dock shows in Draw/Animate modes.
-#[derive(Clone, Copy, PartialEq, Eq)]
-pub(crate) enum RightTab {
-    Color,
-    Layers,
-    Sprites,
-}
-
 /// A keyboard-driven zoom request, applied on the next canvas paint where the
 /// viewport size is known so the zoom stays centred on the viewport.
 #[derive(Clone, Copy)]
@@ -315,8 +307,6 @@ pub struct ShellApp {
     pub(crate) display_frame: Option<PixelBuffer>,
     /// Active workspace mode (Draw / Animate / Create).
     pub(crate) workspace: Workspace,
-    /// Which side-dock tab shows in Draw/Animate modes.
-    pub(crate) right_tab: RightTab,
     /// Whether the bottom timeline shows the full cel matrix (vs a slim
     /// transport line).
     pub(crate) timeline_expanded: bool,
@@ -556,7 +546,6 @@ impl ShellApp {
             editor: crate::editor::EditorState::default(),
             display_frame: None,
             workspace: Workspace::Draw,
-            right_tab: RightTab::Color,
             timeline_expanded: false,
             verb_runtime,
             backend_ready: false,
@@ -826,9 +815,6 @@ impl ShellApp {
     /// empty area to send it to the top level.
     #[allow(clippy::too_many_lines)] // one cohesive panel: render loop + action dispatch
     fn library_panel(&mut self, ui: &mut egui::Ui) {
-        ui.heading("Library");
-        ui.add_space(4.0);
-
         let mut new_sprite = false;
         let mut new_folder = false;
         ui.horizontal(|ui| {
@@ -2032,24 +2018,26 @@ impl ShellApp {
         });
     }
 
-    /// The right-side dock: Colour/Layers/Sprites tabs in Draw and Animate, the
-    /// AI surface in Create.
+    /// The right-side dock in Draw and Animate: Palette and Layers stacked as
+    /// collapsing sections so a colour and the layer stack are usable at once,
+    /// with Sprites collapsed below. Create shows the AI surface instead. The
+    /// full sprite gallery lives in the Create-mode studio.
     fn dock_panel(&mut self, ui: &mut egui::Ui) {
         if self.workspace == Workspace::Create {
             self.create_dock(ui);
             return;
         }
-        ui.horizontal(|ui| {
-            ui.selectable_value(&mut self.right_tab, RightTab::Color, format!("{} Colour", crate::icons::PALETTE));
-            ui.selectable_value(&mut self.right_tab, RightTab::Layers, format!("{} Layers", crate::icons::LAYERS));
-            ui.selectable_value(&mut self.right_tab, RightTab::Sprites, "Sprites");
+        egui::ScrollArea::vertical().auto_shrink([false, false]).show(ui, |ui| {
+            egui::CollapsingHeader::new(format!("{} Palette", crate::icons::PALETTE))
+                .default_open(true)
+                .show(ui, |ui| self.palette_panel(ui));
+            egui::CollapsingHeader::new(format!("{} Layers", crate::icons::LAYERS))
+                .default_open(true)
+                .show(ui, |ui| self.layers_panel(ui));
+            egui::CollapsingHeader::new(format!("{} Sprites", crate::icons::IMAGE))
+                .default_open(false)
+                .show(ui, |ui| self.library_panel(ui));
         });
-        ui.separator();
-        match self.right_tab {
-            RightTab::Color => self.palette_panel(ui),
-            RightTab::Layers => self.layers_panel(ui),
-            RightTab::Sprites => self.library_panel(ui),
-        }
     }
 
     /// Applies and remembers a new theme preference.

@@ -45,7 +45,6 @@ impl ShellApp {
     #[allow(clippy::too_many_lines)]
     pub(crate) fn layers_panel(&mut self, ui: &mut egui::Ui) {
         ui.horizontal(|ui| {
-            ui.heading("Layers");
             if ui.button(icons::ADD).on_hover_text("Add raster layer").clicked() {
                 self.add_layer(false);
             }
@@ -114,149 +113,147 @@ impl ShellApp {
         // (dragged layer, new parent, anchor sibling to land above).
         let mut layer_move: Option<(LayerId, Option<LayerId>, Option<LayerId>)> = None;
 
-        egui::ScrollArea::vertical().max_height(220.0).id_salt("layers_scroll").show(ui, |ui| {
-            for row in &rows {
-                let is_active = active == Some(row.id);
-                let hint = if row.is_group {
-                    crate::dnd::DropHint::Into
-                } else {
-                    crate::dnd::DropHint::Before
-                };
-                let ((), payload) = crate::dnd::drop_target::<LayerDrag, _>(ui, hint, |ui| {
-                    ui.horizontal(|ui| {
-                        ui.add_space(f32::from(row.depth) * 14.0);
-                        // Chevron column: groups toggle collapse; others align past it.
+        for row in &rows {
+            let is_active = active == Some(row.id);
+            let hint = if row.is_group {
+                crate::dnd::DropHint::Into
+            } else {
+                crate::dnd::DropHint::Before
+            };
+            let ((), payload) = crate::dnd::drop_target::<LayerDrag, _>(ui, hint, |ui| {
+                ui.horizontal(|ui| {
+                    ui.add_space(f32::from(row.depth) * 14.0);
+                    // Chevron column: groups toggle collapse; others align past it.
+                    if row.is_group {
+                        let chevron = if row.collapsed { icons::RIGHT } else { icons::DOWN };
+                        if ui.add_enabled(row.has_children, egui::Button::new(chevron).frame(false)).clicked() {
+                            toggle_collapse = Some(row.id);
+                        }
+                    } else {
+                        ui.add_space(14.0);
+                    }
+
+                    let eye = if row.visible { icons::EYE } else { icons::EYE_OFF };
+                    if ui.small_button(eye).on_hover_text("Visibility").clicked() {
+                        toggle_visible = Some(row.id);
+                    }
+                    let lock = if row.locked { icons::LOCK } else { icons::UNLOCK };
+                    if ui.small_button(lock).on_hover_text("Lock").clicked() {
+                        toggle_lock = Some(row.id);
+                    }
+
+                    // Inline rename when this layer is the one being renamed.
+                    if let Some((rid, draft, needs_focus)) = self.editor.layer_rename.as_mut() {
+                        if *rid == row.id {
+                            let resp = ui.add(egui::TextEdit::singleline(draft).desired_width(f32::INFINITY));
+                            if *needs_focus {
+                                resp.request_focus();
+                                *needs_focus = false;
+                            }
+                            if resp.lost_focus() {
+                                if ui.input(|i| i.key_pressed(egui::Key::Escape)) {
+                                    cancel_rename = true;
+                                } else {
+                                    commit_rename = Some((row.id, draft.clone()));
+                                }
+                            }
+                            return;
+                        }
+                    }
+
+                    let label = if row.is_group {
+                        egui::RichText::new(format!("{} {}", icons::GROUP, row.name))
+                    } else if is_active {
+                        egui::RichText::new(row.name.clone()).strong()
+                    } else {
+                        egui::RichText::new(row.name.clone())
+                    };
+                    // One widget senses both click and drag; a clean click stays a
+                    // click because `drag_started` needs pointer motion.
+                    let resp = ui.add(egui::Button::selectable(is_active, label).sense(egui::Sense::click_and_drag()));
+                    if resp.clicked() {
                         if row.is_group {
-                            let chevron = if row.collapsed { icons::RIGHT } else { icons::DOWN };
-                            if ui.add_enabled(row.has_children, egui::Button::new(chevron).frame(false)).clicked() {
-                                toggle_collapse = Some(row.id);
-                            }
+                            toggle_collapse = Some(row.id);
                         } else {
-                            ui.add_space(14.0);
+                            select = Some(row.id);
                         }
-
-                        let eye = if row.visible { icons::EYE } else { icons::EYE_OFF };
-                        if ui.small_button(eye).on_hover_text("Visibility").clicked() {
-                            toggle_visible = Some(row.id);
-                        }
-                        let lock = if row.locked { icons::LOCK } else { icons::UNLOCK };
-                        if ui.small_button(lock).on_hover_text("Lock").clicked() {
-                            toggle_lock = Some(row.id);
-                        }
-
-                        // Inline rename when this layer is the one being renamed.
-                        if let Some((rid, draft, needs_focus)) = self.editor.layer_rename.as_mut() {
-                            if *rid == row.id {
-                                let resp = ui.add(egui::TextEdit::singleline(draft).desired_width(f32::INFINITY));
-                                if *needs_focus {
-                                    resp.request_focus();
-                                    *needs_focus = false;
-                                }
-                                if resp.lost_focus() {
-                                    if ui.input(|i| i.key_pressed(egui::Key::Escape)) {
-                                        cancel_rename = true;
-                                    } else {
-                                        commit_rename = Some((row.id, draft.clone()));
-                                    }
-                                }
-                                return;
-                            }
-                        }
-
-                        let label = if row.is_group {
-                            egui::RichText::new(format!("{} {}", icons::GROUP, row.name))
-                        } else if is_active {
-                            egui::RichText::new(row.name.clone()).strong()
-                        } else {
-                            egui::RichText::new(row.name.clone())
-                        };
-                        // One widget senses both click and drag; a clean click stays a
-                        // click because `drag_started` needs pointer motion.
-                        let resp = ui.add(egui::Button::selectable(is_active, label).sense(egui::Sense::click_and_drag()));
-                        if resp.clicked() {
-                            if row.is_group {
-                                toggle_collapse = Some(row.id);
-                            } else {
-                                select = Some(row.id);
-                            }
-                        }
-                        if resp.double_clicked() {
+                    }
+                    if resp.double_clicked() {
+                        start_rename = Some((row.id, row.name.clone()));
+                    }
+                    resp.dnd_set_drag_payload(LayerDrag(row.id));
+                    resp.context_menu(|ui| {
+                        if ui.button(format!("{} Rename", icons::RENAME)).clicked() {
                             start_rename = Some((row.id, row.name.clone()));
+                            ui.close();
                         }
-                        resp.dnd_set_drag_payload(LayerDrag(row.id));
-                        resp.context_menu(|ui| {
-                            if ui.button(format!("{} Rename", icons::RENAME)).clicked() {
-                                start_rename = Some((row.id, row.name.clone()));
+                        if row.is_group {
+                            if ui.button(format!("{} Add layer inside", icons::ADD)).clicked() {
+                                add_inside = Some(row.id);
                                 ui.close();
                             }
-                            if row.is_group {
-                                if ui.button(format!("{} Add layer inside", icons::ADD)).clicked() {
-                                    add_inside = Some(row.id);
-                                    ui.close();
-                                }
-                            } else if ui.button(format!("{} Duplicate", icons::DUPLICATE)).clicked() {
-                                duplicate = Some(row.id);
-                                ui.close();
-                            }
-                            ui.separator();
-                            if ui.button(format!("{} Move up", icons::UP)).clicked() {
-                                move_up = Some(row.id);
-                                ui.close();
-                            }
-                            if ui.button(format!("{} Move down", icons::DOWN)).clicked() {
-                                move_down = Some(row.id);
-                                ui.close();
-                            }
-                            ui.separator();
-                            if ui.add_enabled(layer_count > 1, egui::Button::new(format!("{} Delete", icons::TRASH))).clicked() {
-                                delete = Some(row.id);
-                                ui.close();
-                            }
-                        });
+                        } else if ui.button(format!("{} Duplicate", icons::DUPLICATE)).clicked() {
+                            duplicate = Some(row.id);
+                            ui.close();
+                        }
+                        ui.separator();
+                        if ui.button(format!("{} Move up", icons::UP)).clicked() {
+                            move_up = Some(row.id);
+                            ui.close();
+                        }
+                        if ui.button(format!("{} Move down", icons::DOWN)).clicked() {
+                            move_down = Some(row.id);
+                            ui.close();
+                        }
+                        ui.separator();
+                        if ui.add_enabled(layer_count > 1, egui::Button::new(format!("{} Delete", icons::TRASH))).clicked() {
+                            delete = Some(row.id);
+                            ui.close();
+                        }
                     });
                 });
-                // A drop onto a group nests into it; a drop onto a layer reorders
-                // the dragged layer directly above it among its siblings.
-                if let Some(payload) = payload {
-                    let LayerDrag(dragged) = *payload;
-                    if dragged != row.id {
-                        layer_move = Some(if row.is_group {
-                            (dragged, Some(row.id), None)
-                        } else {
-                            (dragged, row.parent, Some(row.id))
-                        });
-                    }
-                }
-
-                // Blend mode and opacity for the active raster layer.
-                if is_active && !row.is_group {
-                    ui.horizontal(|ui| {
-                        ui.add_space(f32::from(row.depth) * 14.0 + 28.0);
-                        egui::ComboBox::from_id_salt(("blend", row.id.get()))
-                            .width(110.0)
-                            .selected_text(blend_label(row.blend))
-                            .show_ui(ui, |ui| {
-                                for (mode, name) in BLEND_MODES {
-                                    let mut current = row.blend;
-                                    if ui.selectable_value(&mut current, *mode, *name).clicked() {
-                                        set_blend = Some((row.id, *mode));
-                                    }
-                                }
-                            });
-                        let mut op = row.opacity;
-                        if ui.add(egui::Slider::new(&mut op, 0..=255).text("α")).changed() {
-                            set_opacity = Some((row.id, op));
-                        }
+            });
+            // A drop onto a group nests into it; a drop onto a layer reorders
+            // the dragged layer directly above it among its siblings.
+            if let Some(payload) = payload {
+                let LayerDrag(dragged) = *payload;
+                if dragged != row.id {
+                    layer_move = Some(if row.is_group {
+                        (dragged, Some(row.id), None)
+                    } else {
+                        (dragged, row.parent, Some(row.id))
                     });
                 }
             }
 
-            // A slim strip, shown only while dragging, files the layer at top level.
-            if let Some(payload) = crate::dnd::top_level_strip::<LayerDrag>(ui, "Move to top level") {
-                let LayerDrag(dragged) = *payload;
-                layer_move = Some((dragged, None, None));
+            // Blend mode and opacity for the active raster layer.
+            if is_active && !row.is_group {
+                ui.horizontal(|ui| {
+                    ui.add_space(f32::from(row.depth) * 14.0 + 28.0);
+                    egui::ComboBox::from_id_salt(("blend", row.id.get()))
+                        .width(110.0)
+                        .selected_text(blend_label(row.blend))
+                        .show_ui(ui, |ui| {
+                            for (mode, name) in BLEND_MODES {
+                                let mut current = row.blend;
+                                if ui.selectable_value(&mut current, *mode, *name).clicked() {
+                                    set_blend = Some((row.id, *mode));
+                                }
+                            }
+                        });
+                    let mut op = row.opacity;
+                    if ui.add(egui::Slider::new(&mut op, 0..=255).text("α")).changed() {
+                        set_opacity = Some((row.id, op));
+                    }
+                });
             }
-        });
+        }
+
+        // A slim strip, shown only while dragging, files the layer at top level.
+        if let Some(payload) = crate::dnd::top_level_strip::<LayerDrag>(ui, "Move to top level") {
+            let LayerDrag(dragged) = *payload;
+            layer_move = Some((dragged, None, None));
+        }
 
         // Apply the single action chosen this frame.
         if let Some(id) = select {

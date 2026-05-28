@@ -16,8 +16,6 @@ use crate::icons;
 impl ShellApp {
     /// Draws the palette panel.
     pub(crate) fn palette_panel(&mut self, ui: &mut egui::Ui) {
-        ui.heading("Palette");
-
         let Some(palette) = self.doc.active_palette() else {
             ui.label("No palette.");
             return;
@@ -51,35 +49,33 @@ impl ShellApp {
         let mut set_bg: Option<Rgba> = None;
         let mut edit_idx: Option<usize> = None;
 
-        egui::ScrollArea::vertical().max_height(180.0).show(ui, |ui| {
-            ui.horizontal_wrapped(|ui| {
-                ui.spacing_mut().item_spacing = egui::vec2(3.0, 3.0);
-                for (i, &color) in colors.iter().enumerate() {
-                    let (rect, resp) = ui.allocate_exact_size(egui::vec2(sw, sw), egui::Sense::click());
-                    // Checker under transparent swatches.
-                    if color.a < 255 {
-                        paint_checker(ui, rect);
-                    }
-                    ui.painter().rect_filled(rect, 2.0, to_color32(color));
-                    let selected = color == self.editor.fg;
-                    let stroke = if selected {
-                        egui::Stroke::new(2.0, egui::Color32::WHITE)
-                    } else {
-                        egui::Stroke::new(1.0, egui::Color32::from_black_alpha(120))
-                    };
-                    ui.painter().rect_stroke(rect, 2.0, stroke, egui::StrokeKind::Middle);
-                    if resp.clicked() {
-                        set_fg = Some(color);
-                    }
-                    if resp.secondary_clicked() {
-                        set_bg = Some(color);
-                    }
-                    if resp.double_clicked() {
-                        edit_idx = Some(i);
-                    }
-                    let _ = per_row; // wrapped layout handles row breaks
+        ui.horizontal_wrapped(|ui| {
+            ui.spacing_mut().item_spacing = egui::vec2(3.0, 3.0);
+            for (i, &color) in colors.iter().enumerate() {
+                let (rect, resp) = ui.allocate_exact_size(egui::vec2(sw, sw), egui::Sense::click());
+                // Checker under transparent swatches.
+                if color.a < 255 {
+                    paint_checker(ui, rect);
                 }
-            });
+                ui.painter().rect_filled(rect, 2.0, to_color32(color));
+                let selected = color == self.editor.fg;
+                let stroke = if selected {
+                    egui::Stroke::new(2.0, egui::Color32::WHITE)
+                } else {
+                    egui::Stroke::new(1.0, egui::Color32::from_black_alpha(120))
+                };
+                ui.painter().rect_stroke(rect, 2.0, stroke, egui::StrokeKind::Middle);
+                if resp.clicked() {
+                    set_fg = Some(color);
+                }
+                if resp.secondary_clicked() {
+                    set_bg = Some(color);
+                }
+                if resp.double_clicked() {
+                    edit_idx = Some(i);
+                }
+                let _ = per_row; // wrapped layout handles row breaks
+            }
         });
 
         if let Some(c) = set_fg {
