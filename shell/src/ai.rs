@@ -28,7 +28,8 @@ use pixhaus_ai::verbs::reference_sheet::{
     ReferenceInput, SheetVariantOutput,
 };
 use pixhaus_core::canvas::PixelBuffer;
-use pixhaus_core::project::library::composition::{PromptId, PromptVariable, StructureId};
+use pixhaus_core::project::library::ai::ProjectAi;
+use pixhaus_core::project::library::composition::{PromptId, PromptTemplate, PromptVariable, Structure, StructureId, Style};
 use pixhaus_core::project::{EntityId, PixelBufferId, ProjectMetadata};
 use pixhaus_core::transforms::normalize::{NormalizeOptions, normalize_frames};
 use tokio::runtime::Handle;
@@ -61,31 +62,44 @@ pub const SINGLE_STRUCTURE_ID: &str = STRUCTURE_SINGLE_ID;
 
 /// The (id, display-name) of every resolvable composition structure, with the
 /// free-form `Single` first so it reads as the natural default in the picker.
+/// Project structures shadow built-ins of the same id.
 #[must_use]
-pub fn structure_options() -> Vec<(String, String)> {
+pub fn structure_options(project: &ProjectAi) -> Vec<(String, String)> {
     let lib = BuiltinLibrary::load();
-    let mut out: Vec<(String, String)> = lib.structures.values().map(|s| (s.id.0.clone(), s.name.clone())).collect();
+    let mut map: BTreeMap<String, String> = lib.structures.values().map(|s| (s.id.0.clone(), s.name.clone())).collect();
+    for s in &project.structures {
+        map.insert(s.id.0.clone(), s.name.clone());
+    }
+    let mut out: Vec<(String, String)> = map.into_iter().collect();
     out.sort_by_key(|(id, _)| u8::from(id != STRUCTURE_SINGLE_ID));
     out
 }
 
-/// The variables of a saved/built-in prompt template, for the cockpit dials.
-/// Empty for an unknown id or a template with no variables.
+/// The variables of a saved/built-in prompt template, for the cockpit dials. A
+/// project template shadows the built-in of the same id. Empty for an unknown id
+/// or a template with no variables.
 #[must_use]
-pub fn prompt_variables(prompt_id: &str) -> Vec<PromptVariable> {
-    let lib = BuiltinLibrary::load();
-    lib.prompts
+pub fn prompt_variables(project: &ProjectAi, prompt_id: &str) -> Vec<PromptVariable> {
+    if let Some(p) = project.prompts.iter().find(|p| p.id.0 == prompt_id) {
+        return p.variables.clone();
+    }
+    BuiltinLibrary::load()
+        .prompts
         .get(&PromptId(prompt_id.to_owned()))
         .map(|p| p.variables.clone())
         .unwrap_or_default()
 }
 
 /// The (id, name) of every saved/built-in prompt template, name-sorted, for the
-/// cockpit template picker.
+/// cockpit template picker. Project templates shadow built-ins of the same id.
 #[must_use]
-pub fn prompt_options() -> Vec<(String, String)> {
+pub fn prompt_options(project: &ProjectAi) -> Vec<(String, String)> {
     let lib = BuiltinLibrary::load();
-    let mut out: Vec<(String, String)> = lib.prompts.values().map(|p| (p.id.0.clone(), p.name.clone())).collect();
+    let mut map: BTreeMap<String, String> = lib.prompts.values().map(|p| (p.id.0.clone(), p.name.clone())).collect();
+    for p in &project.prompts {
+        map.insert(p.id.0.clone(), p.name.clone());
+    }
+    let mut out: Vec<(String, String)> = map.into_iter().collect();
     out.sort_by(|a, b| a.1.cmp(&b.1));
     out
 }
@@ -97,6 +111,7 @@ pub fn prompt_options() -> Vec<(String, String)> {
 /// Returns empty strings for an unknown structure.
 #[must_use]
 pub fn compose_preview(
+    project: &ProjectAi,
     structure_id: &str,
     subject: &str,
     style_notes: &str,
@@ -104,7 +119,7 @@ pub fn compose_preview(
     variables: &BTreeMap<String, String>,
 ) -> (String, String) {
     let builtins = BuiltinLibrary::load();
-    let view = CompositionLibraryView::new(&[], &[], &[], builtins);
+    let view = CompositionLibraryView::new(&project.structures, &project.styles, &project.prompts, builtins);
     let Some(structure) = view.structure(&StructureId(structure_id.to_owned())) else {
         return (String::new(), String::new());
     };
@@ -309,6 +324,12 @@ pub struct SheetJob {
     pub num_variants: u32,
     /// Project `style_notes`, used as the prompt baseline when non-empty.
     pub style_notes: String,
+    /// Project composition structures, so a saved structure resolves in the verb.
+    pub structures: Vec<Structure>,
+    /// Project composition styles, so a saved style resolves in the verb.
+    pub styles: Vec<Style>,
+    /// Project prompt templates, so a saved template resolves in the verb.
+    pub prompts: Vec<PromptTemplate>,
     /// Drag-in conditioning references (subject/style anchors).
     pub references: Vec<ReferenceInput>,
     /// Verbatim positive prompt, sent in place of the composed text.
@@ -331,6 +352,9 @@ impl SheetJob {
             variable_values: BTreeMap::new(),
             num_variants,
             style_notes: String::new(),
+            structures: Vec::new(),
+            styles: Vec::new(),
+            prompts: Vec::new(),
             references: Vec::new(),
             prompt_override: None,
             negative_override: None,
@@ -356,8 +380,10 @@ impl SheetJob {
         };
         let ctx = VerbContext::builder(self.meta)
             .with_composition_library(ProjectCompositionLibrary {
+                structures: self.structures,
+                styles: self.styles,
+                prompts: self.prompts,
                 style_notes: self.style_notes,
-                ..Default::default()
             })
             .build();
         (inputs, ctx)
@@ -856,4 +882,29 @@ fn extract_rich(output: &pixhaus_ai::plugin::VerbOutput) -> Vec<GeneratedVariant
             .collect();
     }
     Vec::new()
+}
+
+#[cfg(test)]
+mod tests {
+    use pixhaus_core::project::library::ai::ProjectAi;
+    use pixhaus_core::project::library::composition::{Structure, StructureId, StructureOutput};
+
+    use super::{STRUCTURE_SINGLE_ID, structure_options};
+
+    #[test]
+    fn structure_options_let_project_records_shadow_builtins() {
+        let mut project = ProjectAi::default();
+        // A project structure that reuses a built-in id overrides its name.
+        project.structures.push(Structure {
+            id: StructureId(STRUCTURE_SINGLE_ID.to_owned()),
+            name: "My single".to_owned(),
+            output: StructureOutput::Single,
+            layout_negatives: String::new(),
+        });
+        let opts = structure_options(&project);
+        let single = opts.iter().find(|(id, _)| id == STRUCTURE_SINGLE_ID).expect("single structure present");
+        assert_eq!(single.1, "My single");
+        // The free-form structure still sorts first.
+        assert_eq!(opts.first().map(|(id, _)| id.as_str()), Some(STRUCTURE_SINGLE_ID));
+    }
 }

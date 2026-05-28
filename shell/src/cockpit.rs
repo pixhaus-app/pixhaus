@@ -166,7 +166,7 @@ impl ShellApp {
         ui.add_space(4.0);
         ui.horizontal(|ui| {
             ui.label("Output");
-            let options = ai::structure_options();
+            let options = ai::structure_options(&self.doc.project.library.ai);
             let current = options
                 .iter()
                 .find(|(id, _)| *id == self.ck_structure)
@@ -195,7 +195,7 @@ impl ShellApp {
     /// "surprise me"). With no template the cockpit stays a blank subject box.
     fn cockpit_dials(&mut self, ui: &mut egui::Ui) {
         // Template picker.
-        let options = ai::prompt_options();
+        let options = ai::prompt_options(&self.doc.project.library.ai);
         ui.horizontal(|ui| {
             ui.label("Template");
             let current = self
@@ -218,7 +218,7 @@ impl ShellApp {
         let Some(prompt_id) = self.ck_prompt_id.clone() else {
             return;
         };
-        let vars = ai::prompt_variables(&prompt_id);
+        let vars = ai::prompt_variables(&self.doc.project.library.ai, &prompt_id);
         if vars.is_empty() {
             return;
         }
@@ -314,7 +314,7 @@ impl ShellApp {
         self.ck_vars.clear();
         self.ck_var_locked.clear();
         if let Some(id) = &prompt_id {
-            for var in ai::prompt_variables(id) {
+            for var in ai::prompt_variables(&self.doc.project.library.ai, id) {
                 self.ck_vars.insert(var.key, var.default);
             }
         }
@@ -396,6 +396,7 @@ impl ShellApp {
         // taken the wheel by hand-editing the text.
         if self.ck_dirty && !self.ck_prompt_edited {
             let (pos, neg) = ai::compose_preview(
+                &self.doc.project.library.ai,
                 &self.ck_structure,
                 &self.rs_prompt,
                 &self.doc.project.library.ai.style_notes,
@@ -804,7 +805,7 @@ impl ShellApp {
         // them — the serendipity layer.
         let mut variable_values = self.ck_vars.clone();
         if let Some(prompt_id) = &self.ck_prompt_id {
-            for var in ai::prompt_variables(prompt_id) {
+            for var in ai::prompt_variables(&self.doc.project.library.ai, prompt_id) {
                 let locked = self.ck_var_locked.get(&var.key).copied().unwrap_or(false);
                 if matches!(var.control, VarControl::Wildcard { .. }) && !locked {
                     if let Some(val) = random_value(&var.control) {
@@ -823,6 +824,9 @@ impl ShellApp {
             variable_values,
             num_variants: self.rs_num_variants,
             style_notes: self.doc.project.library.ai.style_notes.clone(),
+            structures: self.doc.project.library.ai.structures.clone(),
+            styles: self.doc.project.library.ai.styles.clone(),
+            prompts: self.doc.project.library.ai.prompts.clone(),
             references,
             prompt_override,
             negative_override,
