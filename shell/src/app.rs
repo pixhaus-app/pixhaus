@@ -229,6 +229,13 @@ pub(crate) struct ClipCandidate {
     pub parent: Option<usize>,
     /// Lazily-built first-frame thumbnail for the gallery card.
     pub card_texture: Option<egui::TextureHandle>,
+    /// Lazily-built chroma-keyed preview textures, one slot per decoded frame,
+    /// for the studio's "show the clip keyed" toggle. Cleared when the key the
+    /// cache was built for ([`Self::keyed_sig`]) no longer matches.
+    pub keyed_thumbs: Vec<Option<egui::TextureHandle>>,
+    /// The `(key colour, tolerance)` the keyed thumbnails were built for, so a
+    /// key change invalidates them.
+    pub keyed_sig: Option<(Rgba, u8)>,
 }
 
 /// Top-level workspace mode. Drives what the side dock shows and whether the
@@ -1477,7 +1484,18 @@ impl ShellApp {
         let fps = self.anim_card().map_or(self.anim_fps, |c| c.fps);
         let dur = Duration::from_millis(u64::from((1000 / fps.max(1)).max(1)));
         if self.anim_clip_last_advance.elapsed() >= dur {
-            self.anim_play_cursor = (self.anim_play_cursor + 1) % self.anim_play_indices.len();
+            let next = self.anim_play_cursor + 1;
+            if next >= self.anim_play_indices.len() {
+                // At the end: wrap when the studio's loop toggle is on, else stop.
+                if self.studio.loop_playback {
+                    self.anim_play_cursor = 0;
+                } else {
+                    self.anim_clip_playing = false;
+                    return;
+                }
+            } else {
+                self.anim_play_cursor = next;
+            }
             let idx = self.anim_play_indices[self.anim_play_cursor];
             self.set_scrub(idx);
             self.anim_clip_last_advance = Instant::now();
@@ -1616,28 +1634,6 @@ impl ShellApp {
         self.anim_recent_motions.retain(|x| x != m);
         self.anim_recent_motions.insert(0, m.to_owned());
         self.anim_recent_motions.truncate(8);
-    }
-
-    /// Shared scrub track + transport across Review, Mark loop, and Pick frames.
-    /// Play cycles whatever subset the current stage defines.
-    #[allow(clippy::cast_possible_truncation)]
-    pub(crate) fn anim_transport(&mut self, ui: &mut egui::Ui) {
-        let n = self.anim_card().map_or(0, |c| c.frames.len());
-        if n == 0 {
-            return;
-        }
-        let last = (n - 1) as u32;
-        ui.horizontal(|ui| {
-            let label = if self.anim_clip_playing { crate::icons::PAUSE } else { crate::icons::PLAY };
-            if ui.button(label).on_hover_text("Play / pause").clicked() {
-                self.toggle_clip_play();
-            }
-            let mut scrub = self.anim_scrub.min(n - 1) as u32;
-            if ui.add(egui::Slider::new(&mut scrub, 0..=last).text("frame")).changed() {
-                self.anim_clip_playing = false;
-                self.set_scrub(scrub as usize);
-            }
-        });
     }
 
     /// The picked-frame thumbnail strip for the selected card; click to drop.
@@ -1818,6 +1814,7 @@ impl ShellApp {
         let markers = anim::auto_loop_markers(&frames);
         let picks = anim::pick_loop_frames(&frames, markers, self.anim_target_frames as usize);
         let thumbs = vec![None; frames.len()];
+        let keyed_thumbs = vec![None; frames.len()];
         self.anim_candidates.push(ClipCandidate {
             clip,
             mime,
@@ -1829,6 +1826,8 @@ impl ShellApp {
             seed: self.anim_seed_fixed.then_some(self.anim_seed),
             parent: self.anim_pending_parent.take(),
             card_texture: None,
+            keyed_thumbs,
+            keyed_sig: None,
             frames,
         });
         let idx = self.anim_candidates.len() - 1;
@@ -1862,7 +1861,9 @@ impl ShellApp {
             canvas_width: cw,
             canvas_height: ch,
             alpha_threshold: 8,
-            chroma: None,
+            // When the studio's "remove background on Land" is set, key the
+            // backdrop out during normalize so the loop lands already stripped.
+            chroma: crate::studio::land_chroma(self.studio.remove_on_land, self.bg_key_color, self.bg_tolerance),
             reference_height: None,
             bottom_margin: 0,
         };
@@ -2298,7 +2299,7 @@ fn pixel_data_to_pixel_buffer(pixels: &PixelData) -> Option<PixelBuffer> {
 
 /// Converts a decoded clip frame into a [`PixelBuffer`] for the canvas, reusing
 /// the exact mechanism the reference-sheet preview uses.
-fn video_frame_to_pixel_buffer(frame: &VideoFrame) -> Option<PixelBuffer> {
+pub(crate) fn video_frame_to_pixel_buffer(frame: &VideoFrame) -> Option<PixelBuffer> {
     PixelBuffer::from_raw(frame.width, frame.height, frame.width * 4, frame.pixels.clone()).ok()
 }
 

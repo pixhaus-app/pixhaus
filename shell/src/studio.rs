@@ -25,8 +25,12 @@ use eframe::egui;
 use tokio_util::sync::CancellationToken;
 
 use pixhaus_ai::backends::fal::{FAL_I2V, FAL_SEEDANCE};
+use pixhaus_core::canvas::PixelBuffer;
+use pixhaus_core::project::Rgba;
+use pixhaus_core::transforms::normalize::{ChromaKey, chroma_key, detect_key_color};
 
 use crate::ai::{self, FirstFrameJob};
+use crate::anim::VideoFrame;
 use crate::app::{AnimPlayMode, JobStatus, ShellApp, Workspace};
 
 /// The studio's ordered stages. Navigation is free — the rail lets you step back
@@ -289,6 +293,16 @@ pub(crate) struct StudioState {
     pub landed: bool,
     /// Which scrubber handle a drag is currently moving.
     pub drag_handle: Option<ScrubHandle>,
+    /// Whether the raw-clip player loops at the end (vs stopping). Defaults on.
+    pub loop_playback: bool,
+    /// Whether the key eyedropper is armed: a click on the clip frame samples
+    /// its colour into `bg_key_color`.
+    pub picking_key: bool,
+    /// Whether the player shows each frame chroma-keyed (backdrop removed).
+    pub keyed_preview: bool,
+    /// Whether Land bakes the chroma key into the landed loop. Turns on when a
+    /// key is chosen; off leaves removal to the timeline op.
+    pub remove_on_land: bool,
 }
 
 /// The scrubber handle a drag is moving.
@@ -325,6 +339,10 @@ impl Default for StudioState {
             compare_other: None,
             landed: false,
             drag_handle: None,
+            loop_playback: true,
+            picking_key: false,
+            keyed_preview: false,
+            remove_on_land: false,
         }
     }
 }
@@ -985,64 +1003,175 @@ impl ShellApp {
 
     // ── Clip & loop stage ──────────────────────────────────────────────────────
 
-    /// The raw clip plays large, with the draggable loop scrubber beneath it.
-    /// In compare mode two clips play side by side.
+    /// The raw clip plays large in a player — the frame, the seekbar (which also
+    /// carries the loop handles), and a transport row. In compare mode two clips
+    /// play side by side over one transport.
     fn studio_clip_surface(&mut self, ui: &mut egui::Ui) {
         if self.anim_candidates.is_empty() {
-            centered_hint(ui, "Generate a clip in the Motion stage. It plays here so you can mark the loop.");
+            centered_hint(ui, "Generate a clip in the Motion stage. It plays here so you can watch it and mark the loop.");
             return;
         }
         let Some(i) = self.anim_selected else {
             centered_hint(ui, "Select a clip in the inspector gallery.");
             return;
         };
-        let scrubber_h = 56.0;
-        let total = ui.available_size();
-        let view_h = (total.y - scrubber_h - 12.0).max(80.0);
-
-        if self.studio.compare {
-            if let Some(other) = self.studio.compare_other.filter(|&o| o != i && o < self.anim_candidates.len()) {
-                let scrub = self.anim_scrub;
-                ui.allocate_ui(egui::vec2(total.x, view_h), |ui| {
-                    ui.columns(2, |cols| {
-                        self.studio_clip_frame(&mut cols[0], i, scrub);
-                        self.studio_clip_frame(&mut cols[1], other, scrub);
-                    });
-                });
-                ui.separator();
-                self.studio_scrubber(ui, i);
-                return;
-            }
-        }
-
-        ui.allocate_ui(egui::vec2(total.x, view_h), |ui| {
-            let scrub = self.anim_scrub;
-            self.studio_clip_frame(ui, i, scrub);
-        });
-        ui.separator();
-        self.studio_scrubber(ui, i);
+        self.studio_clip_player(ui, i);
     }
 
-    /// Draws clip `i`'s frame `idx` fit to the available area, building the
-    /// frame texture lazily into the candidate's thumbnail slot.
-    fn studio_clip_frame(&mut self, ui: &mut egui::Ui, i: usize, idx: usize) {
-        let ctx = ui.ctx().clone();
+    /// The raw-clip player: a fit-to-area frame (click to play/pause, or eyedrop
+    /// the key when armed), the seekbar with loop handles, and a transport row
+    /// with play/pause, the time readout, and the loop toggle.
+    fn studio_clip_player(&mut self, ui: &mut egui::Ui, i: usize) {
         let n = self.anim_candidates[i].frames.len();
         if n == 0 {
             return;
         }
+        let transport_h = 28.0;
+        let seekbar_h = 40.0;
+        let spacing = 8.0;
+        let total = ui.available_size();
+        let frame_h = (total.y - transport_h - seekbar_h - spacing).max(80.0);
+        let scrub = self.anim_scrub.min(n - 1);
+
+        // Frame area: the raw clip (or two clips side by side in compare mode).
+        let compare = self
+            .studio
+            .compare
+            .then_some(self.studio.compare_other)
+            .flatten()
+            .filter(|&o| o != i && o < self.anim_candidates.len());
+        if let Some(other) = compare {
+            ui.allocate_ui(egui::vec2(total.x, frame_h), |ui| {
+                ui.columns(2, |cols| {
+                    self.studio_clip_frame(&mut cols[0], i, scrub);
+                    self.studio_clip_frame(&mut cols[1], other, scrub);
+                });
+            });
+        } else {
+            ui.allocate_ui(egui::vec2(total.x, frame_h), |ui| {
+                self.studio_clip_frame_interactive(ui, i, scrub);
+            });
+        }
+
+        // The seekbar doubles as the loop-marker track.
+        self.studio_scrubber(ui, i);
+        self.studio_clip_transport(ui, i);
+    }
+
+    /// The transport row: play/pause, the `mm:ss / mm:ss` readout, the loop
+    /// toggle, and an eyedrop hint when the key picker is armed.
+    fn studio_clip_transport(&mut self, ui: &mut egui::Ui, i: usize) {
+        let n = self.anim_candidates[i].frames.len();
+        let fps = self.anim_candidates[i].fps;
+        ui.horizontal(|ui| {
+            let label = if self.anim_clip_playing { crate::icons::PAUSE } else { crate::icons::PLAY };
+            if ui.button(label).on_hover_text("Play / pause").clicked() {
+                self.toggle_clip_play();
+            }
+            ui.label(format_clip_time(self.anim_scrub.min(n.saturating_sub(1)), fps, n));
+            ui.checkbox(&mut self.studio.loop_playback, "Loop");
+            if self.studio.picking_key {
+                ui.label(egui::RichText::new("eyedrop armed — click the clip").small().weak());
+            }
+        });
+    }
+
+    /// Draws clip `i`'s frame `idx` fit to the available area (raw or keyed,
+    /// per the preview toggle), building the texture lazily.
+    fn studio_clip_frame(&mut self, ui: &mut egui::Ui, i: usize, idx: usize) {
+        let ctx = ui.ctx().clone();
+        if let Some((id, size)) = self.clip_frame_texture(&ctx, i, idx) {
+            fit_image_sized(ui, id, size);
+        }
+    }
+
+    /// Draws the frame and senses clicks: when the eyedropper is armed a click
+    /// samples the key colour from the raw frame; otherwise it toggles playback.
+    fn studio_clip_frame_interactive(&mut self, ui: &mut egui::Ui, i: usize, idx: usize) {
+        let ctx = ui.ctx().clone();
+        let Some((id, size)) = self.clip_frame_texture(&ctx, i, idx) else {
+            return;
+        };
+        let avail = ui.available_size();
+        let scale = (avail.x / size.x.max(1.0)).min(avail.y / size.y.max(1.0)).max(0.01);
+        let draw = size * scale;
+        let (outer, _) = ui.allocate_exact_size(avail, egui::Sense::hover());
+        let image_rect = egui::Rect::from_center_size(outer.center(), draw);
+        let uv = egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1.0, 1.0));
+        ui.painter().image(id, image_rect, uv, egui::Color32::WHITE);
+        let resp = ui.interact(image_rect, ui.id().with(("studio_clip_frame", i)), egui::Sense::click());
+        if resp.clicked() {
+            if self.studio.picking_key {
+                if let Some(pos) = resp.interact_pointer_pos() {
+                    let u = (pos.x - image_rect.left()) / image_rect.width();
+                    let v = (pos.y - image_rect.top()) / image_rect.height();
+                    if let Some(rgba) = self.anim_candidates[i].frames.get(idx).and_then(|f| frame_texel_rgba(f, u, v)) {
+                        self.set_studio_key(rgba);
+                        self.studio.picking_key = false;
+                    }
+                }
+            } else {
+                self.toggle_clip_play();
+            }
+        }
+    }
+
+    /// Returns the texture id and size for clip `i`'s frame `idx`, building it
+    /// lazily — keyed through the current chroma key when the keyed-preview
+    /// toggle is on (rebuilding the cache when the key changed), else raw.
+    fn clip_frame_texture(&mut self, ctx: &egui::Context, i: usize, idx: usize) -> Option<(egui::TextureId, egui::Vec2)> {
+        let n = self.anim_candidates[i].frames.len();
+        if n == 0 {
+            return None;
+        }
         let idx = idx.min(n - 1);
+        if self.studio.keyed_preview {
+            let sig = (self.bg_key_color, self.bg_tolerance);
+            if self.anim_candidates[i].keyed_sig != Some(sig) {
+                self.anim_candidates[i].keyed_sig = Some(sig);
+                self.anim_candidates[i].keyed_thumbs.iter_mut().for_each(|slot| *slot = None);
+            }
+            if self.anim_candidates[i].keyed_thumbs.get(idx).is_some_and(Option::is_none) {
+                let key = ChromaKey {
+                    color: self.bg_key_color,
+                    tolerance: self.bg_tolerance,
+                };
+                let tex = self.anim_candidates[i]
+                    .frames
+                    .get(idx)
+                    .and_then(crate::app::video_frame_to_pixel_buffer)
+                    .map(|buf| chroma_key(&buf, key))
+                    .and_then(|keyed| pixel_buffer_to_texture(ctx, "studio_keyed", &keyed));
+                if let (Some(tex), Some(slot)) = (tex, self.anim_candidates[i].keyed_thumbs.get_mut(idx)) {
+                    *slot = Some(tex);
+                }
+            }
+            return self.anim_candidates[i]
+                .keyed_thumbs
+                .get(idx)
+                .and_then(|t| t.as_ref())
+                .map(|t| (t.id(), t.size_vec2()));
+        }
         if self.anim_candidates[i].thumbs.get(idx).is_some_and(Option::is_none) {
             if let Some(frame) = self.anim_candidates[i].frames.get(idx) {
-                let tex = crate::app::video_frame_to_texture(&ctx, frame);
+                let tex = crate::app::video_frame_to_texture(ctx, frame);
                 if let Some(slot) = self.anim_candidates[i].thumbs.get_mut(idx) {
                     *slot = Some(tex);
                 }
             }
         }
-        if let Some(Some(tex)) = self.anim_candidates[i].thumbs.get(idx) {
-            fit_image(ui, tex);
-        }
+        self.anim_candidates[i]
+            .thumbs
+            .get(idx)
+            .and_then(|t| t.as_ref())
+            .map(|t| (t.id(), t.size_vec2()))
+    }
+
+    /// Sets the chroma key colour and arms "remove background on Land", so the
+    /// key chosen against the raw clip carries into the landed loop.
+    fn set_studio_key(&mut self, color: Rgba) {
+        self.bg_key_color = color;
+        self.studio.remove_on_land = true;
     }
 
     /// A draggable loop scrubber: a track with the marked `[start, end)` window
@@ -1122,6 +1251,9 @@ impl ShellApp {
         let painter = ui.painter_at(rect);
         let track = egui::Rect::from_min_max(egui::pos2(rect.left(), rect.center().y - 4.0), egui::pos2(rect.right(), rect.center().y + 4.0));
         painter.rect_filled(track, 3.0, ui.visuals().extreme_bg_color);
+        // Playback progress: a muted fill from the start of the track to the playhead.
+        let progress = egui::Rect::from_min_max(track.left_top(), egui::pos2(frame_to_x(scrub), track.bottom()));
+        painter.rect_filled(progress, 3.0, ui.visuals().weak_text_color());
         let win = egui::Rect::from_min_max(
             egui::pos2(frame_to_x(start), track.top()),
             egui::pos2(frame_to_x(end.saturating_sub(1)), track.bottom()),
@@ -1171,11 +1303,15 @@ impl ShellApp {
         }
         ui.horizontal(|ui| {
             ui.label("Play");
-            ui.selectable_value(&mut self.anim_play_mode, AnimPlayMode::Clip, "Clip");
-            ui.selectable_value(&mut self.anim_play_mode, AnimPlayMode::Loop, "Loop");
-            ui.selectable_value(&mut self.anim_play_mode, AnimPlayMode::Picks, "Picks");
+            ui.selectable_value(&mut self.anim_play_mode, AnimPlayMode::Clip, "Clip")
+                .on_hover_text("Play the whole raw clip");
+            ui.selectable_value(&mut self.anim_play_mode, AnimPlayMode::Loop, "Loop")
+                .on_hover_text("Play only the marked loop");
+            ui.selectable_value(&mut self.anim_play_mode, AnimPlayMode::Picks, "Picks")
+                .on_hover_text("Play only the picked frames");
         });
-        self.anim_transport(ui);
+
+        self.studio_key_controls(ui, i);
 
         ui.add_space(6.0);
         ui.label(
@@ -1221,6 +1357,55 @@ impl ShellApp {
             if self.studio.compare {
                 self.studio_compare_picker(ui, i);
             }
+        }
+    }
+
+    /// The background-key controls: the swatch, tolerance, Detect, eyedrop, a
+    /// keyed-preview toggle, and whether Land bakes the key in. Picked against
+    /// the raw clip so you judge the strip before committing; reuses
+    /// `bg_key_color` / `bg_tolerance`, the same key the timeline op uses.
+    fn studio_key_controls(&mut self, ui: &mut egui::Ui, i: usize) {
+        ui.add_space(6.0);
+        egui::CollapsingHeader::new(format!("{} Background key", crate::icons::PALETTE))
+            .id_salt("studio_key")
+            .default_open(true)
+            .show(ui, |ui| {
+                ui.horizontal(|ui| {
+                    ui.label("Key");
+                    let mut col = crate::editor::to_color32(self.bg_key_color);
+                    if ui.color_edit_button_srgba(&mut col).changed() {
+                        self.set_studio_key(crate::editor::from_color32(col));
+                    }
+                    if ui
+                        .button("Detect")
+                        .on_hover_text("Sample the clip frame's border for the backdrop colour")
+                        .clicked()
+                    {
+                        self.detect_studio_key(i);
+                    }
+                    let eyedrop = egui::Button::selectable(self.studio.picking_key, format!("{} Eyedrop", crate::icons::PICKER));
+                    if ui.add(eyedrop).on_hover_text("Click the clip to sample its backdrop colour").clicked() {
+                        self.studio.picking_key = !self.studio.picking_key;
+                    }
+                });
+                ui.add(egui::Slider::new(&mut self.bg_tolerance, 0..=128).text("tolerance"));
+                ui.checkbox(&mut self.studio.keyed_preview, "Preview keyed")
+                    .on_hover_text("Show the clip with the backdrop removed");
+                ui.checkbox(&mut self.studio.remove_on_land, "Remove background on Land")
+                    .on_hover_text("Bake this key into the loop when it lands; off leaves removal to the timeline op");
+            });
+    }
+
+    /// Auto-detects the key colour from the selected clip frame's border.
+    fn detect_studio_key(&mut self, i: usize) {
+        let idx = self.anim_scrub.min(self.anim_candidates[i].frames.len().saturating_sub(1));
+        if let Some(color) = self.anim_candidates[i]
+            .frames
+            .get(idx)
+            .and_then(crate::app::video_frame_to_pixel_buffer)
+            .and_then(|buf| detect_key_color(&buf))
+        {
+            self.set_studio_key(color);
         }
     }
 
@@ -1433,11 +1618,24 @@ impl ShellApp {
         }
         ui.add_space(8.0);
         ui.separator();
-        ui.label(
-            egui::RichText::new("Background removal is a re-runnable timeline operation — strip the loop's backgrounds after landing, from the editor.")
-                .small()
-                .weak(),
-        );
+        if self.studio.remove_on_land {
+            ui.horizontal(|ui| {
+                ui.label(egui::RichText::new("Lands keyed with").small().weak());
+                let mut col = crate::editor::to_color32(self.bg_key_color);
+                if ui.color_edit_button_srgba(&mut col).changed() {
+                    self.set_studio_key(crate::editor::from_color32(col));
+                }
+                if ui.small_button("don't").on_hover_text("Leave removal to the timeline op instead").clicked() {
+                    self.studio.remove_on_land = false;
+                }
+            });
+        } else {
+            ui.label(
+                egui::RichText::new("Lands with the backdrop intact. Pick a key in the Clip stage to land it stripped, or remove it later from the timeline.")
+                    .small()
+                    .weak(),
+            );
+        }
     }
 
     /// Lands the picked frames and flags the session as landed.
@@ -1456,12 +1654,71 @@ fn centered_hint(ui: &mut egui::Ui, text: &str) {
 
 /// Draws `tex` scaled to fit the available area, preserving aspect, centered.
 fn fit_image(ui: &mut egui::Ui, tex: &egui::TextureHandle) {
-    let size = tex.size_vec2();
+    fit_image_sized(ui, tex.id(), tex.size_vec2());
+}
+
+/// Draws a texture by id+size scaled to fit the available area, centered.
+fn fit_image_sized(ui: &mut egui::Ui, id: egui::TextureId, size: egui::Vec2) {
     let avail = ui.available_size();
     let scale = (avail.x / size.x.max(1.0)).min(avail.y / size.y.max(1.0)).max(0.01);
     ui.centered_and_justified(|ui| {
-        ui.add(egui::Image::new((tex.id(), size * scale)));
+        ui.add(egui::Image::new((id, size * scale)));
     });
+}
+
+/// Builds a NEAREST egui texture from a [`PixelBuffer`], dropping any row
+/// padding. `None` if the buffer's rows don't form a tight RGBA image.
+fn pixel_buffer_to_texture(ctx: &egui::Context, name: &str, buf: &PixelBuffer) -> Option<egui::TextureHandle> {
+    let (w, h) = (buf.width(), buf.height());
+    let row_bytes = (w * 4) as usize;
+    let mut tight = Vec::with_capacity(row_bytes * h as usize);
+    for y in 0..h {
+        let row = buf.row(y)?;
+        tight.extend_from_slice(row.get(..row_bytes)?);
+    }
+    if tight.len() != row_bytes * h as usize {
+        return None;
+    }
+    let image = egui::ColorImage::from_rgba_unmultiplied([w as usize, h as usize], &tight);
+    Some(ctx.load_texture(name, image, egui::TextureOptions::NEAREST))
+}
+
+/// Reads the RGBA at normalized clip coordinates `(u, v)` in `0.0..=1.0`,
+/// mapping them to a texel of `frame`. `None` for an empty or malformed frame.
+#[must_use]
+fn frame_texel_rgba(frame: &VideoFrame, u: f32, v: f32) -> Option<Rgba> {
+    if frame.width == 0 || frame.height == 0 {
+        return None;
+    }
+    let x = ((u.clamp(0.0, 1.0) * frame.width as f32) as u32).min(frame.width - 1);
+    let y = ((v.clamp(0.0, 1.0) * frame.height as f32) as u32).min(frame.height - 1);
+    let idx = ((y * frame.width + x) * 4) as usize;
+    let p = frame.pixels.get(idx..idx + 4)?;
+    Some(Rgba::new(p[0], p[1], p[2], p[3]))
+}
+
+/// Formats a clip position as `m:ss / m:ss` from the current frame, the fps, and
+/// the total frame count. The total reads the last frame's time, so the readout
+/// reaches its end exactly at the final frame.
+#[must_use]
+fn format_clip_time(frame: usize, fps: u32, total: usize) -> String {
+    let fps = fps.max(1);
+    let cur = frame as u32 / fps;
+    let dur = total.saturating_sub(1) as u32 / fps;
+    format!("{} / {}", fmt_mmss(cur), fmt_mmss(dur))
+}
+
+/// Formats whole seconds as `m:ss`.
+fn fmt_mmss(secs: u32) -> String {
+    format!("{}:{:02}", secs / 60, secs % 60)
+}
+
+/// The chroma key to bake into Land: `Some` when "remove background on Land" is
+/// set, else `None` (removal left to the timeline op). A pure seam for testing
+/// the Land wiring.
+#[must_use]
+pub(crate) fn land_chroma(remove_on_land: bool, color: Rgba, tolerance: u8) -> Option<ChromaKey> {
+    remove_on_land.then_some(ChromaKey { color, tolerance })
 }
 
 /// Renders a spinner+message for a running job, or an error line for a failure.
@@ -1577,5 +1834,61 @@ mod tests {
         };
         // Custom contributes no kind fragment, just the view.
         assert!(!custom.motion_scaffold().contains("cycle"));
+    }
+
+    /// A 2x2 frame with a distinct colour in each quadrant.
+    fn quad_frame() -> VideoFrame {
+        VideoFrame {
+            pixels: vec![
+                10, 20, 30, 255, // (0,0)
+                40, 50, 60, 255, // (1,0)
+                70, 80, 90, 255, // (0,1)
+                100, 110, 120, 255, // (1,1)
+            ],
+            width: 2,
+            height: 2,
+            timestamp_ms: 0,
+        }
+    }
+
+    #[test]
+    fn frame_texel_rgba_maps_corners_to_quadrants() {
+        let f = quad_frame();
+        assert_eq!(frame_texel_rgba(&f, 0.0, 0.0), Some(Rgba::new(10, 20, 30, 255)));
+        assert_eq!(frame_texel_rgba(&f, 0.99, 0.0), Some(Rgba::new(40, 50, 60, 255)));
+        assert_eq!(frame_texel_rgba(&f, 0.0, 0.99), Some(Rgba::new(70, 80, 90, 255)));
+        assert_eq!(frame_texel_rgba(&f, 0.99, 0.99), Some(Rgba::new(100, 110, 120, 255)));
+        // Out-of-range coords clamp into the frame rather than reading past it.
+        assert_eq!(frame_texel_rgba(&f, 5.0, 5.0), Some(Rgba::new(100, 110, 120, 255)));
+    }
+
+    #[test]
+    fn frame_texel_rgba_rejects_empty_frame() {
+        let empty = VideoFrame {
+            pixels: Vec::new(),
+            width: 0,
+            height: 0,
+            timestamp_ms: 0,
+        };
+        assert_eq!(frame_texel_rgba(&empty, 0.5, 0.5), None);
+    }
+
+    #[test]
+    fn format_clip_time_handles_sub_minute_and_over_minute() {
+        // 25th frame at 10 fps is 2s in; a 60-frame clip's last frame (59) is 5s.
+        assert_eq!(format_clip_time(25, 10, 60), "0:02 / 0:05");
+        // Over a minute: 700 frames at 10 fps is 70s.
+        assert_eq!(format_clip_time(700, 10, 800), "1:10 / 1:19");
+        // A zero fps is treated as 1 fps, not a divide-by-zero.
+        assert_eq!(format_clip_time(3, 0, 4), "0:03 / 0:03");
+    }
+
+    #[test]
+    fn land_chroma_is_some_only_when_removing() {
+        let color = Rgba::new(255, 0, 255, 255);
+        let keyed = land_chroma(true, color, 24).expect("keyed");
+        assert_eq!(keyed.color, color);
+        assert_eq!(keyed.tolerance, 24);
+        assert!(land_chroma(false, color, 24).is_none());
     }
 }
