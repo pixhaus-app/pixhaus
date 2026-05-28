@@ -7,6 +7,57 @@
 //! request it cannot satisfy. Implemented as a raw HTTP client for
 //! consistency with the other adapters.
 //!
+//! # How the OpenAI image API works
+//!
+//! Two endpoints, and the split is the thing to remember:
+//!
+//! - `/v1/images/generations` is text-only: prompt in, image out. It has **no
+//!   reference-image input at all**, and its `style` field is the unrelated
+//!   dall-e-3 "vivid"/"natural" knob — not our `ImageGenRequest::style_image`.
+//! - `/v1/images/edits` is the only endpoint that accepts input images: a
+//!   multipart `image[]` array (up to 16 for gpt-image), an optional `mask`, and
+//!   a prompt. It serves both literal edits and "generate conditioned on a
+//!   reference".
+//!
+//! So this adapter routes by *content*, not by request type: an `ImageGenRequest`
+//! carrying **any** `reference_images` is sent to `/images/edits` (the anchor
+//! rides in `image[]`); a bare prompt goes to `/images/generations`. See
+//! `generate_image`. That is why the studio's first-frame generation — which
+//! passes the approved anchor as a reference — actually reaches the model even
+//! though `/images/generations` has no reference parameter.
+//!
+//! Fields with no OpenAI wire equivalent are dropped: `style_image` (a
+//! FAL/IP-adapter concept), `negative_prompt`, `seed`, and `steps`.
+//!
+//! ## gpt-image vs dall-e
+//!
+//! - gpt-image (`gpt-image-1`/`-2`/`-mini`, `chatgpt-image-latest`): returns
+//!   base64 by default (no `response_format`), takes `output_format` (we send
+//!   `png`), and supports streaming (`stream: true` + `partial_images: 0..=3`).
+//! - dall-e (`dall-e-2`/`-3`): uses `response_format: b64_json`, no streaming.
+//!
+//! `is_gpt_image_model` is the switch; the differences are applied in
+//! `build_image_generation_body` and the multipart edit/reference paths.
+//!
+//! ## Sizes
+//!
+//! gpt-image-1 accepts only `1024x1024`, `1536x1024`, `1024x1536`. gpt-image-2
+//! also accepts arbitrary `WIDTHxHEIGHT` as long as both are divisible by 16, the
+//! aspect is within 1:3..3:1, and it is <= 3840x2160. To stay safe across models
+//! this adapter snaps every gpt-image request to the nearest of the three
+//! standard sizes by aspect (`snap_gpt_image_size`), then downscales the result
+//! back to the caller's exact width/height (`fit_images_to_request`) so the
+//! `ImageGenRequest` width/height contract holds. dall-e sizes pass through
+//! verbatim. (To honor true arbitrary gpt-image-2 sizes, relax the snap — it is
+//! deliberately conservative today.)
+//!
+//! ## Streaming
+//!
+//! Only a single gpt-image request streams (`use_image_stream`): the SSE events
+//! are `image_generation.partial_image` / `.completed` (and `image_edit.*` on the
+//! edit path), parsed by `parse_openai_image_stream`. Multi-image (`n > 1`) and
+//! dall-e stay on the buffered JSON path.
+//!
 //! # Models
 //!
 //! - Image generation: `gpt-image-2` (default); override per-request.
@@ -110,6 +161,10 @@ impl OpenAiBackend {
         self
     }
 
+    /// Generates an image from `req`. Routes by content (see the module docs):
+    /// with any `reference_images` the request goes to `/images/edits`
+    /// (`generate_image_with_references`) because `/images/generations` has no
+    /// reference-image input; a bare prompt uses `/images/generations`.
     #[allow(clippy::cast_precision_loss)]
     async fn generate_image(&self, req: &ImageGenRequest, progress: &VerbProgress, cancel: &CancellationToken) -> Result<ImageGenResponse> {
         let model = req.model.as_deref().unwrap_or(self.image_model.as_str()).to_owned();
@@ -166,6 +221,11 @@ impl OpenAiBackend {
         Ok(ImageGenResponse { images, model })
     }
 
+    /// Generates an image conditioned on `req.reference_images` via the
+    /// `/images/edits` endpoint — the only OpenAI image endpoint that accepts
+    /// input images. There is no reference parameter on `/images/generations`, so
+    /// the references are sent as multipart `image[]` parts (gpt-image) / `image`
+    /// (dall-e). `style_image` is intentionally not sent (no OpenAI equivalent).
     #[allow(clippy::cast_precision_loss)]
     async fn generate_image_with_references(
         &self,
@@ -227,6 +287,10 @@ impl OpenAiBackend {
         })
     }
 
+    /// Edits/inpaints `req.image` via `/images/edits`: the base image plus an
+    /// optional `mask` (white = repaint) and any extra `reference_images`, all as
+    /// multipart `image[]` parts. gpt-image returns base64 `png`; dall-e takes
+    /// `response_format: b64_json`. `style_image` has no OpenAI equivalent.
     #[allow(clippy::cast_precision_loss)]
     async fn edit_image(&self, req: &ImageEditRequest, progress: &VerbProgress, cancel: &CancellationToken) -> Result<ImageGenResponse> {
         let model = req.model.as_deref().unwrap_or(self.image_edit_model.as_str()).to_owned();
