@@ -814,7 +814,7 @@ impl ShellApp {
     /// a folder to file it, or a folder onto another to nest it, or onto the
     /// empty area to send it to the top level.
     #[allow(clippy::too_many_lines)] // one cohesive panel: render loop + action dispatch
-    fn library_panel(&mut self, ui: &mut egui::Ui) {
+    pub(crate) fn library_panel(&mut self, ui: &mut egui::Ui) {
         let mut new_sprite = false;
         let mut new_folder = false;
         ui.horizontal(|ui| {
@@ -2002,7 +2002,9 @@ impl ShellApp {
                 .selectable_label(self.workspace == Workspace::Create, format!("{} Create", crate::icons::SPARKLE))
                 .clicked()
             {
-                self.set_workspace(Workspace::Create);
+                // Create lands in the full-screen AI studio; the cockpit is
+                // reached from the studio's Anchor stage.
+                self.enter_studio();
             }
 
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {

@@ -26,7 +26,7 @@ use tokio_util::sync::CancellationToken;
 
 use pixhaus_ai::backends::fal::{FAL_I2V, FAL_SEEDANCE};
 use pixhaus_core::canvas::PixelBuffer;
-use pixhaus_core::project::Rgba;
+use pixhaus_core::project::{Rgba, SpriteId};
 use pixhaus_core::transforms::normalize::{ChromaKey, chroma_key, detect_key_color};
 
 use crate::ai::{self, FirstFrameJob};
@@ -303,6 +303,9 @@ pub(crate) struct StudioState {
     /// Whether Land bakes the chroma key into the landed loop. Turns on when a
     /// key is chosen; off leaves removal to the timeline op.
     pub remove_on_land: bool,
+    /// The sprite this session belongs to. When the active sprite changes the
+    /// session resets so one sprite's candidates never leak into another's.
+    pub owner: Option<SpriteId>,
 }
 
 /// The scrubber handle a drag is moving.
@@ -343,6 +346,7 @@ impl Default for StudioState {
             picking_key: false,
             keyed_preview: false,
             remove_on_land: false,
+            owner: None,
         }
     }
 }
@@ -399,13 +403,16 @@ impl ShellApp {
         self.set_workspace(Workspace::Draw);
     }
 
-    /// Lays out the studio's three regions under its header.
+    /// Lays out the studio's regions under its header: a left panel with the
+    /// sprite gallery and the stages rail, the center stage surface, and the
+    /// right inspector.
     pub(crate) fn studio_view(&mut self, ui: &mut egui::Ui) {
+        self.sync_studio_owner();
         egui::Panel::top("studio_header").resizable(false).show_inside(ui, |ui| self.studio_header(ui));
-        egui::Panel::left("studio_rail")
-            .resizable(false)
-            .exact_size(190.0)
-            .show_inside(ui, |ui| self.studio_rail(ui));
+        egui::Panel::left("studio_left")
+            .resizable(true)
+            .default_size(240.0)
+            .show_inside(ui, |ui| self.studio_left(ui));
         egui::Panel::right("studio_inspector")
             .resizable(true)
             .default_size(340.0)
@@ -425,13 +432,77 @@ impl ShellApp {
                 back = true;
             }
             ui.separator();
-            ui.heading(format!("{} Animation studio", crate::icons::FILM));
+            ui.heading(format!("{} AI studio", crate::icons::SPARKLE));
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                 ui.label(egui::RichText::new(self.studio.framing_label()).weak());
             });
         });
         if back {
             self.exit_studio();
+        }
+    }
+
+    /// The left panel: the sprite gallery on top, the stages rail below. The
+    /// gallery is the full sprite browser, so every sprite is selectable and
+    /// manageable without leaving the studio.
+    fn studio_left(&mut self, ui: &mut egui::Ui) {
+        ui.add_space(6.0);
+        ui.label(egui::RichText::new(format!("{} Sprites", crate::icons::IMAGE)).strong());
+        ui.add_space(4.0);
+        let gallery_h = (ui.available_height() * 0.5).max(120.0);
+        egui::ScrollArea::vertical()
+            .id_salt("studio_gallery")
+            .max_height(gallery_h)
+            .auto_shrink([false, false])
+            .show(ui, |ui| self.library_panel(ui));
+        ui.separator();
+        self.studio_rail(ui);
+    }
+
+    /// Resets the studio session when the active sprite changes, so one sprite's
+    /// candidates, masks, and clips never appear under another. Cancels any
+    /// in-flight first-frame job so its late results are dropped.
+    fn sync_studio_owner(&mut self) {
+        let active = self.doc.active_sprite().map(|s| s.id);
+        if self.studio.owner == active {
+            return;
+        }
+        if let Some(token) = self.studio.ff_cancel.take() {
+            token.cancel();
+        }
+        self.leave_animation_preview();
+        self.anim_candidates.clear();
+        self.anim_selected = None;
+        self.studio = StudioState::default();
+        self.studio.owner = active;
+        if self.studio.ff_prompt.trim().is_empty() {
+            self.studio.ff_prompt = self.studio.default_pose_prompt();
+        }
+    }
+
+    /// The stage that must finish before the current one is usable, if it is not
+    /// done yet. `None` once the current stage's prerequisite is satisfied (and
+    /// always for the Anchor stage, which has none).
+    fn studio_unmet_prereq(&self) -> Option<StudioStage> {
+        let idx = StudioStage::ALL.iter().position(|s| *s == self.studio.stage)?;
+        let prev = StudioStage::ALL.get(idx.checked_sub(1)?)?;
+        if self.studio_stage_complete(*prev) { None } else { Some(*prev) }
+    }
+
+    /// A centered guide shown in place of a gated stage's surface, with a button
+    /// that jumps back to the stage that must finish first.
+    fn studio_gate_cta(&mut self, ui: &mut egui::Ui, prereq: StudioStage) {
+        let mut go = false;
+        ui.vertical_centered(|ui| {
+            ui.add_space(ui.available_height() * 0.4);
+            ui.label(egui::RichText::new(format!("Finish the {} stage first.", prereq.label())).weak());
+            ui.add_space(8.0);
+            if ui.button(format!("{} Go to {}", crate::icons::LEFT, prereq.label())).clicked() {
+                go = true;
+            }
+        });
+        if go {
+            self.studio.stage = prereq;
         }
     }
 
@@ -475,6 +546,10 @@ impl ShellApp {
 
     /// The center surface for the current stage.
     fn studio_surface(&mut self, ui: &mut egui::Ui) {
+        if let Some(prereq) = self.studio_unmet_prereq() {
+            self.studio_gate_cta(ui, prereq);
+            return;
+        }
         match self.studio.stage {
             StudioStage::Anchor => self.studio_anchor_surface(ui),
             StudioStage::FirstFrame => self.studio_first_frame_surface(ui),
@@ -487,6 +562,10 @@ impl ShellApp {
 
     /// The right inspector for the current stage.
     fn studio_inspector(&mut self, ui: &mut egui::Ui) {
+        if self.studio_unmet_prereq().is_some() {
+            ui.label(egui::RichText::new("Finish the earlier stage to unlock this one.").weak());
+            return;
+        }
         if !self.backend_ready && !matches!(self.studio.stage, StudioStage::Clip | StudioStage::Pick) {
             self.key_entry(ui);
             ui.separator();
@@ -503,13 +582,22 @@ impl ShellApp {
 
     // ── Anchor stage ────────────────────────────────────────────────────────
 
-    /// Shows the approved anchor large, or guidance to approve one first.
+    /// Shows the approved anchor large, or a call-to-action to generate one. The
+    /// anchor conditions everything the studio generates, so it comes first.
     fn studio_anchor_surface(&mut self, ui: &mut egui::Ui) {
         let Some(anchor) = self.doc.active_anchor().map(<[u8]>::to_vec) else {
-            centered_hint(
-                ui,
-                "Approve a result as an anchor in the Cockpit first — it conditions everything the studio generates.",
-            );
+            let mut generate = false;
+            ui.vertical_centered(|ui| {
+                ui.add_space(ui.available_height() * 0.35);
+                ui.label("No anchor yet. The anchor conditions everything the studio generates, so make one first.");
+                ui.add_space(8.0);
+                if ui.button(format!("{} Generate an anchor", crate::icons::SPARKLE)).clicked() {
+                    generate = true;
+                }
+            });
+            if generate {
+                self.create_view = crate::cockpit::CreateView::Cockpit;
+            }
             return;
         };
         let ctx = ui.ctx().clone();
