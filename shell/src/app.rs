@@ -225,6 +225,17 @@ pub enum ShellMsg {
     /// A heavy canvas transform finished off-thread. Boxed because the payload
     /// (a whole sprite plus buffers) dwarfs every other message.
     TransformDone(Box<TransformResult>),
+    /// A Lospec palette fetch finished on its background thread: the slug it ran
+    /// for and either `(name, colors)` or an error string to surface inline.
+    /// Gated behind the `lospec` feature so the default build carries no Lospec
+    /// message.
+    #[cfg(feature = "lospec")]
+    LospecDone {
+        /// The slug the fetch ran for (for the status line).
+        slug: String,
+        /// The fetched `(name, colors)` or an error string.
+        result: Result<(String, Vec<Rgba>), String>,
+    },
     /// A keychain key-op finished off-thread: refreshed per-backend configured
     /// state, overall readiness, and any keychain error to surface.
     BackendsRefreshed {
@@ -1021,6 +1032,10 @@ impl ShellApp {
                         label,
                     } = *result;
                     self.finish_canvas_transform(sprite_id, before_sprite, before_buffers, after_buffers, new_size, label);
+                }
+                #[cfg(feature = "lospec")]
+                ShellMsg::LospecDone { slug, result } => {
+                    self.on_lospec_done(&slug, result);
                 }
                 ShellMsg::BackendsRefreshed {
                     openai_configured,

@@ -39,6 +39,15 @@ rfd.workspace = true
 mp4 = "0.14"
 openh264 = "0.9"
 egui-phosphor = "0.12.0"
+# Network HTTP client for the Lospec palette browser. Optional and gated behind
+# the `lospec` feature so the default build pulls in no network code; the fetch
+# runs on a background thread, never the egui update loop.
+reqwest = { workspace = true, optional = true }
+
+[features]
+# Off by default. Enables the Lospec palette browser, which fetches a palette by
+# slug over HTTP. The only feature in this crate that touches the network.
+lospec = ["dep:reqwest"]
 
 [dev-dependencies]
 # Blocks on async wgpu init in the reveal effect's headless GPU smoke test.

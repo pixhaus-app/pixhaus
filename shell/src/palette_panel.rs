@@ -331,6 +331,12 @@ impl ShellApp {
 
         ui.separator();
         self.import_export_section(ui);
+
+        #[cfg(feature = "lospec")]
+        {
+            ui.separator();
+            self.lospec_section(ui);
+        }
     }
 
     /// The palette switcher: a combo box over the active sprite's palettes plus
@@ -598,6 +604,102 @@ impl ShellApp {
         match std::fs::write(&path, bytes) {
             Ok(()) => self.editor.palette_io_error = None,
             Err(e) => self.editor.palette_io_error = Some(format!("Export failed: {e}")),
+        }
+    }
+
+    /// The "Lospec" section: fetch a palette from lospec.com by slug (or pasted
+    /// URL) into a new palette. The fetch runs on a background thread — v2 shell
+    /// is synchronous egui, so a blocking request inline would freeze the frame
+    /// loop — and its result lands in [`Self::on_lospec_done`] off the channel.
+    /// Gated behind the `lospec` feature; the default build omits it entirely so
+    /// no network code ships.
+    #[cfg(feature = "lospec")]
+    fn lospec_section(&mut self, ui: &mut egui::Ui) {
+        egui::CollapsingHeader::new("Lospec")
+            .id_salt("palette_lospec")
+            .default_open(false)
+            .show(ui, |ui| {
+                ui.label(egui::RichText::new("Import a palette from lospec.com by name or URL.").weak());
+                let mut fetch = false;
+                ui.horizontal(|ui| {
+                    let field = ui.add(
+                        egui::TextEdit::singleline(&mut self.editor.lospec_slug)
+                            .hint_text("e.g. aap-16")
+                            .desired_width(120.0),
+                    );
+                    let can_fetch = !self.editor.lospec_in_flight && self.doc.active_sprite().is_some();
+                    // Enter in the field, or the button, both trigger the fetch.
+                    if field.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter)) {
+                        fetch = true;
+                    }
+                    if ui
+                        .add_enabled(can_fetch, egui::Button::new(format!("{} Fetch", icons::DOWNLOAD)))
+                        .on_disabled_hover_text(if self.editor.lospec_in_flight {
+                            "A fetch is already running"
+                        } else {
+                            "Select a sprite first"
+                        })
+                        .clicked()
+                    {
+                        fetch = true;
+                    }
+                    if self.editor.lospec_in_flight {
+                        ui.spinner();
+                    }
+                });
+                if fetch {
+                    self.start_lospec_fetch();
+                }
+                match &self.editor.lospec_status {
+                    Some(Ok(())) => {
+                        ui.colored_label(egui::Color32::from_rgb(120, 190, 120), "Palette imported.");
+                    }
+                    Some(Err(err)) => {
+                        ui.colored_label(egui::Color32::from_rgb(220, 90, 90), err);
+                    }
+                    None => {}
+                }
+            });
+    }
+
+    /// Normalizes the typed slug and spawns the background fetch. A blank field
+    /// is a no-op; an in-flight fetch blocks a second start.
+    #[cfg(feature = "lospec")]
+    fn start_lospec_fetch(&mut self) {
+        if self.editor.lospec_in_flight {
+            return;
+        }
+        let slug = crate::lospec::normalize_slug(&self.editor.lospec_slug);
+        if slug.is_empty() {
+            self.editor.lospec_status = Some(Err("Enter a Lospec palette name or URL.".to_owned()));
+            return;
+        }
+        self.editor.lospec_in_flight = true;
+        self.editor.lospec_status = None;
+        crate::lospec::spawn_fetch(self.egui_ctx.clone(), self.tx.clone(), slug);
+    }
+
+    /// Lands a finished Lospec fetch: on success, allocate a fresh [`PaletteId`],
+    /// create a palette named after the result, append its colours in one
+    /// [`push_sprite_edit`], and select it; on failure, surface the error inline.
+    /// Mirrors the create-then-append shape the switcher's create path uses.
+    #[cfg(feature = "lospec")]
+    pub(crate) fn on_lospec_done(&mut self, _slug: &str, result: Result<(String, Vec<Rgba>), String>) {
+        self.editor.lospec_in_flight = false;
+        match result {
+            Ok((name, colors)) => {
+                // Allocate the id before the edit so the closure references a
+                // stable id, matching the playbook's allocate-then-edit rule.
+                let id = PaletteId::new(self.doc.alloc_id());
+                push_sprite_edit(&mut self.editor, &mut self.doc, "Import Lospec palette", move |sprite| {
+                    sprite.palettes.push(Palette::from_colors(id, name, colors));
+                });
+                self.editor.active_palette_id = Some(id);
+                self.editor.lospec_status = Some(Ok(()));
+            }
+            Err(err) => {
+                self.editor.lospec_status = Some(Err(format!("Lospec import failed: {err}")));
+            }
         }
     }
 

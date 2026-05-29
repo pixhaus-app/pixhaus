@@ -633,6 +633,21 @@ pub struct EditorState {
     /// above the swatch grid clicks one back into the foreground. View state,
     /// never serialized.
     pub recent_colors: VecDeque<Rgba>,
+    /// Palette panel (Lospec browser): the slug or URL the artist types into the
+    /// Lospec import field, e.g. `aap-16`. Gated behind the `lospec` feature so
+    /// the default build carries no Lospec UI state. View state, never serialized.
+    #[cfg(feature = "lospec")]
+    pub lospec_slug: String,
+    /// Palette panel (Lospec browser): the latest fetch status — `None` when idle,
+    /// `Some(Ok(()))` after a success, `Some(Err(msg))` for the inline error. Set
+    /// off the background fetch thread's result. Gated behind the `lospec` feature.
+    /// View state, never serialized.
+    #[cfg(feature = "lospec")]
+    pub lospec_status: Option<Result<(), String>>,
+    /// Palette panel (Lospec browser): whether a fetch is in flight, disabling the
+    /// import button until the result lands. Gated behind the `lospec` feature.
+    #[cfg(feature = "lospec")]
+    pub lospec_in_flight: bool,
     /// Timeline: cel-thumbnail edge length in points.
     pub cel_size: f32,
     /// Timeline: draft name for a new frame tag.
@@ -757,6 +772,12 @@ impl Default for EditorState {
             export_format: PaletteExportFormat::default(),
             palette_io_error: None,
             recent_colors: VecDeque::new(),
+            #[cfg(feature = "lospec")]
+            lospec_slug: String::new(),
+            #[cfg(feature = "lospec")]
+            lospec_status: None,
+            #[cfg(feature = "lospec")]
+            lospec_in_flight: false,
             cel_size: 48.0,
             new_tag_name: String::new(),
             layer_rename: None,

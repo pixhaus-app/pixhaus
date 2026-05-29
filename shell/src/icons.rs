@@ -94,6 +94,9 @@ pub const NEXT: &str = p::SKIP_FORWARD;
 pub const REPEAT: &str = p::REPEAT;
 
 // Colour / misc.
+// Used only by the `lospec` feature's import button; dead in the default build.
+#[cfg_attr(not(feature = "lospec"), allow(dead_code))]
+pub const DOWNLOAD: &str = p::DOWNLOAD_SIMPLE;
 pub const SWAP: &str = p::SWAP;
 pub const UNDO: &str = p::ARROW_COUNTER_CLOCKWISE;
 pub const REDO: &str = p::ARROW_CLOCKWISE;
