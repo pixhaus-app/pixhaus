@@ -560,7 +560,9 @@ pub struct ClipResult {
 /// Loop detection, frame picking, background removal, and normalize do not run
 /// here; the shell drives them. `cancel` aborts a long i2v job. `epoch` tags
 /// every message so the shell can drop a canceled or superseded run's results.
-pub fn spawn_clip(handle: &Handle, runtime: Arc<VerbRuntime>, ctx: egui::Context, tx: Sender<ShellMsg>, job: AnimJob, cancel: CancellationToken, epoch: u64) {
+/// `job_id` is the durable-queue id the terminal messages carry so the shell
+/// marks the right record `Done`/`Error`.
+pub fn spawn_clip(handle: &Handle, runtime: Arc<VerbRuntime>, ctx: egui::Context, tx: Sender<ShellMsg>, job: AnimJob, cancel: CancellationToken, epoch: u64, job_id: u64) {
     handle.spawn(async move {
         let progress_tx = tx.clone();
         let progress_ctx = ctx.clone();
@@ -573,10 +575,10 @@ pub fn spawn_clip(handle: &Handle, runtime: Arc<VerbRuntime>, ctx: egui::Context
         };
         match generate_clip(&runtime, &job, &cancel, &progress).await {
             Ok(ClipResult { clip, mime, frames }) => {
-                let _ = tx.send(ShellMsg::ClipReady { epoch, clip, mime, frames });
+                let _ = tx.send(ShellMsg::ClipReady { epoch, job_id, clip, mime, frames });
             }
             Err(error) => {
-                let _ = tx.send(ShellMsg::ClipFailed { epoch, error });
+                let _ = tx.send(ShellMsg::ClipFailed { epoch, job_id, error });
             }
         }
         ctx.request_repaint();

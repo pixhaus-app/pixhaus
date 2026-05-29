@@ -148,6 +148,9 @@ pub enum ShellMsg {
     ClipReady {
         /// Generation epoch this result belongs to; stale ones are dropped.
         epoch: u64,
+        /// Durable job id, so the queue can mark this run `Done` and persist the
+        /// clip blob.
+        job_id: u64,
         /// Raw clip bytes, exactly as the backend returned them.
         clip: Vec<u8>,
         /// MIME type of the clip.
@@ -159,6 +162,8 @@ pub enum ShellMsg {
     ClipFailed {
         /// Generation epoch this failure belongs to; stale ones are dropped.
         epoch: u64,
+        /// Durable job id, so the queue can mark this run `Error`.
+        job_id: u64,
         /// Failure reason.
         error: String,
     },
@@ -558,10 +563,16 @@ pub struct ShellApp {
     anim_play_cursor: usize,
     /// When the current clip frame was shown (drives the transport tick).
     anim_clip_last_advance: Instant,
-    /// Cancel handle for the Generate stage's i2v await.
-    anim_cancel: Option<CancellationToken>,
+    /// Durable i2v job queue: owns each clip run's lifecycle, its cancel token,
+    /// and on-disk persistence so an in-flight or finished clip survives an app
+    /// restart. Mutated through `&mut self` — single owner, no lock.
+    pub(crate) anim_jobs: crate::anim_jobs::AnimJobQueue,
+    /// Id of the clip job currently in flight, if any. `cancel_clip` reads this
+    /// to cancel the right job; cleared on any terminal transition.
+    anim_job_id: Option<u64>,
     /// Monotonic generation id. Bumped on every Generate and on Cancel so a
-    /// canceled or superseded clip's late messages are dropped.
+    /// canceled or superseded clip's late messages are dropped. Distinct from a
+    /// job id: the epoch drops stale *messages*, the id names a *durable record*.
     anim_gen_epoch: u64,
     /// Lineage parent captured by a re-roll/branch, stamped on the next clip
     /// card when it lands. `None` for a from-scratch generation.
@@ -864,7 +875,8 @@ impl ShellApp {
             anim_play_indices: Vec::new(),
             anim_play_cursor: 0,
             anim_clip_last_advance: Instant::now(),
-            anim_cancel: None,
+            anim_jobs: crate::anim_jobs::AnimJobQueue::new(),
+            anim_job_id: None,
             anim_gen_epoch: 0,
             anim_pending_parent: None,
             studio: crate::studio::StudioState::default(),
@@ -1033,15 +1045,20 @@ impl ShellApp {
                         self.anim_status = JobStatus::Running(message);
                     }
                 }
-                ShellMsg::ClipReady { epoch, clip, mime, frames } => {
+                ShellMsg::ClipReady { epoch, job_id, clip, mime, frames } => {
+                    // Persist the durable record (and clip blob) even for a stale
+                    // result, so the job leaves Running rather than reloading as
+                    // Interrupted next launch.
+                    self.anim_jobs.finish_done(job_id, &mime, &clip);
                     if epoch == self.anim_gen_epoch {
                         self.on_clip_ready(clip, mime, frames);
                     }
                 }
-                ShellMsg::ClipFailed { epoch, error } => {
+                ShellMsg::ClipFailed { epoch, job_id, error } => {
+                    self.anim_jobs.finish_error(job_id, &error);
                     if epoch == self.anim_gen_epoch {
                         self.anim_status = JobStatus::Failed(error);
-                        self.anim_cancel = None;
+                        self.anim_job_id = None;
                     }
                 }
                 ShellMsg::FirstFrameProgress { epoch, message } => {
@@ -2410,8 +2427,10 @@ impl ShellApp {
         }
     }
 
-    /// Kicks off a clip generation on the tokio runtime, with a cancel
-    /// handle stored so the Cancel button can abort it.
+    /// Kicks off a clip generation on the tokio runtime. The run is registered
+    /// as a durable job so it survives an app restart (recovered as
+    /// `Interrupted`), and its cancel token rides on the queue so the Cancel
+    /// button can abort the right job.
     pub(crate) fn start_clip(&mut self) {
         let Some(anchor) = self.doc.active_anchor().map(<[u8]>::to_vec) else {
             return;
@@ -2419,6 +2438,12 @@ impl ShellApp {
         let Some(sprite) = self.doc.active_sprite() else {
             return;
         };
+        let Some(entity_id) = self.doc.active_entity_id() else {
+            return;
+        };
+        let sprite_id = sprite.id;
+        let seed = self.anim_seed_fixed.then_some(self.anim_seed);
+        let model = self.studio.i2v_model.model_id();
         let job = ai::AnimJob {
             canvas: (sprite.canvas.width, sprite.canvas.height),
             anchor_png: anchor,
@@ -2426,14 +2451,27 @@ impl ShellApp {
             // the clip path generates its own first frame from the anchor.
             first_frame_png: self.studio.approved_first_frame.clone(),
             motion_prompt: self.anim_motion.clone(),
-            i2v_model: Some(self.studio.i2v_model.model_id()),
+            i2v_model: Some(model.clone()),
             target_frames: self.anim_target_frames,
             fps: self.anim_fps,
-            seed: self.anim_seed_fixed.then_some(self.anim_seed),
+            seed,
         };
         self.record_recent_motion(&self.anim_motion.clone());
-        let cancel = CancellationToken::new();
-        self.anim_cancel = Some(cancel.clone());
+        // Register the durable job. `start` returns the id (for the terminal
+        // arms) and the cancel token (handed to the spawned task).
+        let (job_id, cancel) = self.anim_jobs.start(
+            entity_id,
+            sprite_id,
+            self.studio.facing.as_str().to_owned(),
+            Some(self.studio.kind.as_str().to_owned()),
+            model,
+            self.anim_motion.clone(),
+            self.anim_target_frames,
+            self.anim_fps,
+            seed,
+        );
+        self.anim_job_id = Some(job_id);
+        // The epoch stays as the message-staleness tag, distinct from the job id.
         self.anim_gen_epoch += 1;
         let epoch = self.anim_gen_epoch;
         self.anim_status = JobStatus::Running("starting".into());
@@ -2445,6 +2483,7 @@ impl ShellApp {
             job,
             cancel,
             epoch,
+            job_id,
         );
     }
 
@@ -2466,10 +2505,12 @@ impl ShellApp {
         );
     }
 
-    /// Cancels a running clip generation and clears the busy status.
+    /// Cancels the running clip generation and clears the busy status. Fires the
+    /// job's cancel token and flips its durable record to `Cancelled`.
     pub(crate) fn cancel_clip(&mut self) {
-        if let Some(cancel) = self.anim_cancel.take() {
-            cancel.cancel();
+        if let Some(id) = self.anim_job_id.take() {
+            self.anim_jobs.cancel(id);
+            self.anim_jobs.finish_cancelled(id);
         }
         // Bump the epoch so the aborted job's late messages are dropped.
         self.anim_gen_epoch += 1;
@@ -2480,7 +2521,7 @@ impl ShellApp {
     /// loop markers and picks, then selects it for editing.
     fn on_clip_ready(&mut self, clip: Vec<u8>, mime: String, frames: Vec<VideoFrame>) {
         self.anim_status = JobStatus::Idle;
-        self.anim_cancel = None;
+        self.anim_job_id = None;
         let markers = anim::auto_loop_markers(&frames);
         let picks = anim::pick_loop_frames(&frames, markers, self.anim_target_frames as usize);
         let thumbs = vec![None; frames.len()];

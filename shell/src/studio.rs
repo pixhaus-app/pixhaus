@@ -110,6 +110,16 @@ impl AnimKind {
             AnimKind::Custom => None,
         }
     }
+
+    /// A stable `snake_case` tag for the durable job record's `animation_kind`.
+    pub(crate) fn as_str(self) -> &'static str {
+        match self {
+            AnimKind::Idle => "idle",
+            AnimKind::Walk => "walk",
+            AnimKind::Attack => "attack",
+            AnimKind::Custom => "custom",
+        }
+    }
 }
 
 /// The facing direction the animation conditions on.
@@ -140,6 +150,16 @@ impl Facing {
             Facing::North => "back view, facing away",
             Facing::East => "side view, facing right",
             Facing::West => "side view, facing left",
+        }
+    }
+
+    /// A stable `snake_case` tag for the durable job record's `direction`.
+    pub(crate) fn as_str(self) -> &'static str {
+        match self {
+            Facing::South => "south",
+            Facing::North => "north",
+            Facing::East => "east",
+            Facing::West => "west",
         }
     }
 }
