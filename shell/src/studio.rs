@@ -1674,8 +1674,26 @@ impl ShellApp {
         if !self.backend_ready {
             ui.colored_label(ui.visuals().warn_fg_color, "No generation backend configured.");
         }
+
+        ui.add_space(6.0);
+        ui.separator();
+        // A user-supplied video bypasses i2v: it decodes into the same clip
+        // pipeline (Clip -> Pick -> Normalize -> Land), so no backend is needed.
+        if ui
+            .add_enabled(!busy, egui::Button::new(format!("{} Use a video file", crate::icons::UPLOAD)))
+            .on_hover_text("Import an mp4, mov, gif, or apng and loop it like a generated clip — no generation backend needed")
+            .clicked()
+        {
+            self.studio.landed = false;
+            self.clear_clip_lineage();
+            self.import_video_clip();
+            self.studio.stage = StudioStage::Clip;
+        }
+
         studio_status_line(ui, &self.anim_status);
-        if busy && ui.button("Cancel").clicked() {
+        // Cancel applies only to an i2v run (which holds a cancel token via its
+        // job id). A video import is a quick local decode with nothing to cancel.
+        if busy && self.anim_job_id.is_some() && ui.button("Cancel").clicked() {
             self.cancel_clip();
         }
 

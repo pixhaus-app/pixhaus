@@ -167,6 +167,24 @@ pub enum ShellMsg {
         /// Failure reason.
         error: String,
     },
+    /// A user-supplied video file finished decoding off the UI thread. It feeds
+    /// the same `on_clip_ready` path a generated clip uses; the i2v fields
+    /// (approved first frame, motion prompt) play no part. The result is `Err`
+    /// with a user-facing message when the pick was cancelled-then-failed or the
+    /// codec is unsupported.
+    VideoImported {
+        /// Entity captured when the picker opened, so the import records against
+        /// the right entity even if the active sprite changed since.
+        entity_id: pixhaus_core::project::EntityId,
+        /// Sprite captured when the picker opened.
+        sprite_id: SpriteId,
+        /// Frames-per-second used for the decode and the candidate.
+        fps: u32,
+        /// Loop-frame target captured when the picker opened.
+        target: u32,
+        /// The decoded clip (raw bytes, mime, frames), or a user-facing error.
+        result: Result<(Vec<u8>, String, Vec<VideoFrame>), String>,
+    },
     /// First-frame (studio seed-pose) generation progress.
     FirstFrameProgress {
         /// Generation epoch this message belongs to; stale ones are dropped.
@@ -614,8 +632,9 @@ pub struct ShellApp {
     /// restart. Mutated through `&mut self` — single owner, no lock.
     pub(crate) anim_jobs: crate::anim_jobs::AnimJobQueue,
     /// Id of the clip job currently in flight, if any. `cancel_clip` reads this
-    /// to cancel the right job; cleared on any terminal transition.
-    anim_job_id: Option<u64>,
+    /// to cancel the right job; cleared on any terminal transition. The Motion
+    /// inspector reads it to show Cancel only for a cancellable i2v run.
+    pub(crate) anim_job_id: Option<u64>,
     /// Monotonic generation id. Bumped on every Generate and on Cancel so a
     /// canceled or superseded clip's late messages are dropped. Distinct from a
     /// job id: the epoch drops stale *messages*, the id names a *durable record*.
@@ -1138,6 +1157,13 @@ impl ShellApp {
                         self.anim_job_id = None;
                     }
                 }
+                ShellMsg::VideoImported {
+                    entity_id,
+                    sprite_id,
+                    fps,
+                    target,
+                    result,
+                } => self.on_video_imported(entity_id, sprite_id, fps, target, result),
                 ShellMsg::FirstFrameProgress { epoch, message } => {
                     if epoch == self.studio.frame_gen.epoch {
                         self.studio.frame_gen.status = JobStatus::Running(message);
@@ -2630,6 +2656,28 @@ impl ShellApp {
     fn on_clip_ready(&mut self, clip: Vec<u8>, mime: String, frames: Vec<VideoFrame>) {
         self.anim_status = JobStatus::Idle;
         self.anim_job_id = None;
+        let motion = self.anim_motion.clone();
+        let fps = self.anim_fps;
+        let seed = self.anim_seed_fixed.then_some(self.anim_seed);
+        let parent = self.anim_pending_parent.take();
+        self.push_clip_candidate(clip, mime, frames, motion, fps, seed, parent);
+    }
+
+    /// Pushes a decoded clip as a new gallery card with auto-detected loop
+    /// markers and evenly-spaced picks, then selects it. Shared by the i2v result
+    /// path ([`on_clip_ready`]) and the user-video import path
+    /// ([`on_video_imported`]), which differ only in provenance (motion prompt,
+    /// fps, seed, lineage).
+    fn push_clip_candidate(
+        &mut self,
+        clip: Vec<u8>,
+        mime: String,
+        frames: Vec<VideoFrame>,
+        motion: String,
+        fps: u32,
+        seed: Option<u64>,
+        parent: Option<usize>,
+    ) {
         let markers = anim::auto_loop_markers(&frames);
         let picks = anim::pick_loop_frames(&frames, markers, self.anim_target_frames as usize);
         let thumbs = vec![None; frames.len()];
@@ -2640,10 +2688,10 @@ impl ShellApp {
             thumbs,
             markers,
             picks,
-            motion: self.anim_motion.clone(),
-            fps: self.anim_fps,
-            seed: self.anim_seed_fixed.then_some(self.anim_seed),
-            parent: self.anim_pending_parent.take(),
+            motion,
+            fps,
+            seed,
+            parent,
             card_texture: None,
             keyed_thumbs,
             keyed_sig: None,
@@ -2651,6 +2699,73 @@ impl ShellApp {
         });
         let idx = self.anim_candidates.len() - 1;
         self.select_clip(idx);
+    }
+
+    /// Picks a video file (off the UI thread), reads and decodes it through
+    /// [`anim::decode_clip`], and routes the frames through the same clip path an
+    /// i2v generation uses. The approved-first-frame and motion-prompt fields play
+    /// no part; the rest of the pipeline (Clip -> Pick -> Normalize -> Land) is
+    /// identical. The dialog, file read, and decode block, so they run on a
+    /// worker; the result returns over [`ShellMsg::VideoImported`].
+    pub(crate) fn import_video_clip(&mut self) {
+        let Some(entity_id) = self.doc.active_entity_id() else {
+            self.set_status("Approve an anchor before importing a video.");
+            return;
+        };
+        let Some(sprite) = self.doc.active_sprite() else {
+            return;
+        };
+        let sprite_id = sprite.id;
+        let fps = self.anim_fps;
+        let target = self.anim_target_frames;
+        let tx = self.tx.clone();
+        let ctx = self.egui_ctx.clone();
+        self.anim_status = JobStatus::Running("importing video".into());
+        self.runtime.handle().spawn_blocking(move || {
+            let result = pick_and_decode_video(fps);
+            let _ = tx.send(ShellMsg::VideoImported {
+                entity_id,
+                sprite_id,
+                fps,
+                target,
+                result,
+            });
+            ctx.request_repaint();
+        });
+    }
+
+    /// Lands a decoded user video as a clip candidate, or surfaces a clear error.
+    /// On success, when the job queue has a storage dir, the import is recorded as
+    /// a `Done` job tagged `model = "imported"` so it shows in the jobs history
+    /// alongside generated clips.
+    fn on_video_imported(
+        &mut self,
+        entity_id: pixhaus_core::project::EntityId,
+        sprite_id: SpriteId,
+        fps: u32,
+        target: u32,
+        result: Result<(Vec<u8>, String, Vec<VideoFrame>), String>,
+    ) {
+        self.anim_status = JobStatus::Idle;
+        match result {
+            Ok((clip, mime, frames)) => {
+                self.anim_jobs.record_import(
+                    entity_id,
+                    sprite_id,
+                    self.studio.facing.as_str().to_owned(),
+                    Some(self.studio.kind.as_str().to_owned()),
+                    &mime,
+                    target,
+                    fps,
+                    &clip,
+                );
+                // Imported clips have no i2v lineage, prompt, or seed.
+                self.anim_pending_parent = None;
+                self.push_clip_candidate(clip, mime, frames, "imported video".into(), fps, None, None);
+                self.set_status("Imported video clip.");
+            }
+            Err(err) => self.set_status(err),
+        }
     }
 
     /// The inputs that determine the normalize result for the current picks, or
@@ -3460,6 +3575,47 @@ pub(crate) fn video_frame_to_pixel_buffer(frame: &VideoFrame) -> Option<PixelBuf
     PixelBuffer::from_raw(frame.width, frame.height, frame.width * 4, frame.pixels.clone()).ok()
 }
 
+/// Maps a file extension to the MIME `anim::decode_clip` understands. `None`
+/// for an extension we never decode, so the caller can reject it before reading
+/// the file. Case-insensitive.
+fn mime_from_extension(ext: &str) -> Option<&'static str> {
+    match ext.to_ascii_lowercase().as_str() {
+        "gif" => Some("image/gif"),
+        "png" | "apng" => Some("image/apng"),
+        "mp4" | "m4v" => Some("video/mp4"),
+        "mov" => Some("video/quicktime"),
+        _ => None,
+    }
+}
+
+/// Worker-thread half of the video import: open the picker, sniff the MIME from
+/// the extension, read the bytes, and decode. Returns the raw clip, its MIME,
+/// and the decoded frames, or a user-facing error. `Ok` with an empty error is
+/// never produced; a cancelled dialog returns a benign "cancelled" message the
+/// caller shows as a status line. Blocks — call only from `spawn_blocking`.
+fn pick_and_decode_video(fps: u32) -> Result<(Vec<u8>, String, Vec<VideoFrame>), String> {
+    let Some(path) = rfd::FileDialog::new()
+        .set_title("Import a video clip")
+        .add_filter("Video / animation", &["mp4", "m4v", "mov", "gif", "png", "apng"])
+        .pick_file()
+    else {
+        return Err("Video import cancelled.".to_owned());
+    };
+    let ext = path.extension().and_then(|e| e.to_str()).unwrap_or_default();
+    let Some(mime) = mime_from_extension(ext) else {
+        return Err(format!("Unsupported file type \".{ext}\". Use mp4, mov, gif, or apng."));
+    };
+    let bytes = std::fs::read(&path).map_err(|e| format!("Could not read the file: {e}"))?;
+    let frames = anim::decode_clip(&bytes, mime, fps.max(1)).map_err(|e| match e {
+        anim::DecodeError::Unsupported(detail) => format!("Unsupported clip: {detail}. Use mp4/H.264, gif, or apng."),
+        anim::DecodeError::Decode(detail) => format!("Could not decode the clip: {detail}"),
+    })?;
+    if frames.is_empty() {
+        return Err("The clip decoded to zero frames.".to_owned());
+    }
+    Ok((bytes, mime.to_owned(), frames))
+}
+
 /// Loads a clip frame as a NEAREST-sampled egui texture for the pick strip.
 pub(crate) fn video_frame_to_texture(ctx: &egui::Context, frame: &VideoFrame) -> egui::TextureHandle {
     let size = [frame.width as usize, frame.height as usize];
@@ -3549,7 +3705,7 @@ impl eframe::App for ShellApp {
 
 #[cfg(test)]
 mod tests {
-    use super::{GridPrefs, MorphOp, MorphResult, SelectionMask, morph_mask, next_cursor, png_to_pixel_buffer, truncate_motion};
+    use super::{GridPrefs, MorphOp, MorphResult, SelectionMask, mime_from_extension, morph_mask, next_cursor, png_to_pixel_buffer, truncate_motion};
 
     // --- playback cursor: loop vs stop --------------------------------------
 
@@ -3578,6 +3734,35 @@ mod tests {
         // A zero-length order never advances, in either mode.
         assert_eq!(next_cursor(0, 0, true), None);
         assert_eq!(next_cursor(0, 0, false), None);
+    }
+
+    // --- video import: extension -> mime ------------------------------------
+
+    #[test]
+    fn mime_from_extension_maps_supported_video_types() {
+        // The decode-supported containers map to the MIME `decode_clip` matches.
+        assert_eq!(mime_from_extension("mp4"), Some("video/mp4"));
+        assert_eq!(mime_from_extension("m4v"), Some("video/mp4"));
+        assert_eq!(mime_from_extension("mov"), Some("video/quicktime"));
+        assert_eq!(mime_from_extension("gif"), Some("image/gif"));
+        assert_eq!(mime_from_extension("png"), Some("image/apng"));
+        assert_eq!(mime_from_extension("apng"), Some("image/apng"));
+    }
+
+    #[test]
+    fn mime_from_extension_is_case_insensitive() {
+        assert_eq!(mime_from_extension("MP4"), Some("video/mp4"));
+        assert_eq!(mime_from_extension("Gif"), Some("image/gif"));
+    }
+
+    #[test]
+    fn mime_from_extension_rejects_unsupported_types() {
+        // webm/avi/mkv have no native decode path, so the picker rejects them
+        // before reading the file rather than failing deep in the decoder.
+        assert_eq!(mime_from_extension("webm"), None);
+        assert_eq!(mime_from_extension("avi"), None);
+        assert_eq!(mime_from_extension("mkv"), None);
+        assert_eq!(mime_from_extension(""), None);
     }
 
     // --- selection morphology: grow / shrink / feather ----------------------

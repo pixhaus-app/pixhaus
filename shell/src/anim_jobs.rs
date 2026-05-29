@@ -252,6 +252,56 @@ impl AnimJobQueue {
         (id, token)
     }
 
+    /// Records an already-decoded clip — a user-supplied video, not an i2v run —
+    /// as a `Done` job with `model = "imported"`, writing its clip blob beside the
+    /// sidecar. There is no `Running` phase and no cancel token: the clip exists
+    /// before the record does. Returns the allocated id. If the blob cannot be
+    /// written the record is `Error`, mirroring [`finish_done`]'s honesty rule.
+    pub(crate) fn record_import(
+        &mut self,
+        entity_id: EntityId,
+        sprite_id: SpriteId,
+        direction: String,
+        kind: Option<String>,
+        mime: &str,
+        target_count: u32,
+        fps: u32,
+        clip: &[u8],
+    ) -> u64 {
+        let id = self.next_id;
+        self.next_id += 1;
+        let write_error: Option<String> = match self.clip_path(id, mime) {
+            Some(path) => match std::fs::write(&path, clip) {
+                Ok(()) => None,
+                Err(err) => {
+                    tracing::warn!(error = %err, id, "failed to write imported clip");
+                    Some(format!("failed to persist clip: {err}"))
+                }
+            },
+            None => None,
+        };
+        let job = AnimJobRecord {
+            id,
+            entity_id,
+            sprite_id,
+            direction,
+            animation_kind: kind,
+            model: "imported".into(),
+            motion: String::new(),
+            status: if write_error.is_some() { AnimJobStatus::Error } else { AnimJobStatus::Done },
+            created_at_ms: now_ms(),
+            target_count,
+            fps,
+            mime: mime.to_owned(),
+            seed: None,
+            error: write_error,
+        };
+        self.persist(&job);
+        self.jobs.insert(id, job);
+        self.prune();
+        id
+    }
+
     /// Marks a job done and writes its clip bytes beside the sidecar. If the clip
     /// cannot be persisted, the job ends as `Error` rather than a "success" whose
     /// clip cannot be fetched — mirroring the Tauri policy. With no storage dir
@@ -535,6 +585,43 @@ mod tests {
         let (bytes, mime) = q.read_clip(id).unwrap();
         assert_eq!(bytes, clip);
         assert_eq!(mime, "image/gif");
+    }
+
+    #[test]
+    fn record_import_marks_done_and_tags_imported() {
+        // A user-supplied clip records straight to Done with model = "imported"
+        // and no seed/motion, then reads back from disk.
+        let tmp = tempfile::tempdir().unwrap();
+        let dir = tmp.path().join("animation-jobs");
+        std::fs::create_dir_all(&dir).unwrap();
+        let mut q = AnimJobQueue {
+            next_id: 1,
+            jobs: HashMap::new(),
+            cancellations: HashMap::new(),
+            dir: Some(dir),
+        };
+        let clip = [4u8, 3, 2, 1];
+        let id = q.record_import(EntityId::new(8), SpriteId::new(8), "south".into(), Some("walk".into()), "image/gif", 6, 12, &clip);
+        let job = q.get(id).unwrap();
+        assert_eq!(job.status, AnimJobStatus::Done);
+        assert_eq!(job.model, "imported");
+        assert_eq!(job.motion, "");
+        assert_eq!(job.seed, None);
+        // The clip blob is readable, the way a generated Done job's is.
+        let (bytes, mime) = q.read_clip(id).unwrap();
+        assert_eq!(bytes, clip);
+        assert_eq!(mime, "image/gif");
+    }
+
+    #[test]
+    fn record_import_in_memory_marks_done_without_a_blob() {
+        // No storage dir: the import is still Done (the in-memory floor), but
+        // there is no blob to read.
+        let mut q = queue_without_disk();
+        let id = q.record_import(EntityId::new(1), SpriteId::new(1), "east".into(), None, "video/mp4", 4, 24, &[1, 2, 3]);
+        assert_eq!(q.get(id).unwrap().status, AnimJobStatus::Done);
+        assert_eq!(q.get(id).unwrap().model, "imported");
+        assert!(q.read_clip(id).is_none());
     }
 
     #[test]

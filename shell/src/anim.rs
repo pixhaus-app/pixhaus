@@ -427,4 +427,42 @@ mod tests {
         push_annexb(&mut out, &[0x67, 0x42]);
         assert_eq!(out, vec![0, 0, 0, 1, 0x67, 0x42]);
     }
+
+    /// Encodes a small multi-frame GIF in memory: `frames` solid-color frames
+    /// that ramp brightness so motion detection has signal to work with.
+    fn tiny_gif(frame_count: u8) -> Vec<u8> {
+        use image::codecs::gif::GifEncoder;
+        let (w, h) = (4u32, 4u32);
+        let mut out = Vec::new();
+        {
+            let mut encoder = GifEncoder::new(&mut out);
+            let gif_frames: Vec<image::Frame> = (0..frame_count)
+                .map(|i| {
+                    let v = i.saturating_mul(30);
+                    let buf = image::RgbaImage::from_pixel(w, h, image::Rgba([v, v, v, 255]));
+                    image::Frame::new(buf)
+                })
+                .collect();
+            encoder.encode_frames(gif_frames).unwrap();
+        }
+        out
+    }
+
+    #[test]
+    fn imported_gif_decodes_and_picks_a_loop() {
+        // The video-ingest glue: a user-supplied GIF runs the same decode -> loop
+        // -> pick path a generated clip does, and yields non-empty picks. This is
+        // the contract motion-from-video import depends on.
+        let gif = tiny_gif(8);
+        let frames = decode_clip(&gif, "image/gif", 12).expect("decode the fixture gif");
+        assert_eq!(frames.len(), 8, "all GIF frames decode");
+        assert_eq!((frames[0].width, frames[0].height), (4, 4));
+
+        let markers = auto_loop_markers(&frames);
+        let picks = pick_loop_frames(&frames, markers, 4);
+        assert!(!picks.is_empty(), "the ingest path picks at least one loop frame");
+        assert!(picks.len() <= frames.len(), "no pick exceeds the frame count");
+        assert!(picks.iter().all(|&p| p < frames.len()), "every pick indexes a real frame");
+        assert!(picks.windows(2).all(|w| w[0] < w[1]), "picks are strictly increasing: {picks:?}");
+    }
 }
