@@ -17,7 +17,7 @@ use std::collections::BTreeMap;
 
 use eframe::egui;
 use pixhaus_core::project::library::ai::ProjectAi;
-use pixhaus_core::project::{AssetId, ModelId, OperationKind, Quality, ReferenceRole, Rgba, TagDefinition, TagId};
+use pixhaus_core::project::{AssetId, EntityContent, EntityId, ModelId, OperationKind, Quality, ReferenceRole, Rgba, TagDefinition, TagId};
 
 use crate::app::ShellApp;
 use crate::cockpit::CockpitReference;
@@ -45,6 +45,8 @@ impl ShellApp {
 
         egui::ScrollArea::vertical().auto_shrink([false, false]).show(ui, |ui| {
             self.project_ai_section(ui);
+            ui.add_space(10.0);
+            self.style_corpus_section(ui);
             ui.add_space(10.0);
             self.asset_references_section(ui);
             ui.add_space(10.0);
@@ -136,6 +138,56 @@ impl ShellApp {
                 ai.default_candidate_count = count;
                 ai.per_operation_model_prefs = prefs;
             });
+        }
+    }
+
+    /// The style-corpus section: curate which sprite entities define the
+    /// project's look. Each project sprite entity gets an include/exclude
+    /// checkbox that writes [`ProjectAi::style_corpus`]; the corpus biases
+    /// future generations through style notes and composition — it does not
+    /// train a `LoRA` (out of scope). The shared `style_notes` editor lives in
+    /// [`Self::project_ai_section`] above, so this section is the entity-set
+    /// half of project style learning. Toggles route through
+    /// [`push_ai_library_edit`] so each is one undoable step.
+    fn style_corpus_section(&mut self, ui: &mut egui::Ui) {
+        // Snapshot the project sprite entities and the current corpus before
+        // borrowing `self` mutably to apply a toggle.
+        let entities: Vec<(EntityId, String)> = self
+            .doc
+            .project
+            .library
+            .entities
+            .iter()
+            .filter(|e| matches!(e.content, EntityContent::Sprites { .. }))
+            .map(|e| (e.id, e.name.clone()))
+            .collect();
+        let corpus = self.doc.project.library.ai.style_corpus.clone();
+
+        ui.label(egui::RichText::new(format!("{} Style corpus ({})", crate::icons::SPARKLE, corpus.len())).strong());
+        ui.label(
+            egui::RichText::new("Pick the sprite entities whose canonical sheets define this project's look. The corpus biases future generations; it does not train a model.")
+                .small()
+                .weak(),
+        );
+        ui.add_space(4.0);
+
+        if entities.is_empty() {
+            ui.label(egui::RichText::new("No sprite entities to include yet.").small().weak());
+            return;
+        }
+
+        let mut toggle: Option<(EntityId, bool)> = None;
+        egui::Frame::group(ui.style()).show(ui, |ui| {
+            for (id, name) in &entities {
+                let mut included = corpus.contains(id);
+                if ui.checkbox(&mut included, name).on_hover_text("Include this entity in the project style corpus").changed() {
+                    toggle = Some((*id, included));
+                }
+            }
+        });
+
+        if let Some((id, included)) = toggle {
+            self.set_corpus_membership(id, included);
         }
     }
 
@@ -540,6 +592,13 @@ impl ShellApp {
     pub(crate) fn delete_library_tag(&mut self, id: TagId) {
         delete_tag(&mut self.editor, &mut self.doc, id);
     }
+
+    /// Includes (`included = true`) or excludes entity `id` from the project's
+    /// style corpus as one undoable edit. A no-op when the membership already
+    /// matches `included`.
+    pub(crate) fn set_corpus_membership(&mut self, id: EntityId, included: bool) {
+        set_corpus_membership(&mut self.editor, &mut self.doc, id, included);
+    }
 }
 
 /// Creates a tag definition with id `id` and the (already-trimmed, non-empty)
@@ -586,6 +645,23 @@ fn delete_tag(editor: &mut EditorState, doc: &mut DocumentStore, id: TagId) {
         for entity in &mut doc.project.library.entities {
             entity.tags.retain(|t| *t != id);
             entity.ai.suggested_tags.retain(|t| *t != id);
+        }
+    });
+}
+
+/// Includes or excludes entity `id` in the project style corpus as one
+/// undoable [`crate::commands::AiLibraryEdit`]. Including is idempotent — an
+/// entity already in the corpus is not duplicated — and excluding drops every
+/// matching id. A toggle that does not change the set produces no undo entry
+/// (`push_ai_library_edit` skips a no-op edit).
+fn set_corpus_membership(editor: &mut EditorState, doc: &mut DocumentStore, id: EntityId, included: bool) {
+    push_ai_library_edit(editor, doc, "Edit style corpus", |ai| {
+        if included {
+            if !ai.style_corpus.contains(&id) {
+                ai.style_corpus.push(id);
+            }
+        } else {
+            ai.style_corpus.retain(|e| *e != id);
         }
     });
 }
@@ -723,7 +799,10 @@ mod tests {
     use pixhaus_core::project::library::ai::ProjectAi;
     use pixhaus_core::project::{AssetId, CharacterCard, EntityId, ReferenceAsset, ReferenceImage, ReferenceRole, Rgba, StyleSwatch, TagId};
 
-    use super::{add_tag, card_first_reference, delete_card, delete_reference, delete_swatch, delete_tag, recolor_tag, rename_card, rename_swatch, rename_tag, swatch_first_reference};
+    use super::{
+        add_tag, card_first_reference, delete_card, delete_reference, delete_swatch, delete_tag, recolor_tag, rename_card, rename_swatch, rename_tag,
+        set_corpus_membership, swatch_first_reference,
+    };
     use crate::commands::push_ai_library_edit;
     use crate::document::DocumentStore;
     use crate::editor::EditorState;
@@ -1032,5 +1111,40 @@ mod tests {
         assert_eq!(tags(&doc).len(), 1, "undo restores the tag definition");
         assert_eq!(entity(&doc).tags, vec![tag_id], "undo restores the entity's confirmed tag");
         assert_eq!(entity(&doc).ai.suggested_tags, vec![tag_id], "undo restores the entity's suggested tag");
+    }
+
+    // ── Task 13: style-corpus management ────────────────────────────────────
+
+    fn corpus(doc: &DocumentStore) -> &[EntityId] {
+        &doc.project.library.ai.style_corpus
+    }
+
+    #[test]
+    fn toggling_an_entity_into_the_corpus_updates_and_undoes() {
+        let mut doc = DocumentStore::new();
+        let mut editor = EditorState::default();
+        let sprite = doc.create_sprite("Hero", pixhaus_core::project::Size::new(16, 16));
+        let entity_id = sprite.entity_id;
+        assert!(corpus(&doc).is_empty(), "a fresh project has an empty style corpus");
+
+        // Including the entity adds its id once.
+        set_corpus_membership(&mut editor, &mut doc, entity_id, true);
+        assert_eq!(corpus(&doc), [entity_id], "including the entity adds it to the corpus");
+
+        // Including an already-included entity is idempotent and a no-op edit.
+        set_corpus_membership(&mut editor, &mut doc, entity_id, true);
+        assert_eq!(corpus(&doc), [entity_id], "re-including does not duplicate the id");
+
+        // Excluding drops it back out.
+        set_corpus_membership(&mut editor, &mut doc, entity_id, false);
+        assert!(corpus(&doc).is_empty(), "excluding removes the entity from the corpus");
+
+        // One undo restores the prior include; the redundant re-include made no entry.
+        editor.history.undo(&mut doc).expect("undo the exclude");
+        assert_eq!(corpus(&doc), [entity_id], "undo restores the included entity");
+
+        // A second undo unwinds the initial include back to empty.
+        editor.history.undo(&mut doc).expect("undo the include");
+        assert!(corpus(&doc).is_empty(), "undo restores the empty corpus");
     }
 }
