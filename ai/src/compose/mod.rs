@@ -188,7 +188,7 @@ pub fn compose(req: &ComposeRequest) -> Result<ComposedPrompt, ComposeError> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use pixhaus_core::project::library::composition::{Dimensions, PanelRect, StructureId, StructurePanel, StyleId};
+    use pixhaus_core::project::library::composition::{ArtStyleKind, Dimensions, PanelRect, StructureId, StructurePanel, StyleId};
 
     fn paneled() -> Structure {
         Structure {
@@ -237,6 +237,7 @@ mod tests {
         let style = Style {
             id: StyleId("st".into()),
             name: "S".into(),
+            kind: ArtStyleKind::default(),
             modifiers: "16-bit".into(),
             look_negatives: "blurry".into(),
             model_pref: None,

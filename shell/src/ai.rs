@@ -18,7 +18,7 @@ use pixhaus_ai::backends::{
     ApiKeyStore, BackendError, BackendProxy, BackgroundRemovalRequest, ImageEditRequest, ImageGenRequest, ImageToVideoRequest, InferenceRequest,
     InferenceResponse,
 };
-use pixhaus_ai::compose::builtins::{BUILTIN_DEFAULT_BASELINE, BuiltinLibrary, STRUCTURE_SINGLE_ID};
+use pixhaus_ai::compose::builtins::{BuiltinLibrary, STRUCTURE_SINGLE_ID, baseline_for};
 use pixhaus_ai::compose::{ComposeRequest, compose};
 use pixhaus_ai::plugin::{
     BackendCapabilities, CompositionLibraryView, PixelData, ProjectCompositionLibrary, VerbContext, VerbEffect, VerbId, VerbInputs, VerbProgress,
@@ -30,7 +30,7 @@ use pixhaus_ai::verbs::reference_sheet::{
 };
 use pixhaus_core::canvas::PixelBuffer;
 use pixhaus_core::project::library::ai::ProjectAi;
-use pixhaus_core::project::library::composition::{PromptId, PromptTemplate, PromptVariable, Structure, StructureId, Style, StyleId};
+use pixhaus_core::project::library::composition::{ArtStyleKind, PromptId, PromptTemplate, PromptVariable, Structure, StructureId, Style, StyleId};
 use pixhaus_core::project::{AnchorDirection, EntityId, PixelBufferId, ProjectMetadata, SheetVariantId};
 use pixhaus_core::transforms::normalize::{NormalizeOptions, normalize_frames};
 use tokio::runtime::Handle;
@@ -128,8 +128,11 @@ pub fn compose_preview(
     };
     let prompt = prompt_id.and_then(|id| view.prompt(&PromptId(id.to_owned())));
     let style = style_id.and_then(|id| view.style(&StyleId(id.to_owned())));
+    // Mirror the verb: house style_notes lead when set, else the baseline
+    // derives from the picked style's art-style kind (PixelArt by default).
+    let resolved_kind = style.map_or(ArtStyleKind::default(), |s| s.kind);
     let baseline = if style_notes.trim().is_empty() {
-        BUILTIN_DEFAULT_BASELINE
+        baseline_for(resolved_kind)
     } else {
         style_notes
     };
@@ -1050,7 +1053,7 @@ mod tests {
     use std::collections::BTreeMap;
 
     use pixhaus_core::project::library::ai::ProjectAi;
-    use pixhaus_core::project::library::composition::{Structure, StructureId, StructureOutput, Style, StyleId};
+    use pixhaus_core::project::library::composition::{ArtStyleKind, Structure, StructureId, StructureOutput, Style, StyleId};
 
     use super::{STRUCTURE_SINGLE_ID, compose_preview, structure_options, style_options};
 
@@ -1077,6 +1080,7 @@ mod tests {
         project.styles.push(Style {
             id: StyleId("project.style.1".to_owned()),
             name: "Zzz late".to_owned(),
+            kind: ArtStyleKind::default(),
             modifiers: String::new(),
             look_negatives: String::new(),
             model_pref: None,
@@ -1089,11 +1093,27 @@ mod tests {
     }
 
     #[test]
+    fn style_options_include_the_builtin_art_styles_name_sorted() {
+        let project = ProjectAi::default();
+        let opts = style_options(&project);
+        // The built-in art-style taxonomy surfaces in the picker.
+        for name in ["Pixel art", "Retro pixel", "Pixel inspired", "Clean HD", "Map style", "Default"] {
+            assert!(opts.iter().any(|(_, n)| n == name), "built-in style `{name}` must surface, got {opts:?}");
+        }
+        // The list is name-sorted, so display names are non-decreasing.
+        let names: Vec<&str> = opts.iter().map(|(_, n)| n.as_str()).collect();
+        let mut sorted = names.clone();
+        sorted.sort_unstable();
+        assert_eq!(names, sorted, "style options must be name-sorted");
+    }
+
+    #[test]
     fn compose_preview_folds_subject_and_style_into_the_prompt() {
         let mut project = ProjectAi::default();
         project.styles.push(Style {
             id: StyleId("project.style.snes".to_owned()),
             name: "SNES".to_owned(),
+            kind: ArtStyleKind::default(),
             modifiers: "16-bit jrpg palette".to_owned(),
             look_negatives: "photoreal".to_owned(),
             model_pref: None,

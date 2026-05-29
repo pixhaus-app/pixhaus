@@ -7,7 +7,7 @@ mod style;
 
 pub use prompt::{PromptId, PromptTemplate, PromptVariable, VarControl};
 pub use structure::{PanelRect, PanelSlot, Structure, StructureId, StructureOutput, StructurePanel};
-pub use style::{Style, StyleId};
+pub use style::{ArtStyleKind, Style, StyleId};
 
 use serde::{Deserialize, Serialize};
 

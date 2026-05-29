@@ -9,15 +9,48 @@
 use std::collections::BTreeMap;
 
 use pixhaus_core::project::library::composition::{
-    Dimensions, PanelRect, PanelSlot, PromptId, PromptTemplate, PromptVariable, Structure, StructureId, StructureOutput, StructurePanel, Style, StyleId,
-    VarControl,
+    ArtStyleKind, Dimensions, PanelRect, PanelSlot, PromptId, PromptTemplate, PromptVariable, Structure, StructureId, StructureOutput, StructurePanel,
+    Style, StyleId, VarControl,
 };
 
-/// Default cascading baseline used when a project sets no `style_notes`.
+/// Default cascading baseline used when a project sets no `style_notes` and no
+/// art style is resolved. Equal to the pixel-art baseline, since pixel art is
+/// the default kind; prefer [`baseline_for`] when a kind is known.
 pub const BUILTIN_DEFAULT_BASELINE: &str = "pixel art reference sheet";
+
+/// The cascading prompt baseline for an art-style kind. Replaces the single
+/// hardcoded pixel-art baseline so a non-pixel style no longer prefixes
+/// "pixel art" onto every prompt. Pure; the default kind returns
+/// [`BUILTIN_DEFAULT_BASELINE`].
+#[must_use]
+pub fn baseline_for(kind: ArtStyleKind) -> &'static str {
+    match kind {
+        ArtStyleKind::PixelArt => BUILTIN_DEFAULT_BASELINE,
+        ArtStyleKind::RetroPixel => "retro pixel art reference sheet",
+        ArtStyleKind::PixelInspired => "pixel-inspired reference sheet",
+        ArtStyleKind::CleanHd => "high-detail reference sheet",
+        ArtStyleKind::MapStyle => "top-down map reference sheet",
+    }
+}
 
 /// Id of the built-in Default Style carrying the shared look negatives.
 pub const STYLE_DEFAULT_ID: &str = "pixhaus.builtin.style.default";
+
+/// Id of the built-in pixel-art Style — the default look, carrying the pixel
+/// adjectives stripped from structure prose.
+pub const STYLE_PIXEL_ART_ID: &str = "pixhaus.builtin.style.pixel_art";
+
+/// Id of the built-in retro-pixel Style.
+pub const STYLE_RETRO_PIXEL_ID: &str = "pixhaus.builtin.style.retro_pixel";
+
+/// Id of the built-in pixel-inspired Style.
+pub const STYLE_PIXEL_INSPIRED_ID: &str = "pixhaus.builtin.style.pixel_inspired";
+
+/// Id of the built-in clean-HD Style.
+pub const STYLE_CLEAN_HD_ID: &str = "pixhaus.builtin.style.clean_hd";
+
+/// Id of the built-in map-style Style.
+pub const STYLE_MAP_STYLE_ID: &str = "pixhaus.builtin.style.map_style";
 
 /// Id of the built-in free-form Single structure — one image, no panels. The
 /// cockpit's default output so the artist is never forced into a paneled sheet
@@ -46,6 +79,9 @@ impl BuiltinLibrary {
         let mut styles = BTreeMap::new();
         let def = default_style();
         styles.insert(def.id.clone(), def);
+        for s in art_styles() {
+            styles.insert(s.id.clone(), s);
+        }
         let mut prompts = BTreeMap::new();
         for p in example_prompts() {
             prompts.insert(p.id.clone(), p);
@@ -128,8 +164,8 @@ fn character() -> Structure {
         384,
         PanelSlot::Outfit,
         "one outfit-variant panel, {panel_w} pixels wide, {panel_h} pixels tall, \
-         showing an alternate outfit or colour scheme. White background, clean \
-         pixel-art lines, consistent scale across all views. Professional \
+         showing an alternate outfit or colour scheme. White background, \
+         consistent scale across all views. Professional \
          sprite sheet format",
     ));
     Structure {
@@ -227,7 +263,7 @@ fn tileset() -> Structure {
             128,
             PanelSlot::PaletteSwatch,
             "bottom strip ({panel_w}×{panel_h}): palette swatch. White background, \
-             grid-aligned, clean pixel art, consistent tile size throughout",
+             grid-aligned, consistent tile size throughout",
         ),
     ];
     Structure {
@@ -285,15 +321,78 @@ fn single() -> Structure {
     }
 }
 
+/// Look negatives shared by every built-in Style — the legacy default-Style
+/// negatives. Photo/3d negatives only fit pixel-class looks, so the clean-HD
+/// Style trims them rather than fighting its own prompt.
+const SHARED_LOOK_NEGATIVES: &str = "blurry, low quality, watermark, text label, logo, cropped, photo realistic, 3d render";
+
 fn default_style() -> Style {
     Style {
         id: StyleId(STYLE_DEFAULT_ID.into()),
         name: "Default".into(),
+        kind: ArtStyleKind::PixelArt,
         modifiers: String::new(),
-        look_negatives: "blurry, low quality, watermark, text label, logo, cropped, photo realistic, 3d render".into(),
+        look_negatives: SHARED_LOOK_NEGATIVES.into(),
         model_pref: None,
         quality: None,
     }
+}
+
+/// The art-style taxonomy as built-in Styles, one per [`ArtStyleKind`].
+///
+/// Each carries its kind, look-appropriate modifiers, and look negatives, with
+/// a distinct sortable name so it surfaces in the picker (dedup is by id; two
+/// styles sharing a name would sort unstably). The pixel-art Style holds the
+/// pixel adjectives stripped from the style-agnostic structure prose, so the
+/// pixel look appears only when a pixel-class Style is selected.
+fn art_styles() -> Vec<Style> {
+    vec![
+        Style {
+            id: StyleId(STYLE_PIXEL_ART_ID.into()),
+            name: "Pixel art".into(),
+            kind: ArtStyleKind::PixelArt,
+            modifiers: "clean pixel art, crisp pixel-art lines, limited palette".into(),
+            look_negatives: SHARED_LOOK_NEGATIVES.into(),
+            model_pref: None,
+            quality: None,
+        },
+        Style {
+            id: StyleId(STYLE_RETRO_PIXEL_ID.into()),
+            name: "Retro pixel".into(),
+            kind: ArtStyleKind::RetroPixel,
+            modifiers: "lo-fi retro pixel art, chunky pixels, tight 8-bit palette".into(),
+            look_negatives: SHARED_LOOK_NEGATIVES.into(),
+            model_pref: None,
+            quality: None,
+        },
+        Style {
+            id: StyleId(STYLE_PIXEL_INSPIRED_ID.into()),
+            name: "Pixel inspired".into(),
+            kind: ArtStyleKind::PixelInspired,
+            modifiers: "pixel-inspired art, hand-drawn shading with a pixel feel".into(),
+            look_negatives: SHARED_LOOK_NEGATIVES.into(),
+            model_pref: None,
+            quality: None,
+        },
+        Style {
+            id: StyleId(STYLE_CLEAN_HD_ID.into()),
+            name: "Clean HD".into(),
+            kind: ArtStyleKind::CleanHd,
+            modifiers: "clean high-detail rendering, smooth shading, crisp edges".into(),
+            look_negatives: "blurry, low quality, watermark, text label, logo, cropped".into(),
+            model_pref: None,
+            quality: None,
+        },
+        Style {
+            id: StyleId(STYLE_MAP_STYLE_ID.into()),
+            name: "Map style".into(),
+            kind: ArtStyleKind::MapStyle,
+            modifiers: "top-down map art, seamless tiling, even lighting".into(),
+            look_negatives: SHARED_LOOK_NEGATIVES.into(),
+            model_pref: None,
+            quality: None,
+        },
+    ]
 }
 
 /// Built-in example prompts featuring Bit, the Pixhaus mascot, and its world.
@@ -444,6 +543,16 @@ mod tests {
         let single = &lib.structures[&StructureId(STRUCTURE_SINGLE_ID.into())];
         assert!(matches!(single.output, StructureOutput::Single), "single structure has no panels");
         assert!(lib.styles.contains_key(&StyleId(STYLE_DEFAULT_ID.into())));
+        // One built-in Style per art-style kind so every look surfaces in the picker.
+        for id in [
+            STYLE_PIXEL_ART_ID,
+            STYLE_RETRO_PIXEL_ID,
+            STYLE_PIXEL_INSPIRED_ID,
+            STYLE_CLEAN_HD_ID,
+            STYLE_MAP_STYLE_ID,
+        ] {
+            assert!(lib.styles.contains_key(&StyleId(id.into())), "missing built-in style {id}");
+        }
         // Seeded example prompts — Bit's world plus one parametric example.
         assert_eq!(lib.prompts.len(), 5);
         for id in [
@@ -579,6 +688,96 @@ mod tests {
         let out = compose(&req).unwrap();
         assert!(out.positive.starts_with("pixel art character model sheet"));
         assert!(out.positive.contains("GOLDEN_SUBJECT"));
+    }
+
+    mod baseline_for {
+        use super::*;
+        use rstest::rstest;
+
+        #[rstest]
+        #[case::pixel_art(ArtStyleKind::PixelArt, "pixel art reference sheet")]
+        #[case::retro_pixel(ArtStyleKind::RetroPixel, "retro pixel art reference sheet")]
+        #[case::pixel_inspired(ArtStyleKind::PixelInspired, "pixel-inspired reference sheet")]
+        #[case::clean_hd(ArtStyleKind::CleanHd, "high-detail reference sheet")]
+        #[case::map_style(ArtStyleKind::MapStyle, "top-down map reference sheet")]
+        fn returns_kind_specific_baseline(#[case] kind: ArtStyleKind, #[case] expected: &str) {
+            assert_eq!(super::super::baseline_for(kind), expected);
+        }
+
+        #[test]
+        fn pixel_art_baseline_matches_the_legacy_constant() {
+            // The legacy default baseline was the pixel-art string; the default
+            // kind must still produce it so unstyled generation is unchanged.
+            assert_eq!(super::super::baseline_for(ArtStyleKind::default()), BUILTIN_DEFAULT_BASELINE);
+        }
+    }
+
+    #[test]
+    fn art_styles_have_distinct_sortable_names() {
+        let lib = BuiltinLibrary::load();
+        let names: Vec<&str> = lib.styles.values().map(|s| s.name.as_str()).collect();
+        let mut unique = names.clone();
+        unique.sort_unstable();
+        unique.dedup();
+        assert_eq!(unique.len(), names.len(), "built-in style names must be distinct: {names:?}");
+    }
+
+    #[test]
+    fn art_styles_carry_their_kind() {
+        let lib = BuiltinLibrary::load();
+        for (id, kind) in [
+            (STYLE_PIXEL_ART_ID, ArtStyleKind::PixelArt),
+            (STYLE_RETRO_PIXEL_ID, ArtStyleKind::RetroPixel),
+            (STYLE_PIXEL_INSPIRED_ID, ArtStyleKind::PixelInspired),
+            (STYLE_CLEAN_HD_ID, ArtStyleKind::CleanHd),
+            (STYLE_MAP_STYLE_ID, ArtStyleKind::MapStyle),
+        ] {
+            let style = &lib.styles[&StyleId(id.into())];
+            assert_eq!(style.kind, kind, "style {id} must carry kind {kind:?}");
+        }
+    }
+
+    #[test]
+    fn pixel_art_style_modifiers_carry_the_pixel_adjectives() {
+        // The pixel adjectives stripped from structure prose live in the
+        // pixel-art Style's modifiers so they appear only when it is selected.
+        let lib = BuiltinLibrary::load();
+        let style = &lib.styles[&StyleId(STYLE_PIXEL_ART_ID.into())];
+        assert!(style.modifiers.contains("pixel art"), "pixel-art modifiers must carry the pixel adjective: {}", style.modifiers);
+    }
+
+    #[test]
+    fn clean_hd_style_modifiers_are_not_pixel() {
+        let lib = BuiltinLibrary::load();
+        let style = &lib.styles[&StyleId(STYLE_CLEAN_HD_ID.into())];
+        assert!(!style.modifiers.to_lowercase().contains("pixel"), "clean-HD modifiers must not mention pixel: {}", style.modifiers);
+    }
+
+    #[test]
+    fn character_structure_prose_no_longer_carries_pixel_adjective() {
+        // The pixel-art adjective moved from the structure into the pixel-art
+        // Style, so the style-agnostic layout prose drops it. The "N pixels
+        // wide" dimension unit is a different token and must survive.
+        let lib = BuiltinLibrary::load();
+        let positive = compose_layout(&lib, "pixhaus.builtin.structure.character");
+        assert!(!positive.contains("pixel-art"), "character layout prose must not carry the pixel-art adjective: {positive}");
+        assert!(!positive.contains("pixel art"), "character layout prose must not carry the pixel-art adjective: {positive}");
+        // The migration-asserted dimension prose still uses the "pixels" unit.
+        assert!(positive.contains("200 pixels wide"), "dimension unit prose must survive: {positive}");
+    }
+
+    #[test]
+    fn tileset_structure_prose_no_longer_carries_pixel_adjective() {
+        let lib = BuiltinLibrary::load();
+        let positive = compose_layout(&lib, "pixhaus.builtin.structure.tileset");
+        assert!(!positive.contains("pixel art"), "tileset layout prose must not carry the pixel-art adjective: {positive}");
+        assert!(!positive.contains("pixel-art"), "tileset layout prose must not carry the pixel-art adjective: {positive}");
+    }
+
+    #[test]
+    fn character_layout_prose_snapshot() {
+        let lib = BuiltinLibrary::load();
+        insta::assert_snapshot!(compose_layout(&lib, "pixhaus.builtin.structure.character"));
     }
 
     #[test]

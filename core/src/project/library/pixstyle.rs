@@ -273,7 +273,7 @@ pub fn merge_pack(ai: &mut ProjectAi, pack: StylePack, policy: ConflictPolicy) -
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::project::library::composition::StructureOutput;
+    use crate::project::library::composition::{ArtStyleKind, StructureOutput};
 
     fn structure(id: &str, name: &str) -> Structure {
         Structure {
@@ -288,6 +288,7 @@ mod tests {
         Style {
             id: StyleId(id.into()),
             name: name.into(),
+            kind: ArtStyleKind::default(),
             modifiers: String::new(),
             look_negatives: String::new(),
             model_pref: None,

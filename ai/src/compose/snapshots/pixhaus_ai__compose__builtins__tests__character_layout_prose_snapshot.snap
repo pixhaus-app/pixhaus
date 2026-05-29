@@ -1,0 +1,5 @@
+---
+source: ai/src/compose/builtins.rs
+expression: "compose_layout(&lib, \"pixhaus.builtin.structure.character\")"
+---
+five turnaround views in a horizontal strip across the top, left-aligned starting at the left edge — front view, left side, three-quarter view, right side, back view, each 200 pixels wide, 480 pixels tall. three facial expression close-ups side by side, left-aligned starting at the left edge — neutral, happy, angry — each 256 pixels wide, 192 pixels tall. a horizontal palette swatch row showing all colours used, 1024 pixels wide, 128 pixels tall. two detail callout panels side by side, each 512 pixels wide, 320 pixels tall. one outfit-variant panel, 256 pixels wide, 384 pixels tall, showing an alternate outfit or colour scheme. White background, consistent scale across all views. Professional sprite sheet format

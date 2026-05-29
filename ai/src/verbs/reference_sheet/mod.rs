@@ -22,11 +22,11 @@ use serde::{Deserialize, Serialize};
 use tokio::select;
 use tokio_util::sync::CancellationToken;
 
-use pixhaus_core::project::library::composition::{PromptId, StructureId, StyleId};
+use pixhaus_core::project::library::composition::{ArtStyleKind, PromptId, StructureId, StyleId};
 use pixhaus_core::project::{EntityId, GenerationProvenance, ReferenceRole, SheetVariantId};
 
 use crate::backends::{ImageGenRequest, ImageQuality, InferenceRequest, InferenceResponse};
-use crate::compose::builtins::BUILTIN_DEFAULT_BASELINE;
+use crate::compose::builtins::baseline_for;
 use crate::compose::{ComposeRequest, compose};
 use crate::plugin::context::VerbContext;
 use crate::plugin::descriptor::{BackendCapabilities, CostEstimate, EffectKind, VerbDescriptor, VerbId};
@@ -165,6 +165,27 @@ pub struct GenerateSheetPayload {
     pub entity_id: EntityId,
     /// Generated sheet variants, one per requested candidate.
     pub variants: Vec<SheetVariantOutput>,
+    /// The resolved art-style kind plus an optional target grid, so the host's
+    /// Land/finisher path can gate the pixel finisher on `kind.is_pixel()`
+    /// (Brief 8). `#[serde(default)]` keeps pre-`finisher` payloads decodable.
+    #[serde(default)]
+    pub finisher: SheetFinisherSpec,
+}
+
+/// What the host needs to gate the post-generation finisher.
+///
+/// Minimal by design (Brief 1): the resolved [`ArtStyleKind`] plus an optional
+/// `(cols, rows)` target grid hint. The finisher itself (palette-snap +
+/// downscale) lands in Brief 8 and reads `kind.is_pixel()`.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SheetFinisherSpec {
+    /// The resolved art-style kind. Defaults to `PixelArt` when no style is
+    /// picked, matching the cascading-baseline default.
+    #[serde(default)]
+    pub kind: ArtStyleKind,
+    /// Optional `(cols, rows)` grid hint for a static grid-sheet path.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub target_grid: Option<(u32, u32)>,
 }
 
 /// One generated sheet variant in a form ready for host storage.
@@ -335,18 +356,12 @@ impl Verb for GenerateReferenceSheetVerb {
 
         let num_variants = inputs.num_variants.clamp(1, 4);
 
-        // The project's style_notes are the prompt baseline when present, so the
-        // house style folds into every generation; otherwise the built-in default.
-        let baseline: &str = if ctx.composition_library.style_notes.trim().is_empty() {
-            BUILTIN_DEFAULT_BASELINE
-        } else {
-            ctx.composition_library.style_notes.as_str()
-        };
-
         // Resolve the picked records and run the composition resolver. The
         // resolved view borrows `ctx`; we extract owned values before the
-        // backend await so nothing is held across the suspension point.
-        let (composed_positive, composed_negative, composition, width, height, structure_name) = {
+        // backend await so nothing is held across the suspension point. The
+        // style resolves first so the baseline can derive from its art-style
+        // kind (a non-pixel style no longer prefixes "pixel art").
+        let (composed_positive, composed_negative, composition, width, height, structure_name, resolved_kind) = {
             let library = ctx.library_view();
             let structure = library
                 .structure(&inputs.structure_id)
@@ -360,6 +375,17 @@ impl Verb for GenerateReferenceSheetVerb {
                         .ok_or_else(|| VerbError::Schema(format!("generate-reference-sheet: unknown style `{}`", id.0)))?,
                 ),
                 None => None,
+            };
+            // PixelArt by default when no style is picked, matching the cascading
+            // baseline default and the host's finisher gate.
+            let resolved_kind = style.map_or(ArtStyleKind::default(), |s| s.kind);
+            // The project's style_notes are the prompt baseline when present, so
+            // the house style folds into every generation; otherwise the
+            // kind-specific built-in baseline.
+            let baseline: &str = if ctx.composition_library.style_notes.trim().is_empty() {
+                baseline_for(resolved_kind)
+            } else {
+                ctx.composition_library.style_notes.as_str()
             };
             let prompt = match inputs.prompt_id.as_ref() {
                 Some(id) => Some(
@@ -395,6 +421,7 @@ impl Verb for GenerateReferenceSheetVerb {
                 width,
                 height,
                 structure.name.clone(),
+                resolved_kind,
             )
         };
 
@@ -487,6 +514,10 @@ impl Verb for GenerateReferenceSheetVerb {
         let payload = GenerateSheetPayload {
             entity_id: inputs.entity_id,
             variants,
+            finisher: SheetFinisherSpec {
+                kind: resolved_kind,
+                target_grid: None,
+            },
         };
         let payload_json = serde_json::to_value(&payload).map_err(|e| VerbError::Backend(format!("failed to serialise sheet payload: {e}")))?;
 
@@ -1237,6 +1268,133 @@ mod tests {
             "style_notes must lead the composed prompt: {}",
             payload.variants[0].generation.prompt
         );
+    }
+
+    #[tokio::test]
+    async fn pixel_art_style_gives_pixel_baseline() {
+        use crate::compose::builtins::STYLE_PIXEL_ART_ID;
+
+        let runtime = VerbRuntime::new();
+        runtime.register_backend(BackendProxy::new(WhiteStub::new(1)), 0).unwrap();
+        runtime.register(GenerateReferenceSheetVerb::new()).unwrap();
+
+        // No style_notes, so the baseline derives from the picked style's kind.
+        let inputs = VerbInputs::from_struct(&GenerateReferenceSheetInputs {
+            entity_id: EntityId::new(1),
+            structure_id: StructureId(CHARACTER.into()),
+            style_id: Some(StyleId(STYLE_PIXEL_ART_ID.into())),
+            prompt_id: None,
+            variable_values: BTreeMap::new(),
+            target_size: None,
+            inline_text: "a hero".into(),
+            inline_negatives: String::new(),
+            num_variants: 1,
+            quality: None,
+            seed: None,
+            references: Vec::new(),
+            prompt_override: None,
+            negative_override: None,
+        })
+        .unwrap();
+
+        let inv = runtime
+            .invoke(&VerbId::new(GENERATE_REFERENCE_SHEET_VERB_ID), VerbContext::empty(meta()), inputs)
+            .unwrap();
+        let payload = decode_payload(&inv.finish().await.unwrap().output);
+        assert!(
+            payload.variants[0].generation.prompt.starts_with("pixel art reference sheet"),
+            "pixel-art style must lead with the pixel baseline: {}",
+            payload.variants[0].generation.prompt
+        );
+    }
+
+    #[tokio::test]
+    async fn clean_hd_style_gives_non_pixel_baseline() {
+        use crate::compose::builtins::STYLE_CLEAN_HD_ID;
+
+        let runtime = VerbRuntime::new();
+        runtime.register_backend(BackendProxy::new(WhiteStub::new(1)), 0).unwrap();
+        runtime.register(GenerateReferenceSheetVerb::new()).unwrap();
+
+        let inputs = VerbInputs::from_struct(&GenerateReferenceSheetInputs {
+            entity_id: EntityId::new(1),
+            structure_id: StructureId(CHARACTER.into()),
+            style_id: Some(StyleId(STYLE_CLEAN_HD_ID.into())),
+            prompt_id: None,
+            variable_values: BTreeMap::new(),
+            target_size: None,
+            inline_text: "a hero".into(),
+            inline_negatives: String::new(),
+            num_variants: 1,
+            quality: None,
+            seed: None,
+            references: Vec::new(),
+            prompt_override: None,
+            negative_override: None,
+        })
+        .unwrap();
+
+        let inv = runtime
+            .invoke(&VerbId::new(GENERATE_REFERENCE_SHEET_VERB_ID), VerbContext::empty(meta()), inputs)
+            .unwrap();
+        let payload = decode_payload(&inv.finish().await.unwrap().output);
+        let prompt = &payload.variants[0].generation.prompt;
+        assert!(!prompt.starts_with("pixel art"), "a clean-HD style must not prefix pixel art: {prompt}");
+        assert!(prompt.starts_with("high-detail reference sheet"), "clean-HD style must lead with its baseline: {prompt}");
+    }
+
+    #[tokio::test]
+    async fn payload_finisher_carries_resolved_kind() {
+        use crate::compose::builtins::STYLE_CLEAN_HD_ID;
+        use pixhaus_core::project::library::composition::ArtStyleKind;
+
+        let runtime = VerbRuntime::new();
+        runtime.register_backend(BackendProxy::new(WhiteStub::new(1)), 0).unwrap();
+        runtime.register(GenerateReferenceSheetVerb::new()).unwrap();
+
+        let inputs = VerbInputs::from_struct(&GenerateReferenceSheetInputs {
+            entity_id: EntityId::new(1),
+            structure_id: StructureId(CHARACTER.into()),
+            style_id: Some(StyleId(STYLE_CLEAN_HD_ID.into())),
+            prompt_id: None,
+            variable_values: BTreeMap::new(),
+            target_size: None,
+            inline_text: "a hero".into(),
+            inline_negatives: String::new(),
+            num_variants: 1,
+            quality: None,
+            seed: None,
+            references: Vec::new(),
+            prompt_override: None,
+            negative_override: None,
+        })
+        .unwrap();
+
+        let inv = runtime
+            .invoke(&VerbId::new(GENERATE_REFERENCE_SHEET_VERB_ID), VerbContext::empty(meta()), inputs)
+            .unwrap();
+        let payload = decode_payload(&inv.finish().await.unwrap().output);
+        assert_eq!(payload.finisher.kind, ArtStyleKind::CleanHd, "the resolved style kind rides on the payload finisher");
+        assert!(!payload.finisher.kind.is_pixel(), "clean-HD must not gate the pixel finisher");
+    }
+
+    #[tokio::test]
+    async fn payload_finisher_defaults_to_pixel_art_without_a_style() {
+        use pixhaus_core::project::library::composition::ArtStyleKind;
+
+        let runtime = VerbRuntime::new();
+        runtime.register_backend(BackendProxy::new(WhiteStub::new(1)), 0).unwrap();
+        runtime.register(GenerateReferenceSheetVerb::new()).unwrap();
+
+        let inv = runtime
+            .invoke(
+                &VerbId::new(GENERATE_REFERENCE_SHEET_VERB_ID),
+                VerbContext::empty(meta()),
+                inputs_for(CHARACTER, 1),
+            )
+            .unwrap();
+        let payload = decode_payload(&inv.finish().await.unwrap().output);
+        assert_eq!(payload.finisher.kind, ArtStyleKind::PixelArt, "no style resolves to the default pixel-art kind");
     }
 
     #[tokio::test]

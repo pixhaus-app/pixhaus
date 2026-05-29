@@ -721,11 +721,12 @@ mod tests {
 
     #[test]
     fn library_view_resolves_style_over_builtin() {
-        use pixhaus_core::project::library::composition::{Style, StyleId};
+        use pixhaus_core::project::library::composition::{ArtStyleKind, Style, StyleId};
 
         let shadow = Style {
             id: StyleId("pixhaus.builtin.style.default".into()),
             name: "Shadowed".into(),
+            kind: ArtStyleKind::default(),
             modifiers: String::new(),
             look_negatives: String::new(),
             model_pref: None,

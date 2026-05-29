@@ -13,8 +13,8 @@ use pixhaus_ai::compose::builtins::BuiltinLibrary;
 use pixhaus_core::project::ProjectAi;
 use pixhaus_core::project::library::ai::{ModelId, Quality};
 use pixhaus_core::project::library::composition::{
-    Dimensions, PanelRect, PanelSlot, PromptId, PromptTemplate, PromptVariable, Structure, StructureId, StructureOutput, StructurePanel, Style, StyleId,
-    VarControl,
+    ArtStyleKind, Dimensions, PanelRect, PanelSlot, PromptId, PromptTemplate, PromptVariable, Structure, StructureId, StructureOutput, StructurePanel,
+    Style, StyleId, VarControl,
 };
 use pixhaus_core::project::library::pixstyle::{ConflictPolicy, StylePack, merge_pack, read_pack, write_pack};
 
@@ -258,6 +258,7 @@ impl ShellApp {
             LibraryTab::Styles => LibraryDraft::Style(Style {
                 id: StyleId(format!("project.style.{n}")),
                 name: "New style".to_owned(),
+                kind: ArtStyleKind::default(),
                 modifiers: String::new(),
                 look_negatives: String::new(),
                 model_pref: None,
@@ -990,7 +991,7 @@ fn upsert<T, I: PartialEq>(list: &mut Vec<T>, value: T, id_of: impl Fn(&T) -> &I
 
 #[cfg(test)]
 mod tests {
-    use super::{ConflictPolicy, ModelId, Quality, Structure, StructureId, Style, StyleId, gather_export_pack, read_pack, upsert, write_pack};
+    use super::{ArtStyleKind, ConflictPolicy, ModelId, Quality, Structure, StructureId, Style, StyleId, gather_export_pack, read_pack, upsert, write_pack};
     use crate::commands::push_ai_library_edit;
     use crate::document::DocumentStore;
     use crate::editor::EditorState;
@@ -1132,6 +1133,7 @@ mod tests {
         Style {
             id: StyleId("project.style.snes".into()),
             name: "SNES".into(),
+            kind: ArtStyleKind::default(),
             modifiers: "16-bit palette".into(),
             look_negatives: "blurry".into(),
             model_pref: Some(ModelId::FalFluxKontext),
