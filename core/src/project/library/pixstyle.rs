@@ -17,9 +17,7 @@ use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
 use super::ProjectAi;
-use super::composition::{
-    PromptId, PromptTemplate, Structure, StructureId, Style, StyleId,
-};
+use super::composition::{PromptId, PromptTemplate, Structure, StructureId, Style, StyleId};
 
 const PIXSTYLE_MAGIC: &[u8; 4] = b"PXST";
 const PIXSTYLE_FORMAT_VERSION: u16 = 1;
@@ -185,11 +183,7 @@ fn unique_copy_id(base: &str, exists: impl Fn(&str) -> bool) -> String {
 /// Merges `incoming` Structures into `target` per `policy`, reporting the
 /// counts. On `ImportAsCopy` a colliding id gains a unique `.copy` suffix.
 #[must_use]
-pub fn merge_structures(
-    target: &mut Vec<Structure>,
-    incoming: Vec<Structure>,
-    policy: ConflictPolicy,
-) -> ImportReport {
+pub fn merge_structures(target: &mut Vec<Structure>, incoming: Vec<Structure>, policy: ConflictPolicy) -> ImportReport {
     let mut report = ImportReport::default();
     for s in incoming {
         match target.iter().position(|t| t.id == s.id) {
@@ -201,9 +195,7 @@ pub fn merge_structures(
             Some(_) => {
                 // ImportAsCopy.
                 let mut c = s;
-                c.id = StructureId(unique_copy_id(&c.id.0, |id| {
-                    target.iter().any(|t| t.id.0 == id)
-                }));
+                c.id = StructureId(unique_copy_id(&c.id.0, |id| target.iter().any(|t| t.id.0 == id)));
                 target.push(c);
                 report.imported += 1;
             }
@@ -218,11 +210,7 @@ pub fn merge_structures(
 
 /// Merges `incoming` Styles into `target` per `policy`. See [`merge_structures`].
 #[must_use]
-pub fn merge_styles(
-    target: &mut Vec<Style>,
-    incoming: Vec<Style>,
-    policy: ConflictPolicy,
-) -> ImportReport {
+pub fn merge_styles(target: &mut Vec<Style>, incoming: Vec<Style>, policy: ConflictPolicy) -> ImportReport {
     let mut report = ImportReport::default();
     for s in incoming {
         match target.iter().position(|t| t.id == s.id) {
@@ -233,9 +221,7 @@ pub fn merge_styles(
             }
             Some(_) => {
                 let mut c = s;
-                c.id = StyleId(unique_copy_id(&c.id.0, |id| {
-                    target.iter().any(|t| t.id.0 == id)
-                }));
+                c.id = StyleId(unique_copy_id(&c.id.0, |id| target.iter().any(|t| t.id.0 == id)));
                 target.push(c);
                 report.imported += 1;
             }
@@ -250,11 +236,7 @@ pub fn merge_styles(
 
 /// Merges `incoming` Prompts into `target` per `policy`. See [`merge_structures`].
 #[must_use]
-pub fn merge_prompts(
-    target: &mut Vec<PromptTemplate>,
-    incoming: Vec<PromptTemplate>,
-    policy: ConflictPolicy,
-) -> ImportReport {
+pub fn merge_prompts(target: &mut Vec<PromptTemplate>, incoming: Vec<PromptTemplate>, policy: ConflictPolicy) -> ImportReport {
     let mut report = ImportReport::default();
     for p in incoming {
         match target.iter().position(|t| t.id == p.id) {
@@ -265,9 +247,7 @@ pub fn merge_prompts(
             }
             Some(_) => {
                 let mut c = p;
-                c.id = PromptId(unique_copy_id(&c.id.0, |id| {
-                    target.iter().any(|t| t.id.0 == id)
-                }));
+                c.id = PromptId(unique_copy_id(&c.id.0, |id| target.iter().any(|t| t.id.0 == id)));
                 target.push(c);
                 report.imported += 1;
             }
@@ -356,13 +336,8 @@ mod tests {
         let mut buf = Vec::new();
         buf.extend_from_slice(PIXSTYLE_MAGIC);
         buf.extend_from_slice(&99u16.to_le_bytes());
-        buf.extend_from_slice(
-            &zstd::encode_all(&rmp_serde::to_vec_named(&sample_pack()).unwrap()[..], 0).unwrap(),
-        );
-        assert!(matches!(
-            read_pack(&buf[..]).unwrap_err(),
-            PixstyleError::UnsupportedVersion(99)
-        ));
+        buf.extend_from_slice(&zstd::encode_all(&rmp_serde::to_vec_named(&sample_pack()).unwrap()[..], 0).unwrap());
+        assert!(matches!(read_pack(&buf[..]).unwrap_err(), PixstyleError::UnsupportedVersion(99)));
     }
 
     #[test]
@@ -387,10 +362,7 @@ mod tests {
     #[test]
     fn read_capped_rejects_oversized_source() {
         let data = [0u8; 100];
-        assert!(matches!(
-            read_capped(&data[..], 10),
-            Err(PixstyleError::TooLarge)
-        ));
+        assert!(matches!(read_capped(&data[..], 10), Err(PixstyleError::TooLarge)));
         // At or under the cap reads fully.
         assert_eq!(read_capped(&data[..], 100).unwrap().len(), 100);
         assert_eq!(read_capped(&data[..], 256).unwrap().len(), 100);
@@ -404,10 +376,7 @@ mod tests {
         buf.extend_from_slice(PIXSTYLE_MAGIC);
         buf.extend_from_slice(&PIXSTYLE_FORMAT_VERSION.to_le_bytes());
         buf.extend_from_slice(&zstd::encode_all(&bomb[..], 0).unwrap());
-        assert!(matches!(
-            read_pack(&buf[..]).unwrap_err(),
-            PixstyleError::TooLarge
-        ));
+        assert!(matches!(read_pack(&buf[..]).unwrap_err(), PixstyleError::TooLarge));
     }
 
     #[test]
@@ -417,10 +386,7 @@ mod tests {
         buf.extend_from_slice(PIXSTYLE_MAGIC);
         buf.extend_from_slice(&PIXSTYLE_FORMAT_VERSION.to_le_bytes());
         buf.extend_from_slice(&vec![0u8; MAX_COMPRESSED + 1]);
-        assert!(matches!(
-            read_pack(&buf[..]).unwrap_err(),
-            PixstyleError::TooLarge
-        ));
+        assert!(matches!(read_pack(&buf[..]).unwrap_err(), PixstyleError::TooLarge));
     }
 
     // ── merge logic (ported from the Tauri command module) ───────────────────
@@ -428,11 +394,7 @@ mod tests {
     #[test]
     fn merge_structures_skip_keeps_existing_and_counts_skipped() {
         let mut target = vec![structure("a", "original")];
-        let report = merge_structures(
-            &mut target,
-            vec![structure("a", "incoming")],
-            ConflictPolicy::Skip,
-        );
+        let report = merge_structures(&mut target, vec![structure("a", "incoming")], ConflictPolicy::Skip);
         assert_eq!(report.skipped, 1);
         assert_eq!(report.imported, 0);
         assert_eq!(report.overwritten, 0);
@@ -443,11 +405,7 @@ mod tests {
     #[test]
     fn merge_structures_overwrite_replaces() {
         let mut target = vec![structure("a", "original")];
-        let report = merge_structures(
-            &mut target,
-            vec![structure("a", "incoming")],
-            ConflictPolicy::Overwrite,
-        );
+        let report = merge_structures(&mut target, vec![structure("a", "incoming")], ConflictPolicy::Overwrite);
         assert_eq!(report.overwritten, 1);
         assert_eq!(report.imported, 0);
         assert_eq!(target.len(), 1);
@@ -457,11 +415,7 @@ mod tests {
     #[test]
     fn merge_structures_import_as_copy_adds_suffixed_id() {
         let mut target = vec![structure("a", "original")];
-        let report = merge_structures(
-            &mut target,
-            vec![structure("a", "incoming")],
-            ConflictPolicy::ImportAsCopy,
-        );
+        let report = merge_structures(&mut target, vec![structure("a", "incoming")], ConflictPolicy::ImportAsCopy);
         assert_eq!(report.imported, 1);
         assert_eq!(target.len(), 2);
         assert_eq!(target[1].id, StructureId("a.copy".into()));
@@ -486,11 +440,7 @@ mod tests {
     #[test]
     fn merge_structures_new_id_is_imported() {
         let mut target = vec![structure("a", "original")];
-        let report = merge_structures(
-            &mut target,
-            vec![structure("b", "fresh")],
-            ConflictPolicy::Skip,
-        );
+        let report = merge_structures(&mut target, vec![structure("b", "fresh")], ConflictPolicy::Skip);
         assert_eq!(report.imported, 1);
         assert_eq!(target.len(), 2);
     }
@@ -498,11 +448,7 @@ mod tests {
     #[test]
     fn merge_styles_import_as_copy_adds_suffixed_id() {
         let mut target = vec![style("a", "original")];
-        let report = merge_styles(
-            &mut target,
-            vec![style("a", "incoming")],
-            ConflictPolicy::ImportAsCopy,
-        );
+        let report = merge_styles(&mut target, vec![style("a", "incoming")], ConflictPolicy::ImportAsCopy);
         assert_eq!(report.imported, 1);
         assert_eq!(target[1].id, StyleId("a.copy".into()));
     }
@@ -510,11 +456,7 @@ mod tests {
     #[test]
     fn merge_styles_overwrite_replaces() {
         let mut target = vec![style("a", "original")];
-        let report = merge_styles(
-            &mut target,
-            vec![style("a", "incoming")],
-            ConflictPolicy::Overwrite,
-        );
+        let report = merge_styles(&mut target, vec![style("a", "incoming")], ConflictPolicy::Overwrite);
         assert_eq!(report.overwritten, 1);
         assert_eq!(target[0].name, "incoming");
     }
@@ -522,11 +464,7 @@ mod tests {
     #[test]
     fn merge_prompts_skip_keeps_existing() {
         let mut target = vec![prompt("a", "original")];
-        let report = merge_prompts(
-            &mut target,
-            vec![prompt("a", "incoming")],
-            ConflictPolicy::Skip,
-        );
+        let report = merge_prompts(&mut target, vec![prompt("a", "incoming")], ConflictPolicy::Skip);
         assert_eq!(report.skipped, 1);
         assert_eq!(target[0].name, "original");
     }
@@ -534,11 +472,7 @@ mod tests {
     #[test]
     fn merge_prompts_import_as_copy_adds_suffixed_id() {
         let mut target = vec![prompt("a", "original")];
-        let report = merge_prompts(
-            &mut target,
-            vec![prompt("a", "incoming")],
-            ConflictPolicy::ImportAsCopy,
-        );
+        let report = merge_prompts(&mut target, vec![prompt("a", "incoming")], ConflictPolicy::ImportAsCopy);
         assert_eq!(report.imported, 1);
         assert_eq!(target[1].id, PromptId("a.copy".into()));
     }

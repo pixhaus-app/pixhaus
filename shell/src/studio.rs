@@ -2349,13 +2349,29 @@ impl ShellApp {
         };
         let report = &result.report;
         ui.label(egui::RichText::new("Normalization review").strong());
-        ui.label(egui::RichText::new("Drift, scale, and the loop seam — measured on the frames that land.").small().weak());
+        ui.label(
+            egui::RichText::new("Drift, scale, and the loop seam — measured on the frames that land.")
+                .small()
+                .weak(),
+        );
         ui.add_space(6.0);
 
         // Baseline drift: 0px is clean, anything else a warning.
-        report_row(ui, &palette, drift_status(report.baseline_drift_px), "Baseline drift", &format!("{}px", report.baseline_drift_px));
+        report_row(
+            ui,
+            &palette,
+            drift_status(report.baseline_drift_px),
+            "Baseline drift",
+            &format!("{}px", report.baseline_drift_px),
+        );
         // Scale match: how well subject heights agreed before correction.
-        report_row(ui, &palette, scale_status(report.scale_match_pct), "Scale match", &format!("{}%", report.scale_match_pct));
+        report_row(
+            ui,
+            &palette,
+            scale_status(report.scale_match_pct),
+            "Scale match",
+            &format!("{}%", report.scale_match_pct),
+        );
         // Seam verdict: reuse the pick-stage colour thresholds via the SeamMatch.
         report_row(ui, &palette, seam_status(report.seam), "Loop seam", seam_label(report.seam));
         ui.label(egui::RichText::new(format!("Reference height {}px", report.reference_height)).small().weak());
@@ -2451,11 +2467,7 @@ impl ShellApp {
             );
         }
         if self.studio.kind == AnimKind::Custom {
-            ui.label(
-                egui::RichText::new("Custom animations are not tracked in the cascade grid.")
-                    .small()
-                    .weak(),
-            );
+            ui.label(egui::RichText::new("Custom animations are not tracked in the cascade grid.").small().weak());
         }
         ui.add_space(8.0);
         ui.separator();
@@ -3402,7 +3414,11 @@ mod tests {
         // Three subjects of equal height land on a locked baseline, so the
         // drift field reads Ok and the scale field reads a perfect match.
         let black = Rgba::opaque(0, 0, 0);
-        let frames = [synthetic_frame(6, 8, 4, 6, black), synthetic_frame(5, 8, 6, 6, black), synthetic_frame(6, 8, 4, 6, black)];
+        let frames = [
+            synthetic_frame(6, 8, 4, 6, black),
+            synthetic_frame(5, 8, 6, 6, black),
+            synthetic_frame(6, 8, 4, 6, black),
+        ];
         let report = normalize_frames(&frames, &NormalizeOptions::square(16)).expect("normalize").report;
         assert_eq!(drift_status(report.baseline_drift_px), ReportStatus::Ok);
         assert_eq!(scale_status(report.scale_match_pct), ReportStatus::Ok);
@@ -3424,6 +3440,10 @@ mod tests {
         let palette = crate::theme::Palette::for_theme(egui::Theme::Dark);
         assert_eq!(seam_status(report.seam).color(&palette), palette.error);
         // The pass records the drift in the warnings list the inspector shows.
-        assert!(report.warnings.iter().any(|w| w.contains("loop seam")), "seam warning surfaced: {:?}", report.warnings);
+        assert!(
+            report.warnings.iter().any(|w| w.contains("loop seam")),
+            "seam warning surfaced: {:?}",
+            report.warnings
+        );
     }
 }

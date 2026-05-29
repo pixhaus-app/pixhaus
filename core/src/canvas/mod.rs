@@ -25,9 +25,9 @@ pub mod tools;
 pub use blend::{blend, blend_normal, mul_un8, premix};
 pub use buffer::{IndexedBuffer, PixelBuffer, RGBA_BYTES_PER_PIXEL};
 pub use composite::{LayerInput, composite_layers, composite_onto, composite_region};
-pub use merge::{flatten, merge_pair};
 pub use error::{Error, Result};
+pub use merge::{flatten, merge_pair};
 pub use tools::{
-    BrushShape, DitherPattern, brush_covers, dither_allows, draw_ellipse, draw_filled_ellipse, draw_filled_rect, draw_line, draw_line_masked, draw_rect, draw_stroke,
-    flood_fill, flood_fill_blended, paint_brush, paint_brush_blended, paint_brush_masked, stamp_segment, stamp_segment_masked,
+    BrushShape, DitherPattern, brush_covers, dither_allows, draw_ellipse, draw_filled_ellipse, draw_filled_rect, draw_line, draw_line_masked, draw_rect,
+    draw_stroke, flood_fill, flood_fill_blended, paint_brush, paint_brush_blended, paint_brush_masked, stamp_segment, stamp_segment_masked,
 };

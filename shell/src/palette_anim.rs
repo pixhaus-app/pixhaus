@@ -113,95 +113,102 @@ impl ShellApp {
         let selected = self.editor.active_page_id.filter(|id| pages.iter().any(|(pid, _)| pid == id));
         self.editor.active_page_id = selected;
 
-        egui::CollapsingHeader::new("Pages").id_salt("palette_pages").default_open(false).show(ui, |ui| {
-            // Actions chosen this frame, applied after the read borrows end.
-            let mut select: Option<Option<PalettePageId>> = None;
-            let mut add = false;
-            let mut rename: Option<PalettePageId> = None;
-            let mut remove: Option<PalettePageId> = None;
-            let mut toggle_member: Option<usize> = None;
+        egui::CollapsingHeader::new("Pages")
+            .id_salt("palette_pages")
+            .default_open(false)
+            .show(ui, |ui| {
+                // Actions chosen this frame, applied after the read borrows end.
+                let mut select: Option<Option<PalettePageId>> = None;
+                let mut add = false;
+                let mut rename: Option<PalettePageId> = None;
+                let mut remove: Option<PalettePageId> = None;
+                let mut toggle_member: Option<usize> = None;
 
-            ui.horizontal(|ui| {
-                let selected_name = selected
-                    .and_then(|id| pages.iter().find(|(pid, _)| *pid == id))
-                    .map_or_else(|| "(no page)".to_owned(), |(_, name)| name.clone());
-                egui::ComboBox::from_id_salt("palette_page_selector")
-                    .selected_text(selected_name)
-                    .show_ui(ui, |ui| {
-                        if ui.selectable_label(selected.is_none(), "(no page)").clicked() {
-                            select = Some(None);
-                        }
-                        for (id, name) in &pages {
-                            if ui.selectable_label(selected == Some(*id), name).clicked() {
-                                select = Some(Some(*id));
+                ui.horizontal(|ui| {
+                    let selected_name = selected
+                        .and_then(|id| pages.iter().find(|(pid, _)| *pid == id))
+                        .map_or_else(|| "(no page)".to_owned(), |(_, name)| name.clone());
+                    egui::ComboBox::from_id_salt("palette_page_selector")
+                        .selected_text(selected_name)
+                        .show_ui(ui, |ui| {
+                            if ui.selectable_label(selected.is_none(), "(no page)").clicked() {
+                                select = Some(None);
                             }
-                        }
-                    });
-                ui.checkbox(&mut self.editor.filter_to_page, "Filter")
-                    .on_hover_text("Show only the selected page's swatches");
-            });
+                            for (id, name) in &pages {
+                                if ui.selectable_label(selected == Some(*id), name).clicked() {
+                                    select = Some(Some(*id));
+                                }
+                            }
+                        });
+                    ui.checkbox(&mut self.editor.filter_to_page, "Filter")
+                        .on_hover_text("Show only the selected page's swatches");
+                });
 
-            // Add / Rename / Remove, driven by the shared name draft.
-            ui.horizontal(|ui| {
-                ui.add(egui::TextEdit::singleline(&mut self.editor.page_name_draft).hint_text("page name").desired_width(120.0));
-                if ui.button(format!("{} Add", crate::icons::ADD)).clicked() {
-                    add = true;
-                }
-                if let Some(id) = selected {
-                    if ui.button(format!("{} Rename", crate::icons::RENAME)).clicked() {
-                        rename = Some(id);
+                // Add / Rename / Remove, driven by the shared name draft.
+                ui.horizontal(|ui| {
+                    ui.add(
+                        egui::TextEdit::singleline(&mut self.editor.page_name_draft)
+                            .hint_text("page name")
+                            .desired_width(120.0),
+                    );
+                    if ui.button(format!("{} Add", crate::icons::ADD)).clicked() {
+                        add = true;
                     }
-                    if ui.button(format!("{} Remove", crate::icons::TRASH)).clicked() {
-                        remove = Some(id);
-                    }
-                }
-            });
-
-            // Membership: a checkbox per swatch when a page is selected. Ticking
-            // adds the index to the page; unticking removes it. Bounds are
-            // enforced by `set_page_entries` on commit.
-            if selected.is_some() {
-                ui.label(egui::RichText::new("Members:").weak());
-                ui.horizontal_wrapped(|ui| {
-                    ui.spacing_mut().item_spacing = egui::vec2(3.0, 3.0);
-                    for (i, &color) in colors.iter().enumerate() {
-                        // i fits u32 for any realistic palette length.
-                        let in_page = u32::try_from(i).is_ok_and(|idx| members.contains(&idx));
-                        let (rect, resp) = ui.allocate_exact_size(egui::vec2(16.0, 16.0), egui::Sense::click());
-                        if color.a < 255 {
-                            paint_checker(ui, rect);
+                    if let Some(id) = selected {
+                        if ui.button(format!("{} Rename", crate::icons::RENAME)).clicked() {
+                            rename = Some(id);
                         }
-                        ui.painter().rect_filled(rect, 2.0, to_color32(color));
-                        let stroke = if in_page {
-                            egui::Stroke::new(2.0, egui::Color32::WHITE)
-                        } else {
-                            egui::Stroke::new(1.0, egui::Color32::from_black_alpha(120))
-                        };
-                        ui.painter().rect_stroke(rect, 2.0, stroke, egui::StrokeKind::Middle);
-                        if resp.clicked() {
-                            toggle_member = Some(i);
+                        if ui.button(format!("{} Remove", crate::icons::TRASH)).clicked() {
+                            remove = Some(id);
                         }
                     }
                 });
-            }
 
-            // Apply the single chosen action after the borrows release.
-            if let Some(id) = select {
-                self.editor.active_page_id = id;
-            }
-            if add {
-                self.add_palette_page();
-            }
-            if let Some(id) = rename {
-                self.rename_palette_page(id);
-            }
-            if let Some(id) = remove {
-                self.remove_palette_page(id);
-            }
-            if let Some(i) = toggle_member {
-                self.toggle_page_member(i, &members, color_count);
-            }
-        });
+                // Membership: a checkbox per swatch when a page is selected. Ticking
+                // adds the index to the page; unticking removes it. Bounds are
+                // enforced by `set_page_entries` on commit.
+                if selected.is_some() {
+                    ui.label(egui::RichText::new("Members:").weak());
+                    ui.horizontal_wrapped(|ui| {
+                        ui.spacing_mut().item_spacing = egui::vec2(3.0, 3.0);
+                        for (i, &color) in colors.iter().enumerate() {
+                            // i fits u32 for any realistic palette length.
+                            let in_page = u32::try_from(i).is_ok_and(|idx| members.contains(&idx));
+                            let (rect, resp) = ui.allocate_exact_size(egui::vec2(16.0, 16.0), egui::Sense::click());
+                            if color.a < 255 {
+                                paint_checker(ui, rect);
+                            }
+                            ui.painter().rect_filled(rect, 2.0, to_color32(color));
+                            let stroke = if in_page {
+                                egui::Stroke::new(2.0, egui::Color32::WHITE)
+                            } else {
+                                egui::Stroke::new(1.0, egui::Color32::from_black_alpha(120))
+                            };
+                            ui.painter().rect_stroke(rect, 2.0, stroke, egui::StrokeKind::Middle);
+                            if resp.clicked() {
+                                toggle_member = Some(i);
+                            }
+                        }
+                    });
+                }
+
+                // Apply the single chosen action after the borrows release.
+                if let Some(id) = select {
+                    self.editor.active_page_id = id;
+                }
+                if add {
+                    self.add_palette_page();
+                }
+                if let Some(id) = rename {
+                    self.rename_palette_page(id);
+                }
+                if let Some(id) = remove {
+                    self.remove_palette_page(id);
+                }
+                if let Some(i) = toggle_member {
+                    self.toggle_page_member(i, &members, color_count);
+                }
+            });
     }
 
     /// Allocates a fresh [`PalettePageId`], appends a page named from the draft,
@@ -307,86 +314,93 @@ impl ShellApp {
             .filter(|&i| i < color_count);
         let fg = self.editor.fg;
 
-        egui::CollapsingHeader::new("Animation").id_salt("palette_animation").default_open(false).show(ui, |ui| {
-            if color_count == 0 {
-                ui.label("Add a colour to keyframe.");
-                return;
-            }
-
-            let mut set_keyframe: Option<usize> = None;
-            let mut remove_keyframe: Option<usize> = None;
-            let mut cycle = false;
-
-            ui.label(format!("Frame {}", frame.get()));
-            match target {
-                Some(idx) => {
-                    ui.horizontal(|ui| {
-                        if ui
-                            .button(format!("{} Set keyframe", crate::icons::FILM))
-                            .on_hover_text("Keyframe the foreground colour for the target swatch at this frame")
-                            .clicked()
-                        {
-                            set_keyframe = Some(idx);
-                        }
-                        if ui.button("Remove keyframe").clicked() {
-                            remove_keyframe = Some(idx);
-                        }
-                    });
-                    ui.label(egui::RichText::new(format!("Target swatch {idx}")).weak());
+        egui::CollapsingHeader::new("Animation")
+            .id_salt("palette_animation")
+            .default_open(false)
+            .show(ui, |ui| {
+                if color_count == 0 {
+                    ui.label("Add a colour to keyframe.");
+                    return;
                 }
-                None => {
-                    ui.label(egui::RichText::new("Select a swatch to keyframe it.").weak());
-                }
-            }
 
-            // The resolved-at-frame readout: each swatch's colour at the current
-            // frame, animation applied.
-            ui.label(egui::RichText::new("Resolved at frame:").weak());
-            ui.horizontal_wrapped(|ui| {
-                ui.spacing_mut().item_spacing = egui::vec2(3.0, 3.0);
-                for &color in &resolved {
-                    let (rect, _resp) = ui.allocate_exact_size(egui::vec2(16.0, 16.0), egui::Sense::hover());
-                    if color.a < 255 {
-                        paint_checker(ui, rect);
+                let mut set_keyframe: Option<usize> = None;
+                let mut remove_keyframe: Option<usize> = None;
+                let mut cycle = false;
+
+                ui.label(format!("Frame {}", frame.get()));
+                match target {
+                    Some(idx) => {
+                        ui.horizontal(|ui| {
+                            if ui
+                                .button(format!("{} Set keyframe", crate::icons::FILM))
+                                .on_hover_text("Keyframe the foreground colour for the target swatch at this frame")
+                                .clicked()
+                            {
+                                set_keyframe = Some(idx);
+                            }
+                            if ui.button("Remove keyframe").clicked() {
+                                remove_keyframe = Some(idx);
+                            }
+                        });
+                        ui.label(egui::RichText::new(format!("Target swatch {idx}")).weak());
                     }
-                    ui.painter().rect_filled(rect, 2.0, to_color32(color));
-                    ui.painter()
-                        .rect_stroke(rect, 2.0, egui::Stroke::new(1.0, egui::Color32::from_black_alpha(120)), egui::StrokeKind::Middle);
+                    None => {
+                        ui.label(egui::RichText::new("Select a swatch to keyframe it.").weak());
+                    }
+                }
+
+                // The resolved-at-frame readout: each swatch's colour at the current
+                // frame, animation applied.
+                ui.label(egui::RichText::new("Resolved at frame:").weak());
+                ui.horizontal_wrapped(|ui| {
+                    ui.spacing_mut().item_spacing = egui::vec2(3.0, 3.0);
+                    for &color in &resolved {
+                        let (rect, _resp) = ui.allocate_exact_size(egui::vec2(16.0, 16.0), egui::Sense::hover());
+                        if color.a < 255 {
+                            paint_checker(ui, rect);
+                        }
+                        ui.painter().rect_filled(rect, 2.0, to_color32(color));
+                        ui.painter().rect_stroke(
+                            rect,
+                            2.0,
+                            egui::Stroke::new(1.0, egui::Color32::from_black_alpha(120)),
+                            egui::StrokeKind::Middle,
+                        );
+                    }
+                });
+
+                ui.separator();
+
+                // Colour cycling: rotate a swatch range. Clamp the stored indices to
+                // the live palette before they drive the controls.
+                let max_index = color_count - 1;
+                self.editor.cycle_first = self.editor.cycle_first.min(max_index);
+                self.editor.cycle_last = self.editor.cycle_last.min(max_index);
+                ui.label(egui::RichText::new("Cycle range:").weak());
+                ui.horizontal(|ui| {
+                    ui.add(egui::DragValue::new(&mut self.editor.cycle_first).range(0..=max_index).prefix("first "));
+                    ui.add(egui::DragValue::new(&mut self.editor.cycle_last).range(0..=max_index).prefix("last "));
+                    ui.add(egui::DragValue::new(&mut self.editor.cycle_offset).prefix("offset "));
+                });
+                if ui
+                    .add(egui::Button::new(format!("{} Cycle palette", crate::icons::REPEAT)))
+                    .on_hover_text("Rotate the range's swatches by the offset, in one undo step")
+                    .clicked()
+                {
+                    cycle = true;
+                }
+
+                // Apply the chosen action after the borrows release.
+                if let Some(idx) = set_keyframe {
+                    self.set_palette_keyframe(idx, frame, fg);
+                }
+                if let Some(idx) = remove_keyframe {
+                    self.remove_palette_keyframe(idx, frame);
+                }
+                if cycle {
+                    self.cycle_palette();
                 }
             });
-
-            ui.separator();
-
-            // Colour cycling: rotate a swatch range. Clamp the stored indices to
-            // the live palette before they drive the controls.
-            let max_index = color_count - 1;
-            self.editor.cycle_first = self.editor.cycle_first.min(max_index);
-            self.editor.cycle_last = self.editor.cycle_last.min(max_index);
-            ui.label(egui::RichText::new("Cycle range:").weak());
-            ui.horizontal(|ui| {
-                ui.add(egui::DragValue::new(&mut self.editor.cycle_first).range(0..=max_index).prefix("first "));
-                ui.add(egui::DragValue::new(&mut self.editor.cycle_last).range(0..=max_index).prefix("last "));
-                ui.add(egui::DragValue::new(&mut self.editor.cycle_offset).prefix("offset "));
-            });
-            if ui
-                .add(egui::Button::new(format!("{} Cycle palette", crate::icons::REPEAT)))
-                .on_hover_text("Rotate the range's swatches by the offset, in one undo step")
-                .clicked()
-            {
-                cycle = true;
-            }
-
-            // Apply the chosen action after the borrows release.
-            if let Some(idx) = set_keyframe {
-                self.set_palette_keyframe(idx, frame, fg);
-            }
-            if let Some(idx) = remove_keyframe {
-                self.remove_palette_keyframe(idx, frame);
-            }
-            if cycle {
-                self.cycle_palette();
-            }
-        });
     }
 
     /// Sets a keyframe for swatch `idx` at `frame` to `color`, creating the
@@ -600,7 +614,11 @@ mod tests {
         let anim = p.animation.as_ref().expect("animation survives a partial prune");
         // Entry 0 keeps its frame-5 key; entry 1 is untouched.
         assert_eq!(anim.resolve(0, FrameIndex::new(5), Rgba::transparent()), Rgba::opaque(0, 1, 0));
-        assert_eq!(anim.resolve(0, FrameIndex::new(1), Rgba::transparent()), Rgba::transparent(), "the frame-1 key is gone");
+        assert_eq!(
+            anim.resolve(0, FrameIndex::new(1), Rgba::transparent()),
+            Rgba::transparent(),
+            "the frame-1 key is gone"
+        );
         assert_eq!(anim.resolve(1, FrameIndex::new(2), Rgba::transparent()), Rgba::opaque(0, 0, 1));
     }
 

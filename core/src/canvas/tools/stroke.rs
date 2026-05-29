@@ -258,7 +258,18 @@ pub fn stamp_segment(buf: &mut PixelBuffer, from: Option<[f32; 2]>, points: &[[f
 /// the per-stroke commit redraw blends each *unique* footprint pixel once over
 /// `before` via [`PixelBuffer::set_pixel_blended`] (see [`paint_brush_masked`]).
 /// Returns the brush-stamp count.
-pub fn draw_line_masked(buf: &mut PixelBuffer, x0: i32, y0: i32, x1: i32, y1: i32, color: Rgba, shape: BrushShape, size: u32, pattern: DitherPattern, opacity: u8) -> usize {
+pub fn draw_line_masked(
+    buf: &mut PixelBuffer,
+    x0: i32,
+    y0: i32,
+    x1: i32,
+    y1: i32,
+    color: Rgba,
+    shape: BrushShape,
+    size: u32,
+    pattern: DitherPattern,
+    opacity: u8,
+) -> usize {
     let dx = (x1 - x0).abs();
     let dy = (y1 - y0).abs();
     let sx: i32 = if x0 < x1 { 1 } else { -1 };
@@ -575,7 +586,10 @@ mod tests {
             }
         }
 
-        let written = (0..h).flat_map(|y| (0..w).map(move |x| (x, y))).filter(|&(x, y)| buf.pixel(x, y) == Some(color)).count();
+        let written = (0..h)
+            .flat_map(|y| (0..w).map(move |x| (x, y)))
+            .filter(|&(x, y)| buf.pixel(x, y) == Some(color))
+            .count();
         let total = (w * h) as usize;
         // Exactly half for an even-area region.
         assert_eq!(written, total / 2, "checker fill should write exactly half of {total} pixels");
@@ -668,7 +682,16 @@ mod tests {
         let src = Rgba::opaque(200, 40, 60);
 
         let mut buf = PixelBuffer::filled(16, 1, backdrop).unwrap();
-        stamp_segment_masked(&mut buf, None, &[[0.0, 0.0], [15.0, 0.0]], src, BrushShape::Pixel, 1, DitherPattern::Checker, 255);
+        stamp_segment_masked(
+            &mut buf,
+            None,
+            &[[0.0, 0.0], [15.0, 0.0]],
+            src,
+            BrushShape::Pixel,
+            1,
+            DitherPattern::Checker,
+            255,
+        );
 
         for x in 0u32..16 {
             let allowed = dither_allows(DitherPattern::Checker, x as i32, 0);

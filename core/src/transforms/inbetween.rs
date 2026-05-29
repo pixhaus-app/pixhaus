@@ -122,7 +122,17 @@ pub fn interpolate_frames(frame_a: &[u8], frame_b: &[u8], width: u32, height: u3
 /// Returns the variance-rejected mean of the lerp samples drawn from the
 /// 3×3 neighbourhood around `(x, y)` on `channel`.
 #[allow(clippy::too_many_arguments, clippy::similar_names, clippy::many_single_char_names)]
-fn sample_variance_rejected(frame_a: &[u8], frame_b: &[u8], width: usize, height: usize, x: usize, y: usize, channel: usize, t: f32, variance_range: f32) -> f32 {
+fn sample_variance_rejected(
+    frame_a: &[u8],
+    frame_b: &[u8],
+    width: usize,
+    height: usize,
+    x: usize,
+    y: usize,
+    channel: usize,
+    t: f32,
+    variance_range: f32,
+) -> f32 {
     // Capacity 9 covers the full 3×3 neighbourhood; corners and edges
     // contribute fewer samples after clamping. Bound the per-sample count
     // to `u16` so we can convert losslessly to `f32`.
@@ -180,11 +190,7 @@ fn sample_variance_rejected(frame_a: &[u8], frame_b: &[u8], width: usize, height
             accepted += 1;
         }
     }
-    if accepted > 0 {
-        accum / f32::from(accepted)
-    } else {
-        mean
-    }
+    if accepted > 0 { accum / f32::from(accepted) } else { mean }
 }
 
 /// Generates `count` evenly spaced inbetweens between `a` and `b`.

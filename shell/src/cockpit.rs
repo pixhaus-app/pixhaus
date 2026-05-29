@@ -683,8 +683,7 @@ impl ShellApp {
         let entity_id = self.doc.active_entity_id()?;
         let entity = self.doc.project.library.entities.iter().find(|e| e.id == entity_id)?;
         let EntityContent::Sprites {
-            reference_sheet: Some(sheet),
-            ..
+            reference_sheet: Some(sheet), ..
         } = &entity.content
         else {
             return None;
@@ -1305,8 +1304,7 @@ impl ShellApp {
         };
         crate::commands::push_library_edit(&mut self.editor, &mut self.doc, "Delete variant", entity_id, move |entity| {
             if let EntityContent::Sprites {
-                reference_sheet: Some(sheet),
-                ..
+                reference_sheet: Some(sheet), ..
             } = &mut entity.content
             {
                 sheet.variants.retain(|v| v.id != core_id);
@@ -2240,8 +2238,7 @@ mod tests {
         // The delete path: retain variants by id, dropping the target.
         push_library_edit(&mut editor, &mut doc, "Delete variant", entity_id, move |entity| {
             if let EntityContent::Sprites {
-                reference_sheet: Some(sheet),
-                ..
+                reference_sheet: Some(sheet), ..
             } = &mut entity.content
             {
                 sheet.variants.retain(|v| v.id != drop);
@@ -2318,7 +2315,11 @@ mod tests {
     fn card_name_prefers_the_typed_name_and_falls_back_to_the_subject() {
         assert_eq!(card_name("Hero knight", "a small knight"), "Hero knight", "a typed name wins");
         assert_eq!(card_name("  spaced  ", "ignored"), "spaced", "the typed name is trimmed");
-        assert_eq!(card_name("   ", "a small knight"), "a small knight", "a blank name falls back to the subject's first words");
+        assert_eq!(
+            card_name("   ", "a small knight"),
+            "a small knight",
+            "a blank name falls back to the subject's first words"
+        );
         assert_eq!(card_name("", ""), "Untitled card", "no name and no subject falls back to the default");
     }
 
@@ -2332,7 +2333,15 @@ mod tests {
         let card_id = AssetId::new(doc.alloc_id());
         let png = tiny_png(20, 20);
         push_ai_library_edit(&mut editor, &mut doc, "Save character card", move |ai| {
-            push_card_records(&mut ai.asset_library, asset_id, card_id, png, "Hero knight".to_owned(), "house style".to_owned(), 1_700_000_000);
+            push_card_records(
+                &mut ai.asset_library,
+                asset_id,
+                card_id,
+                png,
+                "Hero knight".to_owned(),
+                "house style".to_owned(),
+                1_700_000_000,
+            );
         });
 
         let lib = &doc.project.library.ai.asset_library;
@@ -2362,7 +2371,15 @@ mod tests {
         let swatch_id = AssetId::new(doc.alloc_id());
         let png = tiny_png(20, 20);
         push_ai_library_edit(&mut editor, &mut doc, "Save style swatch", move |ai| {
-            push_swatch_records(&mut ai.asset_library, asset_id, swatch_id, png, "Dusk palette".to_owned(), "muted dusk".to_owned(), 1_700_000_000);
+            push_swatch_records(
+                &mut ai.asset_library,
+                asset_id,
+                swatch_id,
+                png,
+                "Dusk palette".to_owned(),
+                "muted dusk".to_owned(),
+                1_700_000_000,
+            );
         });
 
         let lib = &doc.project.library.ai.asset_library;

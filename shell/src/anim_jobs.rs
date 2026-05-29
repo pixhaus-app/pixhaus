@@ -170,12 +170,7 @@ impl AnimJobQueue {
         };
         // Persist the Running->Interrupted flips so the recovery state is
         // durable, then bound the dir.
-        let interrupted: Vec<AnimJobRecord> = queue
-            .jobs
-            .values()
-            .filter(|j| j.status == AnimJobStatus::Interrupted)
-            .cloned()
-            .collect();
+        let interrupted: Vec<AnimJobRecord> = queue.jobs.values().filter(|j| j.status == AnimJobStatus::Interrupted).cloned().collect();
         for job in &interrupted {
             queue.persist(job);
         }
@@ -190,9 +185,7 @@ impl AnimJobQueue {
 
     /// Path for a job's clip blob, or `None` when in-memory only.
     fn clip_path(&self, id: u64, mime: &str) -> Option<PathBuf> {
-        self.dir
-            .as_ref()
-            .map(|d| d.join(format!("{id}.{}", ext_for_mime(mime))))
+        self.dir.as_ref().map(|d| d.join(format!("{id}.{}", ext_for_mime(mime))))
     }
 
     /// Writes a job's JSON sidecar. A failure degrades to in-memory: it is logged
@@ -370,12 +363,7 @@ impl AnimJobQueue {
     /// Returns the entity's jobs, newest first.
     #[allow(dead_code)]
     pub(crate) fn list(&self, entity_id: EntityId) -> Vec<AnimJobRecord> {
-        let mut v: Vec<AnimJobRecord> = self
-            .jobs
-            .values()
-            .filter(|j| j.entity_id == entity_id)
-            .cloned()
-            .collect();
+        let mut v: Vec<AnimJobRecord> = self.jobs.values().filter(|j| j.entity_id == entity_id).cloned().collect();
         v.sort_by_key(|j| std::cmp::Reverse(j.created_at_ms));
         v
     }
@@ -547,12 +535,7 @@ mod tests {
             reloaded.next_id = reloaded.next_id.max(job.id + 1);
             reloaded.jobs.insert(job.id, job);
         }
-        let interrupted: Vec<AnimJobRecord> = reloaded
-            .jobs
-            .values()
-            .filter(|j| j.status == AnimJobStatus::Interrupted)
-            .cloned()
-            .collect();
+        let interrupted: Vec<AnimJobRecord> = reloaded.jobs.values().filter(|j| j.status == AnimJobStatus::Interrupted).cloned().collect();
         for job in &interrupted {
             reloaded.persist(job);
         }
@@ -601,7 +584,16 @@ mod tests {
             dir: Some(dir),
         };
         let clip = [4u8, 3, 2, 1];
-        let id = q.record_import(EntityId::new(8), SpriteId::new(8), "south".into(), Some("walk".into()), "image/gif", 6, 12, &clip);
+        let id = q.record_import(
+            EntityId::new(8),
+            SpriteId::new(8),
+            "south".into(),
+            Some("walk".into()),
+            "image/gif",
+            6,
+            12,
+            &clip,
+        );
         let job = q.get(id).unwrap();
         assert_eq!(job.status, AnimJobStatus::Done);
         assert_eq!(job.model, "imported");

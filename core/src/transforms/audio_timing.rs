@@ -217,7 +217,9 @@ fn parse_wav_mono_f32(bytes: &[u8]) -> Result<MonoPcm, AudioError> {
             bits_per_sample = read_u16_le(bytes, data_start + 14)?;
         } else if chunk_id == b"data" {
             let data_end = (data_start + chunk_size).min(bytes.len());
-            pcm_data = bytes.get(data_start..data_end).ok_or_else(|| AudioError::Malformed("data chunk out of range".into()))?;
+            pcm_data = bytes
+                .get(data_start..data_end)
+                .ok_or_else(|| AudioError::Malformed("data chunk out of range".into()))?;
         }
 
         // RIFF chunks are padded to even byte boundaries.
@@ -263,7 +265,9 @@ fn decode_pcm_to_mono_f32(data: &[u8], channels: u16, bits_per_sample: u16) -> R
         let mut sum = 0.0f32;
         for ch in 0..channels {
             let start = ch * bytes_per_sample;
-            let sample_bytes = frame_bytes.get(start..start + bytes_per_sample).ok_or_else(|| AudioError::Malformed("truncated PCM frame".into()))?;
+            let sample_bytes = frame_bytes
+                .get(start..start + bytes_per_sample)
+                .ok_or_else(|| AudioError::Malformed("truncated PCM frame".into()))?;
             sum += decode_sample(sample_bytes, bits_per_sample)?;
         }
         mono.push(sum / channels as f32);

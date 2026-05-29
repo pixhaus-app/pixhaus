@@ -511,7 +511,11 @@ mod tests {
             overwrite.set_pixel(1, 2, c);
             let mut blended = PixelBuffer::filled(4, 4, backdrop).unwrap();
             blended.set_pixel_blended(1, 2, c, 255);
-            assert_eq!(blended.as_bytes(), overwrite.as_bytes(), "opacity 255 must overwrite identically over {backdrop:?}");
+            assert_eq!(
+                blended.as_bytes(),
+                overwrite.as_bytes(),
+                "opacity 255 must overwrite identically over {backdrop:?}"
+            );
         }
     }
 

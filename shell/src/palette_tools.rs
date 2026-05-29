@@ -88,7 +88,11 @@ impl ShellApp {
             ui.horizontal(|ui| {
                 ui.add(egui::DragValue::new(&mut self.editor.ramp_from).range(0..=max_index).prefix("from "));
                 ui.add(egui::DragValue::new(&mut self.editor.ramp_to).range(0..=max_index).prefix("to "));
-                ui.add(egui::DragValue::new(&mut self.editor.ramp_steps).range(RAMP_MIN_STEPS..=RAMP_MAX_STEPS).prefix("steps "));
+                ui.add(
+                    egui::DragValue::new(&mut self.editor.ramp_steps)
+                        .range(RAMP_MIN_STEPS..=RAMP_MAX_STEPS)
+                        .prefix("steps "),
+                );
             });
 
             let start = colors[self.editor.ramp_from];
@@ -117,45 +121,48 @@ impl ShellApp {
     /// derives from the foreground, and append a clicked suggestion in one undo
     /// step.
     fn harmony_section(&mut self, ui: &mut egui::Ui) {
-        egui::CollapsingHeader::new("Harmony").id_salt("palette_harmony").default_open(false).show(ui, |ui| {
-            ui.horizontal_wrapped(|ui| {
-                for kind in [
-                    HarmonyKind::Complement,
-                    HarmonyKind::SplitComplement,
-                    HarmonyKind::Triad,
-                    HarmonyKind::Tetrad,
-                    HarmonyKind::Analogous,
-                ] {
-                    ui.selectable_value(&mut self.editor.harmony_kind, kind, kind.label());
-                }
-            });
-
-            let source = self.editor.fg;
-            let suggestions = harmony_colors(self.editor.harmony_kind, source);
-            // The colour the artist clicks this frame, added after the swatch
-            // loop ends so the panel's borrow is released first.
-            let mut add: Option<Rgba> = None;
-            ui.horizontal_wrapped(|ui| {
-                ui.spacing_mut().item_spacing = egui::vec2(3.0, 3.0);
-                // The source swatch leads the strip as the harmony anchor.
-                swatch(ui, source, false);
-                ui.separator();
-                for &c in &suggestions {
-                    if swatch(ui, c, true).clicked() {
-                        add = Some(c);
-                    }
-                }
-            });
-
-            if let Some(c) = add {
-                let sel = self.editor.active_palette_id;
-                push_sprite_edit(&mut self.editor, &mut self.doc, "Add harmony color", |sprite| {
-                    if let Some(p) = palette_by_id_mut(sprite, sel) {
-                        p.colors.push(PaletteEntry::new(c));
+        egui::CollapsingHeader::new("Harmony")
+            .id_salt("palette_harmony")
+            .default_open(false)
+            .show(ui, |ui| {
+                ui.horizontal_wrapped(|ui| {
+                    for kind in [
+                        HarmonyKind::Complement,
+                        HarmonyKind::SplitComplement,
+                        HarmonyKind::Triad,
+                        HarmonyKind::Tetrad,
+                        HarmonyKind::Analogous,
+                    ] {
+                        ui.selectable_value(&mut self.editor.harmony_kind, kind, kind.label());
                     }
                 });
-            }
-        });
+
+                let source = self.editor.fg;
+                let suggestions = harmony_colors(self.editor.harmony_kind, source);
+                // The colour the artist clicks this frame, added after the swatch
+                // loop ends so the panel's borrow is released first.
+                let mut add: Option<Rgba> = None;
+                ui.horizontal_wrapped(|ui| {
+                    ui.spacing_mut().item_spacing = egui::vec2(3.0, 3.0);
+                    // The source swatch leads the strip as the harmony anchor.
+                    swatch(ui, source, false);
+                    ui.separator();
+                    for &c in &suggestions {
+                        if swatch(ui, c, true).clicked() {
+                            add = Some(c);
+                        }
+                    }
+                });
+
+                if let Some(c) = add {
+                    let sel = self.editor.active_palette_id;
+                    push_sprite_edit(&mut self.editor, &mut self.doc, "Add harmony color", |sprite| {
+                        if let Some(p) = palette_by_id_mut(sprite, sel) {
+                            p.colors.push(PaletteEntry::new(c));
+                        }
+                    });
+                }
+            });
     }
 }
 

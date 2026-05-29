@@ -62,12 +62,7 @@ pub fn perspective(buf: &PixelBuffer, dst_corners: &[(f32, f32)]) -> Result<Pixe
     let h = buf.height() as f32;
 
     // Source corners: top-left, top-right, bottom-right, bottom-left.
-    let src_corners: [(f32, f32); 4] = [
-        (0.0, 0.0),
-        (w - 1.0, 0.0),
-        (w - 1.0, h - 1.0),
-        (0.0, h - 1.0),
-    ];
+    let src_corners: [(f32, f32); 4] = [(0.0, 0.0), (w - 1.0, 0.0), (w - 1.0, h - 1.0), (0.0, h - 1.0)];
 
     // Compute forward homography H: src -> dst.
     let h_fwd = solve_homography(&src_corners, dst_corners)?;
@@ -138,11 +133,7 @@ fn solve_homography(src: &[(f32, f32); 4], dst: &[(f32, f32)]) -> Result<H3x3> {
     // Solve via Gaussian elimination with partial pivoting.
     let h_vec = gauss_elim_8x8(&mut a)?;
 
-    Ok([
-        [h_vec[0], h_vec[1], h_vec[2]],
-        [h_vec[3], h_vec[4], h_vec[5]],
-        [h_vec[6], h_vec[7], 1.0],
-    ])
+    Ok([[h_vec[0], h_vec[1], h_vec[2]], [h_vec[3], h_vec[4], h_vec[5]], [h_vec[6], h_vec[7], 1.0]])
 }
 
 /// Gaussian elimination with partial pivoting on the augmented 8x9 matrix.
@@ -154,12 +145,7 @@ fn gauss_elim_8x8(a: &mut [[f64; 9]; 8]) -> Result<[f64; 8]> {
     for col in 0..N {
         // Partial pivot: find the row with the largest absolute value in this column.
         let pivot_row = (col..N)
-            .max_by(|&r1, &r2| {
-                a[r1][col]
-                    .abs()
-                    .partial_cmp(&a[r2][col].abs())
-                    .unwrap_or(std::cmp::Ordering::Equal)
-            })
+            .max_by(|&r1, &r2| a[r1][col].abs().partial_cmp(&a[r2][col].abs()).unwrap_or(std::cmp::Ordering::Equal))
             .unwrap_or(col);
 
         a.swap(col, pivot_row);
@@ -195,8 +181,7 @@ fn gauss_elim_8x8(a: &mut [[f64; 9]; 8]) -> Result<[f64; 8]> {
 /// Computes the inverse of a 3x3 matrix using the adjugate method.
 /// Returns the inverse scaled so that `M[2][2] == 1`.
 fn invert_3x3(m: H3x3) -> Result<H3x3> {
-    let det = m[0][0] * (m[1][1] * m[2][2] - m[1][2] * m[2][1])
-        - m[0][1] * (m[1][0] * m[2][2] - m[1][2] * m[2][0])
+    let det = m[0][0] * (m[1][1] * m[2][2] - m[1][2] * m[2][1]) - m[0][1] * (m[1][0] * m[2][2] - m[1][2] * m[2][0])
         + m[0][2] * (m[1][0] * m[2][1] - m[1][1] * m[2][0]);
 
     if det.abs() < 1e-10 {
@@ -272,10 +257,7 @@ mod tests {
     fn wrong_corner_count_errors() {
         let buf = PixelBuffer::new(4, 4).unwrap();
         let three: &[(f32, f32)] = &[(0.0, 0.0), (3.0, 0.0), (3.0, 3.0)];
-        assert!(matches!(
-            perspective(&buf, three),
-            Err(Error::InvalidCornerCount(3))
-        ));
+        assert!(matches!(perspective(&buf, three), Err(Error::InvalidCornerCount(3))));
     }
 
     #[test]

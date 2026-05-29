@@ -266,7 +266,9 @@ impl ShellApp {
                     }
                     continue;
                 }
-                let chip = ui.small_button(format!("{name} ×")).on_hover_text("Click ×-side to remove, double-click to rename");
+                let chip = ui
+                    .small_button(format!("{name} ×"))
+                    .on_hover_text("Click ×-side to remove, double-click to rename");
                 if chip.clicked() {
                     remove = Some(i);
                 } else if chip.double_clicked() {
@@ -288,7 +290,12 @@ impl ShellApp {
                     push_sprite_edit(&mut self.editor, &mut self.doc, "Rename tag", |sprite| {
                         applied = matches!(rename_tag(sprite, i, &name), Ok(true));
                     });
-                    applied || self.doc.active_sprite().and_then(|s| s.frame_tags.get(i)).is_some_and(|t| t.name == name.trim())
+                    applied
+                        || self
+                            .doc
+                            .active_sprite()
+                            .and_then(|s| s.frame_tags.get(i))
+                            .is_some_and(|t| t.name == name.trim())
                 };
                 if result {
                     self.editor.tag_rename = None;
@@ -431,7 +438,11 @@ impl ShellApp {
                     });
                 }
 
-                if ui.button(format!("{} Add from selected range", icons::ADD)).on_hover_text("Add an engine animation over the selected frames").clicked() {
+                if ui
+                    .button(format!("{} Add from selected range", icons::ADD))
+                    .on_hover_text("Add an engine animation over the selected frames")
+                    .clicked()
+                {
                     self.add_animation_from_selection();
                 }
             });
@@ -562,13 +573,11 @@ impl ShellApp {
                         continue;
                     }
                     let end = (*e).min(count.saturating_sub(1));
-                    let span = egui::Rect::from_min_max(
-                        egui::pos2(col_x(*s), bar.top() + 1.0),
-                        egui::pos2(col_x(end) + cs, bar.bottom() - 1.0),
-                    );
+                    let span = egui::Rect::from_min_max(egui::pos2(col_x(*s), bar.top() + 1.0), egui::pos2(col_x(end) + cs, bar.bottom() - 1.0));
                     ui.painter().rect_filled(span, 3.0, *col);
                     if selected_tag == Some(*i) {
-                        ui.painter().rect_stroke(span, 3.0, egui::Stroke::new(2.0, egui::Color32::WHITE), egui::StrokeKind::Inside);
+                        ui.painter()
+                            .rect_stroke(span, 3.0, egui::Stroke::new(2.0, egui::Color32::WHITE), egui::StrokeKind::Inside);
                     }
                     ui.painter().text(
                         span.center(),
@@ -590,12 +599,15 @@ impl ShellApp {
                 // The tag the menu opened over: the span under the
                 // secondary-click. Only a click that lands on a tag opens a
                 // menu; empty space has no tag to act on.
-                let menu_tag = resp.secondary_clicked().then(|| {
-                    resp.interact_pointer_pos().and_then(|pos| {
-                        let f = frame_at_x(pos.x, left, 0.0, cs, count);
-                        tag_spans.iter().find(|(_, _, s, e, _)| f >= *s && f <= *e).map(|(i, ..)| *i)
+                let menu_tag = resp
+                    .secondary_clicked()
+                    .then(|| {
+                        resp.interact_pointer_pos().and_then(|pos| {
+                            let f = frame_at_x(pos.x, left, 0.0, cs, count);
+                            tag_spans.iter().find(|(_, _, s, e, _)| f >= *s && f <= *e).map(|(i, ..)| *i)
+                        })
                     })
-                }).flatten();
+                    .flatten();
                 if menu_tag.is_some() {
                     resp.context_menu(|ui| {
                         if let Some(idx) = menu_tag {
@@ -628,10 +640,7 @@ impl ShellApp {
                 // Preview the in-progress drag as a translucent span.
                 if let Some(d) = tag_drag {
                     let (lo, hi) = d.normalized();
-                    let preview = egui::Rect::from_min_max(
-                        egui::pos2(col_x(lo), bar.top() + 1.0),
-                        egui::pos2(col_x(hi) + cs, bar.bottom() - 1.0),
-                    );
+                    let preview = egui::Rect::from_min_max(egui::pos2(col_x(lo), bar.top() + 1.0), egui::pos2(col_x(hi) + cs, bar.bottom() - 1.0));
                     ui.painter().rect_filled(preview, 3.0, egui::Color32::from_white_alpha(60));
                 }
             });
@@ -692,10 +701,16 @@ impl ShellApp {
                 // secondary-click. A right-click outside the multi-selection
                 // retargets the active frame to it (the `effectiveSelection`
                 // rule) so the op acts on the clicked frame.
-                let menu_frame = resp.secondary_clicked().then(|| resp.interact_pointer_pos().map(|pos| frame_at_x(pos.x, left, 0.0, cs, count))).flatten();
+                let menu_frame = resp
+                    .secondary_clicked()
+                    .then(|| resp.interact_pointer_pos().map(|pos| frame_at_x(pos.x, left, 0.0, cs, count)))
+                    .flatten();
                 resp.context_menu(|ui| {
                     if let Some(action) = frame_context_menu(ui, has_clipboard, effective_count) {
-                        frame_menu = Some(FrameMenuAction { target: menu_frame, op: action });
+                        frame_menu = Some(FrameMenuAction {
+                            target: menu_frame,
+                            op: action,
+                        });
                         ui.close();
                     }
                 });
@@ -1183,7 +1198,9 @@ impl ShellApp {
             return;
         };
         let insert_at = plan.lo + 1;
-        let (added, cels) = build_tween_cels(frames, plan.layer, insert_at, plan.position, plan.opacity, plan.size, || PixelBufferId::new(self.doc.alloc_id()));
+        let (added, cels) = build_tween_cels(frames, plan.layer, insert_at, plan.position, plan.opacity, plan.size, || {
+            PixelBufferId::new(self.doc.alloc_id())
+        });
         let n = cels.len() as u32;
         if n == 0 {
             return;
@@ -1444,10 +1461,7 @@ fn build_paste_plan(clip: &FrameClipboard, insert_at: u32, mut alloc_id: impl Fn
                 frame_index: target,
                 position: cc.position,
                 opacity: cc.opacity,
-                data: CelData::Raster {
-                    buffer: new_id,
-                    size: cc.size,
-                },
+                data: CelData::Raster { buffer: new_id, size: cc.size },
                 user_data: pixhaus_core::project::UserData::default(),
             });
         }
@@ -1990,7 +2004,12 @@ fn tag_context_menu(ui: &mut egui::Ui, current: (LoopDirection, u16)) -> Option<
     }
     ui.separator();
     ui.menu_button(format!("{} Playback", icons::REPEAT), |ui| {
-        for option in [LoopDirection::Forward, LoopDirection::Reverse, LoopDirection::PingPong, LoopDirection::PingPongReverse] {
+        for option in [
+            LoopDirection::Forward,
+            LoopDirection::Reverse,
+            LoopDirection::PingPong,
+            LoopDirection::PingPongReverse,
+        ] {
             // Selecting a direction keeps the existing repeat count.
             if ui.selectable_label(dir == option, loop_label(option)).clicked() {
                 chosen = Some(TagMenuOp::SetPlayback(option, repeat));
@@ -2811,9 +2830,7 @@ mod tests {
 
             let clip = one_frame_clip(layer, want.clone());
             // Insert after the active frame (0), so the pasted frame is index 1.
-            let plan = build_paste_plan(&clip, 1, || {
-                pixhaus_core::project::PixelBufferId::new(doc.alloc_id())
-            });
+            let plan = build_paste_plan(&clip, 1, || pixhaus_core::project::PixelBufferId::new(doc.alloc_id()));
             // The plan allocates exactly one fresh buffer, and that id is not the
             // source cel's id — paste never aliases the source.
             assert_eq!(plan.added.len(), 1, "one cel pastes one fresh buffer");
@@ -2869,9 +2886,7 @@ mod tests {
 
             let bytes = PixelBuffer::filled(8, 8, Rgba::new(5, 6, 7, 255)).expect("buffer").into_raw();
             let clip = one_frame_clip(layer, bytes);
-            let plan = build_paste_plan(&clip, 1, || {
-                pixhaus_core::project::PixelBufferId::new(doc.alloc_id())
-            });
+            let plan = build_paste_plan(&clip, 1, || pixhaus_core::project::PixelBufferId::new(doc.alloc_id()));
             let pasted_id = plan.added[0].0;
             let added = plan.added.clone();
             let frames = plan.frames.clone();
@@ -2955,7 +2970,9 @@ mod tests {
             assert_eq!(frames[1].pixel(0, 0), Some(Rgba::opaque(128, 128, 128)));
 
             let insert_at = 1u32;
-            let (added, cels) = build_tween_cels(frames, layer, insert_at, IVec2::zero(), 255, Size::new(4, 4), || PixelBufferId::new(doc.alloc_id()));
+            let (added, cels) = build_tween_cels(frames, layer, insert_at, IVec2::zero(), 255, Size::new(4, 4), || {
+                PixelBufferId::new(doc.alloc_id())
+            });
             let new_ids: Vec<PixelBufferId> = added.iter().map(|(id, _)| *id).collect();
             let n = cels.len() as u32;
 

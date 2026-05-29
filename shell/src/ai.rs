@@ -11,13 +11,13 @@ use std::sync::mpsc::Sender;
 
 use base64::Engine as _;
 use eframe::egui;
+pub use pixhaus_ai::backends::ImageQuality;
 use pixhaus_ai::backends::fal::FalBackend;
 use pixhaus_ai::backends::openai::OpenAiBackend;
 use pixhaus_ai::backends::{
     ApiKeyStore, BackendError, BackendProxy, BackgroundRemovalRequest, ImageEditRequest, ImageGenRequest, ImageToVideoRequest, InferenceRequest,
     InferenceResponse,
 };
-pub use pixhaus_ai::backends::ImageQuality;
 use pixhaus_ai::compose::builtins::{BUILTIN_DEFAULT_BASELINE, BuiltinLibrary, STRUCTURE_SINGLE_ID};
 use pixhaus_ai::compose::{ComposeRequest, compose};
 use pixhaus_ai::plugin::{
@@ -562,7 +562,16 @@ pub struct ClipResult {
 /// every message so the shell can drop a canceled or superseded run's results.
 /// `job_id` is the durable-queue id the terminal messages carry so the shell
 /// marks the right record `Done`/`Error`.
-pub fn spawn_clip(handle: &Handle, runtime: Arc<VerbRuntime>, ctx: egui::Context, tx: Sender<ShellMsg>, job: AnimJob, cancel: CancellationToken, epoch: u64, job_id: u64) {
+pub fn spawn_clip(
+    handle: &Handle,
+    runtime: Arc<VerbRuntime>,
+    ctx: egui::Context,
+    tx: Sender<ShellMsg>,
+    job: AnimJob,
+    cancel: CancellationToken,
+    epoch: u64,
+    job_id: u64,
+) {
     handle.spawn(async move {
         let progress_tx = tx.clone();
         let progress_ctx = ctx.clone();
@@ -575,7 +584,13 @@ pub fn spawn_clip(handle: &Handle, runtime: Arc<VerbRuntime>, ctx: egui::Context
         };
         match generate_clip(&runtime, &job, &cancel, &progress).await {
             Ok(ClipResult { clip, mime, frames }) => {
-                let _ = tx.send(ShellMsg::ClipReady { epoch, job_id, clip, mime, frames });
+                let _ = tx.send(ShellMsg::ClipReady {
+                    epoch,
+                    job_id,
+                    clip,
+                    mime,
+                    frames,
+                });
             }
             Err(error) => {
                 let _ = tx.send(ShellMsg::ClipFailed { epoch, job_id, error });

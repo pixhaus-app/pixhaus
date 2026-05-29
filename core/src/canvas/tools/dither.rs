@@ -30,12 +30,7 @@ pub enum DitherPattern {
 const BAYER_2X2: [[u8; 2]; 2] = [[0, 2], [3, 1]];
 
 /// The ordered 4x4 Bayer matrix, values `0..=15`.
-const BAYER_4X4: [[u8; 4]; 4] = [
-    [0, 8, 2, 10],
-    [12, 4, 14, 6],
-    [3, 11, 1, 9],
-    [15, 7, 13, 5],
-];
+const BAYER_4X4: [[u8; 4]; 4] = [[0, 8, 2, 10], [12, 4, 14, 6], [3, 11, 1, 9], [15, 7, 13, 5]];
 
 /// Whether the dither `pattern` permits a write at canvas pixel `(x, y)`.
 ///
@@ -102,10 +97,16 @@ mod tests {
     #[test]
     fn bayer_half_coverage_per_tile() {
         // Each Bayer tile passes exactly half its cells (mid threshold).
-        let count_2x2 = (0..2).flat_map(|y| (0..2).map(move |x| (x, y))).filter(|&(x, y)| dither_allows(DitherPattern::Bayer2x2, x, y)).count();
+        let count_2x2 = (0..2)
+            .flat_map(|y| (0..2).map(move |x| (x, y)))
+            .filter(|&(x, y)| dither_allows(DitherPattern::Bayer2x2, x, y))
+            .count();
         assert_eq!(count_2x2, 2, "Bayer2x2 should pass 2 of 4 cells");
 
-        let count_4x4 = (0..4).flat_map(|y| (0..4).map(move |x| (x, y))).filter(|&(x, y)| dither_allows(DitherPattern::Bayer4x4, x, y)).count();
+        let count_4x4 = (0..4)
+            .flat_map(|y| (0..4).map(move |x| (x, y)))
+            .filter(|&(x, y)| dither_allows(DitherPattern::Bayer4x4, x, y))
+            .count();
         assert_eq!(count_4x4, 8, "Bayer4x4 should pass 8 of 16 cells");
     }
 

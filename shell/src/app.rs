@@ -1160,7 +1160,13 @@ impl ShellApp {
                         self.anim_status = JobStatus::Running(message);
                     }
                 }
-                ShellMsg::ClipReady { epoch, job_id, clip, mime, frames } => {
+                ShellMsg::ClipReady {
+                    epoch,
+                    job_id,
+                    clip,
+                    mime,
+                    frames,
+                } => {
                     // Persist the durable record (and clip blob) even for a stale
                     // result, so the job leaves Running rather than reloading as
                     // Interrupted next launch.
@@ -2812,11 +2818,10 @@ impl ShellApp {
         // Retime the selected tag's range; with no selection, the whole
         // timeline. The range is captured now so a later sprite switch cannot
         // misdirect the durations.
-        let range = self
-            .editor
-            .selected_tag
-            .and_then(|i| sprite.frame_tags.get(i))
-            .map_or_else(|| pixhaus_core::project::FrameRange::new(FrameIndex::new(0), FrameIndex::new(frame_count - 1)), |t| t.range);
+        let range = self.editor.selected_tag.and_then(|i| sprite.frame_tags.get(i)).map_or_else(
+            || pixhaus_core::project::FrameRange::new(FrameIndex::new(0), FrameIndex::new(frame_count - 1)),
+            |t| t.range,
+        );
 
         let fps = self.editor.global_fps.max(1);
         let tx = self.tx.clone();
@@ -2987,7 +2992,11 @@ impl ShellApp {
         // forward (a mirror is not a reversal). Correct only for left-right-
         // symmetric subjects — the cascade grid badges east as a flip, not a
         // generation. The flip is bounded by the pick region, not the 8K canvas.
-        let frames = if self.east_flip_on_land() { flip_frames_horizontal(result.frames) } else { result.frames };
+        let frames = if self.east_flip_on_land() {
+            flip_frames_horizontal(result.frames)
+        } else {
+            result.frames
+        };
         let fps = self.anim_candidates[i].fps;
         let frame_ms = (1000 / fps.max(1)).max(1);
         let motion = self.anim_candidates[i].motion.clone();
@@ -3019,8 +3028,7 @@ impl ShellApp {
             return false;
         };
         let pixhaus_core::project::EntityContent::Sprites {
-            reference_sheet: Some(sheet),
-            ..
+            reference_sheet: Some(sheet), ..
         } = &entity.content
         else {
             return false;
@@ -3881,7 +3889,9 @@ impl eframe::App for ShellApp {
 
 #[cfg(test)]
 mod tests {
-    use super::{GridPrefs, MorphOp, MorphResult, SelectionMask, map_beats_to_frames, mime_from_extension, morph_mask, next_cursor, png_to_pixel_buffer, truncate_motion};
+    use super::{
+        GridPrefs, MorphOp, MorphResult, SelectionMask, map_beats_to_frames, mime_from_extension, morph_mask, next_cursor, png_to_pixel_buffer, truncate_motion,
+    };
 
     // --- playback cursor: loop vs stop --------------------------------------
 

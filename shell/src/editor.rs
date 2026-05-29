@@ -438,7 +438,11 @@ impl TagDrag {
     /// regardless of drag direction.
     #[must_use]
     pub fn normalized(self) -> (u32, u32) {
-        if self.start <= self.end { (self.start, self.end) } else { (self.end, self.start) }
+        if self.start <= self.end {
+            (self.start, self.end)
+        } else {
+            (self.end, self.start)
+        }
     }
 }
 
@@ -1068,10 +1072,7 @@ mod tests {
             }
             // Re-using the oldest colour moves it to the front; no duplicate.
             push_recent(&mut d, Rgba::opaque(1, 0, 0), 16);
-            assert_eq!(
-                colors(&d),
-                vec![Rgba::opaque(1, 0, 0), Rgba::opaque(3, 0, 0), Rgba::opaque(2, 0, 0)]
-            );
+            assert_eq!(colors(&d), vec![Rgba::opaque(1, 0, 0), Rgba::opaque(3, 0, 0), Rgba::opaque(2, 0, 0)]);
         }
 
         #[test]
@@ -1095,7 +1096,7 @@ mod tests {
     mod frame_selection {
         use std::collections::BTreeSet;
 
-        use crate::editor::{frame_range_set, EditorState};
+        use crate::editor::{EditorState, frame_range_set};
 
         fn set(ids: &[u32]) -> BTreeSet<u32> {
             ids.iter().copied().collect()
@@ -1161,7 +1162,7 @@ mod tests {
 
         use pixhaus_core::project::{Layer, LayerId, LayerKind, Size, Sprite, SpriteId};
 
-        use crate::editor::{reseed_selection, EditorState};
+        use crate::editor::{EditorState, reseed_selection};
 
         fn lid(n: u32) -> LayerId {
             LayerId::new(n)

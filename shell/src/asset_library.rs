@@ -96,7 +96,11 @@ impl ShellApp {
             ui.horizontal(|ui| {
                 ui.label("Chroma key");
                 let mut col = egui::Color32::from_rgba_unmultiplied(chroma.r, chroma.g, chroma.b, chroma.a);
-                if ui.color_edit_button_srgba(&mut col).on_hover_text("Background key color for new generations").changed() {
+                if ui
+                    .color_edit_button_srgba(&mut col)
+                    .on_hover_text("Background key color for new generations")
+                    .changed()
+                {
                     chroma = Rgba::new(col.r(), col.g(), col.b(), col.a());
                 }
                 if ui.small_button("Magenta").on_hover_text("Reset to the default magenta key").clicked() {
@@ -165,9 +169,11 @@ impl ShellApp {
 
         ui.label(egui::RichText::new(format!("{} Style corpus ({})", crate::icons::SPARKLE, corpus.len())).strong());
         ui.label(
-            egui::RichText::new("Pick the sprite entities whose canonical sheets define this project's look. The corpus biases future generations; it does not train a model.")
-                .small()
-                .weak(),
+            egui::RichText::new(
+                "Pick the sprite entities whose canonical sheets define this project's look. The corpus biases future generations; it does not train a model.",
+            )
+            .small()
+            .weak(),
         );
         ui.add_space(4.0);
 
@@ -180,7 +186,11 @@ impl ShellApp {
         egui::Frame::group(ui.style()).show(ui, |ui| {
             for (id, name) in &entities {
                 let mut included = corpus.contains(id);
-                if ui.checkbox(&mut included, name).on_hover_text("Include this entity in the project style corpus").changed() {
+                if ui
+                    .checkbox(&mut included, name)
+                    .on_hover_text("Include this entity in the project style corpus")
+                    .changed()
+                {
                     toggle = Some((*id, included));
                 }
             }
@@ -206,7 +216,11 @@ impl ShellApp {
         ui.add_space(4.0);
 
         ui.horizontal(|ui| {
-            let resp = ui.add(egui::TextEdit::singleline(&mut self.tag_new_name).hint_text("New tag name").desired_width(160.0));
+            let resp = ui.add(
+                egui::TextEdit::singleline(&mut self.tag_new_name)
+                    .hint_text("New tag name")
+                    .desired_width(160.0),
+            );
             let submit = resp.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter));
             if (ui.button(format!("{} Add", crate::icons::ADD)).clicked() || submit) && !self.tag_new_name.trim().is_empty() {
                 let name = std::mem::take(&mut self.tag_new_name);
@@ -231,7 +245,11 @@ impl ShellApp {
                         .color
                         .map_or(egui::Color32::TRANSPARENT, |c| egui::Color32::from_rgba_unmultiplied(c.r, c.g, c.b, c.a));
                     if ui.color_edit_button_srgba(&mut col).on_hover_text("Tag color").changed() {
-                        let next = if col.a() == 0 { None } else { Some(Rgba::new(col.r(), col.g(), col.b(), col.a())) };
+                        let next = if col.a() == 0 {
+                            None
+                        } else {
+                            Some(Rgba::new(col.r(), col.g(), col.b(), col.a()))
+                        };
                         recolor = Some((tag.id, next));
                     }
 
@@ -282,10 +300,8 @@ impl ShellApp {
             return;
         }
         // Read the tiles we need before borrowing the cache mutably for textures.
-        let tiles: Vec<(AssetId, ReferenceRole, Vec<String>, Vec<u8>)> = refs
-            .iter()
-            .map(|r| (r.id, r.default_role, r.tags.clone(), r.image.bytes.clone()))
-            .collect();
+        let tiles: Vec<(AssetId, ReferenceRole, Vec<String>, Vec<u8>)> =
+            refs.iter().map(|r| (r.id, r.default_role, r.tags.clone(), r.image.bytes.clone())).collect();
 
         let mut delete: Option<AssetId> = None;
         ui.add_space(4.0);
@@ -1099,7 +1115,11 @@ mod tests {
         let before = doc.project.library.ai.clone();
         assert_eq!(before.default_quality, Quality::Medium, "a fresh project defaults to Medium");
         assert_eq!(before.default_candidate_count, 2, "a fresh project defaults to two candidates");
-        assert_eq!(before.default_chroma, pixhaus_core::project::default_reference_chroma(), "the default chroma is magenta");
+        assert_eq!(
+            before.default_chroma,
+            pixhaus_core::project::default_reference_chroma(),
+            "the default chroma is magenta"
+        );
         assert!(before.per_operation_model_prefs.is_empty(), "no per-operation overrides to start");
 
         // Edit every default through the same path the Project AI section uses.
@@ -1211,7 +1231,14 @@ mod tests {
         add_tag(&mut editor, &mut doc, tag_id, "armored");
         let entity_id = entity_with_suggestion(&mut doc, tag_id);
         // The same tag is already confirmed when its suggestion is accepted.
-        doc.project.library.entities.iter_mut().find(|e| e.id == entity_id).expect("entity").tags.push(tag_id);
+        doc.project
+            .library
+            .entities
+            .iter_mut()
+            .find(|e| e.id == entity_id)
+            .expect("entity")
+            .tags
+            .push(tag_id);
 
         accept_suggested_tag(&mut editor, &mut doc, entity_id, tag_id);
         let entity = doc.project.library.entities.iter().find(|e| e.id == entity_id).expect("entity");

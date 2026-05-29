@@ -145,26 +145,10 @@ fn scale2x(buf: &PixelBuffer) -> PixelBuffer {
 
             // EPX rules — each quadrant takes the neighbour colour when two
             // perpendicular neighbours match and the opposite two don't.
-            let q0 = if left == above && left != below && above != right {
-                above
-            } else {
-                center
-            }; // top-left
-            let q1 = if above == right && above != left && right != below {
-                right
-            } else {
-                center
-            }; // top-right
-            let q2 = if below == left && below != right && left != above {
-                left
-            } else {
-                center
-            }; // bottom-left
-            let q3 = if right == below && right != above && below != left {
-                below
-            } else {
-                center
-            }; // bottom-right
+            let q0 = if left == above && left != below && above != right { above } else { center }; // top-left
+            let q1 = if above == right && above != left && right != below { right } else { center }; // top-right
+            let q2 = if below == left && below != right && left != above { left } else { center }; // bottom-left
+            let q3 = if right == below && right != above && below != left { below } else { center }; // bottom-right
 
             out.set_pixel(out_x, out_y, q0);
             out.set_pixel(out_x + 1, out_y, q1);
@@ -191,12 +175,7 @@ fn lerp_u8(a: u8, b: u8, t: f32) -> u8 {
 /// Linearly interpolates between two [`Rgba`] values in straight-alpha space.
 #[inline]
 fn lerp_rgba(a: Rgba, b: Rgba, t: f32) -> Rgba {
-    Rgba::new(
-        lerp_u8(a.r, b.r, t),
-        lerp_u8(a.g, b.g, t),
-        lerp_u8(a.b, b.b, t),
-        lerp_u8(a.a, b.a, t),
-    )
+    Rgba::new(lerp_u8(a.r, b.r, t), lerp_u8(a.g, b.g, t), lerp_u8(a.b, b.b, t), lerp_u8(a.a, b.a, t))
 }
 
 /// Samples `buf` at sub-pixel position `(x, y)` with bilinear interpolation.
@@ -216,8 +195,7 @@ pub(super) fn bilinear_sample(buf: &PixelBuffer, x: f32, y: f32) -> Rgba {
     let sample = |px: i32, py: i32| -> Rgba {
         let in_bounds = px >= 0 && py >= 0 && px < buf.width() as i32 && py < buf.height() as i32;
         if in_bounds {
-            buf.pixel(px as u32, py as u32)
-                .unwrap_or(Rgba::transparent())
+            buf.pixel(px as u32, py as u32).unwrap_or(Rgba::transparent())
         } else {
             Rgba::transparent()
         }
@@ -286,11 +264,7 @@ pub fn rotate_bilinear(buf: &PixelBuffer, angle_rad: f32) -> Result<PixelBuffer>
 /// # Errors
 ///
 /// Returns [`Error::EmptyBuffer`] if `buf` is 0×0.
-#[allow(
-    clippy::cast_precision_loss,
-    clippy::cast_possible_truncation,
-    clippy::cast_sign_loss
-)]
+#[allow(clippy::cast_precision_loss, clippy::cast_possible_truncation, clippy::cast_sign_loss)]
 pub fn rotate_nearest(buf: &PixelBuffer, angle_rad: f32) -> Result<PixelBuffer> {
     if buf.is_empty() {
         return Err(Error::EmptyBuffer);
@@ -594,11 +568,7 @@ mod tests {
         let buf = PixelBuffer::filled(5, 5, red()).unwrap();
         // Each algorithm preserves dimensions and round-trips a 0° rotation to
         // an all-red buffer (no transparent fill at the identity angle).
-        for algo in [
-            RotationAlgorithm::NearestNeighbor,
-            RotationAlgorithm::Bilinear,
-            RotationAlgorithm::RotSprite,
-        ] {
+        for algo in [RotationAlgorithm::NearestNeighbor, RotationAlgorithm::Bilinear, RotationAlgorithm::RotSprite] {
             let out = rotate(&buf, 0.0, algo).unwrap();
             assert_eq!(out.width(), 5);
             assert_eq!(out.height(), 5);

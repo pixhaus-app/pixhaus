@@ -165,7 +165,13 @@ pub(crate) fn build_grid(anchor: &CharacterAnchor, canonical: &SheetVariant) -> 
     }
 
     CoverageGrid {
-        anchors: AnchorRow { neutral, south, west, north, east },
+        anchors: AnchorRow {
+            neutral,
+            south,
+            west,
+            north,
+            east,
+        },
         cells,
     }
 }
@@ -218,12 +224,17 @@ fn neutral_variant(id: SheetVariantId, created_at: i64, canonical: &SheetVariant
 /// step is unit-testable against a constructed [`crate::document::DocumentStore`]
 /// without a full app. No-op when the entity has no reference sheet — the caller
 /// only reaches this with an approved canonical in hand.
-fn store_neutral(editor: &mut crate::editor::EditorState, doc: &mut crate::document::DocumentStore, entity_id: EntityId, canonical: &SheetVariant, image: Vec<u8>) {
+fn store_neutral(
+    editor: &mut crate::editor::EditorState,
+    doc: &mut crate::document::DocumentStore,
+    entity_id: EntityId,
+    canonical: &SheetVariant,
+    image: Vec<u8>,
+) {
     let variant = neutral_variant(SheetVariantId::new(doc.alloc_id()), now_secs(), canonical, image);
     crate::commands::push_library_edit(editor, doc, "Derive neutral anchor", entity_id, move |entity| {
         if let EntityContent::Sprites {
-            reference_sheet: Some(sheet),
-            ..
+            reference_sheet: Some(sheet), ..
         } = &mut entity.content
         {
             sheet.anchor.neutral = Some(variant);
@@ -306,8 +317,7 @@ fn store_directional(
     };
     crate::commands::push_library_edit(editor, doc, label, entity_id, move |entity| {
         if let EntityContent::Sprites {
-            reference_sheet: Some(sheet),
-            ..
+            reference_sheet: Some(sheet), ..
         } = &mut entity.content
         {
             sheet.anchor.directional.set(dir, variant);
@@ -327,8 +337,7 @@ fn store_directional(
 fn enable_east(editor: &mut crate::editor::EditorState, doc: &mut crate::document::DocumentStore, entity_id: EntityId) {
     crate::commands::push_library_edit(editor, doc, "Enable east (flip of west)", entity_id, |entity| {
         if let EntityContent::Sprites {
-            reference_sheet: Some(sheet),
-            ..
+            reference_sheet: Some(sheet), ..
         } = &mut entity.content
         {
             // A placeholder variant: `set(East, _)` discards it and only flips the
@@ -539,13 +548,17 @@ impl ShellApp {
         let entity_id = self.doc.active_entity_id()?;
         let entity = self.doc.project.library.entities.iter().find(|e| e.id == entity_id)?;
         let EntityContent::Sprites {
-            reference_sheet: Some(sheet),
-            ..
+            reference_sheet: Some(sheet), ..
         } = &entity.content
         else {
             return None;
         };
-        let ReferenceSheet { canonical: Some(canonical), anchor, .. } = sheet.as_ref() else {
+        let ReferenceSheet {
+            canonical: Some(canonical),
+            anchor,
+            ..
+        } = sheet.as_ref()
+        else {
             return None;
         };
         Some((anchor, canonical))
@@ -621,7 +634,11 @@ impl ShellApp {
                 } else {
                     "Derive a neutral anchor first".to_owned()
                 };
-                if ui.add_enabled(has_neutral && !deriving, egui::Button::new(label)).on_hover_text(hover).clicked() {
+                if ui
+                    .add_enabled(has_neutral && !deriving, egui::Button::new(label))
+                    .on_hover_text(hover)
+                    .clicked()
+                {
                     derive_dir = Some(dir);
                 }
             }
@@ -662,8 +679,13 @@ impl ShellApp {
         // (a remote provider plus the 8K constraint rule out unbounded fan-out), so
         // it stays disabled while a derivation or clip is already running.
         ui.add_space(4.0);
-        let plan = self.active_anchor().map(|(anchor, canonical)| plan_reroll(anchor, canonical)).unwrap_or_default();
-        let busy = matches!(self.neutral_status, JobStatus::Running(_)) || matches!(self.directional_status, JobStatus::Running(_)) || matches!(self.anim_status, JobStatus::Running(_));
+        let plan = self
+            .active_anchor()
+            .map(|(anchor, canonical)| plan_reroll(anchor, canonical))
+            .unwrap_or_default();
+        let busy = matches!(self.neutral_status, JobStatus::Running(_))
+            || matches!(self.directional_status, JobStatus::Running(_))
+            || matches!(self.anim_status, JobStatus::Running(_));
         let mut do_reroll = false;
         ui.horizontal(|ui| {
             let stale = plan.len();
@@ -821,7 +843,10 @@ impl ShellApp {
         // The directional anchor derives from the neutral: capture its id (for the
         // parent edge) and prompt (to stay on-model). Without a neutral there is no
         // upstream, so the action is unavailable.
-        let Some((neutral_id, neutral_prompt)) = self.active_anchor().and_then(|(anchor, _)| anchor.neutral.as_ref().map(|n| (n.id, n.user_prompt.clone()))) else {
+        let Some((neutral_id, neutral_prompt)) = self
+            .active_anchor()
+            .and_then(|(anchor, _)| anchor.neutral.as_ref().map(|n| (n.id, n.user_prompt.clone())))
+        else {
             self.directional_status = JobStatus::Failed("derive a neutral anchor first".to_owned());
             return;
         };
@@ -912,7 +937,15 @@ impl ShellApp {
         let Some(derived_from) = self.active_anchor().and_then(|(anchor, _)| seed_variant_id(anchor, direction)) else {
             return;
         };
-        record_derived_sheet(&mut self.editor, &mut self.doc, entity_id, animation_kind, direction, tag_name.to_owned(), derived_from);
+        record_derived_sheet(
+            &mut self.editor,
+            &mut self.doc,
+            entity_id,
+            animation_kind,
+            direction,
+            tag_name.to_owned(),
+            derived_from,
+        );
     }
 
     /// Re-rolls the active entity's stale cascade dependents, one queued job at a
@@ -936,10 +969,17 @@ impl ShellApp {
     /// stale.
     pub(crate) fn reroll_stale_dependents(&mut self) {
         // Respect the one-in-flight bound: never stack a second derivation.
-        if matches!(self.neutral_status, JobStatus::Running(_)) || matches!(self.directional_status, JobStatus::Running(_)) || matches!(self.anim_status, JobStatus::Running(_)) {
+        if matches!(self.neutral_status, JobStatus::Running(_))
+            || matches!(self.directional_status, JobStatus::Running(_))
+            || matches!(self.anim_status, JobStatus::Running(_))
+        {
             return;
         }
-        let Some(step) = self.active_anchor().map(|(anchor, canonical)| plan_reroll(anchor, canonical)).and_then(|steps| steps.into_iter().next()) else {
+        let Some(step) = self
+            .active_anchor()
+            .map(|(anchor, canonical)| plan_reroll(anchor, canonical))
+            .and_then(|steps| steps.into_iter().next())
+        else {
             return;
         };
         match step {
@@ -1122,8 +1162,7 @@ mod tests {
     fn neutral_of(doc: &DocumentStore, entity_id: EntityId) -> Option<SheetVariant> {
         let entity = doc.project.library.entities.iter().find(|e| e.id == entity_id)?;
         let EntityContent::Sprites {
-            reference_sheet: Some(sheet),
-            ..
+            reference_sheet: Some(sheet), ..
         } = &entity.content
         else {
             return None;
@@ -1202,8 +1241,7 @@ mod tests {
     fn directional_of(doc: &DocumentStore, entity_id: EntityId) -> Option<pixhaus_core::project::DirectionalAnchors> {
         let entity = doc.project.library.entities.iter().find(|e| e.id == entity_id)?;
         let EntityContent::Sprites {
-            reference_sheet: Some(sheet),
-            ..
+            reference_sheet: Some(sheet), ..
         } = &entity.content
         else {
             return None;
@@ -1318,7 +1356,10 @@ mod tests {
 
         // One undoable entry: undo clears the flag.
         editor.history.undo(&mut doc).expect("undo enable-east");
-        assert!(!directional_of(&doc, entity_id).expect("sheet present").east_from_west, "undo clears east_from_west");
+        assert!(
+            !directional_of(&doc, entity_id).expect("sheet present").east_from_west,
+            "undo clears east_from_west"
+        );
     }
 
     #[test]
@@ -1342,8 +1383,7 @@ mod tests {
             return Vec::new();
         };
         let EntityContent::Sprites {
-            reference_sheet: Some(sheet),
-            ..
+            reference_sheet: Some(sheet), ..
         } = &entity.content
         else {
             return Vec::new();
@@ -1360,11 +1400,23 @@ mod tests {
             ..Default::default()
         };
         anchor.directional.set(AnchorDirection::West, variant(3, Some(2)));
-        assert_eq!(seed_variant_id(&anchor, AnchorDirection::West), Some(SheetVariantId::new(3)), "west uses its directional anchor");
+        assert_eq!(
+            seed_variant_id(&anchor, AnchorDirection::West),
+            Some(SheetVariantId::new(3)),
+            "west uses its directional anchor"
+        );
         // East shares west's seed (the flip is not its own variant).
-        assert_eq!(seed_variant_id(&anchor, AnchorDirection::East), Some(SheetVariantId::new(3)), "east shares west's seed");
+        assert_eq!(
+            seed_variant_id(&anchor, AnchorDirection::East),
+            Some(SheetVariantId::new(3)),
+            "east shares west's seed"
+        );
         // South has no directional anchor: it falls back to the neutral.
-        assert_eq!(seed_variant_id(&anchor, AnchorDirection::South), Some(SheetVariantId::new(2)), "south falls back to the neutral");
+        assert_eq!(
+            seed_variant_id(&anchor, AnchorDirection::South),
+            Some(SheetVariantId::new(2)),
+            "south falls back to the neutral"
+        );
         // No directional and no neutral: nothing to seed from.
         assert_eq!(seed_variant_id(&CharacterAnchor::default(), AnchorDirection::South), None);
     }
@@ -1411,9 +1463,7 @@ mod tests {
         let nodes_before = editor.history.node_count();
 
         // First Land entry: integrate the frames (mirrors `integrate_picked`).
-        let frames: Vec<PixelBuffer> = (0..3)
-            .map(|_| PixelBuffer::filled(16, 16, Rgba::new(7, 7, 7, 255)).expect("frame"))
-            .collect();
+        let frames: Vec<PixelBuffer> = (0..3).map(|_| PixelBuffer::filled(16, 16, Rgba::new(7, 7, 7, 255)).expect("frame")).collect();
         crate::commands::integrate_frames_undoable(&mut editor, &mut doc, frames, 100, "walk", LoopDirection::Forward).expect("integrated range");
         assert_eq!(doc.frame_count(), 3, "three frames landed");
 
@@ -1515,7 +1565,11 @@ mod tests {
         let plan = plan_reroll(&anchor, &rerolled);
 
         assert_eq!(plan.first(), Some(&RerollStep::Neutral), "the neutral re-derives first");
-        assert_eq!(plan.get(1), Some(&RerollStep::Directional(AnchorDirection::West)), "the directional re-derives after the neutral");
+        assert_eq!(
+            plan.get(1),
+            Some(&RerollStep::Directional(AnchorDirection::West)),
+            "the directional re-derives after the neutral"
+        );
         // The remaining steps are sheets; the fixture's two sheets both go stale.
         assert!(plan[2..].iter().all(|s| matches!(s, RerollStep::Sheet { .. })), "sheets re-roll last");
         let sheet_count = plan.iter().filter(|s| matches!(s, RerollStep::Sheet { .. })).count();

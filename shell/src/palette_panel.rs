@@ -17,13 +17,13 @@ use std::path::Path;
 
 use eframe::egui;
 use pixhaus_core::canvas::PixelBuffer;
-use pixhaus_core::color::palette_file::{aco, gpl, hex, pal, PaletteFileError, PaletteFileResult};
+use pixhaus_core::color::palette_file::{PaletteFileError, PaletteFileResult, aco, gpl, hex, pal};
 use pixhaus_core::color::space::to_hsv;
 use pixhaus_core::project::{CelData, ColorMode, Palette, PaletteEntry, PaletteId, PixelBufferId, Rgba};
 
 use crate::app::ShellApp;
 use crate::color_picker::color_picker_ui;
-use crate::commands::{push_sprite_edit, CanvasBufferSwap, CanvasEdit};
+use crate::commands::{CanvasBufferSwap, CanvasEdit, push_sprite_edit};
 use crate::document::palette_by_id_mut;
 use crate::editor::{PaletteExportFormat, PaletteSort, to_color32};
 use crate::icons;
@@ -374,15 +374,13 @@ impl ShellApp {
         let mut swap: Option<(usize, usize)> = None;
 
         ui.horizontal(|ui| {
-            egui::ComboBox::from_id_salt("palette_switcher")
-                .selected_text(selected_name)
-                .show_ui(ui, |ui| {
-                    for (id, name) in &palettes {
-                        if ui.selectable_label(selected == Some(*id), name).clicked() {
-                            select = Some(*id);
-                        }
+            egui::ComboBox::from_id_salt("palette_switcher").selected_text(selected_name).show_ui(ui, |ui| {
+                for (id, name) in &palettes {
+                    if ui.selectable_label(selected == Some(*id), name).clicked() {
+                        select = Some(*id);
                     }
-                });
+                }
+            });
 
             if ui.button(icons::ADD).on_hover_text("New palette").clicked() {
                 create = true;
@@ -417,11 +415,11 @@ impl ShellApp {
         // Inline rename of the selected palette: an empty name is rejected by
         // `rename_palette`, so a blank field leaves the name unchanged.
         if let Some(id) = selected {
-            let mut name = palettes
-                .iter()
-                .find(|(pid, _)| *pid == id)
-                .map_or_else(String::new, |(_, n)| n.clone());
-            if ui.add(egui::TextEdit::singleline(&mut name).hint_text("palette name").desired_width(f32::INFINITY)).changed() {
+            let mut name = palettes.iter().find(|(pid, _)| *pid == id).map_or_else(String::new, |(_, n)| n.clone());
+            if ui
+                .add(egui::TextEdit::singleline(&mut name).hint_text("palette name").desired_width(f32::INFINITY))
+                .changed()
+            {
                 push_sprite_edit(&mut self.editor, &mut self.doc, "Rename palette", |sprite| {
                     sprite.rename_palette(id, &name);
                 });
@@ -501,8 +499,12 @@ impl ShellApp {
                     paint_checker(ui, rect);
                 }
                 ui.painter().rect_filled(rect, 2.0, to_color32(color));
-                ui.painter()
-                    .rect_stroke(rect, 2.0, egui::Stroke::new(1.0, egui::Color32::from_black_alpha(120)), egui::StrokeKind::Middle);
+                ui.painter().rect_stroke(
+                    rect,
+                    2.0,
+                    egui::Stroke::new(1.0, egui::Color32::from_black_alpha(120)),
+                    egui::StrokeKind::Middle,
+                );
                 if resp.clicked() {
                     pick = Some(color);
                 }
@@ -521,27 +523,30 @@ impl ShellApp {
     /// error shows inline; v2 has no toast system.
     fn import_export_section(&mut self, ui: &mut egui::Ui) {
         let has_palette = self.doc.active_palette_by_id(self.editor.active_palette_id).is_some();
-        egui::CollapsingHeader::new("Import / Export").id_salt("palette_io").default_open(false).show(ui, |ui| {
-            ui.horizontal(|ui| {
-                if ui.add_enabled(has_palette, egui::Button::new(format!("{} Import...", icons::IMAGE))).clicked() {
-                    self.import_palette();
+        egui::CollapsingHeader::new("Import / Export")
+            .id_salt("palette_io")
+            .default_open(false)
+            .show(ui, |ui| {
+                ui.horizontal(|ui| {
+                    if ui.add_enabled(has_palette, egui::Button::new(format!("{} Import...", icons::IMAGE))).clicked() {
+                        self.import_palette();
+                    }
+                });
+
+                ui.horizontal(|ui| {
+                    ui.label("Export as:");
+                    for fmt in [PaletteExportFormat::Gpl, PaletteExportFormat::Hex, PaletteExportFormat::Pal] {
+                        ui.selectable_value(&mut self.editor.export_format, fmt, fmt.label());
+                    }
+                    if ui.add_enabled(has_palette, egui::Button::new(format!("{} Export...", icons::COPY))).clicked() {
+                        self.export_palette();
+                    }
+                });
+
+                if let Some(err) = &self.editor.palette_io_error {
+                    ui.colored_label(egui::Color32::from_rgb(220, 90, 90), err);
                 }
             });
-
-            ui.horizontal(|ui| {
-                ui.label("Export as:");
-                for fmt in [PaletteExportFormat::Gpl, PaletteExportFormat::Hex, PaletteExportFormat::Pal] {
-                    ui.selectable_value(&mut self.editor.export_format, fmt, fmt.label());
-                }
-                if ui.add_enabled(has_palette, egui::Button::new(format!("{} Export...", icons::COPY))).clicked() {
-                    self.export_palette();
-                }
-            });
-
-            if let Some(err) = &self.editor.palette_io_error {
-                ui.colored_label(egui::Color32::from_rgb(220, 90, 90), err);
-            }
-        });
     }
 
     /// Opens a file dialog, parses the picked palette file by extension, and
@@ -838,9 +843,11 @@ impl ShellApp {
                     PaletteSort::Hue => p
                         .colors
                         .sort_by(|a, b| hue_key(a.color).partial_cmp(&hue_key(b.color)).unwrap_or(std::cmp::Ordering::Equal)),
-                    PaletteSort::Saturation => p
-                        .colors
-                        .sort_by(|a, b| saturation_key(a.color).partial_cmp(&saturation_key(b.color)).unwrap_or(std::cmp::Ordering::Equal)),
+                    PaletteSort::Saturation => p.colors.sort_by(|a, b| {
+                        saturation_key(a.color)
+                            .partial_cmp(&saturation_key(b.color))
+                            .unwrap_or(std::cmp::Ordering::Equal)
+                    }),
                     PaletteSort::Value => p.colors.sort_by_key(|e| value_key(e.color)),
                     PaletteSort::Luminance => p.colors.sort_by_key(|e| luminance(e.color)),
                 }
@@ -1015,11 +1022,7 @@ pub(crate) fn quantize_buffer(buf: &mut PixelBuffer, palette: &Palette) {
 /// [`PaletteFileError::Invalid`].
 fn parse_palette_file(path: &Path) -> PaletteFileResult<Vec<Rgba>> {
     let bytes = std::fs::read(path).map_err(|e| PaletteFileError::Invalid(format!("could not read file: {e}")))?;
-    let ext = path
-        .extension()
-        .and_then(|e| e.to_str())
-        .map(str::to_ascii_lowercase)
-        .unwrap_or_default();
+    let ext = path.extension().and_then(|e| e.to_str()).map(str::to_ascii_lowercase).unwrap_or_default();
 
     match ext.as_str() {
         "gpl" => {

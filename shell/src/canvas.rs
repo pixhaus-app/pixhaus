@@ -3014,6 +3014,10 @@ mod tests {
 
         let got = after.pixel(3, 3).expect("pixel");
         assert_eq!(got.a, mul_un8(255, 255 - 128), "eraser at 128 leaves ~half the original alpha");
-        assert_eq!((got.r, got.g, got.b), (opaque.r, opaque.g, opaque.b), "eraser keeps the colour, only lowers alpha");
+        assert_eq!(
+            (got.r, got.g, got.b),
+            (opaque.r, opaque.g, opaque.b),
+            "eraser keeps the colour, only lowers alpha"
+        );
     }
 }

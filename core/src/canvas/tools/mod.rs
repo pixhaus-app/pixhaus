@@ -14,5 +14,6 @@ pub use dither::{DitherPattern, dither_allows};
 pub use fill::{flood_fill, flood_fill_blended};
 pub use shapes::{draw_ellipse, draw_filled_ellipse, draw_filled_rect, draw_rect};
 pub use stroke::{
-    BrushShape, brush_covers, draw_line, draw_line_masked, draw_stroke, paint_brush, paint_brush_blended, paint_brush_masked, stamp_segment, stamp_segment_masked,
+    BrushShape, brush_covers, draw_line, draw_line_masked, draw_stroke, paint_brush, paint_brush_blended, paint_brush_masked, stamp_segment,
+    stamp_segment_masked,
 };

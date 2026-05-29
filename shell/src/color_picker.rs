@@ -25,15 +25,16 @@ use crate::palette_panel::paint_checker;
 pub fn color_picker_ui(ui: &mut egui::Ui, color: &mut Rgba, tab: &mut PickerTab, hex_draft: &mut String) -> egui::Response {
     // Tabs row. Selecting a tab is a change worth returning so the caller can
     // re-seed the hex draft, but it does not edit the colour.
-    let mut resp = ui.horizontal(|ui| {
-        let mut r = ui.selectable_value(tab, PickerTab::Hsv, "HSV");
-        r |= ui.selectable_value(tab, PickerTab::Hsl, "HSL");
-        r |= ui.selectable_value(tab, PickerTab::Rgb, "RGB");
-        r |= ui.selectable_value(tab, PickerTab::Hex, "HEX");
-        r |= ui.selectable_value(tab, PickerTab::Oklch, "OKLCH");
-        r
-    })
-    .inner;
+    let mut resp = ui
+        .horizontal(|ui| {
+            let mut r = ui.selectable_value(tab, PickerTab::Hsv, "HSV");
+            r |= ui.selectable_value(tab, PickerTab::Hsl, "HSL");
+            r |= ui.selectable_value(tab, PickerTab::Rgb, "RGB");
+            r |= ui.selectable_value(tab, PickerTab::Hex, "HEX");
+            r |= ui.selectable_value(tab, PickerTab::Oklch, "OKLCH");
+            r
+        })
+        .inner;
 
     // Preview swatch + hex label.
     preview(ui, *color);
@@ -62,9 +63,14 @@ fn preview(ui: &mut egui::Ui, color: Rgba) {
         if color.a < 255 {
             paint_checker(ui, rect);
         }
-        ui.painter().rect_filled(rect, 2.0, egui::Color32::from_rgba_unmultiplied(color.r, color.g, color.b, color.a));
         ui.painter()
-            .rect_stroke(rect, 2.0, egui::Stroke::new(1.0, egui::Color32::from_black_alpha(120)), egui::StrokeKind::Middle);
+            .rect_filled(rect, 2.0, egui::Color32::from_rgba_unmultiplied(color.r, color.g, color.b, color.a));
+        ui.painter().rect_stroke(
+            rect,
+            2.0,
+            egui::Stroke::new(1.0, egui::Color32::from_black_alpha(120)),
+            egui::StrokeKind::Middle,
+        );
         ui.label(format!("#{:02X}{:02X}{:02X}", color.r, color.g, color.b));
     });
 }
