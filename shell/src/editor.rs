@@ -359,6 +359,13 @@ pub struct EditorState {
     /// straight away. View state, not undoable in itself (the delete it triggers
     /// is the undoable step).
     pub pending_layer_delete: Option<Vec<LayerId>>,
+    /// Timeline: the multi-frame selection set, by frame index. Drives batch
+    /// frame ops (multi-delete, copy/paste of a range, reverse). View state, not
+    /// document state — never serialized and not undoable. An empty set means
+    /// "just the active frame": [`Self::effective_frames`] resolves that
+    /// fallback. The active frame still drives the canvas; this set is only the
+    /// batch-op target.
+    pub selected_frames: BTreeSet<u32>,
 }
 
 impl Default for EditorState {
@@ -397,6 +404,7 @@ impl Default for EditorState {
             layer_rename: None,
             selected_layers: BTreeSet::new(),
             pending_layer_delete: None,
+            selected_frames: BTreeSet::new(),
         }
     }
 }
@@ -425,6 +433,31 @@ impl EditorState {
     pub fn clear_selection(&mut self) {
         self.selection = None;
         self.lasso.clear();
+    }
+
+    /// Drops the multi-frame selection. Called on a sprite switch so a stale
+    /// set never points at frames the new sprite does not have. Distinct from
+    /// [`Self::clear_selection`], which clears the pixel selection.
+    pub fn clear_frame_selection(&mut self) {
+        self.selected_frames.clear();
+    }
+
+    /// The frames a batch op should target: [`Self::selected_frames`] when the
+    /// set is non-empty, else `{active}`. An empty set means "just the active
+    /// frame", so a delete/copy/reverse with nothing explicitly selected still
+    /// acts on the playhead's frame. Mirrors the Tauri `effectiveSelection`.
+    // Consumed by multi-delete, copy/paste, and reverse (plan tasks 3, 4, 2);
+    // landed with the selection model so every later task reads one accessor.
+    #[allow(dead_code)]
+    #[must_use]
+    pub fn effective_frames(&self, active: u32) -> BTreeSet<u32> {
+        if self.selected_frames.is_empty() {
+            let mut set = BTreeSet::new();
+            set.insert(active);
+            set
+        } else {
+            self.selected_frames.clone()
+        }
     }
 
     /// Resolves a layer-panel click into the new multi-select set and anchor.
@@ -473,6 +506,15 @@ impl EditorState {
     pub fn selected_layer_ids(&self) -> Vec<LayerId> {
         self.selected_layers.iter().copied().collect()
     }
+}
+
+/// The inclusive set of frame indices between `a` and `b`, in either order.
+/// Drives Shift-click range selection on the cel-matrix header: the anchor
+/// (the active frame) and the clicked frame, plus everything between them.
+#[must_use]
+pub fn frame_range_set(a: u32, b: u32) -> BTreeSet<u32> {
+    let (lo, hi) = if a <= b { (a, b) } else { (b, a) };
+    (lo..=hi).collect()
 }
 
 /// The contiguous span of `display_order` between `a` and `b` inclusive, in
@@ -566,6 +608,59 @@ mod tests {
         s.mark_dirty(0, 0, 10, 10);
         s.mark_dirty(20, 20, 10, 10);
         assert_eq!(s.take_pending(), Some((0, 0, 30, 30)));
+    }
+
+    mod frame_selection {
+        use std::collections::BTreeSet;
+
+        use crate::editor::{frame_range_set, EditorState};
+
+        fn set(ids: &[u32]) -> BTreeSet<u32> {
+            ids.iter().copied().collect()
+        }
+
+        #[test]
+        fn effective_frames_falls_back_to_the_active_frame_when_empty() {
+            let ed = EditorState::default();
+            assert!(ed.selected_frames.is_empty());
+            assert_eq!(ed.effective_frames(3), set(&[3]), "an empty set resolves to just the active frame");
+        }
+
+        #[test]
+        fn effective_frames_returns_the_set_verbatim_when_non_empty() {
+            let ed = EditorState {
+                selected_frames: set(&[0, 2, 4]),
+                ..EditorState::default()
+            };
+            // The active frame is ignored once the set has any member.
+            assert_eq!(ed.effective_frames(1), set(&[0, 2, 4]));
+        }
+
+        #[test]
+        fn frame_range_set_is_inclusive_in_ascending_order() {
+            assert_eq!(frame_range_set(2, 5), set(&[2, 3, 4, 5]));
+        }
+
+        #[test]
+        fn frame_range_set_is_order_independent() {
+            // Shift-clicking below the anchor yields the same inclusive span.
+            assert_eq!(frame_range_set(5, 2), set(&[2, 3, 4, 5]));
+        }
+
+        #[test]
+        fn frame_range_set_of_one_frame_is_a_singleton() {
+            assert_eq!(frame_range_set(4, 4), set(&[4]));
+        }
+
+        #[test]
+        fn clear_frame_selection_empties_the_set() {
+            let mut ed = EditorState {
+                selected_frames: set(&[1, 2, 3]),
+                ..EditorState::default()
+            };
+            ed.clear_frame_selection();
+            assert!(ed.selected_frames.is_empty());
+        }
     }
 
     mod selection {

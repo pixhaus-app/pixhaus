@@ -103,8 +103,33 @@ impl ShellApp {
             if ui.button("Dup").on_hover_text("Duplicate frame").clicked() {
                 self.duplicate_frame();
             }
-            if ui.button(format!("{} Frame", icons::TRASH)).on_hover_text("Delete frame").clicked() {
-                self.delete_frame();
+            // Pluralize and retarget when a multi-frame selection is active;
+            // an empty selection takes the single-active-frame fast path.
+            let sel = self.editor.selected_frames.len();
+            let (trash_label, trash_hint) = if sel > 1 {
+                (format!("{} Frames", icons::TRASH), "Delete selected frames")
+            } else {
+                (format!("{} Frame", icons::TRASH), "Delete frame")
+            };
+            if ui.button(trash_label).on_hover_text(trash_hint).clicked() {
+                self.delete_selected_frames();
+            }
+            ui.separator();
+            let active = self.doc.active_frame.get();
+            let count = self.doc.frame_count() as u32;
+            if ui
+                .add_enabled(active > 0, egui::Button::new(icons::PREV))
+                .on_hover_text("Move frame left")
+                .clicked()
+            {
+                self.move_frame(-1);
+            }
+            if ui
+                .add_enabled(active + 1 < count, egui::Button::new(icons::NEXT))
+                .on_hover_text("Move frame right")
+                .clicked()
+            {
+                self.move_frame(1);
             }
             ui.separator();
             if ui.button(format!("{} Link", icons::LINK)).on_hover_text("Link to previous frame").clicked() {
@@ -198,8 +223,20 @@ impl ShellApp {
         let active_frame = self.doc.active_frame.get();
         let active_layer = self.doc.active_layer;
         let cs = self.editor.cel_size.clamp(20.0, 96.0);
+        // Read the selection modifiers once for the whole matrix (do not nest
+        // input closures while painting).
+        let (mod_command, mod_shift) = ui.ctx().input(|i| (i.modifiers.command, i.modifiers.shift));
+        // Snapshot the selection set so the painter can read it without holding
+        // a borrow on `self.editor` while the row loop also reads `self`.
+        let selected_frames = self.editor.selected_frames.clone();
+
+        // The accent stroke marking a frame as part of the multi-selection.
+        let selection_stroke = egui::Stroke::new(2.0, egui::Color32::from_rgb(230, 180, 90));
 
         let mut pick: Option<(LayerId, FrameIndex)> = None;
+        // A header-cell pick, resolved against the modifiers after the matrix is
+        // drawn so it can mutate `selected_frames` and the active frame.
+        let mut header_pick: Option<u32> = None;
 
         egui::ScrollArea::both().id_salt("cel_matrix").show(ui, |ui| {
             // Header: frame numbers with tag colour underline.
@@ -221,6 +258,10 @@ impl ShellApp {
                         egui::FontId::proportional(11.0),
                         egui::Color32::WHITE,
                     );
+                    // Selection outline (distinct from the active fill).
+                    if selected_frames.contains(&(f as u32)) {
+                        ui.painter().rect_stroke(rect, 2.0, selection_stroke, egui::StrokeKind::Inside);
+                    }
                     // Tag underline.
                     for (s, e, col) in &tag_spans {
                         if (f as u32) >= *s && (f as u32) <= *e {
@@ -229,7 +270,7 @@ impl ShellApp {
                         }
                     }
                     if resp.clicked() {
-                        pick = Some((active_layer.unwrap_or(LayerId::new(0)), FrameIndex::new(f as u32)));
+                        header_pick = Some(f as u32);
                     }
                 }
             });
@@ -271,6 +312,10 @@ impl ShellApp {
                             egui::Stroke::new(1.0, egui::Color32::from_black_alpha(120)),
                             egui::StrokeKind::Middle,
                         );
+                        // Selection outline marks the whole column as selected.
+                        if selected_frames.contains(&(f as u32)) {
+                            ui.painter().rect_stroke(rect, 2.0, selection_stroke, egui::StrokeKind::Inside);
+                        }
                         if resp.clicked() {
                             pick = Some((*lid, FrameIndex::new(f as u32)));
                         }
@@ -279,8 +324,31 @@ impl ShellApp {
             }
         });
 
+        // A header-cell click resolves against the modifiers held at click:
+        // plain -> clear the set and move the playhead; Ctrl/Cmd -> toggle that
+        // frame, keep the playhead; Shift -> select the inclusive range from the
+        // active frame to the clicked frame.
+        if let Some(f) = header_pick {
+            self.playing = false;
+            if mod_command {
+                if !self.editor.selected_frames.insert(f) {
+                    self.editor.selected_frames.remove(&f);
+                }
+            } else if mod_shift {
+                self.editor.selected_frames = crate::editor::frame_range_set(active_frame, f);
+                self.doc.active_frame = FrameIndex::new(f);
+            } else {
+                self.editor.clear_frame_selection();
+                self.doc.active_frame = FrameIndex::new(f);
+            }
+            self.refresh_canvas(false);
+        }
+
+        // A cel click selects that layer and frame, clearing any multi-frame
+        // selection (it picks a single drawing target, not a batch).
         if let Some((lid, frame)) = pick {
             self.playing = false;
+            self.editor.clear_frame_selection();
             self.doc.active_layer = Some(lid);
             self.doc.active_frame = frame;
             self.refresh_canvas(false);
@@ -350,26 +418,57 @@ impl ShellApp {
         self.refresh_canvas(false);
     }
 
-    /// Deletes the active frame, keeping at least one.
+    /// Deletes the selected frames (or just the active frame when nothing is
+    /// explicitly selected) in one undoable step, then lands the playhead on a
+    /// surviving frame.
+    ///
+    /// The active-index fix matches the Tauri `deleteFrames`: if the active
+    /// frame was deleted, jump to `max(0, lowest_deleted - 1)`; otherwise the
+    /// active frame survived but may have shifted left, so subtract one for
+    /// every deleted index below it.
     #[allow(clippy::cast_possible_truncation)]
-    fn delete_frame(&mut self) {
-        let count = self.doc.frame_count();
+    fn delete_selected_frames(&mut self) {
+        let count = self.doc.frame_count() as u32;
         if count <= 1 {
             return;
         }
-        let idx = self.doc.active_frame.get();
-        push_sprite_edit(&mut self.editor, &mut self.doc, "Delete frame", |sprite| {
-            if (idx as usize) < sprite.frames.len() {
-                sprite.frames.remove(idx as usize);
-            }
-            sprite.cels.retain(|c| c.frame_index.get() != idx);
-            shift_frames(sprite, idx, -1);
-            clamp_tags(sprite);
+        let active = self.doc.active_frame.get();
+        let set = self.editor.effective_frames(active);
+        // Resolve the active-index fix from the *requested* set, before the
+        // last-frame guard inside `delete_frames` may trim it. The guard only
+        // fires when the set covers every frame, and that path always lands on
+        // frame 0 anyway, so reading the requested set here is safe.
+        let next = next_active_after_delete(active, &set);
+
+        push_sprite_edit(&mut self.editor, &mut self.doc, "Delete frames", |sprite| {
+            delete_frames(sprite, &set);
         });
+
         let new_count = self.doc.frame_count() as u32;
-        if idx >= new_count {
-            self.doc.active_frame = FrameIndex::new(new_count.saturating_sub(1));
+        self.doc.active_frame = FrameIndex::new(next.min(new_count.saturating_sub(1)));
+        self.editor.clear_frame_selection();
+        self.refresh_canvas(false);
+    }
+
+    /// Moves the active frame one position left (`delta = -1`) or right
+    /// (`delta = 1`), keeping its cels, and follows it with the playhead. The
+    /// reorder remaps cels, tags, animations, and slice keys in one undo step.
+    #[allow(clippy::cast_possible_wrap, clippy::cast_sign_loss)]
+    fn move_frame(&mut self, delta: i32) {
+        let from = self.doc.active_frame.get();
+        let count = self.doc.frame_count() as i32;
+        if count <= 1 {
+            return;
         }
+        let to = from as i32 + delta;
+        if to < 0 || to >= count {
+            return;
+        }
+        let to = to as u32;
+        push_sprite_edit(&mut self.editor, &mut self.doc, "Move frame", |sprite| {
+            reorder_frame(sprite, from, to);
+        });
+        self.doc.active_frame = FrameIndex::new(to);
         self.refresh_canvas(false);
     }
 
@@ -464,21 +563,155 @@ impl ShellApp {
     }
 }
 
-/// Shifts cel frame indices (and linked sources) at or after `at` by `delta`,
-/// for insert (+1) or delete (-1).
+/// Shifts every frame-index-bearing field at or after `at` by `delta`, for
+/// insert (+1) or delete (-1).
+///
+/// Walks cels (and their linked sources), `frame_tags` ranges, `animations`
+/// ranges, and `slices.keys` in lockstep so cels, tags, animations, and slice
+/// keys all stay aligned with their frames across a timeline insert or delete.
+/// Mirrors the Tauri `shift_frame_indices` (`app/src/commands/frames.rs`).
 #[allow(clippy::cast_possible_wrap, clippy::cast_sign_loss)]
 fn shift_frames(sprite: &mut pixhaus_core::project::Sprite, at: u32, delta: i32) {
+    let shift = |idx: &mut FrameIndex| {
+        if idx.get() >= at {
+            let v = idx.get() as i32 + delta;
+            *idx = FrameIndex::new(v.max(0) as u32);
+        }
+    };
+
     for cel in &mut sprite.cels {
-        if cel.frame_index.get() >= at {
-            let v = cel.frame_index.get() as i32 + delta;
-            cel.frame_index = FrameIndex::new(v.max(0) as u32);
-        }
+        shift(&mut cel.frame_index);
         if let CelData::Linked { source_frame } = &mut cel.data {
-            if source_frame.get() >= at {
-                let v = source_frame.get() as i32 + delta;
-                *source_frame = FrameIndex::new(v.max(0) as u32);
-            }
+            shift(source_frame);
         }
+    }
+    for tag in &mut sprite.frame_tags {
+        shift(&mut tag.range.start);
+        shift(&mut tag.range.end);
+    }
+    for anim in &mut sprite.animations {
+        shift(&mut anim.range.start);
+        shift(&mut anim.range.end);
+    }
+    for slice in &mut sprite.slices {
+        for key in &mut slice.keys {
+            shift(&mut key.frame);
+        }
+    }
+}
+
+/// Remaps a single frame index across a `reorder_frame(from, to)` permutation.
+///
+/// - The frame at `from` lands at `to`.
+/// - Frames between `from` and `to` shift by one, opposite to the move
+///   direction.
+/// - Frames outside the moved span are untouched.
+///
+/// Ported verbatim from the Tauri `remap_for_reorder`
+/// (`app/src/commands/frames.rs`).
+fn remap_for_reorder(idx: FrameIndex, from: u32, to: u32) -> FrameIndex {
+    let n = idx.get();
+    if n == from {
+        FrameIndex::new(to)
+    } else if from < to && n > from && n <= to {
+        FrameIndex::new(n - 1)
+    } else if from > to && n >= to && n < from {
+        FrameIndex::new(n + 1)
+    } else {
+        idx
+    }
+}
+
+/// Normalises a `[start, end]` pair so `start <= end`, used after a reorder
+/// permutation that may have flipped a tag or animation range's endpoints.
+fn ordered_range(a: FrameIndex, b: FrameIndex) -> FrameRange {
+    if a.get() <= b.get() { FrameRange::new(a, b) } else { FrameRange::new(b, a) }
+}
+
+/// Moves the frame at `from` to position `to`, remapping every cel, tag,
+/// animation, and slice key so they track their frames through the move.
+///
+/// `to` is clamped to the last valid index; an out-of-range `from` is a no-op.
+/// Mirrors the Tauri `frame_reorder` (`app/src/commands/frames.rs`).
+#[allow(clippy::cast_possible_truncation)]
+fn reorder_frame(sprite: &mut pixhaus_core::project::Sprite, from: u32, to: u32) {
+    let len = sprite.frames.len();
+    if (from as usize) >= len || len == 0 {
+        return;
+    }
+    let to = to.min(len as u32 - 1);
+    if from == to {
+        return;
+    }
+    let frame = sprite.frames.remove(from as usize);
+    sprite.frames.insert(to as usize, frame);
+
+    for cel in &mut sprite.cels {
+        cel.frame_index = remap_for_reorder(cel.frame_index, from, to);
+    }
+    for tag in &mut sprite.frame_tags {
+        let s = remap_for_reorder(tag.range.start, from, to);
+        let e = remap_for_reorder(tag.range.end, from, to);
+        tag.range = ordered_range(s, e);
+    }
+    for anim in &mut sprite.animations {
+        let s = remap_for_reorder(anim.range.start, from, to);
+        let e = remap_for_reorder(anim.range.end, from, to);
+        anim.range = ordered_range(s, e);
+    }
+    for slice in &mut sprite.slices {
+        for key in &mut slice.keys {
+            key.frame = remap_for_reorder(key.frame, from, to);
+        }
+    }
+}
+
+/// Swaps the frames at `a` and `b`, leaving every frame between them in place.
+///
+/// Composes two `reorder_frame` calls (move `lo` to `hi`, then move the element
+/// now at `hi - 1` back to `lo`), so the cel/range remap stays correct for
+/// free. Mirrors the Tauri `swapFrames` (`ui/src/timeline/timeline-state.ts`).
+// Consumed by reverse and the timeline context menu (plan tasks 2 and 11);
+// kept as a pure free fn now so those tasks reuse one helper.
+#[allow(dead_code)]
+fn swap_frames(sprite: &mut pixhaus_core::project::Sprite, a: u32, b: u32) {
+    if a == b {
+        return;
+    }
+    let (lo, hi) = if a < b { (a, b) } else { (b, a) };
+    reorder_frame(sprite, lo, hi);
+    reorder_frame(sprite, hi - 1, lo);
+}
+
+/// Builds the sequence of `(from, to)` swap pairs that reverse a sorted set of
+/// frame indices: pair the outermost inward, leaving any middle frame fixed.
+///
+/// Ported from the Tauri `buildSwapPairs`
+/// (`ui/src/timeline/timeline-state.ts`). `BTreeSet` iterates ascending, so the
+/// input is already sorted.
+#[allow(dead_code)]
+fn build_swap_pairs(indices: &std::collections::BTreeSet<u32>) -> Vec<(u32, u32)> {
+    let pts: Vec<u32> = indices.iter().copied().collect();
+    let mut pairs = Vec::with_capacity(pts.len() / 2);
+    let mut lo = 0usize;
+    let mut hi = pts.len().saturating_sub(1);
+    while lo < hi {
+        pairs.push((pts[lo], pts[hi]));
+        lo += 1;
+        hi -= 1;
+    }
+    pairs
+}
+
+/// Reverses the order of the selected frames in place, applying one
+/// `swap_frames` per pair from [`build_swap_pairs`]. A middle frame in an
+/// odd-sized selection stays fixed.
+// Wired by the reverse-selected action in the timeline context menu (plan task
+// 11); kept pure and tested now so that task only adds the call site.
+#[allow(dead_code)]
+fn reverse_frames(sprite: &mut pixhaus_core::project::Sprite, indices: &std::collections::BTreeSet<u32>) {
+    for (a, b) in build_swap_pairs(indices) {
+        swap_frames(sprite, a, b);
     }
 }
 
@@ -510,6 +743,55 @@ fn retarget_duplicated_cels(cels_on_frame: Vec<Cel>, insert_at: u32, mut alloc_b
         }
     });
     out
+}
+
+/// Where the playhead should land after deleting `indices`, given the prior
+/// `active` frame. Pure index arithmetic over the *requested* delete set, with
+/// no knowledge of the last-frame guard or the surviving count — the caller
+/// clamps the result to the new frame count.
+///
+/// Mirrors the Tauri `deleteFrames` rule: if the active frame was deleted, land
+/// on `max(0, lowest_deleted - 1)`; otherwise the active frame survived but may
+/// have shifted left, so subtract one for every deleted index below it.
+fn next_active_after_delete(active: u32, indices: &std::collections::BTreeSet<u32>) -> u32 {
+    if indices.contains(&active) {
+        let lowest_deleted = indices.iter().next().copied().unwrap_or(0);
+        lowest_deleted.saturating_sub(1)
+    } else {
+        let deleted_before = indices.iter().filter(|&&i| i < active).count() as u32;
+        active.saturating_sub(deleted_before)
+    }
+}
+
+/// Removes the frames at `indices` and re-indexes everything attached to them.
+///
+/// Iterates highest-index-first so a removal never shifts an index still
+/// pending in the set; for each frame it drops the frame, drops that frame's
+/// cels, then shifts every later cel, tag, animation, and slice key back by one
+/// via [`shift_frames`]. A final [`clamp_tags`] trims any range left dangling.
+///
+/// Guards the last surviving frame: a sprite must keep at least one frame, so
+/// if `indices` covers every frame the lowest index is dropped from the delete
+/// set. Mirrors the Tauri `deleteFrames` (`ui/src/timeline/timeline-state.ts`).
+#[allow(clippy::cast_possible_truncation)]
+fn delete_frames(sprite: &mut pixhaus_core::project::Sprite, indices: &std::collections::BTreeSet<u32>) {
+    let total = sprite.frames.len() as u32;
+    // Build the descending delete order, guarding the last frame: never empty
+    // the sprite. If the set covers everything, keep the lowest index.
+    let mut to_delete: Vec<u32> = indices.iter().copied().filter(|&i| i < total).collect();
+    if to_delete.len() as u32 >= total && total > 0 {
+        // `indices` is ascending; the lowest is first, so drop it.
+        to_delete.remove(0);
+    }
+    for idx in to_delete.into_iter().rev() {
+        let i = idx as usize;
+        if i < sprite.frames.len() {
+            sprite.frames.remove(i);
+        }
+        sprite.cels.retain(|c| c.frame_index.get() != idx);
+        shift_frames(sprite, idx + 1, -1);
+    }
+    clamp_tags(sprite);
 }
 
 /// Clamps tag/animation ranges to the current frame count, dropping any that
@@ -554,8 +836,47 @@ fn tag_color(i: usize) -> egui::Color32 {
 
 #[cfg(test)]
 mod tests {
+    use std::collections::BTreeSet;
+
     use super::*;
-    use pixhaus_core::project::{IVec2, Size, UserData};
+    use pixhaus_core::project::{Animation, AnimationId, IVec2, Rect, Size, Slice, SliceId, SliceKey, Sprite, SpriteId, UserData};
+
+    fn sprite_with_frames(n: u32) -> Sprite {
+        let mut s = Sprite::empty(SpriteId::new(1), "t", Size::new(8, 8));
+        for _ in 0..n {
+            s.frames.push(Frame::default());
+        }
+        s
+    }
+
+    fn simple_raster_cel(frame: u32, layer: u32) -> Cel {
+        Cel::raster(LayerId::new(layer), FrameIndex::new(frame), PixelBufferId::new(1), Size::new(8, 8))
+    }
+
+    fn cel_frames(s: &Sprite) -> Vec<u32> {
+        s.cels.iter().map(|c| c.frame_index.get()).collect()
+    }
+
+    fn slice_with_keys(frames: &[u32]) -> Slice {
+        Slice {
+            id: SliceId::new(1),
+            name: "s".into(),
+            keys: frames
+                .iter()
+                .map(|f| SliceKey {
+                    frame: FrameIndex::new(*f),
+                    bounds: Rect::from_xywh(0, 0, 1, 1),
+                    nine_slice: None,
+                    pivot: None,
+                })
+                .collect(),
+            user_data: UserData::default(),
+        }
+    }
+
+    fn frame_set(ids: &[u32]) -> BTreeSet<u32> {
+        ids.iter().copied().collect()
+    }
 
     fn raster_cel(layer: u32, frame: u32, buffer: u32, opacity: u8, position: IVec2) -> Cel {
         Cel {
@@ -625,5 +946,297 @@ mod tests {
         let cel = raster_cel(1, 2, 7, 255, IVec2::zero());
         let out = retarget_duplicated_cels(vec![cel], 3, |_| None);
         assert!(out.is_empty(), "a raster cel whose buffer cannot be copied is dropped");
+    }
+
+    // shift_frames ─────────────────────────────────────────────────────────────
+
+    #[test]
+    fn shift_minus_one_drops_indices_from_threshold() {
+        let mut s = sprite_with_frames(4);
+        s.cels = vec![
+            simple_raster_cel(0, 1),
+            simple_raster_cel(1, 1),
+            simple_raster_cel(2, 1),
+            simple_raster_cel(3, 1),
+        ];
+        // Frame-delete at index 1: the caller drops cels on frame 1 first, then
+        // shifts everything past back by one.
+        s.cels.retain(|c| c.frame_index.get() != 1);
+        shift_frames(&mut s, 2, -1);
+        assert_eq!(cel_frames(&s), vec![0, 1, 2]);
+    }
+
+    #[test]
+    fn shift_plus_one_makes_room_for_insertion() {
+        let mut s = sprite_with_frames(3);
+        s.cels = vec![simple_raster_cel(0, 1), simple_raster_cel(1, 1), simple_raster_cel(2, 1)];
+        shift_frames(&mut s, 1, 1);
+        assert_eq!(cel_frames(&s), vec![0, 2, 3]);
+    }
+
+    #[test]
+    fn shift_walks_tags_animations_and_slices() {
+        let mut s = sprite_with_frames(5);
+        s.frame_tags.push(FrameTag {
+            name: "walk".into(),
+            range: FrameRange::new(FrameIndex::new(1), FrameIndex::new(3)),
+            loop_direction: LoopDirection::Forward,
+            repeat: 0,
+            user_data: UserData::default(),
+        });
+        s.animations.push(Animation::forward(
+            AnimationId::new(1),
+            "walk",
+            FrameRange::new(FrameIndex::new(2), FrameIndex::new(4)),
+        ));
+        s.slices.push(slice_with_keys(&[1, 3, 4]));
+
+        shift_frames(&mut s, 2, -1);
+
+        assert_eq!(s.frame_tags[0].range.start.get(), 1);
+        assert_eq!(s.frame_tags[0].range.end.get(), 2);
+        assert_eq!(s.animations[0].range.start.get(), 1);
+        assert_eq!(s.animations[0].range.end.get(), 3);
+        let key_frames: Vec<u32> = s.slices[0].keys.iter().map(|k| k.frame.get()).collect();
+        assert_eq!(key_frames, vec![1, 2, 3]);
+    }
+
+    // remap_for_reorder ────────────────────────────────────────────────────────
+
+    #[test]
+    fn remap_forward_move_shifts_middle_left() {
+        // Move frame 1 to position 3: [A B C D] -> [A C D B].
+        let r = |n: u32| remap_for_reorder(FrameIndex::new(n), 1, 3).get();
+        assert_eq!(r(0), 0);
+        assert_eq!(r(1), 3);
+        assert_eq!(r(2), 1);
+        assert_eq!(r(3), 2);
+    }
+
+    #[test]
+    fn remap_backward_move_shifts_middle_right() {
+        // Move frame 3 to position 1: [A B C D] -> [A D B C].
+        let r = |n: u32| remap_for_reorder(FrameIndex::new(n), 3, 1).get();
+        assert_eq!(r(0), 0);
+        assert_eq!(r(1), 2);
+        assert_eq!(r(2), 3);
+        assert_eq!(r(3), 1);
+    }
+
+    #[test]
+    fn remap_outside_span_is_identity() {
+        let r = |n: u32| remap_for_reorder(FrameIndex::new(n), 2, 4).get();
+        assert_eq!(r(0), 0);
+        assert_eq!(r(1), 1);
+        assert_eq!(r(5), 5);
+    }
+
+    // reorder_frame ────────────────────────────────────────────────────────────
+
+    #[test]
+    fn reorder_moves_frame_and_keeps_cels_attached() {
+        // One cel per frame on layer 1; moving frame 1 to 3 must carry each
+        // cel with its frame: [c0 c1 c2 c3] -> [c0 c2 c3 c1] reading by position.
+        let mut s = sprite_with_frames(4);
+        s.cels = vec![
+            simple_raster_cel(0, 1),
+            simple_raster_cel(1, 1),
+            simple_raster_cel(2, 1),
+            simple_raster_cel(3, 1),
+        ];
+        reorder_frame(&mut s, 1, 3);
+        let mut frames = cel_frames(&s);
+        frames.sort_unstable();
+        assert_eq!(frames, vec![0, 1, 2, 3], "every frame still owns exactly one cel");
+        // The cel that was at frame 1 now sits at frame 3.
+        assert_eq!(cel_frames(&s)[1], 3, "the moved cel landed at its new index");
+    }
+
+    #[test]
+    fn reorder_clamps_out_of_range_target() {
+        let mut s = sprite_with_frames(3);
+        s.cels = vec![simple_raster_cel(0, 1), simple_raster_cel(1, 1), simple_raster_cel(2, 1)];
+        reorder_frame(&mut s, 0, 99);
+        // 0 -> last index (2): cels become [2, 0, 1] in frame terms.
+        assert_eq!(cel_frames(&s), vec![2, 0, 1]);
+    }
+
+    #[test]
+    fn reorder_out_of_range_source_is_noop() {
+        let mut s = sprite_with_frames(2);
+        s.cels = vec![simple_raster_cel(0, 1), simple_raster_cel(1, 1)];
+        reorder_frame(&mut s, 5, 0);
+        assert_eq!(cel_frames(&s), vec![0, 1]);
+    }
+
+    // swap_frames ──────────────────────────────────────────────────────────────
+
+    #[test]
+    fn swap_exchanges_two_positions_inner_unchanged() {
+        // Five cels, one per frame. Swap 1 and 3; frames 0, 2, 4 stay put.
+        let mut s = sprite_with_frames(5);
+        s.cels = (0..5).map(|f| simple_raster_cel(f, f + 10)).collect();
+        swap_frames(&mut s, 1, 3);
+        // The buffer that was on frame 1 is now on frame 3 and vice versa;
+        // frames 0, 2, 4 keep their original buffers.
+        let on = |frame: u32| -> u32 {
+            let cel = s.cels.iter().find(|c| c.frame_index.get() == frame).expect("cel present");
+            cel.layer_id.get()
+        };
+        assert_eq!(on(0), 10, "frame 0 untouched");
+        assert_eq!(on(1), 13, "frame 1 now holds what was on frame 3");
+        assert_eq!(on(2), 12, "frame 2 untouched");
+        assert_eq!(on(3), 11, "frame 3 now holds what was on frame 1");
+        assert_eq!(on(4), 14, "frame 4 untouched");
+    }
+
+    #[test]
+    fn swap_same_index_is_noop() {
+        let mut s = sprite_with_frames(3);
+        s.cels = vec![simple_raster_cel(0, 1), simple_raster_cel(1, 2), simple_raster_cel(2, 3)];
+        swap_frames(&mut s, 1, 1);
+        assert_eq!(cel_frames(&s), vec![0, 1, 2]);
+    }
+
+    // build_swap_pairs ─────────────────────────────────────────────────────────
+
+    #[test]
+    fn swap_pairs_empty_selection_has_no_pairs() {
+        assert!(build_swap_pairs(&frame_set(&[])).is_empty());
+    }
+
+    #[test]
+    fn swap_pairs_single_frame_has_no_pairs() {
+        assert!(build_swap_pairs(&frame_set(&[3])).is_empty());
+    }
+
+    #[test]
+    fn swap_pairs_two_frames_one_pair() {
+        assert_eq!(build_swap_pairs(&frame_set(&[1, 4])), vec![(1, 4)]);
+    }
+
+    #[test]
+    fn swap_pairs_three_frames_middle_fixed() {
+        // [0, 1, 2]: outer pair swaps, middle is left untouched.
+        assert_eq!(build_swap_pairs(&frame_set(&[0, 1, 2])), vec![(0, 2)]);
+    }
+
+    #[test]
+    fn swap_pairs_non_contiguous_selection() {
+        // [0, 2, 5, 7] reverses to [7, 5, 2, 0]: pairs (0,7) and (2,5).
+        assert_eq!(build_swap_pairs(&frame_set(&[0, 2, 5, 7])), vec![(0, 7), (2, 5)]);
+    }
+
+    // reverse_frames ───────────────────────────────────────────────────────────
+
+    #[test]
+    fn reverse_three_frames_flips_outer_keeps_middle() {
+        let mut s = sprite_with_frames(3);
+        s.cels = (0..3).map(|f| simple_raster_cel(f, f + 10)).collect();
+        reverse_frames(&mut s, &frame_set(&[0, 1, 2]));
+        let on = |frame: u32| s.cels.iter().find(|c| c.frame_index.get() == frame).expect("cel present").layer_id.get();
+        assert_eq!(on(0), 12, "frame 0 now holds the last frame's content");
+        assert_eq!(on(1), 11, "middle frame stays put");
+        assert_eq!(on(2), 10, "frame 2 now holds the first frame's content");
+    }
+
+    #[test]
+    fn reverse_full_four_frame_selection() {
+        let mut s = sprite_with_frames(4);
+        s.cels = (0..4).map(|f| simple_raster_cel(f, f + 10)).collect();
+        reverse_frames(&mut s, &frame_set(&[0, 1, 2, 3]));
+        let on = |frame: u32| s.cels.iter().find(|c| c.frame_index.get() == frame).expect("cel present").layer_id.get();
+        assert_eq!(on(0), 13);
+        assert_eq!(on(1), 12);
+        assert_eq!(on(2), 11);
+        assert_eq!(on(3), 10);
+    }
+
+    // delete_frames ──────────────────────────────────────────────────────────
+
+    #[test]
+    fn delete_two_frames_reindexes_surviving_cels() {
+        // Five frames, one cel each, tagged by layer id (f + 10). Delete {1, 3}:
+        // survivors were frames 0, 2, 4 and must re-index to 0, 1, 2 while
+        // keeping their original drawings.
+        let mut s = sprite_with_frames(5);
+        s.cels = (0..5).map(|f| simple_raster_cel(f, f + 10)).collect();
+        delete_frames(&mut s, &frame_set(&[1, 3]));
+        assert_eq!(s.frames.len(), 3, "two of five frames are gone");
+        assert_eq!(cel_frames(&s), vec![0, 1, 2], "surviving cels are packed and re-indexed");
+        // The drawings ride along: old frame 0/2/4 -> new frame 0/1/2.
+        let on = |frame: u32| s.cels.iter().find(|c| c.frame_index.get() == frame).expect("cel present").layer_id.get();
+        assert_eq!(on(0), 10, "old frame 0");
+        assert_eq!(on(1), 12, "old frame 2");
+        assert_eq!(on(2), 14, "old frame 4");
+    }
+
+    #[test]
+    fn delete_all_frames_leaves_one() {
+        // The guard never empties a sprite: deleting every frame keeps the
+        // lowest index and its cel.
+        let mut s = sprite_with_frames(3);
+        s.cels = (0..3).map(|f| simple_raster_cel(f, f + 10)).collect();
+        delete_frames(&mut s, &frame_set(&[0, 1, 2]));
+        assert_eq!(s.frames.len(), 1, "one frame always survives");
+        assert_eq!(cel_frames(&s), vec![0], "the surviving frame keeps its cel at index 0");
+        let on = |frame: u32| s.cels.iter().find(|c| c.frame_index.get() == frame).expect("cel present").layer_id.get();
+        assert_eq!(on(0), 10, "the lowest frame (0) is the one kept");
+    }
+
+    #[test]
+    fn delete_frames_out_of_range_indices_are_ignored() {
+        let mut s = sprite_with_frames(3);
+        s.cels = (0..3).map(|f| simple_raster_cel(f, f + 10)).collect();
+        delete_frames(&mut s, &frame_set(&[1, 9]));
+        assert_eq!(cel_frames(&s), vec![0, 1], "only the valid index (1) is deleted");
+    }
+
+    #[test]
+    fn delete_frames_clamps_dangling_tag_ranges() {
+        let mut s = sprite_with_frames(4);
+        s.frame_tags.push(FrameTag {
+            name: "all".into(),
+            range: FrameRange::new(FrameIndex::new(0), FrameIndex::new(3)),
+            loop_direction: LoopDirection::Forward,
+            repeat: 0,
+            user_data: UserData::default(),
+        });
+        delete_frames(&mut s, &frame_set(&[3]));
+        assert_eq!(s.frames.len(), 3);
+        assert_eq!(s.frame_tags[0].range.end.get(), 2, "the tag end is clamped to the new last frame");
+    }
+
+    // next_active_after_delete ─────────────────────────────────────────────────
+
+    #[test]
+    fn active_index_when_active_frame_is_deleted() {
+        // Active frame 3 deleted alongside 1: land on max(0, lowest_deleted - 1)
+        // = max(0, 1 - 1) = 0.
+        assert_eq!(next_active_after_delete(3, &frame_set(&[1, 3])), 0);
+    }
+
+    #[test]
+    fn active_index_when_active_frame_is_lowest_deleted() {
+        // Deleting only the active frame 2: lowest_deleted - 1 = 1.
+        assert_eq!(next_active_after_delete(2, &frame_set(&[2])), 1);
+    }
+
+    #[test]
+    fn active_index_when_frames_before_active_are_deleted() {
+        // Active frame 4 survives; two deleted indices (0, 2) sit below it, so
+        // it shifts left by two to 2.
+        assert_eq!(next_active_after_delete(4, &frame_set(&[0, 2])), 2);
+    }
+
+    #[test]
+    fn active_index_unchanged_when_only_later_frames_deleted() {
+        // Active frame 1 survives; deleted index 3 is after it, so no shift.
+        assert_eq!(next_active_after_delete(1, &frame_set(&[3])), 1);
+    }
+
+    #[test]
+    fn active_index_deleting_first_frame_floors_at_zero() {
+        assert_eq!(next_active_after_delete(0, &frame_set(&[0])), 0);
     }
 }

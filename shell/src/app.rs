@@ -1236,6 +1236,9 @@ impl ShellApp {
         if let Some(sprite_ref) = select {
             self.rs_preview = None;
             self.doc.select(sprite_ref);
+            // The frame selection is per-sprite UI state; a stale set would
+            // point at frames the new sprite may not have.
+            self.editor.clear_frame_selection();
             self.playing = false;
             self.refresh_canvas(true);
         }
