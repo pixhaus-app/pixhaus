@@ -59,6 +59,57 @@ const SIZE_PRESETS: &[(&str, u32, u32)] = &[
     ("1920 x 1080", 1920, 1080),
 ];
 
+/// The grid and overlay preferences persisted across launches through eframe
+/// `Storage` under the `"grid_prefs"` key, alongside `theme_preference` and
+/// `keymap`. These are view settings, not part of the serialized project, so
+/// they never touch the `.pixhaus` schema. Dither and stroke opacity are
+/// per-session tool state and are deliberately not persisted, matching the
+/// Tauri app, which reset them each launch.
+///
+/// The defaults mirror [`crate::editor::EditorState`] so a fresh install and a
+/// stored-but-empty value agree.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct GridPrefs {
+    /// Show the per-pixel grid once the zoom is high enough to read it.
+    pub show_pixel_grid: bool,
+    /// Show the major / tile grid overlay.
+    pub major_grid_enabled: bool,
+    /// Major-grid spacing on the X axis, in canvas pixels.
+    pub spacing_x: u32,
+    /// Major-grid spacing on the Y axis, in canvas pixels.
+    pub spacing_y: u32,
+}
+
+impl Default for GridPrefs {
+    fn default() -> Self {
+        let editor = crate::editor::EditorState::default();
+        Self::from_editor(&editor)
+    }
+}
+
+impl GridPrefs {
+    /// Snapshots the persistable grid fields off the live editor state.
+    #[must_use]
+    pub fn from_editor(editor: &crate::editor::EditorState) -> Self {
+        Self {
+            show_pixel_grid: editor.show_pixel_grid,
+            major_grid_enabled: editor.major_grid_enabled,
+            spacing_x: editor.major_grid_spacing_x,
+            spacing_y: editor.major_grid_spacing_y,
+        }
+    }
+
+    /// Writes the stored grid fields back onto the editor state on load.
+    pub fn apply_to(self, editor: &mut crate::editor::EditorState) {
+        editor.show_pixel_grid = self.show_pixel_grid;
+        editor.major_grid_enabled = self.major_grid_enabled;
+        // Spacing is a divisor in the major-grid step math; a zero would stride
+        // by nothing, so clamp a corrupt stored value up to 1.
+        editor.major_grid_spacing_x = self.spacing_x.max(1);
+        editor.major_grid_spacing_y = self.spacing_y.max(1);
+    }
+}
+
 /// Results delivered from background tokio work to the UI thread.
 #[derive(Debug)]
 pub enum ShellMsg {
@@ -658,6 +709,10 @@ impl ShellApp {
         // to the Aseprite preset with no overrides.
         let keymap = cc.storage.and_then(|s| eframe::get_value::<Keymap>(s, "keymap")).unwrap_or_default();
 
+        // Restore the grid / overlay preferences, defaulting to the editor's own
+        // defaults. Applied to the editor after the struct is built.
+        let grid_prefs = cc.storage.and_then(|s| eframe::get_value::<GridPrefs>(s, "grid_prefs")).unwrap_or_default();
+
         // Restore the last-used new-sprite size, defaulting to 64×64.
         let (last_w, last_h) = cc
             .storage
@@ -772,6 +827,7 @@ impl ShellApp {
             transform_dialog: None,
             status_message: None,
         };
+        grid_prefs.apply_to(&mut app.editor);
         app.install_renderer();
         app.doc.create_sprite("untitled", DEFAULT_CANVAS);
         app.refresh_canvas(true);
@@ -2612,6 +2668,15 @@ impl ShellApp {
                 ui.separator();
                 ui.checkbox(&mut self.editor.show_pixel_grid, "Pixel grid")
                     .on_hover_text("Show a per-pixel grid once the zoom is high enough to read it");
+                ui.checkbox(&mut self.editor.major_grid_enabled, "Tile / major grid")
+                    .on_hover_text("Show a cyan grid every N canvas pixels for tile-sized alignment");
+                if self.editor.major_grid_enabled {
+                    ui.horizontal(|ui| {
+                        ui.label("spacing");
+                        ui.add(egui::DragValue::new(&mut self.editor.major_grid_spacing_x).range(1..=4096).prefix("X "));
+                        ui.add(egui::DragValue::new(&mut self.editor.major_grid_spacing_y).range(1..=4096).prefix("Y "));
+                    });
+                }
             });
 
             ui.separator();
@@ -2807,6 +2872,8 @@ impl ShellApp {
             CommandId::ZoomOut => self.pending_zoom = Some(ZoomAction::Out),
             CommandId::ZoomFit => self.needs_fit = true,
             CommandId::ZoomReset => self.pending_zoom = Some(ZoomAction::Reset),
+            CommandId::ToggleGrid => self.editor.show_pixel_grid = !self.editor.show_pixel_grid,
+            CommandId::ToggleMajorGrid => self.editor.major_grid_enabled = !self.editor.major_grid_enabled,
             CommandId::PlayPause => self.toggle_play(),
             CommandId::ToolPencil => self.editor.left_tool = Tool::Pencil,
             CommandId::ToolEraser => self.editor.left_tool = Tool::Eraser,
@@ -3048,6 +3115,7 @@ impl eframe::App for ShellApp {
         eframe::set_value(storage, "reveal_effect_enabled", &self.reveal_effect_enabled);
         eframe::set_value(storage, "keymap", &self.keymap);
         eframe::set_value(storage, "new_sprite_size", &(self.new_sprite_w, self.new_sprite_h));
+        eframe::set_value(storage, "grid_prefs", &GridPrefs::from_editor(&self.editor));
     }
 
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
@@ -3109,7 +3177,7 @@ impl eframe::App for ShellApp {
 
 #[cfg(test)]
 mod tests {
-    use super::{MorphOp, MorphResult, SelectionMask, morph_mask, next_cursor, png_to_pixel_buffer, truncate_motion};
+    use super::{GridPrefs, MorphOp, MorphResult, SelectionMask, morph_mask, next_cursor, png_to_pixel_buffer, truncate_motion};
 
     // --- playback cursor: loop vs stop --------------------------------------
 
@@ -3251,5 +3319,68 @@ mod tests {
     #[test]
     fn png_to_pixel_buffer_rejects_garbage() {
         assert!(png_to_pixel_buffer(b"not a png").is_none());
+    }
+
+    // --- grid preference persistence ----------------------------------------
+
+    #[test]
+    fn grid_prefs_default_mirrors_the_editor_default() {
+        // A fresh install and a never-saved profile must agree: GridPrefs's
+        // Default reads from EditorState's own defaults rather than hardcoding.
+        let editor = crate::editor::EditorState::default();
+        assert_eq!(GridPrefs::default(), GridPrefs::from_editor(&editor));
+    }
+
+    #[test]
+    fn grid_prefs_round_trips_through_editor() {
+        // apply_to then from_editor is the load/save pair; it must be lossless
+        // for in-range values. Seed a default editor with a non-default prefs
+        // value, then read it straight back.
+        let prefs = GridPrefs {
+            show_pixel_grid: false,
+            major_grid_enabled: true,
+            spacing_x: 16,
+            spacing_y: 24,
+        };
+        let mut editor = crate::editor::EditorState::default();
+        prefs.apply_to(&mut editor);
+
+        assert!(!editor.show_pixel_grid);
+        assert!(editor.major_grid_enabled);
+        assert_eq!(editor.major_grid_spacing_x, 16);
+        assert_eq!(editor.major_grid_spacing_y, 24);
+        // The snapshot off the seeded editor equals the prefs we wrote in.
+        assert_eq!(GridPrefs::from_editor(&editor), prefs);
+    }
+
+    #[test]
+    fn grid_prefs_apply_clamps_zero_spacing_up() {
+        // A corrupt stored zero would stride by nothing in the major-grid math,
+        // so apply_to lifts it to 1.
+        let prefs = GridPrefs {
+            show_pixel_grid: true,
+            major_grid_enabled: true,
+            spacing_x: 0,
+            spacing_y: 0,
+        };
+        let mut editor = crate::editor::EditorState::default();
+        prefs.apply_to(&mut editor);
+        assert_eq!(editor.major_grid_spacing_x, 1);
+        assert_eq!(editor.major_grid_spacing_y, 1);
+    }
+
+    #[test]
+    fn grid_prefs_serde_round_trips() {
+        // The struct persists through eframe Storage, which is JSON; assert the
+        // serde shape survives a round trip with the documented field names.
+        let prefs = GridPrefs {
+            show_pixel_grid: false,
+            major_grid_enabled: true,
+            spacing_x: 32,
+            spacing_y: 8,
+        };
+        let json = serde_json::to_string(&prefs).expect("serialize grid prefs");
+        let back: GridPrefs = serde_json::from_str(&json).expect("deserialize grid prefs");
+        assert_eq!(back, prefs);
     }
 }

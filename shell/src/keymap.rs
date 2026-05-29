@@ -54,6 +54,10 @@ pub enum CommandId {
     ZoomFit,
     /// Reset the zoom to 100%.
     ZoomReset,
+    /// Toggle the per-pixel grid overlay.
+    ToggleGrid,
+    /// Toggle the major / tile grid overlay.
+    ToggleMajorGrid,
     /// Start or stop playback.
     PlayPause,
     // Tools
@@ -106,6 +110,8 @@ impl CommandId {
         CommandId::ZoomOut,
         CommandId::ZoomFit,
         CommandId::ZoomReset,
+        CommandId::ToggleGrid,
+        CommandId::ToggleMajorGrid,
         CommandId::PlayPause,
         CommandId::ToolPencil,
         CommandId::ToolEraser,
@@ -141,6 +147,8 @@ impl CommandId {
             CommandId::ZoomOut => "Zoom out",
             CommandId::ZoomFit => "Zoom to fit",
             CommandId::ZoomReset => "Zoom to 100%",
+            CommandId::ToggleGrid => "Toggle pixel grid",
+            CommandId::ToggleMajorGrid => "Toggle tile / major grid",
             CommandId::PlayPause => "Play / pause",
             CommandId::ToolPencil => "Pencil",
             CommandId::ToolEraser => "Eraser",
@@ -166,7 +174,13 @@ impl CommandId {
             CommandId::NewSprite => CommandCategory::File,
             CommandId::Undo | CommandId::Redo | CommandId::SwapColors | CommandId::BrushSizeDecrease | CommandId::BrushSizeIncrease => CommandCategory::Edit,
             CommandId::SelectAll | CommandId::Deselect | CommandId::InvertSelection | CommandId::DeleteSelection => CommandCategory::Selection,
-            CommandId::ZoomIn | CommandId::ZoomOut | CommandId::ZoomFit | CommandId::ZoomReset | CommandId::PlayPause => CommandCategory::View,
+            CommandId::ZoomIn
+            | CommandId::ZoomOut
+            | CommandId::ZoomFit
+            | CommandId::ZoomReset
+            | CommandId::ToggleGrid
+            | CommandId::ToggleMajorGrid
+            | CommandId::PlayPause => CommandCategory::View,
             CommandId::ToolPencil
             | CommandId::ToolEraser
             | CommandId::ToolFill
@@ -434,6 +448,12 @@ impl Keymap {
 /// The default chord for `command` under `preset`. `Custom` resolves against
 /// the Aseprite base, so unbound-by-preset still has a sensible fallback.
 fn preset_default(preset: KeybindPreset, command: CommandId) -> Option<Chord> {
+    // The grid toggles ship unbound across every preset: Aseprite has no
+    // single-key grid toggle, so binding nothing keeps the letter keys free.
+    // The user can still assign a chord through the rebinding UI.
+    if matches!(command, CommandId::ToggleGrid | CommandId::ToggleMajorGrid) {
+        return None;
+    }
     match preset {
         KeybindPreset::Photoshop => photoshop_default(command),
         KeybindPreset::Aseprite | KeybindPreset::Custom => Some(aseprite_default(command)),
@@ -477,6 +497,10 @@ fn aseprite_default(command: CommandId) -> Chord {
         C::ToolMove => Chord::key(Key::V),
         C::ToolTransform => Chord::key(Key::T),
         C::OpenSettings => Chord::ctrl(Key::Comma),
+        // Grid toggles are intercepted as unbound in `preset_default` and never
+        // reach this table. Aseprite ships no grid-toggle letter, so there is no
+        // default chord to mirror; the rebinding UI assigns one on request.
+        C::ToggleGrid | C::ToggleMajorGrid => Chord::ctrl(Key::Backtick),
     }
 }
 
@@ -632,5 +656,35 @@ mod tests {
         // Photoshop falls through to the same select/invert chords.
         assert_eq!(photoshop_default(CommandId::SelectAll), Some(Chord::ctrl(Key::A)));
         assert_eq!(photoshop_default(CommandId::InvertSelection), Some(Chord::ctrl_shift(Key::I)));
+    }
+
+    #[test]
+    fn grid_toggles_are_view_commands_unbound_by_default() {
+        for command in [CommandId::ToggleGrid, CommandId::ToggleMajorGrid] {
+            assert!(CommandId::ALL.contains(&command), "{command:?} is catalogued");
+            assert_eq!(command.category(), CommandCategory::View);
+            assert!(!command.label().is_empty(), "{command:?} has a label");
+        }
+        // No preset binds them, so the rebinding UI is the only way to assign one.
+        for preset in [KeybindPreset::Aseprite, KeybindPreset::Photoshop, KeybindPreset::Custom] {
+            let keymap = Keymap {
+                preset,
+                custom: BTreeMap::new(),
+            };
+            assert_eq!(keymap.resolve(CommandId::ToggleGrid), None, "{preset:?} leaves ToggleGrid unbound");
+            assert_eq!(keymap.resolve(CommandId::ToggleMajorGrid), None, "{preset:?} leaves ToggleMajorGrid unbound");
+        }
+    }
+
+    #[test]
+    fn a_custom_grid_toggle_override_resolves() {
+        // Unbound by default, but a user override binds normally and survives
+        // serde, since CommandId already round-trips.
+        let mut keymap = Keymap::default();
+        keymap.set_override(CommandId::ToggleGrid, Chord::ctrl(Key::Backtick));
+        assert_eq!(keymap.resolve(CommandId::ToggleGrid), Some(Chord::ctrl(Key::Backtick)));
+        let json = serde_json::to_string(&keymap).expect("serialize");
+        let back: Keymap = serde_json::from_str(&json).expect("deserialize");
+        assert_eq!(back.resolve(CommandId::ToggleGrid), Some(Chord::ctrl(Key::Backtick)));
     }
 }
