@@ -53,12 +53,12 @@ pub use id::{
 };
 pub use layer::{Layer, LayerKind};
 pub use library::{
-    ActiveTarget, AiMetadata, AnchorDirection, AnimationKind, AssetInfo, AssetLibrary, CharacterAnchor, CharacterCard, ChatTranscript, ChatTurn, DerivedSheet,
-    DirectionalAnchors, Entity, EntityContent, EntityDefaults, EntityGroup, EntityKind, GenerationProvenance, Library, LoraAsset, LoraKind, ModelId,
-    NamedSprite, OperationKind, ProjectAi, PromptEntry, PromptHistoryEntry, PromptResult, Quality, ReferenceAsset, ReferenceImage, ReferenceRole,
-    ReferenceSheet, ReferenceSheetTemplateDefinition, ReferenceSheetTemplateId, ReferenceSlot, RefinementKind, RegionDefinition, SheetComposition,
-    SheetDimensions, SheetPanel, SheetVariant, StyleSwatch, TagDefinition, TilemapLayer, TilemapScene, TilesetReference, TrainingJob, TrainingStatus,
-    VariantOrigin, built_in_reference_sheet_templates, default_reference_chroma,
+    ActiveTarget, AiMetadata, AnchorDirection, AnimationKind, AssetInfo, AssetLibrary, CharacterAnchor, CharacterCard, ChatTranscript, ChatTurn,
+    ConflictPolicy, DerivedSheet, DirectionalAnchors, Entity, EntityContent, EntityDefaults, EntityGroup, EntityKind, GenerationProvenance, ImportReport,
+    Library, LoraAsset, LoraKind, ModelId, NamedSprite, OperationKind, PixstyleError, ProjectAi, PromptEntry, PromptHistoryEntry, PromptResult, Quality,
+    ReferenceAsset, ReferenceImage, ReferenceRole, ReferenceSheet, ReferenceSheetTemplateDefinition, ReferenceSheetTemplateId, ReferenceSlot, RefinementKind,
+    RegionDefinition, SheetComposition, SheetDimensions, SheetPanel, SheetVariant, StylePack, StyleSwatch, TagDefinition, TilemapLayer, TilemapScene,
+    TilesetReference, TrainingJob, TrainingStatus, VariantOrigin, built_in_reference_sheet_templates, default_reference_chroma,
 };
 pub use palette::{Palette, PaletteAnimation, PaletteEntry, PaletteFrameOverride, PalettePage};
 pub use schema::{FeatureFlags, SchemaError, SchemaVersion};

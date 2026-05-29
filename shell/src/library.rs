@@ -10,13 +10,15 @@
 
 use eframe::egui;
 use pixhaus_ai::compose::builtins::BuiltinLibrary;
+use pixhaus_core::project::ProjectAi;
 use pixhaus_core::project::library::ai::{ModelId, Quality};
 use pixhaus_core::project::library::composition::{
     Dimensions, PanelRect, PanelSlot, PromptId, PromptTemplate, PromptVariable, Structure, StructureId, StructureOutput, StructurePanel, Style, StyleId,
     VarControl,
 };
+use pixhaus_core::project::library::pixstyle::{ConflictPolicy, StylePack, merge_pack, read_pack, write_pack};
 
-use crate::app::ShellApp;
+use crate::app::{ShellApp, ShellMsg};
 use crate::commands::push_ai_library_edit;
 
 /// Which kind of composition record the library browser is showing.
@@ -75,6 +77,20 @@ impl ShellApp {
             ui.add_space(8.0);
             if ui.button(format!("{} New", crate::icons::ADD)).clicked() {
                 self.library_new();
+            }
+            if ui
+                .button(format!("{} Export pack", crate::icons::DOWNLOAD))
+                .on_hover_text("Save this project's prompts, structures, and styles to a .pixstyle pack")
+                .clicked()
+            {
+                self.library_export_pack();
+            }
+            if ui
+                .button(format!("{} Import pack", crate::icons::UPLOAD))
+                .on_hover_text("Merge composition records from a .pixstyle pack into this project")
+                .clicked()
+            {
+                self.library_import_pack();
             }
         });
         ui.separator();
@@ -452,6 +468,199 @@ impl ShellApp {
         self.library_draft = Some(LibraryDraft::Template(template));
         self.studio_library_open = true;
     }
+
+    /// Exports this project's composition records to a `.pixstyle` pack: every
+    /// project record plus the built-ins the project does not shadow, so the
+    /// pack carries the artist's complete working library and not just their
+    /// edits. The save dialog and the encode/write run on a worker — the rfd
+    /// dialog blocks, and v2's egui loop is synchronous, so doing it inline
+    /// would freeze the window. The gathered pack is owned (no borrow crosses
+    /// the dialog); the result lands as a status line off the channel. Export
+    /// never mutates the document.
+    pub(crate) fn library_export_pack(&mut self) {
+        let pack = gather_export_pack(&self.doc.project.library.ai, &BuiltinLibrary::load());
+        if pack.structures.is_empty() && pack.styles.is_empty() && pack.prompts.is_empty() {
+            self.set_status("Nothing to export: the library is empty");
+            return;
+        }
+        let tx = self.tx.clone();
+        let ctx = self.egui_ctx.clone();
+        // spawn_blocking: the rfd dialog and the file write are blocking I/O,
+        // kept off the egui thread. The pack is moved in, so no document borrow
+        // outlives the dialog.
+        self.runtime.handle().spawn_blocking(move || {
+            let result = run_export(&pack);
+            let _ = tx.send(ShellMsg::PackExportDone { path: result });
+            ctx.request_repaint();
+        });
+    }
+
+    /// Opens the conflict-policy modal for a `.pixstyle` import. The artist picks
+    /// how colliding ids resolve (skip / overwrite / import-as-copy) before any
+    /// file is read; confirming spawns the decode worker. Seeds the modal with
+    /// [`ConflictPolicy::Skip`], the non-destructive default.
+    pub(crate) fn library_import_pack(&mut self) {
+        self.pack_import_policy = Some(ConflictPolicy::Skip);
+    }
+
+    /// The conflict-policy modal shown before a `.pixstyle` import. Renders the
+    /// three policies as radio choices; Import spawns the decode worker with the
+    /// chosen policy and closes the modal, Cancel just closes it.
+    pub(crate) fn show_pack_import_dialog(&mut self, ctx: &egui::Context) {
+        let Some(mut policy) = self.pack_import_policy else {
+            return;
+        };
+        let mut open = true;
+        let mut confirm = false;
+        egui::Window::new(format!("{} Import composition pack", crate::icons::UPLOAD))
+            .collapsible(false)
+            .resizable(false)
+            .open(&mut open)
+            .show(ctx, |ui| {
+                ui.label(egui::RichText::new("When a pack record shares an id with this project:").small().weak());
+                ui.add_space(4.0);
+                for (option, label, hint) in CONFLICT_POLICY_CHOICES {
+                    ui.radio_value(&mut policy, option, label).on_hover_text(hint);
+                }
+                ui.add_space(8.0);
+                ui.separator();
+                ui.horizontal(|ui| {
+                    if ui.button(format!("{} Import", crate::icons::CHECK)).clicked() {
+                        confirm = true;
+                    }
+                    if ui.button("Cancel").clicked() {
+                        self.pack_import_policy = None;
+                    }
+                });
+            });
+        // Keep live radio edits even before Import, until the modal closes.
+        if self.pack_import_policy.is_some() {
+            self.pack_import_policy = Some(policy);
+        }
+        if !open {
+            self.pack_import_policy = None;
+        }
+        if confirm {
+            self.pack_import_policy = None;
+            self.spawn_pack_import(policy);
+        }
+    }
+
+    /// Spawns the `.pixstyle` import worker: the open dialog, read, and decode
+    /// run off the egui thread (rfd blocks; v2's loop is synchronous). The
+    /// decoded pack returns over the channel and merges on the UI thread, so the
+    /// merge is one undoable [`crate::commands::AiLibraryEdit`].
+    fn spawn_pack_import(&mut self, policy: ConflictPolicy) {
+        let tx = self.tx.clone();
+        let ctx = self.egui_ctx.clone();
+        self.runtime.handle().spawn_blocking(move || {
+            let pack = run_import_decode();
+            let _ = tx.send(ShellMsg::PackImportDecoded { pack, policy });
+            ctx.request_repaint();
+        });
+    }
+
+    /// Merges a decoded pack into the project's composition tier under `policy`,
+    /// as one undoable [`crate::commands::AiLibraryEdit`], and surfaces the
+    /// imported / skipped / overwritten counts. Called on the UI thread after the
+    /// import worker decodes the pack.
+    pub(crate) fn apply_imported_pack(&mut self, pack: StylePack, policy: ConflictPolicy) {
+        let report = merge_pack_into_project(&mut self.editor, &mut self.doc, pack, policy);
+        self.set_status(format!(
+            "Imported pack: {} added, {} skipped, {} overwritten",
+            report.imported, report.skipped, report.overwritten
+        ));
+    }
+}
+
+/// Merges `pack` into a project's composition tier under `policy` as one
+/// undoable [`crate::commands::AiLibraryEdit`], returning the merge report. The
+/// document-touching half of the import, split out so the undo wiring is
+/// testable without a full [`ShellApp`].
+fn merge_pack_into_project(
+    editor: &mut crate::editor::EditorState,
+    doc: &mut crate::document::DocumentStore,
+    pack: StylePack,
+    policy: ConflictPolicy,
+) -> pixhaus_core::project::ImportReport {
+    let mut report = pixhaus_core::project::ImportReport::default();
+    push_ai_library_edit(editor, doc, "Import composition pack", |ai| {
+        report = merge_pack(ai, pack, policy);
+    });
+    report
+}
+
+/// Gathers a project's composition records into an exportable [`StylePack`]:
+/// every project record, plus the built-ins the project does not shadow. Pure
+/// so the "project + unshadowed built-ins" rule is testable without a worker or
+/// a dialog.
+fn gather_export_pack(ai: &ProjectAi, builtins: &BuiltinLibrary) -> StylePack {
+    let mut structures = ai.structures.clone();
+    for (id, s) in &builtins.structures {
+        if !ai.structures.iter().any(|x| x.id == *id) {
+            structures.push(s.clone());
+        }
+    }
+    let mut styles = ai.styles.clone();
+    for (id, s) in &builtins.styles {
+        if !ai.styles.iter().any(|x| x.id == *id) {
+            styles.push(s.clone());
+        }
+    }
+    let mut prompts = ai.prompts.clone();
+    for (id, p) in &builtins.prompts {
+        if !ai.prompts.iter().any(|x| x.id == *id) {
+            prompts.push(p.clone());
+        }
+    }
+    StylePack {
+        format_version: 1,
+        structures,
+        styles,
+        prompts,
+    }
+}
+
+/// The three conflict policies, with their modal labels and hover hints, in the
+/// order the import modal lists them. `Skip` leads as the non-destructive
+/// default.
+const CONFLICT_POLICY_CHOICES: [(ConflictPolicy, &str, &str); 3] = [
+    (ConflictPolicy::Skip, "Skip", "Keep this project's record; drop the incoming one"),
+    (ConflictPolicy::Overwrite, "Overwrite", "Replace this project's record with the incoming one"),
+    (ConflictPolicy::ImportAsCopy, "Import as copy", "Add the incoming record under a fresh .copy id"),
+];
+
+/// Opens a `.pixstyle` save dialog and writes `pack` to the chosen path. Runs on
+/// a worker. Returns the written path, `None` for a cancelled dialog, or an
+/// error string. Never touches the document.
+fn run_export(pack: &StylePack) -> Result<Option<std::path::PathBuf>, String> {
+    let Some(path) = rfd::FileDialog::new()
+        .set_title("Export composition pack")
+        .set_file_name("composition.pixstyle")
+        .add_filter("Composition pack", &["pixstyle"])
+        .save_file()
+    else {
+        return Ok(None);
+    };
+    let file = std::fs::File::create(&path).map_err(|e| format!("could not create the file: {e}"))?;
+    write_pack(pack, std::io::BufWriter::new(file)).map_err(|e| e.to_string())?;
+    Ok(Some(path))
+}
+
+/// Opens a `.pixstyle` open dialog and decodes the picked pack. Runs on a
+/// worker. Returns the decoded pack, `None` for a cancelled dialog, or an error
+/// string. The decode caps guard against an oversized or malicious bundle.
+fn run_import_decode() -> Result<Option<StylePack>, String> {
+    let Some(path) = rfd::FileDialog::new()
+        .set_title("Import composition pack")
+        .add_filter("Composition pack", &["pixstyle"])
+        .pick_file()
+    else {
+        return Ok(None);
+    };
+    let file = std::fs::File::open(&path).map_err(|e| format!("could not open the file: {e}"))?;
+    let pack = read_pack(std::io::BufReader::new(file)).map_err(|e| e.to_string())?;
+    Ok(Some(pack))
 }
 
 /// Edits a prompt template: name, text, default structure/style, and variables.
@@ -781,10 +990,143 @@ fn upsert<T, I: PartialEq>(list: &mut Vec<T>, value: T, id_of: impl Fn(&T) -> &I
 
 #[cfg(test)]
 mod tests {
-    use super::{ModelId, Quality, Style, StyleId, upsert};
+    use super::{ConflictPolicy, ModelId, Quality, Structure, StructureId, Style, StyleId, gather_export_pack, read_pack, upsert, write_pack};
     use crate::commands::push_ai_library_edit;
     use crate::document::DocumentStore;
     use crate::editor::EditorState;
+    use pixhaus_ai::compose::builtins::BuiltinLibrary;
+    use pixhaus_core::project::ProjectAi;
+    use pixhaus_core::project::library::composition::{PromptId, PromptTemplate, StructureOutput};
+    use std::collections::BTreeMap;
+
+    fn structure(id: &str, name: &str) -> Structure {
+        Structure {
+            id: StructureId(id.into()),
+            name: name.into(),
+            output: StructureOutput::Single,
+            layout_negatives: String::new(),
+        }
+    }
+
+    fn prompt(id: &str, name: &str) -> PromptTemplate {
+        PromptTemplate {
+            id: PromptId(id.into()),
+            name: name.into(),
+            text: String::new(),
+            variables: Vec::new(),
+            default_style: None,
+            default_structure: None,
+        }
+    }
+
+    /// A hermetic built-in registry with one structure, so the gather rule is
+    /// tested against a known set rather than the real (growing) built-ins.
+    fn one_builtin_structure(id: &str) -> BuiltinLibrary {
+        let mut structures = BTreeMap::new();
+        structures.insert(StructureId(id.into()), structure(id, "Builtin"));
+        BuiltinLibrary {
+            structures,
+            styles: BTreeMap::new(),
+            prompts: BTreeMap::new(),
+        }
+    }
+
+    #[test]
+    fn gather_export_pack_includes_project_and_unshadowed_builtins() {
+        let mut ai = ProjectAi::default();
+        ai.structures.push(structure("project.s", "Project"));
+        // The project shadows the built-in `shared` and adds its own; the
+        // unshadowed built-in `extra` must still come along.
+        ai.structures.push(structure("shared", "Project override"));
+        let mut builtins = one_builtin_structure("extra");
+        builtins.structures.insert(StructureId("shared".into()), structure("shared", "Builtin shared"));
+
+        let pack = gather_export_pack(&ai, &builtins);
+        let ids: Vec<&str> = pack.structures.iter().map(|s| s.id.0.as_str()).collect();
+        assert!(ids.contains(&"project.s"), "project record is exported");
+        assert!(ids.contains(&"extra"), "unshadowed built-in is exported");
+        // The shadowed id appears once, carrying the project's override.
+        assert_eq!(ids.iter().filter(|i| **i == "shared").count(), 1, "shadowed id is not duplicated");
+        let shared = pack.structures.iter().find(|s| s.id.0 == "shared").expect("shared present");
+        assert_eq!(shared.name, "Project override", "the project record wins over the shadowed built-in");
+    }
+
+    #[test]
+    fn export_then_import_round_trips_records_into_a_fresh_project() {
+        // Gather a source project's pack, encode and decode it through the
+        // .pixstyle bytes, then merge into a fresh project — the export/import
+        // acceptance path.
+        let mut source = ProjectAi::default();
+        source.structures.push(structure("s1", "One"));
+        source.prompts.push(prompt("p1", "Warrior"));
+        let builtins = BuiltinLibrary {
+            structures: BTreeMap::new(),
+            styles: BTreeMap::new(),
+            prompts: BTreeMap::new(),
+        };
+        let pack = gather_export_pack(&source, &builtins);
+
+        let mut bytes = Vec::new();
+        write_pack(&pack, &mut bytes).expect("write");
+        let decoded = read_pack(&bytes[..]).expect("read");
+
+        let mut doc = DocumentStore::new();
+        let mut editor = EditorState::default();
+        doc.project.library.ai = ProjectAi::default();
+        super::merge_pack_into_project(&mut editor, &mut doc, decoded, ConflictPolicy::Skip);
+
+        let ai = &doc.project.library.ai;
+        assert!(ai.structures.iter().any(|s| s.id.0 == "s1"), "structure imported into the fresh project");
+        assert!(ai.prompts.iter().any(|p| p.id.0 == "p1"), "prompt imported into the fresh project");
+    }
+
+    #[test]
+    fn re_import_with_skip_reports_skipped_without_duplicating() {
+        // First import adds the record; a second Skip import of the same pack
+        // reports it skipped and leaves the project unchanged.
+        let mut doc = DocumentStore::new();
+        let mut editor = EditorState::default();
+        doc.project.library.ai = ProjectAi::default();
+
+        let pack = super::StylePack {
+            format_version: 1,
+            structures: vec![structure("s1", "One")],
+            styles: Vec::new(),
+            prompts: Vec::new(),
+        };
+
+        super::merge_pack_into_project(&mut editor, &mut doc, pack.clone(), ConflictPolicy::Skip);
+        let after_first = doc.project.library.ai.structures.len();
+        assert_eq!(after_first, 1, "first import adds the record");
+
+        let report = super::merge_pack(&mut doc.project.library.ai, pack, ConflictPolicy::Skip);
+        assert_eq!(report.skipped, 1, "the colliding id is skipped");
+        assert_eq!(report.imported, 0, "nothing new is added");
+        assert_eq!(doc.project.library.ai.structures.len(), 1, "no duplicate record");
+    }
+
+    #[test]
+    fn import_pack_is_one_undoable_edit() {
+        let mut doc = DocumentStore::new();
+        let mut editor = EditorState::default();
+        doc.project.library.ai = ProjectAi::default();
+
+        let pack = super::StylePack {
+            format_version: 1,
+            structures: vec![structure("s1", "One")],
+            styles: Vec::new(),
+            prompts: vec![prompt("p1", "Warrior")],
+        };
+
+        super::merge_pack_into_project(&mut editor, &mut doc, pack, ConflictPolicy::Skip);
+        assert_eq!(doc.project.library.ai.structures.len(), 1);
+        assert_eq!(doc.project.library.ai.prompts.len(), 1);
+
+        // One undo removes the whole import — structures and prompts together.
+        editor.history.undo(&mut doc).expect("undo");
+        assert!(doc.project.library.ai.structures.is_empty(), "undo removes the imported structure");
+        assert!(doc.project.library.ai.prompts.is_empty(), "undo removes the imported prompt in the same step");
+    }
 
     fn style_with_prefs() -> Style {
         Style {

@@ -236,6 +236,22 @@ pub enum ShellMsg {
         /// The fetched `(name, colors)` or an error string.
         result: Result<(String, Vec<Rgba>), String>,
     },
+    /// A composition-pack export finished off-thread: the chosen path (for the
+    /// status line) on success, or an error to surface. A cancelled save dialog
+    /// is reported as `Ok(None)` so the UI stays silent.
+    PackExportDone {
+        /// The path written on success, `None` if the dialog was cancelled.
+        path: Result<Option<std::path::PathBuf>, String>,
+    },
+    /// A composition-pack import finished decoding off-thread: the decoded pack
+    /// to merge on the UI thread, or an error to surface. A cancelled open
+    /// dialog is reported as `Ok(None)` so the UI stays silent.
+    PackImportDecoded {
+        /// The decoded pack, `None` if the dialog was cancelled.
+        pack: Result<Option<pixhaus_core::project::StylePack>, String>,
+        /// The conflict policy the artist chose before the import ran.
+        policy: pixhaus_core::project::ConflictPolicy,
+    },
     /// A keychain key-op finished off-thread: refreshed per-backend configured
     /// state, overall readiness, and any keychain error to surface.
     BackendsRefreshed {
@@ -634,6 +650,10 @@ pub struct ShellApp {
     /// rejected action (e.g. an invalid merge) surfaces its reason without a
     /// dialog. `None` when nothing is being shown.
     status_message: Option<(String, Instant)>,
+    /// The conflict policy chosen in the open `.pixstyle` import modal, or
+    /// `None` when the modal is closed. Opening the modal seeds it with a
+    /// default; confirming spawns the import worker with the chosen policy.
+    pub(crate) pack_import_policy: Option<pixhaus_core::project::ConflictPolicy>,
 }
 
 /// The pending selection-morphology operation and its amount, driven by the
@@ -880,6 +900,7 @@ impl ShellApp {
             morph_dialog: None,
             transform_dialog: None,
             status_message: None,
+            pack_import_policy: None,
         };
         grid_prefs.apply_to(&mut app.editor);
         app.install_renderer();
@@ -1080,6 +1101,16 @@ impl ShellApp {
                 ShellMsg::LospecDone { slug, result } => {
                     self.on_lospec_done(&slug, result);
                 }
+                ShellMsg::PackExportDone { path } => match path {
+                    Ok(Some(p)) => self.set_status(format!("Exported pack to {}", p.display())),
+                    Ok(None) => {}
+                    Err(e) => self.set_status(format!("Pack export failed: {e}")),
+                },
+                ShellMsg::PackImportDecoded { pack, policy } => match pack {
+                    Ok(Some(pack)) => self.apply_imported_pack(pack, policy),
+                    Ok(None) => {}
+                    Err(e) => self.set_status(format!("Pack import failed: {e}")),
+                },
                 ShellMsg::BackendsRefreshed {
                     openai_configured,
                     fal_configured,
@@ -3213,6 +3244,7 @@ impl eframe::App for ShellApp {
         self.show_resize_dialog(ui.ctx());
         self.show_morph_dialog(ui.ctx());
         self.show_transform_dialog(ui.ctx());
+        self.show_pack_import_dialog(ui.ctx());
 
         // Panel order matters: outer panels first, the central canvas last so
         // it fills the space the others leave. The menu bar is always shown;
