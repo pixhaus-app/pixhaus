@@ -15,11 +15,11 @@
 
 use eframe::egui;
 use pixhaus_core::project::library::ai::ProjectAi;
-use pixhaus_core::project::{AssetId, ReferenceRole};
+use pixhaus_core::project::{AssetId, Rgba, ReferenceRole, TagDefinition, TagId};
 
 use crate::app::ShellApp;
 use crate::cockpit::CockpitReference;
-use crate::commands::push_ai_library_edit;
+use crate::commands::{push_ai_library_edit, push_tag_edit};
 use crate::document::DocumentStore;
 use crate::editor::EditorState;
 
@@ -47,7 +47,90 @@ impl ShellApp {
             self.asset_cards_section(ui);
             ui.add_space(10.0);
             self.asset_swatches_section(ui);
+            ui.add_space(10.0);
+            self.tag_manager_section(ui);
         });
+    }
+
+    /// The Tags section: list every library tag with an optional color swatch,
+    /// an auto-generated indicator, inline rename, and delete. Adding a tag mints
+    /// a fresh [`TagId`]; deleting one prunes it from every entity's confirmed and
+    /// suggested lists. All edits are one undoable [`crate::commands::LibraryTagEdit`].
+    fn tag_manager_section(&mut self, ui: &mut egui::Ui) {
+        let tags: Vec<TagDefinition> = self.doc.project.library.tags.clone();
+        ui.label(egui::RichText::new(format!("{} Tags ({})", crate::icons::TAG, tags.len())).strong());
+        ui.label(
+            egui::RichText::new("Library tags label entities. Delete removes a tag from every entity that carries it.")
+                .small()
+                .weak(),
+        );
+        ui.add_space(4.0);
+
+        ui.horizontal(|ui| {
+            let resp = ui.add(egui::TextEdit::singleline(&mut self.tag_new_name).hint_text("New tag name").desired_width(160.0));
+            let submit = resp.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter));
+            if (ui.button(format!("{} Add", crate::icons::ADD)).clicked() || submit) && !self.tag_new_name.trim().is_empty() {
+                let name = std::mem::take(&mut self.tag_new_name);
+                self.add_library_tag(&name);
+            }
+        });
+        ui.add_space(4.0);
+
+        if tags.is_empty() {
+            ui.label(egui::RichText::new("No tags yet.").small().weak());
+            return;
+        }
+
+        let mut delete: Option<TagId> = None;
+        let mut rename: Option<(TagId, String)> = None;
+        let mut recolor: Option<(TagId, Option<Rgba>)> = None;
+        for tag in &tags {
+            egui::Frame::group(ui.style()).show(ui, |ui| {
+                ui.horizontal(|ui| {
+                    // Color swatch toggling between a set color and `(none)`.
+                    let mut col = tag
+                        .color
+                        .map_or(egui::Color32::TRANSPARENT, |c| egui::Color32::from_rgba_unmultiplied(c.r, c.g, c.b, c.a));
+                    if ui.color_edit_button_srgba(&mut col).on_hover_text("Tag color").changed() {
+                        let next = if col.a() == 0 { None } else { Some(Rgba::new(col.r(), col.g(), col.b(), col.a())) };
+                        recolor = Some((tag.id, next));
+                    }
+
+                    let editing = self.tag_rename.as_ref().is_some_and(|(rid, _)| *rid == tag.id.get());
+                    if editing {
+                        if let Some((_, draft)) = self.tag_rename.as_mut() {
+                            let resp = ui.add(egui::TextEdit::singleline(draft).desired_width(140.0));
+                            if resp.lost_focus() || ui.button(crate::icons::CHECK).clicked() {
+                                rename = Some((tag.id, draft.clone()));
+                            }
+                        }
+                    } else {
+                        ui.label(egui::RichText::new(&tag.name).strong());
+                        if tag.auto_generated {
+                            ui.label(egui::RichText::new(format!("{} auto", crate::icons::SPARKLE)).small().weak())
+                                .on_hover_text("Suggested by auto-tagging");
+                        }
+                        if ui.small_button(crate::icons::RENAME).on_hover_text("Rename").clicked() {
+                            self.tag_rename = Some((tag.id.get(), tag.name.clone()));
+                        }
+                    }
+                    if ui.small_button(format!("{} Delete", crate::icons::TRASH)).clicked() {
+                        delete = Some(tag.id);
+                    }
+                });
+            });
+        }
+
+        if let Some((id, name)) = rename {
+            self.rename_library_tag(id, &name);
+            self.tag_rename = None;
+        }
+        if let Some((id, color)) = recolor {
+            self.recolor_library_tag(id, color);
+        }
+        if let Some(id) = delete {
+            self.delete_library_tag(id);
+        }
     }
 
     /// The References section: a thumbnail grid, each tile showing its role and
@@ -343,6 +426,81 @@ impl ShellApp {
         });
         self.ck_dirty = true;
     }
+
+    /// Creates a tag definition named `name` (trimmed) as one undoable edit,
+    /// minting a fresh [`TagId`]. A blank name is ignored.
+    pub(crate) fn add_library_tag(&mut self, name: &str) {
+        let name = name.trim().to_owned();
+        if name.is_empty() {
+            return;
+        }
+        let id = TagId::new(self.doc.alloc_id());
+        add_tag(&mut self.editor, &mut self.doc, id, &name);
+    }
+
+    /// Renames tag `id` as one undoable edit. A blank name is ignored.
+    pub(crate) fn rename_library_tag(&mut self, id: TagId, name: &str) {
+        rename_tag(&mut self.editor, &mut self.doc, id, name);
+    }
+
+    /// Sets (or clears) the accent color of tag `id` as one undoable edit.
+    pub(crate) fn recolor_library_tag(&mut self, id: TagId, color: Option<Rgba>) {
+        recolor_tag(&mut self.editor, &mut self.doc, id, color);
+    }
+
+    /// Deletes tag `id` as one undoable edit, pruning it from every entity's
+    /// confirmed and suggested tag lists.
+    pub(crate) fn delete_library_tag(&mut self, id: TagId) {
+        delete_tag(&mut self.editor, &mut self.doc, id);
+    }
+}
+
+/// Creates a tag definition with id `id` and the (already-trimmed, non-empty)
+/// `name` as one undoable [`crate::commands::LibraryTagEdit`].
+fn add_tag(editor: &mut EditorState, doc: &mut DocumentStore, id: TagId, name: &str) {
+    let name = name.to_owned();
+    push_tag_edit(editor, doc, "Add tag", |doc| {
+        doc.project.library.tags.push(TagDefinition {
+            id,
+            name,
+            color: None,
+            auto_generated: false,
+        });
+    });
+}
+
+/// Renames tag `id`. A blank name is ignored so a tag never loses its label.
+fn rename_tag(editor: &mut EditorState, doc: &mut DocumentStore, id: TagId, name: &str) {
+    let name = name.trim().to_owned();
+    if name.is_empty() {
+        return;
+    }
+    push_tag_edit(editor, doc, "Rename tag", |doc| {
+        if let Some(tag) = doc.project.library.tags.iter_mut().find(|t| t.id == id) {
+            tag.name = name;
+        }
+    });
+}
+
+/// Sets or clears the accent color of tag `id`.
+fn recolor_tag(editor: &mut EditorState, doc: &mut DocumentStore, id: TagId, color: Option<Rgba>) {
+    push_tag_edit(editor, doc, "Recolor tag", |doc| {
+        if let Some(tag) = doc.project.library.tags.iter_mut().find(|t| t.id == id) {
+            tag.color = color;
+        }
+    });
+}
+
+/// Deletes tag `id` and prunes it from every entity's confirmed and suggested
+/// tag lists, all as one undoable edit.
+fn delete_tag(editor: &mut EditorState, doc: &mut DocumentStore, id: TagId) {
+    push_tag_edit(editor, doc, "Delete tag", |doc| {
+        doc.project.library.tags.retain(|t| t.id != id);
+        for entity in &mut doc.project.library.entities {
+            entity.tags.retain(|t| *t != id);
+            entity.ai.suggested_tags.retain(|t| *t != id);
+        }
+    });
 }
 
 /// Removes the reference asset `id` from the library as one undoable edit.
@@ -427,9 +585,9 @@ fn role_label(role: ReferenceRole) -> &'static str {
 #[cfg(test)]
 mod tests {
     use pixhaus_core::project::library::ai::ProjectAi;
-    use pixhaus_core::project::{AssetId, CharacterCard, ReferenceAsset, ReferenceImage, ReferenceRole, StyleSwatch};
+    use pixhaus_core::project::{AssetId, CharacterCard, EntityId, ReferenceAsset, ReferenceImage, ReferenceRole, Rgba, StyleSwatch, TagId};
 
-    use super::{card_first_reference, delete_card, delete_reference, delete_swatch, rename_card, rename_swatch, swatch_first_reference};
+    use super::{add_tag, card_first_reference, delete_card, delete_reference, delete_swatch, delete_tag, recolor_tag, rename_card, rename_swatch, rename_tag, swatch_first_reference};
     use crate::commands::push_ai_library_edit;
     use crate::document::DocumentStore;
     use crate::editor::EditorState;
@@ -620,5 +778,75 @@ mod tests {
 
         editor.history.undo(&mut doc).expect("undo delete");
         assert_eq!(ref_count(&doc), 1, "undo restores the reference");
+    }
+
+    // ── tag-definition CRUD ─────────────────────────────────────────────────
+
+    fn tags(doc: &DocumentStore) -> &[pixhaus_core::project::TagDefinition] {
+        &doc.project.library.tags
+    }
+
+    /// Attaches `tag` to an entity's confirmed and suggested lists so a later
+    /// delete can be observed to prune both.
+    fn attach_tag(doc: &mut DocumentStore, entity_id: EntityId, tag: TagId) {
+        let entity = doc.project.library.entities.iter_mut().find(|e| e.id == entity_id).expect("entity exists");
+        entity.tags.push(tag);
+        entity.ai.suggested_tags.push(tag);
+    }
+
+    #[test]
+    fn add_rename_recolor_tag_round_trip_under_undo() {
+        let mut doc = DocumentStore::new();
+        let mut editor = EditorState::default();
+        assert!(tags(&doc).is_empty(), "no tags to start");
+
+        let tag_id = TagId::new(doc.alloc_id());
+        add_tag(&mut editor, &mut doc, tag_id, "hero");
+        assert_eq!(tags(&doc).len(), 1, "add creates one tag");
+        assert_eq!(tags(&doc)[0].name, "hero");
+        assert_eq!(tags(&doc)[0].color, None, "a new tag has no color");
+
+        rename_tag(&mut editor, &mut doc, tag_id, "  Protagonist  ");
+        assert_eq!(tags(&doc)[0].name, "Protagonist", "rename trims and applies");
+
+        // A blank rename is a no-op and leaves the undo stack untouched.
+        rename_tag(&mut editor, &mut doc, tag_id, "   ");
+        assert_eq!(tags(&doc)[0].name, "Protagonist", "a blank rename is ignored");
+
+        recolor_tag(&mut editor, &mut doc, tag_id, Some(Rgba::opaque(10, 20, 30)));
+        assert_eq!(tags(&doc)[0].color, Some(Rgba::opaque(10, 20, 30)), "recolor applies");
+
+        editor.history.undo(&mut doc).expect("undo recolor");
+        assert_eq!(tags(&doc)[0].color, None, "undo restores no color");
+        editor.history.undo(&mut doc).expect("undo rename");
+        assert_eq!(tags(&doc)[0].name, "hero", "undo restores the original name");
+        editor.history.undo(&mut doc).expect("undo add");
+        assert!(tags(&doc).is_empty(), "undo removes the added tag");
+    }
+
+    #[test]
+    fn delete_tag_prunes_entities_and_undoes() {
+        let mut doc = DocumentStore::new();
+        let mut editor = EditorState::default();
+        let sprite = doc.create_sprite("Hero", pixhaus_core::project::Size::new(16, 16));
+        let entity_id = sprite.entity_id;
+
+        let tag_id = TagId::new(doc.alloc_id());
+        add_tag(&mut editor, &mut doc, tag_id, "hero");
+        attach_tag(&mut doc, entity_id, tag_id);
+
+        let entity = |doc: &DocumentStore| doc.project.library.entities.iter().find(|e| e.id == entity_id).cloned().expect("entity");
+        assert_eq!(entity(&doc).tags, vec![tag_id], "entity carries the confirmed tag");
+        assert_eq!(entity(&doc).ai.suggested_tags, vec![tag_id], "entity carries the suggested tag");
+
+        delete_tag(&mut editor, &mut doc, tag_id);
+        assert!(tags(&doc).is_empty(), "delete removes the tag definition");
+        assert!(entity(&doc).tags.is_empty(), "delete prunes the confirmed tag from the entity");
+        assert!(entity(&doc).ai.suggested_tags.is_empty(), "delete prunes the suggested tag from the entity");
+
+        editor.history.undo(&mut doc).expect("undo delete");
+        assert_eq!(tags(&doc).len(), 1, "undo restores the tag definition");
+        assert_eq!(entity(&doc).tags, vec![tag_id], "undo restores the entity's confirmed tag");
+        assert_eq!(entity(&doc).ai.suggested_tags, vec![tag_id], "undo restores the entity's suggested tag");
     }
 }

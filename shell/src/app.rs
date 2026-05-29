@@ -427,6 +427,11 @@ pub struct ShellApp {
     pub(crate) asset_tex_cache: HashMap<u32, egui::TextureHandle>,
     /// The asset (card or swatch) being renamed inline: its raw id and draft text.
     pub(crate) asset_rename: Option<(u32, String)>,
+    /// Draft name for a new library tag, typed into the tag-manager add field.
+    pub(crate) tag_new_name: String,
+    /// The tag being renamed inline: its raw [`pixhaus_core::project::TagId`] value
+    /// and draft text.
+    pub(crate) tag_rename: Option<(u32, String)>,
     /// Cockpit subject prompt draft.
     pub(crate) rs_prompt: String,
     /// Selected composition Structure id (free-form `Single` by default).
@@ -785,6 +790,8 @@ impl ShellApp {
             asset_browser_open: false,
             asset_tex_cache: HashMap::new(),
             asset_rename: None,
+            tag_new_name: String::new(),
+            tag_rename: None,
             rs_prompt: ai::DEFAULT_SHEET_PROMPT.to_owned(),
             ck_structure: ai::SINGLE_STRUCTURE_ID.to_owned(),
             ck_aspect: crate::cockpit::AnchorAspect::Square,
@@ -1250,6 +1257,7 @@ impl ShellApp {
                                 ui.close();
                             }
                         });
+                        self.entity_tag_chips(ui, sprite_ref.entity_id);
                     });
                 }
             }
@@ -1340,6 +1348,33 @@ impl ShellApp {
             self.editor.clear_frame_selection();
             self.playing = false;
             self.refresh_canvas(true);
+        }
+    }
+
+    /// Renders the confirmed tags of entity `entity_id` as small chips on the
+    /// library tree row, resolving each [`pixhaus_core::project::TagId`] against
+    /// the library's tag definitions. Tags with an accent color tint the chip;
+    /// the rest fall back to a weak label. A no-op when the entity has no tags.
+    fn entity_tag_chips(&self, ui: &mut egui::Ui, entity_id: pixhaus_core::project::EntityId) {
+        let Some(entity) = self.doc.project.library.entities.iter().find(|e| e.id == entity_id) else {
+            return;
+        };
+        if entity.tags.is_empty() {
+            return;
+        }
+        for tag_id in &entity.tags {
+            let Some(def) = self.doc.project.library.tags.iter().find(|t| t.id == *tag_id) else {
+                continue;
+            };
+            let text = egui::RichText::new(format!("{} {}", crate::icons::TAG, def.name)).small();
+            match def.color {
+                Some(c) => {
+                    ui.label(text.color(egui::Color32::from_rgba_unmultiplied(c.r, c.g, c.b, c.a)));
+                }
+                None => {
+                    ui.label(text.weak());
+                }
+            }
         }
     }
 

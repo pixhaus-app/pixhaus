@@ -16,7 +16,7 @@ use std::collections::HashSet;
 
 use pixhaus_core::canvas::PixelBuffer;
 use pixhaus_core::project::library::ai::ProjectAi;
-use pixhaus_core::project::{CelData, Entity, EntityId, FrameRange, LoopDirection, PixelBufferId, Size, Sprite, SpriteId};
+use pixhaus_core::project::{CelData, Entity, EntityId, FrameRange, LoopDirection, PixelBufferId, Size, Sprite, SpriteId, TagDefinition, TagId};
 use pixhaus_core::transforms::{self, CanvasAnchor, MlaaConfig, RotationAlgorithm};
 use pixhaus_core::undo::{Command, CommandError, CommandResult};
 
@@ -715,6 +715,102 @@ impl Command<DocumentStore> for AiLibraryEdit {
         let count = |ai: &ProjectAi| ai.prompts.len() + ai.structures.len() + ai.styles.len();
         (count(&self.before) + count(&self.after)) * 256
     }
+}
+
+/// A reversible edit of the project's library tag definitions and the tag ids
+/// attached to entities. Tag definitions live on `library.tags` (not
+/// `ProjectAi`), and deleting one prunes it from every entity's confirmed and
+/// suggested lists, so the snapshot covers both sides as one undo entry.
+///
+/// The snapshot is cheap: it copies the tag definitions plus each entity's two
+/// `Vec<TagId>` lists, never the entities' sprites or reference-sheet bytes.
+pub struct LibraryTagEdit {
+    /// Tag definitions before the edit.
+    pub before_tags: Vec<TagDefinition>,
+    /// Tag definitions after the edit.
+    pub after_tags: Vec<TagDefinition>,
+    /// Per-entity `(confirmed, suggested)` tag ids before the edit.
+    pub before_entities: Vec<(EntityId, Vec<TagId>, Vec<TagId>)>,
+    /// Per-entity `(confirmed, suggested)` tag ids after the edit.
+    pub after_entities: Vec<(EntityId, Vec<TagId>, Vec<TagId>)>,
+    /// History label.
+    pub label: String,
+}
+
+impl Command<DocumentStore> for LibraryTagEdit {
+    fn label(&self) -> &str {
+        &self.label
+    }
+
+    fn apply(&mut self, doc: &mut DocumentStore) -> CommandResult {
+        restore_tags(doc, &self.after_tags, &self.after_entities);
+        Ok(())
+    }
+
+    fn undo(&mut self, doc: &mut DocumentStore) -> CommandResult {
+        restore_tags(doc, &self.before_tags, &self.before_entities);
+        Ok(())
+    }
+
+    fn estimated_size_bytes(&self) -> usize {
+        // A tag id is 4 bytes; tag definitions carry a short name string. This is
+        // metadata, not pixels — a rough constant per record keeps the cap honest
+        // without walking strings.
+        let tag_bytes = (self.before_tags.len() + self.after_tags.len()) * 32;
+        let entity_lists = self.before_entities.iter().chain(&self.after_entities);
+        let id_bytes: usize = entity_lists.map(|(_, c, s)| (c.len() + s.len()) * 4).sum();
+        tag_bytes + id_bytes
+    }
+}
+
+/// Overwrites the library's tag definitions and restores each named entity's
+/// confirmed and suggested tag lists. Entities absent from the snapshot are left
+/// untouched.
+fn restore_tags(doc: &mut DocumentStore, tags: &[TagDefinition], entities: &[(EntityId, Vec<TagId>, Vec<TagId>)]) {
+    doc.project.library.tags = tags.to_vec();
+    for (id, confirmed, suggested) in entities {
+        if let Some(entity) = doc.project.library.entities.iter_mut().find(|e| e.id == *id) {
+            entity.tags.clone_from(confirmed);
+            entity.ai.suggested_tags.clone_from(suggested);
+        }
+    }
+}
+
+/// Snapshots the library tag definitions and every entity's tag lists, applies
+/// `f`, and — if anything changed — records a [`LibraryTagEdit`] undo entry. The
+/// entry point for tag-definition CRUD and per-entity tagging, both of which can
+/// touch `library.tags` and the entities' tag lists in one step (delete prunes).
+pub fn push_tag_edit(editor: &mut EditorState, doc: &mut DocumentStore, label: &str, f: impl FnOnce(&mut DocumentStore)) {
+    let before_tags = doc.project.library.tags.clone();
+    let before_entities = entity_tag_snapshot(doc);
+
+    f(doc);
+
+    let after_tags = doc.project.library.tags.clone();
+    let after_entities = entity_tag_snapshot(doc);
+    if after_tags == before_tags && after_entities == before_entities {
+        return;
+    }
+
+    let cmd = LibraryTagEdit {
+        before_tags,
+        after_tags,
+        before_entities,
+        after_entities,
+        label: label.to_owned(),
+    };
+    let _ = editor.history.push(Box::new(cmd), doc);
+}
+
+/// Captures every entity's `(id, confirmed_tags, suggested_tags)` for the tag
+/// undo snapshot.
+fn entity_tag_snapshot(doc: &DocumentStore) -> Vec<(EntityId, Vec<TagId>, Vec<TagId>)> {
+    doc.project
+        .library
+        .entities
+        .iter()
+        .map(|e| (e.id, e.tags.clone(), e.ai.suggested_tags.clone()))
+        .collect()
 }
 
 /// Rough byte cost of an entity's embedded reference-sheet images, for the
