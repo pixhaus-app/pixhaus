@@ -60,23 +60,47 @@ impl ShellApp {
     #[allow(clippy::too_many_lines, clippy::cast_possible_truncation, clippy::cast_sign_loss)]
     fn timeline_body(&mut self, ui: &mut egui::Ui) {
         ui.horizontal_wrapped(|ui| {
-            // Loop direction of the first tag (or a default applied to new tags).
-            let mut dir = self
-                .doc
-                .active_sprite()
-                .and_then(|s| s.frame_tags.first())
-                .map_or(LoopDirection::Forward, |t| t.loop_direction);
-            egui::ComboBox::from_id_salt("loop_dir").selected_text(loop_label(dir)).show_ui(ui, |ui| {
-                let before = dir;
-                ui.selectable_value(&mut dir, LoopDirection::Forward, "Forward");
-                ui.selectable_value(&mut dir, LoopDirection::Reverse, "Reverse");
-                ui.selectable_value(&mut dir, LoopDirection::PingPong, "Ping-pong");
-                if dir != before {
-                    push_sprite_edit(&mut self.editor, &mut self.doc, "Loop mode", |sprite| {
-                        if let Some(t) = sprite.frame_tags.first_mut() {
-                            t.loop_direction = dir;
+            // Per-tag playback: the loop direction and repeat of the selected
+            // tag. With no explicit selection, fall back to the only tag when
+            // exactly one exists; with zero or many tags and none selected, the
+            // controls are disabled. Editing writes through `set_tag_playback`,
+            // which mirrors the loop direction onto the same-named animation.
+            let tag_count = self.doc.active_sprite().map_or(0, |s| s.frame_tags.len());
+            let tag_idx = match self.editor.selected_tag {
+                Some(i) if i < tag_count => Some(i),
+                _ if tag_count == 1 => Some(0),
+                _ => None,
+            };
+            let (mut dir, mut repeat) = tag_idx
+                .and_then(|i| self.doc.active_sprite().and_then(|s| s.frame_tags.get(i)))
+                .map_or((LoopDirection::Forward, 0u16), |t| (t.loop_direction, t.repeat));
+            ui.add_enabled_ui(tag_idx.is_some(), |ui| {
+                egui::ComboBox::from_id_salt("tag_loop_dir").selected_text(loop_label(dir)).show_ui(ui, |ui| {
+                    let before = dir;
+                    ui.selectable_value(&mut dir, LoopDirection::Forward, "Forward");
+                    ui.selectable_value(&mut dir, LoopDirection::Reverse, "Reverse");
+                    ui.selectable_value(&mut dir, LoopDirection::PingPong, "Ping-pong");
+                    ui.selectable_value(&mut dir, LoopDirection::PingPongReverse, "Ping-pong rev");
+                    if dir != before {
+                        if let Some(i) = tag_idx {
+                            push_sprite_edit(&mut self.editor, &mut self.doc, "Tag playback", |sprite| {
+                                set_tag_playback(sprite, i, dir, repeat);
+                            });
                         }
-                    });
+                    }
+                });
+                // Repeat count: 0 reads as "loop forever", a positive value
+                // bounds playback. Mirrors the Tauri `repeat` field.
+                if ui
+                    .add(egui::DragValue::new(&mut repeat).range(0..=999).prefix("repeat "))
+                    .on_hover_text("Times the tag repeats (0 = loop forever)")
+                    .changed()
+                {
+                    if let Some(i) = tag_idx {
+                        push_sprite_edit(&mut self.editor, &mut self.doc, "Tag playback", |sprite| {
+                            set_tag_playback(sprite, i, dir, repeat);
+                        });
+                    }
                 }
             });
 
@@ -189,16 +213,59 @@ impl ShellApp {
             if ui.button("Tag frames").on_hover_text("Tag the whole range").clicked() {
                 self.add_tag();
             }
-            // Existing tags as removable chips.
+            // Existing tags as chips. A chip carrying the inline rename shows a
+            // text field instead; double-clicking a chip starts the rename, the
+            // `×` removes the tag. Both the rename and the remove are undoable.
             let tags: Vec<(usize, String)> = self
                 .doc
                 .active_sprite()
                 .map(|s| s.frame_tags.iter().enumerate().map(|(i, t)| (i, t.name.clone())).collect())
                 .unwrap_or_default();
             let mut remove: Option<usize> = None;
+            let mut start_rename: Option<(usize, String)> = None;
+            let mut commit_rename: Option<(usize, String)> = None;
+            let mut cancel_rename = false;
             for (i, name) in tags {
-                if ui.small_button(format!("{name} ×")).on_hover_text("Remove tag").clicked() {
+                if self.editor.tag_rename.as_ref().is_some_and(|(ri, _)| *ri == i) {
+                    if let Some((_, draft)) = self.editor.tag_rename.as_mut() {
+                        let resp = ui.add(egui::TextEdit::singleline(draft).desired_width(90.0));
+                        resp.request_focus();
+                        if resp.lost_focus() {
+                            if ui.input(|input| input.key_pressed(egui::Key::Escape)) {
+                                cancel_rename = true;
+                            } else {
+                                commit_rename = Some((i, draft.clone()));
+                            }
+                        }
+                    }
+                    continue;
+                }
+                let chip = ui.small_button(format!("{name} ×")).on_hover_text("Click ×-side to remove, double-click to rename");
+                if chip.clicked() {
                     remove = Some(i);
+                } else if chip.double_clicked() {
+                    start_rename = Some((i, name));
+                }
+            }
+            if let Some((i, name)) = start_rename {
+                self.editor.selected_tag = Some(i);
+                self.editor.tag_rename = Some((i, name));
+            }
+            if cancel_rename {
+                self.editor.tag_rename = None;
+            }
+            if let Some((i, name)) = commit_rename {
+                // Reject empty and duplicate names; on either the rename stays
+                // open so the user can fix it. A no-op or a success closes it.
+                let result = {
+                    let mut applied = false;
+                    push_sprite_edit(&mut self.editor, &mut self.doc, "Rename tag", |sprite| {
+                        applied = matches!(rename_tag(sprite, i, &name), Ok(true));
+                    });
+                    applied || self.doc.active_sprite().and_then(|s| s.frame_tags.get(i)).is_some_and(|t| t.name == name.trim())
+                };
+                if result {
+                    self.editor.tag_rename = None;
                 }
             }
             if let Some(i) = remove {
@@ -207,6 +274,9 @@ impl ShellApp {
                         sprite.frame_tags.remove(i);
                     }
                 });
+                if self.editor.selected_tag == Some(i) {
+                    self.editor.selected_tag = None;
+                }
             }
         });
 
@@ -224,10 +294,139 @@ impl ShellApp {
         });
 
         ui.separator();
+        self.animations_section(ui);
+
+        ui.separator();
         self.background_removal_panel(ui);
 
         ui.separator();
         self.cel_matrix(ui);
+    }
+
+    /// A collapsible section listing the sprite's engine animations (handoff
+    /// clips). Each row carries an inline-renamable name, a range readout, a
+    /// loop-direction combo, and a speed-multiplier field. "Add from selected
+    /// range" appends one over the effective frame selection. Every edit is one
+    /// undoable [`SpriteEdit`].
+    ///
+    /// Animations pair with frame tags by equal name: `set_tag_playback` mirrors
+    /// a tag's loop direction onto its same-named animation, so an exporter can
+    /// rely on the name match. Renaming an animation here does not rename its tag
+    /// (the pairing is a soft convention), so a rename can break the link.
+    #[allow(clippy::cast_possible_truncation, clippy::too_many_lines)]
+    fn animations_section(&mut self, ui: &mut egui::Ui) {
+        // Snapshot the animation rows so the row loop reads without holding a
+        // borrow on the sprite while it mutates `self.editor` for the rename.
+        let rows: Vec<(usize, String, u32, u32, LoopDirection, f32)> = self
+            .doc
+            .active_sprite()
+            .map(|s| {
+                s.animations
+                    .iter()
+                    .enumerate()
+                    .map(|(i, a)| (i, a.name.clone(), a.range.start.get(), a.range.end.get(), a.loop_direction, a.speed_multiplier))
+                    .collect()
+            })
+            .unwrap_or_default();
+
+        egui::CollapsingHeader::new(format!("{} Animations ({})", icons::FILM, rows.len()))
+            .id_salt("animations_section")
+            .show(ui, |ui| {
+                // Deferred edits, applied after the row loop so each is one
+                // undoable command off the immutable snapshot above.
+                let mut rename: Option<(usize, String)> = None;
+                let mut set_dir: Option<(usize, LoopDirection)> = None;
+                let mut set_speed: Option<(usize, f32)> = None;
+                let mut remove: Option<usize> = None;
+
+                for (i, name, start, end, dir, speed) in rows {
+                    ui.horizontal(|ui| {
+                        // Inline name field. The edit holds in a local draft and
+                        // commits on focus loss, so a partial name is not pushed
+                        // as its own undo step mid-keystroke. An empty or
+                        // unchanged name is dropped.
+                        let mut draft = name.clone();
+                        let resp = ui.add(egui::TextEdit::singleline(&mut draft).desired_width(90.0));
+                        if resp.lost_focus() && draft.trim() != name && !draft.trim().is_empty() {
+                            rename = Some((i, draft.trim().to_owned()));
+                        }
+                        ui.label(format!("[{start}..={end}]"));
+                        let mut combo_dir = dir;
+                        egui::ComboBox::from_id_salt(("anim_dir", i)).selected_text(loop_label(dir)).show_ui(ui, |ui| {
+                            let before = combo_dir;
+                            ui.selectable_value(&mut combo_dir, LoopDirection::Forward, "Forward");
+                            ui.selectable_value(&mut combo_dir, LoopDirection::Reverse, "Reverse");
+                            ui.selectable_value(&mut combo_dir, LoopDirection::PingPong, "Ping-pong");
+                            ui.selectable_value(&mut combo_dir, LoopDirection::PingPongReverse, "Ping-pong rev");
+                            if combo_dir != before {
+                                set_dir = Some((i, combo_dir));
+                            }
+                        });
+                        let mut combo_speed = speed;
+                        if ui
+                            .add(egui::DragValue::new(&mut combo_speed).range(0.1..=8.0).speed(0.05).prefix("×"))
+                            .on_hover_text("Playback speed multiplier")
+                            .changed()
+                        {
+                            set_speed = Some((i, combo_speed));
+                        }
+                        if ui.small_button(icons::TRASH).on_hover_text("Remove animation").clicked() {
+                            remove = Some(i);
+                        }
+                    });
+                }
+
+                if let Some((i, name)) = rename {
+                    push_sprite_edit(&mut self.editor, &mut self.doc, "Rename animation", |sprite| {
+                        if let Some(a) = sprite.animations.get_mut(i) {
+                            a.name = name;
+                        }
+                    });
+                }
+                if let Some((i, dir)) = set_dir {
+                    push_sprite_edit(&mut self.editor, &mut self.doc, "Animation direction", |sprite| {
+                        if let Some(a) = sprite.animations.get_mut(i) {
+                            a.loop_direction = dir;
+                        }
+                    });
+                }
+                if let Some((i, speed)) = set_speed {
+                    push_sprite_edit(&mut self.editor, &mut self.doc, "Animation speed", |sprite| {
+                        if let Some(a) = sprite.animations.get_mut(i) {
+                            a.speed_multiplier = speed.max(0.1);
+                        }
+                    });
+                }
+                if let Some(i) = remove {
+                    push_sprite_edit(&mut self.editor, &mut self.doc, "Remove animation", |sprite| {
+                        if i < sprite.animations.len() {
+                            sprite.animations.remove(i);
+                        }
+                    });
+                }
+
+                if ui.button(format!("{} Add from selected range", icons::ADD)).on_hover_text("Add an engine animation over the selected frames").clicked() {
+                    self.add_animation_from_selection();
+                }
+            });
+    }
+
+    /// Appends an engine animation over the effective frame selection (the
+    /// selected frames, or the active frame alone), with a fresh
+    /// [`pixhaus_core::project::AnimationId`] and a generated `Anim N` name. One
+    /// undoable [`SpriteEdit`]. The id is allocated before the edit closure, as
+    /// the rest of the timeline does.
+    fn add_animation_from_selection(&mut self) {
+        let active = self.doc.active_frame.get();
+        let set = self.editor.effective_frames(active);
+        let Some(range) = range_of_frames(&set) else {
+            return;
+        };
+        let id = pixhaus_core::project::AnimationId::new(self.doc.alloc_id());
+        push_sprite_edit(&mut self.editor, &mut self.doc, "Add animation", |sprite| {
+            let name = unique_animation_name(sprite);
+            sprite.animations.push(pixhaus_core::project::Animation::forward(id, name, range));
+        });
     }
 
     /// The cel grid: layer rows (top-first) by frame columns.
@@ -260,6 +459,9 @@ impl ShellApp {
             .enumerate()
             .map(|(i, t)| (i, t.name.clone(), t.range.start.get(), t.range.end.get(), tag_color(i)))
             .collect();
+        // Per-tag playback snapshot for the tag context menu's submenu, parallel
+        // to `frame_tags`: `(loop_direction, repeat)`.
+        let tag_playback: Vec<(LoopDirection, u16)> = sprite.frame_tags.iter().map(|t| (t.loop_direction, t.repeat)).collect();
 
         let active_frame = self.doc.active_frame.get();
         let active_layer = self.doc.active_layer;
@@ -274,6 +476,11 @@ impl ShellApp {
         // Snapshot the in-progress tag drag so the bar can preview it; the live
         // value is mutated after the scroll area, off the immutable borrow.
         let tag_drag = self.editor.tag_drag;
+        // Whether paste is possible and how many frames a batch op would touch,
+        // snapshotted so the context-menu labels and enablement read without
+        // borrowing `self.editor` inside the scroll area.
+        let has_clipboard = self.editor.frame_clipboard.is_some();
+        let effective_count = self.editor.effective_frames(active_frame).len();
 
         // The accent stroke marking a frame as part of the multi-selection.
         let selection_stroke = egui::Stroke::new(2.0, egui::Color32::from_rgb(230, 180, 90));
@@ -290,6 +497,25 @@ impl ShellApp {
         let mut tag_drag_set: Option<Option<TagDrag>> = None;
         // A completed drag's normalized `[lo, hi]` range to create a tag over.
         let mut tag_create: Option<(u32, u32)> = None;
+        // Scrub head: a frame to move the playhead to (from a header jump-click
+        // or a scrub-drag), resolved after the scroll area. `Some` means stop
+        // playback and set the active frame.
+        let mut scrub_to: Option<u32> = None;
+        // Whether the scrub head is mid-drag, to store back to the editor after
+        // the immutable borrows above are released.
+        let mut scrubbing_set: Option<bool> = None;
+        // The column geometry the playhead line is painted from: `(left, top)`
+        // of frame column 0 (set by the header strip) and the matrix `bottom`
+        // (extended as each row is drawn). The line tracks the active frame's
+        // column centre across the full matrix height.
+        let mut playhead: Option<(f32, f32, f32)> = None;
+        // A frame context-menu action, resolved after the scroll area so it can
+        // mutate `self`. The frame the menu opened over is folded into the
+        // active-frame retarget before the op runs (see `FrameMenuAction`).
+        let mut frame_menu: Option<FrameMenuAction> = None;
+        // A tag context-menu action, likewise deferred. Carries the tag index it
+        // was opened on so delete/rename/playback target that tag.
+        let mut tag_menu: Option<TagMenuAction> = None;
 
         let count = frame_count as u32;
         egui::ScrollArea::both().id_salt("cel_matrix").show(ui, |ui| {
@@ -335,6 +561,26 @@ impl ShellApp {
                         }
                     }
                 }
+                // The tag the menu opened over: the span under the
+                // secondary-click. Only a click that lands on a tag opens a
+                // menu; empty space has no tag to act on.
+                let menu_tag = resp.secondary_clicked().then(|| {
+                    resp.interact_pointer_pos().and_then(|pos| {
+                        let f = frame_at_x(pos.x, left, 0.0, cs, count);
+                        tag_spans.iter().find(|(_, _, s, e, _)| f >= *s && f <= *e).map(|(i, ..)| *i)
+                    })
+                }).flatten();
+                if menu_tag.is_some() {
+                    resp.context_menu(|ui| {
+                        if let Some(idx) = menu_tag {
+                            let playback = tag_playback.get(idx).copied().unwrap_or((LoopDirection::Forward, 0));
+                            if let Some(op) = tag_context_menu(ui, playback) {
+                                tag_menu = Some(TagMenuAction { tag: idx, op });
+                                ui.close();
+                            }
+                        }
+                    });
+                }
                 // Drag over empty space marks a range, created as a tag on
                 // release. The drag tracks live so the preview rect follows.
                 if resp.drag_started() {
@@ -364,11 +610,21 @@ impl ShellApp {
                 }
             });
 
-            // Header: frame numbers with the multi-selection outline.
+            // Header: frame numbers with the multi-selection outline. The whole
+            // strip is one click-and-drag region (not per-cell) so a press with
+            // movement scrubs the playhead live while a press without movement
+            // jumps to (or selects) a frame. Allocating per-cell senses would
+            // fight the drag for the same pointer, so the cells are painter-only.
             ui.horizontal(|ui| {
                 ui.allocate_exact_size(egui::vec2(96.0, cs * 0.6), egui::Sense::hover());
+                let strip_w = (cs * frame_count as f32).max(1.0);
+                let (strip, resp) = ui.allocate_exact_size(egui::vec2(strip_w, cs * 0.6), egui::Sense::click_and_drag());
+                let left = strip.left();
+                // Seed the playhead geometry from the header; rows extend the
+                // bottom below.
+                playhead = Some((left, strip.top(), strip.bottom()));
                 for f in 0..frame_count {
-                    let (rect, resp) = ui.allocate_exact_size(egui::vec2(cs, cs * 0.6), egui::Sense::click());
+                    let rect = egui::Rect::from_min_size(egui::pos2(left + f as f32 * cs, strip.top()), egui::vec2(cs, strip.height()));
                     let is_active = f as u32 == active_frame;
                     let bg = if is_active {
                         egui::Color32::from_rgb(70, 110, 170)
@@ -387,16 +643,46 @@ impl ShellApp {
                     if selected_frames.contains(&(f as u32)) {
                         ui.painter().rect_stroke(rect, 2.0, selection_stroke, egui::StrokeKind::Inside);
                     }
-                    if resp.clicked() {
-                        header_pick = Some(f as u32);
+                }
+                // A press that moved is a scrub: stop playback and track the
+                // pointer's frame live. A press that did not move is a jump,
+                // resolved against the selection modifiers like the old per-cell
+                // click. `drag_started`/`dragged` fire only once movement passes
+                // the drag threshold, so a plain click never enters the scrub
+                // branch.
+                if resp.drag_started() || resp.dragged() {
+                    if let Some(pos) = resp.interact_pointer_pos() {
+                        scrubbing_set = Some(true);
+                        scrub_to = Some(frame_at_x(pos.x, left, 0.0, cs, count));
+                    }
+                } else if resp.drag_stopped() {
+                    scrubbing_set = Some(false);
+                } else if resp.clicked() {
+                    if let Some(pos) = resp.interact_pointer_pos() {
+                        header_pick = Some(frame_at_x(pos.x, left, 0.0, cs, count));
                     }
                 }
+                // The frame the menu opened over: the column under the
+                // secondary-click. A right-click outside the multi-selection
+                // retargets the active frame to it (the `effectiveSelection`
+                // rule) so the op acts on the clicked frame.
+                let menu_frame = resp.secondary_clicked().then(|| resp.interact_pointer_pos().map(|pos| frame_at_x(pos.x, left, 0.0, cs, count))).flatten();
+                resp.context_menu(|ui| {
+                    if let Some(action) = frame_context_menu(ui, has_clipboard, effective_count) {
+                        frame_menu = Some(FrameMenuAction { target: menu_frame, op: action });
+                        ui.close();
+                    }
+                });
             });
 
             // Layer rows.
             for (li, (lid, name)) in layers.iter().enumerate() {
                 ui.horizontal(|ui| {
                     let (lrect, _) = ui.allocate_exact_size(egui::vec2(96.0, cs), egui::Sense::hover());
+                    // Extend the playhead's reach to this row's bottom.
+                    if let Some((_, _, bottom)) = &mut playhead {
+                        *bottom = lrect.bottom();
+                    }
                     let active = active_layer == Some(*lid);
                     ui.painter().text(
                         lrect.left_center() + egui::vec2(4.0, 0.0),
@@ -440,6 +726,16 @@ impl ShellApp {
                     }
                 });
             }
+
+            // Playhead: a 2px vertical line at the active frame's column centre,
+            // painted last so it reads over the header and every row.
+            if let Some((left, top, bottom)) = playhead {
+                let x = left + (active_frame as f32 + 0.5) * cs;
+                ui.painter().line_segment(
+                    [egui::pos2(x, top), egui::pos2(x, bottom)],
+                    egui::Stroke::new(2.0, egui::Color32::from_rgb(240, 220, 120)),
+                );
+            }
         });
 
         // A header-cell click resolves against the modifiers held at click:
@@ -459,6 +755,19 @@ impl ShellApp {
                 self.editor.clear_frame_selection();
                 self.doc.active_frame = FrameIndex::new(f);
             }
+            self.refresh_canvas(false);
+        }
+
+        // Store back the scrub flag (set on a drag start, cleared on release).
+        if let Some(next) = scrubbing_set {
+            self.editor.scrubbing = next;
+        }
+        // A scrub moves the playhead live and stops any playback. The pointer's
+        // frame comes from `frame_at_x`, the same mapping the header jump-click
+        // uses, so scrubbing and clicking land on the same column.
+        if let Some(f) = scrub_to {
+            self.playing = false;
+            self.doc.active_frame = FrameIndex::new(f);
             self.refresh_canvas(false);
         }
 
@@ -506,8 +815,93 @@ impl ShellApp {
             self.editor.selected_tag = Some(self.doc.active_sprite().map_or(0, |s| s.frame_tags.len().saturating_sub(1)));
         }
 
+        // A frame context-menu pick: retarget the active frame first if the
+        // menu opened outside the multi-selection, then run the chosen op. Each
+        // op routes through the same undoable command as its toolbar twin.
+        if let Some(action) = frame_menu {
+            self.apply_frame_menu(action);
+        }
+        // A tag context-menu pick: rename / delete / playback on the chosen tag.
+        if let Some(action) = tag_menu {
+            self.apply_tag_menu(action);
+        }
+
         // Cel-thumbnail size control.
         ui.add(egui::Slider::new(&mut self.editor.cel_size, 20.0..=96.0).text("cel size"));
+    }
+
+    /// Runs a frame context-menu pick. A right-click outside the multi-selection
+    /// retargets the active frame to the clicked frame first, so the op acts on
+    /// the frame the menu opened over (the `effectiveSelection` rule). Each op
+    /// reuses the same undoable command as its toolbar button.
+    fn apply_frame_menu(&mut self, action: FrameMenuAction) {
+        self.playing = false;
+        // Retarget the active frame when the menu opened on a frame outside the
+        // current selection, so the op targets the clicked frame.
+        if let Some(target) = action.target {
+            if !self.editor.selected_frames.contains(&target) {
+                self.editor.clear_frame_selection();
+                self.doc.active_frame = FrameIndex::new(target);
+                self.refresh_canvas(false);
+            }
+        }
+        match action.op {
+            FrameMenuOp::Insert => self.add_frame(),
+            FrameMenuOp::Delete => self.delete_selected_frames(),
+            FrameMenuOp::Duplicate => self.duplicate_frame(),
+            FrameMenuOp::Copy => self.copy_frames(),
+            FrameMenuOp::Cut => self.cut_frames(),
+            FrameMenuOp::Paste => self.paste_frames(),
+            FrameMenuOp::Reverse => self.reverse_selected_frames(),
+        }
+    }
+
+    /// Reverses the order of the selected frames (or the active frame alone, a
+    /// no-op) in one undoable [`SpriteEdit`]. Wired from the frame context menu.
+    fn reverse_selected_frames(&mut self) {
+        let active = self.doc.active_frame.get();
+        let set = self.editor.effective_frames(active);
+        if set.len() < 2 {
+            return;
+        }
+        push_sprite_edit(&mut self.editor, &mut self.doc, "Reverse frames", |sprite| {
+            reverse_frames(sprite, &set);
+        });
+        self.refresh_canvas(false);
+    }
+
+    /// Runs a tag context-menu pick. Rename opens the inline editor; delete
+    /// drops the tag; the playback ops set loop direction and repeat. Each
+    /// change is one undoable [`SpriteEdit`].
+    fn apply_tag_menu(&mut self, action: TagMenuAction) {
+        let idx = action.tag;
+        match action.op {
+            TagMenuOp::Rename => {
+                let name = self.doc.active_sprite().and_then(|s| s.frame_tags.get(idx)).map(|t| t.name.clone());
+                if let Some(name) = name {
+                    self.editor.selected_tag = Some(idx);
+                    self.editor.tag_rename = Some((idx, name));
+                }
+            }
+            TagMenuOp::Delete => {
+                push_sprite_edit(&mut self.editor, &mut self.doc, "Remove tag", |sprite| {
+                    if idx < sprite.frame_tags.len() {
+                        sprite.frame_tags.remove(idx);
+                    }
+                });
+                // The removed tag may have been the selected one; clear so no
+                // dangling index drives the playback controls.
+                if self.editor.selected_tag == Some(idx) {
+                    self.editor.selected_tag = None;
+                }
+                self.editor.tag_rename = None;
+            }
+            TagMenuOp::SetPlayback(dir, repeat) => {
+                push_sprite_edit(&mut self.editor, &mut self.doc, "Tag playback", |sprite| {
+                    set_tag_playback(sprite, idx, dir, repeat);
+                });
+            }
+        }
     }
 
     /// Steps the playhead by `delta` frames, clamped, and refreshes.
@@ -725,9 +1119,8 @@ impl ShellApp {
     /// owned pixel bytes. Linked cels are followed to their source buffer at
     /// copy time, so the clipboard is self-contained and survives later edits
     /// to the source. Records nothing on the undo stack — copy is read-only.
-    // Wired by the frame context menu (plan task 11); kept self-contained now
-    // so that task only adds the call site.
-    #[allow(dead_code, clippy::cast_possible_truncation)]
+    // Wired by the frame context menu (plan task 11).
+    #[allow(clippy::cast_possible_truncation)]
     pub(crate) fn copy_frames(&mut self) {
         let active = self.doc.active_frame.get();
         let set = self.editor.effective_frames(active);
@@ -778,7 +1171,6 @@ impl ShellApp {
     /// Copies the selected frames, then deletes them — the standard cut. The
     /// copy records nothing; the delete is one undoable [`SpriteEdit`].
     // Wired by the frame context menu (plan task 11).
-    #[allow(dead_code)]
     pub(crate) fn cut_frames(&mut self) {
         self.copy_frames();
         self.delete_selected_frames();
@@ -794,7 +1186,7 @@ impl ShellApp {
     /// buffers rather than leaking them. The playhead lands on the first pasted
     /// frame.
     // Wired by the frame context menu (plan task 11).
-    #[allow(dead_code, clippy::cast_possible_truncation)]
+    #[allow(clippy::cast_possible_truncation)]
     pub(crate) fn paste_frames(&mut self) {
         let Some(clip) = self.editor.frame_clipboard.clone() else {
             return;
@@ -1000,9 +1392,7 @@ fn reorder_frame(sprite: &mut pixhaus_core::project::Sprite, from: u32, to: u32)
 /// Composes two `reorder_frame` calls (move `lo` to `hi`, then move the element
 /// now at `hi - 1` back to `lo`), so the cel/range remap stays correct for
 /// free. Mirrors the Tauri `swapFrames` (`ui/src/timeline/timeline-state.ts`).
-// Consumed by reverse and the timeline context menu (plan tasks 2 and 11);
-// kept as a pure free fn now so those tasks reuse one helper.
-#[allow(dead_code)]
+// Consumed by reverse and the timeline context menu (plan tasks 2 and 11).
 fn swap_frames(sprite: &mut pixhaus_core::project::Sprite, a: u32, b: u32) {
     if a == b {
         return;
@@ -1018,7 +1408,6 @@ fn swap_frames(sprite: &mut pixhaus_core::project::Sprite, a: u32, b: u32) {
 /// Ported from the Tauri `buildSwapPairs`
 /// (`ui/src/timeline/timeline-state.ts`). `BTreeSet` iterates ascending, so the
 /// input is already sorted.
-#[allow(dead_code)]
 fn build_swap_pairs(indices: &std::collections::BTreeSet<u32>) -> Vec<(u32, u32)> {
     let pts: Vec<u32> = indices.iter().copied().collect();
     let mut pairs = Vec::with_capacity(pts.len() / 2);
@@ -1036,8 +1425,7 @@ fn build_swap_pairs(indices: &std::collections::BTreeSet<u32>) -> Vec<(u32, u32)
 /// `swap_frames` per pair from [`build_swap_pairs`]. A middle frame in an
 /// odd-sized selection stays fixed.
 // Wired by the reverse-selected action in the timeline context menu (plan task
-// 11); kept pure and tested now so that task only adds the call site.
-#[allow(dead_code)]
+// 11).
 fn reverse_frames(sprite: &mut pixhaus_core::project::Sprite, indices: &std::collections::BTreeSet<u32>) {
     for (a, b) in build_swap_pairs(indices) {
         swap_frames(sprite, a, b);
@@ -1216,6 +1604,92 @@ fn unique_tag_name(sprite: &pixhaus_core::project::Sprite) -> String {
     }
 }
 
+/// Generates an engine-animation name that does not collide with an existing
+/// one: `Anim 1`, `Anim 2`, …, filling the first free slot. The animation-side
+/// analog of [`unique_tag_name`]; user-named clips never block `Anim 1`.
+fn unique_animation_name(sprite: &pixhaus_core::project::Sprite) -> String {
+    let mut n = 1u32;
+    loop {
+        let candidate = format!("Anim {n}");
+        if !sprite.animations.iter().any(|a| a.name == candidate) {
+            return candidate;
+        }
+        n += 1;
+    }
+}
+
+/// Sets a frame tag's playback (loop direction + repeat) and mirrors the loop
+/// direction onto every engine animation of the same name, so the editor tag
+/// and the handoff clip stay in sync. A no-op when `tag_idx` is out of range.
+///
+/// Ports the Tauri `set_frame_tag_playback_on_sprite`
+/// (`app/src/commands/frames.rs`); the v2 caller already holds a tag index
+/// (`EditorState::selected_tag`), so this targets by index rather than name and
+/// returns nothing instead of erroring on a missing tag — the UI never offers a
+/// stale index. The name-pairing with `Animation` is a soft convention: a tag
+/// rename does not rename the animation, so the mirror only fires while the
+/// names match.
+fn set_tag_playback(sprite: &mut pixhaus_core::project::Sprite, tag_idx: usize, dir: LoopDirection, repeat: u16) {
+    let Some(tag) = sprite.frame_tags.get_mut(tag_idx) else {
+        return;
+    };
+    tag.loop_direction = dir;
+    tag.repeat = repeat;
+    let name = tag.name.clone();
+    for anim in sprite.animations.iter_mut().filter(|a| a.name == name) {
+        anim.loop_direction = dir;
+    }
+}
+
+/// Why an inline tag rename was refused. The UI swallows the error (it just
+/// leaves the rename field open or drops the edit), so the variants only need to
+/// distinguish the cases the tests assert; they carry no message plumbing.
+#[derive(Debug, PartialEq, Eq)]
+enum TagRenameError {
+    /// The new name was empty (or whitespace-only after trimming).
+    Empty,
+    /// Another tag already carries the new name.
+    Duplicate,
+    /// The target index does not point at a tag.
+    OutOfRange,
+}
+
+/// Renames the tag at `tag_idx` to `new_name`, rejecting an empty name and a
+/// collision with another tag. Returns `Ok(true)` when a tag was actually
+/// renamed, `Ok(false)` when the name was unchanged (a no-op), and an error
+/// otherwise.
+///
+/// Ports the validation of the Tauri `rename_tag_in_sprite`
+/// (`app/src/commands/frames.rs`); v2 targets by index rather than old name
+/// (the UI already holds the selected index) and the collision check ignores the
+/// tag being renamed so renaming a tag to its own name is the no-op path.
+fn rename_tag(sprite: &mut pixhaus_core::project::Sprite, tag_idx: usize, new_name: &str) -> Result<bool, TagRenameError> {
+    let trimmed = new_name.trim();
+    if trimmed.is_empty() {
+        return Err(TagRenameError::Empty);
+    }
+    if tag_idx >= sprite.frame_tags.len() {
+        return Err(TagRenameError::OutOfRange);
+    }
+    if sprite.frame_tags[tag_idx].name == trimmed {
+        return Ok(false);
+    }
+    if sprite.frame_tags.iter().enumerate().any(|(i, t)| i != tag_idx && t.name == trimmed) {
+        return Err(TagRenameError::Duplicate);
+    }
+    trimmed.clone_into(&mut sprite.frame_tags[tag_idx].name);
+    Ok(true)
+}
+
+/// The inclusive `[min, max]` frame range a set of frame indices spans, or
+/// `None` when the set is empty. Drives "add animation from the selected range":
+/// the animation covers the lowest through highest selected frame.
+fn range_of_frames(indices: &std::collections::BTreeSet<u32>) -> Option<FrameRange> {
+    let lo = indices.iter().next().copied()?;
+    let hi = indices.iter().next_back().copied().unwrap_or(lo);
+    Some(FrameRange::new(FrameIndex::new(lo), FrameIndex::new(hi)))
+}
+
 /// A distinct colour per tag index for the header underline.
 fn tag_color(i: usize) -> egui::Color32 {
     const COLORS: [egui::Color32; 6] = [
@@ -1227,6 +1701,132 @@ fn tag_color(i: usize) -> egui::Color32 {
         egui::Color32::from_rgb(110, 210, 200),
     ];
     COLORS[i % COLORS.len()]
+}
+
+/// A frame context-menu pick, deferred out of the immutable-borrow scroll area.
+/// `target` is the frame the menu opened over (used to retarget the active frame
+/// when the right-click landed outside the multi-selection); `op` is the chosen
+/// operation.
+#[derive(Clone, Copy)]
+struct FrameMenuAction {
+    /// The frame under the secondary-click, or `None` when the click was off any
+    /// column. The handler retargets the active frame to this when it is outside
+    /// the current selection.
+    target: Option<u32>,
+    /// The chosen operation.
+    op: FrameMenuOp,
+}
+
+/// One operation from the frame context menu, mapping to a timeline command.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum FrameMenuOp {
+    /// Insert (append) an empty frame.
+    Insert,
+    /// Delete the selected frame(s).
+    Delete,
+    /// Duplicate the active frame.
+    Duplicate,
+    /// Copy the selected frame(s) to the clipboard.
+    Copy,
+    /// Copy then delete the selected frame(s).
+    Cut,
+    /// Paste the clipboard after the active frame.
+    Paste,
+    /// Reverse the order of the selected frames.
+    Reverse,
+}
+
+/// Builds the frame context menu and returns the chosen op, if any.
+///
+/// `has_clipboard` enables Paste; `effective_count` (the size of the effective
+/// selection) drives the pluralized Delete label and gates Reverse to two or
+/// more frames. Pure over its inputs so the caller can defer the returned op out
+/// of the scroll area's immutable borrow.
+fn frame_context_menu(ui: &mut egui::Ui, has_clipboard: bool, effective_count: usize) -> Option<FrameMenuOp> {
+    let mut chosen = None;
+    if ui.button(format!("{} Insert frame", icons::ADD)).clicked() {
+        chosen = Some(FrameMenuOp::Insert);
+    }
+    let delete_label = if effective_count > 1 {
+        format!("{} Delete frames", icons::TRASH)
+    } else {
+        format!("{} Delete frame", icons::TRASH)
+    };
+    if ui.button(delete_label).clicked() {
+        chosen = Some(FrameMenuOp::Delete);
+    }
+    if ui.button(format!("{} Duplicate", icons::DUPLICATE)).clicked() {
+        chosen = Some(FrameMenuOp::Duplicate);
+    }
+    ui.separator();
+    if ui.button(format!("{} Copy", icons::COPY)).clicked() {
+        chosen = Some(FrameMenuOp::Copy);
+    }
+    if ui.button(format!("{} Cut", icons::CUT)).clicked() {
+        chosen = Some(FrameMenuOp::Cut);
+    }
+    if ui
+        .add_enabled(has_clipboard, egui::Button::new(format!("{} Paste", icons::PASTE)))
+        .on_disabled_hover_text("Copy or cut frames first")
+        .clicked()
+    {
+        chosen = Some(FrameMenuOp::Paste);
+    }
+    ui.separator();
+    if ui
+        .add_enabled(effective_count > 1, egui::Button::new(format!("{} Reverse selected", icons::REVERSE)))
+        .on_disabled_hover_text("Select two or more frames")
+        .clicked()
+    {
+        chosen = Some(FrameMenuOp::Reverse);
+    }
+    chosen
+}
+
+/// A tag context-menu pick, deferred out of the scroll area. `tag` is the index
+/// the menu opened on; `op` is the chosen operation.
+#[derive(Clone, Copy)]
+struct TagMenuAction {
+    /// Index into `Sprite::frame_tags` the menu acts on.
+    tag: usize,
+    /// The chosen operation.
+    op: TagMenuOp,
+}
+
+/// One operation from the tag context menu.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum TagMenuOp {
+    /// Start the inline rename on this tag.
+    Rename,
+    /// Delete this tag.
+    Delete,
+    /// Set this tag's loop direction and repeat (mirrored onto its same-named
+    /// animation by [`set_tag_playback`]).
+    SetPlayback(LoopDirection, u16),
+}
+
+/// Builds the tag context menu (Rename / Delete / playback submenu) and returns
+/// the chosen op, if any. `current` is the tag's `(loop_direction, repeat)`, so
+/// the submenu marks the active direction. Pure over its inputs.
+fn tag_context_menu(ui: &mut egui::Ui, current: (LoopDirection, u16)) -> Option<TagMenuOp> {
+    let (dir, repeat) = current;
+    let mut chosen = None;
+    if ui.button(format!("{} Rename", icons::RENAME)).clicked() {
+        chosen = Some(TagMenuOp::Rename);
+    }
+    if ui.button(format!("{} Delete", icons::TRASH)).clicked() {
+        chosen = Some(TagMenuOp::Delete);
+    }
+    ui.separator();
+    ui.menu_button(format!("{} Playback", icons::REPEAT), |ui| {
+        for option in [LoopDirection::Forward, LoopDirection::Reverse, LoopDirection::PingPong, LoopDirection::PingPongReverse] {
+            // Selecting a direction keeps the existing repeat count.
+            if ui.selectable_label(dir == option, loop_label(option)).clicked() {
+                chosen = Some(TagMenuOp::SetPlayback(option, repeat));
+            }
+        }
+    });
+    chosen
 }
 
 #[cfg(test)]
@@ -1778,6 +2378,223 @@ mod tests {
         assert_eq!(s.frame_tags[0].range.start.get(), 2, "normalized lower bound");
         assert_eq!(s.frame_tags[0].range.end.get(), 5, "normalized upper bound");
         assert_eq!(s.frame_tags[0].name, "Tag 1");
+    }
+
+    // set_tag_playback ─────────────────────────────────────────────────────────
+
+    fn sprite_with_one_tag(name: &str) -> Sprite {
+        let mut s = sprite_with_frames(4);
+        s.frame_tags.push(named_tag(name, 0, 3));
+        s
+    }
+
+    #[test]
+    fn set_playback_updates_tag_fields() {
+        // The selected tag takes the new direction and repeat. Ports the Tauri
+        // `set_playback_updates_tag_fields`.
+        let mut s = sprite_with_one_tag("walk");
+        set_tag_playback(&mut s, 0, LoopDirection::PingPong, 3);
+        assert_eq!(s.frame_tags[0].loop_direction, LoopDirection::PingPong);
+        assert_eq!(s.frame_tags[0].repeat, 3);
+    }
+
+    #[test]
+    fn set_playback_syncs_engine_animation_of_same_name() {
+        // The loop direction mirrors onto the same-named animation; a different
+        // animation is left alone. Ports the Tauri
+        // `set_playback_syncs_engine_animation_of_same_name`.
+        let mut s = sprite_with_one_tag("walk");
+        s.animations.push(Animation::forward(
+            AnimationId::new(1),
+            "walk",
+            FrameRange::new(FrameIndex::new(0), FrameIndex::new(3)),
+        ));
+        s.animations.push(Animation::forward(
+            AnimationId::new(2),
+            "idle",
+            FrameRange::new(FrameIndex::new(0), FrameIndex::new(3)),
+        ));
+        set_tag_playback(&mut s, 0, LoopDirection::PingPong, 0);
+        let walk = s.animations.iter().find(|a| a.name == "walk").expect("walk animation");
+        let idle = s.animations.iter().find(|a| a.name == "idle").expect("idle animation");
+        assert_eq!(walk.loop_direction, LoopDirection::PingPong, "same-name animation synced");
+        assert_eq!(idle.loop_direction, LoopDirection::Forward, "other animation untouched");
+    }
+
+    #[test]
+    fn set_playback_out_of_range_index_is_noop() {
+        // A stale index (e.g. a tag removed under a dangling selection) never
+        // panics and changes nothing.
+        let mut s = sprite_with_one_tag("walk");
+        set_tag_playback(&mut s, 9, LoopDirection::Reverse, 5);
+        assert_eq!(s.frame_tags[0].loop_direction, LoopDirection::Forward, "no tag touched");
+        assert_eq!(s.frame_tags[0].repeat, 0);
+    }
+
+    // rename_tag ────────────────────────────────────────────────────────────────
+
+    fn sprite_with_two_tags() -> Sprite {
+        let mut s = sprite_with_frames(4);
+        s.frame_tags.push(named_tag("walk", 0, 1));
+        s.frame_tags.push(named_tag("run", 2, 3));
+        s
+    }
+
+    #[test]
+    fn rename_tag_changes_name_and_reports_change() {
+        // A rename to a fresh name reports a change and updates the tag. Ports
+        // the Tauri `rename_tag_changes_name_and_reports_change`.
+        let mut s = sprite_with_two_tags();
+        let changed = rename_tag(&mut s, 0, "stride").expect("rename ok");
+        assert!(changed, "rename to a new name reports a change");
+        assert_eq!(s.frame_tags[0].name, "stride");
+    }
+
+    #[test]
+    fn rename_tag_to_same_name_is_a_noop() {
+        let mut s = sprite_with_two_tags();
+        let changed = rename_tag(&mut s, 0, "walk").expect("noop ok");
+        assert!(!changed, "renaming a tag to its own name reports no change");
+        assert_eq!(s.frame_tags[0].name, "walk");
+    }
+
+    #[test]
+    fn rename_tag_trims_and_treats_whitespace_only_as_empty() {
+        // Surrounding whitespace is trimmed before validation and storage.
+        let mut s = sprite_with_two_tags();
+        let changed = rename_tag(&mut s, 0, "  stride  ").expect("rename ok");
+        assert!(changed);
+        assert_eq!(s.frame_tags[0].name, "stride", "the stored name is trimmed");
+    }
+
+    #[test]
+    fn rename_tag_rejects_empty_new_name() {
+        // An empty (or whitespace-only) name is rejected and the tag is left
+        // unchanged. Ports the Tauri `rename_tag_rejects_empty_new_name`.
+        let mut s = sprite_with_two_tags();
+        assert_eq!(rename_tag(&mut s, 0, ""), Err(TagRenameError::Empty));
+        assert_eq!(rename_tag(&mut s, 0, "   "), Err(TagRenameError::Empty), "whitespace-only is empty after trim");
+        assert_eq!(s.frame_tags[0].name, "walk", "the tag is untouched on rejection");
+    }
+
+    #[test]
+    fn rename_tag_rejects_collision_with_existing_tag() {
+        // Renaming onto another tag's name is rejected. Ports the Tauri
+        // `rename_tag_rejects_collision_with_existing_tag`.
+        let mut s = sprite_with_two_tags();
+        assert_eq!(rename_tag(&mut s, 0, "run"), Err(TagRenameError::Duplicate));
+        assert_eq!(s.frame_tags[0].name, "walk", "the tag keeps its name on a collision");
+    }
+
+    #[test]
+    fn rename_tag_out_of_range_index_is_an_error() {
+        let mut s = sprite_with_two_tags();
+        assert_eq!(rename_tag(&mut s, 9, "stride"), Err(TagRenameError::OutOfRange));
+    }
+
+    // range_of_frames / unique_animation_name / add-animation ───────────────────
+
+    #[test]
+    fn range_of_frames_spans_min_to_max() {
+        // A non-contiguous selection yields the inclusive [min, max] range.
+        let r = range_of_frames(&frame_set(&[2, 5, 3])).expect("non-empty set has a range");
+        assert_eq!(r.start.get(), 2, "range starts at the lowest selected frame");
+        assert_eq!(r.end.get(), 5, "range ends at the highest selected frame");
+    }
+
+    #[test]
+    fn range_of_frames_of_one_frame_is_a_singleton() {
+        let r = range_of_frames(&frame_set(&[4])).expect("one frame has a range");
+        assert_eq!(r.start.get(), 4);
+        assert_eq!(r.end.get(), 4);
+    }
+
+    #[test]
+    fn range_of_frames_empty_set_is_none() {
+        assert!(range_of_frames(&frame_set(&[])).is_none());
+    }
+
+    #[test]
+    fn unique_animation_name_starts_at_one_and_skips_taken() {
+        let mut s = sprite_with_frames(4);
+        assert_eq!(unique_animation_name(&s), "Anim 1");
+        s.animations.push(Animation::forward(
+            AnimationId::new(1),
+            "Anim 1",
+            FrameRange::new(FrameIndex::new(0), FrameIndex::new(1)),
+        ));
+        assert_eq!(unique_animation_name(&s), "Anim 2", "the first free slot is used");
+    }
+
+    #[test]
+    fn add_animation_stores_range_and_fresh_id() {
+        // Adding an animation over a selected range stores the exact [min, max]
+        // FrameRange and a fresh AnimationId, with the forward defaults.
+        let mut s = sprite_with_frames(6);
+        let range = range_of_frames(&frame_set(&[1, 4])).expect("range");
+        let id = AnimationId::new(42);
+        let name = unique_animation_name(&s);
+        s.animations.push(Animation::forward(id, name, range));
+        assert_eq!(s.animations.len(), 1);
+        let a = &s.animations[0];
+        assert_eq!(a.id, AnimationId::new(42), "the animation carries the allocated id");
+        assert_eq!(a.range.start.get(), 1, "range start is the lowest selected frame");
+        assert_eq!(a.range.end.get(), 4, "range end is the highest selected frame");
+        assert_eq!(a.name, "Anim 1");
+        assert_eq!(a.loop_direction, LoopDirection::Forward, "a fresh animation plays forward");
+        assert!((a.speed_multiplier - 1.0).abs() < f32::EPSILON, "default speed is editor speed");
+    }
+
+    // frame / tag context menu op enums ──────────────────────────────────────────
+
+    #[test]
+    fn frame_menu_ops_are_distinct() {
+        // A guard that the menu's op set stays the intended seven distinct
+        // operations; copy/cut/paste must not collapse to one value.
+        let ops = [
+            FrameMenuOp::Insert,
+            FrameMenuOp::Delete,
+            FrameMenuOp::Duplicate,
+            FrameMenuOp::Copy,
+            FrameMenuOp::Cut,
+            FrameMenuOp::Paste,
+            FrameMenuOp::Reverse,
+        ];
+        for (i, a) in ops.iter().enumerate() {
+            for b in &ops[i + 1..] {
+                assert_ne!(a, b, "frame menu ops are distinct");
+            }
+        }
+    }
+
+    #[test]
+    fn tag_menu_set_playback_carries_direction_and_repeat() {
+        // The playback submenu op carries the chosen direction and the prior
+        // repeat verbatim, so applying it through `set_tag_playback` is exact.
+        let op = TagMenuOp::SetPlayback(LoopDirection::PingPong, 4);
+        match op {
+            TagMenuOp::SetPlayback(dir, repeat) => {
+                assert_eq!(dir, LoopDirection::PingPong);
+                assert_eq!(repeat, 4);
+            }
+            other => panic!("expected a playback op, got {other:?}"),
+        }
+    }
+
+    // scrub head: frame_at_x drives the active-frame sequence ───────────────────
+
+    #[test]
+    fn scrub_drag_maps_columns_to_the_active_frame_sequence() {
+        // Dragging the scrub head left-to-right across the header walks the
+        // active frame through each column; the same `frame_at_x` mapping the
+        // jump-click uses, so a scrub and a click land identically. A drag past
+        // the right edge clamps to the last frame.
+        let cs = 36.0;
+        let left = 96.0;
+        let count = 6;
+        let xs = [left + 1.0, left + cs * 2.5, left + cs * 5.5, left + cs * 100.0];
+        let seq: Vec<u32> = xs.iter().map(|&x| frame_at_x(x, left, 0.0, cs, count)).collect();
+        assert_eq!(seq, vec![0, 2, 5, 5], "scrub walks columns then clamps at the last frame");
     }
 
     // frame clipboard: copy / paste / undo ─────────────────────────────────────

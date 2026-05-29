@@ -60,6 +60,11 @@ pub const LEFT: &str = p::CARET_LEFT;
 pub const LINK: &str = p::LINK;
 pub const UNLINK: &str = p::LINK_BREAK;
 
+// Frame clipboard / reorder (timeline context menu).
+pub const CUT: &str = p::SCISSORS;
+pub const PASTE: &str = p::CLIPBOARD;
+pub const REVERSE: &str = p::ARROWS_LEFT_RIGHT;
+
 // Clipping masks: a layer clipped to the one below it.
 pub const CLIP: &str = p::ARROW_BEND_DOWN_LEFT;
 

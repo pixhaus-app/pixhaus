@@ -458,9 +458,21 @@ pub struct EditorState {
     /// re-validated against the live tag list at use so a removed tag does not
     /// leave a dangling selection.
     pub selected_tag: Option<usize>,
+    /// Timeline: an in-progress inline tag rename `(tag index, draft)`, started
+    /// from the tag context menu. Mirrors [`Self::layer_rename`] but targets a
+    /// tag by index. `None` when no rename is open. The draft commits on
+    /// Enter/blur through the rename validation (empty and duplicate names are
+    /// rejected) and discards on Escape. View state, never serialized; the
+    /// committed rename is the undoable step.
+    pub tag_rename: Option<(usize, String)>,
     /// Timeline: an in-progress drag on the tag bar that, on release, creates a
     /// tag over the dragged range. `None` between drags. Transient view state.
     pub tag_drag: Option<TagDrag>,
+    /// Timeline: whether the scrub head is being dragged across the header
+    /// strip. Set on a press-with-movement (which also stops playback) and
+    /// cleared on release. Transient view state, never serialized — scrubbing
+    /// only moves the playhead, it is not undoable.
+    pub scrubbing: bool,
 }
 
 impl Default for EditorState {
@@ -504,7 +516,9 @@ impl Default for EditorState {
             loop_playback: true,
             global_fps: 12,
             selected_tag: None,
+            tag_rename: None,
             tag_drag: None,
+            scrubbing: false,
         }
     }
 }
