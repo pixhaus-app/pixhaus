@@ -490,6 +490,35 @@ impl DocumentStore {
         self.active_sprite().and_then(|s| s.palettes.first())
     }
 
+    /// The active sprite's palette selected by `id`, falling back to the first
+    /// palette when `id` is `None` or names a palette the sprite no longer holds
+    /// (e.g. after a delete or a sprite switch left a stale selection). `None`
+    /// only when there is no active sprite or it has no palettes. This is the
+    /// switcher-aware read every palette panel surface routes through, so the
+    /// selection drives which palette the panel shows and edits.
+    #[must_use]
+    pub fn active_palette_by_id(&self, id: Option<PaletteId>) -> Option<&Palette> {
+        let sprite = self.active_sprite()?;
+        match id.and_then(|id| sprite.palette(id)) {
+            Some(palette) => Some(palette),
+            None => sprite.palettes.first(),
+        }
+    }
+
+    /// The active sprite's palette selected by `id`, mutably, with the same
+    /// fallback as [`Self::active_palette_by_id`]. The free-function
+    /// [`palette_by_id_mut`] is the form `push_sprite_edit` closures use (they
+    /// hand back `&mut Sprite`, not the store); this method is the store-level
+    /// counterpart for the same selected-palette resolution.
+    // The panel's edits run through `palette_by_id_mut` inside `push_sprite_edit`
+    // closures (which hold `&mut Sprite`, not the store), so the binary never
+    // calls this store-level form; the tests do.
+    #[cfg_attr(not(test), allow(dead_code))]
+    pub fn active_palette_by_id_mut(&mut self, id: Option<PaletteId>) -> Option<&mut Palette> {
+        let sprite = self.active_sprite_mut()?;
+        palette_by_id_mut(sprite, id)
+    }
+
     /// Whether `layer_id` resolves to a locked layer in the active sprite.
     /// Painting refuses to touch a locked layer; the lock guards pixels, not
     /// the layer's properties.
@@ -1067,6 +1096,20 @@ fn default_palette() -> Vec<Rgba> {
     ]
 }
 
+/// The `sprite`'s palette selected by `id`, mutably, falling back to the first
+/// palette when `id` is `None` or names a palette the sprite no longer holds.
+/// The free-function form so a `push_sprite_edit` closure (handed `&mut Sprite`,
+/// not the `DocumentStore`) can resolve the same selected palette the panel
+/// reads, keeping every edit on the switcher's choice rather than always the
+/// first palette.
+pub(crate) fn palette_by_id_mut(sprite: &mut Sprite, id: Option<PaletteId>) -> Option<&mut Palette> {
+    // Resolve to a concrete id up front so the mutable borrow is taken once.
+    let target = id
+        .filter(|id| sprite.palettes.iter().any(|p| p.id == *id))
+        .or_else(|| sprite.palettes.first().map(|p| p.id))?;
+    sprite.palette_mut(target)
+}
+
 /// Maps `i/total` around the hue wheel to an approximate RGB triple. Only used
 /// by [`DocumentStore::add_demo_animation`].
 #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss, clippy::many_single_char_names)]
@@ -1598,5 +1641,68 @@ mod tests {
         let rows = doc.library_rows(&collapsed);
         assert!(matches!(&rows[0], LibraryRow::Group { collapsed: true, .. }));
         assert!(!rows.iter().any(|r| matches!(r, LibraryRow::Sprite { name, .. } if name == "inside")));
+    }
+
+    /// Appends a second, named palette to the active sprite and returns its id.
+    fn push_palette(doc: &mut DocumentStore, name: &str) -> PaletteId {
+        let id = PaletteId::new(doc.alloc_id());
+        doc.active_sprite_mut().expect("sprite").add_palette(id, name);
+        id
+    }
+
+    #[test]
+    fn active_palette_by_id_selects_the_named_palette() {
+        let mut doc = DocumentStore::new();
+        doc.create_sprite("hero", Size::new(8, 8));
+        let second = push_palette(&mut doc, "second");
+
+        // None falls back to the first (the seed "default" palette).
+        assert_eq!(doc.active_palette_by_id(None).map(|p| p.name.as_str()), Some("default"));
+        // A live id resolves to that palette.
+        assert_eq!(doc.active_palette_by_id(Some(second)).map(|p| p.name.as_str()), Some("second"));
+    }
+
+    #[test]
+    fn active_palette_by_id_falls_back_when_the_id_is_stale() {
+        let mut doc = DocumentStore::new();
+        doc.create_sprite("hero", Size::new(8, 8));
+        // An id the sprite does not hold falls back to the first palette rather
+        // than yielding None — the switcher never lands on an empty panel.
+        let stale = PaletteId::new(999);
+        assert_eq!(doc.active_palette_by_id(Some(stale)).map(|p| p.name.as_str()), Some("default"));
+    }
+
+    #[test]
+    fn active_palette_by_id_is_none_without_a_sprite() {
+        let doc = DocumentStore::new();
+        assert!(doc.active_palette_by_id(None).is_none(), "no active sprite, no palette");
+    }
+
+    #[test]
+    fn active_palette_by_id_mut_edits_the_selected_palette() {
+        let mut doc = DocumentStore::new();
+        doc.create_sprite("hero", Size::new(8, 8));
+        let second = push_palette(&mut doc, "second");
+
+        // Editing through the mut accessor lands on the selected palette, not the
+        // first.
+        doc.active_palette_by_id_mut(Some(second))
+            .expect("second palette")
+            .colors
+            .push(pixhaus_core::project::PaletteEntry::new(Rgba::opaque(1, 2, 3)));
+        assert_eq!(doc.active_palette_by_id(Some(second)).map(|p| p.colors.len()), Some(1));
+        // The first palette is untouched.
+        assert_eq!(doc.active_palette_by_id(None).map(|p| p.colors.len()), Some(default_palette().len()));
+    }
+
+    #[test]
+    fn palette_by_id_mut_falls_back_to_first_for_a_stale_id() {
+        let mut doc = DocumentStore::new();
+        doc.create_sprite("hero", Size::new(8, 8));
+        let first_id = doc.active_sprite().expect("sprite").palettes[0].id;
+        let sprite = doc.active_sprite_mut().expect("sprite");
+        // A None and a stale id both resolve to the first palette.
+        assert_eq!(palette_by_id_mut(sprite, None).map(|p| p.id), Some(first_id));
+        assert_eq!(palette_by_id_mut(sprite, Some(PaletteId::new(12345))).map(|p| p.id), Some(first_id));
     }
 }

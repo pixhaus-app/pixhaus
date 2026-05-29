@@ -14,6 +14,7 @@ use pixhaus_core::project::{PaletteEntry, Rgba};
 
 use crate::app::ShellApp;
 use crate::commands::push_sprite_edit;
+use crate::document::palette_by_id_mut;
 use crate::editor::{HarmonyKind, to_color32};
 use crate::palette_panel::paint_checker;
 
@@ -60,7 +61,7 @@ impl ShellApp {
     /// Draws the ramp and harmony generator sections below the swatch grid. A
     /// no-op when there is no active palette.
     pub(crate) fn palette_tools(&mut self, ui: &mut egui::Ui) {
-        let Some(palette) = self.doc.active_palette() else {
+        let Some(palette) = self.doc.active_palette_by_id(self.editor.active_palette_id) else {
             return;
         };
         let colors: Vec<Rgba> = palette.colors.iter().map(|e| e.color).collect();
@@ -102,8 +103,9 @@ impl ShellApp {
                 .on_disabled_hover_text("A ramp needs at least three steps to add intermediates")
                 .clicked()
             {
+                let sel = self.editor.active_palette_id;
                 push_sprite_edit(&mut self.editor, &mut self.doc, "Add ramp", |sprite| {
-                    if let Some(p) = sprite.palettes.first_mut() {
+                    if let Some(p) = palette_by_id_mut(sprite, sel) {
                         p.colors.extend(intermediates.iter().copied().map(PaletteEntry::new));
                     }
                 });
@@ -146,8 +148,9 @@ impl ShellApp {
             });
 
             if let Some(c) = add {
+                let sel = self.editor.active_palette_id;
                 push_sprite_edit(&mut self.editor, &mut self.doc, "Add harmony color", |sprite| {
-                    if let Some(p) = sprite.palettes.first_mut() {
+                    if let Some(p) = palette_by_id_mut(sprite, sel) {
                         p.colors.push(PaletteEntry::new(c));
                     }
                 });

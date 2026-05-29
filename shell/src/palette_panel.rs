@@ -1,4 +1,10 @@
-//! The palette panel: a swatch grid bound to the active sprite's first palette.
+//! The palette panel: a swatch grid bound to the active sprite's selected
+//! palette.
+//!
+//! A switcher (combo box plus add / delete / rename / reorder) picks which of
+//! the sprite's palettes the panel shows and edits; the selection lives in
+//! [`crate::editor::EditorState::active_palette_id`] and resolves through
+//! [`DocumentStore::active_palette_by_id`], falling back to the first palette.
 //!
 //! Click a swatch to set the foreground colour, Ctrl-click to multi-select,
 //! right-click for the per-swatch menu (edit / rename / lock / remove), and
@@ -13,11 +19,12 @@ use eframe::egui;
 use pixhaus_core::canvas::PixelBuffer;
 use pixhaus_core::color::palette_file::{aco, gpl, hex, pal, PaletteFileError, PaletteFileResult};
 use pixhaus_core::color::space::to_hsv;
-use pixhaus_core::project::{CelData, ColorMode, Palette, PaletteEntry, PixelBufferId, Rgba};
+use pixhaus_core::project::{CelData, ColorMode, Palette, PaletteEntry, PaletteId, PixelBufferId, Rgba};
 
 use crate::app::ShellApp;
 use crate::color_picker::color_picker_ui;
 use crate::commands::{push_sprite_edit, CanvasBufferSwap, CanvasEdit};
+use crate::document::palette_by_id_mut;
 use crate::editor::{PaletteExportFormat, PaletteSort, to_color32};
 use crate::icons;
 
@@ -30,7 +37,13 @@ impl ShellApp {
     /// Draws the palette panel.
     #[allow(clippy::too_many_lines)]
     pub(crate) fn palette_panel(&mut self, ui: &mut egui::Ui) {
-        let Some(palette) = self.doc.active_palette() else {
+        // The switcher both selects the active palette and exposes palette CRUD.
+        // Draw it before reading the palette so a create/delete this frame picks
+        // the right one below.
+        self.palette_switcher(ui);
+
+        let sel = self.editor.active_palette_id;
+        let Some(palette) = self.doc.active_palette_by_id(sel) else {
             ui.label("No palette.");
             return;
         };
@@ -258,7 +271,7 @@ impl ShellApp {
             // Locked swatches never move and never displace a drop target.
             if !self.editor.locked_swatches.contains(&from) && !self.editor.locked_swatches.contains(&to) {
                 push_sprite_edit(&mut self.editor, &mut self.doc, "Reorder swatch", |sprite| {
-                    if let Some(p) = sprite.palettes.first_mut() {
+                    if let Some(p) = palette_by_id_mut(sprite, sel) {
                         reorder_in_place(p, from, to);
                     }
                 });
@@ -270,7 +283,7 @@ impl ShellApp {
             if ui.button(format!("{} add fg", icons::ADD)).clicked() {
                 let c = self.editor.fg;
                 push_sprite_edit(&mut self.editor, &mut self.doc, "Add swatch", |sprite| {
-                    if let Some(p) = sprite.palettes.first_mut() {
+                    if let Some(p) = palette_by_id_mut(sprite, sel) {
                         p.colors.push(PaletteEntry::new(c));
                     }
                 });
@@ -281,7 +294,7 @@ impl ShellApp {
         });
 
         ui.horizontal(|ui| {
-            let has_colors = self.doc.active_palette().is_some_and(|p| !p.colors.is_empty());
+            let has_colors = self.doc.active_palette_by_id(sel).is_some_and(|p| !p.colors.is_empty());
             if ui
                 .add_enabled(has_colors, egui::Button::new(format!("{} Reduce to palette", icons::PALETTE)))
                 .on_hover_text("Snap every opaque pixel on the active frame to its nearest palette colour")
@@ -299,6 +312,149 @@ impl ShellApp {
 
         ui.separator();
         self.import_export_section(ui);
+    }
+
+    /// The palette switcher: a combo box over the active sprite's palettes plus
+    /// add / delete / rename / reorder controls. Selecting writes
+    /// `editor.active_palette_id`; create allocates a fresh [`PaletteId`] before
+    /// the edit and points the selection at it; delete refuses the last palette
+    /// and re-points the selection at the first survivor. A no-op (draws a hint)
+    /// when there is no active sprite.
+    fn palette_switcher(&mut self, ui: &mut egui::Ui) {
+        // Re-validate the selection against the live palettes so a sprite switch
+        // or a delete never leaves the combo pointing at a dropped palette. The
+        // combo and every edit resolve through the same id, so seed it here.
+        let Some(sprite) = self.doc.active_sprite() else {
+            return;
+        };
+        let palettes: Vec<(PaletteId, String)> = sprite.palettes.iter().map(|p| (p.id, p.name.clone())).collect();
+        if palettes.is_empty() {
+            return;
+        }
+        let selected = self
+            .editor
+            .active_palette_id
+            .filter(|id| palettes.iter().any(|(pid, _)| pid == id))
+            .or_else(|| palettes.first().map(|(id, _)| *id));
+        self.editor.active_palette_id = selected;
+
+        let selected_name = selected
+            .and_then(|id| palettes.iter().find(|(pid, _)| *pid == id))
+            .map_or_else(|| "—".to_owned(), |(_, name)| name.clone());
+
+        // Actions chosen this frame, applied after the borrow on `palettes` ends.
+        let mut select: Option<PaletteId> = None;
+        let mut create = false;
+        let mut delete = false;
+        let mut swap: Option<(usize, usize)> = None;
+
+        ui.horizontal(|ui| {
+            egui::ComboBox::from_id_salt("palette_switcher")
+                .selected_text(selected_name)
+                .show_ui(ui, |ui| {
+                    for (id, name) in &palettes {
+                        if ui.selectable_label(selected == Some(*id), name).clicked() {
+                            select = Some(*id);
+                        }
+                    }
+                });
+
+            if ui.button(icons::ADD).on_hover_text("New palette").clicked() {
+                create = true;
+            }
+            // Deleting the last palette is refused, so disable the button there.
+            let can_delete = palettes.len() > 1;
+            if ui
+                .add_enabled(can_delete, egui::Button::new(icons::TRASH))
+                .on_hover_text("Delete palette")
+                .on_disabled_hover_text("A sprite keeps at least one palette")
+                .clicked()
+            {
+                delete = true;
+            }
+
+            // Reorder the selected palette among its siblings.
+            let cur = selected.and_then(|id| palettes.iter().position(|(pid, _)| *pid == id));
+            if let Some(idx) = cur {
+                if ui.add_enabled(idx > 0, egui::Button::new(icons::UP)).on_hover_text("Move up").clicked() {
+                    swap = Some((idx, idx - 1));
+                }
+                if ui
+                    .add_enabled(idx + 1 < palettes.len(), egui::Button::new(icons::DOWN))
+                    .on_hover_text("Move down")
+                    .clicked()
+                {
+                    swap = Some((idx, idx + 1));
+                }
+            }
+        });
+
+        // Inline rename of the selected palette: an empty name is rejected by
+        // `rename_palette`, so a blank field leaves the name unchanged.
+        if let Some(id) = selected {
+            let mut name = palettes
+                .iter()
+                .find(|(pid, _)| *pid == id)
+                .map_or_else(String::new, |(_, n)| n.clone());
+            if ui.add(egui::TextEdit::singleline(&mut name).hint_text("palette name").desired_width(f32::INFINITY)).changed() {
+                push_sprite_edit(&mut self.editor, &mut self.doc, "Rename palette", |sprite| {
+                    sprite.rename_palette(id, &name);
+                });
+            }
+        }
+
+        if let Some(id) = select {
+            self.editor.active_palette_id = Some(id);
+        }
+        if create {
+            self.create_palette();
+        }
+        if delete {
+            self.delete_palette();
+        }
+        if let Some((a, b)) = swap {
+            push_sprite_edit(&mut self.editor, &mut self.doc, "Reorder palette", move |sprite| {
+                if a < sprite.palettes.len() && b < sprite.palettes.len() {
+                    sprite.palettes.swap(a, b);
+                }
+            });
+        }
+
+        ui.separator();
+    }
+
+    /// Allocates a fresh [`PaletteId`], appends an empty palette under it, and
+    /// selects it. The id is allocated before [`push_sprite_edit`] so the edit
+    /// closure references a stable id, matching the playbook's allocate-then-edit
+    /// rule for id-allocating CRUD.
+    fn create_palette(&mut self) {
+        let id = PaletteId::new(self.doc.alloc_id());
+        let n = self.doc.active_sprite().map_or(0, |s| s.palettes.len());
+        let name = format!("Palette {}", n + 1);
+        push_sprite_edit(&mut self.editor, &mut self.doc, "Add palette", move |sprite| {
+            sprite.add_palette(id, name);
+        });
+        self.editor.active_palette_id = Some(id);
+    }
+
+    /// Deletes the selected palette (refusing the sprite's last) and re-points
+    /// the selection at the first survivor, dropping the per-swatch UI sets that
+    /// referred to the old palette's indices.
+    fn delete_palette(&mut self) {
+        let Some(id) = self.editor.active_palette_id else {
+            return;
+        };
+        push_sprite_edit(&mut self.editor, &mut self.doc, "Delete palette", move |sprite| {
+            sprite.delete_palette(id);
+        });
+        // Point the selection at the first remaining palette, then prune the
+        // swatch UI sets against the now-current palette's length.
+        self.editor.active_palette_id = self.doc.active_sprite().and_then(|s| s.palettes.first()).map(|p| p.id);
+        self.editor.selected_swatches.clear();
+        self.editor.locked_swatches.clear();
+        self.editor.editing_swatch = None;
+        self.editor.swatch_scratch = None;
+        self.editor.renaming_swatch = None;
     }
 
     /// The recent-colours strip: the most-recently-painted colours, newest
@@ -339,7 +495,7 @@ impl ShellApp {
     /// no lock across an `.await` (the shell is synchronous egui). The last
     /// error shows inline; v2 has no toast system.
     fn import_export_section(&mut self, ui: &mut egui::Ui) {
-        let has_palette = self.doc.active_palette().is_some();
+        let has_palette = self.doc.active_palette_by_id(self.editor.active_palette_id).is_some();
         egui::CollapsingHeader::new("Import / Export").id_salt("palette_io").default_open(false).show(ui, |ui| {
             ui.horizontal(|ui| {
                 if ui.add_enabled(has_palette, egui::Button::new(format!("{} Import...", icons::IMAGE))).clicked() {
@@ -380,8 +536,9 @@ impl ShellApp {
         match parse_palette_file(&path) {
             Ok(colors) => {
                 self.editor.palette_io_error = None;
+                let sel = self.editor.active_palette_id;
                 push_sprite_edit(&mut self.editor, &mut self.doc, "Import palette", |sprite| {
-                    if let Some(p) = sprite.palettes.first_mut() {
+                    if let Some(p) = palette_by_id_mut(sprite, sel) {
                         p.colors.extend(colors.into_iter().map(PaletteEntry::new));
                     }
                 });
@@ -396,7 +553,7 @@ impl ShellApp {
     /// palette in the selected format, and writes it to disk. An I/O failure is
     /// surfaced inline; a cancelled dialog is silent.
     fn export_palette(&mut self) {
-        let Some(palette) = self.doc.active_palette() else {
+        let Some(palette) = self.doc.active_palette_by_id(self.editor.active_palette_id) else {
             return;
         };
         let name = palette.name.clone();
@@ -436,7 +593,8 @@ impl ShellApp {
         let Some(idx) = self.editor.editing_swatch else {
             return;
         };
-        let current = self.doc.active_palette().and_then(|p| p.colors.get(idx)).map(|e| e.color);
+        let sel = self.editor.active_palette_id;
+        let current = self.doc.active_palette_by_id(sel).and_then(|p| p.colors.get(idx)).map(|e| e.color);
         let Some(current) = current else {
             self.editor.editing_swatch = None;
             self.editor.swatch_scratch = None;
@@ -473,7 +631,7 @@ impl ShellApp {
 
         if commit && color != current {
             push_sprite_edit(&mut self.editor, &mut self.doc, "Edit swatch", |sprite| {
-                if let Some(p) = sprite.palettes.first_mut() {
+                if let Some(p) = palette_by_id_mut(sprite, sel) {
                     if let Some(e) = p.colors.get_mut(idx) {
                         e.color = color;
                     }
@@ -492,8 +650,9 @@ impl ShellApp {
     fn commit_swatch_rename(&mut self, idx: usize) {
         let trimmed = self.editor.rename_draft.trim();
         let name = if trimmed.is_empty() { None } else { Some(trimmed.to_owned()) };
+        let sel = self.editor.active_palette_id;
         push_sprite_edit(&mut self.editor, &mut self.doc, "Rename swatch", |sprite| {
-            if let Some(p) = sprite.palettes.first_mut() {
+            if let Some(p) = palette_by_id_mut(sprite, sel) {
                 set_entry_name(p, idx, name);
             }
         });
@@ -503,8 +662,9 @@ impl ShellApp {
     /// Removes the swatch at `idx`, then prunes the multi-select / lock sets of
     /// stale indices and clamps the open editor index.
     fn remove_swatch(&mut self, idx: usize) {
+        let sel = self.editor.active_palette_id;
         push_sprite_edit(&mut self.editor, &mut self.doc, "Remove swatch", |sprite| {
-            if let Some(p) = sprite.palettes.first_mut() {
+            if let Some(p) = palette_by_id_mut(sprite, sel) {
                 remove_swatch_at(p, idx);
             }
         });
@@ -520,8 +680,9 @@ impl ShellApp {
         if indices.is_empty() {
             return;
         }
+        let sel = self.editor.active_palette_id;
         push_sprite_edit(&mut self.editor, &mut self.doc, "Remove swatches", |sprite| {
-            if let Some(p) = sprite.palettes.first_mut() {
+            if let Some(p) = palette_by_id_mut(sprite, sel) {
                 for i in &indices {
                     remove_swatch_at(p, *i);
                 }
@@ -535,7 +696,7 @@ impl ShellApp {
     /// open editor index. Called after any swatch removal so the sets never
     /// dangle.
     fn prune_palette_ui_state(&mut self) {
-        let len = self.doc.active_palette().map_or(0, |p| p.colors.len());
+        let len = self.doc.active_palette_by_id(self.editor.active_palette_id).map_or(0, |p| p.colors.len());
         self.editor.selected_swatches.retain(|&i| i < len);
         self.editor.locked_swatches.retain(|&i| i < len);
         if self.editor.editing_swatch.is_some_and(|i| i >= len) {
@@ -549,8 +710,9 @@ impl ShellApp {
 
     /// Reorders the active palette's swatches by the requested key.
     fn sort_palette(&mut self, sort: PaletteSort) {
+        let sel = self.editor.active_palette_id;
         push_sprite_edit(&mut self.editor, &mut self.doc, "Sort palette", |sprite| {
-            if let Some(p) = sprite.palettes.first_mut() {
+            if let Some(p) = palette_by_id_mut(sprite, sel) {
                 match sort {
                     PaletteSort::Hue => p
                         .colors
@@ -580,8 +742,16 @@ impl ShellApp {
         let Some(sprite) = self.doc.project.sprite(sprite_id).cloned() else {
             return;
         };
-        // An empty palette has no nearest entry; nothing to reduce to.
-        let Some(palette) = sprite.palettes.first().filter(|p| !p.colors.is_empty()).cloned() else {
+        // Reduce to the switcher's selected palette (falling back to the first),
+        // matching what the panel shows. An empty palette has no nearest entry;
+        // nothing to reduce to.
+        let sel = self.editor.active_palette_id;
+        let Some(palette) = sel
+            .and_then(|id| sprite.palette(id))
+            .or_else(|| sprite.palettes.first())
+            .filter(|p| !p.colors.is_empty())
+            .cloned()
+        else {
             return;
         };
 

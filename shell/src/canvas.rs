@@ -1062,8 +1062,11 @@ impl ShellApp {
         let Some(id) = self.doc.project.active_sprite_id() else {
             return;
         };
+        // Auto-add writes to the switcher's selected palette (falling back to the
+        // first), matching what the panel shows — not always the first palette.
+        let sel = self.editor.active_palette_id;
         if let Some(sprite) = self.doc.project.sprite_mut(id) {
-            if let Some(palette) = sprite.palettes.first_mut() {
+            if let Some(palette) = crate::document::palette_by_id_mut(sprite, sel) {
                 if !palette.colors.iter().any(|e| e.color == color) {
                     palette.colors.push(pixhaus_core::project::PaletteEntry::new(color));
                 }

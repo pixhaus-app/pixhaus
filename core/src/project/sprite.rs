@@ -13,7 +13,7 @@ use super::cel::{Cel, CelData};
 use super::color::ColorMode;
 use super::frame::{Frame, FrameTag};
 use super::geometry::Size;
-use super::id::{FrameIndex, LayerId, SpriteId};
+use super::id::{FrameIndex, LayerId, PaletteId, SpriteId};
 use super::layer::Layer;
 use super::palette::{Palette, PaletteFrameOverride};
 use super::slice::Slice;
@@ -220,6 +220,53 @@ impl Sprite {
         }
         self.layers.retain(|l| l.id != id);
         self.cels.retain(|c| c.layer_id != id);
+    }
+
+    /// The palette with `id`, if present.
+    #[must_use]
+    pub fn palette(&self, id: PaletteId) -> Option<&Palette> {
+        self.palettes.iter().find(|p| p.id == id)
+    }
+
+    /// The palette with `id`, mutably, if present.
+    pub fn palette_mut(&mut self, id: PaletteId) -> Option<&mut Palette> {
+        self.palettes.iter_mut().find(|p| p.id == id)
+    }
+
+    /// Appends an empty palette named `name` under `id`. The caller allocates
+    /// `id` (a fresh [`PaletteId`]) before calling. A blank name is kept as-is —
+    /// the panel guards against empty names at the UI edge, not here.
+    pub fn add_palette(&mut self, id: PaletteId, name: impl Into<String>) {
+        self.palettes.push(Palette::from_colors(id, name, Vec::new()));
+    }
+
+    /// Removes the palette with `id`, returning whether it removed one. Refuses
+    /// to drop the sprite's last palette: a sprite always keeps at least one, so
+    /// the panel never lands on an empty switcher. An absent `id` is a no-op.
+    pub fn delete_palette(&mut self, id: PaletteId) -> bool {
+        if self.palettes.len() <= 1 {
+            return false;
+        }
+        let before = self.palettes.len();
+        self.palettes.retain(|p| p.id != id);
+        self.palettes.len() != before
+    }
+
+    /// Renames the palette with `id`, returning whether it renamed one. A
+    /// whitespace-only name is rejected (no-op), matching the sprite/group rename
+    /// validation. An absent `id` is a no-op.
+    pub fn rename_palette(&mut self, id: PaletteId, new_name: &str) -> bool {
+        let name = new_name.trim();
+        if name.is_empty() {
+            return false;
+        }
+        match self.palette_mut(id) {
+            Some(palette) => {
+                name.clone_into(&mut palette.name);
+                true
+            }
+            None => false,
+        }
     }
 
     /// The non-group layers in back-to-front composite order, each carrying the
@@ -505,5 +552,70 @@ mod tests {
         // Child 3 is hidden while the group is collapsed.
         assert!(!ids.contains(&3), "{ids:?}");
         assert!(ids.contains(&2));
+    }
+
+    // ── palette CRUD ──────────────────────────────────────────────────────
+
+    use rstest::rstest;
+
+    /// A sprite carrying `count` palettes named `p0`..`p{count-1}`, ids `1..=count`.
+    fn sprite_with_palettes(count: u32) -> Sprite {
+        let mut s = Sprite::empty(SpriteId::new(1), "s", Size::new(8, 8));
+        for n in 1..=count {
+            s.palettes.push(Palette::from_colors(PaletteId::new(n), format!("p{}", n - 1), Vec::new()));
+        }
+        s
+    }
+
+    #[test]
+    fn add_palette_appends_an_empty_palette() {
+        let mut s = sprite_with_palettes(1);
+        s.add_palette(PaletteId::new(7), "extra");
+        assert_eq!(s.palettes.len(), 2);
+        let added = s.palette(PaletteId::new(7)).expect("added palette present");
+        assert_eq!(added.name, "extra");
+        assert!(added.colors.is_empty(), "a fresh palette has no swatches");
+    }
+
+    #[test]
+    fn delete_palette_drops_the_named_palette() {
+        let mut s = sprite_with_palettes(3);
+        assert!(s.delete_palette(PaletteId::new(2)), "deleting a non-last palette succeeds");
+        assert_eq!(s.palettes.len(), 2);
+        assert!(s.palette(PaletteId::new(2)).is_none());
+        // The survivors keep their order.
+        let ids: Vec<u32> = s.palettes.iter().map(|p| p.id.get()).collect();
+        assert_eq!(ids, vec![1, 3]);
+    }
+
+    #[test]
+    fn delete_palette_refuses_the_last_palette() {
+        let mut s = sprite_with_palettes(1);
+        assert!(!s.delete_palette(PaletteId::new(1)), "the only palette cannot be deleted");
+        assert_eq!(s.palettes.len(), 1, "the sprite always keeps at least one palette");
+    }
+
+    #[test]
+    fn delete_palette_absent_id_is_a_noop() {
+        let mut s = sprite_with_palettes(2);
+        assert!(!s.delete_palette(PaletteId::new(99)));
+        assert_eq!(s.palettes.len(), 2);
+    }
+
+    #[rstest]
+    #[case("Skin tones", true, "Skin tones")]
+    #[case("  trimmed  ", true, "trimmed")]
+    #[case("", false, "p0")] // empty rejected, name unchanged
+    #[case("   ", false, "p0")] // whitespace-only rejected
+    fn rename_palette_trims_and_rejects_blank(#[case] input: &str, #[case] applied: bool, #[case] expect: &str) {
+        let mut s = sprite_with_palettes(1);
+        assert_eq!(s.rename_palette(PaletteId::new(1), input), applied);
+        assert_eq!(s.palette(PaletteId::new(1)).expect("palette present").name, expect);
+    }
+
+    #[test]
+    fn rename_palette_absent_id_is_a_noop() {
+        let mut s = sprite_with_palettes(1);
+        assert!(!s.rename_palette(PaletteId::new(42), "nope"));
     }
 }

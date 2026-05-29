@@ -11,7 +11,7 @@ use std::collections::{BTreeSet, VecDeque};
 
 use eframe::egui;
 use pixhaus_core::canvas::{BrushShape, DitherPattern, PixelBuffer};
-use pixhaus_core::project::{Frame, IVec2, LayerId, PixelBufferId, Rgba, Size};
+use pixhaus_core::project::{Frame, IVec2, LayerId, PaletteId, PixelBufferId, Rgba, Size};
 use pixhaus_core::selection::SelectionMask;
 use pixhaus_core::undo::History;
 
@@ -545,6 +545,13 @@ pub struct EditorState {
     pub selection_mode: SelectionMode,
     /// Onion-skin settings.
     pub onion: OnionConfig,
+    /// Palette panel: the switcher's selected palette, by id. `None` until a
+    /// sprite is selected or while the selection points at no live palette, in
+    /// which case the panel falls back to the sprite's first palette (see
+    /// [`DocumentStore::active_palette_by_id`]). Drives which palette the panel
+    /// shows and every palette edit lands on. View state, never serialized; a
+    /// sprite switch or a palette delete re-points it at the first palette.
+    pub active_palette_id: Option<PaletteId>,
     /// Palette panel: lock the grid against accidental reordering.
     pub lock_palette_grid: bool,
     /// Palette panel: swatch edge length in points.
@@ -704,6 +711,7 @@ impl Default for EditorState {
             selection: None,
             selection_mode: SelectionMode::default(),
             onion: OnionConfig::default(),
+            active_palette_id: None,
             lock_palette_grid: false,
             swatch_size: 18.0,
             editing_swatch: None,
