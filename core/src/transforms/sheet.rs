@@ -1,301 +1,478 @@
-//! Grid-sheet slicing: cut one composite sheet into ordered cell buffers.
+//! Grid-sheet slicing: cut a single image into a row-major grid of cells.
 //!
-//! This is the inverse of laying frames out in a grid. A creative model paints
-//! one `rows × cols` sheet on a solid key background; the deterministic slicer
-//! cuts it into cells the normalize/key tail then cleans. The slicer makes no
-//! aesthetic decision — it only decides geometry, so the same `(rows, cols)` (or
-//! the same explicit rects) reproduces the same cuts.
-//!
-//! Two entry points:
-//!
-//! - [`slice_grid`] cuts `rows * cols` equal cells, row-major. Cell size is
-//!   floor-divided, so a sheet whose dimensions are not a clean multiple of the
-//!   grid drops the trailing remainder rather than emitting a short final cell.
-//!   That keeps every cell uniform, which the shared-scale normalize pass needs.
-//! - [`slice_rects`] cuts at explicit `(x, y, w, h)` rectangles, for Structures
-//!   that declare gutters, labels, or a palette swatch the naive grid would
-//!   mis-cut. Each rect is clamped to the sheet by the underlying [`crop`].
-//!
-//! Both loop over the existing public [`crop`] — there is no new pixel-copy
-//! primitive here, only the cell math.
+//! The AI static-sheet path asks an image backend for one sheet that packs every
+//! animation frame into a grid, then slices it back into frames. This module owns
+//! the slicing half.
 
-use crate::canvas::buffer::PixelBuffer;
+use serde::{Deserialize, Serialize};
 
 use super::error::{Error, Result};
 use super::resize::crop;
+use crate::canvas::buffer::PixelBuffer;
 
-/// Cuts `sheet` into `rows * cols` equal cells in row-major order.
+/// The slicing geometry for a grid sheet. All margins are in sheet pixels.
 ///
-/// Cell dimensions are floor-divided (`sheet.width() / cols`,
-/// `sheet.height() / rows`); any trailing remainder on the right or bottom edge
-/// is dropped so every returned cell is the same size. The result is ordered
-/// left-to-right within a row, then top-to-bottom — cell `r * cols + c` is the
-/// sub-rect rooted at `(c * cell_w, r * cell_h)`. Deterministic.
+/// A sheet is cut into `rows * cols` cells, row-major (left to right, top to
+/// bottom). `offset_x`/`offset_y` move the grid origin in from the top-left
+/// (for a sheet with a border), `gutter_x`/`gutter_y` are the gaps between
+/// cells, and `inset` trims every cell inward on all four sides (to drop a
+/// per-cell border without changing the grid spacing).
+///
+/// [`SliceGrid::uniform`] builds the zero-margin case that reproduces
+/// [`slice_grid`] exactly.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SliceGrid {
+    /// Number of rows (cells down).
+    pub rows: u32,
+    /// Number of columns (cells across).
+    pub cols: u32,
+    /// Pixels skipped on the left before the first column.
+    pub offset_x: u32,
+    /// Pixels skipped on the top before the first row.
+    pub offset_y: u32,
+    /// Horizontal gap between adjacent columns.
+    pub gutter_x: u32,
+    /// Vertical gap between adjacent rows.
+    pub gutter_y: u32,
+    /// Per-cell inward trim applied on all four sides.
+    pub inset: u32,
+}
+
+impl SliceGrid {
+    /// Build the zero-margin grid: `rows * cols` cells with no offset, gutter,
+    /// or inset.
+    ///
+    /// This is the configuration that reproduces [`slice_grid`] exactly.
+    pub fn uniform(rows: u32, cols: u32) -> Self {
+        SliceGrid {
+            rows,
+            cols,
+            offset_x: 0,
+            offset_y: 0,
+            gutter_x: 0,
+            gutter_y: 0,
+            inset: 0,
+        }
+    }
+}
+
+/// Cut `sheet` into `rows * cols` equal cells, row-major (left to right, top to
+/// bottom).
+///
+/// Every cell is the same size: `width / cols` by `height / rows`. Remainder
+/// pixels on the right and bottom edges are dropped, matching how the static
+/// sheet packs frames on an exact grid.
 ///
 /// # Errors
 ///
-/// [`Error::EmptyBuffer`] when `sheet` is 0×0, when `rows` or `cols` is 0, or
-/// when the floor-divided cell size collapses to zero (the grid is finer than
-/// the sheet on an axis).
+/// Returns [`Error::EmptyBuffer`] if `sheet` has zero area, if `rows` or `cols`
+/// is zero, or if either derived cell dimension would be zero.
 pub fn slice_grid(sheet: &PixelBuffer, rows: u32, cols: u32) -> Result<Vec<PixelBuffer>> {
-    if sheet.is_empty() || rows == 0 || cols == 0 {
+    if rows == 0 || cols == 0 {
         return Err(Error::EmptyBuffer);
     }
     let cell_w = sheet.width() / cols;
     let cell_h = sheet.height() / rows;
+    slice_grid_impl(sheet, rows, cols, cell_w, cell_h)
+}
+
+fn slice_grid_impl(sheet: &PixelBuffer, rows: u32, cols: u32, cell_w: u32, cell_h: u32) -> Result<Vec<PixelBuffer>> {
     if cell_w == 0 || cell_h == 0 {
         return Err(Error::EmptyBuffer);
     }
-
-    let mut cells = Vec::with_capacity((rows as usize) * (cols as usize));
+    let mut cells = Vec::with_capacity((rows * cols) as usize);
     for r in 0..rows {
         for c in 0..cols {
-            // `c < cols` and `r < rows`, so `c * cell_w < cols * cell_w <=
-            // width` and likewise for the height — the origin is always inside
-            // the sheet and the floor-divided cell never overhangs.
-            cells.push(crop(sheet, c * cell_w, r * cell_h, cell_w, cell_h)?);
+            let x = c * cell_w;
+            let y = r * cell_h;
+            let cell = crop(sheet, x, y, cell_w, cell_h)?;
+            cells.push(cell);
         }
     }
     Ok(cells)
 }
 
-/// Cuts `sheet` at the explicit `(x, y, w, h)` rectangles, one cell per rect, in
-/// the order given.
+/// Cut `sheet` into cells per `spec`, row-major (left to right, top to bottom).
 ///
-/// Each rect is passed verbatim to [`crop`], which clamps it to the sheet: a
-/// rect that overhangs an edge yields a cell of the requested size with the
-/// out-of-bounds region left transparent, never an error. Use this over
-/// [`slice_grid`] when a Structure declares gutters or a non-cell region (a
-/// label row, a palette swatch) the uniform grid would mis-cut.
+/// The cell size is derived from the sheet size and the grid margins:
+///
+/// ```text
+/// cell_w = (width  - offset_x - (cols - 1) * gutter_x) / cols
+/// cell_h = (height - offset_y - (rows - 1) * gutter_y) / rows
+/// ```
+///
+/// Cell `(r, c)` is rooted at `(offset_x + c * (cell_w + gutter_x) + inset,
+/// offset_y + r * (cell_h + gutter_y) + inset)` with size
+/// `(cell_w - 2 * inset, cell_h - 2 * inset)`. Every cut routes through
+/// [`crop`]. A [`SliceGrid::uniform`] spec reproduces [`slice_grid`] exactly.
+///
+/// All margin arithmetic saturates, so an over-large margin or inset collapses
+/// a derived dimension to zero rather than wrapping.
 ///
 /// # Errors
 ///
-/// [`Error::EmptyBuffer`] when `sheet` is 0×0, when `rects` is empty, or when
-/// any rect has zero width or height (a zero-area cell yields no buffer).
-pub fn slice_rects(sheet: &PixelBuffer, rects: &[(u32, u32, u32, u32)]) -> Result<Vec<PixelBuffer>> {
-    if sheet.is_empty() || rects.is_empty() {
+/// Returns [`Error::EmptyBuffer`] if `rows` or `cols` is zero, or if any
+/// derived dimension collapses to zero (a margin larger than the sheet, or an
+/// inset that eats the whole cell).
+pub fn slice_grid_spec(sheet: &PixelBuffer, spec: &SliceGrid) -> Result<Vec<PixelBuffer>> {
+    let SliceGrid {
+        rows,
+        cols,
+        offset_x,
+        offset_y,
+        gutter_x,
+        gutter_y,
+        inset,
+    } = *spec;
+
+    if rows == 0 || cols == 0 {
         return Err(Error::EmptyBuffer);
     }
+
+    // Width left for the columns after the leading offset and the inter-column
+    // gutters, then divided evenly. Saturating subtraction means an over-large
+    // margin yields zero usable width, which the cell-size guard rejects below.
+    let cols_gutter = gutter_x.saturating_mul(cols - 1);
+    let rows_gutter = gutter_y.saturating_mul(rows - 1);
+    let usable_w = sheet.width().saturating_sub(offset_x).saturating_sub(cols_gutter);
+    let usable_h = sheet.height().saturating_sub(offset_y).saturating_sub(rows_gutter);
+    let cell_w = usable_w / cols;
+    let cell_h = usable_h / rows;
+
+    // The inset trims both sides, so it consumes `2 * inset` of the cell.
+    let inset2 = inset.saturating_mul(2);
+    let inner_w = cell_w.saturating_sub(inset2);
+    let inner_h = cell_h.saturating_sub(inset2);
+    if inner_w == 0 || inner_h == 0 {
+        return Err(Error::EmptyBuffer);
+    }
+
+    let mut cells = Vec::with_capacity((rows * cols) as usize);
+    for r in 0..rows {
+        for c in 0..cols {
+            let x = offset_x + c * (cell_w + gutter_x) + inset;
+            let y = offset_y + r * (cell_h + gutter_y) + inset;
+            let cell = crop(sheet, x, y, inner_w, inner_h)?;
+            cells.push(cell);
+        }
+    }
+    Ok(cells)
+}
+
+/// Cut `sheet` into the rectangles in `rects` (each `(x, y, w, h)`), in order.
+///
+/// # Errors
+///
+/// Returns [`Error::EmptyBuffer`] if any rectangle has zero area or escapes the
+/// sheet bounds.
+pub fn slice_rects(sheet: &PixelBuffer, rects: &[(u32, u32, u32, u32)]) -> Result<Vec<PixelBuffer>> {
     rects.iter().map(|&(x, y, w, h)| crop(sheet, x, y, w, h)).collect()
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::project::Rgba;
-
+    use crate::canvas::buffer::PixelBuffer;
     use proptest::prelude::*;
+    use rstest::rstest;
 
-    fn color(seed: u8) -> Rgba {
-        Rgba::opaque(seed, 255 - seed, 128)
+    /// Build a sheet where each pixel encodes its (x, y) so cuts are checkable:
+    /// the red channel is the low byte of x, green the low byte of y.
+    fn gradient_sheet(width: u32, height: u32) -> PixelBuffer {
+        let mut px = Vec::with_capacity((width * height * 4) as usize);
+        for y in 0..height {
+            for x in 0..width {
+                // Low byte only; `& 0xff` keeps each value in 0..=255.
+                px.push(low_byte(x));
+                px.push(low_byte(y));
+                px.push(0);
+                px.push(255);
+            }
+        }
+        PixelBuffer::from_raw(width, height, width * 4, px).expect("valid buffer")
     }
 
-    /// A `cols`-wide, `rows`-tall sheet of `cell`-sized blocks, each block filled
-    /// with a distinct opaque colour keyed off its row-major index, on a magenta
-    /// surround so a remainder strip is visibly not a cell.
-    fn block_sheet(rows: u32, cols: u32, cell: u32, pad_right: u32, pad_bottom: u32) -> PixelBuffer {
-        let width = cols * cell + pad_right;
-        let height = rows * cell + pad_bottom;
-        let mut sheet = PixelBuffer::filled(width, height, Rgba::opaque(255, 0, 255)).expect("sheet");
-        for r in 0..rows {
-            for c in 0..cols {
-                #[allow(clippy::cast_possible_truncation)]
-                let fill = color((r * cols + c) as u8);
-                for y in 0..cell {
-                    for x in 0..cell {
-                        sheet.set_pixel(c * cell + x, r * cell + y, fill);
-                    }
-                }
-            }
-        }
-        sheet
+    /// The low byte of `v` as a `u8`, masked so the cast can never truncate.
+    fn low_byte(v: u32) -> u8 {
+        u8::try_from(v & 0xff).expect("masked to a single byte")
     }
 
-    mod slice_grid {
-        use super::*;
+    /// The top-left pixel of a cell, as the `(x, y)` it encodes.
+    fn corner(cell: &PixelBuffer) -> (u8, u8) {
+        let px = cell.pixel(0, 0).expect("cell has a top-left pixel");
+        (px.r, px.g)
+    }
 
-        #[test]
-        fn cuts_a_2x2_sheet_into_four_row_major_cells() {
-            // One distinct opaque square per quadrant; the cut order is
-            // top-left, top-right, bottom-left, bottom-right.
-            let sheet = block_sheet(2, 2, 3, 0, 0);
-            let cells = slice_grid(&sheet, 2, 2).expect("slice");
-            assert_eq!(cells.len(), 4);
-            for (i, cell) in cells.iter().enumerate() {
-                assert_eq!((cell.width(), cell.height()), (3, 3), "cell {i} size");
-                #[allow(clippy::cast_possible_truncation)]
-                let expected = color(i as u8);
-                assert_eq!(cell.pixel(1, 1), Some(expected), "cell {i} centre colour");
-            }
-        }
-
-        #[test]
-        fn cell_origin_matches_row_major_quadrant() {
-            // Pin the geometry: cell (r, c) is rooted at (c*cell_w, r*cell_h).
-            // The bottom-right cell's top-left pixel is the sheet's (3, 3).
-            let sheet = block_sheet(2, 2, 3, 0, 0);
-            let cells = slice_grid(&sheet, 2, 2).expect("slice");
-            let bottom_right = &cells[3];
-            assert_eq!(bottom_right.pixel(0, 0), sheet.pixel(3, 3));
-            assert_eq!(bottom_right.pixel(2, 2), sheet.pixel(5, 5));
-        }
-
-        #[test]
-        fn drops_the_trailing_remainder_so_cells_stay_uniform() {
-            // A 7-wide sheet over 2 cols floor-divides to 3-wide cells; the 7th
-            // column is dropped, not folded into a short final cell.
-            let sheet = block_sheet(2, 2, 3, 1, 1);
-            let cells = slice_grid(&sheet, 2, 2).expect("slice");
-            assert_eq!(cells.len(), 4);
-            for cell in &cells {
-                assert_eq!((cell.width(), cell.height()), (3, 3), "uniform cell size");
-            }
-        }
-
-        #[test]
-        fn errors_on_empty_sheet() {
-            assert_eq!(slice_grid(&PixelBuffer::empty(), 2, 2), Err(Error::EmptyBuffer));
-        }
-
-        #[test]
-        fn errors_on_zero_rows_or_cols() {
-            let sheet = block_sheet(2, 2, 3, 0, 0);
-            assert_eq!(slice_grid(&sheet, 0, 2), Err(Error::EmptyBuffer));
-            assert_eq!(slice_grid(&sheet, 2, 0), Err(Error::EmptyBuffer));
-        }
-
-        #[test]
-        fn errors_when_the_grid_is_finer_than_the_sheet() {
-            // A 4-wide sheet over 5 cols floor-divides to a zero-wide cell.
-            let sheet = block_sheet(1, 4, 1, 0, 0);
-            assert_eq!(slice_grid(&sheet, 1, 5), Err(Error::EmptyBuffer));
-        }
-
-        #[test]
-        fn one_by_one_returns_the_whole_sheet() {
-            let sheet = block_sheet(1, 1, 4, 0, 0);
-            let cells = slice_grid(&sheet, 1, 1).expect("slice");
-            assert_eq!(cells.len(), 1);
-            assert_eq!(cells[0], sheet);
+    #[rstest]
+    #[case(2, 2)]
+    #[case(1, 4)]
+    #[case(4, 1)]
+    #[case(3, 5)]
+    fn slices_into_equal_cells(#[case] rows: u32, #[case] cols: u32) {
+        let sheet = gradient_sheet(64, 64);
+        let cells = slice_grid(&sheet, rows, cols).expect("slice");
+        assert_eq!(cells.len() as u32, rows * cols);
+        let cell_w = 64 / cols;
+        let cell_h = 64 / rows;
+        for cell in &cells {
+            assert_eq!(cell.width(), cell_w);
+            assert_eq!(cell.height(), cell_h);
         }
     }
 
-    mod slice_rects {
-        use super::*;
+    #[test]
+    fn rejects_zero_grid() {
+        let sheet = gradient_sheet(16, 16);
+        assert!(matches!(slice_grid(&sheet, 0, 4), Err(Error::EmptyBuffer)));
+        assert!(matches!(slice_grid(&sheet, 4, 0), Err(Error::EmptyBuffer)));
+    }
 
-        #[test]
-        fn cuts_non_uniform_cells_at_the_given_rects() {
-            // Two cells of different sizes, plus a gutter the rects skip over.
-            let sheet = block_sheet(1, 2, 4, 0, 0);
-            let rects = [(0, 0, 4, 4), (5, 0, 3, 4)];
-            let cells = slice_rects(&sheet, &rects).expect("slice");
-            assert_eq!(cells.len(), 2);
-            assert_eq!((cells[0].width(), cells[0].height()), (4, 4));
-            assert_eq!((cells[1].width(), cells[1].height()), (3, 4));
-            assert_eq!(cells[0].pixel(0, 0), Some(color(0)));
+    #[test]
+    fn rejects_cell_smaller_than_grid() {
+        let sheet = gradient_sheet(2, 2);
+        assert!(matches!(slice_grid(&sheet, 4, 4), Err(Error::EmptyBuffer)));
+    }
+
+    #[test]
+    fn uniform_builds_zero_margin_grid() {
+        let grid = SliceGrid::uniform(2, 3);
+        assert_eq!(grid.rows, 2);
+        assert_eq!(grid.cols, 3);
+        assert_eq!(grid.offset_x, 0);
+        assert_eq!(grid.offset_y, 0);
+        assert_eq!(grid.gutter_x, 0);
+        assert_eq!(grid.gutter_y, 0);
+        assert_eq!(grid.inset, 0);
+    }
+
+    /// The load-bearing invariant: a uniform spec slices byte-identically to the
+    /// zero-margin `slice_grid`.
+    #[rstest]
+    #[case(64, 64, 2, 2)]
+    #[case(64, 64, 1, 4)]
+    #[case(64, 64, 4, 1)]
+    #[case(48, 60, 3, 5)]
+    #[case(30, 30, 7, 7)]
+    fn uniform_matches_slice_grid(#[case] width: u32, #[case] height: u32, #[case] rows: u32, #[case] cols: u32) {
+        let sheet = gradient_sheet(width, height);
+        let plain = slice_grid(&sheet, rows, cols).expect("slice_grid");
+        let spec = slice_grid_spec(&sheet, &SliceGrid::uniform(rows, cols)).expect("slice_grid_spec");
+        assert_eq!(plain.len(), spec.len());
+        for (a, b) in plain.iter().zip(spec.iter()) {
+            assert_eq!(a.width(), b.width());
+            assert_eq!(a.height(), b.height());
+            assert_eq!(a.as_bytes(), b.as_bytes());
         }
+    }
 
-        #[test]
-        fn clamps_an_overhanging_rect_to_transparent() {
-            // A rect rooted inside the sheet but overhanging the right/bottom
-            // edge yields a full-size cell with the off-sheet region transparent.
-            let sheet = block_sheet(1, 1, 2, 0, 0);
-            let cells = slice_rects(&sheet, &[(1, 1, 3, 3)]).expect("slice");
-            assert_eq!((cells[0].width(), cells[0].height()), (3, 3));
-            let opaque = cells[0].pixels().filter(|p| p.a != 0).count();
-            assert_eq!(opaque, 1, "only the one in-bounds pixel is copied");
+    #[test]
+    fn offset_shifts_the_grid_origin() {
+        // A 64x64 sheet, 2x2 grid, offset 8 px in from the top-left. Usable area
+        // is 56x56, so each cell is 28x28 and the first cell starts at (8, 8).
+        let sheet = gradient_sheet(64, 64);
+        let spec = SliceGrid {
+            offset_x: 8,
+            offset_y: 8,
+            ..SliceGrid::uniform(2, 2)
+        };
+        let cells = slice_grid_spec(&sheet, &spec).expect("slice");
+        assert_eq!(cells.len(), 4);
+        for cell in &cells {
+            assert_eq!(cell.width(), 28);
+            assert_eq!(cell.height(), 28);
         }
+        assert_eq!(corner(&cells[0]), (8, 8));
+        assert_eq!(corner(&cells[1]), (36, 8));
+        assert_eq!(corner(&cells[2]), (8, 36));
+        assert_eq!(corner(&cells[3]), (36, 36));
+    }
 
-        #[test]
-        fn errors_on_empty_rect_list() {
-            let sheet = block_sheet(1, 1, 2, 0, 0);
-            assert_eq!(slice_rects(&sheet, &[]), Err(Error::EmptyBuffer));
+    #[test]
+    fn gutter_inserts_gaps_between_cells() {
+        // 64x64 sheet, 2x2 grid, 4 px gutter both ways. Usable width is
+        // 64 - (2-1)*4 = 60, so each cell is 30x30. Cell stride is cell + gutter
+        // = 34, so the second column starts at x = 34.
+        let sheet = gradient_sheet(64, 64);
+        let spec = SliceGrid {
+            gutter_x: 4,
+            gutter_y: 4,
+            ..SliceGrid::uniform(2, 2)
+        };
+        let cells = slice_grid_spec(&sheet, &spec).expect("slice");
+        for cell in &cells {
+            assert_eq!(cell.width(), 30);
+            assert_eq!(cell.height(), 30);
         }
+        assert_eq!(corner(&cells[0]), (0, 0));
+        assert_eq!(corner(&cells[1]), (34, 0));
+        assert_eq!(corner(&cells[2]), (0, 34));
+        assert_eq!(corner(&cells[3]), (34, 34));
+    }
 
-        #[test]
-        fn errors_on_a_zero_area_rect() {
-            let sheet = block_sheet(1, 1, 2, 0, 0);
-            assert_eq!(slice_rects(&sheet, &[(0, 0, 0, 2)]), Err(Error::EmptyBuffer));
+    #[test]
+    fn inset_trims_each_cell_inward() {
+        // 64x64 sheet, 2x2 grid (32x32 cells), inset 4 px. Each cell shrinks to
+        // 24x24 and its origin moves in by the inset.
+        let sheet = gradient_sheet(64, 64);
+        let spec = SliceGrid {
+            inset: 4,
+            ..SliceGrid::uniform(2, 2)
+        };
+        let cells = slice_grid_spec(&sheet, &spec).expect("slice");
+        for cell in &cells {
+            assert_eq!(cell.width(), 24);
+            assert_eq!(cell.height(), 24);
         }
+        assert_eq!(corner(&cells[0]), (4, 4));
+        assert_eq!(corner(&cells[1]), (36, 4));
+        assert_eq!(corner(&cells[2]), (4, 36));
+        assert_eq!(corner(&cells[3]), (36, 36));
+    }
 
+    #[rstest]
+    // Zero rows or cols.
+    #[case(SliceGrid::uniform(0, 4))]
+    #[case(SliceGrid::uniform(4, 0))]
+    // Offset larger than the sheet.
+    #[case(SliceGrid { offset_x: 100, ..SliceGrid::uniform(2, 2) })]
+    #[case(SliceGrid { offset_y: 100, ..SliceGrid::uniform(2, 2) })]
+    // Gutters that consume the whole sheet.
+    #[case(SliceGrid { gutter_x: 100, ..SliceGrid::uniform(2, 2) })]
+    // An inset that eats the whole cell (32x32 cells, inset 16 leaves nothing).
+    #[case(SliceGrid { inset: 16, ..SliceGrid::uniform(2, 2) })]
+    fn rejects_collapsed_dimensions(#[case] spec: SliceGrid) {
+        let sheet = gradient_sheet(64, 64);
+        assert!(matches!(slice_grid_spec(&sheet, &spec), Err(Error::EmptyBuffer)));
+    }
+
+    #[test]
+    fn slice_grid_spec_round_trips_through_rmp() {
+        let grid = SliceGrid {
+            rows: 3,
+            cols: 5,
+            offset_x: 2,
+            offset_y: 4,
+            gutter_x: 1,
+            gutter_y: 1,
+            inset: 2,
+        };
+        let bytes = rmp_serde::to_vec(&grid).expect("encode");
+        let back: SliceGrid = rmp_serde::from_slice(&bytes).expect("decode");
+        assert_eq!(grid, back);
+    }
+
+    proptest! {
         #[test]
-        fn errors_on_empty_sheet() {
-            assert_eq!(slice_rects(&PixelBuffer::empty(), &[(0, 0, 1, 1)]), Err(Error::EmptyBuffer));
+        fn slice_grid_never_panics(
+            width in 1u32..=128,
+            height in 1u32..=128,
+            rows in 1u32..=16,
+            cols in 1u32..=16,
+        ) {
+            let sheet = gradient_sheet(width, height);
+            let _ = slice_grid(&sheet, rows, cols);
         }
     }
 
     proptest! {
-        /// Random sheet sizes and grids never panic and yield exactly
-        /// `rows * cols` cells, each the floor-divided cell size.
         #[test]
-        fn slice_grid_yields_uniform_cells(
-            width in 1u32..=64,
-            height in 1u32..=64,
-            rows in 1u32..=8,
-            cols in 1u32..=8,
+        fn slice_grid_yields_grid_cells(
+            cells_w in 1u32..=8,
+            cells_h in 1u32..=8,
+            cell in 1u32..=16,
         ) {
-            let sheet = PixelBuffer::filled(width, height, Rgba::opaque(255, 0, 255)).expect("sheet");
-            let cell_w = width / cols;
-            let cell_h = height / rows;
-            match slice_grid(&sheet, rows, cols) {
-                Ok(cells) => {
-                    // Cells are produced only when both axes have room.
-                    prop_assert!(cell_w > 0 && cell_h > 0);
-                    prop_assert_eq!(cells.len(), (rows as usize) * (cols as usize));
-                    for cell in &cells {
-                        prop_assert_eq!((cell.width(), cell.height()), (cell_w, cell_h));
-                    }
-                }
-                Err(Error::EmptyBuffer) => {
-                    // The only failure is a collapsed cell on a finer-than-sheet grid.
-                    prop_assert!(cell_w == 0 || cell_h == 0);
-                }
-                Err(other) => prop_assert!(false, "unexpected error: {other:?}"),
+            let width = cells_w * cell;
+            let height = cells_h * cell;
+            let sheet = gradient_sheet(width, height);
+            let cells = slice_grid(&sheet, cells_h, cells_w).expect("slice");
+            prop_assert_eq!(cells.len() as u32, cells_w * cells_h);
+            for c in &cells {
+                prop_assert_eq!(c.width(), cell);
+                prop_assert_eq!(c.height(), cell);
             }
         }
     }
 
-    /// Visual regression: a 2×3 sheet sliced into six cells, recomposited into a
-    /// single horizontal strip, compared against a committed baseline PNG.
-    /// Regenerate with `PIXHAUS_UPDATE_SNAPSHOTS=1 cargo test -p pixhaus-core
-    /// slice_grid_strip_matches_baseline` after an intentional change, and audit
-    /// the new image in the PR.
-    #[test]
-    fn slice_grid_strip_matches_baseline() {
-        use std::path::Path;
+    proptest! {
+        #[test]
+        fn slice_grid_spec_never_panics(
+            width in 1u32..=128,
+            height in 1u32..=128,
+            rows in 0u32..=16,
+            cols in 0u32..=16,
+            offset_x in 0u32..=32,
+            offset_y in 0u32..=32,
+            gutter_x in 0u32..=16,
+            gutter_y in 0u32..=16,
+            inset in 0u32..=16,
+        ) {
+            let sheet = gradient_sheet(width, height);
+            let spec = SliceGrid {
+                rows,
+                cols,
+                offset_x,
+                offset_y,
+                gutter_x,
+                gutter_y,
+                inset,
+            };
+            let _ = slice_grid_spec(&sheet, &spec);
+        }
+    }
 
-        let sheet = block_sheet(2, 3, 8, 0, 0);
-        let cells = slice_grid(&sheet, 2, 3).expect("slice");
-        let cell = 8u32;
-        #[allow(clippy::cast_possible_truncation)]
-        let strip_w = cell * cells.len() as u32;
-        let mut strip = PixelBuffer::new(strip_w, cell).expect("strip");
-        for (i, c) in cells.iter().enumerate() {
-            #[allow(clippy::cast_possible_truncation)]
-            let ox = i as u32 * cell;
-            for y in 0..cell {
-                for x in 0..cell {
-                    if let Some(px) = c.pixel(x, y) {
-                        strip.set_pixel(ox + x, y, px);
+    proptest! {
+        #[test]
+        fn slice_grid_spec_yields_derived_cells(
+            cols in 1u32..=8,
+            rows in 1u32..=8,
+            cell in 2u32..=16,
+            offset_x in 0u32..=8,
+            offset_y in 0u32..=8,
+            gutter_x in 0u32..=4,
+            gutter_y in 0u32..=4,
+            inset in 0u32..=1,
+        ) {
+            // Size the sheet so the derived cell width and height are exact: the
+            // usable span divides evenly into `cell`-wide cells.
+            let width = offset_x + cols * cell + (cols - 1) * gutter_x;
+            let height = offset_y + rows * cell + (rows - 1) * gutter_y;
+            let sheet = gradient_sheet(width, height);
+            let spec = SliceGrid {
+                rows,
+                cols,
+                offset_x,
+                offset_y,
+                gutter_x,
+                gutter_y,
+                inset,
+            };
+            match slice_grid_spec(&sheet, &spec) {
+                Ok(cells) => {
+                    prop_assert_eq!(cells.len() as u32, rows * cols);
+                    let inner = cell - 2 * inset;
+                    for c in &cells {
+                        prop_assert_eq!(c.width(), inner);
+                        prop_assert_eq!(c.height(), inner);
                     }
                 }
+                Err(Error::EmptyBuffer) => {
+                    // Only an inset that eats the whole cell collapses here.
+                    prop_assert!(cell <= 2 * inset);
+                }
+                Err(e) => prop_assert!(false, "unexpected error: {e:?}"),
             }
         }
-        let actual: image::RgbaImage =
-            image::RgbaImage::from_raw(strip.width(), strip.height(), strip.as_bytes().to_vec()).expect("strip bytes form a valid RGBA image");
+    }
 
-        let baseline_path = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/snapshots/slice_grid_strip.png");
-        if std::env::var_os("PIXHAUS_UPDATE_SNAPSHOTS").is_some() {
-            if let Some(dir) = baseline_path.parent() {
-                std::fs::create_dir_all(dir).expect("create snapshot dir");
-            }
-            actual.save(&baseline_path).expect("write baseline png");
-            return;
-        }
-        let baseline = image::open(&baseline_path)
-            .expect("baseline png is present; regenerate with PIXHAUS_UPDATE_SNAPSHOTS=1")
-            .to_rgba8();
-        let result = image_compare::rgba_hybrid_compare(&actual, &baseline).expect("image dimensions match");
-        assert!(result.score >= 0.999, "sliced strip diverged from baseline: score = {}", result.score);
+    #[test]
+    fn slice_rects_cuts_named_regions() {
+        let sheet = gradient_sheet(32, 32);
+        let rects = [(0u32, 0u32, 8u32, 8u32), (8, 8, 16, 16)];
+        let cells = slice_rects(&sheet, &rects).expect("slice");
+        assert_eq!(cells.len(), 2);
+        assert_eq!(cells[0].width(), 8);
+        assert_eq!(cells[0].height(), 8);
+        assert_eq!(cells[1].width(), 16);
+        assert_eq!(cells[1].height(), 16);
     }
 }
