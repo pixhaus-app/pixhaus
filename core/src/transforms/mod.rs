@@ -40,6 +40,7 @@ pub mod perspective;
 pub mod resize;
 pub mod rotate;
 pub mod scale;
+pub mod sheet;
 pub mod skew;
 
 pub use antialias::{MlaaConfig, morphological_antialias};
@@ -56,4 +57,5 @@ pub use perspective::perspective;
 pub use resize::{CanvasAnchor, crop, resize_canvas};
 pub use rotate::{RotationAlgorithm, rotate, rotate_90_ccw, rotate_90_cw, rotate_180, rotate_bilinear, rotate_nearest, rotate_rotsprite};
 pub use scale::{scale_integer, scale_integer_down, scale_nearest};
+pub use sheet::{slice_grid, slice_rects};
 pub use skew::{skew_x, skew_y};

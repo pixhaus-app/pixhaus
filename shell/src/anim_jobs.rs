@@ -381,6 +381,15 @@ impl AnimJobQueue {
         Some((bytes, job.mime))
     }
 
+    /// Total number of records the queue holds, across every entity and status.
+    /// Test-only: the static-sheet path must add none, and asserting the count is
+    /// unchanged is the regression guard against a future refactor reintroducing
+    /// a phantom i2v job record.
+    #[cfg(test)]
+    pub(crate) fn record_count(&self) -> usize {
+        self.jobs.len()
+    }
+
     /// Cancels a running job's token. Returns whether a token was present.
     pub(crate) fn cancel(&mut self, id: u64) -> bool {
         if let Some(token) = self.cancellations.remove(&id) {

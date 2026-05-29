@@ -12,7 +12,7 @@ use std::sync::mpsc::Sender;
 use base64::Engine as _;
 use eframe::egui;
 pub use pixhaus_ai::backends::ImageQuality;
-use pixhaus_ai::backends::fal::FalBackend;
+use pixhaus_ai::backends::fal::{FAL_FLUX_LORA, FalBackend};
 use pixhaus_ai::backends::openai::OpenAiBackend;
 use pixhaus_ai::backends::{
     ApiKeyStore, BackendError, BackendProxy, BackgroundRemovalRequest, ImageEditRequest, ImageGenRequest, ImageToVideoRequest, InferenceRequest,
@@ -34,6 +34,7 @@ use pixhaus_core::project::library::composition::{ArtStyleKind, PromptId, Prompt
 use pixhaus_core::project::{AnchorDirection, EntityId, PixelBufferId, ProjectMetadata, SheetVariantId};
 use pixhaus_core::transforms::finisher::{FinishOptions, finish_frames};
 use pixhaus_core::transforms::normalize::{ComponentMode, NormalizeOptions, normalize_frames};
+use pixhaus_core::transforms::sheet::slice_grid;
 use tokio::runtime::Handle;
 use tokio_util::sync::CancellationToken;
 
@@ -628,6 +629,186 @@ pub fn spawn_clip(
         }
         ctx.request_repaint();
     });
+}
+
+/// Parameters for a static grid-sheet animation: one image generation produces a
+/// `rows × cols` sheet on a solid key background, which is sliced into ordered
+/// frames. The no-video-model alternative to [`AnimJob`] — it carries none of
+/// i2v's per-clip state (model id, durable job queue, cancel token), only what a
+/// single image-gen request and the slice need.
+pub struct StaticSheetJob {
+    /// Target frame canvas size (width, height) the cells normalize to. Also the
+    /// per-cell size the sheet request is sized for: the requested sheet is
+    /// `canvas.0 * cols` wide by `canvas.1 * rows` tall.
+    pub canvas: (u32, u32),
+    /// Approved reference-sheet PNG used as the character anchor; passed as a
+    /// reference image so each cell stays on-model.
+    pub anchor_png: Vec<u8>,
+    /// The motion (choreography) prompt describing the action across the cells.
+    pub action_prompt: String,
+    /// Grid rows.
+    pub rows: u32,
+    /// Grid columns.
+    pub cols: u32,
+    /// Playback frames per second — sets each cell's timestamp (`i * 1000 / fps`).
+    pub fps: u32,
+    /// RNG seed for reproducibility. `None` uses a random seed each run.
+    pub seed: Option<u64>,
+}
+
+/// Builds the static-sheet positive prompt: the action, then the forge's
+/// containment contract for a sliced grid — a solid `#FF00FF` background and an
+/// exact `rows × cols` grid with one frame per cell at a constant scale and
+/// position. The magenta background is requested in the positive prompt (kept
+/// out of the negatives) so the model paints the flat key the slice→normalize
+/// tail removes; [`NormalizeOptions::square`] keys magenta by default.
+#[must_use]
+pub fn static_sheet_prompt(action_prompt: &str, rows: u32, cols: u32) -> String {
+    format!(
+        "{action_prompt}, animation frames laid out as an exact {rows} by {cols} grid, one frame per cell in reading order, \
+         identical subject scale and position in every cell, solid #FF00FF magenta background filling all empty space, \
+         no grid lines, no borders, no labels, no text"
+    )
+}
+
+/// Slices a decoded sheet into ordered [`VideoFrame`]s, row-major, one per grid
+/// cell, stamping each with a playback timestamp of `i * 1000 / fps`. The pure,
+/// blocking core of the static path — [`spawn_static_sheet`] runs it on a worker.
+///
+/// Cells are tightly packed (the slicer's `crop` allocates `width * 4` stride),
+/// so a cell's bytes are exactly its RGBA pixels.
+///
+/// # Errors
+/// Returns the slicer's error string when the sheet is empty or the grid is
+/// finer than the sheet on an axis.
+pub fn sheet_to_frames(sheet: &PixelBuffer, rows: u32, cols: u32, fps: u32) -> Result<Vec<VideoFrame>, String> {
+    let cells = slice_grid(sheet, rows, cols).map_err(|e| e.to_string())?;
+    let fps = fps.max(1);
+    Ok(cells
+        .into_iter()
+        .enumerate()
+        .map(|(i, cell)| {
+            // `i` is bounded by `rows * cols`; the millisecond product cannot
+            // overflow u32 for any realistic frame count.
+            #[allow(clippy::cast_possible_truncation)]
+            let timestamp_ms = (i as u64 * 1000 / u64::from(fps)) as u32;
+            VideoFrame {
+                width: cell.width(),
+                height: cell.height(),
+                pixels: cell.into_raw(),
+                timestamp_ms,
+            }
+        })
+        .collect())
+}
+
+/// Generates one solid-magenta `rows × cols` grid sheet conditioned on the
+/// anchor, decodes it, and slices the cells into ordered frames — the static,
+/// i2v-optional producer. It mirrors the video-import seam: the frames flow into
+/// the same Clip→Pick→Normalize→Land tail with no knowledge of their source.
+///
+/// Unlike [`spawn_clip`] this issues a single `IMAGE_GENERATION` request (no
+/// image-to-video step), so it carries no durable job id or cancel token. The
+/// decode and slice are CPU-bound and run on `spawn_blocking`. The frames arrive
+/// over `tx` as [`ShellMsg::StaticSheetReady`] tagged with `epoch`; a failure
+/// arrives as [`ShellMsg::StaticSheetFailed`].
+pub fn spawn_static_sheet(handle: &Handle, runtime: Arc<VerbRuntime>, ctx: egui::Context, tx: Sender<ShellMsg>, job: StaticSheetJob, epoch: u64) {
+    handle.spawn(async move {
+        let _ = tx.send(ShellMsg::ClipProgress {
+            epoch,
+            message: "generating grid sheet".to_owned(),
+        });
+        ctx.request_repaint();
+        match run_static_sheet(&runtime, job).await {
+            Ok((frames, action, fps, seed)) => {
+                let _ = tx.send(ShellMsg::StaticSheetReady {
+                    epoch,
+                    frames,
+                    action,
+                    fps,
+                    seed,
+                });
+            }
+            Err(error) => {
+                let _ = tx.send(ShellMsg::StaticSheetFailed { epoch, error });
+            }
+        }
+        ctx.request_repaint();
+    });
+}
+
+/// Picks the image backend for a `width` x `height` sheet, honouring the
+/// gpt-image-2 aspect clamp.
+///
+/// gpt-image-2 clamps every dimension to `[1024, 2048]` rounded to a multiple of
+/// 16 (`openai.rs`), capping aspect at 2:1. A wider-than-2:1 grid lands distorted
+/// with cells the slicer can no longer cut at a consistent scale, so it is routed
+/// to FAL Flux, which sets `image_size` verbatim with no aspect clamp. A
+/// roughly-square grid returns `None` so the runtime picks its preferred image
+/// backend (gpt-image-2 at its higher priority).
+fn sheet_backend(width: u32, height: u32) -> Option<String> {
+    let wide = u64::from(width) > 2 * u64::from(height) || u64::from(height) > 2 * u64::from(width);
+    wide.then(|| FAL_FLUX_LORA.to_owned())
+}
+
+/// The async body of [`spawn_static_sheet`]: build one sheet-sized image-gen
+/// request, invoke an `IMAGE_GENERATION` backend, decode the returned PNG, and
+/// slice it to frames on a blocking worker. Returns the frames plus the
+/// provenance the candidate needs (action prompt, fps, seed).
+async fn run_static_sheet(runtime: &VerbRuntime, job: StaticSheetJob) -> Result<(Vec<VideoFrame>, String, u32, Option<u64>), String> {
+    let StaticSheetJob {
+        canvas,
+        anchor_png,
+        action_prompt,
+        rows,
+        cols,
+        fps,
+        seed,
+    } = job;
+    let (cell_w, cell_h) = canvas;
+    // A sheet of cell-sized panels: cell_w * cols wide by cell_h * rows tall.
+    let width = cell_w.saturating_mul(cols).max(1);
+    let height = cell_h.saturating_mul(rows).max(1);
+    let cancel = CancellationToken::new();
+    let req = ImageGenRequest {
+        model: sheet_backend(width, height),
+        prompt: static_sheet_prompt(&action_prompt, rows, cols),
+        // The magenta background is requested positively; keep "background" out
+        // of the negatives so the model paints the flat key.
+        negative_prompt: Some("grid lines, borders, labels, text, particles, glow, motion blur".into()),
+        width,
+        height,
+        steps: None,
+        seed,
+        num_images: 1,
+        quality: None,
+        style_image: None,
+        reference_images: vec![anchor_png],
+    };
+    let sheet_png = match invoke_fat(runtime, BackendCapabilities::IMAGE_GENERATION, InferenceRequest::ImageGeneration(req), &cancel).await? {
+        InferenceResponse::Image(r) => r.images.into_iter().next().ok_or_else(|| "sheet backend returned no image".to_owned())?,
+        _ => return Err("unexpected response for grid-sheet generation".into()),
+    };
+    // Decode + slice are CPU-bound; keep them off the async worker.
+    let frames = tokio::task::spawn_blocking(move || {
+        let sheet = decode_sheet_png(&sheet_png)?;
+        sheet_to_frames(&sheet, rows, cols, fps)
+    })
+    .await
+    .map_err(|e| e.to_string())??;
+    if frames.is_empty() {
+        return Err("grid sheet sliced to zero frames".into());
+    }
+    Ok((frames, action_prompt, fps, seed))
+}
+
+/// Decodes sheet PNG bytes into a tightly packed RGBA [`PixelBuffer`]. The shell
+/// side of the static path keeps its own decoder so [`run_static_sheet`] depends
+/// on no UI-thread helper.
+fn decode_sheet_png(png: &[u8]) -> Result<PixelBuffer, String> {
+    let rgba = image::load_from_memory(png).map_err(|e| e.to_string())?.to_rgba8();
+    let (width, height) = (rgba.width(), rgba.height());
+    PixelBuffer::from_raw(width, height, width * 4, rgba.into_raw()).map_err(|e| e.to_string())
 }
 
 /// Spawns an AI background-removal of one timeline cel on the tokio runtime.
@@ -1420,5 +1601,96 @@ mod tests {
         };
         assert_eq!(landed.as_bytes(), before_bytes.as_slice(), "clean-HD frame bytes are untouched");
         assert_eq!(distinct_opaque_colors(&landed), before_colors, "clean-HD keeps the full colour set");
+    }
+
+    // ── Brief 9: the static grid-sheet producer ───────────────────────────
+
+    /// A `rows × cols` sheet of `cell`-sized panels, each panel a distinct opaque
+    /// colour keyed off its row-major index, on a magenta surround.
+    fn grid_sheet(rows: u32, cols: u32, cell: u32) -> pixhaus_core::canvas::PixelBuffer {
+        use pixhaus_core::project::Rgba;
+        let (w, h) = (cols * cell, rows * cell);
+        let mut sheet = pixhaus_core::canvas::PixelBuffer::filled(w, h, Rgba::opaque(255, 0, 255)).expect("sheet");
+        for r in 0..rows {
+            for c in 0..cols {
+                #[allow(clippy::cast_possible_truncation)]
+                let fill = Rgba::opaque((r * cols + c) as u8, 64, 200);
+                for y in 0..cell {
+                    for x in 0..cell {
+                        sheet.set_pixel(c * cell + x, r * cell + y, fill);
+                    }
+                }
+            }
+        }
+        sheet
+    }
+
+    #[test]
+    fn sheet_to_frames_slices_a_grid_into_ordered_frames() {
+        // A 2x3 sheet yields six frames in row-major order, each cell-sized.
+        let sheet = grid_sheet(2, 3, 4);
+        let frames = super::sheet_to_frames(&sheet, 2, 3, 10).expect("slice");
+        assert_eq!(frames.len(), 6, "rows * cols frames");
+        for f in &frames {
+            assert_eq!((f.width, f.height), (4, 4), "each frame is one cell");
+            assert_eq!(f.pixels.len() as u32, f.width * f.height * 4, "frames are tightly packed");
+        }
+        // The first frame's top-left colour is the row-major-0 panel colour.
+        assert_eq!(&frames[0].pixels[0..3], &[0u8, 64, 200]);
+        // The last frame is panel index 5.
+        assert_eq!(&frames[5].pixels[0..3], &[5u8, 64, 200]);
+    }
+
+    #[test]
+    fn sheet_to_frames_timestamps_are_spaced_by_fps() {
+        // Each frame's timestamp is i * 1000 / fps; at 10 fps that is 100ms apart.
+        let sheet = grid_sheet(1, 3, 2);
+        let frames = super::sheet_to_frames(&sheet, 1, 3, 10).expect("slice");
+        let stamps: Vec<u32> = frames.iter().map(|f| f.timestamp_ms).collect();
+        assert_eq!(stamps, vec![0, 100, 200]);
+    }
+
+    #[test]
+    fn sheet_to_frames_treats_zero_fps_as_one() {
+        // A zero fps must not divide by zero; it is clamped to 1 fps (1s apart).
+        let sheet = grid_sheet(1, 2, 2);
+        let frames = super::sheet_to_frames(&sheet, 1, 2, 0).expect("slice");
+        assert_eq!(frames.iter().map(|f| f.timestamp_ms).collect::<Vec<_>>(), vec![0, 1000]);
+    }
+
+    #[test]
+    fn sheet_to_frames_errors_on_an_empty_sheet() {
+        let empty = pixhaus_core::canvas::PixelBuffer::empty();
+        assert!(super::sheet_to_frames(&empty, 2, 2, 10).is_err(), "an empty sheet has no cells");
+    }
+
+    #[test]
+    fn static_sheet_prompt_states_the_magenta_and_grid_contract() {
+        let prompt = super::static_sheet_prompt("walk cycle, side view", 2, 3);
+        assert!(prompt.starts_with("walk cycle, side view"), "the action leads: {prompt}");
+        assert!(prompt.contains("#FF00FF"), "the magenta key is stated: {prompt}");
+        assert!(prompt.contains("2 by 3 grid"), "the grid shape is stated: {prompt}");
+        assert!(prompt.contains("no borders"), "borders are forbidden: {prompt}");
+    }
+
+    #[test]
+    fn sheet_backend_routes_wide_strips_off_gpt_image_2() {
+        use super::FAL_FLUX_LORA;
+        // A roughly-square grid stays on the runtime's preferred image backend.
+        assert_eq!(super::sheet_backend(1024, 1024), None, "square is within the 2:1 clamp");
+        assert_eq!(super::sheet_backend(2048, 1024), None, "exactly 2:1 is within the clamp");
+        assert_eq!(super::sheet_backend(1024, 2048), None, "exactly 1:2 is within the clamp");
+        // Beyond 2:1 on either axis the gpt-image-2 clamp would distort the
+        // cells, so the sheet is routed to FAL Flux instead.
+        assert_eq!(
+            super::sheet_backend(2049, 1024).as_deref(),
+            Some(FAL_FLUX_LORA),
+            "an 8-cell single-row strip exceeds 2:1 and routes to FAL"
+        );
+        assert_eq!(
+            super::sheet_backend(1024, 2049).as_deref(),
+            Some(FAL_FLUX_LORA),
+            "a tall single-column strip exceeds 1:2 and routes to FAL"
+        );
     }
 }

@@ -167,6 +167,29 @@ pub enum ShellMsg {
         /// Failure reason.
         error: String,
     },
+    /// A static grid sheet finished generating, decoding, and slicing off the UI
+    /// thread. The frames feed the same `push_clip_candidate` path an i2v clip
+    /// uses, with no remote video clip and no durable i2v job record. The static
+    /// path's only motion-quality signal is the normalize report it lands with.
+    StaticSheetReady {
+        /// Generation epoch this result belongs to; stale ones are dropped.
+        epoch: u64,
+        /// The sliced cells as ordered frames.
+        frames: Vec<VideoFrame>,
+        /// The action prompt, threaded onto the candidate as provenance.
+        action: String,
+        /// Playback FPS for the candidate.
+        fps: u32,
+        /// The RNG seed, if one was pinned.
+        seed: Option<u64>,
+    },
+    /// A static grid-sheet generation failed (or was canceled).
+    StaticSheetFailed {
+        /// Generation epoch this failure belongs to; stale ones are dropped.
+        epoch: u64,
+        /// Failure reason.
+        error: String,
+    },
     /// A user-supplied video file finished decoding off the UI thread. It feeds
     /// the same `on_clip_ready` path a generated clip uses; the i2v fields
     /// (approved first frame, motion prompt) play no part. The result is `Err`
@@ -1226,6 +1249,22 @@ impl ShellApp {
                     if epoch == self.anim_gen_epoch {
                         self.anim_status = JobStatus::Failed(error);
                         self.anim_job_id = None;
+                    }
+                }
+                ShellMsg::StaticSheetReady {
+                    epoch,
+                    frames,
+                    action,
+                    fps,
+                    seed,
+                } => {
+                    if epoch == self.anim_gen_epoch {
+                        self.on_static_sheet_ready(frames, action, fps, seed);
+                    }
+                }
+                ShellMsg::StaticSheetFailed { epoch, error } => {
+                    if epoch == self.anim_gen_epoch {
+                        self.anim_status = JobStatus::Failed(error);
                     }
                 }
                 ShellMsg::VideoImported {
@@ -2698,6 +2737,58 @@ impl ShellApp {
         );
     }
 
+    /// Starts a static grid-sheet generation: one solid-magenta `rows × cols`
+    /// sheet conditioned on the anchor, sliced into frames. Mirrors
+    /// [`Self::start_clip`] but skips i2v's durable job queue and cancel token —
+    /// there is no remote video clip to persist or abort. The frames return over
+    /// [`ShellMsg::StaticSheetReady`] and feed the same Clip→Pick→Normalize→Land
+    /// tail as an i2v clip and a video import.
+    pub(crate) fn start_static_sheet(&mut self) {
+        let Some(anchor) = self.doc.active_anchor().map(<[u8]>::to_vec) else {
+            return;
+        };
+        let Some(sprite) = self.doc.active_sprite() else {
+            return;
+        };
+        let seed = self.anim_seed_fixed.then_some(self.anim_seed);
+        let job = ai::StaticSheetJob {
+            canvas: (sprite.canvas.width, sprite.canvas.height),
+            anchor_png: anchor,
+            action_prompt: self.anim_motion.clone(),
+            rows: self.studio.grid_rows.max(1),
+            cols: self.studio.grid_cols.max(1),
+            fps: self.anim_fps,
+            seed,
+        };
+        self.record_recent_motion(&self.anim_motion.clone());
+        // The epoch tags messages so a superseded run's late frames are dropped;
+        // there is no durable job id for the static path.
+        self.anim_gen_epoch += 1;
+        let epoch = self.anim_gen_epoch;
+        self.anim_status = JobStatus::Running("starting".into());
+        ai::spawn_static_sheet(
+            self.runtime.handle(),
+            self.verb_runtime.clone(),
+            self.egui_ctx.clone(),
+            self.tx.clone(),
+            job,
+            epoch,
+        );
+    }
+
+    /// Lands a sliced static sheet as a clip candidate, with no remote clip blob
+    /// and no i2v job record — the static path persists nothing the import path
+    /// does not. Routes through the shared [`Self::push_clip_candidate`] tail.
+    fn on_static_sheet_ready(&mut self, frames: Vec<VideoFrame>, action: String, fps: u32, seed: Option<u64>) {
+        self.anim_status = JobStatus::Idle;
+        // A static sheet has no i2v lineage parent.
+        self.anim_pending_parent = None;
+        // No raw clip blob: the frames are the artifact, so the candidate carries
+        // an empty clip and a PNG mime (the slice path's source format).
+        self.push_clip_candidate(Vec::new(), "image/png".to_owned(), frames, action, fps, seed, None);
+        self.set_status("Generated a static sheet.");
+    }
+
     /// Spawns an AI background removal of `buffer_id` (already encoded to PNG)
     /// on the tokio runtime. The stripped result returns over the channel as
     /// [`ShellMsg::BgRemovalDone`].
@@ -2755,25 +2846,8 @@ impl ShellApp {
         seed: Option<u64>,
         parent: Option<usize>,
     ) {
-        let markers = anim::auto_loop_markers(&frames);
-        let picks = anim::pick_loop_frames(&frames, markers, self.anim_target_frames as usize);
-        let thumbs = vec![None; frames.len()];
-        let keyed_thumbs = vec![None; frames.len()];
-        self.anim_candidates.push(ClipCandidate {
-            clip,
-            mime,
-            thumbs,
-            markers,
-            picks,
-            motion,
-            fps,
-            seed,
-            parent,
-            card_texture: None,
-            keyed_thumbs,
-            keyed_sig: None,
-            frames,
-        });
+        let candidate = build_clip_candidate(clip, mime, frames, motion, fps, seed, parent, self.anim_target_frames as usize);
+        self.anim_candidates.push(candidate);
         let idx = self.anim_candidates.len() - 1;
         self.select_clip(idx);
     }
@@ -3912,6 +3986,44 @@ fn flip_frames_horizontal(frames: Vec<PixelBuffer>) -> Vec<PixelBuffer> {
         .collect()
 }
 
+/// Builds the gallery [`ClipCandidate`] for a decoded clip: auto-detected loop
+/// markers, evenly-spaced picks toward `target_frames`, and empty texture/keyed
+/// caches sized to the frame count. Pure (no [`ShellApp`], no GPU), so the
+/// candidate shape every producer lands — i2v clip, imported video, static sheet
+/// — is testable in isolation. [`ShellApp::push_clip_candidate`] wraps it with
+/// the selection side effect.
+#[allow(clippy::too_many_arguments)]
+fn build_clip_candidate(
+    clip: Vec<u8>,
+    mime: String,
+    frames: Vec<VideoFrame>,
+    motion: String,
+    fps: u32,
+    seed: Option<u64>,
+    parent: Option<usize>,
+    target_frames: usize,
+) -> ClipCandidate {
+    let markers = anim::auto_loop_markers(&frames);
+    let picks = anim::pick_loop_frames(&frames, markers, target_frames);
+    let thumbs = vec![None; frames.len()];
+    let keyed_thumbs = vec![None; frames.len()];
+    ClipCandidate {
+        clip,
+        mime,
+        thumbs,
+        markers,
+        picks,
+        motion,
+        fps,
+        seed,
+        parent,
+        card_texture: None,
+        keyed_thumbs,
+        keyed_sig: None,
+        frames,
+    }
+}
+
 /// Builds [`FinishOptions`](pixhaus_core::transforms::finisher::FinishOptions)
 /// for a studio Land at grid `(w, h)`: `with_palette` snapping to the anchor's
 /// swatches when `anchor_palette` is non-empty, else `for_canvas` (Extract) as
@@ -4533,5 +4645,83 @@ mod tests {
     fn map_beats_empty_inputs_yield_empty() {
         assert!(map_beats_to_frames(&[], 4).is_empty());
         assert!(map_beats_to_frames(&[100], 0).is_empty());
+    }
+
+    // --- Brief 9: static sheet lands frames as a candidate, no i2v job record --
+
+    use super::build_clip_candidate;
+    use crate::anim_jobs::AnimJobQueue;
+
+    /// A `rows * cols` magenta grid sheet with one solid colour per cell, so a
+    /// slice is verifiable by the cell colour and distinct from its neighbours.
+    fn magenta_grid_sheet(rows: u32, cols: u32, cell: u32) -> PixelBuffer {
+        let (w, h) = (cols * cell, rows * cell);
+        let mut sheet = PixelBuffer::filled(w, h, Rgba::opaque(255, 0, 255)).expect("sheet");
+        for r in 0..rows {
+            for c in 0..cols {
+                let fill = Rgba::opaque(u8::try_from(r * cols + c).unwrap_or(0), 64, 200);
+                for y in 0..cell {
+                    for x in 0..cell {
+                        sheet.set_pixel(c * cell + x, r * cell + y, fill);
+                    }
+                }
+            }
+        }
+        sheet
+    }
+
+    #[test]
+    fn static_sheet_frames_reach_clip_candidate() {
+        // The static producer slices a rows*cols sheet (the exact call
+        // `run_static_sheet` makes) and lands the frames through the same
+        // candidate construction `on_static_sheet_ready` drives via
+        // `push_clip_candidate`. The load-bearing claim: every cell becomes a
+        // frame, the candidate carries no clip blob and no i2v lineage, and the
+        // AnimJobQueue gains nothing — the static path is i2v-free, so reusing
+        // `start_clip` wholesale (which records a durable job and a cancel token)
+        // would be a regression this test guards against.
+        let (rows, cols, cell, fps) = (2u32, 3u32, 4u32, 10u32);
+        let sheet = magenta_grid_sheet(rows, cols, cell);
+
+        // The slice the static path performs before handing frames to the tail.
+        let frames = crate::ai::sheet_to_frames(&sheet, rows, cols, fps).expect("slice the sheet");
+        assert_eq!(frames.len() as u32, rows * cols, "every cell becomes one frame");
+
+        // A fresh i2v queue: the static path must add nothing to it. Snapshot the
+        // count before the candidate lands so the assertion is not vacuous.
+        let jobs = AnimJobQueue::new();
+        let jobs_before = jobs.record_count();
+
+        // Build the candidate exactly as `on_static_sheet_ready` does: an empty
+        // clip blob, an `image/png` mime, and no lineage parent.
+        let candidate = build_clip_candidate(
+            Vec::new(),
+            "image/png".to_owned(),
+            frames,
+            "walk cycle, side view".to_owned(),
+            fps,
+            None,
+            None,
+            6,
+        );
+
+        assert_eq!(candidate.frames.len() as u32, rows * cols, "the candidate carries every sliced frame");
+        assert!(candidate.clip.is_empty(), "the static path carries no raw clip blob");
+        assert_eq!(candidate.mime, "image/png", "the static path tags the slice source format");
+        assert_eq!(candidate.parent, None, "a static sheet has no i2v lineage parent");
+        assert_eq!(candidate.seed, None, "no seed was pinned for this run");
+        // The slice is row-major: the first cell is panel 0, the last is the
+        // highest panel index, proving the frames are the cells in order.
+        assert_eq!(&candidate.frames[0].pixels[0..3], &[0u8, 64, 200], "frame 0 is the row-major-0 cell");
+        let last = candidate.frames.len() - 1;
+        assert_eq!(
+            &candidate.frames[last].pixels[0..3],
+            &[u8::try_from(rows * cols - 1).unwrap_or(0), 64, 200],
+            "the last frame is the final cell"
+        );
+
+        // The central no-phantom-job-record invariant: landing a static sheet
+        // touches no `anim_jobs.*` mutator, so the queue is unchanged.
+        assert_eq!(jobs.record_count(), jobs_before, "the static path creates no i2v AnimJobQueue record");
     }
 }

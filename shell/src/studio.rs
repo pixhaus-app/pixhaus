@@ -228,6 +228,49 @@ impl I2vModel {
     }
 }
 
+/// How the Motion stage produces animation frames.
+///
+/// `Animated` is the image-to-video path: a clip from an i2v model, interpolating
+/// true motion. `Static` is the i2v-optional path: one solid-magenta `rows × cols`
+/// grid sheet, sliced into frames — no video model and no per-clip video API
+/// cost, at the price of relying on the model's frame-to-frame consistency.
+#[derive(Copy, Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub(crate) enum GenMode {
+    /// Image-to-video: generate and decode a clip (the i2v path).
+    Animated,
+    /// Static grid sheet: generate one sheet and slice the cells.
+    Static,
+}
+
+/// Which Motion-stage producer a [`GenMode`] dispatches to. The Generate button
+/// matches on this so the routing has a single, testable source of truth.
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+pub(crate) enum GenProducer {
+    /// Drive `start_clip` (the i2v path).
+    Clip,
+    /// Drive `start_static_sheet` (the grid-sheet path).
+    StaticSheet,
+}
+
+impl GenMode {
+    /// The Motion-inspector label for this mode.
+    fn label(self) -> &'static str {
+        match self {
+            GenMode::Animated => "Animated (i2v)",
+            GenMode::Static => "Static sheet",
+        }
+    }
+
+    /// The producer the Generate button routes this mode to.
+    pub(crate) fn producer(self) -> GenProducer {
+        match self {
+            GenMode::Animated => GenProducer::Clip,
+            GenMode::Static => GenProducer::StaticSheet,
+        }
+    }
+}
+
 /// How a first-frame candidate came to be, for the lineage caption.
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub(crate) enum FfOrigin {
@@ -515,6 +558,15 @@ pub(crate) struct StudioSession {
     /// The image-to-video model the Motion stage drives.
     #[serde(default = "default_i2v_model")]
     pub i2v_model: I2vModel,
+    /// How the Motion stage produces frames: an i2v clip or a sliced grid sheet.
+    #[serde(default = "default_gen_mode")]
+    pub gen_mode: GenMode,
+    /// Static-sheet grid rows.
+    #[serde(default = "default_grid_rows")]
+    pub grid_rows: u32,
+    /// Static-sheet grid columns.
+    #[serde(default = "default_grid_cols")]
+    pub grid_cols: u32,
     /// The approved seed pose (PNG), the single input that drives the clip.
     /// The one heavy field — kept on purpose.
     #[serde(default)]
@@ -552,6 +604,18 @@ fn default_i2v_model() -> I2vModel {
     I2vModel::Seedance
 }
 
+fn default_gen_mode() -> GenMode {
+    GenMode::Animated
+}
+
+fn default_grid_rows() -> u32 {
+    2
+}
+
+fn default_grid_cols() -> u32 {
+    3
+}
+
 fn default_target_frames() -> u32 {
     6
 }
@@ -567,6 +631,9 @@ impl Default for StudioSession {
             kind: default_kind(),
             facing: default_facing(),
             i2v_model: default_i2v_model(),
+            gen_mode: default_gen_mode(),
+            grid_rows: default_grid_rows(),
+            grid_cols: default_grid_cols(),
             approved_first_frame: None,
             remove_on_land: false,
             motion: String::new(),
@@ -702,6 +769,12 @@ pub(crate) struct StudioState {
     pub approved_first_frame: Option<Vec<u8>>,
     /// The image-to-video model the Motion stage drives.
     pub i2v_model: I2vModel,
+    /// How the Motion stage produces frames: an i2v clip or a sliced grid sheet.
+    pub gen_mode: GenMode,
+    /// Static-sheet grid rows (consulted only in [`GenMode::Static`]).
+    pub grid_rows: u32,
+    /// Static-sheet grid columns (consulted only in [`GenMode::Static`]).
+    pub grid_cols: u32,
     /// Whether the second clip is shown beside the first for comparison.
     pub compare: bool,
     /// The other clip index in a side-by-side comparison.
@@ -769,6 +842,9 @@ impl Default for StudioState {
             anchor_reveal: crate::reveal::RevealState::default(),
             approved_first_frame: None,
             i2v_model: I2vModel::Seedance,
+            gen_mode: default_gen_mode(),
+            grid_rows: default_grid_rows(),
+            grid_cols: default_grid_cols(),
             compare: false,
             compare_other: None,
             landed: false,
@@ -986,6 +1062,9 @@ impl ShellApp {
             kind: self.studio.kind,
             facing: self.studio.facing,
             i2v_model: self.studio.i2v_model,
+            gen_mode: self.studio.gen_mode,
+            grid_rows: self.studio.grid_rows,
+            grid_cols: self.studio.grid_cols,
             approved_first_frame: self.studio.approved_first_frame.clone(),
             remove_on_land: self.studio.remove_on_land,
             motion: self.anim_motion.clone(),
@@ -1006,6 +1085,9 @@ impl ShellApp {
             facing: session.facing,
             approved_first_frame: session.approved_first_frame.clone(),
             i2v_model: session.i2v_model,
+            gen_mode: session.gen_mode,
+            grid_rows: session.grid_rows,
+            grid_cols: session.grid_cols,
             remove_on_land: session.remove_on_land,
             owner,
             ..StudioState::default()
@@ -1712,28 +1794,57 @@ impl ShellApp {
         }
 
         ui.add_space(6.0);
+        // Generation mode: an i2v clip or a static grid sheet. The choice drives
+        // which inputs show below and which producer the Generate button calls.
         ui.horizontal(|ui| {
-            ui.label("Model");
-            ui.selectable_value(&mut self.studio.i2v_model, I2vModel::Seedance, I2vModel::Seedance.label());
-            ui.selectable_value(&mut self.studio.i2v_model, I2vModel::Wan, I2vModel::Wan.label());
+            ui.label("Mode");
+            ui.selectable_value(&mut self.studio.gen_mode, GenMode::Animated, GenMode::Animated.label())
+                .on_hover_text("Generate a clip with an image-to-video model");
+            ui.selectable_value(&mut self.studio.gen_mode, GenMode::Static, GenMode::Static.label())
+                .on_hover_text("Generate one magenta grid sheet and slice the cells — no video model needed");
         });
+
+        match self.studio.gen_mode {
+            GenMode::Animated => {
+                ui.horizontal(|ui| {
+                    ui.label("Model");
+                    ui.selectable_value(&mut self.studio.i2v_model, I2vModel::Seedance, I2vModel::Seedance.label());
+                    ui.selectable_value(&mut self.studio.i2v_model, I2vModel::Wan, I2vModel::Wan.label());
+                });
+            }
+            GenMode::Static => {
+                ui.horizontal(|ui| {
+                    ui.label("Grid");
+                    ui.add(egui::DragValue::new(&mut self.studio.grid_rows).range(1..=8).prefix("rows "));
+                    ui.add(egui::DragValue::new(&mut self.studio.grid_cols).range(1..=8).prefix("cols "));
+                });
+                ui.colored_label(
+                    ui.visuals().weak_text_color(),
+                    "Sliced from one sheet; consistency depends on the model. Watch the normalize report.",
+                );
+            }
+        }
         ui.add(egui::Slider::new(&mut self.anim_target_frames, 2..=16).text("loop frames"));
         ui.add(egui::Slider::new(&mut self.anim_fps, 4..=24).text("fps"));
         ui.horizontal(|ui| {
             ui.checkbox(&mut self.anim_seed_fixed, "Fixed seed")
-                .on_hover_text("Pin the RNG seed for a reproducible clip; off uses a random seed each run");
+                .on_hover_text("Pin the RNG seed for a reproducible run; off uses a random seed each run");
             ui.add_enabled(self.anim_seed_fixed, egui::DragValue::new(&mut self.anim_seed));
         });
 
         let busy = matches!(self.anim_status, JobStatus::Running(_));
-        if ui
-            .add_enabled(self.backend_ready && !busy, egui::Button::new(format!("{} Generate clip", crate::icons::FILM)))
-            .clicked()
-        {
+        let generate_label = match self.studio.gen_mode {
+            GenMode::Animated => format!("{} Generate clip", crate::icons::FILM),
+            GenMode::Static => format!("{} Generate sheet", crate::icons::FILM),
+        };
+        if ui.add_enabled(self.backend_ready && !busy, egui::Button::new(generate_label)).clicked() {
             self.studio.landed = false;
-            // A from-scratch clip has no lineage parent.
+            // A from-scratch run has no lineage parent.
             self.clear_clip_lineage();
-            self.start_clip();
+            match self.studio.gen_mode.producer() {
+                GenProducer::Clip => self.start_clip(),
+                GenProducer::StaticSheet => self.start_static_sheet(),
+            }
             self.studio.stage = StudioStage::Clip;
         }
         if !self.backend_ready {
@@ -3446,6 +3557,9 @@ mod tests {
             kind: AnimKind::Attack,
             facing: Facing::North,
             i2v_model: I2vModel::Wan,
+            gen_mode: GenMode::Static,
+            grid_rows: 3,
+            grid_cols: 4,
             approved_first_frame: Some(vec![1, 2, 3, 4, 5]),
             remove_on_land: true,
             motion: "attack swing, back view".to_owned(),
@@ -3464,6 +3578,9 @@ mod tests {
         assert_eq!(back.kind, session.kind);
         assert_eq!(back.facing, session.facing);
         assert_eq!(back.i2v_model, session.i2v_model);
+        assert_eq!(back.gen_mode, session.gen_mode);
+        assert_eq!(back.grid_rows, session.grid_rows);
+        assert_eq!(back.grid_cols, session.grid_cols);
         assert_eq!(back.approved_first_frame, session.approved_first_frame);
         assert_eq!(back.remove_on_land, session.remove_on_land);
         assert_eq!(back.motion, session.motion);
@@ -3480,6 +3597,16 @@ mod tests {
         assert_eq!(serde_json::to_string(&AnimKind::Walk).unwrap(), "\"walk\"");
         assert_eq!(serde_json::to_string(&Facing::South).unwrap(), "\"south\"");
         assert_eq!(serde_json::to_string(&I2vModel::Seedance).unwrap(), "\"seedance\"");
+        assert_eq!(serde_json::to_string(&GenMode::Animated).unwrap(), "\"animated\"");
+        assert_eq!(serde_json::to_string(&GenMode::Static).unwrap(), "\"static\"");
+    }
+
+    #[test]
+    fn gen_mode_static_routes_to_static_sheet() {
+        // The Generate dispatch routes each mode to a single producer; static
+        // mode picks the sheet producer, animated stays on the clip producer.
+        assert_eq!(GenMode::Static.producer(), GenProducer::StaticSheet);
+        assert_eq!(GenMode::Animated.producer(), GenProducer::Clip);
     }
 
     #[test]
@@ -3492,6 +3619,9 @@ mod tests {
         assert_eq!(session.kind, AnimKind::Walk);
         assert_eq!(session.facing, Facing::East);
         assert_eq!(session.i2v_model, I2vModel::Seedance);
+        assert_eq!(session.gen_mode, GenMode::Animated);
+        assert_eq!(session.grid_rows, 2);
+        assert_eq!(session.grid_cols, 3);
         assert_eq!(session.target_frames, 6);
         assert_eq!(session.fps, 10);
         assert_eq!(session.motion, "idle breathing");
