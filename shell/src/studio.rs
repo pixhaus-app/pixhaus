@@ -32,7 +32,7 @@ use tokio_util::sync::CancellationToken;
 use pixhaus_ai::backends::fal::{FAL_I2V, FAL_SEEDANCE};
 use pixhaus_core::canvas::PixelBuffer;
 use pixhaus_core::project::{Rgba, SpriteId};
-use pixhaus_core::transforms::normalize::{ChromaKey, chroma_key, detect_key_color};
+use pixhaus_core::transforms::normalize::{ChromaKey, NormalizeResult, SeamMatch, chroma_key, detect_key_color};
 
 use crate::ai::{self, FirstFrameJob};
 use crate::anim::{self, VideoFrame};
@@ -56,18 +56,21 @@ pub(crate) enum StudioStage {
     Clip,
     /// Toggle the evenly-spaced picks and read the seam score.
     Pick,
-    /// Normalize and land the picks on the timeline.
+    /// Review the normalization report (drift / scale / seam) before landing.
+    Normalize,
+    /// Land the reviewed, normalized picks on the timeline.
     Land,
 }
 
 impl StudioStage {
     /// The stages in pipeline order, for the rail.
-    const ALL: [StudioStage; 6] = [
+    const ALL: [StudioStage; 7] = [
         StudioStage::Anchor,
         StudioStage::FirstFrame,
         StudioStage::Motion,
         StudioStage::Clip,
         StudioStage::Pick,
+        StudioStage::Normalize,
         StudioStage::Land,
     ];
 
@@ -79,6 +82,7 @@ impl StudioStage {
             StudioStage::Motion => "Motion",
             StudioStage::Clip => "Clip & loop",
             StudioStage::Pick => "Frame pick",
+            StudioStage::Normalize => "Normalize",
             StudioStage::Land => "Land",
         }
     }
@@ -623,6 +627,28 @@ pub(crate) fn save_studio_sessions(sessions: &HashMap<SpriteId, StudioSession>) 
     }
 }
 
+/// The inputs that determine the cached [`StudioState::normalize`] result. When
+/// any of these change, the cached normalization is stale and must be recomputed
+/// before Land trusts it. Cheap to compare (no buffer hashing): the selected
+/// clip, its pick set, the target canvas, and the key settings fully determine
+/// the normalize output, and the pick set already mutates whenever the clip's
+/// frames change.
+#[derive(Clone, PartialEq, Eq)]
+pub(crate) struct NormalizeCacheKey {
+    /// The selected clip candidate index.
+    pub clip: usize,
+    /// The picked frame indices, in order.
+    pub picks: Vec<usize>,
+    /// The target canvas size (sprite width, height).
+    pub canvas: (u32, u32),
+    /// Whether the chroma key is baked in on Land.
+    pub remove_on_land: bool,
+    /// The chroma key colour, as `(r, g, b)`.
+    pub key_color: (u8, u8, u8),
+    /// The chroma key tolerance.
+    pub key_tolerance: u8,
+}
+
 /// The studio's whole session state. Lives on [`ShellApp`]; the clip candidates
 /// themselves live in `anim_*`, which the clip/pick/land stages drive.
 pub(crate) struct StudioState {
@@ -652,6 +678,18 @@ pub(crate) struct StudioState {
     pub compare_other: Option<usize>,
     /// Set once Land integrated a loop, so Land can confirm the result.
     pub landed: bool,
+    /// The reviewed normalization output, cached transiently so the Normalize
+    /// stage and Land share one pass: Land commits exactly these frames rather
+    /// than re-normalizing. `None` until the Normalize stage runs; invalidated
+    /// when [`NormalizeCacheKey`] changes (a different clip, pick set, canvas,
+    /// or key). Never serialized — it is derived from the picks.
+    pub normalize: Option<NormalizeResult>,
+    /// The inputs the cached [`StudioState::normalize`] was computed from. A
+    /// mismatch against the current inputs invalidates the cache.
+    pub normalize_key: Option<NormalizeCacheKey>,
+    /// Lazily-built textures for the normalized strip, one per cached frame.
+    /// Cleared whenever the cache is recomputed.
+    pub normalize_textures: Vec<Option<egui::TextureHandle>>,
     /// Which scrubber handle a drag is currently moving.
     pub drag_handle: Option<ScrubHandle>,
     /// Whether the raw-clip player loops at the end (vs stopping). Defaults on.
@@ -697,6 +735,9 @@ impl Default for StudioState {
             compare: false,
             compare_other: None,
             landed: false,
+            normalize: None,
+            normalize_key: None,
+            normalize_textures: Vec::new(),
             drag_handle: None,
             loop_playback: true,
             picking_key: false,
@@ -1033,6 +1074,7 @@ impl ShellApp {
             StudioStage::Motion => !self.anim_candidates.is_empty(),
             StudioStage::Clip => self.anim_card().is_some(),
             StudioStage::Pick => self.anim_card().is_some_and(|c| !c.picks.is_empty()),
+            StudioStage::Normalize => self.studio.normalize.is_some(),
             StudioStage::Land => self.studio.landed,
         }
     }
@@ -1049,6 +1091,7 @@ impl ShellApp {
             StudioStage::Motion => self.studio_motion_surface(ui),
             StudioStage::Clip => self.studio_clip_surface(ui),
             StudioStage::Pick => self.studio_pick_surface(ui),
+            StudioStage::Normalize => self.studio_normalize_surface(ui),
             StudioStage::Land => self.studio_land_surface(ui),
         }
     }
@@ -1059,7 +1102,7 @@ impl ShellApp {
             ui.label(egui::RichText::new("Finish the earlier stage to unlock this one.").weak());
             return;
         }
-        if !self.backend_ready && !matches!(self.studio.stage, StudioStage::Clip | StudioStage::Pick) {
+        if !self.backend_ready && !matches!(self.studio.stage, StudioStage::Clip | StudioStage::Pick | StudioStage::Normalize) {
             self.key_entry(ui);
             ui.separator();
         }
@@ -1069,6 +1112,7 @@ impl ShellApp {
             StudioStage::Motion => self.studio_motion_inspector(ui),
             StudioStage::Clip => self.studio_clip_inspector(ui),
             StudioStage::Pick => self.studio_pick_inspector(ui),
+            StudioStage::Normalize => self.studio_normalize_inspector(ui),
             StudioStage::Land => self.studio_land_inspector(ui),
         }
     }
@@ -2170,9 +2214,125 @@ impl ShellApp {
 
         ui.add_space(8.0);
         ui.separator();
+        if ui.button(format!("{} Next: normalize", crate::icons::RIGHT)).clicked() {
+            self.studio.stage = StudioStage::Normalize;
+        }
+    }
+
+    // ── Normalize stage ──────────────────────────────────────────────────────
+
+    /// The normalized frame strip, lazily computed and cached. Shows the locked
+    /// frames the way they will land — same canvas, same baseline — so the
+    /// review reflects exactly what Land commits.
+    fn studio_normalize_surface(&mut self, ui: &mut egui::Ui) {
+        if self.anim_selected.is_none() {
+            centered_hint(ui, "Pick frames from a clip first.");
+            return;
+        }
+        self.refresh_normalize_cache();
+        let Some(result) = self.studio.normalize.as_ref() else {
+            centered_hint(ui, "These picks could not be normalized — widen the loop or re-pick.");
+            return;
+        };
+        if result.frames.is_empty() {
+            centered_hint(ui, "No normalized frames to review.");
+            return;
+        }
+        let ctx = ui.ctx().clone();
+        // Build the strip textures once per cache.
+        if self.studio.normalize_textures.len() != result.frames.len() {
+            self.studio.normalize_textures = vec![None; result.frames.len()];
+        }
+        let target_baseline = result.frames.first().map_or(0, PixelBuffer::height).saturating_sub(1);
+        let palette = crate::theme::Palette::for_theme(ctx.theme());
+        ui.label(egui::RichText::new("Normalized loop — exactly what lands").small().weak());
+        ui.add_space(4.0);
+        egui::ScrollArea::horizontal().show(ui, |ui| {
+            ui.horizontal(|ui| {
+                for idx in 0..result.frames.len() {
+                    if self.studio.normalize_textures[idx].is_none() {
+                        self.studio.normalize_textures[idx] = pixel_buffer_to_texture(&ctx, &format!("normalize_{idx}"), &result.frames[idx]);
+                    }
+                    let Some(tex) = self.studio.normalize_textures[idx].as_ref() else {
+                        continue;
+                    };
+                    let metric = result.metrics.get(idx);
+                    let drift = metric.filter(|m| !m.empty).map_or(0, |m| m.foot_baseline_y.abs_diff(target_baseline));
+                    ui.vertical(|ui| {
+                        let size = tex.size_vec2();
+                        let scale = (96.0 / size.y.max(1.0)).min(1.0);
+                        ui.add(egui::Image::new((tex.id(), size * scale)));
+                        let drift_color = if drift == 0 { palette.success } else { palette.warning };
+                        ui.colored_label(drift_color, egui::RichText::new(format!("Δ {drift}px")).small());
+                    });
+                }
+            });
+        });
+    }
+
+    /// The normalize inspector: the [`NormalizeReport`] rendered as drift,
+    /// scale-match, the seam verdict (same colour thresholds as the pick stage),
+    /// and the warnings list, with a Land affordance.
+    fn studio_normalize_inspector(&mut self, ui: &mut egui::Ui) {
+        if self.anim_selected.is_none() {
+            ui.label(egui::RichText::new("No clip selected.").weak());
+            return;
+        }
+        self.refresh_normalize_cache();
+        let palette = crate::theme::Palette::for_theme(ui.ctx().theme());
+        let Some(result) = self.studio.normalize.as_ref() else {
+            ui.colored_label(palette.error, "These picks could not be normalized.");
+            return;
+        };
+        let report = &result.report;
+        ui.label(egui::RichText::new("Normalization review").strong());
+        ui.label(egui::RichText::new("Drift, scale, and the loop seam — measured on the frames that land.").small().weak());
+        ui.add_space(6.0);
+
+        // Baseline drift: 0px is clean, anything else a warning.
+        report_row(ui, &palette, drift_status(report.baseline_drift_px), "Baseline drift", &format!("{}px", report.baseline_drift_px));
+        // Scale match: how well subject heights agreed before correction.
+        report_row(ui, &palette, scale_status(report.scale_match_pct), "Scale match", &format!("{}%", report.scale_match_pct));
+        // Seam verdict: reuse the pick-stage colour thresholds via the SeamMatch.
+        report_row(ui, &palette, seam_status(report.seam), "Loop seam", seam_label(report.seam));
+        ui.label(egui::RichText::new(format!("Reference height {}px", report.reference_height)).small().weak());
+
+        if !report.warnings.is_empty() {
+            ui.add_space(6.0);
+            ui.separator();
+            ui.label(egui::RichText::new("Warnings").small().strong());
+            for warning in &report.warnings {
+                ui.colored_label(palette.warning, egui::RichText::new(format!("{} {warning}", crate::icons::INFO)).small());
+            }
+        }
+
+        ui.add_space(8.0);
+        ui.separator();
         if ui.button(format!("{} Next: land", crate::icons::RIGHT)).clicked() {
             self.studio.stage = StudioStage::Land;
         }
+    }
+
+    /// Recomputes the cached [`NormalizeResult`] when its inputs changed, so the
+    /// Normalize stage and Land share one pass. A no-op when the cache is fresh.
+    /// CPU-only over the pick buffers (a handful of small frames bounded by the
+    /// pick region), so it runs inline; if the frame count and canvas ever make
+    /// it hitch, move the `normalize_frames` call into `spawn_blocking` — the
+    /// inputs are owned and there is no lock.
+    fn refresh_normalize_cache(&mut self) {
+        let Some(key) = self.normalize_cache_key() else {
+            self.studio.normalize = None;
+            self.studio.normalize_key = None;
+            self.studio.normalize_textures.clear();
+            return;
+        };
+        if self.studio.normalize_key.as_ref() == Some(&key) && self.studio.normalize.is_some() {
+            return;
+        }
+        let result = self.compute_normalize();
+        self.studio.normalize_textures.clear();
+        self.studio.normalize = result;
+        self.studio.normalize_key = self.studio.normalize.as_ref().map(|_| key);
     }
 
     // ── Land stage ───────────────────────────────────────────────────────────
@@ -2260,6 +2420,91 @@ impl ShellApp {
 fn centered_hint(ui: &mut egui::Ui, text: &str) {
     ui.centered_and_justified(|ui| {
         ui.label(egui::RichText::new(text).weak());
+    });
+}
+
+/// The review category for one [`NormalizeReport`] field, decoupled from egui so
+/// it is unit-testable: a value maps to Ok / Warning / Error, which the inspector
+/// renders with the studio's success / warning / error palette colours.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum ReportStatus {
+    /// Within the clean band — rendered with the success colour and a check.
+    Ok,
+    /// Usable but worth a glance — rendered with the warning colour.
+    Warning,
+    /// A defect that will read in-game — rendered with the error colour.
+    Error,
+}
+
+impl ReportStatus {
+    /// The status glyph, from the Phosphor icon set — never an emoji.
+    fn icon(self) -> &'static str {
+        match self {
+            ReportStatus::Ok => crate::icons::CHECK,
+            ReportStatus::Warning => crate::icons::INFO,
+            ReportStatus::Error => crate::icons::X,
+        }
+    }
+
+    /// The palette colour for this status.
+    fn color(self, palette: &crate::theme::Palette) -> egui::Color32 {
+        match self {
+            ReportStatus::Ok => palette.success,
+            ReportStatus::Warning => palette.warning,
+            ReportStatus::Error => palette.error,
+        }
+    }
+}
+
+/// Classifies the foot-baseline drift: zero is clean, anything else is a warning
+/// (the loop still lands, but the feet wobble).
+#[must_use]
+pub(crate) fn drift_status(drift_px: u32) -> ReportStatus {
+    if drift_px == 0 { ReportStatus::Ok } else { ReportStatus::Warning }
+}
+
+/// Classifies the scale-match percent: near-perfect is clean, a moderate gap is
+/// a warning, a wide spread is an error. Mirrors the `< 60%` warning the core
+/// normalize pass already records.
+#[must_use]
+pub(crate) fn scale_status(pct: u32) -> ReportStatus {
+    if pct >= 90 {
+        ReportStatus::Ok
+    } else if pct >= 60 {
+        ReportStatus::Warning
+    } else {
+        ReportStatus::Error
+    }
+}
+
+/// Classifies the loop seam, reusing the pick-stage thresholds: a clean seam is
+/// Ok, a close seam is a warning, a drifting seam is an error.
+#[must_use]
+pub(crate) fn seam_status(seam: SeamMatch) -> ReportStatus {
+    match seam {
+        SeamMatch::Ok => ReportStatus::Ok,
+        SeamMatch::Close => ReportStatus::Warning,
+        SeamMatch::Drift => ReportStatus::Error,
+    }
+}
+
+/// A human-readable label for the seam verdict.
+#[must_use]
+pub(crate) fn seam_label(seam: SeamMatch) -> &'static str {
+    match seam {
+        SeamMatch::Ok => "clean",
+        SeamMatch::Close => "close",
+        SeamMatch::Drift => "drifts",
+    }
+}
+
+/// One status row in the normalize inspector: a coloured glyph, the field name,
+/// and its value.
+fn report_row(ui: &mut egui::Ui, palette: &crate::theme::Palette, status: ReportStatus, name: &str, value: &str) {
+    ui.horizontal(|ui| {
+        ui.colored_label(status.color(palette), status.icon());
+        ui.label(egui::RichText::new(name).small().weak());
+        ui.label(egui::RichText::new(value).small().strong());
     });
 }
 
@@ -3011,5 +3256,87 @@ mod tests {
         // A round-trip of an empty map is also empty.
         let bytes = encode_sessions(&HashMap::new()).expect("encode empty");
         assert!(decode_sessions(&bytes).expect("decode").is_empty());
+    }
+
+    // ── Normalize-review classification ──────────────────────────────────────
+
+    use pixhaus_core::transforms::normalize::{NormalizeOptions, normalize_frames};
+
+    #[test]
+    fn drift_status_is_ok_only_at_zero() {
+        assert_eq!(drift_status(0), ReportStatus::Ok);
+        assert_eq!(drift_status(1), ReportStatus::Warning);
+        assert_eq!(drift_status(40), ReportStatus::Warning);
+    }
+
+    #[test]
+    fn scale_status_bands_by_match_percent() {
+        assert_eq!(scale_status(100), ReportStatus::Ok);
+        assert_eq!(scale_status(90), ReportStatus::Ok);
+        assert_eq!(scale_status(89), ReportStatus::Warning);
+        assert_eq!(scale_status(60), ReportStatus::Warning);
+        assert_eq!(scale_status(59), ReportStatus::Error);
+        assert_eq!(scale_status(0), ReportStatus::Error);
+    }
+
+    #[test]
+    fn seam_status_maps_each_verdict() {
+        assert_eq!(seam_status(SeamMatch::Ok), ReportStatus::Ok);
+        assert_eq!(seam_status(SeamMatch::Close), ReportStatus::Warning);
+        assert_eq!(seam_status(SeamMatch::Drift), ReportStatus::Error);
+    }
+
+    #[test]
+    fn report_status_colors_match_the_palette() {
+        // The inspector reuses the studio palette: Ok→success, Warning→warning,
+        // Error→error. Pinning the mapping guards the colour coding the plan asks
+        // the seam verdict to share with the pick stage.
+        let palette = crate::theme::Palette::for_theme(egui::Theme::Dark);
+        assert_eq!(ReportStatus::Ok.color(&palette), palette.success);
+        assert_eq!(ReportStatus::Warning.color(&palette), palette.warning);
+        assert_eq!(ReportStatus::Error.color(&palette), palette.error);
+    }
+
+    /// A 16×16 magenta frame with a `color` subject rectangle at `(x, y)`
+    /// spanning `w × h`. The magenta keys out; the rectangle is the measured
+    /// subject. The colour drives the loop-seam diff after normalization.
+    fn synthetic_frame(x: u32, y: u32, w: u32, h: u32, color: Rgba) -> PixelBuffer {
+        let mut f = PixelBuffer::filled(16, 16, Rgba::opaque(255, 0, 255)).expect("frame");
+        for sy in y..(y + h).min(16) {
+            for sx in x..(x + w).min(16) {
+                f.set_pixel(sx, sy, color);
+            }
+        }
+        f
+    }
+
+    #[test]
+    fn three_frame_sequence_reports_clean_baseline_as_ok() {
+        // Three subjects of equal height land on a locked baseline, so the
+        // drift field reads Ok and the scale field reads a perfect match.
+        let black = Rgba::opaque(0, 0, 0);
+        let frames = [synthetic_frame(6, 8, 4, 6, black), synthetic_frame(5, 8, 6, 6, black), synthetic_frame(6, 8, 4, 6, black)];
+        let report = normalize_frames(&frames, &NormalizeOptions::square(16)).expect("normalize").report;
+        assert_eq!(drift_status(report.baseline_drift_px), ReportStatus::Ok);
+        assert_eq!(scale_status(report.scale_match_pct), ReportStatus::Ok);
+    }
+
+    #[test]
+    fn three_frame_sequence_with_drifting_seam_renders_error_category() {
+        // The last frame's subject is a different colour from the first's, and
+        // each subject fills the canvas so its colour dominates the per-pixel
+        // mean. After normalization both occupy the same locked cell, so their
+        // per-channel diff is large and the loop seam reads Drift — the error
+        // category the inspector renders with the error colour.
+        let first = synthetic_frame(0, 0, 16, 16, Rgba::opaque(0, 0, 0));
+        let mid = synthetic_frame(0, 0, 16, 16, Rgba::opaque(128, 128, 128));
+        let last = synthetic_frame(0, 0, 16, 16, Rgba::opaque(255, 255, 255));
+        let report = normalize_frames(&[first, mid, last], &NormalizeOptions::square(16)).expect("normalize").report;
+        assert_eq!(report.seam, SeamMatch::Drift, "first and last differ enough to drift");
+        assert_eq!(seam_status(report.seam), ReportStatus::Error);
+        let palette = crate::theme::Palette::for_theme(egui::Theme::Dark);
+        assert_eq!(seam_status(report.seam).color(&palette), palette.error);
+        // The pass records the drift in the warnings list the inspector shows.
+        assert!(report.warnings.iter().any(|w| w.contains("loop seam")), "seam warning surfaced: {:?}", report.warnings);
     }
 }

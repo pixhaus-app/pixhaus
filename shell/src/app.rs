@@ -16,7 +16,7 @@ use pixhaus_ai::plugin::{PixelData, VerbRuntime};
 use pixhaus_core::canvas::PixelBuffer;
 use pixhaus_core::project::{CelData, ColorMode, FrameIndex, GroupId, LoopDirection, PixelBufferId, Rgba, Size, Sprite, SpriteId};
 use pixhaus_core::selection::SelectionMask;
-use pixhaus_core::transforms::normalize::{NormalizeOptions, normalize_frames};
+use pixhaus_core::transforms::normalize::{NormalizeOptions, NormalizeResult, normalize_frames};
 use pixhaus_core::transforms::{CanvasAnchor, MlaaConfig, RotationAlgorithm};
 use pixhaus_render::{Viewport, ViewportRenderer};
 use tokio::runtime::Runtime;
@@ -2557,19 +2557,39 @@ impl ShellApp {
         self.select_clip(idx);
     }
 
-    /// Normalizes and integrates the selected card's picked frames onto the
-    /// timeline. The frames still carry their background — removal is a separate
-    /// timeline op. The clip stays in the gallery; the canvas returns to the sprite.
-    pub(crate) fn integrate_picked(&mut self) {
-        let Some(i) = self.anim_selected else {
-            return;
-        };
-        if self.anim_candidates[i].picks.is_empty() {
-            return;
+    /// The inputs that determine the normalize result for the current picks, or
+    /// `None` when there is nothing to normalize (no selection, empty picks, or
+    /// no active sprite). Cheap to compute and compare; the Normalize stage uses
+    /// it to invalidate its cached pass when the picks or key change.
+    pub(crate) fn normalize_cache_key(&self) -> Option<crate::studio::NormalizeCacheKey> {
+        let i = self.anim_selected?;
+        let cand = self.anim_candidates.get(i)?;
+        if cand.picks.is_empty() {
+            return None;
         }
-        let Some(sprite) = self.doc.active_sprite() else {
-            return;
-        };
+        let sprite = self.doc.active_sprite()?;
+        Some(crate::studio::NormalizeCacheKey {
+            clip: i,
+            picks: cand.picks.clone(),
+            canvas: (sprite.canvas.width, sprite.canvas.height),
+            remove_on_land: self.studio.remove_on_land,
+            key_color: (self.bg_key_color.r, self.bg_key_color.g, self.bg_key_color.b),
+            key_tolerance: self.bg_tolerance,
+        })
+    }
+
+    /// Runs the normalization pass over the selected card's picks and returns the
+    /// full [`NormalizeResult`] (frames, metrics, and the report). `None` when
+    /// there is nothing to normalize or the pass fails — the failure surfaces on
+    /// `anim_status` so the studio can show it. The pass is CPU-only over a
+    /// handful of small pick buffers (bounded by the pick region, not the 8K
+    /// canvas), so it runs inline.
+    pub(crate) fn compute_normalize(&mut self) -> Option<NormalizeResult> {
+        let i = self.anim_selected?;
+        if self.anim_candidates[i].picks.is_empty() {
+            return None;
+        }
+        let sprite = self.doc.active_sprite()?;
         let (cw, ch) = (sprite.canvas.width, sprite.canvas.height);
         let buffers: Vec<PixelBuffer> = self.anim_candidates[i]
             .picks
@@ -2578,7 +2598,7 @@ impl ShellApp {
             .filter_map(video_frame_to_pixel_buffer)
             .collect();
         if buffers.is_empty() {
-            return;
+            return None;
         }
         let opts = NormalizeOptions {
             canvas_width: cw,
@@ -2590,17 +2610,45 @@ impl ShellApp {
             reference_height: None,
             bottom_margin: 0,
         };
-        let frames = match normalize_frames(&buffers, &opts) {
-            Ok(result) => result.frames,
+        match normalize_frames(&buffers, &opts) {
+            Ok(result) => Some(result),
             Err(err) => {
                 self.anim_status = JobStatus::Failed(format!("normalize: {err}"));
-                return;
+                None
             }
+        }
+    }
+
+    /// Integrates the reviewed, normalized picks onto the timeline. Land commits
+    /// exactly the frames the Normalize stage reviewed — it reuses the cached
+    /// [`NormalizeResult`] when fresh, and only recomputes as a fallback (a
+    /// caller that skipped the stage), never a second pass over an already
+    /// reviewed result. The frames may still carry their background unless the
+    /// studio keyed it out on Land; the clip stays in the gallery and the canvas
+    /// returns to the sprite.
+    pub(crate) fn integrate_picked(&mut self) {
+        let Some(i) = self.anim_selected else {
+            return;
         };
+        // Prefer the reviewed result; recompute only when the cache is stale or
+        // absent so Land never double-normalizes what Normalize already showed.
+        let result = match (self.studio.normalize.take(), self.normalize_cache_key()) {
+            (Some(cached), key) if self.studio.normalize_key == key => cached,
+            _ => match self.compute_normalize() {
+                Some(result) => result,
+                None => return,
+            },
+        };
+        self.studio.normalize = None;
+        self.studio.normalize_key = None;
+        self.studio.normalize_textures.clear();
+        if result.frames.is_empty() {
+            return;
+        }
         let fps = self.anim_candidates[i].fps;
         let frame_ms = (1000 / fps.max(1)).max(1);
         let motion = self.anim_candidates[i].motion.clone();
-        integrate_frames_undoable(&mut self.editor, &mut self.doc, frames, frame_ms, &motion, LoopDirection::Forward);
+        integrate_frames_undoable(&mut self.editor, &mut self.doc, result.frames, frame_ms, &motion, LoopDirection::Forward);
         // Drop the canvas preview back to the sprite/timeline; keep the gallery.
         self.anim_selected = None;
         self.anim_clip_playing = false;
