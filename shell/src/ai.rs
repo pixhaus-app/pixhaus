@@ -31,7 +31,7 @@ use pixhaus_ai::verbs::reference_sheet::{
 use pixhaus_core::canvas::PixelBuffer;
 use pixhaus_core::project::library::ai::ProjectAi;
 use pixhaus_core::project::library::composition::{PromptId, PromptTemplate, PromptVariable, Structure, StructureId, Style, StyleId};
-use pixhaus_core::project::{EntityId, PixelBufferId, ProjectMetadata};
+use pixhaus_core::project::{AnchorDirection, EntityId, PixelBufferId, ProjectMetadata, SheetVariantId};
 use pixhaus_core::transforms::normalize::{NormalizeOptions, normalize_frames};
 use tokio::runtime::Handle;
 use tokio_util::sync::CancellationToken;
@@ -756,6 +756,90 @@ pub fn spawn_anchor_refine(
                 },
             },
             Err(error) => ShellMsg::AnchorRefineFailed { epoch, error },
+        };
+        let _ = tx.send(msg);
+        ctx.request_repaint();
+    });
+}
+
+/// Spawns the Tier-1 neutral-anchor derivation: a text-to-image pass that
+/// regenerates the canonical pose as a clean, effect-free neutral, conditioned
+/// on the canonical sheet so the result stays on-model. `job` must be a
+/// [`FirstFrameJob::Generate`] built with the neutral-pose prompt and the
+/// canonical anchor as its reference image. The single derived image arrives
+/// over `tx` as a [`ShellMsg::NeutralDerived`] tagged with `epoch`, carrying the
+/// `entity_id` and `canonical_id` the UI thread needs to stamp and store it; a
+/// failure (or empty result) arrives as [`ShellMsg::NeutralFailed`].
+pub fn spawn_neutral(
+    handle: &Handle,
+    runtime: Arc<VerbRuntime>,
+    ctx: egui::Context,
+    tx: Sender<ShellMsg>,
+    job: FirstFrameJob,
+    cancel: CancellationToken,
+    epoch: u64,
+    entity_id: EntityId,
+    canonical_id: SheetVariantId,
+) {
+    handle.spawn(async move {
+        let msg = match run_first_frame(&runtime, job, &cancel).await {
+            Ok(images) => match images.into_iter().next() {
+                Some(image) => ShellMsg::NeutralDerived {
+                    epoch,
+                    entity_id,
+                    canonical_id,
+                    image,
+                },
+                None => ShellMsg::NeutralFailed {
+                    epoch,
+                    error: "the backend returned no image".to_owned(),
+                },
+            },
+            Err(error) => ShellMsg::NeutralFailed { epoch, error },
+        };
+        let _ = tx.send(msg);
+        ctx.request_repaint();
+    });
+}
+
+/// Spawns a directional-anchor derivation: a text-to-image pass that regenerates
+/// the neutral pose seen from `direction`, conditioned on the neutral anchor so
+/// the result stays on-model. `job` must be a [`FirstFrameJob::Generate`] built
+/// with the directional-view prompt and the neutral image as its reference. The
+/// single derived image arrives over `tx` as a [`ShellMsg::DirectionalDerived`]
+/// tagged with `epoch`, carrying the `entity_id`, `direction`, and `neutral_id`
+/// the UI thread needs to stamp the `parent_variant_id` edge and store it; a
+/// failure (or empty result) arrives as [`ShellMsg::DirectionalFailed`]. East is
+/// never passed here — it is the flip of west, enabled, not generated.
+#[allow(clippy::too_many_arguments)]
+pub fn spawn_directional(
+    handle: &Handle,
+    runtime: Arc<VerbRuntime>,
+    ctx: egui::Context,
+    tx: Sender<ShellMsg>,
+    job: FirstFrameJob,
+    cancel: CancellationToken,
+    epoch: u64,
+    entity_id: EntityId,
+    direction: AnchorDirection,
+    neutral_id: SheetVariantId,
+) {
+    handle.spawn(async move {
+        let msg = match run_first_frame(&runtime, job, &cancel).await {
+            Ok(images) => match images.into_iter().next() {
+                Some(image) => ShellMsg::DirectionalDerived {
+                    epoch,
+                    entity_id,
+                    direction,
+                    neutral_id,
+                    image,
+                },
+                None => ShellMsg::DirectionalFailed {
+                    epoch,
+                    error: "the backend returned no image".to_owned(),
+                },
+            },
+            Err(error) => ShellMsg::DirectionalFailed { epoch, error },
         };
         let _ = tx.send(msg);
         ctx.request_repaint();

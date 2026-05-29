@@ -212,6 +212,50 @@ pub enum ShellMsg {
         /// Failure reason.
         error: String,
     },
+    /// A Tier-1 neutral-anchor derivation finished: the clean neutral image to
+    /// stamp `NeutralReset` and store on the entity's `CharacterAnchor`.
+    NeutralDerived {
+        /// Derivation epoch this result belongs to; stale ones are dropped.
+        epoch: u64,
+        /// The entity whose `CharacterAnchor.neutral` slot the result fills.
+        entity_id: pixhaus_core::project::EntityId,
+        /// The canonical variant this neutral was derived from — the
+        /// `parent_variant_id` edge the staleness cascade walks back.
+        canonical_id: pixhaus_core::project::SheetVariantId,
+        /// The derived neutral image as PNG bytes.
+        image: Vec<u8>,
+    },
+    /// A neutral-anchor derivation failed (or was canceled).
+    NeutralFailed {
+        /// Derivation epoch this failure belongs to; stale ones are dropped.
+        epoch: u64,
+        /// Failure reason.
+        error: String,
+    },
+    /// A directional-anchor derivation finished: the directional image to stamp
+    /// `DirectionalAnchor` and store on the entity's `CharacterAnchor`. East is
+    /// never generated (it is the flip of west), so `direction` is only ever
+    /// south / west / north.
+    DirectionalDerived {
+        /// Derivation epoch this result belongs to; stale ones are dropped.
+        epoch: u64,
+        /// The entity whose directional slot the result fills.
+        entity_id: pixhaus_core::project::EntityId,
+        /// The direction this anchor was generated for.
+        direction: pixhaus_core::project::AnchorDirection,
+        /// The neutral variant this directional anchor was derived from — the
+        /// `parent_variant_id` edge the staleness cascade walks back.
+        neutral_id: pixhaus_core::project::SheetVariantId,
+        /// The derived directional image as PNG bytes.
+        image: Vec<u8>,
+    },
+    /// A directional-anchor derivation failed (or was canceled).
+    DirectionalFailed {
+        /// Derivation epoch this failure belongs to; stale ones are dropped.
+        epoch: u64,
+        /// Failure reason.
+        error: String,
+    },
     /// AI background removal of one cel finished: the stripped PNG to apply to
     /// `buffer_id`.
     BgRemovalDone {
@@ -579,6 +623,20 @@ pub struct ShellApp {
     /// Lineage parent captured by a re-roll/branch, stamped on the next clip
     /// card when it lands. `None` for a from-scratch generation.
     anim_pending_parent: Option<usize>,
+    /// Monotonic id for neutral-anchor derivation runs; a superseded run's late
+    /// result is dropped by epoch. Distinct from the clip epoch — a derivation
+    /// is its own short-lived text-to-image pass.
+    pub(crate) neutral_epoch: u64,
+    /// Neutral-derivation job status (progress / failure), surfaced on the
+    /// coverage grid's anchor header.
+    pub(crate) neutral_status: JobStatus,
+    /// Monotonic id for directional-anchor derivation runs (south/west/north); a
+    /// superseded run's late result is dropped by epoch. East is never generated
+    /// — it is the flip of west — so it has no derivation epoch.
+    pub(crate) directional_epoch: u64,
+    /// Directional-derivation job status (progress / failure), surfaced on the
+    /// coverage grid's anchor header.
+    pub(crate) directional_status: JobStatus,
     /// Animation-studio session state: the current stage, the anchor framing,
     /// the first-frame gallery and approved seed pose, the inpaint mask, and the
     /// motion-model pick. The clip candidates themselves live in `anim_*`, which
@@ -893,6 +951,10 @@ impl ShellApp {
             anim_job_id: None,
             anim_gen_epoch: 0,
             anim_pending_parent: None,
+            neutral_epoch: 0,
+            neutral_status: JobStatus::Idle,
+            directional_epoch: 0,
+            directional_status: JobStatus::Idle,
             studio: crate::studio::StudioState::default(),
             studio_sessions,
             studio_return: None,
@@ -1108,6 +1170,37 @@ impl ShellApp {
                 ShellMsg::AnchorRefineFailed { epoch, error } => {
                     if epoch == self.rs_refine_epoch {
                         self.rs_status = JobStatus::Failed(error);
+                    }
+                }
+                ShellMsg::NeutralDerived {
+                    epoch,
+                    entity_id,
+                    canonical_id,
+                    image,
+                } => {
+                    if epoch == self.neutral_epoch {
+                        self.land_neutral(entity_id, canonical_id, image);
+                    }
+                }
+                ShellMsg::NeutralFailed { epoch, error } => {
+                    if epoch == self.neutral_epoch {
+                        self.neutral_status = JobStatus::Failed(error);
+                    }
+                }
+                ShellMsg::DirectionalDerived {
+                    epoch,
+                    entity_id,
+                    direction,
+                    neutral_id,
+                    image,
+                } => {
+                    if epoch == self.directional_epoch {
+                        self.land_directional(entity_id, direction, neutral_id, image);
+                    }
+                }
+                ShellMsg::DirectionalFailed { epoch, error } => {
+                    if epoch == self.directional_epoch {
+                        self.directional_status = JobStatus::Failed(error);
                     }
                 }
                 ShellMsg::BgRemovalDone { buffer_id, png } => {
@@ -2648,14 +2741,46 @@ impl ShellApp {
         if result.frames.is_empty() {
             return;
         }
+        // East-as-flip-of-west: when the studio is facing east and the entity has
+        // enabled `east_from_west`, east frames are the west loop mirrored. Flip
+        // the reviewed frames horizontally before integrate; the loop still plays
+        // forward (a mirror is not a reversal). Correct only for left-right-
+        // symmetric subjects — the cascade grid badges east as a flip, not a
+        // generation. The flip is bounded by the pick region, not the 8K canvas.
+        let frames = if self.east_flip_on_land() { flip_frames_horizontal(result.frames) } else { result.frames };
         let fps = self.anim_candidates[i].fps;
         let frame_ms = (1000 / fps.max(1)).max(1);
         let motion = self.anim_candidates[i].motion.clone();
-        integrate_frames_undoable(&mut self.editor, &mut self.doc, result.frames, frame_ms, &motion, LoopDirection::Forward);
+        integrate_frames_undoable(&mut self.editor, &mut self.doc, frames, frame_ms, &motion, LoopDirection::Forward);
         // Drop the canvas preview back to the sprite/timeline; keep the gallery.
         self.anim_selected = None;
         self.anim_clip_playing = false;
         self.exit_clip_preview();
+    }
+
+    /// Whether Land should mirror the picked frames for east: `true` only when the
+    /// studio is facing east and the active entity has enabled `east_from_west`.
+    /// East is the flip of west — no clip is generated for it — so Land mirrors the
+    /// reviewed west loop. Reads the active entity's `CharacterAnchor`; `false`
+    /// when no entity is active or its sheet carries no anchor.
+    fn east_flip_on_land(&self) -> bool {
+        if self.studio.facing != crate::studio::Facing::East {
+            return false;
+        }
+        let Some(entity_id) = self.doc.active_entity_id() else {
+            return false;
+        };
+        let Some(entity) = self.doc.project.library.entities.iter().find(|e| e.id == entity_id) else {
+            return false;
+        };
+        let pixhaus_core::project::EntityContent::Sprites {
+            reference_sheet: Some(sheet),
+            ..
+        } = &entity.content
+        else {
+            return false;
+        };
+        sheet.anchor.directional.east_from_west
     }
 
     /// Moves the scrub cursor within the selected card and re-shows that frame.
@@ -3275,6 +3400,21 @@ pub(crate) fn truncate_motion(s: &str, max: usize) -> String {
     }
 }
 
+/// Mirrors every frame left-to-right, in order, for east-as-flip-of-west at Land.
+/// Each frame is the west loop frame mirrored across X, so the east loop plays the
+/// same motion facing right. An empty buffer can't flip — `flip_horizontal`
+/// returns an error there — so it is passed through unchanged rather than dropped,
+/// keeping the frame count and order stable.
+fn flip_frames_horizontal(frames: Vec<PixelBuffer>) -> Vec<PixelBuffer> {
+    frames
+        .into_iter()
+        .map(|frame| match pixhaus_core::transforms::flip_horizontal(&frame) {
+            Ok(flipped) => flipped,
+            Err(_) => frame,
+        })
+        .collect()
+}
+
 /// Decodes PNG bytes into a tightly packed RGBA [`PixelBuffer`] for display on
 /// the wgpu canvas. Returns `None` on a decode failure or an invalid size.
 pub(crate) fn png_to_pixel_buffer(png: &[u8]) -> Option<PixelBuffer> {
@@ -3609,5 +3749,79 @@ mod tests {
         let json = serde_json::to_string(&prefs).expect("serialize grid prefs");
         let back: GridPrefs = serde_json::from_str(&json).expect("deserialize grid prefs");
         assert_eq!(back, prefs);
+    }
+
+    // --- C3: east-as-flip-of-west at Land -----------------------------------
+
+    use super::{PixelBuffer, flip_frames_horizontal};
+    use pixhaus_core::project::Rgba;
+
+    /// A left-right-asymmetric test frame: a colour ramp across X so a mirror is
+    /// visibly distinct from the original (a symmetric pattern would flip onto
+    /// itself and prove nothing).
+    fn ramp_frame(w: u32, h: u32, tag: u8) -> PixelBuffer {
+        let mut buf = PixelBuffer::new(w, h).expect("buffer");
+        for y in 0..h {
+            for x in 0..w {
+                let r = u8::try_from(x * 255 / w.max(1)).unwrap_or(255);
+                buf.set_pixel(x, y, Rgba::opaque(r, tag, u8::try_from(y % 256).unwrap_or(0)));
+            }
+        }
+        buf
+    }
+
+    /// Mirrors one buffer across X by hand — the reference the flip must match.
+    fn mirror_x(buf: &PixelBuffer) -> PixelBuffer {
+        let (w, h) = (buf.width(), buf.height());
+        let mut out = PixelBuffer::new(w, h).expect("buffer");
+        for y in 0..h {
+            for x in 0..w {
+                let px = buf.pixel(w - 1 - x, y).expect("pixel");
+                out.set_pixel(x, y, px);
+            }
+        }
+        out
+    }
+
+    fn to_rgba_image(b: &PixelBuffer) -> image::RgbaImage {
+        let mut bytes = Vec::with_capacity((b.width() as usize) * (b.height() as usize) * 4);
+        for y in 0..b.height() {
+            bytes.extend_from_slice(b.row(y).expect("row"));
+        }
+        image::RgbaImage::from_raw(b.width(), b.height(), bytes).expect("rgba image")
+    }
+
+    #[test]
+    fn east_land_flips_each_west_frame_across_x() {
+        // The west loop the Normalize stage reviewed.
+        let west = vec![ramp_frame(12, 8, 1), ramp_frame(12, 8, 2), ramp_frame(12, 8, 3)];
+        // East is the flip of west: Land mirrors the reviewed frames before
+        // integrate, preserving frame count and order.
+        let east = flip_frames_horizontal(west.clone());
+
+        assert_eq!(east.len(), west.len(), "the flip keeps every frame, in order");
+        for (i, (east_frame, west_frame)) in east.iter().zip(&west).enumerate() {
+            let expected = mirror_x(west_frame);
+            // Byte-for-byte equality, stronger than an image-compare score.
+            assert_eq!(east_frame.as_bytes(), expected.as_bytes(), "east frame {i} is the west frame mirrored across X");
+            // And confirm via image-compare for the visual-regression record.
+            let score = image_compare::rgba_hybrid_compare(&to_rgba_image(east_frame), &to_rgba_image(&expected))
+                .expect("compare")
+                .score;
+            assert!((score - 1.0).abs() < f64::EPSILON, "east frame {i} matches the mirror exactly: {score}");
+        }
+        // The mirror genuinely changes an asymmetric frame — a no-op flip would
+        // pass the equality above against itself and prove nothing.
+        assert_ne!(east[0].as_bytes(), west[0].as_bytes(), "the mirror is not the identity for an asymmetric frame");
+    }
+
+    #[test]
+    fn east_land_passes_an_empty_frame_through_unchanged() {
+        // A zero-sized buffer can't flip; it must pass through, not vanish, so the
+        // frame count and order stay stable.
+        let frames = vec![PixelBuffer::new(0, 0).expect("empty buffer")];
+        let flipped = flip_frames_horizontal(frames);
+        assert_eq!(flipped.len(), 1, "the empty frame survives the flip pass");
+        assert!(flipped[0].is_empty(), "the empty frame is unchanged");
     }
 }
