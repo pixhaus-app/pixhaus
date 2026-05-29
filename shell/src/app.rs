@@ -468,6 +468,12 @@ pub struct ShellApp {
     /// Picked look Style id folded into the composed preview, or `None` to
     /// inherit only the project style notes.
     pub(crate) ck_style_id: Option<String>,
+    /// Anchor influence in `0.0..=1.0`, fed to
+    /// [`pixhaus_ai::plugin::AnchorPayload::from_sprite_entity`] when the
+    /// approved anchor conditions a downstream generation. Transient UI state
+    /// (no undo); defaults to
+    /// [`pixhaus_ai::plugin::DEFAULT_ANCHOR_STRENGTH`].
+    pub(crate) ck_anchor_strength: f32,
     /// Current values for the picked template's variable dials.
     pub(crate) ck_vars: BTreeMap<String, String>,
     /// Per-dial lock: a locked dial is left untouched by randomize / surprise.
@@ -787,6 +793,7 @@ impl ShellApp {
             ck_dirty: true,
             ck_prompt_id: None,
             ck_style_id: None,
+            ck_anchor_strength: pixhaus_ai::plugin::DEFAULT_ANCHOR_STRENGTH,
             ck_vars: BTreeMap::new(),
             ck_var_locked: HashMap::new(),
             ck_references: Vec::new(),

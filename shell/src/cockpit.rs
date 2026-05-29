@@ -12,6 +12,7 @@
 //! into the core [`ReferenceSheet`] model so history survives a save and reopen.
 
 use eframe::egui;
+use pixhaus_ai::plugin::AnchorPayload;
 use pixhaus_ai::verbs::reference_sheet::{ReferenceInput, SheetVariantOutput};
 use pixhaus_core::project::library::composition::VarControl;
 use pixhaus_core::project::{
@@ -554,7 +555,64 @@ impl ShellApp {
         }
         if self.doc.active_anchor().is_some() {
             ui.colored_label(palette.success, format!("{} anchor approved", crate::icons::CHECK));
+            self.cockpit_anchor_strength(ui);
         }
+    }
+
+    /// Anchor-influence control, shown beneath the approved-anchor indicator.
+    /// Tunes how strongly the approved variant conditions downstream
+    /// generations (its bytes become an animation/refine anchor). The value
+    /// feeds [`AnchorPayload::from_sprite_entity`] as the IP-Adapter strength.
+    /// The anchor's resolution is fixed to the approved variant's own
+    /// resolution; this slider governs influence, not size. The cockpit size
+    /// picker ([`Self::cockpit_resolution`]) sets the generation request size
+    /// that produced the variant, surfaced here as a read-only caption.
+    /// Transient UI state — no undo.
+    fn cockpit_anchor_strength(&mut self, ui: &mut egui::Ui) {
+        ui.add(
+            egui::Slider::new(&mut self.ck_anchor_strength, 0.0..=1.0)
+                .text("anchor strength")
+                .fixed_decimals(2),
+        )
+        .on_hover_text("How strongly the approved anchor conditions new generations (0 = loose, 1 = rigid)");
+        // Resolving the payload at the chosen strength confirms an anchor is in
+        // hand; its resolution is the canonical variant's own, not the size
+        // picker above. Decode-free — the dimensions are stored on the variant.
+        if self.active_anchor_payload().is_some() {
+            if let Some((w, h)) = self.active_anchor_resolution() {
+                ui.label(egui::RichText::new(format!("anchor resolution {w} \u{00d7} {h}")).small().weak());
+            }
+        }
+    }
+
+    /// The approved canonical variant's stored `(width, height)`, read without
+    /// decoding the image bytes. This is the anchor's resolution — the size the
+    /// approved variant was generated at, not the cockpit's current size picker.
+    fn active_anchor_resolution(&self) -> Option<(u32, u32)> {
+        let entity_id = self.doc.active_entity_id()?;
+        let entity = self.doc.project.library.entities.iter().find(|e| e.id == entity_id)?;
+        let EntityContent::Sprites {
+            reference_sheet: Some(sheet),
+            ..
+        } = &entity.content
+        else {
+            return None;
+        };
+        let canonical = sheet.canonical.as_ref()?;
+        Some((canonical.width, canonical.height))
+    }
+
+    /// Builds the [`AnchorPayload`] for the active entity's approved canonical
+    /// variant at the cockpit's chosen [`Self::ck_anchor_strength`]. Returns
+    /// `None` when no entity is active or its sheet has no canonical variant.
+    /// `LoRA` is out of scope, so `lora_path` is always `None`. The payload's
+    /// resolution is the canonical variant's own resolution; the cockpit size
+    /// picker ([`Self::cockpit_resolution`]) governs the generation request
+    /// size that produced that variant, not the anchor here.
+    pub(crate) fn active_anchor_payload(&self) -> Option<AnchorPayload> {
+        let entity_id = self.doc.active_entity_id()?;
+        let entity = self.doc.project.library.entities.iter().find(|e| e.id == entity_id)?;
+        anchor_payload_for(entity, self.ck_anchor_strength)
     }
 
     /// Recent prompts, recallable from the cockpit — past prompts are starting
@@ -1611,6 +1669,15 @@ fn stamp_if_promotion(variant: &mut SheetVariant, origin: VariantOrigin) {
     }
 }
 
+/// Builds the anchor payload for `entity` at the chosen `strength`, passing
+/// `None` for `lora_path` (`LoRA` is out of scope). Returns `None` when the
+/// entity has no approved canonical variant. Pure so the strength wiring is
+/// unit-testable without a full app; `from_sprite_entity` itself clamps the
+/// value to `0.0..=1.0`.
+fn anchor_payload_for(entity: &pixhaus_core::project::Entity, strength: f32) -> Option<AnchorPayload> {
+    AnchorPayload::from_sprite_entity(entity, strength, None)
+}
+
 #[cfg(test)]
 mod tests {
     use super::{
@@ -1883,6 +1950,56 @@ mod tests {
         let restored = sheet_variants(&doc, entity_id);
         assert_eq!(restored.len(), 2, "undo restores the deleted variant");
         assert!(restored.iter().any(|v| v.id == drop), "the dropped variant is back by id");
+    }
+
+    // ── Task 9: anchor payload strength control ───────────────────────────────
+
+    #[test]
+    fn chosen_anchor_strength_reaches_the_payload_constructor() {
+        use super::anchor_payload_for;
+
+        let mut doc = DocumentStore::new();
+        doc.create_sprite("hero", Size::new(16, 16));
+        let entity_id = doc.active_entity_id().expect("active entity");
+        let mut editor = EditorState::default();
+
+        // Approve a canonical variant so the entity carries an anchor.
+        let canonical = SheetVariant::from_image(
+            SheetVariantId::new(doc.alloc_id()),
+            1,
+            ReferenceImage {
+                bytes: tiny_png(24, 24),
+                mime: "image/png".to_owned(),
+            },
+        );
+        push_library_edit(&mut editor, &mut doc, "Approve anchor", entity_id, move |entity| {
+            if let EntityContent::Sprites { reference_sheet, .. } = &mut entity.content {
+                let sheet = reference_sheet.get_or_insert_with(|| Box::new(ReferenceSheet::default()));
+                sheet.canonical = Some(canonical);
+            }
+        });
+
+        let entity = doc.project.library.entities.iter().find(|e| e.id == entity_id).expect("entity");
+
+        // The cockpit's chosen strength threads straight through to the payload.
+        let payload = anchor_payload_for(entity, 0.42).expect("canonical anchor yields a payload");
+        assert!((payload.strength - 0.42).abs() < f32::EPSILON, "the chosen strength reaches the constructor");
+        assert!(payload.lora_path.is_none(), "LoRA is out of scope, so lora_path is None");
+
+        // The constructor clamps out-of-range values to the unit interval.
+        let clamped = anchor_payload_for(entity, 5.0).expect("payload");
+        assert!((clamped.strength - 1.0).abs() < f32::EPSILON, "an over-range strength clamps to 1.0");
+    }
+
+    #[test]
+    fn anchor_payload_for_returns_none_without_a_canonical() {
+        use super::anchor_payload_for;
+
+        let mut doc = DocumentStore::new();
+        doc.create_sprite("hero", Size::new(16, 16));
+        let entity_id = doc.active_entity_id().expect("active entity");
+        let entity = doc.project.library.entities.iter().find(|e| e.id == entity_id).expect("entity");
+        assert!(anchor_payload_for(entity, 0.7).is_none(), "no approved canonical means no anchor payload");
     }
 
     #[test]
