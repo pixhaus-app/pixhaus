@@ -241,6 +241,9 @@ impl ShellApp {
         });
 
         self.swatch_editor(ui);
+
+        ui.separator();
+        self.palette_tools(ui);
     }
 
     /// The popup multi-tab colour editor for the double-clicked swatch.

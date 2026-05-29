@@ -100,6 +100,39 @@ pub enum PaletteSort {
     Value,
 }
 
+/// The harmony scheme the palette panel's Harmony tool derives from the
+/// foreground colour. Each kind maps to one `core::color::harmony` function;
+/// switching kinds re-derives the suggestion swatches. Mirrors the kind tabs of
+/// the Tauri `HarmonyPicker.tsx`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
+pub enum HarmonyKind {
+    /// The single complementary colour (hue + 180°).
+    #[default]
+    Complement,
+    /// The two split-complementary colours (hue + 150° / + 210°).
+    SplitComplement,
+    /// The two triadic colours (hue + 120° / + 240°).
+    Triad,
+    /// The three tetradic (square) colours (hue + 90° / 180° / 270°).
+    Tetrad,
+    /// Five analogous colours stepped ±30° around the hue.
+    Analogous,
+}
+
+impl HarmonyKind {
+    /// The short label shown on the kind selector.
+    #[must_use]
+    pub const fn label(self) -> &'static str {
+        match self {
+            Self::Complement => "Comp",
+            Self::SplitComplement => "Split",
+            Self::Triad => "Triad",
+            Self::Tetrad => "Tetrad",
+            Self::Analogous => "Analog",
+        }
+    }
+}
+
 /// The active tab of the multi-tab colour picker. Each tab edits the same
 /// [`Rgba`] through a different colour space; switching tabs preserves the
 /// colour. Mirrors the five modes of the Tauri `ColorPicker.tsx`.
@@ -506,6 +539,18 @@ pub struct EditorState {
     /// Palette panel: the draft name the inline swatch rename edits, re-seeded
     /// from the entry's current name when the rename opens.
     pub rename_draft: String,
+    /// Palette panel: the ramp tool's start swatch index. Clamped to the live
+    /// palette length each frame, so it never points past the palette.
+    pub ramp_from: usize,
+    /// Palette panel: the ramp tool's end swatch index. Clamped like
+    /// [`Self::ramp_from`].
+    pub ramp_to: usize,
+    /// Palette panel: the ramp tool's step count, in `3..=32`. The added swatches
+    /// are the `steps - 2` intermediates (the endpoints are not duplicated).
+    pub ramp_steps: usize,
+    /// Palette panel: the harmony tool's scheme, derived from the foreground
+    /// colour. View state, never serialized.
+    pub harmony_kind: HarmonyKind,
     /// Timeline: cel-thumbnail edge length in points.
     pub cel_size: f32,
     /// Timeline: draft name for a new frame tag.
@@ -616,6 +661,10 @@ impl Default for EditorState {
             locked_swatches: BTreeSet::new(),
             renaming_swatch: None,
             rename_draft: String::new(),
+            ramp_from: 0,
+            ramp_to: 0,
+            ramp_steps: 5,
+            harmony_kind: HarmonyKind::default(),
             cel_size: 48.0,
             new_tag_name: String::new(),
             layer_rename: None,
