@@ -1,0 +1,5 @@
+---
+source: ai/src/compose/builtins.rs
+expression: "compose_layout(&lib, \"pixhaus.builtin.structure.tileset\")"
+---
+top row (1024×256) shows the base tile primitives — flat tile, corner variants, edge variants, in a grid keep the entire subject inside its own cell with equal empty margin on all four sides, never letting limbs, weapons, or effects cross into a neighbouring cell; render every cell at an identical bounding box and identical pixel scale; cells are separated by background only — no drawn cell borders, dividing lines, gridlines, or gutters; no text, labels, captions, numbers, or watermarks anywhere on the sheet. middle band (1024×384): transition tile variants and edge blending rules. lower block (1024×256): 3×3 autotile preview demonstrating the autotile rule set. bottom strip (1024×128): palette swatch. White background, grid-aligned, consistent tile size throughout

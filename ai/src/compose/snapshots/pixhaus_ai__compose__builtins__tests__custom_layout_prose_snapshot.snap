@@ -1,0 +1,5 @@
+---
+source: ai/src/compose/builtins.rs
+expression: "compose_layout(&lib, \"pixhaus.builtin.structure.custom\")"
+---
+full-body orthographic view centred in a 1024×896 area keep the entire subject inside its own cell with equal empty margin on all four sides, never letting limbs, weapons, or effects cross into a neighbouring cell; render every cell at an identical bounding box and identical pixel scale; cells are separated by background only — no drawn cell borders, dividing lines, gridlines, or gutters; no text, labels, captions, numbers, or watermarks anywhere on the sheet. palette swatch row at the bottom, 1024×128 pixels. White background

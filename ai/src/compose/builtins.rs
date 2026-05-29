@@ -90,6 +90,44 @@ impl BuiltinLibrary {
     }
 }
 
+/// Containment + identity-scale-lock + no-border + no-text rules appended once
+/// to the lead prose fragment of every paneled built-in structure. Universal —
+/// applies to every art style, pixel or clean-HD — so it lives in the structure,
+/// not in any Style. Carries no `{var}` placeholders, so appending it before
+/// substitution leaves the lead fragment's `{panel_w}`/`{panel_h}` clause intact.
+const PANEL_DISCIPLINE: &str = "keep the entire subject inside its own cell with \
+    equal empty margin on all four sides, never letting limbs, weapons, or effects \
+    cross into a neighbouring cell; render every cell at an identical bounding box \
+    and identical pixel scale; cells are separated by background only — no drawn \
+    cell borders, dividing lines, gridlines, or gutters; no text, labels, captions, \
+    numbers, or watermarks anywhere on the sheet";
+
+/// Structure-level negatives carrying the same rules, so they hold even when no
+/// Style is picked — compose folds `look_negatives` only when a style is `Some`,
+/// so the no-border/no-text rule must live on the structure to always apply.
+const PANEL_NEG: &str = "drawn cell borders, dividing lines, gridlines, gutters, \
+    panel frames, text, labels, captions, page numbers, subject bleeding across \
+    cell edges, inconsistent cell scale";
+
+/// Appends the shared [`PANEL_DISCIPLINE`] clause to a structure's lead prose
+/// fragment. Compose joins fragments with ". ", so appending to the lead emits
+/// the clause exactly once per sheet.
+fn lead(base: &str) -> String {
+    format!("{base} {PANEL_DISCIPLINE}")
+}
+
+/// Appends the shared [`PANEL_NEG`] rule to a structure's domain `layout_negatives`,
+/// joining with ", " and dropping a leading separator when the domain part is empty
+/// (so `custom()`'s formerly-empty negatives do not start with a bare comma).
+fn with_panel_neg(domain: &str) -> String {
+    let domain = domain.trim();
+    if domain.is_empty() {
+        PANEL_NEG.to_owned()
+    } else {
+        format!("{domain}, {PANEL_NEG}")
+    }
+}
+
 fn panel(label: &str, x: u32, y: u32, w: u32, h: u32, slot: PanelSlot, prose: &str) -> StructurePanel {
     StructurePanel {
         label: label.into(),
@@ -125,6 +163,11 @@ fn character() -> Structure {
     // non-empty fragments only.)
     for p in panels.iter_mut().skip(1) {
         p.prose_fragment.clear();
+    }
+    // Append the universal panel-discipline clause to the lead fragment so it
+    // rides the sheet exactly once.
+    if let Some(first) = panels.first_mut() {
+        first.prose_fragment = lead(&first.prose_fragment);
     }
     let exprs = ["neutral", "happy", "angry"];
     for (i, label) in exprs.iter().enumerate() {
@@ -175,7 +218,7 @@ fn character() -> Structure {
             canvas: Dimensions { width: 1024, height: 1536 },
             panels,
         },
-        layout_negatives: "extra limbs, bad anatomy, duplicate characters, overlapping views, inconsistent scale".into(),
+        layout_negatives: with_panel_neg("extra limbs, bad anatomy, duplicate characters, overlapping views, inconsistent scale"),
     }
 }
 
@@ -210,6 +253,9 @@ fn item() -> Structure {
         };
         panels.push(panel(label, u32::try_from(i).unwrap_or(0) * 512, 896, 512, 128, PanelSlot::Callout, prose));
     }
+    if let Some(first) = panels.first_mut() {
+        first.prose_fragment = lead(&first.prose_fragment);
+    }
     Structure {
         id: StructureId("pixhaus.builtin.structure.item".into()),
         name: "Item".into(),
@@ -217,14 +263,14 @@ fn item() -> Structure {
             canvas: Dimensions { width: 1024, height: 1024 },
             panels,
         },
-        layout_negatives: "floating elements, inconsistent scale across views".into(),
+        layout_negatives: with_panel_neg("floating elements, inconsistent scale across views"),
     }
 }
 
 fn tileset() -> Structure {
     // Per-band pixel dimensions interpolated from each rect, matching the
     // legacy tileset prompt's "(1024×256)" framing.
-    let panels = vec![
+    let mut panels = vec![
         panel(
             "tile-primitives",
             0,
@@ -266,6 +312,9 @@ fn tileset() -> Structure {
              grid-aligned, consistent tile size throughout",
         ),
     ];
+    if let Some(first) = panels.first_mut() {
+        first.prose_fragment = lead(&first.prose_fragment);
+    }
     Structure {
         id: StructureId("pixhaus.builtin.structure.tileset".into()),
         name: "Tileset".into(),
@@ -273,12 +322,12 @@ fn tileset() -> Structure {
             canvas: Dimensions { width: 1024, height: 1024 },
             panels,
         },
-        layout_negatives: "non-grid-aligned tiles, broken patterns, inconsistent tile size".into(),
+        layout_negatives: with_panel_neg("non-grid-aligned tiles, broken patterns, inconsistent tile size"),
     }
 }
 
 fn custom() -> Structure {
-    let panels = vec![
+    let mut panels = vec![
         panel(
             "full-body",
             0,
@@ -298,6 +347,9 @@ fn custom() -> Structure {
             "palette swatch row at the bottom, {panel_w}×{panel_h} pixels. White background",
         ),
     ];
+    if let Some(first) = panels.first_mut() {
+        first.prose_fragment = lead(&first.prose_fragment);
+    }
     Structure {
         id: StructureId("pixhaus.builtin.structure.custom".into()),
         name: "Custom".into(),
@@ -305,7 +357,8 @@ fn custom() -> Structure {
             canvas: Dimensions { width: 1024, height: 1024 },
             panels,
         },
-        layout_negatives: String::new(),
+        // custom() previously had empty negatives; the shared rule supplies them.
+        layout_negatives: with_panel_neg(""),
     }
 }
 
@@ -518,6 +571,26 @@ mod tests {
             context_fragments: &[],
         };
         compose(&req).unwrap().positive
+    }
+
+    /// Composes with no style picked, so the negative folds the structure's
+    /// `layout_negatives` only — proving the panel-discipline rule holds without
+    /// a Style, since compose folds `look_negatives` only when `style` is `Some`.
+    fn compose_negative_no_style(lib: &BuiltinLibrary, id: &str) -> String {
+        let empty = BTreeMap::new();
+        let req = ComposeRequest {
+            baseline: "",
+            structure: structure(lib, id),
+            style: None,
+            prompt: None,
+            variable_values: &empty,
+            entity_info: &empty,
+            inline_text: "",
+            inline_negatives: "",
+            operation_hint: None,
+            context_fragments: &[],
+        };
+        compose(&req).unwrap().negative
     }
 
     fn count_slot(s: &Structure, slot: PanelSlot) -> usize {
@@ -801,5 +874,124 @@ mod tests {
         // Legacy character negative, recombined from look + layout negatives.
         assert!(out.negative.contains("blurry, low quality, watermark"));
         assert!(out.negative.contains("overlapping views, inconsistent scale"));
+    }
+
+    // ── Panel discipline: containment + no-border/no-text + identity/scale-lock ──
+
+    mod panel_discipline {
+        use super::*;
+        use rstest::rstest;
+
+        const CHARACTER: &str = "pixhaus.builtin.structure.character";
+        const ITEM: &str = "pixhaus.builtin.structure.item";
+        const TILESET: &str = "pixhaus.builtin.structure.tileset";
+        const CUSTOM: &str = "pixhaus.builtin.structure.custom";
+
+        /// Every paneled built-in carries the shared containment + scale-lock
+        /// clause in its positive prose, so a downstream fixed-rect crop lands on
+        /// a contained, identically-scaled subject.
+        #[rstest]
+        #[case::character(CHARACTER)]
+        #[case::item(ITEM)]
+        #[case::tileset(TILESET)]
+        #[case::custom(CUSTOM)]
+        fn paneled_structures_emit_containment_clause(#[case] id: &str) {
+            let lib = BuiltinLibrary::load();
+            let positive = compose_layout(&lib, id);
+            assert!(positive.contains("equal empty margin on all four sides"), "{id} missing containment margin clause: {positive}");
+            assert!(
+                positive.contains("identical bounding box and identical pixel scale"),
+                "{id} missing identity/scale-lock clause: {positive}"
+            );
+            assert!(positive.contains("no drawn cell borders"), "{id} missing no-border clause: {positive}");
+        }
+
+        /// The clause rides on the lead fragment, and compose joins fragments
+        /// with ". ", so it appears once per sheet — not once per panel.
+        #[rstest]
+        #[case::character(CHARACTER)]
+        #[case::item(ITEM)]
+        #[case::tileset(TILESET)]
+        #[case::custom(CUSTOM)]
+        fn containment_clause_appears_exactly_once(#[case] id: &str) {
+            let lib = BuiltinLibrary::load();
+            let positive = compose_layout(&lib, id);
+            let count = positive.matches("equal empty margin on all four sides").count();
+            assert_eq!(count, 1, "{id} must carry the containment clause exactly once, got {count}: {positive}");
+        }
+
+        /// Free composition is excluded: a single-image structure must not be
+        /// over-locked with per-cell containment prose.
+        #[test]
+        fn single_structure_has_no_containment_clause() {
+            let lib = BuiltinLibrary::load();
+            let positive = compose_layout(&lib, STRUCTURE_SINGLE_ID);
+            assert!(
+                !positive.contains("equal empty margin on all four sides"),
+                "single (free-form) structure must not carry the containment clause: {positive}"
+            );
+        }
+
+        /// The negatives carry the no-border / no-text rule even with no Style
+        /// picked, because compose folds `look_negatives` only when `style` is
+        /// `Some` — the rule must live on the structure to always hold.
+        #[rstest]
+        #[case::character(CHARACTER)]
+        #[case::item(ITEM)]
+        #[case::tileset(TILESET)]
+        #[case::custom(CUSTOM)]
+        fn paneled_structures_negatives_forbid_borders_and_text(#[case] id: &str) {
+            let lib = BuiltinLibrary::load();
+            let negative = compose_negative_no_style(&lib, id);
+            assert!(negative.contains("drawn cell borders"), "{id} negatives must forbid drawn cell borders: {negative}");
+            assert!(negative.contains("text, labels"), "{id} negatives must forbid text/labels: {negative}");
+        }
+
+        /// The shared negative is appended to each structure's domain negatives,
+        /// never replacing them — additive, so the migration tests stay green.
+        #[test]
+        fn character_negatives_keep_domain_phrase() {
+            let lib = BuiltinLibrary::load();
+            let negative = compose_negative_no_style(&lib, CHARACTER);
+            assert!(negative.contains("overlapping views, inconsistent scale"), "character domain negatives must survive: {negative}");
+            assert!(negative.contains("drawn cell borders"), "shared panel negatives must be present: {negative}");
+        }
+
+        /// Custom had empty domain negatives, so the shared rule must not leave
+        /// a leading bare comma after concatenation.
+        #[test]
+        fn custom_negatives_do_not_start_with_a_bare_comma() {
+            let lib = BuiltinLibrary::load();
+            let negative = compose_negative_no_style(&lib, CUSTOM);
+            assert!(!negative.starts_with(','), "negatives must not start with a bare comma: {negative}");
+            assert!(negative.contains("drawn cell borders"), "custom must still carry the shared panel negatives: {negative}");
+        }
+
+        /// Single keeps empty `layout_negatives`; with no style its negative is
+        /// empty, so the discipline rule does not leak onto free composition.
+        #[test]
+        fn single_structure_negatives_stay_empty() {
+            let lib = BuiltinLibrary::load();
+            let negative = compose_negative_no_style(&lib, STRUCTURE_SINGLE_ID);
+            assert!(negative.is_empty(), "single (free-form) negatives must stay empty: {negative}");
+        }
+    }
+
+    #[test]
+    fn item_layout_prose_snapshot() {
+        let lib = BuiltinLibrary::load();
+        insta::assert_snapshot!(compose_layout(&lib, "pixhaus.builtin.structure.item"));
+    }
+
+    #[test]
+    fn tileset_layout_prose_snapshot() {
+        let lib = BuiltinLibrary::load();
+        insta::assert_snapshot!(compose_layout(&lib, "pixhaus.builtin.structure.tileset"));
+    }
+
+    #[test]
+    fn custom_layout_prose_snapshot() {
+        let lib = BuiltinLibrary::load();
+        insta::assert_snapshot!(compose_layout(&lib, "pixhaus.builtin.structure.custom"));
     }
 }

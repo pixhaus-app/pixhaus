@@ -1,0 +1,5 @@
+---
+source: ai/src/compose/builtins.rs
+expression: "compose_layout(&lib, \"pixhaus.builtin.structure.item\")"
+---
+2×2 grid of orthographic views — top-left is front face, top-right is left side, bottom-left is back face, bottom-right is right side, each 512×384 keep the entire subject inside its own cell with equal empty margin on all four sides, never letting limbs, weapons, or effects cross into a neighbouring cell; render every cell at an identical bounding box and identical pixel scale; cells are separated by background only — no drawn cell borders, dividing lines, gridlines, or gutters; no text, labels, captions, numbers, or watermarks anywhere on the sheet. a palette swatch row 1024×128 pixels. two detail callout panels 512×128 each. White background, consistent scale across all four views

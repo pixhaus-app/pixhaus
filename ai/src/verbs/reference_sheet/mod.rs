@@ -1271,6 +1271,33 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn generated_prompt_carries_panel_discipline() {
+        let runtime = VerbRuntime::new();
+        runtime.register_backend(BackendProxy::new(WhiteStub::new(1)), 0).unwrap();
+        runtime.register(GenerateReferenceSheetVerb::new()).unwrap();
+
+        let inv = runtime
+            .invoke(
+                &VerbId::new(GENERATE_REFERENCE_SHEET_VERB_ID),
+                VerbContext::empty(meta()),
+                inputs_for(CHARACTER, 1),
+            )
+            .unwrap();
+        let payload = decode_payload(&inv.finish().await.unwrap().output);
+        let variant = &payload.variants[0];
+        // Positive prompt carries the universal containment/scale-lock clause.
+        assert!(
+            variant.generation.prompt.contains("equal empty margin on all four sides"),
+            "composed prompt must carry the containment clause: {}",
+            variant.generation.prompt
+        );
+        // Negative carries the no-border rule even with no style picked.
+        let neg = variant.generation.negative_prompt.as_deref().expect("negative_prompt must be Some");
+        assert!(neg.contains("drawn cell borders"), "composed negative must forbid drawn cell borders: {neg}");
+        assert!(!neg.starts_with(','), "negative prompt must not start with a bare comma: {neg}");
+    }
+
+    #[tokio::test]
     async fn pixel_art_style_gives_pixel_baseline() {
         use crate::compose::builtins::STYLE_PIXEL_ART_ID;
 
