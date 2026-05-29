@@ -28,13 +28,35 @@ thiserror.workspace = true
 tracing.workspace = true
 parking_lot.workspace = true
 
+# Download path — optional, pulled in only by the `download` feature. We drive
+# the multi-GB transfer ourselves with reqwest's byte stream (hf-hub 0.5 has no
+# programmatic byte-progress callback), so we need the async + stream toolbox.
+reqwest = { workspace = true, optional = true }
+bytes = { version = "1", optional = true }
+futures-util = { version = "0.3", optional = true }
+tokio = { workspace = true, optional = true }
+tokio-util = { workspace = true, optional = true }
+
+[dev-dependencies]
+tempfile.workspace = true
+tokio = { workspace = true }
+tokio-util = { workspace = true }
+
 [features]
 default = ["cpu"]
 cpu = []
 cuda = ["candle-core/cuda", "candle-nn/cuda", "candle-transformers/cuda"]
 metal = ["candle-core/metal", "candle-nn/metal", "candle-transformers/metal"]
 flash-attn = ["cuda", "candle-transformers/flash-attn"]
-download = ["hf-hub/tokio", "hf-hub/rustls-tls"]
+download = [
+    "dep:reqwest",
+    "dep:bytes",
+    "dep:futures-util",
+    "dep:tokio",
+    "dep:tokio-util",
+    "hf-hub/tokio",
+    "hf-hub/rustls-tls",
+]
 
 # Own lints — not `workspace = true`. The workspace floor denies
 # unwrap_used/expect_used/panic; tensor code wants the occasional unwrap on a

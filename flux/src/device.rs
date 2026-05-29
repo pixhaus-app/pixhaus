@@ -108,3 +108,32 @@ impl DeviceChoice {
         Ok(device)
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// On a build without `cuda`/`metal`, every preference resolves to CPU and
+    /// an explicit GPU preference degrades rather than failing. The CI/test gate
+    /// always compiles the `cpu` feature, so this is the path under test here.
+    #[cfg(not(any(feature = "cuda", feature = "metal")))]
+    #[test]
+    fn cpu_only_build_resolves_everything_to_cpu() {
+        assert_eq!(DeviceChoice::auto(), DeviceChoice::Cpu);
+        assert_eq!(DeviceChoice::resolve(DevicePref::Auto), DeviceChoice::Cpu);
+        assert_eq!(DeviceChoice::resolve(DevicePref::Cuda(0)), DeviceChoice::Cpu);
+        assert_eq!(DeviceChoice::resolve(DevicePref::Metal), DeviceChoice::Cpu);
+        assert_eq!(DeviceChoice::resolve(DevicePref::Cpu), DeviceChoice::Cpu);
+    }
+
+    #[test]
+    fn cpu_choice_builds_a_device() {
+        let device = DeviceChoice::Cpu.to_device().expect("cpu device is infallible");
+        assert!(matches!(device, Device::Cpu));
+    }
+
+    #[test]
+    fn device_pref_default_is_auto() {
+        assert_eq!(DevicePref::default(), DevicePref::Auto);
+    }
+}

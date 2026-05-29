@@ -4910,17 +4910,23 @@ dependencies = [
 name = "pixhaus-flux"
 version = "0.1.0"
 dependencies = [
+ "bytes",
  "candle-core",
  "candle-nn",
  "candle-transformers",
  "directories",
+ "futures-util",
  "hf-hub",
  "image",
  "parking_lot",
+ "reqwest",
  "safetensors 0.7.0",
  "serde",
+ "tempfile",
  "thiserror 2.0.18",
  "tokenizers",
+ "tokio",
+ "tokio-util",
  "tracing",
 ]
 
