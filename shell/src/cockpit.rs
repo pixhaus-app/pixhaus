@@ -14,7 +14,9 @@
 use eframe::egui;
 use pixhaus_ai::verbs::reference_sheet::{ReferenceInput, SheetVariantOutput};
 use pixhaus_core::project::library::composition::VarControl;
-use pixhaus_core::project::{EntityContent, ReferenceImage, ReferenceRole, ReferenceSheet, SheetVariant, SheetVariantId, VariantOrigin};
+use pixhaus_core::project::{
+    EntityContent, GenerationProvenance, ReferenceImage, ReferenceRole, ReferenceSheet, RefinementKind, SheetVariant, SheetVariantId, VariantOrigin,
+};
 
 use crate::ai;
 use crate::app::{JobStatus, ShellApp};
@@ -608,6 +610,13 @@ impl ShellApp {
     fn cockpit_gallery(&mut self, ui: &mut egui::Ui) {
         if self.rs_candidates.is_empty() {
             ui.label(egui::RichText::new("Results land here. Type a subject and Generate.").small().weak());
+            if ui
+                .button(format!("{} Import image…", crate::icons::UPLOAD))
+                .on_hover_text("Bring an existing image in as a candidate")
+                .clicked()
+            {
+                self.import_image_as_variant();
+            }
             return;
         }
         let ctx = ui.ctx().clone();
@@ -617,13 +626,24 @@ impl ShellApp {
             }
         }
 
+        let mut import = false;
         ui.horizontal(|ui| {
             ui.label(egui::RichText::new(format!("Results · {}", self.rs_candidates.len())).strong());
             if ui.small_button("clear").clicked() {
                 self.rs_candidates.clear();
                 self.studio.anchor_selected = None;
             }
+            if ui
+                .small_button(format!("{} Import", crate::icons::UPLOAD))
+                .on_hover_text("Bring an existing image in as a candidate")
+                .clicked()
+            {
+                import = true;
+            }
         });
+        if import {
+            self.import_image_as_variant();
+        }
         ui.add_space(4.0);
 
         let accent = crate::theme::Palette::for_theme(ui.ctx().theme()).accent;
@@ -709,9 +729,26 @@ impl ShellApp {
             {
                 action = Some(CardAction::SaveCard);
             }
+            if ui
+                .button(format!("{} Promote", crate::icons::PROMOTE))
+                .on_hover_text("Re-render at high quality as the final, flagged as a promotion")
+                .clicked()
+            {
+                action = Some(CardAction::Promote);
+            }
             let approve = egui::Button::new(format!("{} Approve as anchor", crate::icons::ANCHOR));
             if ui.add(approve).clicked() {
                 action = Some(CardAction::Approve);
+            }
+            // Guard the approved canonical: the gallery only holds non-canonical
+            // candidates (approval moves them to `canonical`), so every card here
+            // is safe to delete.
+            if ui
+                .button(format!("{} Delete", crate::icons::TRASH))
+                .on_hover_text("Remove this candidate from the reference sheet")
+                .clicked()
+            {
+                action = Some(CardAction::Delete);
             }
         });
 
@@ -822,6 +859,8 @@ impl ShellApp {
             }
             CardAction::SaveCard => self.save_candidate_as_card(i),
             CardAction::Approve => self.approve_candidate(i),
+            CardAction::Promote => self.promote_candidate(i),
+            CardAction::Delete => self.delete_candidate(i),
         }
     }
 
@@ -887,6 +926,13 @@ impl ShellApp {
             }
         }
 
+        // A promotion is a final, high-quality re-render; everything else lets
+        // the router/provider pick the tier. A single candidate suffices for the
+        // promotion — it is a one-shot final render of the source.
+        let promotion = lineage.origin == VariantOrigin::Promotion;
+        let quality = promotion.then_some(ai::ImageQuality::High);
+        let num_variants = if promotion { 1 } else { self.rs_num_variants };
+
         let target = anchor_target_dims(self.ck_aspect, self.ck_resolution, self.ck_custom);
         let job = ai::SheetJob {
             meta: self.doc.project.metadata.clone(),
@@ -895,7 +941,7 @@ impl ShellApp {
             prompt: self.rs_prompt.clone(),
             prompt_id: self.ck_prompt_id.clone(),
             variable_values,
-            num_variants: self.rs_num_variants,
+            num_variants,
             style_notes: self.doc.project.library.ai.style_notes.clone(),
             structures: self.doc.project.library.ai.structures.clone(),
             styles: self.doc.project.library.ai.styles.clone(),
@@ -905,6 +951,7 @@ impl ShellApp {
             negative_override,
             seed,
             target_size: Some(target),
+            quality,
         };
         self.ck_pending = lineage;
         self.rs_status = JobStatus::Running("starting".into());
@@ -954,6 +1001,9 @@ impl ShellApp {
             variant.origin = lineage.origin;
             variant.parent_variant_id = lineage.parent_core;
             variant.cost_usd = cost_usd;
+            // A promotion lands flagged and tiered as the final render so the
+            // gallery and provenance can mark it, and a save preserves it.
+            stamp_if_promotion(&mut variant, lineage.origin);
             core_variants.push(variant);
 
             new_cards.push(CockpitCandidate {
@@ -997,6 +1047,9 @@ impl ShellApp {
 
     /// Lands an inpaint-refined anchor image as a new result linked to `parent`,
     /// inheriting the parent's provenance and persisting it like a fresh variant.
+    /// Stamps the structured [`RefinementKind`] captured at the start of the run
+    /// (a painted mask -> `Masked`, no mask -> `PromptOnly`) onto the variant so
+    /// provenance can show the refinement kind and it survives a save/reload.
     pub(crate) fn land_anchor_refine(&mut self, parent: usize, image: Vec<u8>) {
         self.rs_status = JobStatus::Idle;
         if image::load_from_memory(&image).is_err() {
@@ -1007,22 +1060,11 @@ impl ShellApp {
             Some(c) => (c.output.clone(), c.core_id),
             None => return,
         };
+        // A painted mask was staged at start_anchor_inpaint; an empty stage means
+        // a prompt-only re-run. Either way the metadata travels on the variant.
+        let refinement = self.rs_pending_refinement.take().or(Some(RefinementKind::PromptOnly));
         let core_id = SheetVariantId::new(self.doc.alloc_id());
-        let mut variant = SheetVariant::from_image(
-            core_id,
-            output.generated_at,
-            ReferenceImage {
-                bytes: image.clone(),
-                mime: "image/png".to_owned(),
-            },
-        );
-        variant.user_prompt.clone_from(&output.user_prompt);
-        variant.composed_prompt.clone_from(&output.generation.prompt);
-        variant.composition = output.composition.clone();
-        variant.generation = Some(output.generation.clone());
-        variant.origin = VariantOrigin::Refinement;
-        variant.parent_variant_id = Some(parent_core);
-        variant.cost_usd = None;
+        let variant = refined_variant(core_id, parent_core, &image, &output, refinement);
         self.persist_variants(vec![variant]);
 
         let idx = self.rs_candidates.len();
@@ -1038,6 +1080,117 @@ impl ShellApp {
         });
         self.studio.anchor_selected = Some(idx);
         self.studio.anchor_view.reset();
+    }
+
+    /// Re-renders candidate `i` at high quality as the final, flagged promotion.
+    /// Uses the candidate's image as a Subject reference and runs at
+    /// [`ai::ImageQuality::High`]; the landed variant is flagged
+    /// `promotion = true` with `origin = VariantOrigin::Promotion`, its parent
+    /// set, and `quality = Quality::High`. Raster-only — no upscale, no vector.
+    /// The render lands through [`Self::cockpit_on_done`] like any generation.
+    fn promote_candidate(&mut self, i: usize) {
+        use base64::Engine as _;
+        let Some(cand) = self.rs_candidates.get(i) else {
+            return;
+        };
+        let png = cand.png.clone();
+        // Condition the high-quality run on the source image as a Subject
+        // reference so the promotion stays on-model.
+        let extra = vec![ReferenceInput {
+            image_b64: base64::engine::general_purpose::STANDARD.encode(&png),
+            role: ReferenceRole::Subject,
+            weight: 1.0,
+        }];
+        self.cockpit_generate(
+            PendingLineage {
+                parent: Some(i),
+                parent_core: Some(cand.core_id),
+                origin: VariantOrigin::Promotion,
+                replace: false,
+            },
+            extra,
+        );
+    }
+
+    /// Removes candidate `i` from the active entity's reference sheet and drops
+    /// its gallery card. Recorded as one [`crate::commands::EntityEdit`] (the
+    /// removed variant's bytes live in the `before` snapshot, so undo restores
+    /// it). The gallery never holds the approved canonical — approval moves a
+    /// variant into `canonical` — so this only ever retains non-canonical
+    /// variants and leaves the canonical untouched.
+    fn delete_candidate(&mut self, i: usize) {
+        let Some(cand) = self.rs_candidates.get(i) else {
+            return;
+        };
+        let core_id = cand.core_id;
+        let Some(entity_id) = self.doc.active_entity_id() else {
+            return;
+        };
+        crate::commands::push_library_edit(&mut self.editor, &mut self.doc, "Delete variant", entity_id, move |entity| {
+            if let EntityContent::Sprites {
+                reference_sheet: Some(sheet),
+                ..
+            } = &mut entity.content
+            {
+                sheet.variants.retain(|v| v.id != core_id);
+            }
+        });
+        self.rs_candidates.remove(i);
+        // Keep the selection and parent links coherent after the removal shifts
+        // every later index down by one.
+        fixup_selection_after_remove(&mut self.studio.anchor_selected, i);
+        for cand in &mut self.rs_candidates {
+            if let Some(p) = cand.parent {
+                cand.parent = fixup_parent_after_remove(p, i);
+            }
+        }
+    }
+
+    /// Imports an existing image file as a [`VariantOrigin::ManualImport`] sheet
+    /// variant under the active entity, persisted as one
+    /// [`crate::commands::EntityEdit`] and surfaced as a gallery candidate.
+    /// Decode-validates the bytes before minting an id; a non-image file or a
+    /// cancelled dialog leaves the document unchanged.
+    fn import_image_as_variant(&mut self) {
+        // A brief modal pick, matching the palette import path. The bounded
+        // decode below is the only real work and it is fast.
+        let Some(path) = rfd::FileDialog::new()
+            .set_title("Import image")
+            .add_filter("Image", &["png", "jpg", "jpeg", "webp"])
+            .pick_file()
+        else {
+            return;
+        };
+        let bytes = match std::fs::read(&path) {
+            Ok(b) => b,
+            Err(e) => {
+                self.rs_status = JobStatus::Failed(format!("could not read the image: {e}"));
+                return;
+            }
+        };
+        let mime = mime_for_path(&path);
+        let id = SheetVariantId::new(self.doc.alloc_id());
+        let Some(variant) = imported_variant(id, now_secs(), &bytes, mime) else {
+            self.rs_status = JobStatus::Failed("the file is not a supported image".to_owned());
+            return;
+        };
+        let output = manual_import_output(variant.created_at);
+        self.persist_variants(vec![variant]);
+
+        let idx = self.rs_candidates.len();
+        self.rs_candidates.push(CockpitCandidate {
+            png: bytes,
+            output,
+            cost_usd: None,
+            parent: None,
+            origin: VariantOrigin::ManualImport,
+            core_id: id,
+            texture: None,
+            expanded: false,
+        });
+        self.studio.anchor_selected = Some(idx);
+        self.studio.anchor_view.reset();
+        self.rs_status = JobStatus::Idle;
     }
 
     /// Approves candidate `i` as the canonical anchor: sets it canonical in the
@@ -1184,6 +1337,10 @@ enum CardAction {
     Branch,
     SaveCard,
     Approve,
+    /// Re-render this candidate at high quality as a flagged promotion.
+    Promote,
+    /// Remove this candidate from the reference sheet.
+    Delete,
 }
 
 /// A short lineage caption for a card ("fresh", "re-roll of #1", …).
@@ -1354,9 +1511,112 @@ fn load_png_texture(ctx: &egui::Context, name: &str, png: &[u8]) -> Option<egui:
     Some(ctx.load_texture(name, color, egui::TextureOptions::NEAREST))
 }
 
+/// Builds a refined [`SheetVariant`] from a repainted image, inheriting `parent`'s
+/// provenance and stamping the structured `refinement` metadata. Pure so the
+/// refinement-kind wiring is unit-testable without a full app.
+fn refined_variant(id: SheetVariantId, parent: SheetVariantId, image: &[u8], output: &SheetVariantOutput, refinement: Option<RefinementKind>) -> SheetVariant {
+    let mut variant = SheetVariant::from_image(
+        id,
+        output.generated_at,
+        ReferenceImage {
+            bytes: image.to_vec(),
+            mime: "image/png".to_owned(),
+        },
+    );
+    variant.user_prompt.clone_from(&output.user_prompt);
+    variant.composed_prompt.clone_from(&output.generation.prompt);
+    variant.composition = output.composition.clone();
+    variant.generation = Some(output.generation.clone());
+    variant.origin = VariantOrigin::Refinement;
+    variant.parent_variant_id = Some(parent);
+    variant.refinement = refinement;
+    variant.cost_usd = None;
+    variant
+}
+
+/// Builds a [`VariantOrigin::ManualImport`] variant from image bytes, returning
+/// `None` when the bytes are not a decodable image. Pure and tested; the caller
+/// owns id minting and persistence.
+fn imported_variant(id: SheetVariantId, created_at: i64, bytes: &[u8], mime: &str) -> Option<SheetVariant> {
+    // Validate before committing: a non-image file must not land as a variant.
+    image::load_from_memory(bytes).ok()?;
+    Some(SheetVariant::from_image(
+        id,
+        created_at,
+        ReferenceImage {
+            bytes: bytes.to_vec(),
+            mime: mime.to_owned(),
+        },
+    ))
+}
+
+/// A minimal gallery output for an imported image: no prompt, empty composition,
+/// and a `manual-import` provenance so the card and provenance panel render.
+fn manual_import_output(created_at: i64) -> SheetVariantOutput {
+    SheetVariantOutput {
+        id: SheetVariantId::new(0),
+        generated_at: created_at,
+        image_b64: String::new(),
+        user_prompt: "imported image".to_owned(),
+        composition: pixhaus_core::project::SheetComposition::default(),
+        generation: GenerationProvenance {
+            backend: "manual-import".to_owned(),
+            model: String::new(),
+            prompt: String::new(),
+            seed: None,
+            negative_prompt: None,
+        },
+    }
+}
+
+/// The image MIME hint for a picked file, by extension. Defaults to PNG, which
+/// `SheetVariant::from_image` only uses as a hint — the real bytes drive decode.
+fn mime_for_path(path: &std::path::Path) -> &'static str {
+    match path.extension().and_then(|e| e.to_str()).map(str::to_ascii_lowercase).as_deref() {
+        Some("jpg" | "jpeg") => "image/jpeg",
+        Some("webp") => "image/webp",
+        _ => "image/png",
+    }
+}
+
+/// Adjusts a gallery selection index after the candidate at `removed` is dropped.
+/// The selected card shifts down by one past the removal; the removed card itself
+/// clears the selection. Pure so the index bookkeeping is testable.
+fn fixup_selection_after_remove(selected: &mut Option<usize>, removed: usize) {
+    match *selected {
+        Some(sel) if sel == removed => *selected = None,
+        Some(sel) if sel > removed => *selected = Some(sel - 1),
+        _ => {}
+    }
+}
+
+/// Adjusts a card's parent index after the candidate at `removed` is dropped.
+/// A child of the removed card loses its parent link; later parents shift down.
+fn fixup_parent_after_remove(parent: usize, removed: usize) -> Option<usize> {
+    match parent {
+        p if p == removed => None,
+        p if p > removed => Some(p - 1),
+        p => Some(p),
+    }
+}
+
+/// Flags a variant as a final promotion when its origin is
+/// [`VariantOrigin::Promotion`]: sets `promotion` and the high quality tier so
+/// the gallery, provenance, and a save all reflect it. A no-op for any other
+/// origin. Pure so the promotion stamping is testable without a full app.
+fn stamp_if_promotion(variant: &mut SheetVariant, origin: VariantOrigin) {
+    if origin == VariantOrigin::Promotion {
+        variant.promotion = true;
+        variant.quality = pixhaus_core::project::Quality::High;
+    }
+}
+
 #[cfg(test)]
 mod tests {
-    use super::{AnchorAspect, anchor_target_dims, now_secs, push_prompt_history, relative_time};
+    use super::{
+        AnchorAspect, anchor_target_dims, fixup_parent_after_remove, fixup_selection_after_remove, imported_variant, manual_import_output, now_secs,
+        push_prompt_history, refined_variant, relative_time, stamp_if_promotion,
+    };
 
     #[test]
     fn anchor_target_dims_scales_each_aspect_to_the_long_edge() {
@@ -1424,5 +1684,240 @@ mod tests {
         assert_eq!(relative_time(1_000, 1_000 + 120), "2m ago");
         assert_eq!(relative_time(1_000, 1_000 + 7_200), "2h ago");
         assert_eq!(relative_time(1_000, 1_000 + 2 * 86_400), "2d ago");
+    }
+
+    use pixhaus_core::project::{
+        EntityContent, GenerationProvenance, Quality, ReferenceImage, ReferenceSheet, RefinementKind, SheetVariant, SheetVariantId, Size, VariantOrigin,
+    };
+
+    use crate::commands::push_library_edit;
+    use crate::document::DocumentStore;
+    use crate::editor::EditorState;
+
+    /// A tiny valid PNG (`w` x `h`, solid red) for decode-validating helpers.
+    fn tiny_png(w: u32, h: u32) -> Vec<u8> {
+        use std::io::Cursor;
+        let img = image::RgbaImage::from_pixel(w, h, image::Rgba([200, 0, 0, 255]));
+        let mut out = Vec::new();
+        image::DynamicImage::ImageRgba8(img)
+            .write_to(&mut Cursor::new(&mut out), image::ImageFormat::Png)
+            .expect("encode test png");
+        out
+    }
+
+    /// A gallery output standing in for the refine source's provenance.
+    fn fake_output(prompt: &str, created_at: i64) -> super::SheetVariantOutput {
+        super::SheetVariantOutput {
+            id: SheetVariantId::new(0),
+            generated_at: created_at,
+            image_b64: String::new(),
+            user_prompt: prompt.to_owned(),
+            composition: pixhaus_core::project::SheetComposition::default(),
+            generation: GenerationProvenance {
+                backend: "openai".to_owned(),
+                model: "gpt-image-2".to_owned(),
+                prompt: format!("{prompt}, pixel art"),
+                seed: Some(7),
+                negative_prompt: None,
+            },
+        }
+    }
+
+    // ── Task 5: structured masked / regional refinement metadata ──────────────
+
+    #[test]
+    fn refined_variant_records_a_masked_refinement_with_round_tripping_mask_bytes() {
+        let parent = SheetVariantId::new(1);
+        let id = SheetVariantId::new(2);
+        let image = tiny_png(32, 32);
+        let output = fake_output("a knight", 1_700_000_000);
+        let mask_bytes = vec![9, 8, 7, 6];
+        let refinement = Some(RefinementKind::Masked {
+            mask_png: ReferenceImage {
+                bytes: mask_bytes.clone(),
+                mime: "image/png".to_owned(),
+            },
+        });
+
+        let variant = refined_variant(id, parent, &image, &output, refinement);
+
+        assert_eq!(variant.origin, VariantOrigin::Refinement);
+        assert_eq!(variant.parent_variant_id, Some(parent));
+        assert_eq!(variant.composed_prompt, "a knight, pixel art", "inherits the parent's composed prompt");
+        match variant.refinement {
+            Some(RefinementKind::Masked { mask_png }) => assert_eq!(mask_png.bytes, mask_bytes, "the mask bytes round-trip onto the variant"),
+            other => panic!("expected a masked refinement, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn refined_variant_with_no_mask_records_prompt_only() {
+        let variant = refined_variant(
+            SheetVariantId::new(2),
+            SheetVariantId::new(1),
+            &tiny_png(16, 16),
+            &fake_output("a dragon", 1),
+            Some(RefinementKind::PromptOnly),
+        );
+        assert_eq!(variant.refinement, Some(RefinementKind::PromptOnly));
+    }
+
+    // ── Task 6: promote variant to final ──────────────────────────────────────
+
+    #[test]
+    fn stamp_if_promotion_flags_only_promotion_variants() {
+        let mut promoted = SheetVariant::from_image(
+            SheetVariantId::new(3),
+            0,
+            ReferenceImage {
+                bytes: tiny_png(8, 8),
+                mime: "image/png".to_owned(),
+            },
+        );
+        promoted.origin = VariantOrigin::Promotion;
+        promoted.parent_variant_id = Some(SheetVariantId::new(1));
+        stamp_if_promotion(&mut promoted, VariantOrigin::Promotion);
+        assert!(promoted.promotion, "a promotion is flagged");
+        assert_eq!(promoted.quality, Quality::High, "a promotion renders at the high tier");
+        assert_eq!(promoted.origin, VariantOrigin::Promotion);
+        assert_eq!(promoted.parent_variant_id, Some(SheetVariantId::new(1)), "the source link is kept");
+
+        let mut fresh = SheetVariant::from_image(
+            SheetVariantId::new(4),
+            0,
+            ReferenceImage {
+                bytes: tiny_png(8, 8),
+                mime: "image/png".to_owned(),
+            },
+        );
+        stamp_if_promotion(&mut fresh, VariantOrigin::FreshGeneration);
+        assert!(!fresh.promotion, "a fresh generation is not flagged a promotion");
+    }
+
+    // ── Task 7: import existing image as a sheet variant ──────────────────────
+
+    #[test]
+    fn imported_variant_decodes_dimensions_and_defaults_to_manual_import() {
+        let variant = imported_variant(SheetVariantId::new(5), 1_700_000_000, &tiny_png(48, 24), "image/png").expect("valid image imports");
+        assert_eq!((variant.width, variant.height), (48, 24), "real encoded dimensions are read");
+        assert_eq!(variant.origin, VariantOrigin::ManualImport);
+        assert_eq!(variant.created_at, 1_700_000_000);
+    }
+
+    #[test]
+    fn imported_variant_rejects_non_image_bytes() {
+        assert!(
+            imported_variant(SheetVariantId::new(6), 0, b"not an image at all", "image/png").is_none(),
+            "garbage bytes do not import"
+        );
+    }
+
+    #[test]
+    fn manual_import_output_carries_manual_import_provenance() {
+        let output = manual_import_output(42);
+        assert_eq!(output.generated_at, 42);
+        assert_eq!(output.generation.backend, "manual-import");
+        assert!(output.image_b64.is_empty());
+    }
+
+    #[test]
+    fn importing_bytes_appends_a_manual_import_variant_under_one_undo() {
+        let mut doc = DocumentStore::new();
+        doc.create_sprite("hero", Size::new(16, 16));
+        let entity_id = doc.active_entity_id().expect("active entity");
+        let mut editor = EditorState::default();
+
+        let id = SheetVariantId::new(doc.alloc_id());
+        let variant = imported_variant(id, 1_700_000_000, &tiny_png(20, 20), "image/png").expect("import");
+        // Mirror persist_variants: insert newest-first under the active entity.
+        push_library_edit(&mut editor, &mut doc, "Generate reference sheet", entity_id, move |entity| {
+            if let EntityContent::Sprites { reference_sheet, .. } = &mut entity.content {
+                let sheet = reference_sheet.get_or_insert_with(|| Box::new(ReferenceSheet::default()));
+                sheet.variants.insert(0, variant);
+            }
+        });
+
+        assert_eq!(sheet_variants(&doc, entity_id).len(), 1, "the import appended one variant");
+        assert_eq!(sheet_variants(&doc, entity_id)[0].origin, VariantOrigin::ManualImport);
+        editor.history.undo(&mut doc).expect("undo");
+        assert!(sheet_variants(&doc, entity_id).is_empty(), "undo removes the imported variant");
+    }
+
+    // ── Task 8: delete / remove sheet variant ─────────────────────────────────
+
+    #[test]
+    fn deleting_a_variant_removes_it_and_undo_restores_it() {
+        let mut doc = DocumentStore::new();
+        doc.create_sprite("hero", Size::new(16, 16));
+        let entity_id = doc.active_entity_id().expect("active entity");
+        let mut editor = EditorState::default();
+
+        let keep = SheetVariantId::new(doc.alloc_id());
+        let drop = SheetVariantId::new(doc.alloc_id());
+        let keep_variant = imported_variant(keep, 1, &tiny_png(8, 8), "image/png").expect("keep");
+        let drop_variant = imported_variant(drop, 2, &tiny_png(8, 8), "image/png").expect("drop");
+        push_library_edit(&mut editor, &mut doc, "Generate reference sheet", entity_id, move |entity| {
+            if let EntityContent::Sprites { reference_sheet, .. } = &mut entity.content {
+                let sheet = reference_sheet.get_or_insert_with(|| Box::new(ReferenceSheet::default()));
+                sheet.variants = vec![keep_variant, drop_variant];
+            }
+        });
+        assert_eq!(sheet_variants(&doc, entity_id).len(), 2);
+
+        // The delete path: retain variants by id, dropping the target.
+        push_library_edit(&mut editor, &mut doc, "Delete variant", entity_id, move |entity| {
+            if let EntityContent::Sprites {
+                reference_sheet: Some(sheet),
+                ..
+            } = &mut entity.content
+            {
+                sheet.variants.retain(|v| v.id != drop);
+            }
+        });
+
+        let after = sheet_variants(&doc, entity_id);
+        assert_eq!(after.len(), 1, "the targeted variant is removed");
+        assert_eq!(after[0].id, keep, "the other variant survives");
+
+        editor.history.undo(&mut doc).expect("undo");
+        let restored = sheet_variants(&doc, entity_id);
+        assert_eq!(restored.len(), 2, "undo restores the deleted variant");
+        assert!(restored.iter().any(|v| v.id == drop), "the dropped variant is back by id");
+    }
+
+    #[test]
+    fn fixup_selection_after_remove_shifts_or_clears() {
+        let mut sel = Some(2);
+        fixup_selection_after_remove(&mut sel, 0);
+        assert_eq!(sel, Some(1), "a later selection shifts down by one");
+
+        let mut sel = Some(1);
+        fixup_selection_after_remove(&mut sel, 1);
+        assert_eq!(sel, None, "removing the selected card clears the selection");
+
+        let mut sel = Some(0);
+        fixup_selection_after_remove(&mut sel, 2);
+        assert_eq!(sel, Some(0), "an earlier selection is unchanged");
+    }
+
+    #[test]
+    fn fixup_parent_after_remove_shifts_or_orphans() {
+        assert_eq!(fixup_parent_after_remove(3, 1), Some(2), "a later parent shifts down");
+        assert_eq!(fixup_parent_after_remove(1, 1), None, "a child of the removed card is orphaned");
+        assert_eq!(fixup_parent_after_remove(0, 2), Some(0), "an earlier parent is unchanged");
+    }
+
+    /// The active entity's reference-sheet variants, for the persistence tests.
+    fn sheet_variants(doc: &DocumentStore, entity_id: pixhaus_core::project::EntityId) -> Vec<SheetVariant> {
+        doc.project
+            .library
+            .entities
+            .iter()
+            .find(|e| e.id == entity_id)
+            .and_then(|e| match &e.content {
+                EntityContent::Sprites { reference_sheet, .. } => reference_sheet.as_ref().map(|s| s.variants.clone()),
+                _ => None,
+            })
+            .unwrap_or_default()
     }
 }

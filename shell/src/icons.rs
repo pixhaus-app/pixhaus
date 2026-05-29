@@ -115,3 +115,7 @@ pub const INFO: &str = p::INFO;
 pub const CARD: &str = p::IDENTIFICATION_CARD;
 pub const LIBRARY: &str = p::BOOKS;
 pub const FILM: &str = p::FILM_STRIP;
+/// Promote a variant to a final, high-quality render.
+pub const PROMOTE: &str = p::SEAL_CHECK;
+/// Import an existing image as a sheet variant.
+pub const UPLOAD: &str = p::UPLOAD_SIMPLE;

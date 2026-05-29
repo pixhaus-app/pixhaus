@@ -739,3 +739,63 @@ mod anchor_tests {
         assert!(dirs.get(AnchorDirection::North).is_none());
     }
 }
+
+#[cfg(test)]
+mod refinement_tests {
+    use super::*;
+
+    #[test]
+    fn masked_refinement_tags_as_masked_with_the_mask_bytes() {
+        let refinement = RefinementKind::Masked {
+            mask_png: ReferenceImage {
+                bytes: vec![1, 2, 3, 4],
+                mime: "image/png".into(),
+            },
+        };
+        // The serde tagging must match the Tauri schema so masked-refinement
+        // variants round-trip across trees: { "kind": "masked", "value": { .. } }.
+        let json = serde_json::to_string(&refinement).expect("serialize masked refinement");
+        assert!(json.contains("\"kind\":\"masked\""), "kind tag is masked: {json}");
+        let back: RefinementKind = serde_json::from_str(&json).expect("deserialize masked refinement");
+        assert_eq!(refinement, back);
+    }
+
+    #[test]
+    fn regional_refinement_with_two_regions_round_trips() {
+        let regions = vec![
+            RegionDefinition {
+                polygon: vec![IVec2::new(0, 0), IVec2::new(16, 0), IVec2::new(16, 16), IVec2::new(0, 16)],
+                prompt: "a glowing rune on the shield".into(),
+                region_references: Vec::new(),
+            },
+            RegionDefinition {
+                polygon: vec![IVec2::new(20, 20), IVec2::new(40, 20), IVec2::new(40, 40), IVec2::new(20, 40)],
+                prompt: "a frayed cloak edge".into(),
+                region_references: Vec::new(),
+            },
+        ];
+        let refinement = RefinementKind::Regional { regions };
+
+        // MessagePack is the on-disk project format; assert the full round-trip
+        // through it, not just JSON, so the two regions survive a save/reload.
+        let bytes = rmp_serde::to_vec_named(&refinement).expect("serialize regional refinement");
+        let back: RefinementKind = rmp_serde::from_slice(&bytes).expect("deserialize regional refinement");
+        assert_eq!(refinement, back);
+
+        let RefinementKind::Regional { regions } = back else {
+            panic!("expected a regional refinement");
+        };
+        assert_eq!(regions.len(), 2, "both regions survive the round-trip");
+        assert_eq!(regions[0].polygon.len(), 4);
+        assert_eq!(regions[1].prompt, "a frayed cloak edge");
+    }
+
+    #[test]
+    fn prompt_only_refinement_round_trips() {
+        let refinement = RefinementKind::PromptOnly;
+        let json = serde_json::to_string(&refinement).expect("serialize prompt-only refinement");
+        assert!(json.contains("\"kind\":\"prompt_only\""), "kind tag is prompt_only: {json}");
+        let back: RefinementKind = serde_json::from_str(&json).expect("deserialize prompt-only refinement");
+        assert_eq!(refinement, back);
+    }
+}

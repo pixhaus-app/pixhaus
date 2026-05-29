@@ -1173,6 +1173,16 @@ impl ShellApp {
                 view.inpaint_prompt.clone()
             }
         };
+        // The painted mask is structured refinement metadata: a single freeform
+        // mask lands as RefinementKind::Masked on the variant (a multi-region
+        // box surface, when it exists, would land Regional instead). Capture it
+        // now, keyed by epoch, so land_anchor_refine can stamp it on the result.
+        self.rs_pending_refinement = Some(pixhaus_core::project::RefinementKind::Masked {
+            mask_png: pixhaus_core::project::ReferenceImage {
+                bytes: mask_png.clone(),
+                mime: "image/png".to_owned(),
+            },
+        });
         let job = FirstFrameJob::Inpaint {
             base,
             mask: mask_png,

@@ -446,6 +446,10 @@ pub struct ShellApp {
     /// Monotonic id for anchor inpaint-refine jobs; a superseded run's late
     /// result is dropped by epoch.
     pub(crate) rs_refine_epoch: u64,
+    /// Structured refinement metadata for the in-flight anchor refine — the
+    /// painted mask or regional definition captured at the start of the run and
+    /// stamped onto the landed variant. `None` for a prompt-only re-run.
+    pub(crate) rs_pending_refinement: Option<pixhaus_core::project::RefinementKind>,
     /// Whether the seed is pinned for a reproducible result.
     pub(crate) ck_seed_fixed: bool,
     /// The pinned seed value, used when [`Self::ck_seed_fixed`].
@@ -774,6 +778,7 @@ impl ShellApp {
             rs_preview: None,
             rs_partial_preview: false,
             rs_refine_epoch: 0,
+            rs_pending_refinement: None,
             ck_seed_fixed: false,
             ck_seed: 0,
             ck_positive: String::new(),

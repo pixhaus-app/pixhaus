@@ -17,6 +17,7 @@ use pixhaus_ai::backends::{
     ApiKeyStore, BackendError, BackendProxy, BackgroundRemovalRequest, ImageEditRequest, ImageGenRequest, ImageToVideoRequest, InferenceRequest,
     InferenceResponse,
 };
+pub use pixhaus_ai::backends::ImageQuality;
 use pixhaus_ai::compose::builtins::{BUILTIN_DEFAULT_BASELINE, BuiltinLibrary, STRUCTURE_SINGLE_ID};
 use pixhaus_ai::compose::{ComposeRequest, compose};
 use pixhaus_ai::plugin::{
@@ -359,6 +360,9 @@ pub struct SheetJob {
     /// Explicit output size `(width, height)` for free-form anchors. Ignored by
     /// Paneled structures, which keep their declared canvas.
     pub target_size: Option<(u32, u32)>,
+    /// Quality tier for the run. `None` lets the router/provider choose; a
+    /// promotion sets [`ImageQuality::High`] for the final render.
+    pub quality: Option<ImageQuality>,
 }
 
 impl SheetJob {
@@ -381,6 +385,7 @@ impl SheetJob {
             negative_override: None,
             seed: None,
             target_size: None,
+            quality: None,
         }
     }
 
@@ -394,7 +399,7 @@ impl SheetJob {
             inline_text: self.prompt,
             inline_negatives: String::new(),
             num_variants: self.num_variants.clamp(1, 4),
-            quality: None,
+            quality: self.quality,
             seed: self.seed,
             references: self.references,
             prompt_override: self.prompt_override,
