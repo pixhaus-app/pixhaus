@@ -1,9 +1,11 @@
 //! Built-in AI verbs.
 //!
-//! This vertical-slice port ships a single verb — the reference-sheet
-//! generator. It lives in its own submodule and is public so the app/shell
-//! crate can instantiate and register it with the
-//! [`crate::plugin::runtime::VerbRuntime`].
+//! This vertical-slice port ships the reference-sheet generator plus an
+//! auto-tag stub. Each lives in its own submodule and is public so the
+//! app/shell crate can instantiate and register it with the
+//! [`crate::plugin::runtime::VerbRuntime`]. The auto-tag verb is backend-gated
+//! on a vision-language backend that v2 does not ship yet; its `invoke` reports
+//! the backend as unavailable rather than fabricating a result.
 //!
 //! # Shared helper
 //!
@@ -15,8 +17,10 @@
 //! [`crate::backends::bridge::BackendProxy`], so the helper only needs the
 //! `BackendProxy` branch.
 
+pub mod auto_tag;
 pub mod reference_sheet;
 
+pub use auto_tag::AutoTagVerb;
 pub use reference_sheet::GenerateReferenceSheetVerb;
 
 use crate::backends::{InferenceBackend as OpsBackend, bridge::BackendProxy};

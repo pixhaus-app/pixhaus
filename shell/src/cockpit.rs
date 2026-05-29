@@ -97,6 +97,7 @@ impl ShellApp {
             ui.separator();
         }
         self.cockpit_context(ui);
+        self.cockpit_suggested_tags(ui);
         ui.add_space(8.0);
         self.cockpit_inputs(ui);
         ui.add_space(8.0);
@@ -158,6 +159,74 @@ impl ShellApp {
         // Style notes lead the composed prompt, so an edit re-syncs the preview.
         if notes_changed {
             self.ck_dirty = true;
+        }
+    }
+
+    /// Suggested-tag accept/reject chips for the active entity.
+    ///
+    /// Auto-tagging (a vision-backend verb, not in this build) writes proposed
+    /// `TagId`s into the entity's `AiMetadata::suggested_tags`. This surface
+    /// drives them today against whatever suggestions are already present:
+    /// Accept promotes a tag into the entity's confirmed tags and drops it from
+    /// the suggestions; reject just drops it. Each is one undoable edit. The
+    /// section hides itself when the active entity has no suggestions.
+    fn cockpit_suggested_tags(&mut self, ui: &mut egui::Ui) {
+        let Some(entity_id) = self.doc.active_entity_id() else {
+            return;
+        };
+        let Some(entity) = self.doc.project.library.entities.iter().find(|e| e.id == entity_id) else {
+            return;
+        };
+        if entity.ai.suggested_tags.is_empty() {
+            return;
+        }
+        // Resolve each suggested id to its definition's display name; an id with
+        // no definition (a stale suggestion) falls back to its numeric id so it
+        // is still actionable rather than invisible.
+        let suggestions: Vec<(pixhaus_core::project::TagId, String)> = entity
+            .ai
+            .suggested_tags
+            .iter()
+            .map(|id| {
+                let name = self
+                    .doc
+                    .project
+                    .library
+                    .tags
+                    .iter()
+                    .find(|t| t.id == *id)
+                    .map_or_else(|| format!("#{}", id.get()), |t| t.name.clone());
+                (*id, name)
+            })
+            .collect();
+
+        let mut accept: Option<pixhaus_core::project::TagId> = None;
+        let mut reject: Option<pixhaus_core::project::TagId> = None;
+        ui.add_space(6.0);
+        egui::Frame::group(ui.style()).show(ui, |ui| {
+            ui.horizontal(|ui| {
+                ui.label(egui::RichText::new(format!("{} Suggested tags", crate::icons::TAG)).strong());
+                ui.label(egui::RichText::new("accept to confirm, reject to drop").small().weak());
+            });
+            ui.horizontal_wrapped(|ui| {
+                for (id, name) in &suggestions {
+                    ui.label(egui::RichText::new(name).small());
+                    if ui.small_button(crate::icons::CHECK).on_hover_text("Accept this tag").clicked() {
+                        accept = Some(*id);
+                    }
+                    if ui.small_button(crate::icons::X).on_hover_text("Reject this tag").clicked() {
+                        reject = Some(*id);
+                    }
+                    ui.add_space(8.0);
+                }
+            });
+        });
+
+        if let Some(tag) = accept {
+            self.accept_suggested_tag(entity_id, tag);
+        }
+        if let Some(tag) = reject {
+            self.reject_suggested_tag(entity_id, tag);
         }
     }
 

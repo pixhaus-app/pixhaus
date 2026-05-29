@@ -599,6 +599,18 @@ impl ShellApp {
     pub(crate) fn set_corpus_membership(&mut self, id: EntityId, included: bool) {
         set_corpus_membership(&mut self.editor, &mut self.doc, id, included);
     }
+
+    /// Accepts a suggested tag on an entity: promotes `tag` into the entity's
+    /// confirmed tags and drops it from `suggested_tags`, as one undoable edit.
+    pub(crate) fn accept_suggested_tag(&mut self, entity_id: EntityId, tag: TagId) {
+        accept_suggested_tag(&mut self.editor, &mut self.doc, entity_id, tag);
+    }
+
+    /// Rejects a suggested tag on an entity: drops `tag` from `suggested_tags`
+    /// without confirming it, as one undoable edit.
+    pub(crate) fn reject_suggested_tag(&mut self, entity_id: EntityId, tag: TagId) {
+        reject_suggested_tag(&mut self.editor, &mut self.doc, entity_id, tag);
+    }
 }
 
 /// Creates a tag definition with id `id` and the (already-trimmed, non-empty)
@@ -645,6 +657,33 @@ fn delete_tag(editor: &mut EditorState, doc: &mut DocumentStore, id: TagId) {
         for entity in &mut doc.project.library.entities {
             entity.tags.retain(|t| *t != id);
             entity.ai.suggested_tags.retain(|t| *t != id);
+        }
+    });
+}
+
+/// Accepts the suggested `tag` on entity `entity_id`: moves it from the entity's
+/// `suggested_tags` into its confirmed `tags` (no duplicate if already
+/// confirmed), as one undoable [`crate::commands::LibraryTagEdit`]. A no-op when
+/// the tag was not actually suggested on that entity.
+fn accept_suggested_tag(editor: &mut EditorState, doc: &mut DocumentStore, entity_id: EntityId, tag: TagId) {
+    push_tag_edit(editor, doc, "Accept suggested tag", |doc| {
+        if let Some(entity) = doc.project.library.entities.iter_mut().find(|e| e.id == entity_id) {
+            if entity.ai.suggested_tags.contains(&tag) {
+                entity.ai.suggested_tags.retain(|t| *t != tag);
+                if !entity.tags.contains(&tag) {
+                    entity.tags.push(tag);
+                }
+            }
+        }
+    });
+}
+
+/// Rejects the suggested `tag` on entity `entity_id`: drops it from
+/// `suggested_tags` without confirming it, as one undoable edit.
+fn reject_suggested_tag(editor: &mut EditorState, doc: &mut DocumentStore, entity_id: EntityId, tag: TagId) {
+    push_tag_edit(editor, doc, "Reject suggested tag", |doc| {
+        if let Some(entity) = doc.project.library.entities.iter_mut().find(|e| e.id == entity_id) {
+            entity.ai.suggested_tags.retain(|t| *t != tag);
         }
     });
 }
@@ -800,8 +839,8 @@ mod tests {
     use pixhaus_core::project::{AssetId, CharacterCard, EntityId, ReferenceAsset, ReferenceImage, ReferenceRole, Rgba, StyleSwatch, TagId};
 
     use super::{
-        add_tag, card_first_reference, delete_card, delete_reference, delete_swatch, delete_tag, recolor_tag, rename_card, rename_swatch, rename_tag,
-        set_corpus_membership, swatch_first_reference,
+        accept_suggested_tag, add_tag, card_first_reference, delete_card, delete_reference, delete_swatch, delete_tag, recolor_tag, reject_suggested_tag,
+        rename_card, rename_swatch, rename_tag, set_corpus_membership, swatch_first_reference,
     };
     use crate::commands::push_ai_library_edit;
     use crate::document::DocumentStore;
@@ -1111,6 +1150,73 @@ mod tests {
         assert_eq!(tags(&doc).len(), 1, "undo restores the tag definition");
         assert_eq!(entity(&doc).tags, vec![tag_id], "undo restores the entity's confirmed tag");
         assert_eq!(entity(&doc).ai.suggested_tags, vec![tag_id], "undo restores the entity's suggested tag");
+    }
+
+    // ── Task 14: suggested-tag accept / reject ──────────────────────────────
+
+    /// Creates an entity carrying `tag` as a suggested-only tag (not yet
+    /// confirmed), the state auto-tagging leaves behind for the artist to judge.
+    fn entity_with_suggestion(doc: &mut DocumentStore, tag: TagId) -> EntityId {
+        let entity_id = doc.create_sprite("Hero", pixhaus_core::project::Size::new(16, 16)).entity_id;
+        let entity = doc.project.library.entities.iter_mut().find(|e| e.id == entity_id).expect("entity exists");
+        entity.ai.suggested_tags.push(tag);
+        entity_id
+    }
+
+    #[test]
+    fn accept_promotes_a_suggested_tag_under_one_undo() {
+        let mut doc = DocumentStore::new();
+        let mut editor = EditorState::default();
+        let tag_id = TagId::new(doc.alloc_id());
+        add_tag(&mut editor, &mut doc, tag_id, "armored");
+        let entity_id = entity_with_suggestion(&mut doc, tag_id);
+
+        let entity = |doc: &DocumentStore| doc.project.library.entities.iter().find(|e| e.id == entity_id).cloned().expect("entity");
+        assert!(entity(&doc).tags.is_empty(), "the tag starts suggested, not confirmed");
+        assert_eq!(entity(&doc).ai.suggested_tags, vec![tag_id], "the tag starts in the suggestion list");
+
+        accept_suggested_tag(&mut editor, &mut doc, entity_id, tag_id);
+        assert_eq!(entity(&doc).tags, vec![tag_id], "accept promotes the tag into confirmed tags");
+        assert!(entity(&doc).ai.suggested_tags.is_empty(), "accept drops the tag from the suggestion list");
+
+        editor.history.undo(&mut doc).expect("undo accept");
+        assert!(entity(&doc).tags.is_empty(), "one undo restores the unconfirmed state");
+        assert_eq!(entity(&doc).ai.suggested_tags, vec![tag_id], "one undo restores the suggestion");
+    }
+
+    #[test]
+    fn reject_drops_a_suggested_tag_without_confirming() {
+        let mut doc = DocumentStore::new();
+        let mut editor = EditorState::default();
+        let tag_id = TagId::new(doc.alloc_id());
+        add_tag(&mut editor, &mut doc, tag_id, "armored");
+        let entity_id = entity_with_suggestion(&mut doc, tag_id);
+
+        let entity = |doc: &DocumentStore| doc.project.library.entities.iter().find(|e| e.id == entity_id).cloned().expect("entity");
+
+        reject_suggested_tag(&mut editor, &mut doc, entity_id, tag_id);
+        assert!(entity(&doc).ai.suggested_tags.is_empty(), "reject drops the suggestion");
+        assert!(entity(&doc).tags.is_empty(), "reject never confirms the tag");
+
+        editor.history.undo(&mut doc).expect("undo reject");
+        assert_eq!(entity(&doc).ai.suggested_tags, vec![tag_id], "one undo restores the suggestion");
+        assert!(entity(&doc).tags.is_empty(), "undo of a reject still does not confirm");
+    }
+
+    #[test]
+    fn accept_does_not_duplicate_an_already_confirmed_tag() {
+        let mut doc = DocumentStore::new();
+        let mut editor = EditorState::default();
+        let tag_id = TagId::new(doc.alloc_id());
+        add_tag(&mut editor, &mut doc, tag_id, "armored");
+        let entity_id = entity_with_suggestion(&mut doc, tag_id);
+        // The same tag is already confirmed when its suggestion is accepted.
+        doc.project.library.entities.iter_mut().find(|e| e.id == entity_id).expect("entity").tags.push(tag_id);
+
+        accept_suggested_tag(&mut editor, &mut doc, entity_id, tag_id);
+        let entity = doc.project.library.entities.iter().find(|e| e.id == entity_id).expect("entity");
+        assert_eq!(entity.tags, vec![tag_id], "accept never duplicates an already-confirmed tag");
+        assert!(entity.ai.suggested_tags.is_empty(), "accept still clears the suggestion");
     }
 
     // ── Task 13: style-corpus management ────────────────────────────────────

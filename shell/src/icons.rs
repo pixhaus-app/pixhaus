@@ -111,6 +111,8 @@ pub const BRANCH: &str = p::GIT_BRANCH;
 pub const IMAGE: &str = p::IMAGE;
 pub const COPY: &str = p::COPY;
 pub const CHECK: &str = p::CHECK;
+/// Reject / dismiss (suggested-tag reject chip, close affordances).
+pub const X: &str = p::X;
 pub const INFO: &str = p::INFO;
 pub const CARD: &str = p::IDENTIFICATION_CARD;
 pub const LIBRARY: &str = p::BOOKS;
