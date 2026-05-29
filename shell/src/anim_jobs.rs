@@ -85,6 +85,13 @@ pub(crate) struct AnimJobRecord {
     /// Failure message when `status` is `Error`.
     #[serde(default)]
     pub error: Option<String>,
+    /// Per-frame QC and provenance, set at Land by [`AnimJobQueue::finalize_qc`].
+    /// Finalized after `finish_done` (decode-time is too early — normalize has
+    /// not run yet). The same record rides on the landed `Animation`; this
+    /// sidecar copy is the interim durable-across-restart home until the io crate
+    /// lands. Serde-defaulted so an older sidecar without it still loads.
+    #[serde(default)]
+    pub qc: Option<pixhaus_core::project::AnimationQc>,
 }
 
 /// Max jobs kept in the queue; older terminal jobs (and their files) are pruned.
@@ -238,6 +245,7 @@ impl AnimJobQueue {
             mime: "video/mp4".into(),
             seed,
             error: None,
+            qc: None,
         };
         self.cancellations.insert(id, token.clone());
         self.persist(&job);
@@ -288,6 +296,7 @@ impl AnimJobQueue {
             mime: mime.to_owned(),
             seed: None,
             error: write_error,
+            qc: None,
         };
         self.persist(&job);
         self.jobs.insert(id, job);
@@ -327,6 +336,20 @@ impl AnimJobQueue {
         let snapshot = job.clone();
         self.persist(&snapshot);
         self.prune();
+    }
+
+    /// Attaches the per-frame QC record to a job and re-persists its sidecar, at
+    /// Land. Runs after [`Self::finish_done`] — the decode-time finalize is too
+    /// early, before normalize has measured anything. A missing id is a no-op
+    /// (the job was pruned or never existed); the landed `Animation` copy is the
+    /// source of truth, so a skipped sidecar loses nothing durable.
+    pub(crate) fn finalize_qc(&mut self, id: u64, qc: pixhaus_core::project::AnimationQc) {
+        let Some(job) = self.jobs.get_mut(&id) else {
+            return;
+        };
+        job.qc = Some(qc);
+        let snapshot = job.clone();
+        self.persist(&snapshot);
     }
 
     /// Marks a job failed.
@@ -438,6 +461,43 @@ mod tests {
             jobs: HashMap::new(),
             cancellations: HashMap::new(),
             dir: None,
+        }
+    }
+
+    /// A small populated QC record for the finalize-qc tests.
+    fn sample_qc() -> pixhaus_core::project::AnimationQc {
+        use pixhaus_core::project::Rgba;
+        use pixhaus_core::project::qc::{AnimationQc, FrameQc, NormalizeReportSummary, QcSettings};
+        use pixhaus_core::transforms::SeamMatch;
+        AnimationQc {
+            settings: QcSettings {
+                key_color: Rgba::opaque(255, 0, 255),
+                key_tolerance: 24,
+                alpha_threshold: 8,
+                canvas: (16, 16),
+                bottom_margin: 0,
+                reference_height: 12,
+                remove_on_land: true,
+            },
+            report: NormalizeReportSummary {
+                baseline_drift_px: 0,
+                scale_match_pct: 100,
+                seam: SeamMatch::Ok,
+                reference_height: 12,
+                max_components: 1,
+                any_edge_touch: false,
+                warnings: Vec::new(),
+            },
+            frames: vec![FrameQc {
+                bbox: (2, 2, 12, 12),
+                center_x: 8,
+                foot_baseline_y: 13,
+                empty: false,
+                num_components: 1,
+                largest_component_area: 144,
+                largest_component_bbox: Some((2, 2, 12, 12)),
+                edge_touch: false,
+            }],
         }
     }
 
@@ -646,8 +706,47 @@ mod tests {
         assert_eq!(job.error, None);
         assert_eq!(job.motion, "");
         assert_eq!(job.status, AnimJobStatus::Running);
+        // A sidecar written before the qc field existed still loads.
+        assert_eq!(job.qc, None, "qc defaults to None on an older sidecar");
         // Status serializes snake_case.
         let out = serde_json::to_string(&job.status).unwrap();
         assert_eq!(out, "\"running\"");
+    }
+
+    #[test]
+    fn finalize_qc_persists_and_reloads_from_the_sidecar() {
+        let tmp = tempfile::tempdir().unwrap();
+        let dir = tmp.path().join("animation-jobs");
+        std::fs::create_dir_all(&dir).unwrap();
+        let id = {
+            let mut q = AnimJobQueue {
+                next_id: 1,
+                jobs: HashMap::new(),
+                cancellations: HashMap::new(),
+                dir: Some(dir.clone()),
+            };
+            let id = start_a_job(&mut q, 4, "south", Some("walk"));
+            // The decode-time finalize runs first; the qc finalize follows at Land.
+            q.finish_done(id, "image/gif", &[1, 2, 3]);
+            q.finalize_qc(id, sample_qc());
+            assert_eq!(q.get(id).unwrap().qc, Some(sample_qc()), "the qc is on the in-memory record");
+            id
+        };
+
+        // Reload the sidecar the way `new()` would: the qc must be durable.
+        let sidecar = dir.join(format!("{id}.json"));
+        let bytes = std::fs::read(sidecar).unwrap();
+        let on_disk: AnimJobRecord = serde_json::from_slice(&bytes).unwrap();
+        assert_eq!(on_disk.qc, Some(sample_qc()), "the qc survives a reload from disk");
+    }
+
+    #[test]
+    fn finalize_qc_on_missing_id_is_a_noop() {
+        // A pruned or never-existing job: finalize_qc must not panic or create a
+        // record. The landed Animation copy is the source of truth.
+        let mut q = queue_without_disk();
+        q.finalize_qc(999, sample_qc());
+        assert!(q.get(999).is_none(), "finalize_qc on a missing id creates nothing");
+        assert_eq!(q.record_count(), 0);
     }
 }

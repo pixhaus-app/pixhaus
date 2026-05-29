@@ -2576,6 +2576,21 @@ impl ShellApp {
             "Scale parity",
             &format!("{}%", report.scale_parity_pct),
         );
+        // Components: the most parts any landed frame split into. One clean body
+        // is Ok; more is a warning — a stray keyed-out speck or a fragmented body,
+        // the defect edge-touch alone misses. Static sheets, with no interframe
+        // motion to lean on, are the most prone to it, so it reads here.
+        report_row(
+            ui,
+            &palette,
+            components_status(report.max_components),
+            "Components",
+            &if report.max_components <= 1 {
+                "single body".to_string()
+            } else {
+                format!("{} parts", report.max_components)
+            },
+        );
         // Seam verdict: reuse the pick-stage colour thresholds via the SeamMatch.
         report_row(ui, &palette, seam_status(report.seam), "Loop seam", seam_label(report.seam));
         ui.label(egui::RichText::new(format!("Reference height {}px", report.reference_height)).small().weak());
@@ -2777,6 +2792,15 @@ pub(crate) fn scale_status(pct: u32) -> ReportStatus {
 #[must_use]
 pub(crate) fn edge_status(touched_frames: usize) -> ReportStatus {
     if touched_frames == 0 { ReportStatus::Ok } else { ReportStatus::Error }
+}
+
+/// Classifies the component count: a single clean body (`<= 1`) is Ok, anything
+/// more is a warning — a frame that split into multiple parts is usually a stray
+/// keyed-out speck or a body that fragmented, the defect edge-touch alone misses.
+/// Advisory, like the rest of the QC; it surfaces the defect, it does not block.
+#[must_use]
+pub(crate) fn components_status(max_components: u32) -> ReportStatus {
+    if max_components <= 1 { ReportStatus::Ok } else { ReportStatus::Warning }
 }
 
 /// Classifies the loop seam, reusing the pick-stage thresholds: a clean seam is
@@ -3722,6 +3746,16 @@ mod tests {
         // colour — not the softer warning the drift field uses.
         let palette = crate::theme::Palette::for_theme(egui::Theme::Dark);
         assert_eq!(edge_status(1).color(&palette), palette.error);
+    }
+
+    #[test]
+    fn components_status_is_ok_for_a_single_body() {
+        // Zero (an all-empty loop) and one (a clean body) both read Ok; a
+        // fragmented loop reads Warning — advisory, not a blocking error.
+        assert_eq!(components_status(0), ReportStatus::Ok);
+        assert_eq!(components_status(1), ReportStatus::Ok);
+        assert_eq!(components_status(2), ReportStatus::Warning);
+        assert_eq!(components_status(7), ReportStatus::Warning);
     }
 
     #[test]

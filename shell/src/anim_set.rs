@@ -1531,7 +1531,7 @@ mod tests {
 
         // First Land entry: integrate the frames (mirrors `integrate_picked`).
         let frames: Vec<PixelBuffer> = (0..3).map(|_| PixelBuffer::filled(16, 16, Rgba::new(7, 7, 7, 255)).expect("frame")).collect();
-        crate::commands::integrate_frames_undoable(&mut editor, &mut doc, frames, 100, "walk", LoopDirection::Forward).expect("integrated range");
+        crate::commands::integrate_frames_undoable(&mut editor, &mut doc, frames, 100, "walk", LoopDirection::Forward, None).expect("integrated range");
         assert_eq!(doc.frame_count(), 3, "three frames landed");
 
         // Second Land entry: record the cascade edge, seeded from the neutral.

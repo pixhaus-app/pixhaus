@@ -32,6 +32,7 @@ pub mod id;
 pub mod layer;
 pub mod library;
 pub mod palette;
+pub mod qc;
 pub mod schema;
 pub mod slice;
 pub mod sprite;
@@ -61,6 +62,7 @@ pub use library::{
     TilesetReference, TrainingJob, TrainingStatus, VariantOrigin, built_in_reference_sheet_templates, default_reference_chroma,
 };
 pub use palette::{Palette, PaletteAnimation, PaletteEntry, PaletteFrameOverride, PalettePage};
+pub use qc::{AnimationQc, FrameQc, NormalizeReportSummary, QcSettings};
 pub use schema::{FeatureFlags, SchemaError, SchemaVersion};
 pub use slice::{NineSlice, Pivot, Slice, SliceKey};
 pub use sprite::Sprite;

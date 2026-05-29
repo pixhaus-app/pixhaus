@@ -1,0 +1,73 @@
+---
+source: core/src/project/qc.rs
+expression: json
+---
+{
+  "settings": {
+    "key_color": {
+      "r": 255,
+      "g": 0,
+      "b": 255,
+      "a": 255
+    },
+    "key_tolerance": 24,
+    "alpha_threshold": 8,
+    "canvas": [
+      32,
+      32
+    ],
+    "bottom_margin": 1,
+    "reference_height": 20,
+    "remove_on_land": true
+  },
+  "report": {
+    "baseline_drift_px": 0,
+    "scale_match_pct": 100,
+    "seam": "ok",
+    "reference_height": 12,
+    "max_components": 1,
+    "any_edge_touch": false
+  },
+  "frames": [
+    {
+      "bbox": [
+        12,
+        19,
+        8,
+        12
+      ],
+      "center_x": 16,
+      "foot_baseline_y": 30,
+      "empty": false,
+      "num_components": 1,
+      "largest_component_area": 96,
+      "largest_component_bbox": [
+        12,
+        19,
+        8,
+        12
+      ],
+      "edge_touch": false
+    },
+    {
+      "bbox": [
+        12,
+        19,
+        8,
+        12
+      ],
+      "center_x": 16,
+      "foot_baseline_y": 30,
+      "empty": false,
+      "num_components": 1,
+      "largest_component_area": 96,
+      "largest_component_bbox": [
+        12,
+        19,
+        8,
+        12
+      ],
+      "edge_touch": false
+    }
+  ]
+}

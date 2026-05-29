@@ -449,6 +449,11 @@ pub(crate) struct ClipCandidate {
     /// The `(key colour, tolerance)` the keyed thumbnails were built for, so a
     /// key change invalidates them.
     pub keyed_sig: Option<(Rgba, u8)>,
+    /// The durable job id this clip came from (an i2v run or an imported video),
+    /// or `None` for a producer with no sidecar (the static grid sheet). At Land
+    /// the QC record is persisted back onto this job; a `None` or pruned job is
+    /// skipped, leaving the in-`Animation` QC as the source of truth.
+    pub job_id: Option<u64>,
 }
 
 /// Top-level workspace mode. Drives what the side dock shows and whether the
@@ -1241,7 +1246,7 @@ impl ShellApp {
                     // Interrupted next launch.
                     self.anim_jobs.finish_done(job_id, &mime, &clip);
                     if epoch == self.anim_gen_epoch {
-                        self.on_clip_ready(clip, mime, frames);
+                        self.on_clip_ready(clip, mime, frames, job_id);
                     }
                 }
                 ShellMsg::ClipFailed { epoch, job_id, error } => {
@@ -2784,8 +2789,10 @@ impl ShellApp {
         // A static sheet has no i2v lineage parent.
         self.anim_pending_parent = None;
         // No raw clip blob: the frames are the artifact, so the candidate carries
-        // an empty clip and a PNG mime (the slice path's source format).
-        self.push_clip_candidate(Vec::new(), "image/png".to_owned(), frames, action, fps, seed, None);
+        // an empty clip and a PNG mime (the slice path's source format). No job id
+        // either — the static path persists no sidecar, so the landed Animation
+        // copy is the only home for its QC record.
+        self.push_clip_candidate(Vec::new(), "image/png".to_owned(), frames, action, fps, seed, None, None);
         self.set_status("Generated a static sheet.");
     }
 
@@ -2820,15 +2827,17 @@ impl ShellApp {
     }
 
     /// Receives a generated clip: lands it as a new gallery card with seeded
-    /// loop markers and picks, then selects it for editing.
-    fn on_clip_ready(&mut self, clip: Vec<u8>, mime: String, frames: Vec<VideoFrame>) {
+    /// loop markers and picks, then selects it for editing. `job_id` is the
+    /// durable i2v run this clip came from, carried onto the candidate so Land
+    /// can persist the QC record back onto its sidecar.
+    fn on_clip_ready(&mut self, clip: Vec<u8>, mime: String, frames: Vec<VideoFrame>, job_id: u64) {
         self.anim_status = JobStatus::Idle;
         self.anim_job_id = None;
         let motion = self.anim_motion.clone();
         let fps = self.anim_fps;
         let seed = self.anim_seed_fixed.then_some(self.anim_seed);
         let parent = self.anim_pending_parent.take();
-        self.push_clip_candidate(clip, mime, frames, motion, fps, seed, parent);
+        self.push_clip_candidate(clip, mime, frames, motion, fps, seed, parent, Some(job_id));
     }
 
     /// Pushes a decoded clip as a new gallery card with auto-detected loop
@@ -2836,6 +2845,7 @@ impl ShellApp {
     /// path ([`on_clip_ready`]) and the user-video import path
     /// ([`on_video_imported`]), which differ only in provenance (motion prompt,
     /// fps, seed, lineage).
+    #[allow(clippy::too_many_arguments)]
     fn push_clip_candidate(
         &mut self,
         clip: Vec<u8>,
@@ -2845,8 +2855,9 @@ impl ShellApp {
         fps: u32,
         seed: Option<u64>,
         parent: Option<usize>,
+        job_id: Option<u64>,
     ) {
-        let candidate = build_clip_candidate(clip, mime, frames, motion, fps, seed, parent, self.anim_target_frames as usize);
+        let candidate = build_clip_candidate(clip, mime, frames, motion, fps, seed, parent, self.anim_target_frames as usize, job_id);
         self.anim_candidates.push(candidate);
         let idx = self.anim_candidates.len() - 1;
         self.select_clip(idx);
@@ -2900,7 +2911,7 @@ impl ShellApp {
         self.anim_status = JobStatus::Idle;
         match result {
             Ok((clip, mime, frames)) => {
-                self.anim_jobs.record_import(
+                let import_id = self.anim_jobs.record_import(
                     entity_id,
                     sprite_id,
                     self.studio.facing.as_str().to_owned(),
@@ -2910,9 +2921,10 @@ impl ShellApp {
                     fps,
                     &clip,
                 );
-                // Imported clips have no i2v lineage, prompt, or seed.
+                // Imported clips have no i2v lineage, prompt, or seed, but they do
+                // get a Done sidecar — so the QC can persist back onto it at Land.
                 self.anim_pending_parent = None;
-                self.push_clip_candidate(clip, mime, frames, "imported video".into(), fps, None, None);
+                self.push_clip_candidate(clip, mime, frames, "imported video".into(), fps, None, None, Some(import_id));
                 self.set_status("Imported video clip.");
             }
             Err(err) => self.set_status(err),
@@ -3094,6 +3106,34 @@ impl ShellApp {
         }
     }
 
+    /// Builds the per-frame QC and provenance record for a Land from the reviewed
+    /// `report`/`metrics` and the studio settings the normalize pass ran with.
+    ///
+    /// `canvas` is the active sprite's `(width, height)`, threaded in so the
+    /// caller can mirror the per-frame coordinates for an east flip before this
+    /// runs. The key colour, tolerance, alpha threshold, and bottom margin match
+    /// what [`Self::compute_normalize`] built the [`NormalizeOptions`] from, so the
+    /// record is enough to re-run the post-pass with adjusted flags.
+    fn build_landing_qc(
+        &self,
+        report: &pixhaus_core::transforms::NormalizeReport,
+        metrics: &[pixhaus_core::transforms::FrameMetrics],
+        canvas: Option<(u32, u32)>,
+    ) -> pixhaus_core::project::AnimationQc {
+        use pixhaus_core::project::qc::{AnimationQc, QcSettings};
+        let settings = QcSettings {
+            key_color: self.bg_key_color,
+            key_tolerance: self.bg_tolerance,
+            // Matches `compute_normalize`'s NormalizeOptions.
+            alpha_threshold: 8,
+            canvas: canvas.unwrap_or((0, 0)),
+            bottom_margin: 0,
+            reference_height: report.reference_height,
+            remove_on_land: self.studio.remove_on_land,
+        };
+        AnimationQc::from_pass(settings, report, metrics)
+    }
+
     /// Integrates the reviewed, normalized picks onto the timeline. Land commits
     /// exactly the frames the Normalize stage reviewed — it reuses the cached
     /// [`NormalizeResult`] when fresh, and only recomputes as a fallback (a
@@ -3120,13 +3160,31 @@ impl ShellApp {
         if result.frames.is_empty() {
             return;
         }
+        // Capture the canvas now; it is the width the east-flip coordinate mirror
+        // needs and the QC settings record.
+        let canvas = self.doc.active_sprite().map(|s| (s.canvas.width, s.canvas.height));
+        let east_flip = self.east_flip_on_land();
+        // Build the QC record from the reviewed report/metrics plus the settings
+        // the Normalize pass ran with, BEFORE `result` is consumed. When east is
+        // landed as a flip of west, mirror each per-frame bbox/center_x so the QC
+        // describes the frames that actually land. `qc` is None only when the
+        // canvas is unresolved (no active sprite), which the early returns above
+        // already guard against in practice.
+        let qc = canvas.map(|(cw, _ch)| {
+            let metrics: Vec<pixhaus_core::transforms::FrameMetrics> = if east_flip {
+                result.metrics.iter().map(|m| mirror_metrics_x(*m, cw)).collect()
+            } else {
+                result.metrics.clone()
+            };
+            self.build_landing_qc(&result.report, &metrics, canvas)
+        });
         // East-as-flip-of-west: when the studio is facing east and the entity has
         // enabled `east_from_west`, east frames are the west loop mirrored. Flip
         // the reviewed frames horizontally before integrate; the loop still plays
         // forward (a mirror is not a reversal). Correct only for left-right-
         // symmetric subjects — the cascade grid badges east as a flip, not a
         // generation. The flip is bounded by the pick region, not the 8K canvas.
-        let frames = if self.east_flip_on_land() {
+        let frames = if east_flip {
             flip_frames_horizontal(result.frames)
         } else {
             result.frames
@@ -3145,7 +3203,15 @@ impl ShellApp {
         let fps = self.anim_candidates[i].fps;
         let frame_ms = (1000 / fps.max(1)).max(1);
         let motion = self.anim_candidates[i].motion.clone();
-        integrate_frames_undoable(&mut self.editor, &mut self.doc, frames, frame_ms, &motion, LoopDirection::Forward);
+        // The QC rides into the same `SpriteBufferEdit` undo entry so undo cannot
+        // leave a dangling record.
+        integrate_frames_undoable(&mut self.editor, &mut self.doc, frames, frame_ms, &motion, LoopDirection::Forward, qc.clone());
+        // Persist the QC back onto the originating job's sidecar so it survives
+        // restart. A static-sheet candidate carries no job id and a pruned job is
+        // skipped — the Animation copy is the source of truth either way.
+        if let (Some(job_id), Some(qc)) = (self.anim_candidates[i].job_id, qc) {
+            self.anim_jobs.finalize_qc(job_id, qc);
+        }
         // Record the directional-cascade edge as a second, separately-undoable
         // entry: the frames landed as "Integrate animation", and the edge as
         // "Record cascade edge". `motion` is the frame tag integrate created, so
@@ -3986,6 +4052,27 @@ fn flip_frames_horizontal(frames: Vec<PixelBuffer>) -> Vec<PixelBuffer> {
         .collect()
 }
 
+/// Mirrors a frame's horizontal QC coordinates across a `canvas_w`-wide canvas,
+/// for the east-as-flip-of-west Land. A flip maps a bbox left edge `x` of width
+/// `w` to `canvas_w - x - w` and the centre `cx` to `canvas_w - 1 - cx`, so the
+/// recorded QC describes the flipped frame, not the unflipped west source. The
+/// vertical fields (`bbox_y`, `foot_baseline_y`) and the component counts are
+/// flip-invariant. An empty frame mirrors to itself.
+fn mirror_metrics_x(m: pixhaus_core::transforms::FrameMetrics, canvas_w: u32) -> pixhaus_core::transforms::FrameMetrics {
+    if m.empty {
+        return m;
+    }
+    let new_bbox_x = canvas_w.saturating_sub(m.bbox_x).saturating_sub(m.visible_width);
+    let new_center_x = canvas_w.saturating_sub(1).saturating_sub(m.center_x);
+    let largest_component_bbox = m.largest_component_bbox.map(|(x, y, w, h)| (canvas_w.saturating_sub(x).saturating_sub(w), y, w, h));
+    pixhaus_core::transforms::FrameMetrics {
+        bbox_x: new_bbox_x,
+        center_x: new_center_x,
+        largest_component_bbox,
+        ..m
+    }
+}
+
 /// Builds the gallery [`ClipCandidate`] for a decoded clip: auto-detected loop
 /// markers, evenly-spaced picks toward `target_frames`, and empty texture/keyed
 /// caches sized to the frame count. Pure (no [`ShellApp`], no GPU), so the
@@ -4002,6 +4089,7 @@ fn build_clip_candidate(
     seed: Option<u64>,
     parent: Option<usize>,
     target_frames: usize,
+    job_id: Option<u64>,
 ) -> ClipCandidate {
     let markers = anim::auto_loop_markers(&frames);
     let picks = anim::pick_loop_frames(&frames, markers, target_frames);
@@ -4020,6 +4108,7 @@ fn build_clip_candidate(
         card_texture: None,
         keyed_thumbs,
         keyed_sig: None,
+        job_id,
         frames,
     }
 }
@@ -4263,7 +4352,8 @@ impl eframe::App for ShellApp {
 #[cfg(test)]
 mod tests {
     use super::{
-        GridPrefs, MorphOp, MorphResult, SelectionMask, map_beats_to_frames, mime_from_extension, morph_mask, next_cursor, png_to_pixel_buffer, truncate_motion,
+        GridPrefs, MorphOp, MorphResult, SelectionMask, map_beats_to_frames, mime_from_extension, mirror_metrics_x, morph_mask, next_cursor,
+        png_to_pixel_buffer, truncate_motion,
     };
 
     // --- playback cursor: loop vs stop --------------------------------------
@@ -4286,6 +4376,56 @@ mod tests {
         // Last frame with loop off returns None so playback halts on the final
         // frame instead of wrapping.
         assert_eq!(next_cursor(3, 4, false), None);
+    }
+
+    #[test]
+    fn mirror_metrics_x_mirrors_the_east_flip_coordinates() {
+        // A bbox at x=3 of width 5 on a 16-wide canvas mirrors to
+        // x' = 16 - 3 - 5 = 8; the centre cx mirrors to 16 - 1 - cx. The vertical
+        // fields and component counts are flip-invariant. This is the per-frame
+        // QC mirror the east-as-flip-of-west Land applies before recording.
+        use pixhaus_core::project::qc::FrameQc;
+        use pixhaus_core::transforms::FrameMetrics;
+        let m = FrameMetrics {
+            bbox_x: 3,
+            bbox_y: 4,
+            visible_width: 5,
+            visible_height: 6,
+            center_x: 5,
+            foot_baseline_y: 9,
+            empty: false,
+            num_components: 2,
+            largest_component_area: 20,
+            largest_component_bbox: Some((3, 4, 5, 6)),
+            edge_touch: false,
+        };
+        let flipped = mirror_metrics_x(m, 16);
+        let qc = FrameQc::from(&flipped);
+        assert_eq!(qc.bbox.0, 8, "bbox x mirrors to canvas_w - x - w");
+        assert_eq!(qc.bbox.1, 4, "bbox y is flip-invariant");
+        assert_eq!(qc.bbox.2, 5, "width is flip-invariant");
+        assert_eq!(qc.center_x, 10, "centre x mirrors to canvas_w - 1 - cx");
+        assert_eq!(qc.num_components, 2, "component count is flip-invariant");
+        assert_eq!(qc.largest_component_bbox, Some((8, 4, 5, 6)), "the component bbox mirrors too");
+    }
+
+    #[test]
+    fn mirror_metrics_x_passes_an_empty_frame_through() {
+        use pixhaus_core::transforms::FrameMetrics;
+        let m = FrameMetrics {
+            bbox_x: 0,
+            bbox_y: 0,
+            visible_width: 0,
+            visible_height: 0,
+            center_x: 8,
+            foot_baseline_y: 15,
+            empty: true,
+            num_components: 0,
+            largest_component_area: 0,
+            largest_component_bbox: None,
+            edge_touch: false,
+        };
+        assert_eq!(mirror_metrics_x(m, 16), m, "an empty frame mirrors to itself");
     }
 
     #[test]
@@ -4703,6 +4843,7 @@ mod tests {
             None,
             None,
             6,
+            None,
         );
 
         assert_eq!(candidate.frames.len() as u32, rows * cols, "the candidate carries every sliced frame");
@@ -4710,6 +4851,7 @@ mod tests {
         assert_eq!(candidate.mime, "image/png", "the static path tags the slice source format");
         assert_eq!(candidate.parent, None, "a static sheet has no i2v lineage parent");
         assert_eq!(candidate.seed, None, "no seed was pinned for this run");
+        assert_eq!(candidate.job_id, None, "a static sheet carries no durable job id");
         // The slice is row-major: the first cell is panel 0, the last is the
         // highest panel index, proving the frames are the cells in order.
         assert_eq!(&candidate.frames[0].pixels[0..3], &[0u8, 64, 200], "frame 0 is the row-major-0 cell");

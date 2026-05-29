@@ -376,6 +376,11 @@ pub fn push_layer_consolidation(
 /// captured beforehand). The resulting [`SpriteBufferEdit`] re-applies the
 /// already-applied state idempotently, so the push records the entry without
 /// doubling the effect, and undo restores the seed while removing the frames.
+///
+/// `qc` is the per-frame QC record the studio's normalize review produced; it is
+/// threaded into [`DocumentStore::integrate_frames`] so it lands inside the same
+/// `SpriteBufferEdit` snapshot — undo removes it with the frames rather than
+/// leaving a dangling record. `None` at non-reviewed sites.
 pub fn integrate_frames_undoable(
     editor: &mut EditorState,
     doc: &mut DocumentStore,
@@ -383,6 +388,7 @@ pub fn integrate_frames_undoable(
     frame_duration_ms: u32,
     name: &str,
     loop_direction: LoopDirection,
+    qc: Option<pixhaus_core::project::AnimationQc>,
 ) -> Option<FrameRange> {
     let sprite_id = doc.project.active_sprite_id()?;
     let before = doc.project.sprite(sprite_id)?.clone();
@@ -399,7 +405,7 @@ pub fn integrate_frames_undoable(
         })
         .collect();
 
-    let range = doc.integrate_frames(frames, frame_duration_ms, name, loop_direction)?;
+    let range = doc.integrate_frames(frames, frame_duration_ms, name, loop_direction, qc)?;
 
     let after = doc.project.sprite(sprite_id)?.clone();
     let after_keys: HashSet<PixelBufferId> = doc.pixel_buffers.keys().copied().collect();
@@ -1043,7 +1049,7 @@ mod tests {
             .map(|_| PixelBuffer::filled(8, 8, pixhaus_core::project::Rgba::new(9, 9, 9, 255)).expect("buffer"))
             .collect();
 
-        integrate_frames_undoable(&mut editor, &mut doc, frames, 100, "walk", LoopDirection::Forward).expect("integrated range");
+        integrate_frames_undoable(&mut editor, &mut doc, frames, 100, "walk", LoopDirection::Forward, None).expect("integrated range");
         // The pristine seed is replaced, leaving exactly the three frames.
         assert_eq!(doc.frame_count(), 3);
         assert_eq!(doc.pixel_buffers.len(), 3);
@@ -1055,6 +1061,71 @@ mod tests {
         editor.history.redo(&mut doc).expect("redo");
         assert_eq!(doc.frame_count(), 3, "redo re-integrates the animation");
         assert_eq!(doc.pixel_buffers.len(), 3);
+    }
+
+    /// A small populated QC record for the integrate-with-qc test.
+    fn sample_animation_qc() -> pixhaus_core::project::AnimationQc {
+        use pixhaus_core::project::qc::{AnimationQc, FrameQc, NormalizeReportSummary, QcSettings};
+        use pixhaus_core::project::Rgba;
+        use pixhaus_core::transforms::SeamMatch;
+        AnimationQc {
+            settings: QcSettings {
+                key_color: Rgba::opaque(255, 0, 255),
+                key_tolerance: 24,
+                alpha_threshold: 8,
+                canvas: (8, 8),
+                bottom_margin: 0,
+                reference_height: 6,
+                remove_on_land: true,
+            },
+            report: NormalizeReportSummary {
+                baseline_drift_px: 0,
+                scale_match_pct: 100,
+                seam: SeamMatch::Ok,
+                reference_height: 6,
+                max_components: 1,
+                any_edge_touch: false,
+                warnings: Vec::new(),
+            },
+            frames: vec![FrameQc {
+                bbox: (1, 1, 6, 6),
+                center_x: 4,
+                foot_baseline_y: 6,
+                empty: false,
+                num_components: 1,
+                largest_component_area: 36,
+                largest_component_bbox: Some((1, 1, 6, 6)),
+                edge_touch: false,
+            }],
+        }
+    }
+
+    #[test]
+    fn integrate_frames_undoable_lands_qc_and_undo_removes_it() {
+        let mut doc = DocumentStore::new();
+        doc.create_sprite("hero", Size::new(8, 8));
+        let mut editor = EditorState::default();
+        let frames: Vec<PixelBuffer> = (0..3)
+            .map(|_| PixelBuffer::filled(8, 8, pixhaus_core::project::Rgba::new(9, 9, 9, 255)).expect("buffer"))
+            .collect();
+        let qc = sample_animation_qc();
+
+        integrate_frames_undoable(&mut editor, &mut doc, frames, 100, "walk", LoopDirection::Forward, Some(qc.clone())).expect("integrated range");
+
+        // The landed Animation carries the QC record, inside the same undo entry.
+        let landed = doc.active_sprite().expect("sprite").animations.last().expect("animation").clone();
+        assert_eq!(landed.qc, Some(qc), "the landed animation carries the qc record");
+
+        editor.history.undo(&mut doc).expect("undo");
+        // Undo removed the whole animation (and its qc) along with the frames.
+        assert!(
+            doc.active_sprite().expect("sprite").animations.is_empty(),
+            "undo removes the animation and its qc rather than leaving a dangling record"
+        );
+
+        editor.history.redo(&mut doc).expect("redo");
+        let relanded = doc.active_sprite().expect("sprite").animations.last().expect("animation").clone();
+        assert!(relanded.qc.is_some(), "redo restores the qc record with the animation");
     }
 
     #[test]

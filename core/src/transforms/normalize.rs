@@ -152,6 +152,25 @@ pub struct FrameMetrics {
     pub foot_baseline_y: u32,
     /// `true` when the frame had no opaque pixels.
     pub empty: bool,
+    /// Number of 4-connected opaque components in the frame. `0` for a
+    /// transparent frame. Populated only by [`measure_qc`]; the cheap
+    /// [`measure`] path leaves it `0`. Serde-defaulted so old metrics load.
+    #[serde(default)]
+    pub num_components: u32,
+    /// Opaque-pixel area of the largest component. `0` when there are none.
+    /// Populated only by [`measure_qc`]. Serde-defaulted so old metrics load.
+    #[serde(default)]
+    pub largest_component_area: u32,
+    /// Bounding box `(x, y, w, h)` of the largest component, or `None` when the
+    /// frame has no opaque pixels. Populated only by [`measure_qc`].
+    /// Serde-defaulted so old metrics load.
+    #[serde(default)]
+    pub largest_component_bbox: Option<(u32, u32, u32, u32)>,
+    /// `true` when any opaque pixel sits on the frame's 1px border — the
+    /// edge-touch QC signal. Populated only by [`measure_qc`]. Serde-defaulted
+    /// so old metrics load.
+    #[serde(default)]
+    pub edge_touch: bool,
 }
 
 /// A single 4-connected opaque region found by [`label_components`].
@@ -235,6 +254,19 @@ pub struct NormalizeReport {
     /// land — so it catches a body the scale pass under-corrected. `100` when
     /// at most one non-empty frame lands.
     pub scale_parity_pct: u32,
+    /// The most 4-connected components any landed frame split into. `1` is a
+    /// single clean body; `0` only when every frame is empty. Above `1` means at
+    /// least one frame fragmented (a stray keyed-out speck or a body that broke
+    /// in two) — the QC signal that gates reprocess-vs-regenerate. Populated from
+    /// [`measure_qc`]. Serde-defaulted so old reports load.
+    #[serde(default)]
+    pub max_components: u32,
+    /// `true` when any landed frame has an opaque pixel on its 1px border.
+    /// Distinct from [`edge_touch_frames`](Self::edge_touch_frames), which judges
+    /// the bbox against the `safe_margin` band; this is the raw per-pixel border
+    /// touch from component analysis. Serde-defaulted so old reports load.
+    #[serde(default)]
+    pub any_edge_touch: bool,
 }
 
 /// Options for [`normalize_frames`].
@@ -496,6 +528,10 @@ const fn empty_metrics(w: u32, h: u32) -> FrameMetrics {
         center_x: w / 2,
         foot_baseline_y: h.saturating_sub(1),
         empty: true,
+        num_components: 0,
+        largest_component_area: 0,
+        largest_component_bbox: None,
+        edge_touch: false,
     }
 }
 
@@ -512,6 +548,10 @@ fn metrics_from_bbox(min_x: u32, min_y: u32, max_x: u32, max_y: u32) -> FrameMet
         center_x: min_x + visible_width / 2,
         foot_baseline_y: max_y,
         empty: false,
+        num_components: 0,
+        largest_component_area: 0,
+        largest_component_bbox: None,
+        edge_touch: false,
     }
 }
 
@@ -686,6 +726,77 @@ fn whole_alpha_metrics(buf: &PixelBuffer, alpha_threshold: u8) -> FrameMetrics {
 /// returns the *last* max on ties, so this folds keeping the earlier component.
 fn largest_component(components: &[Component]) -> Option<Component> {
     components.iter().copied().reduce(|best, c| if c.area > best.area { c } else { best })
+}
+
+/// Aggregate QC over a frame's opaque mask: the component count, the largest
+/// component's area and bbox, and whether any opaque pixel touches the 1px
+/// border.
+///
+/// This is the persisted-QC summary of [`label_components`] — the count and the
+/// hero body, not the full per-component list. The most common generation
+/// defects show up here: `num_components > 1` is a stray keyed-out speck or a
+/// body that split, and `edge_touch` is a clipped subject.
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+pub struct ComponentStats {
+    /// Number of 4-connected opaque components. `0` for a transparent frame.
+    pub num_components: u32,
+    /// Opaque-pixel area of the largest component. `0` when there are none.
+    pub largest_component_area: u32,
+    /// Bounding box `(x, y, w, h)` of the largest component, or `None` when the
+    /// frame has no opaque pixels. Ties toward the lowest label (first in scan
+    /// order) for determinism.
+    pub largest_component_bbox: Option<(u32, u32, u32, u32)>,
+    /// `true` when any opaque pixel sits on the buffer's 1px outer border.
+    pub edge_touch: bool,
+}
+
+/// Labels the opaque mask of `buf` (alpha strictly greater than `alpha_threshold`)
+/// into 4-connected components and summarizes them.
+///
+/// Reuses [`label_components`] — same iterative, frame-bounded BFS, the shared
+/// `edge_touch` primitive — so the QC count and the bbox-isolation modes never
+/// drift. Order-stable: the same buffer always yields the same stats, which
+/// matters for snapshot tests. 4-connectivity is the documented default; 8-
+/// connectivity is a future const flag on [`label_components`], not a separate
+/// path here.
+#[must_use]
+pub fn connected_components(buf: &PixelBuffer, alpha_threshold: u8) -> ComponentStats {
+    let components = label_components(buf, alpha_threshold);
+    let num_components = u32::try_from(components.len()).unwrap_or(u32::MAX);
+    let edge_touch = components.iter().any(|c| c.touches_edge);
+    match largest_component(&components) {
+        Some(c) => ComponentStats {
+            num_components,
+            largest_component_area: c.area,
+            largest_component_bbox: Some((c.bbox_x, c.bbox_y, c.width, c.height)),
+            edge_touch,
+        },
+        None => ComponentStats {
+            num_components: 0,
+            largest_component_area: 0,
+            largest_component_bbox: None,
+            edge_touch: false,
+        },
+    }
+}
+
+/// Measures `buf` and adds the connected-component QC fields.
+///
+/// This is [`measure`] (the whole-alpha bbox and placement landmarks) plus
+/// [`connected_components`] (count, largest area/bbox, edge touch) folded into
+/// one [`FrameMetrics`]. The two share `alpha_threshold`. Keep this off the
+/// per-frame seam loop — `measure` stays the cheap path; `measure_qc` runs once
+/// per landed frame when the QC record is built.
+#[must_use]
+pub fn measure_qc(buf: &PixelBuffer, alpha_threshold: u8) -> FrameMetrics {
+    let stats = connected_components(buf, alpha_threshold);
+    FrameMetrics {
+        num_components: stats.num_components,
+        largest_component_area: stats.largest_component_area,
+        largest_component_bbox: stats.largest_component_bbox,
+        edge_touch: stats.edge_touch,
+        ..measure(buf, alpha_threshold)
+    }
 }
 
 /// Auto-detects the likely background colour by sampling the 1px border of
@@ -928,6 +1039,8 @@ pub fn normalize_frames(frames: &[PixelBuffer], opts: &NormalizeOptions) -> Resu
                 warnings: vec!["no frames to normalize".into()],
                 edge_touch_frames: Vec::new(),
                 scale_parity_pct: 100,
+                max_components: 0,
+                any_edge_touch: false,
             },
         });
     }
@@ -965,8 +1078,10 @@ pub fn normalize_frames(frames: &[PixelBuffer], opts: &NormalizeOptions) -> Resu
         out_frames.push(normalize_one(frame, m, reference_height, opts)?);
     }
 
-    // Measure the normalized output to verify baseline lock.
-    let out_metrics: Vec<FrameMetrics> = out_frames.iter().map(|f| measure(f, opts.alpha_threshold)).collect();
+    // Measure the normalized output to verify baseline lock. `measure_qc` adds
+    // the connected-component QC (count, largest body, edge touch) the persisted
+    // QC record carries — run once per landed frame here, never in the seam loop.
+    let out_metrics: Vec<FrameMetrics> = out_frames.iter().map(|f| measure_qc(f, opts.alpha_threshold)).collect();
     let target_baseline = opts.canvas_height.saturating_sub(opts.bottom_margin).saturating_sub(1);
     let baseline_drift_px = out_metrics
         .iter()
@@ -1008,6 +1123,16 @@ pub fn normalize_frames(frames: &[PixelBuffer], opts: &NormalizeOptions) -> Resu
         warnings.push(format!("landed subject heights still vary ({scale_parity_pct}% parity) after scale correction"));
     }
 
+    // Component QC across the landed frames: the worst fragmentation and whether
+    // any frame's content reaches its own border. A frame splitting into more
+    // than one component is the stray-speck / split-body defect; surface it so
+    // the studio warnings list reads it.
+    let max_components = out_metrics.iter().map(|m| m.num_components).max().unwrap_or(0);
+    let any_edge_touch = out_metrics.iter().any(|m| m.edge_touch);
+    if max_components > 1 {
+        warnings.push(format!("a landed frame split into {max_components} disconnected components"));
+    }
+
     let seam = seam_match(out_frames.first(), out_frames.last());
     if seam == SeamMatch::Drift {
         warnings.push("loop seam: last frame differs noticeably from the first".into());
@@ -1024,6 +1149,8 @@ pub fn normalize_frames(frames: &[PixelBuffer], opts: &NormalizeOptions) -> Resu
             warnings,
             edge_touch_frames,
             scale_parity_pct,
+            max_components,
+            any_edge_touch,
         },
     })
 }
@@ -1503,6 +1630,174 @@ mod tests {
             );
         }
 
+        #[test]
+        fn connected_components_single_blob() {
+            // One solid 3x4 body interior to an 8x8 frame: one component, area
+            // w*h, the full bbox, no edge touch.
+            let mut opaque = Vec::new();
+            for y in 2..6 {
+                for x in 2..5 {
+                    opaque.push((x, y));
+                }
+            }
+            let buf = mask(8, 8, &opaque);
+            let stats = connected_components(&buf, 0);
+            assert_eq!(stats.num_components, 1, "a single blob is one component");
+            assert_eq!(stats.largest_component_area, 12, "area is 3*4");
+            assert_eq!(stats.largest_component_bbox, Some((2, 2, 3, 4)), "the full bbox of the body");
+            assert!(!stats.edge_touch, "the interior body never reaches the border");
+        }
+
+        #[test]
+        fn connected_components_frame_filler_touches_edge() {
+            // A body that fills the whole frame touches the border.
+            let mut opaque = Vec::new();
+            for y in 0..4 {
+                for x in 0..4 {
+                    opaque.push((x, y));
+                }
+            }
+            let buf = mask(4, 4, &opaque);
+            let stats = connected_components(&buf, 0);
+            assert_eq!(stats.num_components, 1);
+            assert!(stats.edge_touch, "a frame-filler reaches the border");
+        }
+
+        #[test]
+        fn connected_components_two_blobs_picks_larger() {
+            // A 4px body and a 1px speck: two components, the larger picked.
+            let buf = mask(8, 8, &[(3, 3), (4, 3), (3, 4), (4, 4), (6, 1)]);
+            let stats = connected_components(&buf, 0);
+            assert_eq!(stats.num_components, 2, "body plus speck");
+            assert_eq!(stats.largest_component_area, 4, "the 2x2 body is the largest");
+            assert_eq!(stats.largest_component_bbox, Some((3, 3, 2, 2)), "bbox of the body, not the speck");
+        }
+
+        #[test]
+        fn connected_components_diagonal_gap_stays_two() {
+            // A 1px diagonal gap between two pixels is not 4-connected, so they
+            // stay two components under the documented 4-connectivity.
+            let buf = mask(4, 4, &[(1, 1), (2, 2)]);
+            let stats = connected_components(&buf, 0);
+            assert_eq!(stats.num_components, 2, "diagonal neighbours are not 4-connected");
+        }
+
+        #[test]
+        fn connected_components_transparent_is_zero() {
+            // A fully transparent frame: no components, no area, no bbox, no touch.
+            let buf = PixelBuffer::new(6, 6).unwrap();
+            let stats = connected_components(&buf, 0);
+            assert_eq!(stats.num_components, 0);
+            assert_eq!(stats.largest_component_area, 0);
+            assert_eq!(stats.largest_component_bbox, None);
+            assert!(!stats.edge_touch);
+        }
+
+        #[test]
+        fn connected_components_centered_then_flush() {
+            // A 2x2 body centred (no edge touch), then the same body flush to row
+            // 0 (edge touch).
+            let centered = mask(8, 8, &[(3, 3), (4, 3), (3, 4), (4, 4)]);
+            assert!(!connected_components(&centered, 0).edge_touch, "a centred body is clear of the border");
+            let flush = mask(8, 8, &[(3, 0), (4, 0), (3, 1), (4, 1)]);
+            assert!(connected_components(&flush, 0).edge_touch, "a body on row 0 touches the border");
+        }
+
+        #[test]
+        fn connected_components_is_deterministic() {
+            // The same buffer twice yields identical stats — snapshot stability.
+            let buf = mask(8, 8, &[(1, 1), (2, 1), (5, 5), (6, 5), (6, 6)]);
+            assert_eq!(connected_components(&buf, 0), connected_components(&buf, 0));
+        }
+
+        #[test]
+        fn measure_qc_agrees_with_measure_on_shared_fields() {
+            // measure_qc must match measure on the bbox/baseline fields and add
+            // the component fields on top.
+            let mut buf = PixelBuffer::new(10, 10).unwrap();
+            for y in 4..8 {
+                for x in 3..6 {
+                    buf.set_pixel(x, y, Rgba::opaque(10, 20, 30));
+                }
+            }
+            buf.set_pixel(8, 1, Rgba::opaque(10, 20, 30)); // a detached speck
+            let plain = measure(&buf, 0);
+            let qc = measure_qc(&buf, 0);
+            assert_eq!(qc.bbox_x, plain.bbox_x);
+            assert_eq!(qc.bbox_y, plain.bbox_y);
+            assert_eq!(qc.visible_width, plain.visible_width);
+            assert_eq!(qc.visible_height, plain.visible_height);
+            assert_eq!(qc.center_x, plain.center_x);
+            assert_eq!(qc.foot_baseline_y, plain.foot_baseline_y);
+            assert_eq!(qc.empty, plain.empty);
+            // measure leaves the QC fields zeroed; measure_qc fills them.
+            assert_eq!(plain.num_components, 0, "the cheap measure leaves component fields unpopulated");
+            assert_eq!(qc.num_components, 2, "body plus speck");
+            assert_eq!(qc.largest_component_area, 12, "the 3x4 body");
+            assert_eq!(qc.largest_component_bbox, Some((3, 4, 3, 4)));
+        }
+
+        #[test]
+        fn measure_qc_empty_frame_zeroes_components() {
+            let buf = PixelBuffer::new(4, 4).unwrap();
+            let qc = measure_qc(&buf, 0);
+            assert!(qc.empty);
+            assert_eq!(qc.num_components, 0);
+            assert_eq!(qc.largest_component_area, 0);
+            assert_eq!(qc.largest_component_bbox, None);
+            assert!(!qc.edge_touch);
+        }
+
+        #[test]
+        fn normalize_report_widens_with_component_qc() {
+            // The widened report carries max_components and any_edge_touch. A
+            // single small body, scaled to fit a generous cell with a bottom
+            // margin, lands as one component clear of every border.
+            let mut f = solid(24, 24, Rgba::opaque(255, 0, 255));
+            for y in 12..18 {
+                for x in 10..14 {
+                    f.set_pixel(x, y, Rgba::opaque(10, 20, 30));
+                }
+            }
+            let opts = NormalizeOptions {
+                reference_height: Some(8),
+                bottom_margin: 2,
+                ..NormalizeOptions::square(24)
+            };
+            let res = normalize_frames(&[f.clone(), f], &opts).expect("normalize");
+            assert_eq!(res.report.max_components, 1, "a clean body lands as a single component");
+            assert!(!res.report.any_edge_touch, "a centred body with breathing room never reaches the border");
+        }
+
+        #[test]
+        fn normalize_report_two_blobs_fires_disconnected_warning() {
+            // A frame whose keyed subject splits into two detached blobs lands as
+            // two components and fires the "disconnected components" warning. The
+            // backdrop is left in place (no chroma) so both blobs survive to land.
+            let mut f = PixelBuffer::new(24, 24).unwrap();
+            for y in 14..20 {
+                for x in 4..9 {
+                    f.set_pixel(x, y, Rgba::opaque(10, 20, 30));
+                }
+            }
+            for y in 14..20 {
+                for x in 15..20 {
+                    f.set_pixel(x, y, Rgba::opaque(10, 20, 30));
+                }
+            }
+            let opts = NormalizeOptions {
+                chroma: None,
+                ..NormalizeOptions::square(24)
+            };
+            let res = normalize_frames(&[f], &opts).expect("normalize");
+            assert!(res.report.max_components >= 2, "two detached blobs land as two components: {}", res.report.max_components);
+            assert!(
+                res.report.warnings.iter().any(|w| w.contains("disconnected components")),
+                "the disconnected-components warning fires: {:?}",
+                res.report.warnings
+            );
+        }
+
         proptest! {
             /// The sum of component areas equals the total opaque-pixel count:
             /// every opaque pixel belongs to exactly one component.
@@ -1542,6 +1837,63 @@ mod tests {
                 let whole = measure_components(&buf, 0, ComponentMode::WholeAlpha);
                 let area = |m: &FrameMetrics| u64::from(m.visible_width) * u64::from(m.visible_height);
                 prop_assert!(area(&largest) <= area(&whole), "largest bbox {} > whole bbox {}", area(&largest), area(&whole));
+            }
+
+            /// `connected_components` invariants over random masks: the count
+            /// never exceeds the opaque-pixel count, the largest area is bounded
+            /// by the total, the largest area is zero exactly when there are no
+            /// components, and an edge touch implies an opaque border pixel.
+            #[test]
+            fn connected_components_invariants(
+                seed in 0u32..=4096,
+            ) {
+                let buf = sheet_from_fn(11, 9, |x, y| {
+                    let h = (x.wrapping_mul(3) ^ y.wrapping_mul(17) ^ seed) % 3;
+                    if h == 0 {
+                        Rgba::opaque(40, 80, 120)
+                    } else {
+                        Rgba::new(0, 0, 0, 0)
+                    }
+                });
+                let opaque = u32::try_from(opaque_count_at(&buf, 0)).unwrap();
+                let stats = connected_components(&buf, 0);
+                prop_assert!(stats.num_components <= opaque, "components {} exceed opaque count {opaque}", stats.num_components);
+                prop_assert!(stats.largest_component_area <= opaque, "largest area {} exceeds total {opaque}", stats.largest_component_area);
+                prop_assert_eq!(
+                    stats.largest_component_area == 0,
+                    stats.num_components == 0,
+                    "largest area is zero exactly when there are no components"
+                );
+                if stats.edge_touch {
+                    // An edge touch means at least one opaque pixel on the border.
+                    let (w, h) = (buf.width(), buf.height());
+                    let mut found = false;
+                    for y in 0..h {
+                        for x in 0..w {
+                            if on_border(x, y, w, h) && buf.pixel(x, y).is_some_and(|p| p.a > 0) {
+                                found = true;
+                            }
+                        }
+                    }
+                    prop_assert!(found, "edge_touch implies an opaque border pixel");
+                }
+            }
+
+            /// `connected_components` is order-stable: the same buffer always
+            /// yields the same stats.
+            #[test]
+            fn connected_components_is_stable(
+                seed in 0u32..=4096,
+            ) {
+                let buf = sheet_from_fn(11, 9, |x, y| {
+                    let h = (x.wrapping_mul(9) ^ y.wrapping_mul(5) ^ seed) % 3;
+                    if h == 0 {
+                        Rgba::opaque(10, 20, 30)
+                    } else {
+                        Rgba::new(0, 0, 0, 0)
+                    }
+                });
+                prop_assert_eq!(connected_components(&buf, 0), connected_components(&buf, 0));
             }
         }
     }
@@ -1769,10 +2121,14 @@ mod tests {
                 warnings: Vec::new(),
                 edge_touch_frames: Vec::new(),
                 scale_parity_pct: 100,
+                max_components: 1,
+                any_edge_touch: false,
             };
             let json = serde_json::to_string(&report).expect("encode");
             assert!(!json.contains("edge_touch_frames"), "an empty edge list is skipped: {json}");
             assert!(json.contains("scale_parity_pct"), "scale_parity_pct is always written: {json}");
+            assert!(json.contains("max_components"), "max_components is always written: {json}");
+            assert!(json.contains("any_edge_touch"), "any_edge_touch is always written: {json}");
         }
 
         #[test]
@@ -1785,6 +2141,8 @@ mod tests {
                 warnings: vec!["frame 1 touches an edge".into()],
                 edge_touch_frames: vec![1, 2],
                 scale_parity_pct: 74,
+                max_components: 2,
+                any_edge_touch: true,
             };
             let json = serde_json::to_string(&report).expect("encode");
             let back: NormalizeReport = serde_json::from_str(&json).expect("decode");
@@ -1799,6 +2157,10 @@ mod tests {
             let report: NormalizeReport = serde_json::from_str(json).expect("decode legacy report");
             assert!(report.edge_touch_frames.is_empty(), "edge_touch_frames defaults to empty");
             assert_eq!(report.scale_parity_pct, 100);
+            // The Brief 10 component fields are serde-defaulted, so a report
+            // written before they existed still loads.
+            assert_eq!(report.max_components, 0, "max_components defaults to 0");
+            assert!(!report.any_edge_touch, "any_edge_touch defaults to false");
         }
     }
 

@@ -191,7 +191,7 @@ fn run_gen(args: &[String]) -> Result<()> {
             println!("  [anim] {m}");
         }))
         .map_err(|e| anyhow!(e))?;
-    doc.integrate_frames(frames, frame_ms, "gen", LoopDirection::Forward);
+    doc.integrate_frames(frames, frame_ms, "gen", LoopDirection::Forward, None);
 
     let out_frames = composite_all_frames(&doc)?;
     write_outputs(&out_frames, frame_ms, &out)?;
