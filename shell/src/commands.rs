@@ -918,14 +918,22 @@ mod tests {
         assert_eq!(doc.pixel_buffers.len(), baseline_buffers - 1, "two retired, one added");
 
         editor.history.undo(&mut doc).expect("undo");
-        assert_eq!(doc.active_sprite().expect("sprite").layers.len(), baseline_layers, "undo restores the source layer");
+        assert_eq!(
+            doc.active_sprite().expect("sprite").layers.len(),
+            baseline_layers,
+            "undo restores the source layer"
+        );
         assert!(doc.pixel_buffers.contains_key(&src_buffer), "undo restores the source buffer");
         assert!(doc.pixel_buffers.contains_key(&dest_buffer), "undo restores the destination buffer");
         assert!(!doc.pixel_buffers.contains_key(&merged_id), "undo removes the merged buffer");
         assert_eq!(doc.pixel_buffers.len(), baseline_buffers, "buffer count returns to baseline");
 
         editor.history.redo(&mut doc).expect("redo");
-        assert_eq!(doc.active_sprite().expect("sprite").layers.len(), baseline_layers - 1, "redo re-applies the merge");
+        assert_eq!(
+            doc.active_sprite().expect("sprite").layers.len(),
+            baseline_layers - 1,
+            "redo re-applies the merge"
+        );
         assert!(doc.pixel_buffers.contains_key(&merged_id), "redo restores the merged buffer");
         assert_eq!(doc.pixel_buffers.len(), baseline_buffers - 1);
     }

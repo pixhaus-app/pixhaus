@@ -26,11 +26,7 @@ pub fn triad(color: Rgba) -> [Rgba; 2] {
 
 /// Returns the three tetradic (square) colors (hue + 90°, 180°, 270°).
 pub fn tetrad(color: Rgba) -> [Rgba; 3] {
-    [
-        rotate_hue(color, 90.0),
-        rotate_hue(color, 180.0),
-        rotate_hue(color, 270.0),
-    ]
+    [rotate_hue(color, 90.0), rotate_hue(color, 180.0), rotate_hue(color, 270.0)]
 }
 
 /// Returns `count` analogous colors centered on `color`.
@@ -162,14 +158,9 @@ mod tests {
         let steps = monochromatic(red(), 5);
         assert_eq!(steps.len(), 5);
         // First step should be darker than last step
-        let first_brightness =
-            u32::from(steps[0].r) + u32::from(steps[0].g) + u32::from(steps[0].b);
-        let last_brightness =
-            u32::from(steps[4].r) + u32::from(steps[4].g) + u32::from(steps[4].b);
-        assert!(
-            first_brightness < last_brightness,
-            "expected lighter last step"
-        );
+        let first_brightness = u32::from(steps[0].r) + u32::from(steps[0].g) + u32::from(steps[0].b);
+        let last_brightness = u32::from(steps[4].r) + u32::from(steps[4].g) + u32::from(steps[4].b);
+        assert!(first_brightness < last_brightness, "expected lighter last step");
     }
 
     #[test]

@@ -148,24 +148,15 @@ mod tests {
     fn nearest_exact_match() {
         let palette = [red(), blue(), green()];
         assert_eq!(nearest_color_index(palette.iter().copied(), red()), Some(0));
-        assert_eq!(
-            nearest_color_index(palette.iter().copied(), blue()),
-            Some(1)
-        );
-        assert_eq!(
-            nearest_color_index(palette.iter().copied(), green()),
-            Some(2)
-        );
+        assert_eq!(nearest_color_index(palette.iter().copied(), blue()), Some(1));
+        assert_eq!(nearest_color_index(palette.iter().copied(), green()), Some(2));
     }
 
     #[test]
     fn nearest_picks_closest_by_distance() {
         let palette = [Rgba::opaque(0, 0, 0), Rgba::opaque(200, 0, 0)];
         let target = Rgba::opaque(180, 0, 0);
-        assert_eq!(
-            nearest_color_index(palette.iter().copied(), target),
-            Some(1)
-        );
+        assert_eq!(nearest_color_index(palette.iter().copied(), target), Some(1));
     }
 
     #[test]

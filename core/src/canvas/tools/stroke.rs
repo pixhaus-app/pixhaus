@@ -20,6 +20,7 @@
 )]
 
 use crate::canvas::PixelBuffer;
+use crate::canvas::tools::dither::{DitherPattern, dither_allows};
 use crate::project::Rgba;
 
 /// Brush footprint shape applied at each painted pixel.
@@ -79,6 +80,72 @@ pub fn paint_brush(buf: &mut PixelBuffer, cx: i32, cy: i32, color: Rgba, shape: 
             }
         }
     }
+}
+
+/// Paint the brush footprint centred at `(cx, cy)`, writing only the
+/// pixels the dither `pattern` allows, each blended at `opacity`.
+///
+/// Iterates the footprint via [`brush_covers`] and consults
+/// [`dither_allows`] per covered offset using the pixel's canvas-absolute
+/// coordinate, so the mask is pan-stable across separate stamps. Each
+/// allowed pixel is written through [`PixelBuffer::set_pixel_blended`], so
+/// `opacity == 255` overwrites (the fast path inside `set_pixel_blended`)
+/// and `opacity == 0` is a no-op.
+///
+/// [`paint_brush`] stays the fast path for solid, full-opacity strokes;
+/// this variant exists only when a mask or reduced opacity is in play.
+/// Out-of-bounds pixels are clipped silently. With [`DitherPattern::None`]
+/// and `opacity == 255` it is byte-identical to [`paint_brush`].
+///
+/// # Per-stroke opacity, not per-dab
+///
+/// This stamps a single dab. A freehand drag overlaps dabs, so blending
+/// each dab at a reduced opacity would compound — the overlap would darken.
+/// The Aseprite semantic is per-stroke: opacity applies once over the whole
+/// stroke footprint. The shell honours it not here but at commit time, by
+/// keeping a full-strength preview during the drag and redrawing once from
+/// the pre-stroke `before` snapshot — blending the union footprint at the
+/// chosen opacity over `before`, bounded by the dirty rect already tracked.
+/// Callers that need a one-shot opaque-over-backdrop dab (a shape edge, a
+/// single click, or that commit redraw) can use this directly.
+pub fn paint_brush_masked(buf: &mut PixelBuffer, cx: i32, cy: i32, color: Rgba, shape: BrushShape, size: u32, pattern: DitherPattern, opacity: u8) {
+    // The covered offsets fit inside the brush's bounding box. Pixel is a
+    // single point; Circle and Square span [-reach, reach] around the
+    // centre. The +1 guards the odd/even rounding in brush_covers.
+    let reach = match shape {
+        BrushShape::Pixel => 0,
+        BrushShape::Circle | BrushShape::Square => (size.max(1) as i32) / 2 + 1,
+    };
+    let w = buf.width() as i32;
+    let h = buf.height() as i32;
+
+    for dy in -reach..=reach {
+        for dx in -reach..=reach {
+            if !brush_covers(shape, size, dx, dy) {
+                continue;
+            }
+            let x = cx + dx;
+            let y = cy + dy;
+            if x < 0 || y < 0 || x >= w || y >= h {
+                continue;
+            }
+            if !dither_allows(pattern, x, y) {
+                continue;
+            }
+            buf.set_pixel_blended(x as u32, y as u32, color, opacity);
+        }
+    }
+}
+
+/// Paint the brush footprint centred at `(cx, cy)`, blending every covered
+/// pixel at `opacity` (no dither mask).
+///
+/// A thin alias for [`paint_brush_masked`] with [`DitherPattern::None`].
+/// At `opacity == 255` it overwrites identically to [`paint_brush`]; at
+/// `opacity == 0` it is a no-op. See the per-stroke note on
+/// [`paint_brush_masked`] for the freehand-drag semantic.
+pub fn paint_brush_blended(buf: &mut PixelBuffer, cx: i32, cy: i32, color: Rgba, shape: BrushShape, size: u32, opacity: u8) {
+    paint_brush_masked(buf, cx, cy, color, shape, size, DitherPattern::None, opacity);
 }
 
 /// Whether the brush footprint covers the offset `(dx, dy)` from its centre.
@@ -180,6 +247,96 @@ pub fn stamp_segment(buf: &mut PixelBuffer, from: Option<[f32; 2]>, points: &[[f
     stamps
 }
 
+/// Bresenham line from `(x0, y0)` to `(x1, y1)`, stamping a dither-masked,
+/// `opacity`-blended brush at every line pixel.
+///
+/// The mask-and-blend counterpart of [`draw_line`]. With
+/// [`DitherPattern::None`] and `opacity == 255` it paints the same pixels as
+/// [`draw_line`]. Below 255 it blends per dab, so dabs that overlap — wide
+/// brushes always, and the shared endpoint between joined segments — compound.
+/// Use it for the dither gate at full opacity, or for a single straight edge;
+/// the per-stroke commit redraw blends each *unique* footprint pixel once over
+/// `before` via [`PixelBuffer::set_pixel_blended`] (see [`paint_brush_masked`]).
+/// Returns the brush-stamp count.
+pub fn draw_line_masked(buf: &mut PixelBuffer, x0: i32, y0: i32, x1: i32, y1: i32, color: Rgba, shape: BrushShape, size: u32, pattern: DitherPattern, opacity: u8) -> usize {
+    let dx = (x1 - x0).abs();
+    let dy = (y1 - y0).abs();
+    let sx: i32 = if x0 < x1 { 1 } else { -1 };
+    let sy: i32 = if y0 < y1 { 1 } else { -1 };
+    let mut err = dx - dy;
+    let mut x = x0;
+    let mut y = y0;
+    let mut stamps = 0;
+
+    loop {
+        paint_brush_masked(buf, x, y, color, shape, size, pattern, opacity);
+        stamps += 1;
+        if x == x1 && y == y1 {
+            break;
+        }
+        let e2 = 2 * err;
+        if e2 > -dy {
+            err -= dy;
+            x += sx;
+        }
+        if e2 < dx {
+            err += dx;
+            y += sy;
+        }
+    }
+
+    stamps
+}
+
+/// Stamp a dither-masked, `opacity`-blended brush along `points`, bridging
+/// from `from` like [`stamp_segment`].
+///
+/// The mask-and-blend counterpart of [`stamp_segment`]; with
+/// [`DitherPattern::None`] and `opacity == 255` it stamps the same pixels.
+/// Below 255 it blends per dab, so overlapping dabs — wide brushes, and the
+/// shared point where segments join — compound. That is why the per-stroke
+/// commit redraw does NOT use this for the blend: it blends each *unique*
+/// footprint pixel once over the pre-stroke `before` via
+/// [`PixelBuffer::set_pixel_blended`] (see [`paint_brush_masked`]). Reach for
+/// this for the dither gate at full opacity, where overwrite is idempotent and
+/// the seam double-stamp is harmless. Returns the brush-stamp count.
+pub fn stamp_segment_masked(
+    buf: &mut PixelBuffer,
+    from: Option<[f32; 2]>,
+    points: &[[f32; 2]],
+    color: Rgba,
+    shape: BrushShape,
+    size: u32,
+    pattern: DitherPattern,
+    opacity: u8,
+) -> usize {
+    if points.is_empty() {
+        return 0;
+    }
+
+    let mut stamps = 0;
+    let (mut px, mut py, rest) = if let Some(prev) = from {
+        (prev[0].round() as i32, prev[1].round() as i32, points)
+    } else {
+        let first = points[0];
+        let fx = first[0].round() as i32;
+        let fy = first[1].round() as i32;
+        paint_brush_masked(buf, fx, fy, color, shape, size, pattern, opacity);
+        stamps += 1;
+        (fx, fy, &points[1..])
+    };
+
+    for p in rest {
+        let nx = p[0].round() as i32;
+        let ny = p[1].round() as i32;
+        stamps += draw_line_masked(buf, px, py, nx, ny, color, shape, size, pattern, opacity);
+        px = nx;
+        py = ny;
+    }
+
+    stamps
+}
+
 /// Draw a freehand stroke through `points` (canvas-space `[x, y]` pairs).
 ///
 /// Consecutive points are connected with Bresenham lines. When
@@ -235,10 +392,12 @@ fn count_neighbors(buf: &PixelBuffer, x: i32, y: i32, w: i32, h: i32, color: Rgb
 }
 
 #[cfg(test)]
+#[allow(clippy::unwrap_used)]
 mod tests {
     use super::*;
     use crate::canvas::PixelBuffer;
     use crate::project::Rgba;
+    use proptest::prelude::*;
 
     fn transparent_buf(w: u32, h: u32) -> PixelBuffer {
         PixelBuffer::new(w, h).unwrap()
@@ -398,5 +557,182 @@ mod tests {
             "stamp work {total} exceeds linear bound {} for {N} points — possible O(n^2) regression",
             3 * N,
         );
+    }
+
+    #[test]
+    fn masked_checker_fill_leaves_about_half() {
+        // A checker-masked fill over a region writes ~half the pixels. The
+        // count is exact for an even-area region: a WxH block with W*H even
+        // has exactly W*H/2 even-parity cells.
+        let color = Rgba::opaque(255, 255, 255);
+        let (w, h) = (32u32, 32u32);
+        let mut buf = transparent_buf(w, h);
+
+        // Stamp every pixel with a single-pixel masked brush.
+        for y in 0..h as i32 {
+            for x in 0..w as i32 {
+                paint_brush_masked(&mut buf, x, y, color, BrushShape::Pixel, 1, DitherPattern::Checker, 255);
+            }
+        }
+
+        let written = (0..h).flat_map(|y| (0..w).map(move |x| (x, y))).filter(|&(x, y)| buf.pixel(x, y) == Some(color)).count();
+        let total = (w * h) as usize;
+        // Exactly half for an even-area region.
+        assert_eq!(written, total / 2, "checker fill should write exactly half of {total} pixels");
+    }
+
+    #[test]
+    fn masked_checker_writes_only_allowed_pixels() {
+        // Within the footprint, every written pixel must be checker-allowed.
+        let color = Rgba::opaque(10, 200, 30);
+        let mut buf = transparent_buf(32, 32);
+        paint_brush_masked(&mut buf, 16, 16, color, BrushShape::Square, 8, DitherPattern::Checker, 255);
+
+        for y in 0..32i32 {
+            for x in 0..32i32 {
+                if buf.pixel(x as u32, y as u32) == Some(color) {
+                    assert!(dither_allows(DitherPattern::Checker, x, y), "wrote disallowed pixel at ({x}, {y})");
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn paint_brush_blended_at_255_matches_paint_brush() {
+        let color = Rgba::opaque(200, 30, 30);
+        for shape in [BrushShape::Pixel, BrushShape::Circle, BrushShape::Square] {
+            for size in [1u32, 3, 8] {
+                let mut solid = transparent_buf(64, 64);
+                paint_brush(&mut solid, 30, 30, color, shape, size);
+                let mut blended = transparent_buf(64, 64);
+                paint_brush_blended(&mut blended, 30, 30, color, shape, size, 255);
+                assert_eq!(solid.as_bytes(), blended.as_bytes(), "blended 255 diverged at shape={shape:?} size={size}");
+            }
+        }
+    }
+
+    #[test]
+    fn paint_brush_blended_at_zero_is_noop() {
+        let backdrop = Rgba::opaque(10, 20, 30);
+        let untouched = PixelBuffer::filled(32, 32, backdrop).unwrap();
+        let mut buf = untouched.clone();
+        paint_brush_blended(&mut buf, 16, 16, Rgba::opaque(255, 0, 0), BrushShape::Circle, 6, 0);
+        assert_eq!(buf.as_bytes(), untouched.as_bytes(), "opacity 0 brush must be a no-op");
+    }
+
+    #[test]
+    fn paint_brush_blended_at_128_blends_each_pixel() {
+        let backdrop = Rgba::opaque(20, 80, 160);
+        let src = Rgba::opaque(200, 40, 60);
+        let expected = crate::canvas::blend::blend_normal(src, backdrop, 128);
+        let mut buf = PixelBuffer::filled(8, 8, backdrop).unwrap();
+        paint_brush_blended(&mut buf, 4, 4, src, BrushShape::Square, 3, 128);
+        // Centre is covered, so it should hold the half-strength blend.
+        assert_eq!(buf.pixel(4, 4), Some(expected));
+        // A pixel well outside the footprint keeps the backdrop.
+        assert_eq!(buf.pixel(0, 0), Some(backdrop));
+    }
+
+    #[test]
+    fn draw_line_masked_at_255_matches_draw_line() {
+        let color = Rgba::opaque(255, 255, 255);
+        let mut solid = transparent_buf(32, 32);
+        draw_line(&mut solid, 2, 3, 28, 19, color, BrushShape::Pixel, 1);
+        let mut masked = transparent_buf(32, 32);
+        draw_line_masked(&mut masked, 2, 3, 28, 19, color, BrushShape::Pixel, 1, DitherPattern::None, 255);
+        assert_eq!(solid.as_bytes(), masked.as_bytes(), "masked line at None/255 diverged from draw_line");
+    }
+
+    #[test]
+    fn stamp_segment_masked_at_255_matches_stamp_segment() {
+        let color = Rgba::opaque(180, 60, 220);
+        let points: Vec<[f32; 2]> = (0..20).map(|i| [3.0 + i as f32 * 1.3, 5.0 + (i as f32 * 0.5).cos() * 7.0]).collect();
+        for shape in [BrushShape::Pixel, BrushShape::Circle, BrushShape::Square] {
+            for size in [1u32, 5] {
+                let mut solid = transparent_buf(64, 64);
+                stamp_segment(&mut solid, None, &points, color, shape, size);
+                let mut masked = transparent_buf(64, 64);
+                stamp_segment_masked(&mut masked, None, &points, color, shape, size, DitherPattern::None, 255);
+                assert_eq!(solid.as_bytes(), masked.as_bytes(), "masked segment diverged at shape={shape:?} size={size}");
+            }
+        }
+    }
+
+    #[test]
+    fn stamp_segment_masked_applies_dither_gate() {
+        // The masked path gates each dab through the dither pattern. At full
+        // opacity (the seam-safe case — overwrite is idempotent, so the start
+        // pixel painted twice is harmless), a checker stroke leaves the source
+        // only on checker-allowed cells and the backdrop everywhere else.
+        let backdrop = Rgba::opaque(20, 80, 160);
+        let src = Rgba::opaque(200, 40, 60);
+
+        let mut buf = PixelBuffer::filled(16, 1, backdrop).unwrap();
+        stamp_segment_masked(&mut buf, None, &[[0.0, 0.0], [15.0, 0.0]], src, BrushShape::Pixel, 1, DitherPattern::Checker, 255);
+
+        for x in 0u32..16 {
+            let allowed = dither_allows(DitherPattern::Checker, x as i32, 0);
+            let want = if allowed { src } else { backdrop };
+            assert_eq!(buf.pixel(x, 0), Some(want), "pixel ({x}, 0) mismatch (checker allowed = {allowed})");
+        }
+    }
+
+    #[test]
+    fn per_stroke_commit_over_before_blends_union_once() {
+        // The per-stroke-not-per-dab rule, the way the plan has the shell enforce
+        // it: a live drag accumulates FULL-strength dabs, then commit redraws once
+        // from the pre-stroke `before`, blending each unique footprint pixel a
+        // single time via set_pixel_blended over the union. Two overlapping dabs
+        // must leave one 128 blend on the overlap, never a doubled one. This is
+        // why the shell redraws from `before` rather than blending dab-by-dab —
+        // stamp_segment_masked itself double-stamps seam pixels and would compound.
+        let backdrop = Rgba::opaque(20, 80, 160);
+        let src = Rgba::opaque(200, 40, 60);
+        let opacity = 128u8;
+        let expected = crate::canvas::blend::blend_normal(src, backdrop, opacity);
+
+        // 1. Live preview: accumulate the stroke at full strength.
+        let mut live = PixelBuffer::filled(16, 1, backdrop).unwrap();
+        stamp_segment(&mut live, None, &[[2.0, 0.0], [10.0, 0.0]], src, BrushShape::Pixel, 1);
+        stamp_segment(&mut live, Some([10.0, 0.0]), &[[6.0, 0.0]], src, BrushShape::Pixel, 1);
+
+        // 2. The union footprint is every pixel the preview changed off `before`.
+        let before = PixelBuffer::filled(16, 1, backdrop).unwrap();
+        let union: Vec<(u32, u32)> = (0..16).filter(|&x| live.pixel(x, 0) != before.pixel(x, 0)).map(|x| (x, 0u32)).collect();
+
+        // 3. Commit: blend each union pixel exactly once over `before`.
+        let mut committed = before.clone();
+        for &(x, y) in &union {
+            committed.set_pixel_blended(x, y, src, opacity);
+        }
+
+        for &(x, y) in &union {
+            assert_eq!(committed.pixel(x, y), Some(expected), "union pixel ({x}, {y}) compounded beyond a single blend");
+        }
+        // Pixels outside the union keep the backdrop.
+        assert_eq!(committed.pixel(0, 0), Some(backdrop));
+    }
+
+    proptest! {
+        /// `paint_brush_masked` with `None` and full opacity is byte-identical
+        /// to `paint_brush` for every shape, size, and position.
+        #[test]
+        fn masked_none_matches_paint_brush(
+            shape_idx in 0usize..3,
+            size in 1u32..40,
+            cx in 0i32..64,
+            cy in 0i32..64,
+        ) {
+            let shape = [BrushShape::Pixel, BrushShape::Circle, BrushShape::Square][shape_idx];
+            let color = Rgba::opaque(123, 45, 67);
+
+            let mut a = transparent_buf(64, 64);
+            paint_brush(&mut a, cx, cy, color, shape, size);
+
+            let mut b = transparent_buf(64, 64);
+            paint_brush_masked(&mut b, cx, cy, color, shape, size, DitherPattern::None, 255);
+
+            prop_assert_eq!(a.as_bytes(), b.as_bytes(), "masked None diverged at shape={:?} size={} ({},{})", shape, size, cx, cy);
+        }
     }
 }

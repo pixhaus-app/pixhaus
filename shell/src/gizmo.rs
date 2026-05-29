@@ -141,13 +141,7 @@ impl BoxGizmo {
     /// the same press in image space. Corners and the rotate stem hit-test in
     /// screen space within `tol` pixels; the body falls back to a point-in-box
     /// test in image space. `None` means the press missed the gizmo.
-    pub(crate) fn pick_handle(
-        &self,
-        to_screen: impl Fn(f32, f32) -> egui::Pos2,
-        p: egui::Pos2,
-        pointer_image: (f32, f32),
-        tol: f32,
-    ) -> Option<GizmoHandle> {
+    pub(crate) fn pick_handle(&self, to_screen: impl Fn(f32, f32) -> egui::Pos2, p: egui::Pos2, pointer_image: (f32, f32), tol: f32) -> Option<GizmoHandle> {
         for (k, &(cx, cy)) in self.corners().iter().enumerate() {
             if to_screen(cx, cy).distance(p) <= tol {
                 return Some(GizmoHandle::Corner(k));

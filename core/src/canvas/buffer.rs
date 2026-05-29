@@ -192,6 +192,28 @@ impl PixelBuffer {
         }
     }
 
+    /// Writes `color` at `(x, y)`, blended over the existing pixel at
+    /// `opacity` (`0..=255`) using "src over dst" normal compositing.
+    ///
+    /// Two short-circuits keep the common cases exact and cheap:
+    /// `opacity == 255` is a plain [`Self::set_pixel`] overwrite (the
+    /// stroke fast path), and `opacity == 0` is a true no-op — the slot
+    /// is left byte-identical, since blending a fully-transparent source
+    /// over a transparent backdrop would otherwise rewrite the stored RGB.
+    /// Out-of-bounds coordinates are ignored, matching [`Self::set_pixel`].
+    pub fn set_pixel_blended(&mut self, x: u32, y: u32, color: Rgba, opacity: u8) {
+        if opacity == 255 {
+            self.set_pixel(x, y, color);
+            return;
+        }
+        if opacity == 0 {
+            return;
+        }
+        if let Some(dst) = self.pixel(x, y) {
+            self.set_pixel(x, y, crate::canvas::blend::blend_normal(color, dst, opacity));
+        }
+    }
+
     /// Returns one row's worth of pixel bytes (length = `width * 4`,
     /// trimmed of any padding bytes).
     #[must_use]
@@ -479,6 +501,51 @@ mod tests {
         let c = Rgba::new(10, 20, 30, 40);
         b.set_pixel(1, 2, c);
         assert_eq!(b.pixel(1, 2), Some(c));
+    }
+
+    #[test]
+    fn set_pixel_blended_at_255_equals_set_pixel() {
+        let c = Rgba::new(10, 20, 30, 200);
+        for backdrop in [Rgba::transparent(), Rgba::opaque(80, 90, 100), Rgba::new(5, 6, 7, 128)] {
+            let mut overwrite = PixelBuffer::filled(4, 4, backdrop).unwrap();
+            overwrite.set_pixel(1, 2, c);
+            let mut blended = PixelBuffer::filled(4, 4, backdrop).unwrap();
+            blended.set_pixel_blended(1, 2, c, 255);
+            assert_eq!(blended.as_bytes(), overwrite.as_bytes(), "opacity 255 must overwrite identically over {backdrop:?}");
+        }
+    }
+
+    #[test]
+    fn set_pixel_blended_at_zero_is_noop() {
+        // A zero-opacity write must leave the slot byte-identical, even over
+        // a transparent backdrop where a naive blend would rewrite the RGB.
+        for backdrop in [Rgba::transparent(), Rgba::opaque(80, 90, 100), Rgba::new(5, 6, 7, 128)] {
+            let untouched = PixelBuffer::filled(4, 4, backdrop).unwrap();
+            let mut buf = untouched.clone();
+            buf.set_pixel_blended(1, 2, Rgba::opaque(255, 0, 0), 0);
+            assert_eq!(buf.as_bytes(), untouched.as_bytes(), "opacity 0 must be a no-op over {backdrop:?}");
+        }
+    }
+
+    #[test]
+    fn set_pixel_blended_at_128_matches_blend_normal() {
+        let src = Rgba::opaque(200, 40, 60);
+        let backdrop = Rgba::opaque(20, 80, 160);
+        let mut buf = PixelBuffer::filled(2, 2, backdrop).unwrap();
+        buf.set_pixel_blended(0, 0, src, 128);
+        let expected = crate::canvas::blend::blend_normal(src, backdrop, 128);
+        assert_eq!(buf.pixel(0, 0), Some(expected));
+        // Untouched neighbour keeps the backdrop.
+        assert_eq!(buf.pixel(1, 1), Some(backdrop));
+    }
+
+    #[test]
+    fn set_pixel_blended_out_of_bounds_is_noop() {
+        let mut buf = PixelBuffer::filled(2, 2, Rgba::opaque(1, 2, 3)).unwrap();
+        let before = buf.as_bytes().to_vec();
+        buf.set_pixel_blended(5, 0, Rgba::opaque(255, 0, 0), 128);
+        buf.set_pixel_blended(0, 5, Rgba::opaque(255, 0, 0), 128);
+        assert_eq!(buf.as_bytes(), before.as_slice());
     }
 
     #[test]

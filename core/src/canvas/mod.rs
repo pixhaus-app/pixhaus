@@ -28,5 +28,6 @@ pub use composite::{LayerInput, composite_layers, composite_onto, composite_regi
 pub use merge::{flatten, merge_pair};
 pub use error::{Error, Result};
 pub use tools::{
-    BrushShape, brush_covers, draw_ellipse, draw_filled_ellipse, draw_filled_rect, draw_line, draw_rect, draw_stroke, flood_fill, paint_brush, stamp_segment,
+    BrushShape, DitherPattern, brush_covers, dither_allows, draw_ellipse, draw_filled_ellipse, draw_filled_rect, draw_line, draw_line_masked, draw_rect, draw_stroke,
+    flood_fill, flood_fill_blended, paint_brush, paint_brush_blended, paint_brush_masked, stamp_segment, stamp_segment_masked,
 };

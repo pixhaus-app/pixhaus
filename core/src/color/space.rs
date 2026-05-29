@@ -13,11 +13,7 @@ use crate::project::color::Rgba;
 // ── Internal helpers ────────────────────────────────────────────────────────
 
 fn rgba_to_srgb(c: Rgba) -> Srgb<f32> {
-    Srgb::new(
-        f32::from(c.r) / 255.0,
-        f32::from(c.g) / 255.0,
-        f32::from(c.b) / 255.0,
-    )
+    Srgb::new(f32::from(c.r) / 255.0, f32::from(c.g) / 255.0, f32::from(c.b) / 255.0)
 }
 
 // f32 is clamped to [0.0, 255.0] and rounded before the cast, so
@@ -28,12 +24,7 @@ fn f32_to_u8(v: f32) -> u8 {
 }
 
 fn srgb_to_rgba(srgb: Srgb<f32>, alpha: u8) -> Rgba {
-    Rgba::new(
-        f32_to_u8(srgb.red * 255.0),
-        f32_to_u8(srgb.green * 255.0),
-        f32_to_u8(srgb.blue * 255.0),
-        alpha,
-    )
+    Rgba::new(f32_to_u8(srgb.red * 255.0), f32_to_u8(srgb.green * 255.0), f32_to_u8(srgb.blue * 255.0), alpha)
 }
 
 // ── Public API ───────────────────────────────────────────────────────────────
@@ -65,11 +56,7 @@ pub fn from_hsv(hue_deg: f32, saturation: f32, value: f32, alpha: u8) -> Rgba {
 /// - Alpha is ignored.
 pub fn to_hsl(color: Rgba) -> (f32, f32, f32) {
     let hsl: Hsl = rgba_to_srgb(color).into_color();
-    (
-        hsl.hue.into_positive_degrees(),
-        hsl.saturation,
-        hsl.lightness,
-    )
+    (hsl.hue.into_positive_degrees(), hsl.saturation, hsl.lightness)
 }
 
 /// Constructs an [`Rgba`] from HSL components and an explicit `alpha`.
@@ -77,11 +64,7 @@ pub fn to_hsl(color: Rgba) -> (f32, f32, f32) {
 /// - `hue_deg` is reduced modulo 360 automatically.
 /// - `saturation` and `lightness` are clamped to `[0.0, 1.0]`.
 pub fn from_hsl(hue_deg: f32, saturation: f32, lightness: f32, alpha: u8) -> Rgba {
-    let hsl = Hsl::new(
-        hue_deg,
-        saturation.clamp(0.0, 1.0),
-        lightness.clamp(0.0, 1.0),
-    );
+    let hsl = Hsl::new(hue_deg, saturation.clamp(0.0, 1.0), lightness.clamp(0.0, 1.0));
     let srgb: Srgb<f32> = hsl.into_color();
     srgb_to_rgba(srgb, alpha)
 }
@@ -120,21 +103,13 @@ pub fn oklab_mix(a: Rgba, b: Rgba, t: f32) -> Rgba {
 // sRGB transfer function (gamma decode). Maps a channel in [0, 1] to linear
 // light. Pure-Rust port of `color-utils.ts` `lin`.
 fn srgb_to_linear(c: f32) -> f32 {
-    if c <= 0.040_45 {
-        c / 12.92
-    } else {
-        ((c + 0.055) / 1.055).powf(2.4)
-    }
+    if c <= 0.040_45 { c / 12.92 } else { ((c + 0.055) / 1.055).powf(2.4) }
 }
 
 // Inverse sRGB transfer function (gamma encode). Port of `color-utils.ts`
 // `delin`.
 fn linear_to_srgb(c: f32) -> f32 {
-    if c <= 0.003_130_8 {
-        c * 12.92
-    } else {
-        1.055 * c.powf(1.0 / 2.4) - 0.055
-    }
+    if c <= 0.003_130_8 { c * 12.92 } else { 1.055 * c.powf(1.0 / 2.4) - 0.055 }
 }
 
 // Converts an `Rgba` to Oklab `(L, a, b)`, ignoring alpha. Björn Ottosson's
@@ -228,24 +203,9 @@ mod tests {
         let (h, s, v) = to_hsv(c);
         let back = from_hsv(h, s, v, c.a);
         // Allow 1 ULP rounding on each channel
-        assert!(
-            (i16::from(back.r) - i16::from(c.r)).abs() <= 1,
-            "r: {} vs {}",
-            back.r,
-            c.r
-        );
-        assert!(
-            (i16::from(back.g) - i16::from(c.g)).abs() <= 1,
-            "g: {} vs {}",
-            back.g,
-            c.g
-        );
-        assert!(
-            (i16::from(back.b) - i16::from(c.b)).abs() <= 1,
-            "b: {} vs {}",
-            back.b,
-            c.b
-        );
+        assert!((i16::from(back.r) - i16::from(c.r)).abs() <= 1, "r: {} vs {}", back.r, c.r);
+        assert!((i16::from(back.g) - i16::from(c.g)).abs() <= 1, "g: {} vs {}", back.g, c.g);
+        assert!((i16::from(back.b) - i16::from(c.b)).abs() <= 1, "b: {} vs {}", back.b, c.b);
     }
 
     #[test]
@@ -325,24 +285,9 @@ mod tests {
         ] {
             let (l, chroma, h) = to_oklch(c);
             let back = from_oklch(l, chroma, h, c.a);
-            assert!(
-                (i16::from(back.r) - i16::from(c.r)).abs() <= 2,
-                "r: {} vs {} for {c:?}",
-                back.r,
-                c.r
-            );
-            assert!(
-                (i16::from(back.g) - i16::from(c.g)).abs() <= 2,
-                "g: {} vs {} for {c:?}",
-                back.g,
-                c.g
-            );
-            assert!(
-                (i16::from(back.b) - i16::from(c.b)).abs() <= 2,
-                "b: {} vs {} for {c:?}",
-                back.b,
-                c.b
-            );
+            assert!((i16::from(back.r) - i16::from(c.r)).abs() <= 2, "r: {} vs {} for {c:?}", back.r, c.r);
+            assert!((i16::from(back.g) - i16::from(c.g)).abs() <= 2, "g: {} vs {} for {c:?}", back.g, c.g);
+            assert!((i16::from(back.b) - i16::from(c.b)).abs() <= 2, "b: {} vs {} for {c:?}", back.b, c.b);
             assert_eq!(back.a, c.a);
         }
     }

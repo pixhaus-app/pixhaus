@@ -258,8 +258,16 @@ fn merge_down_op(editor: &mut EditorState, doc: &mut DocumentStore, anchor: Laye
         let Some(above_buf) = doc.pixel_buffers.get(&src_id) else {
             continue;
         };
-        debug_assert_eq!((above_buf.width(), above_buf.height()), (canvas.width, canvas.height), "source cel is full-canvas");
-        debug_assert_eq!((below_buf.width(), below_buf.height()), (canvas.width, canvas.height), "destination cel is full-canvas");
+        debug_assert_eq!(
+            (above_buf.width(), above_buf.height()),
+            (canvas.width, canvas.height),
+            "source cel is full-canvas"
+        );
+        debug_assert_eq!(
+            (below_buf.width(), below_buf.height()),
+            (canvas.width, canvas.height),
+            "destination cel is full-canvas"
+        );
 
         let below = LayerInput {
             buffer: below_buf,
@@ -307,7 +315,10 @@ fn merge_down_op(editor: &mut EditorState, doc: &mut DocumentStore, anchor: Laye
         // target buffer. All targets are full-canvas at the origin.
         for (frame, target_id) in &repoints {
             if let Some(cel) = sprite.cels.iter_mut().find(|c| c.layer_id == dest && c.frame_index == *frame) {
-                cel.data = CelData::Raster { buffer: *target_id, size: canvas };
+                cel.data = CelData::Raster {
+                    buffer: *target_id,
+                    size: canvas,
+                };
             } else {
                 sprite.cels.push(Cel::raster(dest, *frame, *target_id, canvas));
             }
@@ -421,7 +432,10 @@ fn flatten_visible_op(editor: &mut EditorState, doc: &mut DocumentStore) -> Resu
         // buffer. All targets are full-canvas at the origin.
         for (frame, target_id) in &repoints {
             if let Some(cel) = sprite.cels.iter_mut().find(|c| c.layer_id == target && c.frame_index == *frame) {
-                cel.data = CelData::Raster { buffer: *target_id, size: canvas };
+                cel.data = CelData::Raster {
+                    buffer: *target_id,
+                    size: canvas,
+                };
             } else {
                 sprite.cels.push(Cel::raster(target, *frame, *target_id, canvas));
             }
@@ -482,7 +496,10 @@ fn merge_selected_op(editor: &mut EditorState, doc: &mut DocumentStore) -> Resul
     // layer, so the merge is undefined. (A group selected member never reaches
     // `members` because it is absent from composite_order, so catch it here over
     // the raw selection.)
-    if selected.iter().any(|&id| !sprite.layer(id).is_some_and(|l| matches!(l.kind, LayerKind::Raster))) {
+    if selected
+        .iter()
+        .any(|&id| !sprite.layer(id).is_some_and(|l| matches!(l.kind, LayerKind::Raster)))
+    {
         return Err("Merge selected needs raster layers only");
     }
     if members.len() < 2 {
@@ -519,7 +536,11 @@ fn merge_selected_op(editor: &mut EditorState, doc: &mut DocumentStore) -> Resul
             .iter()
             .filter_map(|&(id, mode, opacity)| {
                 let buffer = doc.pixel_buffers.get(&id)?;
-                debug_assert_eq!((buffer.width(), buffer.height()), (canvas.width, canvas.height), "merge-selected input is full-canvas");
+                debug_assert_eq!(
+                    (buffer.width(), buffer.height()),
+                    (canvas.width, canvas.height),
+                    "merge-selected input is full-canvas"
+                );
                 Some(LayerInput {
                     buffer,
                     mode,
@@ -564,7 +585,10 @@ fn merge_selected_op(editor: &mut EditorState, doc: &mut DocumentStore) -> Resul
         // buffer. All targets are full-canvas at the origin.
         for (frame, target_id) in &repoints {
             if let Some(cel) = sprite.cels.iter_mut().find(|c| c.layer_id == target && c.frame_index == *frame) {
-                cel.data = CelData::Raster { buffer: *target_id, size: canvas };
+                cel.data = CelData::Raster {
+                    buffer: *target_id,
+                    size: canvas,
+                };
             } else {
                 sprite.cels.push(Cel::raster(target, *frame, *target_id, canvas));
             }
@@ -758,8 +782,20 @@ mod tests {
             8,
             8,
             &[
-                LayerInput { buffer: &below_ref, mode: BlendMode::Normal, opacity: 255, visible: true, clip_below: false },
-                LayerInput { buffer: &above_ref, mode: BlendMode::Normal, opacity: 255, visible: true, clip_below: false },
+                LayerInput {
+                    buffer: &below_ref,
+                    mode: BlendMode::Normal,
+                    opacity: 255,
+                    visible: true,
+                    clip_below: false,
+                },
+                LayerInput {
+                    buffer: &above_ref,
+                    mode: BlendMode::Normal,
+                    opacity: 255,
+                    visible: true,
+                    clip_below: false,
+                },
             ],
         )
         .expect("reference composite");
@@ -769,13 +805,7 @@ mod tests {
 
         // The destination cel now points at the merged buffer; its bytes must
         // match the direct composite byte-for-byte.
-        let CelData::Raster { buffer, .. } = doc
-            .active_sprite()
-            .expect("sprite")
-            .cel(dest_layer, FrameIndex::new(0))
-            .expect("dest cel")
-            .data
-        else {
+        let CelData::Raster { buffer, .. } = doc.active_sprite().expect("sprite").cel(dest_layer, FrameIndex::new(0)).expect("dest cel").data else {
             panic!("dest cel is raster");
         };
         let merged = doc.pixel_buffers.get(&buffer).expect("merged buffer");
@@ -808,23 +838,39 @@ mod tests {
         let CelData::Raster { buffer: merged_buf, .. } = doc.active_sprite().expect("sprite").cel(dest_layer, FrameIndex::new(0)).expect("cel").data else {
             panic!("raster");
         };
-        assert_eq!(doc.pixel_buffers.get(&merged_buf).expect("merged").pixel(4, 4), Some(above), "destination shows the merged pixel");
+        assert_eq!(
+            doc.pixel_buffers.get(&merged_buf).expect("merged").pixel(4, 4),
+            Some(above),
+            "destination shows the merged pixel"
+        );
         // Two buffers retired (source + old destination), one added (merged).
         assert_eq!(doc.pixel_buffers.len(), baseline_buffers - 1, "two retired, one added");
 
         // One undo fully reverses it: layer count, the sampled destination pixel,
         // and the buffer-store size all return to baseline.
         editor.history.undo(&mut doc).expect("undo");
-        assert_eq!(doc.active_sprite().expect("sprite").layers.len(), baseline_layers, "undo restores the source layer");
+        assert_eq!(
+            doc.active_sprite().expect("sprite").layers.len(),
+            baseline_layers,
+            "undo restores the source layer"
+        );
         let CelData::Raster { buffer: restored, .. } = doc.active_sprite().expect("sprite").cel(dest_layer, FrameIndex::new(0)).expect("cel").data else {
             panic!("raster");
         };
-        assert_eq!(doc.pixel_buffers.get(&restored).expect("restored").pixel(4, 4), Some(dest_pixel_before), "undo restores the destination pixel");
+        assert_eq!(
+            doc.pixel_buffers.get(&restored).expect("restored").pixel(4, 4),
+            Some(dest_pixel_before),
+            "undo restores the destination pixel"
+        );
         assert_eq!(doc.pixel_buffers.len(), baseline_buffers, "buffer count returns to baseline");
 
         // Redo re-applies the merge.
         editor.history.redo(&mut doc).expect("redo");
-        assert_eq!(doc.active_sprite().expect("sprite").layers.len(), baseline_layers - 1, "redo re-applies the merge");
+        assert_eq!(
+            doc.active_sprite().expect("sprite").layers.len(),
+            baseline_layers - 1,
+            "redo re-applies the merge"
+        );
     }
 
     #[test]
@@ -892,7 +938,11 @@ mod tests {
         assert_eq!(flat.as_bytes(), reference.as_bytes(), "flattened target equals the on-screen composite");
 
         // Only the target survives the three visible raster layers.
-        assert_eq!(doc.active_sprite().expect("sprite").layers.len(), 1, "the two upper layers collapsed into the target");
+        assert_eq!(
+            doc.active_sprite().expect("sprite").layers.len(),
+            1,
+            "the two upper layers collapsed into the target"
+        );
     }
 
     #[test]
@@ -925,11 +975,20 @@ mod tests {
         // The hidden layer survives, unchanged: two visible raster layers (seed +
         // top) collapsed into one, the hidden layer stayed put.
         assert!(doc.active_sprite().expect("sprite").layer(hidden).is_some(), "hidden layer still present");
-        assert_eq!(doc.active_sprite().expect("sprite").layers.len(), 2, "hidden layer plus the flatten target remain");
-        let CelData::Raster { buffer: hidden_after, .. } = doc.active_sprite().expect("sprite").cel(hidden, FrameIndex::new(0)).expect("hidden cel").data else {
+        assert_eq!(
+            doc.active_sprite().expect("sprite").layers.len(),
+            2,
+            "hidden layer plus the flatten target remain"
+        );
+        let CelData::Raster { buffer: hidden_after, .. } = doc.active_sprite().expect("sprite").cel(hidden, FrameIndex::new(0)).expect("hidden cel").data
+        else {
             panic!("raster");
         };
-        assert_eq!(doc.pixel_buffers.get(&hidden_after).expect("hidden buffer").pixel(4, 4), Some(hidden_pixel_before), "hidden pixels unchanged");
+        assert_eq!(
+            doc.pixel_buffers.get(&hidden_after).expect("hidden buffer").pixel(4, 4),
+            Some(hidden_pixel_before),
+            "hidden pixels unchanged"
+        );
     }
 
     #[test]
@@ -954,12 +1013,20 @@ mod tests {
         assert_eq!(seed_pixel_before, Rgba::opaque(0, 0, 255));
 
         flatten_visible_op(&mut editor, &mut doc).expect("flatten");
-        assert_eq!(doc.active_sprite().expect("sprite").layers.len(), 1, "three visible raster layers collapsed to one");
+        assert_eq!(
+            doc.active_sprite().expect("sprite").layers.len(),
+            1,
+            "three visible raster layers collapsed to one"
+        );
         // Opaque red on top wins: the target shows red.
         let CelData::Raster { buffer: flat_buf, .. } = doc.active_sprite().expect("sprite").cel(seed, FrameIndex::new(0)).expect("target cel").data else {
             panic!("raster");
         };
-        assert_eq!(doc.pixel_buffers.get(&flat_buf).expect("flat").pixel(4, 4), Some(Rgba::opaque(255, 0, 0)), "target shows the flattened pixel");
+        assert_eq!(
+            doc.pixel_buffers.get(&flat_buf).expect("flat").pixel(4, 4),
+            Some(Rgba::opaque(255, 0, 0)),
+            "target shows the flattened pixel"
+        );
 
         // One undo restores every layer and pixel: layer count, the seed pixel, and
         // the buffer-store size all return to baseline.
@@ -968,7 +1035,11 @@ mod tests {
         let CelData::Raster { buffer: restored, .. } = doc.active_sprite().expect("sprite").cel(seed, FrameIndex::new(0)).expect("seed cel").data else {
             panic!("raster");
         };
-        assert_eq!(doc.pixel_buffers.get(&restored).expect("restored").pixel(4, 4), Some(seed_pixel_before), "undo restores the seed pixel");
+        assert_eq!(
+            doc.pixel_buffers.get(&restored).expect("restored").pixel(4, 4),
+            Some(seed_pixel_before),
+            "undo restores the seed pixel"
+        );
         assert_eq!(doc.pixel_buffers.len(), baseline_buffers, "buffer count returns to baseline");
 
         // Redo re-applies the flatten.
@@ -1015,9 +1086,27 @@ mod tests {
             8,
             8,
             &[
-                LayerInput { buffer: &b, mode: BlendMode::Normal, opacity: 255, visible: true, clip_below: false },
-                LayerInput { buffer: &m, mode: BlendMode::Normal, opacity: 255, visible: true, clip_below: false },
-                LayerInput { buffer: &t, mode: BlendMode::Normal, opacity: 255, visible: true, clip_below: false },
+                LayerInput {
+                    buffer: &b,
+                    mode: BlendMode::Normal,
+                    opacity: 255,
+                    visible: true,
+                    clip_below: false,
+                },
+                LayerInput {
+                    buffer: &m,
+                    mode: BlendMode::Normal,
+                    opacity: 255,
+                    visible: true,
+                    clip_below: false,
+                },
+                LayerInput {
+                    buffer: &t,
+                    mode: BlendMode::Normal,
+                    opacity: 255,
+                    visible: true,
+                    clip_below: false,
+                },
             ],
         )
         .expect("reference composite");
@@ -1032,7 +1121,11 @@ mod tests {
 
         // Only the target survives the three selected layers.
         assert_eq!(doc.active_sprite().expect("sprite").layers.len(), 1, "three layers collapsed into the target");
-        assert_eq!(frame0_buffer(&doc, top).as_bytes(), reference.as_bytes(), "merged target equals a direct composite of the three");
+        assert_eq!(
+            frame0_buffer(&doc, top).as_bytes(),
+            reference.as_bytes(),
+            "merged target equals a direct composite of the three"
+        );
     }
 
     #[test]
@@ -1051,7 +1144,11 @@ mod tests {
 
         let err = merge_selected_op(&mut editor, &mut doc).expect_err("a single selection cannot merge");
         assert_eq!(err, "Select at least two raster layers to merge");
-        assert_eq!(doc.active_sprite().expect("sprite").layers.len(), baseline_layers, "rejection mutates no layers");
+        assert_eq!(
+            doc.active_sprite().expect("sprite").layers.len(),
+            baseline_layers,
+            "rejection mutates no layers"
+        );
         assert_eq!(doc.pixel_buffers.len(), baseline_buffers, "rejection allocates no buffers");
     }
 
@@ -1082,7 +1179,11 @@ mod tests {
 
         let err = merge_selected_op(&mut editor, &mut doc).expect_err("a non-raster member cannot merge");
         assert_eq!(err, "Merge selected needs raster layers only");
-        assert_eq!(doc.active_sprite().expect("sprite").layers.len(), baseline_layers, "rejection mutates no layers");
+        assert_eq!(
+            doc.active_sprite().expect("sprite").layers.len(),
+            baseline_layers,
+            "rejection mutates no layers"
+        );
         assert_eq!(doc.pixel_buffers.len(), baseline_buffers, "rejection allocates no buffers");
     }
 
@@ -1115,15 +1216,27 @@ mod tests {
         merge_selected_op(&mut editor, &mut doc).expect("merge selected");
         assert_eq!(doc.active_sprite().expect("sprite").layers.len(), 1, "three layers collapsed to one");
         // Opaque red on top wins where it covers: the target shows red.
-        assert_eq!(frame0_buffer(&doc, top).pixel(4, 4), Some(Rgba::opaque(255, 0, 0)), "target shows the merged pixel");
+        assert_eq!(
+            frame0_buffer(&doc, top).pixel(4, 4),
+            Some(Rgba::opaque(255, 0, 0)),
+            "target shows the merged pixel"
+        );
 
         // One undo restores every layer and pixel.
         editor.history.undo(&mut doc).expect("undo");
-        assert_eq!(doc.active_sprite().expect("sprite").layers.len(), baseline_layers, "undo restores all three layers");
+        assert_eq!(
+            doc.active_sprite().expect("sprite").layers.len(),
+            baseline_layers,
+            "undo restores all three layers"
+        );
         assert!(doc.active_sprite().expect("sprite").layer(bottom).is_some(), "bottom restored");
         assert!(doc.active_sprite().expect("sprite").layer(mid).is_some(), "mid restored");
         assert!(doc.active_sprite().expect("sprite").layer(top).is_some(), "top restored");
-        assert_eq!(frame0_buffer(&doc, bottom).pixel(4, 4), Some(bottom_pixel_before), "undo restores the bottom pixel");
+        assert_eq!(
+            frame0_buffer(&doc, bottom).pixel(4, 4),
+            Some(bottom_pixel_before),
+            "undo restores the bottom pixel"
+        );
         assert_eq!(frame0_buffer(&doc, mid).pixel(4, 4), Some(mid_pixel_before), "undo restores the mid pixel");
         assert_eq!(doc.pixel_buffers.len(), baseline_buffers, "buffer count returns to baseline");
 
@@ -1191,7 +1304,11 @@ mod tests {
 
         // Redo re-applies the delete.
         editor.history.redo(&mut doc).expect("redo");
-        assert_eq!(doc.active_sprite().expect("sprite").layers.len(), baseline_layers - 2, "redo re-applies the delete");
+        assert_eq!(
+            doc.active_sprite().expect("sprite").layers.len(),
+            baseline_layers - 2,
+            "redo re-applies the delete"
+        );
     }
 
     #[test]
@@ -1209,7 +1326,11 @@ mod tests {
 
         let err = delete_layers_op(&mut editor, &mut doc, &[seed, top]).expect_err("cannot delete every layer");
         assert_eq!(err, "Cannot delete the last layer");
-        assert_eq!(doc.active_sprite().expect("sprite").layers.len(), baseline_layers, "rejection mutates no layers");
+        assert_eq!(
+            doc.active_sprite().expect("sprite").layers.len(),
+            baseline_layers,
+            "rejection mutates no layers"
+        );
         assert_eq!(doc.pixel_buffers.len(), baseline_buffers, "rejection retires no buffers");
     }
 

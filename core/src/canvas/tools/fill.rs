@@ -77,6 +77,73 @@ pub fn flood_fill(buf: &mut PixelBuffer, x: i32, y: i32, fill_color: Rgba, toler
     }
 }
 
+/// Flood-fill like [`flood_fill`], but blend `fill_color` at `opacity`
+/// (`0..=255`) over each filled pixel instead of overwriting it.
+///
+/// `opacity == 255` is the overwrite path and delegates straight to
+/// [`flood_fill`], so a full-opacity bucket stays byte-identical. At a
+/// reduced opacity the matched region is still determined by `tolerance`
+/// against the seed colour — the BFS matches on the pre-fill pixel, marks
+/// each cell visited before writing, and writes through
+/// [`PixelBuffer::set_pixel_blended`], so every pixel is blended exactly
+/// once (no compounding across the flood). `opacity == 0` fills nothing.
+///
+/// No-op when `(x, y)` is out of bounds or — at full opacity — the seed
+/// already equals `fill_color` within tolerance.
+pub fn flood_fill_blended(buf: &mut PixelBuffer, x: i32, y: i32, fill_color: Rgba, tolerance: u8, opacity: u8) {
+    if opacity == 255 {
+        flood_fill(buf, x, y, fill_color, tolerance);
+        return;
+    }
+    if opacity == 0 {
+        return;
+    }
+    if x < 0 || y < 0 || x >= buf.width() as i32 || y >= buf.height() as i32 {
+        return;
+    }
+
+    let Some(target) = buf.pixel(x as u32, y as u32) else {
+        return;
+    };
+
+    let w = buf.width();
+    let h = buf.height();
+    let mut visited = vec![false; (w as usize) * (h as usize)];
+    let mut queue: VecDeque<(u32, u32)> = VecDeque::new();
+    queue.push_back((x as u32, y as u32));
+
+    while let Some((cx, cy)) = queue.pop_front() {
+        let idx = cy as usize * w as usize + cx as usize;
+        if visited[idx] {
+            continue;
+        }
+        visited[idx] = true;
+
+        let Some(current) = buf.pixel(cx, cy) else {
+            continue;
+        };
+
+        if !current.within_tolerance(target, tolerance) {
+            continue;
+        }
+
+        buf.set_pixel_blended(cx, cy, fill_color, opacity);
+
+        if cx > 0 {
+            queue.push_back((cx - 1, cy));
+        }
+        if cx + 1 < w {
+            queue.push_back((cx + 1, cy));
+        }
+        if cy > 0 {
+            queue.push_back((cx, cy - 1));
+        }
+        if cy + 1 < h {
+            queue.push_back((cx, cy + 1));
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -179,5 +246,63 @@ mod tests {
         flood_fill(&mut buf, 2, 2, R, 0);
         // All pixels still red
         assert_eq!(buf.pixel(0, 0), Some(R));
+    }
+
+    #[test]
+    fn blended_fill_at_255_matches_flood_fill() {
+        let mut overwrite = PixelBuffer::filled(5, 5, B).unwrap();
+        flood_fill(&mut overwrite, 2, 2, R, 0);
+        let mut blended = PixelBuffer::filled(5, 5, B).unwrap();
+        flood_fill_blended(&mut blended, 2, 2, R, 0, 255);
+        assert_eq!(blended.as_bytes(), overwrite.as_bytes(), "opacity 255 fill must overwrite identically");
+    }
+
+    #[test]
+    fn blended_fill_at_zero_is_noop() {
+        let untouched = PixelBuffer::filled(5, 5, B).unwrap();
+        let mut buf = untouched.clone();
+        flood_fill_blended(&mut buf, 2, 2, R, 0, 0);
+        assert_eq!(buf.as_bytes(), untouched.as_bytes(), "opacity 0 fill must change nothing");
+    }
+
+    #[test]
+    fn blended_fill_at_128_blends_each_cell_once() {
+        // A uniform region filled at half opacity holds a single blend per
+        // pixel — the flood visits each cell once, so there is no compounding.
+        let backdrop = B;
+        let src = R;
+        let expected = crate::canvas::blend::blend_normal(src, backdrop, 128);
+        let mut buf = PixelBuffer::filled(4, 4, backdrop).unwrap();
+        flood_fill_blended(&mut buf, 0, 0, src, 0, 128);
+        for y in 0..4u32 {
+            for x in 0..4u32 {
+                assert_eq!(buf.pixel(x, y), Some(expected), "cell ({x}, {y}) is not a single 128 blend");
+            }
+        }
+    }
+
+    #[test]
+    fn blended_fill_respects_walls() {
+        // Reduced opacity must not change which pixels the flood reaches.
+        let mut buf = PixelBuffer::new(5, 3).unwrap();
+        for y in 0..3u32 {
+            buf.set_pixel(2, y, R); // vertical wall
+        }
+        flood_fill_blended(&mut buf, 0, 0, G, 0, 128);
+        let expected_left = crate::canvas::blend::blend_normal(G, T, 128);
+        assert_eq!(buf.pixel(0, 0), Some(expected_left));
+        assert_eq!(buf.pixel(1, 1), Some(expected_left));
+        // Right side untouched; wall untouched.
+        assert_eq!(buf.pixel(3, 0), Some(T));
+        assert_eq!(buf.pixel(2, 0), Some(R));
+    }
+
+    #[test]
+    fn blended_fill_out_of_bounds_is_noop() {
+        let untouched = PixelBuffer::filled(4, 4, B).unwrap();
+        let mut buf = untouched.clone();
+        flood_fill_blended(&mut buf, -1, 0, R, 0, 128);
+        flood_fill_blended(&mut buf, 0, 100, R, 0, 128);
+        assert_eq!(buf.as_bytes(), untouched.as_bytes());
     }
 }

@@ -6,7 +6,7 @@
 //! dock for content.
 
 use eframe::egui;
-use pixhaus_core::canvas::BrushShape;
+use pixhaus_core::canvas::{BrushShape, DitherPattern};
 
 use crate::app::ShellApp;
 use crate::editor::{SelectionMode, Tool, from_color32, to_color32};
@@ -41,6 +41,9 @@ impl ShellApp {
                 self.brush_options(ui);
             }
             Tool::Line | Tool::Rectangle | Tool::Ellipse => {
+                ui.add(egui::Slider::new(&mut self.editor.opacity, 0..=255).text("opacity"))
+                    .on_hover_text("Shape strength: 255 is solid, below blends over the backdrop");
+                ui.separator();
                 self.mirror_options(ui);
                 ui.separator();
                 ui.label(egui::RichText::new("hold Shift to fill").small().weak());
@@ -94,8 +97,7 @@ impl ShellApp {
         let mode = &mut self.editor.selection_mode;
         ui.selectable_value(mode, SelectionMode::Replace, icons::SELECT_REPLACE)
             .on_hover_text("Replace selection");
-        ui.selectable_value(mode, SelectionMode::Add, icons::SELECT_ADD)
-            .on_hover_text("Add (Shift)");
+        ui.selectable_value(mode, SelectionMode::Add, icons::SELECT_ADD).on_hover_text("Add (Shift)");
         ui.selectable_value(mode, SelectionMode::Subtract, icons::SELECT_SUBTRACT)
             .on_hover_text("Subtract (Alt)");
         ui.selectable_value(mode, SelectionMode::Intersect, icons::SELECT_INTERSECT)
@@ -113,7 +115,25 @@ impl ShellApp {
                 ui.selectable_value(&mut self.editor.brush_shape, BrushShape::Square, "Square");
             });
         ui.add(egui::Slider::new(&mut self.editor.brush_size, 1..=64).text("size"));
-        ui.checkbox(&mut self.editor.pixel_perfect, "Pixel-perfect");
+        ui.add(egui::Slider::new(&mut self.editor.opacity, 0..=255).text("opacity")).on_hover_text(
+            "Stroke strength: 255 is solid; below blends over the backdrop per-stroke (overlapping passes within one drag do not compound). On the eraser it controls erase strength.",
+        );
+        // Pixel-perfect and dither are mutually exclusive; the commit pass is
+        // skipped while a pattern is active (see canvas::commit_stroke).
+        ui.add_enabled_ui(self.editor.dither == DitherPattern::None, |ui| {
+            ui.checkbox(&mut self.editor.pixel_perfect, "Pixel-perfect");
+        });
+        egui::ComboBox::from_id_salt("ctx_brush_dither")
+            .width(96.0)
+            .selected_text(dither_label(self.editor.dither))
+            .show_ui(ui, |ui| {
+                ui.selectable_value(&mut self.editor.dither, DitherPattern::None, dither_label(DitherPattern::None));
+                ui.selectable_value(&mut self.editor.dither, DitherPattern::Checker, dither_label(DitherPattern::Checker));
+                ui.selectable_value(&mut self.editor.dither, DitherPattern::Bayer2x2, dither_label(DitherPattern::Bayer2x2));
+                ui.selectable_value(&mut self.editor.dither, DitherPattern::Bayer4x4, dither_label(DitherPattern::Bayer4x4));
+            })
+            .response
+            .on_hover_text("Dither pattern gating which footprint pixels the brush writes");
         self.mirror_options(ui);
     }
 
@@ -129,5 +149,14 @@ fn brush_label(shape: BrushShape) -> &'static str {
         BrushShape::Pixel => "Pixel",
         BrushShape::Circle => "Circle",
         BrushShape::Square => "Square",
+    }
+}
+
+fn dither_label(pattern: DitherPattern) -> &'static str {
+    match pattern {
+        DitherPattern::None => "No dither",
+        DitherPattern::Checker => "Checker",
+        DitherPattern::Bayer2x2 => "Bayer 2x2",
+        DitherPattern::Bayer4x4 => "Bayer 4x4",
     }
 }
