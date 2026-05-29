@@ -55,6 +55,8 @@ pollster.workspace = true
 proptest.workspace = true
 image-compare.workspace = true
 rstest.workspace = true
+# Snapshot tests for the atlas export manifest JSON.
+insta.workspace = true
 # Temp dirs for the durable job-queue recovery round-trip tests.
 tempfile.workspace = true
 

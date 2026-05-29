@@ -2558,6 +2558,14 @@ impl ShellApp {
                 crate::theme::Palette::for_theme(ui.ctx().theme()).success,
                 format!("{} landed", crate::icons::CHECK),
             );
+            ui.add_space(6.0);
+            if ui
+                .button(format!("{} Export sprite…", crate::icons::DOWNLOAD))
+                .on_hover_text("Write the landed loop as a PNG sequence, looping GIF, or packed atlas")
+                .clicked()
+            {
+                self.open_export_dialog();
+            }
         }
         if self.studio.kind == AnimKind::Custom {
             ui.label(egui::RichText::new("Custom animations are not tracked in the cascade grid.").small().weak());

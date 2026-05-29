@@ -17,7 +17,14 @@ use anyhow::{Context, Result, anyhow};
 use image::codecs::gif::{GifEncoder, Repeat};
 use image::{Delay, Frame, RgbaImage};
 use pixhaus_core::canvas::PixelBuffer;
+use pixhaus_core::export::hard_mask_alpha;
 use pixhaus_core::project::{FrameIndex, LoopDirection, Size};
+
+/// Alpha threshold for the hard mask the headless GIF encode shares with the GUI
+/// exporter (the forge default). Pixels at or above are forced opaque; below,
+/// transparent — so the encoder routes them to the reserved index and the soft
+/// fringe never dithers into a halo.
+const GIF_ALPHA_THRESHOLD: u8 = 128;
 
 use crate::ai;
 use crate::document::DocumentStore;
@@ -220,7 +227,10 @@ fn write_outputs(frames: &[PixelBuffer], frame_ms: u32, out: &Path) -> Result<()
     let mut encoder = GifEncoder::new(BufWriter::new(file));
     encoder.set_repeat(Repeat::Infinite).context("setting gif repeat")?;
     for frame in frames {
-        let img = to_rgba_image(frame)?;
+        // Hard-mask alpha to 0/255 before the encode so GIF's 1-bit alpha leaves
+        // no soft-fringe halo — the same anti-halo pass the GUI exporter runs.
+        let masked = hard_mask_alpha(frame, GIF_ALPHA_THRESHOLD);
+        let img = to_rgba_image(&masked)?;
         let delay = Delay::from_numer_denom_ms(frame_ms, 1);
         encoder.encode_frame(Frame::from_parts(img, 0, 0, delay)).context("encoding gif frame")?;
     }
@@ -251,4 +261,37 @@ fn to_rgba_image(frame: &PixelBuffer) -> Result<RgbaImage> {
         out
     };
     RgbaImage::from_raw(w, h, tight).ok_or_else(|| anyhow!("frame buffer size mismatch"))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::anim::decode_clip;
+
+    mod run_demo {
+        use super::*;
+
+        #[test]
+        fn writes_loop_gif_and_frames() {
+            let dir = tempfile::tempdir().unwrap();
+            run_demo(dir.path()).unwrap();
+            assert!(dir.path().join("loop.gif").exists(), "demo must write loop.gif");
+            assert!(dir.path().join("frame_000.png").exists(), "demo must write at least one frame png");
+        }
+
+        #[test]
+        fn demo_gif_is_halo_free() {
+            let dir = tempfile::tempdir().unwrap();
+            run_demo(dir.path()).unwrap();
+            let bytes = std::fs::read(dir.path().join("loop.gif")).unwrap();
+            let frames = decode_clip(&bytes, "image/gif", 10).expect("re-decode demo gif");
+            assert!(!frames.is_empty(), "demo gif should decode to frames");
+            for frame in &frames {
+                for px in frame.pixels.chunks_exact(4) {
+                    let a = px[3];
+                    assert!(a == 0 || a == 255, "decoded alpha {a} proves a halo survived the hard mask");
+                }
+            }
+        }
+    }
 }

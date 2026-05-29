@@ -39,6 +39,7 @@ mod context_bar;
 mod dnd;
 mod document;
 mod editor;
+mod export;
 mod gizmo;
 mod gpu;
 mod headless;

@@ -4121,6 +4121,7 @@ dependencies = [
  "glam",
  "image",
  "image-compare",
+ "insta",
  "mp4",
  "openh264",
  "pixhaus-ai",

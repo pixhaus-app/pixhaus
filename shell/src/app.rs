@@ -338,6 +338,14 @@ pub enum ShellMsg {
         /// The conflict policy the artist chose before the import ran.
         policy: pixhaus_core::project::ConflictPolicy,
     },
+    /// A GUI sprite export finished off-thread: the written path on success
+    /// (for the status line), `None` if the save dialog was cancelled, or an
+    /// error to surface. Drained in [`ShellApp::logic`].
+    SpriteExported {
+        /// The path written on success, `None` if the dialog was cancelled, or
+        /// a user-facing error string.
+        result: Result<Option<std::path::PathBuf>, String>,
+    },
     /// A keychain key-op finished off-thread: refreshed per-backend configured
     /// state, overall readiness, and any keychain error to surface.
     BackendsRefreshed {
@@ -770,6 +778,43 @@ pub struct ShellApp {
     /// `None` when the modal is closed. Opening the modal seeds it with a
     /// default; confirming spawns the import worker with the chosen policy.
     pub(crate) pack_import_policy: Option<pixhaus_core::project::ConflictPolicy>,
+    /// The open sprite-export dialog (kind picker + atlas column count), or
+    /// `None` when closed. Opened from the studio Land stage and the File menu;
+    /// confirming spawns the off-thread encode worker.
+    pub(crate) export_dialog: Option<ExportDialog>,
+}
+
+/// Draft state for the sprite-export dialog: which shape to write and, for the
+/// atlas, the grid column count. Bounded so a corrupt count never zeroes the
+/// pack.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct ExportDialog {
+    /// Which of the three shapes is selected.
+    pub kind: ExportDialogKind,
+    /// Atlas grid column count, used only when [`ExportDialogKind::Atlas`].
+    pub columns: u32,
+}
+
+/// The export-shape choice in [`ExportDialog`]. Mirrors
+/// [`crate::export::ExportKind`] without the atlas column payload, which the
+/// dialog carries separately so switching kinds keeps the count.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum ExportDialogKind {
+    /// One transparent PNG per frame.
+    PngSequence,
+    /// An infinitely-looping, hard-masked GIF.
+    LoopingGif,
+    /// A packed atlas PNG plus a sidecar JSON manifest.
+    Atlas,
+}
+
+impl Default for ExportDialog {
+    fn default() -> Self {
+        Self {
+            kind: ExportDialogKind::LoopingGif,
+            columns: 4,
+        }
+    }
 }
 
 /// The pending selection-morphology operation and its amount, driven by the
@@ -1028,6 +1073,7 @@ impl ShellApp {
             transform_dialog: None,
             status_message: None,
             pack_import_policy: None,
+            export_dialog: None,
         };
         grid_prefs.apply_to(&mut app.editor);
         app.install_renderer();
@@ -1288,6 +1334,7 @@ impl ShellApp {
                     Ok(None) => {}
                     Err(e) => self.set_status(format!("Pack import failed: {e}")),
                 },
+                ShellMsg::SpriteExported { result } => self.on_sprite_exported(result),
                 ShellMsg::BackendsRefreshed {
                     openai_configured,
                     fal_configured,
@@ -3097,6 +3144,116 @@ impl ShellApp {
         }
     }
 
+    /// Opens the sprite-export dialog, seeded with the looping-GIF default. A
+    /// no-op (with a status note) when no sprite has any frames to export.
+    pub(crate) fn open_export_dialog(&mut self) {
+        if self.doc.frame_count() == 0 {
+            self.set_status("Nothing to export: the sprite has no frames");
+            return;
+        }
+        self.export_dialog = Some(ExportDialog::default());
+    }
+
+    /// The export dialog: pick the shape (PNG sequence / looping GIF / atlas)
+    /// and, for an atlas, the column count. Export spawns the off-thread worker
+    /// and closes the dialog; Cancel just closes it.
+    pub(crate) fn show_export_dialog(&mut self, ctx: &egui::Context) {
+        let Some(mut dialog) = self.export_dialog else {
+            return;
+        };
+        let mut open = true;
+        let mut confirm = false;
+        egui::Window::new(format!("{} Export sprite", crate::icons::DOWNLOAD))
+            .collapsible(false)
+            .resizable(false)
+            .open(&mut open)
+            .show(ctx, |ui| {
+                ui.label(egui::RichText::new("Shape").strong());
+                ui.radio_value(&mut dialog.kind, ExportDialogKind::PngSequence, "PNG frame sequence")
+                    .on_hover_text("One transparent PNG per frame");
+                ui.radio_value(&mut dialog.kind, ExportDialogKind::LoopingGif, "Looping GIF")
+                    .on_hover_text("Infinitely-looping GIF with a hard alpha mask (no halo)");
+                ui.radio_value(&mut dialog.kind, ExportDialogKind::Atlas, "Packed atlas + manifest")
+                    .on_hover_text("One PNG grid plus a JSON manifest of frame rects");
+                if dialog.kind == ExportDialogKind::Atlas {
+                    ui.add_space(6.0);
+                    ui.horizontal(|ui| {
+                        ui.label("Columns");
+                        ui.add(egui::DragValue::new(&mut dialog.columns).range(1..=64));
+                    });
+                }
+                ui.add_space(8.0);
+                ui.separator();
+                ui.horizontal(|ui| {
+                    if ui.button(format!("{} Export…", crate::icons::DOWNLOAD)).clicked() {
+                        confirm = true;
+                    }
+                    if ui.button("Cancel").clicked() {
+                        self.export_dialog = None;
+                    }
+                });
+            });
+        // Keep live edits until the dialog closes.
+        if self.export_dialog.is_some() {
+            self.export_dialog = Some(dialog);
+        }
+        if !open {
+            self.export_dialog = None;
+        }
+        if confirm {
+            self.export_dialog = None;
+            self.spawn_export(dialog);
+        }
+    }
+
+    /// Composites the active sprite's frames and spawns the off-thread export
+    /// worker for `dialog`'s shape. The frames are read into owned buffers on
+    /// the UI thread before the worker spawns, so no document borrow crosses the
+    /// `rfd` dialog. The result returns over [`ShellMsg::SpriteExported`].
+    fn spawn_export(&mut self, dialog: ExportDialog) {
+        let mut frames = Vec::with_capacity(self.doc.frame_count());
+        for i in 0..self.doc.frame_count() {
+            let idx = FrameIndex::new(u32::try_from(i).unwrap_or(0));
+            if let Some(frame) = self.doc.composite_frame(idx) {
+                frames.push(frame);
+            }
+        }
+        if frames.is_empty() {
+            self.set_status("Nothing to export: the sprite has no frames");
+            return;
+        }
+        let frame_ms = self.doc.frame_duration_ms(FrameIndex::new(0));
+        let base_name = self.doc.active_sprite().map_or_else(|| "sprite".to_owned(), |s| sanitize_base_name(&s.name));
+        let kind = match dialog.kind {
+            ExportDialogKind::PngSequence => crate::export::ExportKind::PngSequence,
+            ExportDialogKind::LoopingGif => crate::export::ExportKind::LoopingGif,
+            ExportDialogKind::Atlas => crate::export::ExportKind::Atlas {
+                columns: dialog.columns.max(1),
+            },
+        };
+        let req = crate::export::ExportRequest::new(kind, frames, frame_ms, base_name);
+        let tx = self.tx.clone();
+        let ctx = self.egui_ctx.clone();
+        // spawn_blocking: the rfd dialog and the encode both block, kept off the
+        // egui thread. The owned frames move into the worker.
+        self.runtime.handle().spawn_blocking(move || {
+            let result = crate::export::run_export(req);
+            let _ = tx.send(ShellMsg::SpriteExported { result });
+            ctx.request_repaint();
+        });
+        self.set_status("Exporting sprite…");
+    }
+
+    /// Surfaces a finished export on the status line. A cancelled dialog
+    /// (`Ok(None)`) stays silent.
+    fn on_sprite_exported(&mut self, result: Result<Option<std::path::PathBuf>, String>) {
+        match result {
+            Ok(Some(path)) => self.set_status(format!("Exported sprite to {}", path.display())),
+            Ok(None) => {}
+            Err(e) => self.set_status(format!("Export failed: {e}")),
+        }
+    }
+
     /// Top panel: menu bar with the wordmark, File/View menus, and a theme
     /// toggle pinned to the right.
     fn menu_bar(&mut self, ui: &mut egui::Ui) {
@@ -3108,6 +3265,16 @@ impl ShellApp {
             ui.menu_button("File", |ui| {
                 if ui.button("New sprite…").clicked() {
                     self.open_new_sprite_dialog();
+                    ui.close();
+                }
+                ui.separator();
+                let has_frames = self.doc.frame_count() > 0;
+                if ui
+                    .add_enabled(has_frames, egui::Button::new(format!("{} Export sprite…", crate::icons::DOWNLOAD)))
+                    .on_disabled_hover_text("Create a sprite with at least one frame first")
+                    .clicked()
+                {
+                    self.open_export_dialog();
                     ui.close();
                 }
                 ui.separator();
@@ -3609,6 +3776,24 @@ fn color_mode_label(mode: ColorMode) -> &'static str {
     }
 }
 
+/// Turns a sprite name into a safe file stem for export: keeps ASCII
+/// alphanumerics, dash, and underscore; collapses every other character to an
+/// underscore. Falls back to `"sprite"` when nothing survives, so the worker
+/// always has a usable default file name.
+fn sanitize_base_name(name: &str) -> String {
+    let cleaned: String = name
+        .trim()
+        .chars()
+        .map(|c| if c.is_ascii_alphanumeric() || c == '-' || c == '_' { c } else { '_' })
+        .collect();
+    let trimmed = cleaned.trim_matches('_');
+    if trimmed.is_empty() {
+        "sprite".to_owned()
+    } else {
+        trimmed.to_owned()
+    }
+}
+
 /// The dropdown label for a rotation algorithm.
 fn rotation_algorithm_label(algorithm: RotationAlgorithm) -> &'static str {
     match algorithm {
@@ -3848,6 +4033,7 @@ impl eframe::App for ShellApp {
         self.show_morph_dialog(ui.ctx());
         self.show_transform_dialog(ui.ctx());
         self.show_pack_import_dialog(ui.ctx());
+        self.show_export_dialog(ui.ctx());
 
         // Panel order matters: outer panels first, the central canvas last so
         // it fills the space the others leave. The menu bar is always shown;

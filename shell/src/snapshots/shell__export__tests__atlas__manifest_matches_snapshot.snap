@@ -1,0 +1,33 @@
+---
+source: shell/src/export.rs
+expression: json
+---
+{
+  "cell_w": 4,
+  "cell_h": 4,
+  "columns": 2,
+  "frame_ms": 100,
+  "frames": [
+    {
+      "index": 0,
+      "x": 0,
+      "y": 0,
+      "w": 4,
+      "h": 4
+    },
+    {
+      "index": 1,
+      "x": 4,
+      "y": 0,
+      "w": 4,
+      "h": 4
+    },
+    {
+      "index": 2,
+      "x": 0,
+      "y": 4,
+      "w": 4,
+      "h": 4
+    }
+  ]
+}
