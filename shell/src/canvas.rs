@@ -10,7 +10,8 @@
 use eframe::egui;
 use glam::Vec2;
 use pixhaus_core::canvas::{
-    BrushShape, PixelBuffer, brush_covers, draw_filled_ellipse, draw_filled_rect, draw_line, draw_rect, draw_stroke, flood_fill, paint_brush,
+    BrushShape, DitherPattern, PixelBuffer, blend_normal, brush_covers, draw_filled_ellipse, draw_filled_rect, draw_line, draw_rect, draw_stroke,
+    flood_fill_blended, mul_un8, paint_brush, paint_brush_masked,
 };
 use pixhaus_core::project::Rgba;
 use pixhaus_core::project::{IVec2, Rect, Size};
@@ -140,6 +141,11 @@ impl ShellApp {
         let hover_canvas = response.hover_pos().map(to_canvas);
 
         let space_down = ui.input(|i| i.key_down(egui::Key::Space));
+        // Alt is the transient eyedropper modifier: held with a paint tool it
+        // samples a colour without switching tools. Read it here so the pan path
+        // still wins (Alt+middle / Alt+space pans), and the quick-pick branch in
+        // route_tools sits below pan and above normal tool routing.
+        let alt = ui.input(|i| i.modifiers.alt);
         let panning = response.dragged_by(egui::PointerButton::Middle) || (space_down && response.dragged_by(egui::PointerButton::Primary));
 
         if panning {
@@ -148,7 +154,7 @@ impl ShellApp {
         } else if !self.preview_active() {
             // A preview (reference sheet, wizard clip, bg-removal) is view-only:
             // pan and zoom, no editing.
-            self.route_tools(&response, interact_canvas);
+            self.route_tools(&response, interact_canvas, alt);
         }
 
         // Zoom on wheel, keeping the canvas point under the cursor fixed.
@@ -177,12 +183,19 @@ impl ShellApp {
         // Overlays (brush cursor, selection ants) belong to the sprite, not a
         // view-only preview.
         if !self.preview_active() {
-            self.paint_overlays(ui, &painter, rect, vp_px, ppp, hover_canvas);
+            self.paint_overlays(ui, &painter, rect, vp_px, ppp, hover_canvas, alt);
         }
     }
 
     /// Routes a pointer gesture to the tool bound to the button driving it.
-    fn route_tools(&mut self, response: &egui::Response, pointer: Option<[i32; 2]>) {
+    ///
+    /// `alt` is the transient eyedropper modifier: when it is held and the
+    /// Primary button drives the gesture, the press is a quick-pick — it samples
+    /// the colour under the pointer and the bound tool never runs. The active
+    /// tool is left unchanged because Alt is transient (releasing it resumes the
+    /// prior tool). The caller has already given the pan path priority, so a held
+    /// Alt over a pan gesture (Alt+middle / Alt+space) still pans.
+    fn route_tools(&mut self, response: &egui::Response, pointer: Option<[i32; 2]>, alt: bool) {
         // A pending free transform commits the moment the active tool stops being
         // Transform (the user switched tools), so it stays one undo entry and the
         // resampled pixels land in the document.
@@ -196,6 +209,20 @@ impl ShellApp {
             }
             return;
         };
+
+        // Eyedropper quick-pick: with Alt held over a paint tool, a Primary press
+        // or drag samples the colour under the pointer instead of running the
+        // bound tool. Drag-start sampling (not just click) lets the user Alt-drag
+        // to scrub for a colour, matching Aseprite. Sit below the pan path (the
+        // caller skips this whole route while panning) and above normal routing.
+        // Sampling mutates only `editor.fg`, so it records no undo and the active
+        // tool is untouched (Alt is transient).
+        if quick_pick_active(alt, self.editor.left_tool, false)
+            && (response.clicked_by(egui::PointerButton::Primary) || response.drag_started_by(egui::PointerButton::Primary))
+        {
+            self.do_pick(p);
+            return;
+        }
 
         // Resolve the selection-combine mode the gesture will commit with. A held
         // Shift/Alt overrides the context-bar default for this gesture; with no
@@ -360,6 +387,8 @@ impl ShellApp {
             mirror_y: self.editor.mirror_y,
             erase,
             pixel_perfect: self.editor.pixel_perfect,
+            dither: self.editor.dither,
+            opacity: self.editor.opacity,
             dirty: None,
             pending: None,
         };
@@ -397,7 +426,16 @@ impl ShellApp {
             return;
         };
         // Pixel-perfect pencil: redraw cleanly from the snapshot once, on commit.
-        if session.pixel_perfect && session.shape == BrushShape::Pixel && session.size == 1 && !session.mirror_x && !session.mirror_y && !session.erase {
+        // Dither and pixel-perfect are mutually exclusive (the corner-removal pass
+        // would punch holes in the pattern), so skip it while a pattern is active.
+        if session.pixel_perfect
+            && session.dither == DitherPattern::None
+            && session.shape == BrushShape::Pixel
+            && session.size == 1
+            && !session.mirror_x
+            && !session.mirror_y
+            && !session.erase
+        {
             if let Some(buf) = self.doc.pixel_buffers.get_mut(&session.buffer_id) {
                 *buf = session.before.clone();
                 draw_stroke(buf, &session.points, session.color, BrushShape::Pixel, 1, true);
@@ -406,6 +444,16 @@ impl ShellApp {
         let Some((x, y, x1, y1)) = session.dirty else {
             return;
         };
+        // Stroke opacity is per-stroke, not per-dab (the Aseprite semantic): the
+        // live preview painted at full strength, so overlapping dabs within the
+        // drag did not compound. On commit, when opacity < 255, redraw the union
+        // footprint once over `before` so each unique pixel blends a single time.
+        // Bounded to the dirty rect already tracked, so this stays O(footprint).
+        if session.opacity < 255 {
+            if let Some(buf) = self.doc.pixel_buffers.get_mut(&session.buffer_id) {
+                blend_stroke_footprint(buf, &session.before, (x, y, x1, y1), session.color, session.opacity, session.erase);
+            }
+        }
         // Clip the painted footprint to the active selection: outside the mask,
         // restore the pre-stroke bytes. Bounded to the stroke's dirty rect.
         if let Some(mask) = self.editor.selection.clone() {
@@ -432,8 +480,11 @@ impl ShellApp {
             return;
         };
         let tolerance = self.editor.tolerance;
+        let opacity = self.editor.opacity;
         if let Some(buf) = self.doc.pixel_buffers.get_mut(&buffer_id) {
-            flood_fill(buf, p[0], p[1], color, tolerance);
+            // flood_fill_blended short-circuits to the overwrite flood at 255, so
+            // the common full-strength bucket stays on the fast path.
+            flood_fill_blended(buf, p[0], p[1], color, tolerance, opacity);
         }
         let (cw, ch) = match self.canvas_size() {
             Some(s) => (s.width, s.height),
@@ -481,6 +532,8 @@ impl ShellApp {
             start: p,
             current: p,
             last_dirty: None,
+            dither: self.editor.dither,
+            opacity: self.editor.opacity,
         });
     }
 
@@ -502,11 +555,12 @@ impl ShellApp {
 
         if let Some(drag) = self.editor.shape_drag.as_ref() {
             let before = &drag.before;
+            let dither = drag.dither;
             if let Some(buf) = self.doc.pixel_buffers.get_mut(&buffer_id) {
                 if let Some((rx, ry, rx1, ry1)) = last_dirty {
                     restore_region(buf, before, rx, ry, rx1 - rx + 1, ry1 - ry + 1);
                 }
-                rasterize_shape(buf, tool, start, p, color, false);
+                rasterize_shape(buf, tool, start, p, color, false, dither);
             }
         }
 
@@ -526,6 +580,17 @@ impl ShellApp {
             Some(s) => (s.width, s.height),
             None => return,
         };
+        // Shape opacity: the preview rasterized at full strength over `before`;
+        // on commit, when opacity < 255, blend the shape's footprint once over
+        // `before` within the final preview bounds. A line/rect/ellipse outline
+        // does not self-overlap, so one blend per pixel is the whole shape.
+        if drag.opacity < 255 {
+            if let Some((bx, by, bx1, by1)) = drag.last_dirty {
+                if let Some(buf) = self.doc.pixel_buffers.get_mut(&drag.buffer_id) {
+                    blend_stroke_footprint(buf, &drag.before, (bx, by, bx1, by1), self.editor.fg, drag.opacity, false);
+                }
+            }
+        }
         // Shapes can span the canvas, so clip over the canvas bounds.
         if let Some(mask) = self.editor.selection.clone() {
             if let Some(buf) = self.doc.pixel_buffers.get_mut(&drag.buffer_id) {
@@ -978,7 +1043,7 @@ impl ShellApp {
     /// Paints the egui overlays over the wgpu canvas: brush cursor, shape
     /// preview, and selection marching ants.
     #[allow(clippy::cast_precision_loss, clippy::too_many_arguments)]
-    fn paint_overlays(&self, ui: &egui::Ui, painter: &egui::Painter, rect: egui::Rect, vp_px: Vec2, ppp: f32, hover_canvas: Option<[i32; 2]>) {
+    fn paint_overlays(&self, ui: &egui::Ui, painter: &egui::Painter, rect: egui::Rect, vp_px: Vec2, ppp: f32, hover_canvas: Option<[i32; 2]>, alt: bool) {
         let c2s = |cx: f32, cy: f32| -> egui::Pos2 {
             let s = self.viewport.canvas_to_screen(Vec2::new(cx, cy), vp_px);
             egui::pos2(rect.min.x + s.x / ppp, rect.min.y + s.y / ppp)
@@ -988,24 +1053,34 @@ impl ShellApp {
         // read on top. Static: it tracks pan/zoom through the viewport math but
         // never animates, so it requests no repaint.
         self.paint_pixel_grid(painter, rect, vp_px, ppp);
+        // Major / tile grid, drawn after the pixel grid so its cyan lines read
+        // on top when both are on.
+        self.paint_major_grid(painter, rect, vp_px, ppp);
 
         // Cursor gizmo at the hovered pixel: the exact brush footprint for the
         // paint brushes, a single target cell for click/shape/selection tools.
+        // While Alt is held the quick-pick eyedropper is armed, so draw the Picker
+        // target cursor (a single cell with a crosshair) instead of the active
+        // tool's footprint, matching what the Primary press will do.
         if let Some([hx, hy]) = hover_canvas {
             let cursor = egui::Stroke::new(1.0, egui::Color32::from_white_alpha(160));
-            match self.editor.left_tool {
-                Tool::Pencil | Tool::Eraser => {
-                    for [a, b] in brush_outline_segments(self.editor.brush_shape, self.editor.brush_size, hx, hy) {
-                        painter.line_segment([c2s(a.0 as f32, a.1 as f32), c2s(b.0 as f32, b.1 as f32)], cursor);
+            if quick_pick_active(alt, self.editor.left_tool, false) {
+                paint_picker_cursor(painter, &c2s, hx, hy, cursor);
+            } else {
+                match self.editor.left_tool {
+                    Tool::Pencil | Tool::Eraser => {
+                        for [a, b] in brush_outline_segments(self.editor.brush_shape, self.editor.brush_size, hx, hy) {
+                            painter.line_segment([c2s(a.0 as f32, a.1 as f32), c2s(b.0 as f32, b.1 as f32)], cursor);
+                        }
                     }
-                }
-                // Move and Transform act on an existing selection / the gizmo,
-                // not a pixel under the cursor.
-                Tool::Move | Tool::Transform => {}
-                _ => {
-                    let min = c2s(hx as f32, hy as f32);
-                    let max = c2s((hx + 1) as f32, (hy + 1) as f32);
-                    painter.rect_stroke(egui::Rect::from_two_pos(min, max), 0.0, cursor, egui::StrokeKind::Middle);
+                    // Move and Transform act on an existing selection / the gizmo,
+                    // not a pixel under the cursor.
+                    Tool::Move | Tool::Transform => {}
+                    _ => {
+                        let min = c2s(hx as f32, hy as f32);
+                        let max = c2s((hx + 1) as f32, (hy + 1) as f32);
+                        painter.rect_stroke(egui::Rect::from_two_pos(min, max), 0.0, cursor, egui::StrokeKind::Middle);
+                    }
                 }
             }
         }
@@ -1112,21 +1187,64 @@ impl ShellApp {
         let Some(canvas) = self.canvas_size() else {
             return;
         };
-        let (xs, ys) = visible_grid_lines(&self.viewport, vp_px, canvas);
-        // Map a canvas boundary coordinate to a screen point in egui (logical)
-        // pixels. `canvas_to_screen` works in physical px, so divide by `ppp`.
+        // step = 1: the returned step indices equal canvas coordinates.
+        let (xs, ys) = visible_grid_lines(&self.viewport, vp_px, canvas, 1);
         let c2s = |cx: f32, cy: f32| -> egui::Pos2 {
             let s = self.viewport.canvas_to_screen(Vec2::new(cx, cy), vp_px);
             egui::pos2(rect.min.x + s.x / ppp, rect.min.y + s.y / ppp)
         };
         let stroke = egui::Stroke::new(1.0, egui::Color32::from_black_alpha(48));
-        let (y0, y1) = (ys.start as f32, (ys.end - 1) as f32);
-        let (x0, x1) = (xs.start as f32, (xs.end - 1) as f32);
+        let (y0, y1) = (ys.start as f32, ys.end.saturating_sub(1) as f32);
+        let (x0, x1) = (xs.start as f32, xs.end.saturating_sub(1) as f32);
         for x in xs {
             painter.line_segment([c2s(x as f32, y0), c2s(x as f32, y1)], stroke);
         }
         for y in ys {
             painter.line_segment([c2s(x0, y as f32), c2s(x1, y as f32)], stroke);
+        }
+    }
+
+    /// Paints the major / tile grid: a cyan line every `major_grid_spacing_x`
+    /// (resp. Y) canvas pixels, aligned to the canvas origin. Drawn after the
+    /// pixel grid in [`Self::paint_overlays`] so it reads on top when both are
+    /// on. Skipped unless the toggle is on, both spacings are positive, and a
+    /// sprite exists.
+    ///
+    /// Like the pixel grid the line count is `O(visible / spacing)`, never
+    /// `O(canvas)`, because [`visible_grid_lines`] clamps the range to the
+    /// viewport — so it stays cheap at the 8K canvas size. The X and Y spacings
+    /// are independent, so a non-square tile size grids correctly. Static
+    /// overlay: no `request_repaint`.
+    #[allow(clippy::cast_precision_loss)]
+    fn paint_major_grid(&self, painter: &egui::Painter, rect: egui::Rect, vp_px: Vec2, ppp: f32) {
+        let (sx, sy) = (self.editor.major_grid_spacing_x, self.editor.major_grid_spacing_y);
+        if !self.editor.major_grid_enabled || sx == 0 || sy == 0 {
+            return;
+        }
+        let Some(canvas) = self.canvas_size() else {
+            return;
+        };
+        // X lines step by `sx`, Y lines by `sy`; the helper clamps each axis to
+        // the canvas. The cross-axis extent spans the full visible canvas so a
+        // line reaches both viewport edges, so take the unstepped span too.
+        let (xs, _) = visible_grid_lines(&self.viewport, vp_px, canvas, sx);
+        let (_, ys) = visible_grid_lines(&self.viewport, vp_px, canvas, sy);
+        let (span_x, span_y) = visible_grid_lines(&self.viewport, vp_px, canvas, 1);
+        let c2s = |cx: f32, cy: f32| -> egui::Pos2 {
+            let s = self.viewport.canvas_to_screen(Vec2::new(cx, cy), vp_px);
+            egui::pos2(rect.min.x + s.x / ppp, rect.min.y + s.y / ppp)
+        };
+        // Cyan at ~45% alpha, matching the Tauri MAJOR_GRID_FRAG constant.
+        let stroke = egui::Stroke::new(1.0, egui::Color32::from_rgba_unmultiplied(102, 178, 255, 115));
+        let (cy0, cy1) = (span_y.start as f32, span_y.end.saturating_sub(1) as f32);
+        let (cx0, cx1) = (span_x.start as f32, span_x.end.saturating_sub(1) as f32);
+        for i in xs {
+            let x = (i * sx as i32) as f32;
+            painter.line_segment([c2s(x, cy0), c2s(x, cy1)], stroke);
+        }
+        for j in ys {
+            let y = (j * sy as i32) as f32;
+            painter.line_segment([c2s(cx0, y), c2s(cx1, y)], stroke);
         }
     }
 }
@@ -1140,19 +1258,35 @@ fn pixel_grid_visible(show: bool, zoom: f32) -> bool {
     show && zoom >= EditorState::PIXEL_GRID_ZOOM_THRESHOLD
 }
 
-/// The inclusive-start, exclusive-end integer ranges of pixel-grid lines visible
-/// in `vp_px` for `viewport`, clamped to the canvas bounds. A line at integer
-/// `x` runs along the canvas-pixel boundary, so the ranges span the boundaries
-/// `0..=canvas.width` (one extra for the right/bottom edge), trimmed to those the
-/// viewport actually shows.
+/// Whether a Primary gesture should sample a colour instead of running the bound
+/// tool: the eyedropper quick-pick. Active when Alt is held and the gesture is
+/// not a pan, regardless of the active paint tool — Alt is transient, so the
+/// tool is never switched. Holding Alt while panning (Alt+middle / Alt+space)
+/// must still pan, so a pan suppresses the pick. The active `Picker` tool already
+/// samples on its own, so Alt over it adds nothing and the quick-pick stays off.
+/// Pure, so the routing rule is unit-testable without an egui `Response`.
+#[must_use]
+fn quick_pick_active(alt: bool, tool: Tool, panning: bool) -> bool {
+    alt && !panning && tool != Tool::Picker
+}
+
+/// The visible boundary lines on each axis for a grid of the given `step`,
+/// clamped to the canvas bounds, as inclusive-start exclusive-end ranges over
+/// the *step index* (multiply by `step` to get the canvas coordinate). A line
+/// sits at canvas coordinate `i * step` for each emitted index `i`, so the first
+/// emitted line always aligns to a multiple of `step` and the count is
+/// `O(visible / step)`. Pass `step = 1` for the per-pixel grid.
 ///
 /// Pure (reads only [`Viewport`] math), so the line-count bound is unit-testable
 /// without a GPU. The count is `O(visible lines)` — proportional to viewport
-/// size and zoom, never to the canvas size — which is what keeps the overlay
-/// cheap at 8192x8192.
+/// size and zoom, inversely to `step`, never to the canvas size — which keeps
+/// both overlays cheap at 8192x8192.
 #[must_use]
 #[allow(clippy::cast_possible_truncation, clippy::cast_precision_loss, clippy::cast_sign_loss)]
-fn visible_grid_lines(viewport: &Viewport, vp_px: Vec2, canvas: Size) -> (std::ops::Range<i32>, std::ops::Range<i32>) {
+fn visible_grid_lines(viewport: &Viewport, vp_px: Vec2, canvas: Size, step: u32) -> (std::ops::Range<i32>, std::ops::Range<i32>) {
+    // A zero step has no grid; guard so the integer divide below is sound.
+    let step = step.max(1) as i32;
+
     // Invert canvas_to_screen at the two screen corners (physical px): the canvas
     // surface spans the whole rect, so the corners are (0,0) and vp_px.
     let top_left = viewport.screen_to_canvas(Vec2::ZERO, vp_px);
@@ -1166,10 +1300,12 @@ fn visible_grid_lines(viewport: &Viewport, vp_px: Vec2, canvas: Size) -> (std::o
     let min_y = (top_left.y.floor() as i32).clamp(0, ch);
     let max_y = (bottom_right.y.ceil() as i32).clamp(0, ch);
 
-    // End is exclusive; +1 includes the far boundary line. min == max (canvas
-    // off-screen) yields an empty range, so the loop emits nothing.
-    let xs = if min_x < max_x { min_x..max_x + 1 } else { 0..0 };
-    let ys = if min_y < max_y { min_y..max_y + 1 } else { 0..0 };
+    // Convert canvas coords to step indices: align the first emitted line down to
+    // a multiple of `step` so the grid is anchored to the canvas origin, not the
+    // viewport. End is exclusive; +1 includes the far boundary line. min == max
+    // (canvas off-screen) yields an empty range, so the loop emits nothing.
+    let xs = if min_x < max_x { min_x / step..max_x / step + 1 } else { 0..0 };
+    let ys = if min_y < max_y { min_y / step..max_y / step + 1 } else { 0..0 };
     (xs, ys)
 }
 
@@ -1211,24 +1347,79 @@ fn inverted_selection(current: Option<&SelectionMask>, size: Size) -> Option<Sel
 
 /// Stamps the brush at `(x, y)` plus its mirror images into `buf`, updating the
 /// session's dirty bounds.
+///
+/// With [`DitherPattern::None`] this is the solid fast path (`paint_brush`); any
+/// other pattern routes through [`paint_brush_masked`] so each covered pixel is
+/// gated by its own canvas-absolute `(x, y)` — the mask is pan-stable, and each
+/// mirror image is gated by its own coordinate.
 fn stamp_point(buf: &mut PixelBuffer, session: &mut StrokeSession, x: i32, y: i32) {
     let (cw, ch) = (buf.width() as i32, buf.height() as i32);
     for (px, py) in mirrored_points(x, y, cw, ch, session.mirror_x, session.mirror_y) {
-        paint_brush(buf, px, py, session.color, session.shape, session.size);
+        if session.dither == DitherPattern::None {
+            paint_brush(buf, px, py, session.color, session.shape, session.size);
+        } else {
+            paint_brush_masked(buf, px, py, session.color, session.shape, session.size, session.dither, 255);
+        }
         mark_point_dirty(session, px, py, cw, ch);
     }
 }
 
 /// Bridges a Bresenham segment from `from` to `to` (plus mirror images) and
 /// records the dirty bounds.
+///
+/// [`DitherPattern::None`] stays on the solid [`draw_line`] fast path; any other
+/// pattern walks the same Bresenham line and stamps the dither-masked footprint
+/// at each step ([`stamp_dither_line`]), so the pattern is continuous along the
+/// drag and stable under pan. Each mirror image walks with its own coordinates.
 fn stamp_segment_mirrored(buf: &mut PixelBuffer, session: &mut StrokeSession, from: [i32; 2], to: [i32; 2]) {
     let (cw, ch) = (buf.width() as i32, buf.height() as i32);
     let froms = mirrored_points(from[0], from[1], cw, ch, session.mirror_x, session.mirror_y);
     let tos = mirrored_points(to[0], to[1], cw, ch, session.mirror_x, session.mirror_y);
     for (f, t) in froms.into_iter().zip(tos) {
-        draw_line(buf, f.0, f.1, t.0, t.1, session.color, session.shape, session.size);
+        if session.dither == DitherPattern::None {
+            draw_line(buf, f.0, f.1, t.0, t.1, session.color, session.shape, session.size);
+        } else {
+            stamp_dither_line(buf, [f.0, f.1], [t.0, t.1], session.color, session.shape, session.size, session.dither);
+        }
         mark_point_dirty(session, f.0, f.1, cw, ch);
         mark_point_dirty(session, t.0, t.1, cw, ch);
+    }
+}
+
+/// Walks a Bresenham line from `from` to `to`, stamping the dither-masked brush
+/// footprint at every line pixel.
+///
+/// The shell-side analogue of [`draw_line`] for the dither path: it mirrors the
+/// same integer Bresenham so the dithered and solid strokes trace identical
+/// pixels, then defers the per-footprint masking and bounds-clipping to
+/// [`paint_brush_masked`]. With [`DitherPattern::None`] it is byte-identical to
+/// [`draw_line`] (a property test pins this), so it is correct on the fast path
+/// too — `stamp_segment_mirrored` only avoids it there to skip the per-pixel
+/// mask check. Opacity is hard-wired to 255 until task 4's blended paint lands.
+#[allow(clippy::cast_sign_loss, clippy::cast_possible_wrap)]
+fn stamp_dither_line(buf: &mut PixelBuffer, from: [i32; 2], to: [i32; 2], color: Rgba, shape: BrushShape, size: u32, pattern: DitherPattern) {
+    let (x0, y0) = (from[0], from[1]);
+    let (x1, y1) = (to[0], to[1]);
+    let dx = (x1 - x0).abs();
+    let dy = (y1 - y0).abs();
+    let sx: i32 = if x0 < x1 { 1 } else { -1 };
+    let sy: i32 = if y0 < y1 { 1 } else { -1 };
+    let mut err = dx - dy;
+    let (mut x, mut y) = (x0, y0);
+    loop {
+        paint_brush_masked(buf, x, y, color, shape, size, pattern, 255);
+        if x == x1 && y == y1 {
+            break;
+        }
+        let e2 = 2 * err;
+        if e2 > -dy {
+            err -= dy;
+            x += sx;
+        }
+        if e2 < dx {
+            err += dx;
+            y += sy;
+        }
     }
 }
 
@@ -1265,11 +1456,62 @@ fn mark_point_dirty(session: &mut StrokeSession, x: i32, y: i32, cw: i32, ch: i3
     session.mark_dirty(x0 as u32, y0 as u32, (x1 - x0 + 1) as u32, (y1 - y0 + 1) as u32);
 }
 
+/// Re-blends a finished stroke's (or shape's) footprint once over `before` at
+/// `opacity`, giving the per-stroke (not per-dab) opacity semantic.
+///
+/// The live preview painted the footprint at full strength, so `buf` already
+/// holds the union of every dab over `before`. This walks the dirty rect and,
+/// for each pixel that the preview changed, writes a single blend of the stroke
+/// over the pre-stroke pixel — so dabs that overlapped within the drag blend
+/// exactly once, never compounding. Pixels the preview left untouched are not
+/// rewritten, so a partial brush footprint stays correct.
+///
+/// `erase` flips the meaning: an eraser at reduced `opacity` reduces the alpha
+/// of the touched pixels rather than blending a colour in, so a half-strength
+/// eraser pass leaves half the original alpha (255 = full erase, handled by the
+/// caller's fast-path skip). `color` is the stroke colour (ignored when erasing).
+///
+/// Bounded entirely by the passed dirty rect, so it stays O(footprint), never
+/// O(canvas) — the 8K constraint. `rect` is inclusive `(x, y, x1, y1)`.
+fn blend_stroke_footprint(buf: &mut PixelBuffer, before: &PixelBuffer, rect: (u32, u32, u32, u32), color: Rgba, opacity: u8, erase: bool) {
+    let (x0, y0, x1, y1) = rect;
+    let inv = 255u8.saturating_sub(opacity);
+    for y in y0..=y1 {
+        for x in x0..=x1 {
+            let (Some(was), Some(now)) = (before.pixel(x, y), buf.pixel(x, y)) else {
+                continue;
+            };
+            if was == now {
+                continue; // the preview did not touch this pixel.
+            }
+            let blended = if erase {
+                // Blend toward transparent: keep the colour, scale the alpha down
+                // by the erase strength. opacity 255 (full erase) is the caller's
+                // fast path and never reaches here.
+                Rgba::new(was.r, was.g, was.b, mul_un8(was.a, inv))
+            } else {
+                blend_normal(color, was, opacity)
+            };
+            buf.set_pixel(x, y, blended);
+        }
+    }
+}
+
 /// Draws the requested shape outline (or fill) into `buf`.
-fn rasterize_shape(buf: &mut PixelBuffer, tool: Tool, start: [i32; 2], end: [i32; 2], color: Rgba, filled: bool) {
+///
+/// The line tool honours the dither `pattern` (it is a single brush stroke); the
+/// rectangle and ellipse tools stay solid for now — dithered fills are a
+/// follow-up that needs masked variants of the fill primitives. Opacity is not
+/// applied here: the preview rasterizes at full strength and the commit blends
+/// the footprint once over `before` (see [`blend_stroke_footprint`]).
+fn rasterize_shape(buf: &mut PixelBuffer, tool: Tool, start: [i32; 2], end: [i32; 2], color: Rgba, filled: bool, pattern: DitherPattern) {
     match tool {
         Tool::Line => {
-            draw_line(buf, start[0], start[1], end[0], end[1], color, BrushShape::Pixel, 1);
+            if pattern == DitherPattern::None {
+                draw_line(buf, start[0], start[1], end[0], end[1], color, BrushShape::Pixel, 1);
+            } else {
+                stamp_dither_line(buf, start, end, color, BrushShape::Pixel, 1, pattern);
+            }
         }
         Tool::Rectangle => {
             if filled {
@@ -1609,10 +1851,25 @@ fn paint_selection_ants(painter: &egui::Painter, segments: &[[(i32, i32); 2]], c
     }
 }
 
+/// Draws the eyedropper target cursor over the hovered cell `(hx, hy)`: the cell
+/// outline plus a centre crosshair so the sampled pixel is unambiguous. Used
+/// while Alt arms the quick-pick, in place of the active tool's footprint.
+fn paint_picker_cursor(painter: &egui::Painter, c2s: &impl Fn(f32, f32) -> egui::Pos2, hx: i32, hy: i32, stroke: egui::Stroke) {
+    let min = c2s(hx as f32, hy as f32);
+    let max = c2s((hx + 1) as f32, (hy + 1) as f32);
+    painter.rect_stroke(egui::Rect::from_two_pos(min, max), 0.0, stroke, egui::StrokeKind::Middle);
+    // Crosshair through the cell centre, pinpointing the pixel to sample.
+    let cx = hx as f32 + 0.5;
+    let cy = hy as f32 + 0.5;
+    painter.line_segment([c2s(cx, hy as f32), c2s(cx, (hy + 1) as f32)], stroke);
+    painter.line_segment([c2s(hx as f32, cy), c2s((hx + 1) as f32, cy)], stroke);
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::commands::write_region;
+    use pixhaus_core::canvas::flood_fill;
 
     // --- visible_grid_lines: per-pixel grid overlay bounds ------------------
 
@@ -1632,12 +1889,12 @@ mod tests {
             zoom: 16.0,
         };
         let vp_px = Vec2::new(320.0, 240.0);
-        let big = visible_grid_lines(&vp, vp_px, Size::new(8192, 8192));
+        let big = visible_grid_lines(&vp, vp_px, Size::new(8192, 8192), 1);
         assert!(line_count(&big) < 100, "expected a small visible-line count, got {}", line_count(&big));
 
         // The same viewport over a tiny canvas yields the same count: the bound
         // is the viewport, not the canvas size.
-        let small = visible_grid_lines(&vp, vp_px, Size::new(64, 64));
+        let small = visible_grid_lines(&vp, vp_px, Size::new(64, 64), 1);
         assert_eq!(line_count(&small), line_count(&big), "line count must not scale with canvas size");
     }
 
@@ -1651,7 +1908,7 @@ mod tests {
             zoom: 4.0,
         };
         let vp_px = Vec2::new(800.0, 600.0);
-        let (xs, ys) = visible_grid_lines(&vp, vp_px, Size::new(16, 16));
+        let (xs, ys) = visible_grid_lines(&vp, vp_px, Size::new(16, 16), 1);
         assert_eq!(xs, 0..17, "x boundaries cover 0..=16 and clamp to the canvas");
         assert_eq!(ys, 0..17, "y boundaries cover 0..=16 and clamp to the canvas");
     }
@@ -1664,8 +1921,130 @@ mod tests {
             scroll: Vec2::new(5000.0, 5000.0),
             zoom: 8.0,
         };
-        let (xs, ys) = visible_grid_lines(&vp, Vec2::new(400.0, 300.0), Size::new(64, 64));
+        let (xs, ys) = visible_grid_lines(&vp, Vec2::new(400.0, 300.0), Size::new(64, 64), 1);
         assert!(xs.is_empty() && ys.is_empty(), "an off-screen canvas emits no grid lines");
+    }
+
+    // --- quick_pick_active: eyedropper Alt routing --------------------------
+
+    #[test]
+    fn alt_with_a_paint_tool_samples() {
+        // Alt held over a paint tool, not panning: the Primary gesture quick-picks
+        // instead of running the bound tool.
+        assert!(quick_pick_active(true, Tool::Pencil, false));
+        assert!(quick_pick_active(true, Tool::Eraser, false));
+        assert!(quick_pick_active(true, Tool::Fill, false));
+        assert!(quick_pick_active(true, Tool::Line, false));
+    }
+
+    #[test]
+    fn alt_while_panning_does_not_sample() {
+        // Pan wins: Alt+middle / Alt+space pans, so the pick stays off even with a
+        // paint tool active.
+        assert!(!quick_pick_active(true, Tool::Pencil, true));
+    }
+
+    #[test]
+    fn no_alt_does_not_sample() {
+        // Without Alt the bound tool runs as usual.
+        assert!(!quick_pick_active(false, Tool::Pencil, false));
+        assert!(!quick_pick_active(false, Tool::Pencil, true));
+    }
+
+    #[test]
+    fn alt_over_the_picker_tool_does_not_quick_pick() {
+        // The Picker already samples on its own; Alt over it adds nothing, so the
+        // quick-pick branch leaves the normal Picker click path to run.
+        assert!(!quick_pick_active(true, Tool::Picker, false));
+    }
+
+    // --- visible_grid_lines: major / tile grid step parameterisation --------
+
+    #[test]
+    fn major_grid_first_line_aligns_to_a_spacing_multiple() {
+        // Scrolled so the near canvas edge sits mid-tile: the first emitted step
+        // index must still floor to a multiple of the spacing, anchoring the
+        // grid to the canvas origin rather than the viewport.
+        const SPACING: u32 = 8;
+        // The viewport is centred: screen_to_canvas(0) = scroll - vp_px/(2*zoom).
+        // With vp_px 400 and zoom 4 the half-span is 50, so a scroll of 63 puts
+        // the near corner at canvas ~13, between the 8 and 16 grid lines.
+        let vp_px = Vec2::new(400.0, 400.0);
+        let vp = Viewport {
+            scroll: Vec2::new(63.0, 63.0),
+            zoom: 4.0,
+        };
+        let (xs, ys) = visible_grid_lines(&vp, vp_px, Size::new(256, 256), SPACING);
+        // The first emitted canvas coordinate is `step_index * SPACING`, so it is
+        // a multiple of SPACING for both axes and sits at or below the near edge.
+        let first_x = xs.start * SPACING as i32;
+        let first_y = ys.start * SPACING as i32;
+        assert_eq!(first_x % SPACING as i32, 0, "first X line aligns to the spacing");
+        assert_eq!(first_y % SPACING as i32, 0, "first Y line aligns to the spacing");
+        assert_eq!(first_x, 8, "the near edge at ~13 floors to the x=8 grid line");
+        assert_eq!(first_y, 8, "the near edge at ~13 floors to the y=8 grid line");
+    }
+
+    #[test]
+    fn major_grid_line_count_is_bounded_by_viewport_over_spacing() {
+        // The major-grid line count is bounded by the visible canvas span divided
+        // by the spacing, never by the canvas size. A 320x240 viewport at zoom 16
+        // shows ~20x15 canvas pixels; at spacing 8 that is at most ~3-4 lines per
+        // axis regardless of how big the canvas is.
+        const SPACING: u32 = 8;
+        let vp = Viewport {
+            scroll: Vec2::new(10.0, 10.0),
+            zoom: 16.0,
+        };
+        let vp_px = Vec2::new(320.0, 240.0);
+        let (xs, ys) = visible_grid_lines(&vp, vp_px, Size::new(8192, 8192), SPACING);
+        // Bound: visible canvas pixels per axis / spacing, plus one for the far
+        // boundary and one for the floor-aligned near boundary.
+        let bound_x = (vp_px.x / (SPACING as f32 * vp.zoom)).ceil() as usize + 2;
+        let bound_y = (vp_px.y / (SPACING as f32 * vp.zoom)).ceil() as usize + 2;
+        assert!(xs.len() <= bound_x, "x lines {} exceed the viewport/(spacing*zoom) bound {bound_x}", xs.len());
+        assert!(ys.len() <= bound_y, "y lines {} exceed the viewport/(spacing*zoom) bound {bound_y}", ys.len());
+
+        // Independence of canvas size: the same viewport over a tiny canvas that
+        // still contains the visible window yields the same counts.
+        let (xs_small, ys_small) = visible_grid_lines(&vp, vp_px, Size::new(64, 64), SPACING);
+        assert_eq!(xs_small.len(), xs.len(), "x count must not scale with canvas size");
+        assert_eq!(ys_small.len(), ys.len(), "y count must not scale with canvas size");
+    }
+
+    #[test]
+    fn major_grid_x_and_y_step_independently() {
+        // A non-square tile size: 8 wide, 16 tall. The X step index range floors
+        // to /8, the Y to /16, so the two axes do not share a spacing. The
+        // viewport is large enough at zoom 2 to show the whole 128x128 canvas
+        // (half-span vp_px/(2*zoom) = 256 >= 128), so the span clamps to 0..128.
+        let vp = Viewport {
+            scroll: Vec2::new(64.0, 64.0),
+            zoom: 2.0,
+        };
+        let vp_px = Vec2::new(1024.0, 1024.0);
+        let (xs, _) = visible_grid_lines(&vp, vp_px, Size::new(128, 128), 8);
+        let (_, ys) = visible_grid_lines(&vp, vp_px, Size::new(128, 128), 16);
+        // X: lines at 0,8,..,128 -> 17 indices. Y: 0,16,..,128 -> 9 indices.
+        // The last emitted index maps to the far boundary on each axis's step.
+        assert_eq!((xs.end - 1) * 8, 128, "x grids on 8 up to the far edge");
+        assert_eq!((ys.end - 1) * 16, 128, "y grids on 16 up to the far edge");
+        assert_eq!(xs.len(), 17);
+        assert_eq!(ys.len(), 9);
+    }
+
+    #[test]
+    fn major_grid_step_below_one_is_treated_as_one() {
+        // A zero step must not divide by zero; the helper floors it to 1, so a
+        // 0-spacing call degrades to the per-pixel grid rather than panicking.
+        let vp = Viewport {
+            scroll: Vec2::new(0.0, 0.0),
+            zoom: 4.0,
+        };
+        let vp_px = Vec2::new(64.0, 64.0);
+        let zero = visible_grid_lines(&vp, vp_px, Size::new(16, 16), 0);
+        let one = visible_grid_lines(&vp, vp_px, Size::new(16, 16), 1);
+        assert_eq!(zero, one, "a zero step behaves like step 1");
     }
 
     #[test]
@@ -2460,5 +2839,147 @@ mod tests {
             .to_rgba8();
         let score = image_compare::rgba_hybrid_compare(&actual, &baseline).expect("compare").score;
         assert!(score >= 0.999, "rotated free transform diverged from baseline: score = {score}");
+    }
+
+    // --- stamp_dither_line: dithered freehand / line stamping ---------------
+
+    use proptest::prelude::*;
+
+    proptest! {
+        /// `stamp_dither_line` with `DitherPattern::None` walks the same Bresenham
+        /// as `draw_line` and writes every covered pixel, so the two are
+        /// byte-identical for any endpoints, shape, and size. This is what lets
+        /// `rasterize_shape` and `stamp_segment_mirrored` keep `draw_line` as the
+        /// fast path without behaviour drift.
+        #[test]
+        fn dither_line_none_matches_draw_line(
+            shape_idx in 0usize..3,
+            size in 1u32..16,
+            x0 in 0i32..48,
+            y0 in 0i32..48,
+            x1 in 0i32..48,
+            y1 in 0i32..48,
+        ) {
+            let shape = [BrushShape::Pixel, BrushShape::Circle, BrushShape::Square][shape_idx];
+            let mut a = buf(48, 48, BLANK);
+            draw_line(&mut a, x0, y0, x1, y1, RED, shape, size);
+
+            let mut b = buf(48, 48, BLANK);
+            stamp_dither_line(&mut b, [x0, y0], [x1, y1], RED, shape, size, DitherPattern::None);
+
+            prop_assert_eq!(a.as_bytes(), b.as_bytes(), "None diverged at ({},{})-({},{}) shape {:?} size {}", x0, y0, x1, y1, shape, size);
+        }
+    }
+
+    #[test]
+    fn dither_line_checker_writes_only_allowed_pixels() {
+        // A checker-dithered horizontal line writes only even-parity pixels and
+        // skips the rest, so the line is a 50% dotted run, not solid.
+        let mut b = buf(32, 1, BLANK);
+        stamp_dither_line(&mut b, [0, 0], [31, 0], RED, BrushShape::Pixel, 1, DitherPattern::Checker);
+        for x in 0..32i32 {
+            let got = b.pixel(x as u32, 0).expect("pixel");
+            if dither_allows_local(x, 0) {
+                assert_eq!(got, RED, "allowed pixel ({x}, 0) is painted");
+            } else {
+                assert_eq!(got, BLANK, "disallowed pixel ({x}, 0) stays blank");
+            }
+        }
+    }
+
+    #[test]
+    fn dither_line_checker_leaves_about_half() {
+        // Over a full row the checker writes exactly half the pixels (even width).
+        let mut b = buf(64, 1, BLANK);
+        stamp_dither_line(&mut b, [0, 0], [63, 0], RED, BrushShape::Pixel, 1, DitherPattern::Checker);
+        let written = (0..64u32).filter(|&x| b.pixel(x, 0) == Some(RED)).count();
+        assert_eq!(written, 32, "checker line writes exactly half of 64 pixels");
+    }
+
+    /// Local mirror of the core checker rule, so the test asserts the shell's
+    /// expectation without reaching into core internals: write when `(x + y)` is
+    /// even. Kept in sync with `core::canvas::dither_allows(Checker, ..)`.
+    fn dither_allows_local(x: i32, y: i32) -> bool {
+        (x + y).rem_euclid(2) == 0
+    }
+
+    // --- stroke opacity: per-stroke (not per-dab) blend ---------------------
+
+    #[test]
+    fn overlapping_two_segment_stroke_at_128_does_not_double_darken() {
+        // The bug this guards: a freehand drag overlaps dabs. Blending each dab
+        // at reduced opacity would compound, so the overlap would darken past a
+        // single blend. The per-stroke semantic blends each unique footprint
+        // pixel once on commit, regardless of how many dabs covered it.
+        let backdrop = Rgba::opaque(200, 200, 200);
+        let before = buf(16, 16, backdrop);
+        // The live preview paints at full strength. Draw the same line twice to
+        // simulate two overlapping segments of one drag landing on the same row.
+        let mut after = before.clone();
+        draw_line(&mut after, 2, 8, 13, 8, RED, BrushShape::Pixel, 1);
+        draw_line(&mut after, 2, 8, 13, 8, RED, BrushShape::Pixel, 1);
+        // Commit at opacity 128 over the row's dirty rect.
+        blend_stroke_footprint(&mut after, &before, (2, 8, 13, 8), RED, 128, false);
+
+        // Every painted pixel — including the overlap — is exactly one 128 blend
+        // of RED over the backdrop, never two.
+        let expect = blend_normal(RED, backdrop, 128);
+        for x in 2..=13u32 {
+            assert_eq!(after.pixel(x, 8), Some(expect), "pixel ({x}, 8) is a single 128 blend, not compounded");
+        }
+    }
+
+    #[test]
+    fn blend_footprint_at_255_is_skipped_by_the_caller() {
+        // The caller fast-paths opacity == 255 (no redraw), so the full-strength
+        // preview stands. This pins that a full-strength stroke equals the raw
+        // overwrite: blend_stroke_footprint is never called at 255, and the live
+        // buffer already holds the overwrite result.
+        let backdrop = Rgba::opaque(10, 10, 10);
+        let before = buf(8, 8, backdrop);
+        let mut after = before.clone();
+        draw_line(&mut after, 0, 4, 7, 4, RED, BrushShape::Pixel, 1);
+        for x in 0..8u32 {
+            assert_eq!(after.pixel(x, 4), Some(RED), "full-strength stroke overwrites");
+        }
+    }
+
+    #[test]
+    fn blend_footprint_leaves_untouched_pixels_alone() {
+        // A pixel the preview never changed must not be rewritten, so a partial
+        // brush footprint inside the dirty rect stays exactly as it was.
+        let backdrop = Rgba::opaque(80, 120, 200);
+        let before = buf(8, 8, backdrop);
+        let mut after = before.clone();
+        // Paint a single pixel; the rest of the 8x8 dirty rect is untouched.
+        paint_brush(&mut after, 4, 4, RED, BrushShape::Pixel, 1);
+        blend_stroke_footprint(&mut after, &before, (0, 0, 7, 7), RED, 64, false);
+
+        assert_eq!(after.pixel(4, 4), Some(blend_normal(RED, backdrop, 64)), "the touched pixel blends once");
+        for y in 0..8u32 {
+            for x in 0..8u32 {
+                if (x, y) == (4, 4) {
+                    continue;
+                }
+                assert_eq!(after.pixel(x, y), Some(backdrop), "untouched pixel ({x}, {y}) is left alone");
+            }
+        }
+    }
+
+    #[test]
+    fn eraser_at_128_halves_alpha_instead_of_clearing() {
+        // A reduced-opacity eraser blends toward transparent: it scales the
+        // original alpha down by the erase strength rather than zeroing it.
+        let opaque = Rgba::opaque(40, 90, 160);
+        let before = buf(8, 8, opaque);
+        // The live preview hard-clears the footprint (transparent overwrite).
+        let mut after = before.clone();
+        paint_brush(&mut after, 3, 3, Rgba::transparent(), BrushShape::Pixel, 1);
+        // Commit the eraser at opacity 128: the touched pixel keeps half its alpha.
+        blend_stroke_footprint(&mut after, &before, (3, 3, 3, 3), Rgba::transparent(), 128, true);
+
+        let got = after.pixel(3, 3).expect("pixel");
+        assert_eq!(got.a, mul_un8(255, 255 - 128), "eraser at 128 leaves ~half the original alpha");
+        assert_eq!((got.r, got.g, got.b), (opaque.r, opaque.g, opaque.b), "eraser keeps the colour, only lowers alpha");
     }
 }
