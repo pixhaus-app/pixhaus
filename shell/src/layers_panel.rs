@@ -320,6 +320,11 @@ impl ShellApp {
                                         toggle_clip = Some(row.id);
                                         ui.close();
                                     }
+                                    // "Convert to tilemap layer" would go here for a raster
+                                    // layer, but it is blocked on the tilemap subsystem
+                                    // (tileset CRUD, tile rendering) which is not in this
+                                    // batch. Tauri ref: app/src/commands/layers.rs:487.
+                                    // blocked on tilemap subsystem
                                 }
                                 let merge_sel_item = egui::Button::new(format!("{} Merge selected", icons::LAYERS));
                                 if ui
