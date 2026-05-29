@@ -2608,6 +2608,10 @@ impl ShellApp {
                 if pref != self.theme_preference {
                     self.set_theme_preference(ui.ctx(), pref);
                 }
+
+                ui.separator();
+                ui.checkbox(&mut self.editor.show_pixel_grid, "Pixel grid")
+                    .on_hover_text("Show a per-pixel grid once the zoom is high enough to read it");
             });
 
             ui.separator();

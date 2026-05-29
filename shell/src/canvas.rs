@@ -17,11 +17,11 @@ use pixhaus_core::project::{IVec2, Rect, Size};
 use pixhaus_core::selection::{
     Connectivity, GapCloseConfig, SelectionMask, color_range, magic_wand_with_gap_close, select_ellipse, select_polygon, select_rect,
 };
-use pixhaus_render::{ViewportRenderer, viewport::clamp_zoom, viewport::snap_zoom};
+use pixhaus_render::{Viewport, ViewportRenderer, viewport::clamp_zoom, viewport::snap_zoom};
 
 use crate::app::{ShellApp, ZoomAction};
 use crate::commands::{PixelRegionEdit, extract_region};
-use crate::editor::{FreeTransformDrag, MoveDrag, SelectionMode, ShapeDrag, StrokeSession, Tool};
+use crate::editor::{EditorState, FreeTransformDrag, MoveDrag, SelectionMode, ShapeDrag, StrokeSession, Tool};
 use crate::gizmo::{BoxGizmo, GizmoHandle};
 
 /// Per-frame paint command for the SPRITE program. Cheap to build; holds only
@@ -984,6 +984,11 @@ impl ShellApp {
             egui::pos2(rect.min.x + s.x / ppp, rect.min.y + s.y / ppp)
         };
 
+        // Per-pixel grid, under every other overlay so the cursor and previews
+        // read on top. Static: it tracks pan/zoom through the viewport math but
+        // never animates, so it requests no repaint.
+        self.paint_pixel_grid(painter, rect, vp_px, ppp);
+
         // Cursor gizmo at the hovered pixel: the exact brush footprint for the
         // paint brushes, a single target cell for click/shape/selection tools.
         if let Some([hx, hy]) = hover_canvas {
@@ -1093,6 +1098,79 @@ impl ShellApp {
             painter.circle_filled(stem, 4.0, accent);
         }
     }
+
+    /// Paints the per-pixel grid: one 1-px dark line on every visible canvas-
+    /// pixel boundary. Skipped unless the toggle is on, the zoom is at or above
+    /// [`EditorState::PIXEL_GRID_ZOOM_THRESHOLD`], and a sprite exists. The line
+    /// count is `O(visible lines)`, never `O(canvas)`, because
+    /// [`visible_grid_lines`] clamps the range to what the viewport shows — so it
+    /// stays cheap at the 8K canvas size. Static overlay: no `request_repaint`.
+    fn paint_pixel_grid(&self, painter: &egui::Painter, rect: egui::Rect, vp_px: Vec2, ppp: f32) {
+        if !pixel_grid_visible(self.editor.show_pixel_grid, self.viewport.zoom) {
+            return;
+        }
+        let Some(canvas) = self.canvas_size() else {
+            return;
+        };
+        let (xs, ys) = visible_grid_lines(&self.viewport, vp_px, canvas);
+        // Map a canvas boundary coordinate to a screen point in egui (logical)
+        // pixels. `canvas_to_screen` works in physical px, so divide by `ppp`.
+        let c2s = |cx: f32, cy: f32| -> egui::Pos2 {
+            let s = self.viewport.canvas_to_screen(Vec2::new(cx, cy), vp_px);
+            egui::pos2(rect.min.x + s.x / ppp, rect.min.y + s.y / ppp)
+        };
+        let stroke = egui::Stroke::new(1.0, egui::Color32::from_black_alpha(48));
+        let (y0, y1) = (ys.start as f32, (ys.end - 1) as f32);
+        let (x0, x1) = (xs.start as f32, (xs.end - 1) as f32);
+        for x in xs {
+            painter.line_segment([c2s(x as f32, y0), c2s(x as f32, y1)], stroke);
+        }
+        for y in ys {
+            painter.line_segment([c2s(x0, y as f32), c2s(x1, y as f32)], stroke);
+        }
+    }
+}
+
+/// Whether the per-pixel grid overlay should draw: only when the toggle is on
+/// and the zoom is at or above [`EditorState::PIXEL_GRID_ZOOM_THRESHOLD`]. Below
+/// the threshold the grid aliases into noise, so the caller skips it. Pure, so
+/// the skip rule is testable without a GPU.
+#[must_use]
+fn pixel_grid_visible(show: bool, zoom: f32) -> bool {
+    show && zoom >= EditorState::PIXEL_GRID_ZOOM_THRESHOLD
+}
+
+/// The inclusive-start, exclusive-end integer ranges of pixel-grid lines visible
+/// in `vp_px` for `viewport`, clamped to the canvas bounds. A line at integer
+/// `x` runs along the canvas-pixel boundary, so the ranges span the boundaries
+/// `0..=canvas.width` (one extra for the right/bottom edge), trimmed to those the
+/// viewport actually shows.
+///
+/// Pure (reads only [`Viewport`] math), so the line-count bound is unit-testable
+/// without a GPU. The count is `O(visible lines)` — proportional to viewport
+/// size and zoom, never to the canvas size — which is what keeps the overlay
+/// cheap at 8192x8192.
+#[must_use]
+#[allow(clippy::cast_possible_truncation, clippy::cast_precision_loss, clippy::cast_sign_loss)]
+fn visible_grid_lines(viewport: &Viewport, vp_px: Vec2, canvas: Size) -> (std::ops::Range<i32>, std::ops::Range<i32>) {
+    // Invert canvas_to_screen at the two screen corners (physical px): the canvas
+    // surface spans the whole rect, so the corners are (0,0) and vp_px.
+    let top_left = viewport.screen_to_canvas(Vec2::ZERO, vp_px);
+    let bottom_right = viewport.screen_to_canvas(vp_px, vp_px);
+    let (cw, ch) = (canvas.width as i32, canvas.height as i32);
+
+    // Boundary lines run 0..=cw and 0..=ch. Floor the near corner and ceil the
+    // far one so a partially-visible boundary still draws, then clamp to bounds.
+    let min_x = (top_left.x.floor() as i32).clamp(0, cw);
+    let max_x = (bottom_right.x.ceil() as i32).clamp(0, cw);
+    let min_y = (top_left.y.floor() as i32).clamp(0, ch);
+    let max_y = (bottom_right.y.ceil() as i32).clamp(0, ch);
+
+    // End is exclusive; +1 includes the far boundary line. min == max (canvas
+    // off-screen) yields an empty range, so the loop emits nothing.
+    let xs = if min_x < max_x { min_x..max_x + 1 } else { 0..0 };
+    let ys = if min_y < max_y { min_y..max_y + 1 } else { 0..0 };
+    (xs, ys)
 }
 
 /// Whether `tool` is a drag-to-select tool whose combine mode is captured at
@@ -1536,6 +1614,72 @@ mod tests {
     use super::*;
     use crate::commands::write_region;
 
+    // --- visible_grid_lines: per-pixel grid overlay bounds ------------------
+
+    /// Total grid lines a range pair would emit (one per integer in each axis).
+    fn line_count(ranges: &(std::ops::Range<i32>, std::ops::Range<i32>)) -> usize {
+        ranges.0.len() + ranges.1.len()
+    }
+
+    #[test]
+    fn grid_line_count_is_bounded_by_the_viewport_not_the_canvas() {
+        // A small viewport over a large canvas at a moderate zoom: only the
+        // on-screen boundaries draw, so the count tracks viewport/zoom, not the
+        // 8192x8192 canvas. At zoom 16 a 320x240 viewport spans 20x15 canvas
+        // pixels, so well under a hundred lines regardless of canvas size.
+        let vp = Viewport {
+            scroll: Vec2::new(10.0, 10.0),
+            zoom: 16.0,
+        };
+        let vp_px = Vec2::new(320.0, 240.0);
+        let big = visible_grid_lines(&vp, vp_px, Size::new(8192, 8192));
+        assert!(line_count(&big) < 100, "expected a small visible-line count, got {}", line_count(&big));
+
+        // The same viewport over a tiny canvas yields the same count: the bound
+        // is the viewport, not the canvas size.
+        let small = visible_grid_lines(&vp, vp_px, Size::new(64, 64));
+        assert_eq!(line_count(&small), line_count(&big), "line count must not scale with canvas size");
+    }
+
+    #[test]
+    fn grid_lines_clamp_to_canvas_bounds() {
+        // A viewport zoomed out far enough that the whole 16x16 canvas fits with
+        // margin: the ranges must stop at the canvas edge (0..=16 boundaries),
+        // never run past it.
+        let vp = Viewport {
+            scroll: Vec2::new(8.0, 8.0),
+            zoom: 4.0,
+        };
+        let vp_px = Vec2::new(800.0, 600.0);
+        let (xs, ys) = visible_grid_lines(&vp, vp_px, Size::new(16, 16));
+        assert_eq!(xs, 0..17, "x boundaries cover 0..=16 and clamp to the canvas");
+        assert_eq!(ys, 0..17, "y boundaries cover 0..=16 and clamp to the canvas");
+    }
+
+    #[test]
+    fn grid_lines_are_empty_when_the_canvas_is_off_screen() {
+        // Scrolled far past the canvas: nothing visible, so both ranges empty
+        // and the caller emits no lines.
+        let vp = Viewport {
+            scroll: Vec2::new(5000.0, 5000.0),
+            zoom: 8.0,
+        };
+        let (xs, ys) = visible_grid_lines(&vp, Vec2::new(400.0, 300.0), Size::new(64, 64));
+        assert!(xs.is_empty() && ys.is_empty(), "an off-screen canvas emits no grid lines");
+    }
+
+    #[test]
+    fn below_threshold_zoom_is_skipped() {
+        // The skip rule paint_pixel_grid consults: a zoom below the threshold
+        // draws nothing, at or above it draws (when the toggle is on), and the
+        // toggle off draws nothing regardless of zoom.
+        let t = EditorState::PIXEL_GRID_ZOOM_THRESHOLD;
+        assert!(!pixel_grid_visible(true, t - 1.0), "below threshold: no grid");
+        assert!(pixel_grid_visible(true, t), "at threshold: grid draws");
+        assert!(pixel_grid_visible(true, t + 4.0), "above threshold: grid draws");
+        assert!(!pixel_grid_visible(false, t + 4.0), "toggle off: no grid at any zoom");
+    }
+
     /// A closed outline visits every grid point an even number of times (each
     /// vertex is shared by an incoming and outgoing edge).
     fn is_closed(segments: &[[(i32, i32); 2]]) -> bool {
@@ -1754,7 +1898,9 @@ mod tests {
         }
         let soft = feather(&hard, 2).expect("feather");
         // Find a boundary pixel the feather left partially covered.
-        let edge = (0..10u32).find(|&x| matches!(soft.get(x, 0), Some(c) if c > 0 && c < 255)).expect("a softened edge pixel");
+        let edge = (0..10u32)
+            .find(|&x| matches!(soft.get(x, 0), Some(c) if c > 0 && c < 255))
+            .expect("a softened edge pixel");
         let coverage = soft.get(edge, 0).expect("coverage");
 
         let mut after = before.clone();
@@ -1868,9 +2014,19 @@ mod tests {
     fn selection_mode_resolves_from_modifiers() {
         use egui::Modifiers;
         let none = Modifiers::default();
-        let shift = Modifiers { shift: true, ..Modifiers::default() };
-        let alt = Modifiers { alt: true, ..Modifiers::default() };
-        let both = Modifiers { shift: true, alt: true, ..Modifiers::default() };
+        let shift = Modifiers {
+            shift: true,
+            ..Modifiers::default()
+        };
+        let alt = Modifiers {
+            alt: true,
+            ..Modifiers::default()
+        };
+        let both = Modifiers {
+            shift: true,
+            alt: true,
+            ..Modifiers::default()
+        };
         assert_eq!(SelectionMode::from_modifiers(none), SelectionMode::Replace);
         assert_eq!(SelectionMode::from_modifiers(shift), SelectionMode::Add);
         assert_eq!(SelectionMode::from_modifiers(alt), SelectionMode::Subtract);
@@ -2276,7 +2432,11 @@ mod tests {
         let mut src = buf(w, h, BLANK);
         for y in 4..=11u32 {
             for x in 4..=11u32 {
-                let shade = if (x + y) % 2 == 0 { Rgba::opaque(220, 80, 60) } else { Rgba::opaque(60, 120, 220) };
+                let shade = if (x + y) % 2 == 0 {
+                    Rgba::opaque(220, 80, 60)
+                } else {
+                    Rgba::opaque(60, 120, 220)
+                };
                 src.set_pixel(x, y, shade);
             }
         }

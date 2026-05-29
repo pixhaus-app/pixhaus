@@ -380,6 +380,9 @@ pub struct EditorState {
     pub bg: Rgba,
     /// Add freshly-painted colours to the active palette (Pixelorama).
     pub auto_add_palette: bool,
+    /// Draw the per-pixel grid overlay once the zoom is high enough to read it
+    /// ([`Self::PIXEL_GRID_ZOOM_THRESHOLD`]). Default on, matching the Tauri app.
+    pub show_pixel_grid: bool,
     /// Branching undo history over the document.
     pub history: History<DocumentStore>,
     /// In-progress freehand stroke.
@@ -493,6 +496,7 @@ impl Default for EditorState {
             fg: Rgba::opaque(20, 20, 28),
             bg: Rgba::transparent(),
             auto_add_palette: true,
+            show_pixel_grid: true,
             history: History::new(),
             stroke: None,
             shape_drag: None,
@@ -524,6 +528,11 @@ impl Default for EditorState {
 }
 
 impl EditorState {
+    /// Zoom (screen pixels per canvas pixel) at and above which the per-pixel
+    /// grid overlay draws. Below it the grid would alias into noise, so the
+    /// overlay is skipped. Mirrors the Tauri `PIXEL_GRID_ZOOM_THRESHOLD`.
+    pub const PIXEL_GRID_ZOOM_THRESHOLD: f32 = 4.0;
+
     /// The tool to use for a pointer button: primary -> left tool, secondary ->
     /// right tool.
     #[must_use]
