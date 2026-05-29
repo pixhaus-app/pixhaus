@@ -923,6 +923,7 @@ impl DocumentStore {
                 loop_direction,
                 speed_multiplier: 1.0,
                 qc,
+                slice: None,
                 user_data: UserData::default(),
             });
             range
@@ -1266,7 +1267,9 @@ mod tests {
         let frames: Vec<PixelBuffer> = (0..4)
             .map(|_| PixelBuffer::filled(8, 8, pixhaus_core::project::Rgba::new(10, 20, 30, 255)).unwrap())
             .collect();
-        let range = doc.integrate_frames(frames, 100, "walk", LoopDirection::Forward, None).expect("integrated range");
+        let range = doc
+            .integrate_frames(frames, 100, "walk", LoopDirection::Forward, None)
+            .expect("integrated range");
 
         // The fresh sprite is pristine, so the animation replaces its seed frame
         // and occupies frames 0..=3 on a single layer — no leading blank.
@@ -1309,7 +1312,9 @@ mod tests {
         let frames: Vec<PixelBuffer> = (0..4)
             .map(|_| PixelBuffer::filled(8, 8, pixhaus_core::project::Rgba::new(10, 20, 30, 255)).unwrap())
             .collect();
-        let range = doc.integrate_frames(frames, 100, "walk", LoopDirection::Forward, None).expect("integrated range");
+        let range = doc
+            .integrate_frames(frames, 100, "walk", LoopDirection::Forward, None)
+            .expect("integrated range");
 
         assert_eq!(range.start, FrameIndex::new(1));
         assert_eq!(range.end, FrameIndex::new(4));

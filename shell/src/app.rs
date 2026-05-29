@@ -17,6 +17,7 @@ use pixhaus_core::canvas::PixelBuffer;
 use pixhaus_core::project::{CelData, ColorMode, FrameIndex, GroupId, LoopDirection, PixelBufferId, Rgba, Size, Sprite, SpriteId};
 use pixhaus_core::selection::SelectionMask;
 use pixhaus_core::transforms::normalize::{NormalizeOptions, NormalizeResult, normalize_frames};
+use pixhaus_core::transforms::sheet::SliceGrid;
 use pixhaus_core::transforms::{CanvasAnchor, MlaaConfig, RotationAlgorithm};
 use pixhaus_render::{Viewport, ViewportRenderer};
 use tokio::runtime::Runtime;
@@ -176,6 +177,14 @@ pub enum ShellMsg {
         epoch: u64,
         /// The sliced cells as ordered frames.
         frames: Vec<VideoFrame>,
+        /// The decoded sheet the frames were cut from, retained for the Sheet
+        /// stage to show and re-cut.
+        sheet: PixelBuffer,
+        /// The slice spec seeded from the generation grid; re-slicing the sheet
+        /// through it reproduces `frames` exactly.
+        slice: SliceGrid,
+        /// The per-cell size the sheet was requested for (`cell_w`, `cell_h`).
+        cell: (u32, u32),
         /// The action prompt, threaded onto the candidate as provenance.
         action: String,
         /// Playback FPS for the candidate.
@@ -1266,12 +1275,15 @@ impl ShellApp {
                 ShellMsg::StaticSheetReady {
                     epoch,
                     frames,
+                    sheet,
+                    slice,
+                    cell,
                     action,
                     fps,
                     seed,
                 } => {
                     if epoch == self.anim_gen_epoch {
-                        self.on_static_sheet_ready(frames, action, fps, seed);
+                        self.on_static_sheet_ready(frames, sheet, slice, cell, action, fps, seed);
                     }
                 }
                 ShellMsg::StaticSheetFailed { epoch, error } => {
@@ -2799,10 +2811,29 @@ impl ShellApp {
     /// Lands a sliced static sheet as a clip candidate, with no remote clip blob
     /// and no i2v job record — the static path persists nothing the import path
     /// does not. Routes through the shared [`Self::push_clip_candidate`] tail.
-    fn on_static_sheet_ready(&mut self, frames: Vec<VideoFrame>, action: String, fps: u32, seed: Option<u64>) {
+    ///
+    /// The retained `sheet`, its `slice` spec, and the per-cell `cell` size are
+    /// stashed on the studio so the Sheet stage can show the raw sheet and re-cut
+    /// it live; the frames still flow straight to the Clip tail, so behavior is
+    /// unchanged until that stage lands.
+    #[allow(clippy::too_many_arguments)]
+    fn on_static_sheet_ready(
+        &mut self,
+        frames: Vec<VideoFrame>,
+        sheet: PixelBuffer,
+        slice: SliceGrid,
+        cell: (u32, u32),
+        action: String,
+        fps: u32,
+        seed: Option<u64>,
+    ) {
         self.anim_status = JobStatus::Idle;
         // A static sheet has no i2v lineage parent.
         self.anim_pending_parent = None;
+        // Carry the raw sheet and its slice geometry forward for the Sheet stage.
+        self.studio.sheet = Some(sheet);
+        self.studio.slice = slice;
+        self.studio.sheet_cell = cell;
         // No raw clip blob: the frames are the artifact, so the candidate carries
         // an empty clip and a PNG mime (the slice path's source format). No job id
         // either — the static path persists no sidecar, so the landed Animation
@@ -3199,11 +3230,7 @@ impl ShellApp {
         // forward (a mirror is not a reversal). Correct only for left-right-
         // symmetric subjects — the cascade grid badges east as a flip, not a
         // generation. The flip is bounded by the pick region, not the 8K canvas.
-        let frames = if east_flip {
-            flip_frames_horizontal(result.frames)
-        } else {
-            result.frames
-        };
+        let frames = if east_flip { flip_frames_horizontal(result.frames) } else { result.frames };
         // Style gate (Brief 8): pixel-class styles get the palette-snap +
         // downscale finisher before the frames hit the timeline; clean-HD/map
         // land the normalized frames verbatim. Resolve the kind from the picked
@@ -4083,7 +4110,9 @@ fn mirror_metrics_x(m: pixhaus_core::transforms::FrameMetrics, canvas_w: u32) ->
     }
     let new_bbox_x = canvas_w.saturating_sub(m.bbox_x).saturating_sub(m.visible_width);
     let new_center_x = canvas_w.saturating_sub(1).saturating_sub(m.center_x);
-    let largest_component_bbox = m.largest_component_bbox.map(|(x, y, w, h)| (canvas_w.saturating_sub(x).saturating_sub(w), y, w, h));
+    let largest_component_bbox = m
+        .largest_component_bbox
+        .map(|(x, y, w, h)| (canvas_w.saturating_sub(x).saturating_sub(w), y, w, h));
     pixhaus_core::transforms::FrameMetrics {
         bbox_x: new_bbox_x,
         center_x: new_center_x,
@@ -4745,7 +4774,10 @@ mod tests {
         // Fixed, so a derived loop stays on the established anchor colours rather
         // than re-extracting a fresh per-frame palette (over-quantising guard).
         let none = landing_finish_options(16, 16, &[]);
-        assert!(matches!(none.palette, PaletteSource::Extract { .. }), "empty anchor palette falls back to Extract");
+        assert!(
+            matches!(none.palette, PaletteSource::Extract { .. }),
+            "empty anchor palette falls back to Extract"
+        );
         let anchor = [PaletteEntry::new(Rgba::opaque(0, 0, 0)), PaletteEntry::new(Rgba::opaque(255, 255, 255))];
         let fixed = landing_finish_options(16, 16, &anchor);
         match fixed.palette {
@@ -4773,7 +4805,11 @@ mod tests {
             if px.0[3] == 0 {
                 continue;
             }
-            assert!(allowed.contains(&[px.0[0], px.0[1], px.0[2]]), "snapped pixel {:?} must be an anchor colour", px.0);
+            assert!(
+                allowed.contains(&[px.0[0], px.0[1], px.0[2]]),
+                "snapped pixel {:?} must be an anchor colour",
+                px.0
+            );
         }
     }
 

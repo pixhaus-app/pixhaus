@@ -33,6 +33,7 @@ use pixhaus_ai::backends::fal::{FAL_I2V, FAL_SEEDANCE};
 use pixhaus_core::canvas::PixelBuffer;
 use pixhaus_core::project::{AnchorDirection, AnimationKind, Rgba, SpriteId};
 use pixhaus_core::transforms::normalize::{ChromaKey, ComponentMode, NormalizeResult, SeamMatch, chroma_key, detect_key_color};
+use pixhaus_core::transforms::sheet::SliceGrid;
 
 use crate::ai::{self, FirstFrameJob};
 use crate::anim::{self, VideoFrame};
@@ -775,6 +776,15 @@ pub(crate) struct StudioState {
     pub grid_rows: u32,
     /// Static-sheet grid columns (consulted only in [`GenMode::Static`]).
     pub grid_cols: u32,
+    /// The raw generated grid sheet, retained for the Sheet stage to show and
+    /// re-cut. `None` until a static sheet lands.
+    pub sheet: Option<PixelBuffer>,
+    /// The slice geometry for the retained sheet, seeded uniform from the
+    /// generation grid and adjusted by the slice gizmo.
+    pub slice: SliceGrid,
+    /// The per-cell size the retained sheet was generated for (`cell_w`,
+    /// `cell_h`).
+    pub sheet_cell: (u32, u32),
     /// Whether the second clip is shown beside the first for comparison.
     pub compare: bool,
     /// The other clip index in a side-by-side comparison.
@@ -845,6 +855,9 @@ impl Default for StudioState {
             gen_mode: default_gen_mode(),
             grid_rows: default_grid_rows(),
             grid_cols: default_grid_cols(),
+            sheet: None,
+            slice: SliceGrid::uniform(default_grid_rows(), default_grid_cols()),
+            sheet_cell: (0, 0),
             compare: false,
             compare_other: None,
             landed: false,
@@ -2287,8 +2300,9 @@ impl ShellApp {
                 // The component policy only bites when Land keys the backdrop —
                 // without keying there are no detached specks to isolate.
                 if self.studio.remove_on_land {
-                    ui.checkbox(&mut self.studio.land_all_parts, "Keep all parts")
-                        .on_hover_text("On: keep every detached part above the min area (multi-part FX). Off: keep only the largest body, dropping stray specks");
+                    ui.checkbox(&mut self.studio.land_all_parts, "Keep all parts").on_hover_text(
+                        "On: keep every detached part above the min area (multi-part FX). Off: keep only the largest body, dropping stray specks",
+                    );
                 }
             });
     }
@@ -3319,7 +3333,11 @@ mod tests {
                 1,
                 "the seed-pose prompt locks identity exactly once for {facing:?}: {final_prompt}"
             );
-            assert_eq!(lock_count(&final_prompt, "change only the pose"), 1, "the seed-pose prompt frees the pose for {facing:?}: {final_prompt}");
+            assert_eq!(
+                lock_count(&final_prompt, "change only the pose"),
+                1,
+                "the seed-pose prompt frees the pose for {facing:?}: {final_prompt}"
+            );
             assert!(
                 !final_prompt.contains("change only the facing direction"),
                 "the seed-pose prompt must not free facing for {facing:?}: {final_prompt}"
@@ -3803,8 +3821,16 @@ mod tests {
         let report = normalize_frames(&frames, &opts).expect("normalize").report;
         assert_eq!(drift_status(report.baseline_drift_px), ReportStatus::Ok);
         assert_eq!(scale_status(report.scale_match_pct), ReportStatus::Ok);
-        assert_eq!(edge_status(report.edge_touch_frames.len()), ReportStatus::Ok, "small centred subjects land clear of every edge");
-        assert_eq!(scale_status(report.scale_parity_pct), ReportStatus::Ok, "the corrected heights agree, so parity reads Ok");
+        assert_eq!(
+            edge_status(report.edge_touch_frames.len()),
+            ReportStatus::Ok,
+            "small centred subjects land clear of every edge"
+        );
+        assert_eq!(
+            scale_status(report.scale_parity_pct),
+            ReportStatus::Ok,
+            "the corrected heights agree, so parity reads Ok"
+        );
     }
 
     #[test]
@@ -3841,8 +3867,16 @@ mod tests {
         let tall = synthetic_frame(7, 1, 2, 14, black);
         let wide = synthetic_frame(1, 7, 14, 2, black);
         let report = normalize_frames(&[tall, wide], &NormalizeOptions::square(16)).expect("normalize").report;
-        assert!(report.edge_touch_frames.contains(&1), "the over-scaled wide frame is flagged: {:?}", report.edge_touch_frames);
-        assert_eq!(edge_status(report.edge_touch_frames.len()), ReportStatus::Error, "the inspector reads Error for a clipped frame");
+        assert!(
+            report.edge_touch_frames.contains(&1),
+            "the over-scaled wide frame is flagged: {:?}",
+            report.edge_touch_frames
+        );
+        assert_eq!(
+            edge_status(report.edge_touch_frames.len()),
+            ReportStatus::Error,
+            "the inspector reads Error for a clipped frame"
+        );
         let palette = crate::theme::Palette::for_theme(egui::Theme::Dark);
         assert_eq!(edge_status(report.edge_touch_frames.len()).color(&palette), palette.error);
     }
