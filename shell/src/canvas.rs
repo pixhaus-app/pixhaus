@@ -234,7 +234,34 @@ impl ShellApp {
 
     // --- gesture lifecycle ---------------------------------------------------
 
+    /// Whether `tool` edits the active layer's pixels (so a layer lock blocks
+    /// it). Selection, picker, and wand read the canvas but write no pixels.
+    fn tool_edits_pixels(tool: Tool) -> bool {
+        matches!(
+            tool,
+            Tool::Pencil | Tool::Eraser | Tool::Fill | Tool::Line | Tool::Rectangle | Tool::Ellipse | Tool::Move | Tool::Transform
+        )
+    }
+
+    /// Surfaces a status-bar note when a pixel-editing gesture begins over a
+    /// locked active layer, and reports whether the layer is locked. The gate in
+    /// `DocumentStore` already refuses the edit; this is the feedback so the
+    /// blocked attempt is not silent. No panic.
+    fn notify_if_active_layer_locked(&mut self, tool: Tool) -> bool {
+        if !Self::tool_edits_pixels(tool) {
+            return false;
+        }
+        let locked = self.doc.active_layer.is_some_and(|id| self.doc.layer_is_locked(id));
+        if locked {
+            self.set_status("Layer is locked");
+        }
+        locked
+    }
+
     fn begin_gesture(&mut self, tool: Tool, color: Rgba, p: [i32; 2]) {
+        if self.notify_if_active_layer_locked(tool) {
+            return;
+        }
         match tool {
             Tool::Pencil | Tool::Eraser => self.begin_stroke(tool, color, p),
             Tool::Line | Tool::Rectangle | Tool::Ellipse => self.begin_shape(tool, p),
@@ -268,6 +295,9 @@ impl ShellApp {
     }
 
     fn click_gesture(&mut self, tool: Tool, color: Rgba, p: [i32; 2]) {
+        if self.notify_if_active_layer_locked(tool) {
+            return;
+        }
         match tool {
             Tool::Pencil | Tool::Eraser => {
                 // A tap with no drag: a single dab.

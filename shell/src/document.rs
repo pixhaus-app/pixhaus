@@ -490,12 +490,24 @@ impl DocumentStore {
         self.active_sprite().and_then(|s| s.palettes.first())
     }
 
+    /// Whether `layer_id` resolves to a locked layer in the active sprite.
+    /// Painting refuses to touch a locked layer; the lock guards pixels, not
+    /// the layer's properties.
+    #[must_use]
+    pub fn layer_is_locked(&self, layer_id: LayerId) -> bool {
+        self.active_sprite()
+            .and_then(|s| s.layers.iter().find(|ly| ly.id == layer_id))
+            .is_some_and(|ly| ly.locked)
+    }
+
     /// Ensures the active sprite has a frame, a raster layer, and a raster cel
     /// at the active `(layer, frame)`, creating each as needed, and returns the
     /// id of the buffer the active cel paints into. Linked cels resolve to
     /// their source frame's buffer (editing the shared drawing, Aseprite-style).
-    /// Returns `None` when there is no active sprite or the active layer is not
-    /// a raster layer.
+    /// Returns `None` when there is no active sprite, the resolved layer is not
+    /// a raster layer, or the resolved layer is locked. This is the single gate
+    /// every paint path funnels through, so the lock check here covers stroke,
+    /// fill, shapes, and the move tool's lift target.
     pub fn ensure_drawable(&mut self) -> Option<PixelBufferId> {
         let sprite_id = self.project.active_sprite_id()?;
         let canvas = self.project.sprite(sprite_id)?.canvas;
@@ -533,6 +545,12 @@ impl DocumentStore {
         };
         self.active_layer = Some(layer_id);
 
+        // A locked layer refuses every paint path. Enforce once here, the shared
+        // gate, rather than at each call site.
+        if self.layer_is_locked(layer_id) {
+            return None;
+        }
+
         let frame = self.active_frame;
         let source = self.project.sprite(sprite_id)?.resolve_source_frame(layer_id, frame);
 
@@ -553,11 +571,16 @@ impl DocumentStore {
     }
 
     /// The buffer id the active `(layer, frame)` paints into, without creating
-    /// anything. `None` if there is no raster cel there yet.
+    /// anything. `None` if there is no raster cel there yet, or the active layer
+    /// is locked — the move/lift paths route through here, so a locked layer
+    /// also refuses to be lifted from.
     #[must_use]
     pub fn active_buffer_id(&self) -> Option<PixelBufferId> {
         let sprite = self.active_sprite()?;
         let layer = self.active_layer?;
+        if self.layer_is_locked(layer) {
+            return None;
+        }
         let source = sprite.resolve_source_frame(layer, self.active_frame);
         match sprite.cel(layer, source)?.data {
             CelData::Raster { buffer, .. } => Some(buffer),
@@ -1181,6 +1204,98 @@ mod tests {
         let id = doc.ensure_drawable().expect("drawable buffer");
         assert!(doc.pixel_buffers.contains_key(&id));
         assert_eq!(doc.active_buffer_id(), Some(id));
+    }
+
+    /// Locks the active layer of the active sprite. Returns the active layer id.
+    fn lock_active_layer(doc: &mut DocumentStore, locked: bool) -> LayerId {
+        let id = doc.active_layer.expect("active layer");
+        let sprite = doc.active_sprite_mut().expect("active sprite");
+        sprite.layers.iter_mut().find(|ly| ly.id == id).expect("layer present").locked = locked;
+        id
+    }
+
+    #[test]
+    fn layer_is_locked_reads_the_flag() {
+        let mut doc = DocumentStore::new();
+        doc.create_sprite("hero", Size::new(8, 8));
+        let id = doc.active_layer.expect("active layer");
+        assert!(!doc.layer_is_locked(id), "fresh layer is unlocked");
+        lock_active_layer(&mut doc, true);
+        assert!(doc.layer_is_locked(id), "lock flag is read back");
+    }
+
+    #[test]
+    fn ensure_drawable_denies_a_locked_layer() {
+        let mut doc = DocumentStore::new();
+        doc.create_sprite("hero", Size::new(8, 8));
+        lock_active_layer(&mut doc, true);
+        assert_eq!(doc.ensure_drawable(), None, "the paint gate refuses a locked layer");
+    }
+
+    #[test]
+    fn active_buffer_id_denies_a_locked_layer() {
+        // The move/lift paths route through active_buffer_id; a locked layer must
+        // refuse to be lifted from.
+        let mut doc = DocumentStore::new();
+        doc.create_sprite("hero", Size::new(8, 8));
+        doc.ensure_drawable().expect("seed a raster cel while unlocked");
+        lock_active_layer(&mut doc, true);
+        assert_eq!(doc.active_buffer_id(), None, "lift refuses a locked layer");
+    }
+
+    #[test]
+    fn unlocking_restores_painting() {
+        let mut doc = DocumentStore::new();
+        doc.create_sprite("hero", Size::new(8, 8));
+        lock_active_layer(&mut doc, true);
+        assert_eq!(doc.ensure_drawable(), None);
+        lock_active_layer(&mut doc, false);
+        let id = doc.ensure_drawable().expect("unlocked layer paints again");
+        assert_eq!(doc.active_buffer_id(), Some(id), "lift works once unlocked");
+    }
+
+    #[test]
+    fn locked_layer_buffer_stays_byte_identical_across_denied_edits() {
+        use crate::commands::extract_region;
+
+        let mut doc = DocumentStore::new();
+        doc.create_sprite("hero", Size::new(8, 8));
+        // Seed a cel and paint one pixel while unlocked, then lock.
+        let id = doc.ensure_drawable().expect("seed cel");
+        doc.pixel_buffers.get_mut(&id).expect("buffer").set_pixel(2, 2, Rgba::opaque(10, 20, 30));
+        lock_active_layer(&mut doc, true);
+        let before = extract_region(doc.pixel_buffers.get(&id).expect("buffer"), 0, 0, 8, 8);
+
+        // Every paint path funnels through these two gates. Both deny, so a paint
+        // method's `let Some(..) = gate() else { return }` early-returns without
+        // touching the buffer — the stand-in for stroke/fill/shape/move.
+        assert_eq!(doc.ensure_drawable(), None, "stroke/fill/shape gate denies");
+        assert_eq!(doc.active_buffer_id(), None, "move/lift gate denies");
+
+        let after = extract_region(doc.pixel_buffers.get(&id).expect("buffer"), 0, 0, 8, 8);
+        assert_eq!(before, after, "a locked layer's pixels are unchanged");
+    }
+
+    #[test]
+    fn structural_edits_apply_while_locked() {
+        // Lock guards pixels, not properties: rename and opacity still apply.
+        let mut doc = DocumentStore::new();
+        doc.create_sprite("hero", Size::new(8, 8));
+        let id = lock_active_layer(&mut doc, true);
+
+        let sprite = doc.active_sprite_mut().expect("sprite");
+        let layer = sprite.layers.iter_mut().find(|ly| ly.id == id).expect("layer");
+        layer.name = "renamed".into();
+        layer.opacity = 128;
+
+        let sprite = doc.active_sprite().expect("sprite");
+        let layer = sprite.layers.iter().find(|ly| ly.id == id).expect("layer");
+        assert!(layer.locked, "still locked");
+        assert_eq!(layer.name, "renamed", "rename applied while locked");
+        assert_eq!(layer.opacity, 128, "opacity applied while locked");
+
+        // The sprite itself is unaffected by the lock.
+        assert_eq!(doc.active_sprite().expect("sprite").name, "hero");
     }
 
     #[test]
