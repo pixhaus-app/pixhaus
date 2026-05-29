@@ -5,6 +5,7 @@
 pub mod extraction;
 pub mod harmony;
 pub mod ops;
+pub mod palette_file;
 pub mod space;
 
 pub use extraction::{
@@ -17,6 +18,7 @@ pub use ops::{
     DEFAULT_SIMILARITY_TOLERANCE, color_ramp, nearest_color_index, palette_cycle, palette_swap,
     similar_colors,
 };
+pub use palette_file::{PaletteFileError, PaletteFileResult};
 pub use space::{
     from_hsl, from_hsv, from_oklch, oklab_mix, rotate_hue, to_hsl, to_hsv, to_oklch,
 };
