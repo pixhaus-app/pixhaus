@@ -32,7 +32,7 @@ use pixhaus_core::canvas::PixelBuffer;
 use pixhaus_core::project::library::ai::ProjectAi;
 use pixhaus_core::project::library::composition::{ArtStyleKind, PromptId, PromptTemplate, PromptVariable, Structure, StructureId, Style, StyleId};
 use pixhaus_core::project::{AnchorDirection, EntityId, PixelBufferId, ProjectMetadata, SheetVariantId};
-use pixhaus_core::transforms::normalize::{NormalizeOptions, normalize_frames};
+use pixhaus_core::transforms::normalize::{ComponentMode, NormalizeOptions, normalize_frames};
 use tokio::runtime::Handle;
 use tokio_util::sync::CancellationToken;
 
@@ -1042,6 +1042,9 @@ pub async fn run_animation(runtime: &VerbRuntime, job: &AnimJob, progress: &(dyn
         chroma: None,
         reference_height: None,
         bottom_margin: 0,
+        // Frames arrive already background-stripped here, so there are no keying
+        // specks to isolate — keep the whole-alpha bbox.
+        component_mode: ComponentMode::WholeAlpha,
     };
     let result = normalize_frames(&buffers, &opts).map_err(|e| e.to_string())?;
     let frame_duration_ms = (1000 / job.fps.max(1)).max(1);

@@ -2916,6 +2916,8 @@ impl ShellApp {
             remove_on_land: self.studio.remove_on_land,
             key_color: (self.bg_key_color.r, self.bg_key_color.g, self.bg_key_color.b),
             key_tolerance: self.bg_tolerance,
+            all_parts: self.studio.land_all_parts,
+            min_area: self.studio.land_min_area,
         })
     }
 
@@ -2950,6 +2952,10 @@ impl ShellApp {
             chroma: crate::studio::land_chroma(self.studio.remove_on_land, self.bg_key_color, self.bg_tolerance),
             reference_height: None,
             bottom_margin: 0,
+            // Isolate the hero from detached keying specks on Land, so a stray
+            // pixel cannot inflate the bbox and shrink the body. WholeAlpha when
+            // the backdrop is left for the timeline op (no keying, no specks).
+            component_mode: crate::studio::land_component_mode(self.studio.remove_on_land, self.studio.land_all_parts, self.studio.land_min_area),
         };
         match normalize_frames(&buffers, &opts) {
             Ok(result) => Some(result),

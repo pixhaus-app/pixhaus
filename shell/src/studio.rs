@@ -32,7 +32,7 @@ use tokio_util::sync::CancellationToken;
 use pixhaus_ai::backends::fal::{FAL_I2V, FAL_SEEDANCE};
 use pixhaus_core::canvas::PixelBuffer;
 use pixhaus_core::project::{AnchorDirection, AnimationKind, Rgba, SpriteId};
-use pixhaus_core::transforms::normalize::{ChromaKey, NormalizeResult, SeamMatch, chroma_key, detect_key_color};
+use pixhaus_core::transforms::normalize::{ChromaKey, ComponentMode, NormalizeResult, SeamMatch, chroma_key, detect_key_color};
 
 use crate::ai::{self, FirstFrameJob};
 use crate::anim::{self, VideoFrame};
@@ -673,6 +673,10 @@ pub(crate) struct NormalizeCacheKey {
     pub key_color: (u8, u8, u8),
     /// The chroma key tolerance.
     pub key_tolerance: u8,
+    /// Whether Land keeps every part above the min area (vs the largest only).
+    pub all_parts: bool,
+    /// The min opaque-pixel area a part needs to survive the `All` mode.
+    pub min_area: u32,
 }
 
 /// The studio's whole session state. Lives on [`ShellApp`]; the clip candidates
@@ -728,6 +732,13 @@ pub(crate) struct StudioState {
     /// Whether Land bakes the chroma key into the landed loop. Turns on when a
     /// key is chosen; off leaves removal to the timeline op.
     pub remove_on_land: bool,
+    /// Land's component policy when keying: `false` keeps only the largest
+    /// component (the hero body); `true` keeps every part above
+    /// [`StudioState::land_min_area`]. Only consulted when `remove_on_land`.
+    pub land_all_parts: bool,
+    /// Minimum opaque-pixel area a detached part needs to survive Land's `All`
+    /// mode. Small by default so only true noise is dropped.
+    pub land_min_area: u32,
     /// The sprite this transient view belongs to. When the active sprite
     /// changes, the current view is flushed into `studio_sessions` for this
     /// owner and a fresh view is hydrated from the map for the new owner, so one
@@ -769,6 +780,8 @@ impl Default for StudioState {
             picking_key: false,
             keyed_preview: false,
             remove_on_land: false,
+            land_all_parts: false,
+            land_min_area: DEFAULT_LAND_MIN_AREA,
             owner: None,
         }
     }
@@ -2160,6 +2173,12 @@ impl ShellApp {
                     .on_hover_text("Show the clip with the backdrop removed");
                 ui.checkbox(&mut self.studio.remove_on_land, "Remove background on Land")
                     .on_hover_text("Bake this key into the loop when it lands; off leaves removal to the timeline op");
+                // The component policy only bites when Land keys the backdrop —
+                // without keying there are no detached specks to isolate.
+                if self.studio.remove_on_land {
+                    ui.checkbox(&mut self.studio.land_all_parts, "Keep all parts")
+                        .on_hover_text("On: keep every detached part above the min area (multi-part FX). Off: keep only the largest body, dropping stray specks");
+                }
             });
     }
 
@@ -2985,6 +3004,27 @@ pub(crate) fn land_chroma(remove_on_land: bool, color: Rgba, tolerance: u8) -> O
     remove_on_land.then_some(ChromaKey::new(color, tolerance))
 }
 
+/// The default `All`-mode min area: parts under this many opaque pixels are
+/// dropped as keying noise.
+pub(crate) const DEFAULT_LAND_MIN_AREA: u32 = 6;
+
+/// The component policy Land measures the keyed picks under. `WholeAlpha` when
+/// the backdrop is left for the timeline op (no keying, so no detached specks to
+/// isolate). When keying on Land, `Largest` keeps only the hero body — a stray
+/// keyed speck no longer inflates the bbox — unless `all_parts` opts into
+/// keeping every component at or above `min_area`. A pure seam for testing the
+/// Land wiring.
+#[must_use]
+pub(crate) fn land_component_mode(remove_on_land: bool, all_parts: bool, min_area: u32) -> ComponentMode {
+    if !remove_on_land {
+        ComponentMode::WholeAlpha
+    } else if all_parts {
+        ComponentMode::All { min_area }
+    } else {
+        ComponentMode::Largest
+    }
+}
+
 /// Builds the first-frame generation prompt: the user's text plus a request to
 /// place the sprite on a flat key-colour background. The colour is the studio's
 /// chroma key, so the deferred background-removal step has a known colour to
@@ -3343,6 +3383,18 @@ mod tests {
         assert_eq!(keyed.color, color);
         assert_eq!(keyed.tolerance, 24);
         assert!(land_chroma(false, color, 24).is_none());
+    }
+
+    #[test]
+    fn land_component_mode_isolates_only_when_keying() {
+        // No keying on Land: WholeAlpha, regardless of the part toggles — there
+        // are no detached keying specks to isolate.
+        assert_eq!(land_component_mode(false, false, 6), ComponentMode::WholeAlpha);
+        assert_eq!(land_component_mode(false, true, 6), ComponentMode::WholeAlpha);
+        // Keying on Land, largest-only: drop stray specks, keep the hero body.
+        assert_eq!(land_component_mode(true, false, 6), ComponentMode::Largest);
+        // Keying on Land, all parts: keep every component at or above min_area.
+        assert_eq!(land_component_mode(true, true, 8), ComponentMode::All { min_area: 8 });
     }
 
     /// A session with every field set away from its default, to prove a

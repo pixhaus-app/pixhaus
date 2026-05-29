@@ -154,6 +154,47 @@ pub struct FrameMetrics {
     pub empty: bool,
 }
 
+/// A single 4-connected opaque region found by [`label_components`].
+///
+/// All coordinates are in the source buffer's pixel space. `touches_edge` is
+/// `true` when any member pixel lies on the 1px outer border — the QC signal the
+/// edge-touch stream reuses.
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+pub struct Component {
+    /// Opaque pixel count in this component.
+    pub area: u32,
+    /// Left edge of the component's bounding box.
+    pub bbox_x: u32,
+    /// Top edge of the component's bounding box.
+    pub bbox_y: u32,
+    /// Width of the component's bounding box.
+    pub width: u32,
+    /// Height of the component's bounding box.
+    pub height: u32,
+    /// `true` when any member pixel sits on the buffer's 1px border.
+    pub touches_edge: bool,
+}
+
+/// Which components the bbox measurement keeps, after labeling the opaque mask.
+///
+/// `WholeAlpha` is the legacy behaviour — the bbox spans every opaque pixel.
+/// `Largest` keeps only the biggest component (the hero body), so a detached
+/// speck no longer widens the bbox. `All { min_area }` unions every component at
+/// or above `min_area` opaque pixels, preserving intentional multi-part FX while
+/// dropping noise.
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+pub enum ComponentMode {
+    /// Bbox over the whole opaque mask, no component analysis. The default.
+    WholeAlpha,
+    /// Keep only the largest component; ties break by lowest label.
+    Largest,
+    /// Union the bboxes of every component with at least `min_area` pixels.
+    All {
+        /// Minimum opaque-pixel count for a component to be kept.
+        min_area: u32,
+    },
+}
+
 /// Loop-seam verdict: how close the last frame is to the first.
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -204,11 +245,17 @@ pub struct NormalizeOptions {
     /// Bottom margin in pixels: the foot baseline is placed this many pixels
     /// above the canvas bottom. Keeps feet off the very edge.
     pub bottom_margin: u32,
+    /// How the source bbox is measured: over the whole opaque mask, the largest
+    /// component, or every component above a minimum area. Defaults to
+    /// [`ComponentMode::WholeAlpha`] in [`NormalizeOptions::square`] so existing
+    /// behaviour is unchanged unless a caller opts in.
+    pub component_mode: ComponentMode,
 }
 
 impl NormalizeOptions {
     /// Square-canvas defaults: magenta key, alpha threshold 8, no bottom
-    /// margin, reference height inferred from the tallest frame.
+    /// margin, reference height inferred from the tallest frame, whole-alpha
+    /// bbox measurement (no component analysis).
     #[must_use]
     pub fn square(side: u32) -> Self {
         Self {
@@ -218,6 +265,7 @@ impl NormalizeOptions {
             chroma: Some(ChromaKey::magenta()),
             reference_height: None,
             bottom_margin: 0,
+            component_mode: ComponentMode::WholeAlpha,
         }
     }
 }
@@ -409,9 +457,159 @@ pub fn chroma_key(buf: &PixelBuffer, key: ChromaKey) -> PixelBuffer {
 /// Measures the opaque bounding box of `buf` and the placement landmarks.
 ///
 /// `alpha_threshold` sets the cutoff: alpha strictly greater than the
-/// threshold counts as opaque content.
+/// threshold counts as opaque content. This is [`measure_components`] under
+/// [`ComponentMode::WholeAlpha`].
 #[must_use]
 pub fn measure(buf: &PixelBuffer, alpha_threshold: u8) -> FrameMetrics {
+    measure_components(buf, alpha_threshold, ComponentMode::WholeAlpha)
+}
+
+/// The metrics of a fully transparent frame: no extent, landmarks at the
+/// frame's centre / bottom so downstream maths never divides by zero.
+const fn empty_metrics(w: u32, h: u32) -> FrameMetrics {
+    FrameMetrics {
+        bbox_x: 0,
+        bbox_y: 0,
+        visible_width: 0,
+        visible_height: 0,
+        center_x: w / 2,
+        foot_baseline_y: h.saturating_sub(1),
+        empty: true,
+    }
+}
+
+/// Builds [`FrameMetrics`] from an inclusive opaque bounding box. The single
+/// bbox-to-metrics code path shared by every [`ComponentMode`].
+fn metrics_from_bbox(min_x: u32, min_y: u32, max_x: u32, max_y: u32) -> FrameMetrics {
+    let visible_width = max_x - min_x + 1;
+    let visible_height = max_y - min_y + 1;
+    FrameMetrics {
+        bbox_x: min_x,
+        bbox_y: min_y,
+        visible_width,
+        visible_height,
+        center_x: min_x + visible_width / 2,
+        foot_baseline_y: max_y,
+        empty: false,
+    }
+}
+
+/// Whether `(x, y)` lies on the buffer's 1px outer border.
+fn on_border(x: u32, y: u32, w: u32, h: u32) -> bool {
+    x == 0 || y == 0 || x + 1 >= w || y + 1 >= h
+}
+
+/// Labels the opaque mask (alpha strictly greater than `alpha_threshold`) into
+/// 4-connected components, returning one [`Component`] per region.
+///
+/// The label array is a flat `Vec<u32>` of length `w * h`; the BFS is iterative
+/// over a single reused work stack (no per-component reallocation) and is
+/// bounded by the opaque-pixel count, not the canvas area, so it stays within
+/// stack limits on an 8K canvas. A `Vec<u32>` of length `w * h` is 256 MB at
+/// 8192² — fine for the small studio pick buffers this is called on, but note
+/// the caveat before pointing it at a full canvas.
+#[must_use]
+pub fn label_components(buf: &PixelBuffer, alpha_threshold: u8) -> Vec<Component> {
+    let (w, h) = (buf.width(), buf.height());
+    if w == 0 || h == 0 {
+        return Vec::new();
+    }
+    let wn = w as usize;
+    let opaque = |x: u32, y: u32| buf.pixel(x, y).is_some_and(|px| px.a > alpha_threshold);
+    let idx = |x: u32, y: u32| (y as usize) * wn + (x as usize);
+
+    // 0 = unlabeled, otherwise the 1-based component label of the owning region.
+    // A `u32` counter, bumped per component, avoids ever casting `len()`.
+    let mut labels = vec![0u32; wn * (h as usize)];
+    let mut components: Vec<Component> = Vec::new();
+    let mut stack: Vec<(u32, u32)> = Vec::new();
+    let mut next_label: u32 = 0;
+
+    for sy in 0..h {
+        for sx in 0..w {
+            if !opaque(sx, sy) || labels[idx(sx, sy)] != 0 {
+                continue;
+            }
+            next_label += 1;
+            let label = next_label;
+            let mut area = 0u32;
+            let (mut min_x, mut min_y, mut max_x, mut max_y) = (sx, sy, sx, sy);
+            let mut touches_edge = false;
+
+            labels[idx(sx, sy)] = label;
+            stack.push((sx, sy));
+            while let Some((x, y)) = stack.pop() {
+                area += 1;
+                min_x = min_x.min(x);
+                min_y = min_y.min(y);
+                max_x = max_x.max(x);
+                max_y = max_y.max(y);
+                touches_edge = touches_edge || on_border(x, y, w, h);
+                for (nx, ny) in neighbours_4(x, y, w, h) {
+                    if labels[idx(nx, ny)] == 0 && opaque(nx, ny) {
+                        labels[idx(nx, ny)] = label;
+                        stack.push((nx, ny));
+                    }
+                }
+            }
+            components.push(Component {
+                area,
+                bbox_x: min_x,
+                bbox_y: min_y,
+                width: max_x - min_x + 1,
+                height: max_y - min_y + 1,
+                touches_edge,
+            });
+        }
+    }
+    components
+}
+
+/// Measures the opaque bbox of `buf` under `mode` and derives the placement
+/// landmarks.
+///
+/// `WholeAlpha` spans every opaque pixel (matching [`measure`]). `Largest` keeps
+/// the single biggest component, breaking ties toward the lowest label for
+/// determinism. `All { min_area }` unions the bboxes of every component with at
+/// least `min_area` opaque pixels; when the filter drops everything, the result
+/// is the empty-frame metrics.
+///
+/// `alpha_threshold` sets the cutoff: alpha strictly greater than the threshold
+/// counts as opaque content.
+#[must_use]
+pub fn measure_components(buf: &PixelBuffer, alpha_threshold: u8, mode: ComponentMode) -> FrameMetrics {
+    let (w, h) = (buf.width(), buf.height());
+    match mode {
+        // The legacy fast path: one bbox over the whole opaque mask, no labeling.
+        ComponentMode::WholeAlpha => whole_alpha_metrics(buf, alpha_threshold),
+        ComponentMode::Largest => match largest_component(&label_components(buf, alpha_threshold)) {
+            Some(c) => metrics_from_bbox(c.bbox_x, c.bbox_y, c.bbox_x + c.width - 1, c.bbox_y + c.height - 1),
+            None => empty_metrics(w, h),
+        },
+        ComponentMode::All { min_area } => {
+            let mut min_x = u32::MAX;
+            let mut min_y = u32::MAX;
+            let mut max_x = 0u32;
+            let mut max_y = 0u32;
+            let mut any = false;
+            for c in label_components(buf, alpha_threshold).iter().filter(|c| c.area >= min_area) {
+                any = true;
+                min_x = min_x.min(c.bbox_x);
+                min_y = min_y.min(c.bbox_y);
+                max_x = max_x.max(c.bbox_x + c.width - 1);
+                max_y = max_y.max(c.bbox_y + c.height - 1);
+            }
+            if any {
+                metrics_from_bbox(min_x, min_y, max_x, max_y)
+            } else {
+                empty_metrics(w, h)
+            }
+        }
+    }
+}
+
+/// The whole-opaque-mask bbox metrics — the legacy [`measure`] body.
+fn whole_alpha_metrics(buf: &PixelBuffer, alpha_threshold: u8) -> FrameMetrics {
     let (w, h) = (buf.width(), buf.height());
     let mut min_x = u32::MAX;
     let mut min_y = u32::MAX;
@@ -431,28 +629,14 @@ pub fn measure(buf: &PixelBuffer, alpha_threshold: u8) -> FrameMetrics {
             }
         }
     }
-    if !any {
-        return FrameMetrics {
-            bbox_x: 0,
-            bbox_y: 0,
-            visible_width: 0,
-            visible_height: 0,
-            center_x: w / 2,
-            foot_baseline_y: h.saturating_sub(1),
-            empty: true,
-        };
-    }
-    let visible_width = max_x - min_x + 1;
-    let visible_height = max_y - min_y + 1;
-    FrameMetrics {
-        bbox_x: min_x,
-        bbox_y: min_y,
-        visible_width,
-        visible_height,
-        center_x: min_x + visible_width / 2,
-        foot_baseline_y: max_y,
-        empty: false,
-    }
+    if any { metrics_from_bbox(min_x, min_y, max_x, max_y) } else { empty_metrics(w, h) }
+}
+
+/// The largest-area component, ties broken toward the lowest label (the first in
+/// scan order). `None` for an empty list. Determinism matters: `Iterator::max`
+/// returns the *last* max on ties, so this folds keeping the earlier component.
+fn largest_component(components: &[Component]) -> Option<Component> {
+    components.iter().copied().reduce(|best, c| if c.area > best.area { c } else { best })
 }
 
 /// Auto-detects the likely background colour by sampling the 1px border of
@@ -705,7 +889,11 @@ pub fn normalize_frames(frames: &[PixelBuffer], opts: &NormalizeOptions) -> Resu
             None => f.clone(),
         })
         .collect();
-    let source_metrics: Vec<FrameMetrics> = keyed.iter().map(|f| measure(f, opts.alpha_threshold)).collect();
+    // Pass 1 uses the configured component mode so `reference_height` and the
+    // crop see the speck-cleaned bbox. Pass 2 (the verify measure below) keeps
+    // `WholeAlpha` so the QC report describes the landed pixels, not a filtered
+    // view — the asymmetry is deliberate.
+    let source_metrics: Vec<FrameMetrics> = keyed.iter().map(|f| measure_components(f, opts.alpha_threshold, opts.component_mode)).collect();
 
     let max_visible = source_metrics.iter().map(|m| m.visible_height).max().unwrap_or(0);
     let reference_height = reference_height(&source_metrics, max_visible, opts);
@@ -1035,6 +1223,235 @@ mod tests {
         let m = measure(&buf, 0);
         assert!(m.empty);
         assert_eq!(m.visible_width, 0);
+    }
+
+    mod components {
+        use super::*;
+
+        /// A transparent buffer with the listed opaque pixels set white. Lets a
+        /// test describe a mask by coordinates without a per-pixel function.
+        fn mask(w: u32, h: u32, opaque: &[(u32, u32)]) -> PixelBuffer {
+            let mut buf = PixelBuffer::new(w, h).unwrap();
+            for &(x, y) in opaque {
+                buf.set_pixel(x, y, Rgba::opaque(255, 255, 255));
+            }
+            buf
+        }
+
+        #[test]
+        fn label_components_counts_separate_runs() {
+            // A 2x2 body in the centre (area 4) and a lone speck (area 1).
+            let buf = mask(8, 8, &[(3, 3), (4, 3), (3, 4), (4, 4), (6, 1)]);
+            let comps = label_components(&buf, 0);
+            assert_eq!(comps.len(), 2, "two disconnected components");
+            let mut areas: Vec<u32> = comps.iter().map(|c| c.area).collect();
+            areas.sort_unstable();
+            assert_eq!(areas, vec![1, 4], "areas are 1 (speck) and 4 (body)");
+        }
+
+        #[test]
+        fn label_components_marks_edge_touch() {
+            // One component on the top-left corner (touches the border) and one
+            // fully interior. 8x8 so an interior pixel can avoid the 1px ring.
+            let buf = mask(8, 8, &[(0, 0), (4, 4)]);
+            let comps = label_components(&buf, 0);
+            assert_eq!(comps.len(), 2);
+            let corner = comps.iter().find(|c| c.bbox_x == 0 && c.bbox_y == 0).expect("corner component");
+            let interior = comps.iter().find(|c| c.bbox_x == 4 && c.bbox_y == 4).expect("interior component");
+            assert!(corner.touches_edge, "the corner pixel sits on the border");
+            assert!(!interior.touches_edge, "the (4,4) pixel is off the border");
+        }
+
+        #[test]
+        fn label_components_diagonal_is_two_components() {
+            // Two diagonally-adjacent pixels are NOT 4-connected, so they label
+            // as two components — the 4-connectivity guard.
+            let buf = mask(4, 4, &[(1, 1), (2, 2)]);
+            let comps = label_components(&buf, 0);
+            assert_eq!(comps.len(), 2, "diagonal neighbours are not 4-connected");
+            assert!(comps.iter().all(|c| c.area == 1), "each diagonal pixel is its own component");
+        }
+
+        #[test]
+        fn measure_largest_ignores_speck() {
+            // A 3x3 body and a 1px speck above-left of it. Largest must measure
+            // the body alone; WholeAlpha must span both — so they differ.
+            let body = [(4, 4), (5, 4), (6, 4), (4, 5), (5, 5), (6, 5), (4, 6), (5, 6), (6, 6)];
+            let mut opaque = body.to_vec();
+            opaque.push((1, 1)); // detached speck
+            let buf = mask(10, 10, &opaque);
+
+            let largest = measure_components(&buf, 0, ComponentMode::Largest);
+            let whole = measure_components(&buf, 0, ComponentMode::WholeAlpha);
+
+            assert_eq!((largest.bbox_x, largest.bbox_y), (4, 4), "Largest bbox starts at the body");
+            assert_eq!((largest.visible_width, largest.visible_height), (3, 3), "Largest bbox is the body only");
+            assert_eq!((whole.bbox_x, whole.bbox_y), (1, 1), "WholeAlpha bbox includes the speck");
+            assert_ne!(whole, largest, "the speck makes WholeAlpha differ from Largest");
+        }
+
+        #[test]
+        fn measure_largest_breaks_ties_by_lowest_label() {
+            // Two equal-area components: one earlier in scan order (lower label,
+            // top-left) and one later (bottom-right). The tie must resolve to the
+            // lower-label one.
+            let buf = mask(8, 8, &[(1, 1), (2, 1), (5, 5), (6, 5)]);
+            let m = measure_components(&buf, 0, ComponentMode::Largest);
+            assert_eq!((m.bbox_x, m.bbox_y), (1, 1), "tie resolves to the lowest-label (first) component");
+        }
+
+        #[test]
+        fn measure_all_keeps_above_min_area() {
+            // A 4px body and a 1px speck. `All { min_area: 2 }` keeps the body,
+            // drops the speck — so it matches the body bbox, not WholeAlpha.
+            let buf = mask(8, 8, &[(2, 2), (3, 2), (2, 3), (3, 3), (6, 6)]);
+            let all = measure_components(&buf, 0, ComponentMode::All { min_area: 2 });
+            assert_eq!((all.bbox_x, all.bbox_y), (2, 2), "the speck is filtered out");
+            assert_eq!((all.visible_width, all.visible_height), (2, 2), "bbox is the 2x2 body");
+        }
+
+        #[test]
+        fn measure_all_unions_multiple_kept_components() {
+            // Two bodies, both above min_area, on opposite corners: All unions
+            // their bboxes into one spanning rect.
+            let buf = mask(8, 8, &[(1, 1), (2, 1), (1, 2), (2, 2), (5, 5), (6, 5), (5, 6), (6, 6)]);
+            let all = measure_components(&buf, 0, ComponentMode::All { min_area: 2 });
+            assert_eq!((all.bbox_x, all.bbox_y), (1, 1), "union starts at the top-left body");
+            assert_eq!((all.visible_width, all.visible_height), (6, 6), "union spans x 1..=6, y 1..=6");
+        }
+
+        #[test]
+        fn measure_all_empty_when_all_filtered() {
+            // Every component is below min_area, so the filter drops everything
+            // and the result is empty.
+            let buf = mask(8, 8, &[(1, 1), (5, 5)]);
+            let all = measure_components(&buf, 0, ComponentMode::All { min_area: 4 });
+            assert!(all.empty, "all components filtered out leaves an empty frame");
+            assert_eq!(all.visible_width, 0);
+        }
+
+        #[test]
+        fn measure_whole_alpha_matches_legacy() {
+            // The refactor must be behavior-preserving: measure_components under
+            // WholeAlpha is byte-for-byte the old `measure` over varied content.
+            let mut buf = PixelBuffer::new(12, 9).unwrap();
+            buf.set_pixel(2, 1, Rgba::opaque(255, 0, 0));
+            buf.set_pixel(9, 7, Rgba::opaque(0, 255, 0));
+            buf.set_pixel(5, 4, Rgba::opaque(0, 0, 255));
+            assert_eq!(measure_components(&buf, 0, ComponentMode::WholeAlpha), measure(&buf, 0), "WholeAlpha == legacy measure");
+
+            // Empty frame parity too.
+            let empty = PixelBuffer::new(6, 4).unwrap();
+            assert_eq!(measure_components(&empty, 0, ComponentMode::WholeAlpha), measure(&empty, 0), "empty WholeAlpha == legacy measure");
+        }
+
+        #[test]
+        fn normalize_largest_keeps_body_height() {
+            // The headline regression. Two frames, identical bodies. The second
+            // carries a top speck that, under WholeAlpha, inflates the bbox and
+            // shrinks the body under the shared-height scale. Largest must make
+            // the speck frame's reference_height and per-frame scale match the
+            // clean baseline.
+            fn frame(with_speck: bool) -> PixelBuffer {
+                let mut f = solid(24, 24, Rgba::opaque(255, 0, 255));
+                // A 6x8 body low in the cell.
+                for y in 12..20 {
+                    for x in 9..15 {
+                        f.set_pixel(x, y, Rgba::opaque(10, 20, 30));
+                    }
+                }
+                if with_speck {
+                    // A 1px dissimilar speck near the top — detached from the body.
+                    f.set_pixel(2, 2, Rgba::opaque(10, 20, 30));
+                }
+                f
+            }
+
+            let clean = normalize_frames(
+                &[frame(false), frame(false)],
+                &NormalizeOptions {
+                    component_mode: ComponentMode::Largest,
+                    ..NormalizeOptions::square(24)
+                },
+            )
+            .unwrap();
+
+            let with_speck = normalize_frames(
+                &[frame(false), frame(true)],
+                &NormalizeOptions {
+                    component_mode: ComponentMode::Largest,
+                    ..NormalizeOptions::square(24)
+                },
+            )
+            .unwrap();
+
+            assert_eq!(
+                with_speck.report.reference_height, clean.report.reference_height,
+                "Largest keeps the reference height; the speck does not inflate it"
+            );
+            // The landed body height must match the clean baseline frame.
+            assert_eq!(
+                with_speck.metrics[1].visible_height, clean.metrics[1].visible_height,
+                "the speck frame's body lands at the same height as the clean baseline"
+            );
+
+            // Prove the speck WOULD have shrunk the body under WholeAlpha, so the
+            // assertion above is load-bearing.
+            let whole = normalize_frames(
+                &[frame(false), frame(true)],
+                &NormalizeOptions {
+                    component_mode: ComponentMode::WholeAlpha,
+                    ..NormalizeOptions::square(24)
+                },
+            )
+            .unwrap();
+            assert!(
+                whole.report.reference_height > with_speck.report.reference_height,
+                "under WholeAlpha the speck inflates the reference height — Largest fixes it"
+            );
+        }
+
+        proptest! {
+            /// The sum of component areas equals the total opaque-pixel count:
+            /// every opaque pixel belongs to exactly one component.
+            #[test]
+            fn component_areas_sum_to_opaque_count(
+                seed in 0u32..=4096,
+            ) {
+                let buf = sheet_from_fn(11, 9, |x, y| {
+                    // A pseudo-random transparent/opaque scatter.
+                    let h = (x.wrapping_mul(7) ^ y.wrapping_mul(13) ^ seed) % 3;
+                    if h == 0 {
+                        Rgba::opaque(200, 50, 90)
+                    } else {
+                        Rgba::new(0, 0, 0, 0)
+                    }
+                });
+                let total: u32 = label_components(&buf, 0).iter().map(|c| c.area).sum();
+                let opaque = u32::try_from(opaque_count_at(&buf, 0)).unwrap();
+                prop_assert_eq!(total, opaque, "labeled areas must cover every opaque pixel exactly once");
+            }
+
+            /// The Largest bbox area is never larger than the WholeAlpha bbox
+            /// area: keeping one component can only shrink the spanning rect.
+            #[test]
+            fn largest_bbox_area_le_whole_alpha(
+                seed in 0u32..=4096,
+            ) {
+                let buf = sheet_from_fn(11, 9, |x, y| {
+                    let h = (x.wrapping_mul(5) ^ y.wrapping_mul(11) ^ seed) % 4;
+                    if h == 0 {
+                        Rgba::opaque(10, 20, 30)
+                    } else {
+                        Rgba::new(0, 0, 0, 0)
+                    }
+                });
+                let largest = measure_components(&buf, 0, ComponentMode::Largest);
+                let whole = measure_components(&buf, 0, ComponentMode::WholeAlpha);
+                let area = |m: &FrameMetrics| u64::from(m.visible_width) * u64::from(m.visible_height);
+                prop_assert!(area(&largest) <= area(&whole), "largest bbox {} > whole bbox {}", area(&largest), area(&whole));
+            }
+        }
     }
 
     #[test]

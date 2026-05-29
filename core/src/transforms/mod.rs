@@ -47,7 +47,8 @@ pub use error::{Error, Result};
 pub use flip::{flip_horizontal, flip_vertical};
 pub use inbetween::{DEFAULT_VARIANCE_RANGE, InbetweenError, interpolate_frames, tween, tween_with_variance};
 pub use normalize::{
-    ChromaKey, FrameMetrics, NormalizeOptions, NormalizeReport, NormalizeResult, SeamMatch, chroma_key, chroma_key_two_pass, measure, normalize_frames, repad,
+    ChromaKey, Component, ComponentMode, FrameMetrics, NormalizeOptions, NormalizeReport, NormalizeResult, SeamMatch, chroma_key, chroma_key_two_pass, label_components, measure,
+    measure_components, normalize_frames, repad,
 };
 pub use perspective::perspective;
 pub use resize::{CanvasAnchor, crop, resize_canvas};
