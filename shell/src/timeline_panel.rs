@@ -202,6 +202,22 @@ impl ShellApp {
             if ui.button(format!("{} Unlink", icons::UNLINK)).on_hover_text("Break the link (copy)").clicked() {
                 self.unlink_cel();
             }
+            ui.separator();
+            // Procedural inbetweening: insert N interpolated cels between two
+            // source frames on the active layer. Enabled only when the two
+            // frames both carry a matching raster cel.
+            let can_tween = self.can_tween();
+            ui.add_enabled_ui(can_tween, |ui| {
+                ui.add(egui::DragValue::new(&mut self.editor.tween_count).range(1..=24).prefix("n "))
+                    .on_hover_text("Inbetweens to insert");
+                if ui
+                    .button(format!("{} Tween", icons::FILM))
+                    .on_hover_text("Insert procedural inbetweens between the two frames")
+                    .clicked()
+                {
+                    self.tween_frames();
+                }
+            });
         });
 
         ui.horizontal_wrapped(|ui| {
@@ -1083,6 +1099,97 @@ impl ShellApp {
         self.refresh_canvas(false);
     }
 
+    /// The two source frames the Tween action interpolates between, on the
+    /// active layer. Prefers the lowest and highest of a two-or-more frame
+    /// selection; with fewer than two selected, falls back to the active frame
+    /// and the one after it. Returns `None` when the pair would run off the end.
+    fn tween_source_frames(&self) -> Option<(u32, u32)> {
+        let count = self.doc.frame_count() as u32;
+        if count < 2 {
+            return None;
+        }
+        let sel = &self.editor.selected_frames;
+        if sel.len() >= 2 {
+            let lo = *sel.iter().next()?;
+            let hi = *sel.iter().next_back()?;
+            (lo != hi).then_some((lo, hi))
+        } else {
+            let a = self.doc.active_frame.get();
+            (a + 1 < count).then_some((a, a + 1))
+        }
+    }
+
+    /// Whether the Tween action can run: two distinct frames are addressable on
+    /// the active layer and both carry a raster cel of matching size.
+    fn can_tween(&self) -> bool {
+        self.tween_plan().is_some()
+    }
+
+    /// Builds the data the Tween action needs, or `None` when the inputs are not
+    /// tweenable. Resolves the two source frames, both raster cels on the active
+    /// layer, and their pixel buffers; returns the endpoints plus the shared
+    /// placement to stamp onto the inserted cels. Read-only over the document so
+    /// the resolution stays separate from the mutation in [`Self::tween_frames`].
+    fn tween_plan(&self) -> Option<TweenPlan> {
+        let layer = self.doc.active_layer?;
+        let (lo, hi) = self.tween_source_frames()?;
+        // `hi` resolves the endpoint cel below; insertion lands right after `lo`.
+        let sprite = self.doc.active_sprite()?;
+        let cel_a = sprite.cel(layer, FrameIndex::new(lo))?;
+        let cel_b = sprite.cel(layer, FrameIndex::new(hi))?;
+        let (CelData::Raster { buffer: id_a, size }, CelData::Raster { buffer: id_b, .. }) = (&cel_a.data, &cel_b.data) else {
+            return None;
+        };
+        let buf_a = self.doc.pixel_buffers.get(id_a)?.clone();
+        let buf_b = self.doc.pixel_buffers.get(id_b)?.clone();
+        // `tween` rejects a size mismatch, so a differing pair drops out here.
+        if buf_a.width() != buf_b.width() || buf_a.height() != buf_b.height() {
+            return None;
+        }
+        Some(TweenPlan {
+            layer,
+            lo,
+            buf_a,
+            buf_b,
+            size: *size,
+            position: cel_a.position,
+            opacity: cel_a.opacity,
+        })
+    }
+
+    /// Inserts `editor.tween_count` procedural inbetweens between the two source
+    /// frames on the active layer, as one undoable edit. The generated cels are
+    /// independent raster buffers; the endpoints are untouched. CPU-bound work
+    /// (the variance-rejected averaging) is bounded by the cel region, not the
+    /// canvas, and stays small here because cels are sprite-sized; if a future
+    /// caller tweens large regions, move the `tween` call under `spawn_blocking`.
+    #[allow(clippy::cast_possible_truncation)]
+    fn tween_frames(&mut self) {
+        let Some(plan) = self.tween_plan() else {
+            return;
+        };
+        let count = self.editor.tween_count.max(1);
+        let Ok(frames) = pixhaus_core::transforms::tween(&plan.buf_a, &plan.buf_b, count) else {
+            return;
+        };
+        let insert_at = plan.lo + 1;
+        let (added, cels) = build_tween_cels(frames, plan.layer, insert_at, plan.position, plan.opacity, plan.size, || PixelBufferId::new(self.doc.alloc_id()));
+        let n = cels.len() as u32;
+        if n == 0 {
+            return;
+        }
+        push_sprite_edit_with_buffers(&mut self.editor, &mut self.doc, "Tween frames", added, |sprite| {
+            shift_frames(sprite, insert_at, n as i32);
+            for offset in 0..n {
+                sprite.frames.insert((insert_at + offset) as usize, Frame::default());
+            }
+            sprite.cels.extend(cels.iter().cloned());
+        });
+        self.editor.clear_frame_selection();
+        self.doc.active_frame = FrameIndex::new(insert_at);
+        self.refresh_canvas(false);
+    }
+
     /// Tags the selected frames (or just the active frame when nothing is
     /// explicitly selected) with the draft name, falling back to a generated
     /// `Tag N` when the name field is empty. The range spans the min..=max of
@@ -1231,6 +1338,60 @@ impl ShellApp {
 /// the byte-based clipboard.
 fn paste_allowed(clip_canvas: pixhaus_core::project::Size, target: pixhaus_core::project::Size) -> bool {
     clip_canvas == target
+}
+
+/// Everything the Tween action resolves up front, read-only over the document:
+/// the active layer, the two source frame indices, both endpoint buffers, and
+/// the shared placement to copy onto the inserted cels.
+struct TweenPlan {
+    /// Active layer the inbetweens are inserted onto.
+    layer: LayerId,
+    /// Lower source frame index (the inbetweens start at `lo + 1`).
+    lo: u32,
+    /// Pixel buffer of the `lo` endpoint cel.
+    buf_a: PixelBuffer,
+    /// Pixel buffer of the `hi` endpoint cel.
+    buf_b: PixelBuffer,
+    /// Cel content size shared by both endpoints (and the inbetweens).
+    size: pixhaus_core::project::Size,
+    /// Placement copied from the `lo` endpoint cel onto each inbetween.
+    position: pixhaus_core::project::IVec2,
+    /// Per-cel opacity copied from the `lo` endpoint cel.
+    opacity: u8,
+}
+
+/// Turns generated inbetween buffers into the fresh `(id, buffer)` pairs and
+/// retargeted raster cels the Tween insert needs, allocating one buffer id per
+/// frame via `alloc_id`. Pure over its inputs so the buffer ownership and cel
+/// retargeting are unit-testable without a `ShellApp`. The `added` pairs are
+/// handed to `push_sprite_edit_with_buffers` so undo removes them; the cels land
+/// at `insert_at..insert_at + n`, all carrying `position`, `opacity`, and `size`
+/// from the lower endpoint cel.
+#[allow(clippy::cast_possible_truncation)]
+fn build_tween_cels(
+    frames: Vec<PixelBuffer>,
+    layer: LayerId,
+    insert_at: u32,
+    position: pixhaus_core::project::IVec2,
+    opacity: u8,
+    size: pixhaus_core::project::Size,
+    mut alloc_id: impl FnMut() -> PixelBufferId,
+) -> (Vec<(PixelBufferId, PixelBuffer)>, Vec<Cel>) {
+    let mut added: Vec<(PixelBufferId, PixelBuffer)> = Vec::with_capacity(frames.len());
+    let mut cels: Vec<Cel> = Vec::with_capacity(frames.len());
+    for (offset, buf) in frames.into_iter().enumerate() {
+        let new_id = alloc_id();
+        cels.push(Cel {
+            layer_id: layer,
+            frame_index: FrameIndex::new(insert_at + offset as u32),
+            position,
+            opacity,
+            data: CelData::Raster { buffer: new_id, size },
+            user_data: pixhaus_core::project::UserData::default(),
+        });
+        added.push((new_id, buf));
+    }
+    (added, cels)
 }
 
 /// The frames, cels, and fresh buffers a paste inserts, built off the document
@@ -2726,6 +2887,124 @@ mod tests {
             assert_eq!(doc.frame_count(), baseline_frames + 1, "redo re-pastes the frame");
             assert_eq!(doc.pixel_buffers.len(), baseline_buffers + 1);
             assert!(doc.pixel_buffers.contains_key(&pasted_id), "redo restores the pasted buffer");
+        }
+    }
+
+    // procedural inbetweening: insert generated cels between two frames ─────────
+    mod tween {
+        use pixhaus_core::canvas::PixelBuffer;
+        use pixhaus_core::project::{Cel, CelData, Frame, FrameIndex, IVec2, PixelBufferId, Rgba, Size};
+
+        use crate::commands::push_sprite_edit_with_buffers;
+        use crate::document::DocumentStore;
+        use crate::editor::EditorState;
+        use crate::timeline_panel::{build_tween_cels, shift_frames};
+
+        /// Seeds a 2-frame, single-layer sprite whose frame 0 and frame 1 carry
+        /// raster cels filled with `color_a` and `color_b`. Returns the layer id
+        /// and the two endpoint buffer ids.
+        fn two_frame_sprite(doc: &mut DocumentStore, color_a: Rgba, color_b: Rgba) -> pixhaus_core::project::LayerId {
+            doc.create_sprite("hero", Size::new(4, 4));
+            let layer = doc.active_sprite().expect("sprite").layers[0].id;
+            // Endpoint buffers.
+            let id_a = PixelBufferId::new(doc.alloc_id());
+            let id_b = PixelBufferId::new(doc.alloc_id());
+            doc.pixel_buffers.insert(id_a, PixelBuffer::filled(4, 4, color_a).expect("buf a"));
+            doc.pixel_buffers.insert(id_b, PixelBuffer::filled(4, 4, color_b).expect("buf b"));
+            let sprite = doc.active_sprite_mut().expect("sprite");
+            // Frame 0 already exists from create_sprite; add a second frame, then
+            // place a raster cel on each.
+            sprite.frames.push(Frame::default());
+            sprite.cels.clear();
+            sprite.cels.push(Cel::raster(layer, FrameIndex::new(0), id_a, Size::new(4, 4)));
+            sprite.cels.push(Cel::raster(layer, FrameIndex::new(1), id_b, Size::new(4, 4)));
+            layer
+        }
+
+        #[test]
+        fn tween_inserts_n_cels_between_the_endpoints_and_undo_restores_baseline() {
+            let mut doc = DocumentStore::new();
+            let layer = two_frame_sprite(&mut doc, Rgba::opaque(0, 0, 0), Rgba::opaque(255, 255, 255));
+            let baseline_frames = doc.frame_count();
+            let baseline_buffers = doc.pixel_buffers.len();
+
+            // Generate 3 inbetweens between the two endpoint buffers.
+            let id_a = match doc.active_sprite().expect("s").cel(layer, FrameIndex::new(0)).expect("cel a").data {
+                CelData::Raster { buffer, .. } => buffer,
+                ref o => panic!("raster expected, got {o:?}"),
+            };
+            let id_b = match doc.active_sprite().expect("s").cel(layer, FrameIndex::new(1)).expect("cel b").data {
+                CelData::Raster { buffer, .. } => buffer,
+                ref o => panic!("raster expected, got {o:?}"),
+            };
+            let a = doc.pixel_buffers.get(&id_a).expect("buf a").clone();
+            let b = doc.pixel_buffers.get(&id_b).expect("buf b").clone();
+            let frames = pixhaus_core::transforms::tween(&a, &b, 3).expect("tween");
+            assert_eq!(frames.len(), 3);
+            // The middle inbetween of two uniform solids is the arithmetic mean.
+            assert_eq!(frames[1].pixel(0, 0), Some(Rgba::opaque(128, 128, 128)));
+
+            let insert_at = 1u32;
+            let (added, cels) = build_tween_cels(frames, layer, insert_at, IVec2::zero(), 255, Size::new(4, 4), || PixelBufferId::new(doc.alloc_id()));
+            let new_ids: Vec<PixelBufferId> = added.iter().map(|(id, _)| *id).collect();
+            let n = cels.len() as u32;
+
+            let mut editor = EditorState::default();
+            push_sprite_edit_with_buffers(&mut editor, &mut doc, "Tween frames", added, |sprite| {
+                shift_frames(sprite, insert_at, n as i32);
+                for offset in 0..n {
+                    sprite.frames.insert((insert_at + offset) as usize, Frame::default());
+                }
+                sprite.cels.extend(cels.iter().cloned());
+            });
+
+            assert_eq!(doc.frame_count(), baseline_frames + 3, "three inbetween frames inserted");
+            assert_eq!(doc.pixel_buffers.len(), baseline_buffers + 3, "three buffers added");
+            // The original endpoint cel on the old frame 1 has shifted to frame 4.
+            let shifted = doc.active_sprite().expect("s").cel(layer, FrameIndex::new(4)).expect("endpoint shifted");
+            match shifted.data {
+                CelData::Raster { buffer, .. } => assert_eq!(buffer, id_b, "the high endpoint kept its buffer, just shifted"),
+                ref o => panic!("raster expected, got {o:?}"),
+            }
+
+            editor.history.undo(&mut doc).expect("undo");
+            assert_eq!(doc.frame_count(), baseline_frames, "one undo removes every inserted frame");
+            assert_eq!(doc.pixel_buffers.len(), baseline_buffers, "one undo removes every inserted buffer, no leak");
+            for id in &new_ids {
+                assert!(!doc.pixel_buffers.contains_key(id), "inbetween buffer {id:?} gone after undo");
+            }
+        }
+
+        #[test]
+        fn build_tween_cels_retargets_to_consecutive_frames() {
+            let layer = pixhaus_core::project::LayerId::new(1);
+            let frames = vec![
+                PixelBuffer::filled(2, 2, Rgba::opaque(10, 10, 10)).expect("f0"),
+                PixelBuffer::filled(2, 2, Rgba::opaque(20, 20, 20)).expect("f1"),
+            ];
+            let mut next = 100u32;
+            let (added, cels) = build_tween_cels(frames, layer, 3, IVec2::new(5, 6), 200, Size::new(2, 2), || {
+                let id = PixelBufferId::new(next);
+                next += 1;
+                id
+            });
+            assert_eq!(added.len(), 2);
+            assert_eq!(cels.len(), 2);
+            assert_eq!(cels[0].frame_index, FrameIndex::new(3));
+            assert_eq!(cels[1].frame_index, FrameIndex::new(4));
+            // Placement and opacity carry from the endpoint onto every inbetween.
+            assert_eq!(cels[0].position, IVec2::new(5, 6));
+            assert_eq!(cels[0].opacity, 200);
+            // Each cel points at its own fresh buffer id, in allocation order.
+            match cels[0].data {
+                CelData::Raster { buffer, size } => {
+                    assert_eq!(buffer, PixelBufferId::new(100));
+                    assert_eq!(size, Size::new(2, 2));
+                }
+                ref o => panic!("raster expected, got {o:?}"),
+            }
+            assert_eq!(added[0].0, PixelBufferId::new(100));
+            assert_eq!(added[1].0, PixelBufferId::new(101));
         }
     }
 }

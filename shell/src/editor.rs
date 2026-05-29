@@ -691,6 +691,11 @@ pub struct EditorState {
     /// authoritative timing lives on each [`Frame`], so this only seeds and
     /// reflects the field, it is not serialized or undoable.
     pub global_fps: u32,
+    /// Timeline: how many procedural inbetweens the Tween action inserts
+    /// between the two selected frames on the active layer. Default `1`. View
+    /// state — the generated cels are the durable artifact, this only seeds the
+    /// count picker and is not serialized or undoable.
+    pub tween_count: usize,
     /// Timeline: the tag the playback/rename controls target, as an index into
     /// `Sprite::frame_tags`, or `None` when no tag is selected. Set by clicking
     /// a span on the tag bar. View state, never serialized; the index is
@@ -787,6 +792,7 @@ impl Default for EditorState {
             frame_clipboard: None,
             loop_playback: true,
             global_fps: 12,
+            tween_count: 1,
             selected_tag: None,
             tag_rename: None,
             tag_drag: None,

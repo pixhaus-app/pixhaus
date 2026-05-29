@@ -15,7 +15,11 @@
 //! source dimensions and sampling bilinearly. Morphological antialias
 //! ([`antialias::morphological_antialias`] with [`antialias::MlaaConfig`])
 //! softens stair-stepped edges in two passes (rows then columns), keeping
-//! source dimensions; `softness == 0` is identity.
+//! source dimensions; `softness == 0` is identity. Procedural inbetweening
+//! ([`inbetween::tween`], built on [`inbetween::interpolate_frames`])
+//! generates evenly spaced intermediate frames between two cels via
+//! variance-rejected 3×3 weighted averaging; the endpoints are reproduced
+//! byte-for-byte and the byte-level core is infallible.
 //!
 //! Selection-awareness boundary: transforms here operate on whole buffers.
 //! The shell lifts a selection into a canvas-sized buffer, transforms that,
@@ -24,6 +28,7 @@
 pub mod antialias;
 pub mod error;
 pub mod flip;
+pub mod inbetween;
 pub mod normalize;
 pub mod perspective;
 pub mod resize;
@@ -34,6 +39,7 @@ pub mod skew;
 pub use antialias::{MlaaConfig, morphological_antialias};
 pub use error::{Error, Result};
 pub use flip::{flip_horizontal, flip_vertical};
+pub use inbetween::{DEFAULT_VARIANCE_RANGE, InbetweenError, interpolate_frames, tween, tween_with_variance};
 pub use normalize::{ChromaKey, FrameMetrics, NormalizeOptions, NormalizeReport, NormalizeResult, SeamMatch, chroma_key, measure, normalize_frames, repad};
 pub use perspective::perspective;
 pub use resize::{CanvasAnchor, crop, resize_canvas};
