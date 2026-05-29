@@ -186,5 +186,3 @@ alongside the rest of the session (`sync_studio_owner`).
 3. **Feature B, shader** — the instanced particle callback + WGSL, then the
    partial/final texture feed and the snap.
 4. Settings toggle + tests.
-
-Each ships on its own `feat/` branch and PR.
