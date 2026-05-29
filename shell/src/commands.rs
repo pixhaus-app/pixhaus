@@ -17,17 +17,23 @@ use std::collections::HashSet;
 use pixhaus_core::canvas::PixelBuffer;
 use pixhaus_core::project::library::ai::ProjectAi;
 use pixhaus_core::project::{CelData, Entity, EntityId, FrameRange, LoopDirection, PixelBufferId, Size, Sprite, SpriteId};
-use pixhaus_core::transforms::{self, CanvasAnchor};
+use pixhaus_core::transforms::{self, CanvasAnchor, MlaaConfig, RotationAlgorithm};
 use pixhaus_core::undo::{Command, CommandError, CommandResult};
 
 use crate::document::DocumentStore;
 use crate::editor::EditorState;
 
-/// A whole-canvas operation on the active sprite: resize, resample, flip, or
-/// 90°-multiple rotation. Every variant rewrites every raster cel buffer and,
+/// A whole-canvas operation on the active sprite: resize, resample, flip,
+/// 90°-multiple or arbitrary-angle rotation, skew, perspective warp, or
+/// morphological antialias. Every variant rewrites every raster cel buffer and,
 /// where dimensions change, the sprite's canvas [`Size`]. Carries only scalars,
 /// so it is cheap to copy into a `spawn_blocking` closure for large canvases.
-#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+///
+/// Does not derive `Eq`: the arbitrary-rotation, skew, and perspective variants
+/// carry `f32` fields. The no-op guard that once relied on `Eq` compares the
+/// resulting [`Sprite`]/[`PixelBuffer`], not the op, so dropping it costs
+/// nothing.
+#[derive(Copy, Clone, Debug, PartialEq)]
 pub enum CanvasOp {
     /// Change the canvas dimensions without scaling pixels: pad transparent on
     /// grow, crop on shrink, positioned by `anchor`.
@@ -56,6 +62,37 @@ pub enum CanvasOp {
     Rotate90Ccw,
     /// Rotate 180°.
     Rotate180,
+    /// Rotate by an arbitrary angle, keeping the source dimensions. The
+    /// algorithm chooses the resampling trade-off (hard-edged nearest, smooth
+    /// bilinear, or diagonal-preserving `RotSprite`).
+    RotateArbitrary {
+        /// Clockwise angle in degrees.
+        degrees: f32,
+        /// Resampling algorithm.
+        algorithm: RotationAlgorithm,
+    },
+    /// Shear the canvas, keeping the source dimensions. `fx` shifts each row
+    /// right proportional to its `y`; `fy` shifts each column down proportional
+    /// to its `x`. A zero factor leaves that axis unchanged.
+    Skew {
+        /// Horizontal shear factor.
+        fx: f32,
+        /// Vertical shear factor.
+        fy: f32,
+    },
+    /// Projective warp of the four source corners `[TL, TR, BR, BL]` onto
+    /// `corners`, keeping the source dimensions and sampling bilinearly.
+    Perspective {
+        /// Destination corners, in the order top-left, top-right, bottom-right,
+        /// bottom-left.
+        corners: [(f32, f32); 4],
+    },
+    /// Morphological antialias (MLAA): soften stair-stepped edges in two passes
+    /// (rows then columns), keeping the source dimensions.
+    Mlaa {
+        /// Threshold and softness for the edge classifier.
+        config: MlaaConfig,
+    },
 }
 
 impl CanvasOp {
@@ -64,7 +101,15 @@ impl CanvasOp {
     pub fn result_size(self, current: Size) -> Size {
         match self {
             Self::Resize { width, height, .. } | Self::Resample { width, height } => Size::new(width, height),
-            Self::FlipHorizontal | Self::FlipVertical | Self::Rotate180 => current,
+            // Arbitrary rotation, skew, perspective, and MLAA all keep the
+            // source dimensions in the core algorithms.
+            Self::FlipHorizontal
+            | Self::FlipVertical
+            | Self::Rotate180
+            | Self::RotateArbitrary { .. }
+            | Self::Skew { .. }
+            | Self::Perspective { .. }
+            | Self::Mlaa { .. } => current,
             Self::Rotate90Cw | Self::Rotate90Ccw => Size::new(current.height, current.width),
         }
     }
@@ -80,6 +125,10 @@ impl CanvasOp {
             Self::Rotate90Cw => "Rotate 90° CW",
             Self::Rotate90Ccw => "Rotate 90° CCW",
             Self::Rotate180 => "Rotate 180°",
+            Self::RotateArbitrary { .. } => "Rotate",
+            Self::Skew { .. } => "Skew",
+            Self::Perspective { .. } => "Perspective",
+            Self::Mlaa { .. } => "Antialias",
         }
     }
 
@@ -98,6 +147,13 @@ impl CanvasOp {
             Self::Rotate90Cw => transforms::rotate_90_cw(buf),
             Self::Rotate90Ccw => transforms::rotate_90_ccw(buf),
             Self::Rotate180 => transforms::rotate_180(buf),
+            Self::RotateArbitrary { degrees, algorithm } => transforms::rotate(buf, degrees, algorithm),
+            // A combined skew is one undo step: shear X first, then Y on the
+            // result, so two non-zero factors stay a single op. A zero factor
+            // is an identity pass, harmless to chain.
+            Self::Skew { fx, fy } => transforms::skew_y(&transforms::skew_x(buf, fx)?, fy),
+            Self::Perspective { corners } => transforms::perspective(buf, &corners),
+            Self::Mlaa { config } => transforms::morphological_antialias(buf, &config),
         }
     }
 }
@@ -130,6 +186,51 @@ pub struct CanvasEdit {
 }
 
 impl Command<DocumentStore> for CanvasEdit {
+    fn label(&self) -> &str {
+        &self.label
+    }
+
+    fn apply(&mut self, doc: &mut DocumentStore) -> CommandResult {
+        replace_sprite(doc, self.sprite_id, self.after_sprite.clone())?;
+        for swap in &self.buffers {
+            doc.pixel_buffers.insert(swap.id, swap.after.clone());
+        }
+        Ok(())
+    }
+
+    fn undo(&mut self, doc: &mut DocumentStore) -> CommandResult {
+        replace_sprite(doc, self.sprite_id, self.before_sprite.clone())?;
+        for swap in &self.buffers {
+            doc.pixel_buffers.insert(swap.id, swap.before.clone());
+        }
+        Ok(())
+    }
+
+    fn estimated_size_bytes(&self) -> usize {
+        self.buffers.iter().map(|s| s.before.as_bytes().len() + s.after.as_bytes().len()).sum()
+    }
+}
+
+/// A reversible crop-to-selection: shrinks the canvas to the selection bounds
+/// and copies each raster cel's sub-rectangle into a smaller buffer, as one undo
+/// unit. Structurally identical to [`CanvasEdit`] — the only difference is how it
+/// is built (the new size and buffers come from a crop rect, not a whole-canvas
+/// op), so the apply/undo bodies match. Kept as its own type so the history label
+/// and intent stay distinct from a generic canvas transform.
+pub struct CropEdit {
+    /// Sprite being cropped.
+    pub sprite_id: SpriteId,
+    /// Sprite value before the crop.
+    pub before_sprite: Sprite,
+    /// Sprite value after the crop (new canvas and per-cel sizes).
+    pub after_sprite: Sprite,
+    /// Per-buffer before/after pairs, the after being the cropped sub-rect.
+    pub buffers: Vec<CanvasBufferSwap>,
+    /// History label.
+    pub label: String,
+}
+
+impl Command<DocumentStore> for CropEdit {
     fn label(&self) -> &str {
         &self.label
     }
@@ -749,6 +850,129 @@ mod tests {
             Size::new(4, 4)
         );
         assert_eq!(CanvasOp::Resample { width: 32, height: 32 }.result_size(s), Size::new(32, 32));
+        // The new size-preserving ops keep the source dimensions.
+        assert_eq!(
+            CanvasOp::RotateArbitrary {
+                degrees: 33.0,
+                algorithm: RotationAlgorithm::RotSprite
+            }
+            .result_size(s),
+            s
+        );
+        assert_eq!(CanvasOp::Skew { fx: 0.5, fy: -0.25 }.result_size(s), s);
+        assert_eq!(
+            CanvasOp::Perspective {
+                corners: [(0.0, 0.0), (16.0, 0.0), (16.0, 8.0), (0.0, 8.0)]
+            }
+            .result_size(s),
+            s
+        );
+        assert_eq!(CanvasOp::Mlaa { config: MlaaConfig::default() }.result_size(s), s);
+    }
+
+    #[test]
+    fn canvas_op_labels_name_the_new_ops() {
+        assert_eq!(
+            CanvasOp::RotateArbitrary {
+                degrees: 12.0,
+                algorithm: RotationAlgorithm::default()
+            }
+            .label(),
+            "Rotate"
+        );
+        assert_eq!(CanvasOp::Skew { fx: 0.0, fy: 0.0 }.label(), "Skew");
+        assert_eq!(CanvasOp::Perspective { corners: [(0.0, 0.0); 4] }.label(), "Perspective");
+        assert_eq!(CanvasOp::Mlaa { config: MlaaConfig::default() }.label(), "Antialias");
+    }
+
+    #[test]
+    fn rotate_arbitrary_zero_is_identity_and_preserves_size() {
+        let buf = PixelBuffer::filled(8, 4, pixhaus_core::project::Rgba::new(10, 20, 30, 255)).expect("buffer");
+        let out = CanvasOp::RotateArbitrary {
+            degrees: 0.0,
+            algorithm: RotationAlgorithm::NearestNeighbor,
+        }
+        .apply(&buf)
+        .expect("rotate");
+        assert_eq!((out.width(), out.height()), (8, 4));
+        assert_eq!(out, buf, "0° rotation is identity");
+    }
+
+    #[test]
+    fn skew_combined_keeps_dimensions_and_zero_is_identity() {
+        let mut buf = PixelBuffer::new(6, 6).expect("buffer");
+        buf.set_pixel(2, 2, pixhaus_core::project::Rgba::new(255, 0, 0, 255));
+        let identity = CanvasOp::Skew { fx: 0.0, fy: 0.0 }.apply(&buf).expect("skew");
+        assert_eq!(identity, buf, "zero skew is identity");
+        let sheared = CanvasOp::Skew { fx: 1.0, fy: 0.0 }.apply(&buf).expect("skew");
+        assert_eq!((sheared.width(), sheared.height()), (6, 6), "skew preserves dimensions");
+    }
+
+    #[test]
+    fn perspective_identity_corners_preserve_size() {
+        let buf = PixelBuffer::filled(8, 8, pixhaus_core::project::Rgba::new(40, 50, 60, 255)).expect("buffer");
+        let out = CanvasOp::Perspective {
+            corners: [(0.0, 0.0), (7.0, 0.0), (7.0, 7.0), (0.0, 7.0)],
+        }
+        .apply(&buf)
+        .expect("perspective");
+        assert_eq!((out.width(), out.height()), (8, 8));
+    }
+
+    #[test]
+    fn mlaa_zero_softness_is_identity() {
+        let buf = PixelBuffer::filled(8, 8, pixhaus_core::project::Rgba::new(1, 2, 3, 255)).expect("buffer");
+        let out = CanvasOp::Mlaa {
+            config: MlaaConfig { threshold: 16, softness: 0 },
+        }
+        .apply(&buf)
+        .expect("mlaa");
+        assert_eq!(out, buf, "softness 0 is identity");
+    }
+
+    #[test]
+    fn canvas_edit_round_trips_an_arbitrary_rotation() {
+        use pixhaus_core::project::CelData;
+
+        let mut doc = DocumentStore::new();
+        doc.create_sprite("hero", Size::new(8, 8));
+        let sprite_id = doc.project.active_sprite_id().expect("active sprite");
+        let before_sprite = doc.project.sprite(sprite_id).expect("sprite").clone();
+        let buffer_id = before_sprite
+            .cels
+            .iter()
+            .find_map(|c| match c.data {
+                CelData::Raster { buffer, .. } => Some(buffer),
+                _ => None,
+            })
+            .expect("raster buffer");
+        let mut before_buf = doc.pixel_buffers.get(&buffer_id).expect("buffer").clone();
+        before_buf.set_pixel(1, 1, pixhaus_core::project::Rgba::new(200, 0, 0, 255));
+        doc.pixel_buffers.insert(buffer_id, before_buf.clone());
+
+        let op = CanvasOp::RotateArbitrary {
+            degrees: 45.0,
+            algorithm: RotationAlgorithm::RotSprite,
+        };
+        let after_buf = op.apply(&before_buf).expect("rotate");
+        // The op keeps the canvas size, so the sprite value is unchanged.
+        let edit = CanvasEdit {
+            sprite_id,
+            before_sprite: before_sprite.clone(),
+            after_sprite: before_sprite,
+            buffers: vec![CanvasBufferSwap {
+                id: buffer_id,
+                before: before_buf.clone(),
+                after: after_buf.clone(),
+            }],
+            label: op.label().to_owned(),
+        };
+
+        let mut editor = EditorState::default();
+        editor.history.push(Box::new(edit), &mut doc).expect("push");
+        assert_eq!(doc.pixel_buffers.get(&buffer_id), Some(&after_buf), "rotation applied");
+        editor.history.undo(&mut doc).expect("undo");
+        assert_eq!(doc.pixel_buffers.get(&buffer_id), Some(&before_buf), "undo restores the source");
     }
 
     #[test]
@@ -807,5 +1031,70 @@ mod tests {
 
         editor.history.redo(&mut doc).expect("redo");
         assert_eq!(doc.pixel_buffers.get(&buffer_id).unwrap().width(), 16);
+    }
+
+    #[test]
+    fn crop_edit_shrinks_canvas_and_undo_restores_size_and_pixels() {
+        use pixhaus_core::project::{CelData, Rgba};
+
+        let mut doc = DocumentStore::new();
+        doc.create_sprite("hero", Size::new(8, 8));
+        let sprite_id = doc.project.active_sprite_id().expect("active sprite");
+        let before_sprite = doc.project.sprite(sprite_id).expect("sprite").clone();
+        let buffer_id = before_sprite
+            .cels
+            .iter()
+            .find_map(|c| match c.data {
+                CelData::Raster { buffer, .. } => Some(buffer),
+                _ => None,
+            })
+            .expect("raster buffer");
+
+        // Paint a marker inside the crop rect and one outside it.
+        let mut before_buf = doc.pixel_buffers.get(&buffer_id).expect("buffer").clone();
+        before_buf.set_pixel(3, 3, Rgba::new(200, 0, 0, 255)); // inside (2,2,4,4)
+        before_buf.set_pixel(0, 0, Rgba::new(0, 200, 0, 255)); // outside it
+        doc.pixel_buffers.insert(buffer_id, before_buf.clone());
+
+        // Crop the 4x4 rect rooted at (2, 2).
+        let (cx, cy, cw, ch) = (2u32, 2u32, 4u32, 4u32);
+        let after_buf = transforms::crop(&before_buf, cx, cy, cw, ch).expect("crop");
+        let mut after_sprite = before_sprite.clone();
+        after_sprite.canvas = Size::new(cw, ch);
+        for cel in &mut after_sprite.cels {
+            if let CelData::Raster { size, .. } = &mut cel.data {
+                *size = Size::new(cw, ch);
+            }
+        }
+
+        let edit = CropEdit {
+            sprite_id,
+            before_sprite,
+            after_sprite,
+            buffers: vec![CanvasBufferSwap {
+                id: buffer_id,
+                before: before_buf.clone(),
+                after: after_buf.clone(),
+            }],
+            label: "Crop to selection".into(),
+        };
+
+        let mut editor = EditorState::default();
+        editor.history.push(Box::new(edit), &mut doc).expect("push");
+        assert_eq!(doc.project.sprite(sprite_id).unwrap().canvas, Size::new(4, 4), "canvas shrank to the crop");
+        let cropped = doc.pixel_buffers.get(&buffer_id).unwrap();
+        assert_eq!((cropped.width(), cropped.height()), (4, 4));
+        // The inside marker moved to rect-local (1, 1); the outside one is gone.
+        assert_eq!(cropped.pixel(1, 1), Some(Rgba::new(200, 0, 0, 255)), "inside pixel kept");
+        let opaque = cropped.pixels().filter(|p| p.a != 0).count();
+        assert_eq!(opaque, 1, "the pixel outside the crop rect is discarded");
+
+        editor.history.undo(&mut doc).expect("undo");
+        assert_eq!(doc.project.sprite(sprite_id).unwrap().canvas, Size::new(8, 8), "undo restores the canvas size");
+        let restored = doc.pixel_buffers.get(&buffer_id).unwrap();
+        assert_eq!(restored, &before_buf, "undo restores every pixel");
+
+        editor.history.redo(&mut doc).expect("redo");
+        assert_eq!(doc.project.sprite(sprite_id).unwrap().canvas, Size::new(4, 4), "redo re-crops");
     }
 }

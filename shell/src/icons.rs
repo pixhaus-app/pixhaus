@@ -26,6 +26,7 @@ pub const LASSO: &str = p::LASSO;
 pub const WAND: &str = p::MAGIC_WAND;
 pub const COLOR_RANGE: &str = p::EYEDROPPER_SAMPLE;
 pub const MOVE: &str = p::ARROWS_OUT_CARDINAL;
+pub const TRANSFORM: &str = p::FRAME_CORNERS;
 
 // Selection-combine modes (the add/subtract/intersect segmented control).
 pub const SELECT_REPLACE: &str = p::SELECTION;
@@ -67,6 +68,14 @@ pub const ROTATE_CW: &str = p::ARROWS_CLOCKWISE;
 pub const ROTATE_CCW: &str = p::ARROWS_COUNTER_CLOCKWISE;
 pub const RENAME: &str = p::PENCIL_SIMPLE;
 pub const DUPLICATE: &str = p::COPY;
+
+// Transform menu. The Phosphor set has no dedicated skew or perspective glyph,
+// so these reuse the nearest geometric icons.
+pub const ROTATE_FREE: &str = p::ARROW_CLOCKWISE;
+pub const SKEW: &str = p::FLIP_HORIZONTAL;
+pub const CROP: &str = p::CROP;
+pub const PERSPECTIVE: &str = p::PERSPECTIVE;
+pub const ANTIALIAS: &str = p::SCRIBBLE;
 
 // Transport.
 pub const PLAY: &str = p::PLAY;

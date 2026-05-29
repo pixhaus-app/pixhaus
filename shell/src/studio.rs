@@ -35,6 +35,7 @@ use crate::ai::{self, FirstFrameJob};
 use crate::anim::{self, VideoFrame};
 use crate::app::{AnimPlayMode, JobStatus, ShellApp, Workspace};
 use crate::document::SpriteRef;
+use crate::gizmo::{BoxGizmo, GizmoHandle};
 
 /// The studio's ordered stages. Navigation is free — the rail lets you step back
 /// to an earlier stage without losing later work — so this is a position in a
@@ -292,104 +293,24 @@ pub(crate) enum MaskTool {
     Box,
 }
 
-/// A transformable rectangular mask region in mask-pixel coordinates. Its filled
-/// (rotated) interior becomes the inpaint mask.
-#[derive(Clone, Copy)]
-pub(crate) struct MaskGizmo {
-    /// Center x in mask pixels.
-    pub cx: f32,
-    /// Center y in mask pixels.
-    pub cy: f32,
-    /// Half-width in mask pixels.
-    pub hw: f32,
-    /// Half-height in mask pixels.
-    pub hh: f32,
-    /// Rotation in radians.
-    pub angle: f32,
-}
-
-/// Which gizmo handle a drag is moving.
-#[derive(Clone, Copy, PartialEq, Eq)]
-pub(crate) enum GizmoHandle {
-    /// Drag the body to translate.
-    Move,
-    /// Drag a corner (0=TL, 1=TR, 2=BR, 3=BL) to scale about the center.
-    Corner(usize),
-    /// Drag the stem to rotate.
-    Rotate,
-}
-
-impl MaskGizmo {
-    /// A box a quarter of the image, centered.
-    fn centered(w: u32, h: u32) -> Self {
-        Self {
-            cx: w as f32 / 2.0,
-            cy: h as f32 / 2.0,
-            hw: (w as f32 / 4.0).max(1.0),
-            hh: (h as f32 / 4.0).max(1.0),
-            angle: 0.0,
+/// Fills `mask` with the box gizmo's rotated interior. Only the union of the
+/// previous and new bounding box is rewritten, so per-drag cost is the rect's
+/// area rather than the whole mask. The gizmo itself is the shared
+/// [`crate::gizmo::BoxGizmo`]; this is the studio's mask consumer of it (the
+/// free-transform tool consumes the same gizmo by resampling pixels instead).
+#[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss, clippy::cast_precision_loss)]
+fn rasterize_gizmo(giz: &BoxGizmo, mask: &mut MaskOverlay) {
+    let new_bbox = giz.aabb(mask.width, mask.height);
+    let region = mask.box_bbox.map_or(new_bbox, |prev| rect_union(prev, new_bbox));
+    let [rx, ry, rw, rh] = region;
+    for y in ry..ry + rh {
+        for x in rx..rx + rw {
+            let inside = giz.contains(x as f32 + 0.5, y as f32 + 0.5);
+            mask.cells[(y as usize) * (mask.width as usize) + x as usize] = inside;
         }
     }
-
-    /// A local offset rotated into image space and added to the center.
-    fn point(&self, lx: f32, ly: f32) -> (f32, f32) {
-        let (s, c) = self.angle.sin_cos();
-        (self.cx + lx * c - ly * s, self.cy + lx * s + ly * c)
-    }
-
-    /// The four corner points in image space: TL, TR, BR, BL.
-    fn corners(&self) -> [(f32, f32); 4] {
-        [
-            self.point(-self.hw, -self.hh),
-            self.point(self.hw, -self.hh),
-            self.point(self.hw, self.hh),
-            self.point(-self.hw, self.hh),
-        ]
-    }
-
-    /// The rotate-handle point, set off above the top edge.
-    fn rotate_handle(&self) -> (f32, f32) {
-        self.point(0.0, -self.hh - self.hh.max(self.hw).mul_add(0.4, 8.0))
-    }
-
-    /// Whether image-space `(px, py)` is inside the rotated rectangle.
-    fn contains(&self, px: f32, py: f32) -> bool {
-        let (s, c) = self.angle.sin_cos();
-        let dx = px - self.cx;
-        let dy = py - self.cy;
-        let lx = dx * c + dy * s;
-        let ly = -dx * s + dy * c;
-        lx.abs() <= self.hw && ly.abs() <= self.hh
-    }
-
-    /// The rectangle's axis-aligned bounding box, clamped to `w` x `h`, as
-    /// `[x, y, w, h]`.
-    fn aabb(&self, w: u32, h: u32) -> [u32; 4] {
-        let xs = self.corners().map(|p| p.0);
-        let ys = self.corners().map(|p| p.1);
-        let min_x = xs.iter().copied().fold(f32::INFINITY, f32::min).floor().clamp(0.0, w as f32);
-        let max_x = xs.iter().copied().fold(f32::NEG_INFINITY, f32::max).ceil().clamp(0.0, w as f32);
-        let min_y = ys.iter().copied().fold(f32::INFINITY, f32::min).floor().clamp(0.0, h as f32);
-        let max_y = ys.iter().copied().fold(f32::NEG_INFINITY, f32::max).ceil().clamp(0.0, h as f32);
-        [min_x as u32, min_y as u32, (max_x - min_x) as u32, (max_y - min_y) as u32]
-    }
-
-    /// Fills `mask` with the rotated rectangle's interior. Only the union of the
-    /// previous and new bounding box is rewritten, so per-drag cost is the rect's
-    /// area rather than the whole mask.
-    fn rasterize(&self, mask: &mut MaskOverlay) {
-        let new_bbox = self.aabb(mask.width, mask.height);
-        let region = mask.box_bbox.map_or(new_bbox, |prev| rect_union(prev, new_bbox));
-        let [rx, ry, rw, rh] = region;
-        for y in ry..ry + rh {
-            for x in rx..rx + rw {
-                let inside = self.contains(x as f32 + 0.5, y as f32 + 0.5);
-                mask.cells[(y as usize) * (mask.width as usize) + x as usize] = inside;
-            }
-        }
-        mask.box_bbox = Some(new_bbox);
-        mask.mark(rx, ry, rw, rh);
-    }
+    mask.box_bbox = Some(new_bbox);
+    mask.mark(rx, ry, rw, rh);
 }
 
 /// Breadcrumb for a hand-edit round trip: the sprite to re-select on return and
@@ -419,7 +340,7 @@ pub(crate) struct RefineView {
     /// Which mask tool shapes the mask.
     pub mask_tool: MaskTool,
     /// The box gizmo, when the box tool is in use (sized to the result).
-    pub gizmo: Option<MaskGizmo>,
+    pub gizmo: Option<BoxGizmo>,
     /// The gizmo handle currently being dragged.
     pub gizmo_drag: Option<GizmoHandle>,
     /// Prompt for the inpaint refinement.
@@ -2206,28 +2127,18 @@ fn ensure_view_mask(view: &mut RefineView, w: u32, h: u32) {
 /// Applies a primary-button drag to the box gizmo (picking a handle on press,
 /// then move / scale / rotate) and rasterizes it into the mask. Returns whether
 /// the drag was consumed; `false` lets the caller pan instead.
+#[allow(clippy::cast_precision_loss)]
 fn gizmo_drag_update(resp: &egui::Response, view: &mut RefineView, iw: u32, ih: u32, rect: egui::Rect) -> bool {
     if view.gizmo.is_none() {
-        view.gizmo = Some(MaskGizmo::centered(iw, ih));
+        view.gizmo = Some(BoxGizmo::centered(iw, ih));
     }
     let Some(mut giz) = view.gizmo else {
         return false;
     };
     if resp.drag_started() {
         view.gizmo_drag = resp.interact_pointer_pos().and_then(|p| {
-            // Corners and the rotate stem hit-test in screen space (fixed
-            // tolerance); the body falls back to a point-in-rect test.
-            for (k, &(cx, cy)) in giz.corners().iter().enumerate() {
-                if view_to_screen(cx, cy, rect, iw, ih).distance(p) <= 8.0 {
-                    return Some(GizmoHandle::Corner(k));
-                }
-            }
-            let (rx, ry) = giz.rotate_handle();
-            if view_to_screen(rx, ry, rect, iw, ih).distance(p) <= 8.0 {
-                return Some(GizmoHandle::Rotate);
-            }
             let (ix, iy) = view_to_image(p, rect, iw, ih);
-            giz.contains(ix, iy).then_some(GizmoHandle::Move)
+            giz.pick_handle(|cx, cy| view_to_screen(cx, cy, rect, iw, ih), p, (ix, iy), 8.0)
         });
     }
     let Some(handle) = view.gizmo_drag else {
@@ -2235,27 +2146,17 @@ fn gizmo_drag_update(resp: &egui::Response, view: &mut RefineView, iw: u32, ih: 
     };
     if let Some(p) = resp.interact_pointer_pos() {
         let (ix, iy) = view_to_image(p, rect, iw, ih);
-        match handle {
-            GizmoHandle::Move => {
-                let d = resp.drag_delta();
-                giz.cx += d.x / rect.width().max(1.0) * iw as f32;
-                giz.cy += d.y / rect.height().max(1.0) * ih as f32;
-            }
-            GizmoHandle::Corner(_) => {
-                let (s, c) = giz.angle.sin_cos();
-                let (dx, dy) = (ix - giz.cx, iy - giz.cy);
-                giz.hw = (dx * c + dy * s).abs().max(2.0);
-                giz.hh = (-dx * s + dy * c).abs().max(2.0);
-            }
-            GizmoHandle::Rotate => {
-                giz.angle = (ix - giz.cx).atan2(-(iy - giz.cy));
-            }
-        }
+        // The body translates by the drag delta mapped into image space; corners
+        // and the stem read the pointer's absolute image position.
+        let d = resp.drag_delta();
+        let dx = d.x / rect.width().max(1.0) * iw as f32;
+        let dy = d.y / rect.height().max(1.0) * ih as f32;
+        giz.drag_handle(handle, ix, iy, dx, dy, false);
         giz.cx = giz.cx.clamp(0.0, iw as f32);
         giz.cy = giz.cy.clamp(0.0, ih as f32);
         view.gizmo = Some(giz);
         if let Some(mask) = view.mask.as_mut() {
-            giz.rasterize(mask);
+            rasterize_gizmo(&giz, mask);
         }
     }
     true
@@ -2463,7 +2364,7 @@ mod tests {
 
     #[test]
     fn gizmo_rasterizes_and_contains() {
-        let giz = MaskGizmo {
+        let giz = BoxGizmo {
             cx: 4.0,
             cy: 4.0,
             hw: 2.0,
@@ -2473,7 +2374,7 @@ mod tests {
         assert!(giz.contains(4.0, 4.0));
         assert!(!giz.contains(0.5, 0.5));
         let mut mask = MaskOverlay::new(8, 8);
-        giz.rasterize(&mut mask);
+        rasterize_gizmo(&giz, &mut mask);
         assert!(!mask.is_empty());
         assert!(mask.cells[4 * 8 + 4]);
         assert!(!mask.cells[0]);
@@ -2497,25 +2398,25 @@ mod tests {
     #[test]
     fn box_rasterize_clears_the_trail_when_it_moves() {
         let mut mask = MaskOverlay::new(64, 64);
-        let a = MaskGizmo {
+        let a = BoxGizmo {
             cx: 16.0,
             cy: 16.0,
             hw: 6.0,
             hh: 6.0,
             angle: 0.0,
         };
-        a.rasterize(&mut mask);
+        rasterize_gizmo(&a, &mut mask);
         assert!(mask.cells[16 * 64 + 16]);
         // Move the box away; the old cells must clear (no trail).
         mask.dirty = None;
-        let b = MaskGizmo {
+        let b = BoxGizmo {
             cx: 48.0,
             cy: 48.0,
             hw: 6.0,
             hh: 6.0,
             angle: 0.0,
         };
-        b.rasterize(&mut mask);
+        rasterize_gizmo(&b, &mut mask);
         assert!(!mask.cells[16 * 64 + 16], "vacated cells should clear");
         assert!(mask.cells[48 * 64 + 48]);
         // The re-uploaded region spans both the old and new boxes.

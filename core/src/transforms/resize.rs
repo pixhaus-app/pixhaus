@@ -106,6 +106,45 @@ pub fn resize_canvas(buf: &PixelBuffer, new_w: u32, new_h: u32, anchor: CanvasAn
     Ok(out)
 }
 
+/// Copies the `(x, y, w, h)` sub-rectangle of `buf` into a fresh `w × h` buffer.
+///
+/// This is resize-with-offset: pixels keep their original scale, the output is
+/// exactly the requested rectangle, and any part of the rectangle that falls
+/// outside the source is left transparent (the rectangle is clamped, not
+/// rejected). Crop-to-selection drives this with a selection's bounding box.
+///
+/// # Errors
+///
+/// - [`Error::EmptyBuffer`] if `buf` is 0×0, or if `w` or `h` is zero (a
+///   zero-area rectangle yields no buffer).
+/// - [`Error::Buffer`] if the output allocation fails.
+pub fn crop(buf: &PixelBuffer, x: u32, y: u32, w: u32, h: u32) -> Result<PixelBuffer> {
+    if buf.is_empty() || w == 0 || h == 0 {
+        return Err(Error::EmptyBuffer);
+    }
+
+    let mut out = PixelBuffer::new(w, h)?;
+    for dy in 0..h {
+        let sy = y.saturating_add(dy);
+        if sy >= buf.height() {
+            // Past the bottom edge of the source: the rest of the output stays
+            // transparent.
+            break;
+        }
+        for dx in 0..w {
+            let sx = x.saturating_add(dx);
+            if sx >= buf.width() {
+                // Past the right edge of the source on this row.
+                break;
+            }
+            if let Some(px) = buf.pixel(sx, sy) {
+                out.set_pixel(dx, dy, px);
+            }
+        }
+    }
+    Ok(out)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -172,5 +211,47 @@ mod tests {
         assert_eq!(resize_canvas(&PixelBuffer::empty(), 4, 4, CanvasAnchor::Center), Err(Error::EmptyBuffer));
         let buf = PixelBuffer::new(2, 2).unwrap();
         assert_eq!(resize_canvas(&buf, 0, 4, CanvasAnchor::Center), Err(Error::DimensionOverflow));
+    }
+
+    #[test]
+    fn crop_extracts_the_sub_rectangle() {
+        // A 4x4 with a single red pixel at (2, 1); crop the 2x2 rect rooted at
+        // (1, 0) and the red pixel lands at the rect-local (1, 1).
+        let mut buf = PixelBuffer::new(4, 4).unwrap();
+        buf.set_pixel(2, 1, red());
+        let out = crop(&buf, 1, 0, 2, 2).unwrap();
+        assert_eq!((out.width(), out.height()), (2, 2));
+        assert_eq!(out.pixel(1, 1), Some(red()));
+        assert_eq!(out.pixel(0, 0), Some(Rgba::transparent()));
+    }
+
+    #[test]
+    fn crop_full_extent_round_trips() {
+        let mut buf = PixelBuffer::new(3, 3).unwrap();
+        buf.set_pixel(0, 0, red());
+        buf.set_pixel(2, 2, red());
+        let out = crop(&buf, 0, 0, 3, 3).unwrap();
+        assert_eq!(out, buf, "cropping the whole extent reproduces the source");
+    }
+
+    #[test]
+    fn crop_clamps_out_of_bounds_rect() {
+        // The rect overhangs the source: the in-bounds pixel is copied, the rest
+        // of the output is transparent rather than an error.
+        let mut buf = PixelBuffer::new(2, 2).unwrap();
+        buf.set_pixel(1, 1, red());
+        let out = crop(&buf, 1, 1, 3, 3).unwrap();
+        assert_eq!((out.width(), out.height()), (3, 3));
+        assert_eq!(out.pixel(0, 0), Some(red()));
+        let opaque = out.pixels().filter(|p| p.a != 0).count();
+        assert_eq!(opaque, 1, "only the one in-bounds pixel is copied");
+    }
+
+    #[test]
+    fn crop_empty_rect_and_empty_source_error() {
+        let buf = PixelBuffer::new(4, 4).unwrap();
+        assert_eq!(crop(&buf, 0, 0, 0, 4), Err(Error::EmptyBuffer));
+        assert_eq!(crop(&buf, 0, 0, 4, 0), Err(Error::EmptyBuffer));
+        assert_eq!(crop(&PixelBuffer::empty(), 0, 0, 4, 4), Err(Error::EmptyBuffer));
     }
 }

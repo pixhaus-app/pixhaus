@@ -9,7 +9,7 @@ use eframe::egui;
 use pixhaus_core::canvas::BrushShape;
 
 use crate::app::ShellApp;
-use crate::editor::{Tool, from_color32, to_color32};
+use crate::editor::{SelectionMode, Tool, from_color32, to_color32};
 use crate::icons;
 
 impl ShellApp {
@@ -45,8 +45,26 @@ impl ShellApp {
                 ui.separator();
                 ui.label(egui::RichText::new("hold Shift to fill").small().weak());
             }
-            Tool::Fill | Tool::Wand => {
+            Tool::Fill => {
                 ui.add(egui::Slider::new(&mut self.editor.tolerance, 0..=255).text("tolerance"));
+            }
+            Tool::Wand => {
+                ui.add(egui::Slider::new(&mut self.editor.tolerance, 0..=255).text("tolerance"));
+                ui.checkbox(&mut self.editor.wand_eight, "8-connected")
+                    .on_hover_text("Include diagonal neighbours when flooding");
+                ui.checkbox(&mut self.editor.wand_gap_close, "Close gaps")
+                    .on_hover_text("Bridge small breaks in an outline before flooding");
+                if self.editor.wand_gap_close {
+                    ui.add(egui::Slider::new(&mut self.editor.wand_gap_distance, 1..=64).text("gap"));
+                }
+                ui.separator();
+                self.selection_mode_control(ui);
+            }
+            Tool::ColorRange => {
+                ui.add(egui::Slider::new(&mut self.editor.color_range_tolerance, 0..=255).text("tolerance"))
+                    .on_hover_text("How close a pixel's colour must be to the clicked colour to be selected");
+                ui.separator();
+                self.selection_mode_control(ui);
             }
             Tool::Picker => {
                 ui.label(egui::RichText::new("click to sample a colour").small().weak());
@@ -54,10 +72,34 @@ impl ShellApp {
             Tool::Move => {
                 ui.label(egui::RichText::new("drag the selection").small().weak());
             }
+            Tool::Transform => {
+                ui.label(
+                    egui::RichText::new("drag a corner to scale (Shift uniform) · the stem to rotate · the body to move · Esc to apply")
+                        .small()
+                        .weak(),
+                );
+            }
             Tool::SelectRect | Tool::SelectEllipse | Tool::Lasso => {
-                ui.label(egui::RichText::new("drag to select · Esc to deselect").small().weak());
+                self.selection_mode_control(ui);
+                ui.separator();
+                ui.label(egui::RichText::new("Shift add · Alt subtract · Esc deselect").small().weak());
             }
         }
+    }
+
+    /// A four-button segmented control for the selection-combine mode, so the
+    /// Shift/Alt modifiers are discoverable without a keyboard. A held modifier
+    /// still overrides this per-gesture (see `route_tools`).
+    fn selection_mode_control(&mut self, ui: &mut egui::Ui) {
+        let mode = &mut self.editor.selection_mode;
+        ui.selectable_value(mode, SelectionMode::Replace, icons::SELECT_REPLACE)
+            .on_hover_text("Replace selection");
+        ui.selectable_value(mode, SelectionMode::Add, icons::SELECT_ADD)
+            .on_hover_text("Add (Shift)");
+        ui.selectable_value(mode, SelectionMode::Subtract, icons::SELECT_SUBTRACT)
+            .on_hover_text("Subtract (Alt)");
+        ui.selectable_value(mode, SelectionMode::Intersect, icons::SELECT_INTERSECT)
+            .on_hover_text("Intersect (Shift+Alt)");
     }
 
     /// Brush shape, size, pixel-perfect, and mirroring — the pencil/eraser set.

@@ -81,6 +81,8 @@ pub enum CommandId {
     ToolColorRange,
     /// Select the move tool.
     ToolMove,
+    /// Select the free-transform tool.
+    ToolTransform,
     // Window
     /// Open the settings window.
     OpenSettings,
@@ -117,6 +119,7 @@ impl CommandId {
         CommandId::ToolWand,
         CommandId::ToolColorRange,
         CommandId::ToolMove,
+        CommandId::ToolTransform,
         CommandId::OpenSettings,
     ];
 
@@ -151,6 +154,7 @@ impl CommandId {
             CommandId::ToolWand => "Magic wand",
             CommandId::ToolColorRange => "Colour range",
             CommandId::ToolMove => "Move",
+            CommandId::ToolTransform => "Free transform",
             CommandId::OpenSettings => "Settings…",
         }
     }
@@ -174,7 +178,8 @@ impl CommandId {
             | CommandId::ToolLasso
             | CommandId::ToolWand
             | CommandId::ToolColorRange
-            | CommandId::ToolMove => CommandCategory::Tools,
+            | CommandId::ToolMove
+            | CommandId::ToolTransform => CommandCategory::Tools,
             CommandId::OpenSettings => CommandCategory::Window,
         }
     }
@@ -470,6 +475,7 @@ fn aseprite_default(command: CommandId) -> Chord {
         // No standard Aseprite letter; A is free in the preset.
         C::ToolColorRange => Chord::key(Key::A),
         C::ToolMove => Chord::key(Key::V),
+        C::ToolTransform => Chord::key(Key::T),
         C::OpenSettings => Chord::ctrl(Key::Comma),
     }
 }

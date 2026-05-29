@@ -16,8 +16,8 @@ use pixhaus_ai::plugin::{PixelData, VerbRuntime};
 use pixhaus_core::canvas::PixelBuffer;
 use pixhaus_core::project::{CelData, ColorMode, FrameIndex, GroupId, LoopDirection, PixelBufferId, Rgba, Size, Sprite, SpriteId};
 use pixhaus_core::selection::SelectionMask;
-use pixhaus_core::transforms::CanvasAnchor;
 use pixhaus_core::transforms::normalize::{NormalizeOptions, normalize_frames};
+use pixhaus_core::transforms::{CanvasAnchor, MlaaConfig, RotationAlgorithm};
 use pixhaus_render::{Viewport, ViewportRenderer};
 use tokio::runtime::Runtime;
 use tokio_util::sync::CancellationToken;
@@ -25,7 +25,7 @@ use tokio_util::sync::CancellationToken;
 use crate::ai;
 use crate::anim::{self, LoopMarkers, VideoFrame};
 use crate::cockpit::{CockpitCandidate, CockpitReference, PendingLineage};
-use crate::commands::{CanvasBufferSwap, CanvasEdit, CanvasOp, integrate_frames_undoable};
+use crate::commands::{CanvasBufferSwap, CanvasEdit, CanvasOp, CropEdit, integrate_frames_undoable};
 use crate::document::{DocumentStore, LibraryRow, SpriteRef};
 use crate::keymap::{CommandId, Keymap};
 use crate::settings::SettingsTab;
@@ -530,6 +530,9 @@ pub struct ShellApp {
     /// The selection-morphology dialog (Grow / Shrink / Feather), or `None` when
     /// closed. Carries which op runs and its current pixel amount.
     morph_dialog: Option<MorphDialog>,
+    /// The open whole-canvas transform dialog (Rotate / Skew / Perspective /
+    /// Antialias), or `None` when none is open. Carries the draft parameters.
+    transform_dialog: Option<TransformDialog>,
 }
 
 /// The pending selection-morphology operation and its amount, driven by the
@@ -576,6 +579,44 @@ impl MorphOp {
 /// The inclusive amount range the morphology dialog clamps to. Bounds the
 /// `O(area * by^2)` cost of grow/shrink so the pass stays responsive at 8K.
 const MORPH_AMOUNT_RANGE: std::ops::RangeInclusive<u32> = 1..=64;
+
+/// An open whole-canvas transform dialog and its draft parameters. One variant
+/// per dialog-driven [`CanvasOp`]; closing it sets the field back to `None`.
+/// Apply forwards the parameters to [`ShellApp::run_canvas_transform`], which
+/// owns the offload threshold and undo wiring.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub(crate) enum TransformDialog {
+    /// Arbitrary-angle rotation: degrees and the resampling algorithm.
+    Rotate {
+        /// Clockwise angle in degrees.
+        degrees: f32,
+        /// Resampling algorithm.
+        algorithm: RotationAlgorithm,
+    },
+    /// Skew/shear: a horizontal and a vertical factor.
+    Skew {
+        /// Horizontal shear factor.
+        fx: f32,
+        /// Vertical shear factor.
+        fy: f32,
+    },
+    /// Perspective warp via four destination corners, seeded to the identity
+    /// rect (the source size) when opened.
+    Perspective {
+        /// Destination corners `[TL, TR, BR, BL]` in pixels.
+        corners: [(f32, f32); 4],
+    },
+    /// Morphological antialias: threshold and softness.
+    Mlaa {
+        /// Edge-classifier threshold and softening factor.
+        config: MlaaConfig,
+    },
+}
+
+/// The inclusive shear-factor range the skew dialog clamps to. Bounds the
+/// per-row/column shift so an extreme factor cannot push every pixel off-canvas
+/// by accident.
+const SKEW_FACTOR_RANGE: std::ops::RangeInclusive<f32> = -4.0..=4.0;
 
 impl ShellApp {
     /// Builds the app from the eframe creation context, taking ownership of the
@@ -720,6 +761,7 @@ impl ShellApp {
             resize_anchor: CanvasAnchor::Center,
             resize_resample: false,
             morph_dialog: None,
+            transform_dialog: None,
         };
         app.install_renderer();
         app.doc.create_sprite("untitled", DEFAULT_CANVAS);
@@ -1409,6 +1451,126 @@ impl ShellApp {
         }
     }
 
+    /// Opens a whole-canvas transform dialog with default parameters. The
+    /// perspective dialog seeds its corners to the source-size identity rect so
+    /// dragging them outward warps from the unchanged image.
+    fn open_transform_dialog(&mut self, dialog: TransformDialog) {
+        if self.doc.active_sprite().is_none() {
+            return;
+        }
+        let dialog = if let TransformDialog::Perspective { .. } = dialog {
+            // Re-seed perspective corners to the active sprite's identity rect,
+            // ignoring the placeholder the menu passed in.
+            #[allow(clippy::cast_precision_loss)]
+            let (w, h) = self.doc.active_sprite().map_or((0.0, 0.0), |s| (s.canvas.width as f32, s.canvas.height as f32));
+            TransformDialog::Perspective {
+                corners: [(0.0, 0.0), (w, 0.0), (w, h), (0.0, h)],
+            }
+        } else {
+            dialog
+        };
+        self.transform_dialog = Some(dialog);
+    }
+
+    /// Renders the open whole-canvas transform dialog (Rotate / Skew /
+    /// Perspective / Antialias). Each is modeled on [`ShellApp::show_resize_dialog`]:
+    /// draft fields plus Apply / Cancel. Apply closes the dialog and forwards the
+    /// op to [`ShellApp::run_canvas_transform`], which owns the offload threshold
+    /// and undo wiring.
+    #[allow(clippy::too_many_lines)]
+    fn show_transform_dialog(&mut self, ctx: &egui::Context) {
+        let Some(mut dialog) = self.transform_dialog else {
+            return;
+        };
+        let title = match dialog {
+            TransformDialog::Rotate { .. } => "Rotate",
+            TransformDialog::Skew { .. } => "Skew",
+            TransformDialog::Perspective { .. } => "Perspective",
+            TransformDialog::Mlaa { .. } => "Antialias (MLAA)",
+        };
+        let mut open = true;
+        let mut apply = false;
+        egui::Window::new(title).collapsible(false).resizable(false).open(&mut open).show(ctx, |ui| {
+            match &mut dialog {
+                TransformDialog::Rotate { degrees, algorithm } => {
+                    ui.horizontal(|ui| {
+                        ui.label("Angle");
+                        ui.add(egui::DragValue::new(degrees).range(-360.0..=360.0).speed(1.0).suffix("°"));
+                    });
+                    ui.horizontal(|ui| {
+                        ui.label("Algorithm");
+                        egui::ComboBox::from_id_salt("rotate_algorithm")
+                            .selected_text(rotation_algorithm_label(*algorithm))
+                            .show_ui(ui, |ui| {
+                                ui.selectable_value(algorithm, RotationAlgorithm::RotSprite, rotation_algorithm_label(RotationAlgorithm::RotSprite));
+                                ui.selectable_value(algorithm, RotationAlgorithm::Bilinear, rotation_algorithm_label(RotationAlgorithm::Bilinear));
+                                ui.selectable_value(
+                                    algorithm,
+                                    RotationAlgorithm::NearestNeighbor,
+                                    rotation_algorithm_label(RotationAlgorithm::NearestNeighbor),
+                                );
+                            });
+                    });
+                }
+                TransformDialog::Skew { fx, fy } => {
+                    ui.horizontal(|ui| {
+                        ui.label("X factor");
+                        ui.add(egui::DragValue::new(fx).range(SKEW_FACTOR_RANGE).speed(0.05));
+                        ui.label("Y factor");
+                        ui.add(egui::DragValue::new(fy).range(SKEW_FACTOR_RANGE).speed(0.05));
+                    });
+                }
+                TransformDialog::Perspective { corners } => {
+                    ui.label("Destination corners (px)");
+                    let labels = ["Top-left", "Top-right", "Bottom-right", "Bottom-left"];
+                    for (corner, name) in corners.iter_mut().zip(labels) {
+                        ui.horizontal(|ui| {
+                            ui.label(name);
+                            ui.add(egui::DragValue::new(&mut corner.0).speed(1.0).prefix("x "));
+                            ui.add(egui::DragValue::new(&mut corner.1).speed(1.0).prefix("y "));
+                        });
+                    }
+                }
+                TransformDialog::Mlaa { config } => {
+                    ui.horizontal(|ui| {
+                        ui.label("Threshold");
+                        ui.add(egui::Slider::new(&mut config.threshold, 0..=255));
+                    });
+                    ui.horizontal(|ui| {
+                        ui.label("Softness");
+                        ui.add(egui::Slider::new(&mut config.softness, 0..=255));
+                    });
+                }
+            }
+            ui.separator();
+            ui.horizontal(|ui| {
+                if ui.button("Apply").clicked() {
+                    apply = true;
+                }
+                if ui.button("Cancel").clicked() {
+                    self.transform_dialog = None;
+                }
+            });
+        });
+        if !open {
+            self.transform_dialog = None;
+        }
+        // Persist live edits to the draft even before Apply is pressed.
+        if self.transform_dialog.is_some() {
+            self.transform_dialog = Some(dialog);
+        }
+        if apply {
+            self.transform_dialog = None;
+            let op = match dialog {
+                TransformDialog::Rotate { degrees, algorithm } => CanvasOp::RotateArbitrary { degrees, algorithm },
+                TransformDialog::Skew { fx, fy } => CanvasOp::Skew { fx, fy },
+                TransformDialog::Perspective { corners } => CanvasOp::Perspective { corners },
+                TransformDialog::Mlaa { config } => CanvasOp::Mlaa { config },
+            };
+            self.run_canvas_transform(op);
+        }
+    }
+
     /// Opens the selection-morphology dialog for `op`, seeding its amount: grow
     /// and shrink default to 1 pixel, feather to 0 (off). A no-op with no active
     /// selection — the menu items are disabled in that case.
@@ -1433,7 +1595,11 @@ impl ShellApp {
         let mut apply = false;
         let mut amount = dialog.amount;
         // Feather goes off at 0; grow/shrink need at least 1 to do anything.
-        let range = if dialog.op == MorphOp::Feather { 0..=*MORPH_AMOUNT_RANGE.end() } else { MORPH_AMOUNT_RANGE };
+        let range = if dialog.op == MorphOp::Feather {
+            0..=*MORPH_AMOUNT_RANGE.end()
+        } else {
+            MORPH_AMOUNT_RANGE
+        };
         egui::Window::new(dialog.op.title())
             .collapsible(false)
             .resizable(false)
@@ -1602,6 +1768,94 @@ impl ShellApp {
         };
         let _ = self.editor.history.push(Box::new(edit), &mut self.doc);
         // Selection coordinates may fall outside the new canvas.
+        self.editor.clear_selection();
+        self.refresh_canvas(true);
+    }
+
+    /// Crops the canvas to the active selection's bounding box: shrinks the
+    /// sprite to that rect and copies each raster cel's sub-rectangle into a
+    /// smaller buffer, as one undo entry. A no-op without a selection (the menu
+    /// item is disabled then) or when the bounds are empty. The selection mask is
+    /// canvas-scale, so its [`SelectionMask::bounds`] is already in canvas space.
+    pub(crate) fn crop_to_selection(&mut self) {
+        let Some(mask) = self.editor.selection.as_ref() else {
+            return;
+        };
+        let bounds = mask.bounds();
+        if bounds.is_empty() {
+            return;
+        }
+        let Some(sprite_id) = self.doc.project.active_sprite_id() else {
+            return;
+        };
+        let Some(before_sprite) = self.doc.project.sprite(sprite_id).cloned() else {
+            return;
+        };
+
+        // Clamp the rect to the canvas: bounds is sourced from a canvas-scale
+        // mask, but a selection edited under a since-resized sprite could overhang.
+        let canvas = before_sprite.canvas;
+        #[allow(clippy::cast_sign_loss)]
+        let bx = bounds.origin.x.max(0) as u32;
+        #[allow(clippy::cast_sign_loss)]
+        let by = bounds.origin.y.max(0) as u32;
+        if bx >= canvas.width || by >= canvas.height {
+            return;
+        }
+        let bw = bounds.size.width.min(canvas.width - bx);
+        let bh = bounds.size.height.min(canvas.height - by);
+        // Floor at a non-zero crop; a zero-area rect has nothing to keep. The
+        // MAX_CANVAS_DIM ceiling needs no check here — crop only shrinks.
+        if bw == 0 || bh == 0 {
+            return;
+        }
+        // Cropping to the whole canvas changes nothing.
+        if bx == 0 && by == 0 && bw == canvas.width && bh == canvas.height {
+            return;
+        }
+
+        // Distinct raster buffers referenced by the sprite, in cel order.
+        let mut ids: Vec<PixelBufferId> = Vec::new();
+        let mut seen: HashSet<PixelBufferId> = HashSet::new();
+        for cel in &before_sprite.cels {
+            if let CelData::Raster { buffer, .. } = cel.data {
+                if seen.insert(buffer) {
+                    ids.push(buffer);
+                }
+            }
+        }
+
+        let mut swaps: Vec<CanvasBufferSwap> = Vec::with_capacity(ids.len());
+        for id in ids {
+            let Some(before) = self.doc.pixel_buffers.get(&id).cloned() else {
+                continue;
+            };
+            let Ok(after) = pixhaus_core::transforms::crop(&before, bx, by, bw, bh) else {
+                // A degenerate crop (empty buffer or zero-area rect) is already
+                // ruled out above; bail rather than commit a partial edit.
+                return;
+            };
+            swaps.push(CanvasBufferSwap { id, before, after });
+        }
+
+        let new_size = Size::new(bw, bh);
+        let mut after_sprite = before_sprite.clone();
+        after_sprite.canvas = new_size;
+        for cel in &mut after_sprite.cels {
+            if let CelData::Raster { size, .. } = &mut cel.data {
+                *size = new_size;
+            }
+        }
+
+        let edit = CropEdit {
+            sprite_id,
+            before_sprite,
+            after_sprite,
+            buffers: swaps,
+            label: "Crop to selection".to_owned(),
+        };
+        let _ = self.editor.history.push(Box::new(edit), &mut self.doc);
+        // The crop consumed the selection; its coordinates no longer map.
         self.editor.clear_selection();
         self.refresh_canvas(true);
     }
@@ -2168,6 +2422,42 @@ impl ShellApp {
                 });
             });
 
+            ui.menu_button("Transform", |ui| {
+                let has_sprite = self.doc.active_sprite().is_some();
+                let has_selection = self.editor.selection.is_some();
+                ui.add_enabled_ui(has_sprite, |ui| {
+                    if ui.button(format!("{} Rotate arbitrary…", crate::icons::ROTATE_FREE)).clicked() {
+                        self.open_transform_dialog(TransformDialog::Rotate {
+                            degrees: 0.0,
+                            algorithm: RotationAlgorithm::default(),
+                        });
+                        ui.close();
+                    }
+                    if ui.button(format!("{} Skew…", crate::icons::SKEW)).clicked() {
+                        self.open_transform_dialog(TransformDialog::Skew { fx: 0.0, fy: 0.0 });
+                        ui.close();
+                    }
+                    if ui.button(format!("{} Perspective…", crate::icons::PERSPECTIVE)).clicked() {
+                        // open_transform_dialog re-seeds the corners to the
+                        // active sprite's identity rect.
+                        self.open_transform_dialog(TransformDialog::Perspective { corners: [(0.0, 0.0); 4] });
+                        ui.close();
+                    }
+                    if ui.button(format!("{} Antialias (MLAA)…", crate::icons::ANTIALIAS)).clicked() {
+                        self.open_transform_dialog(TransformDialog::Mlaa { config: MlaaConfig::default() });
+                        ui.close();
+                    }
+                    ui.separator();
+                    // Crop to selection shrinks the canvas to the selection
+                    // bounds; it needs an active selection to act on.
+                    let crop = egui::Button::new(format!("{} Crop to selection", crate::icons::CROP));
+                    if ui.add_enabled(has_selection, crop).on_disabled_hover_text("Select a region first").clicked() {
+                        self.crop_to_selection();
+                        ui.close();
+                    }
+                });
+            });
+
             ui.menu_button("Select", |ui| {
                 let has_sprite = self.doc.active_sprite().is_some();
                 let has_selection = self.editor.selection.is_some();
@@ -2390,7 +2680,13 @@ impl ShellApp {
             CommandId::BrushSizeDecrease => self.editor.brush_size = self.editor.brush_size.saturating_sub(1).max(1),
             CommandId::BrushSizeIncrease => self.editor.brush_size = (self.editor.brush_size + 1).min(256),
             CommandId::SelectAll => self.select_all(),
-            CommandId::Deselect => self.editor.clear_selection(),
+            CommandId::Deselect => {
+                // Commit any in-flight free transform before dropping the
+                // selection, so Escape ends the transform rather than abandoning
+                // the lifted pixels mid-resample.
+                self.commit_free_transform();
+                self.editor.clear_selection();
+            }
             CommandId::InvertSelection => self.invert_selection(),
             CommandId::DeleteSelection => self.delete_selection(),
             CommandId::ZoomIn => self.pending_zoom = Some(ZoomAction::In),
@@ -2410,6 +2706,7 @@ impl ShellApp {
             CommandId::ToolWand => self.editor.left_tool = Tool::Wand,
             CommandId::ToolColorRange => self.editor.left_tool = Tool::ColorRange,
             CommandId::ToolMove => self.editor.left_tool = Tool::Move,
+            CommandId::ToolTransform => self.editor.left_tool = Tool::Transform,
             CommandId::OpenSettings => self.open_settings(SettingsTab::General),
         }
     }
@@ -2502,6 +2799,15 @@ fn color_mode_label(mode: ColorMode) -> &'static str {
         ColorMode::Rgba => "RGBA",
         ColorMode::Grayscale => "Grayscale",
         ColorMode::Indexed => "Indexed",
+    }
+}
+
+/// The dropdown label for a rotation algorithm.
+fn rotation_algorithm_label(algorithm: RotationAlgorithm) -> &'static str {
+    match algorithm {
+        RotationAlgorithm::RotSprite => "RotSprite (pixel art)",
+        RotationAlgorithm::Bilinear => "Bilinear (smooth)",
+        RotationAlgorithm::NearestNeighbor => "Nearest (hard edges)",
     }
 }
 
@@ -2619,6 +2925,7 @@ impl eframe::App for ShellApp {
         self.show_delete_confirm(ui.ctx());
         self.show_resize_dialog(ui.ctx());
         self.show_morph_dialog(ui.ctx());
+        self.show_transform_dialog(ui.ctx());
 
         // Panel order matters: outer panels first, the central canvas last so
         // it fills the space the others leave. The menu bar is always shown;
@@ -2732,7 +3039,11 @@ mod tests {
         for x in 0..6u32 {
             mask.set(x, 0, 255);
         }
-        assert_eq!(morph_mask(&mask, MorphOp::Shrink, 1), MorphResult::Cleared, "an emptied contract clears the selection");
+        assert_eq!(
+            morph_mask(&mask, MorphOp::Shrink, 1),
+            MorphResult::Cleared,
+            "an emptied contract clears the selection"
+        );
     }
 
     #[test]

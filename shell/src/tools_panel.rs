@@ -23,7 +23,9 @@ const STRIP: &[(Tool, &str, &str)] = &[
     (Tool::SelectEllipse, icons::ELLIPSE_SELECT, "Elliptical marquee"),
     (Tool::Lasso, icons::LASSO, "Lasso (Q)"),
     (Tool::Wand, icons::WAND, "Magic wand (W)"),
+    (Tool::ColorRange, icons::COLOR_RANGE, "Colour range (A)"),
     (Tool::Move, icons::MOVE, "Move selection (V)"),
+    (Tool::Transform, icons::TRANSFORM, "Free transform (T)"),
 ];
 
 impl ShellApp {

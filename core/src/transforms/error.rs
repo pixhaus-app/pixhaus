@@ -17,6 +17,14 @@ pub enum Error {
     #[error("output dimensions overflow u32")]
     DimensionOverflow,
 
+    /// A perspective warp was given the wrong number of destination corners.
+    #[error("expected 4 destination corners, got {0}")]
+    InvalidCornerCount(usize),
+
+    /// The homography system was singular — the corner configuration is degenerate.
+    #[error("degenerate corner configuration (singular matrix)")]
+    Singular,
+
     /// Forwarded pixel-buffer allocation error.
     #[error("pixel buffer error: {0}")]
     Buffer(#[from] crate::canvas::error::Error),

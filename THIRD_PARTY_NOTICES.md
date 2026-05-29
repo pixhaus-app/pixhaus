@@ -33,9 +33,11 @@ behavioural compatibility only; no Aseprite code is copied.
 ### OpenToonz
 
 Palette pages and palette animation (`core/src/project/palette.rs`), the
-onion-skin model (mobile/fixed ghosts), and the gap-closing skeleton
-classification LUT (`core/src/selection/skeleton_lut.rs`, `core/build.rs`) are
-adapted from OpenToonz, licensed under BSD-3-Clause.
+onion-skin model (mobile/fixed ghosts), the gap-closing skeleton
+classification LUT (`core/src/selection/skeleton_lut.rs`, `core/build.rs`), and
+the morphological antialias driver (`core/src/transforms/antialias.rs`, ported
+from `toonz/sources/common/trop/tantialias.cpp`, implementing Reshetov's 2009
+MLAA) are adapted from OpenToonz, licensed under BSD-3-Clause.
 
 - https://github.com/opentoonz/opentoonz
 - Copyright (c) 2016 DWANGO Co., Ltd.

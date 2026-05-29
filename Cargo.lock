@@ -4083,7 +4083,9 @@ version = "0.1.0"
 dependencies = [
  "criterion",
  "image",
+ "image-compare",
  "palette",
+ "proptest",
  "rayon",
  "rstest",
  "serde",

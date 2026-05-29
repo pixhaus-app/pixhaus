@@ -21,7 +21,8 @@ use pixhaus_render::{ViewportRenderer, viewport::clamp_zoom, viewport::snap_zoom
 
 use crate::app::{ShellApp, ZoomAction};
 use crate::commands::{PixelRegionEdit, extract_region};
-use crate::editor::{MoveDrag, SelectionMode, ShapeDrag, StrokeSession, Tool};
+use crate::editor::{FreeTransformDrag, MoveDrag, SelectionMode, ShapeDrag, StrokeSession, Tool};
+use crate::gizmo::{BoxGizmo, GizmoHandle};
 
 /// Per-frame paint command for the SPRITE program. Cheap to build; holds only
 /// the camera state, never GPU handles.
@@ -182,6 +183,12 @@ impl ShellApp {
 
     /// Routes a pointer gesture to the tool bound to the button driving it.
     fn route_tools(&mut self, response: &egui::Response, pointer: Option<[i32; 2]>) {
+        // A pending free transform commits the moment the active tool stops being
+        // Transform (the user switched tools), so it stays one undo entry and the
+        // resampled pixels land in the document.
+        if self.editor.free_transform.is_some() && self.editor.left_tool != Tool::Transform && self.editor.right_tool != Tool::Transform {
+            self.commit_free_transform();
+        }
         let Some(p) = pointer else {
             // No active pointer: a release may still need committing.
             if response.drag_stopped_by(egui::PointerButton::Primary) || response.drag_stopped_by(egui::PointerButton::Secondary) {
@@ -206,7 +213,7 @@ impl ShellApp {
                 self.begin_gesture(tool, color, p);
             }
             if response.dragged_by(btn) {
-                self.update_gesture(tool, p);
+                self.update_gesture(tool, p, modifiers);
             }
             if response.drag_stopped_by(btn) {
                 self.commit_gesture();
@@ -239,11 +246,12 @@ impl ShellApp {
                 self.editor.lasso.push(IVec2::new(p[0], p[1]));
             }
             Tool::Move => self.begin_move(p),
+            Tool::Transform => self.begin_free_transform(p),
             Tool::Fill | Tool::Wand | Tool::ColorRange | Tool::Picker => {}
         }
     }
 
-    fn update_gesture(&mut self, tool: Tool, p: [i32; 2]) {
+    fn update_gesture(&mut self, tool: Tool, p: [i32; 2], modifiers: egui::Modifiers) {
         match tool {
             Tool::Pencil | Tool::Eraser => self.extend_stroke(p),
             Tool::Line | Tool::Rectangle | Tool::Ellipse => self.update_shape(tool, p),
@@ -254,6 +262,7 @@ impl ShellApp {
             }
             Tool::Lasso => self.editor.lasso.push(IVec2::new(p[0], p[1])),
             Tool::Move => self.update_move(p),
+            Tool::Transform => self.update_free_transform(p, modifiers.shift),
             Tool::Fill | Tool::Wand | Tool::ColorRange | Tool::Picker => {}
         }
     }
@@ -289,6 +298,12 @@ impl ShellApp {
             self.commit_lasso();
         } else if self.editor.move_drag.is_some() {
             self.commit_move();
+        } else if let Some(drag) = self.editor.free_transform.as_mut() {
+            // A free transform persists across drags: a single drag release only
+            // ends the handle grab. The whole transform commits once (one undo
+            // entry) when the tool changes or the user deselects, via
+            // `commit_free_transform`.
+            drag.gizmo_drag = None;
         }
     }
 
@@ -711,6 +726,163 @@ impl ShellApp {
         self.refresh_canvas(false);
     }
 
+    // --- free transform ------------------------------------------------------
+
+    /// Starts (or continues) a free transform. The first press lifts the
+    /// selection into a canvas-sized `lifted` buffer, clears it from the live
+    /// buffer, and seeds the box gizmo to the selection's bounding box — the same
+    /// lift `begin_move` does. Either way, the press then picks the gizmo handle
+    /// under the pointer (a corner, the rotate stem, or the body) so the next
+    /// drag transforms the lifted pixels. A press that misses both an active
+    /// transform and a selection is a no-op.
+    #[allow(clippy::cast_precision_loss)]
+    fn begin_free_transform(&mut self, p: [i32; 2]) {
+        if self.editor.free_transform.is_none() {
+            let Some(mask) = self.editor.selection.clone() else {
+                return;
+            };
+            let Some(buffer_id) = self.doc.active_buffer_id() else {
+                return;
+            };
+            let Some(before) = self.doc.pixel_buffers.get(&buffer_id).cloned() else {
+                return;
+            };
+            let Ok(mut lifted) = PixelBuffer::new(before.width(), before.height()) else {
+                return;
+            };
+            let mut sel: Option<(u32, u32, u32, u32)> = None;
+            if let Some(buf) = self.doc.pixel_buffers.get_mut(&buffer_id) {
+                for y in 0..before.height() {
+                    for x in 0..before.width() {
+                        if mask.is_selected(x, y) {
+                            if let Some(c) = before.pixel(x, y) {
+                                lifted.set_pixel(x, y, c);
+                            }
+                            buf.set_pixel(x, y, Rgba::transparent());
+                            sel = Some(match sel {
+                                None => (x, y, x, y),
+                                Some((ax, ay, bx, by)) => (ax.min(x), ay.min(y), bx.max(x), by.max(y)),
+                            });
+                        }
+                    }
+                }
+            }
+            let Some((x0, y0, x1, y1)) = sel else {
+                // Nothing was selected; leave the buffer untouched.
+                return;
+            };
+            let Some(base) = self.doc.pixel_buffers.get(&buffer_id).cloned() else {
+                return;
+            };
+            self.editor.free_transform = Some(FreeTransformDrag {
+                buffer_id,
+                before,
+                base,
+                lifted,
+                sel_bounds: sel,
+                last_dirty: sel,
+                gizmo: BoxGizmo::from_bounds(x0, y0, x1, y1),
+                gizmo_drag: None,
+            });
+            self.refresh_canvas(false);
+        }
+
+        // Pick the handle under the pointer on the (now-present) gizmo. Tolerance
+        // is in canvas pixels scaled so the grab radius is ~8 screen pixels at any
+        // zoom; the pointer's pixel-centre gives sub-cell precision.
+        let tol = (8.0 / self.viewport.zoom.max(0.01)).max(1.5);
+        let pc = (p[0] as f32 + 0.5, p[1] as f32 + 0.5);
+        if let Some(drag) = self.editor.free_transform.as_mut() {
+            drag.gizmo_drag = pick_handle_canvas(&drag.gizmo, pc, tol);
+        }
+    }
+
+    /// Drives the active gizmo handle to the pointer and live-previews the
+    /// resample: restore the previous footprint from `base`, then inverse-map
+    /// `lifted` through the gizmo affine into the live buffer, bounded by the
+    /// gizmo's axis-aligned bounding box. Per-frame cost is O(gizmo area), not
+    /// O(canvas) — the 8K constraint.
+    #[allow(clippy::cast_precision_loss)]
+    fn update_free_transform(&mut self, p: [i32; 2], uniform: bool) {
+        let (buffer_id, cw, ch) = {
+            let Some(drag) = self.editor.free_transform.as_ref() else {
+                return;
+            };
+            (drag.buffer_id, drag.base.width(), drag.base.height())
+        };
+        // The gizmo reads the pointer's absolute image position for every handle:
+        // a corner sets the half-extents from the pointer's local distance, the
+        // stem points at it, and the body re-centres on it. Shift on a corner
+        // locks the aspect ratio (uniform scale).
+        let pc = (p[0] as f32 + 0.5, p[1] as f32 + 0.5);
+        let prev_aabb = {
+            let Some(drag) = self.editor.free_transform.as_mut() else {
+                return;
+            };
+            let Some(handle) = drag.gizmo_drag else {
+                return;
+            };
+            let prev = drag.gizmo.aabb(cw, ch);
+            match handle {
+                GizmoHandle::Move => {
+                    // Re-centre the box so the grabbed body tracks the pointer.
+                    drag.gizmo.cx = pc.0;
+                    drag.gizmo.cy = pc.1;
+                }
+                handle => drag.gizmo.drag_handle(handle, pc.0, pc.1, 0.0, 0.0, uniform),
+            }
+            prev
+        };
+
+        // The footprints to rewrite: the previous stamp and the new gizmo box,
+        // unioned so the trail is cleared as the box moves.
+        let new_aabb = self.editor.free_transform.as_ref().map(|d| d.gizmo.aabb(cw, ch));
+        let prev_rect = aabb_to_inclusive(prev_aabb);
+        let new_rect = new_aabb.and_then(aabb_to_inclusive);
+        let dirty = union_opt(prev_rect, new_rect);
+
+        if let Some(drag) = self.editor.free_transform.as_ref() {
+            let base = &drag.base;
+            let lifted = &drag.lifted;
+            let gizmo = drag.gizmo;
+            let sel = drag.sel_bounds;
+            if let Some(buf) = self.doc.pixel_buffers.get_mut(&buffer_id) {
+                if let Some((rx, ry, rx1, ry1)) = dirty {
+                    restore_region(buf, base, rx, ry, rx1 - rx + 1, ry1 - ry + 1);
+                }
+                if let Some(sel_bounds) = sel {
+                    resample_lifted(buf, lifted, &gizmo, sel_bounds, cw, ch);
+                }
+            }
+        }
+
+        if let Some((x, y, x1, y1)) = dirty {
+            self.upload_region(x, y, x1 - x + 1, y1 - y + 1);
+        }
+        if let Some(drag) = self.editor.free_transform.as_mut() {
+            drag.last_dirty = new_rect;
+        }
+    }
+
+    /// Commits the active free transform as one undo entry over the union of the
+    /// original selection bounds and the final gizmo box, then drops the drag and
+    /// clears the selection. A no-op gizmo (the live buffer matches its
+    /// pre-transform bytes) records nothing — `finish_pixel_edit` skips an
+    /// unchanged region. Called when the tool changes away from Transform or the
+    /// user deselects, not on each drag release.
+    pub(crate) fn commit_free_transform(&mut self) {
+        let Some(drag) = self.editor.free_transform.take() else {
+            return;
+        };
+        let (cw, ch) = match self.canvas_size() {
+            Some(s) => (s.width, s.height),
+            None => return,
+        };
+        self.finish_pixel_edit(&drag.before, drag.buffer_id, 0, 0, cw, ch, "Free transform");
+        self.editor.clear_selection();
+        self.refresh_canvas(false);
+    }
+
     // --- shared helpers ------------------------------------------------------
 
     /// Takes the stroke session's *pending* dirty rect (the footprint stamped
@@ -792,8 +964,9 @@ impl ShellApp {
                         painter.line_segment([c2s(a.0 as f32, a.1 as f32), c2s(b.0 as f32, b.1 as f32)], cursor);
                     }
                 }
-                // Move acts on an existing selection, not a pixel under the cursor.
-                Tool::Move => {}
+                // Move and Transform act on an existing selection / the gizmo,
+                // not a pixel under the cursor.
+                Tool::Move | Tool::Transform => {}
                 _ => {
                     let min = c2s(hx as f32, hy as f32);
                     let max = c2s((hx + 1) as f32, (hy + 1) as f32);
@@ -868,6 +1041,26 @@ impl ShellApp {
                     ui.ctx().request_repaint();
                 }
             }
+        }
+
+        // Free-transform box gizmo: the four corner handles, the body outline,
+        // and the rotate stem, drawn over the live resample preview.
+        if let Some(drag) = &self.editor.free_transform {
+            let accent = ui.visuals().selection.stroke.color;
+            let g = &drag.gizmo;
+            let pts: Vec<egui::Pos2> = g.corners().iter().map(|&(x, y)| c2s(x, y)).collect();
+            for k in 0..4 {
+                painter.line_segment([pts[k], pts[(k + 1) % 4]], egui::Stroke::new(1.5, accent));
+            }
+            for p in &pts {
+                painter.circle_filled(*p, 4.0, accent);
+            }
+            let (tx, ty) = g.point(0.0, -g.hh);
+            let top_mid = c2s(tx, ty);
+            let (rx, ry) = g.rotate_handle();
+            let stem = c2s(rx, ry);
+            painter.line_segment([top_mid, stem], egui::Stroke::new(1.5, accent));
+            painter.circle_filled(stem, 4.0, accent);
         }
     }
 }
@@ -985,6 +1178,79 @@ fn rasterize_shape(buf: &mut PixelBuffer, tool: Tool, start: [i32; 2], end: [i32
             }
         }
         _ => {}
+    }
+}
+
+/// Picks the gizmo handle a click at canvas-pixel position `pc` grabs, with
+/// hit-testing entirely in canvas-pixel space (tolerance `tol`). The screen-space
+/// pick the studio uses needs the per-frame `to_screen` map; here the canvas
+/// pointer is already in image pixels and `tol` is pre-scaled for the zoom, so a
+/// canvas-space distance test is enough and keeps the gizmo widget caller-agnostic.
+fn pick_handle_canvas(g: &BoxGizmo, pc: (f32, f32), tol: f32) -> Option<GizmoHandle> {
+    let dist = |a: (f32, f32)| ((a.0 - pc.0).powi(2) + (a.1 - pc.1).powi(2)).sqrt();
+    for (k, &corner) in g.corners().iter().enumerate() {
+        if dist(corner) <= tol {
+            return Some(GizmoHandle::Corner(k));
+        }
+    }
+    if dist(g.rotate_handle()) <= tol {
+        return Some(GizmoHandle::Rotate);
+    }
+    g.contains(pc.0, pc.1).then_some(GizmoHandle::Move)
+}
+
+/// Converts a gizmo `[x, y, w, h]` aabb to an inclusive `(x0, y0, x1, y1)` rect,
+/// or `None` for a zero-area box.
+fn aabb_to_inclusive([x, y, w, h]: [u32; 4]) -> Option<(u32, u32, u32, u32)> {
+    (w > 0 && h > 0).then(|| (x, y, x + w - 1, y + h - 1))
+}
+
+/// Inverse-maps the lifted selection through the gizmo's affine and stamps the
+/// result into `buf`, bounded to the gizmo's axis-aligned bounding box so the
+/// cost is O(box area), not O(canvas) — the 8K constraint.
+///
+/// At its seed the gizmo covers the selection's continuous extent exactly
+/// (`BoxGizmo::from_bounds`), so the box's local `[-hw, hw] x [-hh, hh]` frame
+/// maps linearly to the source rectangle `sel_bounds`. For each destination pixel
+/// in the box's aabb we undo the gizmo transform to a local position, normalize it
+/// to `[0, 1]` across the box, scale to the source rect, and sample `lifted` with
+/// nearest-neighbour — the responsive preview default; a crisper resample is a
+/// commit-time choice. Transparent source pixels are skipped so the lift's hole
+/// shape is preserved.
+#[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss, clippy::cast_precision_loss)]
+fn resample_lifted(buf: &mut PixelBuffer, lifted: &PixelBuffer, gizmo: &BoxGizmo, sel_bounds: (u32, u32, u32, u32), cw: u32, ch: u32) {
+    let (sx0, sy0, sx1, sy1) = sel_bounds;
+    let left = sx0 as f32;
+    let top = sy0 as f32;
+    let right = sx1 as f32 + 1.0;
+    let bottom = sy1 as f32 + 1.0;
+    let src_w = right - left;
+    let src_h = bottom - top;
+    let (hw, hh) = (gizmo.hw.max(f32::EPSILON), gizmo.hh.max(f32::EPSILON));
+
+    let [ax, ay, aw, ah] = gizmo.aabb(cw, ch);
+    for dy in ay..ay + ah {
+        for dx in ax..ax + aw {
+            let (lx, ly) = gizmo.to_local(dx as f32 + 0.5, dy as f32 + 0.5);
+            if lx.abs() > hw || ly.abs() > hh {
+                continue;
+            }
+            // Local -> [0, 1] across the box -> source-rect pixel.
+            let u = (lx + hw) / (2.0 * hw);
+            let v = (ly + hh) / (2.0 * hh);
+            let src_x = left + u * src_w - 0.5;
+            let src_y = top + v * src_h - 0.5;
+            let sx = src_x.round();
+            let sy = src_y.round();
+            if sx < sx0 as f32 || sx > sx1 as f32 || sy < sy0 as f32 || sy > sy1 as f32 {
+                continue;
+            }
+            let Some(c) = lifted.pixel(sx as u32, sy as u32) else { continue };
+            if c.a == 0 {
+                continue;
+            }
+            buf.set_pixel(dx, dy, c);
+        }
     }
 }
 
@@ -1238,6 +1504,7 @@ fn paint_selection_ants(painter: &egui::Painter, segments: &[[(i32, i32); 2]], c
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::commands::write_region;
 
     /// A closed outline visits every grid point an even number of times (each
     /// vertex is shared by an incoming and outgoing edge).
@@ -1842,5 +2109,166 @@ mod tests {
         let buf = two_color_checkerboard(8, 8);
         let mask = select_color_range(&buf, [0, 0], 255);
         assert_eq!(mask.selected_count(), 64);
+    }
+
+    // --- free transform: gizmo affine resample ------------------------------
+
+    /// Lifts the inclusive selection `(x0, y0, x1, y1)` of `src` into a
+    /// canvas-sized `lifted` buffer and returns it alongside the seed gizmo (the
+    /// box covering the selection bounds, unrotated). Mirrors the lift
+    /// `begin_free_transform` performs, without a `ShellApp`.
+    fn lift(src: &PixelBuffer, x0: u32, y0: u32, x1: u32, y1: u32) -> (PixelBuffer, BoxGizmo) {
+        let mut lifted = PixelBuffer::new(src.width(), src.height()).expect("lifted");
+        for y in y0..=y1 {
+            for x in x0..=x1 {
+                if let Some(c) = src.pixel(x, y) {
+                    lifted.set_pixel(x, y, c);
+                }
+            }
+        }
+        (lifted, BoxGizmo::from_bounds(x0, y0, x1, y1))
+    }
+
+    #[test]
+    fn identity_gizmo_resample_reproduces_the_lift() {
+        // With the seed gizmo (no scale, rotate, or move) the resample reproduces
+        // the lifted region exactly, so a commit over a cleared `base` lands the
+        // pixels back where they started — and `finish_pixel_edit`'s before==after
+        // guard records no history entry.
+        let mut src = buf(8, 8, BLANK);
+        src.set_pixel(2, 2, RED);
+        src.set_pixel(5, 5, Rgba::opaque(20, 220, 40));
+        src.set_pixel(3, 4, Rgba::opaque(40, 60, 220));
+        let (lifted, gizmo) = lift(&src, 2, 2, 5, 5);
+
+        // `base` is the live buffer with the selection cleared (transparent hole).
+        let mut out = src.clone();
+        for y in 2..=5u32 {
+            for x in 2..=5u32 {
+                out.set_pixel(x, y, BLANK);
+            }
+        }
+        resample_lifted(&mut out, &lifted, &gizmo, (2, 2, 5, 5), 8, 8);
+        assert_eq!(out.as_bytes(), src.as_bytes(), "identity resample reproduces the source");
+    }
+
+    #[test]
+    fn uniform_scale_2x_of_a_4x4_selection_fills_an_8x8_region() {
+        // A solid 4x4 selection scaled 2x about its centre covers an 8x8 region.
+        // The seed box spans continuous [2, 6] x [2, 6] (centre (4, 4), half 2);
+        // doubling the half-extents to 4 grows it to [0, 8] x [0, 8].
+        let fill = Rgba::opaque(180, 60, 90);
+        let mut src = buf(8, 8, BLANK);
+        for y in 2..=5u32 {
+            for x in 2..=5u32 {
+                src.set_pixel(x, y, fill);
+            }
+        }
+        let (lifted, mut gizmo) = lift(&src, 2, 2, 5, 5);
+        gizmo.hw = 4.0;
+        gizmo.hh = 4.0;
+
+        let mut out = buf(8, 8, BLANK);
+        resample_lifted(&mut out, &lifted, &gizmo, (2, 2, 5, 5), 8, 8);
+
+        // Every one of the 64 pixels is the fill colour; the scaled box covers the
+        // whole canvas with the solid selection.
+        let covered = out.pixels().filter(|p| *p == fill).count();
+        assert_eq!(covered, 64, "2x scale of the solid 4x4 fills the 8x8 region");
+    }
+
+    #[test]
+    fn lifted_hole_round_trips_through_a_before_after_swap() {
+        // The undo contract: a free transform's `before` is the pre-lift buffer,
+        // its `after` is base (the hole) plus the resampled stamp. Swapping after
+        // -> before restores the original, including the cleared hole. This is the
+        // exact apply/undo `PixelRegionEdit` performs over the committed region.
+        let mut before = buf(8, 8, BLANK);
+        before.set_pixel(3, 3, RED);
+        before.set_pixel(4, 3, RED);
+        let (lifted, mut gizmo) = lift(&before, 3, 3, 4, 3);
+
+        // Move the box two pixels right (the body drag) and resample over a hole.
+        gizmo.cx += 2.0;
+        let mut after = before.clone();
+        for x in 3..=4u32 {
+            after.set_pixel(x, 3, BLANK); // lift the hole
+        }
+        resample_lifted(&mut after, &lifted, &gizmo, (3, 3, 4, 3), 8, 8);
+        // After the move the original cells are empty and the shifted ones filled.
+        assert_eq!(after.pixel(3, 3), Some(BLANK), "original cell vacated");
+        assert_eq!(after.pixel(5, 3), Some(RED), "moved cell filled");
+
+        // The undo restores `before` byte-for-byte (the hole is closed again).
+        let region_before = extract_region(&before, 0, 0, 8, 8);
+        let mut undone = after.clone();
+        write_region(&mut undone, 0, 0, 8, 8, &region_before);
+        assert_eq!(undone.as_bytes(), before.as_bytes(), "undo restores the lifted hole");
+    }
+
+    #[test]
+    fn pick_handle_finds_corner_stem_and_body() {
+        let g = BoxGizmo {
+            cx: 4.0,
+            cy: 4.0,
+            hw: 2.0,
+            hh: 2.0,
+            angle: 0.0,
+        };
+        // TL corner at (2, 2); a click on it within tolerance grabs Corner(0).
+        assert_eq!(pick_handle_canvas(&g, (2.0, 2.0), 1.0), Some(GizmoHandle::Corner(0)));
+        // The body centre grabs Move.
+        assert_eq!(pick_handle_canvas(&g, (4.0, 4.0), 1.0), Some(GizmoHandle::Move));
+        // The rotate stem sits above the top edge.
+        let (rx, ry) = g.rotate_handle();
+        assert_eq!(pick_handle_canvas(&g, (rx, ry), 1.0), Some(GizmoHandle::Rotate));
+        // A click far outside the box misses everything.
+        assert_eq!(pick_handle_canvas(&g, (7.9, 7.9), 0.5), None);
+    }
+
+    #[test]
+    fn aabb_to_inclusive_drops_zero_area() {
+        assert_eq!(aabb_to_inclusive([2, 3, 4, 5]), Some((2, 3, 5, 7)));
+        assert_eq!(aabb_to_inclusive([2, 3, 0, 5]), None);
+        assert_eq!(aabb_to_inclusive([2, 3, 4, 0]), None);
+    }
+
+    /// Visual regression: a rotated free-transform selection compared against a
+    /// committed baseline PNG. Regenerate with `PIXHAUS_UPDATE_SNAPSHOTS=1
+    /// cargo test -p pixhaus-shell rotated_free_transform_matches_baseline` after
+    /// an intentional change, and audit the new image in the PR.
+    #[test]
+    fn rotated_free_transform_matches_baseline() {
+        use std::path::Path;
+
+        // A 16x16 canvas with an off-centre coloured block as the selection.
+        let (w, h) = (16u32, 16u32);
+        let mut src = buf(w, h, BLANK);
+        for y in 4..=11u32 {
+            for x in 4..=11u32 {
+                let shade = if (x + y) % 2 == 0 { Rgba::opaque(220, 80, 60) } else { Rgba::opaque(60, 120, 220) };
+                src.set_pixel(x, y, shade);
+            }
+        }
+        let (lifted, mut gizmo) = lift(&src, 4, 4, 11, 11);
+        gizmo.angle = std::f32::consts::FRAC_PI_6; // 30 degrees
+
+        let mut out = buf(w, h, BLANK);
+        resample_lifted(&mut out, &lifted, &gizmo, (4, 4, 11, 11), w, h);
+
+        let actual = to_rgba_image(&out);
+        let baseline_path = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/snapshots/rotated_free_transform.png");
+        if std::env::var_os("PIXHAUS_UPDATE_SNAPSHOTS").is_some() {
+            if let Some(dir) = baseline_path.parent() {
+                std::fs::create_dir_all(dir).expect("create snapshot dir");
+            }
+            actual.save(&baseline_path).expect("write baseline png");
+            return;
+        }
+        let baseline = image::open(&baseline_path)
+            .expect("baseline png is present; regenerate with PIXHAUS_UPDATE_SNAPSHOTS=1")
+            .to_rgba8();
+        let score = image_compare::rgba_hybrid_compare(&actual, &baseline).expect("compare").score;
+        assert!(score >= 0.999, "rotated free transform diverged from baseline: score = {score}");
     }
 }

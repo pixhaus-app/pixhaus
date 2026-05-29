@@ -14,6 +14,7 @@ use pixhaus_core::selection::SelectionMask;
 use pixhaus_core::undo::History;
 
 use crate::document::DocumentStore;
+use crate::gizmo::{BoxGizmo, GizmoHandle};
 
 /// The editing tools. Pencil through colour-picker paint; the rest select or
 /// move. Adopted from Pixelorama's tool taxonomy (design vs selection vs
@@ -42,8 +43,46 @@ pub enum Tool {
     Lasso,
     /// Magic-wand flood selection by colour.
     Wand,
+    /// Select every pixel matching the clicked colour, canvas-wide (ignores
+    /// contiguity, unlike the wand).
+    ColorRange,
     /// Move the current selection's pixels.
     Move,
+    /// Free-transform the current selection's pixels: scale, rotate, and warp
+    /// the lifted region via the on-canvas box gizmo.
+    Transform,
+}
+
+/// How a freshly-made mask combines with the existing selection. Resolved from
+/// the keyboard modifiers held at the gesture's start (Shift -> Add, Alt ->
+/// Subtract, Shift+Alt -> Intersect, none -> Replace). Transient: it never
+/// persists across gestures, so the default is always Replace.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
+pub enum SelectionMode {
+    /// Discard the old selection and keep only the new mask.
+    #[default]
+    Replace,
+    /// Union the new mask with the old selection.
+    Add,
+    /// Remove the new mask from the old selection.
+    Subtract,
+    /// Keep only the overlap of the new mask and the old selection.
+    Intersect,
+}
+
+impl SelectionMode {
+    /// Resolves the mode from held modifiers: Shift -> Add, Alt -> Subtract,
+    /// Shift+Alt -> Intersect, neither -> Replace. Shift+Alt wins over either
+    /// alone so the intersect gesture is reachable.
+    #[must_use]
+    pub fn from_modifiers(modifiers: egui::Modifiers) -> Self {
+        match (modifiers.shift, modifiers.alt) {
+            (true, true) => Self::Intersect,
+            (true, false) => Self::Add,
+            (false, true) => Self::Subtract,
+            (false, false) => Self::Replace,
+        }
+    }
 }
 
 /// How the palette panel sorts swatches when asked.
@@ -199,6 +238,38 @@ pub struct MoveDrag {
     pub offset: [i32; 2],
 }
 
+/// An in-progress free transform of the selected pixels via the box gizmo.
+///
+/// Mirrors [`MoveDrag`]'s lift-and-stamp shape — the selection is lifted into a
+/// canvas-sized `lifted` buffer and cleared from the live buffer, with `base`
+/// the cleared background and `before` the pre-transform snapshot — but the
+/// stamp is an affine resample of `lifted` through the gizmo instead of an
+/// integer translate. Per-frame work is bounded by the gizmo's axis-aligned
+/// bounding box, not the canvas (the 8K constraint).
+pub struct FreeTransformDrag {
+    /// Buffer being transformed within.
+    pub buffer_id: PixelBufferId,
+    /// Buffer contents before the transform (the undo "before" snapshot).
+    pub before: PixelBuffer,
+    /// The background with the selection lifted out (transparent in the
+    /// selection). Per-frame restore reads from this.
+    pub base: PixelBuffer,
+    /// Lifted pixels (the selection's content at press) as a full-canvas buffer,
+    /// transparent outside the selection. The resample source.
+    pub lifted: PixelBuffer,
+    /// Inclusive bounds of the selection at press, the gizmo's seed rect and the
+    /// source rectangle the resample maps from. `None` for an empty selection.
+    pub sel_bounds: Option<(u32, u32, u32, u32)>,
+    /// Inclusive bounds of the previous frame's stamped footprint, restored
+    /// before the next resample.
+    pub last_dirty: Option<(u32, u32, u32, u32)>,
+    /// The transform box, in canvas-pixel space.
+    pub gizmo: BoxGizmo,
+    /// The handle the current drag is moving, picked on press. `None` between
+    /// drags (a hover, or a press that missed the gizmo).
+    pub gizmo_drag: Option<GizmoHandle>,
+}
+
 /// All interactive-editing state, owned by [`crate::app::ShellApp`].
 pub struct EditorState {
     /// Tool bound to the primary (left) mouse button.
@@ -218,6 +289,18 @@ pub struct EditorState {
     pub mirror_y: bool,
     /// Per-channel fill/wand tolerance.
     pub tolerance: u8,
+    /// Magic wand: use 8-connectivity (diagonals) instead of the default 4.
+    pub wand_eight: bool,
+    /// Magic wand: run the auto-close gap pre-pass so the flood does not leak
+    /// through small breaks in an outline.
+    pub wand_gap_close: bool,
+    /// Magic wand: maximum gap, in pixels, the auto-close pass bridges. Only
+    /// consulted when [`Self::wand_gap_close`] is on.
+    pub wand_gap_distance: u32,
+    /// Per-channel tolerance for the colour-range (select-by-colour) tool. Kept
+    /// separate from [`Self::tolerance`] so the colour-range and fill/wand
+    /// sliders move independently, matching the legacy TS app.
+    pub color_range_tolerance: u8,
     /// Foreground colour (left-button paint).
     pub fg: Rgba,
     /// Background colour (right-button paint, colour swap).
@@ -237,9 +320,14 @@ pub struct EditorState {
     pub sel_drag: Option<([i32; 2], [i32; 2])>,
     /// In-progress move drag.
     pub move_drag: Option<MoveDrag>,
+    /// In-progress free-transform drag.
+    pub free_transform: Option<FreeTransformDrag>,
     /// Current selection mask (canvas-sized), or `None` when nothing is
     /// selected (the whole canvas is editable).
     pub selection: Option<SelectionMask>,
+    /// How the next committed mask combines with [`Self::selection`]. Set from
+    /// the modifiers at gesture start; transient, defaults to Replace.
+    pub selection_mode: SelectionMode,
     /// Onion-skin settings.
     pub onion: OnionConfig,
     /// Palette panel: lock the grid against accidental reordering.
@@ -269,6 +357,10 @@ impl Default for EditorState {
             mirror_x: false,
             mirror_y: false,
             tolerance: 0,
+            wand_eight: false,
+            wand_gap_close: false,
+            wand_gap_distance: 10,
+            color_range_tolerance: 0,
             fg: Rgba::opaque(20, 20, 28),
             bg: Rgba::transparent(),
             auto_add_palette: true,
@@ -278,7 +370,9 @@ impl Default for EditorState {
             lasso: Vec::new(),
             sel_drag: None,
             move_drag: None,
+            free_transform: None,
             selection: None,
+            selection_mode: SelectionMode::default(),
             onion: OnionConfig::default(),
             lock_palette_grid: false,
             swatch_size: 18.0,
