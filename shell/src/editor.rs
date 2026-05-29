@@ -133,6 +133,44 @@ impl HarmonyKind {
     }
 }
 
+/// The writable palette file format the export button targets. Import sniffs
+/// the format from the file's extension and (for `.pal`) its bytes, so it needs
+/// no enum; export must be told which encoder to run. `.aco` is read-only in
+/// every tree, so it is not an export option. Mirrors the export side of the
+/// Tauri `PaletteIOMenu.tsx`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
+pub enum PaletteExportFormat {
+    /// GIMP Palette (`.gpl`), `gpl::encode`.
+    #[default]
+    Gpl,
+    /// Lospec `.hex`, `hex::encode`.
+    Hex,
+    /// JASC `.pal`, `pal::encode_jasc`.
+    Pal,
+}
+
+impl PaletteExportFormat {
+    /// The lowercase file extension this format writes.
+    #[must_use]
+    pub const fn extension(self) -> &'static str {
+        match self {
+            Self::Gpl => "gpl",
+            Self::Hex => "hex",
+            Self::Pal => "pal",
+        }
+    }
+
+    /// The short label shown on the format selector.
+    #[must_use]
+    pub const fn label(self) -> &'static str {
+        match self {
+            Self::Gpl => "GPL",
+            Self::Hex => "HEX",
+            Self::Pal => "PAL",
+        }
+    }
+}
+
 /// The active tab of the multi-tab colour picker. Each tab edits the same
 /// [`Rgba`] through a different colour space; switching tabs preserves the
 /// colour. Mirrors the five modes of the Tauri `ColorPicker.tsx`.
@@ -551,6 +589,15 @@ pub struct EditorState {
     /// Palette panel: the harmony tool's scheme, derived from the foreground
     /// colour. View state, never serialized.
     pub harmony_kind: HarmonyKind,
+    /// Palette panel: the format the export button writes. Import sniffs its
+    /// format from the file, so only export needs this. View state, never
+    /// serialized.
+    pub export_format: PaletteExportFormat,
+    /// Palette panel: the most recent import/export error, shown inline under
+    /// the Import / Export section. `None` when the last file op succeeded or
+    /// none has run. v2 has no toast system, so the field stands in for one.
+    /// View state, never serialized.
+    pub palette_io_error: Option<String>,
     /// Timeline: cel-thumbnail edge length in points.
     pub cel_size: f32,
     /// Timeline: draft name for a new frame tag.
@@ -665,6 +712,8 @@ impl Default for EditorState {
             ramp_to: 0,
             ramp_steps: 5,
             harmony_kind: HarmonyKind::default(),
+            export_format: PaletteExportFormat::default(),
+            palette_io_error: None,
             cel_size: 48.0,
             new_tag_name: String::new(),
             layer_rename: None,

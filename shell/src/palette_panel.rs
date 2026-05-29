@@ -6,14 +6,17 @@
 //! the grid is locked). Auto-add-on-draw, sorting, and a grid lock are the
 //! Pixelorama-derived curation aids; see `THIRD_PARTY_NOTICES.md`.
 
+use std::path::Path;
+
 use eframe::egui;
+use pixhaus_core::color::palette_file::{aco, gpl, hex, pal, PaletteFileError, PaletteFileResult};
 use pixhaus_core::color::space::to_hsv;
 use pixhaus_core::project::{Palette, PaletteEntry, Rgba};
 
 use crate::app::ShellApp;
 use crate::color_picker::color_picker_ui;
 use crate::commands::push_sprite_edit;
-use crate::editor::{PaletteSort, to_color32};
+use crate::editor::{PaletteExportFormat, PaletteSort, to_color32};
 use crate::icons;
 
 /// Drag payload carrying the swatch index being moved. Mirrors the layers
@@ -244,6 +247,102 @@ impl ShellApp {
 
         ui.separator();
         self.palette_tools(ui);
+
+        ui.separator();
+        self.import_export_section(ui);
+    }
+
+    /// The "Import / Export" section: read a `.gpl`/`.hex`/`.pal`/`.aco` file
+    /// into the active palette, or write the active palette to a `.gpl`/`.hex`/
+    /// `.pal` file. Both buttons open the OS-native [`rfd`] dialog synchronously
+    /// on the click — that blocks on the OS dialog, not on app work, and holds
+    /// no lock across an `.await` (the shell is synchronous egui). The last
+    /// error shows inline; v2 has no toast system.
+    fn import_export_section(&mut self, ui: &mut egui::Ui) {
+        let has_palette = self.doc.active_palette().is_some();
+        egui::CollapsingHeader::new("Import / Export").id_salt("palette_io").default_open(false).show(ui, |ui| {
+            ui.horizontal(|ui| {
+                if ui.add_enabled(has_palette, egui::Button::new(format!("{} Import...", icons::IMAGE))).clicked() {
+                    self.import_palette();
+                }
+            });
+
+            ui.horizontal(|ui| {
+                ui.label("Export as:");
+                for fmt in [PaletteExportFormat::Gpl, PaletteExportFormat::Hex, PaletteExportFormat::Pal] {
+                    ui.selectable_value(&mut self.editor.export_format, fmt, fmt.label());
+                }
+                if ui.add_enabled(has_palette, egui::Button::new(format!("{} Export...", icons::COPY))).clicked() {
+                    self.export_palette();
+                }
+            });
+
+            if let Some(err) = &self.editor.palette_io_error {
+                ui.colored_label(egui::Color32::from_rgb(220, 90, 90), err);
+            }
+        });
+    }
+
+    /// Opens a file dialog, parses the picked palette file by extension, and
+    /// appends its colours to the active palette in one undo step. A parse
+    /// failure or a cancelled dialog leaves the palette unchanged; a failure is
+    /// surfaced inline, a cancel is silent.
+    fn import_palette(&mut self) {
+        let Some(path) = rfd::FileDialog::new()
+            .set_title("Import palette")
+            .add_filter("Palette", &["gpl", "hex", "pal", "aco"])
+            .pick_file()
+        else {
+            // A cancelled dialog is not an error; leave the prior state.
+            return;
+        };
+
+        match parse_palette_file(&path) {
+            Ok(colors) => {
+                self.editor.palette_io_error = None;
+                push_sprite_edit(&mut self.editor, &mut self.doc, "Import palette", |sprite| {
+                    if let Some(p) = sprite.palettes.first_mut() {
+                        p.colors.extend(colors.into_iter().map(PaletteEntry::new));
+                    }
+                });
+            }
+            Err(e) => {
+                self.editor.palette_io_error = Some(format!("Import failed: {e}"));
+            }
+        }
+    }
+
+    /// Opens a save dialog seeded from the palette name, encodes the active
+    /// palette in the selected format, and writes it to disk. An I/O failure is
+    /// surfaced inline; a cancelled dialog is silent.
+    fn export_palette(&mut self) {
+        let Some(palette) = self.doc.active_palette() else {
+            return;
+        };
+        let name = palette.name.clone();
+        let colors: Vec<Rgba> = palette.colors.iter().map(|e| e.color).collect();
+        let fmt = self.editor.export_format;
+
+        let slug = palette_slug(&name);
+        let Some(path) = rfd::FileDialog::new()
+            .set_title("Export palette")
+            .set_file_name(format!("{slug}.{ext}", ext = fmt.extension()))
+            .add_filter(fmt.label(), &[fmt.extension()])
+            .save_file()
+        else {
+            return;
+        };
+
+        let bytes: Vec<u8> = match fmt {
+            PaletteExportFormat::Gpl => gpl::encode(&name, &colors).into_bytes(),
+            PaletteExportFormat::Hex => hex::encode(&colors).into_bytes(),
+            PaletteExportFormat::Pal => pal::encode_jasc(&colors).into_bytes(),
+        };
+
+        match std::fs::write(&path, bytes) {
+            Ok(()) => self.editor.palette_io_error = None,
+            Err(e) => self.editor.palette_io_error = Some(format!("Export failed: {e}")),
+        }
     }
 
     /// The popup multi-tab colour editor for the double-clicked swatch.
@@ -433,6 +532,71 @@ pub(crate) fn set_entry_name(palette: &mut Palette, index: usize, name: Option<S
     }
 }
 
+/// Reads `path` and parses it into a colour list, dispatching on the lowercase
+/// file extension. `.gpl` drops the parsed palette name (the panel appends into
+/// the active palette and keeps its name); `.pal` sniffs RIFF vs JASC via
+/// [`parse_pal`]. An unknown extension or a read failure maps to
+/// [`PaletteFileError::Invalid`].
+fn parse_palette_file(path: &Path) -> PaletteFileResult<Vec<Rgba>> {
+    let bytes = std::fs::read(path).map_err(|e| PaletteFileError::Invalid(format!("could not read file: {e}")))?;
+    let ext = path
+        .extension()
+        .and_then(|e| e.to_str())
+        .map(str::to_ascii_lowercase)
+        .unwrap_or_default();
+
+    match ext.as_str() {
+        "gpl" => {
+            let text = bytes_as_utf8(&bytes)?;
+            gpl::parse(text).map(|(_name, colors)| colors)
+        }
+        "hex" => {
+            let text = bytes_as_utf8(&bytes)?;
+            hex::parse(text)
+        }
+        "pal" => parse_pal(&bytes),
+        "aco" => aco::parse(&bytes),
+        other => Err(PaletteFileError::Invalid(format!("unsupported palette extension '{other}'"))),
+    }
+}
+
+/// Sniffs a `.pal` buffer: the binary RIFF form first (its parser checks the
+/// `RIFF` magic and rejects anything else), then the JASC text form. Both
+/// formats share the `.pal` extension, so the extension alone cannot
+/// disambiguate them. Returns the RIFF error only when the bytes start with the
+/// RIFF magic but are otherwise malformed; an absent magic falls through to
+/// JASC so a JASC file's RIFF error never masks the real one.
+pub(crate) fn parse_pal(bytes: &[u8]) -> PaletteFileResult<Vec<Rgba>> {
+    if bytes.starts_with(b"RIFF") {
+        // The bytes claim to be RIFF; surface the RIFF parser's error rather
+        // than a misleading "missing JASC-PAL header".
+        return pal::parse_riff(bytes);
+    }
+    let text = bytes_as_utf8(bytes)?;
+    pal::parse_jasc(text)
+}
+
+/// Borrows `bytes` as UTF-8 text for the text palette parsers, mapping a
+/// non-UTF-8 buffer to [`PaletteFileError::Invalid`] rather than panicking.
+fn bytes_as_utf8(bytes: &[u8]) -> PaletteFileResult<&str> {
+    std::str::from_utf8(bytes).map_err(|_| PaletteFileError::Invalid("file is not valid UTF-8 text".into()))
+}
+
+/// A filesystem-safe stem for the export dialog's default file name, derived
+/// from the palette name. Non-alphanumeric runs collapse to single hyphens; an
+/// empty result falls back to `"palette"`.
+fn palette_slug(name: &str) -> String {
+    let slug: String = name
+        .chars()
+        .map(|c| if c.is_ascii_alphanumeric() { c.to_ascii_lowercase() } else { '-' })
+        .collect::<String>()
+        .split('-')
+        .filter(|s| !s.is_empty())
+        .collect::<Vec<_>>()
+        .join("-");
+    if slug.is_empty() { "palette".to_owned() } else { slug }
+}
+
 /// HSV hue angle in `0..360` for the hue sort, via the shared `space`
 /// conversion.
 fn hue_key(c: Rgba) -> f32 {
@@ -461,10 +625,11 @@ fn luminance(c: Rgba) -> u32 {
 
 #[cfg(test)]
 mod tests {
+    use pixhaus_core::color::palette_file::pal;
     use pixhaus_core::project::{Palette, PaletteId, Rgba};
     use rstest::rstest;
 
-    use super::{luminance, remove_swatch_at, reorder_in_place, saturation_key, set_entry_name, value_key};
+    use super::{luminance, palette_slug, parse_pal, remove_swatch_at, reorder_in_place, saturation_key, set_entry_name, value_key};
 
     fn palette_with_named_colors(names: &[&str]) -> Palette {
         let mut p = Palette::from_colors(PaletteId::new(1), "main", vec![Rgba::opaque(0, 0, 0); names.len()]);
@@ -574,5 +739,55 @@ mod tests {
     #[test]
     fn luminance_orders_black_below_white() {
         assert!(luminance(Rgba::opaque(0, 0, 0)) < luminance(Rgba::opaque(255, 255, 255)));
+    }
+
+    // ── parse_pal: RIFF vs JASC sniff ─────────────────────────────────────
+
+    fn sample_colors() -> Vec<Rgba> {
+        vec![Rgba::opaque(255, 0, 0), Rgba::opaque(0, 255, 0), Rgba::opaque(0, 0, 255)]
+    }
+
+    #[test]
+    fn parse_pal_sniffs_a_riff_fixture() {
+        // A RIFF .pal buffer (binary magic `RIFF`) routes to parse_riff.
+        let bytes = pal::encode_riff(&sample_colors()).expect("encode riff fixture");
+        assert!(bytes.starts_with(b"RIFF"), "fixture must carry the RIFF magic");
+        assert_eq!(parse_pal(&bytes).expect("parse riff via sniff"), sample_colors());
+    }
+
+    #[test]
+    fn parse_pal_sniffs_a_jasc_fixture() {
+        // A JASC .pal buffer (text, no RIFF magic) falls through to parse_jasc.
+        let text = pal::encode_jasc(&sample_colors());
+        let bytes = text.into_bytes();
+        assert!(!bytes.starts_with(b"RIFF"), "fixture must not carry the RIFF magic");
+        assert_eq!(parse_pal(&bytes).expect("parse jasc via sniff"), sample_colors());
+    }
+
+    #[test]
+    fn parse_pal_surfaces_the_riff_error_for_a_truncated_riff() {
+        // Bytes that start with RIFF but are too short must report the RIFF
+        // failure, not a misleading "missing JASC-PAL header".
+        let err = parse_pal(b"RIFF\x00\x00\x00\x00").expect_err("truncated RIFF must error");
+        assert!(err.to_string().contains("RIFF"), "expected a RIFF error, got: {err}");
+    }
+
+    #[test]
+    fn parse_pal_rejects_garbage_that_is_neither_format() {
+        // No RIFF magic and no JASC header -> the JASC parser's error.
+        assert!(parse_pal(b"not a palette at all").is_err());
+    }
+
+    // ── palette_slug ──────────────────────────────────────────────────────
+
+    #[rstest]
+    #[case("My Palette", "my-palette")]
+    #[case("NES", "nes")]
+    #[case("  spaces  ", "spaces")]
+    #[case("a!!!b", "a-b")]
+    #[case("", "palette")]
+    #[case("***", "palette")]
+    fn palette_slug_is_filesystem_safe(#[case] name: &str, #[case] expect: &str) {
+        assert_eq!(palette_slug(name), expect);
     }
 }
