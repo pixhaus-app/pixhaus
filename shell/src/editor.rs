@@ -11,7 +11,7 @@ use std::collections::{BTreeSet, VecDeque};
 
 use eframe::egui;
 use pixhaus_core::canvas::{BrushShape, DitherPattern, PixelBuffer};
-use pixhaus_core::project::{Frame, IVec2, LayerId, PaletteId, PixelBufferId, Rgba, Size};
+use pixhaus_core::project::{Frame, IVec2, LayerId, PaletteId, PalettePageId, PixelBufferId, Rgba, Size};
 use pixhaus_core::selection::SelectionMask;
 use pixhaus_core::undo::History;
 
@@ -596,6 +596,28 @@ pub struct EditorState {
     /// Palette panel: the harmony tool's scheme, derived from the foreground
     /// colour. View state, never serialized.
     pub harmony_kind: HarmonyKind,
+    /// Palette panel: the selected page in the active palette's Pages section,
+    /// by id, or `None` for "no page" (the grid shows every swatch). Re-validated
+    /// against the live page list each frame, so a removed page never leaves a
+    /// dangling selection. View state, never serialized.
+    pub active_page_id: Option<PalettePageId>,
+    /// Palette panel: filter the swatch grid to the selected page's members when
+    /// a page is active. Off by default, so selecting a page highlights its
+    /// members without hiding the rest until the artist asks. View state.
+    pub filter_to_page: bool,
+    /// Palette panel: the draft name an Add-page / Rename-page commits. Re-seeded
+    /// from the page's current name when a rename opens; blank is rejected by the
+    /// add/rename helpers. View state, never serialized.
+    pub page_name_draft: String,
+    /// Palette panel: the cycle range's first index for the Animation section's
+    /// "Cycle range" control. Clamped to the live palette length each frame.
+    pub cycle_first: usize,
+    /// Palette panel: the cycle range's last index, clamped like
+    /// [`Self::cycle_first`].
+    pub cycle_last: usize,
+    /// Palette panel: the cycle range's signed rotation offset. Positive rotates
+    /// toward higher indices, negative toward lower; zero is a no-op.
+    pub cycle_offset: i32,
     /// Palette panel: the format the export button writes. Import sniffs its
     /// format from the file, so only export needs this. View state, never
     /// serialized.
@@ -726,6 +748,12 @@ impl Default for EditorState {
             ramp_to: 0,
             ramp_steps: 5,
             harmony_kind: HarmonyKind::default(),
+            active_page_id: None,
+            filter_to_page: false,
+            page_name_draft: String::new(),
+            cycle_first: 0,
+            cycle_last: 0,
+            cycle_offset: 1,
             export_format: PaletteExportFormat::default(),
             palette_io_error: None,
             recent_colors: VecDeque::new(),

@@ -50,6 +50,18 @@ impl ShellApp {
         let colors: Vec<Rgba> = palette.colors.iter().map(|e| e.color).collect();
         let names: Vec<Option<String>> = palette.colors.iter().map(|e| e.name.clone()).collect();
 
+        // When a page is selected and the page filter is on, restrict the grid to
+        // that page's member indices; otherwise every swatch shows. `None` means
+        // "show all", a tiny set of indices means "show only these".
+        let page_filter: Option<HashSet<usize>> = if self.editor.filter_to_page {
+            self.editor
+                .active_page_id
+                .and_then(|id| palette.pages.iter().find(|p| p.id == id))
+                .map(|page| page.entry_indices.iter().filter_map(|&i| usize::try_from(i).ok()).collect())
+        } else {
+            None
+        };
+
         // Indexed-mode affordances: number the swatches, flag index 0 as the
         // transparent index, and read the foreground back as an index. The
         // labels are gated on the mode so an RGBA sprite renders unchanged.
@@ -110,6 +122,10 @@ impl ShellApp {
         ui.horizontal_wrapped(|ui| {
             ui.spacing_mut().item_spacing = egui::vec2(3.0, 3.0);
             for (i, &color) in colors.iter().enumerate() {
+                // Hide swatches outside the active page when the page filter is on.
+                if page_filter.as_ref().is_some_and(|set| !set.contains(&i)) {
+                    continue;
+                }
                 let is_renaming = self.editor.renaming_swatch == Some(i);
                 let is_locked = self.editor.locked_swatches.contains(&i);
                 let in_selection = self.editor.selected_swatches.contains(&i);
@@ -309,6 +325,9 @@ impl ShellApp {
 
         ui.separator();
         self.palette_tools(ui);
+
+        ui.separator();
+        self.palette_pages_and_animation(ui);
 
         ui.separator();
         self.import_export_section(ui);

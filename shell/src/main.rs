@@ -44,6 +44,7 @@ mod keymap;
 mod layer_ops;
 mod layers_panel;
 mod library;
+mod palette_anim;
 mod palette_panel;
 mod palette_tools;
 mod reveal;
