@@ -1,0 +1,49 @@
+[package]
+name = "pixhaus-flux"
+version.workspace = true
+edition.workspace = true          # 2024 — per-crate editions interoperate with Candle's 2021
+rust-version.workspace = true     # 1.85
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Pixhaus on-device FLUX.2 klein inference — Candle port behind a feature gate"
+
+[dependencies]
+# Published crates.io releases — no fork, no git pin. There is no `flux2` module
+# (only FLUX.1's `flux`), so the FLUX.2 topology is assembled on candle's base
+# APIs (candle-core Tensor + candle-nn VarBuilder/layers); the flow-matching
+# sampler, the VAE, the Qwen3 encoder, and the public DiT building-block structs
+# are imported from candle-transformers. F8E4M3 weight loading is present in
+# candle-core 0.10.
+candle-core = { version = "0.10", default-features = false }
+candle-nn = { version = "0.10", default-features = false }
+candle-transformers = { version = "0.10", default-features = false }
+tokenizers = { version = "0.22", default-features = false, features = ["onig"] }
+hf-hub = { version = "0.5", default-features = false }
+safetensors = "0.7"
+image.workspace = true
+directories.workspace = true
+serde.workspace = true
+thiserror.workspace = true
+tracing.workspace = true
+parking_lot.workspace = true
+
+[features]
+default = ["cpu"]
+cpu = []
+cuda = ["candle-core/cuda", "candle-nn/cuda", "candle-transformers/cuda"]
+metal = ["candle-core/metal", "candle-nn/metal", "candle-transformers/metal"]
+flash-attn = ["cuda", "candle-transformers/flash-attn"]
+download = ["hf-hub/tokio", "hf-hub/rustls-tls"]
+
+# Own lints — not `workspace = true`. The workspace floor denies
+# unwrap_used/expect_used/panic; tensor code wants the occasional unwrap on a
+# shape it just built, so this crate relaxes those to warn without loosening the
+# floor for core/ai/shell. unsafe stays forbidden — Candle's API is safe.
+[lints.rust]
+unsafe_code = "forbid"
+
+[lints.clippy]
+pedantic = { level = "warn", priority = -1 }
+unwrap_used = "warn"
+expect_used = "warn"

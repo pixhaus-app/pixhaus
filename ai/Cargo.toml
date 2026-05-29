@@ -10,6 +10,9 @@ description = "Pixhaus AI: verb runtime, reference-sheet verb, FAL backend (vert
 
 [dependencies]
 pixhaus-core.workspace = true
+# On-device FLUX.2 backend. Optional — pulled in only by the `local-flux`
+# feature so Candle's heavy subtree stays out of the default build.
+pixhaus-flux = { path = "../flux", optional = true }
 async-trait.workspace = true
 base64.workspace = true
 futures.workspace = true
@@ -24,6 +27,15 @@ thiserror.workspace = true
 tokio.workspace = true
 tokio-util.workspace = true
 tracing.workspace = true
+
+[features]
+# Compile the on-device FLUX.2 backend. The `-cuda` / `-metal` / `-cpu` variants
+# pick the Candle backend and also enable the download path. CI's default build
+# leaves all of these off, so Candle never compiles in the standard gate.
+local-flux = ["dep:pixhaus-flux"]
+local-flux-cuda = ["local-flux", "pixhaus-flux/cuda", "pixhaus-flux/download"]
+local-flux-metal = ["local-flux", "pixhaus-flux/metal", "pixhaus-flux/download"]
+local-flux-cpu = ["local-flux", "pixhaus-flux/cpu", "pixhaus-flux/download"]
 
 [dev-dependencies]
 anyhow.workspace = true

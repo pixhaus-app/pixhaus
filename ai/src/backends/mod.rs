@@ -37,6 +37,10 @@ pub mod bridge;
 pub mod error;
 pub mod fal;
 pub mod keys;
+// On-device FLUX.2 backend. Entirely behind the `local-flux` feature so Candle
+// never compiles in the default build.
+#[cfg(feature = "local-flux")]
+pub mod local_flux;
 pub mod openai;
 
 pub use bridge::BackendProxy;

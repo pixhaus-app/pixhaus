@@ -3,7 +3,7 @@ resolver = "3"
 # The native-UI vertical slice (docs/native-ui-vertical-slice.md). Minimal
 # ports of core and ai from the main checkout, plus the new render and shell
 # crates. Each crate carries only what the slice needs.
-members = ["core", "ai", "render", "shell"]
+members = ["core", "ai", "render", "shell", "flux"]
 
 [workspace.package]
 version = "0.1.0"
@@ -20,6 +20,9 @@ homepage = "https://pixhaus.app"
 pixhaus-core = { path = "core" }
 pixhaus-ai = { path = "ai" }
 pixhaus-render = { path = "render" }
+# On-device FLUX.2 inference. Optional in `ai` behind the `local-flux` feature;
+# Candle's heavy subtree never compiles in the default build.
+pixhaus-flux = { path = "flux" }
 # Errors / serde / async backbone.
 anyhow = "1"
 thiserror = "2"
@@ -39,6 +42,8 @@ tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 image = { version = "0.25", default-features = false, features = ["png", "gif"] }
 palette = "0.7"
 rayon = "1.10"
+# App-data cache directory for downloaded local models (pixhaus-flux).
+directories = "6"
 # AI backend HTTP + key storage.
 reqwest = { version = "0.12", default-features = false, features = ["blocking", "json", "stream", "rustls-tls", "multipart", "gzip", "brotli"] }
 keyring = "4"

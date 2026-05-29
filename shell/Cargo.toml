@@ -48,6 +48,12 @@ reqwest = { workspace = true, optional = true }
 # Off by default. Enables the Lospec palette browser, which fetches a palette by
 # slug over HTTP. The only feature in this crate that touches the network.
 lospec = ["dep:reqwest"]
+# On-device FLUX.2 generation. Forward the backend choice to pixhaus-ai. The
+# Windows packaged build compiles with `local-flux-cuda`, macOS with
+# `local-flux-metal`; CI's default build leaves all of these off.
+local-flux-cuda = ["pixhaus-ai/local-flux-cuda"]
+local-flux-metal = ["pixhaus-ai/local-flux-metal"]
+local-flux-cpu = ["pixhaus-ai/local-flux-cpu"]
 
 [dev-dependencies]
 # Blocks on async wgpu init in the reveal effect's headless GPU smoke test.

@@ -49,6 +49,7 @@ mod keymap;
 mod layer_ops;
 mod layers_panel;
 mod library;
+mod local_ai;
 mod lospec;
 mod palette_anim;
 mod palette_panel;

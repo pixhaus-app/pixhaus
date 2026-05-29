@@ -50,3 +50,5 @@ Desktop.ini
 .claude/local-cache/
 .claude/*.lock
 .superpowers/
+
+.tmp/
