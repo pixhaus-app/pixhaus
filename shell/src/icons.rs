@@ -92,6 +92,8 @@ pub const STOP: &str = p::STOP;
 pub const PREV: &str = p::SKIP_BACK;
 pub const NEXT: &str = p::SKIP_FORWARD;
 pub const REPEAT: &str = p::REPEAT;
+/// Beat-driven timing ("sync to audio") action.
+pub const METRONOME: &str = p::METRONOME;
 
 // Colour / misc.
 // Used only by the `lospec` feature's import button; dead in the default build.

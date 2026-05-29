@@ -25,7 +25,7 @@ use tokio_util::sync::CancellationToken;
 use crate::ai;
 use crate::anim::{self, LoopMarkers, VideoFrame};
 use crate::cockpit::{CockpitCandidate, CockpitReference, PendingLineage};
-use crate::commands::{CanvasBufferSwap, CanvasEdit, CanvasOp, CropEdit, integrate_frames_undoable};
+use crate::commands::{CanvasBufferSwap, CanvasEdit, CanvasOp, CropEdit, integrate_frames_undoable, push_sprite_edit};
 use crate::document::{DocumentStore, LibraryRow, SpriteRef};
 use crate::keymap::{CommandId, Keymap};
 use crate::settings::SettingsTab;
@@ -184,6 +184,25 @@ pub enum ShellMsg {
         target: u32,
         /// The decoded clip (raw bytes, mime, frames), or a user-facing error.
         result: Result<(Vec<u8>, String, Vec<VideoFrame>), String>,
+    },
+    /// A WAV file finished decoding off the UI thread for "sync to audio". The
+    /// payload is the per-frame `duration_ms` list the energy-onset detector
+    /// produced (one entry per detected beat), or a user-facing error when the
+    /// pick was cancelled or the input is not PCM WAV. The audio is read for
+    /// timing only and never embedded.
+    AudioSynced {
+        /// Sprite captured when the picker opened, so the durations land on the
+        /// right sprite even if the active sprite changed since.
+        sprite_id: SpriteId,
+        /// Inclusive frame range the durations apply to, captured at pick time
+        /// (the selected tag's range, or the whole timeline when no tag is
+        /// selected).
+        range: pixhaus_core::project::FrameRange,
+        /// Frames-per-second the onsets were snapped to.
+        fps: u32,
+        /// Per-frame durations in milliseconds (one per detected beat), or a
+        /// user-facing error.
+        result: Result<Vec<u32>, String>,
     },
     /// First-frame (studio seed-pose) generation progress.
     FirstFrameProgress {
@@ -1164,6 +1183,7 @@ impl ShellApp {
                     target,
                     result,
                 } => self.on_video_imported(entity_id, sprite_id, fps, target, result),
+                ShellMsg::AudioSynced { sprite_id, range, fps, result } => self.on_audio_synced(sprite_id, range, fps, result),
                 ShellMsg::FirstFrameProgress { epoch, message } => {
                     if epoch == self.studio.frame_gen.epoch {
                         self.studio.frame_gen.status = JobStatus::Running(message);
@@ -2768,6 +2788,111 @@ impl ShellApp {
         }
     }
 
+    /// Picks a WAV file (off the UI thread), detects beat onsets with the core
+    /// energy-envelope detector, and converts them to per-frame durations at the
+    /// timeline FPS. The result returns over [`ShellMsg::AudioSynced`], which
+    /// retimes the active tag's range (or the whole timeline) in one undo entry.
+    ///
+    /// The dialog and file read block, so they run on a worker. The audio is
+    /// read for timing only — nothing is embedded in the project. Beat mode
+    /// only; the old verb's lip-sync mouth layer is out of scope.
+    #[allow(clippy::cast_possible_truncation)]
+    pub(crate) fn sync_to_audio(&mut self) {
+        let Some(sprite) = self.doc.active_sprite() else {
+            self.set_status("Open a sprite before syncing to audio.");
+            return;
+        };
+        let frame_count = sprite.frames.len() as u32;
+        if frame_count == 0 {
+            self.set_status("This sprite has no frames to retime.");
+            return;
+        }
+        let sprite_id = sprite.id;
+
+        // Retime the selected tag's range; with no selection, the whole
+        // timeline. The range is captured now so a later sprite switch cannot
+        // misdirect the durations.
+        let range = self
+            .editor
+            .selected_tag
+            .and_then(|i| sprite.frame_tags.get(i))
+            .map_or_else(|| pixhaus_core::project::FrameRange::new(FrameIndex::new(0), FrameIndex::new(frame_count - 1)), |t| t.range);
+
+        let fps = self.editor.global_fps.max(1);
+        let tx = self.tx.clone();
+        let ctx = self.egui_ctx.clone();
+        self.set_status("Syncing to audio…");
+        self.runtime.handle().spawn_blocking(move || {
+            let result = pick_and_detect_audio(fps);
+            let _ = tx.send(ShellMsg::AudioSynced { sprite_id, range, fps, result });
+            ctx.request_repaint();
+        });
+    }
+
+    /// Applies detected beat durations to the timeline as one undo entry: every
+    /// frame in `range` takes the duration of the beat it maps to, and a `"Beat"`
+    /// frame tag is added (or its range adjusted) to mark the synced span.
+    ///
+    /// The beat count rarely matches the frame count exactly. The durations are
+    /// mapped across the range proportionally — beat `i` covers a contiguous run
+    /// of frames — so a 6-beat detection over 12 frames holds each beat for two
+    /// frames. With more beats than frames the tail beats are dropped.
+    #[allow(clippy::cast_possible_truncation, clippy::cast_precision_loss, clippy::cast_sign_loss)]
+    fn on_audio_synced(&mut self, sprite_id: SpriteId, range: pixhaus_core::project::FrameRange, _fps: u32, result: Result<Vec<u32>, String>) {
+        let durations = match result {
+            Ok(d) => d,
+            Err(err) => {
+                self.set_status(err);
+                return;
+            }
+        };
+        if durations.is_empty() {
+            self.set_status("No beats detected; try a clearer track or a different range.");
+            return;
+        }
+        // Guard against a sprite switch between pick and result.
+        if self.doc.project.active_sprite_id() != Some(sprite_id) {
+            self.set_status("Active sprite changed; audio sync was discarded.");
+            return;
+        }
+
+        let beat_count = durations.len();
+        push_sprite_edit(&mut self.editor, &mut self.doc, "Sync timing to audio", |sprite| {
+            let frame_total = sprite.frames.len() as u32;
+            // Clamp the captured range to the current frame count.
+            let lo = range.start.get().min(frame_total.saturating_sub(1));
+            let hi = range.end.get().min(frame_total.saturating_sub(1));
+            if frame_total == 0 || hi < lo {
+                return;
+            }
+            let span = hi - lo + 1;
+
+            // Spread the beats evenly across the range, then write each frame's
+            // duration from the beat it maps to.
+            let mapped = map_beats_to_frames(&durations, span);
+            for (offset, &dur) in mapped.iter().enumerate() {
+                if let Some(frame) = sprite.frames.get_mut(lo as usize + offset) {
+                    frame.duration_ms = dur.max(1);
+                }
+            }
+
+            // Add or adjust the "Beat" tag over the retimed range.
+            let beat_range = pixhaus_core::project::FrameRange::new(FrameIndex::new(lo), FrameIndex::new(hi));
+            if let Some(tag) = sprite.frame_tags.iter_mut().find(|t| t.name == "Beat") {
+                tag.range = beat_range;
+            } else {
+                sprite.frame_tags.push(pixhaus_core::project::FrameTag {
+                    name: "Beat".into(),
+                    range: beat_range,
+                    loop_direction: LoopDirection::Forward,
+                    repeat: 0,
+                    user_data: pixhaus_core::project::UserData::default(),
+                });
+            }
+        });
+        self.set_status(format!("Synced {beat_count} beats to the timeline."));
+    }
+
     /// The inputs that determine the normalize result for the current picks, or
     /// `None` when there is nothing to normalize (no selection, empty picks, or
     /// no active sprite). Cheap to compute and compare; the Normalize stage uses
@@ -3616,6 +3741,57 @@ fn pick_and_decode_video(fps: u32) -> Result<(Vec<u8>, String, Vec<VideoFrame>),
     Ok((bytes, mime.to_owned(), frames))
 }
 
+/// Maps `durations.len()` beats onto `span` frames, returning one duration per
+/// frame.
+///
+/// Beat `b` covers the contiguous run of frames `[b * span / beats, (b + 1) *
+/// span / beats)`, so the beats spread evenly across the range: more frames
+/// than beats holds each beat across several frames; more beats than frames
+/// drops the tail beats. Returns an empty vector when either side is empty.
+#[must_use]
+#[allow(clippy::cast_possible_truncation)]
+pub(crate) fn map_beats_to_frames(durations: &[u32], span: u32) -> Vec<u32> {
+    let beats = durations.len();
+    if beats == 0 || span == 0 {
+        return Vec::new();
+    }
+    (0..span)
+        .map(|offset| {
+            let beat = ((u64::from(offset) * beats as u64) / u64::from(span)) as usize;
+            durations.get(beat).copied().unwrap_or_else(|| durations.last().copied().unwrap_or(100))
+        })
+        .collect()
+}
+
+/// Worker-thread half of "sync to audio": open the picker, read the WAV bytes,
+/// detect beat onsets, and convert them to per-frame durations at `fps`. Returns
+/// the durations or a user-facing error; a cancelled dialog returns a benign
+/// "cancelled" message. The audio is read for timing only and never stored.
+/// Blocks — call only from `spawn_blocking`.
+fn pick_and_detect_audio(fps: u32) -> Result<Vec<u32>, String> {
+    use pixhaus_core::transforms::audio_timing::{AudioError, detect_onsets_wav, onset_frame_durations};
+
+    let Some(path) = rfd::FileDialog::new()
+        .set_title("Sync timing to a WAV file")
+        .add_filter("PCM WAV audio", &["wav"])
+        .pick_file()
+    else {
+        return Err("Audio sync cancelled.".to_owned());
+    };
+    let bytes = std::fs::read(&path).map_err(|e| format!("Could not read the file: {e}"))?;
+    // A sensitivity of 0.5 matches the old verb's default — a balanced middle
+    // between catching every transient and only the loudest beats.
+    let onsets = detect_onsets_wav(&bytes, 0.5).map_err(|e| match e {
+        AudioError::Unsupported(detail) => detail,
+        AudioError::Malformed(detail) => format!("That WAV file is malformed ({detail})."),
+    })?;
+    let durations = onset_frame_durations(&onsets, fps as f32);
+    if durations.is_empty() {
+        return Err("No beats detected; try a clearer track.".to_owned());
+    }
+    Ok(durations)
+}
+
 /// Loads a clip frame as a NEAREST-sampled egui texture for the pick strip.
 pub(crate) fn video_frame_to_texture(ctx: &egui::Context, frame: &VideoFrame) -> egui::TextureHandle {
     let size = [frame.width as usize, frame.height as usize];
@@ -3705,7 +3881,7 @@ impl eframe::App for ShellApp {
 
 #[cfg(test)]
 mod tests {
-    use super::{GridPrefs, MorphOp, MorphResult, SelectionMask, mime_from_extension, morph_mask, next_cursor, png_to_pixel_buffer, truncate_motion};
+    use super::{GridPrefs, MorphOp, MorphResult, SelectionMask, map_beats_to_frames, mime_from_extension, morph_mask, next_cursor, png_to_pixel_buffer, truncate_motion};
 
     // --- playback cursor: loop vs stop --------------------------------------
 
@@ -4013,5 +4189,34 @@ mod tests {
         let flipped = flip_frames_horizontal(frames);
         assert_eq!(flipped.len(), 1, "the empty frame survives the flip pass");
         assert!(flipped[0].is_empty(), "the empty frame is unchanged");
+    }
+
+    // --- sync to audio: beat → frame mapping --------------------------------
+
+    #[test]
+    fn map_beats_fewer_beats_holds_across_frames() {
+        // Two beats over four frames: each beat covers two frames.
+        let mapped = map_beats_to_frames(&[100, 200], 4);
+        assert_eq!(mapped, vec![100, 100, 200, 200]);
+    }
+
+    #[test]
+    fn map_beats_one_per_frame_when_counts_match() {
+        let mapped = map_beats_to_frames(&[10, 20, 30], 3);
+        assert_eq!(mapped, vec![10, 20, 30]);
+    }
+
+    #[test]
+    fn map_beats_more_beats_than_frames_keeps_leading_beats() {
+        // Four beats over two frames: only the beats the frames index into are
+        // used; the tail beats drop.
+        let mapped = map_beats_to_frames(&[10, 20, 30, 40], 2);
+        assert_eq!(mapped, vec![10, 30]);
+    }
+
+    #[test]
+    fn map_beats_empty_inputs_yield_empty() {
+        assert!(map_beats_to_frames(&[], 4).is_empty());
+        assert!(map_beats_to_frames(&[100], 0).is_empty());
     }
 }

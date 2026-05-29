@@ -19,13 +19,18 @@
 //! ([`inbetween::tween`], built on [`inbetween::interpolate_frames`])
 //! generates evenly spaced intermediate frames between two cels via
 //! variance-rejected 3×3 weighted averaging; the endpoints are reproduced
-//! byte-for-byte and the byte-level core is infallible.
+//! byte-for-byte and the byte-level core is infallible. Beat-driven timing
+//! ([`audio_timing::detect_onsets_wav`], [`audio_timing::onset_frame_durations`])
+//! runs an energy-envelope onset detector over an inline-parsed PCM WAV and
+//! turns the detected beats into per-frame durations at a target fps; it reads
+//! audio for timing only, never embedding it.
 //!
 //! Selection-awareness boundary: transforms here operate on whole buffers.
 //! The shell lifts a selection into a canvas-sized buffer, transforms that,
 //! and stamps the result back, so these functions stay selection-agnostic.
 
 pub mod antialias;
+pub mod audio_timing;
 pub mod error;
 pub mod flip;
 pub mod inbetween;
@@ -37,6 +42,7 @@ pub mod scale;
 pub mod skew;
 
 pub use antialias::{MlaaConfig, morphological_antialias};
+pub use audio_timing::{AudioError, OnsetMs, detect_onsets_wav, onset_frame_durations};
 pub use error::{Error, Result};
 pub use flip::{flip_horizontal, flip_vertical};
 pub use inbetween::{DEFAULT_VARIANCE_RANGE, InbetweenError, interpolate_frames, tween, tween_with_variance};

@@ -229,6 +229,16 @@ impl ShellApp {
             if ui.button("Tag frames").on_hover_text("Tag the whole range").clicked() {
                 self.add_tag();
             }
+            // Beat-driven timing: pick a PCM WAV, detect beats, and retime the
+            // selected tag's range (or the whole timeline) to the inter-beat
+            // intervals. The audio is read for timing only, never embedded.
+            if ui
+                .button(format!("{} Sync to audio", icons::METRONOME))
+                .on_hover_text("Retime frames to the beats in a PCM WAV file")
+                .clicked()
+            {
+                self.sync_to_audio();
+            }
             // Existing tags as chips. A chip carrying the inline rename shows a
             // text field instead; double-clicking a chip starts the rename, the
             // `×` removes the tag. Both the rename and the remove are undoable.
