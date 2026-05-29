@@ -99,9 +99,7 @@ impl DeviceChoice {
     /// (for example, no CUDA runtime present despite a `Cuda` choice).
     pub fn to_device(self) -> Result<Device, FluxError> {
         let device = match self {
-            DeviceChoice::Cuda(ordinal) => {
-                Device::new_cuda(ordinal).map_err(FluxError::Candle)?
-            }
+            DeviceChoice::Cuda(ordinal) => Device::new_cuda(ordinal).map_err(FluxError::Candle)?,
             DeviceChoice::Metal => Device::new_metal(0).map_err(FluxError::Candle)?,
             DeviceChoice::Cpu => Device::Cpu,
         };

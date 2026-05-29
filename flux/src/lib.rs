@@ -24,9 +24,7 @@ pub mod vae;
 
 pub use device::{DeviceChoice, DevicePref};
 pub use loader::{FluxRequest, LoadedModel};
-pub use store::{
-    ModelStore, FLUX2_KLEIN_MODEL_ID, FLUX2_KLEIN_REPO, FLUX2_KLEIN_REVISION, HF_TOKEN_SERVICE_ID,
-};
+pub use store::{FLUX2_KLEIN_MODEL_ID, FLUX2_KLEIN_REPO, FLUX2_KLEIN_REVISION, HF_TOKEN_SERVICE_ID, ModelStore};
 
 #[cfg(feature = "download")]
 pub use store::DownloadError;

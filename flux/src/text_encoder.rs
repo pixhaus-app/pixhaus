@@ -12,3 +12,13 @@
 pub struct TextEncoder {
     // Fields land with the Qwen3 conditioning port (gate 2).
 }
+
+impl TextEncoder {
+    /// A zero-field placeholder so [`crate::loader::LoadedModel`] can hold a
+    /// text-encoder slot before the Qwen3 conditioning lands. Removed once `new`
+    /// exists.
+    #[must_use]
+    pub(crate) fn placeholder() -> Self {
+        Self {}
+    }
+}

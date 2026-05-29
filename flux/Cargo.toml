@@ -41,6 +41,7 @@ tokio-util = { workspace = true, optional = true }
 tempfile.workspace = true
 tokio = { workspace = true }
 tokio-util = { workspace = true }
+image-compare.workspace = true
 
 [features]
 default = ["cpu"]
@@ -61,9 +62,12 @@ download = [
 # Own lints — not `workspace = true`. The workspace floor denies
 # unwrap_used/expect_used/panic; tensor code wants the occasional unwrap on a
 # shape it just built, so this crate relaxes those to warn without loosening the
-# floor for core/ai/shell. unsafe stays forbidden — Candle's API is safe.
+# floor for core/ai/shell. unsafe is denied, not forbidden: candle's mmap
+# safetensors loader (`VarBuilder::from_mmaped_safetensors`) is `unsafe` and is
+# the memory-critical path for the multi-GB transformer — that single call gets a
+# documented `#[allow(unsafe_code)]`; every other unsafe block still fails.
 [lints.rust]
-unsafe_code = "forbid"
+unsafe_code = "deny"
 
 [lints.clippy]
 pedantic = { level = "warn", priority = -1 }

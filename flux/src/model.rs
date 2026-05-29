@@ -14,3 +14,12 @@
 pub struct FluxTransformer {
     // Fields land with the DiT topology port (gates 3-4).
 }
+
+impl FluxTransformer {
+    /// A zero-field placeholder so [`crate::loader::LoadedModel`] can hold a
+    /// transformer slot before the `DiT` topology lands. Removed once `new` exists.
+    #[must_use]
+    pub(crate) fn placeholder() -> Self {
+        Self {}
+    }
+}

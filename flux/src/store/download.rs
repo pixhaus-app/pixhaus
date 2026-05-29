@@ -17,7 +17,7 @@ use futures_util::StreamExt as _;
 use tokio::io::AsyncWriteExt as _;
 use tokio_util::sync::CancellationToken;
 
-use super::{ModelStore, RequiredFile, FLUX2_KLEIN_FILES, FLUX2_KLEIN_TOTAL_BYTES};
+use super::{FLUX2_KLEIN_FILES, FLUX2_KLEIN_TOTAL_BYTES, ModelStore, RequiredFile};
 
 /// Emit a cumulative-progress tick at most this often, to keep the callback /
 /// channel light. The UI repaints on receipt, so per-chunk granularity is waste.
@@ -70,12 +70,7 @@ impl ModelStore {
     ///
     /// Returns [`DownloadError`] on a network failure, a filesystem error, a
     /// truncated transfer (size mismatch), or cancellation.
-    pub async fn download<F>(
-        &self,
-        token: Option<&str>,
-        mut progress: F,
-        cancel: &CancellationToken,
-    ) -> Result<(), DownloadError>
+    pub async fn download<F>(&self, token: Option<&str>, mut progress: F, cancel: &CancellationToken) -> Result<(), DownloadError>
     where
         F: FnMut(u64, u64),
     {
@@ -99,17 +94,7 @@ impl ModelStore {
                 continue;
             }
 
-            let written = download_file(
-                &client,
-                required,
-                &dest,
-                token,
-                already,
-                total,
-                cancel,
-                &mut progress,
-            )
-            .await?;
+            let written = download_file(&client, required, &dest, token, already, total, cancel, &mut progress).await?;
             already = already.saturating_add(written);
             progress(already, total);
         }
@@ -220,9 +205,7 @@ mod tests {
         cancel.cancel();
 
         let mut ticks = Vec::new();
-        let result = store
-            .download(None, |done, total| ticks.push((done, total)), &cancel)
-            .await;
+        let result = store.download(None, |done, total| ticks.push((done, total)), &cancel).await;
 
         assert!(matches!(result, Err(DownloadError::Cancelled)));
         // The initial (0, total) tick still fires before the loop sees the cancel.
@@ -253,9 +236,7 @@ mod tests {
 
         let cancel = CancellationToken::new();
         let mut last = (0u64, 0u64);
-        let result = store
-            .download(None, |done, total| last = (done, total), &cancel)
-            .await;
+        let result = store.download(None, |done, total| last = (done, total), &cancel).await;
 
         assert!(result.is_ok(), "all-complete store should download nothing");
         assert_eq!(last, (FLUX2_KLEIN_TOTAL_BYTES, FLUX2_KLEIN_TOTAL_BYTES));
@@ -273,9 +254,13 @@ mod tests {
         let cancel = CancellationToken::new();
 
         store
-            .download(token.as_deref(), |done, total| {
-                tracing::info!(done, total, "flux download progress");
-            }, &cancel)
+            .download(
+                token.as_deref(),
+                |done, total| {
+                    tracing::info!(done, total, "flux download progress");
+                },
+                &cancel,
+            )
             .await
             .expect("full download");
 

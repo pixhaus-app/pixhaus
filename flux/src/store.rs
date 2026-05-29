@@ -39,24 +39,78 @@ pub struct RequiredFile {
 /// single-file checkpoint and the example images are intentionally excluded.
 /// Sum of `size` is [`FLUX2_KLEIN_TOTAL_BYTES`] (~15.96 GB).
 pub const FLUX2_KLEIN_FILES: &[RequiredFile] = &[
-    RequiredFile { path: "model_index.json", size: 446 },
-    RequiredFile { path: "transformer/config.json", size: 541 },
-    RequiredFile { path: "transformer/diffusion_pytorch_model.safetensors", size: 7_751_109_744 },
-    RequiredFile { path: "vae/config.json", size: 821 },
-    RequiredFile { path: "vae/diffusion_pytorch_model.safetensors", size: 168_120_878 },
-    RequiredFile { path: "text_encoder/config.json", size: 1_536 },
-    RequiredFile { path: "text_encoder/generation_config.json", size: 214 },
-    RequiredFile { path: "text_encoder/model.safetensors.index.json", size: 32_855 },
-    RequiredFile { path: "text_encoder/model-00001-of-00002.safetensors", size: 4_967_215_360 },
-    RequiredFile { path: "text_encoder/model-00002-of-00002.safetensors", size: 3_077_766_632 },
-    RequiredFile { path: "tokenizer/tokenizer.json", size: 11_422_654 },
-    RequiredFile { path: "tokenizer/tokenizer_config.json", size: 5_404 },
-    RequiredFile { path: "tokenizer/vocab.json", size: 2_776_833 },
-    RequiredFile { path: "tokenizer/merges.txt", size: 1_671_853 },
-    RequiredFile { path: "tokenizer/added_tokens.json", size: 707 },
-    RequiredFile { path: "tokenizer/special_tokens_map.json", size: 613 },
-    RequiredFile { path: "tokenizer/chat_template.jinja", size: 4_168 },
-    RequiredFile { path: "scheduler/scheduler_config.json", size: 486 },
+    RequiredFile {
+        path: "model_index.json",
+        size: 446,
+    },
+    RequiredFile {
+        path: "transformer/config.json",
+        size: 541,
+    },
+    RequiredFile {
+        path: "transformer/diffusion_pytorch_model.safetensors",
+        size: 7_751_109_744,
+    },
+    RequiredFile {
+        path: "vae/config.json",
+        size: 821,
+    },
+    RequiredFile {
+        path: "vae/diffusion_pytorch_model.safetensors",
+        size: 168_120_878,
+    },
+    RequiredFile {
+        path: "text_encoder/config.json",
+        size: 1_536,
+    },
+    RequiredFile {
+        path: "text_encoder/generation_config.json",
+        size: 214,
+    },
+    RequiredFile {
+        path: "text_encoder/model.safetensors.index.json",
+        size: 32_855,
+    },
+    RequiredFile {
+        path: "text_encoder/model-00001-of-00002.safetensors",
+        size: 4_967_215_360,
+    },
+    RequiredFile {
+        path: "text_encoder/model-00002-of-00002.safetensors",
+        size: 3_077_766_632,
+    },
+    RequiredFile {
+        path: "tokenizer/tokenizer.json",
+        size: 11_422_654,
+    },
+    RequiredFile {
+        path: "tokenizer/tokenizer_config.json",
+        size: 5_404,
+    },
+    RequiredFile {
+        path: "tokenizer/vocab.json",
+        size: 2_776_833,
+    },
+    RequiredFile {
+        path: "tokenizer/merges.txt",
+        size: 1_671_853,
+    },
+    RequiredFile {
+        path: "tokenizer/added_tokens.json",
+        size: 707,
+    },
+    RequiredFile {
+        path: "tokenizer/special_tokens_map.json",
+        size: 613,
+    },
+    RequiredFile {
+        path: "tokenizer/chat_template.jinja",
+        size: 4_168,
+    },
+    RequiredFile {
+        path: "scheduler/scheduler_config.json",
+        size: 486,
+    },
 ];
 
 /// Total bytes across every required file — the overall progress denominator.
@@ -184,8 +238,7 @@ mod tests {
     #[test]
     fn from_override_some_forces_dir() {
         let dir = PathBuf::from("/custom/models/flux2-klein-4b");
-        let store = ModelStore::from_override(Some(dir.clone()))
-            .expect("explicit override never needs a platform app-data dir");
+        let store = ModelStore::from_override(Some(dir.clone())).expect("explicit override never needs a platform app-data dir");
         assert_eq!(store.root(), dir.as_path());
     }
 
@@ -195,10 +248,7 @@ mod tests {
         // lack one); the path shape is what we assert when it exists.
         if let Some(root) = ModelStore::default_root() {
             assert!(root.ends_with(FLUX2_KLEIN_MODEL_ID), "root was {root:?}");
-            assert!(
-                root.components().any(|c| c.as_os_str() == "models"),
-                "root was {root:?}"
-            );
+            assert!(root.components().any(|c| c.as_os_str() == "models"), "root was {root:?}");
         }
     }
 
@@ -207,9 +257,7 @@ mod tests {
         let url = resolve_url("vae/config.json");
         assert_eq!(
             url,
-            format!(
-                "https://huggingface.co/{FLUX2_KLEIN_REPO}/resolve/{FLUX2_KLEIN_REVISION}/vae/config.json"
-            )
+            format!("https://huggingface.co/{FLUX2_KLEIN_REPO}/resolve/{FLUX2_KLEIN_REVISION}/vae/config.json")
         );
     }
 
@@ -232,10 +280,7 @@ mod tests {
         let dir = TempDir::new().expect("tempdir");
         let store = ModelStore::new(dir.path().to_path_buf());
         write_all_required(&store, /* zero_len_last = */ true);
-        assert!(
-            !store.is_downloaded(),
-            "a zero-length required file must fail the gate"
-        );
+        assert!(!store.is_downloaded(), "a zero-length required file must fail the gate");
     }
 
     #[test]
