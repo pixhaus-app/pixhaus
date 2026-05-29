@@ -94,6 +94,10 @@ pub enum PaletteSort {
     Hue,
     /// Sort by perceived lightness.
     Luminance,
+    /// Sort by HSV saturation.
+    Saturation,
+    /// Sort by HSV value (brightness).
+    Value,
 }
 
 /// The active tab of the multi-tab colour picker. Each tab edits the same
@@ -486,6 +490,22 @@ pub struct EditorState {
     /// rather than committing an undo entry per tick. Committed to the sprite as
     /// one [`crate::commands::push_sprite_edit`] on drag-stop / focus loss.
     pub swatch_scratch: Option<Rgba>,
+    /// Palette panel: the multi-select set of swatch indices. Ctrl-click toggles
+    /// membership; a plain click sets the foreground and clears the set. Drives
+    /// the remove-selected button. View state, never serialized; pruned of stale
+    /// indices after a removal so it never points past the palette.
+    pub selected_swatches: BTreeSet<usize>,
+    /// Palette panel: the per-swatch UI lock set, by index. A locked swatch is
+    /// excluded from edit, remove, and reorder, and shows a lock overlay.
+    /// UI-only, never serialized — matching the Tauri panel's `lockedIndices`.
+    pub locked_swatches: BTreeSet<usize>,
+    /// Palette panel: the swatch index being inline-renamed, if any. Set from
+    /// the per-swatch context menu; the draft commits on Enter / focus loss and
+    /// discards on Escape.
+    pub renaming_swatch: Option<usize>,
+    /// Palette panel: the draft name the inline swatch rename edits, re-seeded
+    /// from the entry's current name when the rename opens.
+    pub rename_draft: String,
     /// Timeline: cel-thumbnail edge length in points.
     pub cel_size: f32,
     /// Timeline: draft name for a new frame tag.
@@ -592,6 +612,10 @@ impl Default for EditorState {
             picker_tab: PickerTab::default(),
             hex_draft: String::new(),
             swatch_scratch: None,
+            selected_swatches: BTreeSet::new(),
+            locked_swatches: BTreeSet::new(),
+            renaming_swatch: None,
+            rename_draft: String::new(),
             cel_size: 48.0,
             new_tag_name: String::new(),
             layer_rename: None,

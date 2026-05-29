@@ -45,6 +45,7 @@ egui-phosphor = "0.12.0"
 pollster.workspace = true
 proptest.workspace = true
 image-compare.workspace = true
+rstest.workspace = true
 
 [lints]
 workspace = true
