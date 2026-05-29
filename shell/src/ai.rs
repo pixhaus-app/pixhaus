@@ -78,6 +78,21 @@ pub fn structure_options(project: &ProjectAi) -> Vec<(String, String)> {
     out
 }
 
+/// The built-in Structure id the subject text reads as, for the cockpit's
+/// advisory guard.
+///
+/// Classifies the subject (compact / wide / tall) and returns the matching
+/// built-in structure id: the character turnaround for a compact subject, the
+/// wide- or tall-object sheet for a vehicle or a staff. Advisory only — the
+/// cockpit suggests this, never forces it, so a wide vehicle is not silently
+/// crammed into the square character cells (the forge's prop-pack-classification
+/// rule). Pure over the subject string, so the preview stays reproducible.
+#[must_use]
+pub fn suggested_structure_id(subject: &str) -> String {
+    use pixhaus_ai::compose::builtins::{classify, recommended_structure};
+    recommended_structure(classify(subject)).0
+}
+
 /// The variables of a saved/built-in prompt template, for the cockpit dials. A
 /// project template shadows the built-in of the same id. Empty for an unknown id
 /// or a template with no variables.
@@ -1359,7 +1374,7 @@ mod tests {
 
     use super::{
         STRUCTURE_SINGLE_ID, compose_preview, derive_prompt, generate_frame_prompt, lock_when_conditioned, resolve_art_style_kind, structure_options,
-        style_options,
+        style_options, suggested_structure_id,
     };
 
     #[test]
@@ -1401,6 +1416,26 @@ mod tests {
             !unconditioned.contains("keep the same character"),
             "an unconditioned prompt carries no lock: {unconditioned}"
         );
+    }
+
+    #[test]
+    fn suggested_structure_id_points_a_wide_subject_at_the_wide_sheet() {
+        use pixhaus_ai::compose::builtins::{STRUCTURE_CHARACTER_ID, STRUCTURE_TALL_OBJECT_ID, STRUCTURE_WIDE_OBJECT_ID};
+        assert_eq!(suggested_structure_id("a red car"), STRUCTURE_WIDE_OBJECT_ID);
+        assert_eq!(suggested_structure_id("a wizard staff"), STRUCTURE_TALL_OBJECT_ID);
+        assert_eq!(suggested_structure_id("a knight"), STRUCTURE_CHARACTER_ID);
+    }
+
+    #[test]
+    fn suggested_structure_id_resolves_in_the_structure_options() {
+        // Every suggestion must be a real, pickable structure so a [Use it] click
+        // lands on a structure the ComboBox can show.
+        let project = ProjectAi::default();
+        let opts = structure_options(&project);
+        for subject in ["a red car", "a wizard staff", "a knight"] {
+            let id = suggested_structure_id(subject);
+            assert!(opts.iter().any(|(oid, _)| *oid == id), "suggestion `{id}` must be in the picker");
+        }
     }
 
     #[test]

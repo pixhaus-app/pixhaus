@@ -10,7 +10,7 @@ use std::collections::BTreeMap;
 
 use pixhaus_core::project::library::composition::{
     ArtStyleKind, Dimensions, PanelRect, PanelSlot, PromptId, PromptTemplate, PromptVariable, Structure, StructureId, StructureOutput, StructurePanel,
-    Style, StyleId, VarControl,
+    Style, StyleId, VarControl, compact_grid_shape, grid_rects,
 };
 
 /// Default cascading baseline used when a project sets no `style_notes` and no
@@ -57,6 +57,20 @@ pub const STYLE_MAP_STYLE_ID: &str = "pixhaus.builtin.style.map_style";
 /// to make one image.
 pub const STRUCTURE_SINGLE_ID: &str = "pixhaus.builtin.structure.single";
 
+/// Id of the built-in character turnaround structure — the default body sheet.
+pub const STRUCTURE_CHARACTER_ID: &str = "pixhaus.builtin.structure.character";
+
+/// Id of the built-in wide-object structure — a 2-row grid of 2:1 wide cells for
+/// vehicles, ships, banners, and other subjects a square cell would crop.
+pub const STRUCTURE_WIDE_OBJECT_ID: &str = "pixhaus.builtin.structure.wide_object";
+
+/// Id of the built-in tall-object structure — a 1-row strip of 1:2 tall cells
+/// for staffs, spears, towers, and other vertical subjects.
+pub const STRUCTURE_TALL_OBJECT_ID: &str = "pixhaus.builtin.structure.tall_object";
+
+/// The five turnaround views the character sheet lays out, in row-major order.
+const VIEWS: [&str; 5] = ["front", "side-left", "three-quarter", "side-right", "back"];
+
 /// The read-only registry of built-in composition records, loaded once at
 /// startup. Project-tier records shadow these by id.
 pub struct BuiltinLibrary {
@@ -73,7 +87,7 @@ impl BuiltinLibrary {
     #[must_use]
     pub fn load() -> Self {
         let mut structures = BTreeMap::new();
-        for s in [single(), character(), item(), tileset(), custom()] {
+        for s in [single(), character(), item(), tileset(), custom(), wide_object(), tall_object()] {
             structures.insert(s.id.clone(), s);
         }
         let mut styles = BTreeMap::new();
@@ -138,31 +152,31 @@ fn panel(label: &str, x: u32, y: u32, w: u32, h: u32, slot: PanelSlot, prose: &s
 }
 
 fn character() -> Structure {
-    // Geometry copied verbatim from templates.rs::character_composition().
-    // Views: 200x480 at x=i*200, y=0. Expressions: 256x192 at y=480.
-    // Palette swatch: 1024x128 at y=672. Callouts: 512x320 at y=800.
-    // Outfit: 256x384 at y=1120.
+    // The five turnaround views lay out as a compact 3x2 grid (6 cells, the last
+    // empty) over the top 1024x960 region instead of the legacy raw 1x5 strip: a
+    // single row gives the model no vertical anchor and drifts in scale (the
+    // forge's multirow-grid-over-singlerow rule). `grid_rects` authors the cells;
+    // the slicer cuts the same floor-divided geometry downstream. The lower
+    // panels (expressions, palette, callouts, outfit) re-budget into the
+    // remaining 576px so the canvas stays 1024x1536 and the panel count stays 12.
     let mut panels = Vec::new();
-    let views = ["front", "side-left", "three-quarter", "side-right", "back"];
-    for (i, label) in views.iter().enumerate() {
-        panels.push(panel(
-            label,
-            u32::try_from(i).unwrap_or(0) * 200,
-            0,
-            200,
-            480,
-            PanelSlot::View,
-            "five turnaround views in a horizontal strip across the top, \
-             left-aligned starting at the left edge — front view, left side, \
-             three-quarter view, right side, back view, each {panel_w} pixels \
-             wide, {panel_h} pixels tall",
-        ));
-    }
-    // Only the first view carries the shared turnaround clause; the rest carry
-    // an empty fragment so the prose is not repeated five times. (Compose joins
-    // non-empty fragments only.)
-    for p in panels.iter_mut().skip(1) {
-        p.prose_fragment.clear();
+    // VIEWS is a fixed 5-element array; map the count to the smallest compact grid.
+    let view_count = u32::try_from(VIEWS.len()).unwrap_or(5);
+    let (view_rows, view_cols) = compact_grid_shape(view_count);
+    let cells = grid_rects(PanelRect { x: 0, y: 0, w: 1024, h: 960 }, view_rows, view_cols);
+    let view_prose = format!(
+        "a compact grid of turnaround views, {view_cols} columns by {view_rows} rows — \
+         front view, left side, three-quarter view, right side, back view, in that order, \
+         left-to-right then top-to-bottom — each {{panel_w}} pixels wide, {{panel_h}} pixels \
+         tall, consistent scale across all cells"
+    );
+    for (i, label) in VIEWS.iter().enumerate() {
+        let rect = cells.get(i).copied().unwrap_or(PanelRect { x: 0, y: 0, w: 0, h: 0 });
+        // Only the first view carries the shared turnaround clause; the rest
+        // carry an empty fragment so the prose is not repeated five times.
+        // (Compose joins non-empty fragments only.)
+        let prose = if i == 0 { view_prose.as_str() } else { "" };
+        panels.push(panel(label, rect.x, rect.y, rect.w, rect.h, PanelSlot::View, prose));
     }
     // Append the universal panel-discipline clause to the lead fragment so it
     // rides the sheet exactly once.
@@ -178,14 +192,14 @@ fn character() -> Structure {
         } else {
             ""
         };
-        panels.push(panel(label, u32::try_from(i).unwrap_or(0) * 256, 480, 256, 192, PanelSlot::Expression, prose));
+        panels.push(panel(label, u32::try_from(i).unwrap_or(0) * 256, 960, 256, 160, PanelSlot::Expression, prose));
     }
     panels.push(panel(
         "palette",
         0,
-        672,
+        1120,
         1024,
-        128,
+        96,
         PanelSlot::PaletteSwatch,
         "a horizontal palette swatch row showing all colours used, {panel_w} \
          pixels wide, {panel_h} pixels tall",
@@ -197,14 +211,14 @@ fn character() -> Structure {
         } else {
             ""
         };
-        panels.push(panel(label, u32::try_from(i).unwrap_or(0) * 512, 800, 512, 320, PanelSlot::Callout, prose));
+        panels.push(panel(label, u32::try_from(i).unwrap_or(0) * 512, 1216, 512, 160, PanelSlot::Callout, prose));
     }
     panels.push(panel(
         "outfit-variant",
         0,
-        1120,
+        1376,
         256,
-        384,
+        160,
         PanelSlot::Outfit,
         "one outfit-variant panel, {panel_w} pixels wide, {panel_h} pixels tall, \
          showing an alternate outfit or colour scheme. White background, \
@@ -372,6 +386,157 @@ fn single() -> Structure {
         output: StructureOutput::Single,
         layout_negatives: String::new(),
     }
+}
+
+/// Wide-object sheet: a 2-row grid of 2:1 wide cells, the structure the
+/// classifier points a vehicle, ship, or banner at so its wide silhouette is not
+/// crammed into a square cell. Four 512×256 view cells tile the top region; a
+/// palette swatch sits below. The cells come from [`grid_rects`] so the slicer
+/// cuts the same geometry.
+fn wide_object() -> Structure {
+    let labels = ["front", "side", "rear", "three-quarter"];
+    let cells = grid_rects(PanelRect { x: 0, y: 0, w: 1024, h: 512 }, 2, 2);
+    let mut panels = Vec::with_capacity(labels.len() + 1);
+    for (i, label) in labels.iter().enumerate() {
+        let rect = cells.get(i).copied().unwrap_or(PanelRect { x: 0, y: 0, w: 0, h: 0 });
+        let prose = if i == 0 {
+            "a 2-row grid of wide 2:1 cells for a wide object — front, side, rear, \
+             three-quarter, left-to-right then top-to-bottom — each {panel_w} pixels \
+             wide, {panel_h} pixels tall, consistent scale across all cells"
+        } else {
+            ""
+        };
+        panels.push(panel(label, rect.x, rect.y, rect.w, rect.h, PanelSlot::View, prose));
+    }
+    panels.push(panel(
+        "palette",
+        0,
+        896,
+        1024,
+        128,
+        PanelSlot::PaletteSwatch,
+        "a palette swatch row {panel_w} pixels wide, {panel_h} pixels tall. White background",
+    ));
+    if let Some(first) = panels.first_mut() {
+        first.prose_fragment = lead(&first.prose_fragment);
+    }
+    Structure {
+        id: StructureId(STRUCTURE_WIDE_OBJECT_ID.into()),
+        name: "Wide object".into(),
+        output: StructureOutput::Paneled {
+            canvas: Dimensions { width: 1024, height: 1024 },
+            panels,
+        },
+        layout_negatives: with_panel_neg("subject cropped at the sides, squashed aspect ratio, inconsistent scale across views"),
+    }
+}
+
+/// Tall-object sheet: a 1-row strip of 1:2 tall cells, the structure the
+/// classifier points a staff, spear, or tower at so its vertical silhouette is
+/// not cropped top and bottom. Four 256×512 view cells tile the top region; a
+/// palette swatch sits below.
+fn tall_object() -> Structure {
+    let labels = ["front", "side", "rear", "three-quarter"];
+    let cells = grid_rects(PanelRect { x: 0, y: 0, w: 1024, h: 512 }, 1, 4);
+    let mut panels = Vec::with_capacity(labels.len() + 1);
+    for (i, label) in labels.iter().enumerate() {
+        let rect = cells.get(i).copied().unwrap_or(PanelRect { x: 0, y: 0, w: 0, h: 0 });
+        let prose = if i == 0 {
+            "a single row of tall 1:2 cells for a tall object — front, side, rear, \
+             three-quarter, left-to-right — each {panel_w} pixels wide, {panel_h} pixels \
+             tall, consistent scale across all cells"
+        } else {
+            ""
+        };
+        panels.push(panel(label, rect.x, rect.y, rect.w, rect.h, PanelSlot::View, prose));
+    }
+    panels.push(panel(
+        "palette",
+        0,
+        896,
+        1024,
+        128,
+        PanelSlot::PaletteSwatch,
+        "a palette swatch row {panel_w} pixels wide, {panel_h} pixels tall. White background",
+    ));
+    if let Some(first) = panels.first_mut() {
+        first.prose_fragment = lead(&first.prose_fragment);
+    }
+    Structure {
+        id: StructureId(STRUCTURE_TALL_OBJECT_ID.into()),
+        name: "Tall object".into(),
+        output: StructureOutput::Paneled {
+            canvas: Dimensions { width: 1024, height: 1024 },
+            panels,
+        },
+        layout_negatives: with_panel_neg("subject cropped at the top or bottom, squashed aspect ratio, inconsistent scale across views"),
+    }
+}
+
+/// The aspect class a subject reads as, driving which sheet shape fits it.
+///
+/// Advisory only: the classifier guesses from keywords in the subject text and
+/// never overrides the artist's pick. A wide vehicle crammed into a square cell
+/// is a guaranteed bad crop (the forge's prop-pack-classification rule), so the
+/// cockpit surfaces the recommendation as a dismissible hint.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum SubjectClass {
+    /// Roughly square — the default. Body characters, items, most subjects.
+    Compact,
+    /// Wider than tall — vehicles, ships, banners, weapon racks, vistas.
+    Wide,
+    /// Taller than wide — staffs, spears, towers, totems, columns.
+    Tall,
+}
+
+/// Keyword stems that read as a wide or collision-heavy subject.
+const WIDE_KEYWORDS: &[&str] = &["vehicle", "car", "truck", "ship", "boat", "banner", "rack", "vista", "landscape", "bridge", "train", "wagon", "tank"];
+
+/// Keyword stems that read as a tall, vertical subject.
+const TALL_KEYWORDS: &[&str] = &["staff", "spear", "tower", "totem", "column", "pillar", "ladder", "lance", "obelisk", "mast"];
+
+/// Classifies a subject string into the sheet-shape class it reads as.
+///
+/// Pure and case-insensitive: matches the lower-cased subject against the wide
+/// and tall keyword sets (wide takes priority when a subject hits both), falling
+/// back to [`SubjectClass::Compact`]. Advisory only — the caller suggests, never
+/// forces, so a misclassification is one click to dismiss.
+#[must_use]
+pub fn classify(subject: &str) -> SubjectClass {
+    let folded = subject.to_lowercase();
+    let hits = |set: &[&str]| set.iter().any(|kw| folded.contains(*kw));
+    if hits(WIDE_KEYWORDS) {
+        SubjectClass::Wide
+    } else if hits(TALL_KEYWORDS) {
+        SubjectClass::Tall
+    } else {
+        SubjectClass::Compact
+    }
+}
+
+/// The built-in Structure id a [`SubjectClass`] recommends.
+///
+/// `Compact` points at the character turnaround; `Wide` and `Tall` point at the
+/// matching object sheet so a wide or tall subject is not forced into square
+/// cells. The caller resolves the id against the live library before using it.
+#[must_use]
+pub fn recommended_structure(class: SubjectClass) -> StructureId {
+    let id = match class {
+        SubjectClass::Compact => STRUCTURE_CHARACTER_ID,
+        SubjectClass::Wide => STRUCTURE_WIDE_OBJECT_ID,
+        SubjectClass::Tall => STRUCTURE_TALL_OBJECT_ID,
+    };
+    StructureId(id.into())
+}
+
+/// Re-exports the grid cell math the shell shares with the static-sheet path.
+///
+/// One grid engine authors the panel rectangles in this module and the slicer
+/// cuts the same floor-divided geometry; the shell reaches the mapping through
+/// here rather than depending on `pixhaus_core::project::library::composition`
+/// directly for the asset-plan advisory.
+pub mod grid {
+    pub use pixhaus_core::project::library::composition::{compact_grid_shape, grid_rects};
 }
 
 /// Look negatives shared by every built-in Style — the legacy default-Style
@@ -610,9 +775,13 @@ mod tests {
     #[test]
     fn loads_structures_and_default_style() {
         let lib = BuiltinLibrary::load();
-        // Single (free-form) plus the four paneled structures.
-        assert_eq!(lib.structures.len(), 5);
+        // Single (free-form) plus the four legacy paneled structures plus the two
+        // new wide/tall object sheets the classifier points at.
+        assert_eq!(lib.structures.len(), 7);
         assert!(lib.structures.contains_key(&StructureId(STRUCTURE_SINGLE_ID.into())));
+        for id in [STRUCTURE_WIDE_OBJECT_ID, STRUCTURE_TALL_OBJECT_ID] {
+            assert!(lib.structures.contains_key(&StructureId(id.into())), "missing built-in structure {id}");
+        }
         let single = &lib.structures[&StructureId(STRUCTURE_SINGLE_ID.into())];
         assert!(matches!(single.output, StructureOutput::Single), "single structure has no panels");
         assert!(lib.styles.contains_key(&StyleId(STYLE_DEFAULT_ID.into())));
@@ -649,7 +818,10 @@ mod tests {
     }
 
     #[test]
-    fn character_geometry_matches_legacy() {
+    fn character_panel_counts_and_canvas_hold_after_the_grid_rewrite() {
+        // The compact-grid rewrite (Brief 11) keeps the canvas, the 12-panel
+        // count, and the 5-view count so the verb test and the gallery overlay
+        // stay valid; only the view rects and the lower-panel budget change.
         let lib = BuiltinLibrary::load();
         let c = structure(&lib, "pixhaus.builtin.structure.character");
         assert_eq!(canvas(c), Dimensions { width: 1024, height: 1536 });
@@ -661,10 +833,33 @@ mod tests {
         assert_eq!(count_slot(c, PanelSlot::Callout), 2);
         assert_eq!(count_slot(c, PanelSlot::Outfit), 1);
         assert_eq!(count_slot(c, PanelSlot::PaletteSwatch), 1);
-        let outfit = panels.iter().find(|p| p.slot == PanelSlot::Outfit).unwrap();
-        assert_eq!((outfit.rect.x, outfit.rect.y, outfit.rect.w, outfit.rect.h), (0, 1120, 256, 384));
         let view_labels: Vec<&str> = panels.iter().filter(|p| p.slot == PanelSlot::View).map(|p| p.label.as_str()).collect();
         assert_eq!(view_labels, ["front", "side-left", "three-quarter", "side-right", "back"]);
+    }
+
+    #[test]
+    fn character_views_span_more_than_one_row() {
+        // The legacy 1x5 strip placed every view at y=0; the compact grid lays
+        // them across at least two rows so the model has a vertical anchor.
+        let lib = BuiltinLibrary::load();
+        let c = structure(&lib, "pixhaus.builtin.structure.character");
+        let StructureOutput::Paneled { panels, .. } = &c.output else { panic!() };
+        let view_ys: std::collections::BTreeSet<u32> = panels.iter().filter(|p| p.slot == PanelSlot::View).map(|p| p.rect.y).collect();
+        assert!(view_ys.len() > 1, "the 5 views must span more than one y, got {view_ys:?}");
+    }
+
+    #[test]
+    fn every_character_panel_lies_inside_the_canvas() {
+        // grid_rects guarantees containment for the views; assert it for every
+        // panel so a re-budget never silently overhangs the 1024x1536 canvas.
+        let lib = BuiltinLibrary::load();
+        let c = structure(&lib, "pixhaus.builtin.structure.character");
+        let Dimensions { width, height } = canvas(c);
+        let StructureOutput::Paneled { panels, .. } = &c.output else { panic!() };
+        for p in panels {
+            assert!(p.rect.x + p.rect.w <= width, "{} overhangs the right edge: {:?}", p.label, p.rect);
+            assert!(p.rect.y + p.rect.h <= height, "{} overhangs the bottom edge: {:?}", p.label, p.rect);
+        }
     }
 
     #[test]
@@ -700,19 +895,34 @@ mod tests {
     }
 
     #[test]
-    fn character_migration_preserves_all_layout_phrases() {
+    fn character_layout_phrases_after_the_compact_grid_migration() {
+        // Brief 11 deliberately migrates the character layout from a raw 1x5
+        // strip to a compact 3x2 grid and re-budgets the lower panels, so the
+        // legacy 200x480 views and the old expression/palette/callout/outfit
+        // dims are gone. These are the new compact-grid phrases the resolver
+        // must emit; the outfit's "Professional sprite sheet format" survives.
         let lib = BuiltinLibrary::load();
         let positive = compose_layout(&lib, "pixhaus.builtin.structure.character");
         for phrase in [
-            "each 200 pixels wide, 480 pixels tall",
-            "each 256 pixels wide, 192 pixels tall",
-            "1024 pixels wide, 128 pixels tall",
-            "each 512 pixels wide, 320 pixels tall",
-            "256 pixels wide, 384 pixels tall",
+            "a compact grid of turnaround views, 3 columns by 2 rows",
+            "each 341 pixels wide, 480 pixels tall",
+            "each 256 pixels wide, 160 pixels tall",
+            "1024 pixels wide, 96 pixels tall",
+            "each 512 pixels wide, 160 pixels tall",
+            "256 pixels wide, 160 pixels tall",
             "Professional sprite sheet format",
         ] {
             assert!(positive.contains(phrase), "missing: {phrase}");
         }
+    }
+
+    #[test]
+    fn character_layout_drops_the_legacy_horizontal_strip_prose() {
+        // The forge's multirow-grid-over-singlerow rule: the 1xN strip prose is
+        // gone, replaced by the compact-grid phrasing.
+        let lib = BuiltinLibrary::load();
+        let positive = compose_layout(&lib, "pixhaus.builtin.structure.character");
+        assert!(!positive.contains("horizontal strip"), "the legacy 1xN strip prose must be gone: {positive}");
     }
 
     #[test]
@@ -835,8 +1045,8 @@ mod tests {
         let positive = compose_layout(&lib, "pixhaus.builtin.structure.character");
         assert!(!positive.contains("pixel-art"), "character layout prose must not carry the pixel-art adjective: {positive}");
         assert!(!positive.contains("pixel art"), "character layout prose must not carry the pixel-art adjective: {positive}");
-        // The migration-asserted dimension prose still uses the "pixels" unit.
-        assert!(positive.contains("200 pixels wide"), "dimension unit prose must survive: {positive}");
+        // The dimension prose still uses the "pixels" unit, now at the compact-grid cell width.
+        assert!(positive.contains("341 pixels wide"), "dimension unit prose must survive: {positive}");
     }
 
     #[test]
@@ -975,6 +1185,103 @@ mod tests {
             let negative = compose_negative_no_style(&lib, STRUCTURE_SINGLE_ID);
             assert!(negative.is_empty(), "single (free-form) negatives must stay empty: {negative}");
         }
+    }
+
+    // ── Brief 11: subject classification and the wide/tall object sheets ──────
+
+    mod classify {
+        use super::*;
+        use rstest::rstest;
+
+        #[rstest]
+        #[case::sports_car("a red sports car", SubjectClass::Wide)]
+        #[case::ship("a pirate ship", SubjectClass::Wide)]
+        #[case::wizard_staff("a tall wizard staff", SubjectClass::Tall)]
+        #[case::spear("a long spear", SubjectClass::Tall)]
+        #[case::knight("a small knight", SubjectClass::Compact)]
+        #[case::slime("a green slime", SubjectClass::Compact)]
+        fn reads_the_subject_aspect(#[case] subject: &str, #[case] expected: SubjectClass) {
+            assert_eq!(super::super::classify(subject), expected);
+        }
+
+        #[test]
+        fn is_case_insensitive() {
+            assert_eq!(super::super::classify("A RED SPORTS CAR"), SubjectClass::Wide);
+            assert_eq!(super::super::classify("A WIZARD STAFF"), SubjectClass::Tall);
+        }
+
+        #[test]
+        fn wide_wins_when_a_subject_hits_both_sets() {
+            // A "tower truck" reads wide and tall; wide takes priority so a bad
+            // horizontal crop is avoided first.
+            assert_eq!(super::super::classify("a tower truck"), SubjectClass::Wide);
+        }
+    }
+
+    mod recommended_structure {
+        use super::*;
+        use rstest::rstest;
+
+        #[rstest]
+        #[case::compact(SubjectClass::Compact, STRUCTURE_CHARACTER_ID)]
+        #[case::wide(SubjectClass::Wide, STRUCTURE_WIDE_OBJECT_ID)]
+        #[case::tall(SubjectClass::Tall, STRUCTURE_TALL_OBJECT_ID)]
+        fn maps_class_to_built_in_structure(#[case] class: SubjectClass, #[case] expected_id: &str) {
+            assert_eq!(super::super::recommended_structure(class), StructureId(expected_id.into()));
+        }
+
+        #[test]
+        fn every_recommendation_resolves_in_the_library() {
+            let lib = BuiltinLibrary::load();
+            for class in [SubjectClass::Compact, SubjectClass::Wide, SubjectClass::Tall] {
+                let id = super::super::recommended_structure(class);
+                assert!(lib.structures.contains_key(&id), "recommendation {id:?} must resolve in the built-in library");
+            }
+        }
+    }
+
+    #[test]
+    fn wide_object_cells_are_wider_than_tall() {
+        let lib = BuiltinLibrary::load();
+        let s = structure(&lib, STRUCTURE_WIDE_OBJECT_ID);
+        assert_eq!(count_slot(s, PanelSlot::View), 4);
+        let StructureOutput::Paneled { panels, .. } = &s.output else { panic!() };
+        for v in panels.iter().filter(|p| p.slot == PanelSlot::View) {
+            assert!(v.rect.w > v.rect.h, "a wide cell must be wider than tall: {:?}", v.rect);
+        }
+    }
+
+    #[test]
+    fn tall_object_cells_are_taller_than_wide() {
+        let lib = BuiltinLibrary::load();
+        let s = structure(&lib, STRUCTURE_TALL_OBJECT_ID);
+        assert_eq!(count_slot(s, PanelSlot::View), 4);
+        let StructureOutput::Paneled { panels, .. } = &s.output else { panic!() };
+        for v in panels.iter().filter(|p| p.slot == PanelSlot::View) {
+            assert!(v.rect.h > v.rect.w, "a tall cell must be taller than wide: {:?}", v.rect);
+        }
+    }
+
+    #[test]
+    fn wide_and_tall_object_panels_lie_inside_their_canvas() {
+        let lib = BuiltinLibrary::load();
+        for id in [STRUCTURE_WIDE_OBJECT_ID, STRUCTURE_TALL_OBJECT_ID] {
+            let s = structure(&lib, id);
+            let Dimensions { width, height } = canvas(s);
+            let StructureOutput::Paneled { panels, .. } = &s.output else { panic!() };
+            for p in panels {
+                assert!(p.rect.x + p.rect.w <= width, "{id}: {} overhangs the right edge: {:?}", p.label, p.rect);
+                assert!(p.rect.y + p.rect.h <= height, "{id}: {} overhangs the bottom edge: {:?}", p.label, p.rect);
+            }
+        }
+    }
+
+    #[test]
+    fn wide_object_carries_the_panel_discipline_clause() {
+        // The new object sheets join the universal containment/no-border rules.
+        let lib = BuiltinLibrary::load();
+        let positive = compose_layout(&lib, STRUCTURE_WIDE_OBJECT_ID);
+        assert!(positive.contains("equal empty margin on all four sides"), "wide object must carry the containment clause: {positive}");
     }
 
     #[test]

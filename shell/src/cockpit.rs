@@ -264,6 +264,20 @@ impl ShellApp {
             });
         });
 
+        // Advisory guard: if the subject reads as a different sheet shape than the
+        // one picked, suggest the better fit — never auto-override. The structure
+        // changes only on an explicit [Use it] click.
+        if let Some(suggestion) = structure_suggestion(&self.ck_structure, &self.rs_prompt, &self.doc.project.library.ai) {
+            ui.horizontal(|ui| {
+                ui.label(crate::icons::INFO);
+                ui.label(egui::RichText::new(&suggestion.message).small().weak());
+                if ui.small_button("Use it").on_hover_text(format!("Switch to the {} sheet", suggestion.name)).clicked() {
+                    self.ck_structure = suggestion.id;
+                    self.ck_dirty = true;
+                }
+            });
+        }
+
         // Resolution applies to free-form output only; a Paneled structure fixes
         // its own canvas from the layout, so the picker would be a no-op there.
         if self.ck_structure == ai::SINGLE_STRUCTURE_ID {
@@ -1516,6 +1530,42 @@ fn cockpit_form_defaults(ai: &pixhaus_core::project::ProjectAi) -> (pixhaus_core
     (ai.default_quality, u32::from(ai.default_candidate_count).clamp(1, 4))
 }
 
+/// A non-blocking structure recommendation the cockpit surfaces above the
+/// output picker when the subject text reads as a different sheet shape than the
+/// one currently picked.
+pub(crate) struct StructureSuggestion {
+    /// The recommended built-in structure id, to set on a [Use it] click.
+    pub id: String,
+    /// The recommended structure's display name, for the hint and the picker.
+    pub name: String,
+    /// The advisory message shown to the artist.
+    pub message: String,
+}
+
+/// Decides whether to advise a different output structure for `subject`.
+///
+/// Pure and side-effect-free: it classifies the subject (wide / tall / compact),
+/// and returns a [`StructureSuggestion`] only when the recommendation differs
+/// from `current`, the subject is non-blank, and the recommended id resolves to
+/// a real structure in the picker. Returns `None` otherwise — including when the
+/// artist already picked the recommended structure, so the hint never nags.
+///
+/// This is the testable core of the cockpit guard: it never mutates state, so
+/// the structure changes only when the caller applies the suggestion on an
+/// explicit [Use it] click (the brief's never-auto-override rule).
+pub(crate) fn structure_suggestion(current: &str, subject: &str, project: &pixhaus_core::project::ProjectAi) -> Option<StructureSuggestion> {
+    if subject.trim().is_empty() {
+        return None;
+    }
+    let id = ai::suggested_structure_id(subject);
+    if id == current {
+        return None;
+    }
+    let name = ai::structure_options(project).into_iter().find(|(oid, _)| *oid == id).map(|(_, name)| name)?;
+    let message = format!("This reads as a better fit for the {name} sheet.");
+    Some(StructureSuggestion { id, name, message })
+}
+
 /// Maximum prompt-history entries kept; older prompts age out on append.
 const MAX_PROMPT_HISTORY: usize = 100;
 
@@ -2028,7 +2078,7 @@ fn anchor_payload_for(entity: &pixhaus_core::project::Entity, strength: f32) -> 
 mod tests {
     use super::{
         AnchorAspect, anchor_finish_options, anchor_target_dims, finish_imported_variant, fixup_parent_after_remove, fixup_selection_after_remove,
-        imported_variant, manual_import_output, now_secs, push_prompt_history, refined_variant, relative_time, stamp_if_promotion,
+        imported_variant, manual_import_output, now_secs, push_prompt_history, refined_variant, relative_time, stamp_if_promotion, structure_suggestion,
     };
     use pixhaus_core::project::library::composition::ArtStyleKind;
 
@@ -2044,6 +2094,61 @@ mod tests {
     #[test]
     fn anchor_target_dims_passes_custom_through_verbatim() {
         assert_eq!(anchor_target_dims(AnchorAspect::Custom, 1536, (640, 1280)), (640, 1280));
+    }
+
+    #[test]
+    fn structure_suggestion_advises_a_wide_subject_when_the_pick_is_compact() {
+        use pixhaus_ai::compose::builtins::{STRUCTURE_CHARACTER_ID, STRUCTURE_WIDE_OBJECT_ID};
+        use pixhaus_core::project::ProjectAi;
+
+        let project = ProjectAi::default();
+        // Subject reads wide but the character sheet is picked: advise the wide sheet.
+        let suggestion = structure_suggestion(STRUCTURE_CHARACTER_ID, "a red sports car", &project).expect("a wide subject must be advised");
+        assert_eq!(suggestion.id, STRUCTURE_WIDE_OBJECT_ID, "the wide-object sheet is recommended");
+        assert!(!suggestion.name.is_empty(), "the suggestion carries a display name");
+    }
+
+    #[test]
+    fn structure_suggestion_is_silent_when_the_pick_already_matches() {
+        use pixhaus_ai::compose::builtins::STRUCTURE_WIDE_OBJECT_ID;
+        use pixhaus_core::project::ProjectAi;
+
+        let project = ProjectAi::default();
+        // The artist already picked the recommended sheet: no nag.
+        assert!(
+            structure_suggestion(STRUCTURE_WIDE_OBJECT_ID, "a red sports car", &project).is_none(),
+            "no suggestion when the pick already matches the recommendation"
+        );
+    }
+
+    #[test]
+    fn structure_suggestion_is_silent_for_a_blank_subject() {
+        use pixhaus_ai::compose::builtins::STRUCTURE_CHARACTER_ID;
+        use pixhaus_core::project::ProjectAi;
+
+        let project = ProjectAi::default();
+        assert!(
+            structure_suggestion(STRUCTURE_CHARACTER_ID, "   ", &project).is_none(),
+            "a blank subject yields no suggestion"
+        );
+    }
+
+    #[test]
+    fn structure_suggestion_never_mutates_the_picked_structure() {
+        use pixhaus_core::project::ProjectAi;
+
+        // The guard is advisory: it returns a value but leaves the caller's
+        // picked structure untouched. The structure changes only when the caller
+        // applies the suggestion on an explicit [Use it] click, modelled here as
+        // the assignment the egui handler performs.
+        let project = ProjectAi::default();
+        let mut picked = "pixhaus.builtin.structure.character".to_owned();
+        let suggestion = structure_suggestion(&picked, "a wizard staff", &project).expect("a tall subject is advised");
+        // Calling the guard did not change the pick.
+        assert_eq!(picked, "pixhaus.builtin.structure.character", "the guard must not auto-override the pick");
+        // Only the explicit click applies it.
+        picked = suggestion.id;
+        assert_eq!(picked, "pixhaus.builtin.structure.tall_object", "the [Use it] click applies the suggestion");
     }
 
     #[test]
