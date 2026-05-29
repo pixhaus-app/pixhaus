@@ -2395,6 +2395,12 @@ impl ShellApp {
                         ui.add(egui::Image::new((tex.id(), size * scale)));
                         let drift_color = if drift == 0 { palette.success } else { palette.warning };
                         ui.colored_label(drift_color, egui::RichText::new(format!("Δ {drift}px")).small());
+                        // A clipped frame — its landed bbox reaches a canvas edge —
+                        // gets an advisory badge under the drift label. STALE is the
+                        // codebase's name for the phosphor warning glyph.
+                        if result.report.edge_touch_frames.contains(&idx) {
+                            ui.colored_label(palette.error, egui::RichText::new(format!("{} clipped", crate::icons::STALE)).small());
+                        }
                     });
                 }
             });
@@ -2439,6 +2445,25 @@ impl ShellApp {
             scale_status(report.scale_match_pct),
             "Scale match",
             &format!("{}%", report.scale_match_pct),
+        );
+        // Edge clear: any frame whose landed bbox touches a canvas edge ships
+        // clipped. Ok when none touch, Error otherwise.
+        let touched = report.edge_touch_frames.len();
+        report_row(
+            ui,
+            &palette,
+            edge_status(touched),
+            "Edge clear",
+            &if touched == 0 { "clear".to_string() } else { format!("{touched} clipped") },
+        );
+        // Scale parity: how well the landed subject heights agree AFTER scale
+        // correction — the post-scale companion to Scale match.
+        report_row(
+            ui,
+            &palette,
+            scale_status(report.scale_parity_pct),
+            "Scale parity",
+            &format!("{}%", report.scale_parity_pct),
         );
         // Seam verdict: reuse the pick-stage colour thresholds via the SeamMatch.
         report_row(ui, &palette, seam_status(report.seam), "Loop seam", seam_label(report.seam));
@@ -2625,6 +2650,14 @@ pub(crate) fn scale_status(pct: u32) -> ReportStatus {
     } else {
         ReportStatus::Error
     }
+}
+
+/// Classifies the edge-touch count: zero clipped frames is clean, any clipped
+/// frame is an error (a subject at a canvas edge ships visibly cropped). The QC
+/// is advisory-strong — it surfaces the defect, it does not block Land.
+#[must_use]
+pub(crate) fn edge_status(touched_frames: usize) -> ReportStatus {
+    if touched_frames == 0 { ReportStatus::Ok } else { ReportStatus::Error }
 }
 
 /// Classifies the loop seam, reusing the pick-stage thresholds: a clean seam is
@@ -3539,6 +3572,21 @@ mod tests {
     }
 
     #[test]
+    fn edge_status_is_ok_only_at_zero() {
+        assert_eq!(edge_status(0), ReportStatus::Ok);
+        assert_eq!(edge_status(1), ReportStatus::Error);
+        assert_eq!(edge_status(5), ReportStatus::Error);
+    }
+
+    #[test]
+    fn edge_status_color_is_error() {
+        // A clipped frame reads in-game, so the inspector paints it the error
+        // colour — not the softer warning the drift field uses.
+        let palette = crate::theme::Palette::for_theme(egui::Theme::Dark);
+        assert_eq!(edge_status(1).color(&palette), palette.error);
+    }
+
+    #[test]
     fn report_status_colors_match_the_palette() {
         // The inspector reuses the studio palette: Ok→success, Warning→warning,
         // Error→error. Pinning the mapping guards the colour coding the plan asks
@@ -3565,16 +3613,26 @@ mod tests {
     #[test]
     fn three_frame_sequence_reports_clean_baseline_as_ok() {
         // Three subjects of equal height land on a locked baseline, so the
-        // drift field reads Ok and the scale field reads a perfect match.
+        // drift field reads Ok and the scale field reads a perfect match. A 1px
+        // bottom margin keeps the feet off the very last row, so the by-design
+        // full-bleed-bottom edge touch does not fire on this otherwise clean
+        // loop — the Edge-clear and Scale-parity rows both read Ok.
         let black = Rgba::opaque(0, 0, 0);
         let frames = [
             synthetic_frame(6, 8, 4, 6, black),
             synthetic_frame(5, 8, 6, 6, black),
             synthetic_frame(6, 8, 4, 6, black),
         ];
-        let report = normalize_frames(&frames, &NormalizeOptions::square(16)).expect("normalize").report;
+        let opts = NormalizeOptions {
+            bottom_margin: 1,
+            safe_margin: 1,
+            ..NormalizeOptions::square(16)
+        };
+        let report = normalize_frames(&frames, &opts).expect("normalize").report;
         assert_eq!(drift_status(report.baseline_drift_px), ReportStatus::Ok);
         assert_eq!(scale_status(report.scale_match_pct), ReportStatus::Ok);
+        assert_eq!(edge_status(report.edge_touch_frames.len()), ReportStatus::Ok, "small centred subjects land clear of every edge");
+        assert_eq!(scale_status(report.scale_parity_pct), ReportStatus::Ok, "the corrected heights agree, so parity reads Ok");
     }
 
     #[test]
@@ -3598,5 +3656,22 @@ mod tests {
             "seam warning surfaced: {:?}",
             report.warnings
         );
+    }
+
+    #[test]
+    fn edge_touching_frame_reads_error_in_the_inspector() {
+        // A tall narrow frame sets a high shared reference height; a short wide
+        // frame scaled up to it balloons past the canvas and repad clips the
+        // overhang, so its landed bbox spans edge to edge. The inspector's
+        // Edge-clear row must read Error and the frame index must appear in
+        // edge_touch_frames so the strip badge shows.
+        let black = Rgba::opaque(0, 0, 0);
+        let tall = synthetic_frame(7, 1, 2, 14, black);
+        let wide = synthetic_frame(1, 7, 14, 2, black);
+        let report = normalize_frames(&[tall, wide], &NormalizeOptions::square(16)).expect("normalize").report;
+        assert!(report.edge_touch_frames.contains(&1), "the over-scaled wide frame is flagged: {:?}", report.edge_touch_frames);
+        assert_eq!(edge_status(report.edge_touch_frames.len()), ReportStatus::Error, "the inspector reads Error for a clipped frame");
+        let palette = crate::theme::Palette::for_theme(egui::Theme::Dark);
+        assert_eq!(edge_status(report.edge_touch_frames.len()).color(&palette), palette.error);
     }
 }

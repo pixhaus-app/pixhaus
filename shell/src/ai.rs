@@ -1045,6 +1045,9 @@ pub async fn run_animation(runtime: &VerbRuntime, job: &AnimJob, progress: &(dyn
         // Frames arrive already background-stripped here, so there are no keying
         // specks to isolate — keep the whole-alpha bbox.
         component_mode: ComponentMode::WholeAlpha,
+        // The AI loop path stays at no safe band; edge-touch QC flags only a
+        // landed bbox literally at a canvas edge.
+        safe_margin: 0,
     };
     let result = normalize_frames(&buffers, &opts).map_err(|e| e.to_string())?;
     let frame_duration_ms = (1000 / job.fps.max(1)).max(1);

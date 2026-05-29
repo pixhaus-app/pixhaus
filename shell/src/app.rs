@@ -2956,6 +2956,9 @@ impl ShellApp {
             // pixel cannot inflate the bbox and shrink the body. WholeAlpha when
             // the backdrop is left for the timeline op (no keying, no specks).
             component_mode: crate::studio::land_component_mode(self.studio.remove_on_land, self.studio.land_all_parts, self.studio.land_min_area),
+            // Edge-touch QC flags a landed bbox literally at a canvas edge. No
+            // safe band on Land — the studio surfaces it advisory, not as a gate.
+            safe_margin: 0,
         };
         match normalize_frames(&buffers, &opts) {
             Ok(result) => Some(result),

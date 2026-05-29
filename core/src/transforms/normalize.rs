@@ -223,6 +223,18 @@ pub struct NormalizeReport {
     /// Human-readable warnings (empty subject, large drift, scale jump).
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub warnings: Vec<String>,
+    /// Frame indices whose landed bbox enters the `safe_margin` band at any
+    /// edge — the silent-clip signature `repad` leaves on an oversized subject.
+    /// Empty when nothing touches. Serde-defaulted so old reports load.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub edge_touch_frames: Vec<usize>,
+    /// Post-correction height parity: the shortest landed subject over the
+    /// tallest, x100. `100` means every corrected subject agrees in height.
+    /// Unlike [`scale_match_pct`](Self::scale_match_pct), which is the *pre*-scale
+    /// spread measured on source frames, this measures the frames that actually
+    /// land — so it catches a body the scale pass under-corrected. `100` when
+    /// at most one non-empty frame lands.
+    pub scale_parity_pct: u32,
 }
 
 /// Options for [`normalize_frames`].
@@ -250,12 +262,20 @@ pub struct NormalizeOptions {
     /// [`ComponentMode::WholeAlpha`] in [`NormalizeOptions::square`] so existing
     /// behaviour is unchanged unless a caller opts in.
     pub component_mode: ComponentMode,
+    /// Minimum transparent border, in pixels, the QC pass expects on all four
+    /// sides. A landed bbox entering this band is flagged in
+    /// [`NormalizeReport::edge_touch_frames`]. `0` disables the band, flagging
+    /// only a bbox literally at an edge. Independent of
+    /// [`bottom_margin`](Self::bottom_margin), which places the subject; this
+    /// only judges the result.
+    pub safe_margin: u32,
 }
 
 impl NormalizeOptions {
     /// Square-canvas defaults: magenta key, alpha threshold 8, no bottom
     /// margin, reference height inferred from the tallest frame, whole-alpha
-    /// bbox measurement (no component analysis).
+    /// bbox measurement (no component analysis), and no safe margin (edge-touch
+    /// QC flags only a bbox literally at an edge — preserves prior behaviour).
     #[must_use]
     pub fn square(side: u32) -> Self {
         Self {
@@ -266,6 +286,7 @@ impl NormalizeOptions {
             reference_height: None,
             bottom_margin: 0,
             component_mode: ComponentMode::WholeAlpha,
+            safe_margin: 0,
         }
     }
 }
@@ -497,6 +518,34 @@ fn metrics_from_bbox(min_x: u32, min_y: u32, max_x: u32, max_y: u32) -> FrameMet
 /// Whether `(x, y)` lies on the buffer's 1px outer border.
 fn on_border(x: u32, y: u32, w: u32, h: u32) -> bool {
     x == 0 || y == 0 || x + 1 >= w || y + 1 >= h
+}
+
+/// True when the landed bbox enters the `margin` band at any of the four edges
+/// of a `canvas_width × canvas_height` frame.
+///
+/// `margin == 0` flags only a bbox literally at an edge (left/top at `0`, right
+/// at `w-1`, bottom at `h-1`) — the silent-clip signature [`repad`] leaves on an
+/// oversized subject. A larger `margin` widens the band inward by that many
+/// pixels: at `margin == n` a bbox whose left is `< n` (or whose right reaches
+/// within `n` of `w-1`) is flagged. Empty frames never touch — they have no
+/// bbox.
+///
+/// Operate this on the OUTPUT metrics: a landed bbox pinned to row 0 or column
+/// 0 is exactly the clip this QC catches.
+#[must_use]
+pub fn bbox_touches_edge(m: &FrameMetrics, canvas_width: u32, canvas_height: u32, margin: u32) -> bool {
+    if m.empty {
+        return false;
+    }
+    let right = m.bbox_x + m.visible_width.saturating_sub(1);
+    let bottom = m.bbox_y + m.visible_height.saturating_sub(1);
+    let last_x = canvas_width.saturating_sub(1);
+    let last_y = canvas_height.saturating_sub(1);
+    let touch_left = m.bbox_x == 0 || m.bbox_x < margin;
+    let touch_top = m.bbox_y == 0 || m.bbox_y < margin;
+    let touch_right = right >= last_x || right + margin > last_x;
+    let touch_bottom = bottom >= last_y || bottom + margin > last_y;
+    touch_left || touch_top || touch_right || touch_bottom
 }
 
 /// Labels the opaque mask (alpha strictly greater than `alpha_threshold`) into
@@ -877,6 +926,8 @@ pub fn normalize_frames(frames: &[PixelBuffer], opts: &NormalizeOptions) -> Resu
                 seam: SeamMatch::Ok,
                 reference_height: 0,
                 warnings: vec!["no frames to normalize".into()],
+                edge_touch_frames: Vec::new(),
+                scale_parity_pct: 100,
             },
         });
     }
@@ -936,6 +987,27 @@ pub fn normalize_frames(frames: &[PixelBuffer], opts: &NormalizeOptions) -> Resu
         warnings.push(format!("subject heights vary widely ({scale_match_pct}% match) before scale correction"));
     }
 
+    // Edge-touch QC: a landed bbox in the safe-margin band is the repad-clip
+    // signature on an oversized subject. Flag each touching frame and warn.
+    let edge_touch_frames: Vec<usize> = out_metrics
+        .iter()
+        .enumerate()
+        .filter(|(_, m)| bbox_touches_edge(m, opts.canvas_width, opts.canvas_height, opts.safe_margin))
+        .map(|(i, _)| i)
+        .collect();
+    for &i in &edge_touch_frames {
+        warnings.push(format!("frame {i} touches a canvas edge — the subject is clipped"));
+    }
+
+    // Post-correction parity: shortest landed subject over tallest, x100. Unlike
+    // scale_match_pct (pre-scale spread on source frames), this measures the
+    // frames that actually land, so it catches a body the scale pass under-
+    // corrected. 100 when at most one non-empty frame lands.
+    let scale_parity_pct = scale_parity(&out_metrics);
+    if scale_parity_pct < 60 {
+        warnings.push(format!("landed subject heights still vary ({scale_parity_pct}% parity) after scale correction"));
+    }
+
     let seam = seam_match(out_frames.first(), out_frames.last());
     if seam == SeamMatch::Drift {
         warnings.push("loop seam: last frame differs noticeably from the first".into());
@@ -950,8 +1022,28 @@ pub fn normalize_frames(frames: &[PixelBuffer], opts: &NormalizeOptions) -> Resu
             seam,
             reference_height,
             warnings,
+            edge_touch_frames,
+            scale_parity_pct,
         },
     })
+}
+
+/// Post-correction height parity over the landed (output) metrics: the shortest
+/// non-empty subject over the tallest, x100. Returns `100` when at most one
+/// non-empty frame lands (nothing to disagree) or the tallest is zero.
+fn scale_parity(out_metrics: &[FrameMetrics]) -> u32 {
+    let mut min_h = u32::MAX;
+    let mut max_h = 0u32;
+    let mut count = 0u32;
+    for m in out_metrics.iter().filter(|m| !m.empty) {
+        count += 1;
+        min_h = min_h.min(m.visible_height);
+        max_h = max_h.max(m.visible_height);
+    }
+    if count <= 1 || max_h == 0 {
+        return 100;
+    }
+    u32::try_from(u64::from(min_h) * 100 / u64::from(max_h)).unwrap_or(100)
 }
 
 /// Classifies the loop seam by mean per-channel difference between the first
@@ -1494,6 +1586,220 @@ mod tests {
         let res = normalize_frames(&[], &opts).unwrap();
         assert!(res.frames.is_empty());
         assert!(!res.report.warnings.is_empty());
+        assert!(res.report.edge_touch_frames.is_empty(), "no frames means nothing touches an edge");
+        assert_eq!(res.report.scale_parity_pct, 100, "an empty sequence is trivially in parity");
+    }
+
+    mod edge_touch_and_scale_parity {
+        use super::*;
+
+        /// Output metrics describing a bbox at `(x, y)` of size `w × h` on a
+        /// `canvas`-sized frame. The fields [`bbox_touches_edge`] reads.
+        fn out_metric(x: u32, y: u32, w: u32, h: u32) -> FrameMetrics {
+            metrics_from_bbox(x, y, x + w - 1, y + h - 1)
+        }
+
+        #[rstest]
+        // The four edges at margin 0: a bbox pinned to row 0 / col 0 / the last
+        // row / the last column each touches its respective side.
+        #[case::left(out_metric(0, 4, 3, 3), true)]
+        #[case::top(out_metric(4, 0, 3, 3), true)]
+        #[case::right(out_metric(13, 4, 3, 3), true)] // x 13..=15 reaches w-1 = 15
+        #[case::bottom(out_metric(4, 13, 3, 3), true)] // y 13..=15 reaches h-1 = 15
+        #[case::interior(out_metric(5, 5, 3, 3), false)]
+        fn bbox_touches_edge_flags_each_side(#[case] m: FrameMetrics, #[case] expected: bool) {
+            assert_eq!(bbox_touches_edge(&m, 16, 16, 0), expected, "{m:?} at margin 0");
+        }
+
+        #[test]
+        fn empty_frame_never_touches() {
+            let m = empty_metrics(16, 16);
+            assert!(!bbox_touches_edge(&m, 16, 16, 0), "an empty frame has no bbox to touch an edge");
+            assert!(!bbox_touches_edge(&m, 16, 16, 4), "still false under a wide margin");
+        }
+
+        #[test]
+        fn safe_margin_widens_the_band() {
+            // A bbox two pixels in from every side is interior at margin 0 but
+            // enters a 3px safe band.
+            let m = out_metric(2, 2, 12, 12); // spans 2..=13 on a 16px canvas
+            assert!(!bbox_touches_edge(&m, 16, 16, 0), "clear of the literal edge");
+            assert!(!bbox_touches_edge(&m, 16, 16, 2), "left/top at 2 is exactly the band floor, still clear");
+            assert!(bbox_touches_edge(&m, 16, 16, 3), "a 3px safe margin pulls the band over the bbox");
+        }
+
+        /// A 16×16 magenta frame with a `color` rectangle at `(x, y)` of `w × h`.
+        fn frame(x: u32, y: u32, w: u32, h: u32, color: Rgba) -> PixelBuffer {
+            let mut buf = solid(16, 16, Rgba::opaque(255, 0, 255));
+            for sy in y..(y + h).min(16) {
+                for sx in x..(x + w).min(16) {
+                    buf.set_pixel(sx, sy, color);
+                }
+            }
+            buf
+        }
+
+        #[test]
+        fn oversized_subject_lands_edge_touching() {
+            // The repad-clip regression. A tall narrow frame sets a high shared
+            // reference height; a short wide frame scaled up to that height
+            // balloons far past the canvas width, so repad centres it and clips
+            // the horizontal overhang — the landed bbox spans edge to edge. The
+            // pass must flag the wide frame and push a warning, not ship it
+            // silently.
+            let black = Rgba::opaque(0, 0, 0);
+            let tall = frame(7, 1, 2, 14, black); // sets reference height ~14
+            let wide = frame(1, 7, 14, 2, black); // scaled to ~14 tall, width balloons and clips
+            let res = normalize_frames(&[tall, wide], &NormalizeOptions::square(16)).expect("normalize");
+            assert!(
+                res.report.edge_touch_frames.contains(&1),
+                "the over-scaled wide subject lands touching an edge: metrics {:?}",
+                res.metrics
+            );
+            assert!(
+                res.report.warnings.iter().any(|w| w.contains("touches") || w.contains("clipped") || w.contains("edge")),
+                "an edge-touch warning is recorded: {:?}",
+                res.report.warnings
+            );
+        }
+
+        #[test]
+        fn clean_sequence_has_no_edge_touch() {
+            // Small, well-centred subjects on a generous canvas land clear of
+            // every edge under a safe margin. A bottom margin keeps the feet off
+            // the very last row, so the by-design full-bleed-bottom touch does
+            // not fire on an otherwise clean loop.
+            let black = Rgba::opaque(0, 0, 0);
+            let frames = [frame(6, 6, 4, 4, black), frame(6, 5, 4, 5, black), frame(6, 6, 4, 4, black)];
+            let opts = NormalizeOptions {
+                bottom_margin: 1,
+                safe_margin: 1,
+                ..NormalizeOptions::square(16)
+            };
+            let res = normalize_frames(&frames, &opts).expect("normalize");
+            assert!(res.report.edge_touch_frames.is_empty(), "a clean sequence touches no edge: {:?}", res.metrics);
+        }
+
+        #[test]
+        fn scale_parity_measures_post_correction() {
+            // Two subjects of very different SOURCE height (one 4 tall, one 12)
+            // make scale_match_pct low. After the pass scales both to the same
+            // reference, the landed heights agree, so scale_parity_pct is ~100.
+            let black = Rgba::opaque(0, 0, 0);
+            let short = frame(6, 8, 4, 4, black);
+            let tall = frame(6, 2, 4, 12, black);
+            let res = normalize_frames(&[short, tall], &NormalizeOptions::square(16)).expect("normalize");
+            assert!(res.report.scale_match_pct < 60, "the pre-scale spread is wide: {}%", res.report.scale_match_pct);
+            assert!(
+                res.report.scale_parity_pct >= 90,
+                "post-correction the landed heights agree: parity {}% (match {}%)",
+                res.report.scale_parity_pct,
+                res.report.scale_match_pct
+            );
+        }
+
+        #[test]
+        fn scale_parity_flags_residual_shrink() {
+            // A wide, short subject scaled up to the shared reference height has
+            // its width balloon far past the canvas; repad centres it and clips
+            // the horizontal overhang. Because the subject's opaque content is a
+            // diagonal, the surviving centre band is only part of its height, so
+            // the frame lands noticeably shorter than the clean tall frame — the
+            // post-scale body-shrink scale_match_pct (a pre-scale signal) cannot
+            // see. scale_parity catches it.
+            let black = Rgba::opaque(0, 0, 0);
+            let tall = frame(7, 1, 2, 14, black);
+            let mut wide_diagonal = solid(16, 16, Rgba::opaque(255, 0, 255));
+            for x in 0..14u32 {
+                let y = 11 + x * 3 / 13; // a 14-wide, 4-tall diagonal low in the cell
+                wide_diagonal.set_pixel(1 + x, y, black);
+            }
+            let res = normalize_frames(&[tall, wide_diagonal], &NormalizeOptions::square(16)).expect("normalize");
+            assert!(
+                res.report.scale_parity_pct < 90,
+                "the over-scaled diagonal lands shorter than the tall frame: parity {}% over heights {:?}",
+                res.report.scale_parity_pct,
+                res.metrics.iter().map(|m| m.visible_height).collect::<Vec<_>>()
+            );
+        }
+
+        proptest! {
+            /// `scale_parity_pct` is always a percentage in `0..=100`.
+            #[test]
+            fn scale_parity_pct_is_a_percentage(
+                seed in 0u32..=512,
+            ) {
+                let black = Rgba::opaque(0, 0, 0);
+                let frames: Vec<PixelBuffer> = (0..3u32)
+                    .map(|i| {
+                        let h = 2 + ((seed.wrapping_add(i.wrapping_mul(97))) % 10);
+                        let y = 14u32.saturating_sub(h);
+                        frame(6, y.min(13), 4, h, black)
+                    })
+                    .collect();
+                let res = normalize_frames(&frames, &NormalizeOptions::square(16)).expect("normalize");
+                prop_assert!(res.report.scale_parity_pct <= 100, "parity {} exceeds 100", res.report.scale_parity_pct);
+            }
+
+            /// When every subject is the same height, the corrected heights agree
+            /// exactly, so parity is a perfect 100.
+            #[test]
+            fn equal_heights_give_full_parity(
+                h in 3u32..=10,
+            ) {
+                let black = Rgba::opaque(0, 0, 0);
+                let y = 13u32.saturating_sub(h);
+                let frames = [frame(6, y, 4, h, black), frame(6, y, 4, h, black), frame(6, y, 4, h, black)];
+                let res = normalize_frames(&frames, &NormalizeOptions::square(16)).expect("normalize");
+                prop_assert_eq!(res.report.scale_parity_pct, 100, "equal source heights land in full parity");
+            }
+        }
+    }
+
+    mod report_serde {
+        use super::*;
+
+        #[test]
+        fn skips_empty_edge_touch_frames_on_the_wire() {
+            let report = NormalizeReport {
+                baseline_drift_px: 0,
+                scale_match_pct: 100,
+                seam: SeamMatch::Ok,
+                reference_height: 16,
+                warnings: Vec::new(),
+                edge_touch_frames: Vec::new(),
+                scale_parity_pct: 100,
+            };
+            let json = serde_json::to_string(&report).expect("encode");
+            assert!(!json.contains("edge_touch_frames"), "an empty edge list is skipped: {json}");
+            assert!(json.contains("scale_parity_pct"), "scale_parity_pct is always written: {json}");
+        }
+
+        #[test]
+        fn round_trips_with_edge_touch_frames() {
+            let report = NormalizeReport {
+                baseline_drift_px: 3,
+                scale_match_pct: 80,
+                seam: SeamMatch::Close,
+                reference_height: 32,
+                warnings: vec!["frame 1 touches an edge".into()],
+                edge_touch_frames: vec![1, 2],
+                scale_parity_pct: 74,
+            };
+            let json = serde_json::to_string(&report).expect("encode");
+            let back: NormalizeReport = serde_json::from_str(&json).expect("decode");
+            assert_eq!(back, report, "the report survives the round-trip with the new fields");
+        }
+
+        #[test]
+        fn deserializes_old_report_without_edge_touch_frames() {
+            // An old report carried no edge_touch_frames. The field defaults to an
+            // empty vec; scale_parity_pct is required and must be present.
+            let json = r#"{"baseline_drift_px":2,"scale_match_pct":90,"seam":"ok","reference_height":24,"scale_parity_pct":100}"#;
+            let report: NormalizeReport = serde_json::from_str(json).expect("decode legacy report");
+            assert!(report.edge_touch_frames.is_empty(), "edge_touch_frames defaults to empty");
+            assert_eq!(report.scale_parity_pct, 100);
+        }
     }
 
     #[test]
