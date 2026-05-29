@@ -46,7 +46,9 @@ use crate::gizmo::{BoxGizmo, GizmoHandle};
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub(crate) enum StudioStage {
-    /// Pick the approved reference sheet plus direction and animation kind.
+    /// Generate and approve the canonical reference sheet — the character's
+    /// look. Direction and animation kind are framing for later stages, not
+    /// chosen here.
     Anchor,
     /// Generate and refine the seed pose (text-to-image + inpaint).
     FirstFrame,
@@ -773,17 +775,30 @@ impl Default for StudioState {
 }
 
 impl StudioState {
-    /// The default seed-pose prompt built from the kind and facing.
-    fn default_pose_prompt(&self) -> String {
-        format!("character seed pose, {}", self.facing.view_fragment())
+    /// The seed-pose prompt for a given facing. Shared so the First-frame
+    /// Direction dial can recognize its own untouched scaffold and keep it in
+    /// step without duplicating the format string.
+    fn pose_prompt_for(facing: Facing) -> String {
+        format!("character seed pose, {}", facing.view_fragment())
     }
 
-    /// The motion prompt scaffolded from the kind and facing.
-    fn motion_scaffold(&self) -> String {
-        match self.kind.motion_fragment() {
-            Some(kind) => format!("{kind}, {}", self.facing.view_fragment()),
-            None => self.facing.view_fragment().to_owned(),
+    /// The motion prompt scaffolded from a given kind and facing. Shared with
+    /// the Motion stage's kind dial for the same reason as [`Self::pose_prompt_for`].
+    fn motion_prompt_for(kind: AnimKind, facing: Facing) -> String {
+        match kind.motion_fragment() {
+            Some(kind) => format!("{kind}, {}", facing.view_fragment()),
+            None => facing.view_fragment().to_owned(),
         }
+    }
+
+    /// The default seed-pose prompt built from the current framing.
+    fn default_pose_prompt(&self) -> String {
+        Self::pose_prompt_for(self.facing)
+    }
+
+    /// The motion prompt scaffolded from the current framing.
+    fn motion_scaffold(&self) -> String {
+        Self::motion_prompt_for(self.kind, self.facing)
     }
 
     /// A one-line framing summary for the header.
@@ -919,6 +934,10 @@ impl ShellApp {
                 self.studio_library_open = false;
                 self.anim_set_open = true;
             }
+            // The framing summary stays in the header at every stage: it is the
+            // at-a-glance readout of the direction/kind framing — including
+            // values seeded from the coverage grid — now that the dials live in
+            // the First-frame and Motion stages rather than the Anchor inspector.
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                 ui.label(egui::RichText::new(self.studio.framing_label()).weak());
             });
@@ -1195,34 +1214,12 @@ impl ShellApp {
         }
     }
 
-    /// The Anchor stage's inspector: the framing dials that scaffold the
-    /// seed-pose and motion prompts, the cockpit composition controls, and the
-    /// results gallery (cards) below.
+    /// The Anchor stage's inspector: the cockpit composition controls and the
+    /// results gallery (cards) below. The animation-kind and direction dials do
+    /// not condition the anchor itself — they scaffold the seed-pose and motion
+    /// prompts — so they live at their point of use (the First-frame and Motion
+    /// stages), not here where they only crowd the canonical-reference step.
     fn studio_anchor_inspector(&mut self, ui: &mut egui::Ui) {
-        ui.label(egui::RichText::new("Animation kind").strong());
-        ui.horizontal_wrapped(|ui| {
-            for kind in AnimKind::ALL {
-                ui.selectable_value(&mut self.studio.kind, kind, kind.label());
-            }
-        });
-        ui.add_space(8.0);
-        ui.label(egui::RichText::new("Direction").strong());
-        ui.horizontal_wrapped(|ui| {
-            for facing in Facing::ALL {
-                ui.selectable_value(&mut self.studio.facing, facing, facing.label());
-            }
-        });
-        ui.add_space(8.0);
-        if ui
-            .button("Apply framing to prompts")
-            .on_hover_text("Scaffold the seed-pose and motion prompts from this framing")
-            .clicked()
-        {
-            self.studio.frame_gen.prompt = self.studio.default_pose_prompt();
-            self.anim_motion = self.studio.motion_scaffold();
-        }
-        ui.add_space(8.0);
-        ui.separator();
         self.anchor_inspector(ui);
         ui.add_space(8.0);
         ui.separator();
@@ -1286,6 +1283,34 @@ impl ShellApp {
         let backend_ready = self.backend_ready;
         let ctx = ui.ctx().clone();
         let success = crate::theme::Palette::for_theme(ui.ctx().theme()).success;
+
+        // The seed pose is the first directional frame, so the Direction dial
+        // lives here, where it actually scaffolds this stage's pose prompt.
+        ui.label(egui::RichText::new("Direction").strong());
+        let prev_facing = self.studio.facing;
+        let mut facing_changed = false;
+        ui.horizontal_wrapped(|ui| {
+            for facing in Facing::ALL {
+                if ui.selectable_value(&mut self.studio.facing, facing, facing.label()).changed() {
+                    facing_changed = true;
+                }
+            }
+        });
+        // Keep the prompt in step with the dial while it is still the untouched
+        // scaffold for the old direction; a hand-edited prompt is never clobbered.
+        if facing_changed && self.studio.frame_gen.prompt == StudioState::pose_prompt_for(prev_facing) {
+            self.studio.frame_gen.prompt = StudioState::pose_prompt_for(self.studio.facing);
+        }
+        if ui
+            .small_button("Apply to prompt")
+            .on_hover_text("Replace the prompt with a seed pose for this direction")
+            .clicked()
+        {
+            let prompt = self.studio.default_pose_prompt();
+            self.studio.frame_gen.prompt = prompt;
+        }
+        ui.add_space(8.0);
+        ui.separator();
 
         let do_generate;
         let mut do_cancel = false;
@@ -1645,6 +1670,33 @@ impl ShellApp {
                 }
             }
         });
+
+        ui.add_space(6.0);
+        // The animation kind is what this clip *is*, so its dial lives here at
+        // the Motion stage where it scaffolds the motion prompt.
+        ui.label(egui::RichText::new("Animation kind").strong());
+        let prev_kind = self.studio.kind;
+        let mut kind_changed = false;
+        ui.horizontal_wrapped(|ui| {
+            for kind in AnimKind::ALL {
+                if ui.selectable_value(&mut self.studio.kind, kind, kind.label()).changed() {
+                    kind_changed = true;
+                }
+            }
+        });
+        // Keep the motion prompt in step with the dial while it is still the
+        // untouched scaffold; a preset or hand-edited motion is never clobbered.
+        if kind_changed && self.anim_motion == StudioState::motion_prompt_for(prev_kind, self.studio.facing) {
+            self.anim_motion = StudioState::motion_prompt_for(self.studio.kind, self.studio.facing);
+        }
+        if ui
+            .small_button("Apply to motion prompt")
+            .on_hover_text("Rebuild the motion prompt from this animation kind and direction")
+            .clicked()
+        {
+            let motion = self.studio.motion_scaffold();
+            self.anim_motion = motion;
+        }
 
         ui.add_space(6.0);
         ui.horizontal(|ui| {
@@ -3186,6 +3238,30 @@ mod tests {
         };
         // Custom contributes no kind fragment, just the view.
         assert!(!custom.motion_scaffold().contains("cycle"));
+    }
+
+    #[test]
+    fn scaffold_helpers_agree_with_current_framing_methods() {
+        // The First-frame and Motion dials keep their prompt in step only while
+        // it equals the scaffold for the *current* framing. That detection is
+        // sound only if the instance methods produce exactly what the per-value
+        // helpers do — so pin the two formulations together across every kind
+        // and facing. Break one formula without the other and this fails.
+        for facing in Facing::ALL {
+            for kind in AnimKind::ALL {
+                let state = StudioState {
+                    kind,
+                    facing,
+                    ..Default::default()
+                };
+                assert_eq!(state.default_pose_prompt(), StudioState::pose_prompt_for(facing), "pose prompt for {facing:?}");
+                assert_eq!(
+                    state.motion_scaffold(),
+                    StudioState::motion_prompt_for(kind, facing),
+                    "motion prompt for {kind:?} / {facing:?}"
+                );
+            }
+        }
     }
 
     /// A 2x2 frame with a distinct colour in each quadrant.

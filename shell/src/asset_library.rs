@@ -25,8 +25,16 @@ use crate::commands::{push_ai_library_edit, push_tag_edit};
 use crate::document::DocumentStore;
 use crate::editor::EditorState;
 
-/// Side length, in points, of a reference thumbnail in the browser grid.
-const THUMB: f32 = 72.0;
+/// Side length, in points, of a reference thumbnail in the browser grid. The
+/// gallery now owns the full panel width, so the thumbnails are large enough to
+/// read the pixel art at a glance rather than the cramped 72 px of the old
+/// single-column layout.
+const THUMB: f32 = 112.0;
+
+/// Width, in points, of a character-card or style-swatch tile. Bounded so the
+/// cards flow as a wrapped grid across the gallery instead of one stretched-out
+/// row per card.
+const CARD_W: f32 = 250.0;
 
 impl ShellApp {
     /// The asset-library browser: References, Character cards, and Style swatches,
@@ -43,18 +51,54 @@ impl ShellApp {
         ui.add_space(6.0);
         ui.separator();
 
-        egui::ScrollArea::vertical().auto_shrink([false, false]).show(ui, |ui| {
-            self.project_ai_section(ui);
-            ui.add_space(10.0);
-            self.style_corpus_section(ui);
-            ui.add_space(10.0);
-            self.asset_references_section(ui);
-            ui.add_space(10.0);
-            self.asset_cards_section(ui);
-            ui.add_space(10.0);
-            self.asset_swatches_section(ui);
-            ui.add_space(10.0);
-            self.tag_manager_section(ui);
+        // Two panes share the full panel width. The left rail holds project
+        // configuration — AI defaults, the style corpus, and tags — at a fixed,
+        // resizable width; the central pane is the asset gallery proper
+        // (references, character cards, style swatches) and takes whatever width
+        // is left. Each pane scrolls on its own so a long gallery never pushes
+        // the settings out of reach. Order matters: the side panel is declared
+        // before the central panel so the gallery fills the remainder.
+        egui::Panel::left("asset_settings_rail")
+            .resizable(true)
+            .default_size(320.0)
+            .show_inside(ui, |ui| {
+                ui.add_space(6.0);
+                ui.label(egui::RichText::new(format!("{} Project settings", crate::icons::AI_DEFAULTS)).strong());
+                ui.add_space(6.0);
+                egui::ScrollArea::vertical()
+                    .auto_shrink([false, false])
+                    .id_salt("asset_settings_scroll")
+                    .show(ui, |ui| {
+                        self.project_ai_section(ui);
+                        ui.add_space(10.0);
+                        ui.separator();
+                        ui.add_space(8.0);
+                        self.style_corpus_section(ui);
+                        ui.add_space(10.0);
+                        ui.separator();
+                        ui.add_space(8.0);
+                        self.tag_manager_section(ui);
+                    });
+            });
+
+        egui::CentralPanel::default().show_inside(ui, |ui| {
+            ui.add_space(6.0);
+            ui.label(egui::RichText::new(format!("{} Assets", crate::icons::LIBRARY)).strong());
+            ui.add_space(6.0);
+            egui::ScrollArea::vertical()
+                .auto_shrink([false, false])
+                .id_salt("asset_gallery_scroll")
+                .show(ui, |ui| {
+                    self.asset_references_section(ui);
+                    ui.add_space(12.0);
+                    ui.separator();
+                    ui.add_space(8.0);
+                    self.asset_cards_section(ui);
+                    ui.add_space(12.0);
+                    ui.separator();
+                    ui.add_space(8.0);
+                    self.asset_swatches_section(ui);
+                });
         });
     }
 
@@ -316,12 +360,23 @@ impl ShellApp {
                         } else {
                             ui.add_sized([THUMB, THUMB], egui::Label::new(egui::RichText::new("?").weak()));
                         }
-                        ui.label(egui::RichText::new(role_label(*role)).small());
-                        for tag in tags {
-                            ui.label(egui::RichText::new(format!("# {tag}")).small().weak());
-                        }
-                        if ui.small_button(format!("{} Delete", crate::icons::TRASH)).clicked() {
-                            delete = Some(*id);
+                        // Role on the left, an icon-only delete hugging the right
+                        // — the verbose "Delete" button per tile was most of the
+                        // old grid's visual noise.
+                        ui.horizontal(|ui| {
+                            ui.label(egui::RichText::new(role_label(*role)).small().strong());
+                            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                                if ui.small_button(crate::icons::TRASH).on_hover_text("Delete reference").clicked() {
+                                    delete = Some(*id);
+                                }
+                            });
+                        });
+                        if !tags.is_empty() {
+                            ui.horizontal_wrapped(|ui| {
+                                for tag in tags {
+                                    ui.label(egui::RichText::new(format!("#{tag}")).small().weak());
+                                }
+                            });
                         }
                     });
                 });
@@ -355,42 +410,50 @@ impl ShellApp {
         let mut delete: Option<AssetId> = None;
         let mut reuse: Option<AssetId> = None;
         let mut rename: Option<(AssetId, String)> = None;
-        for (id, name, member_ids, style_notes) in &cards {
-            egui::Frame::group(ui.style()).show(ui, |ui| {
-                let editing = self.asset_rename.as_ref().is_some_and(|(rid, _)| *rid == id.get());
-                ui.horizontal(|ui| {
-                    if editing {
-                        if let Some((_, draft)) = self.asset_rename.as_mut() {
-                            let resp = ui.add(egui::TextEdit::singleline(draft).desired_width(160.0));
-                            if resp.lost_focus() || ui.button(crate::icons::CHECK).clicked() {
-                                rename = Some((*id, draft.clone()));
+        ui.add_space(4.0);
+        ui.horizontal_wrapped(|ui| {
+            for (id, name, member_ids, style_notes) in &cards {
+                egui::Frame::group(ui.style()).show(ui, |ui| {
+                    ui.vertical(|ui| {
+                        ui.set_width(CARD_W);
+                        let editing = self.asset_rename.as_ref().is_some_and(|(rid, _)| *rid == id.get());
+                        ui.horizontal(|ui| {
+                            if editing {
+                                if let Some((_, draft)) = self.asset_rename.as_mut() {
+                                    let resp = ui.add(egui::TextEdit::singleline(draft).desired_width(CARD_W - 28.0));
+                                    if resp.lost_focus() || ui.button(crate::icons::CHECK).clicked() {
+                                        rename = Some((*id, draft.clone()));
+                                    }
+                                }
+                            } else {
+                                ui.label(egui::RichText::new(name).strong());
+                                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                                    if ui.small_button(crate::icons::RENAME).on_hover_text("Rename").clicked() {
+                                        self.asset_rename = Some((id.get(), name.clone()));
+                                    }
+                                });
                             }
+                        });
+                        if !style_notes.is_empty() {
+                            ui.label(egui::RichText::new(style_notes).small().weak());
                         }
-                    } else {
-                        ui.label(egui::RichText::new(name).strong());
-                        if ui.small_button(crate::icons::RENAME).on_hover_text("Rename").clicked() {
-                            self.asset_rename = Some((id.get(), name.clone()));
-                        }
-                    }
+                        self.asset_member_thumbs(ui, member_ids);
+                        ui.horizontal(|ui| {
+                            if ui
+                                .button(format!("{} Use", crate::icons::SPARKLE))
+                                .on_hover_text("Stage the card's first reference in the cockpit")
+                                .clicked()
+                            {
+                                reuse = Some(*id);
+                            }
+                            if ui.small_button(crate::icons::TRASH).on_hover_text("Delete card").clicked() {
+                                delete = Some(*id);
+                            }
+                        });
+                    });
                 });
-                if !style_notes.is_empty() {
-                    ui.label(egui::RichText::new(style_notes).small().weak());
-                }
-                self.asset_member_thumbs(ui, member_ids);
-                ui.horizontal(|ui| {
-                    if ui
-                        .button(format!("{} Use as reference", crate::icons::SPARKLE))
-                        .on_hover_text("Stage the card's first reference in the cockpit")
-                        .clicked()
-                    {
-                        reuse = Some(*id);
-                    }
-                    if ui.button(format!("{} Delete", crate::icons::TRASH)).clicked() {
-                        delete = Some(*id);
-                    }
-                });
-            });
-        }
+            }
+        });
 
         if let Some((id, name)) = rename {
             self.rename_card(id, &name);
@@ -426,42 +489,50 @@ impl ShellApp {
         let mut delete: Option<AssetId> = None;
         let mut apply: Option<AssetId> = None;
         let mut rename: Option<(AssetId, String)> = None;
-        for (id, name, member_ids, style_notes) in &swatches {
-            egui::Frame::group(ui.style()).show(ui, |ui| {
-                let editing = self.asset_rename.as_ref().is_some_and(|(rid, _)| *rid == id.get());
-                ui.horizontal(|ui| {
-                    if editing {
-                        if let Some((_, draft)) = self.asset_rename.as_mut() {
-                            let resp = ui.add(egui::TextEdit::singleline(draft).desired_width(160.0));
-                            if resp.lost_focus() || ui.button(crate::icons::CHECK).clicked() {
-                                rename = Some((*id, draft.clone()));
+        ui.add_space(4.0);
+        ui.horizontal_wrapped(|ui| {
+            for (id, name, member_ids, style_notes) in &swatches {
+                egui::Frame::group(ui.style()).show(ui, |ui| {
+                    ui.vertical(|ui| {
+                        ui.set_width(CARD_W);
+                        let editing = self.asset_rename.as_ref().is_some_and(|(rid, _)| *rid == id.get());
+                        ui.horizontal(|ui| {
+                            if editing {
+                                if let Some((_, draft)) = self.asset_rename.as_mut() {
+                                    let resp = ui.add(egui::TextEdit::singleline(draft).desired_width(CARD_W - 28.0));
+                                    if resp.lost_focus() || ui.button(crate::icons::CHECK).clicked() {
+                                        rename = Some((*id, draft.clone()));
+                                    }
+                                }
+                            } else {
+                                ui.label(egui::RichText::new(name).strong());
+                                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                                    if ui.small_button(crate::icons::RENAME).on_hover_text("Rename").clicked() {
+                                        self.asset_rename = Some((id.get(), name.clone()));
+                                    }
+                                });
                             }
+                        });
+                        if !style_notes.is_empty() {
+                            ui.label(egui::RichText::new(style_notes).small().weak());
                         }
-                    } else {
-                        ui.label(egui::RichText::new(name).strong());
-                        if ui.small_button(crate::icons::RENAME).on_hover_text("Rename").clicked() {
-                            self.asset_rename = Some((id.get(), name.clone()));
-                        }
-                    }
+                        self.asset_member_thumbs(ui, member_ids);
+                        ui.horizontal(|ui| {
+                            if ui
+                                .button(format!("{} Apply", crate::icons::SPARKLE))
+                                .on_hover_text("Stage the swatch's first reference as a style reference")
+                                .clicked()
+                            {
+                                apply = Some(*id);
+                            }
+                            if ui.small_button(crate::icons::TRASH).on_hover_text("Delete swatch").clicked() {
+                                delete = Some(*id);
+                            }
+                        });
+                    });
                 });
-                if !style_notes.is_empty() {
-                    ui.label(egui::RichText::new(style_notes).small().weak());
-                }
-                self.asset_member_thumbs(ui, member_ids);
-                ui.horizontal(|ui| {
-                    if ui
-                        .button(format!("{} Apply to cockpit", crate::icons::SPARKLE))
-                        .on_hover_text("Stage the swatch's first reference as a style reference")
-                        .clicked()
-                    {
-                        apply = Some(*id);
-                    }
-                    if ui.button(format!("{} Delete", crate::icons::TRASH)).clicked() {
-                        delete = Some(*id);
-                    }
-                });
-            });
-        }
+            }
+        });
 
         if let Some((id, name)) = rename {
             self.rename_swatch(id, &name);
