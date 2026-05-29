@@ -41,6 +41,10 @@ pub(crate) struct CockpitCandidate {
     pub texture: Option<egui::TextureHandle>,
     /// Whether the provenance panel is expanded on the card.
     pub expanded: bool,
+    /// Editable name draft used when saving this candidate as a character card
+    /// or style swatch. Pre-filled from the subject; the artist renames before
+    /// saving instead of accepting a `first_words(...)` auto-name.
+    pub name: String,
 }
 
 /// A staged drag-in reference: an anchor image with a role and weight, fed to
@@ -782,10 +786,17 @@ impl ShellApp {
             }
             if ui
                 .button(format!("{} Card", crate::icons::CARD))
-                .on_hover_text("Save as a character card in the asset library")
+                .on_hover_text("Save as a named character card in the asset library")
                 .clicked()
             {
                 action = Some(CardAction::SaveCard);
+            }
+            if ui
+                .button(format!("{} Swatch", crate::icons::PALETTE))
+                .on_hover_text("Save as a named style swatch in the asset library")
+                .clicked()
+            {
+                action = Some(CardAction::SaveSwatch);
             }
             if ui
                 .button(format!("{} Promote", crate::icons::PROMOTE))
@@ -808,6 +819,17 @@ impl ShellApp {
             {
                 action = Some(CardAction::Delete);
             }
+        });
+
+        // Name for a saved card / swatch — editable before saving, so the
+        // artist names the asset instead of accepting an auto-name.
+        ui.horizontal(|ui| {
+            ui.label(egui::RichText::new("Name").small().weak());
+            ui.add(
+                egui::TextEdit::singleline(&mut self.rs_candidates[i].name)
+                    .hint_text("name for a saved card or swatch")
+                    .desired_width(f32::INFINITY),
+            );
         });
 
         // Provenance — on demand.
@@ -916,6 +938,7 @@ impl ShellApp {
                 );
             }
             CardAction::SaveCard => self.save_candidate_as_card(i),
+            CardAction::SaveSwatch => self.save_candidate_as_swatch(i),
             CardAction::Approve => self.approve_candidate(i),
             CardAction::Promote => self.promote_candidate(i),
             CardAction::Delete => self.delete_candidate(i),
@@ -1064,6 +1087,7 @@ impl ShellApp {
             stamp_if_promotion(&mut variant, lineage.origin);
             core_variants.push(variant);
 
+            let name = first_words(&gv.output.user_prompt, 4);
             new_cards.push(CockpitCandidate {
                 png: gv.png,
                 output: gv.output,
@@ -1073,6 +1097,7 @@ impl ShellApp {
                 core_id,
                 texture: None,
                 expanded: false,
+                name,
             });
         }
 
@@ -1125,6 +1150,7 @@ impl ShellApp {
         let variant = refined_variant(core_id, parent_core, &image, &output, refinement);
         self.persist_variants(vec![variant]);
 
+        let name = first_words(&output.user_prompt, 4);
         let idx = self.rs_candidates.len();
         self.rs_candidates.push(CockpitCandidate {
             png: image,
@@ -1135,6 +1161,7 @@ impl ShellApp {
             core_id,
             texture: None,
             expanded: false,
+            name,
         });
         self.studio.anchor_selected = Some(idx);
         self.studio.anchor_view.reset();
@@ -1235,6 +1262,7 @@ impl ShellApp {
         let output = manual_import_output(variant.created_at);
         self.persist_variants(vec![variant]);
 
+        let name = first_words(&output.user_prompt, 4);
         let idx = self.rs_candidates.len();
         self.rs_candidates.push(CockpitCandidate {
             png: bytes,
@@ -1245,6 +1273,7 @@ impl ShellApp {
             core_id: id,
             texture: None,
             expanded: false,
+            name,
         });
         self.studio.anchor_selected = Some(idx);
         self.studio.anchor_view.reset();
@@ -1278,42 +1307,47 @@ impl ShellApp {
     }
 
     /// Saves candidate `i` into the project asset library as a character card,
-    /// building the asset shelf without leaving the cockpit.
+    /// building the asset shelf without leaving the cockpit. The card and its
+    /// reference image land in one [`crate::commands::AiLibraryEdit`], so a
+    /// single undo removes both. The artist names the card on the gallery card
+    /// before saving; an empty name falls back to the subject's first words.
     fn save_candidate_as_card(&mut self, i: usize) {
-        use pixhaus_core::project::{AssetId, CharacterCard, ReferenceAsset};
+        use pixhaus_core::project::AssetId;
         let Some(cand) = self.rs_candidates.get(i) else {
             return;
         };
         let png = cand.png.clone();
-        let name = first_words(&cand.output.user_prompt, 4);
-        let Some(entity_id) = self.doc.active_entity_id() else {
-            return;
-        };
+        let name = card_name(&cand.name, &cand.output.user_prompt);
+        let style_notes = self.doc.project.library.ai.style_notes.clone();
         let asset_id = AssetId::new(self.doc.alloc_id());
         let card_id = AssetId::new(self.doc.alloc_id());
         let created_at = cand.output.generated_at;
-        crate::commands::push_library_edit(&mut self.editor, &mut self.doc, "Save character card", entity_id, move |_entity| {});
-        // Card and reference live at the project level, not on the entity, so we
-        // write them directly (no per-entity undo needed for the asset shelf).
-        let lib = &mut self.doc.project.library.ai.asset_library;
-        lib.references.push(ReferenceAsset {
-            id: asset_id,
-            image: ReferenceImage {
-                bytes: png,
-                mime: "image/png".to_owned(),
-            },
-            default_role: ReferenceRole::Subject,
-            tags: Vec::new(),
-            source_variant_id: None,
-            created_at,
+        // Card and reference both live on `ProjectAi`, so one AiLibraryEdit
+        // closure keeps the pair atomic: a single undo drops both records.
+        crate::commands::push_ai_library_edit(&mut self.editor, &mut self.doc, "Save character card", move |ai| {
+            push_card_records(&mut ai.asset_library, asset_id, card_id, png, name, style_notes, created_at);
         });
-        lib.character_cards.push(CharacterCard {
-            id: card_id,
-            name,
-            references: vec![asset_id],
-            style_notes: self.doc.project.library.ai.style_notes.clone(),
-            associated_lora: None,
-            created_at,
+        self.rs_status = JobStatus::Idle;
+    }
+
+    /// Saves candidate `i` into the project asset library as a style swatch: the
+    /// variant image as a [`pixhaus_core::project::ReferenceAsset`] plus a
+    /// [`pixhaus_core::project::StyleSwatch`] referencing it. Both land in one
+    /// [`crate::commands::AiLibraryEdit`], so a single undo removes both. `LoRA`
+    /// is out of scope, so `associated_lora` is always `None`.
+    fn save_candidate_as_swatch(&mut self, i: usize) {
+        use pixhaus_core::project::AssetId;
+        let Some(cand) = self.rs_candidates.get(i) else {
+            return;
+        };
+        let png = cand.png.clone();
+        let name = card_name(&cand.name, &cand.output.user_prompt);
+        let style_notes = self.doc.project.library.ai.style_notes.clone();
+        let asset_id = AssetId::new(self.doc.alloc_id());
+        let swatch_id = AssetId::new(self.doc.alloc_id());
+        let created_at = cand.output.generated_at;
+        crate::commands::push_ai_library_edit(&mut self.editor, &mut self.doc, "Save style swatch", move |ai| {
+            push_swatch_records(&mut ai.asset_library, asset_id, swatch_id, png, name, style_notes, created_at);
         });
         self.rs_status = JobStatus::Idle;
     }
@@ -1394,6 +1428,8 @@ enum CardAction {
     Refine,
     Branch,
     SaveCard,
+    /// Save this candidate as a reusable style swatch in the asset library.
+    SaveSwatch,
     Approve,
     /// Re-render this candidate at high quality as a flagged promotion.
     Promote,
@@ -1495,6 +1531,83 @@ fn truncate(s: &str, max: usize) -> String {
 fn first_words(s: &str, n: usize) -> String {
     let name: Vec<&str> = s.split_whitespace().take(n).collect();
     if name.is_empty() { "Untitled card".to_owned() } else { name.join(" ") }
+}
+
+/// Resolves the name to save an asset under: the artist's typed `name` when it
+/// has content, otherwise the subject's first words. Pure so the fallback rule
+/// is unit-testable.
+fn card_name(name: &str, subject: &str) -> String {
+    let trimmed = name.trim();
+    if trimmed.is_empty() { first_words(subject, 4) } else { trimmed.to_owned() }
+}
+
+/// Writes a character card and its source reference image into `lib`, with the
+/// card referencing the asset. Pure so the card/reference pairing is testable
+/// without a full app; the caller wraps it in one undo entry.
+fn push_card_records(
+    lib: &mut pixhaus_core::project::AssetLibrary,
+    asset_id: pixhaus_core::project::AssetId,
+    card_id: pixhaus_core::project::AssetId,
+    png: Vec<u8>,
+    name: String,
+    style_notes: String,
+    created_at: i64,
+) {
+    use pixhaus_core::project::{CharacterCard, ReferenceAsset};
+    lib.references.push(ReferenceAsset {
+        id: asset_id,
+        image: ReferenceImage {
+            bytes: png,
+            mime: "image/png".to_owned(),
+        },
+        default_role: ReferenceRole::Subject,
+        tags: Vec::new(),
+        source_variant_id: None,
+        created_at,
+    });
+    lib.character_cards.push(CharacterCard {
+        id: card_id,
+        name,
+        references: vec![asset_id],
+        style_notes,
+        associated_lora: None,
+        created_at,
+    });
+}
+
+/// Writes a style swatch and its source reference image into `lib`, with the
+/// swatch referencing the asset. `LoRA` is out of scope, so `associated_lora`
+/// is `None`. Pure so the swatch/reference pairing is testable without a full
+/// app; the caller wraps it in one undo entry.
+fn push_swatch_records(
+    lib: &mut pixhaus_core::project::AssetLibrary,
+    asset_id: pixhaus_core::project::AssetId,
+    swatch_id: pixhaus_core::project::AssetId,
+    png: Vec<u8>,
+    name: String,
+    style_notes: String,
+    created_at: i64,
+) {
+    use pixhaus_core::project::{ReferenceAsset, StyleSwatch};
+    lib.references.push(ReferenceAsset {
+        id: asset_id,
+        image: ReferenceImage {
+            bytes: png,
+            mime: "image/png".to_owned(),
+        },
+        default_role: ReferenceRole::Style,
+        tags: Vec::new(),
+        source_variant_id: None,
+        created_at,
+    });
+    lib.style_swatches.push(StyleSwatch {
+        id: swatch_id,
+        name,
+        references: vec![asset_id],
+        style_notes,
+        associated_lora: None,
+        created_at,
+    });
 }
 
 /// A random value for a typed control: a choice for Select/Wildcard, a snapped
@@ -2000,6 +2113,81 @@ mod tests {
         let entity_id = doc.active_entity_id().expect("active entity");
         let entity = doc.project.library.entities.iter().find(|e| e.id == entity_id).expect("entity");
         assert!(anchor_payload_for(entity, 0.7).is_none(), "no approved canonical means no anchor payload");
+    }
+
+    // ── Tasks 11 & 12: save-as-card / save-as-swatch, undoable as a unit ───────
+
+    use super::{card_name, push_card_records, push_swatch_records};
+    use crate::commands::push_ai_library_edit;
+    use pixhaus_core::project::{AssetId, ReferenceRole};
+
+    #[test]
+    fn card_name_prefers_the_typed_name_and_falls_back_to_the_subject() {
+        assert_eq!(card_name("Hero knight", "a small knight"), "Hero knight", "a typed name wins");
+        assert_eq!(card_name("  spaced  ", "ignored"), "spaced", "the typed name is trimmed");
+        assert_eq!(card_name("   ", "a small knight"), "a small knight", "a blank name falls back to the subject's first words");
+        assert_eq!(card_name("", ""), "Untitled card", "no name and no subject falls back to the default");
+    }
+
+    #[test]
+    fn saving_a_card_adds_one_card_and_one_reference_under_one_undo() {
+        let mut doc = DocumentStore::new();
+        doc.create_sprite("hero", Size::new(16, 16));
+        let mut editor = EditorState::default();
+
+        let asset_id = AssetId::new(doc.alloc_id());
+        let card_id = AssetId::new(doc.alloc_id());
+        let png = tiny_png(20, 20);
+        push_ai_library_edit(&mut editor, &mut doc, "Save character card", move |ai| {
+            push_card_records(&mut ai.asset_library, asset_id, card_id, png, "Hero knight".to_owned(), "house style".to_owned(), 1_700_000_000);
+        });
+
+        let lib = &doc.project.library.ai.asset_library;
+        assert_eq!(lib.character_cards.len(), 1, "the save adds one character card");
+        assert_eq!(lib.references.len(), 1, "the save adds one reference image");
+        let card = &lib.character_cards[0];
+        assert_eq!(card.name, "Hero knight");
+        assert_eq!(card.references, vec![asset_id], "the card references its source image");
+        assert_eq!(card.style_notes, "house style");
+        assert!(card.associated_lora.is_none(), "LoRA is out of scope");
+        assert_eq!(lib.references[0].id, asset_id);
+        assert_eq!(lib.references[0].default_role, ReferenceRole::Subject);
+
+        editor.history.undo(&mut doc).expect("undo");
+        let lib = &doc.project.library.ai.asset_library;
+        assert!(lib.character_cards.is_empty(), "one undo removes the card");
+        assert!(lib.references.is_empty(), "the same undo removes the reference");
+    }
+
+    #[test]
+    fn saving_a_swatch_adds_one_swatch_and_one_reference_under_one_undo() {
+        let mut doc = DocumentStore::new();
+        doc.create_sprite("hero", Size::new(16, 16));
+        let mut editor = EditorState::default();
+
+        let asset_id = AssetId::new(doc.alloc_id());
+        let swatch_id = AssetId::new(doc.alloc_id());
+        let png = tiny_png(20, 20);
+        push_ai_library_edit(&mut editor, &mut doc, "Save style swatch", move |ai| {
+            push_swatch_records(&mut ai.asset_library, asset_id, swatch_id, png, "Dusk palette".to_owned(), "muted dusk".to_owned(), 1_700_000_000);
+        });
+
+        let lib = &doc.project.library.ai.asset_library;
+        assert_eq!(lib.style_swatches.len(), 1, "the save adds one style swatch");
+        assert_eq!(lib.references.len(), 1, "the save adds one reference image");
+        let swatch = &lib.style_swatches[0];
+        assert_eq!(swatch.name, "Dusk palette");
+        assert_eq!(swatch.references, vec![asset_id], "the swatch references its source image");
+        assert_eq!(swatch.style_notes, "muted dusk");
+        assert!(swatch.associated_lora.is_none(), "LoRA is out of scope");
+        assert!(lib.character_cards.is_empty(), "a swatch save does not touch cards");
+        assert_eq!(lib.references[0].id, asset_id);
+        assert_eq!(lib.references[0].default_role, ReferenceRole::Style);
+
+        editor.history.undo(&mut doc).expect("undo");
+        let lib = &doc.project.library.ai.asset_library;
+        assert!(lib.style_swatches.is_empty(), "one undo removes the swatch");
+        assert!(lib.references.is_empty(), "the same undo removes the reference");
     }
 
     #[test]
