@@ -121,3 +121,5 @@ pub const TAG: &str = p::TAG;
 pub const PROMOTE: &str = p::SEAL_CHECK;
 /// Import an existing image as a sheet variant.
 pub const UPLOAD: &str = p::UPLOAD_SIMPLE;
+/// Project AI-defaults section header.
+pub const AI_DEFAULTS: &str = p::SLIDERS;

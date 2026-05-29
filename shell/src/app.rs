@@ -444,8 +444,15 @@ pub struct ShellApp {
     /// Custom anchor output `(width, height)`, used when [`Self::ck_aspect`] is
     /// [`crate::cockpit::AnchorAspect::Custom`].
     pub(crate) ck_custom: (u32, u32),
-    /// Requested candidate count (1-4).
+    /// Requested candidate count (1-4). Seeded from the project's
+    /// [`pixhaus_core::project::ProjectAi::default_candidate_count`] by
+    /// [`ShellApp::reset_cockpit_form_defaults`].
     pub(crate) rs_num_variants: u32,
+    /// Requested quality tier for a fresh generation. Seeded from the project's
+    /// [`pixhaus_core::project::ProjectAi::default_quality`] by
+    /// [`ShellApp::reset_cockpit_form_defaults`]. A promotion overrides this with
+    /// [`pixhaus_core::project::Quality::High`].
+    pub(crate) ck_quality: pixhaus_core::project::Quality,
     /// Cockpit job status.
     pub(crate) rs_status: JobStatus,
     /// Generated candidates, newest first, with provenance and lineage.
@@ -798,6 +805,7 @@ impl ShellApp {
             ck_resolution: 1536,
             ck_custom: (1536, 1536),
             rs_num_variants: 2,
+            ck_quality: pixhaus_core::project::Quality::Medium,
             rs_status: JobStatus::Idle,
             rs_candidates: Vec::new(),
             rs_preview: None,

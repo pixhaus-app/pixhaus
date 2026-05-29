@@ -534,6 +534,9 @@ impl ShellApp {
         self.studio_library_open = false;
         self.studio.stage = StudioStage::Anchor;
         self.studio.landed = false;
+        // A fresh Create session inherits the project's AI defaults (quality
+        // tier, candidate count) the artist set in the Project AI section.
+        self.reset_cockpit_form_defaults();
         if self.studio.frame_gen.prompt.trim().is_empty() {
             self.studio.frame_gen.prompt = self.studio.default_pose_prompt();
         }

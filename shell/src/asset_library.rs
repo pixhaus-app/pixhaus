@@ -13,9 +13,11 @@
 //! Thumbnails decode once and are cached by [`crate::app::ShellApp`] keyed on the
 //! asset id, so a scroll never re-decodes a PNG.
 
+use std::collections::BTreeMap;
+
 use eframe::egui;
 use pixhaus_core::project::library::ai::ProjectAi;
-use pixhaus_core::project::{AssetId, Rgba, ReferenceRole, TagDefinition, TagId};
+use pixhaus_core::project::{AssetId, ModelId, OperationKind, Quality, ReferenceRole, Rgba, TagDefinition, TagId};
 
 use crate::app::ShellApp;
 use crate::cockpit::CockpitReference;
@@ -42,6 +44,8 @@ impl ShellApp {
         ui.separator();
 
         egui::ScrollArea::vertical().auto_shrink([false, false]).show(ui, |ui| {
+            self.project_ai_section(ui);
+            ui.add_space(10.0);
             self.asset_references_section(ui);
             ui.add_space(10.0);
             self.asset_cards_section(ui);
@@ -50,6 +54,89 @@ impl ShellApp {
             ui.add_space(10.0);
             self.tag_manager_section(ui);
         });
+    }
+
+    /// The Project AI section: per-project generation defaults — style notes,
+    /// the chroma-key color, the quality tier, the candidate count, and a
+    /// per-operation model preference. Every change routes through
+    /// [`push_ai_library_edit`] so it is one undoable step and persists with the
+    /// project. These are the defaults a fresh cockpit run inherits.
+    fn project_ai_section(&mut self, ui: &mut egui::Ui) {
+        ui.label(egui::RichText::new(format!("{} Project AI defaults", crate::icons::AI_DEFAULTS)).strong());
+        ui.label(
+            egui::RichText::new("Generation defaults for this project. A new Create run inherits the quality tier and candidate count set here.")
+                .small()
+                .weak(),
+        );
+        ui.add_space(4.0);
+
+        // Read the editable values into locals, render against them, then write
+        // back through `push_ai_library_edit` only when something changed — so
+        // the undo stack gets one entry per committed edit, not one per frame.
+        let ai = &self.doc.project.library.ai;
+        let mut style_notes = ai.style_notes.clone();
+        let mut chroma = ai.default_chroma;
+        let mut quality = ai.default_quality;
+        let mut count = ai.default_candidate_count;
+        let mut prefs = ai.per_operation_model_prefs.clone();
+        let before = (style_notes.clone(), chroma, quality, count, prefs.clone());
+
+        egui::Frame::group(ui.style()).show(ui, |ui| {
+            ui.label(egui::RichText::new("Style notes").small().weak());
+            ui.add(
+                egui::TextEdit::multiline(&mut style_notes)
+                    .hint_text("project house style — palette, era, line weight…")
+                    .desired_rows(2)
+                    .desired_width(f32::INFINITY),
+            );
+
+            ui.add_space(4.0);
+            ui.horizontal(|ui| {
+                ui.label("Chroma key");
+                let mut col = egui::Color32::from_rgba_unmultiplied(chroma.r, chroma.g, chroma.b, chroma.a);
+                if ui.color_edit_button_srgba(&mut col).on_hover_text("Background key color for new generations").changed() {
+                    chroma = Rgba::new(col.r(), col.g(), col.b(), col.a());
+                }
+                if ui.small_button("Magenta").on_hover_text("Reset to the default magenta key").clicked() {
+                    chroma = pixhaus_core::project::default_reference_chroma();
+                }
+            });
+
+            ui.add_space(4.0);
+            ui.horizontal(|ui| {
+                ui.label("Default quality");
+                egui::ComboBox::from_id_salt("ai_default_quality")
+                    .selected_text(crate::library::quality_label(quality))
+                    .show_ui(ui, |ui| {
+                        for q in [Quality::Auto, Quality::Low, Quality::Medium, Quality::High] {
+                            ui.selectable_value(&mut quality, q, crate::library::quality_label(q));
+                        }
+                    });
+            });
+
+            ui.horizontal(|ui| {
+                ui.label("Default candidates");
+                ui.add(egui::DragValue::new(&mut count).range(1..=4));
+            });
+
+            ui.add_space(4.0);
+            ui.label(egui::RichText::new("Per-operation model").small().weak());
+            for op in USER_OPERATIONS {
+                operation_model_picker(ui, op, &mut prefs);
+            }
+        });
+
+        let after = (style_notes, chroma, quality, count, prefs);
+        if after != before {
+            let (style_notes, chroma, quality, count, prefs) = after;
+            push_ai_library_edit(&mut self.editor, &mut self.doc, "Edit project AI defaults", |ai| {
+                ai.style_notes = style_notes;
+                ai.default_chroma = chroma;
+                ai.default_quality = quality;
+                ai.default_candidate_count = count;
+                ai.per_operation_model_prefs = prefs;
+            });
+        }
     }
 
     /// The Tags section: list every library tag with an optional color swatch,
@@ -570,6 +657,55 @@ fn swatch_first_reference(ai: &ProjectAi, id: AssetId) -> Option<(String, Vec<u8
     Some((swatch.name.clone(), asset.image.bytes.clone()))
 }
 
+/// User-facing operations a project may pin a model preference for, in display
+/// order. Omits `LoraTraining` (`LoRA` is out of scope) and the non-user-facing
+/// routing-only kinds (`CrossModelGrid`, `VectorExport`, `Upscale`) whose
+/// surfaces are descoped in v2.
+const USER_OPERATIONS: [OperationKind; 5] = [
+    OperationKind::FreshGeneration,
+    OperationKind::MaskedRefinement,
+    OperationKind::PromptOnlyRefinement,
+    OperationKind::RegionalRefinement,
+    OperationKind::Promotion,
+];
+
+/// Human label for a user-facing [`OperationKind`].
+fn operation_label(op: OperationKind) -> &'static str {
+    match op {
+        OperationKind::FreshGeneration => "Fresh generation",
+        OperationKind::MaskedRefinement => "Masked refinement",
+        OperationKind::PromptOnlyRefinement => "Prompt-only refinement",
+        OperationKind::RegionalRefinement => "Regional refinement",
+        OperationKind::Promotion => "Promote to final",
+        OperationKind::ChatTurn => "Chat turn",
+        OperationKind::CrossModelGrid => "Cross-model grid",
+        OperationKind::VectorExport => "Vector export",
+        OperationKind::Upscale => "Upscale",
+        OperationKind::LoraTraining => "LoRA training",
+    }
+}
+
+/// A `(none)`-plus-look-models dropdown that pins a model preference for `op`.
+/// `(none)` clears the entry, meaning "use the router default for this op". The
+/// model list reuses the library's [`crate::library::LOOK_MODELS`], excluding
+/// the upscale/vectorize models per task 1.
+fn operation_model_picker(ui: &mut egui::Ui, op: OperationKind, prefs: &mut BTreeMap<OperationKind, ModelId>) {
+    ui.horizontal(|ui| {
+        ui.label(operation_label(op));
+        let text = prefs.get(&op).copied().map_or("(none)", crate::library::model_label);
+        egui::ComboBox::from_id_salt(("ai_op_model", op)).selected_text(text).show_ui(ui, |ui| {
+            if ui.selectable_label(!prefs.contains_key(&op), "(none)").clicked() {
+                prefs.remove(&op);
+            }
+            for m in crate::library::LOOK_MODELS {
+                if ui.selectable_label(prefs.get(&op) == Some(&m), crate::library::model_label(m)).clicked() {
+                    prefs.insert(op, m);
+                }
+            }
+        });
+    });
+}
+
 /// Human label for a [`ReferenceRole`], mirroring the cockpit's role labels.
 fn role_label(role: ReferenceRole) -> &'static str {
     match role {
@@ -822,6 +958,54 @@ mod tests {
         assert_eq!(tags(&doc)[0].name, "hero", "undo restores the original name");
         editor.history.undo(&mut doc).expect("undo add");
         assert!(tags(&doc).is_empty(), "undo removes the added tag");
+    }
+
+    // ── Task 16: project AI defaults ────────────────────────────────────────
+
+    #[test]
+    fn user_operations_omit_lora_training() {
+        use pixhaus_core::project::OperationKind;
+        assert!(
+            !super::USER_OPERATIONS.contains(&OperationKind::LoraTraining),
+            "LoRA is out of scope, so its training op never appears in the picker list"
+        );
+    }
+
+    #[test]
+    fn editing_ai_defaults_round_trips_under_one_undo() {
+        use pixhaus_core::project::{ModelId, OperationKind, Quality};
+
+        let mut doc = DocumentStore::new();
+        let mut editor = EditorState::default();
+
+        let before = doc.project.library.ai.clone();
+        assert_eq!(before.default_quality, Quality::Medium, "a fresh project defaults to Medium");
+        assert_eq!(before.default_candidate_count, 2, "a fresh project defaults to two candidates");
+        assert_eq!(before.default_chroma, pixhaus_core::project::default_reference_chroma(), "the default chroma is magenta");
+        assert!(before.per_operation_model_prefs.is_empty(), "no per-operation overrides to start");
+
+        // Edit every default through the same path the Project AI section uses.
+        push_ai_library_edit(&mut editor, &mut doc, "Edit project AI defaults", |ai| {
+            ai.style_notes = "muted SNES palette".to_owned();
+            ai.default_chroma = Rgba::opaque(0, 255, 0);
+            ai.default_quality = Quality::High;
+            ai.default_candidate_count = 4;
+            ai.per_operation_model_prefs.insert(OperationKind::FreshGeneration, ModelId::FalFluxDev);
+        });
+
+        let after = &doc.project.library.ai;
+        assert_eq!(after.style_notes, "muted SNES palette");
+        assert_eq!(after.default_chroma, Rgba::opaque(0, 255, 0));
+        assert_eq!(after.default_quality, Quality::High);
+        assert_eq!(after.default_candidate_count, 4);
+        assert_eq!(
+            after.per_operation_model_prefs.get(&OperationKind::FreshGeneration),
+            Some(&ModelId::FalFluxDev),
+            "the fresh-generation model override is pinned"
+        );
+
+        editor.history.undo(&mut doc).expect("undo the defaults edit");
+        assert_eq!(doc.project.library.ai, before, "one undo restores every default to its prior value");
     }
 
     #[test]

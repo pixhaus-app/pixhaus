@@ -621,7 +621,7 @@ fn edit_style(ui: &mut egui::Ui, s: &mut Style) {
 /// The look models a Style may prefer, in display order. Excludes the upscale
 /// (`FalRealEsrgan`) and vectorize (`FalRecraftVectorize`) models — they are not
 /// general look generators, so they never belong on a style.
-const LOOK_MODELS: [ModelId; 6] = [
+pub(crate) const LOOK_MODELS: [ModelId; 6] = [
     ModelId::Auto,
     ModelId::OpenAiGptImage2,
     ModelId::GoogleNanoBananaPro,
@@ -631,7 +631,7 @@ const LOOK_MODELS: [ModelId; 6] = [
 ];
 
 /// Human label for a look [`ModelId`].
-fn model_label(model: ModelId) -> &'static str {
+pub(crate) fn model_label(model: ModelId) -> &'static str {
     match model {
         ModelId::Auto => "Auto (router default)",
         ModelId::OpenAiGptImage2 => "OpenAI gpt-image-2",
@@ -660,7 +660,7 @@ fn model_pref_picker(ui: &mut egui::Ui, model: &mut Option<ModelId>) {
 }
 
 /// Human label for a [`Quality`] tier.
-fn quality_label(quality: Quality) -> &'static str {
+pub(crate) fn quality_label(quality: Quality) -> &'static str {
     match quality {
         Quality::Auto => "Auto",
         Quality::Low => "Low",

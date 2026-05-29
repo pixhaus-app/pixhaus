@@ -201,6 +201,24 @@ impl ShellApp {
 
         ui.add(egui::Slider::new(&mut self.rs_num_variants, 1..=4).text("variants"));
 
+        // Quality tier for this run, seeded from the project default by
+        // `reset_cockpit_form_defaults`; the artist can override it per run.
+        ui.horizontal(|ui| {
+            ui.label("Quality");
+            egui::ComboBox::from_id_salt("ck_quality")
+                .selected_text(crate::library::quality_label(self.ck_quality))
+                .show_ui(ui, |ui| {
+                    for q in [
+                        pixhaus_core::project::Quality::Auto,
+                        pixhaus_core::project::Quality::Low,
+                        pixhaus_core::project::Quality::Medium,
+                        pixhaus_core::project::Quality::High,
+                    ] {
+                        ui.selectable_value(&mut self.ck_quality, q, crate::library::quality_label(q));
+                    }
+                });
+        });
+
         ui.horizontal(|ui| {
             ui.checkbox(&mut self.ck_seed_fixed, "Fixed seed")
                 .on_hover_text("Pin the seed for a reproducible result; off draws a fresh seed each run");
@@ -1007,11 +1025,16 @@ impl ShellApp {
             }
         }
 
-        // A promotion is a final, high-quality re-render; everything else lets
-        // the router/provider pick the tier. A single candidate suffices for the
-        // promotion — it is a one-shot final render of the source.
+        // A promotion is a final, high-quality re-render; everything else uses
+        // the project quality default the artist set (or left at Medium). A
+        // single candidate suffices for the promotion — it is a one-shot final
+        // render of the source.
         let promotion = lineage.origin == VariantOrigin::Promotion;
-        let quality = promotion.then_some(ai::ImageQuality::High);
+        let quality = if promotion {
+            Some(ai::ImageQuality::High)
+        } else {
+            image_quality(self.ck_quality)
+        };
         let num_variants = if promotion { 1 } else { self.rs_num_variants };
 
         let target = anchor_target_dims(self.ck_aspect, self.ck_resolution, self.ck_custom);
@@ -1361,6 +1384,25 @@ impl ShellApp {
         let timestamp = now_secs();
         push_prompt_history(&mut self.doc.project.library.ai.prompt_history, &self.rs_prompt, timestamp);
     }
+
+    /// Seeds the cockpit's new-generation form from the project's AI defaults:
+    /// the quality tier and candidate count the artist set in the Project AI
+    /// section. Called when a fresh form is wanted (entering Create) so a new
+    /// run inherits the project-wide defaults rather than the hard-coded
+    /// starter values. The candidate count is clamped to the 1-4 slider range.
+    pub(crate) fn reset_cockpit_form_defaults(&mut self) {
+        let (quality, count) = cockpit_form_defaults(&self.doc.project.library.ai);
+        self.ck_quality = quality;
+        self.rs_num_variants = count;
+    }
+}
+
+/// Reads the cockpit's new-form generation defaults from the project's AI
+/// settings: the quality tier and the candidate count (clamped to the 1-4
+/// slider range). Pure so the inheritance rule is testable without a full
+/// [`ShellApp`].
+fn cockpit_form_defaults(ai: &pixhaus_core::project::ProjectAi) -> (pixhaus_core::project::Quality, u32) {
+    (ai.default_quality, u32::from(ai.default_candidate_count).clamp(1, 4))
 }
 
 /// Maximum prompt-history entries kept; older prompts age out on append.
@@ -1397,6 +1439,19 @@ fn now_secs() -> i64 {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .map_or(0, |d| i64::try_from(d.as_secs()).unwrap_or(i64::MAX))
+}
+
+/// Maps a project [`Quality`](pixhaus_core::project::Quality) tier to the
+/// backend [`ai::ImageQuality`] hint sent with a generation. `Auto` carries no
+/// hint (`None`) so the router/provider picks the tier.
+fn image_quality(quality: pixhaus_core::project::Quality) -> Option<ai::ImageQuality> {
+    use pixhaus_core::project::Quality;
+    match quality {
+        Quality::Auto => None,
+        Quality::Low => Some(ai::ImageQuality::Low),
+        Quality::Medium => Some(ai::ImageQuality::Medium),
+        Quality::High => Some(ai::ImageQuality::High),
+    }
 }
 
 /// A short relative-time caption for a UTC-second timestamp, e.g. "2m ago".
@@ -1817,6 +1872,75 @@ mod tests {
         // Pixhaus v2's first commit is well after 2020, so any sane clock yields
         // a value past this floor. Guards against the old hardcoded 0.
         assert!(now_secs() > 1_577_836_800, "now_secs returns real UTC seconds");
+    }
+
+    #[test]
+    fn image_quality_maps_tiers_and_lets_auto_defer() {
+        use super::image_quality;
+        use crate::ai::ImageQuality;
+        use pixhaus_core::project::Quality;
+        assert_eq!(image_quality(Quality::Auto), None, "Auto carries no hint so the router picks the tier");
+        assert_eq!(image_quality(Quality::Low), Some(ImageQuality::Low));
+        assert_eq!(image_quality(Quality::Medium), Some(ImageQuality::Medium));
+        assert_eq!(image_quality(Quality::High), Some(ImageQuality::High));
+    }
+
+    #[test]
+    fn editing_default_quality_updates_project_ai_undoes_and_is_read_by_the_new_form() {
+        use super::cockpit_form_defaults;
+        use crate::commands::push_ai_library_edit;
+        use crate::document::DocumentStore;
+        use crate::editor::EditorState;
+        use pixhaus_core::project::Quality;
+
+        let mut doc = DocumentStore::new();
+        let mut editor = EditorState::default();
+
+        // A fresh project's defaults are Medium quality, two candidates — what a
+        // brand-new cockpit form would inherit.
+        assert_eq!(
+            cockpit_form_defaults(&doc.project.library.ai),
+            (Quality::Medium, 2),
+            "the new-form defaults start at the project defaults"
+        );
+
+        // Edit the project's default quality through the undoable library edit,
+        // the same path the Project AI section uses.
+        push_ai_library_edit(&mut editor, &mut doc, "Edit project AI defaults", |ai| {
+            ai.default_quality = Quality::High;
+        });
+        assert_eq!(doc.project.library.ai.default_quality, Quality::High, "the edit updates ProjectAi");
+
+        // A fresh cockpit form now reads the edited default.
+        assert_eq!(
+            cockpit_form_defaults(&doc.project.library.ai),
+            (Quality::High, 2),
+            "the cockpit new-form defaults read the edited quality"
+        );
+
+        // The edit is one undoable step that restores the prior default.
+        editor.history.undo(&mut doc).expect("undo the defaults edit");
+        assert_eq!(doc.project.library.ai.default_quality, Quality::Medium, "undo restores the prior default");
+        assert_eq!(
+            cockpit_form_defaults(&doc.project.library.ai),
+            (Quality::Medium, 2),
+            "the new-form defaults follow the undo"
+        );
+    }
+
+    #[test]
+    fn cockpit_form_defaults_clamp_the_candidate_count() {
+        use super::cockpit_form_defaults;
+        use crate::document::DocumentStore;
+        use pixhaus_core::project::Quality;
+
+        let mut doc = DocumentStore::new();
+        doc.project.library.ai.default_candidate_count = 9;
+        assert_eq!(
+            cockpit_form_defaults(&doc.project.library.ai),
+            (Quality::Medium, 4),
+            "an out-of-range stored count clamps to the 1-4 slider range"
+        );
     }
 
     #[test]
