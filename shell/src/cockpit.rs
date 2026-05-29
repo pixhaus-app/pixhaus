@@ -117,6 +117,7 @@ impl ShellApp {
     /// without re-entering them.
     fn cockpit_context(&mut self, ui: &mut egui::Ui) {
         let palette = crate::theme::Palette::for_theme(ui.ctx().theme());
+        let mut notes_changed = false;
         egui::Frame::group(ui.style()).fill(palette.bg_elevated).show(ui, |ui| {
             ui.horizontal(|ui| {
                 ui.label(egui::RichText::new(format!("{} Context", crate::icons::PALETTE)).strong());
@@ -138,13 +139,19 @@ impl ShellApp {
             ui.add_space(4.0);
             ui.label(egui::RichText::new("Style notes").small().weak());
             let notes = &mut self.doc.project.library.ai.style_notes;
-            ui.add(
-                egui::TextEdit::multiline(notes)
-                    .hint_text("project house style — palette, era, line weight…")
-                    .desired_rows(2)
-                    .desired_width(f32::INFINITY),
-            );
+            notes_changed = ui
+                .add(
+                    egui::TextEdit::multiline(notes)
+                        .hint_text("project house style — palette, era, line weight…")
+                        .desired_rows(2)
+                        .desired_width(f32::INFINITY),
+                )
+                .changed();
         });
+        // Style notes lead the composed prompt, so an edit re-syncs the preview.
+        if notes_changed {
+            self.ck_dirty = true;
+        }
     }
 
     /// Prompt + dials: the subject box, the structure picker (free-form by
@@ -427,8 +434,35 @@ impl ShellApp {
     /// toggle. Recomputed live from the inputs until the artist edits it; once
     /// edited, it is sent verbatim and a reset re-syncs it to the inputs.
     fn cockpit_composed_prompt(&mut self, ui: &mut egui::Ui) {
+        // A look Style picker, next to the structure picker conceptually: its
+        // modifiers and look negatives fold into the live preview below.
+        ui.horizontal(|ui| {
+            ui.label("Style");
+            let options = ai::style_options(&self.doc.project.library.ai);
+            let current = self
+                .ck_style_id
+                .as_ref()
+                .and_then(|id| options.iter().find(|(i, _)| i == id))
+                .map_or_else(|| "(none)".to_owned(), |(_, n)| n.clone());
+            egui::ComboBox::from_id_salt("ck_style").selected_text(current).show_ui(ui, |ui| {
+                if ui.selectable_label(self.ck_style_id.is_none(), "(none)").clicked() {
+                    self.ck_style_id = None;
+                    self.ck_dirty = true;
+                }
+                for (id, name) in &options {
+                    if ui.selectable_label(self.ck_style_id.as_deref() == Some(id), name).clicked() {
+                        self.ck_style_id = Some(id.clone());
+                        self.ck_dirty = true;
+                    }
+                }
+            });
+        });
+
         // Recompute the preview from the current inputs unless the artist has
-        // taken the wheel by hand-editing the text.
+        // taken the wheel by hand-editing the text. The preview is the authority:
+        // every compose input (subject, structure, template, variables, style,
+        // and the project style notes) marks the cockpit dirty, so this stays in
+        // sync with what Generate will send.
         if self.ck_dirty && !self.ck_prompt_edited {
             let (pos, neg) = ai::compose_preview(
                 &self.doc.project.library.ai,
@@ -436,6 +470,7 @@ impl ShellApp {
                 &self.rs_prompt,
                 &self.doc.project.library.ai.style_notes,
                 self.ck_prompt_id.as_deref(),
+                self.ck_style_id.as_deref(),
                 &self.ck_vars,
             );
             self.ck_positive = pos;
@@ -523,7 +558,7 @@ impl ShellApp {
     /// Recent prompts, recallable from the cockpit — past prompts are starting
     /// points, not lost keystrokes.
     fn cockpit_history(&mut self, ui: &mut egui::Ui) {
-        let recent: Vec<String> = self
+        let recent: Vec<(String, i64)> = self
             .doc
             .project
             .library
@@ -532,27 +567,40 @@ impl ShellApp {
             .iter()
             .rev()
             .take(6)
-            .map(|e| e.prompt.clone())
+            .map(|e| (e.prompt.clone(), e.timestamp))
             .collect();
         if recent.is_empty() {
             return;
         }
+        let now = now_secs();
+        let mut recall: Option<String> = None;
         egui::CollapsingHeader::new(format!("{} Recent prompts", crate::icons::UNDO))
             .id_salt("ck_history")
             .show(ui, |ui| {
-                for prompt in recent {
-                    let label = truncate(&prompt, 64);
-                    if ui
-                        .add(egui::Label::new(egui::RichText::new(label).small()).sense(egui::Sense::click()))
-                        .on_hover_text(&prompt)
-                        .clicked()
-                    {
-                        self.rs_prompt = prompt;
-                        self.ck_prompt_edited = false;
-                        self.ck_dirty = true;
-                    }
+                for (prompt, timestamp) in &recent {
+                    let label = truncate(prompt, 64);
+                    ui.horizontal(|ui| {
+                        if ui
+                            .add(egui::Label::new(egui::RichText::new(label).small()).sense(egui::Sense::click()))
+                            .on_hover_text(prompt)
+                            .clicked()
+                        {
+                            recall = Some(prompt.clone());
+                        }
+                        let rel = relative_time(*timestamp, now);
+                        if !rel.is_empty() {
+                            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                                ui.label(egui::RichText::new(rel).small().weak());
+                            });
+                        }
+                    });
                 }
             });
+        if let Some(prompt) = recall {
+            self.rs_prompt = prompt;
+            self.ck_prompt_edited = false;
+            self.ck_dirty = true;
+        }
     }
 
     /// The variant gallery: every generation lands as a card with a thumbnail,
@@ -1060,22 +1108,68 @@ impl ShellApp {
     }
 
     /// Appends the current subject to the project's prompt history (dedup against
-    /// the most recent), so it is recallable later.
+    /// the most recent), stamped with the real UTC second it was issued, so it
+    /// is recallable later with a meaningful time. Caps the history so it cannot
+    /// grow without bound.
     fn record_prompt_history(&mut self) {
-        use pixhaus_core::project::PromptHistoryEntry;
-        let prompt = self.rs_prompt.trim().to_owned();
-        if prompt.is_empty() {
-            return;
-        }
-        let history = &mut self.doc.project.library.ai.prompt_history;
-        if history.last().is_some_and(|e| e.prompt == prompt) {
-            return;
-        }
-        history.push(PromptHistoryEntry {
-            verb_name: "generate_reference_sheet".to_owned(),
-            prompt,
-            timestamp: 0,
-        });
+        // Cheap, non-blocking clock read on the UI thread — no worker, no lock.
+        let timestamp = now_secs();
+        push_prompt_history(&mut self.doc.project.library.ai.prompt_history, &self.rs_prompt, timestamp);
+    }
+}
+
+/// Maximum prompt-history entries kept; older prompts age out on append.
+const MAX_PROMPT_HISTORY: usize = 100;
+
+/// Appends a trimmed, non-empty prompt to `history` stamped with `timestamp`,
+/// deduping against the most recent entry and capping the history length. Pure
+/// so the dedup/timestamp/cap rules are unit-testable without a full app.
+fn push_prompt_history(history: &mut Vec<pixhaus_core::project::PromptHistoryEntry>, prompt: &str, timestamp: i64) {
+    use pixhaus_core::project::PromptHistoryEntry;
+    let prompt = prompt.trim().to_owned();
+    if prompt.is_empty() {
+        return;
+    }
+    if history.last().is_some_and(|e| e.prompt == prompt) {
+        return;
+    }
+    history.push(PromptHistoryEntry {
+        verb_name: "generate_reference_sheet".to_owned(),
+        prompt,
+        timestamp,
+    });
+    if history.len() > MAX_PROMPT_HISTORY {
+        let drop = history.len() - MAX_PROMPT_HISTORY;
+        history.drain(0..drop);
+    }
+}
+
+/// UTC seconds since the epoch, for stamping prompt-history and other
+/// UI-thread-issued records. A cheap `SystemTime::now` read; returns 0 if the
+/// clock is before the epoch.
+fn now_secs() -> i64 {
+    use std::time::{SystemTime, UNIX_EPOCH};
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map_or(0, |d| i64::try_from(d.as_secs()).unwrap_or(i64::MAX))
+}
+
+/// A short relative-time caption for a UTC-second timestamp, e.g. "2m ago".
+/// Falls back to "just now" for non-positive deltas and to a day count for
+/// older entries. Returns an empty string for a zero (unstamped) timestamp.
+fn relative_time(timestamp: i64, now: i64) -> String {
+    if timestamp <= 0 {
+        return String::new();
+    }
+    let delta = now.saturating_sub(timestamp);
+    if delta < 60 {
+        "just now".to_owned()
+    } else if delta < 3600 {
+        format!("{}m ago", delta / 60)
+    } else if delta < 86_400 {
+        format!("{}h ago", delta / 3600)
+    } else {
+        format!("{}d ago", delta / 86_400)
     }
 }
 
@@ -1262,7 +1356,7 @@ fn load_png_texture(ctx: &egui::Context, name: &str, png: &[u8]) -> Option<egui:
 
 #[cfg(test)]
 mod tests {
-    use super::{AnchorAspect, anchor_target_dims};
+    use super::{AnchorAspect, anchor_target_dims, now_secs, push_prompt_history, relative_time};
 
     #[test]
     fn anchor_target_dims_scales_each_aspect_to_the_long_edge() {
@@ -1276,5 +1370,59 @@ mod tests {
     #[test]
     fn anchor_target_dims_passes_custom_through_verbatim() {
         assert_eq!(anchor_target_dims(AnchorAspect::Custom, 1536, (640, 1280)), (640, 1280));
+    }
+
+    #[test]
+    fn now_secs_is_a_real_post_epoch_timestamp() {
+        // Pixhaus v2's first commit is well after 2020, so any sane clock yields
+        // a value past this floor. Guards against the old hardcoded 0.
+        assert!(now_secs() > 1_577_836_800, "now_secs returns real UTC seconds");
+    }
+
+    #[test]
+    fn record_prompt_history_stamps_a_real_timestamp() {
+        let mut history = Vec::new();
+        push_prompt_history(&mut history, "a small knight", 1_700_000_000);
+        assert_eq!(history.len(), 1);
+        assert_eq!(history[0].prompt, "a small knight");
+        assert_ne!(history[0].timestamp, 0, "the entry carries a real timestamp, not 0");
+        assert_eq!(history[0].timestamp, 1_700_000_000);
+    }
+
+    #[test]
+    fn record_prompt_history_dedups_consecutive_identical_prompts() {
+        let mut history = Vec::new();
+        push_prompt_history(&mut history, "a knight", 1);
+        push_prompt_history(&mut history, "  a knight  ", 2);
+        assert_eq!(history.len(), 1, "the trimmed identical prompt is not appended again");
+        push_prompt_history(&mut history, "a dragon", 3);
+        assert_eq!(history.len(), 2, "a different prompt appends");
+    }
+
+    #[test]
+    fn record_prompt_history_skips_blank_prompts() {
+        let mut history = Vec::new();
+        push_prompt_history(&mut history, "   ", 1);
+        assert!(history.is_empty());
+    }
+
+    #[test]
+    fn record_prompt_history_caps_the_length() {
+        let mut history = Vec::new();
+        for i in 0..super::MAX_PROMPT_HISTORY + 50 {
+            push_prompt_history(&mut history, &format!("prompt {i}"), i as i64);
+        }
+        assert_eq!(history.len(), super::MAX_PROMPT_HISTORY, "history is capped");
+        // The oldest entries aged out; the newest survives.
+        assert_eq!(history.last().map(|e| e.prompt.as_str()), Some("prompt 149"));
+    }
+
+    #[test]
+    fn relative_time_reads_as_human_deltas() {
+        assert_eq!(relative_time(0, 1_000), "", "an unstamped entry shows no time");
+        assert_eq!(relative_time(1_000, 1_010), "just now");
+        assert_eq!(relative_time(1_000, 1_000 + 120), "2m ago");
+        assert_eq!(relative_time(1_000, 1_000 + 7_200), "2h ago");
+        assert_eq!(relative_time(1_000, 1_000 + 2 * 86_400), "2d ago");
     }
 }

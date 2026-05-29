@@ -10,6 +10,7 @@
 
 use eframe::egui;
 use pixhaus_ai::compose::builtins::BuiltinLibrary;
+use pixhaus_core::project::library::ai::{ModelId, Quality};
 use pixhaus_core::project::library::composition::{
     Dimensions, PanelRect, PanelSlot, PromptId, PromptTemplate, PromptVariable, Structure, StructureId, StructureOutput, StructurePanel, Style, StyleId,
     VarControl,
@@ -600,8 +601,9 @@ fn edit_structure(ui: &mut egui::Ui, s: &mut Structure) {
     }
 }
 
-/// Edits a style: name, modifiers, and look negatives. `model_pref` and
-/// `quality` are advanced fields preserved across edits but not exposed yet.
+/// Edits a style: name, modifiers, look negatives, and the optional per-style
+/// model and quality preferences. `model_pref` / `quality` default to `(none)`,
+/// meaning "inherit the project / router default".
 fn edit_style(ui: &mut egui::Ui, s: &mut Style) {
     ui.label("Name");
     ui.add(egui::TextEdit::singleline(&mut s.name).desired_width(f32::INFINITY));
@@ -611,6 +613,75 @@ fn edit_style(ui: &mut egui::Ui, s: &mut Style) {
     ui.add_space(4.0);
     ui.label("Look negatives");
     ui.add(egui::TextEdit::multiline(&mut s.look_negatives).desired_rows(2).desired_width(f32::INFINITY));
+    ui.add_space(4.0);
+    model_pref_picker(ui, &mut s.model_pref);
+    quality_picker(ui, &mut s.quality);
+}
+
+/// The look models a Style may prefer, in display order. Excludes the upscale
+/// (`FalRealEsrgan`) and vectorize (`FalRecraftVectorize`) models — they are not
+/// general look generators, so they never belong on a style.
+const LOOK_MODELS: [ModelId; 6] = [
+    ModelId::Auto,
+    ModelId::OpenAiGptImage2,
+    ModelId::GoogleNanoBananaPro,
+    ModelId::GoogleGeminiFlashImage,
+    ModelId::FalFluxKontext,
+    ModelId::FalFluxDev,
+];
+
+/// Human label for a look [`ModelId`].
+fn model_label(model: ModelId) -> &'static str {
+    match model {
+        ModelId::Auto => "Auto (router default)",
+        ModelId::OpenAiGptImage2 => "OpenAI gpt-image-2",
+        ModelId::GoogleNanoBananaPro => "Google Nano Banana Pro",
+        ModelId::GoogleGeminiFlashImage => "Google Gemini Flash Image",
+        ModelId::FalFluxKontext => "fal Flux Kontext",
+        ModelId::FalFluxDev => "fal Flux.1 dev",
+        ModelId::FalRecraftVectorize => "fal Recraft vectorize",
+        ModelId::FalRealEsrgan => "fal Real-ESRGAN",
+    }
+}
+
+/// A `(none)`-plus-look-models dropdown over `Option<ModelId>`. `(none)` means
+/// inherit the project / router default.
+fn model_pref_picker(ui: &mut egui::Ui, model: &mut Option<ModelId>) {
+    ui.horizontal(|ui| {
+        ui.label("Model preference");
+        let text = model.map_or("(none)", model_label);
+        egui::ComboBox::from_id_salt("style_model_pref").selected_text(text).show_ui(ui, |ui| {
+            ui.selectable_value(model, None, "(none)");
+            for m in LOOK_MODELS {
+                ui.selectable_value(model, Some(m), model_label(m));
+            }
+        });
+    });
+}
+
+/// Human label for a [`Quality`] tier.
+fn quality_label(quality: Quality) -> &'static str {
+    match quality {
+        Quality::Auto => "Auto",
+        Quality::Low => "Low",
+        Quality::Medium => "Medium",
+        Quality::High => "High",
+    }
+}
+
+/// A `(none)`-plus-tiers dropdown over `Option<Quality>`. `(none)` means inherit
+/// the project default quality.
+fn quality_picker(ui: &mut egui::Ui, quality: &mut Option<Quality>) {
+    ui.horizontal(|ui| {
+        ui.label("Quality");
+        let text = quality.map_or("(none)", quality_label);
+        egui::ComboBox::from_id_salt("style_quality").selected_text(text).show_ui(ui, |ui| {
+            ui.selectable_value(quality, None, "(none)");
+            for q in [Quality::Auto, Quality::Low, Quality::Medium, Quality::High] {
+                ui.selectable_value(quality, Some(q), quality_label(q));
+            }
+        });
+    });
 }
 
 /// A `(none)`-plus-choices dropdown over an optional id. Returns whether the
@@ -705,5 +776,67 @@ fn upsert<T, I: PartialEq>(list: &mut Vec<T>, value: T, id_of: impl Fn(&T) -> &I
         *slot = value;
     } else {
         list.push(value);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{ModelId, Quality, Style, StyleId, upsert};
+    use crate::commands::push_ai_library_edit;
+    use crate::document::DocumentStore;
+    use crate::editor::EditorState;
+
+    fn style_with_prefs() -> Style {
+        Style {
+            id: StyleId("project.style.snes".into()),
+            name: "SNES".into(),
+            modifiers: "16-bit palette".into(),
+            look_negatives: "blurry".into(),
+            model_pref: Some(ModelId::FalFluxKontext),
+            quality: Some(Quality::High),
+        }
+    }
+
+    #[test]
+    fn upsert_appends_then_replaces_by_id() {
+        let mut styles = vec![style_with_prefs()];
+        // Same id, different prefs: upsert replaces in place rather than appending.
+        let mut edited = style_with_prefs();
+        edited.model_pref = Some(ModelId::FalFluxDev);
+        upsert(&mut styles, edited, |x| &x.id);
+        assert_eq!(styles.len(), 1, "same id replaces");
+        assert_eq!(styles[0].model_pref, Some(ModelId::FalFluxDev));
+    }
+
+    #[test]
+    fn style_model_and_quality_edit_survives_undo_redo() {
+        let mut doc = DocumentStore::new();
+        let mut editor = EditorState::default();
+
+        // Save a style carrying a model preference and quality, as the editor's
+        // Save does via push_ai_library_edit + upsert.
+        let value = style_with_prefs();
+        push_ai_library_edit(&mut editor, &mut doc, "Save style", |ai| upsert(&mut ai.styles, value, |x| &x.id));
+
+        let prefs = |doc: &DocumentStore| {
+            doc.project
+                .library
+                .ai
+                .styles
+                .iter()
+                .find(|s| s.id == StyleId("project.style.snes".into()))
+                .map(|s| (s.model_pref, s.quality))
+        };
+        assert_eq!(prefs(&doc), Some((Some(ModelId::FalFluxKontext), Some(Quality::High))), "prefs persisted");
+
+        editor.history.undo(&mut doc).expect("undo");
+        assert_eq!(prefs(&doc), None, "undo removes the style");
+
+        editor.history.redo(&mut doc).expect("redo");
+        assert_eq!(
+            prefs(&doc),
+            Some((Some(ModelId::FalFluxKontext), Some(Quality::High))),
+            "redo restores the style with its prefs"
+        );
     }
 }

@@ -29,7 +29,7 @@ use pixhaus_ai::verbs::reference_sheet::{
 };
 use pixhaus_core::canvas::PixelBuffer;
 use pixhaus_core::project::library::ai::ProjectAi;
-use pixhaus_core::project::library::composition::{PromptId, PromptTemplate, PromptVariable, Structure, StructureId, Style};
+use pixhaus_core::project::library::composition::{PromptId, PromptTemplate, PromptVariable, Structure, StructureId, Style, StyleId};
 use pixhaus_core::project::{EntityId, PixelBufferId, ProjectMetadata};
 use pixhaus_core::transforms::normalize::{NormalizeOptions, normalize_frames};
 use tokio::runtime::Handle;
@@ -106,9 +106,10 @@ pub fn prompt_options(project: &ProjectAi) -> Vec<(String, String)> {
 
 /// Composes the live positive/negative prompt preview for the cockpit, on the
 /// UI thread, with no backend call. Mirrors what the verb sends: the project
-/// `style_notes` (or the built-in default) lead, then the structure's layout
-/// prose, the picked template (with variables substituted), then the subject.
-/// Returns empty strings for an unknown structure.
+/// `style_notes` (or the built-in default) lead, then the picked Style's
+/// modifiers, the structure's layout prose, the picked template (with variables
+/// substituted), then the subject. The picked Style also folds its look
+/// negatives in. Returns empty strings for an unknown structure.
 #[must_use]
 pub fn compose_preview(
     project: &ProjectAi,
@@ -116,6 +117,7 @@ pub fn compose_preview(
     subject: &str,
     style_notes: &str,
     prompt_id: Option<&str>,
+    style_id: Option<&str>,
     variables: &BTreeMap<String, String>,
 ) -> (String, String) {
     let builtins = BuiltinLibrary::load();
@@ -124,6 +126,7 @@ pub fn compose_preview(
         return (String::new(), String::new());
     };
     let prompt = prompt_id.and_then(|id| view.prompt(&PromptId(id.to_owned())));
+    let style = style_id.and_then(|id| view.style(&StyleId(id.to_owned())));
     let baseline = if style_notes.trim().is_empty() {
         BUILTIN_DEFAULT_BASELINE
     } else {
@@ -133,7 +136,7 @@ pub fn compose_preview(
     let req = ComposeRequest {
         baseline,
         structure,
-        style: None,
+        style,
         prompt,
         variable_values: variables,
         entity_info: &empty,
@@ -143,6 +146,21 @@ pub fn compose_preview(
         context_fragments: &[],
     };
     compose(&req).map_or_else(|_| (String::new(), String::new()), |c| (c.positive, c.negative))
+}
+
+/// The (id, name) of every saved/built-in look Style, name-sorted, for the
+/// cockpit and library style pickers. Project Styles shadow built-ins of the
+/// same id.
+#[must_use]
+pub fn style_options(project: &ProjectAi) -> Vec<(String, String)> {
+    let lib = BuiltinLibrary::load();
+    let mut map: BTreeMap<String, String> = lib.styles.values().map(|s| (s.id.0.clone(), s.name.clone())).collect();
+    for s in &project.styles {
+        map.insert(s.id.0.clone(), s.name.clone());
+    }
+    let mut out: Vec<(String, String)> = map.into_iter().collect();
+    out.sort_by(|a, b| a.1.cmp(&b.1));
+    out
 }
 
 /// Builds the verb runtime with the reference-sheet verb registered. Backend
@@ -923,10 +941,12 @@ fn extract_rich(output: &pixhaus_ai::plugin::VerbOutput) -> Vec<GeneratedVariant
 
 #[cfg(test)]
 mod tests {
-    use pixhaus_core::project::library::ai::ProjectAi;
-    use pixhaus_core::project::library::composition::{Structure, StructureId, StructureOutput};
+    use std::collections::BTreeMap;
 
-    use super::{STRUCTURE_SINGLE_ID, structure_options};
+    use pixhaus_core::project::library::ai::ProjectAi;
+    use pixhaus_core::project::library::composition::{Structure, StructureId, StructureOutput, Style, StyleId};
+
+    use super::{STRUCTURE_SINGLE_ID, compose_preview, structure_options, style_options};
 
     #[test]
     fn structure_options_let_project_records_shadow_builtins() {
@@ -943,5 +963,64 @@ mod tests {
         assert_eq!(single.1, "My single");
         // The free-form structure still sorts first.
         assert_eq!(opts.first().map(|(id, _)| id.as_str()), Some(STRUCTURE_SINGLE_ID));
+    }
+
+    #[test]
+    fn style_options_include_project_styles() {
+        let mut project = ProjectAi::default();
+        project.styles.push(Style {
+            id: StyleId("project.style.1".to_owned()),
+            name: "Zzz late".to_owned(),
+            modifiers: String::new(),
+            look_negatives: String::new(),
+            model_pref: None,
+            quality: None,
+        });
+        let opts = style_options(&project);
+        assert!(opts.iter().any(|(id, name)| id == "project.style.1" && name == "Zzz late"));
+        // Name-sorted: a "Zzz" style lands last.
+        assert_eq!(opts.last().map(|(_, name)| name.as_str()), Some("Zzz late"));
+    }
+
+    #[test]
+    fn compose_preview_folds_subject_and_style_into_the_prompt() {
+        let mut project = ProjectAi::default();
+        project.styles.push(Style {
+            id: StyleId("project.style.snes".to_owned()),
+            name: "SNES".to_owned(),
+            modifiers: "16-bit jrpg palette".to_owned(),
+            look_negatives: "photoreal".to_owned(),
+            model_pref: None,
+            quality: None,
+        });
+        let vars = BTreeMap::new();
+
+        let (pos, neg) = compose_preview(
+            &project,
+            STRUCTURE_SINGLE_ID,
+            "a knight",
+            "house style: chunky outlines",
+            None,
+            Some("project.style.snes"),
+            &vars,
+        );
+        assert!(!pos.is_empty(), "a known structure yields a non-empty positive prompt");
+        assert!(pos.contains("a knight"), "the subject is folded in: {pos}");
+        assert!(pos.contains("16-bit jrpg palette"), "the picked style's modifiers fold in: {pos}");
+        assert!(neg.contains("photoreal"), "the picked style's look negatives fold in: {neg}");
+
+        // Editing the subject changes the output.
+        let (pos2, _) = compose_preview(&project, STRUCTURE_SINGLE_ID, "a dragon", "", None, None, &vars);
+        assert_ne!(pos, pos2, "a different subject yields a different prompt");
+        assert!(pos2.contains("a dragon"));
+    }
+
+    #[test]
+    fn compose_preview_returns_empty_for_an_unknown_structure() {
+        let project = ProjectAi::default();
+        let vars = BTreeMap::new();
+        let (pos, neg) = compose_preview(&project, "does.not.exist", "a knight", "", None, None, &vars);
+        assert!(pos.is_empty());
+        assert!(neg.is_empty());
     }
 }

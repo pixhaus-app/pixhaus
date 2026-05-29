@@ -461,6 +461,9 @@ pub struct ShellApp {
     pub(crate) ck_dirty: bool,
     /// Picked saved-prompt template id, or `None` for a free-form subject.
     pub(crate) ck_prompt_id: Option<String>,
+    /// Picked look Style id folded into the composed preview, or `None` to
+    /// inherit only the project style notes.
+    pub(crate) ck_style_id: Option<String>,
     /// Current values for the picked template's variable dials.
     pub(crate) ck_vars: BTreeMap<String, String>,
     /// Per-dial lock: a locked dial is left untouched by randomize / surprise.
@@ -778,6 +781,7 @@ impl ShellApp {
             ck_prompt_edited: false,
             ck_dirty: true,
             ck_prompt_id: None,
+            ck_style_id: None,
             ck_vars: BTreeMap::new(),
             ck_var_locked: HashMap::new(),
             ck_references: Vec::new(),
