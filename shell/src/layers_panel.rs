@@ -72,7 +72,22 @@ impl ShellApp {
             has_children: bool,
             depth: u16,
             parent: Option<LayerId>,
+            can_merge_down: bool,
+            clip_below: bool,
         }
+        // Back-to-front composite order: a layer can merge down when it and the
+        // entry directly below it are both raster (groups never appear here).
+        let order = sprite.composite_order();
+        let can_merge_down = |id: LayerId| -> bool {
+            let Some(pos) = order.iter().position(|c| c.layer == id) else {
+                return false;
+            };
+            if pos == 0 {
+                return false;
+            }
+            let raster = |lid: LayerId| sprite.layer(lid).is_some_and(|l| matches!(l.kind, LayerKind::Raster));
+            raster(order[pos].layer) && raster(order[pos - 1].layer)
+        };
         let rows: Vec<Row> = sprite
             .layer_display_order()
             .into_iter()
@@ -90,11 +105,29 @@ impl ShellApp {
                     has_children: sprite.layers.iter().any(|c| c.parent == Some(id)),
                     depth,
                     parent: l.parent,
+                    can_merge_down: can_merge_down(id),
+                    clip_below: l.clip_below,
                 })
             })
             .collect();
         let active = self.doc.active_layer;
         let layer_count = sprite.layers.len();
+        // Flatten visible needs at least two visible raster layers (groups never
+        // appear in composite_order).
+        let can_flatten = order
+            .iter()
+            .filter(|c| c.visible && sprite.layer(c.layer).is_some_and(|l| matches!(l.kind, LayerKind::Raster)))
+            .count()
+            >= 2;
+        // Merge selected needs at least two unique raster layers in the
+        // multi-select and no non-raster member (the merge is raster-only).
+        let selected_set = &self.editor.selected_layers;
+        let raster_member = |id: LayerId| sprite.layer(id).is_some_and(|l| matches!(l.kind, LayerKind::Raster));
+        let can_merge_selected =
+            selected_set.iter().all(|&id| raster_member(id)) && selected_set.iter().filter(|&&id| order.iter().any(|c| c.layer == id)).count() >= 2;
+        // Snapshot the selection ids so the per-row Delete can target the whole
+        // set without re-borrowing `self.editor` inside the menu closure.
+        let selected_ids: Vec<LayerId> = selected_set.iter().copied().collect();
 
         // (layer, additive, range): a click routed through the multi-select model.
         let mut select: Option<(LayerId, bool, bool)> = None;
@@ -104,11 +137,17 @@ impl ShellApp {
         let mut toggle_visible: Option<LayerId> = None;
         let mut toggle_lock: Option<LayerId> = None;
         let mut toggle_collapse: Option<LayerId> = None;
+        let mut toggle_clip: Option<LayerId> = None;
         let mut set_opacity: Option<(LayerId, u8)> = None;
         let mut set_blend: Option<(LayerId, BlendMode)> = None;
         let mut move_up: Option<LayerId> = None;
         let mut move_down: Option<LayerId> = None;
-        let mut delete: Option<LayerId> = None;
+        // The layers a Delete should remove: the whole multi-select when the
+        // right-clicked row is in it, else just that row.
+        let mut delete: Option<Vec<LayerId>> = None;
+        let mut merge_down: Option<LayerId> = None;
+        let mut merge_selected = false;
+        let mut flatten_visible = false;
         let mut duplicate: Option<LayerId> = None;
         let mut add_inside: Option<LayerId> = None;
         let mut start_rename: Option<(LayerId, String)> = None;
@@ -210,6 +249,43 @@ impl ShellApp {
                             duplicate = Some(row.id);
                             ui.close();
                         }
+                        if !row.is_group {
+                            let item = egui::Button::new(format!("{} Merge down", icons::LAYERS));
+                            if ui
+                                .add_enabled(row.can_merge_down, item)
+                                .on_disabled_hover_text("Needs a raster layer directly below")
+                                .clicked()
+                            {
+                                merge_down = Some(row.id);
+                                ui.close();
+                            }
+                            // Clip to the layer below: the layer shows only where
+                            // its clip base is opaque. A toggle, so the label
+                            // reflects the current state.
+                            let clip_label = if row.clip_below { "Unclip from below" } else { "Clip to layer below" };
+                            if ui.button(format!("{} {clip_label}", icons::CLIP)).clicked() {
+                                toggle_clip = Some(row.id);
+                                ui.close();
+                            }
+                        }
+                        let merge_sel_item = egui::Button::new(format!("{} Merge selected", icons::LAYERS));
+                        if ui
+                            .add_enabled(can_merge_selected, merge_sel_item)
+                            .on_disabled_hover_text("Select at least two raster layers")
+                            .clicked()
+                        {
+                            merge_selected = true;
+                            ui.close();
+                        }
+                        let flatten_item = egui::Button::new(format!("{} Flatten visible", icons::LAYERS));
+                        if ui
+                            .add_enabled(can_flatten, flatten_item)
+                            .on_disabled_hover_text("Needs at least two visible raster layers")
+                            .clicked()
+                        {
+                            flatten_visible = true;
+                            ui.close();
+                        }
                         ui.separator();
                         if ui.button(format!("{} Move up", icons::UP)).clicked() {
                             move_up = Some(row.id);
@@ -221,7 +297,9 @@ impl ShellApp {
                         }
                         ui.separator();
                         if ui.add_enabled(layer_count > 1, egui::Button::new(format!("{} Delete", icons::TRASH))).clicked() {
-                            delete = Some(row.id);
+                            // Delete the whole selection when the right-clicked
+                            // row is part of it, else just this row.
+                            delete = Some(if selected { selected_ids.clone() } else { vec![row.id] });
                             ui.close();
                         }
                     });
@@ -283,6 +361,10 @@ impl ShellApp {
         if let Some(id) = toggle_lock {
             self.edit_layer("Toggle lock", id, |l| l.locked = !l.locked);
         }
+        if let Some(id) = toggle_clip {
+            self.edit_layer("Toggle clip", id, |l| l.clip_below = !l.clip_below);
+            self.refresh_canvas(false);
+        }
         if let Some(id) = toggle_collapse {
             self.toggle_layer_collapse(id);
         }
@@ -309,8 +391,21 @@ impl ShellApp {
         if let Some(group) = add_inside {
             self.insert_layer(false, Some(group));
         }
-        if let Some(id) = delete {
-            self.delete_layer(id);
+        if let Some(ids) = delete {
+            self.request_delete_layers(&ids);
+        }
+        if let Some(id) = merge_down {
+            // The op merges the active layer down; target the right-clicked row.
+            self.doc.active_layer = Some(id);
+            self.merge_down();
+        }
+        if merge_selected {
+            // The op reads the multi-select set directly; the right-click-collapse
+            // rule above already scopes it to the clicked row when needed.
+            self.merge_selected();
+        }
+        if flatten_visible {
+            self.flatten_visible();
         }
         if cancel_rename {
             self.editor.layer_rename = None;
@@ -400,19 +495,6 @@ impl ShellApp {
                 l.set_collapsed(!collapsed);
             }
         }
-    }
-
-    /// Deletes the layer (re-parenting a group's children) and its cels, keeping
-    /// at least one layer in the sprite.
-    fn delete_layer(&mut self, id: LayerId) {
-        let count = self.doc.active_sprite().map_or(0, |s| s.layers.len());
-        if count <= 1 {
-            return;
-        }
-        push_sprite_edit(&mut self.editor, &mut self.doc, "Delete layer", |sprite| sprite.remove_layer(id));
-        self.editor.selected_layers.remove(&id);
-        self.reseed_layer_selection();
-        self.refresh_canvas(false);
     }
 
     /// Reseeds the anchor and the multi-select set when the set has emptied or

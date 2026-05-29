@@ -72,12 +72,14 @@ fn bench_composite_region(c: &mut Criterion) {
             mode: BlendMode::Normal,
             opacity: 255,
             visible: true,
+            clip_below: false,
         },
         LayerInput {
             buffer: &top,
             mode: BlendMode::Normal,
             opacity: 255,
             visible: true,
+            clip_below: false,
         },
     ];
     let mut dst = buffer(CANVAS, CANVAS, Rgba::transparent());

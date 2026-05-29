@@ -352,6 +352,13 @@ pub struct EditorState {
     /// anchor: the last-clicked row, whose blend/opacity strip shows); this set
     /// is only the batch-op target.
     pub selected_layers: BTreeSet<LayerId>,
+    /// Layers panel: a delete awaiting confirmation. Set when a delete would
+    /// remove more than one layer or a group with children — destructive enough
+    /// to ask first. Carries the exact ids to drop; the confirm modal runs the
+    /// delete, cancel clears it. A single leaf delete skips this and deletes
+    /// straight away. View state, not undoable in itself (the delete it triggers
+    /// is the undoable step).
+    pub pending_layer_delete: Option<Vec<LayerId>>,
 }
 
 impl Default for EditorState {
@@ -389,6 +396,7 @@ impl Default for EditorState {
             new_tag_name: String::new(),
             layer_rename: None,
             selected_layers: BTreeSet::new(),
+            pending_layer_delete: None,
         }
     }
 }

@@ -80,6 +80,10 @@ pub struct LayerComposite {
     pub visible: bool,
     /// Effective opacity, the layer's opacity scaled by ancestor group opacities.
     pub opacity: u8,
+    /// Whether this layer clips to the layer below it — its visible pixels are
+    /// masked by the alpha of everything composited at-and-below its clip base.
+    /// In-memory only; never serialized (it mirrors [`Layer::clip_below`]).
+    pub clip_below: bool,
 }
 
 impl Sprite {
@@ -243,6 +247,7 @@ impl Sprite {
                     mode: layer.blend_mode,
                     visible,
                     opacity,
+                    clip_below: layer.clip_below,
                 });
             }
         }
@@ -473,6 +478,21 @@ mod tests {
         let child = order.iter().find(|c| c.layer == LayerId::new(3)).unwrap();
         // 255 * 128 / 255 == 128.
         assert_eq!(child.opacity, 128);
+    }
+
+    #[test]
+    fn composite_order_carries_clip_below_flag() {
+        let mut s = sprite_with_group();
+        // Mark the top raster (4) as clipping to the layer below it.
+        if let Some(l) = s.layers.iter_mut().find(|l| l.id == LayerId::new(4)) {
+            l.clip_below = true;
+        }
+        let order = s.composite_order();
+        let clipped = order.iter().find(|c| c.layer == LayerId::new(4)).unwrap();
+        assert!(clipped.clip_below);
+        // Unmarked layers report the flag clear.
+        let plain = order.iter().find(|c| c.layer == LayerId::new(1)).unwrap();
+        assert!(!plain.clip_below);
     }
 
     #[test]

@@ -9,7 +9,7 @@ use rayon::prelude::*;
 
 use crate::project::{BlendMode, Rgba};
 
-use super::blend::blend as blend_pixel;
+use super::blend::{blend as blend_pixel, mul_un8};
 use super::buffer::{PixelBuffer, RGBA_BYTES_PER_PIXEL};
 use super::error::{Error, Result};
 
@@ -32,6 +32,11 @@ pub struct LayerInput<'a> {
     /// are still passed through the API so call sites match the
     /// document's layer order.
     pub visible: bool,
+    /// Whether this layer clips to the layer below: its source alpha is
+    /// masked by the alpha of everything composited beneath it (its clip
+    /// base plus all lower layers) before it blends in. `false` for the
+    /// common case; the merge/flatten paths always pass `false`.
+    pub clip_below: bool,
 }
 
 impl LayerInput<'_> {
@@ -87,6 +92,7 @@ pub fn composite_onto(backdrop: &mut PixelBuffer, layer: &LayerInput<'_>) -> Res
 
     let mode = layer.mode;
     let opacity = layer.opacity;
+    let clip = layer.clip_below;
     let width = backdrop.width() as usize;
     let row_bytes = width * RGBA_BYTES_PER_PIXEL;
 
@@ -100,7 +106,7 @@ pub fn composite_onto(backdrop: &mut PixelBuffer, layer: &LayerInput<'_>) -> Res
         .par_chunks_mut(dst_stride)
         .zip(src_bytes.par_chunks(src_stride))
         .for_each(|(d_row, s_row)| {
-            blend_row(&mut d_row[..row_bytes], &s_row[..row_bytes], mode, opacity);
+            blend_row(&mut d_row[..row_bytes], &s_row[..row_bytes], mode, opacity, clip);
         });
 
     Ok(())
@@ -164,11 +170,20 @@ fn composite_span(row: &mut [u8], layers: &[LayerInput<'_>], py: u32, x0: u32, x
             if !layer.contributes() {
                 continue;
             }
-            let Some(src) = layer.buffer.pixel(px, py) else {
+            let Some(mut src) = layer.buffer.pixel(px, py) else {
                 continue;
             };
             if src.a == 0 {
                 continue;
+            }
+            if layer.clip_below {
+                // `acc` already holds everything composited beneath this layer
+                // (its clip base plus all lower layers), so its alpha is the
+                // clip mask. Pre-scale the source alpha; the blend is unchanged.
+                src.a = mul_un8(src.a, acc.a);
+                if src.a == 0 {
+                    continue;
+                }
             }
             acc = blend_pixel(layer.mode, src, acc, layer.opacity);
         }
@@ -181,17 +196,29 @@ fn composite_span(row: &mut [u8], layers: &[LayerInput<'_>], py: u32, x0: u32, x
 
 /// Blends one row of source bytes into one row of destination bytes
 /// in place. Both slices must be `width * 4` bytes.
-fn blend_row(dst: &mut [u8], src: &[u8], mode: BlendMode, opacity: u8) {
+///
+/// When `clip` is set, the source alpha is first masked by the backdrop's
+/// alpha at the same pixel (`mul_un8(s.a, d.a)`). The backdrop already holds
+/// everything composited beneath this layer, so the mask is the alpha of the
+/// clip base plus all lower layers — Aseprite's "clip to layer below". This
+/// only pre-scales the source alpha; the blend math itself is unchanged.
+fn blend_row(dst: &mut [u8], src: &[u8], mode: BlendMode, opacity: u8, clip: bool) {
     debug_assert_eq!(dst.len(), src.len());
     debug_assert_eq!(dst.len() % RGBA_BYTES_PER_PIXEL, 0);
 
     for (d_chunk, s_chunk) in dst.chunks_exact_mut(RGBA_BYTES_PER_PIXEL).zip(src.chunks_exact(RGBA_BYTES_PER_PIXEL)) {
-        let s = Rgba::new(s_chunk[0], s_chunk[1], s_chunk[2], s_chunk[3]);
+        let mut s = Rgba::new(s_chunk[0], s_chunk[1], s_chunk[2], s_chunk[3]);
         // Fast path: source pixel is fully transparent.
         if s.a == 0 {
             continue;
         }
         let d = Rgba::new(d_chunk[0], d_chunk[1], d_chunk[2], d_chunk[3]);
+        if clip {
+            s.a = mul_un8(s.a, d.a);
+            if s.a == 0 {
+                continue;
+            }
+        }
         let result = blend_pixel(mode, s, d, opacity);
         d_chunk[0] = result.r;
         d_chunk[1] = result.g;
@@ -230,6 +257,7 @@ mod tests {
                 mode: BlendMode::Normal,
                 opacity: 255,
                 visible: true,
+                clip_below: false,
             }],
         )
         .unwrap();
@@ -252,6 +280,7 @@ mod tests {
                 mode: BlendMode::Normal,
                 opacity: 255,
                 visible: false,
+                clip_below: false,
             }],
         )
         .unwrap();
@@ -269,6 +298,7 @@ mod tests {
                 mode: BlendMode::Normal,
                 opacity: 0,
                 visible: true,
+                clip_below: false,
             }],
         )
         .unwrap();
@@ -288,12 +318,14 @@ mod tests {
                     mode: BlendMode::Normal,
                     opacity: 255,
                     visible: true,
+                    clip_below: false,
                 },
                 LayerInput {
                     buffer: &top,
                     mode: BlendMode::Normal,
                     opacity: 255,
                     visible: true,
+                    clip_below: false,
                 },
             ],
         )
@@ -314,12 +346,14 @@ mod tests {
                     mode: BlendMode::Normal,
                     opacity: 255,
                     visible: true,
+                    clip_below: false,
                 },
                 LayerInput {
                     buffer: &top,
                     mode: BlendMode::Multiply,
                     opacity: 255,
                     visible: true,
+                    clip_below: false,
                 },
             ],
         )
@@ -343,6 +377,7 @@ mod tests {
                 mode: BlendMode::Normal,
                 opacity: 255,
                 visible: true,
+                clip_below: false,
             },
         )
         .unwrap_err();
@@ -368,12 +403,14 @@ mod tests {
                 mode: BlendMode::Normal,
                 opacity: 255,
                 visible: true,
+                clip_below: false,
             },
             LayerInput {
                 buffer: &top,
                 mode: BlendMode::Normal,
                 opacity: 200,
                 visible: true,
+                clip_below: false,
             },
         ];
         let full = composite_layers(128, 128, &layers).unwrap();
@@ -399,6 +436,7 @@ mod tests {
             mode: BlendMode::Normal,
             opacity: 255,
             visible: true,
+            clip_below: false,
         }];
         let mut dst = PixelBuffer::new(16, 16).unwrap();
         composite_region(&mut dst, &layers, 4, 4, 4, 4);
@@ -420,6 +458,7 @@ mod tests {
                 mode: BlendMode::Normal,
                 opacity: 255,
                 visible: true,
+                clip_below: false,
             },
         )
         .unwrap();
@@ -428,5 +467,96 @@ mod tests {
                 assert_eq!(padded.pixel(x, y), Some(Rgba::opaque(10, 20, 30)));
             }
         }
+    }
+
+    /// A base layer with an opaque blob filling the left half (`x < 2`) and a
+    /// transparent right half. The blob is the clip base.
+    fn opaque_blob_base(size: u32) -> PixelBuffer {
+        let mut base = PixelBuffer::new(size, size).unwrap();
+        for y in 0..size {
+            for x in 0..size / 2 {
+                base.set_pixel(x, y, Rgba::opaque(0, 0, 255));
+            }
+        }
+        base
+    }
+
+    fn input(buffer: &PixelBuffer, opacity: u8, visible: bool, clip_below: bool) -> LayerInput<'_> {
+        LayerInput {
+            buffer,
+            mode: BlendMode::Normal,
+            opacity,
+            visible,
+            clip_below,
+        }
+    }
+
+    #[test]
+    fn clip_layer_shows_only_over_opaque_base() {
+        // A solid green clip layer over a half-opaque blue base: green appears
+        // only where the base is opaque, and the base shows through nowhere it
+        // is transparent.
+        let base = opaque_blob_base(4);
+        let clip = solid(4, 4, Rgba::opaque(0, 255, 0));
+        let out = composite_layers(4, 4, &[input(&base, 255, true, false), input(&clip, 255, true, true)]).unwrap();
+
+        for y in 0..4 {
+            // Left half: base opaque, so the clip layer paints green over it.
+            assert_eq!(out.pixel(0, y), Some(Rgba::opaque(0, 255, 0)), "(0,{y})");
+            assert_eq!(out.pixel(1, y), Some(Rgba::opaque(0, 255, 0)), "(1,{y})");
+            // Right half: base transparent, so the clip layer is masked out.
+            assert_eq!(out.pixel(2, y), Some(Rgba::transparent()), "(2,{y})");
+            assert_eq!(out.pixel(3, y), Some(Rgba::transparent()), "(3,{y})");
+        }
+    }
+
+    #[test]
+    fn clip_layer_contributes_nothing_when_base_hidden() {
+        // Hiding the base layer leaves the clip with no opaque mask, so the clip
+        // contributes nothing — the whole canvas stays transparent.
+        let base = opaque_blob_base(4);
+        let clip = solid(4, 4, Rgba::opaque(0, 255, 0));
+        let out = composite_layers(4, 4, &[input(&base, 255, false, false), input(&clip, 255, true, true)]).unwrap();
+
+        for y in 0..4 {
+            for x in 0..4 {
+                assert_eq!(out.pixel(x, y), Some(Rgba::transparent()), "({x},{y})");
+            }
+        }
+    }
+
+    #[test]
+    fn clip_region_path_matches_full_clip_composite() {
+        // The region (span) path must mask identically to the full path: clip
+        // green over a half-opaque base, then compare both over the full canvas.
+        let base = opaque_blob_base(4);
+        let clip = solid(4, 4, Rgba::opaque(0, 255, 0));
+        let layers = [input(&base, 255, true, false), input(&clip, 255, true, true)];
+        let full = composite_layers(4, 4, &layers).unwrap();
+
+        let mut region = PixelBuffer::new(4, 4).unwrap();
+        composite_region(&mut region, &layers, 0, 0, 4, 4);
+
+        for y in 0..4 {
+            for x in 0..4 {
+                assert_eq!(region.pixel(x, y), full.pixel(x, y), "({x},{y})");
+            }
+        }
+    }
+
+    #[test]
+    fn clip_masks_partial_base_alpha() {
+        // A base at half alpha masks the clip to roughly half: the mask is the
+        // base's alpha, applied via the same MUL_UN8 the blend math uses, so a
+        // clip layer over a 128-alpha base lands at 128, not 255.
+        let base = solid(2, 2, Rgba::new(0, 0, 255, 128));
+        let clip = solid(2, 2, Rgba::opaque(255, 0, 0));
+        let out = composite_layers(2, 2, &[input(&base, 255, true, false), input(&clip, 255, true, true)]).unwrap();
+        let pixel = out.pixel(0, 0).unwrap();
+        // The clip's red mixes in over the semi-transparent blue base; the
+        // result stays partly blue because the clip alpha is masked to 128.
+        assert!(pixel.r > 0, "clip red contributes through the mask");
+        assert!(pixel.b > 0, "base blue survives under the masked clip");
+        assert!(pixel.a < 255, "masking keeps the composite below full opacity");
     }
 }

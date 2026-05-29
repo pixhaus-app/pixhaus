@@ -60,6 +60,9 @@ pub const LEFT: &str = p::CARET_LEFT;
 pub const LINK: &str = p::LINK;
 pub const UNLINK: &str = p::LINK_BREAK;
 
+// Clipping masks: a layer clipped to the one below it.
+pub const CLIP: &str = p::ARROW_BEND_DOWN_LEFT;
+
 // Canvas operations.
 pub const RESIZE: &str = p::RESIZE;
 pub const FLIP_H: &str = p::FLIP_HORIZONTAL;

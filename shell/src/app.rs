@@ -533,6 +533,11 @@ pub struct ShellApp {
     /// The open whole-canvas transform dialog (Rotate / Skew / Perspective /
     /// Antialias), or `None` when none is open. Carries the draft parameters.
     transform_dialog: Option<TransformDialog>,
+    /// A transient one-line status message and when it was set, shown in the
+    /// status bar and faded out after a few seconds. The non-modal way a
+    /// rejected action (e.g. an invalid merge) surfaces its reason without a
+    /// dialog. `None` when nothing is being shown.
+    status_message: Option<(String, Instant)>,
 }
 
 /// The pending selection-morphology operation and its amount, driven by the
@@ -617,6 +622,9 @@ pub(crate) enum TransformDialog {
 /// per-row/column shift so an extreme factor cannot push every pixel off-canvas
 /// by accident.
 const SKEW_FACTOR_RANGE: std::ops::RangeInclusive<f32> = -4.0..=4.0;
+
+/// How long a transient status-bar message stays visible before it clears.
+const STATUS_MESSAGE_TTL: Duration = Duration::from_secs(5);
 
 impl ShellApp {
     /// Builds the app from the eframe creation context, taking ownership of the
@@ -762,6 +770,7 @@ impl ShellApp {
             resize_resample: false,
             morph_dialog: None,
             transform_dialog: None,
+            status_message: None,
         };
         app.install_renderer();
         app.doc.create_sprite("untitled", DEFAULT_CANVAS);
@@ -803,6 +812,13 @@ impl ShellApp {
             // Showing the sprite invalidates the wizard's clip-preview marker.
             self.anim_shown = None;
         }
+    }
+
+    /// Sets a transient status-bar message (shown muted, fades out). The
+    /// non-modal way an op reports a rejection or a brief result. Replaces any
+    /// message already showing.
+    pub(crate) fn set_status(&mut self, message: impl Into<String>) {
+        self.status_message = Some((message.into(), Instant::now()));
     }
 
     /// Whether the canvas is showing a reference-sheet preview rather than the
@@ -1381,6 +1397,46 @@ impl ShellApp {
             self.confirm_delete = None;
             self.playing = false;
             self.refresh_canvas(true);
+        }
+    }
+
+    /// Renders the delete-layers confirmation modal. Shown only for a delete
+    /// destructive enough to ask first — more than one layer, or a group with
+    /// children. Confirm runs the staged delete; Cancel clears it. A single leaf
+    /// delete never reaches here (it deletes straight away), so this dialog is
+    /// only ever opened for the multi/group case.
+    fn show_delete_layers_confirm(&mut self, ctx: &egui::Context) {
+        let Some(count) = self.editor.pending_layer_delete.as_ref().map(Vec::len) else {
+            return;
+        };
+        let mut open = true;
+        let mut confirm = false;
+        let message = if count == 1 {
+            "Delete this group and reparent its children?".to_owned()
+        } else {
+            format!("Delete {count} layers?")
+        };
+        egui::Window::new("Delete layers")
+            .collapsible(false)
+            .resizable(false)
+            .open(&mut open)
+            .show(ctx, |ui| {
+                ui.label(message);
+                ui.separator();
+                ui.horizontal(|ui| {
+                    if ui.button(format!("{} Delete", crate::icons::TRASH)).clicked() {
+                        confirm = true;
+                    }
+                    if ui.button("Cancel").clicked() {
+                        self.cancel_pending_layer_delete();
+                    }
+                });
+            });
+        if confirm {
+            self.confirm_pending_layer_delete();
+        } else if !open {
+            // Closing via the window's X is a cancel.
+            self.cancel_pending_layer_delete();
         }
     }
 
@@ -2422,6 +2478,36 @@ impl ShellApp {
                 });
             });
 
+            ui.menu_button("Layer", |ui| {
+                let can_merge_down = self.active_layer_can_merge_down();
+                if ui
+                    .add_enabled(can_merge_down, egui::Button::new(format!("{} Merge down", crate::icons::LAYERS)))
+                    .on_disabled_hover_text("Select a raster layer with a raster layer directly below it")
+                    .clicked()
+                {
+                    self.merge_down();
+                    ui.close();
+                }
+                let can_merge_selected = self.can_merge_selected();
+                if ui
+                    .add_enabled(can_merge_selected, egui::Button::new(format!("{} Merge selected", crate::icons::LAYERS)))
+                    .on_disabled_hover_text("Select at least two raster layers")
+                    .clicked()
+                {
+                    self.merge_selected();
+                    ui.close();
+                }
+                let can_flatten = self.can_flatten_visible();
+                if ui
+                    .add_enabled(can_flatten, egui::Button::new(format!("{} Flatten visible", crate::icons::LAYERS)))
+                    .on_disabled_hover_text("Needs at least two visible raster layers")
+                    .clicked()
+                {
+                    self.flatten_visible();
+                    ui.close();
+                }
+            });
+
             ui.menu_button("Transform", |ui| {
                 let has_sprite = self.doc.active_sprite().is_some();
                 let has_selection = self.editor.selection.is_some();
@@ -2621,6 +2707,19 @@ impl ShellApp {
             ui.label(muted(format!("{} frames", self.doc.frame_count())));
             ui.separator();
             ui.label(muted(format!("{:.0}% zoom", self.viewport.zoom * 100.0)));
+
+            // A transient message (e.g. a rejected merge) shows at the right
+            // edge, then clears once it ages past its time-to-live.
+            if let Some((text, set_at)) = &self.status_message {
+                if set_at.elapsed() < STATUS_MESSAGE_TTL {
+                    let text = text.clone();
+                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                        ui.label(egui::RichText::new(text).small().color(palette.warning));
+                    });
+                } else {
+                    self.status_message = None;
+                }
+            }
         });
     }
 }
@@ -2923,6 +3022,7 @@ impl eframe::App for ShellApp {
         self.show_settings_window(ui.ctx());
         self.show_new_sprite_dialog(ui.ctx());
         self.show_delete_confirm(ui.ctx());
+        self.show_delete_layers_confirm(ui.ctx());
         self.show_resize_dialog(ui.ctx());
         self.show_morph_dialog(ui.ctx());
         self.show_transform_dialog(ui.ctx());

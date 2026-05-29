@@ -317,6 +317,55 @@ pub fn push_sprite_edit_with_buffers(
     let _ = editor.history.push(Box::new(cmd), doc);
 }
 
+/// Records a destructive layer consolidation (merge down, merge selected,
+/// flatten visible) as one undo entry. A merge moves the sprite value and the
+/// buffer store together: the merged target gets fresh buffers, the retired
+/// source layers and the old destination buffers are dropped, and the sprite
+/// structure loses the consumed layers and repoints the survivor's cels.
+///
+/// `added_buffers` carry the merged target's new bytes under fresh ids; pass
+/// buffers that are *not yet* in the store, allocate their ids first, and
+/// reference them from the sprite inside `f`. `removed_buffers` carry the bytes
+/// of the source and old destination buffers being retired; capture those bytes
+/// from the store *before* calling, because the recorded command removes them on
+/// apply/redo and restores them on undo. The single `SpriteBufferEdit` keeps the
+/// structural drop and the pixel rewrite reversible as one step — unlike the
+/// Tauri merge, where the structural drop was not undoable.
+// Callers flatten_visible and merge_selected land in later layer-ops tasks;
+// merge_down (this batch) is the first to wire onto this undo path.
+pub fn push_layer_consolidation(
+    editor: &mut EditorState,
+    doc: &mut DocumentStore,
+    label: &str,
+    added_buffers: Vec<(PixelBufferId, PixelBuffer)>,
+    removed_buffers: Vec<(PixelBufferId, PixelBuffer)>,
+    f: impl FnOnce(&mut Sprite),
+) {
+    let Some(id) = doc.project.active_sprite_id() else {
+        return;
+    };
+    let Some(before) = doc.project.sprite(id).cloned() else {
+        return;
+    };
+    let mut after = before.clone();
+    f(&mut after);
+    if after == before {
+        // The structure did not change, so nothing references the new buffers
+        // and nothing retired the old ones. Drop the edit rather than leak the
+        // added buffers or wrongly remove the "retired" ones.
+        return;
+    }
+    let cmd = SpriteBufferEdit {
+        sprite_id: id,
+        before,
+        after,
+        added_buffers,
+        removed_buffers,
+        label: label.to_owned(),
+    };
+    let _ = editor.history.push(Box::new(cmd), doc);
+}
+
 /// Runs [`DocumentStore::integrate_frames`] and records it as one undo entry,
 /// so dropping an AI-generated animation onto the timeline is reversible.
 ///
@@ -808,6 +857,77 @@ mod tests {
         editor.history.redo(&mut doc).expect("redo");
         assert!(doc.pixel_buffers.contains_key(&new_id), "redo restores the buffer");
         assert_eq!(doc.pixel_buffers.len(), before_count + 1);
+    }
+
+    #[test]
+    fn layer_consolidation_swaps_buffers_and_structure_with_undo() {
+        use pixhaus_core::project::{Cel, CelData, FrameIndex, Layer, LayerId, PixelBufferId, Rgba};
+
+        let mut doc = DocumentStore::new();
+        doc.create_sprite("hero", Size::new(8, 8));
+
+        // A second raster layer with its own cel and buffer, so the merge has a
+        // distinct source to retire onto the base destination.
+        let dest_layer = doc.active_sprite().expect("sprite").layers[0].id;
+        let CelData::Raster { buffer: dest_buffer, .. } = doc.active_sprite().expect("sprite").cels[0].data else {
+            panic!("seed cel is raster")
+        };
+        let src_layer = LayerId::new(doc.alloc_id());
+        let src_buffer = PixelBufferId::new(doc.alloc_id());
+        let mut editor = EditorState::default();
+        push_sprite_edit_with_buffers(
+            &mut editor,
+            &mut doc,
+            "Add layer",
+            vec![(src_buffer, PixelBuffer::filled(8, 8, Rgba::new(0, 0, 255, 255)).expect("buffer"))],
+            |sprite| {
+                sprite.layers.push(Layer::raster(src_layer, "Layer 2"));
+                sprite.cels.push(Cel::raster(src_layer, FrameIndex::new(0), src_buffer, Size::new(8, 8)));
+            },
+        );
+        let baseline_layers = doc.active_sprite().expect("sprite").layers.len();
+        let baseline_buffers = doc.pixel_buffers.len();
+
+        // Capture the retired buffers' bytes before the command removes them.
+        let removed = vec![
+            (src_buffer, doc.pixel_buffers.get(&src_buffer).expect("src buffer").clone()),
+            (dest_buffer, doc.pixel_buffers.get(&dest_buffer).expect("dest buffer").clone()),
+        ];
+        // The merged target lands under a fresh id.
+        let merged_id = PixelBufferId::new(doc.alloc_id());
+        let merged = PixelBuffer::filled(8, 8, Rgba::new(0, 0, 255, 255)).expect("merged");
+
+        push_layer_consolidation(&mut editor, &mut doc, "Merge down", vec![(merged_id, merged)], removed, |sprite| {
+            sprite.remove_layer(src_layer);
+            // Repoint the surviving destination cel to the merged buffer.
+            for cel in &mut sprite.cels {
+                if cel.layer_id == dest_layer {
+                    if let CelData::Raster { buffer, .. } = &mut cel.data {
+                        *buffer = merged_id;
+                    }
+                }
+            }
+        });
+
+        // The source layer is gone and the buffer store swapped the two retired
+        // buffers for the one merged buffer.
+        assert_eq!(doc.active_sprite().expect("sprite").layers.len(), baseline_layers - 1, "source layer dropped");
+        assert!(doc.pixel_buffers.contains_key(&merged_id), "merged buffer inserted");
+        assert!(!doc.pixel_buffers.contains_key(&src_buffer), "source buffer retired");
+        assert!(!doc.pixel_buffers.contains_key(&dest_buffer), "old destination buffer retired");
+        assert_eq!(doc.pixel_buffers.len(), baseline_buffers - 1, "two retired, one added");
+
+        editor.history.undo(&mut doc).expect("undo");
+        assert_eq!(doc.active_sprite().expect("sprite").layers.len(), baseline_layers, "undo restores the source layer");
+        assert!(doc.pixel_buffers.contains_key(&src_buffer), "undo restores the source buffer");
+        assert!(doc.pixel_buffers.contains_key(&dest_buffer), "undo restores the destination buffer");
+        assert!(!doc.pixel_buffers.contains_key(&merged_id), "undo removes the merged buffer");
+        assert_eq!(doc.pixel_buffers.len(), baseline_buffers, "buffer count returns to baseline");
+
+        editor.history.redo(&mut doc).expect("redo");
+        assert_eq!(doc.active_sprite().expect("sprite").layers.len(), baseline_layers - 1, "redo re-applies the merge");
+        assert!(doc.pixel_buffers.contains_key(&merged_id), "redo restores the merged buffer");
+        assert_eq!(doc.pixel_buffers.len(), baseline_buffers - 1);
     }
 
     #[test]

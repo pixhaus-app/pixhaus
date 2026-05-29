@@ -634,6 +634,7 @@ impl DocumentStore {
                     mode: BlendMode::Normal,
                     opacity: 255,
                     visible: true,
+                    clip_below: false,
                 },
             );
         }
@@ -644,6 +645,7 @@ impl DocumentStore {
                 mode: BlendMode::Normal,
                 opacity: 255,
                 visible: true,
+                clip_below: false,
             },
         );
         Some(stack)
@@ -751,6 +753,7 @@ impl DocumentStore {
                 mode: entry.mode,
                 opacity: entry.opacity,
                 visible: entry.visible,
+                clip_below: entry.clip_below,
             });
         }
 
@@ -800,6 +803,7 @@ impl DocumentStore {
                 mode: entry.mode,
                 opacity: entry.opacity,
                 visible: entry.visible,
+                clip_below: entry.clip_below,
             });
         }
         composite_region(dst, &inputs, x, y, w, h);
@@ -1135,6 +1139,68 @@ mod tests {
         let frame = doc.composite_active_frame().expect("composite");
         assert_eq!(frame.width(), 16);
         assert_eq!(frame.height(), 24);
+    }
+
+    /// Adds a raster layer filled with `color` on frame 0 to the active sprite.
+    /// Returns the new layer id. Layers added later stack on top.
+    fn push_filled_layer(doc: &mut DocumentStore, name: &str, color: Rgba) -> LayerId {
+        let canvas = doc.active_sprite().expect("sprite").canvas;
+        let layer = LayerId::new(doc.alloc_id());
+        let buffer = PixelBufferId::new(doc.alloc_id());
+        doc.pixel_buffers
+            .insert(buffer, PixelBuffer::filled(canvas.width, canvas.height, color).expect("layer buffer"));
+        let sprite = doc.active_sprite_mut().expect("sprite");
+        sprite.layers.push(Layer::raster(layer, name));
+        sprite.cels.push(Cel::raster(layer, FrameIndex::new(0), buffer, canvas));
+        layer
+    }
+
+    #[test]
+    fn clip_layer_composites_only_over_its_opaque_base() {
+        // Base layer: an opaque blob in the left half, transparent right half.
+        // Clip layer on top: solid green over the whole canvas, marked clip.
+        let mut doc = DocumentStore::new();
+        doc.create_sprite("clip", Size::new(4, 4));
+        // The seed layer is the base; paint its left half opaque blue.
+        let base = doc.active_layer.expect("seed layer");
+        let base_buf = doc.active_buffer_id().expect("seed buffer");
+        {
+            let buf = doc.pixel_buffers.get_mut(&base_buf).expect("base buffer");
+            for y in 0..4 {
+                for x in 0..2 {
+                    buf.set_pixel(x, y, Rgba::opaque(0, 0, 255));
+                }
+            }
+        }
+        let clip = push_filled_layer(&mut doc, "shading", Rgba::opaque(0, 255, 0));
+        // Mark the top layer to clip to the base.
+        doc.active_sprite_mut()
+            .expect("sprite")
+            .layers
+            .iter_mut()
+            .find(|l| l.id == clip)
+            .expect("clip layer")
+            .clip_below = true;
+        let _ = base;
+
+        let frame = doc.composite_frame(FrameIndex::new(0)).expect("composite");
+        for y in 0..4 {
+            // Left half: base opaque, so the clip layer shows green.
+            assert_eq!(frame.pixel(0, y), Some(Rgba::opaque(0, 255, 0)), "(0,{y})");
+            assert_eq!(frame.pixel(1, y), Some(Rgba::opaque(0, 255, 0)), "(1,{y})");
+            // Right half: base transparent, so the clip is masked away.
+            assert_eq!(frame.pixel(2, y), Some(Rgba::transparent()), "(2,{y})");
+            assert_eq!(frame.pixel(3, y), Some(Rgba::transparent()), "(3,{y})");
+        }
+
+        // The region path must agree with the full composite.
+        let mut region = PixelBuffer::new(4, 4).expect("region buffer");
+        doc.composite_region_into(&mut region, 0, 0, 4, 4);
+        for y in 0..4 {
+            for x in 0..4 {
+                assert_eq!(region.pixel(x, y), frame.pixel(x, y), "region ({x},{y})");
+            }
+        }
     }
 
     #[test]

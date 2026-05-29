@@ -40,6 +40,13 @@ pub struct Layer {
     /// omitted from the wire form.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub effects: Vec<LayerEffect>,
+    /// Clip to the layer below: the layer's visible pixels are limited to
+    /// where its clip base (the immediate lower sibling within the same
+    /// parent) is opaque. `false` by default; files written before clipping
+    /// existed load with the flag clear and re-save with the field omitted
+    /// from the wire form, so old files load unchanged.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub clip_below: bool,
     /// Free-form user metadata.
     #[serde(skip_serializing_if = "UserData::is_empty", default)]
     pub user_data: UserData,
@@ -59,6 +66,7 @@ impl Layer {
             locked: false,
             parent: None,
             effects: Vec::new(),
+            clip_below: false,
             user_data: UserData::default(),
         }
     }
@@ -145,11 +153,47 @@ mod tests {
             locked: false,
             parent: Some(LayerId::new(2)),
             effects: Vec::new(),
+            clip_below: false,
             user_data: UserData::default(),
         };
         let json = serde_json::to_string(&l).unwrap();
         let back: Layer = serde_json::from_str(&json).unwrap();
         assert_eq!(l, back);
+    }
+
+    #[test]
+    fn clip_below_defaults_false() {
+        let l = Layer::raster(LayerId::new(1), "fx");
+        assert!(!l.clip_below);
+    }
+
+    #[test]
+    fn clip_below_omitted_from_wire_when_false() {
+        // The flag follows the parent/effects pattern: a clear flag never
+        // reaches the wire form, so old readers and old files round-trip.
+        let l = Layer::raster(LayerId::new(1), "base");
+        let json = serde_json::to_string(&l).unwrap();
+        assert!(!json.contains("clip_below"), "{json}");
+    }
+
+    #[test]
+    fn clip_below_round_trips_when_true() {
+        let mut l = Layer::raster(LayerId::new(1), "shading");
+        l.clip_below = true;
+        let json = serde_json::to_string(&l).unwrap();
+        assert!(json.contains("clip_below"), "{json}");
+        let back: Layer = serde_json::from_str(&json).unwrap();
+        assert_eq!(l, back);
+        assert!(back.clip_below);
+    }
+
+    #[test]
+    fn layer_loads_when_clip_below_absent() {
+        // An old file (or any payload) that omits the field loads with the
+        // flag clear — `#[serde(default)]` supplies it.
+        let json = r#"{"id":1,"name":"old","kind":{"kind":"raster"},"blend_mode":"normal","opacity":255,"visible":true,"locked":false}"#;
+        let l: Layer = serde_json::from_str(json).unwrap();
+        assert!(!l.clip_below);
     }
 
     #[test]

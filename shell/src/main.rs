@@ -40,6 +40,7 @@ mod gpu;
 mod headless;
 mod icons;
 mod keymap;
+mod layer_ops;
 mod layers_panel;
 mod library;
 mod palette_panel;
