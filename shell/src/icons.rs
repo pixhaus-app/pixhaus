@@ -113,6 +113,10 @@ pub const COPY: &str = p::COPY;
 pub const CHECK: &str = p::CHECK;
 /// Reject / dismiss (suggested-tag reject chip, close affordances).
 pub const X: &str = p::X;
+/// An empty / not-yet-filled slot (coverage-grid missing cell).
+pub const EMPTY: &str = p::CIRCLE_DASHED;
+/// A stale / out-of-date slot needing a re-roll (coverage-grid stale cell).
+pub const STALE: &str = p::WARNING;
 pub const INFO: &str = p::INFO;
 pub const CARD: &str = p::IDENTIFICATION_CARD;
 pub const LIBRARY: &str = p::BOOKS;

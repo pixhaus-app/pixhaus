@@ -27,6 +27,7 @@
 mod ai;
 mod anim;
 mod anim_jobs;
+mod anim_set;
 mod app;
 mod asset_library;
 mod bg_removal;

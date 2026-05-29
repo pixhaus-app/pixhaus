@@ -781,6 +781,7 @@ impl ShellApp {
     pub(crate) fn enter_studio(&mut self) {
         self.workspace = Workspace::Create;
         self.studio_library_open = false;
+        self.anim_set_open = false;
         self.studio.stage = StudioStage::Anchor;
         self.studio.landed = false;
         // A fresh Create session inherits the project's AI defaults (quality
@@ -837,6 +838,14 @@ impl ShellApp {
             }
             return;
         }
+        if self.anim_set_open {
+            // The coverage-grid overlay fills the center alone: a read-only
+            // directional-cascade plan over the active entity's anchor.
+            egui::CentralPanel::default().show_inside(ui, |ui| {
+                egui::ScrollArea::vertical().auto_shrink([false, false]).show(ui, |ui| self.anim_set_view(ui));
+            });
+            return;
+        }
         egui::Panel::left("studio_left")
             .resizable(true)
             .default_size(240.0)
@@ -873,6 +882,18 @@ impl ShellApp {
                 .clicked()
             {
                 self.studio_library_open = true;
+            }
+            if self.anim_set_open {
+                if ui.button(format!("{} Done", crate::icons::CHECK)).clicked() {
+                    self.anim_set_open = false;
+                }
+            } else if ui
+                .button(format!("{} Coverage", crate::icons::FILM))
+                .on_hover_text("Directional-cascade coverage grid for this entity")
+                .clicked()
+            {
+                self.studio_library_open = false;
+                self.anim_set_open = true;
             }
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                 ui.label(egui::RichText::new(self.studio.framing_label()).weak());

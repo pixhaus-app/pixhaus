@@ -434,6 +434,8 @@ pub struct ShellApp {
     pub(crate) egui_ctx: egui::Context,
     /// Whether the composition-library overlay is open over the studio.
     pub(crate) studio_library_open: bool,
+    /// Whether the directional-cascade coverage grid is open over the studio.
+    pub(crate) anim_set_open: bool,
     /// Which composition-library tab shows in the Library view.
     pub(crate) library_tab: crate::library::LibraryTab,
     /// The composition-library record currently open in the editor, if any.
@@ -834,6 +836,7 @@ impl ShellApp {
             gpu_pref,
             egui_ctx: cc.egui_ctx.clone(),
             studio_library_open: false,
+            anim_set_open: false,
             library_tab: crate::library::LibraryTab::Templates,
             library_draft: None,
             asset_browser_open: false,
