@@ -23,7 +23,10 @@
 //! [`ShellApp`] (here and in `anim_*`), so Cancel and restart are clean at every
 //! stage.
 
+use std::collections::HashMap;
+
 use eframe::egui;
+use serde::{Deserialize, Serialize};
 use tokio_util::sync::CancellationToken;
 
 use pixhaus_ai::backends::fal::{FAL_I2V, FAL_SEEDANCE};
@@ -40,7 +43,8 @@ use crate::gizmo::{BoxGizmo, GizmoHandle};
 /// The studio's ordered stages. Navigation is free — the rail lets you step back
 /// to an earlier stage without losing later work — so this is a position in a
 /// workspace, not a forced march.
-#[derive(Clone, Copy, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
 pub(crate) enum StudioStage {
     /// Pick the approved reference sheet plus direction and animation kind.
     Anchor,
@@ -81,7 +85,8 @@ impl StudioStage {
 }
 
 /// The animation kind, which scaffolds the motion prompt.
-#[derive(Clone, Copy, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
 pub(crate) enum AnimKind {
     Idle,
     Walk,
@@ -123,7 +128,8 @@ impl AnimKind {
 }
 
 /// The facing direction the animation conditions on.
-#[derive(Clone, Copy, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
 pub(crate) enum Facing {
     South,
     North,
@@ -165,7 +171,8 @@ impl Facing {
 }
 
 /// The image-to-video model the Motion stage drives.
-#[derive(Clone, Copy, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
 pub(crate) enum I2vModel {
     /// `ByteDance` Seedance 2.0 (the backend default).
     Seedance,
@@ -437,6 +444,185 @@ impl Default for GenThread {
     }
 }
 
+/// Max per-sprite sessions kept in the map (and the sidecar). Past this, the
+/// heaviest sessions are dropped first — mirrors the `MAX_JOBS` cap on the
+/// durable job queue and bounds the sidecar's on-disk size.
+pub(crate) const MAX_STUDIO_SESSIONS: usize = 24;
+
+/// The serializable subset of a studio session, kept per sprite so switching
+/// sprites away and back — and restarting the app — resumes where the artist
+/// left off.
+///
+/// This holds only durable facts: the stage, the framing (kind / facing), the
+/// i2v model, the approved seed pose (the one heavy field — a PNG, kept because
+/// it is the single input that drives a clip and is expensive to regenerate),
+/// the remove-on-land flag, and the motion parameters that live on [`ShellApp`]
+/// (motion prompt, target frames, fps, seed). Transient view state — texture
+/// handles, the reveal effect, drag state, and the inpaint mask paint state —
+/// is rebuilt lazily and never serialized.
+///
+/// Interim home: this persists to an app-data sidecar
+/// (`studio-sessions.json` under `eframe::storage_dir`), not the project
+/// archive. When the io crate lands and `.pixhaus` gains save/open, this moves
+/// onto the per-entity `AiMetadata` or a new `Project` field and rides the
+/// project archive; the serialization shape here is designed so that is a
+/// type-move, not a redesign.
+///
+/// Every field carries `#[serde(default)]` so an older sidecar (one written
+/// before a field existed, or a missing sidecar) still deserializes —
+/// forward-compat matters more than strictness for app-data sidecars.
+#[derive(Clone, Serialize, Deserialize)]
+pub(crate) struct StudioSession {
+    /// The stage in view when the session was flushed.
+    #[serde(default = "default_stage")]
+    pub stage: StudioStage,
+    /// Animation kind, scaffolding the motion prompt.
+    #[serde(default = "default_kind")]
+    pub kind: AnimKind,
+    /// Facing direction the generation conditions on.
+    #[serde(default = "default_facing")]
+    pub facing: Facing,
+    /// The image-to-video model the Motion stage drives.
+    #[serde(default = "default_i2v_model")]
+    pub i2v_model: I2vModel,
+    /// The approved seed pose (PNG), the single input that drives the clip.
+    /// The one heavy field — kept on purpose.
+    #[serde(default)]
+    pub approved_first_frame: Option<Vec<u8>>,
+    /// Whether Land bakes the chroma key into the landed loop.
+    #[serde(default)]
+    pub remove_on_land: bool,
+    /// The motion (choreography) prompt.
+    #[serde(default)]
+    pub motion: String,
+    /// Requested loop frame count.
+    #[serde(default = "default_target_frames")]
+    pub target_frames: u32,
+    /// Playback FPS for the generated animation.
+    #[serde(default = "default_fps")]
+    pub fps: u32,
+    /// Pinned RNG seed, or `None` for a random seed each run.
+    #[serde(default)]
+    pub seed: Option<u64>,
+}
+
+fn default_stage() -> StudioStage {
+    StudioStage::Anchor
+}
+
+fn default_kind() -> AnimKind {
+    AnimKind::Walk
+}
+
+fn default_facing() -> Facing {
+    Facing::East
+}
+
+fn default_i2v_model() -> I2vModel {
+    I2vModel::Seedance
+}
+
+fn default_target_frames() -> u32 {
+    6
+}
+
+fn default_fps() -> u32 {
+    10
+}
+
+impl Default for StudioSession {
+    fn default() -> Self {
+        Self {
+            stage: default_stage(),
+            kind: default_kind(),
+            facing: default_facing(),
+            i2v_model: default_i2v_model(),
+            approved_first_frame: None,
+            remove_on_land: false,
+            motion: String::new(),
+            target_frames: default_target_frames(),
+            fps: default_fps(),
+            seed: None,
+        }
+    }
+}
+
+/// On-disk shape of the per-sprite session sidecar. Entries are a list of
+/// `(SpriteId, StudioSession)` pairs rather than a JSON object so the format
+/// never depends on serde's integer-map-key coercion. `#[serde(default)]` makes
+/// an empty or missing file deserialize to an empty session set.
+#[derive(Default, Serialize, Deserialize)]
+struct StudioSessionsSidecar {
+    #[serde(default)]
+    sessions: Vec<(SpriteId, StudioSession)>,
+}
+
+/// The studio-sessions sidecar path under eframe's app-data storage, a sibling
+/// of `gpu.json` and the `animation-jobs` dir. `None` when no storage dir is
+/// resolvable.
+fn sessions_path() -> Option<std::path::PathBuf> {
+    eframe::storage_dir("pixhaus").map(|dir| dir.join("studio-sessions.json"))
+}
+
+/// Serializes the per-sprite sessions to the sidecar's JSON bytes. The pure,
+/// filesystem-free core of [`save_studio_sessions`], so the round-trip is
+/// testable without a storage dir.
+fn encode_sessions(sessions: &HashMap<SpriteId, StudioSession>) -> Result<Vec<u8>, serde_json::Error> {
+    let sidecar = StudioSessionsSidecar {
+        sessions: sessions.iter().map(|(id, s)| (*id, s.clone())).collect(),
+    };
+    serde_json::to_vec(&sidecar)
+}
+
+/// Parses the sidecar's JSON bytes into a per-sprite session map. The pure,
+/// filesystem-free core of [`load_studio_sessions`].
+fn decode_sessions(bytes: &[u8]) -> Result<HashMap<SpriteId, StudioSession>, serde_json::Error> {
+    let sidecar: StudioSessionsSidecar = serde_json::from_slice(bytes)?;
+    Ok(sidecar.sessions.into_iter().collect())
+}
+
+/// Loads the persisted per-sprite sessions. A missing or unreadable sidecar
+/// yields an empty map — equivalent to a fresh install. Never errors up to the
+/// UI: a corrupt sidecar is logged and treated as empty.
+pub(crate) fn load_studio_sessions() -> HashMap<SpriteId, StudioSession> {
+    let Some(path) = sessions_path() else {
+        return HashMap::new();
+    };
+    let Ok(bytes) = std::fs::read(&path) else {
+        return HashMap::new();
+    };
+    match decode_sessions(&bytes) {
+        Ok(map) => map,
+        Err(err) => {
+            tracing::warn!(error = %err, "failed to parse studio-sessions sidecar; starting empty");
+            HashMap::new()
+        }
+    }
+}
+
+/// Persists the per-sprite sessions to the sidecar. A write failure degrades to
+/// not-persisted: it is logged and swallowed, never propagated, so a full disk
+/// cannot crash the studio. Matches the `gpu.rs` / `anim_jobs.rs` sidecar policy.
+pub(crate) fn save_studio_sessions(sessions: &HashMap<SpriteId, StudioSession>) {
+    let Some(path) = sessions_path() else {
+        return;
+    };
+    if let Some(parent) = path.parent() {
+        if let Err(err) = std::fs::create_dir_all(parent) {
+            tracing::warn!(error = %err, "failed to create storage dir for studio sessions");
+            return;
+        }
+    }
+    match encode_sessions(sessions) {
+        Ok(bytes) => {
+            if let Err(err) = std::fs::write(&path, bytes) {
+                tracing::warn!(error = %err, "failed to persist studio sessions");
+            }
+        }
+        Err(err) => tracing::warn!(error = %err, "failed to serialize studio sessions"),
+    }
+}
+
 /// The studio's whole session state. Lives on [`ShellApp`]; the clip candidates
 /// themselves live in `anim_*`, which the clip/pick/land stages drive.
 pub(crate) struct StudioState {
@@ -478,8 +664,10 @@ pub(crate) struct StudioState {
     /// Whether Land bakes the chroma key into the landed loop. Turns on when a
     /// key is chosen; off leaves removal to the timeline op.
     pub remove_on_land: bool,
-    /// The sprite this session belongs to. When the active sprite changes the
-    /// session resets so one sprite's candidates never leak into another's.
+    /// The sprite this transient view belongs to. When the active sprite
+    /// changes, the current view is flushed into `studio_sessions` for this
+    /// owner and a fresh view is hydrated from the map for the new owner, so one
+    /// sprite's work never leaks into another's and switching back restores it.
     pub owner: Option<SpriteId>,
 }
 
@@ -671,9 +859,75 @@ impl ShellApp {
         self.studio_rail(ui);
     }
 
-    /// Resets the studio session when the active sprite changes, so one sprite's
-    /// candidates, masks, and clips never appear under another. Cancels any
-    /// in-flight first-frame job so its late results are dropped.
+    /// Snapshots the current transient session into a [`StudioSession`] — the
+    /// serializable subset (stage, framing, model, approved pose, motion params),
+    /// dropping the transient view (textures, reveal, drag, mask paint).
+    fn studio_session_snapshot(&self) -> StudioSession {
+        StudioSession {
+            stage: self.studio.stage,
+            kind: self.studio.kind,
+            facing: self.studio.facing,
+            i2v_model: self.studio.i2v_model,
+            approved_first_frame: self.studio.approved_first_frame.clone(),
+            remove_on_land: self.studio.remove_on_land,
+            motion: self.anim_motion.clone(),
+            target_frames: self.anim_target_frames,
+            fps: self.anim_fps,
+            seed: self.anim_seed_fixed.then_some(self.anim_seed),
+        }
+    }
+
+    /// Replaces the transient session view with a fresh one hydrated from
+    /// `session`, owned by `owner`. The clip candidates and any in-flight job are
+    /// dropped by the caller; the transient view (textures, reveal, mask paint)
+    /// rebuilds lazily from the durable facts.
+    fn hydrate_studio_session(&mut self, owner: Option<SpriteId>, session: &StudioSession) {
+        let mut state = StudioState {
+            stage: session.stage,
+            kind: session.kind,
+            facing: session.facing,
+            approved_first_frame: session.approved_first_frame.clone(),
+            i2v_model: session.i2v_model,
+            remove_on_land: session.remove_on_land,
+            owner,
+            ..StudioState::default()
+        };
+        // Seed the first-frame prompt from the framing when the session carried
+        // no prompt of its own.
+        if state.frame_gen.prompt.trim().is_empty() {
+            state.frame_gen.prompt = state.default_pose_prompt();
+        }
+        self.studio = state;
+        self.anim_motion.clone_from(&session.motion);
+        self.anim_target_frames = session.target_frames;
+        self.anim_fps = session.fps;
+        match session.seed {
+            Some(seed) => {
+                self.anim_seed_fixed = true;
+                self.anim_seed = seed;
+            }
+            None => self.anim_seed_fixed = false,
+        }
+    }
+
+    /// Flushes the active sprite's transient view into `studio_sessions` so the
+    /// in-progress session is captured at the latest moment — called from
+    /// `App::save` before the sidecar is written. Ownerless (no active sprite)
+    /// is a no-op.
+    pub(crate) fn flush_active_studio_session(&mut self) {
+        if let Some(owner) = self.studio.owner {
+            let snapshot = self.studio_session_snapshot();
+            self.studio_sessions.insert(owner, snapshot);
+            self.prune_studio_sessions();
+        }
+    }
+
+    /// Switches the studio session when the active sprite changes: flush the
+    /// current transient view into `studio_sessions` for the old owner, then
+    /// hydrate a fresh view from the map for the new owner (default if absent).
+    /// One sprite's candidates, masks, and clips never appear under another, and
+    /// switching away and back restores the work. Cancels any in-flight
+    /// first-frame job so its late results are dropped.
     fn sync_studio_owner(&mut self) {
         let active = self.doc.active_sprite().map(|s| s.id);
         if self.studio.owner == active {
@@ -682,13 +936,40 @@ impl ShellApp {
         if let Some(token) = self.studio.frame_gen.cancel.take() {
             token.cancel();
         }
+        // Flush the outgoing owner's durable facts so a later switch back resumes
+        // it. An ownerless transient session (no sprite) is not persisted.
+        if let Some(prev) = self.studio.owner {
+            let snapshot = self.studio_session_snapshot();
+            self.studio_sessions.insert(prev, snapshot);
+            self.prune_studio_sessions();
+        }
         self.leave_animation_preview();
         self.anim_candidates.clear();
         self.anim_selected = None;
-        self.studio = StudioState::default();
-        self.studio.owner = active;
-        if self.studio.frame_gen.prompt.trim().is_empty() {
-            self.studio.frame_gen.prompt = self.studio.default_pose_prompt();
+        let session = active.and_then(|id| self.studio_sessions.get(&id).cloned()).unwrap_or_default();
+        self.hydrate_studio_session(active, &session);
+    }
+
+    /// Caps `studio_sessions` to [`MAX_STUDIO_SESSIONS`], dropping the heaviest
+    /// (those carrying an approved-pose PNG) first, then any remainder. The cap
+    /// bounds the sidecar so a long-lived install does not grow it without limit;
+    /// the approved pose is the only large field, so evicting pose-carrying
+    /// sessions first reclaims the most bytes per drop.
+    fn prune_studio_sessions(&mut self) {
+        while self.studio_sessions.len() > MAX_STUDIO_SESSIONS {
+            let victim = self
+                .studio_sessions
+                .iter()
+                .filter(|(id, _)| Some(**id) != self.studio.owner)
+                .max_by_key(|(_, s)| s.approved_first_frame.as_ref().map_or(0, Vec::len))
+                .map(|(id, _)| *id);
+            match victim {
+                Some(id) => {
+                    self.studio_sessions.remove(&id);
+                }
+                // Nothing droppable (only the active owner is left): stop.
+                None => break,
+            }
         }
     }
 
@@ -2617,5 +2898,118 @@ mod tests {
         assert_eq!(keyed.color, color);
         assert_eq!(keyed.tolerance, 24);
         assert!(land_chroma(false, color, 24).is_none());
+    }
+
+    /// A session with every field set away from its default, to prove a
+    /// round-trip carries the real values and not the defaults.
+    fn sample_session() -> StudioSession {
+        StudioSession {
+            stage: StudioStage::Pick,
+            kind: AnimKind::Attack,
+            facing: Facing::North,
+            i2v_model: I2vModel::Wan,
+            approved_first_frame: Some(vec![1, 2, 3, 4, 5]),
+            remove_on_land: true,
+            motion: "attack swing, back view".to_owned(),
+            target_frames: 12,
+            fps: 24,
+            seed: Some(99),
+        }
+    }
+
+    #[test]
+    fn studio_session_round_trips_through_serde() {
+        let session = sample_session();
+        let bytes = serde_json::to_vec(&session).expect("serialize");
+        let back: StudioSession = serde_json::from_slice(&bytes).expect("deserialize");
+        assert_eq!(back.stage, session.stage);
+        assert_eq!(back.kind, session.kind);
+        assert_eq!(back.facing, session.facing);
+        assert_eq!(back.i2v_model, session.i2v_model);
+        assert_eq!(back.approved_first_frame, session.approved_first_frame);
+        assert_eq!(back.remove_on_land, session.remove_on_land);
+        assert_eq!(back.motion, session.motion);
+        assert_eq!(back.target_frames, session.target_frames);
+        assert_eq!(back.fps, session.fps);
+        assert_eq!(back.seed, session.seed);
+    }
+
+    #[test]
+    fn studio_session_enums_serialize_snake_case() {
+        // The framing enums must serialize snake_case so a sidecar is stable and
+        // forward-compatible across renames.
+        assert_eq!(serde_json::to_string(&StudioStage::FirstFrame).unwrap(), "\"first_frame\"");
+        assert_eq!(serde_json::to_string(&AnimKind::Walk).unwrap(), "\"walk\"");
+        assert_eq!(serde_json::to_string(&Facing::South).unwrap(), "\"south\"");
+        assert_eq!(serde_json::to_string(&I2vModel::Seedance).unwrap(), "\"seedance\"");
+    }
+
+    #[test]
+    fn missing_sidecar_fields_fall_back_to_defaults() {
+        // An older sidecar written before a field existed still deserializes,
+        // filling the gaps with the documented defaults.
+        let json = r#"{ "motion": "idle breathing" }"#;
+        let session: StudioSession = serde_json::from_str(json).expect("deserialize sparse");
+        assert_eq!(session.stage, StudioStage::Anchor);
+        assert_eq!(session.kind, AnimKind::Walk);
+        assert_eq!(session.facing, Facing::East);
+        assert_eq!(session.i2v_model, I2vModel::Seedance);
+        assert_eq!(session.target_frames, 6);
+        assert_eq!(session.fps, 10);
+        assert_eq!(session.motion, "idle breathing");
+        assert!(session.approved_first_frame.is_none());
+        assert!(session.seed.is_none());
+        assert!(!session.remove_on_land);
+    }
+
+    #[test]
+    fn two_sprite_sessions_survive_a_round_trip_through_the_map() {
+        // Mirror the flush-then-hydrate switch: sprite A's session is flushed to
+        // the map, sprite B's is hydrated, then A is read back unchanged.
+        let mut map: HashMap<SpriteId, StudioSession> = HashMap::new();
+        let a = SpriteId::new(1);
+        let b = SpriteId::new(2);
+
+        let session_a = StudioSession {
+            stage: StudioStage::Motion,
+            facing: Facing::West,
+            motion: "walk cycle, side view".to_owned(),
+            approved_first_frame: Some(vec![7, 7, 7]),
+            ..StudioSession::default()
+        };
+        let session_b = StudioSession {
+            stage: StudioStage::FirstFrame,
+            facing: Facing::North,
+            motion: "idle, back view".to_owned(),
+            ..StudioSession::default()
+        };
+
+        // Working on A, then switching to B (B flushed in turn) must not disturb A.
+        map.insert(a, session_a.clone());
+        map.insert(b, session_b.clone());
+
+        let back_a = map.get(&a).expect("sprite A session retained");
+        assert_eq!(back_a.stage, StudioStage::Motion);
+        assert_eq!(back_a.facing, Facing::West);
+        assert_eq!(back_a.motion, "walk cycle, side view");
+        assert_eq!(back_a.approved_first_frame.as_deref(), Some(&[7, 7, 7][..]));
+
+        // And the whole map survives the sidecar serde round-trip.
+        let bytes = encode_sessions(&map).expect("encode");
+        let restored = decode_sessions(&bytes).expect("decode");
+        assert_eq!(restored.len(), 2);
+        assert_eq!(restored.get(&a).unwrap().motion, session_a.motion);
+        assert_eq!(restored.get(&b).unwrap().facing, session_b.facing);
+        assert_eq!(restored.get(&a).unwrap().approved_first_frame, session_a.approved_first_frame);
+    }
+
+    #[test]
+    fn empty_and_missing_sidecar_decode_to_empty() {
+        // An empty JSON object (no sessions key) decodes to an empty map.
+        let map = decode_sessions(b"{}").expect("decode empty object");
+        assert!(map.is_empty());
+        // A round-trip of an empty map is also empty.
+        let bytes = encode_sessions(&HashMap::new()).expect("encode empty");
+        assert!(decode_sessions(&bytes).expect("decode").is_empty());
     }
 }

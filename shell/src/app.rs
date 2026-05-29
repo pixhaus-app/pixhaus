@@ -583,6 +583,13 @@ pub struct ShellApp {
     /// the studio's clip/pick/land stages drive unchanged. All of it lives off
     /// the document until Land, so Cancel and restart are clean at every stage.
     pub(crate) studio: crate::studio::StudioState,
+    /// Per-sprite durable studio sessions. The transient `studio` view is the
+    /// active sprite's session; on a sprite switch it is flushed here and the new
+    /// sprite's session is hydrated back (default if absent). Persisted to a
+    /// `studio-sessions.json` sidecar so the last session per sprite survives an
+    /// app restart. Interim home — moves into the project archive when the io
+    /// crate lands.
+    pub(crate) studio_sessions: HashMap<SpriteId, crate::studio::StudioSession>,
     /// Set while hand-editing a generated image in the drawing editor: the
     /// breadcrumb back to the studio thread the edit returns to.
     pub(crate) studio_return: Option<crate::studio::StudioReturn>,
@@ -795,6 +802,10 @@ impl ShellApp {
             .and_then(|s| eframe::get_value::<(u32, u32)>(s, "new_sprite_size"))
             .unwrap_or((DEFAULT_CANVAS.width, DEFAULT_CANVAS.height));
 
+        // Restore the per-sprite studio sessions from their app-data sidecar.
+        // A missing or corrupt sidecar yields an empty map (a fresh install).
+        let studio_sessions = crate::studio::load_studio_sessions();
+
         let mut app = Self {
             doc: DocumentStore::new(),
             runtime,
@@ -880,6 +891,7 @@ impl ShellApp {
             anim_gen_epoch: 0,
             anim_pending_parent: None,
             studio: crate::studio::StudioState::default(),
+            studio_sessions,
             studio_return: None,
             bg_key_color: Rgba::opaque(255, 0, 255),
             bg_tolerance: 24,
@@ -3274,6 +3286,11 @@ impl eframe::App for ShellApp {
         eframe::set_value(storage, "keymap", &self.keymap);
         eframe::set_value(storage, "new_sprite_size", &(self.new_sprite_w, self.new_sprite_h));
         eframe::set_value(storage, "grid_prefs", &GridPrefs::from_editor(&self.editor));
+        // Capture the active sprite's in-progress session, then write the
+        // per-sprite sessions to their own JSON sidecar under the storage dir
+        // (the approved-pose PNG is too heavy for eframe's RON value store).
+        self.flush_active_studio_session();
+        crate::studio::save_studio_sessions(&self.studio_sessions);
     }
 
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
