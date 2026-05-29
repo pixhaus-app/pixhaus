@@ -7,6 +7,8 @@
 //! disjoint fields and pushes undo entries with
 //! `editor.history.push(cmd, &mut doc)`.
 
+use std::collections::BTreeSet;
+
 use eframe::egui;
 use pixhaus_core::canvas::{BrushShape, PixelBuffer};
 use pixhaus_core::project::{IVec2, LayerId, PixelBufferId, Rgba};
@@ -344,6 +346,12 @@ pub struct EditorState {
     /// `needs_focus` is set when the rename starts so the text field grabs
     /// focus on its first frame.
     pub layer_rename: Option<(LayerId, String, bool)>,
+    /// Layers panel: the multi-select set, driving batch ops (merge selected,
+    /// delete multi). View state, not document state — never serialized and not
+    /// undoable. The paint target stays [`DocumentStore::active_layer`] (the
+    /// anchor: the last-clicked row, whose blend/opacity strip shows); this set
+    /// is only the batch-op target.
+    pub selected_layers: BTreeSet<LayerId>,
 }
 
 impl Default for EditorState {
@@ -380,6 +388,7 @@ impl Default for EditorState {
             cel_size: 48.0,
             new_tag_name: String::new(),
             layer_rename: None,
+            selected_layers: BTreeSet::new(),
         }
     }
 }
@@ -409,6 +418,81 @@ impl EditorState {
         self.selection = None;
         self.lasso.clear();
     }
+
+    /// Resolves a layer-panel click into the new multi-select set and anchor.
+    /// `display_order` is the panel's top-first display order
+    /// (`Sprite::layer_display_order`), `anchor` is the current anchor
+    /// (`DocumentStore::active_layer`, the last-clicked row). Returns the new
+    /// anchor for the caller to store back into `active_layer`.
+    ///
+    /// - Plain click (`additive` and `range` both false): replace the set with
+    ///   `{id}` and make `id` the anchor.
+    /// - Ctrl/Cmd-click (`additive`): toggle `id` in the set and move the anchor
+    ///   to `id`. Removing the anchor leaves the set as-is (the caller's reseed
+    ///   handles an emptied set).
+    /// - Shift-click (`range`): select the contiguous display-order span between
+    ///   the current anchor and `id`. The anchor does not move (Shift extends
+    ///   from the same anchor, matching the Tauri panel). With no anchor, falls
+    ///   back to a plain click.
+    ///
+    /// Range wins over toggle when both modifiers are held, matching the panel.
+    pub fn resolve_layer_selection(&mut self, display_order: &[LayerId], anchor: Option<LayerId>, id: LayerId, additive: bool, range: bool) -> LayerId {
+        if range {
+            if let Some(span) = anchor.and_then(|a| display_range(display_order, a, id)) {
+                self.selected_layers = span.into_iter().collect();
+                return anchor.unwrap_or(id);
+            }
+            // No anchor (or it left the tree): treat as a plain click.
+        }
+        if additive && !range {
+            if !self.selected_layers.insert(id) {
+                self.selected_layers.remove(&id);
+            }
+            return id;
+        }
+        // Plain click (or range fall-through): collapse to the clicked row.
+        self.selected_layers.clear();
+        self.selected_layers.insert(id);
+        id
+    }
+
+    /// The current multi-select as a `Vec`, in ascending `LayerId` order.
+    /// Batch ops read this; they re-order by composite position themselves.
+    // Consumed by merge-selected and delete-multi (plan tasks 4 and 5); kept on
+    // the selection model now so every later task reads one accessor.
+    #[allow(dead_code)]
+    #[must_use]
+    pub fn selected_layer_ids(&self) -> Vec<LayerId> {
+        self.selected_layers.iter().copied().collect()
+    }
+}
+
+/// The contiguous span of `display_order` between `a` and `b` inclusive, in
+/// display order. `None` when either id is absent from the order.
+fn display_range(display_order: &[LayerId], a: LayerId, b: LayerId) -> Option<Vec<LayerId>> {
+    let pa = display_order.iter().position(|&l| l == a)?;
+    let pb = display_order.iter().position(|&l| l == b)?;
+    let (lo, hi) = if pa <= pb { (pa, pb) } else { (pb, pa) };
+    Some(display_order[lo..=hi].to_vec())
+}
+
+/// Reseeds `selected` and the anchor against the live `display_order` (top-first).
+/// Drops selected ids no longer in the order; when the set has emptied or the
+/// anchor is gone, seeds both from the top remaining layer. Returns the new
+/// anchor (the first display-order layer, or `None` for an empty sprite). Pure
+/// so the shell wrapper and tests share one rule.
+pub fn reseed_selection(display_order: &[LayerId], selected: &mut BTreeSet<LayerId>, anchor: Option<LayerId>) -> Option<LayerId> {
+    selected.retain(|id| display_order.contains(id));
+    let anchor_live = anchor.is_some_and(|id| display_order.contains(&id));
+    if anchor_live && !selected.is_empty() {
+        return anchor;
+    }
+    let top = display_order.first().copied();
+    selected.clear();
+    if let Some(id) = top {
+        selected.insert(id);
+    }
+    top
 }
 
 /// Converts a core [`Rgba`] to an egui [`egui::Color32`] (unmultiplied).
@@ -474,5 +558,147 @@ mod tests {
         s.mark_dirty(0, 0, 10, 10);
         s.mark_dirty(20, 20, 10, 10);
         assert_eq!(s.take_pending(), Some((0, 0, 30, 30)));
+    }
+
+    mod selection {
+        use std::collections::BTreeSet;
+
+        use pixhaus_core::project::{Layer, LayerId, LayerKind, Size, Sprite, SpriteId};
+
+        use crate::editor::{reseed_selection, EditorState};
+
+        fn lid(n: u32) -> LayerId {
+            LayerId::new(n)
+        }
+
+        /// Bottom raster (1), a group (2) holding one child raster (3), and a
+        /// top raster (4). Vec order is bottom-first; the display order this
+        /// yields is top-first: [4, 2, 3, 1].
+        fn nested_order() -> Vec<LayerId> {
+            let mut s = Sprite::empty(SpriteId::new(1), "s", Size::new(8, 8));
+            let mut group = Layer::raster(lid(2), "group");
+            group.kind = LayerKind::Group { collapsed: false };
+            let mut child = Layer::raster(lid(3), "child");
+            child.parent = Some(lid(2));
+            s.layers = vec![Layer::raster(lid(1), "bottom"), group, child, Layer::raster(lid(4), "top")];
+            s.layer_display_order().into_iter().map(|(id, _)| id).collect()
+        }
+
+        fn set(ids: &[u32]) -> BTreeSet<LayerId> {
+            ids.iter().map(|n| lid(*n)).collect()
+        }
+
+        fn editor_with(ids: &[u32]) -> EditorState {
+            EditorState {
+                selected_layers: set(ids),
+                ..EditorState::default()
+            }
+        }
+
+        #[test]
+        fn display_order_is_top_first_through_the_group() {
+            assert_eq!(nested_order(), vec![lid(4), lid(2), lid(3), lid(1)]);
+        }
+
+        #[test]
+        fn shift_range_spans_the_display_order_across_the_group() {
+            let order = nested_order();
+            let mut ed = EditorState::default();
+            // Anchor on the top layer (4), shift-click the bottom layer (1):
+            // the range covers the whole top-first span, including the group
+            // header and its child, not Vec order.
+            let new_anchor = ed.resolve_layer_selection(&order, Some(lid(4)), lid(1), false, true);
+            assert_eq!(new_anchor, lid(4), "shift extends from the anchor without moving it");
+            assert_eq!(ed.selected_layers, set(&[1, 2, 3, 4]));
+
+            // A tighter range: anchor 2, shift-click 3 -> contiguous [2, 3].
+            let mut ed2 = EditorState::default();
+            ed2.resolve_layer_selection(&order, Some(lid(2)), lid(3), false, true);
+            assert_eq!(ed2.selected_layers, set(&[2, 3]));
+        }
+
+        #[test]
+        fn shift_with_no_anchor_falls_back_to_a_plain_click() {
+            let order = nested_order();
+            let mut ed = EditorState::default();
+            let new_anchor = ed.resolve_layer_selection(&order, None, lid(3), false, true);
+            assert_eq!(new_anchor, lid(3));
+            assert_eq!(ed.selected_layers, set(&[3]));
+        }
+
+        #[test]
+        fn ctrl_toggle_adds_then_removes() {
+            let order = nested_order();
+            let mut ed = EditorState::default();
+            // Seed with a plain click on 4.
+            ed.resolve_layer_selection(&order, None, lid(4), false, false);
+            assert_eq!(ed.selected_layers, set(&[4]));
+
+            // Ctrl-click 1: adds it and moves the anchor to 1.
+            let anchor = ed.resolve_layer_selection(&order, Some(lid(4)), lid(1), true, false);
+            assert_eq!(anchor, lid(1));
+            assert_eq!(ed.selected_layers, set(&[1, 4]));
+
+            // Ctrl-click 1 again: removes it. The anchor still tracks 1.
+            let anchor = ed.resolve_layer_selection(&order, Some(lid(1)), lid(1), true, false);
+            assert_eq!(anchor, lid(1));
+            assert_eq!(ed.selected_layers, set(&[4]));
+        }
+
+        #[test]
+        fn plain_click_collapses_to_one() {
+            let order = nested_order();
+            let mut ed = editor_with(&[1, 2, 3, 4]);
+            let anchor = ed.resolve_layer_selection(&order, Some(lid(4)), lid(3), false, false);
+            assert_eq!(anchor, lid(3));
+            assert_eq!(ed.selected_layers, set(&[3]), "plain click discards the rest of the selection");
+        }
+
+        #[test]
+        fn range_wins_over_toggle_when_both_modifiers_held() {
+            let order = nested_order();
+            let mut ed = EditorState::default();
+            // Both Ctrl and Shift down: the range path runs, not the toggle.
+            ed.resolve_layer_selection(&order, Some(lid(2)), lid(3), true, true);
+            assert_eq!(ed.selected_layers, set(&[2, 3]));
+        }
+
+        #[test]
+        fn deleting_the_anchor_reseeds_both_anchor_and_set() {
+            // Start with the full selection, anchor on the top layer (4). Drop 4
+            // from the order (simulating a delete) and reseed.
+            let mut selected = set(&[1, 2, 3, 4]);
+            selected.remove(&lid(4));
+            // Order after 4 is gone: top-first [2, 3, 1].
+            let order_after = vec![lid(2), lid(3), lid(1)];
+            let anchor = reseed_selection(&order_after, &mut selected, Some(lid(4)));
+            // The dead anchor reseeds to the top remaining layer; the set follows.
+            assert_eq!(anchor, Some(lid(2)));
+            assert_eq!(selected, set(&[2]));
+        }
+
+        #[test]
+        fn reseed_is_a_no_op_while_anchor_and_set_stay_live() {
+            let order = nested_order();
+            let mut selected = set(&[2, 3]);
+            let anchor = reseed_selection(&order, &mut selected, Some(lid(2)));
+            assert_eq!(anchor, Some(lid(2)));
+            assert_eq!(selected, set(&[2, 3]), "a live anchor with a non-empty set is left untouched");
+        }
+
+        #[test]
+        fn reseed_seeds_from_the_top_when_the_set_empties() {
+            let order = nested_order();
+            let mut selected: BTreeSet<LayerId> = BTreeSet::new();
+            let anchor = reseed_selection(&order, &mut selected, None);
+            assert_eq!(anchor, Some(lid(4)));
+            assert_eq!(selected, set(&[4]));
+        }
+
+        #[test]
+        fn selected_layer_ids_returns_ascending_ids() {
+            let ed = editor_with(&[4, 1, 3]);
+            assert_eq!(ed.selected_layer_ids(), vec![lid(1), lid(3), lid(4)]);
+        }
     }
 }

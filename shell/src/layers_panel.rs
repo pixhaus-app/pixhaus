@@ -96,7 +96,11 @@ impl ShellApp {
         let active = self.doc.active_layer;
         let layer_count = sprite.layers.len();
 
-        let mut select: Option<LayerId> = None;
+        // (layer, additive, range): a click routed through the multi-select model.
+        let mut select: Option<(LayerId, bool, bool)> = None;
+        // A right-click on a row outside the selection collapses to that row
+        // before the context menu opens.
+        let mut collapse_select: Option<LayerId> = None;
         let mut toggle_visible: Option<LayerId> = None;
         let mut toggle_lock: Option<LayerId> = None;
         let mut toggle_collapse: Option<LayerId> = None;
@@ -114,7 +118,8 @@ impl ShellApp {
         let mut layer_move: Option<(LayerId, Option<LayerId>, Option<LayerId>)> = None;
 
         for row in &rows {
-            let is_active = active == Some(row.id);
+            let is_anchor = active == Some(row.id);
+            let selected = self.editor.selected_layers.contains(&row.id);
             let hint = if row.is_group {
                 crate::dnd::DropHint::Into
             } else {
@@ -161,25 +166,34 @@ impl ShellApp {
                         }
                     }
 
+                    // Strong text marks the anchor (active) row only, even when
+                    // several rows are selected.
                     let label = if row.is_group {
                         egui::RichText::new(format!("{} {}", icons::GROUP, row.name))
-                    } else if is_active {
+                    } else if is_anchor {
                         egui::RichText::new(row.name.clone()).strong()
                     } else {
                         egui::RichText::new(row.name.clone())
                     };
                     // One widget senses both click and drag; a clean click stays a
-                    // click because `drag_started` needs pointer motion.
-                    let resp = ui.add(egui::Button::selectable(is_active, label).sense(egui::Sense::click_and_drag()));
+                    // click because `drag_started` needs pointer motion. Selected
+                    // rows render highlighted via `Button::selectable`.
+                    let resp = ui.add(egui::Button::selectable(selected, label).sense(egui::Sense::click_and_drag()));
                     if resp.clicked() {
                         if row.is_group {
                             toggle_collapse = Some(row.id);
                         } else {
-                            select = Some(row.id);
+                            let (cmd, shift) = ui.input(|i| (i.modifiers.command, i.modifiers.shift));
+                            select = Some((row.id, cmd, shift));
                         }
                     }
                     if resp.double_clicked() {
                         start_rename = Some((row.id, row.name.clone()));
+                    }
+                    // Right-click on a row outside the selection collapses to it
+                    // first, so a context-menu batch op targets the clicked row.
+                    if resp.secondary_clicked() && !selected {
+                        collapse_select = Some(row.id);
                     }
                     resp.dnd_set_drag_payload(LayerDrag(row.id));
                     resp.context_menu(|ui| {
@@ -226,8 +240,8 @@ impl ShellApp {
                 }
             }
 
-            // Blend mode and opacity for the active raster layer.
-            if is_active && !row.is_group {
+            // Blend mode and opacity for the anchor raster layer only.
+            if is_anchor && !row.is_group {
                 ui.horizontal(|ui| {
                     ui.add_space(f32::from(row.depth) * 14.0 + 28.0);
                     egui::ComboBox::from_id_salt(("blend", row.id.get()))
@@ -256,8 +270,11 @@ impl ShellApp {
         }
 
         // Apply the single action chosen this frame.
-        if let Some(id) = select {
-            self.doc.active_layer = Some(id);
+        if let Some(id) = collapse_select {
+            self.select_layer(id, false, false);
+        }
+        if let Some((id, additive, range)) = select {
+            self.select_layer(id, additive, range);
         }
         if let Some(id) = toggle_visible {
             self.edit_layer("Toggle visibility", id, |l| l.visible = !l.visible);
@@ -305,6 +322,30 @@ impl ShellApp {
         if let Some((id, name)) = start_rename {
             self.editor.layer_rename = Some((id, name, true));
         }
+    }
+
+    /// Routes a layer-panel click through the multi-select model. `additive` is
+    /// Ctrl/Cmd-click (toggle), `range` is Shift-click (contiguous span). Keeps
+    /// `active_layer` as the anchor and paint target; the selection set is the
+    /// batch-op target. See [`crate::editor::EditorState::resolve_layer_selection`].
+    pub(crate) fn select_layer(&mut self, id: LayerId, additive: bool, range: bool) {
+        let order: Vec<LayerId> = self
+            .doc
+            .active_sprite()
+            .map(|s| s.layer_display_order().into_iter().map(|(lid, _)| lid).collect())
+            .unwrap_or_default();
+        let anchor = self.doc.active_layer;
+        let new_anchor = self.editor.resolve_layer_selection(&order, anchor, id, additive, range);
+        self.doc.active_layer = Some(new_anchor);
+    }
+
+    /// The current multi-select. Batch ops (merge selected, delete multi) read
+    /// this.
+    // Consumed by plan tasks 4 and 5; added now so every later task reads one
+    // ShellApp accessor.
+    #[allow(dead_code)]
+    pub(crate) fn selected_layer_ids(&self) -> Vec<LayerId> {
+        self.editor.selected_layer_ids()
     }
 
     /// Mutates the layer with `id` through an undoable edit.
@@ -369,8 +410,23 @@ impl ShellApp {
             return;
         }
         push_sprite_edit(&mut self.editor, &mut self.doc, "Delete layer", |sprite| sprite.remove_layer(id));
-        self.doc.active_layer = self.doc.active_sprite().and_then(|s| s.layers.last().map(|l| l.id));
+        self.editor.selected_layers.remove(&id);
+        self.reseed_layer_selection();
         self.refresh_canvas(false);
+    }
+
+    /// Reseeds the anchor and the multi-select set when the set has emptied or
+    /// the anchor no longer names a live layer — e.g. after a delete. Seeds both
+    /// from the top remaining layer in display order. A no-op while the anchor
+    /// is still a selected, live layer.
+    pub(crate) fn reseed_layer_selection(&mut self) {
+        let order: Vec<LayerId> = self
+            .doc
+            .active_sprite()
+            .map(|s| s.layer_display_order().into_iter().map(|(id, _)| id).collect())
+            .unwrap_or_default();
+        let anchor = self.doc.active_layer;
+        self.doc.active_layer = crate::editor::reseed_selection(&order, &mut self.editor.selected_layers, anchor);
     }
 
     /// Moves the layer one slot toward the top (`up`) or bottom among its
