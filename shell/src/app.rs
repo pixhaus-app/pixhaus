@@ -2752,6 +2752,11 @@ impl ShellApp {
         let frame_ms = (1000 / fps.max(1)).max(1);
         let motion = self.anim_candidates[i].motion.clone();
         integrate_frames_undoable(&mut self.editor, &mut self.doc, frames, frame_ms, &motion, LoopDirection::Forward);
+        // Record the directional-cascade edge as a second, separately-undoable
+        // entry: the frames landed as "Integrate animation", and the edge as
+        // "Record cascade edge". `motion` is the frame tag integrate created, so
+        // the edge names the same range. Skipped for custom animations.
+        self.record_cascade_edge(&motion);
         // Drop the canvas preview back to the sprite/timeline; keep the gallery.
         self.anim_selected = None;
         self.anim_clip_playing = false;

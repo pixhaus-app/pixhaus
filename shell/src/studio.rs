@@ -31,7 +31,7 @@ use tokio_util::sync::CancellationToken;
 
 use pixhaus_ai::backends::fal::{FAL_I2V, FAL_SEEDANCE};
 use pixhaus_core::canvas::PixelBuffer;
-use pixhaus_core::project::{Rgba, SpriteId};
+use pixhaus_core::project::{AnchorDirection, AnimationKind, Rgba, SpriteId};
 use pixhaus_core::transforms::normalize::{ChromaKey, NormalizeResult, SeamMatch, chroma_key, detect_key_color};
 
 use crate::ai::{self, FirstFrameJob};
@@ -129,6 +129,18 @@ impl AnimKind {
             AnimKind::Custom => "custom",
         }
     }
+
+    /// Maps the studio kind to the core [`AnimationKind`] used in the directional
+    /// cascade. [`AnimKind::Custom`] has no cascade equivalent and returns `None`,
+    /// so a custom animation lands its frames but records no cascade edge.
+    pub(crate) fn to_animation_kind(self) -> Option<AnimationKind> {
+        match self {
+            AnimKind::Idle => Some(AnimationKind::Idle),
+            AnimKind::Walk => Some(AnimationKind::Walk),
+            AnimKind::Attack => Some(AnimationKind::Attack),
+            AnimKind::Custom => None,
+        }
+    }
 }
 
 /// The facing direction the animation conditions on.
@@ -170,6 +182,18 @@ impl Facing {
             Facing::North => "north",
             Facing::East => "east",
             Facing::West => "west",
+        }
+    }
+
+    /// Maps the studio facing to the core [`AnchorDirection`] the directional
+    /// cascade indexes by. Every facing has a direction (east is the flip of
+    /// west, but the cascade still records the east cell).
+    pub(crate) fn to_anchor_direction(self) -> AnchorDirection {
+        match self {
+            Facing::South => AnchorDirection::South,
+            Facing::North => AnchorDirection::North,
+            Facing::East => AnchorDirection::East,
+            Facing::West => AnchorDirection::West,
         }
     }
 }
@@ -2408,6 +2432,13 @@ impl ShellApp {
                 format!("{} landed", crate::icons::CHECK),
             );
         }
+        if self.studio.kind == AnimKind::Custom {
+            ui.label(
+                egui::RichText::new("Custom animations are not tracked in the cascade grid.")
+                    .small()
+                    .weak(),
+            );
+        }
         ui.add_space(8.0);
         ui.separator();
         if self.studio.remove_on_land {
@@ -2948,6 +2979,23 @@ mod tests {
     fn key_color_prompt_appends_the_hex_background() {
         let p = key_color_prompt("a knight", Rgba::opaque(255, 0, 255));
         assert_eq!(p, "a knight, isolated on a solid #ff00ff background");
+    }
+
+    #[test]
+    fn anim_kind_maps_to_animation_kind_except_custom() {
+        assert_eq!(AnimKind::Idle.to_animation_kind(), Some(AnimationKind::Idle));
+        assert_eq!(AnimKind::Walk.to_animation_kind(), Some(AnimationKind::Walk));
+        assert_eq!(AnimKind::Attack.to_animation_kind(), Some(AnimationKind::Attack));
+        // Custom has no cascade kind, so Land skips its edge.
+        assert_eq!(AnimKind::Custom.to_animation_kind(), None);
+    }
+
+    #[test]
+    fn facing_maps_to_anchor_direction() {
+        assert_eq!(Facing::South.to_anchor_direction(), AnchorDirection::South);
+        assert_eq!(Facing::North.to_anchor_direction(), AnchorDirection::North);
+        assert_eq!(Facing::East.to_anchor_direction(), AnchorDirection::East);
+        assert_eq!(Facing::West.to_anchor_direction(), AnchorDirection::West);
     }
 
     #[test]

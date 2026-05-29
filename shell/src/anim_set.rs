@@ -18,7 +18,8 @@
 use eframe::egui;
 
 use pixhaus_core::project::{
-    AnchorDirection, AnimationKind, CharacterAnchor, EntityContent, EntityId, ReferenceImage, ReferenceSheet, SheetVariant, SheetVariantId, VariantOrigin,
+    AnchorDirection, AnimationKind, CharacterAnchor, DerivedSheet, EntityContent, EntityId, ReferenceImage, ReferenceSheet, SheetVariant, SheetVariantId,
+    VariantOrigin,
 };
 
 use crate::app::{JobStatus, ShellApp};
@@ -341,6 +342,61 @@ fn enable_east(editor: &mut crate::editor::EditorState, doc: &mut crate::documen
                 },
             );
             sheet.anchor.directional.set(AnchorDirection::East, placeholder);
+        }
+    });
+}
+
+/// Resolves the anchor variant id a clip in `direction` was seeded from, for a
+/// [`DerivedSheet`]'s `derived_from` edge. Prefers the directional anchor for
+/// that direction (east returns the west variant via
+/// [`pixhaus_core::project::DirectionalAnchors::get`]); falls back to the neutral
+/// when no directional anchor exists, since the studio seeds from the neutral
+/// before any directional anchor is derived. `None` only when neither is present.
+#[must_use]
+fn seed_variant_id(anchor: &CharacterAnchor, direction: AnchorDirection) -> Option<SheetVariantId> {
+    anchor
+        .directional
+        .get(direction)
+        .map(|v| v.id)
+        .or_else(|| anchor.neutral.as_ref().map(|n| n.id))
+}
+
+/// Records a [`DerivedSheet`] edge onto the entity's [`CharacterAnchor`] at Land,
+/// as one undoable library edit. This is the cascade write that integrate's frame
+/// landing pairs with: the frames land as a [`crate::commands::SpriteBufferEdit`]
+/// ("Integrate animation"), and this records the edge ("Record cascade edge") so
+/// the coverage grid reads the new (kind, direction) cell as covered and undo
+/// reverses each independently.
+///
+/// `derived_from` is the directional anchor (or neutral) the clip was seeded from
+/// — when it changes id, the new sheet reads stale, which is the cascade's whole
+/// point. East shares west's seed id (the flip is not its own variant).
+///
+/// Takes the editor and document directly (not `&mut ShellApp`) so the write is
+/// unit-testable against a constructed [`crate::document::DocumentStore`]. No-op
+/// when the entity has no reference sheet.
+fn record_derived_sheet(
+    editor: &mut crate::editor::EditorState,
+    doc: &mut crate::document::DocumentStore,
+    entity_id: EntityId,
+    animation_kind: AnimationKind,
+    direction: AnchorDirection,
+    tag_name: String,
+    derived_from: SheetVariantId,
+) {
+    let sheet = DerivedSheet {
+        animation_kind,
+        direction,
+        tag_name,
+        derived_from,
+    };
+    crate::commands::push_library_edit(editor, doc, "Record cascade edge", entity_id, move |entity| {
+        if let EntityContent::Sprites {
+            reference_sheet: Some(ref_sheet),
+            ..
+        } = &mut entity.content
+        {
+            ref_sheet.anchor.derived_sheets.push(sheet);
         }
     });
 }
@@ -723,6 +779,39 @@ impl ShellApp {
         };
         enable_east(&mut self.editor, &mut self.doc, entity_id);
     }
+
+    /// Records the directional-cascade [`DerivedSheet`] edge for the just-landed
+    /// clip, the second of Land's two undo entries (the first being the frames
+    /// integrated by [`crate::commands::integrate_frames_undoable`]). The edge
+    /// reads the studio's kind and facing and points `derived_from` at the
+    /// directional anchor (or neutral) the clip was seeded from, so the coverage
+    /// grid's matching cell reads covered and re-rolling the upstream marks it
+    /// stale.
+    ///
+    /// `tag_name` is the frame tag integrate created — the motion label — so the
+    /// recorded edge names the same range that landed on the timeline.
+    ///
+    /// [`AnimKind::Custom`] has no [`AnimationKind`] in the cascade, so a custom
+    /// animation records no edge; the Land inspector notes that custom animations
+    /// are not tracked in the cascade grid. Also a no-op when no entity is active,
+    /// its sheet has no anchor to seed from, or the seed variant cannot be
+    /// resolved (no directional anchor and no neutral yet).
+    pub(crate) fn record_cascade_edge(&mut self, tag_name: &str) {
+        let Some(animation_kind) = self.studio.kind.to_animation_kind() else {
+            // Custom animations have no cascade kind: land the frames, skip the
+            // edge, and tell the user why so the grid's silence is explained.
+            self.anim_status = JobStatus::Failed("custom animations are not tracked in the cascade grid".to_owned());
+            return;
+        };
+        let direction = self.studio.facing.to_anchor_direction();
+        let Some(entity_id) = self.doc.active_entity_id() else {
+            return;
+        };
+        let Some(derived_from) = self.active_anchor().and_then(|(anchor, _)| seed_variant_id(anchor, direction)) else {
+            return;
+        };
+        record_derived_sheet(&mut self.editor, &mut self.doc, entity_id, animation_kind, direction, tag_name.to_owned(), derived_from);
+    }
 }
 
 /// Renders one anchor-header chip: a label and its state glyph.
@@ -1099,5 +1188,112 @@ mod tests {
         enable_east(&mut editor, &mut doc, entity_id);
         assert_eq!(editor.history.node_count(), nodes_after_first, "a redundant enable records no undo entry");
         assert!(directional_of(&doc, entity_id).expect("sheet present").east_from_west);
+    }
+
+    // ── C4: DerivedSheet edge recording at Land ───────────────────────────────
+
+    /// Reads the active entity's derived sheets, if a reference sheet exists.
+    fn derived_sheets_of(doc: &DocumentStore, entity_id: EntityId) -> Vec<DerivedSheet> {
+        let Some(entity) = doc.project.library.entities.iter().find(|e| e.id == entity_id) else {
+            return Vec::new();
+        };
+        let EntityContent::Sprites {
+            reference_sheet: Some(sheet),
+            ..
+        } = &entity.content
+        else {
+            return Vec::new();
+        };
+        sheet.anchor.derived_sheets.clone()
+    }
+
+    #[test]
+    fn seed_variant_id_prefers_directional_then_neutral() {
+        // West directional present: its id is the seed.
+        let neutral = variant(2, Some(1));
+        let mut anchor = CharacterAnchor {
+            neutral: Some(neutral),
+            ..Default::default()
+        };
+        anchor.directional.set(AnchorDirection::West, variant(3, Some(2)));
+        assert_eq!(seed_variant_id(&anchor, AnchorDirection::West), Some(SheetVariantId::new(3)), "west uses its directional anchor");
+        // East shares west's seed (the flip is not its own variant).
+        assert_eq!(seed_variant_id(&anchor, AnchorDirection::East), Some(SheetVariantId::new(3)), "east shares west's seed");
+        // South has no directional anchor: it falls back to the neutral.
+        assert_eq!(seed_variant_id(&anchor, AnchorDirection::South), Some(SheetVariantId::new(2)), "south falls back to the neutral");
+        // No directional and no neutral: nothing to seed from.
+        assert_eq!(seed_variant_id(&CharacterAnchor::default(), AnchorDirection::South), None);
+    }
+
+    #[test]
+    fn record_derived_sheet_lands_the_edge_with_expected_fields_under_one_undo() {
+        let (mut doc, mut editor, entity_id, neutral) = doc_with_neutral();
+        // Seed from the neutral (no directional anchor yet) — the studio's pre-
+        // directional case. `derived_from` must match the neutral's id.
+        let derived_from = neutral.id;
+
+        record_derived_sheet(
+            &mut editor,
+            &mut doc,
+            entity_id,
+            AnimationKind::Idle,
+            AnchorDirection::South,
+            "idle".to_owned(),
+            derived_from,
+        );
+
+        let sheets = derived_sheets_of(&doc, entity_id);
+        assert_eq!(sheets.len(), 1, "one edge recorded");
+        let sheet = &sheets[0];
+        assert_eq!(sheet.animation_kind, AnimationKind::Idle);
+        assert_eq!(sheet.direction, AnchorDirection::South);
+        assert_eq!(sheet.tag_name, "idle", "tag names the landed range");
+        assert_eq!(sheet.derived_from, derived_from, "derived_from points at the seed anchor");
+
+        // One undoable entry: undo removes the edge.
+        editor.history.undo(&mut doc).expect("undo the edge");
+        assert!(derived_sheets_of(&doc, entity_id).is_empty(), "undo removes the recorded edge");
+        editor.history.redo(&mut doc).expect("redo the edge");
+        assert_eq!(derived_sheets_of(&doc, entity_id).len(), 1, "redo restores the edge");
+    }
+
+    #[test]
+    fn land_records_two_undo_entries_and_undo_reverses_each_independently() {
+        use pixhaus_core::canvas::PixelBuffer;
+        use pixhaus_core::project::{LoopDirection, Rgba};
+
+        let (mut doc, mut editor, entity_id, neutral) = doc_with_neutral();
+        let frames_before = doc.frame_count();
+        let nodes_before = editor.history.node_count();
+
+        // First Land entry: integrate the frames (mirrors `integrate_picked`).
+        let frames: Vec<PixelBuffer> = (0..3)
+            .map(|_| PixelBuffer::filled(16, 16, Rgba::new(7, 7, 7, 255)).expect("frame"))
+            .collect();
+        crate::commands::integrate_frames_undoable(&mut editor, &mut doc, frames, 100, "walk", LoopDirection::Forward).expect("integrated range");
+        assert_eq!(doc.frame_count(), 3, "three frames landed");
+
+        // Second Land entry: record the cascade edge, seeded from the neutral.
+        record_derived_sheet(
+            &mut editor,
+            &mut doc,
+            entity_id,
+            AnimationKind::Walk,
+            AnchorDirection::South,
+            "walk".to_owned(),
+            neutral.id,
+        );
+        assert_eq!(derived_sheets_of(&doc, entity_id).len(), 1, "edge recorded");
+        assert_eq!(editor.history.node_count(), nodes_before + 2, "Land is two distinct undo entries");
+
+        // The first undo reverses only the edge; the frames stay on the timeline.
+        editor.history.undo(&mut doc).expect("undo the edge");
+        assert!(derived_sheets_of(&doc, entity_id).is_empty(), "first undo removes the edge");
+        assert_eq!(doc.frame_count(), 3, "the frames are still landed after undoing only the edge");
+
+        // The second undo reverses the frame integration.
+        editor.history.undo(&mut doc).expect("undo the frames");
+        assert_eq!(doc.frame_count(), frames_before, "second undo removes the integrated frames");
+        assert!(derived_sheets_of(&doc, entity_id).is_empty(), "no edge remains");
     }
 }
