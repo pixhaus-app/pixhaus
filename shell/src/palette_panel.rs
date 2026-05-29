@@ -6,16 +6,18 @@
 //! the grid is locked). Auto-add-on-draw, sorting, and a grid lock are the
 //! Pixelorama-derived curation aids; see `THIRD_PARTY_NOTICES.md`.
 
+use std::collections::HashSet;
 use std::path::Path;
 
 use eframe::egui;
+use pixhaus_core::canvas::PixelBuffer;
 use pixhaus_core::color::palette_file::{aco, gpl, hex, pal, PaletteFileError, PaletteFileResult};
 use pixhaus_core::color::space::to_hsv;
-use pixhaus_core::project::{Palette, PaletteEntry, Rgba};
+use pixhaus_core::project::{CelData, Palette, PaletteEntry, PixelBufferId, Rgba};
 
 use crate::app::ShellApp;
 use crate::color_picker::color_picker_ui;
-use crate::commands::push_sprite_edit;
+use crate::commands::{push_sprite_edit, CanvasBufferSwap, CanvasEdit};
 use crate::editor::{PaletteExportFormat, PaletteSort, to_color32};
 use crate::icons;
 
@@ -240,6 +242,18 @@ impl ShellApp {
             }
             if !self.editor.selected_swatches.is_empty() && ui.button(format!("{} remove selected", icons::TRASH)).clicked() {
                 self.remove_selected_swatches();
+            }
+        });
+
+        ui.horizontal(|ui| {
+            let has_colors = self.doc.active_palette().is_some_and(|p| !p.colors.is_empty());
+            if ui
+                .add_enabled(has_colors, egui::Button::new(format!("{} Reduce to palette", icons::PALETTE)))
+                .on_hover_text("Snap every opaque pixel on the active frame to its nearest palette colour")
+                .on_disabled_hover_text("Add a colour to the palette first")
+                .clicked()
+            {
+                self.reduce_to_palette();
             }
         });
 
@@ -484,6 +498,73 @@ impl ShellApp {
             }
         });
     }
+
+    /// Snaps every opaque pixel on the active frame to its nearest palette
+    /// colour, rewriting each raster cel's buffer in place. Routes through one
+    /// [`CanvasEdit`] covering every touched buffer — not [`push_sprite_edit`] —
+    /// because the edit changes pixel bytes, not the [`Sprite`] structure. The
+    /// before/after sprite values are identical; only the buffers swap.
+    ///
+    /// A no-op when there is no active sprite, the palette is empty, or the
+    /// quantization leaves every buffer byte-identical (already on-palette).
+    fn reduce_to_palette(&mut self) {
+        let Some(sprite_id) = self.doc.project.active_sprite_id() else {
+            return;
+        };
+        let Some(sprite) = self.doc.project.sprite(sprite_id).cloned() else {
+            return;
+        };
+        // An empty palette has no nearest entry; nothing to reduce to.
+        let Some(palette) = sprite.palettes.first().filter(|p| !p.colors.is_empty()).cloned() else {
+            return;
+        };
+
+        // The distinct raster buffers the active frame draws from, resolving
+        // linked cels to their owning source so a shared drawing is quantized
+        // once.
+        let frame = self.doc.active_frame;
+        let mut ids: Vec<PixelBufferId> = Vec::new();
+        let mut seen: HashSet<PixelBufferId> = HashSet::new();
+        for entry in sprite.composite_order() {
+            let source = sprite.resolve_source_frame(entry.layer, frame);
+            let Some(cel) = sprite.cel(entry.layer, source) else {
+                continue;
+            };
+            if let CelData::Raster { buffer, .. } = cel.data {
+                if seen.insert(buffer) {
+                    ids.push(buffer);
+                }
+            }
+        }
+
+        // Quantize each buffer into a swap, dropping the ones the pass leaves
+        // byte-identical so an already-on-palette frame records no entry.
+        let mut buffers: Vec<CanvasBufferSwap> = Vec::new();
+        for id in ids {
+            let Some(before) = self.doc.pixel_buffers.get(&id).cloned() else {
+                continue;
+            };
+            let mut after = before.clone();
+            quantize_buffer(&mut after, &palette);
+            if after != before {
+                buffers.push(CanvasBufferSwap { id, before, after });
+            }
+        }
+        if buffers.is_empty() {
+            return;
+        }
+
+        // The structure is unchanged; only the pixel bytes move.
+        let edit = CanvasEdit {
+            sprite_id,
+            before_sprite: sprite.clone(),
+            after_sprite: sprite,
+            buffers,
+            label: "Reduce to palette".to_owned(),
+        };
+        let _ = self.editor.history.push(Box::new(edit), &mut self.doc);
+        self.refresh_canvas(false);
+    }
 }
 
 /// Paints a small 2x2 checkerboard inside `rect` to back transparent swatches.
@@ -529,6 +610,44 @@ pub(crate) fn reorder_in_place(palette: &mut Palette, from: usize, to: usize) ->
 pub(crate) fn set_entry_name(palette: &mut Palette, index: usize, name: Option<String>) {
     if let Some(entry) = palette.colors.get_mut(index) {
         entry.name = name;
+    }
+}
+
+/// Snaps every opaque pixel in `buf` to its nearest `palette` entry, in place.
+///
+/// For each pixel with non-zero alpha, maps the colour to
+/// [`Palette::nearest_index`] and writes back the entry's colour, keeping the
+/// pixel's own alpha. Alpha-0 pixels are left byte-identical (a transparent
+/// pixel has no colour to quantize). An empty palette is a no-op:
+/// `nearest_index` returns `None`, so there is nothing to map to.
+///
+/// Works directly on the buffer's `Vec<u8>` stride rows — four bytes per pixel,
+/// no intermediate `Vec<Vec<u8>>` — so the cost is bounded by the buffer's pixel
+/// count, not the canvas (the 8K constraint).
+pub(crate) fn quantize_buffer(buf: &mut PixelBuffer, palette: &Palette) {
+    // An empty palette has no nearest entry; skip the whole pass.
+    if palette.colors.is_empty() {
+        return;
+    }
+    for y in 0..buf.height() {
+        let Some(row) = buf.row_mut(y) else { continue };
+        for px in row.chunks_exact_mut(4) {
+            // px is a 4-byte RGBA chunk: leave fully-transparent pixels alone.
+            if px[3] == 0 {
+                continue;
+            }
+            let here = Rgba::new(px[0], px[1], px[2], px[3]);
+            // nearest_index ignores alpha on both sides and returns Some(_) for a
+            // non-empty palette, so the get is in range; keep the pixel's alpha.
+            if let Some(idx) = palette.nearest_index(here) {
+                if let Some(entry) = palette.colors.get(idx) {
+                    let c = entry.color;
+                    px[0] = c.r;
+                    px[1] = c.g;
+                    px[2] = c.b;
+                }
+            }
+        }
     }
 }
 
@@ -625,11 +744,12 @@ fn luminance(c: Rgba) -> u32 {
 
 #[cfg(test)]
 mod tests {
+    use pixhaus_core::canvas::PixelBuffer;
     use pixhaus_core::color::palette_file::pal;
     use pixhaus_core::project::{Palette, PaletteId, Rgba};
     use rstest::rstest;
 
-    use super::{luminance, palette_slug, parse_pal, remove_swatch_at, reorder_in_place, saturation_key, set_entry_name, value_key};
+    use super::{luminance, palette_slug, parse_pal, quantize_buffer, remove_swatch_at, reorder_in_place, saturation_key, set_entry_name, value_key};
 
     fn palette_with_named_colors(names: &[&str]) -> Palette {
         let mut p = Palette::from_colors(PaletteId::new(1), "main", vec![Rgba::opaque(0, 0, 0); names.len()]);
@@ -789,5 +909,56 @@ mod tests {
     #[case("***", "palette")]
     fn palette_slug_is_filesystem_safe(#[case] name: &str, #[case] expect: &str) {
         assert_eq!(palette_slug(name), expect);
+    }
+
+    // ── quantize_buffer ───────────────────────────────────────────────────
+
+    /// A two-colour palette: near-black and near-white, plus a transparent
+    /// index 0 to prove transparent entries never win an opaque pixel.
+    fn quantize_palette() -> Palette {
+        Palette::from_colors(
+            PaletteId::new(1),
+            "bw",
+            vec![Rgba::transparent(), Rgba::opaque(0, 0, 0), Rgba::opaque(255, 255, 255)],
+        )
+    }
+
+    #[test]
+    fn quantize_buffer_snaps_opaque_pixels_to_nearest_entries() {
+        // A 2x2 of off-palette colours: two lean dark, two lean light.
+        let mut buf = PixelBuffer::new(2, 2).expect("buffer");
+        buf.set_pixel(0, 0, Rgba::opaque(30, 30, 30)); // -> black
+        buf.set_pixel(1, 0, Rgba::opaque(200, 210, 220)); // -> white
+        buf.set_pixel(0, 1, Rgba::opaque(10, 5, 8)); // -> black
+        buf.set_pixel(1, 1, Rgba::opaque(240, 245, 250)); // -> white
+
+        quantize_buffer(&mut buf, &quantize_palette());
+
+        assert_eq!(buf.pixel(0, 0), Some(Rgba::opaque(0, 0, 0)));
+        assert_eq!(buf.pixel(1, 0), Some(Rgba::opaque(255, 255, 255)));
+        assert_eq!(buf.pixel(0, 1), Some(Rgba::opaque(0, 0, 0)));
+        assert_eq!(buf.pixel(1, 1), Some(Rgba::opaque(255, 255, 255)));
+    }
+
+    #[test]
+    fn quantize_buffer_leaves_transparent_pixels_untouched() {
+        let mut buf = PixelBuffer::new(2, 1).expect("buffer");
+        // A fully-transparent pixel carrying stray RGB must survive byte-for-byte.
+        let ghost = Rgba::new(123, 45, 67, 0);
+        buf.set_pixel(0, 0, ghost);
+        buf.set_pixel(1, 0, Rgba::opaque(40, 40, 40)); // opaque -> black
+
+        quantize_buffer(&mut buf, &quantize_palette());
+
+        assert_eq!(buf.pixel(0, 0), Some(ghost), "alpha-0 pixel left untouched");
+        assert_eq!(buf.pixel(1, 0), Some(Rgba::opaque(0, 0, 0)), "opaque pixel snapped");
+    }
+
+    #[test]
+    fn quantize_buffer_with_empty_palette_is_a_noop() {
+        let mut buf = PixelBuffer::filled(2, 2, Rgba::opaque(13, 17, 19)).expect("buffer");
+        let before = buf.as_bytes().to_vec();
+        quantize_buffer(&mut buf, &Palette::from_colors(PaletteId::new(2), "empty", vec![]));
+        assert_eq!(buf.as_bytes(), before.as_slice(), "an empty palette changes nothing");
     }
 }
