@@ -27,7 +27,7 @@ use pixhaus_core::project::{EntityId, GenerationProvenance, ReferenceRole, Sheet
 
 use crate::backends::{ImageGenRequest, ImageQuality, InferenceRequest, InferenceResponse};
 use crate::compose::builtins::baseline_for;
-use crate::compose::{ComposeRequest, compose};
+use crate::compose::{ComposeRequest, VariableAxis, compose, identity_lock_clause};
 use crate::plugin::context::VerbContext;
 use crate::plugin::descriptor::{BackendCapabilities, CostEstimate, EffectKind, VerbDescriptor, VerbId};
 use crate::plugin::error::{Result, VerbError};
@@ -356,6 +356,16 @@ impl Verb for GenerateReferenceSheetVerb {
 
         let num_variants = inputs.num_variants.clamp(1, 4);
 
+        // Split the conditioning references up front: the result feeds both the
+        // identity-lock decision below (a non-empty `reference_images` means an
+        // anchor is in play) and the backend request later, so we decode once.
+        let (style_image, reference_images) = decode_references(&inputs.references);
+        // An anchor reference conditions the generation, so name what stays fixed
+        // (silhouette, palette, face, costume, scale) and free only the pose.
+        // A lone Style-role reference routes to `style_image`, not an anchor, so
+        // it does not lock identity. The `prompt_override` path stays verbatim.
+        let identity_hint = (!reference_images.is_empty()).then(|| identity_lock_clause(VariableAxis::Pose));
+
         // Resolve the picked records and run the composition resolver. The
         // resolved view borrows `ctx`; we extract owned values before the
         // backend await so nothing is held across the suspension point. The
@@ -405,7 +415,7 @@ impl Verb for GenerateReferenceSheetVerb {
                 entity_info: &entity_info,
                 inline_text: &inputs.inline_text,
                 inline_negatives: &inputs.inline_negatives,
-                operation_hint: None,
+                operation_hint: identity_hint.as_deref(),
                 context_fragments: &[],
             };
             let composed = compose(&req).map_err(|e| VerbError::Schema(e.to_string()))?;
@@ -444,7 +454,6 @@ impl Verb for GenerateReferenceSheetVerb {
 
         progress.step(Some(0.1), "sending to image generation backend").await;
 
-        let (style_image, reference_images) = decode_references(&inputs.references);
         let negative_opt = (!negative.trim().is_empty()).then(|| negative.clone());
         let req = ImageGenRequest {
             model: None,
@@ -1472,6 +1481,134 @@ mod tests {
         let captured = captured.lock().unwrap().clone().expect("backend was invoked");
         assert!(captured.style_image.is_some(), "the Style-role reference routes to style_image");
         assert_eq!(captured.reference_images.len(), 1, "the Subject reference routes to reference_images");
+    }
+
+    #[tokio::test]
+    async fn anchor_reference_adds_identity_lock_to_prompt() {
+        let captured = Arc::new(Mutex::new(None));
+        let stub = CapturingStub { last: captured.clone() };
+        let runtime = VerbRuntime::new();
+        runtime.register_backend(BackendProxy::new(stub), 0).unwrap();
+        runtime.register(GenerateReferenceSheetVerb::new()).unwrap();
+
+        let png_b64 = base64::engine::general_purpose::STANDARD.encode(WhiteStub::white_png());
+        let inputs = VerbInputs::from_struct(&GenerateReferenceSheetInputs {
+            entity_id: EntityId::new(1),
+            structure_id: StructureId(CHARACTER.into()),
+            style_id: None,
+            prompt_id: None,
+            variable_values: BTreeMap::new(),
+            target_size: None,
+            inline_text: "hero".into(),
+            inline_negatives: String::new(),
+            num_variants: 1,
+            quality: None,
+            seed: None,
+            // A Subject-role anchor routes to reference_images, so the verb adds
+            // the identity-lock clause.
+            references: vec![ReferenceInput {
+                image_b64: png_b64,
+                role: ReferenceRole::Subject,
+                weight: 1.0,
+            }],
+            prompt_override: None,
+            negative_override: None,
+        })
+        .unwrap();
+
+        runtime
+            .invoke(&VerbId::new(GENERATE_REFERENCE_SHEET_VERB_ID), VerbContext::empty(meta()), inputs)
+            .unwrap()
+            .finish()
+            .await
+            .unwrap();
+
+        let captured = captured.lock().unwrap().clone().expect("backend was invoked");
+        let prompt = &captured.prompt;
+        assert!(
+            prompt.contains("keep the same character from the reference image"),
+            "an anchor reference must add the identity-lock clause: {prompt}"
+        );
+        assert!(
+            prompt.contains("identical silhouette, palette, face, costume, and scale"),
+            "the identity-lock clause must list the locked attributes: {prompt}"
+        );
+    }
+
+    #[tokio::test]
+    async fn no_reference_omits_identity_lock() {
+        let captured = Arc::new(Mutex::new(None));
+        let stub = CapturingStub { last: captured.clone() };
+        let runtime = VerbRuntime::new();
+        runtime.register_backend(BackendProxy::new(stub), 0).unwrap();
+        runtime.register(GenerateReferenceSheetVerb::new()).unwrap();
+
+        // A from-scratch sheet (no references) must not carry the lock clause.
+        runtime
+            .invoke(
+                &VerbId::new(GENERATE_REFERENCE_SHEET_VERB_ID),
+                VerbContext::empty(meta()),
+                inputs_for(CHARACTER, 1),
+            )
+            .unwrap()
+            .finish()
+            .await
+            .unwrap();
+
+        let captured = captured.lock().unwrap().clone().expect("backend was invoked");
+        assert!(
+            !captured.prompt.contains("keep the same character from the reference image"),
+            "a from-scratch sheet must not carry the identity-lock clause: {}",
+            captured.prompt
+        );
+    }
+
+    #[tokio::test]
+    async fn style_only_reference_omits_identity_lock() {
+        let captured = Arc::new(Mutex::new(None));
+        let stub = CapturingStub { last: captured.clone() };
+        let runtime = VerbRuntime::new();
+        runtime.register_backend(BackendProxy::new(stub), 0).unwrap();
+        runtime.register(GenerateReferenceSheetVerb::new()).unwrap();
+
+        // A lone Style-role reference routes to style_image, not reference_images,
+        // so it is not an anchor and must not trigger the identity lock.
+        let png_b64 = base64::engine::general_purpose::STANDARD.encode(WhiteStub::white_png());
+        let inputs = VerbInputs::from_struct(&GenerateReferenceSheetInputs {
+            entity_id: EntityId::new(1),
+            structure_id: StructureId(CHARACTER.into()),
+            style_id: None,
+            prompt_id: None,
+            variable_values: BTreeMap::new(),
+            target_size: None,
+            inline_text: "hero".into(),
+            inline_negatives: String::new(),
+            num_variants: 1,
+            quality: None,
+            seed: None,
+            references: vec![ReferenceInput {
+                image_b64: png_b64,
+                role: ReferenceRole::Style,
+                weight: 1.0,
+            }],
+            prompt_override: None,
+            negative_override: None,
+        })
+        .unwrap();
+
+        runtime
+            .invoke(&VerbId::new(GENERATE_REFERENCE_SHEET_VERB_ID), VerbContext::empty(meta()), inputs)
+            .unwrap()
+            .finish()
+            .await
+            .unwrap();
+
+        let captured = captured.lock().unwrap().clone().expect("backend was invoked");
+        assert!(
+            !captured.prompt.contains("keep the same character from the reference image"),
+            "a Style-only reference is not an anchor and must not lock identity: {}",
+            captured.prompt
+        );
     }
 
     #[tokio::test]

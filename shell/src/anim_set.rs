@@ -17,6 +17,7 @@
 
 use eframe::egui;
 
+use pixhaus_ai::compose::{VariableAxis, identity_lock_clause};
 use pixhaus_core::project::{
     AnchorDirection, AnimationKind, CharacterAnchor, DerivedSheet, EntityContent, EntityId, ReferenceImage, ReferenceSheet, SheetVariant, SheetVariantId,
     VariantOrigin,
@@ -186,11 +187,14 @@ pub(crate) fn build_grid(anchor: &CharacterAnchor, canonical: &SheetVariant) -> 
 #[must_use]
 fn neutral_pose_prompt(canonical_prompt: &str) -> String {
     const NEUTRAL: &str = "neutral rest pose, relaxed stance, front view, no special effects, no glow, no particles, flat even lighting";
+    // The pass conditions on the canonical anchor, so lock identity and free only
+    // the pose. The clause rides the tail, after the axis prose.
+    let lock = identity_lock_clause(VariableAxis::Pose);
     let subject = canonical_prompt.trim();
     if subject.is_empty() {
-        NEUTRAL.to_owned()
+        format!("{NEUTRAL}, {lock}")
     } else {
-        format!("{subject}, {NEUTRAL}")
+        format!("{subject}, {NEUTRAL}, {lock}")
     }
 }
 
@@ -256,11 +260,14 @@ fn directional_pose_prompt(neutral_prompt: &str, dir: AnchorDirection) -> String
         AnchorDirection::North => "back view, facing away",
     };
     const COMMON: &str = "neutral rest pose, no special effects, flat even lighting";
+    // The pass conditions on the neutral anchor, so lock identity and free only
+    // the facing direction. The clause rides the tail, after the axis prose.
+    let lock = identity_lock_clause(VariableAxis::Facing);
     let subject = neutral_prompt.trim();
     if subject.is_empty() {
-        format!("{view}, {COMMON}")
+        format!("{view}, {COMMON}, {lock}")
     } else {
-        format!("{subject}, {view}, {COMMON}")
+        format!("{subject}, {view}, {COMMON}, {lock}")
     }
 }
 
@@ -1175,9 +1182,14 @@ mod tests {
         let p = neutral_pose_prompt("a small retro robot");
         assert!(p.starts_with("a small retro robot, "), "the subject leads: {p}");
         assert!(p.contains("neutral rest pose"), "the neutral instruction is appended: {p}");
+        // The pass conditions on the anchor, so it carries the identity-lock clause
+        // freeing only the pose, after the axis prose.
+        assert!(p.contains("keep the same character from the reference image"), "the identity-lock clause is appended: {p}");
+        assert!(p.contains("change only the pose"), "the neutral pass frees only the pose: {p}");
         // An empty canonical prompt falls back to the bare neutral instruction.
         assert!(!neutral_pose_prompt("  ").is_empty());
         assert!(!neutral_pose_prompt("  ").starts_with(','), "no leading comma when the subject is empty");
+        assert!(neutral_pose_prompt("  ").contains("keep the same character"), "the lock survives an empty subject");
     }
 
     #[test]
@@ -1285,10 +1297,65 @@ mod tests {
         let west = directional_pose_prompt("a knight", AnchorDirection::West);
         assert!(west.starts_with("a knight, "), "the subject leads: {west}");
         assert!(west.contains("facing left"), "west is the side view facing left: {west}");
+        // The pass conditions on the neutral anchor, so it carries the identity-lock
+        // clause freeing only the facing direction.
+        assert!(west.contains("keep the same character from the reference image"), "the identity-lock clause is appended: {west}");
+        assert!(west.contains("change only the facing direction"), "the directional pass frees only the facing: {west}");
         let north = directional_pose_prompt("a knight", AnchorDirection::North);
         assert!(north.contains("back view"), "north is the back view: {north}");
         // Empty subject falls back to the bare view instruction, no leading comma.
         assert!(!directional_pose_prompt("  ", AnchorDirection::South).starts_with(','));
+        assert!(
+            directional_pose_prompt("  ", AnchorDirection::South).contains("change only the facing direction"),
+            "the facing lock survives an empty subject"
+        );
+    }
+
+    /// The composed cascade -> `run_first_frame` Generate path must not
+    /// double-append or cross axes. The cascade prompts (`neutral_pose_prompt`,
+    /// `directional_pose_prompt`) already carry the axis-appropriate lock; the
+    /// Generate arm adds the framing suffix via `generate_frame_prompt` and then
+    /// runs `lock_when_conditioned`, whose marker guard leaves a pre-locked prompt
+    /// alone. This runs both transforms (with a non-empty reference, as the
+    /// cascade always conditions) to guard the seam the isolated prompt tests
+    /// miss: each side is correct alone, but the prompt the backend actually sees
+    /// is the composition of the two.
+    #[test]
+    fn cascade_prompt_through_generate_arm_locks_each_axis_once() {
+        let lock_count = |haystack: &str, needle: &str| haystack.matches(needle).count();
+        // The Generate arm: framing suffix, then the conditioned Pose lock guarded
+        // by the marker. The cascade always conditions on an anchor.
+        let through_generate_arm = |base: &str| crate::ai::lock_when_conditioned(crate::ai::generate_frame_prompt(base), true);
+
+        // Neutral: the cascade prompt carries the Pose lock; the Generate arm's
+        // marker guard does not re-add it, so the final prompt locks the pose once.
+        let neutral = through_generate_arm(&neutral_pose_prompt("a small retro robot"));
+        assert_eq!(
+            lock_count(&neutral, "keep the same character from the reference image"),
+            1,
+            "the identity-lock clause appears exactly once on the composed neutral prompt: {neutral}"
+        );
+        assert_eq!(lock_count(&neutral, "change only the pose"), 1, "the neutral prompt frees the pose exactly once: {neutral}");
+        assert!(!neutral.contains("change only the facing direction"), "the neutral prompt must not free facing: {neutral}");
+        assert!(neutral.contains(", single sprite frame, side view"), "the framing suffix is present: {neutral}");
+
+        // Directional: the cascade prompt carries the Facing lock; the Generate
+        // arm's marker guard does not add a Pose lock, so the final prompt frees
+        // facing — and only facing. A stray Pose lock would contradict the free axis.
+        let directional = through_generate_arm(&directional_pose_prompt("a knight", AnchorDirection::West));
+        assert_eq!(
+            lock_count(&directional, "keep the same character from the reference image"),
+            1,
+            "the identity-lock clause appears exactly once on the composed directional prompt: {directional}"
+        );
+        assert!(
+            directional.contains("change only the facing direction"),
+            "the directional prompt frees the facing direction: {directional}"
+        );
+        assert!(
+            !directional.contains("change only the pose"),
+            "the directional prompt must not also free the pose — contradictory axes: {directional}"
+        );
     }
 
     #[test]

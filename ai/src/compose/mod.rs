@@ -1,7 +1,10 @@
 //! Composition resolver. See docs/planning/work/prompt-style-structure-library.md section 6.
 
 pub mod builtins;
+pub mod invariants;
 pub mod variables;
+
+pub use invariants::{VariableAxis, identity_lock_clause};
 
 use std::collections::BTreeMap;
 

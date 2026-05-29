@@ -19,7 +19,7 @@ use pixhaus_ai::backends::{
     InferenceResponse,
 };
 use pixhaus_ai::compose::builtins::{BuiltinLibrary, STRUCTURE_SINGLE_ID, baseline_for};
-use pixhaus_ai::compose::{ComposeRequest, compose};
+use pixhaus_ai::compose::{ComposeRequest, VariableAxis, compose, identity_lock_clause};
 use pixhaus_ai::plugin::{
     BackendCapabilities, CompositionLibraryView, PixelData, ProjectCompositionLibrary, VerbContext, VerbEffect, VerbId, VerbInputs, VerbProgress,
     VerbProgressEvent, VerbRuntime,
@@ -660,6 +660,64 @@ pub enum FirstFrameJob {
     },
 }
 
+/// Assembles a derivation prompt: the base subject, the framing `suffix`, and —
+/// only when the pass conditions on an anchor (`conditioned`) — the Pose
+/// identity-lock clause naming the reference and freeing only the pose. An
+/// IP-Adapter weight pulls globally toward the anchor but cannot say "keep the
+/// face and palette, change the pose", so the prose states it; from-scratch
+/// passes (`conditioned` false) skip it. The clause rides at the tail, mirroring
+/// where `compose` appends `operation_hint`.
+///
+/// Used only by `generate_clip`'s self-seed, whose `motion_prompt` carries no
+/// lock, so the single append here is correct. `run_first_frame`'s Generate arm
+/// does NOT use this: it appends the suffix via [`generate_frame_prompt`] and
+/// the Pose lock via [`lock_when_conditioned`], which together avoid
+/// double-appending or contradicting the free axis.
+fn derive_prompt(base: &str, suffix: &str, conditioned: bool) -> String {
+    let lock = if conditioned {
+        format!(", {}", identity_lock_clause(VariableAxis::Pose))
+    } else {
+        String::new()
+    };
+    format!("{base}, {suffix}{lock}")
+}
+
+/// Appends only the single-sprite framing suffix to a Generate-arm `base` prompt.
+///
+/// This adds no identity-lock clause — the Generate arm appends that separately
+/// via [`lock_when_conditioned`] so it can key off `reference_images` and the
+/// clause the base already carries. The two callers differ: the studio
+/// neutral/directional passes arrive with the axis-appropriate lock baked into
+/// `base` (Pose for neutral, Facing for directional), while the studio seed-pose
+/// path (`studio::start_gen`) arrives lock-free.
+pub(crate) fn generate_frame_prompt(base: &str) -> String {
+    format!("{base}, single sprite frame, side view")
+}
+
+/// The substring that marks a prompt as already carrying an identity-lock
+/// clause from [`identity_lock_clause`]. Used to decide whether the Generate arm
+/// should add the Pose lock or leave the existing axis lock untouched.
+const IDENTITY_LOCK_MARKER: &str = "keep the same character from the reference image";
+
+/// Appends the Pose identity-lock clause to a Generate-arm prompt when the pass
+/// conditions on an anchor and the prompt does not already carry a lock.
+///
+/// The Generate arm has three callers, and only the prompt-plus-references pair
+/// distinguishes them. The studio neutral/directional cascade passes arrive
+/// already locked (Pose for neutral, Facing for directional), so the marker
+/// guard leaves them alone — re-appending a Pose lock would double it on neutral
+/// and contradict the Facing axis on directional turns. The studio seed-pose
+/// path (`studio::start_gen`) always conditions on the anchor yet arrives
+/// lock-free, so it gets the Pose lock here. The from-scratch headless path
+/// passes no reference, so `has_reference` is false and it stays lock-free.
+pub(crate) fn lock_when_conditioned(prompt: String, has_reference: bool) -> String {
+    if has_reference && !prompt.contains(IDENTITY_LOCK_MARKER) {
+        format!("{prompt}, {}", identity_lock_clause(VariableAxis::Pose))
+    } else {
+        prompt
+    }
+}
+
 /// Runs a [`FirstFrameJob`] to completion, returning the candidate PNGs. The
 /// generate arm needs `IMAGE_GENERATION`; the inpaint arm needs `IMAGE_INPAINT`.
 /// Both condition on the anchor so the seed pose stays on-model.
@@ -676,9 +734,14 @@ pub async fn run_first_frame(runtime: &VerbRuntime, job: FirstFrameJob, cancel: 
             // The background is requested in the positive prompt (a flat key
             // colour, built in the studio); keep "background" out of the
             // negatives so the model actually paints the solid fill.
+            let has_reference = !reference_images.is_empty();
             let req = ImageGenRequest {
                 model: None,
-                prompt: format!("{prompt}, single sprite frame, side view"),
+                // Framing suffix, then the Pose lock only when this conditions on
+                // an anchor and the prompt is not already locked. The cascade
+                // passes arrive pre-locked and are left alone; the studio
+                // seed-pose path arrives lock-free and gets the Pose lock.
+                prompt: lock_when_conditioned(generate_frame_prompt(&prompt), has_reference),
                 negative_prompt: Some("scenery, environment, particles, glow, motion blur, gradient, drop shadow".into()),
                 width,
                 height,
@@ -698,6 +761,15 @@ pub async fn run_first_frame(runtime: &VerbRuntime, job: FirstFrameJob, cancel: 
             prompt,
             num_variants,
         } => {
+            // Refining a region against an anchor locks identity too — the repaint
+            // must keep the character. Refining the anchor itself (no references)
+            // carries no lock. The inpaint instruction has no framing suffix, so
+            // append the clause directly rather than through `derive_prompt`.
+            let prompt = if reference_images.is_empty() {
+                prompt
+            } else {
+                format!("{prompt}, {}", identity_lock_clause(VariableAxis::Pose))
+            };
             let req = ImageEditRequest {
                 model: None,
                 image: base,
@@ -878,9 +950,11 @@ pub async fn generate_clip(runtime: &VerbRuntime, job: &AnimJob, cancel: &Cancel
         approved
     } else {
         progress("generating first frame");
+        // The self-seed always conditions on the approved anchor, so it carries
+        // the identity-lock clause to hold the character across the phase change.
         let req = ImageGenRequest {
             model: None,
-            prompt: format!("{}, single sprite frame, side view, transparent background", job.motion_prompt),
+            prompt: derive_prompt(&job.motion_prompt, "single sprite frame, side view, transparent background", true),
             negative_prompt: Some("background, particles, glow, motion blur".into()),
             width,
             height,
@@ -1055,7 +1129,44 @@ mod tests {
     use pixhaus_core::project::library::ai::ProjectAi;
     use pixhaus_core::project::library::composition::{ArtStyleKind, Structure, StructureId, StructureOutput, Style, StyleId};
 
-    use super::{STRUCTURE_SINGLE_ID, compose_preview, structure_options, style_options};
+    use pixhaus_ai::compose::{VariableAxis, identity_lock_clause};
+
+    use super::{STRUCTURE_SINGLE_ID, compose_preview, derive_prompt, generate_frame_prompt, lock_when_conditioned, structure_options, style_options};
+
+    #[test]
+    fn lock_when_conditioned_adds_the_pose_lock_once_on_an_unlocked_conditioned_prompt() {
+        let lock = identity_lock_clause(VariableAxis::Pose);
+        let marker = "keep the same character from the reference image";
+
+        // Conditioned and unlocked: the seed-pose case. The Pose lock rides the tail.
+        let seed = lock_when_conditioned(generate_frame_prompt("character seed pose, side view, facing left"), true);
+        assert!(seed.ends_with(&lock), "the Pose lock rides the tail: {seed}");
+        assert_eq!(seed.matches(marker).count(), 1, "exactly one identity-lock clause: {seed}");
+
+        // Conditioned but already locked: the cascade case. The marker guard leaves it alone.
+        let already = format!("a hero, {lock}");
+        let cascade = lock_when_conditioned(generate_frame_prompt(&already), true);
+        assert_eq!(cascade.matches(marker).count(), 1, "a pre-locked prompt is not double-locked: {cascade}");
+
+        // No reference: the from-scratch headless case. No lock.
+        let scratch = lock_when_conditioned(generate_frame_prompt("a hero"), false);
+        assert!(!scratch.contains(marker), "an unconditioned prompt carries no lock: {scratch}");
+    }
+
+    #[test]
+    fn derive_prompt_appends_lock_only_when_conditioned() {
+        let lock = identity_lock_clause(VariableAxis::Pose);
+
+        // Conditioned: base, suffix, then the identity-lock clause at the tail.
+        let conditioned = derive_prompt("a hero", "single sprite frame, side view", true);
+        assert_eq!(conditioned, format!("a hero, single sprite frame, side view, {lock}"));
+        assert!(conditioned.contains("keep the same character from the reference image"), "the lock clause rides the tail: {conditioned}");
+
+        // From scratch: base and suffix only, no lock.
+        let unconditioned = derive_prompt("a hero", "single sprite frame, side view", false);
+        assert_eq!(unconditioned, "a hero, single sprite frame, side view");
+        assert!(!unconditioned.contains("keep the same character"), "an unconditioned prompt carries no lock: {unconditioned}");
+    }
 
     #[test]
     fn structure_options_let_project_records_shadow_builtins() {

@@ -3086,6 +3086,34 @@ mod tests {
         assert_eq!(p, "isolated on a solid #008040 background");
     }
 
+    /// `start_gen` always conditions on the anchor (it early-returns when the
+    /// reference is empty) yet its seed-pose prompt carries no lock of its own.
+    /// The Generate arm must add the Pose lock exactly once, so the most
+    /// user-visible conditioned generation does not drift identity or scale. This
+    /// guards the seam the isolated prompt tests miss, mirroring the cascade test.
+    #[test]
+    fn start_gen_seed_pose_prompt_locks_the_pose_once() {
+        let lock_count = |haystack: &str, needle: &str| haystack.matches(needle).count();
+
+        for facing in [Facing::South, Facing::North, Facing::West, Facing::East] {
+            // The exact prompt `start_gen` builds for an untouched scaffold.
+            let seed = key_color_prompt(&StudioState::pose_prompt_for(facing), Rgba::opaque(255, 0, 255));
+            // `start_gen` always has a non-empty anchor, so the Generate arm conditions.
+            let final_prompt = crate::ai::lock_when_conditioned(crate::ai::generate_frame_prompt(&seed), true);
+
+            assert_eq!(
+                lock_count(&final_prompt, "keep the same character from the reference image"),
+                1,
+                "the seed-pose prompt locks identity exactly once for {facing:?}: {final_prompt}"
+            );
+            assert_eq!(lock_count(&final_prompt, "change only the pose"), 1, "the seed-pose prompt frees the pose for {facing:?}: {final_prompt}");
+            assert!(
+                !final_prompt.contains("change only the facing direction"),
+                "the seed-pose prompt must not free facing for {facing:?}: {final_prompt}"
+            );
+        }
+    }
+
     #[test]
     fn gizmo_rasterizes_and_contains() {
         let giz = BoxGizmo {

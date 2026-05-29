@@ -1,0 +1,5 @@
+---
+source: ai/src/compose/invariants.rs
+expression: "identity_lock_clause(VariableAxis::Phase)"
+---
+keep the same character from the reference image: identical silhouette, palette, face, costume, and scale; change only the animation phase
