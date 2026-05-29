@@ -1902,10 +1902,7 @@ impl ShellApp {
                 self.anim_candidates[i].keyed_thumbs.iter_mut().for_each(|slot| *slot = None);
             }
             if self.anim_candidates[i].keyed_thumbs.get(idx).is_some_and(Option::is_none) {
-                let key = ChromaKey {
-                    color: self.bg_key_color,
-                    tolerance: self.bg_tolerance,
-                };
+                let key = ChromaKey::new(self.bg_key_color, self.bg_tolerance);
                 let tex = self.anim_candidates[i]
                     .frames
                     .get(idx)
@@ -2985,7 +2982,7 @@ fn fmt_mmss(secs: u32) -> String {
 /// the Land wiring.
 #[must_use]
 pub(crate) fn land_chroma(remove_on_land: bool, color: Rgba, tolerance: u8) -> Option<ChromaKey> {
-    remove_on_land.then_some(ChromaKey { color, tolerance })
+    remove_on_land.then_some(ChromaKey::new(color, tolerance))
 }
 
 /// Builds the first-frame generation prompt: the user's text plus a request to

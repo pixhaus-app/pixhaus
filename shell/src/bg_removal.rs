@@ -122,10 +122,7 @@ impl ShellApp {
     /// tolerance, recording one undo entry per cel, and flags the ones the
     /// keyer judged likely failures.
     pub(crate) fn key_background_now(&mut self) {
-        let key = ChromaKey {
-            color: self.bg_key_color,
-            tolerance: self.bg_tolerance,
-        };
+        let key = ChromaKey::new(self.bg_key_color, self.bg_tolerance);
         let targets = self.bg_targets();
         if targets.is_empty() {
             return;
@@ -222,10 +219,7 @@ impl ShellApp {
     /// Keys the active frame's composite with the current settings and uploads
     /// it as a view-only preview.
     fn update_bg_preview(&mut self) {
-        let key = ChromaKey {
-            color: self.bg_key_color,
-            tolerance: self.bg_tolerance,
-        };
+        let key = ChromaKey::new(self.bg_key_color, self.bg_tolerance);
         if let Some(frame) = self.doc.composite_active_frame() {
             let keyed = chroma_key(&frame, key);
             self.upload_frame(&keyed, false);

@@ -27,6 +27,8 @@
 //! frame must match the first) and the foot baseline (must hold across every
 //! frame) are non-negotiable, so both are measured and reported.
 
+use std::collections::VecDeque;
+
 use serde::{Deserialize, Serialize};
 
 use crate::canvas::buffer::PixelBuffer;
@@ -40,13 +42,27 @@ use super::scale::scale_nearest;
 /// Generated sheets use a solid magenta (`#FF00FF`) or green (`#00FF00`)
 /// backdrop so the subject silhouette is unambiguous; chroma-keying turns
 /// that backdrop into alpha without touching the subject.
+///
+/// Removal is two-pass (see [`chroma_key_two_pass`]): a tight interior
+/// threshold derived from `tolerance`, then a looser border-seeded flood
+/// derived from `border_tolerance`. `tolerance` and `border_tolerance` are
+/// `0..=128` sliders squared internally; comparing in squared-Euclidean space
+/// removes the antialiased fringe a flat per-channel box leaves behind.
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ChromaKey {
     /// The background colour to remove (alpha is ignored on the key).
     pub color: Rgba,
-    /// Per-channel tolerance. A pixel keys out when every channel is
-    /// within `tolerance` of `color`. `0` keys only exact matches.
+    /// Interior squared-distance tolerance as a `0..=128` slider; squared
+    /// internally. `0` keys only exact matches.
     pub tolerance: u8,
+    /// Looser flood distance for the border-seeded pass. `None` derives
+    /// ~1.5x from `tolerance`. serde-defaulted so old files load.
+    #[serde(default)]
+    pub border_tolerance: Option<u8>,
+    /// Outer-border pixels forced transparent after keying. `0` is off.
+    /// serde-defaulted so old files load.
+    #[serde(default)]
+    pub trim_border: u8,
 }
 
 impl ChromaKey {
@@ -56,6 +72,8 @@ impl ChromaKey {
         Self {
             color: Rgba::opaque(255, 0, 255),
             tolerance: 16,
+            border_tolerance: None,
+            trim_border: 0,
         }
     }
 
@@ -65,15 +83,51 @@ impl ChromaKey {
         Self {
             color: Rgba::opaque(0, 255, 0),
             tolerance: 16,
+            border_tolerance: None,
+            trim_border: 0,
         }
     }
 
-    /// Returns `true` when `px` is within tolerance of the key colour.
+    /// A key for `color` at `tolerance`, with the border flood derived from
+    /// `tolerance` and no border trim. The constructor the shell call sites
+    /// reach for when they only have a colour and a slider value.
     #[must_use]
-    fn matches(self, px: Rgba) -> bool {
-        let within = |a: u8, b: u8| a.abs_diff(b) <= self.tolerance;
-        within(px.r, self.color.r) && within(px.g, self.color.g) && within(px.b, self.color.b)
+    pub const fn new(color: Rgba, tolerance: u8) -> Self {
+        Self {
+            color,
+            tolerance,
+            border_tolerance: None,
+            trim_border: 0,
+        }
     }
+
+    /// Interior squared-Euclidean threshold. The `0..=128` slider squared and
+    /// summed across three channels (max `3 * 128^2 = 49152`, fits `i32`).
+    #[must_use]
+    fn interior_threshold(self) -> i32 {
+        3 * i32::from(self.tolerance).pow(2)
+    }
+
+    /// Border-pass squared threshold. Defaults to ~1.5x the interior slider
+    /// when `border_tolerance` is unset, so the looser flood reaches the
+    /// antialiased fringe without dictating a separate user control.
+    #[must_use]
+    fn border_threshold(self) -> i32 {
+        let t = self.border_tolerance.unwrap_or(self.tolerance.saturating_add(self.tolerance / 2));
+        3 * i32::from(t).pow(2)
+    }
+}
+
+/// Squared Euclidean RGB distance between two colours, alpha ignored.
+///
+/// Works in `i32` over the three RGB channels; the maximum is
+/// `3 * 255^2 = 195075`, which fits comfortably. Symmetric in its arguments.
+#[must_use]
+fn rgb_dist_sq(a: Rgba, b: Rgba) -> i32 {
+    let dr = i32::from(a.r) - i32::from(b.r);
+    let dg = i32::from(a.g) - i32::from(b.g);
+    let db = i32::from(a.b) - i32::from(b.b);
+    dr * dr + dg * dg + db * db
 }
 
 /// Per-frame alpha bounding box and the derived placement landmarks.
@@ -179,23 +233,177 @@ pub struct NormalizeResult {
     pub report: NormalizeReport,
 }
 
-/// Keys `key.color` out of `buf` to transparency, leaving the subject
-/// untouched. Pixels within tolerance get alpha `0`; their RGB is preserved
+/// Keys `key.color` out of `buf` to transparency in two passes, leaving the
+/// subject untouched. Pixels are cleared to alpha `0`; their RGB is preserved
 /// so a later opacity tweak doesn't reveal a colour shift.
+///
+/// 1. **Interior** — clears every still-opaque pixel within the squared
+///    interior threshold of the key. This kills the bulk flat background.
+/// 2. **Border flood** — a 4-connected flood seeded from every still-opaque
+///    edge pixel, clearing pixels within the looser border threshold. The
+///    flood cannot cross an opaque dissimilar interior pixel, so a same-hue
+///    interior region (a magenta gem on a magenta sheet) is not eaten. This
+///    removes the connected antialiased fringe a flat key leaves as a halo.
+/// 3. **Edge band** — one dilation ring: any still-opaque pixel 4-adjacent to
+///    a now-transparent pixel and within the border threshold is cleared,
+///    softening the residual rim.
+/// 4. **Trim** — when `key.trim_border > 0`, the outer ring of that thickness
+///    is forced transparent to remove cell-seam bleed.
+///
+/// The flood is iterative over an explicit queue with a visited mask, never
+/// recursive, so it stays bounded for an 8K canvas.
 #[must_use]
-pub fn chroma_key(buf: &PixelBuffer, key: ChromaKey) -> PixelBuffer {
+pub fn chroma_key_two_pass(buf: &PixelBuffer, key: ChromaKey) -> PixelBuffer {
     let mut out = buf.clone();
-    for y in 0..buf.height() {
-        for x in 0..buf.width() {
-            if let Some(px) = buf.pixel(x, y)
+    let (w, h) = (out.width(), out.height());
+    if w == 0 || h == 0 {
+        return out;
+    }
+    let interior = key.interior_threshold();
+    let border = key.border_threshold();
+    key_interior(&mut out, key.color, interior);
+    key_border_flood(&mut out, key.color, border);
+    key_edge_band(&mut out, key.color, border);
+    if key.trim_border > 0 {
+        trim_outer_ring(&mut out, key.trim_border);
+    }
+    out
+}
+
+/// Clears `out` to alpha `0` where the squared distance to `key` is within
+/// `interior`. RGB is preserved. The bulk flat-background removal pass.
+fn key_interior(out: &mut PixelBuffer, key: Rgba, interior: i32) {
+    let (w, h) = (out.width(), out.height());
+    for y in 0..h {
+        for x in 0..w {
+            if let Some(px) = out.pixel(x, y)
                 && px.a != 0
-                && key.matches(px)
+                && rgb_dist_sq(px, key) <= interior
             {
                 out.set_pixel(x, y, Rgba::new(px.r, px.g, px.b, 0));
             }
         }
     }
-    out
+}
+
+/// Whether a pixel at `(x, y)` should join the border flood: an already-cleared
+/// pixel (walk through it) or a still-opaque pixel within `border` of `key`.
+/// A dissimilar opaque interior pixel returns `false`, blocking the flood.
+fn floodable(out: &PixelBuffer, key: Rgba, border: i32, x: u32, y: u32) -> bool {
+    match out.pixel(x, y) {
+        Some(px) if px.a == 0 => true,
+        Some(px) => rgb_dist_sq(px, key) <= border,
+        None => false,
+    }
+}
+
+/// 4-connected flood seeded from every floodable edge pixel, clearing opaque
+/// pixels within `border` of `key`. Iterative over an explicit queue with a
+/// visited mask — never recursion — so it stays bounded on an 8K canvas.
+fn key_border_flood(out: &mut PixelBuffer, key: Rgba, border: i32) {
+    let (w, h) = (out.width(), out.height());
+    let idx = |x: u32, y: u32| (y as usize) * (w as usize) + (x as usize);
+    let mut visited = vec![false; (w as usize) * (h as usize)];
+    let mut queue: VecDeque<(u32, u32)> = VecDeque::new();
+    // Seed the flood from every floodable pixel on the 1px border.
+    for x in 0..w {
+        for y in [0, h - 1] {
+            let i = idx(x, y);
+            if !visited[i] && floodable(out, key, border, x, y) {
+                visited[i] = true;
+                queue.push_back((x, y));
+            }
+        }
+    }
+    for y in 0..h {
+        for x in [0, w - 1] {
+            let i = idx(x, y);
+            if !visited[i] && floodable(out, key, border, x, y) {
+                visited[i] = true;
+                queue.push_back((x, y));
+            }
+        }
+    }
+    while let Some((x, y)) = queue.pop_front() {
+        if let Some(px) = out.pixel(x, y)
+            && px.a != 0
+        {
+            out.set_pixel(x, y, Rgba::new(px.r, px.g, px.b, 0));
+        }
+        for (nx, ny) in neighbours_4(x, y, w, h) {
+            let i = idx(nx, ny);
+            if !visited[i] && floodable(out, key, border, nx, ny) {
+                visited[i] = true;
+                queue.push_back((nx, ny));
+            }
+        }
+    }
+}
+
+/// The in-bounds 4-connected neighbours of `(x, y)`.
+fn neighbours_4(x: u32, y: u32, w: u32, h: u32) -> impl Iterator<Item = (u32, u32)> {
+    [
+        (x > 0).then(|| (x - 1, y)),
+        (x + 1 < w).then_some((x + 1, y)),
+        (y > 0).then(|| (x, y - 1)),
+        (y + 1 < h).then_some((x, y + 1)),
+    ]
+    .into_iter()
+    .flatten()
+}
+
+/// One dilation ring: clears any still-opaque pixel that is 4-adjacent to a
+/// now-transparent pixel and within `border` of `key`. The transparency mask
+/// is snapshotted first so the ring is exactly one pixel deep, not a cascade.
+fn key_edge_band(out: &mut PixelBuffer, key: Rgba, border: i32) {
+    let (w, h) = (out.width(), out.height());
+    let idx = |x: u32, y: u32| (y as usize) * (w as usize) + (x as usize);
+    let mut transparent = vec![false; (w as usize) * (h as usize)];
+    for y in 0..h {
+        for x in 0..w {
+            if out.pixel(x, y).is_some_and(|p| p.a == 0) {
+                transparent[idx(x, y)] = true;
+            }
+        }
+    }
+    for y in 0..h {
+        for x in 0..w {
+            let touches = neighbours_4(x, y, w, h).any(|(nx, ny)| transparent[idx(nx, ny)]);
+            if touches
+                && let Some(px) = out.pixel(x, y)
+                && px.a != 0
+                && rgb_dist_sq(px, key) <= border
+            {
+                out.set_pixel(x, y, Rgba::new(px.r, px.g, px.b, 0));
+            }
+        }
+    }
+}
+
+/// Forces the outer ring of `thickness` pixels transparent, preserving RGB.
+/// Removes cell-seam bleed at sheet boundaries.
+fn trim_outer_ring(out: &mut PixelBuffer, thickness: u8) {
+    let (w, h) = (out.width(), out.height());
+    let t = u32::from(thickness);
+    for y in 0..h {
+        for x in 0..w {
+            let on_ring = x < t || y < t || x + t >= w || y + t >= h;
+            if on_ring
+                && let Some(px) = out.pixel(x, y)
+                && px.a != 0
+            {
+                out.set_pixel(x, y, Rgba::new(px.r, px.g, px.b, 0));
+            }
+        }
+    }
+}
+
+/// Keys `key.color` out of `buf` to transparency, leaving the subject
+/// untouched. Back-compat shim — every call site now runs the two-pass
+/// [`chroma_key_two_pass`] keyer.
+#[must_use]
+pub fn chroma_key(buf: &PixelBuffer, key: ChromaKey) -> PixelBuffer {
+    chroma_key_two_pass(buf, key)
 }
 
 /// Measures the opaque bounding box of `buf` and the placement landmarks.
@@ -597,6 +805,9 @@ fn seam_match(first: Option<&PixelBuffer>, last: Option<&PixelBuffer>) -> SeamMa
 
 #[cfg(test)]
 mod tests {
+    use proptest::prelude::*;
+    use rstest::rstest;
+
     use super::*;
 
     fn solid(w: u32, h: u32, color: Rgba) -> PixelBuffer {
@@ -610,6 +821,197 @@ mod tests {
         let out = chroma_key(&buf, ChromaKey::magenta());
         assert_eq!(out.pixel(0, 0).unwrap().a, 0, "background keyed out");
         assert_eq!(out.pixel(1, 1), Some(Rgba::opaque(10, 20, 30)), "subject kept");
+    }
+
+    mod rgb_dist_sq {
+        use super::*;
+
+        #[rstest]
+        #[case::identical(Rgba::opaque(10, 20, 30), Rgba::opaque(10, 20, 30), 0)]
+        #[case::black_to_white(Rgba::opaque(0, 0, 0), Rgba::opaque(255, 255, 255), 195_075)]
+        #[case::single_channel(Rgba::opaque(0, 0, 0), Rgba::opaque(5, 0, 0), 25)]
+        #[case::magenta_aa_rim(Rgba::opaque(0xE0, 0x40, 0xE0), Rgba::opaque(255, 0, 255), 6018)]
+        fn computes_squared_distance(#[case] a: Rgba, #[case] b: Rgba, #[case] expected: i32) {
+            assert_eq!(rgb_dist_sq(a, b), expected, "{a:?} vs {b:?}");
+        }
+
+        #[test]
+        fn ignores_alpha() {
+            let opaque = Rgba::new(10, 20, 30, 255);
+            let faint = Rgba::new(10, 20, 30, 1);
+            assert_eq!(rgb_dist_sq(opaque, faint), 0, "alpha must not factor in");
+        }
+
+        #[rstest]
+        #[case(Rgba::opaque(10, 20, 30), Rgba::opaque(200, 100, 50))]
+        #[case(Rgba::opaque(255, 0, 255), Rgba::opaque(0, 255, 0))]
+        fn is_symmetric(#[case] a: Rgba, #[case] b: Rgba) {
+            assert_eq!(rgb_dist_sq(a, b), rgb_dist_sq(b, a), "distance is symmetric");
+        }
+    }
+
+    mod chroma_key_two_pass {
+        use super::*;
+
+        /// A magenta field with a centred opaque subject and a 1px partly
+        /// desaturated antialiased rim (`#E040E0`) around the subject. At
+        /// tolerance 32 the rim survives the old per-channel box (its green
+        /// channel is 64 off the key, past the box) but the two-pass flood
+        /// reaches it from the background and clears it.
+        fn magenta_with_aa_rim() -> PixelBuffer {
+            let mut buf = solid(8, 8, Rgba::opaque(255, 0, 255));
+            // Antialiased rim ring at x,y in 2..=5.
+            for y in 2..=5 {
+                for x in 2..=5 {
+                    buf.set_pixel(x, y, Rgba::opaque(0xE0, 0x40, 0xE0));
+                }
+            }
+            // Solid dissimilar subject inside the rim.
+            for y in 3..=4 {
+                for x in 3..=4 {
+                    buf.set_pixel(x, y, Rgba::opaque(10, 20, 30));
+                }
+            }
+            buf
+        }
+
+        #[test]
+        fn interior_pass_parity_keeps_existing_behaviour() {
+            // The original single-pass case: a flat field with one off-key
+            // subject pixel. Two-pass must still key the field and keep the
+            // subject.
+            let mut buf = solid(4, 4, Rgba::opaque(255, 0, 255));
+            buf.set_pixel(1, 1, Rgba::opaque(10, 20, 30));
+            let out = chroma_key_two_pass(&buf, ChromaKey::magenta());
+            assert_eq!(out.pixel(0, 0).unwrap().a, 0, "background keyed out");
+            assert_eq!(out.pixel(1, 1), Some(Rgba::opaque(10, 20, 30)), "subject kept");
+        }
+
+        #[test]
+        fn removes_connected_aa_halo_that_a_per_channel_box_keeps() {
+            let buf = magenta_with_aa_rim();
+            let key = ChromaKey::new(Rgba::opaque(255, 0, 255), 32);
+            // Old per-channel box at the same tolerance leaves the rim: the
+            // green channel is 64 off the key, past the 32 box.
+            let within = |a: u8, b: u8| a.abs_diff(b) <= key.tolerance;
+            let rim = Rgba::opaque(0xE0, 0x40, 0xE0);
+            assert!(
+                !(within(rim.r, key.color.r) && within(rim.g, key.color.g) && within(rim.b, key.color.b)),
+                "the old per-channel box would NOT key this rim — the test only proves something if so"
+            );
+            let out = chroma_key_two_pass(&buf, key);
+            assert_eq!(out.pixel(2, 2).unwrap().a, 0, "the AA rim is flooded away");
+            assert_eq!(out.pixel(0, 0).unwrap().a, 0, "the magenta field is gone");
+            assert_eq!(out.pixel(3, 3), Some(Rgba::opaque(10, 20, 30)), "the subject is untouched");
+        }
+
+        #[test]
+        fn does_not_eat_same_hue_interior_surrounded_by_subject() {
+            // An interior block within the border threshold of the key but
+            // OUTSIDE the interior threshold, fully ringed by dissimilar
+            // subject pixels, must survive: the border flood cannot reach it.
+            let mut buf = solid(10, 10, Rgba::opaque(255, 0, 255));
+            // Dissimilar subject body fills x,y in 2..=7.
+            for y in 2..=7 {
+                for x in 2..=7 {
+                    buf.set_pixel(x, y, Rgba::opaque(10, 20, 30));
+                }
+            }
+            // A near-key gem buried at the centre, ringed by the subject.
+            for y in 4..=5 {
+                for x in 4..=5 {
+                    buf.set_pixel(x, y, Rgba::opaque(0xE0, 0x40, 0xE0));
+                }
+            }
+            let key = ChromaKey::new(Rgba::opaque(255, 0, 255), 32);
+            let out = chroma_key_two_pass(&buf, key);
+            assert_eq!(out.pixel(0, 0).unwrap().a, 0, "the field around the body keys out");
+            assert!(out.pixel(4, 4).unwrap().a != 0, "the buried near-key gem survives");
+            assert!(out.pixel(5, 5).unwrap().a != 0, "the whole gem survives, not just one pixel");
+        }
+
+        #[test]
+        fn preserves_rgb_on_cleared_pixels() {
+            let buf = solid(4, 4, Rgba::opaque(255, 0, 255));
+            let out = chroma_key_two_pass(&buf, ChromaKey::magenta());
+            let px = out.pixel(0, 0).unwrap();
+            assert_eq!(px.a, 0, "cleared to transparent");
+            assert_eq!((px.r, px.g, px.b), (255, 0, 255), "RGB preserved under the cleared alpha");
+        }
+
+        #[test]
+        fn trim_border_clears_the_outer_ring() {
+            // A fully-opaque subject sheet (no key match anywhere) with a
+            // one-pixel trim forced transparent on the outer ring.
+            let buf = solid(5, 5, Rgba::opaque(10, 20, 30));
+            let key = ChromaKey {
+                color: Rgba::opaque(255, 0, 255),
+                tolerance: 16,
+                border_tolerance: None,
+                trim_border: 1,
+            };
+            let out = chroma_key_two_pass(&buf, key);
+            assert_eq!(out.pixel(0, 0).unwrap().a, 0, "top-left corner trimmed");
+            assert_eq!(out.pixel(4, 4).unwrap().a, 0, "bottom-right corner trimmed");
+            assert_eq!(out.pixel(2, 0).unwrap().a, 0, "top edge trimmed");
+            assert!(out.pixel(2, 2).unwrap().a != 0, "the interior is untouched by the trim");
+        }
+
+        #[test]
+        fn empty_buffer_is_returned_unchanged() {
+            let buf = PixelBuffer::empty();
+            let out = chroma_key_two_pass(&buf, ChromaKey::magenta());
+            assert!(out.is_empty());
+        }
+    }
+
+    mod chroma_key_serde {
+        use super::*;
+
+        #[test]
+        fn deserializes_old_msgpack_without_new_fields() {
+            // An old ChromaKey only carried `color` and `tolerance`. Encode a
+            // two-field analogue and prove it round-trips with the new fields
+            // defaulted.
+            #[derive(Serialize)]
+            struct OldKey {
+                color: Rgba,
+                tolerance: u8,
+            }
+            let old = OldKey {
+                color: Rgba::opaque(255, 0, 255),
+                tolerance: 24,
+            };
+            let bytes = rmp_serde::to_vec_named(&old).expect("encode old key");
+            let key: ChromaKey = rmp_serde::from_slice(&bytes).expect("decode into new ChromaKey");
+            assert_eq!(key.color, Rgba::opaque(255, 0, 255));
+            assert_eq!(key.tolerance, 24);
+            assert_eq!(key.border_tolerance, None, "border_tolerance defaults to None");
+            assert_eq!(key.trim_border, 0, "trim_border defaults to 0");
+        }
+
+        #[test]
+        fn deserializes_old_json_without_new_fields() {
+            let json = r#"{"color":{"r":0,"g":255,"b":0,"a":255},"tolerance":8}"#;
+            let key: ChromaKey = serde_json::from_str(json).expect("decode legacy JSON");
+            assert_eq!(key.color, Rgba::opaque(0, 255, 0));
+            assert_eq!(key.tolerance, 8);
+            assert_eq!(key.border_tolerance, None);
+            assert_eq!(key.trim_border, 0);
+        }
+
+        #[test]
+        fn round_trips_new_fields_through_json() {
+            let key = ChromaKey {
+                color: Rgba::opaque(255, 0, 255),
+                tolerance: 20,
+                border_tolerance: Some(40),
+                trim_border: 2,
+            };
+            let json = serde_json::to_string(&key).expect("encode");
+            let back: ChromaKey = serde_json::from_str(&json).expect("decode");
+            assert_eq!(back, key, "all four fields survive the round-trip");
+        }
     }
 
     #[test]
@@ -732,5 +1134,124 @@ mod tests {
         assert_eq!(fit_reference_height(200, 100, 64, 64), 32);
         // No extent: falls back to the canvas height.
         assert_eq!(fit_reference_height(0, 0, 64, 64), 64);
+    }
+
+    /// Builds a deterministic test sheet from a per-pixel colour function, so a
+    /// proptest can generate varied content without a custom strategy.
+    fn sheet_from_fn(w: u32, h: u32, f: impl Fn(u32, u32) -> Rgba) -> PixelBuffer {
+        let mut buf = PixelBuffer::new(w, h).unwrap();
+        for y in 0..h {
+            for x in 0..w {
+                buf.set_pixel(x, y, f(x, y));
+            }
+        }
+        buf
+    }
+
+    fn opaque_count_at(buf: &PixelBuffer, threshold: u8) -> u64 {
+        opaque_count(buf, threshold)
+    }
+
+    proptest! {
+        /// Keying can only ever remove opaque pixels, never add them.
+        #[test]
+        fn chroma_key_two_pass_never_increases_opaque_count(
+            seed in 0u32..=255,
+            tol in 0u8..=64,
+        ) {
+            let key = ChromaKey::new(Rgba::opaque(255, 0, 255), tol);
+            let buf = sheet_from_fn(12, 12, |x, y| {
+                // A magenta field with a pseudo-random scatter of off-key blocks.
+                let h = (x.wrapping_mul(7) ^ y.wrapping_mul(13) ^ seed) % 4;
+                match h {
+                    0 => Rgba::opaque(255, 0, 255),
+                    1 => Rgba::opaque(10, 20, 30),
+                    2 => Rgba::opaque(0xE0, 0x40, 0xE0),
+                    _ => Rgba::opaque(200, 50, 90),
+                }
+            });
+            let before = opaque_count_at(&buf, 0);
+            let after = opaque_count_at(&chroma_key_two_pass(&buf, key), 0);
+            prop_assert!(after <= before, "after {after} > before {before}");
+        }
+
+        /// No pixel outside the trim ring is cleared unless it is within the
+        /// border threshold of the key (the flood never eats a far-from-key pixel).
+        #[test]
+        fn chroma_key_two_pass_only_clears_within_border_threshold(
+            seed in 0u32..=255,
+            tol in 0u8..=64,
+        ) {
+            let key = ChromaKey::new(Rgba::opaque(255, 0, 255), tol);
+            let buf = sheet_from_fn(12, 12, |x, y| {
+                let h = (x.wrapping_mul(5) ^ y.wrapping_mul(11) ^ seed) % 3;
+                match h {
+                    0 => Rgba::opaque(255, 0, 255),
+                    1 => Rgba::opaque(0xE0, 0x40, 0xE0),
+                    _ => Rgba::opaque(10, 20, 30),
+                }
+            });
+            let out = chroma_key_two_pass(&buf, key);
+            let border = key.border_threshold();
+            for y in 0..buf.height() {
+                for x in 0..buf.width() {
+                    let was = buf.pixel(x, y).unwrap();
+                    let now = out.pixel(x, y).unwrap();
+                    if was.a != 0 && now.a == 0 {
+                        // trim_border is 0 here, so every cleared pixel must have
+                        // been within the looser border threshold of the key.
+                        prop_assert!(
+                            rgb_dist_sq(was, key.color) <= border,
+                            "cleared a far-from-key pixel at ({x},{y}): dist {} > border {border}",
+                            rgb_dist_sq(was, key.color)
+                        );
+                    }
+                }
+            }
+        }
+    }
+
+    /// Visual regression: a magenta field with an antialiased rim around a
+    /// subject, keyed two-pass, compared against a committed baseline PNG.
+    /// Catches a halo-removal regression the byte-level tests might miss.
+    /// Regenerate with `PIXHAUS_UPDATE_SNAPSHOTS=1 cargo test -p pixhaus-core
+    /// chroma_key_two_pass_halo_matches_baseline` and audit the new image.
+    #[test]
+    fn chroma_key_two_pass_halo_matches_baseline() {
+        use std::path::Path;
+
+        // A 16x16 magenta sheet, a 6x6 AA rim ring, a 4x4 dissimilar subject.
+        let mut buf = solid(16, 16, Rgba::opaque(255, 0, 255));
+        for y in 5..=10 {
+            for x in 5..=10 {
+                buf.set_pixel(x, y, Rgba::opaque(0xE0, 0x40, 0xE0));
+            }
+        }
+        for y in 6..=9 {
+            for x in 6..=9 {
+                buf.set_pixel(x, y, Rgba::opaque(10, 20, 30));
+            }
+        }
+        let key = ChromaKey::new(Rgba::opaque(255, 0, 255), 32);
+        let out = chroma_key_two_pass(&buf, key);
+        let actual: image::RgbaImage =
+            image::RgbaImage::from_raw(out.width(), out.height(), out.as_bytes().to_vec()).expect("buffer bytes form a valid RGBA image");
+
+        let baseline_path = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/snapshots/chroma_key_two_pass_halo.png");
+
+        if std::env::var_os("PIXHAUS_UPDATE_SNAPSHOTS").is_some() {
+            if let Some(dir) = baseline_path.parent() {
+                std::fs::create_dir_all(dir).expect("create snapshot dir");
+            }
+            actual.save(&baseline_path).expect("write baseline png");
+            return;
+        }
+
+        let baseline = image::open(&baseline_path)
+            .expect("baseline png is present; regenerate with PIXHAUS_UPDATE_SNAPSHOTS=1")
+            .to_rgba8();
+
+        let result = image_compare::rgba_hybrid_compare(&actual, &baseline).expect("image dimensions match");
+        assert!(result.score >= 0.999, "two-pass keyed halo diverged from baseline: score = {}", result.score);
     }
 }

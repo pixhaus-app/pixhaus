@@ -46,7 +46,9 @@ pub use audio_timing::{AudioError, OnsetMs, detect_onsets_wav, onset_frame_durat
 pub use error::{Error, Result};
 pub use flip::{flip_horizontal, flip_vertical};
 pub use inbetween::{DEFAULT_VARIANCE_RANGE, InbetweenError, interpolate_frames, tween, tween_with_variance};
-pub use normalize::{ChromaKey, FrameMetrics, NormalizeOptions, NormalizeReport, NormalizeResult, SeamMatch, chroma_key, measure, normalize_frames, repad};
+pub use normalize::{
+    ChromaKey, FrameMetrics, NormalizeOptions, NormalizeReport, NormalizeResult, SeamMatch, chroma_key, chroma_key_two_pass, measure, normalize_frames, repad,
+};
 pub use perspective::perspective;
 pub use resize::{CanvasAnchor, crop, resize_canvas};
 pub use rotate::{RotationAlgorithm, rotate, rotate_90_ccw, rotate_90_cw, rotate_180, rotate_bilinear, rotate_nearest, rotate_rotsprite};
