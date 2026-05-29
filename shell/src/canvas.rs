@@ -224,6 +224,30 @@ impl ShellApp {
             return;
         }
 
+        // Tile-aware drawing seam (BLOCKED — tilemap subsystem port, out of this
+        // batch). Do not implement here. The future contract, once the tilemap
+        // subsystem lands (tilemap data ops, the autotile engine, the tileset UI):
+        //
+        // - Check a tile context first, right here, ahead of the per-button pixel
+        //   dispatch below: either a `Tool::TilePaint` / `Tool::TileErase` pair or
+        //   a tilemap-context flag (the analogue of the Tauri app's
+        //   `activeTilemapCtx`). When it is active, the gesture is a tile edit, not
+        //   a pixel paint, so `return` before the loop runs — never fall through to
+        //   `begin_gesture` / the pixel paint path.
+        // - Map the canvas pixel `p` to a tilemap cell via the tilemap's
+        //   `cell_to_pixel` inverse (the geometry ships with the subsystem;
+        //   `core::project::tilemap::TilemapData` is inert data today and has no
+        //   `cell_to_pixel` yet).
+        // - Dispatch a dedicated `TileEdit` undo command in `commands.rs` — a
+        //   tilemap analogue of `PixelRegionEdit` (a `Command<DocumentStore>`
+        //   capturing before/after cells over the touched cell range) — so tile
+        //   edits are undoable. v2 has no tile-editing command today.
+        //
+        // The major / tile grid built in T2 is the shared dependency: its
+        // independent X/Y spacing (`editor.major_grid_spacing_x` /
+        // `major_grid_spacing_y`) stays bindable to the active tileset's tile size
+        // when the tile editor arrives. No tilemap internals are designed here.
+
         // Resolve the selection-combine mode the gesture will commit with. A held
         // Shift/Alt overrides the context-bar default for this gesture; with no
         // modifier the current (UI-set) mode applies. Capture it at the gesture's
@@ -1022,10 +1046,17 @@ impl ShellApp {
         let _ = self.editor.history.push(Box::new(cmd), &mut self.doc);
     }
 
-    /// Adds `color` to the active palette when auto-add is on and the colour is
-    /// not already present.
+    /// Records `color` as a recently-used colour and, when auto-add is on, adds
+    /// it to the active palette if it is not already present. Fully-transparent
+    /// colours (the eraser) are recorded nowhere — they have no colour to track.
+    /// Recents are tracked regardless of the auto-add toggle so the strip
+    /// reflects every painted colour.
     fn maybe_add_palette(&mut self, color: Rgba) {
-        if !self.editor.auto_add_palette || color.a == 0 {
+        if color.a == 0 {
+            return;
+        }
+        self.editor.push_recent(color);
+        if !self.editor.auto_add_palette {
             return;
         }
         let Some(id) = self.doc.project.active_sprite_id() else {

@@ -7,7 +7,7 @@
 //! disjoint fields and pushes undo entries with
 //! `editor.history.push(cmd, &mut doc)`.
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeSet, VecDeque};
 
 use eframe::egui;
 use pixhaus_core::canvas::{BrushShape, DitherPattern, PixelBuffer};
@@ -598,6 +598,12 @@ pub struct EditorState {
     /// none has run. v2 has no toast system, so the field stands in for one.
     /// View state, never serialized.
     pub palette_io_error: Option<String>,
+    /// Palette panel: the most-recently-committed colours, newest first, capped
+    /// at [`Self::RECENT_COLORS_CAP`]. A stroke / fill / shape commit pushes its
+    /// colour via [`push_recent`] (move-to-front on a repeat); the recents strip
+    /// above the swatch grid clicks one back into the foreground. View state,
+    /// never serialized.
+    pub recent_colors: VecDeque<Rgba>,
     /// Timeline: cel-thumbnail edge length in points.
     pub cel_size: f32,
     /// Timeline: draft name for a new frame tag.
@@ -714,6 +720,7 @@ impl Default for EditorState {
             harmony_kind: HarmonyKind::default(),
             export_format: PaletteExportFormat::default(),
             palette_io_error: None,
+            recent_colors: VecDeque::new(),
             cel_size: 48.0,
             new_tag_name: String::new(),
             layer_rename: None,
@@ -736,6 +743,18 @@ impl EditorState {
     /// grid overlay draws. Below it the grid would alias into noise, so the
     /// overlay is skipped. Mirrors the Tauri `PIXEL_GRID_ZOOM_THRESHOLD`.
     pub const PIXEL_GRID_ZOOM_THRESHOLD: f32 = 4.0;
+
+    /// How many recent colours the palette panel keeps. One short row above the
+    /// swatch grid.
+    pub const RECENT_COLORS_CAP: usize = 16;
+
+    /// Records `color` as the most-recently-used colour, newest first, capped at
+    /// [`Self::RECENT_COLORS_CAP`]. A repeat moves to the front rather than
+    /// duplicating. Called from the stroke / fill / shape commit so the recents
+    /// strip tracks painted colours regardless of the auto-add-to-palette toggle.
+    pub fn push_recent(&mut self, color: Rgba) {
+        push_recent(&mut self.recent_colors, color, Self::RECENT_COLORS_CAP);
+    }
 
     /// The tool to use for a pointer button: primary -> left tool, secondary ->
     /// right tool.
@@ -872,6 +891,26 @@ pub fn reseed_selection(display_order: &[LayerId], selected: &mut BTreeSet<Layer
     top
 }
 
+/// Pushes `color` to the front of the recent-colours deque, capped at `cap`.
+///
+/// A colour already present moves to the front (dedup-to-front) rather than
+/// duplicating; a fresh colour pushes to the front and the oldest entry is
+/// evicted from the back once the deque exceeds `cap`. A `cap` of 0 leaves the
+/// deque empty. Pure so the panel and tests share one rule.
+pub fn push_recent(recent: &mut VecDeque<Rgba>, color: Rgba, cap: usize) {
+    if cap == 0 {
+        recent.clear();
+        return;
+    }
+    if let Some(pos) = recent.iter().position(|&c| c == color) {
+        recent.remove(pos);
+    }
+    recent.push_front(color);
+    while recent.len() > cap {
+        recent.pop_back();
+    }
+}
+
 /// Converts a core [`Rgba`] to an egui [`egui::Color32`] (unmultiplied).
 #[must_use]
 pub fn to_color32(c: Rgba) -> egui::Color32 {
@@ -937,6 +976,57 @@ mod tests {
         s.mark_dirty(0, 0, 10, 10);
         s.mark_dirty(20, 20, 10, 10);
         assert_eq!(s.take_pending(), Some((0, 0, 30, 30)));
+    }
+
+    mod recent_colors {
+        use std::collections::VecDeque;
+
+        use pixhaus_core::project::Rgba;
+
+        use crate::editor::push_recent;
+
+        fn colors(deque: &VecDeque<Rgba>) -> Vec<Rgba> {
+            deque.iter().copied().collect()
+        }
+
+        #[test]
+        fn push_recent_puts_the_newest_color_first() {
+            let mut d = VecDeque::new();
+            push_recent(&mut d, Rgba::opaque(1, 0, 0), 16);
+            push_recent(&mut d, Rgba::opaque(2, 0, 0), 16);
+            assert_eq!(colors(&d), vec![Rgba::opaque(2, 0, 0), Rgba::opaque(1, 0, 0)]);
+        }
+
+        #[test]
+        fn push_recent_moves_a_repeat_to_the_front_without_duplicating() {
+            let mut d = VecDeque::new();
+            for n in 1..=3 {
+                push_recent(&mut d, Rgba::opaque(n, 0, 0), 16);
+            }
+            // Re-using the oldest colour moves it to the front; no duplicate.
+            push_recent(&mut d, Rgba::opaque(1, 0, 0), 16);
+            assert_eq!(
+                colors(&d),
+                vec![Rgba::opaque(1, 0, 0), Rgba::opaque(3, 0, 0), Rgba::opaque(2, 0, 0)]
+            );
+        }
+
+        #[test]
+        fn push_recent_evicts_the_oldest_past_the_cap() {
+            let mut d = VecDeque::new();
+            // Cap of 2: pushing a third distinct colour drops the oldest.
+            push_recent(&mut d, Rgba::opaque(1, 0, 0), 2);
+            push_recent(&mut d, Rgba::opaque(2, 0, 0), 2);
+            push_recent(&mut d, Rgba::opaque(3, 0, 0), 2);
+            assert_eq!(colors(&d), vec![Rgba::opaque(3, 0, 0), Rgba::opaque(2, 0, 0)]);
+        }
+
+        #[test]
+        fn push_recent_with_zero_cap_keeps_the_deque_empty() {
+            let mut d = VecDeque::new();
+            push_recent(&mut d, Rgba::opaque(1, 0, 0), 0);
+            assert!(d.is_empty());
+        }
     }
 
     mod frame_selection {

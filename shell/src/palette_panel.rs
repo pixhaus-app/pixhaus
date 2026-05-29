@@ -13,7 +13,7 @@ use eframe::egui;
 use pixhaus_core::canvas::PixelBuffer;
 use pixhaus_core::color::palette_file::{aco, gpl, hex, pal, PaletteFileError, PaletteFileResult};
 use pixhaus_core::color::space::to_hsv;
-use pixhaus_core::project::{CelData, Palette, PaletteEntry, PixelBufferId, Rgba};
+use pixhaus_core::project::{CelData, ColorMode, Palette, PaletteEntry, PixelBufferId, Rgba};
 
 use crate::app::ShellApp;
 use crate::color_picker::color_picker_ui;
@@ -36,6 +36,12 @@ impl ShellApp {
         };
         let colors: Vec<Rgba> = palette.colors.iter().map(|e| e.color).collect();
         let names: Vec<Option<String>> = palette.colors.iter().map(|e| e.name.clone()).collect();
+
+        // Indexed-mode affordances: number the swatches, flag index 0 as the
+        // transparent index, and read the foreground back as an index. The
+        // labels are gated on the mode so an RGBA sprite renders unchanged.
+        let is_indexed = self.doc.active_sprite().is_some_and(|s| s.color_mode == ColorMode::Indexed);
+        let fg_index = if is_indexed { palette.nearest_index(self.editor.fg) } else { None };
 
         ui.horizontal(|ui| {
             ui.checkbox(&mut self.editor.auto_add_palette, "Auto-add")
@@ -60,6 +66,16 @@ impl ShellApp {
                 self.sort_palette(PaletteSort::Luminance);
             }
         });
+
+        if is_indexed {
+            // The foreground's resolved index, the draw layer's index readout.
+            let label = fg_index.map_or_else(|| "Index: -".to_owned(), |i| format!("Index: {i}"));
+            ui.label(egui::RichText::new(label).weak());
+        }
+
+        // The recents strip: the most-recently-painted colours, newest first.
+        // Clicking one re-selects it as the foreground. UI-only, never persisted.
+        self.recents_strip(ui);
 
         ui.separator();
 
@@ -105,10 +121,15 @@ impl ShellApp {
                 // when a compatible drag hovers; the released payload reorders.
                 let ((), payload) = crate::dnd::drop_target::<SwatchDrag, _>(ui, crate::dnd::DropHint::Before, |ui| {
                     let (rect, resp) = ui.allocate_exact_size(egui::vec2(sw, sw), egui::Sense::click_and_drag());
-                    if color.a < 255 {
+                    // In indexed mode, index 0 is the transparent index: show the
+                    // checker through it whatever colour the entry stores.
+                    let transparent_index = is_indexed && i == 0;
+                    if color.a < 255 || transparent_index {
                         paint_checker(ui, rect);
                     }
-                    ui.painter().rect_filled(rect, 2.0, to_color32(color));
+                    if !transparent_index {
+                        ui.painter().rect_filled(rect, 2.0, to_color32(color));
+                    }
                     let selected = in_selection || color == self.editor.fg;
                     let stroke = if selected {
                         egui::Stroke::new(2.0, egui::Color32::WHITE)
@@ -116,6 +137,20 @@ impl ShellApp {
                         egui::Stroke::new(1.0, egui::Color32::from_black_alpha(120))
                     };
                     ui.painter().rect_stroke(rect, 2.0, stroke, egui::StrokeKind::Middle);
+                    if is_indexed {
+                        // Number each swatch in its corner, in a contrast colour
+                        // so the label reads on light and dark entries alike. The
+                        // transparent index reads "0/T".
+                        let label = entry_index_label(i, transparent_index);
+                        let ink = if transparent_index { egui::Color32::WHITE } else { contrast_ink(color) };
+                        ui.painter().text(
+                            rect.right_top() + egui::vec2(-2.0, 1.0),
+                            egui::Align2::RIGHT_TOP,
+                            label,
+                            egui::FontId::proportional(sw * 0.4),
+                            ink,
+                        );
+                    }
                     if is_locked {
                         // A lock glyph overlays the locked swatch's corner.
                         ui.painter().text(
@@ -264,6 +299,37 @@ impl ShellApp {
 
         ui.separator();
         self.import_export_section(ui);
+    }
+
+    /// The recent-colours strip: the most-recently-painted colours, newest
+    /// first, each a small clickable swatch. Clicking one sets it as the
+    /// foreground. A no-op (draws nothing) until at least one colour has been
+    /// committed this session. Session-only state, never serialized.
+    fn recents_strip(&mut self, ui: &mut egui::Ui) {
+        if self.editor.recent_colors.is_empty() {
+            return;
+        }
+        let recents: Vec<Rgba> = self.editor.recent_colors.iter().copied().collect();
+        let mut pick: Option<Rgba> = None;
+        ui.horizontal_wrapped(|ui| {
+            ui.spacing_mut().item_spacing = egui::vec2(3.0, 3.0);
+            ui.label(egui::RichText::new("Recent:").weak());
+            for color in recents {
+                let (rect, resp) = ui.allocate_exact_size(egui::vec2(14.0, 14.0), egui::Sense::click());
+                if color.a < 255 {
+                    paint_checker(ui, rect);
+                }
+                ui.painter().rect_filled(rect, 2.0, to_color32(color));
+                ui.painter()
+                    .rect_stroke(rect, 2.0, egui::Stroke::new(1.0, egui::Color32::from_black_alpha(120)), egui::StrokeKind::Middle);
+                if resp.clicked() {
+                    pick = Some(color);
+                }
+            }
+        });
+        if let Some(color) = pick {
+            self.editor.fg = color;
+        }
     }
 
     /// The "Import / Export" section: read a `.gpl`/`.hex`/`.pal`/`.aco` file
@@ -742,6 +808,21 @@ fn luminance(c: Rgba) -> u32 {
     (u32::from(c.r) * 299 + u32::from(c.g) * 587 + u32::from(c.b) * 114) / 1000
 }
 
+/// The corner label for the swatch at `index` in an indexed-mode palette. The
+/// transparent index reads `"0/T"`; every other index is its number. Pure so
+/// the panel and its test share one rule.
+#[must_use]
+pub(crate) fn entry_index_label(index: usize, is_transparent: bool) -> String {
+    if is_transparent { format!("{index}/T") } else { index.to_string() }
+}
+
+/// Picks black or white text for a label drawn over `bg`, whichever reads with
+/// more contrast — black on a light swatch, white on a dark one. Uses the same
+/// Rec.601 luminance the sort key does, thresholded at the mid grey.
+fn contrast_ink(bg: Rgba) -> egui::Color32 {
+    if luminance(bg) > 140 { egui::Color32::BLACK } else { egui::Color32::WHITE }
+}
+
 #[cfg(test)]
 mod tests {
     use pixhaus_core::canvas::PixelBuffer;
@@ -749,7 +830,9 @@ mod tests {
     use pixhaus_core::project::{Palette, PaletteId, Rgba};
     use rstest::rstest;
 
-    use super::{luminance, palette_slug, parse_pal, quantize_buffer, remove_swatch_at, reorder_in_place, saturation_key, set_entry_name, value_key};
+    use super::{
+        entry_index_label, luminance, palette_slug, parse_pal, quantize_buffer, remove_swatch_at, reorder_in_place, saturation_key, set_entry_name, value_key,
+    };
 
     fn palette_with_named_colors(names: &[&str]) -> Palette {
         let mut p = Palette::from_colors(PaletteId::new(1), "main", vec![Rgba::opaque(0, 0, 0); names.len()]);
@@ -909,6 +992,17 @@ mod tests {
     #[case("***", "palette")]
     fn palette_slug_is_filesystem_safe(#[case] name: &str, #[case] expect: &str) {
         assert_eq!(palette_slug(name), expect);
+    }
+
+    // ── entry_index_label ─────────────────────────────────────────────────
+
+    #[rstest]
+    #[case(0, true, "0/T")] // index 0 is the transparent index
+    #[case(0, false, "0")] // a non-indexed-transparent 0 is just its number
+    #[case(5, false, "5")]
+    #[case(255, false, "255")]
+    fn entry_index_label_flags_the_transparent_index(#[case] index: usize, #[case] is_transparent: bool, #[case] expect: &str) {
+        assert_eq!(entry_index_label(index, is_transparent), expect);
     }
 
     // ── quantize_buffer ───────────────────────────────────────────────────
