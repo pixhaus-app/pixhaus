@@ -623,7 +623,7 @@ fn example_prompts() -> Vec<PromptTemplate> {
     let character = StructureId("pixhaus.builtin.structure.character".into());
     let item = StructureId("pixhaus.builtin.structure.item".into());
     let tileset = StructureId("pixhaus.builtin.structure.tileset".into());
-    vec![
+    let mut examples = vec![
         PromptTemplate {
             id: PromptId("pixhaus.builtin.prompt.bit".into()),
             name: "Bit — mascot".into(),
@@ -708,8 +708,105 @@ fn example_prompts() -> Vec<PromptTemplate> {
             default_style: None,
             default_structure: Some(StructureId(STRUCTURE_SINGLE_ID.into())),
         },
-    ]
+    ];
+    examples.extend(bit_prompts());
+    examples
 }
+
+/// The Bit demo prompt pack: one composed prompt per movement and action, in
+/// the pixel-art default look.
+///
+/// One worked prompt per entry in the demo's action set — idle, walk, run, jump,
+/// fall, attack, hurt, plus a turnaround — so the first-run Bit project can
+/// regenerate every cell through the same reference-sheet pipeline. Each carries
+/// the same mascot identity prose Bit's mascot example uses, then the action's
+/// own pose direction, and points at the built-in structure that frames it: the
+/// turnaround at the character body sheet, the single-pose movements and actions
+/// at the free-composition Single structure. Plain text, no variables — the
+/// pixel-art baseline and the picked pixel-art Style supply the look, so a
+/// non-pixel style can restyle the same prompt without fighting baked-in
+/// adjectives.
+fn bit_prompts() -> Vec<PromptTemplate> {
+    let character = StructureId(STRUCTURE_CHARACTER_ID.into());
+    let single = StructureId(STRUCTURE_SINGLE_ID.into());
+    BIT_ACTIONS
+        .iter()
+        .map(|action| {
+            let structure = if action.id == "turnaround" { character.clone() } else { single.clone() };
+            PromptTemplate {
+                id: PromptId(format!("pixhaus.builtin.prompt.bit_{}", action.id)),
+                name: format!("Bit — {}", action.label),
+                text: format!("{BIT_IDENTITY} {}", action.pose),
+                variables: Vec::new(),
+                default_style: None,
+                default_structure: Some(structure),
+            }
+        })
+        .collect()
+}
+
+/// The mascot-identity prose shared by every Bit action prompt, so each pose
+/// reads as the same character. Kept free of pixel adjectives — the look comes
+/// from the selected style, not the prompt — so the pack restyles cleanly.
+const BIT_IDENTITY: &str = "Bit, the Pixhaus mascot — a small retro robot with a boxy CRT/floppy-disk head, \
+    a glowing pixel-face screen showing its expression, a stubby antenna with a blinking pixel, \
+    chunky rounded limbs, friendly proportions.";
+
+/// One Bit action in the demo prompt pack: a stable id slug, a display label,
+/// and the pose direction appended after the shared identity prose.
+struct BitAction {
+    /// Id slug, used in the prompt id and to pick the turnaround's structure.
+    id: &'static str,
+    /// Display label shown in the prompt picker.
+    label: &'static str,
+    /// Pose-direction prose appended after [`BIT_IDENTITY`].
+    pose: &'static str,
+}
+
+/// The demo's movement/action set as prompt-pack records: the looping movements,
+/// the one-shot actions, and the turnaround that feeds the directional anchors.
+const BIT_ACTIONS: &[BitAction] = &[
+    BitAction {
+        id: "idle",
+        label: "idle",
+        pose: "standing idle, weight settled, a calm neutral pose, facing the viewer.",
+    },
+    BitAction {
+        id: "walk",
+        label: "walk",
+        pose: "mid-stride in a relaxed walk cycle, one foot forward, arms swinging, side view.",
+    },
+    BitAction {
+        id: "run",
+        label: "run",
+        pose: "leaning forward in a fast run, legs extended, arms pumping, side view.",
+    },
+    BitAction {
+        id: "jump",
+        label: "jump",
+        pose: "at the top of a jump, knees tucked, arms raised, airborne.",
+    },
+    BitAction {
+        id: "fall",
+        label: "fall",
+        pose: "falling, arms out for balance, legs trailing below, airborne.",
+    },
+    BitAction {
+        id: "attack",
+        label: "attack",
+        pose: "the impact frame of a melee swing, one arm thrust forward, body committed, side view.",
+    },
+    BitAction {
+        id: "hurt",
+        label: "hurt",
+        pose: "recoiling from a hit, head back, arms drawn in, a brief flinch.",
+    },
+    BitAction {
+        id: "turnaround",
+        label: "turnaround",
+        pose: "a turnaround model sheet — front, left side, three-quarter, right side, back views, consistent identity and scale.",
+    },
+];
 
 #[cfg(test)]
 mod tests {
@@ -795,8 +892,9 @@ mod tests {
         ] {
             assert!(lib.styles.contains_key(&StyleId(id.into())), "missing built-in style {id}");
         }
-        // Seeded example prompts — Bit's world plus one parametric example.
-        assert_eq!(lib.prompts.len(), 5);
+        // Seeded example prompts — Bit's world, one parametric example, and the
+        // Bit demo action pack (one prompt per movement/action).
+        assert_eq!(lib.prompts.len(), 5 + BIT_ACTIONS.len());
         for id in [
             "pixhaus.builtin.prompt.bit",
             "pixhaus.builtin.prompt.byte",
@@ -1300,5 +1398,87 @@ mod tests {
     fn custom_layout_prose_snapshot() {
         let lib = BuiltinLibrary::load();
         insta::assert_snapshot!(compose_layout(&lib, "pixhaus.builtin.structure.custom"));
+    }
+
+    // ── Brief 12: the Bit demo prompt pack ───────────────────────────────────
+
+    mod bit_prompts {
+        use super::*;
+
+        /// Every Bit-pack prompt id, derived from the action set.
+        fn bit_prompt_ids() -> Vec<PromptId> {
+            super::super::BIT_ACTIONS
+                .iter()
+                .map(|a| PromptId(format!("pixhaus.builtin.prompt.bit_{}", a.id)))
+                .collect()
+        }
+
+        /// Composes `prompt` in the pixel-art default: the pixel-art baseline and
+        /// the built-in pixel-art Style, against the prompt's own structure.
+        fn compose_in_pixel_default(lib: &BuiltinLibrary, prompt: &PromptTemplate) -> String {
+            let empty = BTreeMap::new();
+            let structure = &lib.structures[prompt.default_structure.as_ref().expect("Bit prompt names a structure")];
+            let style = &lib.styles[&StyleId(STYLE_PIXEL_ART_ID.into())];
+            let req = ComposeRequest {
+                baseline: baseline_for(ArtStyleKind::PixelArt),
+                structure,
+                style: Some(style),
+                prompt: Some(prompt),
+                variable_values: &empty,
+                entity_info: &empty,
+                inline_text: "",
+                inline_negatives: "",
+                operation_hint: None,
+                context_fragments: &[],
+            };
+            compose(&req).unwrap().positive
+        }
+
+        #[test]
+        fn cover_all_actions() {
+            let lib = BuiltinLibrary::load();
+            // One prompt per action, no more, no fewer.
+            let ids = bit_prompt_ids();
+            assert_eq!(ids.len(), super::super::BIT_ACTIONS.len(), "one prompt per action");
+            for id in &ids {
+                let prompt = lib.prompts.get(id).unwrap_or_else(|| panic!("Bit prompt {id:?} present"));
+                // Each composes in the pixel-art default: the positive leads with
+                // the pixel baseline, proving the look comes from the style layer,
+                // not baked into the prompt text.
+                let positive = compose_in_pixel_default(&lib, prompt);
+                assert!(
+                    positive.starts_with(BUILTIN_DEFAULT_BASELINE),
+                    "{id:?} must compose beginning with the pixel baseline: {positive}"
+                );
+            }
+        }
+
+        #[test]
+        fn point_at_valid_structures() {
+            let lib = BuiltinLibrary::load();
+            for id in bit_prompt_ids() {
+                let prompt = lib.prompts.get(&id).unwrap_or_else(|| panic!("Bit prompt {id:?} present"));
+                let structure = prompt.default_structure.as_ref().unwrap_or_else(|| panic!("{id:?} names a structure"));
+                assert!(lib.structures.contains_key(structure), "{id:?} structure {structure:?} must resolve in the library");
+            }
+        }
+
+        #[test]
+        fn carry_the_shared_mascot_identity() {
+            // Every action prompt reads as the same character, so a restyle keeps
+            // Bit recognizable across cells.
+            let lib = BuiltinLibrary::load();
+            for id in bit_prompt_ids() {
+                let prompt = lib.prompts.get(&id).unwrap_or_else(|| panic!("Bit prompt {id:?} present"));
+                assert!(prompt.text.contains("Bit, the Pixhaus mascot"), "{id:?} must carry the shared Bit identity: {}", prompt.text);
+            }
+        }
+
+        #[test]
+        fn idle_prompt_snapshot() {
+            let lib = BuiltinLibrary::load();
+            let prompt = lib.prompts.get(&PromptId("pixhaus.builtin.prompt.bit_idle".into())).expect("Bit idle prompt present");
+            insta::assert_snapshot!(compose_in_pixel_default(&lib, prompt));
+        }
     }
 }

@@ -1105,7 +1105,14 @@ impl ShellApp {
         };
         grid_prefs.apply_to(&mut app.editor);
         app.install_renderer();
-        app.doc.create_sprite("untitled", DEFAULT_CANVAS);
+        // Seed the Bit demo only when no project was restored, so a future
+        // save/load path that already populated the document is never clobbered.
+        // Until the io crate lands the document is always fresh, so this is the
+        // first-run showcase: a recognizable mascot with idle/walk/run/attack
+        // cells to regenerate, restyle, animate, and export.
+        if app.doc.active_sprite().is_none() {
+            crate::demo::build_bit_demo(&mut app.doc);
+        }
         app.refresh_canvas(true);
         // Register backends from the keychain off-thread so the blocking reads
         // never delay the first paint; readiness arrives over the channel.
@@ -1694,6 +1701,14 @@ impl ShellApp {
             self.new_sprite_custom = !is_preset_size(size.width, size.height);
         }
         self.new_sprite_open = true;
+    }
+
+    /// Re-seeds the Bit demo into the document, replacing the current contents,
+    /// and refits the canvas. The File-menu way back to the first-run showcase.
+    fn open_bit_demo(&mut self) {
+        crate::demo::build_bit_demo(&mut self.doc);
+        self.refresh_canvas(true);
+        self.set_status("Loaded the Bit demo");
     }
 
     /// The active library entity's default canvas size, if it declares one.
@@ -3459,6 +3474,10 @@ impl ShellApp {
             ui.menu_button("File", |ui| {
                 if ui.button("New sprite…").clicked() {
                     self.open_new_sprite_dialog();
+                    ui.close();
+                }
+                if ui.button("Open Bit demo").clicked() {
+                    self.open_bit_demo();
                     ui.close();
                 }
                 ui.separator();

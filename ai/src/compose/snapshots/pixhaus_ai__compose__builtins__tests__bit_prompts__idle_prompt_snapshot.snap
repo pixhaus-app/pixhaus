@@ -1,0 +1,5 @@
+---
+source: ai/src/compose/builtins.rs
+expression: "compose_in_pixel_default(&lib, prompt)"
+---
+pixel art reference sheet. clean pixel art, crisp pixel-art lines, limited palette. Bit, the Pixhaus mascot — a small retro robot with a boxy CRT/floppy-disk head, a glowing pixel-face screen showing its expression, a stubby antenna with a blinking pixel, chunky rounded limbs, friendly proportions. standing idle, weight settled, a calm neutral pose, facing the viewer.

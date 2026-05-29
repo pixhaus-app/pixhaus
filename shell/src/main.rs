@@ -36,6 +36,7 @@ mod cockpit;
 mod color_picker;
 mod commands;
 mod context_bar;
+mod demo;
 mod dnd;
 mod document;
 mod editor;
