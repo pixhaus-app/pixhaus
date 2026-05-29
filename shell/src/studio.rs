@@ -557,18 +557,32 @@ impl ShellApp {
         self.sync_studio_owner();
         egui::Panel::top("studio_header").resizable(false).show_inside(ui, |ui| self.studio_header(ui));
         if self.studio_library_open {
-            // The composition-library overlay: the browser fills the center, the
-            // record editor the right dock, over the rest of the studio.
-            egui::Panel::right("studio_inspector")
-                .resizable(true)
-                .default_size(340.0)
-                .show_inside(ui, |ui| {
-                    egui::ScrollArea::vertical()
-                        .auto_shrink([false, false])
-                        .id_salt("library_editor_scroll")
-                        .show(ui, |ui| self.library_editor(ui));
+            // The library overlay hosts two browsers behind a sub-tab: the
+            // composition library (prompts/structures/styles, with the record
+            // editor in the right dock) and the asset library (references,
+            // character cards, style swatches), which fills the center alone.
+            egui::Panel::top("studio_library_tabs").resizable(false).show_inside(ui, |ui| {
+                ui.add_space(4.0);
+                ui.horizontal(|ui| {
+                    ui.selectable_value(&mut self.asset_browser_open, false, format!("{} Composition", crate::icons::LIBRARY));
+                    ui.selectable_value(&mut self.asset_browser_open, true, format!("{} Assets", crate::icons::CARD));
                 });
-            egui::CentralPanel::default().show_inside(ui, |ui| self.library_view(ui));
+                ui.add_space(2.0);
+            });
+            if self.asset_browser_open {
+                egui::CentralPanel::default().show_inside(ui, |ui| self.asset_library_view(ui));
+            } else {
+                egui::Panel::right("studio_inspector")
+                    .resizable(true)
+                    .default_size(340.0)
+                    .show_inside(ui, |ui| {
+                        egui::ScrollArea::vertical()
+                            .auto_shrink([false, false])
+                            .id_salt("library_editor_scroll")
+                            .show(ui, |ui| self.library_editor(ui));
+                    });
+                egui::CentralPanel::default().show_inside(ui, |ui| self.library_view(ui));
+            }
             return;
         }
         egui::Panel::left("studio_left")

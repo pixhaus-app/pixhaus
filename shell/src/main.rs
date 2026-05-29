@@ -27,6 +27,7 @@
 mod ai;
 mod anim;
 mod app;
+mod asset_library;
 mod bg_removal;
 mod canvas;
 mod cockpit;

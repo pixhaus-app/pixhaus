@@ -418,6 +418,15 @@ pub struct ShellApp {
     /// The composition-library record currently open in the editor, if any.
     /// Acts as the browser's selection: the row whose id matches is highlighted.
     pub(crate) library_draft: Option<crate::library::LibraryDraft>,
+    /// Whether the library overlay shows the asset browser (saved references,
+    /// character cards, style swatches) instead of the composition library.
+    pub(crate) asset_browser_open: bool,
+    /// Decoded asset thumbnails, keyed by [`pixhaus_core::project::AssetId`]'s raw
+    /// value. Each PNG decodes once on first display and is reused; deletes evict
+    /// their entry. Keeps the browser from re-decoding on every frame.
+    pub(crate) asset_tex_cache: HashMap<u32, egui::TextureHandle>,
+    /// The asset (card or swatch) being renamed inline: its raw id and draft text.
+    pub(crate) asset_rename: Option<(u32, String)>,
     /// Cockpit subject prompt draft.
     pub(crate) rs_prompt: String,
     /// Selected composition Structure id (free-form `Single` by default).
@@ -773,6 +782,9 @@ impl ShellApp {
             studio_library_open: false,
             library_tab: crate::library::LibraryTab::Templates,
             library_draft: None,
+            asset_browser_open: false,
+            asset_tex_cache: HashMap::new(),
+            asset_rename: None,
             rs_prompt: ai::DEFAULT_SHEET_PROMPT.to_owned(),
             ck_structure: ai::SINGLE_STRUCTURE_ID.to_owned(),
             ck_aspect: crate::cockpit::AnchorAspect::Square,
