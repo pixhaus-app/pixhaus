@@ -13,33 +13,11 @@ use std::collections::BTreeMap;
 
 use serde::{Deserialize, Serialize};
 
+use crate::color::ops::nearest_color_index;
+
 use super::color::Rgba;
 use super::id::{FrameIndex, PaletteId, PalettePageId};
 use super::user_data::UserData;
-
-/// Returns the index of the entry whose RGB values are nearest to `target`,
-/// ignoring alpha on both sides.
-///
-/// Uses squared Euclidean distance in sRGB space. Returns `None` if the
-/// iterator yields no items. Inlined from the main checkout's
-/// `color::ops::nearest_color_index`; the broader `color` ops module is not
-/// part of the vertical slice.
-fn nearest_color_index<I>(palette: I, target: Rgba) -> Option<usize>
-where
-    I: IntoIterator<Item = Rgba>,
-{
-    palette
-        .into_iter()
-        .enumerate()
-        .map(|(i, c)| {
-            let dr = i32::from(c.r) - i32::from(target.r);
-            let dg = i32::from(c.g) - i32::from(target.g);
-            let db = i32::from(c.b) - i32::from(target.b);
-            (i, dr * dr + dg * dg + db * db)
-        })
-        .min_by_key(|&(_, dist)| dist)
-        .map(|(i, _)| i)
-}
 
 /// A single entry within a [`Palette`].
 ///
