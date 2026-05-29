@@ -979,40 +979,12 @@ pub(crate) fn set_entry_name(palette: &mut Palette, index: usize, name: Option<S
 
 /// Snaps every opaque pixel in `buf` to its nearest `palette` entry, in place.
 ///
-/// For each pixel with non-zero alpha, maps the colour to
-/// [`Palette::nearest_index`] and writes back the entry's colour, keeping the
-/// pixel's own alpha. Alpha-0 pixels are left byte-identical (a transparent
-/// pixel has no colour to quantize). An empty palette is a no-op:
-/// `nearest_index` returns `None`, so there is nothing to map to.
-///
-/// Works directly on the buffer's `Vec<u8>` stride rows — four bytes per pixel,
-/// no intermediate `Vec<Vec<u8>>` — so the cost is bounded by the buffer's pixel
-/// count, not the canvas (the 8K constraint).
+/// A thin shim over [`pixhaus_core::transforms::finisher::snap_to_palette`] so
+/// the manual "Reduce to palette" button and the style-gated finisher share one
+/// snap implementation. Alpha-0 pixels stay byte-identical; an empty palette is
+/// a no-op. See the core function for the full contract.
 pub(crate) fn quantize_buffer(buf: &mut PixelBuffer, palette: &Palette) {
-    // An empty palette has no nearest entry; skip the whole pass.
-    if palette.colors.is_empty() {
-        return;
-    }
-    for y in 0..buf.height() {
-        let Some(row) = buf.row_mut(y) else { continue };
-        for px in row.chunks_exact_mut(4) {
-            // px is a 4-byte RGBA chunk: leave fully-transparent pixels alone.
-            if px[3] == 0 {
-                continue;
-            }
-            let here = Rgba::new(px[0], px[1], px[2], px[3]);
-            // nearest_index ignores alpha on both sides and returns Some(_) for a
-            // non-empty palette, so the get is in range; keep the pixel's alpha.
-            if let Some(idx) = palette.nearest_index(here) {
-                if let Some(entry) = palette.colors.get(idx) {
-                    let c = entry.color;
-                    px[0] = c.r;
-                    px[1] = c.g;
-                    px[2] = c.b;
-                }
-            }
-        }
-    }
+    pixhaus_core::transforms::finisher::snap_to_palette(buf, palette);
 }
 
 /// Reads `path` and parses it into a colour list, dispatching on the lowercase

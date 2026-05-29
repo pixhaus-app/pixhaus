@@ -32,6 +32,7 @@ use pixhaus_core::canvas::PixelBuffer;
 use pixhaus_core::project::library::ai::ProjectAi;
 use pixhaus_core::project::library::composition::{ArtStyleKind, PromptId, PromptTemplate, PromptVariable, Structure, StructureId, Style, StyleId};
 use pixhaus_core::project::{AnchorDirection, EntityId, PixelBufferId, ProjectMetadata, SheetVariantId};
+use pixhaus_core::transforms::finisher::{FinishOptions, finish_frames};
 use pixhaus_core::transforms::normalize::{ComponentMode, NormalizeOptions, normalize_frames};
 use tokio::runtime::Handle;
 use tokio_util::sync::CancellationToken;
@@ -165,6 +166,27 @@ pub fn style_options(project: &ProjectAi) -> Vec<(String, String)> {
     let mut out: Vec<(String, String)> = map.into_iter().collect();
     out.sort_by(|a, b| a.1.cmp(&b.1));
     out
+}
+
+/// Resolves the [`ArtStyleKind`] for a generation from the picked style id.
+///
+/// The kind drives the pixel finisher gate (Brief 8): `is_pixel()` kinds run
+/// the palette-snap + downscale finisher, the rest land their normalized frames
+/// verbatim. Resolution mirrors [`compose_preview`]: a project Style shadows a
+/// built-in of the same id; an unknown id or `None` falls back to the default
+/// [`ArtStyleKind::PixelArt`] so the historical pixel-art behaviour is kept.
+///
+/// Resolve the kind from the same picked style the generation used — not a
+/// later UI value — so a clean-HD sprite is not crushed to a low grid by a
+/// stale picker (the wrong-gate risk in the brief).
+#[must_use]
+pub fn resolve_art_style_kind(project: &ProjectAi, style_id: Option<&str>) -> ArtStyleKind {
+    let Some(id) = style_id else {
+        return ArtStyleKind::default();
+    };
+    let builtins = BuiltinLibrary::load();
+    let view = CompositionLibraryView::new(&project.structures, &project.styles, &project.prompts, builtins);
+    view.style(&StyleId(id.to_owned())).map_or_else(ArtStyleKind::default, |s| s.kind)
 }
 
 /// Builds the verb runtime with the reference-sheet verb registered. Backend
@@ -542,6 +564,11 @@ pub struct AnimJob {
     pub fps: u32,
     /// RNG seed for reproducibility. `None` uses a random seed each run.
     pub seed: Option<u64>,
+    /// Art-style family resolved from the picked Style. Gates the pixel
+    /// finisher: `is_pixel()` kinds get the palette-snap + downscale post-pass
+    /// after normalize; the rest land their normalized frames verbatim.
+    /// Defaults to [`ArtStyleKind::PixelArt`] to keep the historical look.
+    pub art_style_kind: ArtStyleKind,
 }
 
 /// The raw output of the Generate stage: the exact Seedance clip plus its
@@ -1050,8 +1077,20 @@ pub async fn run_animation(runtime: &VerbRuntime, job: &AnimJob, progress: &(dyn
         safe_margin: 0,
     };
     let result = normalize_frames(&buffers, &opts).map_err(|e| e.to_string())?;
+    // Style gate: only pixel-class styles run the finisher (palette-snap +
+    // downscale-to-grid). Clean-HD/map land the normalized frames verbatim.
+    // The finisher runs after normalize, on the canvas-sized frames, so the
+    // grid is the job canvas — safe.
+    let frames = if job.art_style_kind.is_pixel() {
+        progress("finishing (pixel)");
+        let opts = FinishOptions::for_canvas(width, height);
+        let finished = finish_frames(&result.frames, &opts).map_err(|e| e.to_string())?;
+        finished.into_iter().map(|f| f.buffer).collect()
+    } else {
+        result.frames
+    };
     let frame_duration_ms = (1000 / job.fps.max(1)).max(1);
-    Ok((result.frames, frame_duration_ms))
+    Ok((frames, frame_duration_ms))
 }
 
 /// Removes the background of one PNG via the `BACKGROUND_REMOVAL` capability
@@ -1137,7 +1176,10 @@ mod tests {
 
     use pixhaus_ai::compose::{VariableAxis, identity_lock_clause};
 
-    use super::{STRUCTURE_SINGLE_ID, compose_preview, derive_prompt, generate_frame_prompt, lock_when_conditioned, structure_options, style_options};
+    use super::{
+        STRUCTURE_SINGLE_ID, compose_preview, derive_prompt, generate_frame_prompt, lock_when_conditioned, resolve_art_style_kind, structure_options,
+        style_options,
+    };
 
     #[test]
     fn lock_when_conditioned_adds_the_pose_lock_once_on_an_unlocked_conditioned_prompt() {
@@ -1166,12 +1208,18 @@ mod tests {
         // Conditioned: base, suffix, then the identity-lock clause at the tail.
         let conditioned = derive_prompt("a hero", "single sprite frame, side view", true);
         assert_eq!(conditioned, format!("a hero, single sprite frame, side view, {lock}"));
-        assert!(conditioned.contains("keep the same character from the reference image"), "the lock clause rides the tail: {conditioned}");
+        assert!(
+            conditioned.contains("keep the same character from the reference image"),
+            "the lock clause rides the tail: {conditioned}"
+        );
 
         // From scratch: base and suffix only, no lock.
         let unconditioned = derive_prompt("a hero", "single sprite frame, side view", false);
         assert_eq!(unconditioned, "a hero, single sprite frame, side view");
-        assert!(!unconditioned.contains("keep the same character"), "an unconditioned prompt carries no lock: {unconditioned}");
+        assert!(
+            !unconditioned.contains("keep the same character"),
+            "an unconditioned prompt carries no lock: {unconditioned}"
+        );
     }
 
     #[test]
@@ -1265,5 +1313,112 @@ mod tests {
         let (pos, neg) = compose_preview(&project, "does.not.exist", "a knight", "", None, None, &vars);
         assert!(pos.is_empty());
         assert!(neg.is_empty());
+    }
+
+    // ── Brief 8: the pixel-finisher style gate ────────────────────────────
+
+    #[test]
+    fn resolve_art_style_kind_reads_the_picked_style_kind() {
+        use pixhaus_ai::compose::builtins::{STYLE_CLEAN_HD_ID, STYLE_PIXEL_ART_ID};
+        let project = ProjectAi::default();
+        // Built-in pixel-art and clean-HD styles resolve to their kinds.
+        assert_eq!(resolve_art_style_kind(&project, Some(STYLE_PIXEL_ART_ID)), ArtStyleKind::PixelArt);
+        assert_eq!(resolve_art_style_kind(&project, Some(STYLE_CLEAN_HD_ID)), ArtStyleKind::CleanHd);
+        // No style and an unknown id both fall back to the pixel-art default so
+        // the historical look is preserved (and the wrong-gate risk is bounded).
+        assert_eq!(resolve_art_style_kind(&project, None), ArtStyleKind::PixelArt);
+        assert_eq!(resolve_art_style_kind(&project, Some("does.not.exist")), ArtStyleKind::PixelArt);
+    }
+
+    #[test]
+    fn resolve_art_style_kind_lets_a_project_style_shadow_a_builtin() {
+        use pixhaus_ai::compose::builtins::STYLE_PIXEL_ART_ID;
+        let mut project = ProjectAi::default();
+        // A project Style reusing the built-in pixel-art id but tagged clean-HD
+        // must win — resolution mirrors compose_preview's shadowing.
+        project.styles.push(Style {
+            id: StyleId(STYLE_PIXEL_ART_ID.to_owned()),
+            name: "My override".to_owned(),
+            kind: ArtStyleKind::CleanHd,
+            modifiers: String::new(),
+            look_negatives: String::new(),
+            model_pref: None,
+            quality: None,
+        });
+        assert_eq!(resolve_art_style_kind(&project, Some(STYLE_PIXEL_ART_ID)), ArtStyleKind::CleanHd);
+    }
+
+    /// A 64×64 frame with a smooth 2-D gradient — far more than 32 distinct
+    /// colours, so the finisher's 32-colour extract cap forces a real
+    /// reduction.
+    fn gradient_frame() -> pixhaus_core::canvas::PixelBuffer {
+        use pixhaus_core::project::Rgba;
+        let (w, h) = (64u32, 64u32);
+        let mut buf = pixhaus_core::canvas::PixelBuffer::new(w, h).expect("buffer");
+        for y in 0..h {
+            for x in 0..w {
+                #[allow(clippy::cast_possible_truncation)]
+                let r = (x * 255 / (w - 1)) as u8;
+                #[allow(clippy::cast_possible_truncation)]
+                let g = (y * 255 / (h - 1)) as u8;
+                buf.set_pixel(x, y, Rgba::opaque(r, g, 80));
+            }
+        }
+        buf
+    }
+
+    fn distinct_opaque_colors(buf: &pixhaus_core::canvas::PixelBuffer) -> usize {
+        let mut set = std::collections::HashSet::new();
+        for px in buf.pixels() {
+            if px.a != 0 {
+                set.insert([px.r, px.g, px.b]);
+            }
+        }
+        set.len()
+    }
+
+    #[test]
+    fn pixel_style_runs_finisher() {
+        // The gate the land paths use: a pixel-class kind runs finish_frames,
+        // which snaps the gradient down to a small palette.
+        use pixhaus_core::transforms::finisher::{FinishOptions, finish_frames};
+        let kind = ArtStyleKind::PixelArt;
+        assert!(kind.is_pixel(), "pixel-art is a pixel-class kind");
+
+        let frame = gradient_frame();
+        let before = distinct_opaque_colors(&frame);
+        let opts = FinishOptions::for_canvas(frame.width(), frame.height());
+        let finished = finish_frames(std::slice::from_ref(&frame), &opts).expect("finish");
+        let after = distinct_opaque_colors(&finished[0].buffer);
+        assert!(after < before, "the finisher reduced the colour count ({before} -> {after})");
+        assert!(!finished[0].palette.colors.is_empty(), "a pixel finish returns a palette to seed");
+        // Every opaque pixel lands on the returned palette.
+        let set: std::collections::HashSet<[u8; 3]> = finished[0].palette.colors.iter().map(|e| [e.color.r, e.color.g, e.color.b]).collect();
+        for px in finished[0].buffer.pixels() {
+            if px.a != 0 {
+                assert!(set.contains(&[px.r, px.g, px.b]), "snapped pixel must be on the palette");
+            }
+        }
+    }
+
+    #[test]
+    fn clean_hd_skips_finisher() {
+        // The gate's other side: a clean-HD kind does not finish, so the frames
+        // (here the normalize output stand-in) land byte-for-byte unchanged with
+        // no palette reduction.
+        let kind = ArtStyleKind::CleanHd;
+        assert!(!kind.is_pixel(), "clean-HD is not a pixel-class kind");
+
+        let frame = gradient_frame();
+        let before_bytes = frame.as_bytes().to_vec();
+        let before_colors = distinct_opaque_colors(&frame);
+        // Mirror the land-path branch: when !is_pixel, land the frame verbatim.
+        let landed = if kind.is_pixel() {
+            unreachable!("clean-HD must not take the finisher branch");
+        } else {
+            frame
+        };
+        assert_eq!(landed.as_bytes(), before_bytes.as_slice(), "clean-HD frame bytes are untouched");
+        assert_eq!(distinct_opaque_colors(&landed), before_colors, "clean-HD keeps the full colour set");
     }
 }

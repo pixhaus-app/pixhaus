@@ -32,6 +32,7 @@
 pub mod antialias;
 pub mod audio_timing;
 pub mod error;
+pub mod finisher;
 pub mod flip;
 pub mod inbetween;
 pub mod normalize;
@@ -44,11 +45,12 @@ pub mod skew;
 pub use antialias::{MlaaConfig, morphological_antialias};
 pub use audio_timing::{AudioError, OnsetMs, detect_onsets_wav, onset_frame_durations};
 pub use error::{Error, Result};
+pub use finisher::{FinishOptions, FinishedFrame, PaletteSource, finish_frame, finish_frames, snap_to_palette};
 pub use flip::{flip_horizontal, flip_vertical};
 pub use inbetween::{DEFAULT_VARIANCE_RANGE, InbetweenError, interpolate_frames, tween, tween_with_variance};
 pub use normalize::{
-    ChromaKey, Component, ComponentMode, FrameMetrics, NormalizeOptions, NormalizeReport, NormalizeResult, SeamMatch, chroma_key, chroma_key_two_pass, label_components, measure,
-    measure_components, normalize_frames, repad,
+    ChromaKey, Component, ComponentMode, FrameMetrics, NormalizeOptions, NormalizeReport, NormalizeResult, SeamMatch, chroma_key, chroma_key_two_pass,
+    label_components, measure, measure_components, normalize_frames, repad,
 };
 pub use perspective::perspective;
 pub use resize::{CanvasAnchor, crop, resize_canvas};

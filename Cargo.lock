@@ -4084,6 +4084,7 @@ dependencies = [
  "criterion",
  "image",
  "image-compare",
+ "insta",
  "palette",
  "proptest",
  "rayon",

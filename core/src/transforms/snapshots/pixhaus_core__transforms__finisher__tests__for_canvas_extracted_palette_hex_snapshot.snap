@@ -1,0 +1,8 @@
+---
+source: core/src/transforms/finisher.rs
+expression: hex
+---
+[
+    "#c81010",
+    "#1010c8",
+]

@@ -183,6 +183,8 @@ fn run_gen(args: &[String]) -> Result<()> {
         target_frames: 6,
         fps: 10,
         seed: None,
+        // The headless demo is the pixel-art default, so the finisher runs.
+        art_style_kind: pixhaus_core::project::library::composition::ArtStyleKind::PixelArt,
     };
     let (frames, frame_ms) = rt
         .block_on(ai::run_animation(&runtime, &anim_job, &|m| {

@@ -1262,7 +1262,7 @@ impl ShellApp {
                 }
                 ShellMsg::AnchorRefineDone { epoch, parent, image } => {
                     if epoch == self.rs_refine_epoch {
-                        self.land_anchor_refine(parent, image);
+                        self.land_anchor_refine(parent, &image);
                     }
                 }
                 ShellMsg::AnchorRefineFailed { epoch, error } => {
@@ -2651,6 +2651,9 @@ impl ShellApp {
         let sprite_id = sprite.id;
         let seed = self.anim_seed_fixed.then_some(self.anim_seed);
         let model = self.studio.i2v_model.model_id();
+        // Resolve the art-style kind from the picked style at generation time so
+        // the finisher gate matches what was generated, not a later picker value.
+        let art_style_kind = ai::resolve_art_style_kind(&self.doc.project.library.ai, self.ck_style_id.as_deref());
         let job = ai::AnimJob {
             canvas: (sprite.canvas.width, sprite.canvas.height),
             anchor_png: anchor,
@@ -2662,6 +2665,7 @@ impl ShellApp {
             target_frames: self.anim_target_frames,
             fps: self.anim_fps,
             seed,
+            art_style_kind,
         };
         self.record_recent_motion(&self.anim_motion.clone());
         // Register the durable job. `start` returns the id (for the terminal
@@ -3053,6 +3057,17 @@ impl ShellApp {
         } else {
             result.frames
         };
+        // Style gate (Brief 8): pixel-class styles get the palette-snap +
+        // downscale finisher before the frames hit the timeline; clean-HD/map
+        // land the normalized frames verbatim. Resolve the kind from the picked
+        // style, not a stale value. The frames are already canvas-sized, so the
+        // finisher snaps colour without changing dimensions (a no-op downscale).
+        let art_style_kind = ai::resolve_art_style_kind(&self.doc.project.library.ai, self.ck_style_id.as_deref());
+        let frames = if art_style_kind.is_pixel() {
+            self.finish_landing_frames(frames)
+        } else {
+            frames
+        };
         let fps = self.anim_candidates[i].fps;
         let frame_ms = (1000 / fps.max(1)).max(1);
         let motion = self.anim_candidates[i].motion.clone();
@@ -3066,6 +3081,45 @@ impl ShellApp {
         self.anim_selected = None;
         self.anim_clip_playing = false;
         self.exit_clip_preview();
+    }
+
+    /// Runs the pixel finisher over the landing `frames` and seeds the active
+    /// sprite's palette from the result. Returns the snapped, grid-aligned
+    /// buffers. The frames are already canvas-sized so the downscale is a no-op
+    /// and only the palette snap changes pixels. The palette is seeded only when
+    /// the sprite is still on its default palette, so a curated palette is not
+    /// clobbered. Pure aside from the palette seed; bounded by the frame count
+    /// and canvas, not the 8K limit (small post-grid buffers).
+    ///
+    /// When the active entity carries an anchor palette (the studio derives from
+    /// the approved anchor), the snap uses `Fixed(anchor_palette)` so the loop
+    /// keeps the established anchor colours instead of re-extracting a fresh
+    /// per-frame palette that can drift off the anchor (Brief 8's over-quantising
+    /// guard). Falls back to `Extract` (`for_canvas`) when no anchor palette is
+    /// present.
+    fn finish_landing_frames(&mut self, frames: Vec<PixelBuffer>) -> Vec<PixelBuffer> {
+        let Some((w, h)) = self.doc.active_sprite().map(|s| (s.canvas.width, s.canvas.height)) else {
+            return frames;
+        };
+        let anchor_palette = self.active_anchor_palette();
+        let opts = landing_finish_options(w, h, &anchor_palette);
+        let Ok(finished) = pixhaus_core::transforms::finisher::finish_frames(&frames, &opts) else {
+            return frames;
+        };
+        // Seed the sprite palette from the first frame's snapped palette so the
+        // landed loop and the palette panel agree. Only when the sprite still
+        // carries the editor default palette, never over a curated one.
+        if let Some(palette) = finished.iter().map(|f| &f.palette).find(|p| !p.colors.is_empty()) {
+            let colors: Vec<Rgba> = palette.colors.iter().map(|e| e.color).collect();
+            if let Some(sprite) = self.doc.active_sprite_mut() {
+                if let Some(first) = sprite.palettes.first_mut() {
+                    if first.name == "default" {
+                        first.colors = colors.into_iter().map(pixhaus_core::project::PaletteEntry::new).collect();
+                    }
+                }
+            }
+        }
+        finished.into_iter().map(|f| f.buffer).collect()
     }
 
     /// Whether Land should mirror the picked frames for east: `true` only when the
@@ -3787,11 +3841,7 @@ fn sanitize_base_name(name: &str) -> String {
         .map(|c| if c.is_ascii_alphanumeric() || c == '-' || c == '_' { c } else { '_' })
         .collect();
     let trimmed = cleaned.trim_matches('_');
-    if trimmed.is_empty() {
-        "sprite".to_owned()
-    } else {
-        trimmed.to_owned()
-    }
+    if trimmed.is_empty() { "sprite".to_owned() } else { trimmed.to_owned() }
 }
 
 /// The dropdown label for a rotation algorithm.
@@ -3860,6 +3910,22 @@ fn flip_frames_horizontal(frames: Vec<PixelBuffer>) -> Vec<PixelBuffer> {
             Err(_) => frame,
         })
         .collect()
+}
+
+/// Builds [`FinishOptions`](pixhaus_core::transforms::finisher::FinishOptions)
+/// for a studio Land at grid `(w, h)`: `with_palette` snapping to the anchor's
+/// swatches when `anchor_palette` is non-empty, else `for_canvas` (Extract) as
+/// the fallback. Pure, so the over-quantising guard is testable without a full
+/// [`ShellApp`].
+fn landing_finish_options(w: u32, h: u32, anchor_palette: &[pixhaus_core::project::PaletteEntry]) -> pixhaus_core::transforms::finisher::FinishOptions {
+    use pixhaus_core::project::palette::Palette;
+    use pixhaus_core::transforms::finisher::FinishOptions;
+    if anchor_palette.is_empty() {
+        FinishOptions::for_canvas(w, h)
+    } else {
+        let colors = anchor_palette.iter().map(|e| e.color).collect();
+        FinishOptions::with_palette((w, h), Palette::from_colors(pixhaus_core::project::PaletteId::new(0), "anchor", colors))
+    }
 }
 
 /// Decodes PNG bytes into a tightly packed RGBA [`PixelBuffer`] for display on
@@ -4394,6 +4460,50 @@ mod tests {
         let flipped = flip_frames_horizontal(frames);
         assert_eq!(flipped.len(), 1, "the empty frame survives the flip pass");
         assert!(flipped[0].is_empty(), "the empty frame is unchanged");
+    }
+
+    // --- Brief 8: anchor-palette over-quantising guard on Land --------------
+
+    use super::landing_finish_options;
+    use pixhaus_core::project::PaletteEntry;
+    use pixhaus_core::transforms::finisher::{PaletteSource, finish_frames};
+
+    #[test]
+    fn landing_finish_options_prefers_the_anchor_palette_when_present() {
+        // No anchor palette -> Extract (for_canvas); a present anchor palette ->
+        // Fixed, so a derived loop stays on the established anchor colours rather
+        // than re-extracting a fresh per-frame palette (over-quantising guard).
+        let none = landing_finish_options(16, 16, &[]);
+        assert!(matches!(none.palette, PaletteSource::Extract { .. }), "empty anchor palette falls back to Extract");
+        let anchor = [PaletteEntry::new(Rgba::opaque(0, 0, 0)), PaletteEntry::new(Rgba::opaque(255, 255, 255))];
+        let fixed = landing_finish_options(16, 16, &anchor);
+        match fixed.palette {
+            PaletteSource::Fixed(p) => assert_eq!(p.colors.len(), 2, "the anchor swatches drive the fixed palette"),
+            other => panic!("expected a fixed anchor palette, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn landing_with_an_anchor_palette_snaps_frames_to_the_anchor_colours() {
+        // A derivation with a present anchor palette snaps every opaque pixel to
+        // the anchor's two colours, not a freshly extracted set — so a landed
+        // loop does not drift off the established anchor palette.
+        let anchor = [PaletteEntry::new(Rgba::opaque(0, 0, 0)), PaletteEntry::new(Rgba::opaque(255, 255, 255))];
+        let opts = landing_finish_options(8, 8, &anchor);
+        // A colour ramp gives the snap a spread to reduce; a flat fill would prove
+        // nothing about drift.
+        let finished = finish_frames(&[ramp_frame(8, 8, 4)], &opts).expect("finish");
+        assert_eq!(finished.len(), 1);
+        let palette: Vec<[u8; 3]> = finished[0].palette.colors.iter().map(|e| [e.color.r, e.color.g, e.color.b]).collect();
+        assert_eq!(palette, vec![[0, 0, 0], [255, 255, 255]], "the snap palette is exactly the anchor swatches");
+        let allowed: std::collections::HashSet<[u8; 3]> = [[0, 0, 0], [255, 255, 255]].into_iter().collect();
+        let img = to_rgba_image(&finished[0].buffer);
+        for px in img.pixels() {
+            if px.0[3] == 0 {
+                continue;
+            }
+            assert!(allowed.contains(&[px.0[0], px.0[1], px.0[2]]), "snapped pixel {:?} must be an anchor colour", px.0);
+        }
     }
 
     // --- sync to audio: beat → frame mapping --------------------------------

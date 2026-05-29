@@ -14,9 +14,11 @@
 use eframe::egui;
 use pixhaus_ai::plugin::AnchorPayload;
 use pixhaus_ai::verbs::reference_sheet::{ReferenceInput, SheetVariantOutput};
-use pixhaus_core::project::library::composition::VarControl;
+use pixhaus_core::canvas::PixelBuffer;
+use pixhaus_core::project::library::composition::{ArtStyleKind, VarControl};
 use pixhaus_core::project::{
-    EntityContent, GenerationProvenance, ReferenceImage, ReferenceRole, ReferenceSheet, RefinementKind, SheetVariant, SheetVariantId, VariantOrigin,
+    EntityContent, GenerationProvenance, PaletteEntry, ReferenceImage, ReferenceRole, ReferenceSheet, RefinementKind, SheetVariant, SheetVariantId,
+    VariantOrigin,
 };
 
 use crate::ai;
@@ -1202,6 +1204,28 @@ impl ShellApp {
         }
     }
 
+    /// The active entity's anchor palette: the canonical variant's
+    /// `extracted_palette`, empty when no entity is active or its sheet has no
+    /// approved canonical. The single-sprite land paths snap to this palette
+    /// (when non-empty) so a refined or imported variant keeps the established
+    /// anchor colours instead of drifting onto a freshly extracted set (Brief
+    /// 8's over-quantising guard).
+    pub(crate) fn active_anchor_palette(&self) -> Vec<PaletteEntry> {
+        let Some(entity_id) = self.doc.active_entity_id() else {
+            return Vec::new();
+        };
+        let Some(entity) = self.doc.project.library.entities.iter().find(|e| e.id == entity_id) else {
+            return Vec::new();
+        };
+        let EntityContent::Sprites {
+            reference_sheet: Some(sheet), ..
+        } = &entity.content
+        else {
+            return Vec::new();
+        };
+        sheet.canonical.as_ref().map(|c| c.extracted_palette.clone()).unwrap_or_default()
+    }
+
     /// Persists `variants` as candidates under the active entity's reference
     /// sheet, recorded as a single undoable [`crate::commands::EntityEdit`].
     fn persist_variants(&mut self, variants: Vec<SheetVariant>) {
@@ -1224,9 +1248,9 @@ impl ShellApp {
     /// Stamps the structured [`RefinementKind`] captured at the start of the run
     /// (a painted mask -> `Masked`, no mask -> `PromptOnly`) onto the variant so
     /// provenance can show the refinement kind and it survives a save/reload.
-    pub(crate) fn land_anchor_refine(&mut self, parent: usize, image: Vec<u8>) {
+    pub(crate) fn land_anchor_refine(&mut self, parent: usize, image: &[u8]) {
         self.rs_status = JobStatus::Idle;
-        if image::load_from_memory(&image).is_err() {
+        if image::load_from_memory(image).is_err() {
             self.rs_status = JobStatus::Failed("the refined image could not be decoded".to_owned());
             return;
         }
@@ -1238,13 +1262,23 @@ impl ShellApp {
         // a prompt-only re-run. Either way the metadata travels on the variant.
         let refinement = self.rs_pending_refinement.take().or(Some(RefinementKind::PromptOnly));
         let core_id = SheetVariantId::new(self.doc.alloc_id());
-        let variant = refined_variant(core_id, parent_core, &image, &output, refinement);
+        let mut variant = refined_variant(core_id, parent_core, image, &output, refinement);
+        // Style gate (Brief 8): a refined anchor is a single-sprite land too —
+        // pixel-class styles finish the refined image (palette snap) and seed
+        // `extracted_palette` so approval is a no-op; clean-HD/map leave it
+        // verbatim. Snap to the active entity's anchor palette when present so
+        // the refinement keeps the established colours rather than drifting onto
+        // a freshly extracted set. Use the finished bytes for the gallery card.
+        let kind = ai::resolve_art_style_kind(&self.doc.project.library.ai, self.ck_style_id.as_deref());
+        let anchor_palette = self.active_anchor_palette();
+        finish_imported_variant(&mut variant, kind, &anchor_palette);
+        let display_bytes = variant.image.bytes.clone();
         self.persist_variants(vec![variant]);
 
         let name = first_words(&output.user_prompt, 4);
         let idx = self.rs_candidates.len();
         self.rs_candidates.push(CockpitCandidate {
-            png: image,
+            png: display_bytes,
             output,
             cost_usd: None,
             parent: Some(parent),
@@ -1345,17 +1379,27 @@ impl ShellApp {
         };
         let mime = mime_for_path(&path);
         let id = SheetVariantId::new(self.doc.alloc_id());
-        let Some(variant) = imported_variant(id, now_secs(), &bytes, mime) else {
+        let Some(mut variant) = imported_variant(id, now_secs(), &bytes, mime) else {
             self.rs_status = JobStatus::Failed("the file is not a supported image".to_owned());
             return;
         };
+        // Style gate (Brief 8): pixel-class styles finish the imported image
+        // (palette snap) and seed `extracted_palette` so approval is a no-op;
+        // clean-HD/map leave it verbatim. Resolve the kind from the picked style.
+        // Snap to the active entity's anchor palette when present so an import
+        // into an anchored sprite keeps the established colours; extract from the
+        // image otherwise.
+        let kind = ai::resolve_art_style_kind(&self.doc.project.library.ai, self.ck_style_id.as_deref());
+        let anchor_palette = self.active_anchor_palette();
+        finish_imported_variant(&mut variant, kind, &anchor_palette);
+        let display_bytes = variant.image.bytes.clone();
         let output = manual_import_output(variant.created_at);
         self.persist_variants(vec![variant]);
 
         let name = first_words(&output.user_prompt, 4);
         let idx = self.rs_candidates.len();
         self.rs_candidates.push(CockpitCandidate {
-            png: bytes,
+            png: display_bytes,
             output,
             cost_usd: None,
             parent: None,
@@ -1843,6 +1887,73 @@ fn imported_variant(id: SheetVariantId, created_at: i64, bytes: &[u8], mime: &st
     ))
 }
 
+/// Runs the pixel finisher over a landing `variant`'s image when `kind` is a
+/// pixel-class style, populating [`SheetVariant::extracted_palette`] at land
+/// time so the later approval-flow `ensure_extracted_palette` is a no-op
+/// (idempotence — see Brief 8's double-finishing risk).
+///
+/// `anchor_palette` is the active entity's anchor `extracted_palette`. When it
+/// is non-empty the snap uses `Fixed(anchor_palette)` so a refined variant
+/// keeps the established anchor palette instead of drifting onto a freshly
+/// extracted set (the over-quantising guard from Brief 8's Risks). When it is
+/// empty — a manual import with no anchor in hand — the snap falls back to
+/// `Extract`, sourcing the palette from the image itself.
+///
+/// Pixel-class kinds (`is_pixel()`): decode the variant's image, finish it
+/// (palette snap; the grid is the image's own size, so it is a palette-only
+/// finish that keeps dimensions), re-encode the snapped pixels as PNG, store
+/// the finished bytes, and record the snapped palette. A decode/encode failure
+/// leaves the variant unchanged rather than dropping the import. Non-pixel
+/// kinds (clean-HD/map) leave the variant's bytes and empty palette untouched
+/// so a high-detail sprite is never crushed to a low grid.
+///
+/// Pure: it mutates only the `variant` it is handed; the caller owns id minting
+/// and persistence.
+fn finish_imported_variant(variant: &mut SheetVariant, kind: ArtStyleKind, anchor_palette: &[PaletteEntry]) {
+    if !kind.is_pixel() {
+        return;
+    }
+    let Ok(decoded) = image::load_from_memory(&variant.image.bytes) else {
+        return;
+    };
+    let rgba = decoded.to_rgba8();
+    let (w, h) = rgba.dimensions();
+    let buf = PixelBuffer::from_image(rgba);
+    // Prefer the anchor palette so a derivation does not drift off the
+    // established colours; extract from the image only when no anchor palette
+    // is present. Either way the grid is the image's own size, making this a
+    // palette-only finish (no downscale).
+    let opts = anchor_finish_options(w, h, anchor_palette);
+    let Ok(finished) = pixhaus_core::transforms::finisher::finish_frame(&buf, &opts) else {
+        return;
+    };
+    let Some(image) = finished.buffer.as_image() else {
+        return;
+    };
+    let mut png = Vec::new();
+    if image.write_to(&mut std::io::Cursor::new(&mut png), image::ImageFormat::Png).is_err() {
+        return;
+    }
+    variant.image.bytes = png;
+    "image/png".clone_into(&mut variant.image.mime);
+    variant.extracted_palette = finished.palette.colors;
+}
+
+/// Builds [`FinishOptions`](pixhaus_core::transforms::finisher::FinishOptions)
+/// for a single-sprite land at grid `(w, h)`: `with_palette` snapping to the
+/// anchor's swatches when `anchor_palette` is non-empty, else `for_canvas`
+/// (Extract) as the fallback. Pure, so the over-quantising guard is testable.
+fn anchor_finish_options(w: u32, h: u32, anchor_palette: &[PaletteEntry]) -> pixhaus_core::transforms::finisher::FinishOptions {
+    use pixhaus_core::project::palette::Palette;
+    use pixhaus_core::transforms::finisher::FinishOptions;
+    if anchor_palette.is_empty() {
+        FinishOptions::for_canvas(w, h)
+    } else {
+        let colors = anchor_palette.iter().map(|e| e.color).collect();
+        FinishOptions::with_palette((w, h), Palette::from_colors(pixhaus_core::project::PaletteId::new(0), "anchor", colors))
+    }
+}
+
 /// A minimal gallery output for an imported image: no prompt, empty composition,
 /// and a `manual-import` provenance so the card and provenance panel render.
 fn manual_import_output(created_at: i64) -> SheetVariantOutput {
@@ -1916,9 +2027,10 @@ fn anchor_payload_for(entity: &pixhaus_core::project::Entity, strength: f32) -> 
 #[cfg(test)]
 mod tests {
     use super::{
-        AnchorAspect, anchor_target_dims, fixup_parent_after_remove, fixup_selection_after_remove, imported_variant, manual_import_output, now_secs,
-        push_prompt_history, refined_variant, relative_time, stamp_if_promotion,
+        AnchorAspect, anchor_finish_options, anchor_target_dims, finish_imported_variant, fixup_parent_after_remove, fixup_selection_after_remove,
+        imported_variant, manual_import_output, now_secs, push_prompt_history, refined_variant, relative_time, stamp_if_promotion,
     };
+    use pixhaus_core::project::library::composition::ArtStyleKind;
 
     #[test]
     fn anchor_target_dims_scales_each_aspect_to_the_long_edge() {
@@ -2058,7 +2170,8 @@ mod tests {
     }
 
     use pixhaus_core::project::{
-        EntityContent, GenerationProvenance, Quality, ReferenceImage, ReferenceSheet, RefinementKind, SheetVariant, SheetVariantId, Size, VariantOrigin,
+        EntityContent, GenerationProvenance, PaletteEntry, Quality, ReferenceImage, ReferenceSheet, RefinementKind, Rgba, SheetVariant, SheetVariantId,
+        Size, VariantOrigin,
     };
 
     use crate::commands::push_library_edit;
@@ -2181,6 +2294,142 @@ mod tests {
             imported_variant(SheetVariantId::new(6), 0, b"not an image at all", "image/png").is_none(),
             "garbage bytes do not import"
         );
+    }
+
+    /// A 16×16 PNG split into a soft red/blue gradient so the finisher has a
+    /// colour set to reduce — a single flat colour would not prove reduction.
+    fn gradient_png(w: u32, h: u32) -> Vec<u8> {
+        use std::io::Cursor;
+        let mut img = image::RgbaImage::new(w, h);
+        for (x, _y, px) in img.enumerate_pixels_mut() {
+            #[allow(clippy::cast_possible_truncation)]
+            let t = (x * 255 / (w - 1).max(1)) as u8;
+            *px = image::Rgba([255 - t, 30, t, 255]);
+        }
+        let mut out = Vec::new();
+        image::DynamicImage::ImageRgba8(img)
+            .write_to(&mut Cursor::new(&mut out), image::ImageFormat::Png)
+            .expect("encode test png");
+        out
+    }
+
+    #[test]
+    fn pixel_style_import_lands_with_a_non_empty_extracted_palette() {
+        // A pixel-class kind finishes the import: the palette is snapped and
+        // recorded so the later approval-flow extraction becomes a no-op.
+        let mut variant = imported_variant(SheetVariantId::new(10), now_secs(), &gradient_png(16, 16), "image/png").expect("import");
+        assert!(variant.extracted_palette.is_empty(), "from_image starts with no palette");
+        finish_imported_variant(&mut variant, ArtStyleKind::PixelArt, &[]);
+        assert!(!variant.extracted_palette.is_empty(), "pixel-class import seeds the extracted palette");
+        // Every opaque pixel of the finished image is one of the recorded swatches.
+        let decoded = image::load_from_memory(&variant.image.bytes).expect("finished bytes decode").to_rgba8();
+        let set: std::collections::HashSet<[u8; 3]> = variant.extracted_palette.iter().map(|e| [e.color.r, e.color.g, e.color.b]).collect();
+        for px in decoded.pixels() {
+            if px.0[3] == 0 {
+                continue;
+            }
+            assert!(
+                set.contains(&[px.0[0], px.0[1], px.0[2]]),
+                "finished pixel {:?} must be on the recorded palette",
+                px.0
+            );
+        }
+    }
+
+    #[test]
+    fn clean_hd_import_lands_verbatim_with_no_extracted_palette() {
+        // A clean-HD kind skips the finisher: the bytes and the empty palette
+        // are untouched, so a high-detail import is never crushed to a low grid.
+        let bytes = gradient_png(16, 16);
+        let mut variant = imported_variant(SheetVariantId::new(11), now_secs(), &bytes, "image/png").expect("import");
+        let before = variant.image.bytes.clone();
+        finish_imported_variant(&mut variant, ArtStyleKind::CleanHd, &[]);
+        assert!(variant.extracted_palette.is_empty(), "clean-HD import records no palette");
+        assert_eq!(variant.image.bytes, before, "clean-HD import bytes are untouched");
+    }
+
+    #[test]
+    fn pixel_style_refine_lands_with_a_non_empty_extracted_palette() {
+        // A refined anchor is a single-sprite land too: a pixel-class kind
+        // finishes it, snapping the palette and recording it so the later
+        // approval-flow extraction becomes a no-op.
+        let mut variant = refined_variant(
+            SheetVariantId::new(20),
+            SheetVariantId::new(1),
+            &gradient_png(16, 16),
+            &fake_output("a knight", 1),
+            Some(RefinementKind::PromptOnly),
+        );
+        assert!(variant.extracted_palette.is_empty(), "refined_variant starts with no palette");
+        finish_imported_variant(&mut variant, ArtStyleKind::PixelArt, &[]);
+        assert!(!variant.extracted_palette.is_empty(), "pixel-class refine seeds the extracted palette");
+        let decoded = image::load_from_memory(&variant.image.bytes).expect("finished bytes decode").to_rgba8();
+        let set: std::collections::HashSet<[u8; 3]> = variant.extracted_palette.iter().map(|e| [e.color.r, e.color.g, e.color.b]).collect();
+        for px in decoded.pixels() {
+            if px.0[3] == 0 {
+                continue;
+            }
+            assert!(set.contains(&[px.0[0], px.0[1], px.0[2]]), "finished pixel {:?} must be on the recorded palette", px.0);
+        }
+    }
+
+    #[test]
+    fn clean_hd_refine_lands_verbatim_with_no_extracted_palette() {
+        // A clean-HD refine skips the finisher: the bytes and the empty palette
+        // are untouched, so a high-detail refined anchor is never crushed.
+        let mut variant = refined_variant(
+            SheetVariantId::new(21),
+            SheetVariantId::new(1),
+            &gradient_png(16, 16),
+            &fake_output("a knight", 1),
+            Some(RefinementKind::PromptOnly),
+        );
+        let before = variant.image.bytes.clone();
+        finish_imported_variant(&mut variant, ArtStyleKind::CleanHd, &[]);
+        assert!(variant.extracted_palette.is_empty(), "clean-HD refine records no palette");
+        assert_eq!(variant.image.bytes, before, "clean-HD refine bytes are untouched");
+    }
+
+    #[test]
+    fn anchor_finish_options_prefers_the_anchor_palette_when_present() {
+        // No anchor palette -> Extract (for_canvas); a present anchor palette ->
+        // Fixed, so the snap stays on the established anchor colours (Brief 8's
+        // over-quantising guard).
+        use pixhaus_core::transforms::finisher::PaletteSource;
+        let none = anchor_finish_options(16, 16, &[]);
+        assert!(matches!(none.palette, PaletteSource::Extract { .. }), "empty anchor palette falls back to Extract");
+        let anchor = [PaletteEntry::new(Rgba::opaque(10, 20, 30)), PaletteEntry::new(Rgba::opaque(200, 100, 50))];
+        let fixed = anchor_finish_options(16, 16, &anchor);
+        match fixed.palette {
+            PaletteSource::Fixed(p) => assert_eq!(p.colors.len(), 2, "the anchor swatches drive the fixed palette"),
+            other => panic!("expected a fixed anchor palette, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn pixel_style_refine_with_an_anchor_palette_snaps_to_the_anchor_colours() {
+        // A refine into an anchored sprite snaps to the anchor's swatches, not a
+        // freshly extracted set: every finished opaque pixel is one of the two
+        // anchor colours, so the derivation does not drift off the anchor palette.
+        let anchor = [PaletteEntry::new(Rgba::opaque(0, 0, 0)), PaletteEntry::new(Rgba::opaque(255, 255, 255))];
+        let mut variant = refined_variant(
+            SheetVariantId::new(22),
+            SheetVariantId::new(1),
+            &gradient_png(16, 16),
+            &fake_output("a knight", 1),
+            Some(RefinementKind::PromptOnly),
+        );
+        finish_imported_variant(&mut variant, ArtStyleKind::PixelArt, &anchor);
+        let recorded: Vec<[u8; 3]> = variant.extracted_palette.iter().map(|e| [e.color.r, e.color.g, e.color.b]).collect();
+        assert_eq!(recorded, vec![[0, 0, 0], [255, 255, 255]], "the recorded palette is exactly the anchor swatches");
+        let decoded = image::load_from_memory(&variant.image.bytes).expect("finished bytes decode").to_rgba8();
+        let allowed: std::collections::HashSet<[u8; 3]> = [[0, 0, 0], [255, 255, 255]].into_iter().collect();
+        for px in decoded.pixels() {
+            if px.0[3] == 0 {
+                continue;
+            }
+            assert!(allowed.contains(&[px.0[0], px.0[1], px.0[2]]), "finished pixel {:?} must be an anchor colour", px.0);
+        }
     }
 
     #[test]
