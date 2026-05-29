@@ -30,6 +30,7 @@ mod app;
 mod bg_removal;
 mod canvas;
 mod cockpit;
+mod color_picker;
 mod commands;
 mod context_bar;
 mod dnd;

@@ -9,8 +9,9 @@ use eframe::egui;
 use pixhaus_core::project::{PaletteEntry, Rgba};
 
 use crate::app::ShellApp;
+use crate::color_picker::color_picker_ui;
 use crate::commands::push_sprite_edit;
-use crate::editor::{PaletteSort, from_color32, to_color32};
+use crate::editor::{PaletteSort, to_color32};
 use crate::icons;
 
 impl ShellApp {
@@ -110,7 +111,13 @@ impl ShellApp {
         self.swatch_editor(ui);
     }
 
-    /// The popup colour editor for the double-clicked swatch.
+    /// The popup multi-tab colour editor for the double-clicked swatch.
+    ///
+    /// The in-progress colour lives in `editor.swatch_scratch`, not the
+    /// document: slider drags repaint the swatch live but commit nothing, so a
+    /// drag is one undo step. The edit lands as a single
+    /// [`push_sprite_edit`] when a slider's drag stops or the hex field loses
+    /// focus.
     fn swatch_editor(&mut self, ui: &mut egui::Ui) {
         let Some(idx) = self.editor.editing_swatch else {
             return;
@@ -118,30 +125,50 @@ impl ShellApp {
         let current = self.doc.active_palette().and_then(|p| p.colors.get(idx)).map(|e| e.color);
         let Some(current) = current else {
             self.editor.editing_swatch = None;
+            self.editor.swatch_scratch = None;
             return;
         };
-        let mut col = to_color32(current);
+
+        // Seed the scratch colour and hex draft the first time the popup opens
+        // for this swatch.
+        if self.editor.swatch_scratch.is_none() {
+            self.editor.swatch_scratch = Some(current);
+            self.editor.hex_draft = format!("#{:02X}{:02X}{:02X}", current.r, current.g, current.b);
+        }
+
+        let mut color = self.editor.swatch_scratch.unwrap_or(current);
         let mut close = false;
+        let mut commit = false;
         egui::Window::new(format!("Edit swatch {idx}"))
             .collapsible(false)
             .resizable(false)
             .show(ui.ctx(), |ui| {
-                if ui.color_edit_button_srgba(&mut col).changed() {
-                    let new = from_color32(col);
-                    push_sprite_edit(&mut self.editor, &mut self.doc, "Edit swatch", |sprite| {
-                        if let Some(p) = sprite.palettes.first_mut() {
-                            if let Some(e) = p.colors.get_mut(idx) {
-                                e.color = new;
-                            }
-                        }
-                    });
+                let resp = color_picker_ui(ui, &mut color, &mut self.editor.picker_tab, &mut self.editor.hex_draft);
+                // Commit one undo entry when a slider drag stops or the hex
+                // field loses focus — not on every continuous slider tick.
+                if resp.drag_stopped() || resp.lost_focus() {
+                    commit = true;
                 }
                 if ui.button("Done").clicked() {
+                    commit = true;
                     close = true;
                 }
             });
+
+        self.editor.swatch_scratch = Some(color);
+
+        if commit && color != current {
+            push_sprite_edit(&mut self.editor, &mut self.doc, "Edit swatch", |sprite| {
+                if let Some(p) = sprite.palettes.first_mut() {
+                    if let Some(e) = p.colors.get_mut(idx) {
+                        e.color = color;
+                    }
+                }
+            });
+        }
         if close {
             self.editor.editing_swatch = None;
+            self.editor.swatch_scratch = None;
         }
     }
 
@@ -163,7 +190,7 @@ impl ShellApp {
 }
 
 /// Paints a small 2x2 checkerboard inside `rect` to back transparent swatches.
-fn paint_checker(ui: &egui::Ui, rect: egui::Rect) {
+pub(crate) fn paint_checker(ui: &egui::Ui, rect: egui::Rect) {
     let p = ui.painter();
     p.rect_filled(rect, 2.0, egui::Color32::from_gray(90));
     let h = rect.height() / 2.0;

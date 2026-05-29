@@ -10,7 +10,7 @@
 use std::collections::BTreeSet;
 
 use eframe::egui;
-use pixhaus_core::canvas::{BrushShape, PixelBuffer};
+use pixhaus_core::canvas::{BrushShape, DitherPattern, PixelBuffer};
 use pixhaus_core::project::{Frame, IVec2, LayerId, PixelBufferId, Rgba, Size};
 use pixhaus_core::selection::SelectionMask;
 use pixhaus_core::undo::History;
@@ -96,6 +96,24 @@ pub enum PaletteSort {
     Luminance,
 }
 
+/// The active tab of the multi-tab colour picker. Each tab edits the same
+/// [`Rgba`] through a different colour space; switching tabs preserves the
+/// colour. Mirrors the five modes of the Tauri `ColorPicker.tsx`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
+pub enum PickerTab {
+    /// Hue / saturation / value sliders.
+    #[default]
+    Hsv,
+    /// Hue / saturation / lightness sliders.
+    Hsl,
+    /// Red / green / blue integer sliders.
+    Rgb,
+    /// A `#RRGGBB` text field.
+    Hex,
+    /// Lightness / chroma / hue sliders in OKLCH.
+    Oklch,
+}
+
 /// Onion-skin configuration. Fixed-offset (mobile) ghosts of the neighbouring
 /// frames render under the current frame, tinted and faded by distance.
 /// Adopted from `OpenToonz`'s mobile onion-skin (`OnionSkinMask`); see
@@ -156,6 +174,18 @@ pub struct StrokeSession {
     pub erase: bool,
     /// Whether the pencil pixel-perfect pass applies on commit.
     pub pixel_perfect: bool,
+    /// Dither pattern gating this stroke's writes. A per-gesture copy of
+    /// [`EditorState::dither`], so changing the editor mid-stroke does not split
+    /// the pattern. [`DitherPattern::None`] keeps the stroke on the solid fast
+    /// path; any other value also suppresses the pixel-perfect commit pass.
+    pub dither: DitherPattern,
+    /// Stroke strength in `0..=255`, a per-gesture copy of
+    /// [`EditorState::opacity`]. The live preview paints at full strength so the
+    /// artist sees the colour; on commit, when `opacity < 255`, the stroke
+    /// redraws once from [`Self::before`] blending each unique footprint pixel a
+    /// single time (the per-stroke, not per-dab, Aseprite semantic). `255` keeps
+    /// the stroke on the overwrite fast path.
+    pub opacity: u8,
     /// Inclusive dirty bounds in canvas pixels over the whole stroke, or `None`
     /// until first stamp. Read once at commit to bound the undo snapshot.
     pub dirty: Option<(u32, u32, u32, u32)>,
@@ -214,6 +244,17 @@ pub struct ShapeDrag {
     /// the next redraw so each move touches only the old and new footprints,
     /// not the whole canvas.
     pub last_dirty: Option<(u32, u32, u32, u32)>,
+    /// Dither pattern for this shape, a per-gesture copy of
+    /// [`EditorState::dither`]. Carried so a future dithered shape pass has the
+    /// value at hand; shape rasterization stays solid for now (the freehand
+    /// brush is the only dithered path in this batch).
+    pub dither: DitherPattern,
+    /// Shape strength in `0..=255`, a per-gesture copy of
+    /// [`EditorState::opacity`]. The preview rasterizes at full strength; on
+    /// commit, when `opacity < 255`, the shape's pixels are blended once over
+    /// [`Self::before`] (the line/rect/ellipse outline never self-overlaps, so a
+    /// single blend per pixel is the whole shape). `255` overwrites.
+    pub opacity: u8,
 }
 
 /// An in-progress move of the selected pixels.
@@ -383,6 +424,29 @@ pub struct EditorState {
     /// Draw the per-pixel grid overlay once the zoom is high enough to read it
     /// ([`Self::PIXEL_GRID_ZOOM_THRESHOLD`]). Default on, matching the Tauri app.
     pub show_pixel_grid: bool,
+    /// Draw the major / tile grid overlay: a cyan line every
+    /// [`Self::major_grid_spacing_x`] / [`Self::major_grid_spacing_y`] canvas
+    /// pixels. Default off; the tile workflow binds the spacing to a tile size
+    /// later.
+    pub major_grid_enabled: bool,
+    /// Major-grid line spacing on the X axis, in canvas pixels. Independent of
+    /// the Y spacing so a non-square tile size works.
+    pub major_grid_spacing_x: u32,
+    /// Major-grid line spacing on the Y axis, in canvas pixels. Independent of
+    /// the X spacing so a non-square tile size works.
+    pub major_grid_spacing_y: u32,
+    /// Dither pattern gating which footprint pixels the freehand brush writes.
+    /// Default [`DitherPattern::None`] (a solid brush). Session state, not
+    /// persisted, mutually exclusive with pixel-perfect (the commit pass is
+    /// skipped while a pattern is active).
+    pub dither: DitherPattern,
+    /// Paint strength in `0..=255` for the brush, eraser, fill, and shapes.
+    /// Default `255` (full strength, the overwrite fast path). Below 255 the
+    /// paint blends over the backdrop per-stroke (not per-dab): a freehand drag
+    /// blends each unique footprint pixel once on commit, so overlapping passes
+    /// within one drag do not compound. On the eraser it reduces, rather than
+    /// clears, the erased alpha (255 = full erase). Session state, not persisted.
+    pub opacity: u8,
     /// Branching undo history over the document.
     pub history: History<DocumentStore>,
     /// In-progress freehand stroke.
@@ -412,6 +476,16 @@ pub struct EditorState {
     pub swatch_size: f32,
     /// Palette panel: index being edited in the colour popup, if any.
     pub editing_swatch: Option<usize>,
+    /// Palette panel: the multi-tab colour picker's active tab.
+    pub picker_tab: PickerTab,
+    /// Palette panel: the `#RRGGBB` text the HEX tab edits, re-seeded from the
+    /// live colour when the tab opens and parsed back on Enter / focus loss.
+    pub hex_draft: String,
+    /// Palette panel: the in-progress colour of the swatch being edited, held
+    /// off the document so live slider drags preview by repainting the swatch
+    /// rather than committing an undo entry per tick. Committed to the sprite as
+    /// one [`crate::commands::push_sprite_edit`] on drag-stop / focus loss.
+    pub swatch_scratch: Option<Rgba>,
     /// Timeline: cel-thumbnail edge length in points.
     pub cel_size: f32,
     /// Timeline: draft name for a new frame tag.
@@ -497,6 +571,11 @@ impl Default for EditorState {
             bg: Rgba::transparent(),
             auto_add_palette: true,
             show_pixel_grid: true,
+            major_grid_enabled: false,
+            major_grid_spacing_x: 8,
+            major_grid_spacing_y: 8,
+            dither: DitherPattern::None,
+            opacity: 255,
             history: History::new(),
             stroke: None,
             shape_drag: None,
@@ -510,6 +589,9 @@ impl Default for EditorState {
             lock_palette_grid: false,
             swatch_size: 18.0,
             editing_swatch: None,
+            picker_tab: PickerTab::default(),
+            hex_draft: String::new(),
+            swatch_scratch: None,
             cel_size: 48.0,
             new_tag_name: String::new(),
             layer_rename: None,
@@ -698,6 +780,8 @@ mod tests {
             mirror_y: false,
             erase: false,
             pixel_perfect: false,
+            dither: DitherPattern::None,
+            opacity: 255,
             dirty: None,
             pending: None,
         }
