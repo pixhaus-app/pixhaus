@@ -12,7 +12,7 @@ use pixhaus_core::canvas::PixelBuffer;
 
 use crate::app::ShellApp;
 use crate::commands::{extract_region, push_sprite_edit, push_sprite_edit_with_buffers};
-use crate::editor::{ClipCel, ClipFrame, FrameClipboard};
+use crate::editor::{ClipCel, ClipFrame, FrameClipboard, TagDrag};
 use crate::icons;
 
 impl ShellApp {
@@ -83,11 +83,9 @@ impl ShellApp {
             ui.separator();
             // Per-frame duration of the active frame.
             let active = self.doc.active_frame;
-            let mut dur = self
-                .doc
-                .active_sprite()
-                .and_then(|s| s.frames.get(active.get() as usize))
-                .map_or(100u32, |f| f.duration_ms);
+            let active_frame = self.doc.active_sprite().and_then(|s| s.frames.get(active.get() as usize));
+            let mut dur = active_frame.map_or(100u32, |f| f.duration_ms);
+            let mut mul = active_frame.map_or(1.0f32, |f| f.duration_mul);
             if ui.add(egui::Slider::new(&mut dur, 16..=1000).text("ms")).changed() {
                 push_sprite_edit(&mut self.editor, &mut self.doc, "Frame duration", |sprite| {
                     if let Some(f) = sprite.frames.get_mut(active.get() as usize) {
@@ -95,7 +93,47 @@ impl ShellApp {
                     }
                 });
             }
-            ui.label(format!("{:.0} fps", 1000.0 / f64::from(dur.max(1))));
+            // Per-frame hold multiplier: scales the frame's effective on-screen
+            // time without touching the base `duration_ms`. Clamped at
+            // MIN_DURATION_MUL so a frame never plays for zero time.
+            if ui
+                .add(egui::Slider::new(&mut mul, MIN_DURATION_MUL..=8.0).text("×"))
+                .on_hover_text("Frame hold multiplier")
+                .changed()
+            {
+                let mul = clamp_duration_mul(mul);
+                push_sprite_edit(&mut self.editor, &mut self.doc, "Frame hold", |sprite| {
+                    if let Some(f) = sprite.frames.get_mut(active.get() as usize) {
+                        f.duration_mul = mul;
+                    }
+                });
+            }
+            // The readout uses the effective duration so it reflects the hold
+            // multiplier, not just the base `duration_ms`.
+            let effective = self
+                .doc
+                .active_sprite()
+                .and_then(|s| s.frames.get(active.get() as usize))
+                .map_or(dur.max(1), pixhaus_core::project::Frame::effective_duration_ms);
+            ui.label(format!("{:.0} fps", 1000.0 / f64::from(effective.max(1))));
+
+            ui.separator();
+            // Global FPS: writes a uniform `duration_ms` across every frame in
+            // one edit, leaving each frame's hold multiplier untouched.
+            let mut fps = self.editor.global_fps;
+            if ui
+                .add(egui::DragValue::new(&mut fps).range(1..=120).prefix("FPS "))
+                .on_hover_text("Set the frame duration across all frames")
+                .changed()
+            {
+                self.editor.global_fps = fps;
+                let ms = fps_to_duration_ms(fps);
+                push_sprite_edit(&mut self.editor, &mut self.doc, "Set FPS", |sprite| {
+                    for f in &mut sprite.frames {
+                        f.duration_ms = ms;
+                    }
+                });
+            }
         });
 
         ui.horizontal_wrapped(|ui| {
@@ -214,12 +252,13 @@ impl ShellApp {
             }
             cells.push(row);
         }
-        // Tag spans for the header strip.
-        let tag_spans: Vec<(u32, u32, egui::Color32)> = sprite
+        // Tag spans for the interactive tag bar: (index, name, start, end,
+        // colour). The index targets `frame_tags` for selection and jump.
+        let tag_spans: Vec<(usize, String, u32, u32, egui::Color32)> = sprite
             .frame_tags
             .iter()
             .enumerate()
-            .map(|(i, t)| (t.range.start.get(), t.range.end.get(), tag_color(i)))
+            .map(|(i, t)| (i, t.name.clone(), t.range.start.get(), t.range.end.get(), tag_color(i)))
             .collect();
 
         let active_frame = self.doc.active_frame.get();
@@ -231,6 +270,10 @@ impl ShellApp {
         // Snapshot the selection set so the painter can read it without holding
         // a borrow on `self.editor` while the row loop also reads `self`.
         let selected_frames = self.editor.selected_frames.clone();
+        let selected_tag = self.editor.selected_tag;
+        // Snapshot the in-progress tag drag so the bar can preview it; the live
+        // value is mutated after the scroll area, off the immutable borrow.
+        let tag_drag = self.editor.tag_drag;
 
         // The accent stroke marking a frame as part of the multi-selection.
         let selection_stroke = egui::Stroke::new(2.0, egui::Color32::from_rgb(230, 180, 90));
@@ -239,9 +282,89 @@ impl ShellApp {
         // A header-cell pick, resolved against the modifiers after the matrix is
         // drawn so it can mutate `selected_frames` and the active frame.
         let mut header_pick: Option<u32> = None;
+        // Tag-bar deferred actions, resolved after the scroll area so they can
+        // mutate `self` without fighting the immutable snapshot borrows above.
+        // A clicked tag span: select it and jump the playhead to its start.
+        let mut tag_pick: Option<usize> = None;
+        // An updated drag state to store back (`Some(None)` clears it).
+        let mut tag_drag_set: Option<Option<TagDrag>> = None;
+        // A completed drag's normalized `[lo, hi]` range to create a tag over.
+        let mut tag_create: Option<(u32, u32)> = None;
 
+        let count = frame_count as u32;
         egui::ScrollArea::both().id_salt("cel_matrix").show(ui, |ui| {
-            // Header: frame numbers with tag colour underline.
+            // Tag bar: an interactive strip above the header. Each tag is a
+            // filled span over its frame columns; left-click selects it and
+            // jumps the playhead to its start; dragging over empty space marks
+            // a range that becomes a new tag on release.
+            ui.horizontal(|ui| {
+                ui.allocate_exact_size(egui::vec2(96.0, TAG_BAR_HEIGHT), egui::Sense::hover());
+                let cols_w = cs * frame_count as f32;
+                let (bar, resp) = ui.allocate_exact_size(egui::vec2(cols_w.max(1.0), TAG_BAR_HEIGHT), egui::Sense::click_and_drag());
+                let left = bar.left();
+                // Column x for a frame index: the left edge of its cell.
+                let col_x = |f: u32| left + f as f32 * cs;
+                // Paint each tag span.
+                for (i, name, s, e, col) in &tag_spans {
+                    if *s >= count {
+                        continue;
+                    }
+                    let end = (*e).min(count.saturating_sub(1));
+                    let span = egui::Rect::from_min_max(
+                        egui::pos2(col_x(*s), bar.top() + 1.0),
+                        egui::pos2(col_x(end) + cs, bar.bottom() - 1.0),
+                    );
+                    ui.painter().rect_filled(span, 3.0, *col);
+                    if selected_tag == Some(*i) {
+                        ui.painter().rect_stroke(span, 3.0, egui::Stroke::new(2.0, egui::Color32::WHITE), egui::StrokeKind::Inside);
+                    }
+                    ui.painter().text(
+                        span.center(),
+                        egui::Align2::CENTER_CENTER,
+                        name,
+                        egui::FontId::proportional(11.0),
+                        egui::Color32::from_rgb(20, 20, 28),
+                    );
+                }
+                // A click on the bar selects the tag under the pointer, if any.
+                if resp.clicked() {
+                    if let Some(pos) = resp.interact_pointer_pos() {
+                        let f = frame_at_x(pos.x, left, 0.0, cs, count);
+                        if let Some((i, ..)) = tag_spans.iter().find(|(_, _, s, e, _)| f >= *s && f <= *e) {
+                            tag_pick = Some(*i);
+                        }
+                    }
+                }
+                // Drag over empty space marks a range, created as a tag on
+                // release. The drag tracks live so the preview rect follows.
+                if resp.drag_started() {
+                    if let Some(pos) = resp.interact_pointer_pos() {
+                        let f = frame_at_x(pos.x, left, 0.0, cs, count);
+                        tag_drag_set = Some(Some(TagDrag { start: f, end: f }));
+                    }
+                } else if resp.dragged() {
+                    if let (Some(d), Some(pos)) = (tag_drag, resp.interact_pointer_pos()) {
+                        let f = frame_at_x(pos.x, left, 0.0, cs, count);
+                        tag_drag_set = Some(Some(TagDrag { start: d.start, end: f }));
+                    }
+                } else if resp.drag_stopped() {
+                    if let Some(d) = tag_drag {
+                        tag_create = Some(d.normalized());
+                    }
+                    tag_drag_set = Some(None);
+                }
+                // Preview the in-progress drag as a translucent span.
+                if let Some(d) = tag_drag {
+                    let (lo, hi) = d.normalized();
+                    let preview = egui::Rect::from_min_max(
+                        egui::pos2(col_x(lo), bar.top() + 1.0),
+                        egui::pos2(col_x(hi) + cs, bar.bottom() - 1.0),
+                    );
+                    ui.painter().rect_filled(preview, 3.0, egui::Color32::from_white_alpha(60));
+                }
+            });
+
+            // Header: frame numbers with the multi-selection outline.
             ui.horizontal(|ui| {
                 ui.allocate_exact_size(egui::vec2(96.0, cs * 0.6), egui::Sense::hover());
                 for f in 0..frame_count {
@@ -263,13 +386,6 @@ impl ShellApp {
                     // Selection outline (distinct from the active fill).
                     if selected_frames.contains(&(f as u32)) {
                         ui.painter().rect_stroke(rect, 2.0, selection_stroke, egui::StrokeKind::Inside);
-                    }
-                    // Tag underline.
-                    for (s, e, col) in &tag_spans {
-                        if (f as u32) >= *s && (f as u32) <= *e {
-                            let bar = egui::Rect::from_min_size(rect.left_bottom() - egui::vec2(0.0, 3.0), egui::vec2(rect.width(), 3.0));
-                            ui.painter().rect_filled(bar, 0.0, *col);
-                        }
                     }
                     if resp.clicked() {
                         header_pick = Some(f as u32);
@@ -354,6 +470,40 @@ impl ShellApp {
             self.doc.active_layer = Some(lid);
             self.doc.active_frame = frame;
             self.refresh_canvas(false);
+        }
+
+        // Store back the tag-drag transient (set while dragging, cleared on
+        // release).
+        if let Some(next) = tag_drag_set {
+            self.editor.tag_drag = next;
+        }
+
+        // A tag-span click selects that tag and jumps the playhead to its
+        // first frame, mirroring the Tauri tag-click behaviour.
+        if let Some(i) = tag_pick {
+            self.playing = false;
+            self.editor.selected_tag = Some(i);
+            if let Some(start) = self.doc.active_sprite().and_then(|s| s.frame_tags.get(i)).map(|t| t.range.start) {
+                self.doc.active_frame = start;
+                self.refresh_canvas(false);
+            }
+        }
+
+        // A finished drag over empty space creates a tag spanning the dragged
+        // range, named uniquely. One undoable `SpriteEdit`.
+        if let Some((lo, hi)) = tag_create {
+            let range = FrameRange::new(FrameIndex::new(lo), FrameIndex::new(hi));
+            push_sprite_edit(&mut self.editor, &mut self.doc, "Add tag", |sprite| {
+                let name = unique_tag_name(sprite);
+                sprite.frame_tags.push(FrameTag {
+                    name,
+                    range,
+                    loop_direction: LoopDirection::Forward,
+                    repeat: 0,
+                    user_data: pixhaus_core::project::UserData::default(),
+                });
+            });
+            self.editor.selected_tag = Some(self.doc.active_sprite().map_or(0, |s| s.frame_tags.len().saturating_sub(1)));
         }
 
         // Cel-thumbnail size control.
@@ -539,20 +689,26 @@ impl ShellApp {
         self.refresh_canvas(false);
     }
 
-    /// Tags the whole frame range with the draft name (or "tag").
+    /// Tags the selected frames (or just the active frame when nothing is
+    /// explicitly selected) with the draft name, falling back to a generated
+    /// `Tag N` when the name field is empty. The range spans the min..=max of
+    /// the effective selection, so the button now tags a chosen sub-range
+    /// rather than always the whole timeline; the tag bar's drag-to-create
+    /// covers an arbitrary dragged span.
     #[allow(clippy::cast_possible_truncation)]
     fn add_tag(&mut self) {
         let count = self.doc.frame_count();
         if count == 0 {
             return;
         }
-        let name = if self.editor.new_tag_name.trim().is_empty() {
-            "tag".to_owned()
-        } else {
-            self.editor.new_tag_name.trim().to_owned()
-        };
-        let range = FrameRange::new(FrameIndex::new(0), FrameIndex::new(count as u32 - 1));
+        let active = self.doc.active_frame.get();
+        let set = self.editor.effective_frames(active);
+        let lo = set.iter().next().copied().unwrap_or(active);
+        let hi = set.iter().next_back().copied().unwrap_or(active);
+        let range = FrameRange::new(FrameIndex::new(lo), FrameIndex::new(hi));
+        let typed = self.editor.new_tag_name.trim().to_owned();
         push_sprite_edit(&mut self.editor, &mut self.doc, "Add tag", |sprite| {
+            let name = if typed.is_empty() { unique_tag_name(sprite) } else { typed };
             sprite.frame_tags.push(FrameTag {
                 name,
                 range,
@@ -985,12 +1141,78 @@ fn clamp_tags(sprite: &mut pixhaus_core::project::Sprite) {
     }
 }
 
+/// Height in points of the interactive tag-bar strip above the cel-matrix
+/// header.
+const TAG_BAR_HEIGHT: f32 = 14.0;
+
+/// Smallest on-screen multiplier a frame can hold. Keeps a frame from ever
+/// having zero playback time. Mirrors the Tauri `MIN_DURATION_MUL`
+/// (`app/src/commands/frames.rs`).
+const MIN_DURATION_MUL: f32 = 0.01;
+
+/// Clamps a frame hold multiplier to at least [`MIN_DURATION_MUL`].
+///
+/// Split out so the clamp is unit-testable without an egui slider. The slider
+/// already bounds its range, but a programmatic write (or a future keybind)
+/// goes through this too.
+fn clamp_duration_mul(mul: f32) -> f32 {
+    mul.max(MIN_DURATION_MUL)
+}
+
+/// The per-frame `duration_ms` a global FPS implies: `1000 / fps`, with `fps`
+/// floored at `1` and the result floored at `1ms` so a frame always has
+/// playable time. At high FPS the integer division rounds down, so the readout
+/// fps can read slightly above the requested value — the same flooring every
+/// downstream player applies.
+fn fps_to_duration_ms(fps: u32) -> u32 {
+    (1000 / fps.max(1)).max(1)
+}
+
 fn loop_label(dir: LoopDirection) -> &'static str {
     match dir {
         LoopDirection::Forward => "Forward",
         LoopDirection::Reverse => "Reverse",
         LoopDirection::PingPong => "Ping-pong",
         LoopDirection::PingPongReverse => "Ping-pong rev",
+    }
+}
+
+/// Maps a pointer x to a frame index over the tag bar / header strip.
+///
+/// `header_left` is the left edge of frame column 0 (after the row-label
+/// gutter), `scroll_x` the horizontal scroll offset of the matrix, `cs` the
+/// fixed column width (the cel-thumbnail size), and `count` the frame count.
+/// The result is floored to the column and clamped to `[0, count-1]` so a drag
+/// off either end lands on the first or last frame. The v2 analog of the Tauri
+/// `frameIndexFromX` (`ui/src/timeline/FrameTagBar.tsx`).
+///
+/// `count == 0` returns `0`: with no frames there is nowhere to point, and
+/// callers guard the empty case before acting on the result.
+#[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
+fn frame_at_x(pointer_x: f32, header_left: f32, scroll_x: f32, cs: f32, count: u32) -> u32 {
+    if count == 0 || cs <= 0.0 {
+        return 0;
+    }
+    let local = (pointer_x - header_left + scroll_x) / cs;
+    if local <= 0.0 {
+        return 0;
+    }
+    (local.floor() as u32).min(count - 1)
+}
+
+/// Generates a tag name that does not collide with any existing tag: `Tag 1`,
+/// `Tag 2`, …, filling the first free slot rather than always appending. Ports
+/// the Tauri `genUniqueTagName` (`ui/src/timeline/timeline-state.ts`); only
+/// `Tag N` names participate, so user-named tags ("Walk", "Run") never block
+/// `Tag 1`.
+fn unique_tag_name(sprite: &pixhaus_core::project::Sprite) -> String {
+    let mut n = 1u32;
+    loop {
+        let candidate = format!("Tag {n}");
+        if !sprite.frame_tags.iter().any(|t| t.name == candidate) {
+            return candidate;
+        }
+        n += 1;
     }
 }
 
@@ -1049,6 +1271,16 @@ mod tests {
 
     fn frame_set(ids: &[u32]) -> BTreeSet<u32> {
         ids.iter().copied().collect()
+    }
+
+    fn named_tag(name: &str, start: u32, end: u32) -> FrameTag {
+        FrameTag {
+            name: name.to_owned(),
+            range: FrameRange::new(FrameIndex::new(start), FrameIndex::new(end)),
+            loop_direction: LoopDirection::Forward,
+            repeat: 0,
+            user_data: UserData::default(),
+        }
     }
 
     fn raster_cel(layer: u32, frame: u32, buffer: u32, opacity: u8, position: IVec2) -> Cel {
@@ -1411,6 +1643,141 @@ mod tests {
     #[test]
     fn active_index_deleting_first_frame_floors_at_zero() {
         assert_eq!(next_active_after_delete(0, &frame_set(&[0])), 0);
+    }
+
+    // duration_mul / global FPS ────────────────────────────────────────────────
+
+    #[test]
+    fn duration_mul_clamps_at_minimum() {
+        // A multiplier below the floor (or zero) clamps up to MIN_DURATION_MUL
+        // so a frame never plays for zero time. Ports the Tauri
+        // `duration_mul_clamps_below_minimum`.
+        assert!((clamp_duration_mul(0.0) - MIN_DURATION_MUL).abs() < f32::EPSILON);
+        assert!((clamp_duration_mul(-5.0) - MIN_DURATION_MUL).abs() < f32::EPSILON);
+    }
+
+    #[test]
+    fn duration_mul_passes_normal_value_through() {
+        assert!((clamp_duration_mul(2.5) - 2.5).abs() < f32::EPSILON);
+    }
+
+    #[test]
+    fn fps_to_duration_ms_floors_at_one_millisecond() {
+        // 12 fps -> 83ms (1000 / 12 = 83, floored). A very high fps still keeps
+        // at least 1ms of playable time.
+        assert_eq!(fps_to_duration_ms(12), 83);
+        assert_eq!(fps_to_duration_ms(60), 16);
+        assert_eq!(fps_to_duration_ms(1000), 1, "1000 fps still floors at 1ms");
+        assert_eq!(fps_to_duration_ms(2000), 1, "above 1000 fps the ms floor holds at 1");
+        assert_eq!(fps_to_duration_ms(0), 1000, "a zero fps floors to 1 fps -> 1000ms");
+    }
+
+    #[test]
+    fn set_fps_writes_every_frame_and_preserves_duration_mul() {
+        // Setting FPS retimes all frames uniformly via `duration_ms` while
+        // leaving each frame's hold multiplier untouched.
+        let mut s = sprite_with_frames(3);
+        s.frames[0].duration_mul = 2.0;
+        s.frames[1].duration_mul = 0.5;
+        // Apply the same write the FPS field does.
+        let ms = fps_to_duration_ms(24);
+        for f in &mut s.frames {
+            f.duration_ms = ms;
+        }
+        assert!(s.frames.iter().all(|f| f.duration_ms == ms), "every frame takes the new duration");
+        assert!((s.frames[0].duration_mul - 2.0).abs() < f32::EPSILON, "frame 0 hold survives the FPS write");
+        assert!((s.frames[1].duration_mul - 0.5).abs() < f32::EPSILON, "frame 1 hold survives the FPS write");
+        assert!((s.frames[2].duration_mul - 1.0).abs() < f32::EPSILON, "frame 2 keeps its default hold");
+    }
+
+    // frame_at_x / unique_tag_name / tag create ───────────────────────────────
+
+    #[test]
+    fn frame_at_x_maps_each_column_to_its_index() {
+        // A 36-pt-wide column starting at x = 96 (the row-label gutter), no
+        // scroll. A pointer inside a column lands on that column's index.
+        let cs = 36.0;
+        let left = 96.0;
+        assert_eq!(frame_at_x(left + 1.0, left, 0.0, cs, 10), 0, "just inside column 0");
+        assert_eq!(frame_at_x(left + cs + 1.0, left, 0.0, cs, 10), 1, "into column 1");
+        assert_eq!(frame_at_x(left + cs * 3.5, left, 0.0, cs, 10), 3, "mid column 3");
+    }
+
+    #[test]
+    fn frame_at_x_clamps_at_both_ends() {
+        let cs = 36.0;
+        let left = 96.0;
+        // A pointer left of the first column floors to 0, never negative.
+        assert_eq!(frame_at_x(left - 50.0, left, 0.0, cs, 5), 0, "left of the bar clamps to 0");
+        assert_eq!(frame_at_x(left, left, 0.0, cs, 5), 0, "exactly at the left edge is column 0");
+        // Past the last column clamps to count - 1.
+        assert_eq!(frame_at_x(left + cs * 100.0, left, 0.0, cs, 5), 4, "far right clamps to the last frame");
+    }
+
+    #[test]
+    fn frame_at_x_accounts_for_horizontal_scroll() {
+        let cs = 36.0;
+        let left = 0.0;
+        // Scrolled right by two columns: a pointer at the bar's left edge now
+        // points at frame 2.
+        assert_eq!(frame_at_x(0.0, left, cs * 2.0, cs, 10), 2);
+    }
+
+    #[test]
+    fn frame_at_x_with_no_frames_is_zero() {
+        assert_eq!(frame_at_x(500.0, 96.0, 0.0, 36.0, 0), 0);
+    }
+
+    #[test]
+    fn unique_tag_name_starts_at_one_for_an_empty_sprite() {
+        let s = sprite_with_frames(3);
+        assert_eq!(unique_tag_name(&s), "Tag 1");
+    }
+
+    #[test]
+    fn unique_tag_name_skips_taken_names() {
+        let mut s = sprite_with_frames(3);
+        s.frame_tags.push(named_tag("Tag 1", 0, 0));
+        assert_eq!(unique_tag_name(&s), "Tag 2");
+        s.frame_tags.push(named_tag("Tag 2", 0, 0));
+        assert_eq!(unique_tag_name(&s), "Tag 3");
+    }
+
+    #[test]
+    fn unique_tag_name_fills_the_first_gap() {
+        let mut s = sprite_with_frames(3);
+        s.frame_tags.push(named_tag("Tag 1", 0, 0));
+        s.frame_tags.push(named_tag("Tag 3", 0, 0));
+        assert_eq!(unique_tag_name(&s), "Tag 2", "the first free slot is filled, not appended");
+    }
+
+    #[test]
+    fn unique_tag_name_ignores_user_named_tags() {
+        let mut s = sprite_with_frames(3);
+        s.frame_tags.push(named_tag("Walk", 0, 0));
+        s.frame_tags.push(named_tag("Run", 1, 2));
+        assert_eq!(unique_tag_name(&s), "Tag 1", "non-sequential names never block Tag 1");
+    }
+
+    #[test]
+    fn drag_create_stores_the_exact_sub_range() {
+        // A tag created over a dragged sub-range stores `[lo, hi]` verbatim,
+        // not the whole timeline. The push mirrors the tag-bar drag-stop path.
+        let mut s = sprite_with_frames(8);
+        let (lo, hi) = TagDrag { start: 5, end: 2 }.normalized();
+        let range = FrameRange::new(FrameIndex::new(lo), FrameIndex::new(hi));
+        let name = unique_tag_name(&s);
+        s.frame_tags.push(FrameTag {
+            name: name.clone(),
+            range,
+            loop_direction: LoopDirection::Forward,
+            repeat: 0,
+            user_data: UserData::default(),
+        });
+        assert_eq!(s.frame_tags.len(), 1);
+        assert_eq!(s.frame_tags[0].range.start.get(), 2, "normalized lower bound");
+        assert_eq!(s.frame_tags[0].range.end.get(), 5, "normalized upper bound");
+        assert_eq!(s.frame_tags[0].name, "Tag 1");
     }
 
     // frame clipboard: copy / paste / undo ─────────────────────────────────────

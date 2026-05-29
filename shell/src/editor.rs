@@ -300,6 +300,32 @@ pub struct ClipFrame {
     pub cels: Vec<ClipCel>,
 }
 
+/// An in-progress frame-tag drag on the tag bar: a press-and-drag over empty
+/// space that, on release, becomes a tag over the normalized `[min, max]` of
+/// `start` and `end`. Both endpoints are frame indices clamped to the timeline,
+/// so either can be the smaller. Transient view state: never serialized, not
+/// undoable (the tag it creates is the undoable step). Mirrors the Tauri
+/// `TagDragState` (`ui/src/timeline/timeline-state.ts`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct TagDrag {
+    /// Frame index where the drag began (the press point), clamped to the
+    /// timeline.
+    pub start: u32,
+    /// Frame index the pointer is over now, clamped to the timeline. May be
+    /// below `start` when the drag runs leftward.
+    pub end: u32,
+}
+
+impl TagDrag {
+    /// The normalized inclusive range the drag covers: `start` and `end` sorted
+    /// so the lower index is `lo`. A tag created from a drag uses `[lo, hi]`
+    /// regardless of drag direction.
+    #[must_use]
+    pub fn normalized(self) -> (u32, u32) {
+        if self.start <= self.end { (self.start, self.end) } else { (self.end, self.start) }
+    }
+}
+
 /// One copied cel, resolved to owned RGBA bytes so the clipboard does not point
 /// back into the buffer store. Linked cels are resolved to their source buffer
 /// at copy time, so paste always builds an independent raster cel.
@@ -421,6 +447,20 @@ pub struct EditorState {
     /// halts on the last frame. View state, transient, not undoable — the
     /// studio clip player carries the same toggle (`Studio::loop_playback`).
     pub loop_playback: bool,
+    /// Timeline: last-set global FPS, the value the FPS field shows and writes
+    /// across every frame's `duration_ms`. Default `12`. View state — the
+    /// authoritative timing lives on each [`Frame`], so this only seeds and
+    /// reflects the field, it is not serialized or undoable.
+    pub global_fps: u32,
+    /// Timeline: the tag the playback/rename controls target, as an index into
+    /// `Sprite::frame_tags`, or `None` when no tag is selected. Set by clicking
+    /// a span on the tag bar. View state, never serialized; the index is
+    /// re-validated against the live tag list at use so a removed tag does not
+    /// leave a dangling selection.
+    pub selected_tag: Option<usize>,
+    /// Timeline: an in-progress drag on the tag bar that, on release, creates a
+    /// tag over the dragged range. `None` between drags. Transient view state.
+    pub tag_drag: Option<TagDrag>,
 }
 
 impl Default for EditorState {
@@ -462,6 +502,9 @@ impl Default for EditorState {
             selected_frames: BTreeSet::new(),
             frame_clipboard: None,
             loop_playback: true,
+            global_fps: 12,
+            selected_tag: None,
+            tag_drag: None,
         }
     }
 }
@@ -717,6 +760,17 @@ mod tests {
             };
             ed.clear_frame_selection();
             assert!(ed.selected_frames.is_empty());
+        }
+
+        #[test]
+        fn tag_drag_normalizes_regardless_of_direction() {
+            use crate::editor::TagDrag;
+            // A rightward drag keeps its order.
+            assert_eq!(TagDrag { start: 2, end: 5 }.normalized(), (2, 5));
+            // A leftward drag swaps so the lower index is first.
+            assert_eq!(TagDrag { start: 5, end: 2 }.normalized(), (2, 5));
+            // A single-frame drag collapses to a one-frame range.
+            assert_eq!(TagDrag { start: 3, end: 3 }.normalized(), (3, 3));
         }
     }
 
