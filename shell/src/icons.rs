@@ -86,6 +86,7 @@ pub const PAUSE: &str = p::PAUSE;
 pub const STOP: &str = p::STOP;
 pub const PREV: &str = p::SKIP_BACK;
 pub const NEXT: &str = p::SKIP_FORWARD;
+pub const REPEAT: &str = p::REPEAT;
 
 // Colour / misc.
 pub const SWAP: &str = p::SWAP;

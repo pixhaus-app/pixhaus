@@ -11,7 +11,7 @@ use std::collections::BTreeSet;
 
 use eframe::egui;
 use pixhaus_core::canvas::{BrushShape, PixelBuffer};
-use pixhaus_core::project::{IVec2, LayerId, PixelBufferId, Rgba};
+use pixhaus_core::project::{Frame, IVec2, LayerId, PixelBufferId, Rgba, Size};
 use pixhaus_core::selection::SelectionMask;
 use pixhaus_core::undo::History;
 
@@ -272,6 +272,51 @@ pub struct FreeTransformDrag {
     pub gizmo_drag: Option<GizmoHandle>,
 }
 
+/// A copied run of frames, held off the serialized document so it survives
+/// edits to the source and can paste into any sprite of equal canvas size.
+///
+/// Unlike the Tauri clipboard, which stored a single source frame index and
+/// re-duplicated it on paste, v2 stores the **resolved pixel bytes** of every
+/// cel: linked cels are resolved to their source buffer at copy time, so the
+/// clipboard is self-contained and a later edit to the source frame does not
+/// change what paste produces. This fits v2's buffer-store model and enables
+/// cross-sprite paste; paste rejects a canvas-size mismatch rather than scaling.
+#[derive(Clone, Debug)]
+pub struct FrameClipboard {
+    /// Canvas size the frames were copied from. Paste rejects a sprite whose
+    /// canvas differs, so a pasted cel's bytes always fit the target buffer.
+    pub canvas: Size,
+    /// The copied frames, in ascending source-frame order.
+    pub frames: Vec<ClipFrame>,
+}
+
+/// One copied frame: the [`Frame`] timing/metadata value and the cels that sat
+/// on it, each carrying owned bytes.
+#[derive(Clone, Debug)]
+pub struct ClipFrame {
+    /// The frame's timing and metadata, cloned verbatim.
+    pub frame: Frame,
+    /// The cels on this frame, each resolved to owned pixel bytes at copy time.
+    pub cels: Vec<ClipCel>,
+}
+
+/// One copied cel, resolved to owned RGBA bytes so the clipboard does not point
+/// back into the buffer store. Linked cels are resolved to their source buffer
+/// at copy time, so paste always builds an independent raster cel.
+#[derive(Clone, Debug)]
+pub struct ClipCel {
+    /// Layer the cel belonged to. Paste keeps the cel on the same layer id.
+    pub layer_id: LayerId,
+    /// Top-left placement within the canvas.
+    pub position: IVec2,
+    /// Per-cel opacity.
+    pub opacity: u8,
+    /// Packed `width * height * 4` RGBA bytes (tight stride, `width * 4`).
+    pub bytes: Vec<u8>,
+    /// Pixel dimensions of [`Self::bytes`].
+    pub size: Size,
+}
+
 /// All interactive-editing state, owned by [`crate::app::ShellApp`].
 pub struct EditorState {
     /// Tool bound to the primary (left) mouse button.
@@ -366,6 +411,16 @@ pub struct EditorState {
     /// fallback. The active frame still drives the canvas; this set is only the
     /// batch-op target.
     pub selected_frames: BTreeSet<u32>,
+    /// Timeline: the copied frame payload, or `None` when nothing has been
+    /// copied. Holds owned pixel bytes (see [`FrameClipboard`]), so it survives
+    /// edits to the source frames and pastes into any sprite of equal canvas
+    /// size. View state, never serialized.
+    pub frame_clipboard: Option<FrameClipboard>,
+    /// Timeline: whether main-timeline playback loops. Default `true` to keep
+    /// the prior always-loop behaviour. With it off, playback runs once and
+    /// halts on the last frame. View state, transient, not undoable — the
+    /// studio clip player carries the same toggle (`Studio::loop_playback`).
+    pub loop_playback: bool,
 }
 
 impl Default for EditorState {
@@ -405,6 +460,8 @@ impl Default for EditorState {
             selected_layers: BTreeSet::new(),
             pending_layer_delete: None,
             selected_frames: BTreeSet::new(),
+            frame_clipboard: None,
+            loop_playback: true,
         }
     }
 }

@@ -1950,10 +1950,18 @@ impl ShellApp {
         }
         let dur = Duration::from_millis(u64::from(self.doc.frame_duration_ms(self.doc.active_frame)));
         if self.last_advance.elapsed() >= dur {
-            self.play_cursor = (self.play_cursor + 1) % self.play_order.len();
-            self.doc.active_frame = self.play_order[self.play_cursor];
-            self.last_advance = Instant::now();
-            self.refresh_canvas(false);
+            if let Some(next) = next_cursor(self.play_cursor, self.play_order.len(), self.editor.loop_playback) {
+                self.play_cursor = next;
+                self.doc.active_frame = self.play_order[self.play_cursor];
+                self.last_advance = Instant::now();
+                self.refresh_canvas(false);
+            } else {
+                // Loop off and at the last frame: halt, leaving the playhead on
+                // the final frame. Stop requesting repaints so the loop goes
+                // idle.
+                self.playing = false;
+                return;
+            }
         }
         ctx.request_repaint_after(dur);
     }
@@ -2859,6 +2867,24 @@ enum LibraryDrag {
     Group(GroupId),
 }
 
+/// The next playback cursor after `cursor` over a `len`-frame play order, or
+/// `None` to stop. While inside the order it advances by one. At the last frame
+/// it wraps to `0` when `looping`, else returns `None` so the caller halts on
+/// the final frame. `len == 0` always stops.
+fn next_cursor(cursor: usize, len: usize, looping: bool) -> Option<usize> {
+    if len == 0 {
+        return None;
+    }
+    let next = cursor + 1;
+    if next < len {
+        Some(next)
+    } else if looping {
+        Some(0)
+    } else {
+        None
+    }
+}
+
 /// Whether `(w, h)` exactly matches one of the [`SIZE_PRESETS`] entries.
 fn is_preset_size(w: u32, h: u32) -> bool {
     SIZE_PRESETS.iter().any(|(_, pw, ph)| *pw == w && *ph == h)
@@ -3079,7 +3105,36 @@ impl eframe::App for ShellApp {
 
 #[cfg(test)]
 mod tests {
-    use super::{MorphOp, MorphResult, SelectionMask, morph_mask, png_to_pixel_buffer, truncate_motion};
+    use super::{MorphOp, MorphResult, SelectionMask, morph_mask, next_cursor, png_to_pixel_buffer, truncate_motion};
+
+    // --- playback cursor: loop vs stop --------------------------------------
+
+    #[test]
+    fn next_cursor_advances_inside_the_play_order() {
+        // Mid-order, the cursor steps forward by one regardless of loop mode.
+        assert_eq!(next_cursor(0, 4, true), Some(1));
+        assert_eq!(next_cursor(2, 4, false), Some(3));
+    }
+
+    #[test]
+    fn next_cursor_wraps_at_the_end_when_looping() {
+        // Last frame with loop on cycles back to the start.
+        assert_eq!(next_cursor(3, 4, true), Some(0));
+    }
+
+    #[test]
+    fn next_cursor_stops_at_the_end_when_not_looping() {
+        // Last frame with loop off returns None so playback halts on the final
+        // frame instead of wrapping.
+        assert_eq!(next_cursor(3, 4, false), None);
+    }
+
+    #[test]
+    fn next_cursor_stops_on_an_empty_order() {
+        // A zero-length order never advances, in either mode.
+        assert_eq!(next_cursor(0, 0, true), None);
+        assert_eq!(next_cursor(0, 0, false), None);
+    }
 
     // --- selection morphology: grow / shrink / feather ----------------------
 

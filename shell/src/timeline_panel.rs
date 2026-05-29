@@ -11,7 +11,8 @@ use pixhaus_core::project::{Cel, CelData, Frame, FrameIndex, FrameRange, FrameTa
 use pixhaus_core::canvas::PixelBuffer;
 
 use crate::app::ShellApp;
-use crate::commands::{push_sprite_edit, push_sprite_edit_with_buffers};
+use crate::commands::{extract_region, push_sprite_edit, push_sprite_edit_with_buffers};
+use crate::editor::{ClipCel, ClipFrame, FrameClipboard};
 use crate::icons;
 
 impl ShellApp {
@@ -50,6 +51,7 @@ impl ShellApp {
         if ui.button(icons::NEXT).on_hover_text("Next frame").clicked() {
             self.step_frame(1);
         }
+        ui.toggle_value(&mut self.editor.loop_playback, icons::REPEAT).on_hover_text("Loop playback");
         ui.label(format!("{} / {}", self.doc.active_frame.get() + 1, self.doc.frame_count().max(1)));
     }
 
@@ -561,6 +563,177 @@ impl ShellApp {
         });
         self.editor.new_tag_name.clear();
     }
+
+    /// Snapshots the selected frames (or the active frame when nothing is
+    /// explicitly selected) into the frame clipboard, resolving every cel to
+    /// owned pixel bytes. Linked cels are followed to their source buffer at
+    /// copy time, so the clipboard is self-contained and survives later edits
+    /// to the source. Records nothing on the undo stack — copy is read-only.
+    // Wired by the frame context menu (plan task 11); kept self-contained now
+    // so that task only adds the call site.
+    #[allow(dead_code, clippy::cast_possible_truncation)]
+    pub(crate) fn copy_frames(&mut self) {
+        let active = self.doc.active_frame.get();
+        let set = self.editor.effective_frames(active);
+        let Some(sprite) = self.doc.active_sprite() else {
+            return;
+        };
+        let canvas = sprite.canvas;
+        // Ascending order so paste rebuilds the run in timeline order.
+        let mut frames: Vec<ClipFrame> = Vec::with_capacity(set.len());
+        for &fi in &set {
+            let frame_idx = FrameIndex::new(fi);
+            let Some(frame) = sprite.frames.get(fi as usize).cloned() else {
+                continue;
+            };
+            // Each cel sitting on this frame, resolved to owned bytes.
+            let mut cels: Vec<ClipCel> = Vec::new();
+            for cel in sprite.cels.iter().filter(|c| c.frame_index == frame_idx) {
+                // Resolve the layer's source frame (one link hop) and read its
+                // raster buffer. Tilemap cels carry no raster bytes here and a
+                // link with no resolvable raster source is skipped.
+                let source = sprite.resolve_source_frame(cel.layer_id, frame_idx);
+                let Some(src_cel) = sprite.cel(cel.layer_id, source) else {
+                    continue;
+                };
+                let CelData::Raster { buffer, size } = src_cel.data else {
+                    continue;
+                };
+                let Some(buf) = self.doc.pixel_buffers.get(&buffer) else {
+                    continue;
+                };
+                let bytes = extract_region(buf, 0, 0, size.width, size.height);
+                cels.push(ClipCel {
+                    layer_id: cel.layer_id,
+                    position: cel.position,
+                    opacity: cel.opacity,
+                    bytes,
+                    size,
+                });
+            }
+            frames.push(ClipFrame { frame, cels });
+        }
+        if frames.is_empty() {
+            return;
+        }
+        self.editor.frame_clipboard = Some(FrameClipboard { canvas, frames });
+    }
+
+    /// Copies the selected frames, then deletes them — the standard cut. The
+    /// copy records nothing; the delete is one undoable [`SpriteEdit`].
+    // Wired by the frame context menu (plan task 11).
+    #[allow(dead_code)]
+    pub(crate) fn cut_frames(&mut self) {
+        self.copy_frames();
+        self.delete_selected_frames();
+    }
+
+    /// Pastes the frame clipboard after the active frame, allocating a fresh
+    /// buffer per cel so the pasted pixels are independent of the source.
+    ///
+    /// Rejects (no-op + warn) when the clipboard's canvas size differs from the
+    /// active sprite's: a cel's bytes are sized for the source canvas, and v2
+    /// does not scale on paste. The new frames and their buffers are recorded as
+    /// one [`SpriteBufferEdit`], so undo removes both the frames and the pasted
+    /// buffers rather than leaking them. The playhead lands on the first pasted
+    /// frame.
+    // Wired by the frame context menu (plan task 11).
+    #[allow(dead_code, clippy::cast_possible_truncation)]
+    pub(crate) fn paste_frames(&mut self) {
+        let Some(clip) = self.editor.frame_clipboard.clone() else {
+            return;
+        };
+        let Some(canvas) = self.doc.active_sprite().map(|s| s.canvas) else {
+            return;
+        };
+        if !paste_allowed(clip.canvas, canvas) {
+            tracing::warn!(
+                clipboard = ?clip.canvas,
+                target = ?canvas,
+                "paste rejected: frame clipboard canvas size does not match the active sprite"
+            );
+            return;
+        }
+        if clip.frames.is_empty() {
+            return;
+        }
+        let insert_at = self.doc.active_frame.get() + 1;
+        let plan = build_paste_plan(&clip, insert_at, || PixelBufferId::new(self.doc.alloc_id()));
+        let PastePlan { added, frames, cels } = plan;
+        let n = frames.len() as i32;
+
+        push_sprite_edit_with_buffers(&mut self.editor, &mut self.doc, "Paste frames", added, |sprite| {
+            shift_frames(sprite, insert_at, n);
+            for (offset, frame) in frames.iter().enumerate() {
+                sprite.frames.insert(insert_at as usize + offset, frame.clone());
+            }
+            sprite.cels.extend(cels.iter().cloned());
+        });
+        self.doc.active_frame = FrameIndex::new(insert_at);
+        self.editor.clear_frame_selection();
+        self.refresh_canvas(false);
+    }
+}
+
+/// Whether a frame clipboard may paste into a sprite of `target` canvas size.
+///
+/// A copied cel's bytes are sized for the source canvas, and v2 does not scale
+/// on paste, so the canvases must match exactly. Cross-sprite paste of a
+/// different size is rejected rather than scaled — the deliberate trade-off for
+/// the byte-based clipboard.
+fn paste_allowed(clip_canvas: pixhaus_core::project::Size, target: pixhaus_core::project::Size) -> bool {
+    clip_canvas == target
+}
+
+/// The frames, cels, and fresh buffers a paste inserts, built off the document
+/// so the structural insert and the buffer allocation are one testable unit.
+struct PastePlan {
+    /// Fresh buffers to hand to `push_sprite_edit_with_buffers` (owned by the
+    /// undo entry, removed on undo).
+    added: Vec<(PixelBufferId, PixelBuffer)>,
+    /// The frames to insert at `insert_at`, in clipboard order.
+    frames: Vec<Frame>,
+    /// The cels to extend onto the sprite, already retargeted to the inserted
+    /// frame indices and pointing at the fresh buffers.
+    cels: Vec<Cel>,
+}
+
+/// Builds the [`PastePlan`] for inserting `clip` at `insert_at`.
+///
+/// Each clipboard cel becomes an independent raster cel: its packed bytes are
+/// rebuilt into a fresh [`PixelBuffer`] under a new id from `alloc_id`, so the
+/// pasted pixels never alias the source. A cel whose bytes do not form a valid
+/// buffer is dropped rather than aborting the paste. Pure over the document, so
+/// the byte-duplication and retargeting are unit-testable without a `ShellApp`.
+#[allow(clippy::cast_possible_truncation)]
+fn build_paste_plan(clip: &FrameClipboard, insert_at: u32, mut alloc_id: impl FnMut() -> PixelBufferId) -> PastePlan {
+    let mut added: Vec<(PixelBufferId, PixelBuffer)> = Vec::new();
+    let mut frames: Vec<Frame> = Vec::with_capacity(clip.frames.len());
+    let mut cels: Vec<Cel> = Vec::new();
+    for (offset, cf) in clip.frames.iter().enumerate() {
+        let target = FrameIndex::new(insert_at + offset as u32);
+        frames.push(cf.frame.clone());
+        for cc in &cf.cels {
+            let stride = cc.size.width.saturating_mul(4);
+            let Ok(buffer) = PixelBuffer::from_raw(cc.size.width, cc.size.height, stride, cc.bytes.clone()) else {
+                continue;
+            };
+            let new_id = alloc_id();
+            added.push((new_id, buffer));
+            cels.push(Cel {
+                layer_id: cc.layer_id,
+                frame_index: target,
+                position: cc.position,
+                opacity: cc.opacity,
+                data: CelData::Raster {
+                    buffer: new_id,
+                    size: cc.size,
+                },
+                user_data: pixhaus_core::project::UserData::default(),
+            });
+        }
+    }
+    PastePlan { added, frames, cels }
 }
 
 /// Shifts every frame-index-bearing field at or after `at` by `delta`, for
@@ -1238,5 +1411,137 @@ mod tests {
     #[test]
     fn active_index_deleting_first_frame_floors_at_zero() {
         assert_eq!(next_active_after_delete(0, &frame_set(&[0])), 0);
+    }
+
+    // frame clipboard: copy / paste / undo ─────────────────────────────────────
+    mod clipboard {
+        use pixhaus_core::canvas::PixelBuffer;
+        use pixhaus_core::project::{CelData, Frame, IVec2, Rgba, Size};
+
+        use crate::commands::push_sprite_edit_with_buffers;
+        use crate::document::DocumentStore;
+        use crate::editor::{ClipCel, ClipFrame, EditorState, FrameClipboard};
+        use crate::timeline_panel::{build_paste_plan, paste_allowed, shift_frames};
+
+        /// A clipboard of one frame carrying a single raster cel on `layer`, with
+        /// the given packed `8*8*4` bytes.
+        fn one_frame_clip(layer: pixhaus_core::project::LayerId, bytes: Vec<u8>) -> FrameClipboard {
+            FrameClipboard {
+                canvas: Size::new(8, 8),
+                frames: vec![ClipFrame {
+                    frame: Frame::default(),
+                    cels: vec![ClipCel {
+                        layer_id: layer,
+                        position: IVec2::zero(),
+                        opacity: 200,
+                        bytes,
+                        size: Size::new(8, 8),
+                    }],
+                }],
+            }
+        }
+
+        #[test]
+        fn paste_duplicates_bytes_into_an_independent_buffer() {
+            let mut doc = DocumentStore::new();
+            doc.create_sprite("hero", Size::new(8, 8));
+            let layer = doc.active_sprite().expect("sprite").layers[0].id;
+            // Tag the source bytes with a recognisable colour at one pixel.
+            let mut src = PixelBuffer::filled(8, 8, Rgba::new(7, 8, 9, 255)).expect("buffer");
+            src.set_pixel(2, 3, Rgba::new(200, 100, 50, 255));
+            let want = src.clone().into_raw();
+
+            let baseline_frames = doc.frame_count();
+            let baseline_buffers = doc.pixel_buffers.len();
+
+            let clip = one_frame_clip(layer, want.clone());
+            // Insert after the active frame (0), so the pasted frame is index 1.
+            let plan = build_paste_plan(&clip, 1, || {
+                pixhaus_core::project::PixelBufferId::new(doc.alloc_id())
+            });
+            // The plan allocates exactly one fresh buffer, and that id is not the
+            // source cel's id — paste never aliases the source.
+            assert_eq!(plan.added.len(), 1, "one cel pastes one fresh buffer");
+            let pasted_id = plan.added[0].0;
+            let source_id = match doc.active_sprite().expect("sprite").cels[0].data {
+                CelData::Raster { buffer, .. } => buffer,
+                ref other => panic!("seed cel is raster, got {other:?}"),
+            };
+            assert_ne!(pasted_id, source_id, "the pasted buffer is a fresh id, not the source");
+
+            let added = plan.added.clone();
+            let frames = plan.frames.clone();
+            let cels = plan.cels.clone();
+            let mut editor = EditorState::default();
+            push_sprite_edit_with_buffers(&mut editor, &mut doc, "Paste frames", added, |sprite| {
+                shift_frames(sprite, 1, frames.len() as i32);
+                for (offset, frame) in frames.iter().enumerate() {
+                    sprite.frames.insert(1 + offset, frame.clone());
+                }
+                sprite.cels.extend(cels.iter().cloned());
+            });
+
+            assert_eq!(doc.frame_count(), baseline_frames + 1, "frame count grew by one");
+            assert_eq!(doc.pixel_buffers.len(), baseline_buffers + 1, "one buffer added");
+            let got = doc.pixel_buffers.get(&pasted_id).expect("pasted buffer present").clone().into_raw();
+            assert_eq!(got, want, "the pasted cel's bytes equal the copied source bytes");
+            // Mutating the pasted buffer must not touch the source: independent.
+            let pasted = doc.pixel_buffers.get_mut(&pasted_id).expect("pasted buffer");
+            pasted.set_pixel(0, 0, Rgba::new(1, 1, 1, 1));
+            assert_ne!(
+                doc.pixel_buffers.get(&pasted_id).expect("pasted").pixel(0, 0),
+                doc.pixel_buffers.get(&source_id).expect("source").pixel(0, 0),
+                "editing the paste does not change the source buffer"
+            );
+        }
+
+        #[test]
+        fn paste_into_a_different_size_sprite_is_rejected() {
+            // The size guard is a pure comparison: equal canvases allow, any
+            // mismatch rejects (no scaling on paste).
+            assert!(paste_allowed(Size::new(8, 8), Size::new(8, 8)), "equal canvases paste");
+            assert!(!paste_allowed(Size::new(8, 8), Size::new(16, 16)), "a larger target is rejected");
+            assert!(!paste_allowed(Size::new(8, 8), Size::new(8, 16)), "a mismatched height is rejected");
+        }
+
+        #[test]
+        fn undo_of_paste_removes_frames_and_buffers_to_baseline() {
+            let mut doc = DocumentStore::new();
+            doc.create_sprite("hero", Size::new(8, 8));
+            let layer = doc.active_sprite().expect("sprite").layers[0].id;
+            let baseline_frames = doc.frame_count();
+            let baseline_buffers = doc.pixel_buffers.len();
+
+            let bytes = PixelBuffer::filled(8, 8, Rgba::new(5, 6, 7, 255)).expect("buffer").into_raw();
+            let clip = one_frame_clip(layer, bytes);
+            let plan = build_paste_plan(&clip, 1, || {
+                pixhaus_core::project::PixelBufferId::new(doc.alloc_id())
+            });
+            let pasted_id = plan.added[0].0;
+            let added = plan.added.clone();
+            let frames = plan.frames.clone();
+            let cels = plan.cels.clone();
+
+            let mut editor = EditorState::default();
+            push_sprite_edit_with_buffers(&mut editor, &mut doc, "Paste frames", added, |sprite| {
+                shift_frames(sprite, 1, frames.len() as i32);
+                for (offset, frame) in frames.iter().enumerate() {
+                    sprite.frames.insert(1 + offset, frame.clone());
+                }
+                sprite.cels.extend(cels.iter().cloned());
+            });
+            assert_eq!(doc.frame_count(), baseline_frames + 1);
+            assert_eq!(doc.pixel_buffers.len(), baseline_buffers + 1);
+
+            editor.history.undo(&mut doc).expect("undo");
+            assert_eq!(doc.frame_count(), baseline_frames, "undo removes the pasted frame");
+            assert_eq!(doc.pixel_buffers.len(), baseline_buffers, "undo removes the pasted buffer, no leak");
+            assert!(!doc.pixel_buffers.contains_key(&pasted_id), "the pasted buffer id is gone after undo");
+
+            editor.history.redo(&mut doc).expect("redo");
+            assert_eq!(doc.frame_count(), baseline_frames + 1, "redo re-pastes the frame");
+            assert_eq!(doc.pixel_buffers.len(), baseline_buffers + 1);
+            assert!(doc.pixel_buffers.contains_key(&pasted_id), "redo restores the pasted buffer");
+        }
     }
 }
