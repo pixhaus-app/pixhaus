@@ -361,6 +361,81 @@ fn seed_variant_id(anchor: &CharacterAnchor, direction: AnchorDirection) -> Opti
         .or_else(|| anchor.neutral.as_ref().map(|n| n.id))
 }
 
+/// One unit of cascade re-generation, in the dependency order a stale anchor must
+/// be rebuilt: the neutral first (everything derives from it), then the directional
+/// anchors (they derive from the neutral), then the derived animation sheets (they
+/// derive from the directional anchors). [`plan_reroll`] returns these already
+/// ordered, so a driver can run them front-to-back without re-checking dependencies.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum RerollStep {
+    /// Re-derive the effect-stripped neutral anchor from the current canonical.
+    Neutral,
+    /// Re-derive a directional anchor from the (re-derived) neutral. East never
+    /// appears here — it is the flip of west and carries no stored variant.
+    Directional(AnchorDirection),
+    /// Re-run the i2v + integrate for one stale derived sheet, re-pointing its
+    /// `derived_from` at the new upstream anchor.
+    Sheet {
+        /// The animation the stale sheet holds.
+        animation_kind: AnimationKind,
+        /// The facing the stale sheet was generated for.
+        direction: AnchorDirection,
+    },
+}
+
+/// Enumerates the stale dependents of `anchor` against the current `canonical`, in
+/// dependency order: the neutral (if stale) first, then each stale directional
+/// anchor (south / west / north — east is the flip of west and never re-derived),
+/// then each stale derived sheet.
+///
+/// Pure: no egui, no document, no spawning. A driver walks the returned steps
+/// front-to-back, queuing each re-run through the durable queue (A1) so the cascade
+/// rebuilds bottom-up — neutral before directionals before sheets — and a sheet's
+/// `derived_from` re-points at an upstream that is itself already fresh.
+///
+/// A fresh dependent is omitted: re-rolling the canonical marks everything below it
+/// stale, but re-rolling only a single directional anchor leaves the neutral and the
+/// other directionals fresh, so only the affected branch is enqueued. The body order
+/// matches the coverage grid ([`CoverageGrid::KINDS`] x [`CoverageGrid::DIRECTIONS`])
+/// so the plan reads in the same order the grid renders.
+#[must_use]
+pub(crate) fn plan_reroll(anchor: &CharacterAnchor, canonical: &SheetVariant) -> Vec<RerollStep> {
+    let mut steps = Vec::new();
+
+    // The neutral is the root of the cascade: re-derive it first so the
+    // directional anchors below have a fresh upstream to condition on.
+    if anchor.is_neutral_stale(canonical) {
+        steps.push(RerollStep::Neutral);
+    }
+
+    // Directional anchors derive from the neutral. East is the flip of west and is
+    // never generated, so it is not a re-derive step — refreshing west refreshes
+    // east. Only enqueue a directional that exists and reads stale (a missing
+    // directional is not a dependent to re-roll; it was never derived).
+    for dir in [AnchorDirection::South, AnchorDirection::West, AnchorDirection::North] {
+        if anchor.directional.get(dir).is_some() && anchor.is_directional_stale(dir, canonical) {
+            steps.push(RerollStep::Directional(dir));
+        }
+    }
+
+    // Derived sheets sit at the bottom of the cascade. Walk them in grid order so
+    // the plan matches the coverage surface; enqueue each that reads stale.
+    for kind in CoverageGrid::KINDS {
+        for direction in CoverageGrid::DIRECTIONS {
+            if let Some(sheet) = anchor.derived_sheets.iter().find(|s| s.animation_kind == kind && s.direction == direction) {
+                if anchor.is_sheet_stale(sheet, canonical) {
+                    steps.push(RerollStep::Sheet {
+                        animation_kind: kind,
+                        direction,
+                    });
+                }
+            }
+        }
+    }
+
+    steps
+}
+
 /// Records a [`DerivedSheet`] edge onto the entity's [`CharacterAnchor`] at Land,
 /// as one undoable library edit. This is the cascade write that integrate's frame
 /// landing pairs with: the frames land as a [`crate::commands::SpriteBufferEdit`]
@@ -580,6 +655,33 @@ impl ShellApp {
         }
         if do_enable_east {
             self.enable_east_for_active();
+        }
+
+        // Re-roll stale dependents. The plan is the count of stale neutral /
+        // directional / sheet slots; the action drives one queued re-run at a time
+        // (a remote provider plus the 8K constraint rule out unbounded fan-out), so
+        // it stays disabled while a derivation or clip is already running.
+        ui.add_space(4.0);
+        let plan = self.active_anchor().map(|(anchor, canonical)| plan_reroll(anchor, canonical)).unwrap_or_default();
+        let busy = matches!(self.neutral_status, JobStatus::Running(_)) || matches!(self.directional_status, JobStatus::Running(_)) || matches!(self.anim_status, JobStatus::Running(_));
+        let mut do_reroll = false;
+        ui.horizontal(|ui| {
+            let stale = plan.len();
+            let label = format!("{} Re-roll stale dependents", crate::icons::WAND);
+            let hover = if stale == 0 {
+                "Nothing stale — the cascade is up to date".to_owned()
+            } else {
+                format!("Regenerate {stale} stale anchor(s)/sheet(s) in dependency order, one queued job at a time")
+            };
+            if ui.add_enabled(stale > 0 && !busy, egui::Button::new(label)).on_hover_text(hover).clicked() {
+                do_reroll = true;
+            }
+            if stale > 0 {
+                ui.label(egui::RichText::new(format!("{stale} stale")).weak());
+            }
+        });
+        if do_reroll {
+            self.reroll_stale_dependents();
         }
 
         ui.add_space(10.0);
@@ -811,6 +913,48 @@ impl ShellApp {
             return;
         };
         record_derived_sheet(&mut self.editor, &mut self.doc, entity_id, animation_kind, direction, tag_name.to_owned(), derived_from);
+    }
+
+    /// Re-rolls the active entity's stale cascade dependents, one queued job at a
+    /// time. Reads the plan via [`plan_reroll`] (neutral -> directional -> sheets in
+    /// dependency order) and starts the first step that is not already in flight:
+    ///
+    /// - a stale neutral re-derives via [`Self::derive_neutral`];
+    /// - else the first stale directional anchor re-derives via
+    ///   [`Self::derive_directional`];
+    /// - else the first stale derived sheet seeds the studio (kind + facing) and
+    ///   starts its i2v clip through the durable queue ([`Self::start_clip`]).
+    ///
+    /// One step per call is deliberate: a remote provider plus the 8K constraint
+    /// rule out unbounded fan-out, so the driver gates concurrency to a single
+    /// in-flight job. Each landed re-derive refreshes its slot and clears it from the
+    /// next plan, so repeated invocations (or a re-call when a job lands) walk the
+    /// cascade bottom-up until [`plan_reroll`] is empty and the grid reads all-fresh.
+    /// While a derivation is already running the call is a no-op, so the bound holds.
+    ///
+    /// No-op when no entity is active, its sheet has no canonical, or nothing is
+    /// stale.
+    pub(crate) fn reroll_stale_dependents(&mut self) {
+        // Respect the one-in-flight bound: never stack a second derivation.
+        if matches!(self.neutral_status, JobStatus::Running(_)) || matches!(self.directional_status, JobStatus::Running(_)) || matches!(self.anim_status, JobStatus::Running(_)) {
+            return;
+        }
+        let Some(step) = self.active_anchor().map(|(anchor, canonical)| plan_reroll(anchor, canonical)).and_then(|steps| steps.into_iter().next()) else {
+            return;
+        };
+        match step {
+            RerollStep::Neutral => self.derive_neutral(),
+            RerollStep::Directional(dir) => self.derive_directional(dir),
+            RerollStep::Sheet { animation_kind, direction } => {
+                // Seed the studio for the stale sheet's framing, then start the i2v
+                // clip; Land re-records the edge with the fresh `derived_from`. The
+                // overlay stays open (unlike a manual cell click) so the grid still
+                // shows the batch's remaining stale cells.
+                self.studio.kind = kind_to_studio(animation_kind);
+                self.studio.facing = direction_to_facing(direction);
+                self.start_clip();
+            }
+        }
     }
 }
 
@@ -1295,5 +1439,125 @@ mod tests {
         editor.history.undo(&mut doc).expect("undo the frames");
         assert_eq!(doc.frame_count(), frames_before, "second undo removes the integrated frames");
         assert!(derived_sheets_of(&doc, entity_id).is_empty(), "no edge remains");
+    }
+
+    // ── C5: re-roll stale dependents (the planner) ────────────────────────────
+
+    /// An anchor with a fresh neutral and a fresh west directional, two derived
+    /// sheets (one fresh walk/west, one stale idle/south), against canonical id 1 —
+    /// the C1 fixture is reused here so the planner is checked against the same
+    /// staleness model the grid renders.
+    #[test]
+    fn plan_reroll_lists_nothing_when_everything_is_fresh() {
+        let (anchor, canonical) = fixture();
+        // The idle/south sheet in the fixture derives from a gone upstream, so it is
+        // stale even against the live canonical — strip it to get an all-fresh anchor.
+        let mut fresh = anchor;
+        fresh.derived_sheets.retain(|s| s.direction != AnchorDirection::South);
+        assert_eq!(plan_reroll(&fresh, &canonical), Vec::new(), "an all-fresh cascade has no stale dependents");
+    }
+
+    #[test]
+    fn plan_reroll_enumerates_two_stale_sheets_in_dependency_order() {
+        // A neutral and a west directional, both fresh against canonical id 1, with
+        // two derived sheets that each claim a gone upstream — so the two sheets are
+        // stale but the anchors are not. The planner must list exactly the two
+        // stale sheets, in grid (kind x direction) order, and nothing above them.
+        let canonical = variant(1, None);
+        let neutral = variant(2, Some(1));
+        let west = variant(3, Some(2));
+        let mut anchor = CharacterAnchor {
+            neutral: Some(neutral),
+            ..Default::default()
+        };
+        anchor.directional.set(AnchorDirection::West, west);
+        // Two stale sheets: idle/south and walk/west, each derived from a now-gone id.
+        anchor.derived_sheets.push(DerivedSheet {
+            animation_kind: AnimationKind::Walk,
+            direction: AnchorDirection::West,
+            tag_name: "walk".into(),
+            derived_from: SheetVariantId::new(88),
+        });
+        anchor.derived_sheets.push(DerivedSheet {
+            animation_kind: AnimationKind::Idle,
+            direction: AnchorDirection::South,
+            tag_name: "idle".into(),
+            derived_from: SheetVariantId::new(99),
+        });
+
+        let plan = plan_reroll(&anchor, &canonical);
+        // Exactly the two stale sheets, no neutral or directional step (both fresh),
+        // and in grid order: Idle/South precedes Walk/West.
+        assert_eq!(
+            plan,
+            vec![
+                RerollStep::Sheet {
+                    animation_kind: AnimationKind::Idle,
+                    direction: AnchorDirection::South,
+                },
+                RerollStep::Sheet {
+                    animation_kind: AnimationKind::Walk,
+                    direction: AnchorDirection::West,
+                },
+            ],
+            "exactly the two stale sheets, in grid order, with no fresh upstream step"
+        );
+    }
+
+    #[test]
+    fn plan_reroll_orders_neutral_then_directional_then_sheets() {
+        // Re-roll the canonical: the neutral, the west directional, and the derived
+        // sheets all go stale. The plan must rebuild bottom-up — neutral first, then
+        // the directional, then the sheets — so each sheet re-points at a fresh
+        // upstream.
+        let (anchor, _) = fixture();
+        let rerolled = variant(7, None);
+        let plan = plan_reroll(&anchor, &rerolled);
+
+        assert_eq!(plan.first(), Some(&RerollStep::Neutral), "the neutral re-derives first");
+        assert_eq!(plan.get(1), Some(&RerollStep::Directional(AnchorDirection::West)), "the directional re-derives after the neutral");
+        // The remaining steps are sheets; the fixture's two sheets both go stale.
+        assert!(plan[2..].iter().all(|s| matches!(s, RerollStep::Sheet { .. })), "sheets re-roll last");
+        let sheet_count = plan.iter().filter(|s| matches!(s, RerollStep::Sheet { .. })).count();
+        assert_eq!(sheet_count, 2, "both fixture sheets re-roll under a canonical re-roll");
+    }
+
+    #[test]
+    fn plan_reroll_skips_missing_directionals_and_never_lists_east() {
+        // A stale neutral with no directionals derived and one stale derived sheet:
+        // the plan re-derives the neutral and the sheet, but never a missing
+        // directional (it was never derived, so it is not a dependent), and never
+        // east (east is the flip of west, not a re-derive step).
+        let rerolled = variant(7, None);
+        let neutral = variant(2, Some(1)); // parent id 1, not 7 -> stale against rerolled
+        let mut anchor = CharacterAnchor {
+            neutral: Some(neutral),
+            ..Default::default()
+        };
+        // Enable east-from-west on top of a (missing) west so east could in
+        // principle be reported — the planner must still never emit an east step.
+        anchor.directional.east_from_west = true;
+        anchor.derived_sheets.push(DerivedSheet {
+            animation_kind: AnimationKind::Attack,
+            direction: AnchorDirection::North,
+            tag_name: "attack".into(),
+            derived_from: SheetVariantId::new(5),
+        });
+
+        let plan = plan_reroll(&anchor, &rerolled);
+        assert_eq!(plan.first(), Some(&RerollStep::Neutral), "the stale neutral re-derives first");
+        assert!(
+            !plan.iter().any(|s| matches!(s, RerollStep::Directional(_))),
+            "no directional step: none was derived, so none is a dependent"
+        );
+        assert!(
+            !plan.iter().any(|s| matches!(s, RerollStep::Directional(AnchorDirection::East))),
+            "east is the flip of west and is never a re-derive step"
+        );
+        assert_eq!(
+            plan.iter().filter(|s| matches!(s, RerollStep::Sheet { .. })).count(),
+            1,
+            "the one stale sheet re-rolls"
+        );
     }
 }
