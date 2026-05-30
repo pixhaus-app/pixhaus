@@ -865,9 +865,11 @@ async fn run_static_sheet(runtime: &VerbRuntime, job: StaticSheetJob) -> Result<
     let slice = SliceGrid::uniform(rows, cols);
     // Decode + slice are CPU-bound; keep them off the async worker. The decoded
     // sheet leaves the closure with the frames so the Sheet stage can show it.
+    // Clone the spec into the closure; the original rides the result.
+    let cut = slice.clone();
     let (sheet, frames) = tokio::task::spawn_blocking(move || -> Result<(PixelBuffer, Vec<VideoFrame>), String> {
         let sheet = decode_sheet_png(&sheet_png)?;
-        let frames = slice_sheet_to_frames(&sheet, &slice, fps)?;
+        let frames = slice_sheet_to_frames(&sheet, &cut, fps)?;
         Ok((sheet, frames))
     })
     .await

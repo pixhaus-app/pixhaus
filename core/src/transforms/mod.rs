@@ -57,5 +57,5 @@ pub use perspective::perspective;
 pub use resize::{CanvasAnchor, crop, resize_canvas};
 pub use rotate::{RotationAlgorithm, rotate, rotate_90_ccw, rotate_90_cw, rotate_180, rotate_bilinear, rotate_nearest, rotate_rotsprite};
 pub use scale::{scale_integer, scale_integer_down, scale_nearest};
-pub use sheet::{SliceGrid, slice_grid, slice_grid_spec, slice_rects};
+pub use sheet::{SliceGrid, SliceOverrides, slice_grid, slice_grid_resolve, slice_grid_spec, slice_rects};
 pub use skew::{skew_x, skew_y};

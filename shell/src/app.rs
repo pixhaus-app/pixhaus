@@ -2836,7 +2836,7 @@ impl ShellApp {
         self.anim_pending_parent = None;
         // Carry the raw sheet and its slice geometry forward for the Sheet stage.
         self.studio.sheet = Some(sheet);
-        self.studio.slice = slice;
+        self.studio.slice = slice.clone();
         self.studio.sheet_cell = cell;
         // Drop the previous sheet's cached texture and re-slice marker so the
         // Sheet stage rebuilds them for the new sheet.
@@ -3260,9 +3260,22 @@ impl ShellApp {
         let fps = self.anim_candidates[i].fps;
         let frame_ms = (1000 / fps.max(1)).max(1);
         let motion = self.anim_candidates[i].motion.clone();
+        // Persist the slice spec when these frames came from a retained grid
+        // sheet (the static path stashes the sheet on the studio). The i2v and
+        // video-import paths keep no sheet, so they land with no slice.
+        let slice = self.studio.sheet.as_ref().map(|_| self.studio.slice.clone());
         // The QC rides into the same `SpriteBufferEdit` undo entry so undo cannot
-        // leave a dangling record.
-        integrate_frames_undoable(&mut self.editor, &mut self.doc, frames, frame_ms, &motion, LoopDirection::Forward, qc.clone());
+        // leave a dangling record. The slice spec rides the same entry.
+        integrate_frames_undoable(
+            &mut self.editor,
+            &mut self.doc,
+            frames,
+            frame_ms,
+            &motion,
+            LoopDirection::Forward,
+            qc.clone(),
+            slice,
+        );
         // Persist the QC back onto the originating job's sidecar so it survives
         // restart. A static-sheet candidate carries no job id and a pruned job is
         // skipped — the Animation copy is the source of truth either way.

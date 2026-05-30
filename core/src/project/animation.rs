@@ -161,6 +161,7 @@ mod tests {
             gutter_x: 2,
             gutter_y: 2,
             inset: 1,
+            ..SliceGrid::uniform(2, 4)
         }
     }
 

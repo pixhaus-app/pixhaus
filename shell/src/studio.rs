@@ -3049,7 +3049,7 @@ impl ShellApp {
         sheet_draw_grid(&painter, &self.studio.slice, rect, iw, ih, ui.ctx().theme());
 
         // Re-slice live when the spec changed since the last cut.
-        if self.studio.sheet_sliced != Some(self.studio.slice) {
+        if self.studio.sheet_sliced.as_ref() != Some(&self.studio.slice) {
             self.reslice_static_sheet();
         }
     }
@@ -3073,12 +3073,13 @@ impl ShellApp {
         let d = resp.drag_delta();
         let (dx, dy) = (d.x / rect.width().max(1.0) * iw as f32, d.y / rect.height().max(1.0) * ih as f32);
         let delta = match edge {
-            SliceEdge::Top | SliceEdge::Bottom | SliceEdge::InteriorY => dy,
+            SliceEdge::Top | SliceEdge::Bottom | SliceEdge::InteriorY(_) => dy,
             _ => dx,
         };
         let delta = delta.round() as i32;
         if delta != 0 {
-            self.studio.slice = slice_drag_edge(self.studio.slice, edge, delta, iw, ih);
+            let spec = self.studio.slice.clone();
+            self.studio.slice = slice_drag_edge(spec, edge, delta, iw, ih);
         }
     }
 
@@ -3090,7 +3091,7 @@ impl ShellApp {
         let Some(sheet) = self.studio.sheet.as_ref() else {
             return;
         };
-        let spec = self.studio.slice;
+        let spec = self.studio.slice.clone();
         let fps = self.anim_fps;
         let Ok(frames) = ai::slice_sheet_to_frames(sheet, &spec, fps) else {
             // A collapsed spec yields no frames; leave the last good cut in place
@@ -3137,8 +3138,8 @@ impl ShellApp {
             .on_hover_text("Off fits the sheet to the view; on shows it at one screen pixel per sheet pixel");
         ui.add_space(6.0);
 
-        let before = self.studio.slice;
-        let mut spec = self.studio.slice;
+        let before = self.studio.slice.clone();
+        let mut spec = self.studio.slice.clone();
         egui::Grid::new("slice_grid_spinners").num_columns(2).spacing([8.0, 4.0]).show(ui, |ui| {
             ui.label("Rows");
             ui.add(egui::DragValue::new(&mut spec.rows).range(1..=16));
@@ -3177,10 +3178,23 @@ impl ShellApp {
             .weak(),
         );
 
+        // Phase B status: surface how many dividers are off the uniform grid so a
+        // non-uniform cut is legible without re-reading the overlay.
+        let custom = self.studio.slice.overrides.x.len() + self.studio.slice.overrides.y.len();
+        if custom > 0 {
+            ui.label(
+                egui::RichText::new(format!("{custom} custom divider(s) — drag a single divider for a variable cell"))
+                    .small()
+                    .weak(),
+            );
+        } else {
+            ui.label(egui::RichText::new("Drag a single interior divider for a variable cell size").small().weak());
+        }
+
         ui.horizontal(|ui| {
             if ui
                 .button("Reset to uniform")
-                .on_hover_text("Drop offset, gutter, and inset back to a plain even grid")
+                .on_hover_text("Drop offset, gutter, inset, and any custom dividers back to a plain even grid")
                 .clicked()
             {
                 self.studio.slice = SliceGrid::uniform(self.studio.slice.rows, self.studio.slice.cols);
@@ -3219,9 +3233,14 @@ impl ShellApp {
 }
 
 /// Which edge of the slice grid a pointer drag grabbed. Vertical edges move on
-/// the x axis (changing `offset_x`, the column gutter, or the trailing margin),
-/// horizontal edges on the y axis. Interior edges are the dividers between cells;
-/// the outer edges are the grid's bounding rectangle.
+/// the x axis (changing `offset_x` or the trailing inset), horizontal edges on
+/// the y axis. Interior edges are the dividers between cells; the outer edges are
+/// the grid's bounding rectangle.
+///
+/// An interior divider carries its index (`1..cols` for `InteriorX`, `1..rows`
+/// for `InteriorY`): the boundary after that column/row. Dragging it sets a
+/// per-divider override (Phase B), so one divider moves and its two neighbouring
+/// cells resize while the rest of the grid holds.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum SliceEdge {
     /// The grid's left bound — drags adjust `offset_x`.
@@ -3232,10 +3251,12 @@ pub(crate) enum SliceEdge {
     Right,
     /// The grid's bottom bound — drags adjust the implied cell height (uniform).
     Bottom,
-    /// An interior vertical divider — drags adjust `gutter_x` (uniform).
-    InteriorX,
-    /// An interior horizontal divider — drags adjust `gutter_y` (uniform).
-    InteriorY,
+    /// Interior vertical divider `index` (between columns `index - 1` and
+    /// `index`) — drags set an x override for that divider.
+    InteriorX(u32),
+    /// Interior horizontal divider `index` (between rows `index - 1` and
+    /// `index`) — drags set a y override for that divider.
+    InteriorY(u32),
 }
 
 /// The derived cell size for a [`SliceGrid`] over a `sheet_w` x `sheet_h` sheet,
@@ -3255,18 +3276,11 @@ pub(crate) fn slice_cell_size(spec: &SliceGrid, sheet_w: u32, sheet_h: u32) -> (
 /// The x positions (in sheet pixels) of every vertical cell edge for `spec`:
 /// for each column, its left and right edge, so the returned vector has
 /// `2 * cols` entries (a left/right pair per column, gutters showing as gaps
-/// between pairs). Used to draw the grid and hit-test edge drags.
+/// between pairs). Used to draw the grid and hit-test edge drags. Delegates to
+/// [`SliceGrid::x_edges`] so the overlay reflects any per-divider override.
 #[must_use]
 pub(crate) fn slice_x_edges(spec: &SliceGrid, sheet_w: u32) -> Vec<u32> {
-    let (cell_w, _) = slice_cell_size(spec, sheet_w, 1);
-    let cols = spec.cols.max(1);
-    let mut xs = Vec::with_capacity((cols * 2) as usize);
-    for c in 0..cols {
-        let left = spec.offset_x + c * (cell_w + spec.gutter_x);
-        xs.push(left);
-        xs.push(left + cell_w);
-    }
-    xs
+    spec.x_edges(sheet_w).into_iter().flat_map(|(l, r)| [l, r]).collect()
 }
 
 /// The y positions (in sheet pixels) of every horizontal cell edge for `spec`:
@@ -3274,20 +3288,12 @@ pub(crate) fn slice_x_edges(spec: &SliceGrid, sheet_w: u32) -> Vec<u32> {
 /// entries. The vertical companion to [`slice_x_edges`].
 #[must_use]
 pub(crate) fn slice_y_edges(spec: &SliceGrid, sheet_h: u32) -> Vec<u32> {
-    let (_, cell_h) = slice_cell_size(spec, 1, sheet_h);
-    let rows = spec.rows.max(1);
-    let mut ys = Vec::with_capacity((rows * 2) as usize);
-    for r in 0..rows {
-        let top = spec.offset_y + r * (cell_h + spec.gutter_y);
-        ys.push(top);
-        ys.push(top + cell_h);
-    }
-    ys
+    spec.y_edges(sheet_h).into_iter().flat_map(|(t, b)| [t, b]).collect()
 }
 
 /// Applies a drag of `delta` sheet-pixels on `edge` to `spec`, adjusting the one
-/// uniform parameter that edge controls, clamped so the grid stays valid against
-/// a `sheet_w` x `sheet_h` sheet. Pure so the drag math is testable without egui.
+/// parameter that edge controls, clamped so the grid stays valid against a
+/// `sheet_w` x `sheet_h` sheet. Pure so the drag math is testable without egui.
 ///
 /// - Left/top outer edges move `offset_x`/`offset_y` — the leading margin before
 ///   the grid.
@@ -3295,7 +3301,10 @@ pub(crate) fn slice_y_edges(spec: &SliceGrid, sheet_h: u32) -> Vec<u32> {
 ///   derived from the offsets and gutters, with the trailing margin absorbing the
 ///   slack. Pulling them inward (a negative delta) maps to a positive `inset`,
 ///   trimming every cell uniformly so the visible outer edge moves in.
-/// - Interior dividers adjust `gutter_x`/`gutter_y` — the gap between cells.
+/// - Interior dividers set a per-divider override (Phase B): the dragged divider
+///   alone moves, resizing its two neighbouring cells; the rest of the grid
+///   holds. A divider dragged exactly back onto its uniform position drops its
+///   override, so a fully reset grid is byte-identical to the uniform spec.
 #[must_use]
 pub(crate) fn slice_drag_edge(mut spec: SliceGrid, edge: SliceEdge, delta: i32, sheet_w: u32, sheet_h: u32) -> SliceGrid {
     let apply = |value: u32, delta: i32, max: u32| -> u32 {
@@ -3324,18 +3333,82 @@ pub(crate) fn slice_drag_edge(mut spec: SliceGrid, edge: SliceEdge, delta: i32, 
             let max = slice_cell_size(&spec, sheet_w, sheet_h).1 / 2;
             spec.inset = apply(spec.inset, -delta, max);
         }
-        SliceEdge::InteriorX => {
-            let cols = spec.cols.max(1);
-            let max = sheet_w.saturating_sub(spec.offset_x) / cols;
-            spec.gutter_x = apply(spec.gutter_x, delta, max);
-        }
-        SliceEdge::InteriorY => {
-            let rows = spec.rows.max(1);
-            let max = sheet_h.saturating_sub(spec.offset_y) / rows;
-            spec.gutter_y = apply(spec.gutter_y, delta, max);
-        }
+        SliceEdge::InteriorX(index) => drag_divider(&mut spec, Axis::X, index, delta, sheet_w),
+        SliceEdge::InteriorY(index) => drag_divider(&mut spec, Axis::Y, index, delta, sheet_h),
     }
     spec
+}
+
+/// Which axis a per-divider drag moves.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Axis {
+    X,
+    Y,
+}
+
+/// Moves interior divider `index` on `axis` by `delta` sheet-pixels via a
+/// per-divider override, clamped between its neighbouring cell edges. A divider
+/// returned exactly to its uniform position drops the override, so an untouched
+/// grid stays the uniform Phase A spec.
+fn drag_divider(spec: &mut SliceGrid, axis: Axis, index: u32, delta: i32, span: u32) {
+    let (count, gutter) = match axis {
+        Axis::X => (spec.cols.max(1), spec.gutter_x),
+        Axis::Y => (spec.rows.max(1), spec.gutter_y),
+    };
+    if index == 0 || index >= count {
+        return;
+    }
+    // The current edge pairs (with overrides already applied), so a drag stacks
+    // on the divider's present position rather than its uniform seed.
+    let pairs = match axis {
+        Axis::X => spec.x_edges(span),
+        Axis::Y => spec.y_edges(span),
+    };
+    let prev = (index - 1) as usize;
+    let next = index as usize;
+    let Some(&(_, cur)) = pairs.get(prev) else {
+        return;
+    };
+    // Bound the divider strictly between its neighbours so neither cell collapses.
+    let lower = pairs.get(prev).map_or(0, |&(l, _)| l + 1);
+    let upper = pairs.get(next).map_or(span, |&(_, r)| r.saturating_sub(gutter + 1));
+    if lower > upper {
+        return;
+    }
+    let pos = (i64::from(cur) + i64::from(delta)).clamp(i64::from(lower), i64::from(upper)) as u32;
+
+    // The uniform position of this divider; matching it drops the override.
+    let uniform = uniform_divider(spec, axis, index, span);
+    set_divider_override(spec, axis, index, pos, uniform);
+}
+
+/// The uniform (no-override) position of interior divider `index` on `axis`:
+/// the right edge of cell `index - 1`.
+fn uniform_divider(spec: &SliceGrid, axis: Axis, index: u32, span: u32) -> u32 {
+    let bare = SliceGrid {
+        overrides: pixhaus_core::transforms::SliceOverrides::default(),
+        ..spec.clone()
+    };
+    let pairs = match axis {
+        Axis::X => bare.x_edges(span),
+        Axis::Y => bare.y_edges(span),
+    };
+    pairs.get((index - 1) as usize).map_or(0, |&(_, r)| r)
+}
+
+/// Sets (or clears) the override for divider `index` on `axis`. A `pos` equal to
+/// the uniform divider clears the entry; otherwise it is recorded, replacing any
+/// prior entry for the same divider.
+fn set_divider_override(spec: &mut SliceGrid, axis: Axis, index: u32, pos: u32, uniform: u32) {
+    let list = match axis {
+        Axis::X => &mut spec.overrides.x,
+        Axis::Y => &mut spec.overrides.y,
+    };
+    list.retain(|&(d, _)| d != index);
+    if pos != uniform {
+        list.push((index, pos));
+        list.sort_unstable_by_key(|&(d, _)| d);
+    }
 }
 
 /// Picks the slice edge a press at screen position `p` grabs, given the screen
@@ -3346,9 +3419,10 @@ pub(crate) fn slice_drag_edge(mut spec: SliceGrid, edge: SliceEdge, delta: i32, 
 fn sheet_pick_edge(spec: &SliceGrid, p: egui::Pos2, rect: egui::Rect, iw: u32, ih: u32, tol: f32) -> Option<SliceEdge> {
     let to_x = |sx: u32| view_to_screen(sx as f32, 0.0, rect, iw, ih).x;
     let to_y = |sy: u32| view_to_screen(0.0, sy as f32, rect, iw, ih).y;
-    let (cw, ch) = slice_cell_size(spec, iw, ih);
-    let cols = spec.cols.max(1);
-    let rows = spec.rows.max(1);
+    // Resolved edges (overrides applied) so a moved divider is grabbable where
+    // it is drawn, not where the uniform grid would place it.
+    let xs = spec.x_edges(iw);
+    let ys = spec.y_edges(ih);
 
     // Outer edges first so they take ties with adjacent interior dividers.
     let mut best: Option<(SliceEdge, f32)> = None;
@@ -3358,23 +3432,30 @@ fn sheet_pick_edge(spec: &SliceGrid, p: egui::Pos2, rect: egui::Rect, iw: u32, i
             best = Some((edge, d));
         }
     };
-    // Left/right outer bounds.
-    consider(SliceEdge::Left, to_x(spec.offset_x), p.x);
-    let right_x = spec.offset_x + (cols - 1) * (cw + spec.gutter_x) + cw;
-    consider(SliceEdge::Right, to_x(right_x), p.x);
+    // Left/right outer bounds, from the first cell's left and the last cell's right.
+    if let Some(&(left, _)) = xs.first() {
+        consider(SliceEdge::Left, to_x(left), p.x);
+    }
+    if let Some(&(_, right)) = xs.last() {
+        consider(SliceEdge::Right, to_x(right), p.x);
+    }
     // Top/bottom outer bounds.
-    consider(SliceEdge::Top, to_y(spec.offset_y), p.y);
-    let bottom_y = spec.offset_y + (rows - 1) * (ch + spec.gutter_y) + ch;
-    consider(SliceEdge::Bottom, to_y(bottom_y), p.y);
-    // Interior vertical dividers (between columns), if more than one column.
-    for c in 1..cols {
-        let x = spec.offset_x + c * (cw + spec.gutter_x);
-        consider(SliceEdge::InteriorX, to_x(x), p.x);
+    if let Some(&(top, _)) = ys.first() {
+        consider(SliceEdge::Top, to_y(top), p.y);
+    }
+    if let Some(&(_, bottom)) = ys.last() {
+        consider(SliceEdge::Bottom, to_y(bottom), p.y);
+    }
+    // Interior vertical dividers (between columns): divider `c` is the right edge
+    // of column `c - 1`, for `c` in `1..cols`.
+    for (idx, pair) in xs.iter().enumerate().skip(1) {
+        let index = idx as u32;
+        consider(SliceEdge::InteriorX(index), to_x(pair.0), p.x);
     }
     // Interior horizontal dividers (between rows).
-    for r in 1..rows {
-        let y = spec.offset_y + r * (ch + spec.gutter_y);
-        consider(SliceEdge::InteriorY, to_y(y), p.y);
+    for (idx, pair) in ys.iter().enumerate().skip(1) {
+        let index = idx as u32;
+        consider(SliceEdge::InteriorY(index), to_y(pair.0), p.y);
     }
     best.map(|(edge, _)| edge)
 }
@@ -3398,12 +3479,12 @@ fn sheet_draw_grid(painter: &egui::Painter, spec: &SliceGrid, rect: egui::Rect, 
         }
     }
     // Crosshairs through the first cell's center, to gauge subject centering.
-    if let (Some(&xl), Some(&yt)) = (xs.first(), ys.first()) {
-        let (cw, ch) = slice_cell_size(spec, iw, ih);
-        let cx = xl as f32 + cw as f32 / 2.0;
-        let cy = yt as f32 + ch as f32 / 2.0;
-        painter.line_segment([to(xl as f32, cy), to(xl as f32 + cw as f32, cy)], faint);
-        painter.line_segment([to(cx, yt as f32), to(cx, yt as f32 + ch as f32)], faint);
+    // Size from the first resolved cell so an overridden divider 1 still centers.
+    if let (&[xl, xr, ..], &[yt, yb, ..]) = (xs.as_slice(), ys.as_slice()) {
+        let cx = f32::midpoint(xl as f32, xr as f32);
+        let cy = f32::midpoint(yt as f32, yb as f32);
+        painter.line_segment([to(xl as f32, cy), to(xr as f32, cy)], faint);
+        painter.line_segment([to(cx, yt as f32), to(cx, yb as f32)], faint);
     }
 }
 
