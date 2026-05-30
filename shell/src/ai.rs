@@ -673,6 +673,170 @@ pub fn spawn_reference_sheet(handle: &Handle, runtime: Arc<VerbRuntime>, ctx: eg
     });
 }
 
+/// Parameters for one editor-mode on-device generation: the mode keys the
+/// request and landing, the rest is what the request needs. Built on the UI
+/// thread from the popover + the active document, then moved into
+/// [`spawn_local_image`].
+pub struct LocalImageJob {
+    /// Which on-device action to run.
+    pub mode: crate::app::LocalGenMode,
+    /// The prompt the generation conditions on.
+    pub prompt: String,
+    /// Output canvas size `(width, height)` for text-to-image. Image-to-image and
+    /// inpaint take their size from the init image instead.
+    pub canvas: (u32, u32),
+    /// Init image as PNG bytes for image-to-image / inpaint. `None` for
+    /// text-to-image.
+    pub init_png: Option<Vec<u8>>,
+    /// Inpaint mask as a white-on-black PNG. `None` for text-to-image and
+    /// image-to-image.
+    pub mask_png: Option<Vec<u8>>,
+    /// Image-to-image / inpaint strength, `0.0..=1.0`. Ignored by text-to-image.
+    pub strength: f32,
+    /// Whether the result lands as a new layer, threaded back through
+    /// [`ShellMsg::LocalGenDone`] so the drain lands it the way the popover asked.
+    pub as_new_layer: bool,
+    /// Selection bounds `(x, y, w, h)` for an inpaint landing, threaded back so
+    /// the drain writes a region edit. `None` for the other modes.
+    pub region: Option<(u32, u32, u32, u32)>,
+}
+
+/// Runs one editor-mode generation to completion and returns the single result
+/// PNG. Pins the local backend by id (`flux-local`) so a registered cloud
+/// backend never steals an explicitly-local action, and maps the mode to the
+/// matching capability + request: text-to-image is an `ImageGeneration`,
+/// image-to-image an `ImageEdit` with strength, inpaint an `ImageInpaint` with a
+/// mask. `progress` forwards the backend's `Step` events; `cancel` aborts the
+/// sampling loop between steps.
+///
+/// # Errors
+/// Propagates backend selection and inference errors, an unexpected response
+/// shape, or an empty result, as a string.
+async fn run_local_image(runtime: &VerbRuntime, job: &LocalImageJob, progress: VerbProgress, cancel: &CancellationToken) -> Result<Vec<u8>, String> {
+    use crate::app::LocalGenMode;
+
+    let (capability, request) = match job.mode {
+        LocalGenMode::TextToImage => {
+            let (width, height) = job.canvas;
+            let req = ImageGenRequest {
+                // Pin the local model so the studio/cloud router never displaces
+                // an explicitly-local Generate action.
+                model: Some(LOCAL_FLUX_MODEL_ID.to_owned()),
+                prompt: job.prompt.clone(),
+                negative_prompt: None,
+                width: width.max(1),
+                height: height.max(1),
+                steps: None,
+                seed: None,
+                num_images: 1,
+                quality: None,
+                style_image: None,
+                reference_images: Vec::new(),
+            };
+            (BackendCapabilities::IMAGE_GENERATION, InferenceRequest::ImageGeneration(req))
+        }
+        LocalGenMode::ImageToImage => {
+            let image = job.init_png.clone().ok_or_else(|| "image-to-image needs an init image".to_owned())?;
+            let req = ImageEditRequest {
+                model: Some(LOCAL_FLUX_MODEL_ID.to_owned()),
+                image,
+                mask: None,
+                prompt: job.prompt.clone(),
+                negative_prompt: None,
+                num_images: 1,
+                style_image: None,
+                reference_images: Vec::new(),
+                strength: Some(job.strength.clamp(0.0, 1.0)),
+            };
+            (BackendCapabilities::IMAGE_EDIT, InferenceRequest::ImageEdit(req))
+        }
+        LocalGenMode::Inpaint => {
+            let image = job.init_png.clone().ok_or_else(|| "inpaint needs an init image".to_owned())?;
+            let mask = job.mask_png.clone().ok_or_else(|| "inpaint needs a selection mask".to_owned())?;
+            let req = ImageEditRequest {
+                model: Some(LOCAL_FLUX_MODEL_ID.to_owned()),
+                image,
+                mask: Some(mask),
+                prompt: job.prompt.clone(),
+                negative_prompt: None,
+                num_images: 1,
+                style_image: None,
+                reference_images: Vec::new(),
+                strength: Some(job.strength.clamp(0.0, 1.0)),
+            };
+            (BackendCapabilities::IMAGE_INPAINT, InferenceRequest::ImageInpaint(req))
+        }
+    };
+
+    let thin = runtime
+        .select_backend_by_id(LOCAL_FLUX_BACKEND_ID, capability, &VerbId::new("shell.local_gen"))
+        .map_err(|e| e.to_string())?;
+    let proxy = thin
+        .as_any()
+        .downcast_ref::<BackendProxy>()
+        .ok_or_else(|| "local backend is not a BackendProxy".to_owned())?;
+    let response = proxy.fat().invoke(request, progress, cancel.clone()).await.map_err(|e| e.to_string())?;
+    match response {
+        InferenceResponse::Image(r) => r.images.into_iter().next().ok_or_else(|| "local backend returned no image".to_owned()),
+        _ => Err("unexpected response for local generation".into()),
+    }
+}
+
+/// Spawns one editor-mode generation on the tokio runtime, mirroring
+/// [`spawn_reference_sheet`]: progress and the single result PNG arrive over
+/// `tx`, tagged with `epoch` so a superseded run's late result is dropped, and
+/// `ctx` is woken after each message so the popover repaints. `cancel` aborts the
+/// sampling between steps.
+///
+/// The backend's async `Step` events are forwarded as [`ShellMsg::LocalGenProgress`]
+/// by a small drain task that owns the live [`VerbProgress`] receiver — the same
+/// shape `spawn_clip` uses for its progress closure.
+#[allow(clippy::too_many_arguments)]
+pub fn spawn_local_image(handle: &Handle, runtime: Arc<VerbRuntime>, ctx: egui::Context, tx: Sender<ShellMsg>, job: LocalImageJob, cancel: CancellationToken, epoch: u64) {
+    handle.spawn(async move {
+        // A live progress channel so the backend's per-step ticks reach the UI.
+        let (progress, mut rx) = VerbProgress::channel();
+        let fwd_tx = tx.clone();
+        let fwd_ctx = ctx.clone();
+        let drain = tokio::spawn(async move {
+            while let Some(event) = rx.recv().await {
+                if let VerbProgressEvent::Step { message, .. } = event {
+                    let _ = fwd_tx.send(ShellMsg::LocalGenProgress { epoch, message });
+                    fwd_ctx.request_repaint();
+                }
+            }
+        });
+
+        let as_new_layer = job.as_new_layer;
+        let mode = job.mode;
+        let region = job.region;
+        let result = run_local_image(&runtime, &job, progress, &cancel).await;
+        // Dropping the progress sender (moved into run_local_image) closes the
+        // channel, so the drain task finishes; await it before the terminal send.
+        drain.await.ok();
+
+        let msg = if cancel.is_cancelled() {
+            ShellMsg::LocalGenFailed {
+                epoch,
+                error: "cancelled".to_owned(),
+            }
+        } else {
+            match result {
+                Ok(png) => ShellMsg::LocalGenDone {
+                    epoch,
+                    mode,
+                    png,
+                    as_new_layer,
+                    region,
+                },
+                Err(error) => ShellMsg::LocalGenFailed { epoch, error },
+            }
+        };
+        let _ = tx.send(msg);
+        ctx.request_repaint();
+    });
+}
+
 /// Parameters for an animation generation.
 pub struct AnimJob {
     /// Target canvas size (width, height) the frames are normalized to.
@@ -1117,6 +1281,7 @@ pub async fn run_first_frame(runtime: &VerbRuntime, job: FirstFrameJob, cancel: 
                 num_images: num_variants.clamp(1, 4),
                 style_image: None,
                 reference_images,
+                strength: None,
             };
             (BackendCapabilities::IMAGE_INPAINT, InferenceRequest::ImageInpaint(req))
         }

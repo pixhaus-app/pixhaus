@@ -932,6 +932,7 @@ mod tests {
             num_images: 1,
             style_image: None,
             reference_images: Vec::new(),
+            strength: None,
         };
         let body = build_fal_edit_body(&req);
         assert_eq!(body["prompt"], "edit");

@@ -193,6 +193,63 @@ pub(crate) enum LocalModelStatus {
     Failed(String),
 }
 
+/// Which on-device generation the editor-mode Generate popover runs.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub(crate) enum LocalGenMode {
+    /// Text-to-image: a prompt renders a fresh image at canvas size, landed as a
+    /// new layer.
+    #[default]
+    TextToImage,
+    /// Image-to-image: the active layer (or the composite) is re-imagined at a
+    /// strength, landed full-canvas or as a new layer.
+    ImageToImage,
+    /// Inpaint: the selection masks the region the prompt repaints, landed over
+    /// the selection bounds.
+    Inpaint,
+}
+
+impl LocalGenMode {
+    /// The popover's title for this mode.
+    pub(crate) fn title(self) -> &'static str {
+        match self {
+            Self::TextToImage => "Generate image",
+            Self::ImageToImage => "Image to image",
+            Self::Inpaint => "Inpaint selection",
+        }
+    }
+}
+
+/// Transient state of the editor-mode Generate popover. `None` on
+/// [`ShellApp::local_gen`] means the popover is closed. Not persisted — a fresh
+/// generation starts from the defaults each session.
+pub(crate) struct LocalGenPanel {
+    /// Which of the three on-device actions the popover runs.
+    pub(crate) mode: LocalGenMode,
+    /// The prompt the generation conditions on.
+    pub(crate) prompt: String,
+    /// Image-to-image / inpaint strength, `0.0..=1.0`: how far the result departs
+    /// from the source. Ignored by text-to-image.
+    pub(crate) strength: f32,
+    /// Whether the result lands as a new layer (true) or replaces the active
+    /// pixels (false). Text-to-image always lands as a new layer; this toggle
+    /// drives image-to-image (inpaint always lands over the selection region).
+    pub(crate) as_new_layer: bool,
+}
+
+impl LocalGenPanel {
+    /// Opens the popover for `mode` with the distilled-friendly defaults: an
+    /// empty prompt, a mid 0.6 strength, and replace-in-place off (a new layer)
+    /// for image-to-image.
+    pub(crate) fn for_mode(mode: LocalGenMode) -> Self {
+        Self {
+            mode,
+            prompt: String::new(),
+            strength: 0.6,
+            as_new_layer: matches!(mode, LocalGenMode::TextToImage),
+        }
+    }
+}
+
 /// Results delivered from background tokio work to the UI thread.
 #[derive(Debug)]
 pub enum ShellMsg {
@@ -511,6 +568,38 @@ pub enum ShellMsg {
         model: String,
         /// Whether the weights are present and complete.
         ready: bool,
+    },
+    /// Progress for an in-flight editor-mode local generation. A spinner + label,
+    /// not a bar — the four distilled steps are too fast to warrant a bar. The
+    /// `epoch` drops a stale message from a superseded or cancelled run.
+    LocalGenProgress {
+        /// Generation epoch this message belongs to; stale ones are dropped.
+        epoch: u64,
+        /// One-line status (e.g. `"step 2/4"`).
+        message: String,
+    },
+    /// An editor-mode local generation finished: the single result image as PNG
+    /// bytes, plus the mode and landing parameters captured at spawn so the drain
+    /// lands it without re-reading the popover (which the user may have changed).
+    LocalGenDone {
+        /// Generation epoch this result belongs to; stale ones are dropped.
+        epoch: u64,
+        /// Which action produced this result, keying the landing path.
+        mode: LocalGenMode,
+        /// The generated image as PNG bytes.
+        png: Vec<u8>,
+        /// Whether to land as a new layer (image-to-image) or replace in place.
+        as_new_layer: bool,
+        /// Selection bounds `(x, y, w, h)` for an inpaint landing, captured at
+        /// spawn. `None` for text-to-image and image-to-image.
+        region: Option<(u32, u32, u32, u32)>,
+    },
+    /// An editor-mode local generation failed (or was cancelled).
+    LocalGenFailed {
+        /// Generation epoch this failure belongs to; stale ones are dropped.
+        epoch: u64,
+        /// Failure reason.
+        error: String,
     },
 }
 
@@ -963,6 +1052,16 @@ pub struct ShellApp {
     /// defaults. Only read by the `local-flux` settings row.
     #[cfg_attr(not(feature = "local-flux"), allow(dead_code))]
     pub(crate) advanced_open: bool,
+    /// The open editor-mode Generate popover, or `None` when closed. Drives the
+    /// text-to-image / image-to-image / inpaint actions reached from the Generate
+    /// menu. Transient — not persisted.
+    pub(crate) local_gen: Option<LocalGenPanel>,
+    /// Status of the in-flight editor-mode local generation, surfaced in the
+    /// popover's spinner + label block. Reuses [`JobStatus`].
+    pub(crate) local_gen_status: JobStatus,
+    /// Monotonic epoch tagging each editor-mode generation so a late result from
+    /// a superseded run is dropped at drain, mirroring the clip/derivation guards.
+    pub(crate) local_gen_epoch: u64,
 }
 
 /// Draft state for the sprite-export dialog: which shape to write and, for the
@@ -1265,6 +1364,9 @@ impl ShellApp {
             hf_token_configured: false,
             hf_token_input: String::new(),
             advanced_open: false,
+            local_gen: None,
+            local_gen_status: JobStatus::Idle,
+            local_gen_epoch: 0,
         };
         grid_prefs.apply_to(&mut app.editor);
         app.install_renderer();
@@ -1633,6 +1735,31 @@ impl ShellApp {
                         if !matches!(self.local_ai_status, LocalModelStatus::Downloading { .. }) {
                             self.local_ai_status = if ready { LocalModelStatus::Ready } else { LocalModelStatus::NotDownloaded };
                         }
+                    }
+                }
+                ShellMsg::LocalGenProgress { epoch, message } => {
+                    if epoch == self.local_gen_epoch {
+                        self.local_gen_status = JobStatus::Running(message);
+                    }
+                }
+                ShellMsg::LocalGenDone {
+                    epoch,
+                    mode,
+                    png,
+                    as_new_layer,
+                    region,
+                } => {
+                    // Drop a late result from a superseded run; the epoch guard
+                    // mirrors ClipReady.
+                    if epoch == self.local_gen_epoch {
+                        self.land_local_gen(mode, &png, as_new_layer, region);
+                    }
+                }
+                ShellMsg::LocalGenFailed { epoch, error } => {
+                    if epoch == self.local_gen_epoch {
+                        self.local_gen_status = JobStatus::Failed(error.clone());
+                        // The error must survive the popover closing, so also toast it.
+                        self.set_status(format!("Generation failed: {error}"));
                     }
                 }
             }
@@ -2707,6 +2834,15 @@ impl ShellApp {
     pub(crate) fn open_settings(&mut self, tab: SettingsTab) {
         self.settings_open = true;
         self.settings_tab = tab;
+    }
+
+    /// Whether the on-device backend can run a generation right now: the build
+    /// compiled in `local-flux` and the weights probed Ready. Gates the Generate
+    /// menu items and the popover's Generate button. With the feature off this is
+    /// always `false`, so the menu items stay disabled and the popover never opens.
+    #[must_use]
+    pub(crate) fn local_ai_ready(&self) -> bool {
+        cfg!(feature = "local-flux") && matches!(self.local_ai_status, LocalModelStatus::Ready)
     }
 
     /// Stores a key and re-registers backends, updating readiness.
@@ -3835,6 +3971,59 @@ impl ShellApp {
                 });
             });
 
+            ui.menu_button("Generate", |ui| {
+                // On-device generation is a command, not a tool: a prompt + a
+                // landing, gated on the local backend being ready. Each item
+                // explains why it is off when it is.
+                let ready = self.local_ai_ready();
+                let has_sprite = self.doc.active_sprite().is_some();
+                let has_selection = self.editor.selection.is_some();
+
+                let t2i = egui::Button::new(format!("{} Text to image…", crate::icons::SPARKLE));
+                let t2i_on = ready && has_sprite;
+                if ui
+                    .add_enabled(t2i_on, t2i)
+                    .on_disabled_hover_text(self.local_gen_disabled_reason(has_sprite))
+                    .clicked()
+                {
+                    self.open_local_gen(LocalGenMode::TextToImage);
+                    ui.close();
+                }
+
+                let i2i = egui::Button::new(format!("{} Image to image…", crate::icons::IMAGE));
+                let i2i_on = ready && has_sprite;
+                if ui
+                    .add_enabled(i2i_on, i2i)
+                    .on_disabled_hover_text(self.local_gen_disabled_reason(has_sprite))
+                    .clicked()
+                {
+                    self.open_local_gen(LocalGenMode::ImageToImage);
+                    ui.close();
+                }
+
+                // Inpaint needs a selection to mask the repaint region.
+                let inpaint = egui::Button::new(format!("{} Inpaint selection…", crate::icons::SELECT_ALL));
+                let inpaint_on = ready && has_sprite && has_selection;
+                let inpaint_why = if !has_selection && ready && has_sprite {
+                    "Make a selection first — it masks the region to repaint"
+                } else {
+                    self.local_gen_disabled_reason(has_sprite)
+                };
+                if ui.add_enabled(inpaint_on, inpaint).on_disabled_hover_text(inpaint_why).clicked() {
+                    self.open_local_gen(LocalGenMode::Inpaint);
+                    ui.close();
+                }
+
+                // When the backend is not ready, a one-click path to the fix.
+                if !ready {
+                    ui.separator();
+                    if ui.button(format!("{} Open download settings", crate::icons::DOWNLOAD)).clicked() {
+                        self.open_settings(SettingsTab::Ai);
+                        ui.close();
+                    }
+                }
+            });
+
             ui.menu_button("Select", |ui| {
                 let has_sprite = self.doc.active_sprite().is_some();
                 let has_selection = self.editor.selection.is_some();
@@ -4557,6 +4746,7 @@ impl eframe::App for ShellApp {
         self.show_transform_dialog(ui.ctx());
         self.show_pack_import_dialog(ui.ctx());
         self.show_export_dialog(ui.ctx());
+        self.show_local_gen_panel(ui.ctx());
 
         // Panel order matters: outer panels first, the central canvas last so
         // it fills the space the others leave. The menu bar is always shown;

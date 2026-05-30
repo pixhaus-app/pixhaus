@@ -336,9 +336,11 @@ fn build_i2i_request(req: &ImageEditRequest) -> Result<FluxRequest> {
         .map(|img| (img.width(), img.height()))
         .map_err(|err| BackendError::InvalidResponse(format!("could not decode edit source image: {err}")))?;
     // Inpaint and edit share the i2i path; a present mask scopes the repaint. The
-    // strength is fixed at the edit default here — the editor-action layer threads
-    // a user strength through once it lands; until then a whole-image edit at 0.8
-    // keeps most of the reference while letting the prompt steer.
+    // editor action threads a user strength through `req.strength`; clamp it to
+    // the valid noise-schedule range and fall back to the edit default when the
+    // request carries none, so a whole-image edit at 0.8 keeps most of the
+    // reference while letting the prompt steer.
+    let strength = req.strength.map_or(DEFAULT_EDIT_STRENGTH, |s| s.clamp(0.0, 1.0));
     Ok(FluxRequest {
         prompt: req.prompt.clone(),
         width,
@@ -347,7 +349,7 @@ fn build_i2i_request(req: &ImageEditRequest) -> Result<FluxRequest> {
         num_images: req.num_images,
         init_image: Some(req.image.clone()),
         mask: req.mask.clone(),
-        strength: DEFAULT_EDIT_STRENGTH,
+        strength,
         advanced: None,
     })
 }

@@ -258,6 +258,7 @@ async fn image_edit_routes_to_image_to_image() {
         num_images: 1,
         style_image: None,
         reference_images: Vec::new(),
+        strength: None,
     });
     let progress = VerbProgress::discard();
     let cancel = CancellationToken::new();

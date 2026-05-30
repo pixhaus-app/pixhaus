@@ -323,6 +323,14 @@ pub struct ImageEditRequest {
     /// Ordered additional references for image edits.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub reference_images: Vec<Vec<u8>>,
+    /// Edit strength in `[0.0, 1.0]` for image-to-image backends: how far the
+    /// result departs from the source. Higher means more change. `None` lets
+    /// the backend pick its default. Used by the local FLUX backend's i2i and
+    /// inpaint paths to set the noise-injection schedule entry point. Cloud
+    /// backends without a matching API parameter destructure-and-ignore it —
+    /// the same posture they take toward `style_image`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub strength: Option<f32>,
 }
 
 /// Frame interpolation request (`FRAME_INTERPOLATION` capability).
