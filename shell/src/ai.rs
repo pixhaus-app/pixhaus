@@ -34,7 +34,11 @@ use pixhaus_core::project::library::composition::{ArtStyleKind, PromptId, Prompt
 use pixhaus_core::project::{AnchorDirection, EntityId, PixelBufferId, ProjectMetadata, SheetVariantId};
 use pixhaus_core::transforms::finisher::{FinishOptions, finish_frames};
 use pixhaus_core::transforms::normalize::{ComponentMode, NormalizeOptions, normalize_frames};
-use pixhaus_core::transforms::sheet::{SliceGrid, slice_grid, slice_grid_spec};
+use pixhaus_core::transforms::sheet::{SliceGrid, slice_grid_spec};
+// `slice_grid` is the legacy uniform slicer; production drives `slice_grid_spec`
+// now, so it survives only inside the test-gated `sheet_to_frames` parity anchor.
+#[cfg(test)]
+use pixhaus_core::transforms::sheet::slice_grid;
 use tokio::runtime::Handle;
 use tokio_util::sync::CancellationToken;
 
@@ -696,6 +700,7 @@ pub fn static_sheet_prompt(action_prompt: &str, rows: u32, cols: u32) -> String 
 /// # Errors
 /// Returns the slicer's error string when the sheet is empty or the grid is
 /// finer than the sheet on an axis.
+#[cfg(test)]
 pub fn sheet_to_frames(sheet: &PixelBuffer, rows: u32, cols: u32, fps: u32) -> Result<Vec<VideoFrame>, String> {
     let cells = slice_grid(sheet, rows, cols).map_err(|e| e.to_string())?;
     Ok(cells_to_frames(cells, fps))

@@ -267,9 +267,14 @@ fn resolved_axis_edges(span: u32, count: u32, offset: u32, gutter: u32, override
     let cell = usable / count;
 
     // Seed the uniform left/right of every cell, then overwrite the shared
-    // dividers the overrides move.
-    let mut lefts: Vec<u32> = (0..count).map(|c| offset + c * (cell + gutter)).collect();
-    let mut rights: Vec<u32> = lefts.iter().map(|l| l + cell).collect();
+    // dividers the overrides move. Saturate the seed like the rest of the
+    // module: `x_edges`/`y_edges` are public and run on a `SliceGrid`
+    // deserialized straight from a file, so an adversarial offset/gutter must
+    // clamp rather than overflow in a debug build.
+    let mut lefts: Vec<u32> = (0..count)
+        .map(|c| offset.saturating_add(c.saturating_mul(cell.saturating_add(gutter))))
+        .collect();
+    let mut rights: Vec<u32> = lefts.iter().map(|&l| l.saturating_add(cell)).collect();
     for &(index, pos) in overrides {
         // Divider `index` is the boundary after cell `index - 1`; ignore an
         // index that names no interior divider.
@@ -631,6 +636,53 @@ mod tests {
     fn empty_overrides_is_the_uniform_case() {
         assert!(SliceOverrides::default().is_empty());
         assert!(SliceGrid::uniform(2, 3).overrides.is_empty());
+    }
+
+    #[test]
+    fn x_edges_seed_a_uniform_grid() {
+        // A plain 4-wide, 2-col grid over 8 px: two 4-wide cells, no gap.
+        let spec = SliceGrid::uniform(1, 2);
+        assert_eq!(spec.x_edges(8), vec![(0, 4), (4, 8)]);
+    }
+
+    #[test]
+    fn y_edges_seed_a_uniform_grid() {
+        let spec = SliceGrid::uniform(2, 1);
+        assert_eq!(spec.y_edges(8), vec![(0, 4), (4, 8)]);
+    }
+
+    #[test]
+    fn x_edges_saturate_on_an_adversarial_gutter() {
+        // A spec deserialized from a file can carry a huge gutter that would
+        // overflow the non-saturating seed in a debug build. The clamp keeps
+        // every edge within the span instead of panicking.
+        let spec = SliceGrid {
+            rows: 1,
+            cols: 3,
+            gutter_x: u32::MAX,
+            ..SliceGrid::uniform(1, 3)
+        };
+        let edges = spec.x_edges(16);
+        assert_eq!(edges.len(), 3, "one pair per column");
+        for (lo, hi) in edges {
+            assert!(lo <= 16 && hi <= 16, "edges stay within the span: ({lo}, {hi})");
+            assert!(lo <= hi, "a cell never inverts: ({lo}, {hi})");
+        }
+    }
+
+    #[test]
+    fn y_edges_saturate_on_an_adversarial_offset() {
+        let spec = SliceGrid {
+            rows: 2,
+            cols: 1,
+            offset_y: u32::MAX,
+            ..SliceGrid::uniform(2, 1)
+        };
+        let edges = spec.y_edges(16);
+        assert_eq!(edges.len(), 2);
+        for (lo, hi) in edges {
+            assert!(lo <= hi, "no inverted cell on a saturated offset: ({lo}, {hi})");
+        }
     }
 
     #[test]
