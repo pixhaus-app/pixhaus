@@ -110,6 +110,89 @@ impl GridPrefs {
     }
 }
 
+/// The on-device FLUX.2 model settings, persisted across launches through eframe
+/// `Storage` under the `"local_ai"` key, alongside `grid_prefs`. These are view /
+/// device preferences, not part of the serialized project, so they never touch
+/// the `.pixhaus` schema.
+///
+/// `device` and `overrides` round-trip whether or not the build compiled the
+/// on-device backend, so toggling the feature never drops a saved preference.
+/// The HF token is not here — it lives in the OS keychain under
+/// `pixhaus.huggingface`, never on disk.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
+pub struct LocalModelSettings {
+    /// The resolved-device preference: `Auto` lets the runtime pick CUDA -> Metal
+    /// -> CPU; the explicit variants force one.
+    pub device: crate::ai::DevicePref,
+    /// Cache-directory override. `None` uses the app-data default
+    /// (`<data_dir>/models/<model>`).
+    pub cache_dir: Option<std::path::PathBuf>,
+    /// The model id the local section manages. Currently only `flux2-klein-4b`;
+    /// held so a second model slots in without a settings migration.
+    pub default_model: String,
+    /// Advanced sampling override. `None` pins the distilled posture (4 steps,
+    /// guidance 1.0); `Some` is the artist's opt-in step/guidance pair.
+    pub overrides: Option<DistilledOverrides>,
+}
+
+impl Default for LocalModelSettings {
+    fn default() -> Self {
+        Self {
+            device: crate::ai::DevicePref::default(),
+            cache_dir: None,
+            default_model: crate::ai::LOCAL_FLUX_MODEL_ID.to_owned(),
+            overrides: None,
+        }
+    }
+}
+
+/// An advanced override of the distilled sampling defaults, revealed by the
+/// settings "Advanced override" checkbox. Bounded so a corrupt stored value can
+/// never push the sampler past a usable range.
+#[derive(Clone, Copy, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
+pub struct DistilledOverrides {
+    /// Flow-matching step count, `1..=8`. The distilled default is 4.
+    pub steps: u32,
+    /// Guidance scale, `0.0..=4.0`. The distilled default is 1.0 (CFG disabled);
+    /// klein ignores guidance, but it is carried for completeness and future
+    /// non-distilled models.
+    pub guidance: f32,
+}
+
+impl Default for DistilledOverrides {
+    fn default() -> Self {
+        // The distilled defaults, so opening the override starts where the pinned
+        // posture sits rather than at zero.
+        Self { steps: 4, guidance: 1.0 }
+    }
+}
+
+/// Whether the local FLUX.2 weights are present, downloading, ready, or failed.
+/// Drives the settings model card. Set by the startup probe and the download
+/// messages; never persisted (it is re-probed each launch).
+#[derive(Clone, Debug, Default, PartialEq)]
+pub(crate) enum LocalModelStatus {
+    /// Presence not yet probed (the startup check is off-thread and in flight).
+    #[default]
+    Unknown,
+    /// The weights are absent — the card shows a Download button.
+    NotDownloaded,
+    /// A download is in progress: completion fraction plus the downloaded / total
+    /// byte counts for the caption.
+    Downloading {
+        /// Completion fraction `0.0`–`1.0`.
+        fraction: f32,
+        /// Bytes downloaded so far.
+        bytes: u64,
+        /// Total bytes to download.
+        total: u64,
+    },
+    /// The weights are present and complete — the card shows a Delete button.
+    Ready,
+    /// The last download failed — the card shows the reason and a Retry button.
+    Failed(String),
+}
+
 /// Results delivered from background tokio work to the UI thread.
 #[derive(Debug)]
 pub enum ShellMsg {
@@ -376,10 +459,58 @@ pub enum ShellMsg {
         openai_configured: bool,
         /// Whether a FAL key is stored.
         fal_configured: bool,
+        /// Whether an optional Hugging Face token is stored (for gated / rate-
+        /// limited model downloads).
+        hf_configured: bool,
         /// Whether at least one backend is registered and ready.
         ready: bool,
         /// Keychain error from the op, if any.
         error: Option<String>,
+    },
+    /// Cumulative progress for an in-flight local-model download. Drained into
+    /// [`LocalModelStatus::Downloading`]. Produced only by the `local-flux`
+    /// download driver, but drained unconditionally so the variant stays in the
+    /// always-compiled message contract.
+    #[cfg_attr(not(feature = "local-flux"), allow(dead_code))]
+    ModelDownloadProgress {
+        /// The model id this progress belongs to.
+        model: String,
+        /// Completion fraction `0.0`–`1.0`, or `None` when the total is unknown.
+        fraction: Option<f32>,
+        /// Bytes downloaded so far.
+        bytes: u64,
+        /// Total bytes to download.
+        total: u64,
+        /// One-line status (e.g. the current file).
+        message: String,
+    },
+    /// A local-model download finished. Flips the status to
+    /// [`LocalModelStatus::Ready`] and re-runs backend registration.
+    #[cfg_attr(not(feature = "local-flux"), allow(dead_code))]
+    ModelDownloadDone {
+        /// The model id that finished downloading.
+        model: String,
+    },
+    /// A local-model download failed (or was cancelled). Flips the status to
+    /// [`LocalModelStatus::Failed`].
+    #[cfg_attr(not(feature = "local-flux"), allow(dead_code))]
+    ModelDownloadFailed {
+        /// The model id whose download failed.
+        model: String,
+        /// The failure reason.
+        error: String,
+    },
+    /// The artist chose a cache directory in the off-thread folder picker, or
+    /// cancelled it (`None`). Persisted into [`LocalModelSettings::cache_dir`].
+    #[cfg_attr(not(feature = "local-flux"), allow(dead_code))]
+    ModelCacheDirChosen(Option<std::path::PathBuf>),
+    /// A startup presence probe finished: whether the model's weights are present
+    /// and complete on disk. Seeds [`LocalModelStatus`] before any user action.
+    LocalModelProbed {
+        /// The model id that was probed.
+        model: String,
+        /// Whether the weights are present and complete.
+        ready: bool,
     },
 }
 
@@ -810,6 +941,28 @@ pub struct ShellApp {
     /// `None` when closed. Opened from the studio Land stage and the File menu;
     /// confirming spawns the off-thread encode worker.
     pub(crate) export_dialog: Option<ExportDialog>,
+    /// On-device FLUX.2 model settings (device, cache dir, distilled overrides),
+    /// persisted under the `"local_ai"` storage key.
+    pub(crate) local_ai: LocalModelSettings,
+    /// Presence/download state of the local model, driving the settings card.
+    /// Re-probed each launch (never persisted); seeded by the startup probe.
+    pub(crate) local_ai_status: LocalModelStatus,
+    /// Cancel token for an in-flight model download, owned here so the Cancel
+    /// button can abort the transfer. `None` when no download is running.
+    pub(crate) local_ai_cancel: Option<CancellationToken>,
+    /// Whether a Hugging Face token is stored in the keychain, cached off-thread
+    /// (the startup probe and a save/clear refresh it) so the settings row never
+    /// reads the keychain on the UI thread.
+    pub(crate) hf_token_configured: bool,
+    /// HF token draft, typed into the settings password field. Cleared on Save.
+    /// Only read by the `local-flux` settings row.
+    #[cfg_attr(not(feature = "local-flux"), allow(dead_code))]
+    pub(crate) hf_token_input: String,
+    /// Whether the settings "Advanced override" section is expanded. Transient UI
+    /// state — not persisted, so each launch starts folded on the distilled
+    /// defaults. Only read by the `local-flux` settings row.
+    #[cfg_attr(not(feature = "local-flux"), allow(dead_code))]
+    pub(crate) advanced_open: bool,
 }
 
 /// Draft state for the sprite-export dialog: which shape to write and, for the
@@ -967,6 +1120,10 @@ impl ShellApp {
         // defaults. Applied to the editor after the struct is built.
         let grid_prefs = cc.storage.and_then(|s| eframe::get_value::<GridPrefs>(s, "grid_prefs")).unwrap_or_default();
 
+        // Restore the on-device model settings (device, cache dir, distilled
+        // overrides), defaulting to Auto / app-data cache / distilled posture.
+        let local_ai = cc.storage.and_then(|s| eframe::get_value::<LocalModelSettings>(s, "local_ai")).unwrap_or_default();
+
         // Restore the last-used new-sprite size, defaulting to 64×64.
         let (last_w, last_h) = cc
             .storage
@@ -1102,6 +1259,12 @@ impl ShellApp {
             status_message: None,
             pack_import_policy: None,
             export_dialog: None,
+            local_ai,
+            local_ai_status: LocalModelStatus::default(),
+            local_ai_cancel: None,
+            hf_token_configured: false,
+            hf_token_input: String::new(),
+            advanced_open: false,
         };
         grid_prefs.apply_to(&mut app.editor);
         app.install_renderer();
@@ -1123,6 +1286,18 @@ impl ShellApp {
             app.tx.clone(),
             ai::KeyOp::RegisterFromKeychain,
         );
+        // Probe the local model's on-disk presence off-thread so the settings
+        // card shows the right state without a UI-thread filesystem walk, and
+        // refresh the cached HF-token-configured flag the same way.
+        crate::local_ai::spawn_model_probe(
+            app.runtime.handle(),
+            app.egui_ctx.clone(),
+            app.tx.clone(),
+            app.local_ai.default_model.clone(),
+            app.local_ai.cache_dir.clone(),
+        );
+        // The HF-token-configured flag rides the RegisterFromKeychain refresh
+        // spawned just above, so no separate probe is needed here.
         app
     }
 
@@ -1389,14 +1564,75 @@ impl ShellApp {
                 ShellMsg::BackendsRefreshed {
                     openai_configured,
                     fal_configured,
+                    hf_configured,
                     ready,
                     error,
                 } => {
                     self.openai_key_configured = openai_configured;
                     self.fal_key_configured = fal_configured;
+                    self.hf_token_configured = hf_configured;
                     self.backend_ready = ready;
                     if let Some(err) = error {
                         self.rs_status = JobStatus::Failed(format!("keychain: {err}"));
+                    }
+                }
+                ShellMsg::ModelDownloadProgress {
+                    model,
+                    fraction,
+                    bytes,
+                    total,
+                    message,
+                } => {
+                    // Drop a tick for a model that is not the one we are tracking
+                    // (a stale message from a superseded run).
+                    if model == self.local_ai.default_model {
+                        tracing::trace!(%model, bytes, total, %message, "model download progress");
+                        self.local_ai_status = LocalModelStatus::Downloading {
+                            fraction: fraction.unwrap_or(0.0),
+                            bytes,
+                            total,
+                        };
+                    }
+                }
+                ShellMsg::ModelDownloadDone { model } => {
+                    if model == self.local_ai.default_model {
+                        self.local_ai_status = LocalModelStatus::Ready;
+                        self.local_ai_cancel = None;
+                        // The weights are present now — re-run registration so the
+                        // local backend goes live without a restart.
+                        self.refresh_local_backend();
+                    }
+                }
+                ShellMsg::ModelDownloadFailed { model, error } => {
+                    if model == self.local_ai.default_model {
+                        self.local_ai_status = LocalModelStatus::Failed(error);
+                        self.local_ai_cancel = None;
+                    }
+                }
+                ShellMsg::ModelCacheDirChosen(dir) => {
+                    // `None` is a cancelled picker — leave the current dir intact.
+                    if let Some(dir) = dir {
+                        self.local_ai.cache_dir = Some(dir);
+                        // The cache moved, so the presence answer changed; re-probe
+                        // and re-register against the new location.
+                        self.local_ai_status = LocalModelStatus::Unknown;
+                        crate::local_ai::spawn_model_probe(
+                            self.runtime.handle(),
+                            self.egui_ctx.clone(),
+                            self.tx.clone(),
+                            self.local_ai.default_model.clone(),
+                            self.local_ai.cache_dir.clone(),
+                        );
+                        self.refresh_local_backend();
+                    }
+                }
+                ShellMsg::LocalModelProbed { model, ready } => {
+                    if model == self.local_ai.default_model {
+                        // A probe never overrides an in-flight download or a
+                        // terminal failure the user has not acknowledged.
+                        if !matches!(self.local_ai_status, LocalModelStatus::Downloading { .. }) {
+                            self.local_ai_status = if ready { LocalModelStatus::Ready } else { LocalModelStatus::NotDownloaded };
+                        }
                     }
                 }
             }
@@ -2457,12 +2693,12 @@ impl ShellApp {
     }
 
     /// Shown in the cockpit when no backend is ready: a pointer to the
-    /// AI-backends settings tab where keys are actually entered.
+    /// AI settings tab where keys are actually entered.
     pub(crate) fn key_entry(&mut self, ui: &mut egui::Ui) {
         ui.horizontal(|ui| {
             ui.label("No generation backend configured.");
             if ui.button("Configure in Settings…").clicked() {
-                self.open_settings(SettingsTab::AiBackends);
+                self.open_settings(SettingsTab::Ai);
             }
         });
     }
@@ -4302,6 +4538,7 @@ impl eframe::App for ShellApp {
         eframe::set_value(storage, "keymap", &self.keymap);
         eframe::set_value(storage, "new_sprite_size", &(self.new_sprite_w, self.new_sprite_h));
         eframe::set_value(storage, "grid_prefs", &GridPrefs::from_editor(&self.editor));
+        eframe::set_value(storage, "local_ai", &self.local_ai);
         // Capture the active sprite's in-progress session, then write the
         // per-sprite sessions to their own JSON sidecar under the storage dir
         // (the approved-pose PNG is too heavy for eframe's RON value store).

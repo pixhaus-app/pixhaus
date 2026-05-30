@@ -49,6 +49,17 @@ pub const OPENAI_BACKEND_ID: &str = "openai";
 /// `LocalFluxBackend::backend_id` so a readiness probe can find it in the runtime.
 pub const LOCAL_FLUX_BACKEND_ID: &str = "flux-local";
 
+/// The local model id the settings section manages and the cache subdirectory
+/// uses. Mirrors `pixhaus_flux::FLUX2_KLEIN_MODEL_ID`, restated here so it is
+/// available with the `local-flux` feature off (the settings struct's default
+/// names it whether or not the on-device backend compiled in).
+pub const LOCAL_FLUX_MODEL_ID: &str = "flux2-klein-4b";
+
+/// Keychain id the optional Hugging Face token is stored under (service
+/// `pixhaus.huggingface`). Restated here so the settings row can route the token
+/// through `spawn_backend_key_op` with the feature off.
+pub const HF_TOKEN_BACKEND_ID: &str = "huggingface";
+
 /// The persisted device preference for the local model, owned by the shell so it
 /// round-trips through eframe `Storage` whether or not the build compiled the
 /// on-device backend. Mirrors `pixhaus_flux::DevicePref`; converted to the flux
@@ -387,6 +398,19 @@ pub fn key_configured(backend: &str) -> bool {
     ApiKeyStore::get(backend).is_ok()
 }
 
+/// Reads the optional Hugging Face token from the OS keychain, or `None` when
+/// none is stored. Blocking keychain I/O — call only off the UI thread (on
+/// Linux it can pop a system unlock dialog). The token is optional: klein-4B is
+/// a public repo, so it matters only for rate limits or future gated repos.
+///
+/// Used by the `local-flux` download driver; gated so a feature-off build does
+/// not carry an unused keychain read.
+#[cfg(feature = "local-flux")]
+#[must_use]
+pub fn hf_token() -> Option<String> {
+    ApiKeyStore::get(HF_TOKEN_BACKEND_ID).ok().filter(|t| !t.trim().is_empty())
+}
+
 /// Whether `backend` is currently registered in the verb runtime.
 #[must_use]
 pub fn backend_registered(runtime: &VerbRuntime, backend: &str) -> bool {
@@ -441,6 +465,7 @@ pub fn spawn_backend_key_op(handle: &Handle, runtime: Arc<VerbRuntime>, ctx: egu
         let _ = tx.send(ShellMsg::BackendsRefreshed {
             openai_configured: key_configured(OPENAI_BACKEND_ID),
             fal_configured: key_configured(FAL_BACKEND_ID),
+            hf_configured: key_configured(HF_TOKEN_BACKEND_ID),
             ready: backend_registered(&runtime, OPENAI_BACKEND_ID)
                 || backend_registered(&runtime, FAL_BACKEND_ID)
                 || backend_registered(&runtime, LOCAL_FLUX_BACKEND_ID),

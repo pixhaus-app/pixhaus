@@ -23,8 +23,8 @@ pub(crate) enum SettingsTab {
     General,
     /// Keyboard rebinding.
     Keybinds,
-    /// API-key entry and provider status.
-    AiBackends,
+    /// Cloud-backend API keys plus the on-device model manager.
+    Ai,
     /// GPU adapter selection.
     Graphics,
 }
@@ -65,7 +65,7 @@ impl ShellApp {
         ui.horizontal(|ui| {
             ui.selectable_value(&mut self.settings_tab, SettingsTab::General, "General");
             ui.selectable_value(&mut self.settings_tab, SettingsTab::Keybinds, "Keybinds");
-            ui.selectable_value(&mut self.settings_tab, SettingsTab::AiBackends, "AI backends");
+            ui.selectable_value(&mut self.settings_tab, SettingsTab::Ai, "AI");
             ui.selectable_value(&mut self.settings_tab, SettingsTab::Graphics, "Graphics");
         });
         ui.separator();
@@ -73,7 +73,7 @@ impl ShellApp {
         match self.settings_tab {
             SettingsTab::General => self.general_tab(ui),
             SettingsTab::Keybinds => self.keybinds_tab(ui),
-            SettingsTab::AiBackends => self.ai_backends_tab(ui),
+            SettingsTab::Ai => self.ai_tab(ui),
             SettingsTab::Graphics => self.graphics_tab(ui),
         }
     }
@@ -156,16 +156,278 @@ impl ShellApp {
         }
     }
 
-    /// AI backends tab: one status/set/clear row per ported provider.
-    fn ai_backends_tab(&mut self, ui: &mut egui::Ui) {
-        ui.heading("AI backends");
-        ui.label(egui::RichText::new("Keys are stored in the OS keychain, never on disk.").small().weak());
+    /// AI tab: the cloud backend rows, then the on-device model manager. Scrolls
+    /// because the local section's download card and override sliders can outrun
+    /// the window's height.
+    fn ai_tab(&mut self, ui: &mut egui::Ui) {
+        egui::ScrollArea::vertical().show(ui, |ui| {
+            ui.heading("Cloud backends");
+            ui.label(egui::RichText::new("Keys are stored in the OS keychain, never on disk.").small().weak());
+            ui.add_space(8.0);
+            self.backend_row(ui, "OpenAI", ai::OPENAI_BACKEND_ID, "Generates reference sheets (gpt-image).");
+            ui.add_space(6.0);
+            ui.separator();
+            ui.add_space(6.0);
+            self.backend_row(ui, "FAL", ai::FAL_BACKEND_ID, "Reference sheets, plus image-to-video animation.");
+
+            ui.add_space(12.0);
+            ui.separator();
+            ui.add_space(8.0);
+            self.local_model_section(ui);
+        });
+    }
+
+    /// The on-device model manager: device, cache dir, the download/manage card,
+    /// the optional HF token, and the distilled-params override. The real section
+    /// is compiled only with `local-flux`; the feature-off stub renders one weak
+    /// line so the tab never looks broken.
+    #[cfg(feature = "local-flux")]
+    fn local_model_section(&mut self, ui: &mut egui::Ui) {
+        use crate::ai::DevicePref;
+        use crate::app::LocalModelStatus;
+
+        let palette = crate::theme::Palette::for_theme(ui.ctx().theme());
+
+        ui.heading("Local model (FLUX.2 klein)");
+        ui.label(
+            egui::RichText::new("Runs on this machine. No API key, no per-image cost. One-time ~16 GB download.")
+                .small()
+                .weak(),
+        );
         ui.add_space(8.0);
-        self.backend_row(ui, "OpenAI", ai::OPENAI_BACKEND_ID, "Generates reference sheets (gpt-image).");
+
+        // --- Device ---------------------------------------------------------
+        ui.strong("Device");
+        // Deferred mutation: collect the click, apply after the borrow ends so
+        // the radio closures don't hold `&mut self`.
+        let mut new_device: Option<DevicePref> = None;
+        ui.horizontal(|ui| {
+            for (pref, label) in device_choices() {
+                let selected = self.local_ai.device == pref;
+                if ui.radio(selected, label).clicked() && !selected {
+                    new_device = Some(pref);
+                }
+            }
+        });
+        if let Some(pref) = new_device {
+            self.local_ai.device = pref;
+            // Device choice only takes effect on the next model load; re-register
+            // so a ready backend picks up the new device on its next invoke.
+            self.refresh_local_backend();
+        }
+        if self.local_ai.device == DevicePref::Auto {
+            ui.label(egui::RichText::new(format!("Auto resolves to: {}", resolved_device_label())).small().weak());
+        }
+        ui.add_space(8.0);
+
+        // --- Cache directory ------------------------------------------------
+        ui.strong("Cache directory");
+        let cache_caption = self
+            .local_model_cache_root()
+            .map_or_else(|| "no cache directory available".to_owned(), |p| p.display().to_string());
+        ui.label(egui::RichText::new(cache_caption).small().weak());
+        let mut reset_cache = false;
+        let mut choose_cache = false;
+        ui.horizontal(|ui| {
+            if ui.button("Choose…").clicked() {
+                choose_cache = true;
+            }
+            if ui.add_enabled(self.local_ai.cache_dir.is_some(), egui::Button::new("Reset to default")).clicked() {
+                reset_cache = true;
+            }
+        });
+        if choose_cache {
+            self.spawn_cache_dir_picker();
+        }
+        if reset_cache {
+            self.local_ai.cache_dir = None;
+            self.local_ai_status = LocalModelStatus::Unknown;
+            crate::local_ai::spawn_model_probe(
+                self.runtime.handle(),
+                self.egui_ctx.clone(),
+                self.tx.clone(),
+                self.local_ai.default_model.clone(),
+                None,
+            );
+            self.refresh_local_backend();
+        }
+        ui.add_space(10.0);
+
+        // --- Model card -----------------------------------------------------
+        let mut download = false;
+        let mut cancel = false;
+        let mut delete = false;
+        egui::Frame::group(ui.style()).show(ui, |ui| {
+            ui.horizontal(|ui| {
+                ui.strong("FLUX.2 klein 4B");
+                match &self.local_ai_status {
+                    LocalModelStatus::Ready => {
+                        ui.label(egui::RichText::new("ready").small().color(palette.success));
+                    }
+                    LocalModelStatus::Failed(_) => {
+                        ui.label(egui::RichText::new("failed").small().color(palette.error));
+                    }
+                    LocalModelStatus::Downloading { .. } => {
+                        ui.label(egui::RichText::new("downloading").small().color(palette.warning));
+                    }
+                    LocalModelStatus::NotDownloaded => {
+                        ui.label(egui::RichText::new("not downloaded").small().weak());
+                    }
+                    LocalModelStatus::Unknown => {
+                        ui.label(egui::RichText::new("checking…").small().weak());
+                    }
+                }
+            });
+            match self.local_ai_status.clone() {
+                LocalModelStatus::NotDownloaded => {
+                    if ui.button("Download").clicked() {
+                        download = true;
+                    }
+                }
+                LocalModelStatus::Unknown => {
+                    // Presence probe still in flight — offer no action until it
+                    // resolves, so a click can't race the probe.
+                    ui.add_enabled(false, egui::Button::new("Download"));
+                }
+                LocalModelStatus::Downloading { fraction, bytes, total } => {
+                    ui.add(egui::ProgressBar::new(fraction).show_percentage());
+                    ui.label(egui::RichText::new(format!("{} / {}", gib(bytes), gib(total))).small().weak());
+                    if ui.button("Cancel").clicked() {
+                        cancel = true;
+                    }
+                }
+                LocalModelStatus::Ready => {
+                    if ui.button("Delete").clicked() {
+                        delete = true;
+                    }
+                }
+                LocalModelStatus::Failed(err) => {
+                    ui.label(egui::RichText::new(err).small().color(palette.error));
+                    if ui.button("Retry").clicked() {
+                        download = true;
+                    }
+                }
+            }
+        });
+        if download {
+            self.start_model_download();
+        }
+        if cancel {
+            self.cancel_model_download();
+        }
+        if delete {
+            self.delete_model();
+        }
         ui.add_space(6.0);
+
+        // --- Total disk usage ----------------------------------------------
+        ui.label(
+            egui::RichText::new(format!("Total disk usage when downloaded: ~16 GB. Cached under: {}", self.local_model_cache_caption()))
+                .small()
+                .weak(),
+        );
+        ui.add_space(10.0);
+
+        // --- HF token -------------------------------------------------------
         ui.separator();
         ui.add_space(6.0);
-        self.backend_row(ui, "FAL", ai::FAL_BACKEND_ID, "Reference sheets, plus image-to-video animation.");
+        ui.strong("Hugging Face token (optional)");
+        ui.label(
+            egui::RichText::new("Only needed for gated or rate-limited downloads. klein-4B is public.")
+                .small()
+                .weak(),
+        );
+        if self.hf_token_configured {
+            ui.label(egui::RichText::new("token stored").small().color(palette.success));
+        }
+        let mut save_token: Option<String> = None;
+        let mut clear_token = false;
+        ui.horizontal(|ui| {
+            ui.add(
+                egui::TextEdit::singleline(&mut self.hf_token_input)
+                    .password(true)
+                    .hint_text("paste HF token")
+                    .desired_width(220.0),
+            );
+            if ui.button("Save").clicked() && !self.hf_token_input.trim().is_empty() {
+                save_token = Some(self.hf_token_input.trim().to_owned());
+                self.hf_token_input.clear();
+            }
+            if ui.add_enabled(self.hf_token_configured, egui::Button::new("Clear")).clicked() {
+                clear_token = true;
+            }
+        });
+        if let Some(token) = save_token {
+            self.save_key(ai::HF_TOKEN_BACKEND_ID, &token);
+            // Optimistic; the off-thread refresh confirms it.
+            self.hf_token_configured = true;
+        }
+        if clear_token {
+            self.clear_backend(ai::HF_TOKEN_BACKEND_ID);
+            self.hf_token_configured = false;
+        }
+        ui.add_space(10.0);
+
+        // --- Distilled params ----------------------------------------------
+        ui.separator();
+        ui.add_space(6.0);
+        ui.strong("Sampling");
+        ui.label(egui::RichText::new("Steps: 4 · Guidance: 1.0 (distilled defaults)").small().weak());
+        let mut advanced = self.advanced_open;
+        if ui.checkbox(&mut advanced, "Advanced override").changed() {
+            self.advanced_open = advanced;
+            // Opening the override seeds the distilled posture; closing it pins
+            // the distilled defaults again.
+            self.local_ai.overrides = advanced.then(|| self.local_ai.overrides.unwrap_or_default());
+        }
+        if self.advanced_open {
+            let mut overrides = self.local_ai.overrides.unwrap_or_default();
+            let mut changed = false;
+            ui.horizontal(|ui| {
+                ui.label("Steps");
+                changed |= ui.add(egui::Slider::new(&mut overrides.steps, 1..=8)).changed();
+            });
+            ui.horizontal(|ui| {
+                ui.label("Guidance");
+                changed |= ui.add(egui::Slider::new(&mut overrides.guidance, 0.0..=4.0)).changed();
+            });
+            if changed {
+                self.local_ai.overrides = Some(overrides);
+            }
+        }
+    }
+
+    /// Feature-off stub: one weak line stating on-device generation is absent.
+    #[cfg(not(feature = "local-flux"))]
+    #[allow(clippy::unused_self)]
+    fn local_model_section(&mut self, ui: &mut egui::Ui) {
+        ui.heading("Local model");
+        ui.label(
+            egui::RichText::new("This build was compiled without on-device generation.")
+                .small()
+                .weak(),
+        );
+    }
+
+    /// The cache-path caption for the "total disk usage" line: the override path
+    /// or the resolved app-data default, or a plain note when neither resolves.
+    #[cfg(feature = "local-flux")]
+    fn local_model_cache_caption(&self) -> String {
+        self.local_model_cache_root()
+            .map_or_else(|| "the platform app-data directory".to_owned(), |p| p.display().to_string())
+    }
+
+    /// Spawns the native folder picker off the UI thread (it blocks) and routes
+    /// the chosen directory back over [`crate::app::ShellMsg::ModelCacheDirChosen`].
+    #[cfg(feature = "local-flux")]
+    fn spawn_cache_dir_picker(&self) {
+        let tx = self.tx.clone();
+        let ctx = self.egui_ctx.clone();
+        self.runtime.handle().spawn_blocking(move || {
+            let chosen = rfd::FileDialog::new().set_title("Choose the model cache directory").pick_folder();
+            let _ = tx.send(crate::app::ShellMsg::ModelCacheDirChosen(chosen));
+            ctx.request_repaint();
+        });
     }
 
     /// One provider row: a status badge, a password field with Save, and Clear.
@@ -291,6 +553,47 @@ impl ShellApp {
             });
         });
     }
+}
+
+/// The device-preference radios to offer for this build and platform: always
+/// `Auto` and `CPU`, plus the GPU variants the build compiled in. Only offering
+/// supported variants keeps the artist from picking a backend that silently
+/// falls back to CPU.
+#[cfg(feature = "local-flux")]
+fn device_choices() -> Vec<(crate::ai::DevicePref, &'static str)> {
+    use crate::ai::DevicePref;
+    let mut out = vec![(DevicePref::Auto, "Auto")];
+    if cfg!(feature = "local-flux-cuda") {
+        out.push((DevicePref::Cuda(0), "CUDA"));
+    }
+    if cfg!(feature = "local-flux-metal") {
+        out.push((DevicePref::Metal, "Metal"));
+    }
+    out.push((DevicePref::Cpu, "CPU"));
+    out
+}
+
+/// The device `Auto` resolves to for this build, for the caption under the radios.
+/// CPU-only builds always resolve to CPU; GPU builds name the GPU family.
+#[cfg(feature = "local-flux")]
+fn resolved_device_label() -> &'static str {
+    if cfg!(feature = "local-flux-cuda") {
+        "CUDA (GPU)"
+    } else if cfg!(feature = "local-flux-metal") {
+        "Metal (GPU)"
+    } else {
+        "CPU (slow — minutes per image)"
+    }
+}
+
+/// Format a byte count as gibibytes with one decimal, for the download caption.
+#[cfg(feature = "local-flux")]
+fn gib(bytes: u64) -> String {
+    // f64 carries a ~16 GB byte count without precision loss for a one-decimal
+    // display.
+    #[allow(clippy::cast_precision_loss)]
+    let g = bytes as f64 / (1024.0 * 1024.0 * 1024.0);
+    format!("{g:.1} GB")
 }
 
 /// Reads the first non-modifier key pressed this frame and builds a chord from

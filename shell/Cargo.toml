@@ -34,6 +34,10 @@ tracing.workspace = true
 tracing-subscriber.workspace = true
 image.workspace = true
 rfd.workspace = true
+# App-data cache-path resolution for the local-model settings caption. Shared
+# with the flux crate's ModelStore default root, but needed here feature-
+# independently so the path shows whether or not on-device generation compiled in.
+directories.workspace = true
 # Pure-Rust mp4 demux + H.264 decode for the image-to-video clip, so the
 # animation path needs no external ffmpeg binary. openh264 is BSD-2; mp4 is MIT.
 mp4 = "0.14"
