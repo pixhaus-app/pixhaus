@@ -2,8 +2,8 @@
 //! [`LoadedModel`] ready to run text-to-image and image-to-image.
 //!
 //! The multi-GB load is expensive and runs once; the backend holds the result
-//! behind a `OnceCell<Mutex<..>>`. Milestone 1 wires the VAE; the transformer and
-//! text encoder land in later gates, so their fields stay placeholders.
+//! behind a `OnceCell<Mutex<..>>`. The VAE and Qwen3 text encoder are wired; the
+//! transformer lands in a later gate, so its field stays a placeholder.
 //!
 //! Working dtype is bf16 on a GPU, f32 on CPU (candle's `bf16_default_to_f32`).
 //! `VarBuilder::from_mmaped_safetensors` returns every tensor already cast to the
@@ -52,6 +52,10 @@ pub struct LoadedModel {
     /// `Vae::load`, so this field is not yet read inside the crate.
     #[allow(dead_code)]
     vae: Vae,
+    /// The Qwen3 text encoder — prompt -> `(1, seq, 7680)` conditioning. Read by
+    /// the t2i/img2img pipelines in a later gate; the parity test drives it
+    /// through its own public `TextEncoder::load`, so this field is not yet read
+    /// inside the crate.
     #[allow(dead_code)]
     text_encoder: TextEncoder,
     /// The device every component lives on. Read by the run methods in a later gate.
@@ -98,13 +102,14 @@ impl LoadedModel {
         let dtype = device.bf16_default_to_f32();
 
         let vae = Vae::load(store, &device, dtype)?;
+        let text_encoder = TextEncoder::load(store, &device, dtype)?;
 
-        // Transformer and text encoder land in later gates. Keep them as typed
-        // placeholders so the field set and the backend bridge stay stable.
+        // The transformer lands in a later gate. Keep it as a typed placeholder so
+        // the field set and the backend bridge stay stable.
         Ok(Self {
             transformer: FluxTransformer::placeholder(),
             vae,
-            text_encoder: TextEncoder::placeholder(),
+            text_encoder,
             device,
         })
     }

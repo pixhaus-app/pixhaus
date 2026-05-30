@@ -24,6 +24,7 @@ safetensors = "0.7"
 image.workspace = true
 directories.workspace = true
 serde.workspace = true
+serde_json.workspace = true
 thiserror.workspace = true
 tracing.workspace = true
 parking_lot.workspace = true
@@ -42,6 +43,7 @@ tempfile.workspace = true
 tokio = { workspace = true }
 tokio-util = { workspace = true }
 image-compare.workspace = true
+insta.workspace = true
 
 [features]
 default = ["cpu"]
