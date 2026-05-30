@@ -1234,7 +1234,10 @@ impl ShellApp {
 
         // Restore the on-device model settings (device, cache dir, distilled
         // overrides), defaulting to Auto / app-data cache / distilled posture.
-        let local_ai = cc.storage.and_then(|s| eframe::get_value::<LocalModelSettings>(s, "local_ai")).unwrap_or_default();
+        let local_ai = cc
+            .storage
+            .and_then(|s| eframe::get_value::<LocalModelSettings>(s, "local_ai"))
+            .unwrap_or_default();
 
         // Restore the last-used new-sprite size, defaulting to 64×64.
         let (last_w, last_h) = cc

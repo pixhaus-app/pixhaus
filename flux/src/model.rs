@@ -288,7 +288,11 @@ impl Flux2Modulation {
     fn forward(&self, temb: &Tensor) -> Result<Vec<ModulationOut>, FluxError> {
         let ys = temb.silu()?.apply(&self.lin)?.unsqueeze(1)?.chunk(3 * self.n_sets, D::Minus1)?;
         if ys.len() != 3 * self.n_sets {
-            return Err(FluxError::Device(format!("modulation chunk produced {} parts, expected {}", ys.len(), 3 * self.n_sets)));
+            return Err(FluxError::Device(format!(
+                "modulation chunk produced {} parts, expected {}",
+                ys.len(),
+                3 * self.n_sets
+            )));
         }
         let mut out = Vec::with_capacity(self.n_sets);
         for set in 0..self.n_sets {
@@ -455,7 +459,14 @@ impl DoubleStreamBlock {
         let txt_modulated = txt_m1.scale_shift(&txt.apply(&self.txt_norm1)?)?;
 
         let (img_q, img_k, img_v) = project_qkv(&img_modulated, &self.to_q, &self.to_k, &self.to_v, &self.img_qk_norm, self.num_heads)?;
-        let (txt_q, txt_k, txt_v) = project_qkv(&txt_modulated, &self.add_q_proj, &self.add_k_proj, &self.add_v_proj, &self.txt_qk_norm, self.num_heads)?;
+        let (txt_q, txt_k, txt_v) = project_qkv(
+            &txt_modulated,
+            &self.add_q_proj,
+            &self.add_k_proj,
+            &self.add_v_proj,
+            &self.txt_qk_norm,
+            self.num_heads,
+        )?;
 
         // Apply rotary per stream, then join. The shared rope table is indexed
         // text-first then image (matching the id concat order in the forward).

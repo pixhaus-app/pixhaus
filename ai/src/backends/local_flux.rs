@@ -52,9 +52,7 @@ use parking_lot::Mutex;
 use pixhaus_flux::{AdvancedSampling, FluxError, LoadedModel};
 use tokio_util::sync::CancellationToken;
 
-use super::{
-    BackendError, ImageEditRequest, ImageGenRequest, ImageGenResponse, InferenceBackend, InferenceRequest, InferenceResponse, Result, VerbProgress,
-};
+use super::{BackendError, ImageEditRequest, ImageGenRequest, ImageGenResponse, InferenceBackend, InferenceRequest, InferenceResponse, Result, VerbProgress};
 use crate::plugin::descriptor::{BackendCapabilities, CostEstimate};
 use crate::plugin::progress::VerbProgressEvent;
 
@@ -110,7 +108,13 @@ pub trait FluxRunner: Send + Sync + 'static {
     /// # Errors
     ///
     /// Returns [`BackendError`] on a load, tensor, encode, or decode failure.
-    fn run(&self, mode: FluxMode, request: FluxRequest, tick: &mpsc::Sender<FluxTick>, should_continue: &(dyn Fn() -> bool + Send + Sync)) -> Result<Vec<Vec<u8>>>;
+    fn run(
+        &self,
+        mode: FluxMode,
+        request: FluxRequest,
+        tick: &mpsc::Sender<FluxTick>,
+        should_continue: &(dyn Fn() -> bool + Send + Sync),
+    ) -> Result<Vec<Vec<u8>>>;
 }
 
 /// The production [`FluxRunner`]: a lazily-loaded, GPU-serialized `LoadedModel`.
@@ -157,12 +161,20 @@ impl LoadedFluxRunner {
         let loaded = LoadedModel::load(&self.store, self.device).map_err(map_flux_error)?;
         // Ignore the Err(value) from a lost race; the stored value is valid.
         let _ = self.model.set(Mutex::new(loaded));
-        self.model.get().ok_or_else(|| BackendError::Other("flux model cell was empty after init".to_owned()))
+        self.model
+            .get()
+            .ok_or_else(|| BackendError::Other("flux model cell was empty after init".to_owned()))
     }
 }
 
 impl FluxRunner for LoadedFluxRunner {
-    fn run(&self, mode: FluxMode, request: FluxRequest, tick: &mpsc::Sender<FluxTick>, should_continue: &(dyn Fn() -> bool + Send + Sync)) -> Result<Vec<Vec<u8>>> {
+    fn run(
+        &self,
+        mode: FluxMode,
+        request: FluxRequest,
+        tick: &mpsc::Sender<FluxTick>,
+        should_continue: &(dyn Fn() -> bool + Send + Sync),
+    ) -> Result<Vec<Vec<u8>>> {
         let cell = self.model_or_load(tick)?;
         // parking_lot Mutex: serializes the GPU, held only inside this blocking
         // call, never across an .await.
@@ -401,7 +413,11 @@ impl InferenceBackend for LocalFluxBackend {
     }
 
     async fn invoke(&self, request: InferenceRequest, progress: VerbProgress, cancel: CancellationToken) -> Result<InferenceResponse> {
-        progress.send(VerbProgressEvent::Started { backend: Some("flux-local".to_owned()) }).await;
+        progress
+            .send(VerbProgressEvent::Started {
+                backend: Some("flux-local".to_owned()),
+            })
+            .await;
         // Honour a token that fired before we even started.
         if cancel.is_cancelled() {
             return Err(BackendError::Cancelled);

@@ -232,7 +232,10 @@ impl ShellApp {
             if ui.button("Choose…").clicked() {
                 choose_cache = true;
             }
-            if ui.add_enabled(self.local_ai.cache_dir.is_some(), egui::Button::new("Reset to default")).clicked() {
+            if ui
+                .add_enabled(self.local_ai.cache_dir.is_some(), egui::Button::new("Reset to default"))
+                .clicked()
+            {
                 reset_cache = true;
             }
         });
@@ -322,9 +325,12 @@ impl ShellApp {
 
         // --- Total disk usage ----------------------------------------------
         ui.label(
-            egui::RichText::new(format!("Total disk usage when downloaded: ~16 GB. Cached under: {}", self.local_model_cache_caption()))
-                .small()
-                .weak(),
+            egui::RichText::new(format!(
+                "Total disk usage when downloaded: ~16 GB. Cached under: {}",
+                self.local_model_cache_caption()
+            ))
+            .small()
+            .weak(),
         );
         ui.add_space(10.0);
 
@@ -402,11 +408,7 @@ impl ShellApp {
     #[allow(clippy::unused_self)]
     fn local_model_section(&mut self, ui: &mut egui::Ui) {
         ui.heading("Local model");
-        ui.label(
-            egui::RichText::new("This build was compiled without on-device generation.")
-                .small()
-                .weak(),
-        );
+        ui.label(egui::RichText::new("This build was compiled without on-device generation.").small().weak());
     }
 
     /// The cache-path caption for the "total disk usage" line: the override path

@@ -803,7 +803,15 @@ async fn run_local_image(runtime: &VerbRuntime, job: &LocalImageJob, progress: V
 /// by a small drain task that owns the live [`VerbProgress`] receiver — the same
 /// shape `spawn_clip` uses for its progress closure.
 #[allow(clippy::too_many_arguments)]
-pub fn spawn_local_image(handle: &Handle, runtime: Arc<VerbRuntime>, ctx: egui::Context, tx: Sender<ShellMsg>, job: LocalImageJob, cancel: CancellationToken, epoch: u64) {
+pub fn spawn_local_image(
+    handle: &Handle,
+    runtime: Arc<VerbRuntime>,
+    ctx: egui::Context,
+    tx: Sender<ShellMsg>,
+    job: LocalImageJob,
+    cancel: CancellationToken,
+    epoch: u64,
+) {
     handle.spawn(async move {
         // A live progress channel so the backend's per-step ticks reach the UI.
         let (progress, mut rx) = VerbProgress::channel();

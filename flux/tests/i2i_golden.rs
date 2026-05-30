@@ -26,6 +26,19 @@
 //! holds `transformer/`, `vae/`, `text_encoder/`, and `tokenizer/`.
 
 #![cfg(any(feature = "cpu", feature = "cuda", feature = "metal"))]
+// Test-only relaxations. The workspace floor denies unwrap/expect/panic and the
+// clippy.toml disallowed-methods list bans unwrap/expect; this self-contained
+// gate test builds its own fixtures and tensors, where unwrapping a just-built
+// value and index/shape casts are idiomatic. Mirrors ai/tests/local_flux_backend.rs.
+#![allow(
+    clippy::unwrap_used,
+    clippy::expect_used,
+    clippy::panic,
+    clippy::disallowed_methods,
+    clippy::cast_possible_truncation,
+    clippy::cast_precision_loss,
+    clippy::doc_markdown
+)]
 
 use std::path::{Path, PathBuf};
 
@@ -175,6 +188,7 @@ fn inpaint_preserves_unmasked_region() {
 fn solid_mask(w: u32, h: u32, value: u8) -> Vec<u8> {
     let img = image::GrayImage::from_pixel(w, h, image::Luma([value]));
     let mut buf = Vec::new();
-    img.write_to(&mut std::io::Cursor::new(&mut buf), image::ImageFormat::Png).expect("encode mask PNG");
+    img.write_to(&mut std::io::Cursor::new(&mut buf), image::ImageFormat::Png)
+        .expect("encode mask PNG");
     buf
 }

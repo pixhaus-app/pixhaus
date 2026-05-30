@@ -14,6 +14,19 @@
 //! on `cpu`/`cuda`/`metal`.
 
 #![cfg(any(feature = "cpu", feature = "cuda", feature = "metal"))]
+// Test-only relaxations. The workspace floor denies unwrap/expect/panic and the
+// clippy.toml disallowed-methods list bans unwrap/expect; this self-contained
+// gate test builds its own fixtures and tensors, where unwrapping a just-built
+// value and index/shape casts are idiomatic. Mirrors ai/tests/local_flux_backend.rs.
+#![allow(
+    clippy::unwrap_used,
+    clippy::expect_used,
+    clippy::panic,
+    clippy::disallowed_methods,
+    clippy::cast_possible_truncation,
+    clippy::cast_precision_loss,
+    clippy::doc_markdown
+)]
 
 use candle_core::{DType, Device, Result as CandleResult, Shape, Tensor};
 use candle_nn::Init;
@@ -97,14 +110,20 @@ fn fixed_inputs(cfg: &Flux2Config, device: &Device) -> (Tensor, Tensor, Tensor, 
             img_ids.extend_from_slice(&[0u32, row as u32, col as u32, 0]);
         }
     }
-    let img_ids = Tensor::from_vec(img_ids, (img_len, 4), device).expect("img_ids").to_dtype(DType::F32).expect("ids f32");
+    let img_ids = Tensor::from_vec(img_ids, (img_len, 4), device)
+        .expect("img_ids")
+        .to_dtype(DType::F32)
+        .expect("ids f32");
 
     // Text ids: (t=0, h=0, w=0, l=token), spanning the l axis.
     let mut txt_ids = Vec::with_capacity(txt_len * 4);
     for tok in 0..txt_len {
         txt_ids.extend_from_slice(&[0u32, 0, 0, tok as u32]);
     }
-    let txt_ids = Tensor::from_vec(txt_ids, (txt_len, 4), device).expect("txt_ids").to_dtype(DType::F32).expect("ids f32");
+    let txt_ids = Tensor::from_vec(txt_ids, (txt_len, 4), device)
+        .expect("txt_ids")
+        .to_dtype(DType::F32)
+        .expect("ids f32");
 
     let timesteps = Tensor::from_vec(vec![0.5f32], (b,), device).expect("timesteps");
     (img, img_ids, txt, txt_ids, timesteps, img_len)

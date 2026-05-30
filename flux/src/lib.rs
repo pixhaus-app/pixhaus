@@ -15,6 +15,25 @@
 //! building-block structs; reimplement the handful of module-private helpers
 //! locally; build the new block topology where it diverges from FLUX.1.
 
+// Test-only relaxations for the in-crate `#[cfg(test)]` modules. The workspace
+// floor denies unwrap/expect/panic and clippy.toml bans unwrap/expect, but the
+// unit tests build their own fixtures and tensors, where unwrapping a just-built
+// value and index/shape casts are idiomatic. `cfg_attr(test, ...)` keeps
+// production code held to the full strictness.
+#![cfg_attr(
+    test,
+    allow(
+        clippy::unwrap_used,
+        clippy::expect_used,
+        clippy::panic,
+        clippy::missing_panics_doc,
+        clippy::disallowed_methods,
+        clippy::cast_possible_truncation,
+        clippy::cast_precision_loss,
+        clippy::identity_op
+    )
+)]
+
 pub mod device;
 pub mod loader;
 pub mod model;

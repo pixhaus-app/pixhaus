@@ -27,9 +27,7 @@ use std::time::Duration;
 use mockall::mock;
 use mockall::predicate::eq;
 use pixhaus_ai::backends::local_flux::{FluxMode, FluxRequest, FluxRunner, FluxTick, LocalFluxBackend};
-use pixhaus_ai::backends::{
-    BackendError, ImageEditRequest, ImageGenRequest, InferenceBackend, InferenceRequest, InferenceResponse, Result as BackendResult,
-};
+use pixhaus_ai::backends::{BackendError, ImageEditRequest, ImageGenRequest, InferenceBackend, InferenceRequest, InferenceResponse, Result as BackendResult};
 use pixhaus_ai::plugin::descriptor::BackendCapabilities;
 use pixhaus_ai::plugin::progress::{VerbProgress, VerbProgressEvent};
 use tokio_util::sync::CancellationToken;
@@ -239,7 +237,12 @@ async fn image_edit_routes_to_image_to_image() {
     let backend = backend_with(|runner| {
         runner
             .expect_run()
-            .with(eq(FluxMode::ImageToImage), mockall::predicate::always(), mockall::predicate::always(), mockall::predicate::always())
+            .with(
+                eq(FluxMode::ImageToImage),
+                mockall::predicate::always(),
+                mockall::predicate::always(),
+                mockall::predicate::always(),
+            )
             .times(1)
             .returning(|_mode, req, tick, _cont| {
                 // The init image is threaded through from the edit request.

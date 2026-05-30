@@ -180,12 +180,8 @@ impl ShellApp {
                     ui.add(egui::TextEdit::multiline(&mut panel.prompt).desired_rows(3).hint_text("describe the result"));
 
                     if matches!(mode, LocalGenMode::ImageToImage | LocalGenMode::Inpaint) {
-                        ui.add(
-                            egui::Slider::new(&mut panel.strength, 0.0..=1.0)
-                                .text("strength")
-                                .fixed_decimals(2),
-                        )
-                        .on_hover_text("How far the result departs from the source (0 = keep, 1 = redraw)");
+                        ui.add(egui::Slider::new(&mut panel.strength, 0.0..=1.0).text("strength").fixed_decimals(2))
+                            .on_hover_text("How far the result departs from the source (0 = keep, 1 = redraw)");
                     }
 
                     if matches!(mode, LocalGenMode::ImageToImage) {
@@ -201,7 +197,11 @@ impl ShellApp {
                     .min_size(egui::vec2(ui.available_width(), 30.0));
                 if ui
                     .add_enabled(can_generate, button)
-                    .on_disabled_hover_text(if running { "A generation is already running" } else { "The on-device model is not ready" })
+                    .on_disabled_hover_text(if running {
+                        "A generation is already running"
+                    } else {
+                        "The on-device model is not ready"
+                    })
                     .clicked()
                 {
                     generate = true;
@@ -295,7 +295,12 @@ impl ShellApp {
                     return;
                 };
                 #[allow(clippy::cast_sign_loss)]
-                let region = (bounds.origin.x.max(0) as u32, bounds.origin.y.max(0) as u32, bounds.size.width, bounds.size.height);
+                let region = (
+                    bounds.origin.x.max(0) as u32,
+                    bounds.origin.y.max(0) as u32,
+                    bounds.size.width,
+                    bounds.size.height,
+                );
                 (Some(png), Some(mask_png), Some(region))
             }
         };
