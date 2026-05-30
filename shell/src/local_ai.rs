@@ -1,7 +1,7 @@
 //! Local-model UI plumbing — the download manager and the settings actions.
 //!
 //! The off-thread spawns model the shapes the rest of the shell already uses:
-//! [`spawn_model_download`] mirrors `ai::spawn_clip` (a cancel token owned by the
+//! `spawn_model_download` mirrors `ai::spawn_clip` (a cancel token owned by the
 //! [`ShellApp`] plus a progress closure that sends a `ShellMsg` and repaints),
 //! and [`spawn_model_probe`] mirrors `ai::spawn_backend_key_op`'s blocking shape
 //! (a presence check off the UI thread). The editor-mode Generate actions land

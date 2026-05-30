@@ -1,6 +1,6 @@
 //! Pixhaus native shell — eframe + egui binary.
 //!
-//! Owns the application state ([`app::DocumentStore`]), a tokio runtime for AI
+//! Owns the application state ([`DocumentStore`](crate::document::DocumentStore)), a tokio runtime for AI
 //! work, and a results channel pump drained once per frame. The vertical-slice
 //! flow (create sprite -> reference sheet -> animation -> playback) is built up
 //! over phases P0-P6; see `docs/native-ui-vertical-slice-plan.md`.

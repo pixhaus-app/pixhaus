@@ -851,7 +851,7 @@ impl DocumentStore {
     /// machine-readable record of how it was processed. `None` for callers that
     /// did not run the review (the headless runner, the demo).
     ///
-    /// `slice` is the resolved [`SliceGrid`] that cut the source grid sheet into
+    /// `slice` is the resolved `SliceGrid` that cut the source grid sheet into
     /// these frames; it rides onto the new [`Animation`] so the cut is
     /// reproducible after save/load. `None` for frames that did not come from a
     /// sliced sheet (the i2v and video-import paths, the headless runner).
@@ -950,7 +950,7 @@ impl DocumentStore {
 
     /// Keys `key` out of `buffer_id` in place, returning the pre-key snapshot so
     /// the caller can record an undo entry. `None` when the buffer is missing.
-    /// The keying itself is the pure [`chroma_key`](pixhaus_core::transforms::normalize::chroma_key);
+    /// The keying itself is the pure [`chroma_key`];
     /// this just swaps the stored buffer and hands back the original.
     pub fn chroma_key_buffer(&mut self, buffer_id: PixelBufferId, key: ChromaKey) -> Option<PixelBuffer> {
         let before = self.pixel_buffers.get(&buffer_id)?.clone();

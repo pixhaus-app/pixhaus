@@ -43,7 +43,12 @@ allow = [
 ]
 confidence-threshold = 0.8
 # Per-crate license exceptions go here if a dependency needs one.
-exceptions = []
+exceptions = [
+    # egui's bundled default fonts (Ubuntu-Light, Hack, NotoEmoji, emoji-icon-font)
+    # ship as embedded assets under the standard permissive font licenses. The
+    # crate's code is MIT OR Apache-2.0; only the font assets need this allowance.
+    { name = "epaint_default_fonts", allow = ["OFL-1.1", "Ubuntu-font-1.0"] },
+]
 
 [bans]
 # Surface, but do not fail on, duplicate versions and wildcard deps — these

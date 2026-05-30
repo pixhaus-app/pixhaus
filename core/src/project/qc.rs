@@ -1,7 +1,7 @@
 //! Per-frame QC and provenance for a landed animation.
 //!
-//! The studio measures a [`NormalizeReport`](crate::transforms::NormalizeReport)
-//! and per-frame [`FrameMetrics`](crate::transforms::FrameMetrics) when it
+//! The studio measures a [`NormalizeReport`]
+//! and per-frame [`FrameMetrics`] when it
 //! reviews a normalized loop, then drops both when it lands the frames. This
 //! module is the serializable record that survives the Land: the exact key,
 //! tolerance, alpha threshold, and canvas the frames came from, the aggregate
@@ -45,7 +45,7 @@ pub struct QcSettings {
 }
 
 /// Per-frame QC for one landed frame, mirroring the
-/// [`FrameMetrics`](crate::transforms::FrameMetrics) fields the record keeps.
+/// [`FrameMetrics`] fields the record keeps.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct FrameQc {
     /// The frame's opaque bounding box `(x, y, w, h)`.
@@ -84,7 +84,7 @@ impl From<&FrameMetrics> for FrameQc {
 }
 
 /// The aggregate report fields the QC record keeps, the serializable summary of
-/// [`NormalizeReport`](crate::transforms::NormalizeReport).
+/// [`NormalizeReport`].
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct NormalizeReportSummary {
     /// Worst foot-baseline deviation across the landed frames, in pixels.

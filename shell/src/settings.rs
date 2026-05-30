@@ -4,7 +4,7 @@
 //! The window is an egui *immediate* viewport (`show_viewport_immediate`) rather
 //! than an in-canvas modal, so it gets its own OS window, decorations, and close
 //! button. Immediate (not deferred) is the deliberate choice: the viewport UI
-//! closure runs synchronously inside [`crate::app::ShellApp::ui`] and borrows
+//! closure runs synchronously inside `crate::app::ShellApp::ui` and borrows
 //! `&mut self`, so the tabs mutate app state, the keymap, and the keychain
 //! directly — no `Arc<Mutex<…>>` handshake. The X button is detected through the
 //! viewport's `close_requested` and clears `settings_open`.
@@ -31,7 +31,7 @@ pub(crate) enum SettingsTab {
 
 impl ShellApp {
     /// Shows the settings window when `settings_open` is set. Called once per
-    /// frame from [`ShellApp::ui`]; a no-op while closed.
+    /// frame from `ShellApp::ui`; a no-op while closed.
     pub(crate) fn show_settings_window(&mut self, ctx: &egui::Context) {
         if !self.settings_open {
             // Don't carry a half-finished rebind capture into the next opening.

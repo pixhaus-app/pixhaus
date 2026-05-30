@@ -295,7 +295,7 @@ fn directional_variant(id: SheetVariantId, created_at: i64, neutral: &SheetVaria
 /// one undoable library edit. The store step of a south/west/north derivation: it
 /// mints the variant via [`directional_variant`] (stamping the `DirectionalAnchor`
 /// origin and the `parent_variant_id` edge back to the neutral) and writes it onto
-/// the matching directional slot via [`DirectionalAnchors::set`], through
+/// the matching directional slot via `DirectionalAnchors::set`, through
 /// [`crate::commands::push_library_edit`], so undo removes it and the grid's cell
 /// goes fresh.
 ///
@@ -334,7 +334,7 @@ fn store_directional(
 
 /// Enables east-as-flip-of-west on the entity's [`CharacterAnchor`] as one
 /// undoable library edit. East is never generated: this calls
-/// [`DirectionalAnchors::set`] with [`AnchorDirection::East`], a no-op store that
+/// `DirectionalAnchors::set` with [`AnchorDirection::East`], a no-op store that
 /// flips `east_from_west` on so Land mirrors the west loop for east. No variant is
 /// stored. Idempotent — when `east_from_west` is already set,
 /// [`crate::commands::push_library_edit`] sees no change and records no entry.

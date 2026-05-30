@@ -252,7 +252,7 @@ pub struct VerbContext {
     /// Currently-displayed frame.
     pub active_frame: Option<FrameIndex>,
     /// Active palette resolved from
-    /// [`pixhaus_core::project::CanvasState`]. May differ from the
+    /// `pixhaus_core::project::CanvasState`. May differ from the
     /// sprite's first palette when the user has switched context.
     pub active_palette: Option<Palette>,
     /// Selection bounds, if any. `None` means "no selection — operate

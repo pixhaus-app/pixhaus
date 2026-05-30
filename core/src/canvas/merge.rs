@@ -6,7 +6,7 @@
 //! over [`composite_layers`] — it never re-implements the blend math.
 //! Keeping the merge here, beside the compositor, gives the operation
 //! its own name at the call site and its own test, while the single
-//! source of truth for blending stays in [`mod@composite`].
+//! source of truth for blending stays in [`mod@super::composite`].
 
 use super::buffer::PixelBuffer;
 use super::composite::{LayerInput, composite_layers};
@@ -38,7 +38,7 @@ pub fn merge_pair(below: &LayerInput<'_>, above: &LayerInput<'_>, width: u32, he
 /// collapse every visible raster layer into the bottom-most one. Like
 /// [`merge_pair`], it is a thin, named wrapper over [`composite_layers`] so the
 /// intent reads at the call site and flatten gets its own test — the blend math
-/// stays in [`mod@composite`]. The result is byte-identical to what the live
+/// stays in [`mod@super::composite`]. The result is byte-identical to what the live
 /// compositor shows for the same inputs.
 ///
 /// # Errors

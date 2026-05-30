@@ -12,10 +12,10 @@
 //! - [`parse_lospec_json`] turns the endpoint's `{ name, colors: [hex...] }`
 //!   body into `(name, Vec<Rgba>)` via [`hex::parse`]. Pure, no network, always
 //!   compiled so the parse test runs in the default build.
-//! - Behind the feature, [`fetch_palette`] performs the blocking GET and
-//!   [`spawn_fetch`] runs it on a background thread, delivering the result back
-//!   over the shell's [`ShellMsg`] channel polled in the update loop.
-//! - The panel ([`ShellApp::lospec_section`]) creates a new palette named after
+//! - Behind the feature, `fetch_palette` performs the blocking GET and
+//!   `spawn_fetch` runs it on a background thread, delivering the result back
+//!   over the shell's `ShellMsg` channel polled in the update loop.
+//! - The panel (`ShellApp::lospec_section`) creates a new palette named after
 //!   the result and appends the colours as one `SpriteEdit`; failures surface
 //!   inline.
 //!

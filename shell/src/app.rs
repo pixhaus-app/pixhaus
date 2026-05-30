@@ -3,7 +3,7 @@
 //! [`DocumentStore`] is a plain field mutated through `&mut self` — single
 //! owner, no `RwLock` for UI-thread access. Background AI work runs on the
 //! owned tokio runtime and reports back over [`ShellMsg`] on an `mpsc` channel
-//! that [`ShellApp::logic`] drains each frame.
+//! that `ShellApp::logic` drains each frame.
 
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::sync::Arc;
@@ -512,7 +512,7 @@ pub enum ShellMsg {
     },
     /// A GUI sprite export finished off-thread: the written path on success
     /// (for the status line), `None` if the save dialog was cancelled, or an
-    /// error to surface. Drained in [`ShellApp::logic`].
+    /// error to surface. Drained in `ShellApp::logic`.
     SpriteExported {
         /// The path written on success, `None` if the dialog was cancelled, or
         /// a user-facing error string.
@@ -728,7 +728,7 @@ pub struct ShellApp {
     pub(crate) runtime: Runtime,
     /// Cloned and handed to background tasks so they can report results (P4+).
     pub(crate) tx: mpsc::Sender<ShellMsg>,
-    /// Drained each frame by [`ShellApp::logic`].
+    /// Drained each frame by `ShellApp::logic`.
     rx: mpsc::Receiver<ShellMsg>,
     /// wgpu device/queue/format handle; `None` only if the wgpu backend failed
     /// to initialize.
@@ -3280,8 +3280,8 @@ impl ShellApp {
 
     /// Pushes a decoded clip as a new gallery card with auto-detected loop
     /// markers and evenly-spaced picks, then selects it. Shared by the i2v result
-    /// path ([`on_clip_ready`]) and the user-video import path
-    /// ([`on_video_imported`]), which differ only in provenance (motion prompt,
+    /// path (`on_clip_ready`) and the user-video import path
+    /// (`on_video_imported`), which differ only in provenance (motion prompt,
     /// fps, seed, lineage).
     #[allow(clippy::too_many_arguments)]
     fn push_clip_candidate(

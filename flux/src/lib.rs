@@ -1,4 +1,4 @@
-//! On-device FLUX.2 [klein] 4B image generation for Pixhaus.
+//! On-device FLUX.2 `klein` 4B image generation for Pixhaus.
 //!
 //! This crate ports the FLUX.2 inference pipeline to the [Candle](https://github.com/huggingface/candle)
 //! Rust ML framework: load the bf16 weights, run 4-step distilled

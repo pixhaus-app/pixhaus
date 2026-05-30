@@ -9,7 +9,7 @@
 //!
 //! # Shared helper
 //!
-//! [`ctx_fat_backend`] recovers the fat operational backend
+//! `ctx_fat_backend` recovers the fat operational backend
 //! ([`crate::backends::InferenceBackend`]) from the thin
 //! [`crate::plugin::backend::InferenceBackend`] the runtime stores on
 //! [`crate::plugin::context::VerbContext::backend`]. The full crate downcasts

@@ -7,7 +7,7 @@
 //!
 //! Clip decoding is pluggable: [`decode_clip`] handles GIF/APNG with the
 //! `image` crate (no external binary). MP4/WebM decode needs `ffmpeg` and is
-//! the isolated follow-up — it returns [`DecodeError::NeedsFfmpeg`] for now.
+//! the isolated follow-up — it returns `DecodeError::NeedsFfmpeg` for now.
 
 use std::io::Cursor;
 

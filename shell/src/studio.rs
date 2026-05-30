@@ -2787,7 +2787,7 @@ impl ShellApp {
     }
 
     /// The normalize inspector: the editable [`NormalizeKnobs`] up top, then the
-    /// [`NormalizeReport`] rendered as drift, scale-match, the seam verdict (same
+    /// `NormalizeReport` rendered as drift, scale-match, the seam verdict (same
     /// colour thresholds as the pick stage), and the warnings list, with a Land
     /// affordance.
     fn studio_normalize_inspector(&mut self, ui: &mut egui::Ui) {
@@ -3498,7 +3498,7 @@ fn centered_hint(ui: &mut egui::Ui, text: &str) {
     });
 }
 
-/// The review category for one [`NormalizeReport`] field, decoupled from egui so
+/// The review category for one `NormalizeReport` field, decoupled from egui so
 /// it is unit-testable: a value maps to Ok / Warning / Error, which the inspector
 /// renders with the studio's success / warning / error palette colours.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

@@ -45,7 +45,7 @@ impl VariableAxis {
 ///
 /// The phrase opens by naming the reference image (so reference-visible-first
 /// holds even when the model sees only text), lists the locked attributes from
-/// [`FIXED_ATTRS`], then states the single axis that is free to change. Pure,
+/// `FIXED_ATTRS`, then states the single axis that is free to change. Pure,
 /// deterministic, and never empty — the same axis always yields the same bytes.
 ///
 /// ```

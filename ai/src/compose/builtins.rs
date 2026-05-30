@@ -778,7 +778,7 @@ fn bit_action_prompt(action: &BitAction) -> PromptTemplate {
 }
 
 /// A one-click preset for the cockpit: an action label and the prompt,
-/// structure, and style ids it applies on click. Built from [`BIT_ACTIONS`] so
+/// structure, and style ids it applies on click. Built from `BIT_ACTIONS` so
 /// the card set tracks the prompt pack and never drifts.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct BitPreset {
@@ -793,7 +793,7 @@ pub struct BitPreset {
     pub style_id: String,
 }
 
-/// The cockpit's one-click Bit preset cards, one per [`BIT_ACTIONS`] entry in
+/// The cockpit's one-click Bit preset cards, one per `BIT_ACTIONS` entry in
 /// pack order.
 ///
 /// Pure and data-driven: each card carries the action's prompt id, the

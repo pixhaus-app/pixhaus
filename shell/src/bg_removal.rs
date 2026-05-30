@@ -1,7 +1,7 @@
 //! Background removal as a re-runnable timeline operation.
 //!
 //! Removal left the animation pipeline (see
-//! `docs/native-ui-animation-pipeline.md`) and became a [`DocumentStore`] op
+//! `docs/native-ui-animation-pipeline.md`) and became a `DocumentStore` op
 //! over a cel or a whole layer, recorded on the undo history like any pixel
 //! edit. It tries keying first — fast, free, deterministic — and falls back to
 //! the AI `BACKGROUND_REMOVAL` backend, which the dithered Seedance backgrounds

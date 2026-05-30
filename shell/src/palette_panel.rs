@@ -4,7 +4,7 @@
 //! A switcher (combo box plus add / delete / rename / reorder) picks which of
 //! the sprite's palettes the panel shows and edits; the selection lives in
 //! [`crate::editor::EditorState::active_palette_id`] and resolves through
-//! [`DocumentStore::active_palette_by_id`], falling back to the first palette.
+//! `DocumentStore::active_palette_by_id`, falling back to the first palette.
 //!
 //! Click a swatch to set the foreground colour, Ctrl-click to multi-select,
 //! right-click for the per-swatch menu (edit / rename / lock / remove), and
@@ -858,7 +858,7 @@ impl ShellApp {
     /// Snaps every opaque pixel on the active frame to its nearest palette
     /// colour, rewriting each raster cel's buffer in place. Routes through one
     /// [`CanvasEdit`] covering every touched buffer — not [`push_sprite_edit`] —
-    /// because the edit changes pixel bytes, not the [`Sprite`] structure. The
+    /// because the edit changes pixel bytes, not the `Sprite` structure. The
     /// before/after sprite values are identical; only the buffers swap.
     ///
     /// A no-op when there is no active sprite, the palette is empty, or the

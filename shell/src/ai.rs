@@ -1007,9 +1007,9 @@ pub fn sheet_to_frames(sheet: &PixelBuffer, rows: u32, cols: u32, fps: u32) -> R
 
 /// Re-slices a decoded sheet through a [`SliceGrid`] spec into ordered
 /// [`VideoFrame`]s, stamping each cell with the same `i * 1000 / fps` timestamp
-/// [`sheet_to_frames`] uses. The Sheet stage calls this to re-cut live as the
+/// `sheet_to_frames` uses. The Sheet stage calls this to re-cut live as the
 /// user adjusts the slice gizmo, so the gizmo and `sheet_to_frames` agree on the
-/// uniform case ([`SliceGrid::uniform`] reproduces [`slice_grid`] exactly).
+/// uniform case ([`SliceGrid::uniform`] reproduces `slice_grid` exactly).
 ///
 /// # Errors
 /// Returns the slicer's error string when the spec collapses a derived cell

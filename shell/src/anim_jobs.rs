@@ -257,7 +257,7 @@ impl AnimJobQueue {
     /// as a `Done` job with `model = "imported"`, writing its clip blob beside the
     /// sidecar. There is no `Running` phase and no cancel token: the clip exists
     /// before the record does. Returns the allocated id. If the blob cannot be
-    /// written the record is `Error`, mirroring [`finish_done`]'s honesty rule.
+    /// written the record is `Error`, mirroring [`finish_done`](Self::finish_done)'s honesty rule.
     pub(crate) fn record_import(
         &mut self,
         entity_id: EntityId,

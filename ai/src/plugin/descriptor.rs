@@ -131,7 +131,7 @@ impl BackendCapabilities {
 
     /// The empty set — the verb runs entirely on local CPU and needs
     /// no inference backend. Used by classical-only verbs (Cleanup's
-    /// fast path) and the [`super::echo::EchoVerb`] reference plugin.
+    /// fast path) and the `super::echo::EchoVerb` reference plugin.
     #[must_use]
     pub const fn empty() -> Self {
         Self(0)

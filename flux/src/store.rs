@@ -203,7 +203,7 @@ impl ModelStore {
     /// non-empty on disk.
     ///
     /// Non-emptiness is the cheap presence check the gate needs; the stronger
-    /// per-file size equality used during download (see [`ModelStore::download`])
+    /// per-file size equality used during download (see `ModelStore::download`)
     /// catches truncation.
     #[must_use]
     pub fn is_downloaded(&self) -> bool {

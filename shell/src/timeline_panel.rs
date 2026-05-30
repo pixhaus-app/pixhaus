@@ -340,7 +340,7 @@ impl ShellApp {
     /// clips). Each row carries an inline-renamable name, a range readout, a
     /// loop-direction combo, and a speed-multiplier field. "Add from selected
     /// range" appends one over the effective frame selection. Every edit is one
-    /// undoable [`SpriteEdit`].
+    /// undoable `SpriteEdit`.
     ///
     /// Animations pair with frame tags by equal name: `set_tag_playback` mirrors
     /// a tag's loop direction onto its same-named animation, so an exporter can
@@ -451,7 +451,7 @@ impl ShellApp {
     /// Appends an engine animation over the effective frame selection (the
     /// selected frames, or the active frame alone), with a fresh
     /// [`pixhaus_core::project::AnimationId`] and a generated `Anim N` name. One
-    /// undoable [`SpriteEdit`]. The id is allocated before the edit closure, as
+    /// undoable `SpriteEdit`. The id is allocated before the edit closure, as
     /// the rest of the timeline does.
     fn add_animation_from_selection(&mut self) {
         let active = self.doc.active_frame.get();
@@ -898,7 +898,7 @@ impl ShellApp {
     }
 
     /// Reverses the order of the selected frames (or the active frame alone, a
-    /// no-op) in one undoable [`SpriteEdit`]. Wired from the frame context menu.
+    /// no-op) in one undoable `SpriteEdit`. Wired from the frame context menu.
     fn reverse_selected_frames(&mut self) {
         let active = self.doc.active_frame.get();
         let set = self.editor.effective_frames(active);
@@ -913,7 +913,7 @@ impl ShellApp {
 
     /// Runs a tag context-menu pick. Rename opens the inline editor; delete
     /// drops the tag; the playback ops set loop direction and repeat. Each
-    /// change is one undoable [`SpriteEdit`].
+    /// change is one undoable `SpriteEdit`.
     fn apply_tag_menu(&mut self, action: TagMenuAction) {
         let idx = action.tag;
         match action.op {
@@ -1303,7 +1303,7 @@ impl ShellApp {
     }
 
     /// Copies the selected frames, then deletes them — the standard cut. The
-    /// copy records nothing; the delete is one undoable [`SpriteEdit`].
+    /// copy records nothing; the delete is one undoable `SpriteEdit`.
     // Wired by the frame context menu (plan task 11).
     pub(crate) fn cut_frames(&mut self) {
         self.copy_frames();
@@ -1316,7 +1316,7 @@ impl ShellApp {
     /// Rejects (no-op + warn) when the clipboard's canvas size differs from the
     /// active sprite's: a cel's bytes are sized for the source canvas, and v2
     /// does not scale on paste. The new frames and their buffers are recorded as
-    /// one [`SpriteBufferEdit`], so undo removes both the frames and the pasted
+    /// one `SpriteBufferEdit`, so undo removes both the frames and the pasted
     /// buffers rather than leaking them. The playhead lands on the first pasted
     /// frame.
     // Wired by the frame context menu (plan task 11).
