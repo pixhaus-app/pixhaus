@@ -1376,7 +1376,10 @@ mod tests {
         let payload = decode_payload(&inv.finish().await.unwrap().output);
         let prompt = &payload.variants[0].generation.prompt;
         assert!(!prompt.starts_with("pixel art"), "a clean-HD style must not prefix pixel art: {prompt}");
-        assert!(prompt.starts_with("high-detail reference sheet"), "clean-HD style must lead with its baseline: {prompt}");
+        assert!(
+            prompt.starts_with("high-detail reference sheet"),
+            "clean-HD style must lead with its baseline: {prompt}"
+        );
     }
 
     #[tokio::test]
@@ -1410,7 +1413,11 @@ mod tests {
             .invoke(&VerbId::new(GENERATE_REFERENCE_SHEET_VERB_ID), VerbContext::empty(meta()), inputs)
             .unwrap();
         let payload = decode_payload(&inv.finish().await.unwrap().output);
-        assert_eq!(payload.finisher.kind, ArtStyleKind::CleanHd, "the resolved style kind rides on the payload finisher");
+        assert_eq!(
+            payload.finisher.kind,
+            ArtStyleKind::CleanHd,
+            "the resolved style kind rides on the payload finisher"
+        );
         assert!(!payload.finisher.kind.is_pixel(), "clean-HD must not gate the pixel finisher");
     }
 

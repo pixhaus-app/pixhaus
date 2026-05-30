@@ -13,8 +13,8 @@ use pixhaus_ai::compose::builtins::BuiltinLibrary;
 use pixhaus_core::project::ProjectAi;
 use pixhaus_core::project::library::ai::{ModelId, Quality};
 use pixhaus_core::project::library::composition::{
-    ArtStyleKind, Dimensions, PanelRect, PanelSlot, PromptId, PromptTemplate, PromptVariable, Structure, StructureId, StructureOutput, StructurePanel,
-    Style, StyleId, VarControl,
+    ArtStyleKind, Dimensions, PanelRect, PanelSlot, PromptId, PromptTemplate, PromptVariable, Structure, StructureId, StructureOutput, StructurePanel, Style,
+    StyleId, VarControl,
 };
 use pixhaus_core::project::library::pixstyle::{ConflictPolicy, StylePack, merge_pack, read_pack, write_pack};
 

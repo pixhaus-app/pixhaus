@@ -81,7 +81,10 @@ mod tests {
             assert!(clause.contains(attr), "clause must lock `{attr}`: {clause}");
         }
         // Exactly this axis's variable phrase is named as free to change.
-        assert!(clause.contains(&format!("change only {variable}")), "clause must free only `{variable}`: {clause}");
+        assert!(
+            clause.contains(&format!("change only {variable}")),
+            "clause must free only `{variable}`: {clause}"
+        );
     }
 
     #[rstest]

@@ -336,7 +336,16 @@ mod tests {
             // 7 frames, 3 cols -> 3 rows -> 12x12 atlas, two trailing cells empty.
             assert_eq!((atlas.image.width(), atlas.image.height()), (12, 12));
             assert_eq!(atlas.frames.len(), 7);
-            assert_eq!(atlas.frames[6], FrameRect { index: 6, x: 0, y: 8, w: 4, h: 4 });
+            assert_eq!(
+                atlas.frames[6],
+                FrameRect {
+                    index: 6,
+                    x: 0,
+                    y: 8,
+                    w: 4,
+                    h: 4
+                }
+            );
             // The two trailing cells (col 1 and 2 of the last row) stay transparent.
             assert_eq!(atlas.image.pixel(4, 8), Some(Rgba::transparent()));
             assert_eq!(atlas.image.pixel(8, 8), Some(Rgba::transparent()));
@@ -348,7 +357,16 @@ mod tests {
             let atlas = pack_atlas(&frames, AtlasOptions::default()).unwrap();
             assert_eq!(atlas.columns, 2);
             assert_eq!((atlas.image.width(), atlas.image.height()), (6, 6));
-            assert_eq!(atlas.frames[3], FrameRect { index: 3, x: 3, y: 3, w: 3, h: 3 });
+            assert_eq!(
+                atlas.frames[3],
+                FrameRect {
+                    index: 3,
+                    x: 3,
+                    y: 3,
+                    w: 3,
+                    h: 3
+                }
+            );
         }
 
         #[test]

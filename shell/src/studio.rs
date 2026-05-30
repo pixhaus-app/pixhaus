@@ -33,6 +33,7 @@ use pixhaus_ai::backends::fal::{FAL_I2V, FAL_SEEDANCE};
 use pixhaus_core::canvas::PixelBuffer;
 use pixhaus_core::project::{AnchorDirection, AnimationKind, Rgba, SpriteId};
 use pixhaus_core::transforms::normalize::{ChromaKey, ComponentMode, NormalizeResult, SeamMatch, chroma_key, detect_key_color};
+use pixhaus_core::transforms::sheet::SliceGrid;
 
 use crate::ai::{self, FirstFrameJob};
 use crate::anim::{self, VideoFrame};
@@ -54,6 +55,10 @@ pub(crate) enum StudioStage {
     FirstFrame,
     /// Choreography prompt, model pick, fps, frame count, seed.
     Motion,
+    /// Cut the raw grid sheet: a slice gizmo over the generated sheet that
+    /// re-slices live. Only reached on the static-sheet path; the i2v path skips
+    /// straight to the clip.
+    Sheet,
     /// Scrub the raw clip and drag the loop markers.
     Clip,
     /// Toggle the evenly-spaced picks and read the seam score.
@@ -66,10 +71,11 @@ pub(crate) enum StudioStage {
 
 impl StudioStage {
     /// The stages in pipeline order, for the rail.
-    const ALL: [StudioStage; 7] = [
+    const ALL: [StudioStage; 8] = [
         StudioStage::Anchor,
         StudioStage::FirstFrame,
         StudioStage::Motion,
+        StudioStage::Sheet,
         StudioStage::Clip,
         StudioStage::Pick,
         StudioStage::Normalize,
@@ -82,6 +88,7 @@ impl StudioStage {
             StudioStage::Anchor => "Anchor",
             StudioStage::FirstFrame => "First frame",
             StudioStage::Motion => "Motion",
+            StudioStage::Sheet => "Slice",
             StudioStage::Clip => "Clip & loop",
             StudioStage::Pick => "Frame pick",
             StudioStage::Normalize => "Normalize",
@@ -413,14 +420,29 @@ fn rasterize_gizmo(giz: &BoxGizmo, mask: &mut MaskOverlay) {
     mask.mark(rx, ry, rw, rh);
 }
 
+/// Where a Normalize-stage "edit pixels" round trip returns to: the clip and the
+/// frame index within it whose buffer the edit replaces, so the edit flows back
+/// into the pick set without re-picking.
+#[derive(Clone, Copy)]
+pub(crate) struct PickReturn {
+    /// The selected clip candidate index.
+    pub clip: usize,
+    /// The frame index within the clip (a pick value, not a strip slot).
+    pub frame: usize,
+}
+
 /// Breadcrumb for a hand-edit round trip: the sprite to re-select on return and
-/// the temporary edit sprite to drop. The edited image lands in the first-frame
-/// thread.
+/// the temporary edit sprite to drop. Without [`Self::pick`] the edited image
+/// lands in the first-frame thread (the seed-pose hand edit); with it, the edit
+/// returns into that clip frame's buffer (the Normalize-stage frame edit).
 pub(crate) struct StudioReturn {
     /// The sprite that was active before hand-editing, restored on return.
     pub origin: Option<SpriteRef>,
     /// The scratch sprite created for the edit, deleted on return.
     pub edit: SpriteRef,
+    /// When set, the edit returns into this clip frame's buffer instead of the
+    /// first-frame thread.
+    pub pick: Option<PickReturn>,
 }
 
 /// The center-viewport refine state shared by the generation stages: the pan and
@@ -720,6 +742,35 @@ pub(crate) fn save_studio_sessions(sessions: &HashMap<SpriteId, StudioSession>) 
     }
 }
 
+/// The editable normalize knobs that have no other home on the studio. The
+/// canvas comes from the active sprite, the chroma key from the background-key
+/// fields, and the component mode from the Land keying toggles, so those are not
+/// duplicated here; this carries only the measurement knobs the Normalize
+/// inspector exposes. Folded into [`NormalizeCacheKey`] so a change re-runs the
+/// pass in place.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(crate) struct NormalizeKnobs {
+    /// Alpha at or below this counts as background when measuring the bbox.
+    pub alpha_threshold: u8,
+    /// Reference visible height every subject is scaled to. `None` infers it
+    /// from the tallest picked subject.
+    pub reference_height: Option<u32>,
+    /// Pixels the foot baseline sits above the canvas bottom.
+    pub bottom_margin: u32,
+}
+
+impl Default for NormalizeKnobs {
+    fn default() -> Self {
+        // Matches the values the static-sheet path used before the knobs existed,
+        // so an untouched inspector reproduces the prior cut exactly.
+        Self {
+            alpha_threshold: 8,
+            reference_height: None,
+            bottom_margin: 0,
+        }
+    }
+}
+
 /// The inputs that determine the cached [`StudioState::normalize`] result. When
 /// any of these change, the cached normalization is stale and must be recomputed
 /// before Land trusts it. Cheap to compare (no buffer hashing): the selected
@@ -744,6 +795,12 @@ pub(crate) struct NormalizeCacheKey {
     pub all_parts: bool,
     /// The min opaque-pixel area a part needs to survive the `All` mode.
     pub min_area: u32,
+    /// The alpha background threshold the measurement uses.
+    pub alpha_threshold: u8,
+    /// The reference height subjects scale toward (`None` infers it).
+    pub reference_height: Option<u32>,
+    /// The foot-baseline bottom margin.
+    pub bottom_margin: u32,
 }
 
 /// The studio's whole session state. Lives on [`ShellApp`]; the clip candidates
@@ -775,6 +832,25 @@ pub(crate) struct StudioState {
     pub grid_rows: u32,
     /// Static-sheet grid columns (consulted only in [`GenMode::Static`]).
     pub grid_cols: u32,
+    /// The raw generated grid sheet, retained for the Sheet stage to show and
+    /// re-cut. `None` until a static sheet lands.
+    pub sheet: Option<PixelBuffer>,
+    /// The slice geometry for the retained sheet, seeded uniform from the
+    /// generation grid and adjusted by the slice gizmo.
+    pub slice: SliceGrid,
+    /// The per-cell size the retained sheet was generated for (`cell_w`,
+    /// `cell_h`).
+    pub sheet_cell: (u32, u32),
+    /// Cached texture for the retained sheet, built lazily on the Sheet stage and
+    /// dropped when a new sheet lands.
+    pub sheet_texture: Option<egui::TextureHandle>,
+    /// Whether the Sheet stage shows the sheet at 1:1 (else fit-to-view).
+    pub sheet_one_to_one: bool,
+    /// Which slice edge a Sheet-stage drag is currently moving, set on press.
+    pub sheet_drag: Option<SliceEdge>,
+    /// The slice spec the cached preview frames were last cut with, so a changed
+    /// spec triggers a live re-slice. `None` until the first re-slice runs.
+    pub sheet_sliced: Option<SliceGrid>,
     /// Whether the second clip is shown beside the first for comparison.
     pub compare: bool,
     /// The other clip index in a side-by-side comparison.
@@ -793,6 +869,9 @@ pub(crate) struct StudioState {
     /// Lazily-built textures for the normalized strip, one per cached frame.
     /// Cleared whenever the cache is recomputed.
     pub normalize_textures: Vec<Option<egui::TextureHandle>>,
+    /// The editable normalize knobs the Normalize inspector drives. Folded into
+    /// [`NormalizeCacheKey`] so a change re-runs the pass in place.
+    pub norm_knobs: NormalizeKnobs,
     /// Which scrubber handle a drag is currently moving.
     pub drag_handle: Option<ScrubHandle>,
     /// Whether the raw-clip player loops at the end (vs stopping). Defaults on.
@@ -845,12 +924,20 @@ impl Default for StudioState {
             gen_mode: default_gen_mode(),
             grid_rows: default_grid_rows(),
             grid_cols: default_grid_cols(),
+            sheet: None,
+            slice: SliceGrid::uniform(default_grid_rows(), default_grid_cols()),
+            sheet_cell: (0, 0),
+            sheet_texture: None,
+            sheet_one_to_one: false,
+            sheet_drag: None,
+            sheet_sliced: None,
             compare: false,
             compare_other: None,
             landed: false,
             normalize: None,
             normalize_key: None,
             normalize_textures: Vec::new(),
+            norm_knobs: NormalizeKnobs::default(),
             drag_handle: None,
             loop_playback: true,
             picking_key: false,
@@ -1178,8 +1265,16 @@ impl ShellApp {
     /// always for the Anchor stage, which has none).
     fn studio_unmet_prereq(&self) -> Option<StudioStage> {
         let idx = StudioStage::ALL.iter().position(|s| *s == self.studio.stage)?;
-        let prev = StudioStage::ALL.get(idx.checked_sub(1)?)?;
-        if self.studio_stage_complete(*prev) { None } else { Some(*prev) }
+        let mut prev = *StudioStage::ALL.get(idx.checked_sub(1)?)?;
+        // The Sheet stage only applies to the static-sheet path. On the i2v path
+        // no sheet is retained, so it is never "complete" and would wrongly gate
+        // the Clip stage behind it; skip it as a prerequisite then, falling back
+        // to the stage before it (Motion).
+        if prev == StudioStage::Sheet && self.studio.sheet.is_none() {
+            let prev_idx = StudioStage::ALL.iter().position(|s| *s == prev)?;
+            prev = *StudioStage::ALL.get(prev_idx.checked_sub(1)?)?;
+        }
+        if self.studio_stage_complete(prev) { None } else { Some(prev) }
     }
 
     /// A centered guide shown in place of a gated stage's surface, with a button
@@ -1231,6 +1326,10 @@ impl ShellApp {
             StudioStage::Anchor => self.doc.active_anchor().is_some(),
             StudioStage::FirstFrame => self.studio.approved_first_frame.is_some(),
             StudioStage::Motion => !self.anim_candidates.is_empty(),
+            // The Sheet stage is complete once a sheet has been retained and a
+            // clip exists for it; the i2v path leaves it empty (no sheet) and the
+            // rail just shows it unchecked, which is fine — it is a no-op there.
+            StudioStage::Sheet => self.studio.sheet.is_some() && self.anim_card().is_some(),
             StudioStage::Clip => self.anim_card().is_some(),
             StudioStage::Pick => self.anim_card().is_some_and(|c| !c.picks.is_empty()),
             StudioStage::Normalize => self.studio.normalize.is_some(),
@@ -1248,6 +1347,7 @@ impl ShellApp {
             StudioStage::Anchor => self.studio_anchor_surface(ui),
             StudioStage::FirstFrame => self.studio_first_frame_surface(ui),
             StudioStage::Motion => self.studio_motion_surface(ui),
+            StudioStage::Sheet => self.studio_sheet_surface(ui),
             StudioStage::Clip => self.studio_clip_surface(ui),
             StudioStage::Pick => self.studio_pick_surface(ui),
             StudioStage::Normalize => self.studio_normalize_surface(ui),
@@ -1261,7 +1361,12 @@ impl ShellApp {
             ui.label(egui::RichText::new("Finish the earlier stage to unlock this one.").weak());
             return;
         }
-        if !self.backend_ready && !matches!(self.studio.stage, StudioStage::Clip | StudioStage::Pick | StudioStage::Normalize) {
+        if !self.backend_ready
+            && !matches!(
+                self.studio.stage,
+                StudioStage::Sheet | StudioStage::Clip | StudioStage::Pick | StudioStage::Normalize
+            )
+        {
             self.key_entry(ui);
             ui.separator();
         }
@@ -1269,6 +1374,7 @@ impl ShellApp {
             StudioStage::Anchor => self.studio_anchor_inspector(ui),
             StudioStage::FirstFrame => self.studio_first_frame_inspector(ui),
             StudioStage::Motion => self.studio_motion_inspector(ui),
+            StudioStage::Sheet => self.studio_sheet_inspector(ui),
             StudioStage::Clip => self.studio_clip_inspector(ui),
             StudioStage::Pick => self.studio_pick_inspector(ui),
             StudioStage::Normalize => self.studio_normalize_inspector(ui),
@@ -1649,31 +1755,76 @@ impl ShellApp {
         };
         let origin = self.doc.active_sprite_ref();
         let edit = self.doc.create_sprite_from_buffer("Hand-edit", buffer);
-        self.studio_return = Some(StudioReturn { origin, edit });
+        self.studio_return = Some(StudioReturn { origin, edit, pick: None });
         self.studio.frame_gen.view.painting = false;
         self.set_workspace(Workspace::Draw);
         self.refresh_canvas(true);
     }
 
-    /// Returns from a hand-edit: captures the edited pixels as a new candidate in
-    /// the first-frame thread, restores the original sprite, drops the scratch
-    /// sprite, and re-enters the studio at the first-frame stage.
+    /// Returns from a hand-edit: captures the edited pixels, restores the original
+    /// sprite, drops the scratch sprite, and re-enters the studio. A first-frame
+    /// hand edit lands the result as a new thread candidate at the first-frame
+    /// stage; a Normalize-stage frame edit ([`StudioReturn::pick`]) writes the
+    /// edited buffer back into that clip frame and returns to the Normalize stage,
+    /// re-running the cached normalize so the strip and report reflect the edit.
     pub(crate) fn finish_hand_edit(&mut self) {
         let Some(ret) = self.studio_return.take() else {
             return;
         };
-        let png = self.doc.composite_active_frame().and_then(|buf| pixel_buffer_to_png(&buf));
+        let edited = self.doc.composite_active_frame();
         if let Some(origin) = ret.origin {
             self.doc.select(origin);
         }
         self.doc.delete_sprite(ret.edit);
-        if let Some(png) = png {
-            let parent = self.gen_ref().selected;
-            self.on_gen_ready(vec![png], parent, true);
-        }
         self.workspace = Workspace::Create;
-        self.studio.stage = StudioStage::FirstFrame;
+        if let Some(pick) = ret.pick {
+            self.finish_pick_edit(pick, edited);
+        } else {
+            if let Some(png) = edited.and_then(|buf| pixel_buffer_to_png(&buf)) {
+                let parent = self.gen_ref().selected;
+                self.on_gen_ready(vec![png], parent, true);
+            }
+            self.studio.stage = StudioStage::FirstFrame;
+        }
         self.refresh_canvas(true);
+    }
+
+    /// Writes the `edited` buffer back into the clip frame the Normalize-stage
+    /// "edit pixels" round trip came from, restores the selection, and re-runs
+    /// the cached normalize so the strip and report show the edit. A `None` edit
+    /// (the scratch sprite produced no frame) is a no-op beyond returning to the
+    /// stage. The frame is rebuilt as a fresh [`VideoFrame`] from the edited
+    /// buffer, keeping its timestamp, and its cached thumbnail is dropped so the
+    /// pick strip rebuilds it.
+    fn finish_pick_edit(&mut self, pick: PickReturn, edited: Option<PixelBuffer>) {
+        self.studio.stage = StudioStage::Normalize;
+        self.anim_selected = Some(pick.clip);
+        let Some(buffer) = edited else {
+            return;
+        };
+        let Some(pixels) = pixel_buffer_to_png(&buffer).and_then(|png| crate::app::png_to_pixel_buffer(&png)) else {
+            return;
+        };
+        let Some(cand) = self.anim_candidates.get_mut(pick.clip) else {
+            return;
+        };
+        let Some(slot) = cand.frames.get_mut(pick.frame) else {
+            return;
+        };
+        let timestamp_ms = slot.timestamp_ms;
+        *slot = VideoFrame {
+            pixels: pixels.as_bytes().to_vec(),
+            width: pixels.width(),
+            height: pixels.height(),
+            timestamp_ms,
+        };
+        // Drop the cached thumbnail so the pick strip rebuilds it from the edit.
+        if let Some(thumb) = cand.thumbs.get_mut(pick.frame) {
+            *thumb = None;
+        }
+        // The frames changed, so the cached normalize is stale; recompute it.
+        self.refresh_normalize_cache();
+        self.sync_clip_preview();
     }
 
     /// Inpaint-refines the selected anchor result over its painted mask. The
@@ -2287,8 +2438,9 @@ impl ShellApp {
                 // The component policy only bites when Land keys the backdrop —
                 // without keying there are no detached specks to isolate.
                 if self.studio.remove_on_land {
-                    ui.checkbox(&mut self.studio.land_all_parts, "Keep all parts")
-                        .on_hover_text("On: keep every detached part above the min area (multi-part FX). Off: keep only the largest body, dropping stray specks");
+                    ui.checkbox(&mut self.studio.land_all_parts, "Keep all parts").on_hover_text(
+                        "On: keep every detached part above the min area (multi-part FX). Off: keep only the largest body, dropping stray specks",
+                    );
                 }
             });
     }
@@ -2485,10 +2637,19 @@ impl ShellApp {
         if self.studio.normalize_textures.len() != result.frames.len() {
             self.studio.normalize_textures = vec![None; result.frames.len()];
         }
+        // The strip is in pick order: strip slot `idx` is the normalized form of
+        // the selected card's `picks[idx]`. Snapshot the picks so a per-frame drop
+        // can name the source frame after the `result` borrow ends.
+        let picks: Vec<usize> = self.anim_card().map(|c| c.picks.clone()).unwrap_or_default();
         let target_baseline = result.frames.first().map_or(0, PixelBuffer::height).saturating_sub(1);
         let palette = crate::theme::Palette::for_theme(ctx.theme());
         ui.label(egui::RichText::new("Normalized loop — exactly what lands").small().weak());
+        ui.label(egui::RichText::new("Drop a junk frame, or send one to Draw for manual surgery.").small().weak());
         ui.add_space(4.0);
+        // Deferred per-frame action, applied after the `result` borrow releases:
+        // dropping a pick or handing a frame to the Draw editor both mutate `self`.
+        let mut drop_pick: Option<usize> = None;
+        let mut edit_pick: Option<usize> = None;
         egui::ScrollArea::horizontal().show(ui, |ui| {
             ui.horizontal(|ui| {
                 for idx in 0..result.frames.len() {
@@ -2500,27 +2661,135 @@ impl ShellApp {
                     };
                     let metric = result.metrics.get(idx);
                     let drift = metric.filter(|m| !m.empty).map_or(0, |m| m.foot_baseline_y.abs_diff(target_baseline));
-                    ui.vertical(|ui| {
-                        let size = tex.size_vec2();
-                        let scale = (96.0 / size.y.max(1.0)).min(1.0);
-                        ui.add(egui::Image::new((tex.id(), size * scale)));
-                        let drift_color = if drift == 0 { palette.success } else { palette.warning };
-                        ui.colored_label(drift_color, egui::RichText::new(format!("Δ {drift}px")).small());
-                        // A clipped frame — its landed bbox reaches a canvas edge —
-                        // gets an advisory badge under the drift label. STALE is the
-                        // codebase's name for the phosphor warning glyph.
-                        if result.report.edge_touch_frames.contains(&idx) {
-                            ui.colored_label(palette.error, egui::RichText::new(format!("{} clipped", crate::icons::STALE)).small());
-                        }
+                    let edge_touch = result.report.edge_touch_frames.contains(&idx);
+                    ui.push_id(idx, |ui| {
+                        ui.vertical(|ui| {
+                            let size = tex.size_vec2();
+                            let scale = (96.0 / size.y.max(1.0)).min(1.0);
+                            let mut image = egui::Image::new((tex.id(), size * scale));
+                            // Tint an edge-touch frame so the why reads at a glance,
+                            // not just as a count in the report below.
+                            if edge_touch {
+                                image = image.tint(egui::Color32::from_rgb(255, 170, 170));
+                            }
+                            ui.add(image);
+                            let drift_color = if drift == 0 { palette.success } else { palette.warning };
+                            ui.colored_label(drift_color, egui::RichText::new(format!("Δ {drift}px")).small());
+                            // A clipped frame — its landed bbox reaches a canvas edge —
+                            // gets an advisory badge under the drift label. STALE is the
+                            // codebase's name for the phosphor warning glyph.
+                            if edge_touch {
+                                ui.colored_label(palette.error, egui::RichText::new(format!("{} clipped", crate::icons::STALE)).small());
+                            }
+                            ui.horizontal(|ui| {
+                                if ui
+                                    .small_button(crate::icons::TRASH)
+                                    .on_hover_text("Drop this frame from the pick set")
+                                    .clicked()
+                                {
+                                    drop_pick = picks.get(idx).copied();
+                                }
+                                if ui
+                                    .small_button(crate::icons::PENCIL)
+                                    .on_hover_text("Edit this frame's pixels in Draw")
+                                    .clicked()
+                                {
+                                    edit_pick = picks.get(idx).copied();
+                                }
+                            });
+                        });
                     });
                 }
             });
         });
+        if let Some(p) = drop_pick {
+            self.toggle_pick(p);
+        } else if let Some(p) = edit_pick {
+            self.edit_pick_in_draw(p);
+        }
     }
 
-    /// The normalize inspector: the [`NormalizeReport`] rendered as drift,
-    /// scale-match, the seam verdict (same colour thresholds as the pick stage),
-    /// and the warnings list, with a Land affordance.
+    /// The editable normalize knobs: chroma key colour + tolerance, the keep-
+    /// background toggle and its component mode, the alpha background threshold,
+    /// the bottom margin, and the reference height. Each change invalidates the
+    /// normalize cache and re-runs the pass in place, so the strip and the report
+    /// reflect the new cut. The pass is CPU-only over a handful of small pick
+    /// buffers, so the re-run is inline — no lock, no await.
+    fn normalize_knobs(&mut self, ui: &mut egui::Ui) {
+        let mut changed = false;
+
+        // Canvas is read-only here — it is the active sprite's size, not a knob.
+        if let Some((cw, ch)) = self.doc.active_sprite().map(|s| (s.canvas.width, s.canvas.height)) {
+            ui.label(egui::RichText::new(format!("Canvas {cw}×{ch}px")).small().weak());
+        }
+
+        // Chroma key colour + tolerance. These also drive the background-removal
+        // panel, so the values stay in step across the studio.
+        ui.horizontal(|ui| {
+            ui.label("Key colour");
+            let mut rgb = [self.bg_key_color.r, self.bg_key_color.g, self.bg_key_color.b];
+            if ui.color_edit_button_srgb(&mut rgb).changed() {
+                self.bg_key_color = Rgba::opaque(rgb[0], rgb[1], rgb[2]);
+                changed = true;
+            }
+        });
+        ui.horizontal(|ui| {
+            ui.label("Key tolerance");
+            changed |= ui.add(egui::Slider::new(&mut self.bg_tolerance, 0..=128)).changed();
+        });
+
+        // Keep-background toggle: when set, the backdrop is keyed out during
+        // normalize so the loop lands already stripped. Its component mode picks
+        // how detached parts survive.
+        changed |= ui.checkbox(&mut self.studio.remove_on_land, "Remove background").changed();
+        if self.studio.remove_on_land {
+            ui.indent("norm_key", |ui| {
+                changed |= ui.checkbox(&mut self.studio.land_all_parts, "Keep all parts (vs largest only)").changed();
+                if self.studio.land_all_parts {
+                    ui.horizontal(|ui| {
+                        ui.label("Min area");
+                        changed |= ui.add(egui::DragValue::new(&mut self.studio.land_min_area).range(1..=128)).changed();
+                    });
+                }
+            });
+        }
+
+        // The measurement knobs that have no other home.
+        let knobs = &mut self.studio.norm_knobs;
+        ui.horizontal(|ui| {
+            ui.label("Alpha threshold");
+            changed |= ui.add(egui::Slider::new(&mut knobs.alpha_threshold, 0..=64)).changed();
+        });
+        ui.horizontal(|ui| {
+            ui.label("Bottom margin");
+            changed |= ui.add(egui::DragValue::new(&mut knobs.bottom_margin).range(0..=256)).changed();
+        });
+
+        // Reference height: an explicit target the subjects scale toward, or the
+        // tallest picked subject when auto.
+        let mut auto_ref = knobs.reference_height.is_none();
+        ui.horizontal(|ui| {
+            if ui.checkbox(&mut auto_ref, "Auto reference height").changed() {
+                knobs.reference_height = if auto_ref { None } else { Some(1) };
+                changed = true;
+            }
+        });
+        if let Some(h) = knobs.reference_height.as_mut() {
+            ui.horizontal(|ui| {
+                ui.label("Reference height");
+                changed |= ui.add(egui::DragValue::new(h).range(1..=4096)).changed();
+            });
+        }
+
+        if changed {
+            self.refresh_normalize_cache();
+        }
+    }
+
+    /// The normalize inspector: the editable [`NormalizeKnobs`] up top, then the
+    /// [`NormalizeReport`] rendered as drift, scale-match, the seam verdict (same
+    /// colour thresholds as the pick stage), and the warnings list, with a Land
+    /// affordance.
     fn studio_normalize_inspector(&mut self, ui: &mut egui::Ui) {
         if self.anim_selected.is_none() {
             ui.label(egui::RichText::new("No clip selected.").weak());
@@ -2528,18 +2797,30 @@ impl ShellApp {
         }
         self.refresh_normalize_cache();
         let palette = crate::theme::Palette::for_theme(ui.ctx().theme());
+        ui.label(egui::RichText::new("Normalization review").strong());
+        ui.label(
+            egui::RichText::new("Tune the pass, then read the result below — the strip and report re-run as you change a knob.")
+                .small()
+                .weak(),
+        );
+        ui.add_space(6.0);
+
+        // The editable knobs run before the report borrow: each change invalidates
+        // the cache and re-runs the pass in place, so the strip and the report
+        // below reflect the new cut.
+        self.normalize_knobs(ui);
+
+        ui.add_space(6.0);
+        ui.separator();
+        ui.label(egui::RichText::new("Result").small().strong());
+        ui.add_space(4.0);
+
+        // Borrow the (re-run) result after the knobs above refreshed the cache.
         let Some(result) = self.studio.normalize.as_ref() else {
             ui.colored_label(palette.error, "These picks could not be normalized.");
             return;
         };
         let report = &result.report;
-        ui.label(egui::RichText::new("Normalization review").strong());
-        ui.label(
-            egui::RichText::new("Drift, scale, and the loop seam — measured on the frames that land.")
-                .small()
-                .weak(),
-        );
-        ui.add_space(6.0);
 
         // Baseline drift: 0px is clean, anything else a warning.
         report_row(
@@ -2718,10 +2999,495 @@ impl ShellApp {
         }
     }
 
+    // ── Sheet (slice) stage ────────────────────────────────────────────────────
+
+    /// The Sheet stage surface: the raw generated sheet at fit-to-view (or 1:1),
+    /// with the slice grid drawn over it. Dragging a grid edge adjusts the matching
+    /// uniform slice parameter and re-slices live. Only the static-sheet path
+    /// retains a sheet; the i2v path shows a hint.
+    #[allow(clippy::cast_precision_loss, clippy::cast_possible_truncation, clippy::cast_sign_loss)]
+    fn studio_sheet_surface(&mut self, ui: &mut egui::Ui) {
+        let Some(sheet) = self.studio.sheet.as_ref() else {
+            centered_hint(
+                ui,
+                "No sheet to slice. This stage is for the static grid-sheet path — generate a sheet in the Motion stage.",
+            );
+            return;
+        };
+        let (iw, ih) = (sheet.width(), sheet.height());
+        if iw == 0 || ih == 0 {
+            centered_hint(ui, "The generated sheet is empty.");
+            return;
+        }
+        let ctx = ui.ctx().clone();
+        if self.studio.sheet_texture.is_none() {
+            self.studio.sheet_texture = pixel_buffer_to_texture(&ctx, "studio_sheet", sheet);
+        }
+        let Some(tex) = self.studio.sheet_texture.as_ref() else {
+            centered_hint(ui, "The generated sheet could not be displayed.");
+            return;
+        };
+        let tex_id = tex.id();
+
+        let canvas = ui.available_rect_before_wrap();
+        // Fit-to-view, or 1:1 (one screen pixel per sheet pixel).
+        let fit = (canvas.width() / iw as f32).min(canvas.height() / ih as f32).max(0.01);
+        let scale = if self.studio.sheet_one_to_one { 1.0 } else { fit };
+        let draw = egui::vec2(iw as f32 * scale, ih as f32 * scale);
+        let rect = egui::Rect::from_center_size(canvas.center(), draw);
+
+        let resp = ui.allocate_rect(canvas, egui::Sense::click_and_drag());
+        let painter = ui.painter_at(canvas);
+        painter.image(
+            tex_id,
+            rect,
+            egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1.0, 1.0)),
+            egui::Color32::WHITE,
+        );
+
+        self.sheet_grid_drag(&resp, rect, iw, ih);
+        sheet_draw_grid(&painter, &self.studio.slice, rect, iw, ih, ui.ctx().theme());
+
+        // Re-slice live when the spec changed since the last cut.
+        if self.studio.sheet_sliced.as_ref() != Some(&self.studio.slice) {
+            self.reslice_static_sheet();
+        }
+    }
+
+    /// Handles an edge drag on the slice grid: picks the grabbed edge on press,
+    /// then maps the frame's drag delta (screen pixels) into sheet pixels and
+    /// applies it to the uniform slice parameter that edge controls.
+    #[allow(clippy::cast_precision_loss, clippy::cast_possible_truncation)]
+    fn sheet_grid_drag(&mut self, resp: &egui::Response, rect: egui::Rect, iw: u32, ih: u32) {
+        if resp.drag_started() {
+            self.studio.sheet_drag = resp
+                .interact_pointer_pos()
+                .and_then(|p| sheet_pick_edge(&self.studio.slice, p, rect, iw, ih, 8.0));
+        }
+        if resp.drag_stopped() {
+            self.studio.sheet_drag = None;
+        }
+        let Some(edge) = self.studio.sheet_drag else {
+            return;
+        };
+        let d = resp.drag_delta();
+        let (dx, dy) = (d.x / rect.width().max(1.0) * iw as f32, d.y / rect.height().max(1.0) * ih as f32);
+        let delta = match edge {
+            SliceEdge::Top | SliceEdge::Bottom | SliceEdge::InteriorY(_) => dy,
+            _ => dx,
+        };
+        let delta = delta.round() as i32;
+        if delta != 0 {
+            let spec = self.studio.slice.clone();
+            self.studio.slice = slice_drag_edge(spec, edge, delta, iw, ih);
+        }
+    }
+
+    /// Re-cuts the retained sheet through the current slice spec and replaces the
+    /// selected candidate's frames in place, re-deriving its loop markers and
+    /// picks so the Clip / Pick / Normalize / Land tail sees the new cut. A no-op
+    /// when no sheet is retained or no candidate is selected.
+    fn reslice_static_sheet(&mut self) {
+        let Some(sheet) = self.studio.sheet.as_ref() else {
+            return;
+        };
+        let spec = self.studio.slice.clone();
+        let fps = self.anim_fps;
+        let Ok(frames) = ai::slice_sheet_to_frames(sheet, &spec, fps) else {
+            // A collapsed spec yields no frames; leave the last good cut in place
+            // and mark this spec as attempted so we do not retry every frame.
+            self.studio.sheet_sliced = Some(spec);
+            return;
+        };
+        let Some(idx) = self.anim_selected else {
+            self.studio.sheet_sliced = Some(spec);
+            return;
+        };
+        let Some(candidate) = self.anim_candidates.get_mut(idx) else {
+            // Mark the spec resolved like the sibling guards above so a stale
+            // `anim_selected` index doesn't re-slice the sheet every frame.
+            self.studio.sheet_sliced = Some(spec);
+            return;
+        };
+        candidate.markers = crate::anim::auto_loop_markers(&frames);
+        candidate.picks = crate::anim::pick_loop_frames(&frames, candidate.markers, self.anim_target_frames as usize);
+        candidate.frames = frames;
+        self.studio.sheet_sliced = Some(spec);
+        // The new frame set invalidates any cached scrub position and normalize.
+        self.anim_scrub = 0;
+        self.studio.normalize = None;
+        self.studio.normalize_key = None;
+        self.studio.normalize_textures.clear();
+    }
+
+    /// The Sheet stage inspector: the slice-grid spinners (rows, cols, offsets,
+    /// gutters, inset), a fit / 1:1 toggle, a reset-to-uniform action, and a
+    /// confirm affordance that carries the cut into the Clip stage.
+    fn studio_sheet_inspector(&mut self, ui: &mut egui::Ui) {
+        if self.studio.sheet.is_none() {
+            ui.label(egui::RichText::new("No sheet retained. Generate a static sheet in the Motion stage.").weak());
+            return;
+        }
+        let (sw, sh) = self.studio.sheet.as_ref().map_or((0, 0), |s| (s.width(), s.height()));
+        ui.label(egui::RichText::new("Slice the sheet").strong());
+        ui.label(
+            egui::RichText::new("Drag a grid edge or use the spinners. The cells re-slice live; a uniform grid cuts exactly as before.")
+                .small()
+                .weak(),
+        );
+        ui.add_space(6.0);
+
+        ui.checkbox(&mut self.studio.sheet_one_to_one, "Show at 1:1")
+            .on_hover_text("Off fits the sheet to the view; on shows it at one screen pixel per sheet pixel");
+        ui.add_space(6.0);
+
+        let before = self.studio.slice.clone();
+        let mut spec = self.studio.slice.clone();
+        egui::Grid::new("slice_grid_spinners").num_columns(2).spacing([8.0, 4.0]).show(ui, |ui| {
+            ui.label("Rows");
+            ui.add(egui::DragValue::new(&mut spec.rows).range(1..=16));
+            ui.end_row();
+            ui.label("Cols");
+            ui.add(egui::DragValue::new(&mut spec.cols).range(1..=16));
+            ui.end_row();
+            ui.label("Offset x");
+            ui.add(egui::DragValue::new(&mut spec.offset_x).range(0..=sw.saturating_sub(1)));
+            ui.end_row();
+            ui.label("Offset y");
+            ui.add(egui::DragValue::new(&mut spec.offset_y).range(0..=sh.saturating_sub(1)));
+            ui.end_row();
+            ui.label("Gutter x");
+            ui.add(egui::DragValue::new(&mut spec.gutter_x).range(0..=sw / 2));
+            ui.end_row();
+            ui.label("Gutter y");
+            ui.add(egui::DragValue::new(&mut spec.gutter_y).range(0..=sh / 2));
+            ui.end_row();
+            ui.label("Inset");
+            ui.add(egui::DragValue::new(&mut spec.inset).range(0..=sw.min(sh) / 2));
+            ui.end_row();
+        });
+        if spec != before {
+            self.studio.slice = spec;
+        }
+
+        let (cw, ch) = slice_cell_size(&self.studio.slice, sw, sh);
+        ui.add_space(4.0);
+        ui.label(
+            egui::RichText::new(format!(
+                "Cell {cw} x {ch}px, {} cells",
+                self.studio.slice.rows.max(1) * self.studio.slice.cols.max(1)
+            ))
+            .small()
+            .weak(),
+        );
+
+        // Phase B status: surface how many dividers are off the uniform grid so a
+        // non-uniform cut is legible without re-reading the overlay.
+        let custom = self.studio.slice.overrides.x.len() + self.studio.slice.overrides.y.len();
+        if custom > 0 {
+            ui.label(
+                egui::RichText::new(format!("{custom} custom divider(s) — drag a single divider for a variable cell"))
+                    .small()
+                    .weak(),
+            );
+        } else {
+            ui.label(egui::RichText::new("Drag a single interior divider for a variable cell size").small().weak());
+        }
+
+        ui.horizontal(|ui| {
+            if ui
+                .button("Reset to uniform")
+                .on_hover_text("Drop offset, gutter, inset, and any custom dividers back to a plain even grid")
+                .clicked()
+            {
+                self.studio.slice = SliceGrid::uniform(self.studio.slice.rows, self.studio.slice.cols);
+            }
+        });
+
+        // A collapsed spec produced no cut; warn rather than silently keeping the
+        // last good frames.
+        if self
+            .studio
+            .sheet
+            .as_ref()
+            .is_some_and(|s| ai::slice_sheet_to_frames(s, &self.studio.slice, self.anim_fps).is_err())
+        {
+            ui.colored_label(
+                ui.visuals().warn_fg_color,
+                "This spec collapses a cell to nothing — widen a cell or lower a margin.",
+            );
+        }
+
+        ui.add_space(8.0);
+        ui.separator();
+        if ui.button(format!("{} Confirm slice — next: clip", crate::icons::RIGHT)).clicked() {
+            // Make sure the latest spec is cut before moving on, then route to the
+            // same Clip tail the static path used before this stage existed.
+            self.reslice_static_sheet();
+            self.studio.stage = StudioStage::Clip;
+        }
+    }
+
     /// Lands the picked frames and flags the session as landed.
     fn studio_land(&mut self) {
         self.integrate_picked();
         self.studio.landed = true;
+    }
+}
+
+/// Which edge of the slice grid a pointer drag grabbed. Vertical edges move on
+/// the x axis (changing `offset_x` or the trailing inset), horizontal edges on
+/// the y axis. Interior edges are the dividers between cells; the outer edges are
+/// the grid's bounding rectangle.
+///
+/// An interior divider carries its index (`1..cols` for `InteriorX`, `1..rows`
+/// for `InteriorY`): the boundary after that column/row. Dragging it sets a
+/// per-divider override (Phase B), so one divider moves and its two neighbouring
+/// cells resize while the rest of the grid holds.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum SliceEdge {
+    /// The grid's left bound — drags adjust `offset_x`.
+    Left,
+    /// The grid's top bound — drags adjust `offset_y`.
+    Top,
+    /// The grid's right bound — drags adjust the implied cell width (uniform).
+    Right,
+    /// The grid's bottom bound — drags adjust the implied cell height (uniform).
+    Bottom,
+    /// Interior vertical divider `index` (between columns `index - 1` and
+    /// `index`) — drags set an x override for that divider.
+    InteriorX(u32),
+    /// Interior horizontal divider `index` (between rows `index - 1` and
+    /// `index`) — drags set a y override for that divider.
+    InteriorY(u32),
+}
+
+/// The derived cell size for a [`SliceGrid`] over a `sheet_w` x `sheet_h` sheet,
+/// matching `slice_grid_spec`'s formula (saturating, floor-divided). Returns
+/// `(cell_w, cell_h)`; either may be zero for a degenerate spec.
+#[must_use]
+pub(crate) fn slice_cell_size(spec: &SliceGrid, sheet_w: u32, sheet_h: u32) -> (u32, u32) {
+    let cols = spec.cols.max(1);
+    let rows = spec.rows.max(1);
+    let cols_gutter = spec.gutter_x.saturating_mul(cols - 1);
+    let rows_gutter = spec.gutter_y.saturating_mul(rows - 1);
+    let usable_w = sheet_w.saturating_sub(spec.offset_x).saturating_sub(cols_gutter);
+    let usable_h = sheet_h.saturating_sub(spec.offset_y).saturating_sub(rows_gutter);
+    (usable_w / cols, usable_h / rows)
+}
+
+/// The x positions (in sheet pixels) of every vertical cell edge for `spec`:
+/// for each column, its left and right edge, so the returned vector has
+/// `2 * cols` entries (a left/right pair per column, gutters showing as gaps
+/// between pairs). Used to draw the grid and hit-test edge drags. Delegates to
+/// [`SliceGrid::x_edges`] so the overlay reflects any per-divider override.
+#[must_use]
+pub(crate) fn slice_x_edges(spec: &SliceGrid, sheet_w: u32) -> Vec<u32> {
+    spec.x_edges(sheet_w).into_iter().flat_map(|(l, r)| [l, r]).collect()
+}
+
+/// The y positions (in sheet pixels) of every horizontal cell edge for `spec`:
+/// for each row, its top and bottom edge, so the returned vector has `2 * rows`
+/// entries. The vertical companion to [`slice_x_edges`].
+#[must_use]
+pub(crate) fn slice_y_edges(spec: &SliceGrid, sheet_h: u32) -> Vec<u32> {
+    spec.y_edges(sheet_h).into_iter().flat_map(|(t, b)| [t, b]).collect()
+}
+
+/// Applies a drag of `delta` sheet-pixels on `edge` to `spec`, adjusting the one
+/// parameter that edge controls, clamped so the grid stays valid against a
+/// `sheet_w` x `sheet_h` sheet. Pure so the drag math is testable without egui.
+///
+/// - Left/top outer edges move `offset_x`/`offset_y` — the leading margin before
+///   the grid.
+/// - Right/bottom outer edges have no stored field of their own: the cell size is
+///   derived from the offsets and gutters, with the trailing margin absorbing the
+///   slack. Pulling them inward (a negative delta) maps to a positive `inset`,
+///   trimming every cell uniformly so the visible outer edge moves in.
+/// - Interior dividers set a per-divider override (Phase B): the dragged divider
+///   alone moves, resizing its two neighbouring cells; the rest of the grid
+///   holds. A divider dragged exactly back onto its uniform position drops its
+///   override, so a fully reset grid is byte-identical to the uniform spec.
+#[must_use]
+pub(crate) fn slice_drag_edge(mut spec: SliceGrid, edge: SliceEdge, delta: i32, sheet_w: u32, sheet_h: u32) -> SliceGrid {
+    let apply = |value: u32, delta: i32, max: u32| -> u32 {
+        let next = i64::from(value) + i64::from(delta);
+        next.clamp(0, i64::from(max)) as u32
+    };
+    match edge {
+        SliceEdge::Left => {
+            // Cap the offset so at least one pixel of cell width survives.
+            let max = sheet_w.saturating_sub(spec.cols.max(1));
+            spec.offset_x = apply(spec.offset_x, delta, max);
+        }
+        SliceEdge::Top => {
+            let max = sheet_h.saturating_sub(spec.rows.max(1));
+            spec.offset_y = apply(spec.offset_y, delta, max);
+        }
+        SliceEdge::Right => {
+            // The right edge has no stored field; growing it shrinks the implied
+            // trailing margin, which the derived cell size already absorbs. A
+            // negative drag (pulling in) maps to a positive inset, trimming every
+            // cell uniformly so the visible right edge moves in.
+            let max = slice_cell_size(&spec, sheet_w, sheet_h).0 / 2;
+            spec.inset = apply(spec.inset, -delta, max);
+        }
+        SliceEdge::Bottom => {
+            let max = slice_cell_size(&spec, sheet_w, sheet_h).1 / 2;
+            spec.inset = apply(spec.inset, -delta, max);
+        }
+        SliceEdge::InteriorX(index) => drag_divider(&mut spec, Axis::X, index, delta, sheet_w),
+        SliceEdge::InteriorY(index) => drag_divider(&mut spec, Axis::Y, index, delta, sheet_h),
+    }
+    spec
+}
+
+/// Which axis a per-divider drag moves.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Axis {
+    X,
+    Y,
+}
+
+/// Moves interior divider `index` on `axis` by `delta` sheet-pixels via a
+/// per-divider override, clamped between its neighbouring cell edges. A divider
+/// returned exactly to its uniform position drops the override, so an untouched
+/// grid stays the uniform Phase A spec.
+fn drag_divider(spec: &mut SliceGrid, axis: Axis, index: u32, delta: i32, span: u32) {
+    let (count, gutter) = match axis {
+        Axis::X => (spec.cols.max(1), spec.gutter_x),
+        Axis::Y => (spec.rows.max(1), spec.gutter_y),
+    };
+    if index == 0 || index >= count {
+        return;
+    }
+    // The current edge pairs (with overrides already applied), so a drag stacks
+    // on the divider's present position rather than its uniform seed.
+    let pairs = match axis {
+        Axis::X => spec.x_edges(span),
+        Axis::Y => spec.y_edges(span),
+    };
+    let prev = (index - 1) as usize;
+    let next = index as usize;
+    let Some(&(_, cur)) = pairs.get(prev) else {
+        return;
+    };
+    // Bound the divider strictly between its neighbours so neither cell collapses.
+    let lower = pairs.get(prev).map_or(0, |&(l, _)| l + 1);
+    let upper = pairs.get(next).map_or(span, |&(_, r)| r.saturating_sub(gutter + 1));
+    if lower > upper {
+        return;
+    }
+    let pos = (i64::from(cur) + i64::from(delta)).clamp(i64::from(lower), i64::from(upper)) as u32;
+
+    // The uniform position of this divider; matching it drops the override.
+    let uniform = uniform_divider(spec, axis, index, span);
+    set_divider_override(spec, axis, index, pos, uniform);
+}
+
+/// The uniform (no-override) position of interior divider `index` on `axis`:
+/// the right edge of cell `index - 1`.
+fn uniform_divider(spec: &SliceGrid, axis: Axis, index: u32, span: u32) -> u32 {
+    let bare = SliceGrid {
+        overrides: pixhaus_core::transforms::SliceOverrides::default(),
+        ..spec.clone()
+    };
+    let pairs = match axis {
+        Axis::X => bare.x_edges(span),
+        Axis::Y => bare.y_edges(span),
+    };
+    pairs.get((index - 1) as usize).map_or(0, |&(_, r)| r)
+}
+
+/// Sets (or clears) the override for divider `index` on `axis`. A `pos` equal to
+/// the uniform divider clears the entry; otherwise it is recorded, replacing any
+/// prior entry for the same divider.
+fn set_divider_override(spec: &mut SliceGrid, axis: Axis, index: u32, pos: u32, uniform: u32) {
+    let list = match axis {
+        Axis::X => &mut spec.overrides.x,
+        Axis::Y => &mut spec.overrides.y,
+    };
+    list.retain(|&(d, _)| d != index);
+    if pos != uniform {
+        list.push((index, pos));
+        list.sort_unstable_by_key(|&(d, _)| d);
+    }
+}
+
+/// Picks the slice edge a press at screen position `p` grabs, given the screen
+/// `rect` the `iw` x `ih` sheet is drawn into and a `tol` in screen pixels.
+/// Vertical edges (outer left/right, interior columns) are tested against `p.x`,
+/// horizontal edges against `p.y`; the nearest within `tol` wins. `None` if the
+/// press missed every edge. Outer edges win ties so they stay grabbable.
+fn sheet_pick_edge(spec: &SliceGrid, p: egui::Pos2, rect: egui::Rect, iw: u32, ih: u32, tol: f32) -> Option<SliceEdge> {
+    let to_x = |sx: u32| view_to_screen(sx as f32, 0.0, rect, iw, ih).x;
+    let to_y = |sy: u32| view_to_screen(0.0, sy as f32, rect, iw, ih).y;
+    // Resolved edges (overrides applied) so a moved divider is grabbable where
+    // it is drawn, not where the uniform grid would place it.
+    let xs = spec.x_edges(iw);
+    let ys = spec.y_edges(ih);
+
+    // Outer edges first so they take ties with adjacent interior dividers.
+    let mut best: Option<(SliceEdge, f32)> = None;
+    let mut consider = |edge: SliceEdge, screen: f32, axis: f32| {
+        let d = (screen - axis).abs();
+        if d <= tol && best.is_none_or(|(_, bd)| d < bd) {
+            best = Some((edge, d));
+        }
+    };
+    // Left/right outer bounds, from the first cell's left and the last cell's right.
+    if let Some(&(left, _)) = xs.first() {
+        consider(SliceEdge::Left, to_x(left), p.x);
+    }
+    if let Some(&(_, right)) = xs.last() {
+        consider(SliceEdge::Right, to_x(right), p.x);
+    }
+    // Top/bottom outer bounds.
+    if let Some(&(top, _)) = ys.first() {
+        consider(SliceEdge::Top, to_y(top), p.y);
+    }
+    if let Some(&(_, bottom)) = ys.last() {
+        consider(SliceEdge::Bottom, to_y(bottom), p.y);
+    }
+    // Interior vertical dividers (between columns): divider `c` is the right edge
+    // of column `c - 1`, for `c` in `1..cols`.
+    for (idx, pair) in xs.iter().enumerate().skip(1) {
+        let index = idx as u32;
+        consider(SliceEdge::InteriorX(index), to_x(pair.0), p.x);
+    }
+    // Interior horizontal dividers (between rows).
+    for (idx, pair) in ys.iter().enumerate().skip(1) {
+        let index = idx as u32;
+        consider(SliceEdge::InteriorY(index), to_y(pair.0), p.y);
+    }
+    best.map(|(edge, _)| edge)
+}
+
+/// Draws the slice grid over the sheet: a cell rectangle per cell, plus center
+/// crosshairs on the first cell so drift against the subject reads at a glance
+/// (borrowed from agent-sprite-forge's layout guide).
+#[allow(clippy::cast_precision_loss)]
+fn sheet_draw_grid(painter: &egui::Painter, spec: &SliceGrid, rect: egui::Rect, iw: u32, ih: u32, theme: egui::Theme) {
+    let palette = crate::theme::Palette::for_theme(theme);
+    let line = egui::Stroke::new(1.5, palette.success);
+    let faint = egui::Stroke::new(1.0, palette.success.gamma_multiply(0.4));
+    let xs = slice_x_edges(spec, iw);
+    let ys = slice_y_edges(spec, ih);
+    let to = |sx: f32, sy: f32| view_to_screen(sx, sy, rect, iw, ih);
+    // Cell rectangles: pair (left, right) over (top, bottom).
+    for (xl, xr) in xs.chunks_exact(2).map(|p| (p[0], p[1])) {
+        for (yt, yb) in ys.chunks_exact(2).map(|p| (p[0], p[1])) {
+            let cell = egui::Rect::from_min_max(to(xl as f32, yt as f32), to(xr as f32, yb as f32));
+            painter.rect_stroke(cell, 0.0, line, egui::StrokeKind::Inside);
+        }
+    }
+    // Crosshairs through the first cell's center, to gauge subject centering.
+    // Size from the first resolved cell so an overridden divider 1 still centers.
+    if let (&[xl, xr, ..], &[yt, yb, ..]) = (xs.as_slice(), ys.as_slice()) {
+        let cx = f32::midpoint(xl as f32, xr as f32);
+        let cy = f32::midpoint(yt as f32, yb as f32);
+        painter.line_segment([to(xl as f32, cy), to(xr as f32, cy)], faint);
+        painter.line_segment([to(cx, yt as f32), to(cx, yb as f32)], faint);
     }
 }
 
@@ -3319,7 +4085,11 @@ mod tests {
                 1,
                 "the seed-pose prompt locks identity exactly once for {facing:?}: {final_prompt}"
             );
-            assert_eq!(lock_count(&final_prompt, "change only the pose"), 1, "the seed-pose prompt frees the pose for {facing:?}: {final_prompt}");
+            assert_eq!(
+                lock_count(&final_prompt, "change only the pose"),
+                1,
+                "the seed-pose prompt frees the pose for {facing:?}: {final_prompt}"
+            );
             assert!(
                 !final_prompt.contains("change only the facing direction"),
                 "the seed-pose prompt must not free facing for {facing:?}: {final_prompt}"
@@ -3803,8 +4573,16 @@ mod tests {
         let report = normalize_frames(&frames, &opts).expect("normalize").report;
         assert_eq!(drift_status(report.baseline_drift_px), ReportStatus::Ok);
         assert_eq!(scale_status(report.scale_match_pct), ReportStatus::Ok);
-        assert_eq!(edge_status(report.edge_touch_frames.len()), ReportStatus::Ok, "small centred subjects land clear of every edge");
-        assert_eq!(scale_status(report.scale_parity_pct), ReportStatus::Ok, "the corrected heights agree, so parity reads Ok");
+        assert_eq!(
+            edge_status(report.edge_touch_frames.len()),
+            ReportStatus::Ok,
+            "small centred subjects land clear of every edge"
+        );
+        assert_eq!(
+            scale_status(report.scale_parity_pct),
+            ReportStatus::Ok,
+            "the corrected heights agree, so parity reads Ok"
+        );
     }
 
     #[test]
@@ -3841,8 +4619,16 @@ mod tests {
         let tall = synthetic_frame(7, 1, 2, 14, black);
         let wide = synthetic_frame(1, 7, 14, 2, black);
         let report = normalize_frames(&[tall, wide], &NormalizeOptions::square(16)).expect("normalize").report;
-        assert!(report.edge_touch_frames.contains(&1), "the over-scaled wide frame is flagged: {:?}", report.edge_touch_frames);
-        assert_eq!(edge_status(report.edge_touch_frames.len()), ReportStatus::Error, "the inspector reads Error for a clipped frame");
+        assert!(
+            report.edge_touch_frames.contains(&1),
+            "the over-scaled wide frame is flagged: {:?}",
+            report.edge_touch_frames
+        );
+        assert_eq!(
+            edge_status(report.edge_touch_frames.len()),
+            ReportStatus::Error,
+            "the inspector reads Error for a clipped frame"
+        );
         let palette = crate::theme::Palette::for_theme(egui::Theme::Dark);
         assert_eq!(edge_status(report.edge_touch_frames.len()).color(&palette), palette.error);
     }

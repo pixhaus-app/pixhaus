@@ -718,7 +718,11 @@ fn whole_alpha_metrics(buf: &PixelBuffer, alpha_threshold: u8) -> FrameMetrics {
             }
         }
     }
-    if any { metrics_from_bbox(min_x, min_y, max_x, max_y) } else { empty_metrics(w, h) }
+    if any {
+        metrics_from_bbox(min_x, min_y, max_x, max_y)
+    } else {
+        empty_metrics(w, h)
+    }
 }
 
 /// The largest-area component, ties broken toward the lowest label (the first in
@@ -1557,11 +1561,19 @@ mod tests {
             buf.set_pixel(2, 1, Rgba::opaque(255, 0, 0));
             buf.set_pixel(9, 7, Rgba::opaque(0, 255, 0));
             buf.set_pixel(5, 4, Rgba::opaque(0, 0, 255));
-            assert_eq!(measure_components(&buf, 0, ComponentMode::WholeAlpha), measure(&buf, 0), "WholeAlpha == legacy measure");
+            assert_eq!(
+                measure_components(&buf, 0, ComponentMode::WholeAlpha),
+                measure(&buf, 0),
+                "WholeAlpha == legacy measure"
+            );
 
             // Empty frame parity too.
             let empty = PixelBuffer::new(6, 4).unwrap();
-            assert_eq!(measure_components(&empty, 0, ComponentMode::WholeAlpha), measure(&empty, 0), "empty WholeAlpha == legacy measure");
+            assert_eq!(
+                measure_components(&empty, 0, ComponentMode::WholeAlpha),
+                measure(&empty, 0),
+                "empty WholeAlpha == legacy measure"
+            );
         }
 
         #[test]
@@ -1790,7 +1802,11 @@ mod tests {
                 ..NormalizeOptions::square(24)
             };
             let res = normalize_frames(&[f], &opts).expect("normalize");
-            assert!(res.report.max_components >= 2, "two detached blobs land as two components: {}", res.report.max_components);
+            assert!(
+                res.report.max_components >= 2,
+                "two detached blobs land as two components: {}",
+                res.report.max_components
+            );
             assert!(
                 res.report.warnings.iter().any(|w| w.contains("disconnected components")),
                 "the disconnected-components warning fires: {:?}",
@@ -2009,7 +2025,10 @@ mod tests {
                 res.metrics
             );
             assert!(
-                res.report.warnings.iter().any(|w| w.contains("touches") || w.contains("clipped") || w.contains("edge")),
+                res.report
+                    .warnings
+                    .iter()
+                    .any(|w| w.contains("touches") || w.contains("clipped") || w.contains("edge")),
                 "an edge-touch warning is recorded: {:?}",
                 res.report.warnings
             );

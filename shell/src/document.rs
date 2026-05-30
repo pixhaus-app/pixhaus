@@ -850,6 +850,11 @@ impl DocumentStore {
     /// produced; it rides onto the new [`Animation`] so a landed loop carries a
     /// machine-readable record of how it was processed. `None` for callers that
     /// did not run the review (the headless runner, the demo).
+    ///
+    /// `slice` is the resolved [`SliceGrid`] that cut the source grid sheet into
+    /// these frames; it rides onto the new [`Animation`] so the cut is
+    /// reproducible after save/load. `None` for frames that did not come from a
+    /// sliced sheet (the i2v and video-import paths, the headless runner).
     #[allow(clippy::cast_possible_truncation)] // frame counts fit u32
     pub fn integrate_frames(
         &mut self,
@@ -858,6 +863,7 @@ impl DocumentStore {
         name: &str,
         loop_direction: LoopDirection,
         qc: Option<pixhaus_core::project::AnimationQc>,
+        slice: Option<pixhaus_core::transforms::SliceGrid>,
     ) -> Option<FrameRange> {
         if frames.is_empty() {
             return None;
@@ -923,6 +929,7 @@ impl DocumentStore {
                 loop_direction,
                 speed_multiplier: 1.0,
                 qc,
+                slice,
                 user_data: UserData::default(),
             });
             range
@@ -1062,7 +1069,7 @@ impl DocumentStore {
                 frames.push(buf);
             }
         }
-        self.integrate_frames(frames, 120, "demo", LoopDirection::Forward, None);
+        self.integrate_frames(frames, 120, "demo", LoopDirection::Forward, None, None);
     }
 }
 
@@ -1266,7 +1273,9 @@ mod tests {
         let frames: Vec<PixelBuffer> = (0..4)
             .map(|_| PixelBuffer::filled(8, 8, pixhaus_core::project::Rgba::new(10, 20, 30, 255)).unwrap())
             .collect();
-        let range = doc.integrate_frames(frames, 100, "walk", LoopDirection::Forward, None).expect("integrated range");
+        let range = doc
+            .integrate_frames(frames, 100, "walk", LoopDirection::Forward, None, None)
+            .expect("integrated range");
 
         // The fresh sprite is pristine, so the animation replaces its seed frame
         // and occupies frames 0..=3 on a single layer — no leading blank.
@@ -1309,7 +1318,9 @@ mod tests {
         let frames: Vec<PixelBuffer> = (0..4)
             .map(|_| PixelBuffer::filled(8, 8, pixhaus_core::project::Rgba::new(10, 20, 30, 255)).unwrap())
             .collect();
-        let range = doc.integrate_frames(frames, 100, "walk", LoopDirection::Forward, None).expect("integrated range");
+        let range = doc
+            .integrate_frames(frames, 100, "walk", LoopDirection::Forward, None, None)
+            .expect("integrated range");
 
         assert_eq!(range.start, FrameIndex::new(1));
         assert_eq!(range.end, FrameIndex::new(4));
