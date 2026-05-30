@@ -2834,12 +2834,19 @@ impl ShellApp {
         self.studio.sheet = Some(sheet);
         self.studio.slice = slice;
         self.studio.sheet_cell = cell;
+        // Drop the previous sheet's cached texture and re-slice marker so the
+        // Sheet stage rebuilds them for the new sheet.
+        self.studio.sheet_texture = None;
+        self.studio.sheet_sliced = Some(slice);
         // No raw clip blob: the frames are the artifact, so the candidate carries
         // an empty clip and a PNG mime (the slice path's source format). No job id
         // either — the static path persists no sidecar, so the landed Animation
         // copy is the only home for its QC record.
         self.push_clip_candidate(Vec::new(), "image/png".to_owned(), frames, action, fps, seed, None, None);
-        self.set_status("Generated a static sheet.");
+        // Route to the Sheet stage so the user sees the raw sheet and can re-cut
+        // it before the clip review, rather than jumping straight to the clip.
+        self.studio.stage = crate::studio::StudioStage::Sheet;
+        self.set_status("Generated a static sheet — review the slice.");
     }
 
     /// Spawns an AI background removal of `buffer_id` (already encoded to PNG)

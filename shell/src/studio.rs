@@ -55,6 +55,10 @@ pub(crate) enum StudioStage {
     FirstFrame,
     /// Choreography prompt, model pick, fps, frame count, seed.
     Motion,
+    /// Cut the raw grid sheet: a slice gizmo over the generated sheet that
+    /// re-slices live. Only reached on the static-sheet path; the i2v path skips
+    /// straight to the clip.
+    Sheet,
     /// Scrub the raw clip and drag the loop markers.
     Clip,
     /// Toggle the evenly-spaced picks and read the seam score.
@@ -67,10 +71,11 @@ pub(crate) enum StudioStage {
 
 impl StudioStage {
     /// The stages in pipeline order, for the rail.
-    const ALL: [StudioStage; 7] = [
+    const ALL: [StudioStage; 8] = [
         StudioStage::Anchor,
         StudioStage::FirstFrame,
         StudioStage::Motion,
+        StudioStage::Sheet,
         StudioStage::Clip,
         StudioStage::Pick,
         StudioStage::Normalize,
@@ -83,6 +88,7 @@ impl StudioStage {
             StudioStage::Anchor => "Anchor",
             StudioStage::FirstFrame => "First frame",
             StudioStage::Motion => "Motion",
+            StudioStage::Sheet => "Slice",
             StudioStage::Clip => "Clip & loop",
             StudioStage::Pick => "Frame pick",
             StudioStage::Normalize => "Normalize",
@@ -785,6 +791,16 @@ pub(crate) struct StudioState {
     /// The per-cell size the retained sheet was generated for (`cell_w`,
     /// `cell_h`).
     pub sheet_cell: (u32, u32),
+    /// Cached texture for the retained sheet, built lazily on the Sheet stage and
+    /// dropped when a new sheet lands.
+    pub sheet_texture: Option<egui::TextureHandle>,
+    /// Whether the Sheet stage shows the sheet at 1:1 (else fit-to-view).
+    pub sheet_one_to_one: bool,
+    /// Which slice edge a Sheet-stage drag is currently moving, set on press.
+    pub sheet_drag: Option<SliceEdge>,
+    /// The slice spec the cached preview frames were last cut with, so a changed
+    /// spec triggers a live re-slice. `None` until the first re-slice runs.
+    pub sheet_sliced: Option<SliceGrid>,
     /// Whether the second clip is shown beside the first for comparison.
     pub compare: bool,
     /// The other clip index in a side-by-side comparison.
@@ -858,6 +874,10 @@ impl Default for StudioState {
             sheet: None,
             slice: SliceGrid::uniform(default_grid_rows(), default_grid_cols()),
             sheet_cell: (0, 0),
+            sheet_texture: None,
+            sheet_one_to_one: false,
+            sheet_drag: None,
+            sheet_sliced: None,
             compare: false,
             compare_other: None,
             landed: false,
@@ -1191,8 +1211,16 @@ impl ShellApp {
     /// always for the Anchor stage, which has none).
     fn studio_unmet_prereq(&self) -> Option<StudioStage> {
         let idx = StudioStage::ALL.iter().position(|s| *s == self.studio.stage)?;
-        let prev = StudioStage::ALL.get(idx.checked_sub(1)?)?;
-        if self.studio_stage_complete(*prev) { None } else { Some(*prev) }
+        let mut prev = *StudioStage::ALL.get(idx.checked_sub(1)?)?;
+        // The Sheet stage only applies to the static-sheet path. On the i2v path
+        // no sheet is retained, so it is never "complete" and would wrongly gate
+        // the Clip stage behind it; skip it as a prerequisite then, falling back
+        // to the stage before it (Motion).
+        if prev == StudioStage::Sheet && self.studio.sheet.is_none() {
+            let prev_idx = StudioStage::ALL.iter().position(|s| *s == prev)?;
+            prev = *StudioStage::ALL.get(prev_idx.checked_sub(1)?)?;
+        }
+        if self.studio_stage_complete(prev) { None } else { Some(prev) }
     }
 
     /// A centered guide shown in place of a gated stage's surface, with a button
@@ -1244,6 +1272,10 @@ impl ShellApp {
             StudioStage::Anchor => self.doc.active_anchor().is_some(),
             StudioStage::FirstFrame => self.studio.approved_first_frame.is_some(),
             StudioStage::Motion => !self.anim_candidates.is_empty(),
+            // The Sheet stage is complete once a sheet has been retained and a
+            // clip exists for it; the i2v path leaves it empty (no sheet) and the
+            // rail just shows it unchecked, which is fine — it is a no-op there.
+            StudioStage::Sheet => self.studio.sheet.is_some() && self.anim_card().is_some(),
             StudioStage::Clip => self.anim_card().is_some(),
             StudioStage::Pick => self.anim_card().is_some_and(|c| !c.picks.is_empty()),
             StudioStage::Normalize => self.studio.normalize.is_some(),
@@ -1261,6 +1293,7 @@ impl ShellApp {
             StudioStage::Anchor => self.studio_anchor_surface(ui),
             StudioStage::FirstFrame => self.studio_first_frame_surface(ui),
             StudioStage::Motion => self.studio_motion_surface(ui),
+            StudioStage::Sheet => self.studio_sheet_surface(ui),
             StudioStage::Clip => self.studio_clip_surface(ui),
             StudioStage::Pick => self.studio_pick_surface(ui),
             StudioStage::Normalize => self.studio_normalize_surface(ui),
@@ -1274,7 +1307,12 @@ impl ShellApp {
             ui.label(egui::RichText::new("Finish the earlier stage to unlock this one.").weak());
             return;
         }
-        if !self.backend_ready && !matches!(self.studio.stage, StudioStage::Clip | StudioStage::Pick | StudioStage::Normalize) {
+        if !self.backend_ready
+            && !matches!(
+                self.studio.stage,
+                StudioStage::Sheet | StudioStage::Clip | StudioStage::Pick | StudioStage::Normalize
+            )
+        {
             self.key_entry(ui);
             ui.separator();
         }
@@ -1282,6 +1320,7 @@ impl ShellApp {
             StudioStage::Anchor => self.studio_anchor_inspector(ui),
             StudioStage::FirstFrame => self.studio_first_frame_inspector(ui),
             StudioStage::Motion => self.studio_motion_inspector(ui),
+            StudioStage::Sheet => self.studio_sheet_inspector(ui),
             StudioStage::Clip => self.studio_clip_inspector(ui),
             StudioStage::Pick => self.studio_pick_inspector(ui),
             StudioStage::Normalize => self.studio_normalize_inspector(ui),
@@ -2732,10 +2771,411 @@ impl ShellApp {
         }
     }
 
+    // ── Sheet (slice) stage ────────────────────────────────────────────────────
+
+    /// The Sheet stage surface: the raw generated sheet at fit-to-view (or 1:1),
+    /// with the slice grid drawn over it. Dragging a grid edge adjusts the matching
+    /// uniform slice parameter and re-slices live. Only the static-sheet path
+    /// retains a sheet; the i2v path shows a hint.
+    #[allow(clippy::cast_precision_loss, clippy::cast_possible_truncation, clippy::cast_sign_loss)]
+    fn studio_sheet_surface(&mut self, ui: &mut egui::Ui) {
+        let Some(sheet) = self.studio.sheet.as_ref() else {
+            centered_hint(
+                ui,
+                "No sheet to slice. This stage is for the static grid-sheet path — generate a sheet in the Motion stage.",
+            );
+            return;
+        };
+        let (iw, ih) = (sheet.width(), sheet.height());
+        if iw == 0 || ih == 0 {
+            centered_hint(ui, "The generated sheet is empty.");
+            return;
+        }
+        let ctx = ui.ctx().clone();
+        if self.studio.sheet_texture.is_none() {
+            self.studio.sheet_texture = pixel_buffer_to_texture(&ctx, "studio_sheet", sheet);
+        }
+        let Some(tex) = self.studio.sheet_texture.as_ref() else {
+            centered_hint(ui, "The generated sheet could not be displayed.");
+            return;
+        };
+        let tex_id = tex.id();
+
+        let canvas = ui.available_rect_before_wrap();
+        // Fit-to-view, or 1:1 (one screen pixel per sheet pixel).
+        let fit = (canvas.width() / iw as f32).min(canvas.height() / ih as f32).max(0.01);
+        let scale = if self.studio.sheet_one_to_one { 1.0 } else { fit };
+        let draw = egui::vec2(iw as f32 * scale, ih as f32 * scale);
+        let rect = egui::Rect::from_center_size(canvas.center(), draw);
+
+        let resp = ui.allocate_rect(canvas, egui::Sense::click_and_drag());
+        let painter = ui.painter_at(canvas);
+        painter.image(
+            tex_id,
+            rect,
+            egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1.0, 1.0)),
+            egui::Color32::WHITE,
+        );
+
+        self.sheet_grid_drag(&resp, rect, iw, ih);
+        sheet_draw_grid(&painter, &self.studio.slice, rect, iw, ih, ui.ctx().theme());
+
+        // Re-slice live when the spec changed since the last cut.
+        if self.studio.sheet_sliced != Some(self.studio.slice) {
+            self.reslice_static_sheet();
+        }
+    }
+
+    /// Handles an edge drag on the slice grid: picks the grabbed edge on press,
+    /// then maps the frame's drag delta (screen pixels) into sheet pixels and
+    /// applies it to the uniform slice parameter that edge controls.
+    #[allow(clippy::cast_precision_loss, clippy::cast_possible_truncation)]
+    fn sheet_grid_drag(&mut self, resp: &egui::Response, rect: egui::Rect, iw: u32, ih: u32) {
+        if resp.drag_started() {
+            self.studio.sheet_drag = resp
+                .interact_pointer_pos()
+                .and_then(|p| sheet_pick_edge(&self.studio.slice, p, rect, iw, ih, 8.0));
+        }
+        if resp.drag_stopped() {
+            self.studio.sheet_drag = None;
+        }
+        let Some(edge) = self.studio.sheet_drag else {
+            return;
+        };
+        let d = resp.drag_delta();
+        let (dx, dy) = (d.x / rect.width().max(1.0) * iw as f32, d.y / rect.height().max(1.0) * ih as f32);
+        let delta = match edge {
+            SliceEdge::Top | SliceEdge::Bottom | SliceEdge::InteriorY => dy,
+            _ => dx,
+        };
+        let delta = delta.round() as i32;
+        if delta != 0 {
+            self.studio.slice = slice_drag_edge(self.studio.slice, edge, delta, iw, ih);
+        }
+    }
+
+    /// Re-cuts the retained sheet through the current slice spec and replaces the
+    /// selected candidate's frames in place, re-deriving its loop markers and
+    /// picks so the Clip / Pick / Normalize / Land tail sees the new cut. A no-op
+    /// when no sheet is retained or no candidate is selected.
+    fn reslice_static_sheet(&mut self) {
+        let Some(sheet) = self.studio.sheet.as_ref() else {
+            return;
+        };
+        let spec = self.studio.slice;
+        let fps = self.anim_fps;
+        let Ok(frames) = ai::slice_sheet_to_frames(sheet, &spec, fps) else {
+            // A collapsed spec yields no frames; leave the last good cut in place
+            // and mark this spec as attempted so we do not retry every frame.
+            self.studio.sheet_sliced = Some(spec);
+            return;
+        };
+        let Some(idx) = self.anim_selected else {
+            self.studio.sheet_sliced = Some(spec);
+            return;
+        };
+        let Some(candidate) = self.anim_candidates.get_mut(idx) else {
+            return;
+        };
+        candidate.markers = crate::anim::auto_loop_markers(&frames);
+        candidate.picks = crate::anim::pick_loop_frames(&frames, candidate.markers, self.anim_target_frames as usize);
+        candidate.frames = frames;
+        self.studio.sheet_sliced = Some(spec);
+        // The new frame set invalidates any cached scrub position and normalize.
+        self.anim_scrub = 0;
+        self.studio.normalize = None;
+        self.studio.normalize_key = None;
+        self.studio.normalize_textures.clear();
+    }
+
+    /// The Sheet stage inspector: the slice-grid spinners (rows, cols, offsets,
+    /// gutters, inset), a fit / 1:1 toggle, a reset-to-uniform action, and a
+    /// confirm affordance that carries the cut into the Clip stage.
+    fn studio_sheet_inspector(&mut self, ui: &mut egui::Ui) {
+        if self.studio.sheet.is_none() {
+            ui.label(egui::RichText::new("No sheet retained. Generate a static sheet in the Motion stage.").weak());
+            return;
+        }
+        let (sw, sh) = self.studio.sheet.as_ref().map_or((0, 0), |s| (s.width(), s.height()));
+        ui.label(egui::RichText::new("Slice the sheet").strong());
+        ui.label(
+            egui::RichText::new("Drag a grid edge or use the spinners. The cells re-slice live; a uniform grid cuts exactly as before.")
+                .small()
+                .weak(),
+        );
+        ui.add_space(6.0);
+
+        ui.checkbox(&mut self.studio.sheet_one_to_one, "Show at 1:1")
+            .on_hover_text("Off fits the sheet to the view; on shows it at one screen pixel per sheet pixel");
+        ui.add_space(6.0);
+
+        let before = self.studio.slice;
+        let mut spec = self.studio.slice;
+        egui::Grid::new("slice_grid_spinners").num_columns(2).spacing([8.0, 4.0]).show(ui, |ui| {
+            ui.label("Rows");
+            ui.add(egui::DragValue::new(&mut spec.rows).range(1..=16));
+            ui.end_row();
+            ui.label("Cols");
+            ui.add(egui::DragValue::new(&mut spec.cols).range(1..=16));
+            ui.end_row();
+            ui.label("Offset x");
+            ui.add(egui::DragValue::new(&mut spec.offset_x).range(0..=sw.saturating_sub(1)));
+            ui.end_row();
+            ui.label("Offset y");
+            ui.add(egui::DragValue::new(&mut spec.offset_y).range(0..=sh.saturating_sub(1)));
+            ui.end_row();
+            ui.label("Gutter x");
+            ui.add(egui::DragValue::new(&mut spec.gutter_x).range(0..=sw / 2));
+            ui.end_row();
+            ui.label("Gutter y");
+            ui.add(egui::DragValue::new(&mut spec.gutter_y).range(0..=sh / 2));
+            ui.end_row();
+            ui.label("Inset");
+            ui.add(egui::DragValue::new(&mut spec.inset).range(0..=sw.min(sh) / 2));
+            ui.end_row();
+        });
+        if spec != before {
+            self.studio.slice = spec;
+        }
+
+        let (cw, ch) = slice_cell_size(&self.studio.slice, sw, sh);
+        ui.add_space(4.0);
+        ui.label(
+            egui::RichText::new(format!(
+                "Cell {cw} x {ch}px, {} cells",
+                self.studio.slice.rows.max(1) * self.studio.slice.cols.max(1)
+            ))
+            .small()
+            .weak(),
+        );
+
+        ui.horizontal(|ui| {
+            if ui
+                .button("Reset to uniform")
+                .on_hover_text("Drop offset, gutter, and inset back to a plain even grid")
+                .clicked()
+            {
+                self.studio.slice = SliceGrid::uniform(self.studio.slice.rows, self.studio.slice.cols);
+            }
+        });
+
+        // A collapsed spec produced no cut; warn rather than silently keeping the
+        // last good frames.
+        if self
+            .studio
+            .sheet
+            .as_ref()
+            .is_some_and(|s| ai::slice_sheet_to_frames(s, &self.studio.slice, self.anim_fps).is_err())
+        {
+            ui.colored_label(
+                ui.visuals().warn_fg_color,
+                "This spec collapses a cell to nothing — widen a cell or lower a margin.",
+            );
+        }
+
+        ui.add_space(8.0);
+        ui.separator();
+        if ui.button(format!("{} Confirm slice — next: clip", crate::icons::RIGHT)).clicked() {
+            // Make sure the latest spec is cut before moving on, then route to the
+            // same Clip tail the static path used before this stage existed.
+            self.reslice_static_sheet();
+            self.studio.stage = StudioStage::Clip;
+        }
+    }
+
     /// Lands the picked frames and flags the session as landed.
     fn studio_land(&mut self) {
         self.integrate_picked();
         self.studio.landed = true;
+    }
+}
+
+/// Which edge of the slice grid a pointer drag grabbed. Vertical edges move on
+/// the x axis (changing `offset_x`, the column gutter, or the trailing margin),
+/// horizontal edges on the y axis. Interior edges are the dividers between cells;
+/// the outer edges are the grid's bounding rectangle.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum SliceEdge {
+    /// The grid's left bound — drags adjust `offset_x`.
+    Left,
+    /// The grid's top bound — drags adjust `offset_y`.
+    Top,
+    /// The grid's right bound — drags adjust the implied cell width (uniform).
+    Right,
+    /// The grid's bottom bound — drags adjust the implied cell height (uniform).
+    Bottom,
+    /// An interior vertical divider — drags adjust `gutter_x` (uniform).
+    InteriorX,
+    /// An interior horizontal divider — drags adjust `gutter_y` (uniform).
+    InteriorY,
+}
+
+/// The derived cell size for a [`SliceGrid`] over a `sheet_w` x `sheet_h` sheet,
+/// matching `slice_grid_spec`'s formula (saturating, floor-divided). Returns
+/// `(cell_w, cell_h)`; either may be zero for a degenerate spec.
+#[must_use]
+pub(crate) fn slice_cell_size(spec: &SliceGrid, sheet_w: u32, sheet_h: u32) -> (u32, u32) {
+    let cols = spec.cols.max(1);
+    let rows = spec.rows.max(1);
+    let cols_gutter = spec.gutter_x.saturating_mul(cols - 1);
+    let rows_gutter = spec.gutter_y.saturating_mul(rows - 1);
+    let usable_w = sheet_w.saturating_sub(spec.offset_x).saturating_sub(cols_gutter);
+    let usable_h = sheet_h.saturating_sub(spec.offset_y).saturating_sub(rows_gutter);
+    (usable_w / cols, usable_h / rows)
+}
+
+/// The x positions (in sheet pixels) of every vertical cell edge for `spec`:
+/// for each column, its left and right edge, so the returned vector has
+/// `2 * cols` entries (a left/right pair per column, gutters showing as gaps
+/// between pairs). Used to draw the grid and hit-test edge drags.
+#[must_use]
+pub(crate) fn slice_x_edges(spec: &SliceGrid, sheet_w: u32) -> Vec<u32> {
+    let (cell_w, _) = slice_cell_size(spec, sheet_w, 1);
+    let cols = spec.cols.max(1);
+    let mut xs = Vec::with_capacity((cols * 2) as usize);
+    for c in 0..cols {
+        let left = spec.offset_x + c * (cell_w + spec.gutter_x);
+        xs.push(left);
+        xs.push(left + cell_w);
+    }
+    xs
+}
+
+/// The y positions (in sheet pixels) of every horizontal cell edge for `spec`:
+/// for each row, its top and bottom edge, so the returned vector has `2 * rows`
+/// entries. The vertical companion to [`slice_x_edges`].
+#[must_use]
+pub(crate) fn slice_y_edges(spec: &SliceGrid, sheet_h: u32) -> Vec<u32> {
+    let (_, cell_h) = slice_cell_size(spec, 1, sheet_h);
+    let rows = spec.rows.max(1);
+    let mut ys = Vec::with_capacity((rows * 2) as usize);
+    for r in 0..rows {
+        let top = spec.offset_y + r * (cell_h + spec.gutter_y);
+        ys.push(top);
+        ys.push(top + cell_h);
+    }
+    ys
+}
+
+/// Applies a drag of `delta` sheet-pixels on `edge` to `spec`, adjusting the one
+/// uniform parameter that edge controls, clamped so the grid stays valid against
+/// a `sheet_w` x `sheet_h` sheet. Pure so the drag math is testable without egui.
+///
+/// - Left/top outer edges move `offset_x`/`offset_y` — the leading margin before
+///   the grid.
+/// - Right/bottom outer edges have no stored field of their own: the cell size is
+///   derived from the offsets and gutters, with the trailing margin absorbing the
+///   slack. Pulling them inward (a negative delta) maps to a positive `inset`,
+///   trimming every cell uniformly so the visible outer edge moves in.
+/// - Interior dividers adjust `gutter_x`/`gutter_y` — the gap between cells.
+#[must_use]
+pub(crate) fn slice_drag_edge(mut spec: SliceGrid, edge: SliceEdge, delta: i32, sheet_w: u32, sheet_h: u32) -> SliceGrid {
+    let apply = |value: u32, delta: i32, max: u32| -> u32 {
+        let next = i64::from(value) + i64::from(delta);
+        next.clamp(0, i64::from(max)) as u32
+    };
+    match edge {
+        SliceEdge::Left => {
+            // Cap the offset so at least one pixel of cell width survives.
+            let max = sheet_w.saturating_sub(spec.cols.max(1));
+            spec.offset_x = apply(spec.offset_x, delta, max);
+        }
+        SliceEdge::Top => {
+            let max = sheet_h.saturating_sub(spec.rows.max(1));
+            spec.offset_y = apply(spec.offset_y, delta, max);
+        }
+        SliceEdge::Right => {
+            // The right edge has no stored field; growing it shrinks the implied
+            // trailing margin, which the derived cell size already absorbs. A
+            // negative drag (pulling in) maps to a positive inset, trimming every
+            // cell uniformly so the visible right edge moves in.
+            let max = slice_cell_size(&spec, sheet_w, sheet_h).0 / 2;
+            spec.inset = apply(spec.inset, -delta, max);
+        }
+        SliceEdge::Bottom => {
+            let max = slice_cell_size(&spec, sheet_w, sheet_h).1 / 2;
+            spec.inset = apply(spec.inset, -delta, max);
+        }
+        SliceEdge::InteriorX => {
+            let cols = spec.cols.max(1);
+            let max = sheet_w.saturating_sub(spec.offset_x) / cols;
+            spec.gutter_x = apply(spec.gutter_x, delta, max);
+        }
+        SliceEdge::InteriorY => {
+            let rows = spec.rows.max(1);
+            let max = sheet_h.saturating_sub(spec.offset_y) / rows;
+            spec.gutter_y = apply(spec.gutter_y, delta, max);
+        }
+    }
+    spec
+}
+
+/// Picks the slice edge a press at screen position `p` grabs, given the screen
+/// `rect` the `iw` x `ih` sheet is drawn into and a `tol` in screen pixels.
+/// Vertical edges (outer left/right, interior columns) are tested against `p.x`,
+/// horizontal edges against `p.y`; the nearest within `tol` wins. `None` if the
+/// press missed every edge. Outer edges win ties so they stay grabbable.
+fn sheet_pick_edge(spec: &SliceGrid, p: egui::Pos2, rect: egui::Rect, iw: u32, ih: u32, tol: f32) -> Option<SliceEdge> {
+    let to_x = |sx: u32| view_to_screen(sx as f32, 0.0, rect, iw, ih).x;
+    let to_y = |sy: u32| view_to_screen(0.0, sy as f32, rect, iw, ih).y;
+    let (cw, ch) = slice_cell_size(spec, iw, ih);
+    let cols = spec.cols.max(1);
+    let rows = spec.rows.max(1);
+
+    // Outer edges first so they take ties with adjacent interior dividers.
+    let mut best: Option<(SliceEdge, f32)> = None;
+    let mut consider = |edge: SliceEdge, screen: f32, axis: f32| {
+        let d = (screen - axis).abs();
+        if d <= tol && best.is_none_or(|(_, bd)| d < bd) {
+            best = Some((edge, d));
+        }
+    };
+    // Left/right outer bounds.
+    consider(SliceEdge::Left, to_x(spec.offset_x), p.x);
+    let right_x = spec.offset_x + (cols - 1) * (cw + spec.gutter_x) + cw;
+    consider(SliceEdge::Right, to_x(right_x), p.x);
+    // Top/bottom outer bounds.
+    consider(SliceEdge::Top, to_y(spec.offset_y), p.y);
+    let bottom_y = spec.offset_y + (rows - 1) * (ch + spec.gutter_y) + ch;
+    consider(SliceEdge::Bottom, to_y(bottom_y), p.y);
+    // Interior vertical dividers (between columns), if more than one column.
+    for c in 1..cols {
+        let x = spec.offset_x + c * (cw + spec.gutter_x);
+        consider(SliceEdge::InteriorX, to_x(x), p.x);
+    }
+    // Interior horizontal dividers (between rows).
+    for r in 1..rows {
+        let y = spec.offset_y + r * (ch + spec.gutter_y);
+        consider(SliceEdge::InteriorY, to_y(y), p.y);
+    }
+    best.map(|(edge, _)| edge)
+}
+
+/// Draws the slice grid over the sheet: a cell rectangle per cell, plus center
+/// crosshairs on the first cell so drift against the subject reads at a glance
+/// (borrowed from agent-sprite-forge's layout guide).
+#[allow(clippy::cast_precision_loss)]
+fn sheet_draw_grid(painter: &egui::Painter, spec: &SliceGrid, rect: egui::Rect, iw: u32, ih: u32, theme: egui::Theme) {
+    let palette = crate::theme::Palette::for_theme(theme);
+    let line = egui::Stroke::new(1.5, palette.success);
+    let faint = egui::Stroke::new(1.0, palette.success.gamma_multiply(0.4));
+    let xs = slice_x_edges(spec, iw);
+    let ys = slice_y_edges(spec, ih);
+    let to = |sx: f32, sy: f32| view_to_screen(sx, sy, rect, iw, ih);
+    // Cell rectangles: pair (left, right) over (top, bottom).
+    for (xl, xr) in xs.chunks_exact(2).map(|p| (p[0], p[1])) {
+        for (yt, yb) in ys.chunks_exact(2).map(|p| (p[0], p[1])) {
+            let cell = egui::Rect::from_min_max(to(xl as f32, yt as f32), to(xr as f32, yb as f32));
+            painter.rect_stroke(cell, 0.0, line, egui::StrokeKind::Inside);
+        }
+    }
+    // Crosshairs through the first cell's center, to gauge subject centering.
+    if let (Some(&xl), Some(&yt)) = (xs.first(), ys.first()) {
+        let (cw, ch) = slice_cell_size(spec, iw, ih);
+        let cx = xl as f32 + cw as f32 / 2.0;
+        let cy = yt as f32 + ch as f32 / 2.0;
+        painter.line_segment([to(xl as f32, cy), to(xl as f32 + cw as f32, cy)], faint);
+        painter.line_segment([to(cx, yt as f32), to(cx, yt as f32 + ch as f32)], faint);
     }
 }
 
