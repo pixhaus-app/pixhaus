@@ -717,7 +717,7 @@ pub fn slice_sheet_to_frames(sheet: &PixelBuffer, spec: &SliceGrid, fps: u32) ->
 
 /// Stamps sliced `cells` with row-major playback timestamps (`i * 1000 / fps`)
 /// and moves each cell's tightly packed RGBA pixels into a [`VideoFrame`]. The
-/// shared tail of [`sheet_to_frames`] and [`slice_sheet_to_frames`].
+/// shared tail of [`slice_sheet_to_frames`] (and the test-only `sheet_to_frames`).
 fn cells_to_frames(cells: Vec<PixelBuffer>, fps: u32) -> Vec<VideoFrame> {
     let fps = fps.max(1);
     cells

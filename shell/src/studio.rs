@@ -3104,6 +3104,9 @@ impl ShellApp {
             return;
         };
         let Some(candidate) = self.anim_candidates.get_mut(idx) else {
+            // Mark the spec resolved like the sibling guards above so a stale
+            // `anim_selected` index doesn't re-slice the sheet every frame.
+            self.studio.sheet_sliced = Some(spec);
             return;
         };
         candidate.markers = crate::anim::auto_loop_markers(&frames);
