@@ -249,7 +249,11 @@ mod tests {
         let sprite = bit_sprite(&doc);
         assert_eq!(sprite.frame_tags.len(), BIT_ACTIONS.len(), "one tag per action");
         for (name, kind) in BIT_ACTIONS {
-            let tag = sprite.frame_tags.iter().find(|t| t.name == *name).unwrap_or_else(|| panic!("tag {name} present"));
+            let tag = sprite
+                .frame_tags
+                .iter()
+                .find(|t| t.name == *name)
+                .unwrap_or_else(|| panic!("tag {name} present"));
             let expected_repeat = match kind {
                 FrameTagKind::Loop => 0,
                 FrameTagKind::OneShot => 1,
@@ -265,7 +269,9 @@ mod tests {
         for tag in &sprite.frame_tags {
             let frame = tag.range.start;
             let source = sprite.resolve_source_frame(sprite.layers[0].id, frame);
-            let cel = sprite.cel(sprite.layers[0].id, source).unwrap_or_else(|| panic!("cel for {} present", tag.name));
+            let cel = sprite
+                .cel(sprite.layers[0].id, source)
+                .unwrap_or_else(|| panic!("cel for {} present", tag.name));
             let pixhaus_core::project::CelData::Raster { buffer, .. } = cel.data else {
                 panic!("the demo cel is a raster cel");
             };

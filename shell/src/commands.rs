@@ -381,6 +381,10 @@ pub fn push_layer_consolidation(
 /// threaded into [`DocumentStore::integrate_frames`] so it lands inside the same
 /// `SpriteBufferEdit` snapshot — undo removes it with the frames rather than
 /// leaving a dangling record. `None` at non-reviewed sites.
+///
+/// `slice` is the resolved slice grid that cut the source sheet into these
+/// frames, threaded through the same way so it rides onto the landed
+/// `Animation`. `None` for frames that did not come from a sliced sheet.
 pub fn integrate_frames_undoable(
     editor: &mut EditorState,
     doc: &mut DocumentStore,
@@ -389,6 +393,7 @@ pub fn integrate_frames_undoable(
     name: &str,
     loop_direction: LoopDirection,
     qc: Option<pixhaus_core::project::AnimationQc>,
+    slice: Option<pixhaus_core::transforms::SliceGrid>,
 ) -> Option<FrameRange> {
     let sprite_id = doc.project.active_sprite_id()?;
     let before = doc.project.sprite(sprite_id)?.clone();
@@ -405,7 +410,7 @@ pub fn integrate_frames_undoable(
         })
         .collect();
 
-    let range = doc.integrate_frames(frames, frame_duration_ms, name, loop_direction, qc)?;
+    let range = doc.integrate_frames(frames, frame_duration_ms, name, loop_direction, qc, slice)?;
 
     let after = doc.project.sprite(sprite_id)?.clone();
     let after_keys: HashSet<PixelBufferId> = doc.pixel_buffers.keys().copied().collect();
@@ -1049,7 +1054,7 @@ mod tests {
             .map(|_| PixelBuffer::filled(8, 8, pixhaus_core::project::Rgba::new(9, 9, 9, 255)).expect("buffer"))
             .collect();
 
-        integrate_frames_undoable(&mut editor, &mut doc, frames, 100, "walk", LoopDirection::Forward, None).expect("integrated range");
+        integrate_frames_undoable(&mut editor, &mut doc, frames, 100, "walk", LoopDirection::Forward, None, None).expect("integrated range");
         // The pristine seed is replaced, leaving exactly the three frames.
         assert_eq!(doc.frame_count(), 3);
         assert_eq!(doc.pixel_buffers.len(), 3);
@@ -1065,8 +1070,8 @@ mod tests {
 
     /// A small populated QC record for the integrate-with-qc test.
     fn sample_animation_qc() -> pixhaus_core::project::AnimationQc {
-        use pixhaus_core::project::qc::{AnimationQc, FrameQc, NormalizeReportSummary, QcSettings};
         use pixhaus_core::project::Rgba;
+        use pixhaus_core::project::qc::{AnimationQc, FrameQc, NormalizeReportSummary, QcSettings};
         use pixhaus_core::transforms::SeamMatch;
         AnimationQc {
             settings: QcSettings {
@@ -1110,7 +1115,7 @@ mod tests {
             .collect();
         let qc = sample_animation_qc();
 
-        integrate_frames_undoable(&mut editor, &mut doc, frames, 100, "walk", LoopDirection::Forward, Some(qc.clone())).expect("integrated range");
+        integrate_frames_undoable(&mut editor, &mut doc, frames, 100, "walk", LoopDirection::Forward, Some(qc.clone()), None).expect("integrated range");
 
         // The landed Animation carries the QC record, inside the same undo entry.
         let landed = doc.active_sprite().expect("sprite").animations.last().expect("animation").clone();
@@ -1126,6 +1131,50 @@ mod tests {
         editor.history.redo(&mut doc).expect("redo");
         let relanded = doc.active_sprite().expect("sprite").animations.last().expect("animation").clone();
         assert!(relanded.qc.is_some(), "redo restores the qc record with the animation");
+    }
+
+    #[test]
+    fn integrate_frames_undoable_records_the_slice_grid() {
+        // The static-sheet Land path threads the resolved slice spec through, so a
+        // landed animation carries the cut it came from (reproducible after save).
+        let mut doc = DocumentStore::new();
+        doc.create_sprite("hero", Size::new(8, 8));
+        let mut editor = EditorState::default();
+        let frames: Vec<PixelBuffer> = (0..3)
+            .map(|_| PixelBuffer::filled(8, 8, pixhaus_core::project::Rgba::new(9, 9, 9, 255)).expect("buffer"))
+            .collect();
+        let slice = pixhaus_core::transforms::SliceGrid {
+            offset_x: 1,
+            gutter_x: 1,
+            ..pixhaus_core::transforms::SliceGrid::uniform(1, 3)
+        };
+
+        integrate_frames_undoable(&mut editor, &mut doc, frames, 100, "walk", LoopDirection::Forward, None, Some(slice.clone())).expect("integrated range");
+
+        let landed = doc.active_sprite().expect("sprite").animations.last().expect("animation").clone();
+        assert_eq!(landed.slice, Some(slice), "the landed animation records its slice grid");
+
+        editor.history.undo(&mut doc).expect("undo");
+        assert!(
+            doc.active_sprite().expect("sprite").animations.is_empty(),
+            "undo removes the animation and its slice with the frames"
+        );
+    }
+
+    #[test]
+    fn integrate_frames_undoable_without_a_slice_lands_none() {
+        // The i2v and import paths pass no slice, so their animation records none.
+        let mut doc = DocumentStore::new();
+        doc.create_sprite("hero", Size::new(8, 8));
+        let mut editor = EditorState::default();
+        let frames: Vec<PixelBuffer> = (0..2)
+            .map(|_| PixelBuffer::filled(8, 8, pixhaus_core::project::Rgba::new(1, 2, 3, 255)).expect("buffer"))
+            .collect();
+
+        integrate_frames_undoable(&mut editor, &mut doc, frames, 100, "walk", LoopDirection::Forward, None, None).expect("integrated range");
+
+        let landed = doc.active_sprite().expect("sprite").animations.last().expect("animation").clone();
+        assert_eq!(landed.slice, None, "an animation that did not come from a sliced sheet records no slice");
     }
 
     #[test]

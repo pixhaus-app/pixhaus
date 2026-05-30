@@ -11,6 +11,7 @@ use super::frame::{FrameRange, LoopDirection};
 use super::id::AnimationId;
 use super::qc::AnimationQc;
 use super::user_data::UserData;
+use crate::transforms::SliceGrid;
 
 /// A named animation entry referencing a frame range.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -34,6 +35,15 @@ pub struct Animation {
     /// older files load and animations without QC stay byte-identical.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub qc: Option<AnimationQc>,
+    /// The slice grid that cut the source sheet into these frames, when the
+    /// animation landed through the studio's static grid-sheet path. Holds the
+    /// resolved geometry (rows, cols, offset, gutter, inset) so the cut is
+    /// reproducible and re-editable after save/load. `None` for an animation
+    /// that did not come from a sliced sheet. Serde-defaulted and omitted when
+    /// absent so older files load and animations without a slice spec stay
+    /// byte-identical.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub slice: Option<SliceGrid>,
     /// Free-form user metadata.
     #[serde(skip_serializing_if = "UserData::is_empty", default)]
     pub user_data: UserData,
@@ -50,6 +60,7 @@ impl Animation {
             loop_direction: LoopDirection::Forward,
             speed_multiplier: 1.0,
             qc: None,
+            slice: None,
             user_data: UserData::default(),
         }
     }
@@ -139,5 +150,62 @@ mod tests {
         let a: Animation = serde_json::from_str(json).expect("decode legacy animation");
         assert_eq!(a.qc, None, "qc defaults to None");
         assert_eq!(a.name, "walk");
+    }
+
+    fn sample_slice() -> SliceGrid {
+        SliceGrid {
+            rows: 2,
+            cols: 4,
+            offset_x: 3,
+            offset_y: 1,
+            gutter_x: 2,
+            gutter_y: 2,
+            inset: 1,
+            ..SliceGrid::uniform(2, 4)
+        }
+    }
+
+    #[test]
+    fn animation_round_trip_with_slice() {
+        let mut a = Animation::forward(AnimationId::new(1), "walk", FrameRange::new(FrameIndex::new(0), FrameIndex::new(3)));
+        a.slice = Some(sample_slice());
+        let json = serde_json::to_string(&a).expect("encode");
+        assert!(json.contains("\"slice\""), "the slice payload is written: {json}");
+        let back: Animation = serde_json::from_str(&json).expect("decode");
+        assert_eq!(a, back);
+    }
+
+    #[test]
+    fn animation_round_trip_with_slice_msgpack() {
+        // The on-disk format is MessagePack; the slice spec must round-trip there too.
+        let mut a = Animation::forward(AnimationId::new(1), "walk", FrameRange::new(FrameIndex::new(0), FrameIndex::new(3)));
+        a.slice = Some(sample_slice());
+        let bytes = rmp_serde::to_vec_named(&a).expect("encode msgpack");
+        let back: Animation = rmp_serde::from_slice(&bytes).expect("decode msgpack");
+        assert_eq!(a, back, "the slice spec survives the MessagePack round-trip");
+    }
+
+    #[test]
+    fn animation_without_slice_omits_the_field() {
+        let a = Animation::forward(AnimationId::new(1), "idle", FrameRange::new(FrameIndex::new(0), FrameIndex::new(1)));
+        assert_eq!(a.slice, None);
+        let json = serde_json::to_string(&a).expect("encode");
+        assert!(!json.contains("slice"), "an animation with no slice omits the field: {json}");
+        let back: Animation = serde_json::from_str(&json).expect("decode");
+        assert_eq!(a, back, "the None case is byte-identical");
+    }
+
+    #[test]
+    fn deserializes_old_animation_without_slice() {
+        // A record written before the slice field existed still loads, in both
+        // wire formats: JSON for readability, MessagePack as the on-disk format.
+        let json = r#"{"id":1,"name":"walk","range":{"start":0,"end":3},"loop_direction":"forward","speed_multiplier":1.0}"#;
+        let a: Animation = serde_json::from_str(json).expect("decode legacy animation");
+        assert_eq!(a.slice, None, "slice defaults to None");
+
+        let legacy = Animation::forward(AnimationId::new(2), "run", FrameRange::new(FrameIndex::new(0), FrameIndex::new(2)));
+        let bytes = rmp_serde::to_vec_named(&legacy).expect("encode msgpack");
+        let back: Animation = rmp_serde::from_slice(&bytes).expect("decode msgpack");
+        assert_eq!(back.slice, None, "an animation serialized without the field decodes to None");
     }
 }

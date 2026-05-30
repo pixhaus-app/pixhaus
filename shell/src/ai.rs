@@ -34,6 +34,10 @@ use pixhaus_core::project::library::composition::{ArtStyleKind, PromptId, Prompt
 use pixhaus_core::project::{AnchorDirection, EntityId, PixelBufferId, ProjectMetadata, SheetVariantId};
 use pixhaus_core::transforms::finisher::{FinishOptions, finish_frames};
 use pixhaus_core::transforms::normalize::{ComponentMode, NormalizeOptions, normalize_frames};
+use pixhaus_core::transforms::sheet::{SliceGrid, slice_grid_spec};
+// `slice_grid` is the legacy uniform slicer; production drives `slice_grid_spec`
+// now, so it survives only inside the test-gated `sheet_to_frames` parity anchor.
+#[cfg(test)]
 use pixhaus_core::transforms::sheet::slice_grid;
 use tokio::runtime::Handle;
 use tokio_util::sync::CancellationToken;
@@ -987,10 +991,32 @@ pub fn static_sheet_prompt(action_prompt: &str, rows: u32, cols: u32) -> String 
 /// # Errors
 /// Returns the slicer's error string when the sheet is empty or the grid is
 /// finer than the sheet on an axis.
+#[cfg(test)]
 pub fn sheet_to_frames(sheet: &PixelBuffer, rows: u32, cols: u32, fps: u32) -> Result<Vec<VideoFrame>, String> {
     let cells = slice_grid(sheet, rows, cols).map_err(|e| e.to_string())?;
+    Ok(cells_to_frames(cells, fps))
+}
+
+/// Re-slices a decoded sheet through a [`SliceGrid`] spec into ordered
+/// [`VideoFrame`]s, stamping each cell with the same `i * 1000 / fps` timestamp
+/// [`sheet_to_frames`] uses. The Sheet stage calls this to re-cut live as the
+/// user adjusts the slice gizmo, so the gizmo and `sheet_to_frames` agree on the
+/// uniform case ([`SliceGrid::uniform`] reproduces [`slice_grid`] exactly).
+///
+/// # Errors
+/// Returns the slicer's error string when the spec collapses a derived cell
+/// dimension to zero (an over-large margin or inset, or a zero-sized grid).
+pub fn slice_sheet_to_frames(sheet: &PixelBuffer, spec: &SliceGrid, fps: u32) -> Result<Vec<VideoFrame>, String> {
+    let cells = slice_grid_spec(sheet, spec).map_err(|e| e.to_string())?;
+    Ok(cells_to_frames(cells, fps))
+}
+
+/// Stamps sliced `cells` with row-major playback timestamps (`i * 1000 / fps`)
+/// and moves each cell's tightly packed RGBA pixels into a [`VideoFrame`]. The
+/// shared tail of [`slice_sheet_to_frames`] (and the test-only `sheet_to_frames`).
+fn cells_to_frames(cells: Vec<PixelBuffer>, fps: u32) -> Vec<VideoFrame> {
     let fps = fps.max(1);
-    Ok(cells
+    cells
         .into_iter()
         .enumerate()
         .map(|(i, cell)| {
@@ -1005,7 +1031,29 @@ pub fn sheet_to_frames(sheet: &PixelBuffer, rows: u32, cols: u32, fps: u32) -> R
                 timestamp_ms,
             }
         })
-        .collect())
+        .collect()
+}
+
+/// The output of a static-sheet run: the sliced frames plus the raw sheet and
+/// the geometry that produced them, so the Sheet stage can show the sheet and
+/// re-cut it live. The previous design dropped everything but the frames.
+pub struct StaticSheetResult {
+    /// The sliced cells as ordered frames (the artifact the Clip tail consumes).
+    pub frames: Vec<VideoFrame>,
+    /// The decoded sheet the frames were cut from, retained for the Sheet stage.
+    pub sheet: PixelBuffer,
+    /// The slice spec seeded from the generation grid (a [`SliceGrid::uniform`]
+    /// over the requested rows/cols). Re-slicing through this reproduces
+    /// `frames` exactly.
+    pub slice: SliceGrid,
+    /// The per-cell size the sheet was requested for (`cell_w`, `cell_h`).
+    pub cell: (u32, u32),
+    /// The action prompt, threaded onto the candidate as provenance.
+    pub action: String,
+    /// Playback FPS for the candidate.
+    pub fps: u32,
+    /// The RNG seed, if one was pinned.
+    pub seed: Option<u64>,
 }
 
 /// Generates one solid-magenta `rows × cols` grid sheet conditioned on the
@@ -1015,9 +1063,10 @@ pub fn sheet_to_frames(sheet: &PixelBuffer, rows: u32, cols: u32, fps: u32) -> R
 ///
 /// Unlike [`spawn_clip`] this issues a single `IMAGE_GENERATION` request (no
 /// image-to-video step), so it carries no durable job id or cancel token. The
-/// decode and slice are CPU-bound and run on `spawn_blocking`. The frames arrive
-/// over `tx` as [`ShellMsg::StaticSheetReady`] tagged with `epoch`; a failure
-/// arrives as [`ShellMsg::StaticSheetFailed`].
+/// decode and slice are CPU-bound and run on `spawn_blocking`. The result —
+/// frames plus the retained sheet and its slice geometry — arrives over `tx` as
+/// [`ShellMsg::StaticSheetReady`] tagged with `epoch`; a failure arrives as
+/// [`ShellMsg::StaticSheetFailed`].
 pub fn spawn_static_sheet(handle: &Handle, runtime: Arc<VerbRuntime>, ctx: egui::Context, tx: Sender<ShellMsg>, job: StaticSheetJob, epoch: u64) {
     handle.spawn(async move {
         let _ = tx.send(ShellMsg::ClipProgress {
@@ -1026,10 +1075,21 @@ pub fn spawn_static_sheet(handle: &Handle, runtime: Arc<VerbRuntime>, ctx: egui:
         });
         ctx.request_repaint();
         match run_static_sheet(&runtime, job).await {
-            Ok((frames, action, fps, seed)) => {
+            Ok(StaticSheetResult {
+                frames,
+                sheet,
+                slice,
+                cell,
+                action,
+                fps,
+                seed,
+            }) => {
                 let _ = tx.send(ShellMsg::StaticSheetReady {
                     epoch,
                     frames,
+                    sheet,
+                    slice,
+                    cell,
                     action,
                     fps,
                     seed,
@@ -1059,9 +1119,10 @@ fn sheet_backend(width: u32, height: u32) -> Option<String> {
 
 /// The async body of [`spawn_static_sheet`]: build one sheet-sized image-gen
 /// request, invoke an `IMAGE_GENERATION` backend, decode the returned PNG, and
-/// slice it to frames on a blocking worker. Returns the frames plus the
-/// provenance the candidate needs (action prompt, fps, seed).
-async fn run_static_sheet(runtime: &VerbRuntime, job: StaticSheetJob) -> Result<(Vec<VideoFrame>, String, u32, Option<u64>), String> {
+/// slice it to frames on a blocking worker. Returns the frames plus the retained
+/// sheet, the slice geometry that cut it, and the provenance the candidate needs
+/// (action prompt, fps, seed).
+async fn run_static_sheet(runtime: &VerbRuntime, job: StaticSheetJob) -> Result<StaticSheetResult, String> {
     let StaticSheetJob {
         canvas,
         anchor_png,
@@ -1095,17 +1156,32 @@ async fn run_static_sheet(runtime: &VerbRuntime, job: StaticSheetJob) -> Result<
         InferenceResponse::Image(r) => r.images.into_iter().next().ok_or_else(|| "sheet backend returned no image".to_owned())?,
         _ => return Err("unexpected response for grid-sheet generation".into()),
     };
-    // Decode + slice are CPU-bound; keep them off the async worker.
-    let frames = tokio::task::spawn_blocking(move || {
+    // The slice that produced the frames, seeded uniform from the generation
+    // grid. Re-cutting the retained sheet through this reproduces `frames`.
+    let slice = SliceGrid::uniform(rows, cols);
+    // Decode + slice are CPU-bound; keep them off the async worker. The decoded
+    // sheet leaves the closure with the frames so the Sheet stage can show it.
+    // Clone the spec into the closure; the original rides the result.
+    let cut = slice.clone();
+    let (sheet, frames) = tokio::task::spawn_blocking(move || -> Result<(PixelBuffer, Vec<VideoFrame>), String> {
         let sheet = decode_sheet_png(&sheet_png)?;
-        sheet_to_frames(&sheet, rows, cols, fps)
+        let frames = slice_sheet_to_frames(&sheet, &cut, fps)?;
+        Ok((sheet, frames))
     })
     .await
     .map_err(|e| e.to_string())??;
     if frames.is_empty() {
         return Err("grid sheet sliced to zero frames".into());
     }
-    Ok((frames, action_prompt, fps, seed))
+    Ok(StaticSheetResult {
+        frames,
+        sheet,
+        slice,
+        cell: (cell_w, cell_h),
+        action: action_prompt,
+        fps,
+        seed,
+    })
 }
 
 /// Decodes sheet PNG bytes into a tightly packed RGBA [`PixelBuffer`]. The shell
@@ -1989,6 +2065,60 @@ mod tests {
     fn sheet_to_frames_errors_on_an_empty_sheet() {
         let empty = pixhaus_core::canvas::PixelBuffer::empty();
         assert!(super::sheet_to_frames(&empty, 2, 2, 10).is_err(), "an empty sheet has no cells");
+    }
+
+    #[test]
+    fn slice_sheet_to_frames_uniform_matches_sheet_to_frames() {
+        use pixhaus_core::transforms::sheet::SliceGrid;
+        // The load-bearing invariant: a uniform spec slices byte-identically to
+        // the rows/cols path, so the gizmo's default cut equals today's cut.
+        let sheet = grid_sheet(2, 3, 4);
+        let (rows, cols, fps) = (2u32, 3u32, 10u32);
+        let plain = super::sheet_to_frames(&sheet, rows, cols, fps).expect("rows/cols slice");
+        let spec = super::slice_sheet_to_frames(&sheet, &SliceGrid::uniform(rows, cols), fps).expect("spec slice");
+        assert_eq!(plain.len(), spec.len(), "same cell count");
+        for (a, b) in plain.iter().zip(spec.iter()) {
+            assert_eq!(a.width, b.width);
+            assert_eq!(a.height, b.height);
+            assert_eq!(a.timestamp_ms, b.timestamp_ms);
+            assert_eq!(a.pixels, b.pixels, "a uniform spec cuts the same bytes");
+        }
+    }
+
+    #[test]
+    fn slice_sheet_to_frames_re_cuts_with_an_offset_spec() {
+        use pixhaus_core::project::Rgba;
+        use pixhaus_core::transforms::sheet::SliceGrid;
+        // A sheet whose top-left pixel of each offset cell is recoverable: paint a
+        // distinct colour at (2, 2) so an offset cut lands on it. An offset spec
+        // shifts the grid origin, proving the helper drives the spec, not the
+        // rows/cols path.
+        let mut sheet = pixhaus_core::canvas::PixelBuffer::filled(12, 8, Rgba::opaque(255, 0, 255)).expect("sheet");
+        sheet.set_pixel(2, 2, Rgba::opaque(10, 20, 30));
+        let spec = SliceGrid {
+            offset_x: 2,
+            offset_y: 2,
+            ..SliceGrid::uniform(2, 2)
+        };
+        let frames = super::slice_sheet_to_frames(&sheet, &spec, 10).expect("offset slice");
+        assert_eq!(frames.len(), 4, "rows * cols frames");
+        // Usable area is 10x6, so cells are 5x3 and the first cell roots at (2, 2).
+        assert_eq!((frames[0].width, frames[0].height), (5, 3));
+        assert_eq!(&frames[0].pixels[0..3], &[10u8, 20, 30], "the first cell starts at the offset origin");
+    }
+
+    #[test]
+    fn slice_sheet_to_frames_errors_on_a_collapsed_spec() {
+        use pixhaus_core::transforms::sheet::SliceGrid;
+        let sheet = grid_sheet(2, 2, 4);
+        let spec = SliceGrid {
+            offset_x: 100,
+            ..SliceGrid::uniform(2, 2)
+        };
+        assert!(
+            super::slice_sheet_to_frames(&sheet, &spec, 10).is_err(),
+            "an over-large offset collapses the cut"
+        );
     }
 
     #[test]

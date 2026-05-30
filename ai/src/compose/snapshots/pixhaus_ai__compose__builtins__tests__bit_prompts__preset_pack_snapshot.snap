@@ -1,0 +1,54 @@
+---
+source: ai/src/compose/builtins.rs
+expression: "format!(\"{:#?}\", super::super::bit_presets())"
+---
+[
+    BitPreset {
+        label: "idle",
+        prompt_id: "pixhaus.builtin.prompt.bit_idle",
+        structure_id: "pixhaus.builtin.structure.single",
+        style_id: "pixhaus.builtin.style.pixel_art",
+    },
+    BitPreset {
+        label: "walk",
+        prompt_id: "pixhaus.builtin.prompt.bit_walk",
+        structure_id: "pixhaus.builtin.structure.single",
+        style_id: "pixhaus.builtin.style.pixel_art",
+    },
+    BitPreset {
+        label: "run",
+        prompt_id: "pixhaus.builtin.prompt.bit_run",
+        structure_id: "pixhaus.builtin.structure.single",
+        style_id: "pixhaus.builtin.style.pixel_art",
+    },
+    BitPreset {
+        label: "jump",
+        prompt_id: "pixhaus.builtin.prompt.bit_jump",
+        structure_id: "pixhaus.builtin.structure.single",
+        style_id: "pixhaus.builtin.style.pixel_art",
+    },
+    BitPreset {
+        label: "fall",
+        prompt_id: "pixhaus.builtin.prompt.bit_fall",
+        structure_id: "pixhaus.builtin.structure.single",
+        style_id: "pixhaus.builtin.style.pixel_art",
+    },
+    BitPreset {
+        label: "attack",
+        prompt_id: "pixhaus.builtin.prompt.bit_attack",
+        structure_id: "pixhaus.builtin.structure.single",
+        style_id: "pixhaus.builtin.style.pixel_art",
+    },
+    BitPreset {
+        label: "hurt",
+        prompt_id: "pixhaus.builtin.prompt.bit_hurt",
+        structure_id: "pixhaus.builtin.structure.single",
+        style_id: "pixhaus.builtin.style.pixel_art",
+    },
+    BitPreset {
+        label: "turnaround",
+        prompt_id: "pixhaus.builtin.prompt.bit_turnaround",
+        structure_id: "pixhaus.builtin.structure.character",
+        style_id: "pixhaus.builtin.style.pixel_art",
+    },
+]

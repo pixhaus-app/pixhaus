@@ -17,6 +17,7 @@ use pixhaus_core::canvas::PixelBuffer;
 use pixhaus_core::project::{CelData, ColorMode, FrameIndex, GroupId, LoopDirection, PixelBufferId, Rgba, Size, Sprite, SpriteId};
 use pixhaus_core::selection::SelectionMask;
 use pixhaus_core::transforms::normalize::{NormalizeOptions, NormalizeResult, normalize_frames};
+use pixhaus_core::transforms::sheet::SliceGrid;
 use pixhaus_core::transforms::{CanvasAnchor, MlaaConfig, RotationAlgorithm};
 use pixhaus_render::{Viewport, ViewportRenderer};
 use tokio::runtime::Runtime;
@@ -316,6 +317,14 @@ pub enum ShellMsg {
         epoch: u64,
         /// The sliced cells as ordered frames.
         frames: Vec<VideoFrame>,
+        /// The decoded sheet the frames were cut from, retained for the Sheet
+        /// stage to show and re-cut.
+        sheet: PixelBuffer,
+        /// The slice spec seeded from the generation grid; re-slicing the sheet
+        /// through it reproduces `frames` exactly.
+        slice: SliceGrid,
+        /// The per-cell size the sheet was requested for (`cell_w`, `cell_h`).
+        cell: (u32, u32),
         /// The action prompt, threaded onto the candidate as provenance.
         action: String,
         /// Playback FPS for the candidate.
@@ -1381,6 +1390,10 @@ impl ShellApp {
         // cells to regenerate, restyle, animate, and export.
         if app.doc.active_sprite().is_none() {
             crate::demo::build_bit_demo(&mut app.doc);
+            // Pre-select the demo's default Bit preset so the bare Generate
+            // button produces a good Bit sheet on the first click, before the
+            // user touches the template, structure, or style pickers.
+            app.select_default_bit_preset();
         }
         app.refresh_canvas(true);
         // Register backends from the keychain off-thread so the blocking reads
@@ -1547,12 +1560,15 @@ impl ShellApp {
                 ShellMsg::StaticSheetReady {
                     epoch,
                     frames,
+                    sheet,
+                    slice,
+                    cell,
                     action,
                     fps,
                     seed,
                 } => {
                     if epoch == self.anim_gen_epoch {
-                        self.on_static_sheet_ready(frames, action, fps, seed);
+                        self.on_static_sheet_ready(frames, sheet, slice, cell, action, fps, seed);
                     }
                 }
                 ShellMsg::StaticSheetFailed { epoch, error } => {
@@ -3177,16 +3193,42 @@ impl ShellApp {
     /// Lands a sliced static sheet as a clip candidate, with no remote clip blob
     /// and no i2v job record — the static path persists nothing the import path
     /// does not. Routes through the shared [`Self::push_clip_candidate`] tail.
-    fn on_static_sheet_ready(&mut self, frames: Vec<VideoFrame>, action: String, fps: u32, seed: Option<u64>) {
+    ///
+    /// The retained `sheet`, its `slice` spec, and the per-cell `cell` size are
+    /// stashed on the studio so the Sheet stage can show the raw sheet and re-cut
+    /// it live; the frames still flow straight to the Clip tail, so behavior is
+    /// unchanged until that stage lands.
+    #[allow(clippy::too_many_arguments)]
+    fn on_static_sheet_ready(
+        &mut self,
+        frames: Vec<VideoFrame>,
+        sheet: PixelBuffer,
+        slice: SliceGrid,
+        cell: (u32, u32),
+        action: String,
+        fps: u32,
+        seed: Option<u64>,
+    ) {
         self.anim_status = JobStatus::Idle;
         // A static sheet has no i2v lineage parent.
         self.anim_pending_parent = None;
+        // Carry the raw sheet and its slice geometry forward for the Sheet stage.
+        self.studio.sheet = Some(sheet);
+        self.studio.slice = slice.clone();
+        self.studio.sheet_cell = cell;
+        // Drop the previous sheet's cached texture and re-slice marker so the
+        // Sheet stage rebuilds them for the new sheet.
+        self.studio.sheet_texture = None;
+        self.studio.sheet_sliced = Some(slice);
         // No raw clip blob: the frames are the artifact, so the candidate carries
         // an empty clip and a PNG mime (the slice path's source format). No job id
         // either — the static path persists no sidecar, so the landed Animation
         // copy is the only home for its QC record.
         self.push_clip_candidate(Vec::new(), "image/png".to_owned(), frames, action, fps, seed, None, None);
-        self.set_status("Generated a static sheet.");
+        // Route to the Sheet stage so the user sees the raw sheet and can re-cut
+        // it before the clip review, rather than jumping straight to the clip.
+        self.studio.stage = crate::studio::StudioStage::Sheet;
+        self.set_status("Generated a static sheet — review the slice.");
     }
 
     /// Spawns an AI background removal of `buffer_id` (already encoded to PNG)
@@ -3448,6 +3490,9 @@ impl ShellApp {
             key_tolerance: self.bg_tolerance,
             all_parts: self.studio.land_all_parts,
             min_area: self.studio.land_min_area,
+            alpha_threshold: self.studio.norm_knobs.alpha_threshold,
+            reference_height: self.studio.norm_knobs.reference_height,
+            bottom_margin: self.studio.norm_knobs.bottom_margin,
         })
     }
 
@@ -3473,15 +3518,16 @@ impl ShellApp {
         if buffers.is_empty() {
             return None;
         }
+        let knobs = self.studio.norm_knobs;
         let opts = NormalizeOptions {
             canvas_width: cw,
             canvas_height: ch,
-            alpha_threshold: 8,
+            alpha_threshold: knobs.alpha_threshold,
             // When the studio's "remove background on Land" is set, key the
             // backdrop out during normalize so the loop lands already stripped.
             chroma: crate::studio::land_chroma(self.studio.remove_on_land, self.bg_key_color, self.bg_tolerance),
-            reference_height: None,
-            bottom_margin: 0,
+            reference_height: knobs.reference_height,
+            bottom_margin: knobs.bottom_margin,
             // Isolate the hero from detached keying specks on Land, so a stray
             // pixel cannot inflate the bbox and shrink the body. WholeAlpha when
             // the backdrop is left for the timeline op (no keying, no specks).
@@ -3518,9 +3564,9 @@ impl ShellApp {
             key_color: self.bg_key_color,
             key_tolerance: self.bg_tolerance,
             // Matches `compute_normalize`'s NormalizeOptions.
-            alpha_threshold: 8,
+            alpha_threshold: self.studio.norm_knobs.alpha_threshold,
             canvas: canvas.unwrap_or((0, 0)),
-            bottom_margin: 0,
+            bottom_margin: self.studio.norm_knobs.bottom_margin,
             reference_height: report.reference_height,
             remove_on_land: self.studio.remove_on_land,
         };
@@ -3577,11 +3623,7 @@ impl ShellApp {
         // forward (a mirror is not a reversal). Correct only for left-right-
         // symmetric subjects — the cascade grid badges east as a flip, not a
         // generation. The flip is bounded by the pick region, not the 8K canvas.
-        let frames = if east_flip {
-            flip_frames_horizontal(result.frames)
-        } else {
-            result.frames
-        };
+        let frames = if east_flip { flip_frames_horizontal(result.frames) } else { result.frames };
         // Style gate (Brief 8): pixel-class styles get the palette-snap +
         // downscale finisher before the frames hit the timeline; clean-HD/map
         // land the normalized frames verbatim. Resolve the kind from the picked
@@ -3596,9 +3638,22 @@ impl ShellApp {
         let fps = self.anim_candidates[i].fps;
         let frame_ms = (1000 / fps.max(1)).max(1);
         let motion = self.anim_candidates[i].motion.clone();
+        // Persist the slice spec when these frames came from a retained grid
+        // sheet (the static path stashes the sheet on the studio). The i2v and
+        // video-import paths keep no sheet, so they land with no slice.
+        let slice = self.studio.sheet.as_ref().map(|_| self.studio.slice.clone());
         // The QC rides into the same `SpriteBufferEdit` undo entry so undo cannot
-        // leave a dangling record.
-        integrate_frames_undoable(&mut self.editor, &mut self.doc, frames, frame_ms, &motion, LoopDirection::Forward, qc.clone());
+        // leave a dangling record. The slice spec rides the same entry.
+        integrate_frames_undoable(
+            &mut self.editor,
+            &mut self.doc,
+            frames,
+            frame_ms,
+            &motion,
+            LoopDirection::Forward,
+            qc.clone(),
+            slice,
+        );
         // Persist the QC back onto the originating job's sidecar so it survives
         // restart. A static-sheet candidate carries no job id and a pruned job is
         // skipped — the Animation copy is the source of truth either way.
@@ -3614,6 +3669,39 @@ impl ShellApp {
         self.anim_selected = None;
         self.anim_clip_playing = false;
         self.exit_clip_preview();
+    }
+
+    /// Hands the picked frame `frame` (a clip frame index, not a strip slot) to
+    /// the Draw workspace for manual surgery, then returns the edited pixels back
+    /// into the clip so the pick lands the edit. The frame opens as a scratch
+    /// sprite in Draw; [`Self::finish_hand_edit`] reads it back over
+    /// [`crate::studio::StudioReturn::pick`] and drops the scratch sprite. Reuses
+    /// the hand-edit round trip the first-frame stage already drives.
+    pub(crate) fn edit_pick_in_draw(&mut self, frame: usize) {
+        let Some(clip) = self.anim_selected else {
+            return;
+        };
+        let Some(buffer) = self
+            .anim_candidates
+            .get(clip)
+            .and_then(|c| c.frames.get(frame))
+            .and_then(video_frame_to_pixel_buffer)
+        else {
+            self.anim_status = JobStatus::Failed("That frame could not be decoded for editing.".to_owned());
+            return;
+        };
+        // Open the frame as a scratch sprite the same way `hand_edit` does, so the
+        // return leg can composite the edit back and drop the scratch sprite.
+        let origin = self.doc.active_sprite_ref();
+        let edit = self.doc.create_sprite_from_buffer("Edit frame", buffer);
+        self.studio_return = Some(crate::studio::StudioReturn {
+            origin,
+            edit,
+            pick: Some(crate::studio::PickReturn { clip, frame }),
+        });
+        self.exit_clip_preview();
+        self.set_workspace(Workspace::Draw);
+        self.refresh_canvas(true);
     }
 
     /// Runs the pixel finisher over the landing `frames` and seeds the active
@@ -3705,7 +3793,7 @@ impl ShellApp {
 
     /// Uploads the current scrub frame when the wizard owns the canvas and the
     /// shown frame is stale. Re-fits only on the first show.
-    fn sync_clip_preview(&mut self) {
+    pub(crate) fn sync_clip_preview(&mut self) {
         if !self.clip_preview_active() {
             return;
         }
@@ -4514,7 +4602,9 @@ fn mirror_metrics_x(m: pixhaus_core::transforms::FrameMetrics, canvas_w: u32) ->
     }
     let new_bbox_x = canvas_w.saturating_sub(m.bbox_x).saturating_sub(m.visible_width);
     let new_center_x = canvas_w.saturating_sub(1).saturating_sub(m.center_x);
-    let largest_component_bbox = m.largest_component_bbox.map(|(x, y, w, h)| (canvas_w.saturating_sub(x).saturating_sub(w), y, w, h));
+    let largest_component_bbox = m
+        .largest_component_bbox
+        .map(|(x, y, w, h)| (canvas_w.saturating_sub(x).saturating_sub(w), y, w, h));
     pixhaus_core::transforms::FrameMetrics {
         bbox_x: new_bbox_x,
         center_x: new_center_x,
@@ -5178,7 +5268,10 @@ mod tests {
         // Fixed, so a derived loop stays on the established anchor colours rather
         // than re-extracting a fresh per-frame palette (over-quantising guard).
         let none = landing_finish_options(16, 16, &[]);
-        assert!(matches!(none.palette, PaletteSource::Extract { .. }), "empty anchor palette falls back to Extract");
+        assert!(
+            matches!(none.palette, PaletteSource::Extract { .. }),
+            "empty anchor palette falls back to Extract"
+        );
         let anchor = [PaletteEntry::new(Rgba::opaque(0, 0, 0)), PaletteEntry::new(Rgba::opaque(255, 255, 255))];
         let fixed = landing_finish_options(16, 16, &anchor);
         match fixed.palette {
@@ -5206,7 +5299,11 @@ mod tests {
             if px.0[3] == 0 {
                 continue;
             }
-            assert!(allowed.contains(&[px.0[0], px.0[1], px.0[2]]), "snapped pixel {:?} must be an anchor colour", px.0);
+            assert!(
+                allowed.contains(&[px.0[0], px.0[1], px.0[2]]),
+                "snapped pixel {:?} must be an anchor colour",
+                px.0
+            );
         }
     }
 

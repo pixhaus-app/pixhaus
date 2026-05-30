@@ -1184,12 +1184,18 @@ mod tests {
         assert!(p.contains("neutral rest pose"), "the neutral instruction is appended: {p}");
         // The pass conditions on the anchor, so it carries the identity-lock clause
         // freeing only the pose, after the axis prose.
-        assert!(p.contains("keep the same character from the reference image"), "the identity-lock clause is appended: {p}");
+        assert!(
+            p.contains("keep the same character from the reference image"),
+            "the identity-lock clause is appended: {p}"
+        );
         assert!(p.contains("change only the pose"), "the neutral pass frees only the pose: {p}");
         // An empty canonical prompt falls back to the bare neutral instruction.
         assert!(!neutral_pose_prompt("  ").is_empty());
         assert!(!neutral_pose_prompt("  ").starts_with(','), "no leading comma when the subject is empty");
-        assert!(neutral_pose_prompt("  ").contains("keep the same character"), "the lock survives an empty subject");
+        assert!(
+            neutral_pose_prompt("  ").contains("keep the same character"),
+            "the lock survives an empty subject"
+        );
     }
 
     #[test]
@@ -1299,8 +1305,14 @@ mod tests {
         assert!(west.contains("facing left"), "west is the side view facing left: {west}");
         // The pass conditions on the neutral anchor, so it carries the identity-lock
         // clause freeing only the facing direction.
-        assert!(west.contains("keep the same character from the reference image"), "the identity-lock clause is appended: {west}");
-        assert!(west.contains("change only the facing direction"), "the directional pass frees only the facing: {west}");
+        assert!(
+            west.contains("keep the same character from the reference image"),
+            "the identity-lock clause is appended: {west}"
+        );
+        assert!(
+            west.contains("change only the facing direction"),
+            "the directional pass frees only the facing: {west}"
+        );
         let north = directional_pose_prompt("a knight", AnchorDirection::North);
         assert!(north.contains("back view"), "north is the back view: {north}");
         // Empty subject falls back to the bare view instruction, no leading comma.
@@ -1335,8 +1347,15 @@ mod tests {
             1,
             "the identity-lock clause appears exactly once on the composed neutral prompt: {neutral}"
         );
-        assert_eq!(lock_count(&neutral, "change only the pose"), 1, "the neutral prompt frees the pose exactly once: {neutral}");
-        assert!(!neutral.contains("change only the facing direction"), "the neutral prompt must not free facing: {neutral}");
+        assert_eq!(
+            lock_count(&neutral, "change only the pose"),
+            1,
+            "the neutral prompt frees the pose exactly once: {neutral}"
+        );
+        assert!(
+            !neutral.contains("change only the facing direction"),
+            "the neutral prompt must not free facing: {neutral}"
+        );
         assert!(neutral.contains(", single sprite frame, side view"), "the framing suffix is present: {neutral}");
 
         // Directional: the cascade prompt carries the Facing lock; the Generate
@@ -1531,7 +1550,7 @@ mod tests {
 
         // First Land entry: integrate the frames (mirrors `integrate_picked`).
         let frames: Vec<PixelBuffer> = (0..3).map(|_| PixelBuffer::filled(16, 16, Rgba::new(7, 7, 7, 255)).expect("frame")).collect();
-        crate::commands::integrate_frames_undoable(&mut editor, &mut doc, frames, 100, "walk", LoopDirection::Forward, None).expect("integrated range");
+        crate::commands::integrate_frames_undoable(&mut editor, &mut doc, frames, 100, "walk", LoopDirection::Forward, None, None).expect("integrated range");
         assert_eq!(doc.frame_count(), 3, "three frames landed");
 
         // Second Land entry: record the cascade edge, seeded from the neutral.
