@@ -45,6 +45,38 @@ use crate::app::ShellMsg;
 pub const FAL_BACKEND_ID: &str = "fal";
 /// Backend id `OpenAI` keys are stored under (keychain service `pixhaus.openai`).
 pub const OPENAI_BACKEND_ID: &str = "openai";
+/// Backend id the on-device FLUX.2 backend registers under. Matches
+/// `LocalFluxBackend::backend_id` so a readiness probe can find it in the runtime.
+pub const LOCAL_FLUX_BACKEND_ID: &str = "flux-local";
+
+/// The persisted device preference for the local model, owned by the shell so it
+/// round-trips through eframe `Storage` whether or not the build compiled the
+/// on-device backend. Mirrors `pixhaus_flux::DevicePref`; converted to the flux
+/// type only inside the `local-flux` registration arm.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub enum DevicePref {
+    /// Pick the best available device: CUDA, then Metal, then CPU.
+    #[default]
+    Auto,
+    /// Force CUDA at the given ordinal.
+    Cuda(usize),
+    /// Force Metal.
+    Metal,
+    /// Force CPU.
+    Cpu,
+}
+
+#[cfg(feature = "local-flux")]
+impl From<DevicePref> for pixhaus_ai::backends::local_flux::DevicePref {
+    fn from(pref: DevicePref) -> Self {
+        match pref {
+            DevicePref::Auto => Self::Auto,
+            DevicePref::Cuda(ordinal) => Self::Cuda(ordinal),
+            DevicePref::Metal => Self::Metal,
+            DevicePref::Cpu => Self::Cpu,
+        }
+    }
+}
 
 /// Default reference-sheet prompt — Bit, the Pixhaus mascot. Ported from
 /// `ui/src/sheet/sheet-editor-state.ts::DEFAULT_SHEET_PROMPT`. Pre-fills a fresh
@@ -226,11 +258,64 @@ pub fn build_runtime() -> Arc<VerbRuntime> {
 /// least one is ready. For the headless CLI runner, which has no UI thread to
 /// protect and must have its backends ready before it proceeds; the GUI defers
 /// registration via [`spawn_backend_key_op`] instead.
+///
+/// The local FLUX backend folds into readiness too: an offline or no-key user
+/// with the weights downloaded still has a working image backend.
 #[must_use]
 pub fn register_backends_blocking(runtime: &VerbRuntime) -> bool {
     let openai = try_register_openai(runtime);
     let fal = try_register_fal(runtime);
-    openai || fal
+    let local = try_register_local_flux(runtime, DevicePref::Auto, None);
+    openai || fal || local
+}
+
+/// Tries to register the on-device FLUX.2 backend at priority 5 — below premium
+/// cloud (`gpt-image` at 0), above generic cloud FLUX (FAL at 10) — so an offline
+/// or no-key user still gets a working image backend, without displacing the
+/// preferred cloud default.
+///
+/// Gated on weights-present via [`pixhaus_flux::ModelStore::is_downloaded`]: when
+/// the model is absent the UI shows a Download affordance instead and this
+/// returns `false`. The model is **not** loaded here — only presence-checked — so
+/// registration stays instant and never blocks the UI thread. Re-run it when a
+/// download completes or the device changes.
+///
+/// `device` is the persisted device preference; `cache_dir` is the persisted
+/// cache-directory override (`None` uses the app-data default).
+///
+/// The `#[cfg(not(feature = "local-flux"))]` stub returns `false`: a build
+/// without on-device generation has no local backend to register.
+#[cfg(feature = "local-flux")]
+#[must_use]
+pub fn try_register_local_flux(runtime: &VerbRuntime, device: DevicePref, cache_dir: Option<std::path::PathBuf>) -> bool {
+    use pixhaus_ai::backends::local_flux::{DeviceChoice, LocalFluxBackend, ModelStore};
+
+    let Some(store) = ModelStore::from_override(cache_dir) else {
+        tracing::info!("no app-data dir for the FLUX cache; local backend unavailable");
+        return false;
+    };
+    if !store.is_downloaded() {
+        // Weights absent — the settings UI surfaces a Download affordance.
+        return false;
+    }
+    let backend = LocalFluxBackend::new(store, DeviceChoice::resolve(device.into()));
+    match runtime.register_backend(BackendProxy::new(backend), 5) {
+        Ok(()) => true,
+        // Already registered is fine: re-running after a download or a device
+        // change is idempotent from the caller's view.
+        Err(err) => {
+            tracing::info!(%err, "local FLUX backend already registered or registration failed");
+            backend_registered(runtime, LOCAL_FLUX_BACKEND_ID)
+        }
+    }
+}
+
+/// Stub for builds compiled without on-device generation. Always `false` — there
+/// is no local backend to register.
+#[cfg(not(feature = "local-flux"))]
+#[must_use]
+pub fn try_register_local_flux(_runtime: &VerbRuntime, _device: DevicePref, _cache_dir: Option<std::path::PathBuf>) -> bool {
+    false
 }
 
 /// Tries to register the `OpenAI` backend from the keychain (priority 0 — preferred
@@ -339,6 +424,8 @@ pub fn spawn_backend_key_op(handle: &Handle, runtime: Arc<VerbRuntime>, ctx: egu
                 Ok(()) => {
                     try_register_openai(&runtime);
                     try_register_fal(&runtime);
+                    // Presence-only; instant, no model load — safe on this thread.
+                    let _ = try_register_local_flux(&runtime, DevicePref::Auto, None);
                     None
                 }
                 Err(err) => Some(err),
@@ -347,13 +434,16 @@ pub fn spawn_backend_key_op(handle: &Handle, runtime: Arc<VerbRuntime>, ctx: egu
             KeyOp::RegisterFromKeychain => {
                 try_register_openai(&runtime);
                 try_register_fal(&runtime);
+                let _ = try_register_local_flux(&runtime, DevicePref::Auto, None);
                 None
             }
         };
         let _ = tx.send(ShellMsg::BackendsRefreshed {
             openai_configured: key_configured(OPENAI_BACKEND_ID),
             fal_configured: key_configured(FAL_BACKEND_ID),
-            ready: backend_registered(&runtime, OPENAI_BACKEND_ID) || backend_registered(&runtime, FAL_BACKEND_ID),
+            ready: backend_registered(&runtime, OPENAI_BACKEND_ID)
+                || backend_registered(&runtime, FAL_BACKEND_ID)
+                || backend_registered(&runtime, LOCAL_FLUX_BACKEND_ID),
             error,
         });
         ctx.request_repaint();
