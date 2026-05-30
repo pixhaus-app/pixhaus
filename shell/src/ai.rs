@@ -699,6 +699,11 @@ pub struct LocalImageJob {
     /// Selection bounds `(x, y, w, h)` for an inpaint landing, threaded back so
     /// the drain writes a region edit. `None` for the other modes.
     pub region: Option<(u32, u32, u32, u32)>,
+    /// RNG seed minted at spawn. Threaded into the text-to-image request so the
+    /// run is reproducible, and recorded in the project's AI lineage when the
+    /// result lands. Image-to-image / inpaint seed the latent off the init image,
+    /// so the backend ignores this for those modes; it is still recorded.
+    pub seed: u64,
 }
 
 /// Runs one editor-mode generation to completion and returns the single result
@@ -727,7 +732,9 @@ async fn run_local_image(runtime: &VerbRuntime, job: &LocalImageJob, progress: V
                 width: width.max(1),
                 height: height.max(1),
                 steps: None,
-                seed: None,
+                // The spawn-minted seed makes the run reproducible and is the
+                // value recorded in the project's AI lineage on landing.
+                seed: Some(job.seed),
                 num_images: 1,
                 quality: None,
                 style_image: None,
@@ -810,6 +817,9 @@ pub fn spawn_local_image(handle: &Handle, runtime: Arc<VerbRuntime>, ctx: egui::
         let as_new_layer = job.as_new_layer;
         let mode = job.mode;
         let region = job.region;
+        // Captured for the AI-lineage record the landing path writes.
+        let prompt = job.prompt.clone();
+        let seed = job.seed;
         let result = run_local_image(&runtime, &job, progress, &cancel).await;
         // Dropping the progress sender (moved into run_local_image) closes the
         // channel, so the drain task finishes; await it before the terminal send.
@@ -828,6 +838,8 @@ pub fn spawn_local_image(handle: &Handle, runtime: Arc<VerbRuntime>, ctx: egui::
                     png,
                     as_new_layer,
                     region,
+                    prompt,
+                    seed,
                 },
                 Err(error) => ShellMsg::LocalGenFailed { epoch, error },
             }

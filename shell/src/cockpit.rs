@@ -1572,7 +1572,19 @@ const MAX_PROMPT_HISTORY: usize = 100;
 /// Appends a trimmed, non-empty prompt to `history` stamped with `timestamp`,
 /// deduping against the most recent entry and capping the history length. Pure
 /// so the dedup/timestamp/cap rules are unit-testable without a full app.
+///
+/// The Create cockpit calls this for reference-sheet runs; the editor-mode local
+/// generations call [`push_prompt_history_for`] with their own verb name.
 fn push_prompt_history(history: &mut Vec<pixhaus_core::project::PromptHistoryEntry>, prompt: &str, timestamp: i64) {
+    push_prompt_history_for(history, "generate_reference_sheet", prompt, timestamp);
+}
+
+/// Same as [`push_prompt_history`] but tags the entry with an explicit
+/// `verb_name`, so a lineage reader can tell which action produced the prompt
+/// (e.g. a cloud reference sheet vs an on-device editor generation). The dedup
+/// keys on the prompt only, so re-running an identical prompt through a different
+/// action still records once — the verb name on the existing entry wins.
+pub(crate) fn push_prompt_history_for(history: &mut Vec<pixhaus_core::project::PromptHistoryEntry>, verb_name: &str, prompt: &str, timestamp: i64) {
     use pixhaus_core::project::PromptHistoryEntry;
     let prompt = prompt.trim().to_owned();
     if prompt.is_empty() {
@@ -1582,7 +1594,7 @@ fn push_prompt_history(history: &mut Vec<pixhaus_core::project::PromptHistoryEnt
         return;
     }
     history.push(PromptHistoryEntry {
-        verb_name: "generate_reference_sheet".to_owned(),
+        verb_name: verb_name.to_owned(),
         prompt,
         timestamp,
     });
@@ -1595,7 +1607,7 @@ fn push_prompt_history(history: &mut Vec<pixhaus_core::project::PromptHistoryEnt
 /// UTC seconds since the epoch, for stamping prompt-history and other
 /// UI-thread-issued records. A cheap `SystemTime::now` read; returns 0 if the
 /// clock is before the epoch.
-fn now_secs() -> i64 {
+pub(crate) fn now_secs() -> i64 {
     use std::time::{SystemTime, UNIX_EPOCH};
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -2078,7 +2090,8 @@ fn anchor_payload_for(entity: &pixhaus_core::project::Entity, strength: f32) -> 
 mod tests {
     use super::{
         AnchorAspect, anchor_finish_options, anchor_target_dims, finish_imported_variant, fixup_parent_after_remove, fixup_selection_after_remove,
-        imported_variant, manual_import_output, now_secs, push_prompt_history, refined_variant, relative_time, stamp_if_promotion, structure_suggestion,
+        imported_variant, manual_import_output, now_secs, push_prompt_history, push_prompt_history_for, refined_variant, relative_time, stamp_if_promotion,
+        structure_suggestion,
     };
     use pixhaus_core::project::library::composition::ArtStyleKind;
 
@@ -2245,6 +2258,21 @@ mod tests {
         assert_eq!(history.len(), 1, "the trimmed identical prompt is not appended again");
         push_prompt_history(&mut history, "a dragon", 3);
         assert_eq!(history.len(), 2, "a different prompt appends");
+    }
+
+    #[test]
+    fn push_prompt_history_for_tags_the_supplied_verb_name() {
+        // The editor-mode local-generation lineage rides the verb name, which
+        // carries backend/model/mode for an on-device action.
+        let mut history = Vec::new();
+        push_prompt_history_for(&mut history, "flux-local:flux2-klein-4b:inpaint", "a rusty sword [seed 42]", 1_700_000_001);
+        assert_eq!(history.len(), 1);
+        assert_eq!(history[0].verb_name, "flux-local:flux2-klein-4b:inpaint");
+        assert_eq!(history[0].prompt, "a rusty sword [seed 42]");
+        assert_eq!(history[0].timestamp, 1_700_000_001);
+        // The default wrapper still tags reference-sheet runs.
+        push_prompt_history(&mut history, "a knight", 1_700_000_002);
+        assert_eq!(history[1].verb_name, "generate_reference_sheet");
     }
 
     #[test]

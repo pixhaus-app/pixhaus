@@ -109,6 +109,8 @@ struct ResnetBlock {
 }
 
 impl ResnetBlock {
+    // vb is taken by value to match candle's builder-style `.pp()` chaining.
+    #[allow(clippy::needless_pass_by_value)]
     fn new(in_c: usize, out_c: usize, groups: usize, vb: VarBuilder) -> Result<Self, FluxError> {
         let norm1 = group_norm(groups, in_c, RESNET_EPS, vb.pp("norm1"))?;
         let conv1 = conv3x3(in_c, out_c, vb.pp("conv1"))?;
@@ -160,6 +162,8 @@ struct AttnBlock {
 }
 
 impl AttnBlock {
+    // vb is taken by value to match candle's builder-style `.pp()` chaining.
+    #[allow(clippy::needless_pass_by_value)]
     fn new(channels: usize, groups: usize, vb: VarBuilder) -> Result<Self, FluxError> {
         let group_norm = group_norm(groups, channels, RESNET_EPS, vb.pp("group_norm"))?;
         let to_q = linear(channels, channels, vb.pp("to_q"))?;
@@ -178,6 +182,8 @@ impl AttnBlock {
 }
 
 impl Module for AttnBlock {
+    // b/c/h/w are the standard NCHW dim names and q/k/v the attention triple.
+    #[allow(clippy::many_single_char_names)]
     fn forward(&self, xs: &Tensor) -> candle_core::Result<Tensor> {
         let residual = xs;
         let (b, c, h, w) = xs.dims4()?;
@@ -210,6 +216,8 @@ struct Downsample {
 }
 
 impl Downsample {
+    // vb is taken by value to match candle's builder-style `.pp()` chaining.
+    #[allow(clippy::needless_pass_by_value)]
     fn new(channels: usize, vb: VarBuilder) -> Result<Self, FluxError> {
         let cfg = Conv2dConfig {
             stride: 2,
@@ -237,6 +245,8 @@ struct Upsample {
 }
 
 impl Upsample {
+    // vb is taken by value to match candle's builder-style `.pp()` chaining.
+    #[allow(clippy::needless_pass_by_value)]
     fn new(channels: usize, vb: VarBuilder) -> Result<Self, FluxError> {
         let conv = conv3x3(channels, channels, vb.pp("conv"))?;
         Ok(Self { conv })
@@ -273,6 +283,8 @@ struct MidBlock {
 }
 
 impl MidBlock {
+    // vb is taken by value to match candle's builder-style `.pp()` chaining.
+    #[allow(clippy::needless_pass_by_value)]
     fn new(channels: usize, cfg: &VaeConfig, vb: VarBuilder) -> Result<Self, FluxError> {
         let groups = cfg.norm_num_groups;
         let resnet1 = ResnetBlock::new(channels, channels, groups, vb.pp("resnets").pp(0))?;
@@ -307,6 +319,8 @@ struct Encoder {
 }
 
 impl Encoder {
+    // vb is taken by value to match candle's builder-style `.pp()` chaining.
+    #[allow(clippy::needless_pass_by_value)]
     fn new(cfg: &VaeConfig, vb: VarBuilder) -> Result<Self, FluxError> {
         let groups = cfg.norm_num_groups;
         let block_out = &cfg.block_out_channels;
@@ -382,6 +396,8 @@ struct Decoder {
 }
 
 impl Decoder {
+    // vb is taken by value to match candle's builder-style `.pp()` chaining.
+    #[allow(clippy::needless_pass_by_value)]
     fn new(cfg: &VaeConfig, vb: VarBuilder) -> Result<Self, FluxError> {
         let groups = cfg.norm_num_groups;
         let block_out = &cfg.block_out_channels;
@@ -506,6 +522,8 @@ impl Vae {
     /// # Errors
     ///
     /// Returns [`FluxError`] if a weight key is missing or mis-shaped.
+    // vb is taken by value to match candle's builder-style `.pp()` chaining.
+    #[allow(clippy::needless_pass_by_value)]
     pub fn from_var_builder(cfg: &VaeConfig, vb: VarBuilder) -> Result<Self, FluxError> {
         let encoder = Encoder::new(cfg, vb.pp("encoder"))?;
         let decoder = Decoder::new(cfg, vb.pp("decoder"))?;
@@ -593,6 +611,8 @@ impl Vae {
     /// # Errors
     ///
     /// Returns [`FluxError::Candle`] if `h`/`w` are not divisible by the patch.
+    // b/c/h/w are the standard NCHW dim names; ph/pw the patch extents.
+    #[allow(clippy::many_single_char_names)]
     pub fn patchify(&self, latent: &Tensor) -> Result<Tensor, FluxError> {
         let (b, c, h, w) = latent.dims4()?;
         let [ph, pw] = self.cfg.patch_size;
@@ -607,6 +627,8 @@ impl Vae {
     /// # Errors
     ///
     /// Returns [`FluxError::Candle`] on a shape failure.
+    // b/c/h/w are the standard NCHW dim names; ph/pw the patch extents.
+    #[allow(clippy::many_single_char_names)]
     pub fn unpatchify(&self, patched: &Tensor) -> Result<Tensor, FluxError> {
         let (b, pc, h, w) = patched.dims4()?;
         let [ph, pw] = self.cfg.patch_size;

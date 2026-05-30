@@ -306,6 +306,11 @@ impl ShellApp {
         self.local_ai_cancel = Some(cancel.clone());
         self.local_gen_status = JobStatus::Running("starting".to_owned());
 
+        // Mint a fresh seed so the run is reproducible and a real seed lands in
+        // the AI-lineage record. Image-to-image / inpaint seed the latent off the
+        // init image, so the backend ignores it there; it is still recorded.
+        let seed = mint_seed();
+
         let job = crate::ai::LocalImageJob {
             mode,
             prompt,
@@ -315,6 +320,7 @@ impl ShellApp {
             strength,
             as_new_layer,
             region,
+            seed,
         };
         crate::ai::spawn_local_image(
             self.runtime.handle(),
@@ -351,8 +357,11 @@ impl ShellApp {
     /// - inpaint -> a `PixelRegionEdit` over the selection `region`.
     ///
     /// On a decode failure the status is set so the popover surfaces it; on
-    /// success the popover closes and the status returns to idle.
-    pub(crate) fn land_local_gen(&mut self, mode: LocalGenMode, png: &[u8], as_new_layer: bool, region: Option<(u32, u32, u32, u32)>) {
+    /// success the popover closes, the prompt / backend / model / seed are
+    /// recorded in the project's AI lineage (the spec's recorded provenance
+    /// decision: no watermark, but the lineage is logged as the Create studio
+    /// already does for cloud generations), and the status returns to idle.
+    pub(crate) fn land_local_gen(&mut self, mode: LocalGenMode, png: &[u8], as_new_layer: bool, region: Option<(u32, u32, u32, u32)>, prompt: &str, seed: u64) {
         let Some(buffer) = crate::app::png_to_pixel_buffer(png) else {
             self.local_gen_status = JobStatus::Failed("could not decode the generated image".to_owned());
             return;
@@ -372,6 +381,7 @@ impl ShellApp {
             },
         };
         if landed {
+            self.record_local_gen_lineage(mode, prompt, seed);
             self.local_gen_status = JobStatus::Idle;
             self.local_gen = None;
             self.local_ai_cancel = None;
@@ -379,6 +389,29 @@ impl ShellApp {
         } else {
             self.local_gen_status = JobStatus::Failed("could not land the result on the canvas".to_owned());
         }
+    }
+
+    /// Records the prompt / backend / model / seed of an editor-mode local
+    /// generation in the project's AI lineage. The watermark is omitted by design
+    /// (it would corrupt exact pixel output); the spec instead asks for the same
+    /// lineage the Create studio keeps for cloud generations. The
+    /// [`PromptHistoryEntry`](pixhaus_core::project::PromptHistoryEntry) schema
+    /// holds the prompt, a verb name, and a timestamp, so the backend / model /
+    /// mode ride in the verb name (`flux-local:<model>:<mode>`); the seed rides
+    /// in the prompt note so it survives a save/reload without a schema change.
+    ///
+    /// Uses the feature-independent `crate::ai::LOCAL_FLUX_MODEL_ID` so this
+    /// compiles and runs the same way with `local-flux` off.
+    fn record_local_gen_lineage(&mut self, mode: LocalGenMode, prompt: &str, seed: u64) {
+        let mode_tag = match mode {
+            LocalGenMode::TextToImage => "text_to_image",
+            LocalGenMode::ImageToImage => "image_to_image",
+            LocalGenMode::Inpaint => "inpaint",
+        };
+        let verb_name = format!("flux-local:{}:{mode_tag}", crate::ai::LOCAL_FLUX_MODEL_ID);
+        let note = format!("{prompt} [seed {seed}]");
+        let timestamp = crate::cockpit::now_secs();
+        crate::cockpit::push_prompt_history_for(&mut self.doc.project.library.ai.prompt_history, &verb_name, &note, timestamp);
     }
 
     /// Lands a generated buffer as a fresh top raster layer + cel, in one undo
@@ -459,6 +492,25 @@ impl ShellApp {
         };
         self.editor.history.push(Box::new(cmd), &mut self.doc).is_ok()
     }
+}
+
+/// Mints a fresh `u64` seed for one editor-mode generation. Dependency-free
+/// (no `rand` crate in the shell): an xorshift over the wall clock, mirroring
+/// `cockpit::rand_index`. Good enough to vary runs and to record a real seed in
+/// the AI lineage — not a cryptographic RNG.
+fn mint_seed() -> u64 {
+    use std::cell::Cell;
+    use std::time::{SystemTime, UNIX_EPOCH};
+    thread_local!(static STATE: Cell<u64> = const { Cell::new(0x2545_f491_4f6c_dd1d) });
+    let clock = SystemTime::now().duration_since(UNIX_EPOCH).map_or(0, |d| d.as_nanos() as u64);
+    STATE.with(|s| {
+        let mut x = s.get() ^ clock;
+        x ^= x << 13;
+        x ^= x >> 7;
+        x ^= x << 17;
+        s.set(x);
+        x
+    })
 }
 
 /// Encodes a [`PixelBuffer`] to PNG, dropping any row padding. `None` if the

@@ -33,8 +33,12 @@
 //!
 //! The reference pipeline's pixel-layer watermarking is deliberately omitted — it
 //! would corrupt exact pixel output, which is antithetical to a pixel-art editor.
-//! Lineage (prompt / backend / model / seed) is recorded by the Create studio, as
-//! it already is for cloud generations.
+//! Lineage (prompt / backend / model / seed) is recorded instead: cloud Create
+//! generations go through the studio's reference-sheet provenance, and the
+//! editor-mode local actions (text-to-image, image-to-image, inpaint) that land
+//! directly on the canvas record into the project's AI lineage at the landing
+//! site (`shell::local_ai::ShellApp::record_local_gen_lineage`). The backend
+//! itself stays stateless — it owns no project, so it cannot write lineage.
 
 #![cfg(feature = "local-flux")]
 

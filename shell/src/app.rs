@@ -593,6 +593,10 @@ pub enum ShellMsg {
         /// Selection bounds `(x, y, w, h)` for an inpaint landing, captured at
         /// spawn. `None` for text-to-image and image-to-image.
         region: Option<(u32, u32, u32, u32)>,
+        /// The prompt that produced this result, for the AI-lineage record.
+        prompt: String,
+        /// The RNG seed minted at spawn, recorded in the lineage entry.
+        seed: u64,
     },
     /// An editor-mode local generation failed (or was cancelled).
     LocalGenFailed {
@@ -1748,11 +1752,13 @@ impl ShellApp {
                     png,
                     as_new_layer,
                     region,
+                    prompt,
+                    seed,
                 } => {
                     // Drop a late result from a superseded run; the epoch guard
                     // mirrors ClipReady.
                     if epoch == self.local_gen_epoch {
-                        self.land_local_gen(mode, &png, as_new_layer, region);
+                        self.land_local_gen(mode, &png, as_new_layer, region, &prompt, seed);
                     }
                 }
                 ShellMsg::LocalGenFailed { epoch, error } => {
