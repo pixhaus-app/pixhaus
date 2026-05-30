@@ -420,14 +420,29 @@ fn rasterize_gizmo(giz: &BoxGizmo, mask: &mut MaskOverlay) {
     mask.mark(rx, ry, rw, rh);
 }
 
+/// Where a Normalize-stage "edit pixels" round trip returns to: the clip and the
+/// frame index within it whose buffer the edit replaces, so the edit flows back
+/// into the pick set without re-picking.
+#[derive(Clone, Copy)]
+pub(crate) struct PickReturn {
+    /// The selected clip candidate index.
+    pub clip: usize,
+    /// The frame index within the clip (a pick value, not a strip slot).
+    pub frame: usize,
+}
+
 /// Breadcrumb for a hand-edit round trip: the sprite to re-select on return and
-/// the temporary edit sprite to drop. The edited image lands in the first-frame
-/// thread.
+/// the temporary edit sprite to drop. Without [`Self::pick`] the edited image
+/// lands in the first-frame thread (the seed-pose hand edit); with it, the edit
+/// returns into that clip frame's buffer (the Normalize-stage frame edit).
 pub(crate) struct StudioReturn {
     /// The sprite that was active before hand-editing, restored on return.
     pub origin: Option<SpriteRef>,
     /// The scratch sprite created for the edit, deleted on return.
     pub edit: SpriteRef,
+    /// When set, the edit returns into this clip frame's buffer instead of the
+    /// first-frame thread.
+    pub pick: Option<PickReturn>,
 }
 
 /// The center-viewport refine state shared by the generation stages: the pan and
@@ -727,6 +742,35 @@ pub(crate) fn save_studio_sessions(sessions: &HashMap<SpriteId, StudioSession>) 
     }
 }
 
+/// The editable normalize knobs that have no other home on the studio. The
+/// canvas comes from the active sprite, the chroma key from the background-key
+/// fields, and the component mode from the Land keying toggles, so those are not
+/// duplicated here; this carries only the measurement knobs the Normalize
+/// inspector exposes. Folded into [`NormalizeCacheKey`] so a change re-runs the
+/// pass in place.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(crate) struct NormalizeKnobs {
+    /// Alpha at or below this counts as background when measuring the bbox.
+    pub alpha_threshold: u8,
+    /// Reference visible height every subject is scaled to. `None` infers it
+    /// from the tallest picked subject.
+    pub reference_height: Option<u32>,
+    /// Pixels the foot baseline sits above the canvas bottom.
+    pub bottom_margin: u32,
+}
+
+impl Default for NormalizeKnobs {
+    fn default() -> Self {
+        // Matches the values the static-sheet path used before the knobs existed,
+        // so an untouched inspector reproduces the prior cut exactly.
+        Self {
+            alpha_threshold: 8,
+            reference_height: None,
+            bottom_margin: 0,
+        }
+    }
+}
+
 /// The inputs that determine the cached [`StudioState::normalize`] result. When
 /// any of these change, the cached normalization is stale and must be recomputed
 /// before Land trusts it. Cheap to compare (no buffer hashing): the selected
@@ -751,6 +795,12 @@ pub(crate) struct NormalizeCacheKey {
     pub all_parts: bool,
     /// The min opaque-pixel area a part needs to survive the `All` mode.
     pub min_area: u32,
+    /// The alpha background threshold the measurement uses.
+    pub alpha_threshold: u8,
+    /// The reference height subjects scale toward (`None` infers it).
+    pub reference_height: Option<u32>,
+    /// The foot-baseline bottom margin.
+    pub bottom_margin: u32,
 }
 
 /// The studio's whole session state. Lives on [`ShellApp`]; the clip candidates
@@ -819,6 +869,9 @@ pub(crate) struct StudioState {
     /// Lazily-built textures for the normalized strip, one per cached frame.
     /// Cleared whenever the cache is recomputed.
     pub normalize_textures: Vec<Option<egui::TextureHandle>>,
+    /// The editable normalize knobs the Normalize inspector drives. Folded into
+    /// [`NormalizeCacheKey`] so a change re-runs the pass in place.
+    pub norm_knobs: NormalizeKnobs,
     /// Which scrubber handle a drag is currently moving.
     pub drag_handle: Option<ScrubHandle>,
     /// Whether the raw-clip player loops at the end (vs stopping). Defaults on.
@@ -884,6 +937,7 @@ impl Default for StudioState {
             normalize: None,
             normalize_key: None,
             normalize_textures: Vec::new(),
+            norm_knobs: NormalizeKnobs::default(),
             drag_handle: None,
             loop_playback: true,
             picking_key: false,
@@ -1701,31 +1755,76 @@ impl ShellApp {
         };
         let origin = self.doc.active_sprite_ref();
         let edit = self.doc.create_sprite_from_buffer("Hand-edit", buffer);
-        self.studio_return = Some(StudioReturn { origin, edit });
+        self.studio_return = Some(StudioReturn { origin, edit, pick: None });
         self.studio.frame_gen.view.painting = false;
         self.set_workspace(Workspace::Draw);
         self.refresh_canvas(true);
     }
 
-    /// Returns from a hand-edit: captures the edited pixels as a new candidate in
-    /// the first-frame thread, restores the original sprite, drops the scratch
-    /// sprite, and re-enters the studio at the first-frame stage.
+    /// Returns from a hand-edit: captures the edited pixels, restores the original
+    /// sprite, drops the scratch sprite, and re-enters the studio. A first-frame
+    /// hand edit lands the result as a new thread candidate at the first-frame
+    /// stage; a Normalize-stage frame edit ([`StudioReturn::pick`]) writes the
+    /// edited buffer back into that clip frame and returns to the Normalize stage,
+    /// re-running the cached normalize so the strip and report reflect the edit.
     pub(crate) fn finish_hand_edit(&mut self) {
         let Some(ret) = self.studio_return.take() else {
             return;
         };
-        let png = self.doc.composite_active_frame().and_then(|buf| pixel_buffer_to_png(&buf));
+        let edited = self.doc.composite_active_frame();
         if let Some(origin) = ret.origin {
             self.doc.select(origin);
         }
         self.doc.delete_sprite(ret.edit);
-        if let Some(png) = png {
-            let parent = self.gen_ref().selected;
-            self.on_gen_ready(vec![png], parent, true);
-        }
         self.workspace = Workspace::Create;
-        self.studio.stage = StudioStage::FirstFrame;
+        if let Some(pick) = ret.pick {
+            self.finish_pick_edit(pick, edited);
+        } else {
+            if let Some(png) = edited.and_then(|buf| pixel_buffer_to_png(&buf)) {
+                let parent = self.gen_ref().selected;
+                self.on_gen_ready(vec![png], parent, true);
+            }
+            self.studio.stage = StudioStage::FirstFrame;
+        }
         self.refresh_canvas(true);
+    }
+
+    /// Writes the `edited` buffer back into the clip frame the Normalize-stage
+    /// "edit pixels" round trip came from, restores the selection, and re-runs
+    /// the cached normalize so the strip and report show the edit. A `None` edit
+    /// (the scratch sprite produced no frame) is a no-op beyond returning to the
+    /// stage. The frame is rebuilt as a fresh [`VideoFrame`] from the edited
+    /// buffer, keeping its timestamp, and its cached thumbnail is dropped so the
+    /// pick strip rebuilds it.
+    fn finish_pick_edit(&mut self, pick: PickReturn, edited: Option<PixelBuffer>) {
+        self.studio.stage = StudioStage::Normalize;
+        self.anim_selected = Some(pick.clip);
+        let Some(buffer) = edited else {
+            return;
+        };
+        let Some(pixels) = pixel_buffer_to_png(&buffer).and_then(|png| crate::app::png_to_pixel_buffer(&png)) else {
+            return;
+        };
+        let Some(cand) = self.anim_candidates.get_mut(pick.clip) else {
+            return;
+        };
+        let Some(slot) = cand.frames.get_mut(pick.frame) else {
+            return;
+        };
+        let timestamp_ms = slot.timestamp_ms;
+        *slot = VideoFrame {
+            pixels: pixels.as_bytes().to_vec(),
+            width: pixels.width(),
+            height: pixels.height(),
+            timestamp_ms,
+        };
+        // Drop the cached thumbnail so the pick strip rebuilds it from the edit.
+        if let Some(thumb) = cand.thumbs.get_mut(pick.frame) {
+            *thumb = None;
+        }
+        // The frames changed, so the cached normalize is stale; recompute it.
+        self.refresh_normalize_cache();
+        self.sync_clip_preview();
     }
 
     /// Inpaint-refines the selected anchor result over its painted mask. The
@@ -2538,10 +2637,19 @@ impl ShellApp {
         if self.studio.normalize_textures.len() != result.frames.len() {
             self.studio.normalize_textures = vec![None; result.frames.len()];
         }
+        // The strip is in pick order: strip slot `idx` is the normalized form of
+        // the selected card's `picks[idx]`. Snapshot the picks so a per-frame drop
+        // can name the source frame after the `result` borrow ends.
+        let picks: Vec<usize> = self.anim_card().map(|c| c.picks.clone()).unwrap_or_default();
         let target_baseline = result.frames.first().map_or(0, PixelBuffer::height).saturating_sub(1);
         let palette = crate::theme::Palette::for_theme(ctx.theme());
         ui.label(egui::RichText::new("Normalized loop — exactly what lands").small().weak());
+        ui.label(egui::RichText::new("Drop a junk frame, or send one to Draw for manual surgery.").small().weak());
         ui.add_space(4.0);
+        // Deferred per-frame action, applied after the `result` borrow releases:
+        // dropping a pick or handing a frame to the Draw editor both mutate `self`.
+        let mut drop_pick: Option<usize> = None;
+        let mut edit_pick: Option<usize> = None;
         egui::ScrollArea::horizontal().show(ui, |ui| {
             ui.horizontal(|ui| {
                 for idx in 0..result.frames.len() {
@@ -2553,27 +2661,135 @@ impl ShellApp {
                     };
                     let metric = result.metrics.get(idx);
                     let drift = metric.filter(|m| !m.empty).map_or(0, |m| m.foot_baseline_y.abs_diff(target_baseline));
-                    ui.vertical(|ui| {
-                        let size = tex.size_vec2();
-                        let scale = (96.0 / size.y.max(1.0)).min(1.0);
-                        ui.add(egui::Image::new((tex.id(), size * scale)));
-                        let drift_color = if drift == 0 { palette.success } else { palette.warning };
-                        ui.colored_label(drift_color, egui::RichText::new(format!("Δ {drift}px")).small());
-                        // A clipped frame — its landed bbox reaches a canvas edge —
-                        // gets an advisory badge under the drift label. STALE is the
-                        // codebase's name for the phosphor warning glyph.
-                        if result.report.edge_touch_frames.contains(&idx) {
-                            ui.colored_label(palette.error, egui::RichText::new(format!("{} clipped", crate::icons::STALE)).small());
-                        }
+                    let edge_touch = result.report.edge_touch_frames.contains(&idx);
+                    ui.push_id(idx, |ui| {
+                        ui.vertical(|ui| {
+                            let size = tex.size_vec2();
+                            let scale = (96.0 / size.y.max(1.0)).min(1.0);
+                            let mut image = egui::Image::new((tex.id(), size * scale));
+                            // Tint an edge-touch frame so the why reads at a glance,
+                            // not just as a count in the report below.
+                            if edge_touch {
+                                image = image.tint(egui::Color32::from_rgb(255, 170, 170));
+                            }
+                            ui.add(image);
+                            let drift_color = if drift == 0 { palette.success } else { palette.warning };
+                            ui.colored_label(drift_color, egui::RichText::new(format!("Δ {drift}px")).small());
+                            // A clipped frame — its landed bbox reaches a canvas edge —
+                            // gets an advisory badge under the drift label. STALE is the
+                            // codebase's name for the phosphor warning glyph.
+                            if edge_touch {
+                                ui.colored_label(palette.error, egui::RichText::new(format!("{} clipped", crate::icons::STALE)).small());
+                            }
+                            ui.horizontal(|ui| {
+                                if ui
+                                    .small_button(crate::icons::TRASH)
+                                    .on_hover_text("Drop this frame from the pick set")
+                                    .clicked()
+                                {
+                                    drop_pick = picks.get(idx).copied();
+                                }
+                                if ui
+                                    .small_button(crate::icons::PENCIL)
+                                    .on_hover_text("Edit this frame's pixels in Draw")
+                                    .clicked()
+                                {
+                                    edit_pick = picks.get(idx).copied();
+                                }
+                            });
+                        });
                     });
                 }
             });
         });
+        if let Some(p) = drop_pick {
+            self.toggle_pick(p);
+        } else if let Some(p) = edit_pick {
+            self.edit_pick_in_draw(p);
+        }
     }
 
-    /// The normalize inspector: the [`NormalizeReport`] rendered as drift,
-    /// scale-match, the seam verdict (same colour thresholds as the pick stage),
-    /// and the warnings list, with a Land affordance.
+    /// The editable normalize knobs: chroma key colour + tolerance, the keep-
+    /// background toggle and its component mode, the alpha background threshold,
+    /// the bottom margin, and the reference height. Each change invalidates the
+    /// normalize cache and re-runs the pass in place, so the strip and the report
+    /// reflect the new cut. The pass is CPU-only over a handful of small pick
+    /// buffers, so the re-run is inline — no lock, no await.
+    fn normalize_knobs(&mut self, ui: &mut egui::Ui) {
+        let mut changed = false;
+
+        // Canvas is read-only here — it is the active sprite's size, not a knob.
+        if let Some((cw, ch)) = self.doc.active_sprite().map(|s| (s.canvas.width, s.canvas.height)) {
+            ui.label(egui::RichText::new(format!("Canvas {cw}×{ch}px")).small().weak());
+        }
+
+        // Chroma key colour + tolerance. These also drive the background-removal
+        // panel, so the values stay in step across the studio.
+        ui.horizontal(|ui| {
+            ui.label("Key colour");
+            let mut rgb = [self.bg_key_color.r, self.bg_key_color.g, self.bg_key_color.b];
+            if ui.color_edit_button_srgb(&mut rgb).changed() {
+                self.bg_key_color = Rgba::opaque(rgb[0], rgb[1], rgb[2]);
+                changed = true;
+            }
+        });
+        ui.horizontal(|ui| {
+            ui.label("Key tolerance");
+            changed |= ui.add(egui::Slider::new(&mut self.bg_tolerance, 0..=128)).changed();
+        });
+
+        // Keep-background toggle: when set, the backdrop is keyed out during
+        // normalize so the loop lands already stripped. Its component mode picks
+        // how detached parts survive.
+        changed |= ui.checkbox(&mut self.studio.remove_on_land, "Remove background").changed();
+        if self.studio.remove_on_land {
+            ui.indent("norm_key", |ui| {
+                changed |= ui.checkbox(&mut self.studio.land_all_parts, "Keep all parts (vs largest only)").changed();
+                if self.studio.land_all_parts {
+                    ui.horizontal(|ui| {
+                        ui.label("Min area");
+                        changed |= ui.add(egui::DragValue::new(&mut self.studio.land_min_area).range(1..=128)).changed();
+                    });
+                }
+            });
+        }
+
+        // The measurement knobs that have no other home.
+        let knobs = &mut self.studio.norm_knobs;
+        ui.horizontal(|ui| {
+            ui.label("Alpha threshold");
+            changed |= ui.add(egui::Slider::new(&mut knobs.alpha_threshold, 0..=64)).changed();
+        });
+        ui.horizontal(|ui| {
+            ui.label("Bottom margin");
+            changed |= ui.add(egui::DragValue::new(&mut knobs.bottom_margin).range(0..=256)).changed();
+        });
+
+        // Reference height: an explicit target the subjects scale toward, or the
+        // tallest picked subject when auto.
+        let mut auto_ref = knobs.reference_height.is_none();
+        ui.horizontal(|ui| {
+            if ui.checkbox(&mut auto_ref, "Auto reference height").changed() {
+                knobs.reference_height = if auto_ref { None } else { Some(1) };
+                changed = true;
+            }
+        });
+        if let Some(h) = knobs.reference_height.as_mut() {
+            ui.horizontal(|ui| {
+                ui.label("Reference height");
+                changed |= ui.add(egui::DragValue::new(h).range(1..=4096)).changed();
+            });
+        }
+
+        if changed {
+            self.refresh_normalize_cache();
+        }
+    }
+
+    /// The normalize inspector: the editable [`NormalizeKnobs`] up top, then the
+    /// [`NormalizeReport`] rendered as drift, scale-match, the seam verdict (same
+    /// colour thresholds as the pick stage), and the warnings list, with a Land
+    /// affordance.
     fn studio_normalize_inspector(&mut self, ui: &mut egui::Ui) {
         if self.anim_selected.is_none() {
             ui.label(egui::RichText::new("No clip selected.").weak());
@@ -2581,18 +2797,30 @@ impl ShellApp {
         }
         self.refresh_normalize_cache();
         let palette = crate::theme::Palette::for_theme(ui.ctx().theme());
+        ui.label(egui::RichText::new("Normalization review").strong());
+        ui.label(
+            egui::RichText::new("Tune the pass, then read the result below — the strip and report re-run as you change a knob.")
+                .small()
+                .weak(),
+        );
+        ui.add_space(6.0);
+
+        // The editable knobs run before the report borrow: each change invalidates
+        // the cache and re-runs the pass in place, so the strip and the report
+        // below reflect the new cut.
+        self.normalize_knobs(ui);
+
+        ui.add_space(6.0);
+        ui.separator();
+        ui.label(egui::RichText::new("Result").small().strong());
+        ui.add_space(4.0);
+
+        // Borrow the (re-run) result after the knobs above refreshed the cache.
         let Some(result) = self.studio.normalize.as_ref() else {
             ui.colored_label(palette.error, "These picks could not be normalized.");
             return;
         };
         let report = &result.report;
-        ui.label(egui::RichText::new("Normalization review").strong());
-        ui.label(
-            egui::RichText::new("Drift, scale, and the loop seam — measured on the frames that land.")
-                .small()
-                .weak(),
-        );
-        ui.add_space(6.0);
 
         // Baseline drift: 0px is clean, anything else a warning.
         report_row(

@@ -3108,6 +3108,9 @@ impl ShellApp {
             key_tolerance: self.bg_tolerance,
             all_parts: self.studio.land_all_parts,
             min_area: self.studio.land_min_area,
+            alpha_threshold: self.studio.norm_knobs.alpha_threshold,
+            reference_height: self.studio.norm_knobs.reference_height,
+            bottom_margin: self.studio.norm_knobs.bottom_margin,
         })
     }
 
@@ -3133,15 +3136,16 @@ impl ShellApp {
         if buffers.is_empty() {
             return None;
         }
+        let knobs = self.studio.norm_knobs;
         let opts = NormalizeOptions {
             canvas_width: cw,
             canvas_height: ch,
-            alpha_threshold: 8,
+            alpha_threshold: knobs.alpha_threshold,
             // When the studio's "remove background on Land" is set, key the
             // backdrop out during normalize so the loop lands already stripped.
             chroma: crate::studio::land_chroma(self.studio.remove_on_land, self.bg_key_color, self.bg_tolerance),
-            reference_height: None,
-            bottom_margin: 0,
+            reference_height: knobs.reference_height,
+            bottom_margin: knobs.bottom_margin,
             // Isolate the hero from detached keying specks on Land, so a stray
             // pixel cannot inflate the bbox and shrink the body. WholeAlpha when
             // the backdrop is left for the timeline op (no keying, no specks).
@@ -3178,9 +3182,9 @@ impl ShellApp {
             key_color: self.bg_key_color,
             key_tolerance: self.bg_tolerance,
             // Matches `compute_normalize`'s NormalizeOptions.
-            alpha_threshold: 8,
+            alpha_threshold: self.studio.norm_knobs.alpha_threshold,
             canvas: canvas.unwrap_or((0, 0)),
-            bottom_margin: 0,
+            bottom_margin: self.studio.norm_knobs.bottom_margin,
             reference_height: report.reference_height,
             remove_on_land: self.studio.remove_on_land,
         };
@@ -3272,6 +3276,39 @@ impl ShellApp {
         self.exit_clip_preview();
     }
 
+    /// Hands the picked frame `frame` (a clip frame index, not a strip slot) to
+    /// the Draw workspace for manual surgery, then returns the edited pixels back
+    /// into the clip so the pick lands the edit. The frame opens as a scratch
+    /// sprite in Draw; [`Self::finish_hand_edit`] reads it back over
+    /// [`crate::studio::StudioReturn::pick`] and drops the scratch sprite. Reuses
+    /// the hand-edit round trip the first-frame stage already drives.
+    pub(crate) fn edit_pick_in_draw(&mut self, frame: usize) {
+        let Some(clip) = self.anim_selected else {
+            return;
+        };
+        let Some(buffer) = self
+            .anim_candidates
+            .get(clip)
+            .and_then(|c| c.frames.get(frame))
+            .and_then(video_frame_to_pixel_buffer)
+        else {
+            self.anim_status = JobStatus::Failed("That frame could not be decoded for editing.".to_owned());
+            return;
+        };
+        // Open the frame as a scratch sprite the same way `hand_edit` does, so the
+        // return leg can composite the edit back and drop the scratch sprite.
+        let origin = self.doc.active_sprite_ref();
+        let edit = self.doc.create_sprite_from_buffer("Edit frame", buffer);
+        self.studio_return = Some(crate::studio::StudioReturn {
+            origin,
+            edit,
+            pick: Some(crate::studio::PickReturn { clip, frame }),
+        });
+        self.exit_clip_preview();
+        self.set_workspace(Workspace::Draw);
+        self.refresh_canvas(true);
+    }
+
     /// Runs the pixel finisher over the landing `frames` and seeds the active
     /// sprite's palette from the result. Returns the snapped, grid-aligned
     /// buffers. The frames are already canvas-sized so the downscale is a no-op
@@ -3361,7 +3398,7 @@ impl ShellApp {
 
     /// Uploads the current scrub frame when the wizard owns the canvas and the
     /// shown frame is stale. Re-fits only on the first show.
-    fn sync_clip_preview(&mut self) {
+    pub(crate) fn sync_clip_preview(&mut self) {
         if !self.clip_preview_active() {
             return;
         }
