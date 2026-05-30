@@ -4921,6 +4921,7 @@ dependencies = [
  "image-compare",
  "insta",
  "parking_lot",
+ "proptest",
  "reqwest",
  "safetensors 0.7.0",
  "serde",

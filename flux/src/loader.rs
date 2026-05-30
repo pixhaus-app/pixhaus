@@ -45,6 +45,9 @@ pub struct FluxRequest {
 /// synchronous and GPU-bound, so the backend invokes them inside
 /// `spawn_blocking` under a `parking_lot::Mutex`.
 pub struct LoadedModel {
+    /// The FLUX.2 `DiT`. Driven by the t2i/img2img pipelines in a later gate; the
+    /// single-forward test drives it through its own public `FluxTransformer::load`,
+    /// so this field is not yet read inside the crate.
     #[allow(dead_code)]
     transformer: FluxTransformer,
     /// The VAE — latent encode/decode. Read by the t2i/img2img pipelines in a
@@ -103,11 +106,10 @@ impl LoadedModel {
 
         let vae = Vae::load(store, &device, dtype)?;
         let text_encoder = TextEncoder::load(store, &device, dtype)?;
+        let transformer = FluxTransformer::load(store, &device, dtype)?;
 
-        // The transformer lands in a later gate. Keep it as a typed placeholder so
-        // the field set and the backend bridge stay stable.
         Ok(Self {
-            transformer: FluxTransformer::placeholder(),
+            transformer,
             vae,
             text_encoder,
             device,
