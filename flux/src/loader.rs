@@ -18,24 +18,61 @@ use candle_nn::VarBuilder;
 use crate::FluxError;
 use crate::device::DeviceChoice;
 use crate::model::FluxTransformer;
+use crate::pipeline::{self, SampleParams};
 use crate::store::ModelStore;
 use crate::text_encoder::TextEncoder;
 use crate::vae::Vae;
 
-/// A request to generate or edit an image. The concrete fields land with the
-/// backend bridge; for now it is the seam the loader's run methods accept.
+/// An advanced override of the distilled sampling defaults. Present only when the
+/// settings advanced-override toggle is on; otherwise the backend runs the pinned
+/// distilled 4 steps / guidance 1.0 and these fields are ignored.
+#[derive(Clone, Copy, Debug)]
+pub struct AdvancedSampling {
+    /// Flow-matching step count override.
+    pub steps: usize,
+    /// Guidance-scale override (a no-op for klein, carried for completeness).
+    pub guidance: f64,
+}
+
+/// A request to generate or edit an image.
 #[derive(Clone, Debug, Default)]
 pub struct FluxRequest {
     /// The text prompt.
     pub prompt: String,
-    /// Output width in pixels.
+    /// Output width in pixels. Rounded up to a multiple of the latent downsample.
     pub width: u32,
-    /// Output height in pixels.
+    /// Output height in pixels. Rounded up to a multiple of the latent downsample.
     pub height: u32,
+    /// RNG seed. A fixed seed yields a fixed image for a fixed prompt.
+    pub seed: u64,
+    /// How many images to sample in one batch. Zero is treated as one.
+    pub num_images: u32,
     /// Optional init image (PNG bytes) for image-to-image. `None` is text-to-image.
     pub init_image: Option<Vec<u8>>,
     /// Image-to-image strength in `0.0..=1.0`. Ignored without an init image.
     pub strength: f32,
+    /// Advanced override of the distilled step/guidance defaults. `None` pins the
+    /// distilled posture (4 steps, guidance 1.0).
+    pub advanced: Option<AdvancedSampling>,
+}
+
+impl FluxRequest {
+    /// Resolve the sampling parameters: the advanced override when present, else
+    /// the pinned distilled defaults.
+    fn sample_params(&self) -> SampleParams {
+        match self.advanced {
+            Some(adv) => SampleParams {
+                steps: adv.steps.max(1),
+                guidance: adv.guidance,
+            },
+            None => SampleParams::default(),
+        }
+    }
+
+    /// At least one image — a zero `num_images` is treated as one.
+    fn image_count(&self) -> usize {
+        (self.num_images as usize).max(1)
+    }
 }
 
 /// A loaded, ready-to-run FLUX.2 model: the transformer, the VAE, the text
@@ -45,24 +82,16 @@ pub struct FluxRequest {
 /// synchronous and GPU-bound, so the backend invokes them inside
 /// `spawn_blocking` under a `parking_lot::Mutex`.
 pub struct LoadedModel {
-    /// The FLUX.2 `DiT`. Driven by the t2i/img2img pipelines in a later gate; the
-    /// single-forward test drives it through its own public `FluxTransformer::load`,
-    /// so this field is not yet read inside the crate.
-    #[allow(dead_code)]
+    /// The FLUX.2 `DiT`. Driven one denoise step per schedule window by the t2i
+    /// pipeline.
     transformer: FluxTransformer,
-    /// The VAE — latent encode/decode. Read by the t2i/img2img pipelines in a
-    /// later gate; the round-trip test drives the VAE through its own public
-    /// `Vae::load`, so this field is not yet read inside the crate.
-    #[allow(dead_code)]
+    /// The VAE — latent encode/decode plus the patchify/`BatchNorm` boundary the
+    /// t2i pipeline inverts before decoding.
     vae: Vae,
-    /// The Qwen3 text encoder — prompt -> `(1, seq, 7680)` conditioning. Read by
-    /// the t2i/img2img pipelines in a later gate; the parity test drives it
-    /// through its own public `TextEncoder::load`, so this field is not yet read
-    /// inside the crate.
-    #[allow(dead_code)]
+    /// The Qwen3 text encoder — prompt -> `(1, seq, 7680)` conditioning.
     text_encoder: TextEncoder,
-    /// The device every component lives on. Read by the run methods in a later gate.
-    #[allow(dead_code)]
+    /// The device every component lives on. The t2i pipeline seeds it and draws
+    /// the initial noise on it.
     device: Device,
 }
 
@@ -116,18 +145,61 @@ impl LoadedModel {
         })
     }
 
-    /// Run text-to-image. `step_cb(step, total)` is called before each sampling
-    /// step; returning `false` cancels the run. Returns one or more PNG buffers.
+    /// Run text-to-image. `should_continue(step, total)` is called before each
+    /// sampling step; returning `false` cancels the run (the loop breaks and the
+    /// partial latent decodes — the backend bridge discards a cancelled result).
+    /// Returns one PNG buffer per requested image.
+    ///
+    /// The path, end to end: encode the prompt to Qwen3 conditioning, draw seeded
+    /// noise in the normalized patchified latent space, integrate the 4-step
+    /// flow-matching schedule through the transformer, then invert the latent prep
+    /// and VAE-decode to PNG. Width/height are rounded up to a multiple of the
+    /// latent downsample; seed and `num_images` come from the request; steps and
+    /// guidance are pinned to the distilled defaults unless the advanced override
+    /// is set.
     ///
     /// # Errors
     ///
-    /// Returns [`FluxError`] on a tensor or decode failure.
-    pub fn text_to_image<F>(&mut self, req: &FluxRequest, step_cb: F) -> Result<Vec<Vec<u8>>, FluxError>
+    /// Returns [`FluxError`] on a tensor, encode, or decode failure.
+    pub fn text_to_image<F>(&mut self, req: &FluxRequest, should_continue: F) -> Result<Vec<Vec<u8>>, FluxError>
     where
         F: FnMut(usize, usize) -> bool,
     {
-        let _ = (req, step_cb);
-        todo!("port the 4-step flow-matching t2i pipeline")
+        let params = req.sample_params();
+        let num_images = req.image_count();
+        let device = &self.device;
+
+        // Seed the device so a fixed seed yields a fixed image. CPU cannot be
+        // seeded in candle 0.10 (`set_seed` errors on `Device::Cpu`); ignore that
+        // failure so the CPU path still runs — only the GPU path is reproducible.
+        let _ = device.set_seed(req.seed);
+
+        let dtype = device.bf16_default_to_f32();
+
+        // Output geometry: round each side up to a multiple of the 16x downsample
+        // and derive the latent token grid.
+        let (out_w, lw) = pipeline::latent_grid(req.width);
+        let (out_h, lh) = pipeline::latent_grid(req.height);
+        let _ = (out_w, out_h);
+
+        // Prompt -> Qwen3 conditioning (1, seq, 7680). Repeat across the batch so
+        // every image shares the prompt.
+        let txt_single = self.text_encoder.encode(&req.prompt)?.to_dtype(dtype)?;
+        let seq = txt_single.dim(1)?;
+        let txt = txt_single.broadcast_as((num_images, seq, txt_single.dim(2)?))?.contiguous()?;
+        let txt_ids = pipeline::text_position_ids(seq, device)?;
+
+        // Image position ids over the latent grid.
+        let img_ids = pipeline::image_position_ids(lh, lw, device)?;
+
+        // Seeded noise in the normalized patchified packed space, then integrate.
+        let channels = self.vae.config().patched_latent_channels();
+        let noise = pipeline::initial_noise(num_images, lh, lw, channels, device, dtype)?;
+        let timesteps = pipeline::schedule(params.steps);
+
+        let latent = pipeline::denoise(&self.transformer, &noise, &img_ids, &txt, &txt_ids, &timesteps, should_continue)?;
+
+        pipeline::decode_to_pngs(&self.vae, &latent, lh, lw)
     }
 
     /// Run image-to-image (edit / inpaint). Same callback contract as
