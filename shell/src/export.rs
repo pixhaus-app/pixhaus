@@ -375,9 +375,27 @@ mod tests {
                 image: PixelBuffer::filled(8, 8, Rgba::transparent()).unwrap(),
                 columns: 2,
                 frames: vec![
-                    FrameRect { index: 0, x: 0, y: 0, w: 4, h: 4 },
-                    FrameRect { index: 1, x: 4, y: 0, w: 4, h: 4 },
-                    FrameRect { index: 2, x: 0, y: 4, w: 4, h: 4 },
+                    FrameRect {
+                        index: 0,
+                        x: 0,
+                        y: 0,
+                        w: 4,
+                        h: 4,
+                    },
+                    FrameRect {
+                        index: 1,
+                        x: 4,
+                        y: 0,
+                        w: 4,
+                        h: 4,
+                    },
+                    FrameRect {
+                        index: 2,
+                        x: 0,
+                        y: 4,
+                        w: 4,
+                        h: 4,
+                    },
                 ],
             };
             let manifest = AtlasManifest::from_atlas(&atlas, 4, 4, 100);
