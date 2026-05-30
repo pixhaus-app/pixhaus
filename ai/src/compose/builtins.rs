@@ -8,9 +8,11 @@
 
 use std::collections::BTreeMap;
 
+use serde::Serialize;
+
 use pixhaus_core::project::library::composition::{
-    ArtStyleKind, Dimensions, PanelRect, PanelSlot, PromptId, PromptTemplate, PromptVariable, Structure, StructureId, StructureOutput, StructurePanel,
-    Style, StyleId, VarControl, compact_grid_shape, grid_rects,
+    ArtStyleKind, Dimensions, PanelRect, PanelSlot, PromptId, PromptTemplate, PromptVariable, Structure, StructureId, StructureOutput, StructurePanel, Style,
+    StyleId, VarControl, compact_grid_shape, grid_rects,
 };
 
 /// Default cascading baseline used when a project sets no `style_notes` and no
@@ -490,7 +492,21 @@ pub enum SubjectClass {
 }
 
 /// Keyword stems that read as a wide or collision-heavy subject.
-const WIDE_KEYWORDS: &[&str] = &["vehicle", "car", "truck", "ship", "boat", "banner", "rack", "vista", "landscape", "bridge", "train", "wagon", "tank"];
+const WIDE_KEYWORDS: &[&str] = &[
+    "vehicle",
+    "car",
+    "truck",
+    "ship",
+    "boat",
+    "banner",
+    "rack",
+    "vista",
+    "landscape",
+    "bridge",
+    "train",
+    "wagon",
+    "tank",
+];
 
 /// Keyword stems that read as a tall, vertical subject.
 const TALL_KEYWORDS: &[&str] = &["staff", "spear", "tower", "totem", "column", "pillar", "ladder", "lance", "obelisk", "mast"];
@@ -727,22 +743,83 @@ fn example_prompts() -> Vec<PromptTemplate> {
 /// non-pixel style can restyle the same prompt without fighting baked-in
 /// adjectives.
 fn bit_prompts() -> Vec<PromptTemplate> {
-    let character = StructureId(STRUCTURE_CHARACTER_ID.into());
-    let single = StructureId(STRUCTURE_SINGLE_ID.into());
+    BIT_ACTIONS.iter().map(bit_action_prompt).collect()
+}
+
+/// The prompt id a Bit action composes into, e.g. `..prompt.bit_idle`.
+fn bit_prompt_id(action: &BitAction) -> PromptId {
+    PromptId(format!("pixhaus.builtin.prompt.bit_{}", action.id))
+}
+
+/// The structure a Bit action frames against: the turnaround at the character
+/// body sheet, every single-pose movement and action at the free-composition
+/// Single structure.
+fn bit_structure(action: &BitAction) -> StructureId {
+    let id = if action.id == "turnaround" {
+        STRUCTURE_CHARACTER_ID
+    } else {
+        STRUCTURE_SINGLE_ID
+    };
+    StructureId(id.into())
+}
+
+/// Builds the `PromptTemplate` for one Bit action. Shared by [`bit_prompts`]
+/// (which seeds the prompt picker) and [`bit_presets`] (which reads its
+/// structure for the one-click cards), so the two never drift.
+fn bit_action_prompt(action: &BitAction) -> PromptTemplate {
+    PromptTemplate {
+        id: bit_prompt_id(action),
+        name: format!("Bit — {}", action.label),
+        text: format!("{BIT_IDENTITY} {}", action.pose),
+        variables: Vec::new(),
+        default_style: None,
+        default_structure: Some(bit_structure(action)),
+    }
+}
+
+/// A one-click preset for the cockpit: an action label and the prompt,
+/// structure, and style ids it applies on click. Built from [`BIT_ACTIONS`] so
+/// the card set tracks the prompt pack and never drifts.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct BitPreset {
+    /// The action label shown on the card (idle, walk, run, ...).
+    pub label: String,
+    /// The prompt id the card selects.
+    pub prompt_id: String,
+    /// The structure id the prompt frames against.
+    pub structure_id: String,
+    /// The look style the card applies — the pixel-art default for every Bit
+    /// card, so a one-click result lands in the demo's house look.
+    pub style_id: String,
+}
+
+/// The cockpit's one-click Bit preset cards, one per [`BIT_ACTIONS`] entry in
+/// pack order.
+///
+/// Pure and data-driven: each card carries the action's prompt id, the
+/// structure that prompt frames against, and the pixel-art style. The cockpit
+/// applies the card (prompt + structure + style) and fires its existing
+/// generate path, so a new action in the pack grows the gallery with no UI
+/// change.
+#[must_use]
+pub fn bit_presets() -> Vec<BitPreset> {
     BIT_ACTIONS
         .iter()
-        .map(|action| {
-            let structure = if action.id == "turnaround" { character.clone() } else { single.clone() };
-            PromptTemplate {
-                id: PromptId(format!("pixhaus.builtin.prompt.bit_{}", action.id)),
-                name: format!("Bit — {}", action.label),
-                text: format!("{BIT_IDENTITY} {}", action.pose),
-                variables: Vec::new(),
-                default_style: None,
-                default_structure: Some(structure),
-            }
+        .map(|action| BitPreset {
+            label: action.label.to_owned(),
+            prompt_id: bit_prompt_id(action).0,
+            structure_id: bit_structure(action).0,
+            style_id: STYLE_PIXEL_ART_ID.to_owned(),
         })
         .collect()
+}
+
+/// The prompt id the Bit demo pre-selects on open, so the bare Generate button
+/// produces a good Bit result on the first click. The looping idle pose is the
+/// natural default — a calm, front-facing single image.
+#[must_use]
+pub fn bit_default_prompt_id() -> String {
+    BIT_ACTIONS.first().map_or_else(String::new, |a| bit_prompt_id(a).0)
 }
 
 /// The mascot-identity prose shared by every Bit action prompt, so each pose
@@ -1124,14 +1201,22 @@ mod tests {
         // pixel-art Style's modifiers so they appear only when it is selected.
         let lib = BuiltinLibrary::load();
         let style = &lib.styles[&StyleId(STYLE_PIXEL_ART_ID.into())];
-        assert!(style.modifiers.contains("pixel art"), "pixel-art modifiers must carry the pixel adjective: {}", style.modifiers);
+        assert!(
+            style.modifiers.contains("pixel art"),
+            "pixel-art modifiers must carry the pixel adjective: {}",
+            style.modifiers
+        );
     }
 
     #[test]
     fn clean_hd_style_modifiers_are_not_pixel() {
         let lib = BuiltinLibrary::load();
         let style = &lib.styles[&StyleId(STYLE_CLEAN_HD_ID.into())];
-        assert!(!style.modifiers.to_lowercase().contains("pixel"), "clean-HD modifiers must not mention pixel: {}", style.modifiers);
+        assert!(
+            !style.modifiers.to_lowercase().contains("pixel"),
+            "clean-HD modifiers must not mention pixel: {}",
+            style.modifiers
+        );
     }
 
     #[test]
@@ -1141,8 +1226,14 @@ mod tests {
         // wide" dimension unit is a different token and must survive.
         let lib = BuiltinLibrary::load();
         let positive = compose_layout(&lib, "pixhaus.builtin.structure.character");
-        assert!(!positive.contains("pixel-art"), "character layout prose must not carry the pixel-art adjective: {positive}");
-        assert!(!positive.contains("pixel art"), "character layout prose must not carry the pixel-art adjective: {positive}");
+        assert!(
+            !positive.contains("pixel-art"),
+            "character layout prose must not carry the pixel-art adjective: {positive}"
+        );
+        assert!(
+            !positive.contains("pixel art"),
+            "character layout prose must not carry the pixel-art adjective: {positive}"
+        );
         // The dimension prose still uses the "pixels" unit, now at the compact-grid cell width.
         assert!(positive.contains("341 pixels wide"), "dimension unit prose must survive: {positive}");
     }
@@ -1151,8 +1242,14 @@ mod tests {
     fn tileset_structure_prose_no_longer_carries_pixel_adjective() {
         let lib = BuiltinLibrary::load();
         let positive = compose_layout(&lib, "pixhaus.builtin.structure.tileset");
-        assert!(!positive.contains("pixel art"), "tileset layout prose must not carry the pixel-art adjective: {positive}");
-        assert!(!positive.contains("pixel-art"), "tileset layout prose must not carry the pixel-art adjective: {positive}");
+        assert!(
+            !positive.contains("pixel art"),
+            "tileset layout prose must not carry the pixel-art adjective: {positive}"
+        );
+        assert!(
+            !positive.contains("pixel-art"),
+            "tileset layout prose must not carry the pixel-art adjective: {positive}"
+        );
     }
 
     #[test]
@@ -1206,7 +1303,10 @@ mod tests {
         fn paneled_structures_emit_containment_clause(#[case] id: &str) {
             let lib = BuiltinLibrary::load();
             let positive = compose_layout(&lib, id);
-            assert!(positive.contains("equal empty margin on all four sides"), "{id} missing containment margin clause: {positive}");
+            assert!(
+                positive.contains("equal empty margin on all four sides"),
+                "{id} missing containment margin clause: {positive}"
+            );
             assert!(
                 positive.contains("identical bounding box and identical pixel scale"),
                 "{id} missing identity/scale-lock clause: {positive}"
@@ -1251,7 +1351,10 @@ mod tests {
         fn paneled_structures_negatives_forbid_borders_and_text(#[case] id: &str) {
             let lib = BuiltinLibrary::load();
             let negative = compose_negative_no_style(&lib, id);
-            assert!(negative.contains("drawn cell borders"), "{id} negatives must forbid drawn cell borders: {negative}");
+            assert!(
+                negative.contains("drawn cell borders"),
+                "{id} negatives must forbid drawn cell borders: {negative}"
+            );
             assert!(negative.contains("text, labels"), "{id} negatives must forbid text/labels: {negative}");
         }
 
@@ -1261,7 +1364,10 @@ mod tests {
         fn character_negatives_keep_domain_phrase() {
             let lib = BuiltinLibrary::load();
             let negative = compose_negative_no_style(&lib, CHARACTER);
-            assert!(negative.contains("overlapping views, inconsistent scale"), "character domain negatives must survive: {negative}");
+            assert!(
+                negative.contains("overlapping views, inconsistent scale"),
+                "character domain negatives must survive: {negative}"
+            );
             assert!(negative.contains("drawn cell borders"), "shared panel negatives must be present: {negative}");
         }
 
@@ -1272,7 +1378,10 @@ mod tests {
             let lib = BuiltinLibrary::load();
             let negative = compose_negative_no_style(&lib, CUSTOM);
             assert!(!negative.starts_with(','), "negatives must not start with a bare comma: {negative}");
-            assert!(negative.contains("drawn cell borders"), "custom must still carry the shared panel negatives: {negative}");
+            assert!(
+                negative.contains("drawn cell borders"),
+                "custom must still carry the shared panel negatives: {negative}"
+            );
         }
 
         /// Single keeps empty `layout_negatives`; with no style its negative is
@@ -1379,7 +1488,10 @@ mod tests {
         // The new object sheets join the universal containment/no-border rules.
         let lib = BuiltinLibrary::load();
         let positive = compose_layout(&lib, STRUCTURE_WIDE_OBJECT_ID);
-        assert!(positive.contains("equal empty margin on all four sides"), "wide object must carry the containment clause: {positive}");
+        assert!(
+            positive.contains("equal empty margin on all four sides"),
+            "wide object must carry the containment clause: {positive}"
+        );
     }
 
     #[test]
@@ -1459,7 +1571,10 @@ mod tests {
             for id in bit_prompt_ids() {
                 let prompt = lib.prompts.get(&id).unwrap_or_else(|| panic!("Bit prompt {id:?} present"));
                 let structure = prompt.default_structure.as_ref().unwrap_or_else(|| panic!("{id:?} names a structure"));
-                assert!(lib.structures.contains_key(structure), "{id:?} structure {structure:?} must resolve in the library");
+                assert!(
+                    lib.structures.contains_key(structure),
+                    "{id:?} structure {structure:?} must resolve in the library"
+                );
             }
         }
 
@@ -1470,15 +1585,95 @@ mod tests {
             let lib = BuiltinLibrary::load();
             for id in bit_prompt_ids() {
                 let prompt = lib.prompts.get(&id).unwrap_or_else(|| panic!("Bit prompt {id:?} present"));
-                assert!(prompt.text.contains("Bit, the Pixhaus mascot"), "{id:?} must carry the shared Bit identity: {}", prompt.text);
+                assert!(
+                    prompt.text.contains("Bit, the Pixhaus mascot"),
+                    "{id:?} must carry the shared Bit identity: {}",
+                    prompt.text
+                );
             }
         }
 
         #[test]
         fn idle_prompt_snapshot() {
             let lib = BuiltinLibrary::load();
-            let prompt = lib.prompts.get(&PromptId("pixhaus.builtin.prompt.bit_idle".into())).expect("Bit idle prompt present");
+            let prompt = lib
+                .prompts
+                .get(&PromptId("pixhaus.builtin.prompt.bit_idle".into()))
+                .expect("Bit idle prompt present");
             insta::assert_snapshot!(compose_in_pixel_default(&lib, prompt));
+        }
+
+        #[test]
+        fn one_preset_per_action_in_pack_order() {
+            let presets = super::super::bit_presets();
+            assert_eq!(presets.len(), super::super::BIT_ACTIONS.len(), "one preset per action");
+            for (preset, action) in presets.iter().zip(super::super::BIT_ACTIONS.iter()) {
+                assert_eq!(preset.label, action.label);
+                assert_eq!(preset.prompt_id, format!("pixhaus.builtin.prompt.bit_{}", action.id));
+            }
+        }
+
+        #[test]
+        fn every_preset_resolves_against_the_library() {
+            // The cockpit applies each card's prompt, structure, and style ids;
+            // all three must exist so a one-click card never dead-ends.
+            let lib = BuiltinLibrary::load();
+            for preset in super::super::bit_presets() {
+                assert!(
+                    lib.prompts.contains_key(&PromptId(preset.prompt_id.clone())),
+                    "preset prompt {} missing",
+                    preset.prompt_id
+                );
+                assert!(
+                    lib.structures.contains_key(&StructureId(preset.structure_id.clone())),
+                    "preset structure {} missing",
+                    preset.structure_id
+                );
+                assert!(
+                    lib.styles.contains_key(&StyleId(preset.style_id.clone())),
+                    "preset style {} missing",
+                    preset.style_id
+                );
+            }
+        }
+
+        #[test]
+        fn preset_structure_matches_its_prompt() {
+            // A card's structure must be the one its prompt frames against, so
+            // applying the card reproduces the prompt's intended sheet shape.
+            let lib = BuiltinLibrary::load();
+            for preset in super::super::bit_presets() {
+                let prompt = &lib.prompts[&PromptId(preset.prompt_id.clone())];
+                let prompt_structure = prompt.default_structure.as_ref().expect("Bit prompt names a structure");
+                assert_eq!(
+                    &StructureId(preset.structure_id.clone()),
+                    prompt_structure,
+                    "preset {} structure must match its prompt",
+                    preset.label
+                );
+            }
+        }
+
+        #[test]
+        fn every_preset_uses_the_pixel_art_style() {
+            for preset in super::super::bit_presets() {
+                assert_eq!(preset.style_id, STYLE_PIXEL_ART_ID, "preset {} must apply the pixel-art look", preset.label);
+            }
+        }
+
+        #[test]
+        fn the_default_prompt_is_a_real_bit_prompt() {
+            let lib = BuiltinLibrary::load();
+            let id = super::super::bit_default_prompt_id();
+            assert_eq!(id, "pixhaus.builtin.prompt.bit_idle", "the demo defaults to Bit idle");
+            assert!(lib.prompts.contains_key(&PromptId(id)), "the default prompt must exist in the library");
+        }
+
+        #[test]
+        fn preset_pack_snapshot() {
+            // Debug-formatted, not yaml: the crate pulls `insta` without the
+            // `yaml` feature, matching the text-snapshot style used elsewhere.
+            insta::assert_snapshot!(format!("{:#?}", super::super::bit_presets()));
         }
     }
 }

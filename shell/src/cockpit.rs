@@ -12,6 +12,7 @@
 //! into the core [`ReferenceSheet`] model so history survives a save and reopen.
 
 use eframe::egui;
+use pixhaus_ai::compose::builtins::BitPreset;
 use pixhaus_ai::plugin::AnchorPayload;
 use pixhaus_ai::verbs::reference_sheet::{ReferenceInput, SheetVariantOutput};
 use pixhaus_core::canvas::PixelBuffer;
@@ -102,6 +103,8 @@ impl ShellApp {
         self.cockpit_suggested_tags(ui);
         ui.add_space(8.0);
         self.cockpit_inputs(ui);
+        ui.add_space(8.0);
+        self.cockpit_presets(ui);
         ui.add_space(8.0);
         self.cockpit_dials(ui);
         ui.add_space(8.0);
@@ -271,7 +274,11 @@ impl ShellApp {
             ui.horizontal(|ui| {
                 ui.label(crate::icons::INFO);
                 ui.label(egui::RichText::new(&suggestion.message).small().weak());
-                if ui.small_button("Use it").on_hover_text(format!("Switch to the {} sheet", suggestion.name)).clicked() {
+                if ui
+                    .small_button("Use it")
+                    .on_hover_text(format!("Switch to the {} sheet", suggestion.name))
+                    .clicked()
+                {
                     self.ck_structure = suggestion.id;
                     self.ck_dirty = true;
                 }
@@ -487,6 +494,83 @@ impl ShellApp {
         }
         self.ck_prompt_edited = false;
         self.ck_dirty = true;
+    }
+
+    /// One-click Bit preset cards, driven by the builtin prompt pack. Each card
+    /// applies an action's prompt, structure, and style and fires the existing
+    /// generate path in a single click, so the user reaches a good sheet without
+    /// hunting the template dropdown. Data-driven: one card per pack entry, so a
+    /// new action grows the gallery with no UI change.
+    fn cockpit_presets(&mut self, ui: &mut egui::Ui) {
+        let presets = pixhaus_ai::compose::builtins::bit_presets();
+        if presets.is_empty() {
+            return;
+        }
+        // Gate the cards on the same conditions as the Generate button: a ready
+        // backend, no run in flight, and an active entity to attach results to.
+        let can_generate = self.backend_ready && !matches!(self.rs_status, JobStatus::Running(_)) && self.doc.active_entity_id().is_some();
+
+        ui.add_space(4.0);
+        ui.label(egui::RichText::new(format!("{} One-click presets", crate::icons::SPARKLE)).strong());
+
+        // A card click applies the preset then fires generate; defer both until
+        // after the borrow of `presets` ends so the apply path can take `&mut self`.
+        let mut fire: Option<BitPreset> = None;
+        ui.horizontal_wrapped(|ui| {
+            for preset in &presets {
+                let label = capitalize(&preset.label);
+                if ui
+                    .add_enabled(can_generate, egui::Button::new(label))
+                    .on_hover_text(format!("Generate Bit {} in one click", preset.label))
+                    .clicked()
+                {
+                    fire = Some(preset.clone());
+                }
+            }
+        });
+
+        // The whole-pack action queues one sheet per card, for a one-click demo
+        // of the full character. Each fires through the same generate path; the
+        // results land in the gallery as they arrive.
+        let fire_all = ui
+            .add_enabled(
+                can_generate,
+                egui::Button::new(format!("{} Generate the whole Bit pack", crate::icons::SPARKLE)),
+            )
+            .on_hover_text("Queue one sheet per preset")
+            .clicked();
+        ui.add_space(4.0);
+
+        if let Some(preset) = fire {
+            self.apply_bit_preset(&preset);
+            self.cockpit_generate(PendingLineage::default(), Vec::new());
+        } else if fire_all {
+            for preset in &presets {
+                self.apply_bit_preset(preset);
+                self.cockpit_generate(PendingLineage::default(), Vec::new());
+            }
+        }
+    }
+
+    /// Applies a Bit preset to the cockpit state: the prompt (which seeds its
+    /// dials and clears the free-form subject), the structure it frames against,
+    /// and the pixel-art look. Does not generate — the caller fires the run.
+    fn apply_bit_preset(&mut self, preset: &BitPreset) {
+        self.set_template(Some(preset.prompt_id.clone()));
+        self.ck_structure.clone_from(&preset.structure_id);
+        self.ck_style_id = Some(preset.style_id.clone());
+        self.ck_dirty = true;
+    }
+
+    /// Pre-selects the Bit demo's default preset on boot so the bare Generate
+    /// button works on the first click with no other input. Resolves the default
+    /// prompt id against the prompt pack and applies the matching preset; a no-op
+    /// if the pack has no default.
+    pub(crate) fn select_default_bit_preset(&mut self) {
+        let default_id = pixhaus_ai::compose::builtins::bit_default_prompt_id();
+        if let Some(preset) = pixhaus_ai::compose::builtins::bit_presets().into_iter().find(|p| p.prompt_id == default_id) {
+            self.apply_bit_preset(&preset);
+        }
     }
 
     /// The staged references strip — drag-in anchors with a role and weight.
@@ -1734,6 +1818,13 @@ fn kv(ui: &mut egui::Ui, key: &str, value: &str) {
     });
 }
 
+/// Upper-cases the first character of `label` for a card title, leaving the
+/// rest untouched. Pure; an empty label yields an empty string.
+fn capitalize(label: &str) -> String {
+    let mut chars = label.chars();
+    chars.next().map_or_else(String::new, |first| first.to_uppercase().chain(chars).collect())
+}
+
 /// Truncates `s` to at most `max` chars, appending an ellipsis when cut.
 fn truncate(s: &str, max: usize) -> String {
     if s.chars().count() <= max {
@@ -2275,8 +2366,8 @@ mod tests {
     }
 
     use pixhaus_core::project::{
-        EntityContent, GenerationProvenance, PaletteEntry, Quality, ReferenceImage, ReferenceSheet, RefinementKind, Rgba, SheetVariant, SheetVariantId,
-        Size, VariantOrigin,
+        EntityContent, GenerationProvenance, PaletteEntry, Quality, ReferenceImage, ReferenceSheet, RefinementKind, Rgba, SheetVariant, SheetVariantId, Size,
+        VariantOrigin,
     };
 
     use crate::commands::push_library_edit;
@@ -2474,7 +2565,11 @@ mod tests {
             if px.0[3] == 0 {
                 continue;
             }
-            assert!(set.contains(&[px.0[0], px.0[1], px.0[2]]), "finished pixel {:?} must be on the recorded palette", px.0);
+            assert!(
+                set.contains(&[px.0[0], px.0[1], px.0[2]]),
+                "finished pixel {:?} must be on the recorded palette",
+                px.0
+            );
         }
     }
 
@@ -2502,7 +2597,10 @@ mod tests {
         // over-quantising guard).
         use pixhaus_core::transforms::finisher::PaletteSource;
         let none = anchor_finish_options(16, 16, &[]);
-        assert!(matches!(none.palette, PaletteSource::Extract { .. }), "empty anchor palette falls back to Extract");
+        assert!(
+            matches!(none.palette, PaletteSource::Extract { .. }),
+            "empty anchor palette falls back to Extract"
+        );
         let anchor = [PaletteEntry::new(Rgba::opaque(10, 20, 30)), PaletteEntry::new(Rgba::opaque(200, 100, 50))];
         let fixed = anchor_finish_options(16, 16, &anchor);
         match fixed.palette {
@@ -2526,14 +2624,22 @@ mod tests {
         );
         finish_imported_variant(&mut variant, ArtStyleKind::PixelArt, &anchor);
         let recorded: Vec<[u8; 3]> = variant.extracted_palette.iter().map(|e| [e.color.r, e.color.g, e.color.b]).collect();
-        assert_eq!(recorded, vec![[0, 0, 0], [255, 255, 255]], "the recorded palette is exactly the anchor swatches");
+        assert_eq!(
+            recorded,
+            vec![[0, 0, 0], [255, 255, 255]],
+            "the recorded palette is exactly the anchor swatches"
+        );
         let decoded = image::load_from_memory(&variant.image.bytes).expect("finished bytes decode").to_rgba8();
         let allowed: std::collections::HashSet<[u8; 3]> = [[0, 0, 0], [255, 255, 255]].into_iter().collect();
         for px in decoded.pixels() {
             if px.0[3] == 0 {
                 continue;
             }
-            assert!(allowed.contains(&[px.0[0], px.0[1], px.0[2]]), "finished pixel {:?} must be an anchor colour", px.0);
+            assert!(
+                allowed.contains(&[px.0[0], px.0[1], px.0[2]]),
+                "finished pixel {:?} must be an anchor colour",
+                px.0
+            );
         }
     }
 
@@ -2675,6 +2781,17 @@ mod tests {
             "a blank name falls back to the subject's first words"
         );
         assert_eq!(card_name("", ""), "Untitled card", "no name and no subject falls back to the default");
+    }
+
+    #[test]
+    fn capitalize_upper_cases_only_the_first_character() {
+        use super::capitalize;
+        assert_eq!(capitalize("idle"), "Idle");
+        assert_eq!(capitalize("turnaround"), "Turnaround");
+        assert_eq!(capitalize(""), "");
+        // Already-capitalized and single-char inputs round-trip.
+        assert_eq!(capitalize("Walk"), "Walk");
+        assert_eq!(capitalize("x"), "X");
     }
 
     #[test]

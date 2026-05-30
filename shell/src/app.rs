@@ -1121,6 +1121,10 @@ impl ShellApp {
         // cells to regenerate, restyle, animate, and export.
         if app.doc.active_sprite().is_none() {
             crate::demo::build_bit_demo(&mut app.doc);
+            // Pre-select the demo's default Bit preset so the bare Generate
+            // button produces a good Bit sheet on the first click, before the
+            // user touches the template, structure, or style pickers.
+            app.select_default_bit_preset();
         }
         app.refresh_canvas(true);
         // Register backends from the keychain off-thread so the blocking reads
