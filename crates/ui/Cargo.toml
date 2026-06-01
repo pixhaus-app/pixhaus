@@ -21,6 +21,15 @@ pixhaus-render = { path = "../render" }
 [dev-dependencies]
 rstest.workspace = true
 insta.workspace = true
+# The five capability modules, for the integration tests only. These are
+# dev-dependencies so the cycle (each module depends on pixhaus-ui) exists only
+# in the test/example/bench build, never in the library graph - Cargo allows a
+# dev-dependency cycle precisely because it does not affect the normal build.
+pixhaus-mod-sprite-edit = { path = "../../modules/sprite-edit" }
+pixhaus-mod-animation = { path = "../../modules/animation" }
+pixhaus-mod-tiles = { path = "../../modules/tiles" }
+pixhaus-mod-generation = { path = "../../modules/generation" }
+pixhaus-mod-export = { path = "../../modules/export" }
 
 [lints]
 workspace = true
