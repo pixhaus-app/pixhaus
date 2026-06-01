@@ -16,6 +16,11 @@ egui-wgpu.workspace = true
 tokio.workspace = true
 tracing-subscriber.workspace = true
 pixhaus-ui = { path = "../crates/ui" }
+pixhaus-mod-sprite-edit = { path = "../modules/sprite-edit" }
+pixhaus-mod-animation = { path = "../modules/animation" }
+pixhaus-mod-tiles = { path = "../modules/tiles" }
+pixhaus-mod-generation = { path = "../modules/generation" }
+pixhaus-mod-export = { path = "../modules/export" }
 
 [lints]
 workspace = true
