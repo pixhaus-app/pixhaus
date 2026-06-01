@@ -8,5 +8,10 @@ license.workspace = true
 repository.workspace = true
 homepage.workspace = true
 
+[dependencies]
+egui.workspace = true
+egui-phosphor.workspace = true
+pixhaus-ui = { path = "../../crates/ui" }
+
 [lints]
 workspace = true
