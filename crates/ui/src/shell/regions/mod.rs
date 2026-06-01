@@ -8,3 +8,5 @@ pub mod right_dock;
 pub mod status_bar;
 pub mod tool_options;
 pub mod top_bar;
+
+pub(crate) mod scope_split;
