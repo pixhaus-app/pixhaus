@@ -66,7 +66,7 @@ fn full_rail() -> Vec<ToolId> {
         "text",
         "hand",
         "zoom",
-        "ai-brush",
+        "ai_brush",
     ]
     .into_iter()
     .map(ToolId)

@@ -66,7 +66,7 @@ fn full_rail() -> Vec<ToolId> {
         "text",
         "hand",
         "zoom",
-        "ai-brush",
+        "ai_brush",
     ]
     .into_iter()
     .map(ToolId)
@@ -386,7 +386,7 @@ mod tests {
         let rail = full_rail();
         assert_eq!(rail.len(), 15);
         assert_eq!(rail[0], PENCIL);
-        assert_eq!(rail[14], ToolId("ai-brush"));
+        assert_eq!(rail[14], ToolId("ai_brush"));
     }
 
     #[test]
