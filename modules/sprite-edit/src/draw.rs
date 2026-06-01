@@ -224,9 +224,6 @@ impl Panel for PalettePanel {
 }
 
 /// Paint an 8x4 inert swatch grid alternating two surface tiers (mock palette).
-// The 0..32 swatch indices and the radius token are exactly representable as the
-// numeric types here; the casts cannot truncate or lose a sign.
-#[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss, clippy::cast_precision_loss)]
 fn swatch_grid(ui: &mut egui::Ui, theme: &pixhaus_ui::theme::Theme) {
     let cell = 18.0;
     ui.vertical(|ui| {
@@ -240,13 +237,9 @@ fn swatch_grid(ui: &mut egui::Ui, theme: &pixhaus_ui::theme::Theme) {
                         } else {
                             theme.surfaces.elevated
                         };
-                        ui.painter().rect_filled(rect, theme.radius.sm as u8, fill);
-                        ui.painter().rect_stroke(
-                            rect,
-                            theme.radius.sm as u8,
-                            egui::Stroke::new(1.0, theme.roles.border),
-                            egui::StrokeKind::Inside,
-                        );
+                        ui.painter().rect_filled(rect, theme.radius.sm, fill);
+                        ui.painter()
+                            .rect_stroke(rect, theme.radius.sm, egui::Stroke::new(1.0, theme.roles.border), egui::StrokeKind::Inside);
                     }
                 }
             });
@@ -381,8 +374,6 @@ impl Panel for FramesPanel {
 
 /// Paint a horizontal strip of eight mock frame thumbnails; the current frame
 /// (index 0) is tinted with the accent.
-// The cell size and radius token cast to bounded small integers; no truncation.
-#[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
 fn frame_strip(ui: &mut egui::Ui, theme: &pixhaus_ui::theme::Theme) {
     let cell = 40.0;
     ui.horizontal(|ui| {
@@ -390,13 +381,9 @@ fn frame_strip(ui: &mut egui::Ui, theme: &pixhaus_ui::theme::Theme) {
             let (rect, _) = ui.allocate_exact_size(egui::Vec2::splat(cell), egui::Sense::hover());
             if ui.is_rect_visible(rect) {
                 let fill = if i == 0 { theme.accent.muted } else { theme.surfaces.inset };
-                ui.painter().rect_filled(rect, theme.radius.sm as u8, fill);
-                ui.painter().rect_stroke(
-                    rect,
-                    theme.radius.sm as u8,
-                    egui::Stroke::new(1.0, theme.roles.border),
-                    egui::StrokeKind::Inside,
-                );
+                ui.painter().rect_filled(rect, theme.radius.sm, fill);
+                ui.painter()
+                    .rect_stroke(rect, theme.radius.sm, egui::Stroke::new(1.0, theme.roles.border), egui::StrokeKind::Inside);
             }
         }
     });
