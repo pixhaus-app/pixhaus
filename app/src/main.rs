@@ -1,47 +1,70 @@
 //! Pixhaus application binary: the eframe + egui host shell.
 //!
 //! The Host App layer (architecture bible section 4.1). It owns the single tokio
-//! runtime, boots the window, and runs the egui loop; the canvas is drawn by
-//! `render` through the `ui` paint callback. Module registration and the workspace
-//! host land as those systems are built.
+//! runtime, boots the window, builds the [`pixhaus_ui::state::Host`], registers the
+//! shell menus and the capability modules, and runs the egui loop; the canvas is
+//! drawn by `render` through the egui-wgpu paint callback installed at startup.
 
 use anyhow::Context;
 use eframe::egui;
 
+use pixhaus_ui::contrib_api::Module;
+use pixhaus_ui::state::Host;
+
+/// Build the shell host: theme, fonts, shell menus, and the capability modules.
+///
+/// Registration order is load-bearing. `register_shell_menus` runs first so the
+/// shell's File/Edit/View/Window/Help groups precede the module-contributed
+/// Sprite/Layer/Frame/Select groups. `SpriteEditModule` registers next because it
+/// owns the shared panel and tool ids the other workspaces reference by value
+/// (bible rule 2); the remaining modules append their workspaces after it.
+fn build_host(ctx: &egui::Context) -> Host {
+    let mut host = Host::new(pixhaus_ui::theme::Theme::dark());
+
+    pixhaus_ui::theme::apply_to_visuals(host.theme(), ctx);
+    pixhaus_ui::theme::install_fonts(ctx);
+
+    pixhaus_ui::shell::menus::register_shell_menus(&mut host.registrar());
+
+    // sprite-edit FIRST: it registers the shared panels and tools the other
+    // modules name by id, so it must run before any layout references them.
+    pixhaus_mod_sprite_edit::SpriteEditModule.register(&mut host.registrar());
+    pixhaus_mod_animation::AnimationModule.register(&mut host.registrar());
+    pixhaus_mod_tiles::TilesModule.register(&mut host.registrar());
+    pixhaus_mod_generation::GenerationModule.register(&mut host.registrar());
+    pixhaus_mod_export::ExportModule.register(&mut host.registrar());
+
+    host
+}
+
 /// Top-level application state, owned across frames by the eframe loop.
 ///
-/// A unit struct at scaffold stage: the document, tool selection, and undo stack
-/// move in as the shared sprite-editing core lands.
-struct PixhausApp;
+/// The [`Host`] is the single owner of every piece of shell-level mutable state
+/// (registries, session/UI state, the intent sink, theme). The eframe loop drives
+/// it: `logic` drains background results, `ui` composes the regions.
+struct PixhausApp {
+    host: Host,
+}
 
 impl PixhausApp {
     fn new(cc: &eframe::CreationContext<'_>) -> Self {
+        // Install the canvas renderer into egui-wgpu's resource store before the
+        // first paint; the paint callback retrieves it from there each frame.
         if let Some(render_state) = cc.wgpu_render_state.as_ref() {
             pixhaus_ui::install_canvas_renderer(render_state);
         }
-        Self
+        let host = build_host(&cc.egui_ctx);
+        Self { host }
     }
 }
 
 impl eframe::App for PixhausApp {
-    fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
-        egui::Panel::top("top_bar").show_inside(ui, |ui| {
-            ui.horizontal(|ui| {
-                ui.heading("Pixhaus");
-                ui.separator();
-                ui.label("v3 scaffold");
-                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                    if ui.button("Quit").clicked() {
-                        ui.ctx().send_viewport_cmd(egui::ViewportCommand::Close);
-                    }
-                });
-            });
-        });
+    fn logic(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+        pixhaus_ui::shell::drain_background(&mut self.host, ctx);
+    }
 
-        egui::CentralPanel::default().show_inside(ui, |ui| {
-            let (response, painter) = ui.allocate_painter(ui.available_size(), egui::Sense::click_and_drag());
-            painter.add(egui_wgpu::Callback::new_paint_callback(response.rect, pixhaus_ui::CanvasCallback));
-        });
+    fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
+        pixhaus_ui::shell::Shell::run(&mut self.host, ui);
     }
 }
 
