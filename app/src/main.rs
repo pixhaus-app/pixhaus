@@ -14,8 +14,8 @@ use pixhaus_ui::state::Host;
 /// Build the shell host: theme, fonts, shell menus, and the capability modules.
 ///
 /// Registration order is load-bearing. `register_shell_menus` runs first so the
-/// shell's File/Edit/View/Window/Help groups precede the module-contributed
-/// Sprite/Layer/Frame/Select groups. `SpriteEditModule` registers next because it
+/// shell's File/Edit/Select/View/Window/Help groups precede the module-contributed
+/// Sprite/Layer/Frame groups. `SpriteEditModule` registers next because it
 /// owns the shared panel and tool ids the other workspaces reference by value
 /// (bible rule 2); the remaining modules append their workspaces after it.
 fn build_host(ctx: &egui::Context) -> Host {

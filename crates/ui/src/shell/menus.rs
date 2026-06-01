@@ -1,10 +1,12 @@
 //! The shell's always-present top-bar menu groups, as data.
 //!
-//! The shell owns Pixhaus/File/Edit/View/Window/Help; modules contribute
-//! Sprite/Layer/Frame/Select into `Registries.menus`. Most items emit a mock
-//! `Intent::RunAction`; the View/Window items named below are wired live in the
-//! top-bar render (SHELL.4): View > Theme, View > Toggle Grid, Window > Command
-//! Palette.
+//! The shell owns Pixhaus/File/Edit/Select/View/Window/Help; modules contribute
+//! Sprite/Layer/Frame into `Registries.menus`. Together they make the spec's menu
+//! set (File Edit Sprite Layer Frame Select View Window Help) - Select is a
+//! selection-level concern the shell owns, not a module one. Most items emit a
+//! mock `Intent::RunAction`; the View/Window items named below are wired live in
+//! the top-bar render (SHELL.4): View > Theme, View > Toggle Grid, Window >
+//! Command Palette.
 
 use crate::contrib_api::ids::ActionId;
 use crate::contrib_api::module::{HostRegistrar, MenuGroup, MenuItem};
@@ -49,6 +51,14 @@ pub fn shell_menu_groups() -> Vec<MenuGroup> {
                 item("Cut", ActionId("edit.cut")),
                 item("Copy", ActionId("edit.copy")),
                 item("Paste", ActionId("edit.paste")),
+            ],
+        },
+        MenuGroup {
+            label: "Select",
+            items: vec![
+                item("Select All", ActionId("select.all")),
+                item("Deselect", ActionId("select.none")),
+                item("Inverse", ActionId("select.inverse")),
             ],
         },
         MenuGroup {
@@ -105,8 +115,16 @@ mod tests {
     fn shell_groups_in_order() {
         let groups = shell_menu_groups();
         let labels: Vec<&str> = groups.iter().map(|g| g.label).collect();
-        // The shell owns these; Sprite/Layer/Frame/Select are module-contributed.
-        assert_eq!(labels, vec!["Pixhaus", "File", "Edit", "View", "Window", "Help"]);
+        // The shell owns these; Sprite/Layer/Frame are module-contributed.
+        assert_eq!(labels, vec!["Pixhaus", "File", "Edit", "Select", "View", "Window", "Help"]);
+    }
+
+    #[test]
+    fn select_menu_has_the_selection_items() {
+        let groups = shell_menu_groups();
+        let select = group(&groups, "Select");
+        let item_labels: Vec<&str> = select.items.iter().map(|i| i.label).collect();
+        assert_eq!(item_labels, vec!["Select All", "Deselect", "Inverse"]);
     }
 
     #[test]
