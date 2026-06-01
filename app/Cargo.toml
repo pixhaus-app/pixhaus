@@ -1,0 +1,21 @@
+[package]
+name = "pixhaus-app"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+
+[dependencies]
+anyhow.workspace = true
+eframe.workspace = true
+egui.workspace = true
+egui-wgpu.workspace = true
+tokio.workspace = true
+tracing-subscriber.workspace = true
+pixhaus-ui = { path = "../crates/ui" }
+
+[lints]
+workspace = true

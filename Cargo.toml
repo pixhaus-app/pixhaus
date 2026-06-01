@@ -1,10 +1,9 @@
 [workspace]
 resolver = "3"
-# Clean slate. No crates yet — crates land as the work defines them. Until the
-# first crate is added here, `cargo` workspace commands and the conclaude Stop
-# gate error with "the manifest is virtual, and the workspace has no members".
-# That is expected, not a misconfiguration (see CLAUDE.md).
-members = []
+# The layered crate graph from docs/pixhaus_architecture_bible.md. See CLAUDE.md's
+# Repo layout for the trees and the dependency direction. Globs pick up new layer
+# crates and modules without editing this list.
+members = ["crates/*", "modules/*", "app"]
 
 [workspace.package]
 version = "0.1.0"

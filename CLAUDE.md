@@ -1,31 +1,29 @@
 # Pixhaus
 
-Open-source AI-native pixel art editor for sprites, animations, and tilemaps.
-Native Rust: an `eframe` + `egui` shell with a `wgpu` canvas renderer. Unity-only
-engine target. MIT license.
+Open-source, AI-native, native-Rust tool for creating and animating sprites
+across many art styles — pixel art is a first-class mode, not the whole product.
+An `eframe` + `egui` shell with a `wgpu` canvas renderer. Unity-only engine
+target. MIT license.
 
 ## Status: clean-slate restart (v3)
 
 This is the `v3` branch — a second deliberate rebuild. `v2` proved out the native
-Rust direction: an `eframe` + `egui` shell embedding a `wgpu` canvas, with pixel
-data and the GPU surface both in Rust so painting never crosses an IPC boundary
-(the wall the original Tauri 2 + TypeScript/WebGL2 build hit at 4K/8K). That
-direction is right. What `v2` also accumulated was breadth — AI backends, local
-FLUX inference, sprite pipelines — layered on before the core editor was solid.
+Rust direction (an `eframe` + `egui` shell embedding a `wgpu` canvas, pixel data
+and the GPU surface both in Rust so painting never crosses an IPC boundary — the
+wall the original Tauri 2 + TypeScript/WebGL2 build hit at 4K/8K) but accumulated
+breadth — AI backends, local FLUX inference, sprite pipelines — before the core
+editor was solid. `v3` keeps the proven direction and the discipline.
 
-So `v3` starts empty again and stays deliberately narrow: Rust + `egui`/`wgpu`
-and nothing else until the core drawing/playback experience earns the next
-dependency. No AI runtime, no local inference, no project-format or plugin
-machinery pre-locked — those are decisions to make when the work reaches them,
-not assumptions baked into the scaffold. There is no carried-over code; crates
-land as the work defines them. Don't assume a `core`/`render`/`shell` exists
-until you see it.
+What's landed: the architectural scaffold from
+`docs/pixhaus_architecture_bible.md`. The workspace is now the full layered crate
+graph (see Repo layout) with a runnable egui/wgpu spine — `cargo run -p
+pixhaus-app` opens a window with a wgpu-drawn canvas. The layer and module crates
+beyond that spine are compiling stubs; they gain bodies as the roadmap (bible §26)
+reaches them. Don't mistake a stub for a missing decision — the boundary exists on
+purpose; fill it, don't reshape it without cause.
 
-The workspace has no members yet (`Cargo.toml`'s `members = []`). Until the first
-crate lands, `cargo` workspace commands and the `conclaude` Stop gate will error
-with "the manifest is virtual, and the workspace has no members" — that is
-expected, not a misconfiguration. The gate goes green the moment you add a crate
-to `members`. Don't weaken the gate to silence it; add the first crate instead.
+The stack stays narrow: Rust + `egui`/`wgpu` and the async/serde backbone, and
+nothing else until a crate earns the next dependency.
 
 ## Stack — locked, do not relitigate
 
@@ -86,23 +84,64 @@ note above); the gate becomes meaningful with the first crate.
 
 ## Repo layout
 
-A clean slate. The root holds the workspace `Cargo.toml`, the toolchain and lint
-config (`rust-toolchain.toml`, `rustfmt.toml`, `clippy.toml`), `.cargo/deny.toml`,
-and the hook config (`.conclaude.yaml`, `.claude/`).
-
-Crates land as the work defines them. The expected shape:
+The root holds the workspace `Cargo.toml`, the toolchain and lint config
+(`rust-toolchain.toml`, `rustfmt.toml`, `clippy.toml`), `.cargo/deny.toml`, the
+hook config (`.conclaude.yaml`, `.claude/`), and `docs/` (the architecture bible
+lives there). Code lives in three trees:
 
 ```
-render/   UI-agnostic wgpu viewport renderer. Depends on core + wgpu.
-          Knows nothing about egui. The perf-critical code.
-shell/    eframe + egui + egui-wgpu binary. Owns app state, hosts panels,
-          embeds render/ via an egui paint callback. Depends on everything.
-core/     pixel ops, blend, undo, project model, selection, transforms (as it lands)
-io/       the project format, PNG, sprite sheets, etc. (as it lands)
+crates/    the shared spine - layer crates every workspace and module sits on
+  core/      domain model: project, document, sprite, layer, frame, cel, palette,
+             selection, art mode, ids, the Command trait. No egui, no wgpu.
+  render/    UI-agnostic wgpu viewport renderer. Depends on core. Knows nothing
+             about egui. The perf-critical code.
+  io/        project format, PNG, sprite sheets, importer/exporter traits.
+  services/  command execution, undo/transactions, the job system, provider dispatch.
+  platform/  native dialogs, recent files, OS paths, GPU capability detection.
+  ui/        the egui contribution surface - Panel/Tool/Workspace/Provider/Importer/
+             Exporter/Validator traits, the registries, the Module trait, theme
+             tokens, and the egui<->render canvas paint callback. The only crate
+             that knows both egui and render.
+
+modules/   internal capability modules (bible section 7). Each registers
+           capabilities with the host; none owns core data. Compiled in, not
+           dynamically loaded.
+  core/ sprite-edit/ animation/ generation/ pixel-art/ tiles/ export/ providers/
+
+app/       the eframe binary (Host App layer). Owns the tokio runtime, boots the
+           window, registers modules, runs the egui loop. Depends on everything;
+           nothing depends on it.
 ```
+
+Dependency direction is strict and acyclic: `core` is deepest and egui-free;
+`render`, `io`, `services`, and `platform` depend only on `core`; `ui` depends on
+those; `modules/*` depend on `core` + `services` + `ui`; `app` depends on all.
+`core` and `render` never see egui — that keeps the renderer alive across a
+UI-toolkit change. Crate packages are `pixhaus-<dir>` (`pixhaus-core`,
+`pixhaus-render`, …) and `pixhaus-mod-<name>` for modules.
 
 Don't add a new top-level directory without updating this section first.
 `conclaude`'s `preventRootAdditions` blocks it otherwise.
+
+## Architecture
+
+`docs/pixhaus_architecture_bible.md` is the source of truth — read it before
+making a structural decision. The load-bearing rules it sets, which the crate
+graph above encodes:
+
+- Workspaces are task-focused layouts over shared capabilities; they don't own
+  data models. Draw and Animate are siblings over one sprite-editing core.
+- Tools create commands; commands own all mutation of project state and are
+  undoable. Tools and AI results never mutate the model directly.
+- Long, expensive, or external work is a job. Jobs produce results; applying a
+  result is a command. AI generation never touches the canvas directly.
+- Capabilities are registered by internal modules through registries — no
+  external dynamic plugins.
+- GPU textures are caches and views; the project model is the source of truth.
+- Pixel art is a deep, dedicated mode, not the whole product.
+
+When a change spans a boundary the bible draws, follow the bible, not
+convenience.
 
 ## Commands
 
@@ -184,7 +223,8 @@ messages, PR bodies, error messages, log messages, README updates.
 
 ## When in doubt
 
-1. Read the relevant skill in `.claude/skills/`.
-2. The stack is locked. If you think it shouldn't be, that's a discussion to
+1. Read `docs/pixhaus_architecture_bible.md` — it settles most structural questions.
+2. Read the relevant skill in `.claude/skills/`.
+3. The stack is locked. If you think it shouldn't be, that's a discussion to
    raise, not a code change to make unilaterally.
-3. Don't guess on architectural decisions. Surface the question.
+4. Don't guess on architectural decisions. Surface the question.
