@@ -11,8 +11,16 @@ homepage.workspace = true
 [dependencies]
 egui.workspace = true
 egui-wgpu.workspace = true
+egui-phosphor.workspace = true
 wgpu.workspace = true
+serde.workspace = true
+thiserror.workspace = true
+tracing.workspace = true
 pixhaus-render = { path = "../render" }
+
+[dev-dependencies]
+rstest.workspace = true
+insta.workspace = true
 
 [lints]
 workspace = true
