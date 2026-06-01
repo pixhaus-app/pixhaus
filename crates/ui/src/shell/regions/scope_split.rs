@@ -19,9 +19,6 @@ use crate::theme::Theme;
 /// `session`/`ui_state`/`theme` are shared borrows of sibling `Host` fields;
 /// `intents` is reborrowed per panel; `scratch` is this panel's own buffer. The
 /// caller has already destructured `&mut *host`, so these are provably disjoint.
-// The first callers (the right dock and bottom tray) land in SHELL.7/8; `expect`
-// rather than `allow` so the unused marker itself warns once it is wired up.
-#[expect(dead_code, reason = "first used by the right-dock and bottom-tray regions")]
 pub(crate) fn panel_scope<'a>(
     session: &'a SessionState,
     ui_state: &'a UiState,
