@@ -5,10 +5,12 @@
 //! `install_fonts`, and the token structs in `tokens`/`palettes`/`contrast`.
 
 mod contrast;
+mod fonts;
 mod palettes;
 pub mod tokens;
 
 pub use contrast::wcag_contrast;
+pub use fonts::install_fonts;
 pub use palettes::DEFAULT_ACCENT_SEED;
 pub use tokens::{AccentTokens, Elevation, Radii, Roles, SurfaceTier, Surfaces, Theme, ThemeVariant, TypeScale};
 
