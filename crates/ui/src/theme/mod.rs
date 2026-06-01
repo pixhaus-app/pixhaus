@@ -12,7 +12,7 @@ pub mod tokens;
 pub use contrast::wcag_contrast;
 pub use fonts::install_fonts;
 pub use palettes::DEFAULT_ACCENT_SEED;
-pub use tokens::{AccentTokens, Elevation, Radii, Roles, SurfaceTier, Surfaces, Theme, ThemeVariant, TypeScale};
+pub use tokens::{AccentTokens, Elevation, Radii, Roles, Spacing, SurfaceTier, Surfaces, Theme, ThemeVariant, TypeScale};
 
 /// Map theme tokens onto egui's `Visuals`/`Style`. Called once at boot and re-applied
 /// by `apply_intent` on a variant change so a theme switch actually repaints. Uses
