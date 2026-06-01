@@ -1,0 +1,77 @@
+//! Session state: the per-session, non-durable model the shell owns.
+//!
+//! Minimal this round. `active_document` / `selection` / `undo_stack` are reserved
+//! seams that arrive with `core` (spec "Owners, no overlap"); they are intentionally
+//! absent, not forgotten.
+
+use crate::contrib_api::ids::{ActionId, ToolId, WorkspaceId};
+
+/// Non-durable session state owned by [`crate::state::Host`].
+///
+/// Reserved for `core`: `active_document`, `selection`, `undo_stack`. They join when
+/// `core` has types; until then they would be fake state, so they are left out.
+pub struct SessionState {
+    /// The workspace currently shown (Draw, Animate, Tiles, Generate, Export).
+    pub active_workspace: WorkspaceId,
+    /// The tool currently selected in the active workspace's rail.
+    pub active_tool: ToolId,
+    /// Whether the (future) document has unsaved edits. Mock this round.
+    pub dirty: bool,
+    /// Mock job entries so the status dot and the console panel have content.
+    pub jobs: Vec<JobStub>,
+    /// Drives the status-bar AI dot.
+    pub ai_status: AiStatus,
+}
+
+/// A stand-in for a real job (spec: bible rule 5). Carries only what the mock
+/// status dot and console need; the real job system lands in `services`.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct JobStub {
+    /// The action that queued this job.
+    pub action: ActionId,
+    /// Where the job is in its (mock) lifecycle.
+    pub state: JobState,
+}
+
+/// Mock lifecycle for a [`JobStub`].
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+pub enum JobState {
+    /// Queued, not yet running.
+    Queued,
+    /// Finished (mock).
+    Done,
+}
+
+impl JobStub {
+    /// A freshly queued job for `action`.
+    pub fn queued(action: ActionId) -> Self {
+        Self {
+            action,
+            state: JobState::Queued,
+        }
+    }
+}
+
+/// The AI runtime status surfaced by the status-bar dot (spec UX 27).
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+pub enum AiStatus {
+    /// Idle and available (success-colored dot).
+    Ready,
+    /// A job is running (warning-colored dot).
+    Working,
+    /// No backend (disabled-colored dot).
+    Offline,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn queued_job_carries_its_action_and_is_queued() {
+        let action = ActionId("ai.fill");
+        let job = JobStub::queued(action);
+        assert_eq!(job.action, action, "queued() must record the action it was given");
+        assert_eq!(job.state, JobState::Queued, "a fresh job starts Queued");
+    }
+}
