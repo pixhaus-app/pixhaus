@@ -7,7 +7,7 @@
 //! Palette.
 
 use crate::contrib_api::ids::ActionId;
-use crate::contrib_api::module::{MenuGroup, MenuItem};
+use crate::contrib_api::module::{HostRegistrar, MenuGroup, MenuItem};
 
 // Stable action ids the top-bar render special-cases. Inert items carry their own
 // "<group>.<verb>" ids and route to the mock RunAction toast.
@@ -77,6 +77,17 @@ pub fn shell_menu_groups() -> Vec<MenuGroup> {
     ]
 }
 
+/// Register the shell's always-present menu groups through the registrar.
+///
+/// Called from `build_host` so the always-present groups enter `Registries.menus`
+/// by the same path modules use for their Sprite/Layer/Frame/Select groups. Order:
+/// call this first so module groups append after the shell's File/Edit/View block.
+pub fn register_shell_menus(host: &mut dyn HostRegistrar) {
+    for group in shell_menu_groups() {
+        host.add_menu_group(group);
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -112,5 +123,15 @@ mod tests {
         let groups = shell_menu_groups();
         let window = group(&groups, "Window");
         assert!(window.items.iter().any(|i| i.label.contains("Command Palette")));
+    }
+
+    #[test]
+    fn register_shell_menus_populates_the_registry() {
+        let mut host = crate::state::Host::new(crate::theme::Theme::dark());
+        register_shell_menus(&mut host.registrar());
+        let labels: Vec<&str> = host.registries.menus.iter().map(|g| g.label).collect();
+        assert!(labels.contains(&"File"));
+        assert!(labels.contains(&"View"));
+        assert!(labels.contains(&"Window"));
     }
 }
