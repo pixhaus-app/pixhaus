@@ -36,6 +36,9 @@ tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 eframe = { version = "0.34", default-features = false, features = ["wgpu", "persistence"] }
 egui = "0.34"
 egui_extras = "0.34"
+# Phosphor icon glyphs merged into egui's font set (tool-rail glyphs + AI sparkle).
+# Ratified in the ui-shell-foundation design; 0.12 declares egui = "0.34".
+egui-phosphor = "0.12"
 egui-wgpu = "0.34"
 wgpu = "=29.0.1"
 glam = "0.30"
