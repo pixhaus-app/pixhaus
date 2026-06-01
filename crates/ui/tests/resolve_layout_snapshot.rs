@@ -6,6 +6,9 @@
 //! reference shows as a gap here (and `resolve_layout` logs a warn).
 
 #![cfg_attr(test, allow(clippy::unwrap_used, clippy::expect_used))]
+// insta's `assert_debug_snapshot!` expands to a `.unwrap()` we do not control;
+// the disallowed-methods lint fires on that macro-internal call, not on our code.
+#![allow(clippy::disallowed_methods)]
 
 mod support;
 

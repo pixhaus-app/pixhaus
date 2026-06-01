@@ -1,4 +1,4 @@
-//! Spec test 7: headless boot smoke test (egui_kittest declined).
+//! Spec test 7: headless boot smoke test (`egui_kittest` declined).
 //!
 //! No event loop, no GPU. Boot the Host with all five modules registered and
 //! assert every workspace resolves to a non-empty dock and tray, and that the
