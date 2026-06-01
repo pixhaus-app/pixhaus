@@ -10,6 +10,17 @@
 //! draw through [`CanvasCallback`]. The registries and trait surface land as the
 //! workspaces are built.
 
+#![cfg_attr(test, allow(clippy::unwrap_used, clippy::expect_used, clippy::panic))]
+
+pub mod contrib_api;
+mod icons;
+pub mod region;
+pub mod registry;
+pub mod shell;
+pub mod state;
+pub mod theme;
+pub mod widgets;
+
 use egui::epaint::PaintCallbackInfo;
 use egui_wgpu::{CallbackResources, CallbackTrait, RenderState};
 use wgpu::RenderPass;
