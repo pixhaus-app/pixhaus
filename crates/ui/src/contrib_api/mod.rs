@@ -5,7 +5,7 @@
 //! [`Tool`], [`Workspace`], [`Module`]) are dyn-compatible and stored as
 //! `Box<dyn _>` - registries are the textbook heterogeneous-collection case and
 //! none sits on the per-pixel hot path, so the vtable hop is free. The
-//! [`_assert_boxable`] guard below fails the build if any of them regresses.
+//! `_assert_boxable` guard below fails the build if any of them regresses.
 
 pub mod context;
 pub mod ids;

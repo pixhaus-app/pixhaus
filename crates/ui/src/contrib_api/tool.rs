@@ -39,7 +39,7 @@ pub trait Tool {
 pub struct ToolMeta {
     /// Display label shown in tooltips and the command palette.
     pub label: &'static str,
-    /// Phosphor glyph from [`crate::icons`] painted on the rail button.
+    /// Phosphor glyph from `crate::icons` painted on the rail button.
     pub icon: char,
     /// Optional keyboard shortcut (e.g. `B` for pencil). `None` means no key.
     pub shortcut: Option<egui::KeyboardShortcut>,

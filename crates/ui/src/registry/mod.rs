@@ -2,7 +2,7 @@
 //!
 //! [`Registry`] is an insertion-ordered keyed store (the order is the rail/tab
 //! display order); [`Registries`] bundles the per-kind registries; a thin wrapper
-//! over `&mut Registries` implements the [`HostRegistrar`](crate::contrib_api::HostRegistrar)
+//! over `&mut Registries` implements the [`HostRegistrar`]
 //! a [`Module`](crate::contrib_api::Module) sees. [`resolve_layout`] turns a
 //! workspace's authored layout into a [`ResolvedLayout`] filtered to registered ids.
 
@@ -20,7 +20,7 @@ pub use resolve::{ResolvedLayout, resolve_layout};
 /// `items` keeps registration order, which is the display order for the tool
 /// rail and tray tabs; `index` maps an id to its slot for O(1) `get`. A module
 /// registering a duplicate id is a programming error, loud in debug (the
-/// `debug_assert` in [`Registry::insert`]) and last-value-wins in release.
+/// `debug_assert` in `Registry::insert`) and last-value-wins in release.
 pub struct Registry<K: Copy + Eq + Hash, V> {
     items: Vec<V>,
     index: HashMap<K, usize>,
@@ -42,12 +42,11 @@ impl<K: Copy + Eq + Hash, V> Registry<K, V> {
     /// and overwrites the existing slot (last value wins) in release.
     fn insert(&mut self, key: K, value: V) {
         debug_assert!(!self.index.contains_key(&key), "duplicate registry id");
-        match self.index.get(&key).copied() {
-            Some(i) => self.items[i] = value,
-            None => {
-                self.index.insert(key, self.items.len());
-                self.items.push(value);
-            }
+        if let Some(i) = self.index.get(&key).copied() {
+            self.items[i] = value;
+        } else {
+            self.index.insert(key, self.items.len());
+            self.items.push(value);
         }
     }
 

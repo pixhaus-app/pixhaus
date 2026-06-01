@@ -38,7 +38,7 @@ pub struct ActionDesc {
     pub id: ActionId,
     /// Display label.
     pub label: &'static str,
-    /// Phosphor glyph from [`crate::icons`].
+    /// Phosphor glyph from `crate::icons`.
     pub icon: char,
     /// Whether this action appears in the Ctrl/Cmd+K command palette.
     pub palette_visible: bool,

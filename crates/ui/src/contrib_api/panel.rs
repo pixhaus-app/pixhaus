@@ -55,7 +55,7 @@ pub trait Panel {
 pub struct PanelMeta {
     /// Display title shown in the card header.
     pub title: &'static str,
-    /// Phosphor glyph from [`crate::icons`].
+    /// Phosphor glyph from `crate::icons`.
     pub icon: char,
     /// Where this panel sits unless a workspace places it elsewhere.
     pub default_region: Region,

@@ -52,12 +52,11 @@ pub fn resolve_layout(ws: WorkspaceId, r: &Registries) -> ResolvedLayout {
         return ResolvedLayout::empty();
     };
     let layout = workspace.layout();
-    let keep_panel = |id: &PanelId| match r.panels.get(*id) {
-        Some(panel) => {
+    let keep_panel = |id: &PanelId| {
+        if let Some(panel) = r.panels.get(*id) {
             debug_assert!(panel.relevant_in(ws), "workspace listed an irrelevant panel");
             true
-        }
-        None => {
+        } else {
             tracing::warn!(?id, "workspace references an unregistered panel; skipping");
             false
         }
