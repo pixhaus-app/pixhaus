@@ -1,0 +1,29 @@
+{
+  "skill_name": "pixhaus-zstd",
+  "evals": [
+    {
+      "id": 0,
+      "name": "project-save-load",
+      "prompt": "I'm implementing the .pixhaus file format in our `io` library crate. A project is serialized to MessagePack with rmp-serde and then compressed with zstd; these files can get large because we support 8K canvases. Write `save_project(project: &Project, path: &Path)` and `load_project(path: &Path)` for this. We use `thiserror` in library crates (no anyhow, no unwrap). Assume `Project: Serialize + DeserializeOwned`. Show the functions plus imports and any error enum you need. Explain the key choices briefly.",
+      "expected_output": "Streams MessagePack directly through zstd::stream::write::Encoder to the file and calls finish() (or auto_finish); load uses zstd::stream::read::Decoder + rmp_serde::decode::from_read. Uses thiserror, no unwrap. Bonus: notes compression level 3 / running off the UI thread via spawn_blocking.",
+      "assertions": [],
+      "files": []
+    },
+    {
+      "id": 1,
+      "name": "truncated-save-debug",
+      "prompt": "Users report that large .pixhaus projects sometimes save to a file that won't reopen — the loader errors out as if the data is truncated. Small projects are fine. Here is the save function. What is the bug and how do I fix it?\n\n```rust\nuse std::fs::File;\nuse std::io::BufWriter;\n\npub fn save_project(project: &Project, path: &Path) -> Result<(), SaveError> {\n    let file = BufWriter::new(File::create(path)?);\n    let mut encoder = zstd::stream::write::Encoder::new(file, 3)?;\n    rmp_serde::encode::write(&mut encoder, project)?;\n    Ok(())\n}\n```",
+      "expected_output": "Identifies that the Encoder is dropped without finish(), so the zstd frame epilogue (and buffered data) is never flushed, truncating the file. Fix: call encoder.finish()? before returning (or use auto_finish). Explains why small files might appear to work and why finish() is also where late I/O errors surface.",
+      "assertions": [],
+      "files": []
+    },
+    {
+      "id": 2,
+      "name": "thumbnail-cache-bulk",
+      "prompt": "While scrubbing the timeline we read and write a lot of small cached thumbnail tiles — about 800 of them, each a few KB of RGBA bytes. I want to zstd-compress each tile independently on the way to disk and decompress on the way back. Which zstd API fits this better than encode_all per tile, and why? Show compress and decompress helpers.",
+      "expected_output": "Recommends zstd::bulk::Compressor/Decompressor reused across the many small tiles (keeps the context/dictionary alive vs re-allocating per call). decompress takes a capacity bound. May suggest a trained dictionary (dict::from_samples + with_prepared_dictionary) since the tiles are small and similar. Correct API names.",
+      "assertions": [],
+      "files": []
+    }
+  ]
+}

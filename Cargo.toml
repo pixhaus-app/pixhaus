@@ -1,0 +1,86 @@
+[workspace]
+resolver = "3"
+# Clean slate. No crates yet — crates land as the work defines them. Until the
+# first crate is added here, `cargo` workspace commands and the conclaude Stop
+# gate error with "the manifest is virtual, and the workspace has no members".
+# That is expected, not a misconfiguration (see CLAUDE.md).
+members = []
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.85"
+authors = ["Luis <luis@agsense.es>"]
+license = "MIT"
+repository = "https://github.com/pixhaus-app/pixhaus"
+homepage = "https://pixhaus.app"
+
+# Version-stable backbone shared across crates. Deliberately minimal: Rust +
+# egui/wgpu and nothing else. Add a dependency here only when a crate actually
+# needs it — and load the matching `pixhaus-<dep>` skill before reaching for its
+# API, since pinned versions drift from training data.
+[workspace.dependencies]
+# Errors / serde / async backbone.
+anyhow = "1"
+thiserror = "2"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+futures = "0.3"
+tokio = { version = "1", features = ["full"] }
+tokio-util = { version = "0.7", features = ["rt"] }
+parking_lot = "0.12"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+# egui / wgpu native UI stack (lockstep — pinned together). wgpu is pinned
+# EXACTLY: eframe 0.34 builds against wgpu 29.0.1, and two wgpu versions in the
+# tree are incompatible types. See pixhaus-eframe / pixhaus-egui-wgpu.
+eframe = { version = "0.34", default-features = false, features = ["wgpu", "persistence"] }
+egui = "0.34"
+egui_extras = "0.34"
+egui-wgpu = "0.34"
+wgpu = "=29.0.1"
+glam = "0.30"
+bytemuck = { version = "1", features = ["derive"] }
+pollster = "0.4"
+rfd = "0.15"
+# Test stack (see pixhaus-testing-conventions).
+rstest = "0.26"
+proptest = "1"
+insta = "1"
+tempfile = "3"
+mockall = "0.13"
+image-compare = "0.4"
+
+[workspace.lints.rust]
+unsafe_code = "forbid"
+missing_docs = "warn"
+
+[workspace.lints.clippy]
+pedantic = { level = "warn", priority = -1 }
+unwrap_used = "deny"
+expect_used = "deny"
+panic = "deny"
+todo = "warn"
+unimplemented = "warn"
+dbg_macro = "warn"
+print_stdout = "warn"
+print_stderr = "warn"
+module_name_repetitions = "allow"
+must_use_candidate = "allow"
+missing_errors_doc = "allow"
+missing_panics_doc = "allow"
+
+[profile.dev]
+opt-level = 0
+debug = true
+
+[profile.release]
+opt-level = 3
+lto = "thin"
+codegen-units = 1
+strip = true
+
+[profile.release-with-debug]
+inherits = "release"
+debug = true
+strip = false

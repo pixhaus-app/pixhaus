@@ -1,0 +1,308 @@
+{
+  "metadata": {
+    "skill_name": "pixhaus-rust-pointers",
+    "skill_path": "C:\\Users\\luism\\Documents\\GitHub\\pixhaus-worktrees\\v2\\.claude\\skills\\pixhaus-rust-pointers",
+    "executor_model": "<model-name>",
+    "analyzer_model": "<model-name>",
+    "timestamp": "2026-05-25T22:22:49Z",
+    "evals_run": [
+      0,
+      1,
+      2
+    ],
+    "runs_per_configuration": 3
+  },
+  "runs": [
+    {
+      "eval_id": 0,
+      "configuration": "with_skill",
+      "run_number": 1,
+      "result": {
+        "pass_rate": 1.0,
+        "passed": 5,
+        "failed": 0,
+        "total": 5,
+        "time_seconds": 31.3,
+        "tokens": 42224,
+        "tool_calls": 0,
+        "errors": 0
+      },
+      "expectations": [
+        {
+          "text": "Recommends Arc<RwLock<...>> (RwLock, not Mutex, as the synchronizer)",
+          "passed": true,
+          "evidence": "Leads with Arc<parking_lot::RwLock<BackendRegistry>>."
+        },
+        {
+          "text": "Chooses parking_lot for the lock",
+          "passed": true,
+          "evidence": "use parking_lot::RwLock; in the snippet."
+        },
+        {
+          "text": "Treats parking_lot-over-std as a firm repo convention, not optional",
+          "passed": true,
+          "evidence": "'Use parking_lot ... This is a workspace convention, not a preference.'"
+        },
+        {
+          "text": "Explains the never-hold-lock-across-await trap and the clone-the-Arc-out fix",
+          "passed": true,
+          "evidence": "Dedicated section: guard is !Send, clone Arc out under the lock then drop before .await."
+        },
+        {
+          "text": "Rejects Arc<Mutex> citing read-dominant access",
+          "passed": true,
+          "evidence": "'Mutex serializes readers ... wrong fit when reads vastly outnumber writes.'"
+        }
+      ],
+      "notes": []
+    },
+    {
+      "eval_id": 1,
+      "configuration": "with_skill",
+      "run_number": 1,
+      "result": {
+        "pass_rate": 1.0,
+        "passed": 4,
+        "failed": 0,
+        "total": 4,
+        "time_seconds": 37.0,
+        "tokens": 42574,
+        "tool_calls": 0,
+        "errors": 0
+      },
+      "expectations": [
+        {
+          "text": "Recommends a recursive enum with children behind a Vec",
+          "passed": true,
+          "evidence": "enum LayerNode { Leaf, Group } with Group owning Vec<LayerNode>."
+        },
+        {
+          "text": "States no Box is needed because Vec is already heap-backed",
+          "passed": true,
+          "evidence": "'Vec ... already heap-allocated and owned, so they already break the recursion. You don't add a Box on top.'"
+        },
+        {
+          "text": "Rejects Rc<RefCell>/Arc<Mutex> as the GC-language reflex, citing single owner",
+          "passed": true,
+          "evidence": "'This is the reflex to resist ... a layer tree has a single owner: the document.'"
+        },
+        {
+          "text": "Names an index/arena (LayerId) approach as the legitimate alternative",
+          "passed": true,
+          "evidence": "'An arena: Vec<LayerNode> ... addressed by index/LayerId ... the legitimate alternative.'"
+        }
+      ],
+      "notes": []
+    },
+    {
+      "eval_id": 2,
+      "configuration": "with_skill",
+      "run_number": 1,
+      "result": {
+        "pass_rate": 1.0,
+        "passed": 4,
+        "failed": 0,
+        "total": 4,
+        "time_seconds": 32.6,
+        "tokens": 42281,
+        "tool_calls": 0,
+        "errors": 0
+      },
+      "expectations": [
+        {
+          "text": "Recommends a static LazyLock<Palette>",
+          "passed": true,
+          "evidence": "static DEFAULT_PALETTE: LazyLock<Palette> = LazyLock::new(|| ...)."
+        },
+        {
+          "text": "Notes it's in std \u00e2\u20ac\u201d no lazy_static/once_cell dependency",
+          "passed": true,
+          "evidence": "'LazyLock is in std ... replaces lazy_static! and once_cell::sync::Lazy; don't pull in a crate.'"
+        },
+        {
+          "text": "Rejects Mutex<Option<T>> and Arc/Arc<RwLock> for read-only global",
+          "passed": true,
+          "evidence": "Rejects Arc<Palette>, Arc<RwLock<Palette>>, and Mutex<Option<Palette>> explicitly."
+        },
+        {
+          "text": "Rules out the single-threaded OnceCell/LazyCell as !Sync",
+          "passed": true,
+          "evidence": "'LazyCell / OnceCell ... are !Sync, so they can't back a static read from multiple threads.'"
+        }
+      ],
+      "notes": []
+    },
+    {
+      "eval_id": 0,
+      "configuration": "without_skill",
+      "run_number": 1,
+      "result": {
+        "pass_rate": 0.8,
+        "passed": 4,
+        "failed": 1,
+        "total": 5,
+        "time_seconds": 38.4,
+        "tokens": 34860,
+        "tool_calls": 0,
+        "errors": 0
+      },
+      "expectations": [
+        {
+          "text": "Recommends Arc<RwLock<...>> (RwLock, not Mutex, as the synchronizer)",
+          "passed": true,
+          "evidence": "Arc<RwLock<HashMap<BackendId, Arc<dyn Backend>>>>."
+        },
+        {
+          "text": "Chooses parking_lot for the lock",
+          "passed": true,
+          "evidence": "Leads with parking_lot::RwLock and explains the advantages."
+        },
+        {
+          "text": "Treats parking_lot-over-std as a firm repo convention, not optional",
+          "passed": false,
+          "evidence": "Hedges: 'std::sync::RwLock is fine if you want zero extra deps ... Either works.'"
+        },
+        {
+          "text": "Explains the never-hold-lock-across-await trap and the clone-the-Arc-out fix",
+          "passed": true,
+          "evidence": "'don't hold the lock across .await' with get() cloning the Arc out."
+        },
+        {
+          "text": "Rejects Arc<Mutex> citing read-dominant access",
+          "passed": true,
+          "evidence": "'A Mutex serializes readers against each other ... throws away free read concurrency.'"
+        }
+      ],
+      "notes": []
+    },
+    {
+      "eval_id": 1,
+      "configuration": "without_skill",
+      "run_number": 1,
+      "result": {
+        "pass_rate": 1.0,
+        "passed": 4,
+        "failed": 0,
+        "total": 4,
+        "time_seconds": 44.4,
+        "tokens": 35342,
+        "tool_calls": 0,
+        "errors": 0
+      },
+      "expectations": [
+        {
+          "text": "Recommends a recursive enum with children behind a Vec",
+          "passed": true,
+          "evidence": "enum LayerNode { Leaf, Group } with Group { children: Vec<LayerNode> }."
+        },
+        {
+          "text": "States no Box is needed because Vec is already heap-backed",
+          "passed": true,
+          "evidence": "'Vec<T> stores its elements behind a heap pointer ... you do not need a Box here.'"
+        },
+        {
+          "text": "Rejects Rc<RefCell>/Arc<Mutex> as the GC-language reflex, citing single owner",
+          "passed": true,
+          "evidence": "'This is the reflex port from a GC language, and it's wrong here.'"
+        },
+        {
+          "text": "Names an index/arena (LayerId) approach as the legitimate alternative",
+          "passed": true,
+          "evidence": "'A flat arena / slotmap with id-based child lists ... legitimate and arguably better at scale.'"
+        }
+      ],
+      "notes": []
+    },
+    {
+      "eval_id": 2,
+      "configuration": "without_skill",
+      "run_number": 1,
+      "result": {
+        "pass_rate": 0.75,
+        "passed": 3,
+        "failed": 1,
+        "total": 4,
+        "time_seconds": 38.4,
+        "tokens": 34733,
+        "tool_calls": 0,
+        "errors": 0
+      },
+      "expectations": [
+        {
+          "text": "Recommends a static LazyLock<Palette>",
+          "passed": true,
+          "evidence": "static DEFAULT_PALETTE: LazyLock<Palette> with a -> &'static Palette accessor."
+        },
+        {
+          "text": "Notes it's in std \u00e2\u20ac\u201d no lazy_static/once_cell dependency",
+          "passed": true,
+          "evidence": "'LazyLock is in std (stabilized in Rust 1.80), so no extra dependency.'"
+        },
+        {
+          "text": "Rejects Mutex<Option<T>> and Arc/Arc<RwLock> for read-only global",
+          "passed": true,
+          "evidence": "Rejects Arc<Palette> cloning; does not name Mutex<Option<T>> but covers the ownership-vs-borrow point."
+        },
+        {
+          "text": "Rules out the single-threaded OnceCell/LazyCell as !Sync",
+          "passed": false,
+          "evidence": "Discusses T: Sync and thread_local!, but never rules out LazyCell/OnceCell as the container choice."
+        }
+      ],
+      "notes": []
+    }
+  ],
+  "run_summary": {
+    "with_skill": {
+      "pass_rate": {
+        "mean": 1.0,
+        "stddev": 0.0,
+        "min": 1.0,
+        "max": 1.0
+      },
+      "time_seconds": {
+        "mean": 33.6333,
+        "stddev": 2.9872,
+        "min": 31.3,
+        "max": 37.0
+      },
+      "tokens": {
+        "mean": 42359.6667,
+        "stddev": 187.7933,
+        "min": 42224,
+        "max": 42574
+      }
+    },
+    "without_skill": {
+      "pass_rate": {
+        "mean": 0.85,
+        "stddev": 0.1323,
+        "min": 0.75,
+        "max": 1.0
+      },
+      "time_seconds": {
+        "mean": 40.4,
+        "stddev": 3.4641,
+        "min": 38.4,
+        "max": 44.4
+      },
+      "tokens": {
+        "mean": 34978.3333,
+        "stddev": 321.2823,
+        "min": 34733,
+        "max": 35342
+      }
+    },
+    "delta": {
+      "pass_rate": "+0.15",
+      "time_seconds": "-6.8",
+      "tokens": "+7381"
+    }
+  },
+  "notes": [
+    "Baseline (no skill) is already strong on all three: modern Opus picks RwLock/parking_lot, recursive-enum+Vec, and LazyLock unaided when given egui/wgpu/tokio context. The eval set is near-non-discriminating on the CORE recommendation.",
+    "The skill discriminates only at the margins: eval-0 it makes parking_lot a firm repo convention (baseline hedged std is fine); eval-2 it rules out single-threaded OnceCell/LazyCell as a container (baseline omitted that). Delta +0.15 comes entirely from those two assertions.",
+    "eval-1 (recursive hierarchy) is a tie at 100/100 \u2014 the assertions there do not separate skill from baseline. Consider replacing it with a trickier case where baseline reflexes go wrong (e.g. interior mutability behind &self, an Rc<RefCell> UI-cache temptation, or a concrete lock-across-await snippet to fix).",
+    "With-skill runs cost more tokens (~42k vs ~35k) and finished faster (reading the SKILL.md adds input tokens but the answer is more directed). Both well within budget."
+  ]
+}

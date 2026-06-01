@@ -1,0 +1,12 @@
+{
+  "eval_id": 0,
+  "eval_name": "project-save-load",
+  "prompt": "I'm implementing the .pixhaus file format in our `io` library crate. A project is serialized to MessagePack with rmp-serde and then compressed with zstd; these files can get large because we support 8K canvases. Write `save_project(project: &Project, path: &Path)` and `load_project(path: &Path)` for this. We use `thiserror` in library crates (no anyhow, no unwrap). Assume `Project: Serialize + DeserializeOwned`. Show the functions plus imports and any error enum you need. Explain the key choices briefly.",
+  "assertions": [
+    "Uses streaming zstd Encoder/Decoder for the large project file (not encode_all/decode_all)",
+    "Calls encoder.finish() so the frame is not left truncated",
+    "All zstd API names used are real (no invented methods)",
+    "Uses a thiserror enum, no unwrap/anyhow, no leaked io::Error",
+    "Gives the Pixhaus-specific rule to run save/load off the UI thread via spawn_blocking"
+  ]
+}

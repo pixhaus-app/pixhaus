@@ -1,0 +1,6 @@
+{
+  "eval_id": 1,
+  "eval_name": "recursive-layer-hierarchy",
+  "prompt": "In the Pixhaus core crate I need a layer hierarchy where a group can contain other groups or leaf layers, nested arbitrarily deep. How should I represent this recursive structure in Rust?",
+  "assertions": []
+}

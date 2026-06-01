@@ -1,0 +1,12 @@
+{
+  "eval_id": 2,
+  "eval_name": "profile-laggy-8k-drawing",
+  "prompt": "Brush drawing is super laggy on an 8192x8192 canvas but totally smooth on a 256x256 sprite. I'm on Windows. How do I figure out where the time is actually going before I start changing things?",
+  "assertions": [
+    {"text": "Recommends the release-with-debug profile for profiling (release opts + debug symbols, not dev, not stripped release)", "type": "qualitative"},
+    {"text": "Recommends samply as the cross-platform/Windows profiler (no perf/sudo), with cargo flamegraph as an alternative", "type": "qualitative"},
+    {"text": "Explains how to read a flamegraph (widest box = most CPU time)", "type": "qualitative"},
+    {"text": "Diagnoses likely canvas-tool causes: full-canvas pass that should be dirty-rect-bounded, per-move buffer clone, or work on the egui frame thread", "type": "qualitative"},
+    {"text": "Does not jump straight to a code rewrite without profiling first", "type": "qualitative"}
+  ]
+}

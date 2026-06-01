@@ -1,0 +1,22 @@
+[
+  {"query": "implementing save_project in the io crate — i serialize the doc to messagepack with rmp-serde and want to compress it before writing the .pixhaus file. how should I wire the encoder up?", "should_trigger": true},
+  {"query": "exported .pixhaus files won't reopen once the canvas gets big, the loader bails out saying the stream looks truncated. small files are fine. heres my save fn, whats wrong", "should_trigger": true},
+  {"query": "i've got around 800 small rgba thumbnail tiles i want to compress to disk and read back constantly while scrubbing the timeline — whats the right api for that, encode_all per tile feels wrong", "should_trigger": true},
+  {"query": "what compression level should we use for project saves, is bumping it to 19 actually worth it over the default 3", "should_trigger": true},
+  {"query": "should I bother training a dictionary for the tile cache or is that overkill for our case", "should_trigger": true},
+  {"query": "for a 4096x4096 project do I use encode_all on the serialized bytes or stream it through the Encoder, and do I have to call finish()", "should_trigger": true},
+  {"query": "someone sent me a .pixhaus file and im loading it — how do I guard the decompress against a zip-bomb style blow-up in memory", "should_trigger": true},
+  {"query": "is zstd going to be a problem under our MIT license, will cargo deny flag the bundled C library", "should_trigger": true},
+  {"query": "decompress the project bytes back into the Project struct when opening a file", "should_trigger": true},
+
+  {"query": "set up zstd compression on the nginx responses for our marketing landing page", "should_trigger": false},
+  {"query": "the timeline panel feels laggy while scrubbing, can you profile why egui is repainting so much", "should_trigger": false},
+  {"query": "serialize the project to messagepack with rmp-serde so we can write it out — just the encoding part for now", "should_trigger": false},
+  {"query": "the png we export is huge, can you crunch the file size down with oxipng or better deflate settings", "should_trigger": false},
+  {"query": "gzip the log files before we upload them to the crash reporter", "should_trigger": false},
+  {"query": "our wgpu texture upload is slow on the 8k canvas, can we use a compressed GPU texture format like BC7 instead", "should_trigger": false},
+  {"query": "zip up the project folder with all its referenced asset files into one archive a user can email", "should_trigger": false},
+  {"query": "dedupe identical tiles in the document model before save so the file isn't storing the same tile a hundred times", "should_trigger": false},
+  {"query": "decode this base64 image string we pulled off the system clipboard", "should_trigger": false},
+  {"query": "add a compress() helper to the http client that sets Content-Encoding for our AI backend requests", "should_trigger": false}
+]

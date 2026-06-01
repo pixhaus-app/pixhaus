@@ -1,0 +1,6 @@
+{
+  "eval_id": 0,
+  "eval_name": "cross-thread-registry",
+  "prompt": "I'm working in the Pixhaus repo on the shell crate. I'm building the backend registry that holds all the AI adapters (Anthropic, OpenAI, Replicate, etc). The egui UI thread reads it constantly to list which backends are available, and a settings flow occasionally adds or removes one. Background tasks spawned on the tokio runtime also need to look up a backend by id to run a request. What should I wrap the registry in, and why that and not the alternatives?",
+  "assertions": []
+}

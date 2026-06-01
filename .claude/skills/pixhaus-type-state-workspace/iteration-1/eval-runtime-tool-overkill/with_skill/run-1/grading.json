@@ -1,0 +1,35 @@
+{
+  "expectations": [
+    {
+      "text": "Recommends against type-state here",
+      "passed": true,
+      "evidence": "'type-state is the wrong tool here'; quotes 'a match wearing a costume'."
+    },
+    {
+      "text": "Identifies the runtime-chosen-state boundary",
+      "passed": true,
+      "evidence": "'the transition is driven by runtime input ... you don't know at compile time whether the active tool is a Pencil'."
+    },
+    {
+      "text": "Explicitly rejects unsafe/transmute",
+      "passed": true,
+      "evidence": "'Drop the unsafe plan completely'; explains transmute is UB and unsafe forbidden workspace-wide."
+    },
+    {
+      "text": "Suggests enum or trait object instead",
+      "passed": true,
+      "evidence": "Option A enum+match (preferred), Option B Box<dyn ToolBehavior>."
+    },
+    {
+      "text": "Does not output a type-state design relying on unsafe",
+      "passed": true,
+      "evidence": "No unsafe in any sketch; notes where type-state WOULD fit (stroke lifecycle)."
+    }
+  ],
+  "summary": {
+    "pass_rate": 1.0,
+    "passed": 5,
+    "failed": 0,
+    "total": 5
+  }
+}

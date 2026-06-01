@@ -1,0 +1,26 @@
+{
+  "skill_name": "pixhaus-performance",
+  "evals": [
+    {
+      "id": 0,
+      "name": "guess-trap-optimize-blend",
+      "prompt": "This blend function in our core crate feels slow when I'm painting on big canvases. Can you optimize it?\n\n```rust\npub fn blend_normal(src: &PixelBuffer, dst: &mut PixelBuffer) {\n    for y in 0..dst.height {\n        for x in 0..dst.width {\n            let s = src.pixel(x, y).unwrap();\n            let d = dst.pixel(x, y).unwrap();\n            let out = alpha_over(s, d);\n            dst.set_pixel(x, y, out);\n        }\n    }\n}\n```",
+      "expected_output": "Does not blindly rewrite for speed. Leads with measure-don't-guess: profile or benchmark to confirm this is actually the bottleneck and at what canvas size, build with --release/the right profile. Notes the real lever is bounding work to the dirty region rather than the whole canvas, and parallelizing with rayon only if a full-canvas pass is genuinely needed. May point at rust-conventions for the per-pixel/clone concerns. Sets up a criterion bench to verify any change clears a real margin (~5%+).",
+      "files": []
+    },
+    {
+      "id": 1,
+      "name": "set-up-criterion-bench",
+      "prompt": "I'm about to change how the flood-fill in our core crate works and I want to make sure I don't make it slower. How do I set up benchmarking for it in this repo?",
+      "expected_output": "Adds criterion as a dev-dependency (noting it clears the MIT/Apache cargo-deny gate), creates a bench in benches/ with harness = false in Cargo.toml, uses std::hint::black_box (not criterion::black_box), benchmarks at a realistic canvas size, runs cargo bench before and after to read the delta, and keeps the change only if it clears noise (~5%+). Mentions timing must come from a --release build, not dev.",
+      "files": []
+    },
+    {
+      "id": 2,
+      "name": "profile-laggy-8k-drawing",
+      "prompt": "Brush drawing is super laggy on an 8192x8192 canvas but totally smooth on a 256x256 sprite. I'm on Windows. How do I figure out where the time is actually going before I start changing things?",
+      "expected_output": "Recommends profiling rather than guessing. Builds with the release-with-debug profile (release optimizations + debug symbols, not dev, not stripped release) and profiles with samply (cross-platform, works on Windows, no perf/sudo) — or cargo flamegraph as the alternative. Explains how to read the flamegraph (widest box = most CPU time). Diagnoses the likely causes for a canvas tool: full-canvas pass that should be dirty-rect-bounded, a buffer clone per brush move, or heavy work on the egui frame thread that should move off-thread/to the GPU. Cross-links rayon/tokio/wgpu as appropriate.",
+      "files": []
+    }
+  ]
+}

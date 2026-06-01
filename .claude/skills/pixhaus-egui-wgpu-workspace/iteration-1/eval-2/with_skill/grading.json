@@ -1,0 +1,37 @@
+{
+  "eval_id": 2,
+  "eval_name": "wgpu-setup-config",
+  "configuration": "with_skill",
+  "expectations": [
+    {
+      "text": "Identifies WgpuConfiguration as the home for these settings",
+      "passed": true,
+      "evidence": "texture-dimension limits \u2014 live in **one place**: `egui_wgpu::WgpuConfiguration`. On"
+    },
+    {
+      "text": "Sets desired_maximum_frame_latency = Some(1) for low input latency",
+      "passed": true,
+      "evidence": "| Minimize brush-stroke input latency | `WgpuConfiguration::desired_maximum_frame_latency` | `Some(1)` |"
+    },
+    {
+      "text": "Uses an AutoVsync present_mode (vsync on)",
+      "passed": true,
+      "evidence": "| Vsync on, no tearing | `WgpuConfiguration::present_mode` | `wgpu::PresentMode::AutoVsync` |"
+    },
+    {
+      "text": "Prefers the discrete GPU via PowerPreference::HighPerformance or native_adapter_selector",
+      "passed": true,
+      "evidence": "| Prefer discrete / high-perf GPU | `wgpu_setup` \u2192 `WgpuSetupCreateNew::power_preference` (and optionally `native_adapter_selector` to pin it hard) | `wgpu::PowerPreference::HighPerformance` |"
+    },
+    {
+      "text": "Requests higher texture limits via the device_descriptor closure (max_texture_dimension_2d)",
+      "passed": true,
+      "evidence": "| 8K texture support | `WgpuSetupCreateNew::device_descriptor` closure \u2192 `DeviceDescriptor::required_limits` | raise `max_texture_dimension_2d` to \u2265 8192 |"
+    },
+    {
+      "text": "Routes config through eframe NativeOptions wgpu_options",
+      "passed": true,
+      "evidence": "to eframe through `NativeOptions.wgpu_options` and eframe creates the instance, adapter,"
+    }
+  ]
+}

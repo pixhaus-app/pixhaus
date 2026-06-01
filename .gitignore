@@ -1,0 +1,54 @@
+# Rust
+/target
+**/target
+**/*.rs.bk
+*.pdb
+Cargo.lock.bak
+
+# Logs
+logs/
+*.log
+
+# Local env / secrets
+.env
+.env.local
+.env.*.local
+*.pem
+*.key
+*.crt
+
+# Editor
+.vscode/*
+!.vscode/extensions.json
+!.vscode/settings.recommended.json
+.idea/
+.fleet/
+*.swp
+*.swo
+*~
+.DS_Store
+
+# Worktrees
+../pixhaus-worktrees/
+
+# Headless runner output (generated sprites)
+out/
+out_demo/
+out_gen/
+
+# Coverage
+coverage/
+*.lcov
+tarpaulin-report.html
+
+# OS
+Thumbs.db
+ehthumbs.db
+Desktop.ini
+
+# Misc agent state
+.claude/local-cache/
+.claude/*.lock
+.superpowers/
+
+.tmp/

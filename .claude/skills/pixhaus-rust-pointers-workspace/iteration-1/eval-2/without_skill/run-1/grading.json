@@ -1,0 +1,30 @@
+{
+  "expectations": [
+    {
+      "text": "Recommends a static LazyLock<Palette>",
+      "passed": true,
+      "evidence": "static DEFAULT_PALETTE: LazyLock<Palette> with a -> &'static Palette accessor."
+    },
+    {
+      "text": "Notes it's in std \u00e2\u20ac\u201d no lazy_static/once_cell dependency",
+      "passed": true,
+      "evidence": "'LazyLock is in std (stabilized in Rust 1.80), so no extra dependency.'"
+    },
+    {
+      "text": "Rejects Mutex<Option<T>> and Arc/Arc<RwLock> for read-only global",
+      "passed": true,
+      "evidence": "Rejects Arc<Palette> cloning; does not name Mutex<Option<T>> but covers the ownership-vs-borrow point."
+    },
+    {
+      "text": "Rules out the single-threaded OnceCell/LazyCell as !Sync",
+      "passed": false,
+      "evidence": "Discusses T: Sync and thread_local!, but never rules out LazyCell/OnceCell as the container choice."
+    }
+  ],
+  "summary": {
+    "pass_rate": 0.75,
+    "passed": 3,
+    "failed": 1,
+    "total": 4
+  }
+}

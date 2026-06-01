@@ -1,0 +1,359 @@
+{
+  "metadata": {
+    "skill_name": "pixhaus-type-state",
+    "skill_path": "C:/Users/luism/Documents/GitHub/pixhaus-worktrees/v2/.claude/skills/pixhaus-type-state",
+    "executor_model": "<model-name>",
+    "analyzer_model": "<model-name>",
+    "timestamp": "2026-05-25T22:23:59Z",
+    "evals_run": [
+      0,
+      1,
+      2
+    ],
+    "runs_per_configuration": 3
+  },
+  "runs": [
+    {
+      "eval_id": 0,
+      "configuration": "with_skill",
+      "run_number": 1,
+      "result": {
+        "pass_rate": 1.0,
+        "passed": 7,
+        "failed": 0,
+        "total": 7,
+        "time_seconds": 77.6,
+        "tokens": 45723,
+        "tool_calls": 0,
+        "errors": 0
+      },
+      "expectations": [
+        {
+          "text": "Builder is generic over per-required-field marker types (type-state)",
+          "passed": true,
+          "evidence": "ExportConfigBuilder<Set/Unset, Set/Unset>; setters generic over the other param so they compose in any order."
+        },
+        {
+          "text": "build() is implemented only for the state where both format and output_path are set",
+          "passed": true,
+          "evidence": "impl ExportConfigBuilder<Set, Set> { fn build }. Negative compile confirms E0599 on the three incomplete states."
+        },
+        {
+          "text": "No unwrap/expect/unreachable/panic anywhere",
+          "passed": true,
+          "evidence": "grep found none; clippy-clean."
+        },
+        {
+          "text": "Required fields NOT stored as Option then unwrapped/unreachable'd",
+          "passed": true,
+          "evidence": "0 Option fields; required fields hold harmless placeholders in new() overwritten by typed setters, so build() reads plain values."
+        },
+        {
+          "text": "columns is an optional setter available in any state, defaults to 1",
+          "passed": true,
+          "evidence": "columns() on the fully-generic impl; new() sets 1."
+        },
+        {
+          "text": "Produced Rust compiles on edition 2024",
+          "passed": true,
+          "evidence": "rustc --edition 2024 --crate-type lib exit 0, no warnings; 4 tests pass."
+        },
+        {
+          "text": "Calling build() with a required field unset is a compile error",
+          "passed": true,
+          "evidence": "Verified: E0599 no method build for <Set,Unset>, <Unset,Set>, <Unset,Unset>."
+        }
+      ],
+      "notes": []
+    },
+    {
+      "eval_id": 2,
+      "configuration": "with_skill",
+      "run_number": 1,
+      "result": {
+        "pass_rate": 1.0,
+        "passed": 5,
+        "failed": 0,
+        "total": 5,
+        "time_seconds": 50.8,
+        "tokens": 41779,
+        "tool_calls": 0,
+        "errors": 0
+      },
+      "expectations": [
+        {
+          "text": "Recommends against type-state here",
+          "passed": true,
+          "evidence": "'type-state is the wrong tool here'; quotes 'a match wearing a costume'."
+        },
+        {
+          "text": "Identifies the runtime-chosen-state boundary",
+          "passed": true,
+          "evidence": "'the transition is driven by runtime input ... you don't know at compile time whether the active tool is a Pencil'."
+        },
+        {
+          "text": "Explicitly rejects unsafe/transmute",
+          "passed": true,
+          "evidence": "'Drop the unsafe plan completely'; explains transmute is UB and unsafe forbidden workspace-wide."
+        },
+        {
+          "text": "Suggests enum or trait object instead",
+          "passed": true,
+          "evidence": "Option A enum+match (preferred), Option B Box<dyn ToolBehavior>."
+        },
+        {
+          "text": "Does not output a type-state design relying on unsafe",
+          "passed": true,
+          "evidence": "No unsafe in any sketch; notes where type-state WOULD fit (stroke lifecycle)."
+        }
+      ],
+      "notes": []
+    },
+    {
+      "eval_id": 1,
+      "configuration": "with_skill",
+      "run_number": 1,
+      "result": {
+        "pass_rate": 1.0,
+        "passed": 6,
+        "failed": 0,
+        "total": 6,
+        "time_seconds": 139.7,
+        "tokens": 51604,
+        "tool_calls": 0,
+        "errors": 0
+      },
+      "expectations": [
+        {
+          "text": "Three distinct state types model draft, running, finished",
+          "passed": true,
+          "evidence": "Draft (marker), Running { handle }, Done { output }."
+        },
+        {
+          "text": "output accessor exists only on the finished state",
+          "passed": true,
+          "evidence": "output()/into_output() in impl Job<Done>; negative compile E0599 on Job<Running>."
+        },
+        {
+          "text": "submit() exists only on the draft state",
+          "passed": true,
+          "evidence": "submit() in impl Job<Draft>, takes self; E0599 on Job<Running>."
+        },
+        {
+          "text": "Transition methods take self by value",
+          "passed": true,
+          "evidence": "submit(self), await/into_output consume self."
+        },
+        {
+          "text": "State-specific data lives inside the state type, not Option+unreachable",
+          "passed": true,
+          "evidence": "handle and output are plain fields on Running/Done; no Option, no unwrap/unreachable."
+        },
+        {
+          "text": "No unwrap/expect/unreachable/panic; fallible transitions return Result",
+          "passed": true,
+          "evidence": "clippy deny set passes; real await_output documented as async returning Result<Job<Done>, JobError>."
+        }
+      ],
+      "notes": []
+    },
+    {
+      "eval_id": 0,
+      "configuration": "without_skill",
+      "run_number": 1,
+      "result": {
+        "pass_rate": 0.8571,
+        "passed": 6,
+        "failed": 1,
+        "total": 7,
+        "time_seconds": 75.1,
+        "tokens": 38935,
+        "tool_calls": 0,
+        "errors": 0
+      },
+      "expectations": [
+        {
+          "text": "Builder is generic over per-required-field marker types (type-state)",
+          "passed": true,
+          "evidence": "ExportConfigBuilder<Missing/Set, Missing/Set> markers."
+        },
+        {
+          "text": "build() is implemented only for the state where both format and output_path are set",
+          "passed": true,
+          "evidence": "impl on <Set, Set>; negative compile shows E0599 for <Missing, Set>."
+        },
+        {
+          "text": "No unwrap/expect/unreachable/panic anywhere",
+          "passed": true,
+          "evidence": "None present; build() uses match with default arms instead of unwrap."
+        },
+        {
+          "text": "Required fields NOT stored as Option then unwrapped/unreachable'd",
+          "passed": false,
+          "evidence": "Stored required fields as Option<_> (2 Option fields) and recovered them in build() via a match that maps the by-construction-impossible None arms to defaults. No panic, but this is exactly the Option-you-re-check shape the skill steers away from; the skill's idiom stores the data plainly so there is no Option at all."
+        },
+        {
+          "text": "columns is an optional setter available in any state, defaults to 1",
+          "passed": true,
+          "evidence": "columns off the type-state, defaults to 1."
+        },
+        {
+          "text": "Produced Rust compiles on edition 2024",
+          "passed": true,
+          "evidence": "rustc exit 0, tests pass."
+        },
+        {
+          "text": "Calling build() with a required field unset is a compile error",
+          "passed": true,
+          "evidence": "Verified E0599 for <Missing, Set>."
+        }
+      ],
+      "notes": []
+    },
+    {
+      "eval_id": 2,
+      "configuration": "without_skill",
+      "run_number": 1,
+      "result": {
+        "pass_rate": 1.0,
+        "passed": 5,
+        "failed": 0,
+        "total": 5,
+        "time_seconds": 39.6,
+        "tokens": 34716,
+        "tool_calls": 0,
+        "errors": 0
+      },
+      "expectations": [
+        {
+          "text": "Recommends against type-state here",
+          "passed": true,
+          "evidence": "'type-state is the wrong tool here'; pattern buys nothing."
+        },
+        {
+          "text": "Identifies the runtime-chosen-state boundary",
+          "passed": true,
+          "evidence": "'Which tool is active is decided at runtime by a user clicking the toolbar ... that's data, not a type'."
+        },
+        {
+          "text": "Explicitly rejects unsafe/transmute",
+          "passed": true,
+          "evidence": "'the unsafe plan can't work' + 'banned in this workspace anyway'; explains one fixed return type."
+        },
+        {
+          "text": "Suggests enum or trait object instead",
+          "passed": true,
+          "evidence": "Option A enum+match, Option B trait + Box<dyn Tool>."
+        },
+        {
+          "text": "Does not output a type-state design relying on unsafe",
+          "passed": true,
+          "evidence": "No unsafe; structs behind a narrow shared interface."
+        }
+      ],
+      "notes": []
+    },
+    {
+      "eval_id": 1,
+      "configuration": "without_skill",
+      "run_number": 1,
+      "result": {
+        "pass_rate": 1.0,
+        "passed": 6,
+        "failed": 0,
+        "total": 6,
+        "time_seconds": 83.5,
+        "tokens": 39454,
+        "tool_calls": 0,
+        "errors": 0
+      },
+      "expectations": [
+        {
+          "text": "Three distinct state types model draft, running, finished",
+          "passed": true,
+          "evidence": "Draft { config }, Running { config, handle }, Finished { output }."
+        },
+        {
+          "text": "output accessor exists only on the finished state",
+          "passed": true,
+          "evidence": "output()/into_output() in impl Job<Finished>."
+        },
+        {
+          "text": "submit() exists only on the draft state",
+          "passed": true,
+          "evidence": "submit() in impl Job<Draft>, takes self by value."
+        },
+        {
+          "text": "Transition methods take self by value",
+          "passed": true,
+          "evidence": "submit consumes the draft; commented negative cases show re-submit of moved draft is rejected."
+        },
+        {
+          "text": "State-specific data lives inside the state type, not Option+unreachable",
+          "passed": true,
+          "evidence": "handle and output are plain fields; 0 Option fields; explicitly avoids the Option+unreachable anti-pattern."
+        },
+        {
+          "text": "No unwrap/expect/unreachable/panic; fallible transitions return Result",
+          "passed": true,
+          "evidence": "No panic paths; compiles clean under edition 2024. (Result-on-join-failure less explicitly modeled than the with-skill run, but no panic present.)"
+        }
+      ],
+      "notes": []
+    }
+  ],
+  "run_summary": {
+    "with_skill": {
+      "pass_rate": {
+        "mean": 1.0,
+        "stddev": 0.0,
+        "min": 1.0,
+        "max": 1.0
+      },
+      "time_seconds": {
+        "mean": 89.3667,
+        "stddev": 45.6031,
+        "min": 50.8,
+        "max": 139.7
+      },
+      "tokens": {
+        "mean": 46368.6667,
+        "stddev": 4944.2209,
+        "min": 41779,
+        "max": 51604
+      }
+    },
+    "without_skill": {
+      "pass_rate": {
+        "mean": 0.9524,
+        "stddev": 0.0825,
+        "min": 0.8571,
+        "max": 1.0
+      },
+      "time_seconds": {
+        "mean": 66.0667,
+        "stddev": 23.3024,
+        "min": 39.6,
+        "max": 83.5
+      },
+      "tokens": {
+        "mean": 37701.6667,
+        "stddev": 2598.6524,
+        "min": 34716,
+        "max": 39454
+      }
+    },
+    "delta": {
+      "pass_rate": "+0.05",
+      "time_seconds": "+23.3",
+      "tokens": "+8667"
+    }
+  },
+  "notes": [
+    "Baseline is strong: type-state is a well-known pattern, so no-skill Claude already scores 95.2%. The skill's measurable lift is concentrated, not broad.",
+    "Single discriminating assertion = eval-0 A4 (builder required fields). Without the skill, Claude stored required fields as Option<_> and recovered them via a match on the by-construction-impossible None arm \u2014 avoids the panic but keeps the very 'Option you re-check' shape the skill argues against. With the skill, fields are plain placeholder values, so build() reads them directly. This is exactly the skill's central Pixhaus-specific teaching.",
+    "eval-2 (runtime tool selection, judgment) is non-discriminating: both configs correctly steered away from type-state and rejected the unsafe idea. Keep it as a regression guardrail, or swap for a harder judgment case next iteration.",
+    "eval-1 (job lifecycle) non-discriminating at the assertion level \u2014 both stored state data inline with no Option+unreachable. The with-skill run verified more negative-compile cases (higher tokens/time).",
+    "Cost: with-skill runs spent more tokens and time (read the skill, ran rustc to verify, checked negative cases). Acceptable for a correctness-focused skill; the verification rigor is a feature, not waste."
+  ]
+}

@@ -1,0 +1,45 @@
+{
+  "expectations": [
+    {
+      "text": "Builder is generic over per-required-field marker types (type-state)",
+      "passed": true,
+      "evidence": "ExportConfigBuilder<Set/Unset, Set/Unset>; setters generic over the other param so they compose in any order."
+    },
+    {
+      "text": "build() is implemented only for the state where both format and output_path are set",
+      "passed": true,
+      "evidence": "impl ExportConfigBuilder<Set, Set> { fn build }. Negative compile confirms E0599 on the three incomplete states."
+    },
+    {
+      "text": "No unwrap/expect/unreachable/panic anywhere",
+      "passed": true,
+      "evidence": "grep found none; clippy-clean."
+    },
+    {
+      "text": "Required fields NOT stored as Option then unwrapped/unreachable'd",
+      "passed": true,
+      "evidence": "0 Option fields; required fields hold harmless placeholders in new() overwritten by typed setters, so build() reads plain values."
+    },
+    {
+      "text": "columns is an optional setter available in any state, defaults to 1",
+      "passed": true,
+      "evidence": "columns() on the fully-generic impl; new() sets 1."
+    },
+    {
+      "text": "Produced Rust compiles on edition 2024",
+      "passed": true,
+      "evidence": "rustc --edition 2024 --crate-type lib exit 0, no warnings; 4 tests pass."
+    },
+    {
+      "text": "Calling build() with a required field unset is a compile error",
+      "passed": true,
+      "evidence": "Verified: E0599 no method build for <Set,Unset>, <Unset,Set>, <Unset,Unset>."
+    }
+  ],
+  "summary": {
+    "pass_rate": 1.0,
+    "passed": 7,
+    "failed": 0,
+    "total": 7
+  }
+}

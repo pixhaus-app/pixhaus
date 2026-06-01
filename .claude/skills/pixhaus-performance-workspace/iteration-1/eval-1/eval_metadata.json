@@ -1,0 +1,13 @@
+{
+  "eval_id": 1,
+  "eval_name": "set-up-criterion-bench",
+  "prompt": "I'm about to change how the flood-fill in our core crate works and I want to make sure I don't make it slower. How do I set up benchmarking for it in this repo?",
+  "assertions": [
+    {"text": "Adds criterion as a dev-dependency", "type": "programmatic"},
+    {"text": "Specifies harness = false for the [[bench]] target", "type": "programmatic"},
+    {"text": "Uses std::hint::black_box rather than the deprecated criterion::black_box", "type": "programmatic"},
+    {"text": "Benchmarks at a realistic (large) canvas size, not a toy input", "type": "qualitative"},
+    {"text": "Says to compare before/after via cargo bench and keep only gains above noise", "type": "qualitative"},
+    {"text": "Notes timing must come from an optimized build, not dev", "type": "qualitative"}
+  ]
+}

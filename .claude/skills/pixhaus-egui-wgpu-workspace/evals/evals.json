@@ -1,0 +1,26 @@
+{
+  "skill_name": "pixhaus-egui-wgpu",
+  "evals": [
+    {
+      "id": 0,
+      "name": "canvas-paint-callback",
+      "prompt": "We're wiring up the Pixhaus canvas viewport. In the central panel I need to render our already-composited RGBA pixel buffer (it lives on the GPU as a wgpu::Texture) directly in a wgpu render pass embedded in the egui frame, and on each brush stroke only the dirty rectangle should be re-uploaded, not the whole 8192x8192 canvas. Show me the CallbackTrait implementation, where the GPU resources (pipeline, bind group, the canvas texture) should live, and how to push the callback from the panel. We're on egui-wgpu 0.34.",
+      "files": [],
+      "assertions": []
+    },
+    {
+      "id": 1,
+      "name": "display-wgpu-texture",
+      "prompt": "My render crate composites the document into its own wgpu::Texture. I just want egui to display that texture as an image in the viewport, crisp with no blurring when the user zooms in. How do I hand the texture to egui and draw it, and how do I update it when the texture's contents change each frame? I keep seeing references to register_native_texture and update_native_texture and I'm not sure which to call. egui-wgpu 0.34.",
+      "files": [],
+      "assertions": []
+    },
+    {
+      "id": 2,
+      "name": "wgpu-setup-config",
+      "prompt": "For the Pixhaus eframe app I want to tune the egui-wgpu setup: prefer the discrete / high-performance GPU, keep vsync on but minimize input latency for brush strokes, and request higher texture-dimension limits so we can support an 8K canvas. Where do these settings live in egui-wgpu and how do I configure them? egui-wgpu 0.34.",
+      "files": [],
+      "assertions": []
+    }
+  ]
+}

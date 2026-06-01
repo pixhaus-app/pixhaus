@@ -1,0 +1,26 @@
+{
+  "expectations": [
+    {
+      "text": "No unwrap()/expect() remain in the rewritten production code",
+      "passed": true,
+      "evidence": "All four call sites converted; nothing trips disallowed-methods."
+    },
+    {
+      "text": "rename_active propagates the parse error with `?` and turns the get_mut None into a typed error via ok_or_else",
+      "passed": true,
+      "evidence": "Uses parse_layer_name(raw)? and .get_mut(..).ok_or_else(|| Error::LayerIndexOutOfRange { index })?"
+    },
+    {
+      "text": "Respects 'keep the public signatures' \u2014 infallible getters kept infallible with an unwrap_or* fallback",
+      "passed": true,
+      "evidence": "active_layer_name -> unwrap_or_default(); active_opacity -> unwrap_or(1.0). Both signatures unchanged."
+    },
+    {
+      "text": "Per-change rationale tied to the chosen replacement",
+      "passed": true,
+      "evidence": "Four bullet points, each naming the tool and why (lazy vs eager, fallback vs propagate)."
+    }
+  ],
+  "score": 4,
+  "total": 4
+}

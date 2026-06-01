@@ -1,0 +1,37 @@
+{
+  "eval_id": 1,
+  "eval_name": "display-wgpu-texture",
+  "configuration": "with_skill",
+  "expectations": [
+    {
+      "text": "Uses register_native_texture to get a TextureId",
+      "passed": true,
+      "evidence": "You're on the right path. Since `render` already composites into its own `wgpu::Texture`, you don't need the `CallbackTrait` route at all \u2014 that's for splicing a live wgpu pass *inside* the egui frame"
+    },
+    {
+      "text": "Specifies FilterMode::Nearest for crisp pixel art",
+      "passed": true,
+      "evidence": "## Crisp, not blurry \u2014 pass `FilterMode::Nearest`"
+    },
+    {
+      "text": "Uses update_egui_texture_from_wgpu_texture and avoids the nonexistent update_native_texture",
+      "passed": true,
+      "evidence": "- `update_egui_texture_from_wgpu_texture` \u2014 the in-place updater. This is the function people mean when they say \"`update_native_texture`,\" which **does not exist** under that name. It re-points an ex"
+    },
+    {
+      "text": "Does NOT present the nonexistent update_native_texture as a real API",
+      "passed": true,
+      "evidence": "## First, clear up the naming \u2014 there is no `update_native_texture`"
+    },
+    {
+      "text": "Uses the correct sampler-options method name (register_native_texture_with_sampler_options), not the invented _with_sampler_descriptor",
+      "passed": true,
+      "evidence": "pub fn register_native_texture_with_sampler_options("
+    },
+    {
+      "text": "Draws the texture via painter.image / ui.image with the TextureId",
+      "passed": true,
+      "evidence": "ui.painter().image("
+    }
+  ]
+}

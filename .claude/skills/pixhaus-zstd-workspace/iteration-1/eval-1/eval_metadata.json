@@ -1,0 +1,11 @@
+{
+  "eval_id": 1,
+  "eval_name": "truncated-save-debug",
+  "prompt": "Users report that large .pixhaus projects sometimes save to a file that won't reopen \u00e2\u20ac\u201d the loader errors out as if the data is truncated. Small projects are fine. Here is the save function. What is the bug and how do I fix it?\n\n```rust\nuse std::fs::File;\nuse std::io::BufWriter;\n\npub fn save_project(project: &Project, path: &Path) -> Result<(), SaveError> {\n    let file = BufWriter::new(File::create(path)?);\n    let mut encoder = zstd::stream::write::Encoder::new(file, 3)?;\n    rmp_serde::encode::write(&mut encoder, project)?;\n    Ok(())\n}\n```",
+  "assertions": [
+    "Identifies the root cause: Encoder dropped without finish(), so the frame epilogue is never written",
+    "Fix calls encoder.finish()? and propagates the error",
+    "Correctly explains the small-vs-large size correlation via internal buffering/blocks",
+    "Notes the auto_finish() caveat (Drop-based finish swallows the error) on the save path"
+  ]
+}

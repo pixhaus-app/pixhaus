@@ -1,0 +1,64 @@
+# cargo-deny configuration. Enforces the licensing and supply-chain rules
+# from CLAUDE.md: MIT project, no GPL/LGPL/AGPL copyleft dependencies, no
+# known-vulnerable or yanked crates, no crates from unknown sources.
+#
+# Lives under .cargo/ because the repo layout forbids new top-level paths
+# (see CLAUDE.md, enforced by conclaude's preventRootAdditions). Run with an
+# explicit config path:
+#   cargo deny --config .cargo/deny.toml check
+
+[graph]
+all-features = true
+
+[advisories]
+# Fail on crates with a known security advisory or that have been yanked.
+yanked = "deny"
+# Only flag "unmaintained" advisories for crates we depend on directly, to keep
+# noise from transitive deps we don't control out of the gate. Vulnerability and
+# yanked checks stay at full strength across the whole tree.
+unmaintained = "workspace"
+ignore = []
+
+[licenses]
+# Only these (permissive, MIT-distribution-compatible) licenses are allowed.
+# Anything not listed — notably GPL-2.0/3.0, LGPL, AGPL — fails the check.
+# Add a new entry deliberately, with a reason.
+allow = [
+    "MIT",
+    "Apache-2.0",
+    "Apache-2.0 WITH LLVM-exception",
+    "BSD-2-Clause",
+    "BSD-3-Clause",
+    "ISC",
+    "Zlib",
+    "MPL-2.0",
+    "BSL-1.0",
+    "Unicode-3.0",
+    "Unicode-DFS-2016",
+    "CC0-1.0",
+    # webpki-roots ships the Mozilla CA bundle under this permissive license.
+    "CDLA-Permissive-2.0",
+    # libbzip2's permissive (BSD-like) license, pulled in transitively.
+    "bzip2-1.0.6",
+]
+confidence-threshold = 0.8
+# Per-crate license exceptions go here if a dependency needs one.
+exceptions = [
+    # egui's bundled default fonts (Ubuntu-Light, Hack, NotoEmoji, emoji-icon-font)
+    # ship as embedded assets under the standard permissive font licenses. The
+    # crate's code is MIT OR Apache-2.0; only the font assets need this allowance.
+    { name = "epaint_default_fonts", allow = ["OFL-1.1", "Ubuntu-font-1.0"] },
+]
+
+[bans]
+# Surface, but do not fail on, duplicate versions and wildcard deps — these
+# are hygiene signals rather than hard errors for an app workspace.
+multiple-versions = "warn"
+wildcards = "warn"
+allow = []
+deny = []
+
+[sources]
+unknown-registry = "deny"
+unknown-git = "deny"
+allow-registry = ["https://github.com/rust-lang/crates.io-index"]

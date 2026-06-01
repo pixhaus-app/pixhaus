@@ -1,0 +1,29 @@
+{
+  "skill_name": "pixhaus-eframe",
+  "evals": [
+    {
+      "id": 0,
+      "name": "boot-window-and-render-state",
+      "prompt": "I'm starting the Pixhaus native app. Write the main.rs: open a window titled \"Pixhaus\" at 1280x800 with a minimum size of 640x480, use the wgpu rendering backend, and in the App constructor grab the wgpu device/queue so the canvas renderer can use it later. Show the App impl too. We're on eframe 0.34.",
+      "expected_output": "main() builds NativeOptions with renderer: Renderer::Wgpu and a ViewportBuilder (with_title/with_inner_size/with_min_inner_size), calls run_native with an AppCreator returning Ok(Box::new(..)). The App impl uses the `ui(&mut self, ui, frame)` method (NOT the deprecated update). The constructor takes &CreationContext and reads cc.wgpu_render_state for the device/queue.",
+      "files": [],
+      "assertions": []
+    },
+    {
+      "id": 1,
+      "name": "confirm-on-close",
+      "prompt": "In Pixhaus, when the user clicks the window close button and the document has unsaved changes, I don't want the app to just quit. I want to show a confirm dialog and only close if they confirm. How do I do this with eframe 0.34?",
+      "expected_output": "Detects the close request via ctx.input(|i| i.viewport().close_requested()), vetoes it with ViewportCommand::CancelClose, shows a dialog over subsequent frames, and issues ViewportCommand::Close when confirmed. Does NOT rely on a boolean return from update/ui or claim on_exit can cancel the close.",
+      "files": [],
+      "assertions": []
+    },
+    {
+      "id": 2,
+      "name": "persist-prefs-not-document",
+      "prompt": "I want Pixhaus to remember the user's UI preferences (theme, panel layout) between launches, but the actual document/artwork should NOT be auto-saved this way. Set up the eframe side of this on 0.34.",
+      "files": [],
+      "expected_output": "Enables the `persistence` feature, implements App::save with eframe::set_value, restores in the constructor from cc.storage with eframe::get_value (unwrap_or_default), and explicitly keeps the document out of eframe Storage (project file format instead). Bonus: mentions persist_window / auto_save_interval and keeping save cheap.",
+      "assertions": []
+    }
+  ]
+}

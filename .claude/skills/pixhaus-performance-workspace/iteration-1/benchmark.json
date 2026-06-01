@@ -1,0 +1,340 @@
+{
+  "metadata": {
+    "skill_name": "pixhaus-performance",
+    "skill_path": "C:/Users/luism/Documents/GitHub/pixhaus-worktrees/v2/.claude/skills/pixhaus-performance",
+    "executor_model": "<model-name>",
+    "analyzer_model": "<model-name>",
+    "timestamp": "2026-05-25T22:24:28Z",
+    "evals_run": [
+      0,
+      1,
+      2
+    ],
+    "runs_per_configuration": 3
+  },
+  "runs": [
+    {
+      "eval_id": 0,
+      "configuration": "with_skill",
+      "run_number": 1,
+      "result": {
+        "pass_rate": 1.0,
+        "passed": 5,
+        "failed": 0,
+        "total": 5,
+        "time_seconds": 53.7,
+        "tokens": 41416,
+        "tool_calls": 0,
+        "errors": 0
+      },
+      "expectations": [
+        {
+          "text": "Leads with measure-don't-guess before optimizing",
+          "passed": true,
+          "evidence": "Opens: 'I'm not going to rewrite this on the strength of feels slow ... don't guess, measure'."
+        },
+        {
+          "text": "Does not present a hand-optimized rewrite without a measurement caveat",
+          "passed": true,
+          "evidence": "Separates 'almost certainly true on inspection' from 'needs a number'; the perf rewrite is gated behind profile+bench steps 2-5."
+        },
+        {
+          "text": "Identifies bounding work to the dirty region as the durable fix",
+          "passed": true,
+          "evidence": "'The thing that matters more than the inner loop: bound the work' \u00e2\u20ac\u201d dirty rectangle, not full-canvas pass."
+        },
+        {
+          "text": "Mentions building with --release / the correct profile for honest timing",
+          "passed": true,
+          "evidence": "'are you even timing a release build?' + cargo run --release, and release-with-debug for profiling."
+        },
+        {
+          "text": "Suggests a criterion benchmark to verify the change clears a real margin",
+          "passed": true,
+          "evidence": "Step 3-5: criterion bench with harness=false, std::hint::black_box, keep only if it clears ~5% outside noise."
+        }
+      ],
+      "notes": []
+    },
+    {
+      "eval_id": 1,
+      "configuration": "with_skill",
+      "run_number": 1,
+      "result": {
+        "pass_rate": 1.0,
+        "passed": 6,
+        "failed": 0,
+        "total": 6,
+        "time_seconds": 43.0,
+        "tokens": 40621,
+        "tool_calls": 0,
+        "errors": 0
+      },
+      "expectations": [
+        {
+          "text": "Adds criterion as a dev-dependency",
+          "passed": true,
+          "evidence": "[dev-dependencies] criterion = \"0.7\" on the core crate."
+        },
+        {
+          "text": "Specifies harness = false for the [[bench]] target",
+          "passed": true,
+          "evidence": "[[bench]] name=flood_fill harness=false, with note that it's not optional."
+        },
+        {
+          "text": "Uses std::hint::black_box rather than deprecated criterion::black_box",
+          "passed": true,
+          "evidence": "Explicitly 'std::hint::black_box (not the deprecated criterion::black_box)'."
+        },
+        {
+          "text": "Benchmarks at a realistic (large) canvas size, not a toy input",
+          "passed": true,
+          "evidence": "Benchmarks at 4K/8K with whole-canvas and bounded cases; warns against 256x256 toy."
+        },
+        {
+          "text": "Says to compare before/after via cargo bench and keep only gains above noise",
+          "passed": true,
+          "evidence": "Baseline-then-rerun workflow; keep only if it clears ~5%, revert if within noise/overlapping intervals."
+        },
+        {
+          "text": "Notes timing must come from an optimized build, not dev",
+          "passed": true,
+          "evidence": "Build-profile table + 'Use release-with-debug, never dev'; bacon is correctness not perf."
+        }
+      ],
+      "notes": []
+    },
+    {
+      "eval_id": 2,
+      "configuration": "with_skill",
+      "run_number": 1,
+      "result": {
+        "pass_rate": 1.0,
+        "passed": 5,
+        "failed": 0,
+        "total": 5,
+        "time_seconds": 43.8,
+        "tokens": 40334,
+        "tool_calls": 0,
+        "errors": 0
+      },
+      "expectations": [
+        {
+          "text": "Recommends the release-with-debug profile for profiling",
+          "passed": true,
+          "evidence": "'For profiling you want release-with-debug, which keeps release optimizations but also keeps debug symbols and skips strip'; uses the repo's existing profile."
+        },
+        {
+          "text": "Recommends samply (cross-platform/Windows) with flamegraph as alternative",
+          "passed": true,
+          "evidence": "'Use samply here ... works the same on your Windows machine ... cargo flamegraph works too but on Windows its backend goes through ETW/blondie'."
+        },
+        {
+          "text": "Explains how to read a flamegraph (widest box = most CPU time)",
+          "passed": true,
+          "evidence": "X-axis is total CPU time, wider box = more time; hunt the widest box near the top."
+        },
+        {
+          "text": "Diagnoses likely canvas-tool causes (dirty-rect, per-move clone, frame thread)",
+          "passed": true,
+          "evidence": "Section 4 lists per-pixel full-canvas loop, 256MB buffer clone, work on egui frame thread, CPU compositing."
+        },
+        {
+          "text": "Does not jump straight to a code rewrite without profiling first",
+          "passed": true,
+          "evidence": "'don't apply any of them until the profile actually points there'; rewrite gated on samply output."
+        }
+      ],
+      "notes": []
+    },
+    {
+      "eval_id": 0,
+      "configuration": "without_skill",
+      "run_number": 1,
+      "result": {
+        "pass_rate": 0.2,
+        "passed": 1,
+        "failed": 4,
+        "total": 5,
+        "time_seconds": 41.7,
+        "tokens": 35393,
+        "tool_calls": 0,
+        "errors": 0
+      },
+      "expectations": [
+        {
+          "text": "Leads with measure-don't-guess before optimizing",
+          "passed": false,
+          "evidence": "Opens 'Short answer: yes, and the speedup is large' and proceeds straight to a rewrite; no measure-first framing."
+        },
+        {
+          "text": "Does not present a hand-optimized rewrite without a measurement caveat",
+          "passed": false,
+          "evidence": "Presents the full byte-slice rewrite as the answer; benchmarking appears only as step 5 before parallelism."
+        },
+        {
+          "text": "Identifies bounding work to the dirty region as the durable fix",
+          "passed": true,
+          "evidence": "'Fix #3: blend only the dirty region' explicitly called the big one for painting."
+        },
+        {
+          "text": "Mentions building with --release / the correct profile for honest timing",
+          "passed": false,
+          "evidence": "Never mentions release builds, profiles, or profiling at all."
+        },
+        {
+          "text": "Suggests a criterion benchmark to verify the change clears a real margin",
+          "passed": false,
+          "evidence": "Mentions a criterion bench 'before adding any parallelism' but not as before/after verification with a margin/revert rule."
+        }
+      ],
+      "notes": []
+    },
+    {
+      "eval_id": 1,
+      "configuration": "without_skill",
+      "run_number": 1,
+      "result": {
+        "pass_rate": 0.8333,
+        "passed": 5,
+        "failed": 1,
+        "total": 6,
+        "time_seconds": 40.5,
+        "tokens": 35353,
+        "tool_calls": 0,
+        "errors": 0
+      },
+      "expectations": [
+        {
+          "text": "Adds criterion as a dev-dependency",
+          "passed": true,
+          "evidence": "[dev-dependencies] criterion = { version = \"0.5\", features=[html_reports] }."
+        },
+        {
+          "text": "Specifies harness = false for the [[bench]] target",
+          "passed": true,
+          "evidence": "[[bench]] name=flood_fill harness=false with explanation."
+        },
+        {
+          "text": "Uses std::hint::black_box rather than deprecated criterion::black_box",
+          "passed": false,
+          "evidence": "Imports and uses criterion::black_box (the deprecated re-export), and pins criterion 0.5."
+        },
+        {
+          "text": "Benchmarks at a realistic (large) canvas size, not a toy input",
+          "passed": true,
+          "evidence": "256 -> 8192 size sweep with Throughput::Elements."
+        },
+        {
+          "text": "Says to compare before/after via cargo bench and keep only gains above noise",
+          "passed": true,
+          "evidence": "--save-baseline before / --baseline before workflow; reads p-value significance and 'No change detected'."
+        },
+        {
+          "text": "Notes timing must come from an optimized build, not dev",
+          "passed": true,
+          "evidence": "'Run in release ... never judge perf from cargo test or a debug build.'"
+        }
+      ],
+      "notes": []
+    },
+    {
+      "eval_id": 2,
+      "configuration": "without_skill",
+      "run_number": 1,
+      "result": {
+        "pass_rate": 0.6,
+        "passed": 3,
+        "failed": 2,
+        "total": 5,
+        "time_seconds": 48.7,
+        "tokens": 35148,
+        "tool_calls": 0,
+        "errors": 0
+      },
+      "expectations": [
+        {
+          "text": "Recommends the release-with-debug profile for profiling",
+          "passed": false,
+          "evidence": "Recommends adding debug=true to [profile.release] or a new [profile.profiling] \u00e2\u20ac\u201d the right concept, but reinvents it instead of using the repo's existing release-with-debug profile."
+        },
+        {
+          "text": "Recommends samply (cross-platform/Windows) with flamegraph as alternative",
+          "passed": true,
+          "evidence": "Recommends samply plus Windows-specific options (Superluminal, WPA, PIX, RenderDoc)."
+        },
+        {
+          "text": "Explains how to read a flamegraph (widest box = most CPU time)",
+          "passed": false,
+          "evidence": "Mentions flame graphs but never explains the x-axis = time / widest-box reading."
+        },
+        {
+          "text": "Diagnoses likely canvas-tool causes (dirty-rect, per-move clone, frame thread)",
+          "passed": true,
+          "evidence": "Names whole-buffer re-scan, full-texture re-upload, undo-path full-buffer clone, egui re-tessellation; recommends dirty-region bounding."
+        },
+        {
+          "text": "Does not jump straight to a code rewrite without profiling first",
+          "passed": true,
+          "evidence": "'Why not just start optimizing' section; measure-first ordered plan."
+        }
+      ],
+      "notes": []
+    }
+  ],
+  "run_summary": {
+    "with_skill": {
+      "pass_rate": {
+        "mean": 1.0,
+        "stddev": 0.0,
+        "min": 1.0,
+        "max": 1.0
+      },
+      "time_seconds": {
+        "mean": 46.8333,
+        "stddev": 5.9601,
+        "min": 43.0,
+        "max": 53.7
+      },
+      "tokens": {
+        "mean": 40790.3333,
+        "stddev": 560.5233,
+        "min": 40334,
+        "max": 41416
+      }
+    },
+    "without_skill": {
+      "pass_rate": {
+        "mean": 0.5444,
+        "stddev": 0.3203,
+        "min": 0.2,
+        "max": 0.8333
+      },
+      "time_seconds": {
+        "mean": 43.6333,
+        "stddev": 4.4287,
+        "min": 40.5,
+        "max": 48.7
+      },
+      "tokens": {
+        "mean": 35298.0,
+        "stddev": 131.4344,
+        "min": 35148,
+        "max": 35393
+      }
+    },
+    "delta": {
+      "pass_rate": "+0.46",
+      "time_seconds": "+3.2",
+      "tokens": "+5492"
+    }
+  },
+  "notes": [
+    "Delta +0.46 (with-skill 100% vs baseline 54%). The baselines were strong on their own — even without the skill, every run led with 'measure before changing', so the skill's value is in Pixhaus specifics, not in teaching the mindset.",
+    "Discriminating assertions (where the skill clearly won): eval-0 'leads with measure-don't-guess' + 'no rewrite without a measurement caveat' (baseline jumped straight to a rewrite, never mentioned --release or profiling); eval-1 'std::hint::black_box not criterion::black_box' (baseline used the deprecated re-export and pinned criterion 0.5); eval-2 'uses the repo's existing release-with-debug profile' and 'explains how to read a flamegraph' (baseline reinvented a profiling profile and skipped the reading explanation).",
+    "Non-discriminating assertions (both configs passed, low signal): 'criterion as dev-dependency', 'harness = false', 'realistic large size', 'diagnoses dirty-region' — capable models already do these. Consider dropping or tightening for iteration 2.",
+    "Gap surfaced by the eval-2 baseline: it went deeper than the skill on GPU-side profiling for an egui+wgpu canvas (puffin/puffin_egui in-process flamegraph, PIX/RenderDoc, wgpu timestamp queries, the CPU->GPU full-texture-upload hypothesis). The skill currently only delegates 'CPU compositing -> wgpu' and doesn't mention profiling the GPU side or that the bottleneck may be upload bandwidth, not CPU. Worth adding for a tool whose hot path is often the GPU.",
+    "Single run per configuration (no variance data). Pass-rate stddev is 0 by construction; treat the per-eval pass/fail as the signal, not the (absent) variance.",
+    "Time/token cost of the skill: with-skill runs averaged ~47s / ~40.8k tokens vs baseline ~43.6s / ~35.3k — the skill adds ~3s and ~5k tokens (reading SKILL.md + cross-links), a reasonable cost for the accuracy gain."
+  ]
+}

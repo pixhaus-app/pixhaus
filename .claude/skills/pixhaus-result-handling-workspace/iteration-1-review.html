@@ -1,0 +1,1325 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Eval Review</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Poppins:wght@500;600&family=Lora:wght@400;500&display=swap" rel="stylesheet">
+  <script src="https://cdn.sheetjs.com/xlsx-0.20.3/package/dist/xlsx.full.min.js" integrity="sha384-EnyY0/GSHQGSxSgMwaIPzSESbqoOLSexfnSMN2AP+39Ckmn92stwABZynq1JyzdT" crossorigin="anonymous"></script>
+  <style>
+    :root {
+      --bg: #faf9f5;
+      --surface: #ffffff;
+      --border: #e8e6dc;
+      --text: #141413;
+      --text-muted: #b0aea5;
+      --accent: #d97757;
+      --accent-hover: #c4613f;
+      --green: #788c5d;
+      --green-bg: #eef2e8;
+      --red: #c44;
+      --red-bg: #fceaea;
+      --header-bg: #141413;
+      --header-text: #faf9f5;
+      --radius: 6px;
+    }
+
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+
+    body {
+      font-family: 'Lora', Georgia, serif;
+      background: var(--bg);
+      color: var(--text);
+      height: 100vh;
+      display: flex;
+      flex-direction: column;
+    }
+
+    /* ---- Header ---- */
+    .header {
+      background: var(--header-bg);
+      color: var(--header-text);
+      padding: 1rem 2rem;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      flex-shrink: 0;
+    }
+    .header h1 {
+      font-family: 'Poppins', sans-serif;
+      font-size: 1.25rem;
+      font-weight: 600;
+    }
+    .header .instructions {
+      font-size: 0.8rem;
+      opacity: 0.7;
+      margin-top: 0.25rem;
+    }
+    .header .progress {
+      font-size: 0.875rem;
+      opacity: 0.8;
+      text-align: right;
+    }
+
+    /* ---- Main content ---- */
+    .main {
+      flex: 1;
+      overflow-y: auto;
+      padding: 1.5rem 2rem;
+      display: flex;
+      flex-direction: column;
+      gap: 1.25rem;
+    }
+
+    /* ---- Sections ---- */
+    .section {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      flex-shrink: 0;
+    }
+    .section-header {
+      font-family: 'Poppins', sans-serif;
+      padding: 0.75rem 1rem;
+      font-size: 0.75rem;
+      font-weight: 500;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+      color: var(--text-muted);
+      border-bottom: 1px solid var(--border);
+      background: var(--bg);
+    }
+    .section-body {
+      padding: 1rem;
+    }
+
+    /* ---- Config badge ---- */
+    .config-badge {
+      display: inline-block;
+      padding: 0.2rem 0.625rem;
+      border-radius: 9999px;
+      font-family: 'Poppins', sans-serif;
+      font-size: 0.6875rem;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.03em;
+      margin-left: 0.75rem;
+      vertical-align: middle;
+    }
+    .config-badge.config-primary {
+      background: rgba(33, 150, 243, 0.12);
+      color: #1976d2;
+    }
+    .config-badge.config-baseline {
+      background: rgba(255, 193, 7, 0.15);
+      color: #f57f17;
+    }
+
+    /* ---- Prompt ---- */
+    .prompt-text {
+      white-space: pre-wrap;
+      font-size: 0.9375rem;
+      line-height: 1.6;
+    }
+
+    /* ---- Outputs ---- */
+    .output-file {
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      overflow: hidden;
+    }
+    .output-file + .output-file {
+      margin-top: 1rem;
+    }
+    .output-file-header {
+      padding: 0.5rem 0.75rem;
+      font-size: 0.8rem;
+      font-weight: 600;
+      color: var(--text-muted);
+      background: var(--bg);
+      border-bottom: 1px solid var(--border);
+      font-family: 'SF Mono', SFMono-Regular, Consolas, 'Liberation Mono', Menlo, monospace;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+    }
+    .output-file-header .dl-btn {
+      font-size: 0.7rem;
+      color: var(--accent);
+      text-decoration: none;
+      cursor: pointer;
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+      font-weight: 500;
+      opacity: 0.8;
+    }
+    .output-file-header .dl-btn:hover {
+      opacity: 1;
+      text-decoration: underline;
+    }
+    .output-file-content {
+      padding: 0.75rem;
+      overflow-x: auto;
+    }
+    .output-file-content pre {
+      font-size: 0.8125rem;
+      line-height: 1.5;
+      white-space: pre-wrap;
+      word-break: break-word;
+      font-family: 'SF Mono', SFMono-Regular, Consolas, 'Liberation Mono', Menlo, monospace;
+    }
+    .output-file-content img {
+      max-width: 100%;
+      height: auto;
+      border-radius: 4px;
+    }
+    .output-file-content iframe {
+      width: 100%;
+      height: 600px;
+      border: none;
+    }
+    .output-file-content table {
+      border-collapse: collapse;
+      font-size: 0.8125rem;
+      width: 100%;
+    }
+    .output-file-content table td,
+    .output-file-content table th {
+      border: 1px solid var(--border);
+      padding: 0.375rem 0.5rem;
+      text-align: left;
+    }
+    .output-file-content table th {
+      background: var(--bg);
+      font-weight: 600;
+    }
+    .output-file-content .download-link {
+      display: inline-flex;
+      align-items: center;
+      gap: 0.5rem;
+      padding: 0.5rem 1rem;
+      background: var(--bg);
+      border: 1px solid var(--border);
+      border-radius: 4px;
+      color: var(--accent);
+      text-decoration: none;
+      font-size: 0.875rem;
+      cursor: pointer;
+    }
+    .output-file-content .download-link:hover {
+      background: var(--border);
+    }
+    .empty-state {
+      color: var(--text-muted);
+      font-style: italic;
+      padding: 2rem;
+      text-align: center;
+    }
+
+    /* ---- Feedback ---- */
+    .prev-feedback {
+      background: var(--bg);
+      border: 1px solid var(--border);
+      border-radius: 4px;
+      padding: 0.625rem 0.75rem;
+      margin-top: 0.75rem;
+      font-size: 0.8125rem;
+      color: var(--text-muted);
+      line-height: 1.5;
+    }
+    .prev-feedback-label {
+      font-size: 0.7rem;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.04em;
+      margin-bottom: 0.25rem;
+      color: var(--text-muted);
+    }
+    .feedback-textarea {
+      width: 100%;
+      min-height: 100px;
+      padding: 0.75rem;
+      border: 1px solid var(--border);
+      border-radius: 4px;
+      font-family: inherit;
+      font-size: 0.9375rem;
+      line-height: 1.5;
+      resize: vertical;
+      color: var(--text);
+    }
+    .feedback-textarea:focus {
+      outline: none;
+      border-color: var(--accent);
+      box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.1);
+    }
+    .feedback-status {
+      font-size: 0.75rem;
+      color: var(--text-muted);
+      margin-top: 0.5rem;
+      min-height: 1.1em;
+    }
+
+    /* ---- Grades (collapsible) ---- */
+    .grades-toggle {
+      display: flex;
+      align-items: center;
+      cursor: pointer;
+      user-select: none;
+    }
+    .grades-toggle:hover {
+      color: var(--accent);
+    }
+    .grades-toggle .arrow {
+      margin-right: 0.5rem;
+      transition: transform 0.15s;
+      font-size: 0.75rem;
+    }
+    .grades-toggle .arrow.open {
+      transform: rotate(90deg);
+    }
+    .grades-content {
+      display: none;
+      margin-top: 0.75rem;
+    }
+    .grades-content.open {
+      display: block;
+    }
+    .grades-summary {
+      font-size: 0.875rem;
+      margin-bottom: 0.75rem;
+      display: flex;
+      align-items: center;
+      gap: 0.5rem;
+    }
+    .grade-badge {
+      display: inline-block;
+      padding: 0.125rem 0.5rem;
+      border-radius: 9999px;
+      font-size: 0.75rem;
+      font-weight: 600;
+    }
+    .grade-pass { background: var(--green-bg); color: var(--green); }
+    .grade-fail { background: var(--red-bg); color: var(--red); }
+    .assertion-list {
+      list-style: none;
+    }
+    .assertion-item {
+      padding: 0.625rem 0;
+      border-bottom: 1px solid var(--border);
+      font-size: 0.8125rem;
+    }
+    .assertion-item:last-child { border-bottom: none; }
+    .assertion-status {
+      font-weight: 600;
+      margin-right: 0.5rem;
+    }
+    .assertion-status.pass { color: var(--green); }
+    .assertion-status.fail { color: var(--red); }
+    .assertion-evidence {
+      color: var(--text-muted);
+      font-size: 0.75rem;
+      margin-top: 0.25rem;
+      padding-left: 1.5rem;
+    }
+
+    /* ---- View tabs ---- */
+    .view-tabs {
+      display: flex;
+      gap: 0;
+      padding: 0 2rem;
+      background: var(--bg);
+      border-bottom: 1px solid var(--border);
+      flex-shrink: 0;
+    }
+    .view-tab {
+      font-family: 'Poppins', sans-serif;
+      padding: 0.625rem 1.25rem;
+      font-size: 0.8125rem;
+      font-weight: 500;
+      cursor: pointer;
+      border: none;
+      background: none;
+      color: var(--text-muted);
+      border-bottom: 2px solid transparent;
+      transition: all 0.15s;
+    }
+    .view-tab:hover { color: var(--text); }
+    .view-tab.active {
+      color: var(--accent);
+      border-bottom-color: var(--accent);
+    }
+    .view-panel { display: none; }
+    .view-panel.active { display: flex; flex-direction: column; flex: 1; overflow: hidden; }
+
+    /* ---- Benchmark view ---- */
+    .benchmark-view {
+      padding: 1.5rem 2rem;
+      overflow-y: auto;
+      flex: 1;
+    }
+    .benchmark-table {
+      border-collapse: collapse;
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      font-size: 0.8125rem;
+      width: 100%;
+      margin-bottom: 1.5rem;
+    }
+    .benchmark-table th, .benchmark-table td {
+      padding: 0.625rem 0.75rem;
+      text-align: left;
+      border: 1px solid var(--border);
+    }
+    .benchmark-table th {
+      font-family: 'Poppins', sans-serif;
+      background: var(--header-bg);
+      color: var(--header-text);
+      font-weight: 500;
+      font-size: 0.75rem;
+      text-transform: uppercase;
+      letter-spacing: 0.04em;
+    }
+    .benchmark-table tr:hover { background: var(--bg); }
+    .benchmark-table tr.benchmark-row-with { background: rgba(33, 150, 243, 0.06); }
+    .benchmark-table tr.benchmark-row-without { background: rgba(255, 193, 7, 0.06); }
+    .benchmark-table tr.benchmark-row-with:hover { background: rgba(33, 150, 243, 0.12); }
+    .benchmark-table tr.benchmark-row-without:hover { background: rgba(255, 193, 7, 0.12); }
+    .benchmark-table tr.benchmark-row-avg { font-weight: 600; border-top: 2px solid var(--border); }
+    .benchmark-table tr.benchmark-row-avg.benchmark-row-with { background: rgba(33, 150, 243, 0.12); }
+    .benchmark-table tr.benchmark-row-avg.benchmark-row-without { background: rgba(255, 193, 7, 0.12); }
+    .benchmark-delta-positive { color: var(--green); font-weight: 600; }
+    .benchmark-delta-negative { color: var(--red); font-weight: 600; }
+    .benchmark-notes {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      padding: 1rem;
+    }
+    .benchmark-notes h3 {
+      font-family: 'Poppins', sans-serif;
+      font-size: 0.875rem;
+      margin-bottom: 0.75rem;
+    }
+    .benchmark-notes ul {
+      list-style: disc;
+      padding-left: 1.25rem;
+    }
+    .benchmark-notes li {
+      font-size: 0.8125rem;
+      line-height: 1.6;
+      margin-bottom: 0.375rem;
+    }
+    .benchmark-empty {
+      color: var(--text-muted);
+      font-style: italic;
+      text-align: center;
+      padding: 3rem;
+    }
+
+    /* ---- Navigation ---- */
+    .nav {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      padding: 1rem 2rem;
+      border-top: 1px solid var(--border);
+      background: var(--surface);
+      flex-shrink: 0;
+    }
+    .nav-btn {
+      font-family: 'Poppins', sans-serif;
+      padding: 0.5rem 1.25rem;
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      background: var(--surface);
+      cursor: pointer;
+      font-size: 0.875rem;
+      font-weight: 500;
+      color: var(--text);
+      transition: all 0.15s;
+    }
+    .nav-btn:hover:not(:disabled) {
+      background: var(--bg);
+      border-color: var(--text-muted);
+    }
+    .nav-btn:disabled {
+      opacity: 0.4;
+      cursor: not-allowed;
+    }
+    .done-btn {
+      font-family: 'Poppins', sans-serif;
+      padding: 0.5rem 1.5rem;
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      background: var(--surface);
+      color: var(--text);
+      cursor: pointer;
+      font-size: 0.875rem;
+      font-weight: 500;
+      transition: all 0.15s;
+    }
+    .done-btn:hover {
+      background: var(--bg);
+      border-color: var(--text-muted);
+    }
+    .done-btn.ready {
+      border: none;
+      background: var(--accent);
+      color: white;
+      font-weight: 600;
+    }
+    .done-btn.ready:hover {
+      background: var(--accent-hover);
+    }
+    /* ---- Done overlay ---- */
+    .done-overlay {
+      display: none;
+      position: fixed;
+      inset: 0;
+      background: rgba(0, 0, 0, 0.5);
+      z-index: 100;
+      justify-content: center;
+      align-items: center;
+    }
+    .done-overlay.visible {
+      display: flex;
+    }
+    .done-card {
+      background: var(--surface);
+      border-radius: 12px;
+      padding: 2rem 3rem;
+      text-align: center;
+      box-shadow: 0 20px 60px rgba(0, 0, 0, 0.3);
+      max-width: 500px;
+    }
+    .done-card h2 {
+      font-size: 1.5rem;
+      margin-bottom: 0.5rem;
+    }
+    .done-card p {
+      color: var(--text-muted);
+      margin-bottom: 1.5rem;
+      line-height: 1.5;
+    }
+    .done-card .btn-row {
+      display: flex;
+      gap: 0.5rem;
+      justify-content: center;
+    }
+    .done-card button {
+      padding: 0.5rem 1.25rem;
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      background: var(--surface);
+      cursor: pointer;
+      font-size: 0.875rem;
+    }
+    .done-card button:hover {
+      background: var(--bg);
+    }
+    /* ---- Toast ---- */
+    .toast {
+      position: fixed;
+      bottom: 5rem;
+      left: 50%;
+      transform: translateX(-50%);
+      background: var(--header-bg);
+      color: var(--header-text);
+      padding: 0.625rem 1.25rem;
+      border-radius: var(--radius);
+      font-size: 0.875rem;
+      opacity: 0;
+      transition: opacity 0.3s;
+      pointer-events: none;
+      z-index: 200;
+    }
+    .toast.visible {
+      opacity: 1;
+    }
+  </style>
+</head>
+<body>
+  <div id="app" style="height:100vh; display:flex; flex-direction:column;">
+    <div class="header">
+      <div>
+        <h1>Eval Review: <span id="skill-name"></span></h1>
+        <div class="instructions">Review each output and leave feedback below. Navigate with arrow keys or buttons. When done, copy feedback and paste into Claude Code.</div>
+      </div>
+      <div class="progress" id="progress"></div>
+    </div>
+
+    <!-- View tabs (only shown when benchmark data exists) -->
+    <div class="view-tabs" id="view-tabs" style="display:none;">
+      <button class="view-tab active" onclick="switchView('outputs')">Outputs</button>
+      <button class="view-tab" onclick="switchView('benchmark')">Benchmark</button>
+    </div>
+
+    <!-- Outputs panel (qualitative review) -->
+    <div class="view-panel active" id="panel-outputs">
+    <div class="main">
+      <!-- Prompt -->
+      <div class="section">
+        <div class="section-header">Prompt <span class="config-badge" id="config-badge" style="display:none;"></span></div>
+        <div class="section-body">
+          <div class="prompt-text" id="prompt-text"></div>
+        </div>
+      </div>
+
+      <!-- Outputs -->
+      <div class="section">
+        <div class="section-header">Output</div>
+        <div class="section-body" id="outputs-body">
+          <div class="empty-state">No output files found</div>
+        </div>
+      </div>
+
+      <!-- Previous Output (collapsible) -->
+      <div class="section" id="prev-outputs-section" style="display:none;">
+        <div class="section-header">
+          <div class="grades-toggle" onclick="togglePrevOutputs()">
+            <span class="arrow" id="prev-outputs-arrow">&#9654;</span>
+            Previous Output
+          </div>
+        </div>
+        <div class="grades-content" id="prev-outputs-content"></div>
+      </div>
+
+      <!-- Grades (collapsible) -->
+      <div class="section" id="grades-section" style="display:none;">
+        <div class="section-header">
+          <div class="grades-toggle" onclick="toggleGrades()">
+            <span class="arrow" id="grades-arrow">&#9654;</span>
+            Formal Grades
+          </div>
+        </div>
+        <div class="grades-content" id="grades-content"></div>
+      </div>
+
+      <!-- Feedback -->
+      <div class="section">
+        <div class="section-header">Your Feedback</div>
+        <div class="section-body">
+          <textarea
+            class="feedback-textarea"
+            id="feedback"
+            placeholder="What do you think of this output? Any issues, suggestions, or things that look great?"
+          ></textarea>
+          <div class="feedback-status" id="feedback-status"></div>
+          <div class="prev-feedback" id="prev-feedback" style="display:none;">
+            <div class="prev-feedback-label">Previous feedback</div>
+            <div id="prev-feedback-text"></div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="nav" id="outputs-nav">
+      <button class="nav-btn" id="prev-btn" onclick="navigate(-1)">&#8592; Previous</button>
+      <button class="done-btn" id="done-btn" onclick="showDoneDialog()">Submit All Reviews</button>
+      <button class="nav-btn" id="next-btn" onclick="navigate(1)">Next &#8594;</button>
+    </div>
+    </div><!-- end panel-outputs -->
+
+    <!-- Benchmark panel (quantitative stats) -->
+    <div class="view-panel" id="panel-benchmark">
+      <div class="benchmark-view" id="benchmark-content">
+        <div class="benchmark-empty">No benchmark data available. Run a benchmark to see quantitative results here.</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Done overlay -->
+  <div class="done-overlay" id="done-overlay">
+    <div class="done-card">
+      <h2>Review Complete</h2>
+      <p>Your feedback has been saved. Go back to your Claude Code session and tell Claude you're done reviewing.</p>
+      <div class="btn-row">
+        <button onclick="closeDoneDialog()">OK</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Toast -->
+  <div class="toast" id="toast"></div>
+
+  <script>
+    // ---- Embedded data (injected by generate_review.py) ----
+    const EMBEDDED_DATA = {"skill_name": "pixhaus-result-handling", "runs": [{"id": "clean-up-unwraps-with_skill", "prompt": "This is in pixhaus_core. `cargo clippy` is failing on every one of these unwraps/expects and I can't commit. Rewrite the file so it passes the workspace lints, picking the right replacement at each call site (some of these can return an error, some have a sensible fallback). Keep the public signatures unless you have a good reason to change one. Show me the rewritten file and a one-line note per change explaining why you chose that replacement.", "eval_id": 0, "outputs": [{"name": "answer.md", "type": "text", "content": "# Rewritten `layer_ops.rs`\n\nEvery `unwrap`/`expect` is gone. The two infallible getters keep their plain\nreturn types and recover with a sensible default; the one `Result`-returning\nmethod propagates with `?` and turns a bad index into a typed error.\n\nOne assumption worth flagging: `rename_active` needs an `Error` variant for an\nout-of-range active index. The skill's own example uses\n`Error::LayerIndexOutOfRange { index }`, so I used that. If your `Error` enum\nnames it differently, swap the variant \u00e2\u20ac\u201d the call-site shape (`ok_or_else(..)?`)\nstays the same.\n\n```rust\n// pixhaus_core::layer \u00e2\u20ac\u201d clippy-clean: no unwrap/expect outside tests.\n\nuse crate::{Error, Result};\n\npub struct Document {\n    layers: Vec<Layer>,\n    active: usize,\n}\n\npub struct Layer {\n    pub name: String,\n    pub opacity: Option<f32>,\n}\n\nimpl Document {\n    pub fn active_layer_name(&self) -> String {\n        self.layers\n            .get(self.active)\n            .map(|layer| layer.name.clone())\n            .unwrap_or_default()\n    }\n\n    pub fn active_opacity(&self) -> f32 {\n        self.layers\n            .get(self.active)\n            .and_then(|layer| layer.opacity)\n            .unwrap_or(1.0)\n    }\n\n    pub fn rename_active(&mut self, raw: &str) -> Result<()> {\n        let trimmed = parse_layer_name(raw)?;\n        let layer = self\n            .layers\n            .get_mut(self.active)\n            .ok_or_else(|| Error::LayerIndexOutOfRange { index: self.active })?;\n        layer.name = trimmed;\n        Ok(())\n    }\n}\n\nfn parse_layer_name(raw: &str) -> Result<String> {\n    let trimmed = raw.trim();\n    if trimmed.is_empty() {\n        return Err(Error::EmptyLayerName);\n    }\n    Ok(trimmed.to_string())\n}\n```\n\n## Per-change rationale\n\n- **`active_layer_name` \u00e2\u20ac\u201d `.get(..).unwrap()` \u00e2\u2020\u2019 `.map(..).unwrap_or_default()`**: the fn returns a bare `String`, not a `Result`, so there's no caller to bubble to; a missing active layer yields an empty name (a harmless display string) instead of crashing the editor. Signature kept.\n- **`active_opacity` \u00e2\u20ac\u201d `.get(..).expect(..)` and `opacity.unwrap()` \u00e2\u2020\u2019 one `.and_then(..).unwrap_or(1.0)`**: both the missing-layer and the `None`-opacity cases collapse to the same sensible fallback \u00e2\u20ac\u201d fully opaque (`1.0`). `unwrap_or` (not `unwrap_or_else`) because `1.0` is a trivial constant, so eager eval is free. Signature (`-> f32`) kept.\n- **`rename_active` \u00e2\u20ac\u201d `parse_layer_name(raw).unwrap()` \u00e2\u2020\u2019 `parse_layer_name(raw)?`**: this fn already returns `Result<()>`, so an empty-name parse failure should travel to the caller; `?` propagates `Error::EmptyLayerName` and runs any `From` conversion for free.\n- **`rename_active` \u00e2\u20ac\u201d `.get_mut(self.active).unwrap()` \u00e2\u2020\u2019 `.ok_or_else(|| Error::LayerIndexOutOfRange { index: self.active })?`**: a bad active index is a real error this `Result` fn can report, so turn the `None` into a typed variant and `?` it; `ok_or_else` (lazy) because constructing the variant is non-trivial, matching the skill's `Option`-to-`Result` rule. (No order/borrow issue: the lookup is bound before the assignment, so the `&mut` borrow ends cleanly.)\n```\n```\n\n## Notes\n\n- No `todo!`/`unimplemented!`/`unreachable!` introduced, so nothing trips the Stop gate's `-D warnings`.\n- `parse_layer_name` was already clean and is unchanged.\n- Both getters stay infallible by design \u00e2\u20ac\u201d they're cheap accessors used in hot UI paths, and forcing every caller to handle a `Result` for \"which layer is active\" would be churn for no safety gain. The fallbacks (empty name, opaque `1.0`) are the right empty values, which is exactly when `unwrap_or*` is the correct tool rather than a typed error.\n"}], "grading": {"expectations": [{"text": "No unwrap()/expect() remain in the rewritten production code", "passed": true, "evidence": "All four call sites converted; nothing trips disallowed-methods."}, {"text": "rename_active propagates the parse error with `?` and turns the get_mut None into a typed error via ok_or_else", "passed": true, "evidence": "Uses parse_layer_name(raw)? and .get_mut(..).ok_or_else(|| Error::LayerIndexOutOfRange { index })?"}, {"text": "Respects 'keep the public signatures' \u2014 infallible getters kept infallible with an unwrap_or* fallback", "passed": true, "evidence": "active_layer_name -> unwrap_or_default(); active_opacity -> unwrap_or(1.0). Both signatures unchanged."}, {"text": "Per-change rationale tied to the chosen replacement", "passed": true, "evidence": "Four bullet points, each naming the tool and why (lazy vs eager, fallback vs propagate)."}], "score": 4, "total": 4}}, {"id": "clean-up-unwraps-without_skill", "prompt": "This is in pixhaus_core. `cargo clippy` is failing on every one of these unwraps/expects and I can't commit. Rewrite the file so it passes the workspace lints, picking the right replacement at each call site (some of these can return an error, some have a sensible fallback). Keep the public signatures unless you have a good reason to change one. Show me the rewritten file and a one-line note per change explaining why you chose that replacement.", "eval_id": 0, "outputs": [{"name": "answer.md", "type": "text", "content": "# Rewritten `layer_ops.rs`\n\nThe workspace forbids `unwrap()`/`expect()`/`panic!()` outside tests (clippy `-D warnings`). Each call site falls into one of two buckets: it can surface a real error (so return `Result`), or it has a defensible non-failing fallback (so use `unwrap_or`-style helpers). I picked per site below.\n\nThe one signature I changed is `active_opacity` \u00e2\u20ac\u201d it returned a bare `f32` but was relying on `unwrap()` for two separate \"might not exist\" cases. The honest fix is a fallback, not a new `Result`, so I kept it `f32` but documented the default. `active_layer_name` similarly can't fail meaningfully if we accept that \"no active layer\" yields an empty name, but the active index is a document invariant, so I made it return `Result` to avoid silently masking corruption \u00e2\u20ac\u201d see note. (If you'd rather not touch that signature, the fallback variant is in the notes.)\n\n```rust\n// pixhaus_core::layer \u00e2\u20ac\u201d layer operations.\n\nuse crate::{Error, Result};\n\npub struct Document {\n    layers: Vec<Layer>,\n    active: usize,\n}\n\npub struct Layer {\n    pub name: String,\n    pub opacity: Option<f32>,\n}\n\n/// Opacity to assume when a layer carries no explicit value.\nconst DEFAULT_OPACITY: f32 = 1.0;\n\nimpl Document {\n    pub fn active_layer_name(&self) -> Result<String> {\n        let layer = self\n            .layers\n            .get(self.active)\n            .ok_or(Error::NoActiveLayer)?;\n        Ok(layer.name.clone())\n    }\n\n    pub fn active_opacity(&self) -> f32 {\n        self.layers\n            .get(self.active)\n            .and_then(|layer| layer.opacity)\n            .unwrap_or(DEFAULT_OPACITY)\n    }\n\n    pub fn rename_active(&mut self, raw: &str) -> Result<()> {\n        let trimmed = parse_layer_name(raw)?;\n        self.layers\n            .get_mut(self.active)\n            .ok_or(Error::NoActiveLayer)?\n            .name = trimmed;\n        Ok(())\n    }\n}\n\nfn parse_layer_name(raw: &str) -> Result<String> {\n    let trimmed = raw.trim();\n    if trimmed.is_empty() {\n        return Err(Error::EmptyLayerName);\n    }\n    Ok(trimmed.to_string())\n}\n```\n\n## Per-change notes\n\n- **`active_layer_name` line 17 `self.layers.get(self.active).unwrap()`** \u00e2\u2020\u2019 `ok_or(Error::NoActiveLayer)?`, signature now `-> Result<String>`. A bad active index means a corrupt document, not a normal miss; returning an error surfaces it instead of panicking the editor. Fallback alternative if you must keep `-> String`: `.map(|l| l.name.clone()).unwrap_or_default()`.\n\n- **`active_opacity` line 22 `.expect(\"active index valid\")`** \u00e2\u2020\u2019 folded into `.get(...).and_then(...).unwrap_or(DEFAULT_OPACITY)`. Opacity has a sensible default (fully opaque), and a missing layer here just collapses to that default rather than crashing a render/UI read path that can't propagate errors.\n\n- **`active_opacity` line 23 `layer.opacity.unwrap()`** \u00e2\u2020\u2019 handled by the same `and_then(|layer| layer.opacity)` chain feeding `unwrap_or(DEFAULT_OPACITY)`. `opacity` is an `Option<f32>` by design, so `None` is expected, not exceptional \u00e2\u20ac\u201d give it the default instead of asserting it's set.\n\n- **`rename_active` line 27 `parse_layer_name(raw).unwrap()`** \u00e2\u2020\u2019 `?`. The function already returns `Result` and `parse_layer_name` returns the exact `Error::EmptyLayerName` we want to propagate; `?` forwards it for free.\n\n- **`rename_active` line 28 `self.layers.get_mut(self.active).unwrap()`** \u00e2\u2020\u2019 `ok_or(Error::NoActiveLayer)?`. Same invariant as `active_layer_name`, but here the caller already gets a `Result`, so propagating the error is the natural choice and changes no signature.\n\nNote: this assumes the crate's `Error` enum has a `NoActiveLayer` variant (alongside the existing `EmptyLayerName`). If it doesn't yet, add it to the `thiserror` enum in the error module \u00e2\u20ac\u201d that's the one extra edit needed for this to compile.\n"}], "grading": {"expectations": [{"text": "No unwrap()/expect() remain in the rewritten production code", "passed": true, "evidence": "All call sites converted."}, {"text": "rename_active propagates the parse error with `?` and turns the get_mut None into a typed error via ok_or_else", "passed": true, "evidence": "Uses ? and .ok_or(Error::NoActiveLayer)? (ok_or rather than ok_or_else, but equivalent intent)."}, {"text": "Respects 'keep the public signatures' \u2014 infallible getters kept infallible with an unwrap_or* fallback", "passed": false, "evidence": "Changed active_layer_name from -> String to -> Result<String>; only active_opacity kept infallible. Justified as corruption, but the prompt said keep signatures unless a strong reason and an empty-name fallback was available."}, {"text": "Per-change rationale tied to the chosen replacement", "passed": true, "evidence": "Per-change notes provided, including a keep-signature alternative."}], "score": 3, "total": 4}}, {"id": "stub-blend-branch-with_skill", "prompt": "I'm filling in the blend-mode match in pixhaus_core. I've implemented Normal and Multiply, but Overlay isn't done yet and I want to come back to it. There's also a catch-all arm for a BlendMode variant that the dispatcher upstream already guarantees never reaches this function. What should I put in the unfinished Overlay arm and the catch-all arm? I want the session's Stop gate to stay green if possible, and I don't want a surprise panic in production. Give me the match with both arms filled in and explain the call.", "eval_id": 1, "outputs": [{"name": "answer.md", "type": "text", "content": "# Filling the Overlay and catch-all arms\n\nTwo arms, two different problems \u00e2\u20ac\u201d don't reach for the same macro on both.\n\n```rust\nfn blend(mode: BlendMode, src: Rgba8, dst: Rgba8) -> Rgba8 {\n    match mode {\n        BlendMode::Normal => blend_normal(src, dst),\n        BlendMode::Multiply => blend_multiply(src, dst),\n\n        // Not implemented yet \u00e2\u20ac\u201d coming back to this. `unimplemented!` is a\n        // deliberate \"decided not to build this branch yet\" marker, which\n        // reads truer than `todo!` here. Either way the Stop gate's\n        // `-D warnings` will reject the session while this is present, so it\n        // can't quietly ship: it forces you back before the session goes green.\n        BlendMode::Overlay => unimplemented!(\"Overlay blend mode\"),\n\n        // The upstream dispatcher guarantees this never reaches here. The\n        // invariant is enforced *outside* this function, so the type can't\n        // express it \u00e2\u20ac\u201d hence `unreachable!` with the invariant stated. This\n        // slips clippy and survives `-D warnings`, so the gate stays green.\n        other => unreachable!(\n            \"blend() received {other:?}, which the dispatcher filters out before this call\"\n        ),\n    }\n}\n```\n\n## Why each arm is what it is\n\nThese two arms look similar \u00e2\u20ac\u201d both are \"I'm not handling this normally\" \u00e2\u20ac\u201d but they are opposite cases, and the workspace lint config treats them very differently. The repo sets `panic`/`unwrap_used`/`expect_used` to **deny**, `todo`/`unimplemented` to **warn**, and the Stop gate runs `cargo clippy --workspace --all-targets -- -D warnings`, which promotes every warning to a hard error.\n\n### The Overlay arm: `unimplemented!` (or `todo!`)\n\nThis is genuine \"come back to it\" scaffolding. You have two defensible choices:\n\n- `todo!(\"Overlay blend mode\")` \u00e2\u20ac\u201d \"I will write this.\"\n- `unimplemented!(\"Overlay blend mode\")` \u00e2\u20ac\u201d \"a branch I've decided not to build yet.\"\n\nBoth are clippy `warn`, not `deny`, so they compile during your edit loop. Pick `unimplemented!` if you want it to read as a deliberate not-yet-built branch; `todo!` if it reads more as active-edit scaffolding. The wording difference is the only thing at stake \u00e2\u20ac\u201d mechanically they behave identically here.\n\nThe key thing to be honest about: **neither survives the Stop gate.** Because `-D warnings` promotes the `warn`-level lint to an error, a session that still contains `Overlay => unimplemented!(...)` will fail `cargo clippy --workspace --all-targets -- -D warnings`. That's the desired behavior \u00e2\u20ac\u201d it's a safety net, not a finish line. It means:\n\n- You can keep working with this arm in place; the per-edit clippy (`--tests -- -D warnings` via the post-edit hook on the touched crate) and the Stop gate will both flag it, so you get the reminder loud and early.\n- You will **not** accidentally ship an unimplemented blend mode to production. The gate physically won't let the session close clean until Overlay is either implemented or turned into a real `Err`.\n\nSo if you want the Stop gate green *right now*, Overlay isn't done \u00e2\u20ac\u201d you'd have to implement it. If you're fine with the gate flagging the one known-unfinished branch while you iterate, `unimplemented!`/`todo!` is exactly the right placeholder and won't cause a surprise panic in production, because production code only ships after a clean gate.\n\nDo **not** use `panic!`, `unwrap()`, or `expect()` to stub this \u00e2\u20ac\u201d they're `deny`, so they won't even compile in non-test code.\n\n### The catch-all arm: `unreachable!`\n\nThis is the opposite case. You're not deferring work \u00e2\u20ac\u201d you're asserting a branch can never execute because the dispatcher upstream filters that variant before `blend()` is ever called.\n\n`unreachable!` is the one panic-family macro that is **not linted at all**: it isn't `deny`, it isn't `warn`, so it compiles and it passes the `-D warnings` gate. That's exactly why it fits the catch-all and not the Overlay arm \u00e2\u20ac\u201d it lets the session go green, which is what you asked for.\n\nThe honest caveat: `unreachable!` is still a live `panic!` wearing a permission slip. It slips both clippy and the gate, which makes it the dangerous one. So two rules apply:\n\n1. **Only use it on a branch you've genuinely proven impossible.** Here the proof lives upstream in the dispatcher, so it's legitimate \u00e2\u20ac\u201d but the proof is outside this function, which is why you can't simply rely on the compiler.\n2. **State the invariant in the message.** The comment and the `unreachable!(\"... which the dispatcher filters out ...\")` string record *why* it can't happen, so a future reader (or a future refactor that changes the dispatcher) knows what assumption is being leaned on. The `{other:?}` also gives you the offending variant in the panic message if the invariant is ever violated.\n\n### The better long-term move (optional)\n\n`unreachable!` is a runtime gamble \u00e2\u20ac\u201d it's only sound as long as the dispatcher keeps its promise. If you can, make the branch impossible *in the type system* instead of asserting it at runtime: have the dispatcher hand `blend()` a narrower type that simply can't represent the filtered-out variant (a separate enum of \"blendable\" modes, or a newtype the dispatcher constructs only after filtering). Then there's no catch-all arm to write, the match is exhaustive over real cases, and \"this can't happen\" becomes a compile error rather than a deferred panic. That's the type-state direction (`pixhaus-type-state`); it's more work than this task needs today, but it's the move that retires the `unreachable!` entirely.\n\n## Summary\n\n- **Overlay** \u00e2\u2020\u2019 `unimplemented!(\"Overlay blend mode\")` (or `todo!`). Compiles now, no production panic risk, but the Stop gate will flag it via `-D warnings` until you finish it. That's intended.\n- **Catch-all** \u00e2\u2020\u2019 `unreachable!(\"... dispatcher filters this out ...\")`. Passes the gate (not linted), no surprise in practice as long as the dispatcher invariant holds. Comment the invariant; ideally encode it in the type later so the arm disappears.\n- Never stub either arm with `panic!`/`unwrap()`/`expect()` \u00e2\u20ac\u201d they're `deny` and won't compile outside tests.\n"}], "grading": {"expectations": [{"text": "Correctly states todo!/unimplemented! FAIL the Stop gate under -D warnings (verified: `-D clippy::todo` implied by `-D warnings`)", "passed": true, "evidence": "States neither survives the gate because -D warnings promotes the warning to an error."}, {"text": "Gives accurate guidance for a green gate (either return Err, or explains the todo! tradeoff truthfully)", "passed": true, "evidence": "Explains the unfinished branch will block the gate until implemented; no false 'stays green' claim."}, {"text": "Flags unreachable! as still a runtime panic and prefers encoding impossibility in the type (type-state)", "passed": true, "evidence": "Calls it 'a live panic wearing a permission slip'; recommends narrowing the type so the arm disappears, cites pixhaus-type-state; adds a comment stating the invariant."}, {"text": "Does not suggest panic!/unwrap to stub the unfinished arm", "passed": true, "evidence": "Explicitly says panic!/unwrap/expect are deny and won't compile."}], "score": 4, "total": 4}}, {"id": "stub-blend-branch-without_skill", "prompt": "I'm filling in the blend-mode match in pixhaus_core. I've implemented Normal and Multiply, but Overlay isn't done yet and I want to come back to it. There's also a catch-all arm for a BlendMode variant that the dispatcher upstream already guarantees never reaches this function. What should I put in the unfinished Overlay arm and the catch-all arm? I want the session's Stop gate to stay green if possible, and I don't want a surprise panic in production. Give me the match with both arms filled in and explain the call.", "eval_id": 1, "outputs": [{"name": "answer.md", "type": "text", "content": "# Filling the Overlay and catch-all arms\n\nTwo arms, two different jobs. They look similar but the reasoning is opposite, so don't reach for the same macro on both.\n\n```rust\nfn blend(mode: BlendMode, src: Rgba8, dst: Rgba8) -> Rgba8 {\n    match mode {\n        BlendMode::Normal => blend_normal(src, dst),\n        BlendMode::Multiply => blend_multiply(src, dst),\n\n        // Not implemented yet \u00e2\u20ac\u201d coming back to this.\n        // `todo!()` documents intent and keeps the Stop gate green:\n        // clippy's `todo` lint is set to `warn`, not `deny`, so\n        // `-D warnings` does NOT promote it to an error here.\n        BlendMode::Overlay => todo!(\"Overlay blend math\"),\n\n        // The upstream dispatcher guarantees this variant never reaches\n        // `blend`. We encode that invariant rather than papering over it\n        // with a silent fallback. `unreachable!()` is the right tool for\n        // \"the type system allows it but the program logic forbids it.\"\n        other => unreachable!(\"blend() received {other:?}, which the dispatcher filters out\"),\n    }\n}\n```\n\n## Why `todo!()` for the unfinished Overlay arm\n\nYou want three things from the placeholder: it satisfies the type checker (the arm must produce an `Rgba8`), it survives the Stop gate, and it screams \"finish me\" so it can't quietly ship.\n\n`todo!()` gives you all three. It diverges (`-> !`), so it type-checks in an arm that's supposed to return a value without you having to invent a fake return. And critically for your gate: the workspace clippy config sets `clippy::todo` to **warn**, not deny. The Stop gate runs `cargo clippy --workspace --all-targets -- -D warnings`. `-D warnings` turns the *standard* `warn`-level lints into errors, but it does not change lint levels you've explicitly pinned in config \u00e2\u20ac\u201d a configured `warn` stays a warning. So `todo!()` shows up as a warning in your local build, nags you, and does not fail the gate.\n\nDon't use `unimplemented!()` here. It's also configured to warn, so the gate behaves the same, but the semantics differ: `todo!()` means \"I intend to write this,\" `unimplemented!()` means \"this case is intentionally not supported.\" Overlay is the former. Pick the macro that tells the truth about your intent.\n\nDon't substitute a real-but-wrong value (e.g. falling through to `blend_normal`) just to make the arm compile silently. That's worse than a placeholder \u00e2\u20ac\u201d it's a correctness bug that the gate can't catch and a reviewer might miss. The whole point of `todo!()` is that it's visible.\n\n## Why `unreachable!()` for the catch-all \u00e2\u20ac\u201d not `_ => {}` and not `panic!()`\n\nThe catch-all is a different problem. This variant *can't* reach the function per the dispatcher's contract, but the compiler doesn't know that \u00e2\u20ac\u201d the `match` still has to be exhaustive over `BlendMode`. You're encoding an invariant the type system can't express.\n\n`unreachable!()` is exactly that statement: \"control flow cannot get here; if it does, my reasoning was wrong.\" It diverges so the arm type-checks, and the message documents the contract for the next reader. If the dispatcher ever regresses and lets the variant through, you get a loud, located panic in a debug/test build instead of silent corruption \u00e2\u20ac\u201d which is what you want from a violated invariant.\n\nOn the gate: `clippy::unreachable` is **not** in the deny set you described (only `panic`, `unwrap_used`, `expect_used` are denied; `todo`/`unimplemented` warn). `unreachable!()` isn't flagged by those, so it passes clippy clean. It expands to a `panic!` under the hood, but the `clippy::panic` lint targets literal `panic!()` calls in your source, not the macro's internal expansion \u00e2\u20ac\u201d so writing `unreachable!()` does not trip the `panic` deny.\n\nThat's also why you must **not** write `panic!(\"unreachable\")` by hand here: that literal `panic!` *is* what `clippy::panic = deny` catches, and it would fail the Stop gate. `unreachable!()` is the sanctioned way to say the same thing.\n\nTwo more options to reject:\n\n- **`_ => {}` / a silent default value.** A catch-all that returns some default (or an empty block, if this returned `()`) hides the bug. If the dispatcher contract breaks, you'd ship wrong pixels with no signal. The invariant deserves an assertion, not a swallow.\n- **`unreachable_unchecked()`** (the `core::hint` one). That's `unsafe`, and `unsafe` is forbidden workspace-wide. Not an option, and you don't want UB guarding a cross-module contract anyway.\n\n## The \"surprise panic in production\" concern\n\nBoth macros panic if hit. The difference is whether a hit is *possible under correct operation*:\n\n- The `unreachable!()` arm only fires if an upstream invariant is already violated \u00e2\u20ac\u201d i.e. there's a bug. A panic there is the correct, loud failure, not a surprise. The alternative (silent fallback) would be the actual landmine.\n- The `todo!()` arm *will* panic if Overlay is ever selected before you finish it. That's the one to be deliberate about. It's fine as a checked-in placeholder *because* it's loud and the warning reminds you, but don't let a release go out with a user-reachable `todo!()`. Before you ship Overlay as a selectable mode, the arm must hold real blend math. Treat the clippy warning as a release blocker, not noise.\n\nIf you'd rather the unfinished path degrade gracefully in production instead of panicking, the alternative is to not list Overlay as selectable yet (gate it out in the dispatcher / UI), so the `todo!()` stays genuinely unreachable until implemented. But as long as Overlay can't be picked, `todo!()` is the honest placeholder and the gate stays green.\n"}], "grading": {"expectations": [{"text": "Correctly states todo!/unimplemented! FAIL the Stop gate under -D warnings (verified: `-D clippy::todo` implied by `-D warnings`)", "passed": false, "evidence": "WRONG: claimed '-D warnings does not override a lint level you've explicitly pinned in config, so a configured warn stays a warning -- the gate stays green.' Empirically false (EXIT_CODE=101)."}, {"text": "Gives accurate guidance for a green gate (either return Err, or explains the todo! tradeoff truthfully)", "passed": false, "evidence": "Advised todo! for Overlay on the false premise the gate stays green; a contributor following this would hit a surprise gate failure."}, {"text": "Flags unreachable! as still a runtime panic and prefers encoding impossibility in the type (type-state)", "passed": false, "evidence": "Used unreachable! framed as 'encodes the invariant'; mentioned the todo! becoming reachable as the only panic risk, did not flag unreachable! as a live panic nor suggest type-state."}, {"text": "Does not suggest panic!/unwrap to stub the unfinished arm", "passed": true, "evidence": "Warns against literal panic!(\"unreachable\") and unreachable_unchecked()."}], "score": 1, "total": 4}}, {"id": "async-backend-error-with_skill", "prompt": "In the shell binary I'm spawning a decode job on the tokio runtime and sending the result back to the egui update loop over a oneshot channel. The decode lives in pixhaus_io and returns its own error type. I keep getting a compile error about the error not being Send when I spawn the task. How should I set up the error type and the channel so this works, and where should I log the failure? Sketch the spawn + the receiver-drain side.", "eval_id": 2, "outputs": [{"name": "answer.md", "type": "text", "content": "# Spawning a `pixhaus_io` decode and sending the result to the egui loop\n\n## The actual cause of the `Send` error\n\n`tokio::spawn` requires the future *and its output* to be `Send + 'static`. The\noutput here is `Result<DecodedThing, pixhaus_io::Error>`, so the whole error type\nhas to be `Send` (really `Send + Sync + 'static` once it travels across threads\nand gets stored).\n\nA thiserror-derived enum is `Send + Sync` automatically \u00e2\u20ac\u201d *as long as every field\nis*. So the fix is almost never at the spawn site or the channel; it's in the\nerror type's fields. The usual culprit is one of:\n\n- a non-`Send` source wrapped in a variant \u00e2\u20ac\u201d an `Rc`, a `RefCell`, a raw\n  `Box<dyn Error>` with no `Send + Sync` bound, or an FFI/handle type;\n- a `Box<dyn std::error::Error>` field (also forbidden in our public APIs \u00e2\u20ac\u201d define\n  a real enum instead);\n- a borrowed field tying the error to a lifetime, so it isn't `'static`.\n\nKeep `pixhaus_io::Error`'s fields to owned, thread-safe data and the `Send` error\ndisappears on its own. Do **not** paper over it with `#[async_trait(?Send)]`, a\n`Box<dyn Error>`, or `spawn_blocking` \"to dodge `Send`\" \u00e2\u20ac\u201d `spawn_blocking`'s\nclosure output must be `Send` too, so it doesn't help, and the bound is telling you\nsomething real. If a genuinely non-`Send` source is unavoidable, that's a design\nquestion to surface, not to escape-hatch.\n\nOne more point that decides `spawn` vs `spawn_blocking` here: a decode is\n**CPU-bound, synchronous work** (zstd/PNG/MessagePack). That belongs on\n`spawn_blocking`, not `tokio::spawn` \u00e2\u20ac\u201d a decode inside `tokio::spawn` hogs a\nscheduler worker for the whole decode. The sketch below uses `spawn_blocking`.\n\n## The error type (in `pixhaus_io`)\n\nNothing special is needed beyond keeping fields owned and thread-safe. A normal\nthiserror enum already satisfies `Send + Sync + 'static`:\n\n```rust\n// pixhaus_io/src/lib.rs\nuse thiserror::Error;\n\n#[derive(Debug, Error)]\npub enum Error {\n    #[error(\"I/O error\")]\n    Io(#[from] std::io::Error),\n\n    #[error(\"zstd decompress failed at {stage}\")]\n    Decompress { stage: &'static str, #[source] source: std::io::Error },\n\n    #[error(\"MessagePack decode failed\")]\n    Decode(#[from] rmp_serde::decode::Error),\n    // every field above is owned + Send + Sync, so `Error` is too.\n}\n\npub type Result<T> = std::result::Result<T, Error>;\n```\n\nIf you currently have a field like `source: Box<dyn std::error::Error>` or an\n`Rc<_>`, that's the thing breaking `Send` \u00e2\u20ac\u201d change it to a concrete owned type (or\n`Box<dyn std::error::Error + Send + Sync>` only if you truly can't name the type;\nprefer a concrete variant). Defining the enum in detail is `pixhaus-thiserror`'s\njob; the load-bearing rule for *this* problem is: owned, thread-safe fields only.\n\n## The channel\n\nIt's a single decode answered once, so a `oneshot` is the right choice (you already\npicked it). Carry the whole `Result` as the message \u00e2\u20ac\u201d let the receiver decide what\nto do with `Err`. Don't try to make the channel itself \"handle\" the error:\n\n```rust\nuse tokio::sync::oneshot;\n\n// the message is the decode's Result; pixhaus_io::Error is Send + Sync + 'static\ntype DecodeOutcome = Result<Document, pixhaus_io::Error>;\n```\n\n## The spawn side\n\nWhere this runs: from `ui` (or a command handler) on the egui thread, kicking the\nwork onto the binary's one runtime. The egui thread only *starts* the task and\nlater *drains* it.\n\n```rust\nuse tokio::sync::oneshot;\n\nimpl Pixhaus {\n    /// Called from the egui thread when the user opens a project.\n    fn start_decode(&mut self, ctx: &egui::Context, path: std::path::PathBuf) {\n        let (tx, rx) = oneshot::channel::<DecodeOutcome>();\n        self.pending_decode = Some(rx); // UI owns the receiver; drained each frame\n        let ctx = ctx.clone();          // cheap; used to wake the idle loop\n\n        // Decode is CPU-bound + synchronous -> spawn_blocking, not tokio::spawn.\n        self.rt.spawn_blocking(move || {\n            // No `?`/unwrap here: capture the whole Result and ship it as-is.\n            let outcome = pixhaus_io::load_project(&path); // -> Result<_, pixhaus_io::Error>\n\n            // send() fails only if the UI dropped the receiver (app closing) \u00e2\u20ac\u201d ignore it.\n            let _ = tx.send(outcome);\n            ctx.request_repaint(); // wake the loop so it drains the oneshot\n        });\n    }\n}\n```\n\nNotes that matter:\n\n- The error is **not logged inside the task.** We forward the full `Result` so the\n  UI thread \u00e2\u20ac\u201d which owns the document and the user-facing surface \u00e2\u20ac\u201d decides. Logging\n  at the boundary that can actually react keeps the policy in one place.\n- `let _ = tx.send(..)` is correct, not a swallowed error: a `oneshot` send only\n  fails when the receiver was dropped, which here means the window closed.\n\n## The receiver-drain side\n\n`oneshot::Receiver` has `try_recv()` \u00e2\u20ac\u201d call it each frame from `logic`, never\n`recv().await` (awaiting on the egui thread freezes the window). The drain is where\nthe `Err` is handled and logged:\n\n```rust\nuse tokio::sync::oneshot::error::TryRecvError;\n\nimpl Pixhaus {\n    /// Called every frame from eframe `App::update` (the logic half).\n    fn drain_decode(&mut self) {\n        let Some(rx) = self.pending_decode.as_mut() else {\n            return; // nothing in flight\n        };\n\n        match rx.try_recv() {\n            Ok(Ok(doc)) => {\n                self.document = doc;          // decode succeeded\n                self.pending_decode = None;   // consume the slot\n            }\n            Ok(Err(e)) => {\n                // The decode failed. Log here, at the boundary that can react,\n                // and surface it to the user. inspect_err isn't a fit \u00e2\u20ac\u201d we're\n                // not propagating, we're consuming.\n                tracing::warn!(\"project decode failed: {e}\");\n                self.show_error_toast(format!(\"Couldn't open project: {e}\"));\n                self.pending_decode = None;\n            }\n            Err(TryRecvError::Empty) => {\n                // Not done yet \u00e2\u20ac\u201d the normal case, not an error. Leave it pending.\n            }\n            Err(TryRecvError::Closed) => {\n                // Sender dropped without sending (task panicked/aborted). Rare; clear it.\n                tracing::error!(\"decode task ended without a result\");\n                self.pending_decode = None;\n            }\n        }\n    }\n}\n```\n\n## Where to log the failure \u00e2\u20ac\u201d the short answer\n\nIn the **receiver drain on the egui thread**, in the `Ok(Err(e))` arm. That's the\nowner that can both record it (`tracing::warn!`) and react (toast, restore state).\nDon't log inside the spawned task \u00e2\u20ac\u201d the task's job is to compute and forward; if it\nlogged *and* the UI also reacted, you'd have the failure handled in two places.\n\n`inspect_err` (the skill's log-and-propagate tool) isn't the right call here because\nthe UI thread is the *terminal* consumer of this `Result` \u00e2\u20ac\u201d it's recovering, not\nbubbling up. `inspect_err` is for the `... .inspect_err(|e| warn!())?` shape where\nyou log on the way past and still `?` it onward; the drain has nowhere further to\npropagate to.\n\n## Checklist for this specific problem\n\n- [ ] `pixhaus_io::Error` has only owned, `Send + Sync + 'static` fields \u00e2\u20ac\u201d no `Rc`,\n      no bare `Box<dyn Error>`, no borrowed/`'static`-breaking field. This is the\n      real fix for the `Send` error.\n- [ ] Use `spawn_blocking` (CPU-bound decode), not `tokio::spawn`.\n- [ ] `oneshot` carries the whole `Result<_, pixhaus_io::Error>`; the task does no\n      `?`/`unwrap` on it \u00e2\u20ac\u201d it forwards it.\n- [ ] `let _ = tx.send(..)` and a `ctx.request_repaint()` after.\n- [ ] Drain with `try_recv()` in `logic`, never `recv().await`.\n- [ ] Log + user-surface the `Err` in the drain's `Ok(Err(e))` arm, not in the task.\n- [ ] No `unwrap`/`expect` anywhere outside `#[cfg(test)]` (clippy denies them).\n```\n"}], "grading": {"expectations": [{"text": "Identifies the spawned error must be Send + Sync + 'static", "passed": true, "evidence": "States spawn requires the output (incl. the error) to be Send + 'static, really Send + Sync + 'static."}, {"text": "Root cause = a non-Send field in the error type (Rc / Box<dyn Error> without Send+Sync bound / borrowed field)", "passed": true, "evidence": "Lists the exact culprits; notes a thiserror enum is Send/Sync iff every field is."}, {"text": "Sends the whole Result<T, E> over the channel", "passed": true, "evidence": "type DecodeOutcome = Result<Document, pixhaus_io::Error>; tx.send(outcome)."}, {"text": "Logs at the UI/drain boundary and does not misapply inspect_err", "passed": true, "evidence": "Logs in the drain's Ok(Err(e)) arm; explicitly reasons inspect_err is wrong here since the UI thread is the terminal consumer, not propagating with ?."}, {"text": "Does not paper over with Box<dyn Error> in a public API or a ?Send escape hatch", "passed": true, "evidence": "Explicitly warns against #[async_trait(?Send)], Box<dyn Error>, and 'spawn_blocking to dodge Send'."}], "score": 5, "total": 5}}, {"id": "async-backend-error-without_skill", "prompt": "In the shell binary I'm spawning a decode job on the tokio runtime and sending the result back to the egui update loop over a oneshot channel. The decode lives in pixhaus_io and returns its own error type. I keep getting a compile error about the error not being Send when I spawn the task. How should I set up the error type and the channel so this works, and where should I log the failure? Sketch the spawn + the receiver-drain side.", "eval_id": 2, "outputs": [{"name": "answer.md", "type": "text", "content": "# Spawning a decode job and returning its error to the egui loop\n\n## What the compile error is actually telling you\n\n`tokio::spawn` requires the future to be `Send + 'static`, because the\nmulti-threaded runtime can move the task across worker threads. A future is\n`Send` only if every value held *across an `.await`* is `Send`. Your decode\nreturns `Result<DecodedImage, pixhaus_io::DecodeError>`, so that error type is\npart of the task's output and lives inside the future. If `DecodeError` is not\n`Send`, the whole future is not `Send`, and `spawn` rejects it.\n\nThe fix is not to wrap things or sprinkle `?Send`. It's to make the error type\n`Send` at the source. That's the right call regardless \u00e2\u20ac\u201d an error that has to\ntravel back to the UI thread over a channel must be `Send` anyway, channel or\nruntime aside.\n\n## Why the error isn't Send (the usual culprits)\n\nA `thiserror` enum is `Send` automatically *unless one of its fields isn't*. The\nthings that silently poison it:\n\n- `#[from] std::io::Error` is fine \u00e2\u20ac\u201d `io::Error` is `Send`.\n- A `source` or field of type `Box<dyn std::error::Error>` \u00e2\u20ac\u201d **not** `Send`.\n  `Box<dyn Error + Send + Sync>` is the Send-safe form.\n- An `Rc<_>`, a `Cell`/`RefCell`, or a raw pointer captured in a variant \u00e2\u20ac\u201d not\n  `Send`.\n- A third-party error from a dependency that itself isn't `Send` (rare, but it\n  happens with FFI-backed crates).\n\nCheck the variant fields first. The error message from the compiler will name\nthe exact non-`Send` type in the \"within `...`, the trait `Send` is not\nimplemented for `...`\" note \u00e2\u20ac\u201d read that note, it points straight at the field.\n\n## Set the error type up so it's Send + Sync + 'static\n\nIn `pixhaus_io`, define the decode error with `thiserror` and keep every field\n`Send + Sync`. If you need to box an opaque inner error, require the bounds:\n\n```rust\n// pixhaus_io/src/error.rs\nuse thiserror::Error;\n\n#[derive(Debug, Error)]\npub enum DecodeError {\n    #[error(\"unsupported format: {0}\")]\n    UnsupportedFormat(String),\n\n    #[error(\"truncated file: expected {expected} bytes, found {found}\")]\n    Truncated { expected: usize, found: usize },\n\n    #[error(\"io error reading project\")]\n    Io(#[from] std::io::Error),\n\n    // If you must carry an opaque inner error, bound it Send + Sync.\n    // Box<dyn Error> alone is NOT Send and will re-break the spawn.\n    #[error(\"decode backend failed\")]\n    Backend(#[source] Box<dyn std::error::Error + Send + Sync + 'static>),\n}\n```\n\n`thiserror` doesn't add `Send`/`Sync` \u00e2\u20ac\u201d it just derives `std::error::Error`. The\nauto traits come from the fields, so the rule is: keep the fields `Send + Sync`\nand the enum is `Send + Sync` for free. You don't write an explicit `impl Send`,\nand you must not (that would need `unsafe`, which the workspace forbids).\n\nIf you want a hard guarantee that future edits can't regress this, add a\ncompile-time assertion in `pixhaus_io`'s tests:\n\n```rust\n#[test]\nfn decode_error_is_send_sync() {\n    fn assert_send_sync<T: Send + Sync + 'static>() {}\n    assert_send_sync::<DecodeError>();\n}\n```\n\nThat test fails to compile the day someone adds a non-`Send` field, which is\nexactly when you want to find out.\n\n## The channel: oneshot carries the Result whole\n\nSend the *whole* `Result` over the channel, not just the `Ok`. One message, one\noutcome, success or failure. The receiver then matches on it. `tokio::sync::oneshot`\nis the right primitive for a single decode \u00e2\u2020\u2019 single reply.\n\nThe channel's payload must be `Send` too. Since `DecodedImage` and `DecodeError`\nare both `Send + 'static`, `Result<DecodedImage, DecodeError>` is `Send`, and the\n`oneshot::Sender` of that type is `Send`. Good.\n\n## Spawn side\n\n```rust\n// shell/src/app.rs (or wherever the app owns the runtime handle)\nuse tokio::sync::oneshot;\nuse pixhaus_io::{decode_project, DecodeError, DecodedImage};\n\nstruct PendingDecode {\n    // The loop polls this each frame; None until the task replies.\n    rx: oneshot::Receiver<Result<DecodedImage, DecodeError>>,\n}\n\nimpl App {\n    fn start_decode(&mut self, path: std::path::PathBuf) {\n        let (tx, rx) = oneshot::channel::<Result<DecodedImage, DecodeError>>();\n\n        // self.rt is the tokio runtime Handle the binary owns (one owner).\n        self.rt.spawn(async move {\n            // spawn_blocking for the CPU-bound decode; await its JoinHandle.\n            // The blocking closure returns the io Result; the JoinError from a\n            // panic is mapped into our own error so the loop sees one type.\n            let result = tokio::task::spawn_blocking(move || decode_project(&path))\n                .await\n                .unwrap_or_else(|join_err| {\n                    Err(DecodeError::Backend(Box::new(join_err)))\n                });\n\n            // Receiver may be gone if the user closed the doc mid-decode.\n            // That's not an error worth logging loudly \u00e2\u20ac\u201d drop quietly.\n            let _ = tx.send(result);\n        });\n\n        self.pending_decode = Some(PendingDecode { rx });\n    }\n}\n```\n\nNotes on the spawn:\n\n- `decode_project` is CPU-bound (parsing, zstd, pixel work), so it runs inside\n  `spawn_blocking`, not directly on an async worker. The outer `spawn` exists\n  only to `.await` the blocking handle and forward the result.\n- `tokio::task::JoinError` is `Send + Sync`, so boxing it into\n  `DecodeError::Backend` keeps the error type `Send`. A panic in the decode thus\n  becomes a normal `Err` the UI can show, instead of taking down a worker\n  silently.\n- `tx.send(result)` returns `Err(value)` if the receiver was dropped. We discard\n  it with `let _ =` \u00e2\u20ac\u201d a closed doc isn't a failure.\n- No lock is held across the `.await`. The task owns `path` by move and touches\n  no shared state.\n\n## Receiver-drain side (egui update loop)\n\nThe update loop owns the document directly and drains the channel each frame.\n`oneshot::Receiver::try_recv()` is non-blocking: it returns `Empty` while the\ntask is still running, the value once it lands, and `Closed` if the sender was\ndropped without sending (a task panic that escaped, which shouldn't happen given\nthe mapping above, but handle it).\n\n```rust\nuse tokio::sync::oneshot::error::TryRecvError;\n\nimpl eframe::App for App {\n    fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {\n        self.drain_pending_decode(ctx);\n        // ... rest of the frame: panels, canvas, etc.\n    }\n}\n\nimpl App {\n    fn drain_pending_decode(&mut self, ctx: &egui::Context) {\n        let Some(pending) = self.pending_decode.as_mut() else {\n            return;\n        };\n\n        match pending.rx.try_recv() {\n            Ok(Ok(image)) => {\n                self.document.replace_image(image);\n                self.pending_decode = None;\n                ctx.request_repaint(); // new pixels to draw\n            }\n            Ok(Err(err)) => {\n                // LOG HERE: at the UI boundary, where we have context\n                // (the user, the action) and can surface it. Library code in\n                // pixhaus_io returns the error; it does not log.\n                tracing::error!(error = %err, \"project decode failed\");\n                self.toast_error(format!(\"Couldn't open project: {err}\"));\n                self.pending_decode = None;\n            }\n            Err(TryRecvError::Empty) => {\n                // Still decoding. Keep the slot, ask for another frame so we\n                // poll again soon even if nothing else invalidates the UI.\n                ctx.request_repaint();\n            }\n            Err(TryRecvError::Closed) => {\n                // Sender dropped without sending \u00e2\u20ac\u201d treat as a failure.\n                tracing::error!(\"decode task ended without a result\");\n                self.toast_error(\"Decode task ended unexpectedly\".to_owned());\n                self.pending_decode = None;\n            }\n        }\n    }\n}\n```\n\n## Where to log\n\n- **`pixhaus_io` (library): do not log.** It returns `DecodeError`. Logging\n  inside a library duplicates messages and steals the caller's context.\n- **`shell` (binary): log at the drain site**, the `Ok(Err(err))` and `Closed`\n  arms above, with `tracing::error!`. That's the one place that knows it's a\n  user-initiated open, can attach a toast, and owns the error's final\n  disposition. Log once, where you decide what to do about it.\n\nUse `%err` (the `Display` form) so the `thiserror` `#[error(\"...\")]` strings come\nthrough. If you want the source chain, `tracing::error!(error = ?err, ...)` gives\nthe `Debug` view, or walk `std::error::Error::source()` and log the chain.\n\n## Summary of the moving parts\n\n1. `DecodeError` is a `thiserror` enum whose fields are all `Send + Sync` \u00e2\u20ac\u201d box\n   any opaque inner as `Box<dyn Error + Send + Sync + 'static>`. A compile-time\n   `assert_send_sync::<DecodeError>()` test locks that in.\n2. The channel is `oneshot::channel::<Result<DecodedImage, DecodeError>>()` \u00e2\u20ac\u201d\n   the whole `Result` travels as one message.\n3. Spawn wraps the CPU-bound decode in `spawn_blocking`, maps `JoinError` into\n   `DecodeError`, and `let _ = tx.send(result)`.\n4. The egui loop calls `try_recv()` each frame, handles `Ok(Ok)`, `Ok(Err)`,\n   `Empty` (repaint and wait), `Closed` (treat as failure), and logs only at the\n   `Err` arms.\n"}], "grading": {"expectations": [{"text": "Identifies the spawned error must be Send + Sync + 'static", "passed": true, "evidence": "Explains a future is Send only if values held across .await are Send; error must be Send."}, {"text": "Root cause = a non-Send field in the error type (Rc / Box<dyn Error> without Send+Sync bound / borrowed field)", "passed": true, "evidence": "Names Box<dyn Error> without Send+Sync, Rc, RefCell, raw pointers as poisoners."}, {"text": "Sends the whole Result<T, E> over the channel", "passed": true, "evidence": "oneshot::channel::<Result<DecodedImage, DecodeError>>()."}, {"text": "Logs at the UI/drain boundary and does not misapply inspect_err", "passed": true, "evidence": "Logs only at the binary's drain site; library returns the error and does not log. (Did not discuss inspect_err.)"}, {"text": "Does not paper over with Box<dyn Error> in a public API or a ?Send escape hatch", "passed": true, "evidence": "Recommends Box<dyn Error + Send + Sync> for opaque inner and a compile-time assert_send_sync test; no ?Send."}], "score": 5, "total": 5}}], "previous_feedback": {}, "previous_outputs": {}};
+
+    // ---- State ----
+    let feedbackMap = {};  // run_id -> feedback text
+    let currentIndex = 0;
+    let visitedRuns = new Set();
+
+    // ---- Init ----
+    async function init() {
+      // Load saved feedback from server — but only if this isn't a fresh
+      // iteration (indicated by previous_feedback being present). When
+      // previous feedback exists, the feedback.json on disk is stale from
+      // the prior iteration and should not pre-fill the textareas.
+      const hasPrevious = Object.keys(EMBEDDED_DATA.previous_feedback || {}).length > 0
+        || Object.keys(EMBEDDED_DATA.previous_outputs || {}).length > 0;
+      if (!hasPrevious) {
+        try {
+          const resp = await fetch("/api/feedback");
+          const data = await resp.json();
+          if (data.reviews) {
+            for (const r of data.reviews) feedbackMap[r.run_id] = r.feedback;
+          }
+        } catch { /* first run, no feedback yet */ }
+      }
+
+      document.getElementById("skill-name").textContent = EMBEDDED_DATA.skill_name;
+      showRun(0);
+
+      // Wire up feedback auto-save
+      const textarea = document.getElementById("feedback");
+      let saveTimeout = null;
+      textarea.addEventListener("input", () => {
+        clearTimeout(saveTimeout);
+        document.getElementById("feedback-status").textContent = "";
+        saveTimeout = setTimeout(() => saveCurrentFeedback(), 800);
+      });
+    }
+
+    // ---- Navigation ----
+    function navigate(delta) {
+      const newIndex = currentIndex + delta;
+      if (newIndex >= 0 && newIndex < EMBEDDED_DATA.runs.length) {
+        saveCurrentFeedback();
+        showRun(newIndex);
+      }
+    }
+
+    function updateNavButtons() {
+      document.getElementById("prev-btn").disabled = currentIndex === 0;
+      document.getElementById("next-btn").disabled =
+        currentIndex === EMBEDDED_DATA.runs.length - 1;
+    }
+
+    // ---- Show a run ----
+    function showRun(index) {
+      currentIndex = index;
+      const run = EMBEDDED_DATA.runs[index];
+
+      // Progress
+      document.getElementById("progress").textContent =
+        `${index + 1} of ${EMBEDDED_DATA.runs.length}`;
+
+      // Prompt
+      document.getElementById("prompt-text").textContent = run.prompt;
+
+      // Config badge
+      const badge = document.getElementById("config-badge");
+      const configMatch = run.id.match(/(with_skill|without_skill|new_skill|old_skill)/);
+      if (configMatch) {
+        const config = configMatch[1];
+        const isBaseline = config === "without_skill" || config === "old_skill";
+        badge.textContent = config.replace(/_/g, " ");
+        badge.className = "config-badge " + (isBaseline ? "config-baseline" : "config-primary");
+        badge.style.display = "inline-block";
+      } else {
+        badge.style.display = "none";
+      }
+
+      // Outputs
+      renderOutputs(run);
+
+      // Previous outputs
+      renderPrevOutputs(run);
+
+      // Grades
+      renderGrades(run);
+
+      // Previous feedback
+      const prevFb = (EMBEDDED_DATA.previous_feedback || {})[run.id];
+      const prevEl = document.getElementById("prev-feedback");
+      if (prevFb) {
+        document.getElementById("prev-feedback-text").textContent = prevFb;
+        prevEl.style.display = "block";
+      } else {
+        prevEl.style.display = "none";
+      }
+
+      // Feedback
+      document.getElementById("feedback").value = feedbackMap[run.id] || "";
+      document.getElementById("feedback-status").textContent = "";
+
+      updateNavButtons();
+
+      // Track visited runs and promote done button when all visited
+      visitedRuns.add(index);
+      const doneBtn = document.getElementById("done-btn");
+      if (visitedRuns.size >= EMBEDDED_DATA.runs.length) {
+        doneBtn.classList.add("ready");
+      }
+
+      // Scroll main content to top
+      document.querySelector(".main").scrollTop = 0;
+    }
+
+    // ---- Render outputs ----
+    function renderOutputs(run) {
+      const container = document.getElementById("outputs-body");
+      container.innerHTML = "";
+
+      const outputs = run.outputs || [];
+      if (outputs.length === 0) {
+        container.innerHTML = '<div class="empty-state">No output files</div>';
+        return;
+      }
+
+      for (const file of outputs) {
+        const fileDiv = document.createElement("div");
+        fileDiv.className = "output-file";
+
+        // Always show file header with download link
+        const header = document.createElement("div");
+        header.className = "output-file-header";
+        const nameSpan = document.createElement("span");
+        nameSpan.textContent = file.name;
+        header.appendChild(nameSpan);
+        const dlBtn = document.createElement("a");
+        dlBtn.className = "dl-btn";
+        dlBtn.textContent = "Download";
+        dlBtn.download = file.name;
+        dlBtn.href = getDownloadUri(file);
+        header.appendChild(dlBtn);
+        fileDiv.appendChild(header);
+
+        const content = document.createElement("div");
+        content.className = "output-file-content";
+
+        if (file.type === "text") {
+          const pre = document.createElement("pre");
+          pre.textContent = file.content;
+          content.appendChild(pre);
+        } else if (file.type === "image") {
+          const img = document.createElement("img");
+          img.src = file.data_uri;
+          img.alt = file.name;
+          content.appendChild(img);
+        } else if (file.type === "pdf") {
+          const iframe = document.createElement("iframe");
+          iframe.src = file.data_uri;
+          content.appendChild(iframe);
+        } else if (file.type === "xlsx") {
+          renderXlsx(content, file.data_b64);
+        } else if (file.type === "binary") {
+          const a = document.createElement("a");
+          a.className = "download-link";
+          a.href = file.data_uri;
+          a.download = file.name;
+          a.textContent = "Download " + file.name;
+          content.appendChild(a);
+        } else if (file.type === "error") {
+          const pre = document.createElement("pre");
+          pre.textContent = file.content;
+          pre.style.color = "var(--red)";
+          content.appendChild(pre);
+        }
+
+        fileDiv.appendChild(content);
+        container.appendChild(fileDiv);
+      }
+    }
+
+    // ---- XLSX rendering via SheetJS ----
+    function renderXlsx(container, b64Data) {
+      try {
+        const raw = Uint8Array.from(atob(b64Data), c => c.charCodeAt(0));
+        const wb = XLSX.read(raw, { type: "array" });
+
+        for (let i = 0; i < wb.SheetNames.length; i++) {
+          const sheetName = wb.SheetNames[i];
+          const ws = wb.Sheets[sheetName];
+
+          if (wb.SheetNames.length > 1) {
+            const sheetLabel = document.createElement("div");
+            sheetLabel.style.cssText =
+              "font-weight:600; font-size:0.8rem; color:#b0aea5; margin-top:0.5rem; margin-bottom:0.25rem;";
+            sheetLabel.textContent = "Sheet: " + sheetName;
+            container.appendChild(sheetLabel);
+          }
+
+          const htmlStr = XLSX.utils.sheet_to_html(ws, { editable: false });
+          const wrapper = document.createElement("div");
+          wrapper.innerHTML = htmlStr;
+          container.appendChild(wrapper);
+        }
+      } catch (err) {
+        container.textContent = "Error rendering spreadsheet: " + err.message;
+      }
+    }
+
+    // ---- Grades ----
+    function renderGrades(run) {
+      const section = document.getElementById("grades-section");
+      const content = document.getElementById("grades-content");
+
+      if (!run.grading) {
+        section.style.display = "none";
+        return;
+      }
+
+      const grading = run.grading;
+      section.style.display = "block";
+      // Reset to collapsed
+      content.classList.remove("open");
+      document.getElementById("grades-arrow").classList.remove("open");
+
+      const summary = grading.summary || {};
+      const expectations = grading.expectations || [];
+
+      let html = '<div style="padding: 1rem;">';
+
+      // Summary line
+      const passRate = summary.pass_rate != null
+        ? Math.round(summary.pass_rate * 100) + "%"
+        : "?";
+      const badgeClass = summary.pass_rate >= 0.8 ? "grade-pass" : summary.pass_rate >= 0.5 ? "" : "grade-fail";
+      html += '<div class="grades-summary">';
+      html += '<span class="grade-badge ' + badgeClass + '">' + passRate + '</span>';
+      html += '<span>' + (summary.passed || 0) + ' passed, ' + (summary.failed || 0) + ' failed of ' + (summary.total || 0) + '</span>';
+      html += '</div>';
+
+      // Assertions list
+      html += '<ul class="assertion-list">';
+      for (const exp of expectations) {
+        const statusClass = exp.passed ? "pass" : "fail";
+        const statusIcon = exp.passed ? "\u2713" : "\u2717";
+        html += '<li class="assertion-item">';
+        html += '<span class="assertion-status ' + statusClass + '">' + statusIcon + '</span>';
+        html += '<span>' + escapeHtml(exp.text) + '</span>';
+        if (exp.evidence) {
+          html += '<div class="assertion-evidence">' + escapeHtml(exp.evidence) + '</div>';
+        }
+        html += '</li>';
+      }
+      html += '</ul>';
+
+      html += '</div>';
+      content.innerHTML = html;
+    }
+
+    function toggleGrades() {
+      const content = document.getElementById("grades-content");
+      const arrow = document.getElementById("grades-arrow");
+      content.classList.toggle("open");
+      arrow.classList.toggle("open");
+    }
+
+    // ---- Previous outputs (collapsible) ----
+    function renderPrevOutputs(run) {
+      const section = document.getElementById("prev-outputs-section");
+      const content = document.getElementById("prev-outputs-content");
+      const prevOutputs = (EMBEDDED_DATA.previous_outputs || {})[run.id];
+
+      if (!prevOutputs || prevOutputs.length === 0) {
+        section.style.display = "none";
+        return;
+      }
+
+      section.style.display = "block";
+      // Reset to collapsed
+      content.classList.remove("open");
+      document.getElementById("prev-outputs-arrow").classList.remove("open");
+
+      // Render the files into the content area
+      content.innerHTML = "";
+      const wrapper = document.createElement("div");
+      wrapper.style.padding = "1rem";
+
+      for (const file of prevOutputs) {
+        const fileDiv = document.createElement("div");
+        fileDiv.className = "output-file";
+
+        const header = document.createElement("div");
+        header.className = "output-file-header";
+        const nameSpan = document.createElement("span");
+        nameSpan.textContent = file.name;
+        header.appendChild(nameSpan);
+        const dlBtn = document.createElement("a");
+        dlBtn.className = "dl-btn";
+        dlBtn.textContent = "Download";
+        dlBtn.download = file.name;
+        dlBtn.href = getDownloadUri(file);
+        header.appendChild(dlBtn);
+        fileDiv.appendChild(header);
+
+        const fc = document.createElement("div");
+        fc.className = "output-file-content";
+
+        if (file.type === "text") {
+          const pre = document.createElement("pre");
+          pre.textContent = file.content;
+          fc.appendChild(pre);
+        } else if (file.type === "image") {
+          const img = document.createElement("img");
+          img.src = file.data_uri;
+          img.alt = file.name;
+          fc.appendChild(img);
+        } else if (file.type === "pdf") {
+          const iframe = document.createElement("iframe");
+          iframe.src = file.data_uri;
+          fc.appendChild(iframe);
+        } else if (file.type === "xlsx") {
+          renderXlsx(fc, file.data_b64);
+        } else if (file.type === "binary") {
+          const a = document.createElement("a");
+          a.className = "download-link";
+          a.href = file.data_uri;
+          a.download = file.name;
+          a.textContent = "Download " + file.name;
+          fc.appendChild(a);
+        }
+
+        fileDiv.appendChild(fc);
+        wrapper.appendChild(fileDiv);
+      }
+
+      content.appendChild(wrapper);
+    }
+
+    function togglePrevOutputs() {
+      const content = document.getElementById("prev-outputs-content");
+      const arrow = document.getElementById("prev-outputs-arrow");
+      content.classList.toggle("open");
+      arrow.classList.toggle("open");
+    }
+
+    // ---- Feedback (saved to server -> feedback.json) ----
+    function saveCurrentFeedback() {
+      const run = EMBEDDED_DATA.runs[currentIndex];
+      const text = document.getElementById("feedback").value;
+
+      if (text.trim() === "") {
+        delete feedbackMap[run.id];
+      } else {
+        feedbackMap[run.id] = text;
+      }
+
+      // Build reviews array from map
+      const reviews = [];
+      for (const [run_id, feedback] of Object.entries(feedbackMap)) {
+        if (feedback.trim()) {
+          reviews.push({ run_id, feedback, timestamp: new Date().toISOString() });
+        }
+      }
+
+      fetch("/api/feedback", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ reviews, status: "in_progress" }),
+      }).then(() => {
+        document.getElementById("feedback-status").textContent = "Saved";
+      }).catch(() => {
+        // Static mode or server unavailable — no-op on auto-save,
+        // feedback will be downloaded on final submit
+        document.getElementById("feedback-status").textContent = "Will download on submit";
+      });
+    }
+
+    // ---- Done ----
+    function showDoneDialog() {
+      // Save current textarea to feedbackMap (but don't POST yet)
+      const run = EMBEDDED_DATA.runs[currentIndex];
+      const text = document.getElementById("feedback").value;
+      if (text.trim() === "") {
+        delete feedbackMap[run.id];
+      } else {
+        feedbackMap[run.id] = text;
+      }
+
+      // POST once with status: complete — include ALL runs so the model
+      // can distinguish "no feedback" (looks good) from "not reviewed"
+      const reviews = [];
+      const ts = new Date().toISOString();
+      for (const r of EMBEDDED_DATA.runs) {
+        reviews.push({ run_id: r.id, feedback: feedbackMap[r.id] || "", timestamp: ts });
+      }
+      const payload = JSON.stringify({ reviews, status: "complete" }, null, 2);
+      fetch("/api/feedback", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: payload,
+      }).then(() => {
+        document.getElementById("done-overlay").classList.add("visible");
+      }).catch(() => {
+        // Server not available (static mode) — download as file
+        const blob = new Blob([payload], { type: "application/json" });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement("a");
+        a.href = url;
+        a.download = "feedback.json";
+        a.click();
+        URL.revokeObjectURL(url);
+        document.getElementById("done-overlay").classList.add("visible");
+      });
+    }
+
+    function closeDoneDialog() {
+      // Reset status back to in_progress
+      saveCurrentFeedback();
+      document.getElementById("done-overlay").classList.remove("visible");
+    }
+
+    // ---- Toast ----
+    function showToast(message) {
+      const toast = document.getElementById("toast");
+      toast.textContent = message;
+      toast.classList.add("visible");
+      setTimeout(() => toast.classList.remove("visible"), 2000);
+    }
+
+    // ---- Keyboard nav ----
+    document.addEventListener("keydown", (e) => {
+      // Don't capture when typing in textarea
+      if (e.target.tagName === "TEXTAREA") return;
+
+      if (e.key === "ArrowLeft" || e.key === "ArrowUp") {
+        e.preventDefault();
+        navigate(-1);
+      } else if (e.key === "ArrowRight" || e.key === "ArrowDown") {
+        e.preventDefault();
+        navigate(1);
+      }
+    });
+
+    // ---- Util ----
+    function getDownloadUri(file) {
+      if (file.data_uri) return file.data_uri;
+      if (file.data_b64) return "data:application/octet-stream;base64," + file.data_b64;
+      if (file.type === "text") return "data:text/plain;charset=utf-8," + encodeURIComponent(file.content);
+      return "#";
+    }
+
+    function escapeHtml(text) {
+      const div = document.createElement("div");
+      div.textContent = text;
+      return div.innerHTML;
+    }
+
+    // ---- View switching ----
+    function switchView(view) {
+      document.querySelectorAll(".view-tab").forEach(t => t.classList.remove("active"));
+      document.querySelectorAll(".view-panel").forEach(p => p.classList.remove("active"));
+      document.querySelector(`[onclick="switchView('${view}')"]`).classList.add("active");
+      document.getElementById("panel-" + view).classList.add("active");
+    }
+
+    // ---- Benchmark rendering ----
+    function renderBenchmark() {
+      const data = EMBEDDED_DATA.benchmark;
+      if (!data) return;
+
+      // Show the tabs
+      document.getElementById("view-tabs").style.display = "flex";
+
+      const container = document.getElementById("benchmark-content");
+      const summary = data.run_summary || {};
+      const metadata = data.metadata || {};
+      const notes = data.notes || [];
+
+      let html = "";
+
+      // Header
+      html += "<h2 style='font-family: Poppins, sans-serif; margin-bottom: 0.5rem;'>Benchmark Results</h2>";
+      html += "<p style='color: var(--text-muted); font-size: 0.875rem; margin-bottom: 1.25rem;'>";
+      if (metadata.skill_name) html += "<strong>" + escapeHtml(metadata.skill_name) + "</strong> &mdash; ";
+      if (metadata.timestamp) html += metadata.timestamp + " &mdash; ";
+      if (metadata.evals_run) html += "Evals: " + metadata.evals_run.join(", ") + " &mdash; ";
+      html += (metadata.runs_per_configuration || "?") + " runs per configuration";
+      html += "</p>";
+
+      // Summary table
+      html += '<table class="benchmark-table">';
+
+      function fmtStat(stat, pct) {
+        if (!stat) return "—";
+        const suffix = pct ? "%" : "";
+        const m = pct ? (stat.mean * 100).toFixed(0) : stat.mean.toFixed(1);
+        const s = pct ? (stat.stddev * 100).toFixed(0) : stat.stddev.toFixed(1);
+        return m + suffix + " ± " + s + suffix;
+      }
+
+      function deltaClass(val) {
+        if (!val) return "";
+        const n = parseFloat(val);
+        if (n > 0) return "benchmark-delta-positive";
+        if (n < 0) return "benchmark-delta-negative";
+        return "";
+      }
+
+      // Discover config names dynamically (everything except "delta")
+      const configs = Object.keys(summary).filter(k => k !== "delta");
+      const configA = configs[0] || "config_a";
+      const configB = configs[1] || "config_b";
+      const labelA = configA.replace(/_/g, " ").replace(/\b\w/g, c => c.toUpperCase());
+      const labelB = configB.replace(/_/g, " ").replace(/\b\w/g, c => c.toUpperCase());
+      const a = summary[configA] || {};
+      const b = summary[configB] || {};
+      const delta = summary.delta || {};
+
+      html += "<thead><tr><th>Metric</th><th>" + escapeHtml(labelA) + "</th><th>" + escapeHtml(labelB) + "</th><th>Delta</th></tr></thead>";
+      html += "<tbody>";
+
+      html += "<tr><td><strong>Pass Rate</strong></td>";
+      html += "<td>" + fmtStat(a.pass_rate, true) + "</td>";
+      html += "<td>" + fmtStat(b.pass_rate, true) + "</td>";
+      html += '<td class="' + deltaClass(delta.pass_rate) + '">' + (delta.pass_rate || "—") + "</td></tr>";
+
+      // Time (only show row if data exists)
+      if (a.time_seconds || b.time_seconds) {
+        html += "<tr><td><strong>Time (s)</strong></td>";
+        html += "<td>" + fmtStat(a.time_seconds, false) + "</td>";
+        html += "<td>" + fmtStat(b.time_seconds, false) + "</td>";
+        html += '<td class="' + deltaClass(delta.time_seconds) + '">' + (delta.time_seconds ? delta.time_seconds + "s" : "—") + "</td></tr>";
+      }
+
+      // Tokens (only show row if data exists)
+      if (a.tokens || b.tokens) {
+        html += "<tr><td><strong>Tokens</strong></td>";
+        html += "<td>" + fmtStat(a.tokens, false) + "</td>";
+        html += "<td>" + fmtStat(b.tokens, false) + "</td>";
+        html += '<td class="' + deltaClass(delta.tokens) + '">' + (delta.tokens || "—") + "</td></tr>";
+      }
+
+      html += "</tbody></table>";
+
+      // Per-eval breakdown (if runs data available)
+      const runs = data.runs || [];
+      if (runs.length > 0) {
+        const evalIds = [...new Set(runs.map(r => r.eval_id))].sort((a, b) => a - b);
+
+        html += "<h3 style='font-family: Poppins, sans-serif; margin-bottom: 0.75rem;'>Per-Eval Breakdown</h3>";
+
+        const hasTime = runs.some(r => r.result && r.result.time_seconds != null);
+        const hasErrors = runs.some(r => r.result && r.result.errors > 0);
+
+        for (const evalId of evalIds) {
+          const evalRuns = runs.filter(r => r.eval_id === evalId);
+          const evalName = evalRuns[0] && evalRuns[0].eval_name ? evalRuns[0].eval_name : "Eval " + evalId;
+
+          html += "<h4 style='font-family: Poppins, sans-serif; margin: 1rem 0 0.5rem; color: var(--text);'>" + escapeHtml(evalName) + "</h4>";
+          html += '<table class="benchmark-table">';
+          html += "<thead><tr><th>Config</th><th>Run</th><th>Pass Rate</th>";
+          if (hasTime) html += "<th>Time (s)</th>";
+          if (hasErrors) html += "<th>Crashes During Execution</th>";
+          html += "</tr></thead>";
+          html += "<tbody>";
+
+          // Group by config and render with average rows
+          const configGroups = [...new Set(evalRuns.map(r => r.configuration))];
+          for (let ci = 0; ci < configGroups.length; ci++) {
+            const config = configGroups[ci];
+            const configRuns = evalRuns.filter(r => r.configuration === config);
+            if (configRuns.length === 0) continue;
+
+            const rowClass = ci === 0 ? "benchmark-row-with" : "benchmark-row-without";
+            const configLabel = config.replace(/_/g, " ").replace(/\b\w/g, c => c.toUpperCase());
+
+            for (const run of configRuns) {
+              const r = run.result || {};
+              const prClass = r.pass_rate >= 0.8 ? "benchmark-delta-positive" : r.pass_rate < 0.5 ? "benchmark-delta-negative" : "";
+              html += '<tr class="' + rowClass + '">';
+              html += "<td>" + configLabel + "</td>";
+              html += "<td>" + run.run_number + "</td>";
+              html += '<td class="' + prClass + '">' + ((r.pass_rate || 0) * 100).toFixed(0) + "% (" + (r.passed || 0) + "/" + (r.total || 0) + ")</td>";
+              if (hasTime) html += "<td>" + (r.time_seconds != null ? r.time_seconds.toFixed(1) : "—") + "</td>";
+              if (hasErrors) html += "<td>" + (r.errors || 0) + "</td>";
+              html += "</tr>";
+            }
+
+            // Average row
+            const rates = configRuns.map(r => (r.result || {}).pass_rate || 0);
+            const avgRate = rates.reduce((a, b) => a + b, 0) / rates.length;
+            const avgPrClass = avgRate >= 0.8 ? "benchmark-delta-positive" : avgRate < 0.5 ? "benchmark-delta-negative" : "";
+            html += '<tr class="benchmark-row-avg ' + rowClass + '">';
+            html += "<td>" + configLabel + "</td>";
+            html += "<td>Avg</td>";
+            html += '<td class="' + avgPrClass + '">' + (avgRate * 100).toFixed(0) + "%</td>";
+            if (hasTime) {
+              const times = configRuns.map(r => (r.result || {}).time_seconds).filter(t => t != null);
+              html += "<td>" + (times.length ? (times.reduce((a, b) => a + b, 0) / times.length).toFixed(1) : "—") + "</td>";
+            }
+            if (hasErrors) html += "<td></td>";
+            html += "</tr>";
+          }
+          html += "</tbody></table>";
+
+          // Per-assertion detail for this eval
+          const runsWithExpectations = {};
+          for (const config of configGroups) {
+            runsWithExpectations[config] = evalRuns.filter(r => r.configuration === config && r.expectations && r.expectations.length > 0);
+          }
+          const hasAnyExpectations = Object.values(runsWithExpectations).some(runs => runs.length > 0);
+          if (hasAnyExpectations) {
+            // Collect all unique assertion texts across all configs
+            const allAssertions = [];
+            const seen = new Set();
+            for (const config of configGroups) {
+              for (const run of runsWithExpectations[config]) {
+                for (const exp of (run.expectations || [])) {
+                  if (!seen.has(exp.text)) {
+                    seen.add(exp.text);
+                    allAssertions.push(exp.text);
+                  }
+                }
+              }
+            }
+
+            html += '<table class="benchmark-table" style="margin-top: 0.5rem;">';
+            html += "<thead><tr><th>Assertion</th>";
+            for (const config of configGroups) {
+              const label = config.replace(/_/g, " ").replace(/\b\w/g, c => c.toUpperCase());
+              html += "<th>" + escapeHtml(label) + "</th>";
+            }
+            html += "</tr></thead><tbody>";
+
+            for (const assertionText of allAssertions) {
+              html += "<tr><td>" + escapeHtml(assertionText) + "</td>";
+
+              for (const config of configGroups) {
+                html += "<td>";
+                for (const run of runsWithExpectations[config]) {
+                  const exp = (run.expectations || []).find(e => e.text === assertionText);
+                  if (exp) {
+                    const cls = exp.passed ? "benchmark-delta-positive" : "benchmark-delta-negative";
+                    const icon = exp.passed ? "\u2713" : "\u2717";
+                    html += '<span class="' + cls + '" title="Run ' + run.run_number + ': ' + escapeHtml(exp.evidence || "") + '">' + icon + "</span> ";
+                  } else {
+                    html += "— ";
+                  }
+                }
+                html += "</td>";
+              }
+              html += "</tr>";
+            }
+            html += "</tbody></table>";
+          }
+        }
+      }
+
+      // Notes
+      if (notes.length > 0) {
+        html += '<div class="benchmark-notes">';
+        html += "<h3>Analysis Notes</h3>";
+        html += "<ul>";
+        for (const note of notes) {
+          html += "<li>" + escapeHtml(note) + "</li>";
+        }
+        html += "</ul></div>";
+      }
+
+      container.innerHTML = html;
+    }
+
+    // ---- Start ----
+    init();
+    renderBenchmark();
+  </script>
+</body>
+</html>

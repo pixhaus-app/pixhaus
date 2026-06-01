@@ -1,0 +1,1325 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Eval Review</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Poppins:wght@500;600&family=Lora:wght@400;500&display=swap" rel="stylesheet">
+  <script src="https://cdn.sheetjs.com/xlsx-0.20.3/package/dist/xlsx.full.min.js" integrity="sha384-EnyY0/GSHQGSxSgMwaIPzSESbqoOLSexfnSMN2AP+39Ckmn92stwABZynq1JyzdT" crossorigin="anonymous"></script>
+  <style>
+    :root {
+      --bg: #faf9f5;
+      --surface: #ffffff;
+      --border: #e8e6dc;
+      --text: #141413;
+      --text-muted: #b0aea5;
+      --accent: #d97757;
+      --accent-hover: #c4613f;
+      --green: #788c5d;
+      --green-bg: #eef2e8;
+      --red: #c44;
+      --red-bg: #fceaea;
+      --header-bg: #141413;
+      --header-text: #faf9f5;
+      --radius: 6px;
+    }
+
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+
+    body {
+      font-family: 'Lora', Georgia, serif;
+      background: var(--bg);
+      color: var(--text);
+      height: 100vh;
+      display: flex;
+      flex-direction: column;
+    }
+
+    /* ---- Header ---- */
+    .header {
+      background: var(--header-bg);
+      color: var(--header-text);
+      padding: 1rem 2rem;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      flex-shrink: 0;
+    }
+    .header h1 {
+      font-family: 'Poppins', sans-serif;
+      font-size: 1.25rem;
+      font-weight: 600;
+    }
+    .header .instructions {
+      font-size: 0.8rem;
+      opacity: 0.7;
+      margin-top: 0.25rem;
+    }
+    .header .progress {
+      font-size: 0.875rem;
+      opacity: 0.8;
+      text-align: right;
+    }
+
+    /* ---- Main content ---- */
+    .main {
+      flex: 1;
+      overflow-y: auto;
+      padding: 1.5rem 2rem;
+      display: flex;
+      flex-direction: column;
+      gap: 1.25rem;
+    }
+
+    /* ---- Sections ---- */
+    .section {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      flex-shrink: 0;
+    }
+    .section-header {
+      font-family: 'Poppins', sans-serif;
+      padding: 0.75rem 1rem;
+      font-size: 0.75rem;
+      font-weight: 500;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+      color: var(--text-muted);
+      border-bottom: 1px solid var(--border);
+      background: var(--bg);
+    }
+    .section-body {
+      padding: 1rem;
+    }
+
+    /* ---- Config badge ---- */
+    .config-badge {
+      display: inline-block;
+      padding: 0.2rem 0.625rem;
+      border-radius: 9999px;
+      font-family: 'Poppins', sans-serif;
+      font-size: 0.6875rem;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.03em;
+      margin-left: 0.75rem;
+      vertical-align: middle;
+    }
+    .config-badge.config-primary {
+      background: rgba(33, 150, 243, 0.12);
+      color: #1976d2;
+    }
+    .config-badge.config-baseline {
+      background: rgba(255, 193, 7, 0.15);
+      color: #f57f17;
+    }
+
+    /* ---- Prompt ---- */
+    .prompt-text {
+      white-space: pre-wrap;
+      font-size: 0.9375rem;
+      line-height: 1.6;
+    }
+
+    /* ---- Outputs ---- */
+    .output-file {
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      overflow: hidden;
+    }
+    .output-file + .output-file {
+      margin-top: 1rem;
+    }
+    .output-file-header {
+      padding: 0.5rem 0.75rem;
+      font-size: 0.8rem;
+      font-weight: 600;
+      color: var(--text-muted);
+      background: var(--bg);
+      border-bottom: 1px solid var(--border);
+      font-family: 'SF Mono', SFMono-Regular, Consolas, 'Liberation Mono', Menlo, monospace;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+    }
+    .output-file-header .dl-btn {
+      font-size: 0.7rem;
+      color: var(--accent);
+      text-decoration: none;
+      cursor: pointer;
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+      font-weight: 500;
+      opacity: 0.8;
+    }
+    .output-file-header .dl-btn:hover {
+      opacity: 1;
+      text-decoration: underline;
+    }
+    .output-file-content {
+      padding: 0.75rem;
+      overflow-x: auto;
+    }
+    .output-file-content pre {
+      font-size: 0.8125rem;
+      line-height: 1.5;
+      white-space: pre-wrap;
+      word-break: break-word;
+      font-family: 'SF Mono', SFMono-Regular, Consolas, 'Liberation Mono', Menlo, monospace;
+    }
+    .output-file-content img {
+      max-width: 100%;
+      height: auto;
+      border-radius: 4px;
+    }
+    .output-file-content iframe {
+      width: 100%;
+      height: 600px;
+      border: none;
+    }
+    .output-file-content table {
+      border-collapse: collapse;
+      font-size: 0.8125rem;
+      width: 100%;
+    }
+    .output-file-content table td,
+    .output-file-content table th {
+      border: 1px solid var(--border);
+      padding: 0.375rem 0.5rem;
+      text-align: left;
+    }
+    .output-file-content table th {
+      background: var(--bg);
+      font-weight: 600;
+    }
+    .output-file-content .download-link {
+      display: inline-flex;
+      align-items: center;
+      gap: 0.5rem;
+      padding: 0.5rem 1rem;
+      background: var(--bg);
+      border: 1px solid var(--border);
+      border-radius: 4px;
+      color: var(--accent);
+      text-decoration: none;
+      font-size: 0.875rem;
+      cursor: pointer;
+    }
+    .output-file-content .download-link:hover {
+      background: var(--border);
+    }
+    .empty-state {
+      color: var(--text-muted);
+      font-style: italic;
+      padding: 2rem;
+      text-align: center;
+    }
+
+    /* ---- Feedback ---- */
+    .prev-feedback {
+      background: var(--bg);
+      border: 1px solid var(--border);
+      border-radius: 4px;
+      padding: 0.625rem 0.75rem;
+      margin-top: 0.75rem;
+      font-size: 0.8125rem;
+      color: var(--text-muted);
+      line-height: 1.5;
+    }
+    .prev-feedback-label {
+      font-size: 0.7rem;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.04em;
+      margin-bottom: 0.25rem;
+      color: var(--text-muted);
+    }
+    .feedback-textarea {
+      width: 100%;
+      min-height: 100px;
+      padding: 0.75rem;
+      border: 1px solid var(--border);
+      border-radius: 4px;
+      font-family: inherit;
+      font-size: 0.9375rem;
+      line-height: 1.5;
+      resize: vertical;
+      color: var(--text);
+    }
+    .feedback-textarea:focus {
+      outline: none;
+      border-color: var(--accent);
+      box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.1);
+    }
+    .feedback-status {
+      font-size: 0.75rem;
+      color: var(--text-muted);
+      margin-top: 0.5rem;
+      min-height: 1.1em;
+    }
+
+    /* ---- Grades (collapsible) ---- */
+    .grades-toggle {
+      display: flex;
+      align-items: center;
+      cursor: pointer;
+      user-select: none;
+    }
+    .grades-toggle:hover {
+      color: var(--accent);
+    }
+    .grades-toggle .arrow {
+      margin-right: 0.5rem;
+      transition: transform 0.15s;
+      font-size: 0.75rem;
+    }
+    .grades-toggle .arrow.open {
+      transform: rotate(90deg);
+    }
+    .grades-content {
+      display: none;
+      margin-top: 0.75rem;
+    }
+    .grades-content.open {
+      display: block;
+    }
+    .grades-summary {
+      font-size: 0.875rem;
+      margin-bottom: 0.75rem;
+      display: flex;
+      align-items: center;
+      gap: 0.5rem;
+    }
+    .grade-badge {
+      display: inline-block;
+      padding: 0.125rem 0.5rem;
+      border-radius: 9999px;
+      font-size: 0.75rem;
+      font-weight: 600;
+    }
+    .grade-pass { background: var(--green-bg); color: var(--green); }
+    .grade-fail { background: var(--red-bg); color: var(--red); }
+    .assertion-list {
+      list-style: none;
+    }
+    .assertion-item {
+      padding: 0.625rem 0;
+      border-bottom: 1px solid var(--border);
+      font-size: 0.8125rem;
+    }
+    .assertion-item:last-child { border-bottom: none; }
+    .assertion-status {
+      font-weight: 600;
+      margin-right: 0.5rem;
+    }
+    .assertion-status.pass { color: var(--green); }
+    .assertion-status.fail { color: var(--red); }
+    .assertion-evidence {
+      color: var(--text-muted);
+      font-size: 0.75rem;
+      margin-top: 0.25rem;
+      padding-left: 1.5rem;
+    }
+
+    /* ---- View tabs ---- */
+    .view-tabs {
+      display: flex;
+      gap: 0;
+      padding: 0 2rem;
+      background: var(--bg);
+      border-bottom: 1px solid var(--border);
+      flex-shrink: 0;
+    }
+    .view-tab {
+      font-family: 'Poppins', sans-serif;
+      padding: 0.625rem 1.25rem;
+      font-size: 0.8125rem;
+      font-weight: 500;
+      cursor: pointer;
+      border: none;
+      background: none;
+      color: var(--text-muted);
+      border-bottom: 2px solid transparent;
+      transition: all 0.15s;
+    }
+    .view-tab:hover { color: var(--text); }
+    .view-tab.active {
+      color: var(--accent);
+      border-bottom-color: var(--accent);
+    }
+    .view-panel { display: none; }
+    .view-panel.active { display: flex; flex-direction: column; flex: 1; overflow: hidden; }
+
+    /* ---- Benchmark view ---- */
+    .benchmark-view {
+      padding: 1.5rem 2rem;
+      overflow-y: auto;
+      flex: 1;
+    }
+    .benchmark-table {
+      border-collapse: collapse;
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      font-size: 0.8125rem;
+      width: 100%;
+      margin-bottom: 1.5rem;
+    }
+    .benchmark-table th, .benchmark-table td {
+      padding: 0.625rem 0.75rem;
+      text-align: left;
+      border: 1px solid var(--border);
+    }
+    .benchmark-table th {
+      font-family: 'Poppins', sans-serif;
+      background: var(--header-bg);
+      color: var(--header-text);
+      font-weight: 500;
+      font-size: 0.75rem;
+      text-transform: uppercase;
+      letter-spacing: 0.04em;
+    }
+    .benchmark-table tr:hover { background: var(--bg); }
+    .benchmark-table tr.benchmark-row-with { background: rgba(33, 150, 243, 0.06); }
+    .benchmark-table tr.benchmark-row-without { background: rgba(255, 193, 7, 0.06); }
+    .benchmark-table tr.benchmark-row-with:hover { background: rgba(33, 150, 243, 0.12); }
+    .benchmark-table tr.benchmark-row-without:hover { background: rgba(255, 193, 7, 0.12); }
+    .benchmark-table tr.benchmark-row-avg { font-weight: 600; border-top: 2px solid var(--border); }
+    .benchmark-table tr.benchmark-row-avg.benchmark-row-with { background: rgba(33, 150, 243, 0.12); }
+    .benchmark-table tr.benchmark-row-avg.benchmark-row-without { background: rgba(255, 193, 7, 0.12); }
+    .benchmark-delta-positive { color: var(--green); font-weight: 600; }
+    .benchmark-delta-negative { color: var(--red); font-weight: 600; }
+    .benchmark-notes {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      padding: 1rem;
+    }
+    .benchmark-notes h3 {
+      font-family: 'Poppins', sans-serif;
+      font-size: 0.875rem;
+      margin-bottom: 0.75rem;
+    }
+    .benchmark-notes ul {
+      list-style: disc;
+      padding-left: 1.25rem;
+    }
+    .benchmark-notes li {
+      font-size: 0.8125rem;
+      line-height: 1.6;
+      margin-bottom: 0.375rem;
+    }
+    .benchmark-empty {
+      color: var(--text-muted);
+      font-style: italic;
+      text-align: center;
+      padding: 3rem;
+    }
+
+    /* ---- Navigation ---- */
+    .nav {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      padding: 1rem 2rem;
+      border-top: 1px solid var(--border);
+      background: var(--surface);
+      flex-shrink: 0;
+    }
+    .nav-btn {
+      font-family: 'Poppins', sans-serif;
+      padding: 0.5rem 1.25rem;
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      background: var(--surface);
+      cursor: pointer;
+      font-size: 0.875rem;
+      font-weight: 500;
+      color: var(--text);
+      transition: all 0.15s;
+    }
+    .nav-btn:hover:not(:disabled) {
+      background: var(--bg);
+      border-color: var(--text-muted);
+    }
+    .nav-btn:disabled {
+      opacity: 0.4;
+      cursor: not-allowed;
+    }
+    .done-btn {
+      font-family: 'Poppins', sans-serif;
+      padding: 0.5rem 1.5rem;
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      background: var(--surface);
+      color: var(--text);
+      cursor: pointer;
+      font-size: 0.875rem;
+      font-weight: 500;
+      transition: all 0.15s;
+    }
+    .done-btn:hover {
+      background: var(--bg);
+      border-color: var(--text-muted);
+    }
+    .done-btn.ready {
+      border: none;
+      background: var(--accent);
+      color: white;
+      font-weight: 600;
+    }
+    .done-btn.ready:hover {
+      background: var(--accent-hover);
+    }
+    /* ---- Done overlay ---- */
+    .done-overlay {
+      display: none;
+      position: fixed;
+      inset: 0;
+      background: rgba(0, 0, 0, 0.5);
+      z-index: 100;
+      justify-content: center;
+      align-items: center;
+    }
+    .done-overlay.visible {
+      display: flex;
+    }
+    .done-card {
+      background: var(--surface);
+      border-radius: 12px;
+      padding: 2rem 3rem;
+      text-align: center;
+      box-shadow: 0 20px 60px rgba(0, 0, 0, 0.3);
+      max-width: 500px;
+    }
+    .done-card h2 {
+      font-size: 1.5rem;
+      margin-bottom: 0.5rem;
+    }
+    .done-card p {
+      color: var(--text-muted);
+      margin-bottom: 1.5rem;
+      line-height: 1.5;
+    }
+    .done-card .btn-row {
+      display: flex;
+      gap: 0.5rem;
+      justify-content: center;
+    }
+    .done-card button {
+      padding: 0.5rem 1.25rem;
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      background: var(--surface);
+      cursor: pointer;
+      font-size: 0.875rem;
+    }
+    .done-card button:hover {
+      background: var(--bg);
+    }
+    /* ---- Toast ---- */
+    .toast {
+      position: fixed;
+      bottom: 5rem;
+      left: 50%;
+      transform: translateX(-50%);
+      background: var(--header-bg);
+      color: var(--header-text);
+      padding: 0.625rem 1.25rem;
+      border-radius: var(--radius);
+      font-size: 0.875rem;
+      opacity: 0;
+      transition: opacity 0.3s;
+      pointer-events: none;
+      z-index: 200;
+    }
+    .toast.visible {
+      opacity: 1;
+    }
+  </style>
+</head>
+<body>
+  <div id="app" style="height:100vh; display:flex; flex-direction:column;">
+    <div class="header">
+      <div>
+        <h1>Eval Review: <span id="skill-name"></span></h1>
+        <div class="instructions">Review each output and leave feedback below. Navigate with arrow keys or buttons. When done, copy feedback and paste into Claude Code.</div>
+      </div>
+      <div class="progress" id="progress"></div>
+    </div>
+
+    <!-- View tabs (only shown when benchmark data exists) -->
+    <div class="view-tabs" id="view-tabs" style="display:none;">
+      <button class="view-tab active" onclick="switchView('outputs')">Outputs</button>
+      <button class="view-tab" onclick="switchView('benchmark')">Benchmark</button>
+    </div>
+
+    <!-- Outputs panel (qualitative review) -->
+    <div class="view-panel active" id="panel-outputs">
+    <div class="main">
+      <!-- Prompt -->
+      <div class="section">
+        <div class="section-header">Prompt <span class="config-badge" id="config-badge" style="display:none;"></span></div>
+        <div class="section-body">
+          <div class="prompt-text" id="prompt-text"></div>
+        </div>
+      </div>
+
+      <!-- Outputs -->
+      <div class="section">
+        <div class="section-header">Output</div>
+        <div class="section-body" id="outputs-body">
+          <div class="empty-state">No output files found</div>
+        </div>
+      </div>
+
+      <!-- Previous Output (collapsible) -->
+      <div class="section" id="prev-outputs-section" style="display:none;">
+        <div class="section-header">
+          <div class="grades-toggle" onclick="togglePrevOutputs()">
+            <span class="arrow" id="prev-outputs-arrow">&#9654;</span>
+            Previous Output
+          </div>
+        </div>
+        <div class="grades-content" id="prev-outputs-content"></div>
+      </div>
+
+      <!-- Grades (collapsible) -->
+      <div class="section" id="grades-section" style="display:none;">
+        <div class="section-header">
+          <div class="grades-toggle" onclick="toggleGrades()">
+            <span class="arrow" id="grades-arrow">&#9654;</span>
+            Formal Grades
+          </div>
+        </div>
+        <div class="grades-content" id="grades-content"></div>
+      </div>
+
+      <!-- Feedback -->
+      <div class="section">
+        <div class="section-header">Your Feedback</div>
+        <div class="section-body">
+          <textarea
+            class="feedback-textarea"
+            id="feedback"
+            placeholder="What do you think of this output? Any issues, suggestions, or things that look great?"
+          ></textarea>
+          <div class="feedback-status" id="feedback-status"></div>
+          <div class="prev-feedback" id="prev-feedback" style="display:none;">
+            <div class="prev-feedback-label">Previous feedback</div>
+            <div id="prev-feedback-text"></div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="nav" id="outputs-nav">
+      <button class="nav-btn" id="prev-btn" onclick="navigate(-1)">&#8592; Previous</button>
+      <button class="done-btn" id="done-btn" onclick="showDoneDialog()">Submit All Reviews</button>
+      <button class="nav-btn" id="next-btn" onclick="navigate(1)">Next &#8594;</button>
+    </div>
+    </div><!-- end panel-outputs -->
+
+    <!-- Benchmark panel (quantitative stats) -->
+    <div class="view-panel" id="panel-benchmark">
+      <div class="benchmark-view" id="benchmark-content">
+        <div class="benchmark-empty">No benchmark data available. Run a benchmark to see quantitative results here.</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Done overlay -->
+  <div class="done-overlay" id="done-overlay">
+    <div class="done-card">
+      <h2>Review Complete</h2>
+      <p>Your feedback has been saved. Go back to your Claude Code session and tell Claude you're done reviewing.</p>
+      <div class="btn-row">
+        <button onclick="closeDoneDialog()">OK</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Toast -->
+  <div class="toast" id="toast"></div>
+
+  <script>
+    // ---- Embedded data (injected by generate_review.py) ----
+    const EMBEDDED_DATA = {"skill_name": "pixhaus-performance", "runs": [{"id": "eval-0-with_skill-run-1", "prompt": "(No prompt found)", "eval_id": null, "outputs": [{"name": "answer.md", "type": "text", "content": "# Optimizing `blend_normal`\n\nShort answer: I'm not going to rewrite this on the strength of \"feels slow.\" The rule in this repo (CLAUDE.md, and the perf workflow) is **don't guess, measure** \u00e2\u20ac\u201d no optimization lands without a benchmark or profile showing this code is actually the bottleneck. So let's do this in the order that produces evidence, and I'll tell you exactly what I'd change and why once we have it. That said, this function has two specific problems I'm confident about *on inspection* (not on a timing hunch), and one structural one that matters more than the inner loop. Let me separate \"almost certainly true regardless of measurement\" from \"needs a number.\"\n\n## First: are you even timing a release build?\n\nThis is the single most common false alarm. If \"feels slow\" came from `cargo run` (a `dev` build), throw the observation out \u00e2\u20ac\u201d it tells you nothing real. Bounds checks and un-inlined calls dominate a debug build in ways `release` erases entirely.\n\n```bash\n# honest timing \u00e2\u20ac\u201d full opt-level 3, thin LTO\ncargo run --release\n```\n\nIf it's still slow in release, now we have a real problem to chase. Half the time, this step ends the investigation.\n\n## The two things wrong on inspection (not hunches)\n\n### 1. `.unwrap()` in a per-pixel loop violates the no-unwrap rule and adds a branch per pixel\n\n`src.pixel(x, y).unwrap()` and `dst.pixel(x, y).unwrap()` run on every single pixel. At 8192\u00c3\u20148192 that's ~67 million `Option` unwraps, each a bounds check plus a panic branch \u00e2\u20ac\u201d and `.unwrap()` outside tests is clippy-banned here anyway. The coordinates are loop-derived from `0..height`/`0..width`, so they're provably in bounds; the per-pixel `Option` plumbing is pure overhead. This is a correctness-convention fix that also happens to remove work, so it's worth doing independent of any benchmark.\n\n### 2. You're doing per-pixel 2D indexing instead of iterating the buffer\n\n`pixel(x, y)` / `set_pixel(x, y)` recompute `y * stride + x` (and bounds-check) on every access, three times per pixel (two reads, one write). CLAUDE.md mandates pixel buffers are flat `Vec<u8>` with explicit stride. The idiomatic, faster form iterates the byte slices directly \u00e2\u20ac\u201d let the iterator carry the position so the optimizer can elide bounds checks and vectorize the channel math. Prefer iterators over indexing (a stated convention, and it's what lets the autovectorizer work).\n\nRoughly (adjust to your real `PixelBuffer` API \u00e2\u20ac\u201d assuming RGBA8, 4 bytes/pixel, matching dimensions):\n\n```rust\n/// Composite `src` over `dst` in place (normal/source-over).\n/// Requires identical dimensions; callers slice to the overlap first.\npub fn blend_normal(src: &PixelBuffer, dst: &mut PixelBuffer) {\n    debug_assert_eq!(src.width, dst.width);\n    debug_assert_eq!(src.height, dst.height);\n\n    for (s, d) in src\n        .pixels()        // &[u8; 4] per pixel, or chunks_exact(4)\n        .zip(dst.pixels_mut())\n    {\n        *d = alpha_over(*s, *d);\n    }\n}\n```\n\nIf `PixelBuffer` doesn't expose pixel iterators yet, `src.bytes().chunks_exact(4).zip(dst.bytes_mut().chunks_exact(4))` gets you there over the flat `Vec<u8>`. `chunks_exact` is the right call \u00e2\u20ac\u201d it gives the optimizer a known stride and no remainder branch in the hot path.\n\nNote I have **not** added `#[inline]` to `alpha_over`. LTO inlines aggressively already; adding it on a hunch is noise. If a benchmark later shows it matters across the crate boundary, then add it \u00e2\u20ac\u201d not before.\n\n## The thing that matters more than the inner loop: bound the work\n\nHere's the contrarian-with-cause part. Making this loop 3x faster is the *wrong fix* if it's running over the whole canvas during live painting. The 8K perf constraint in this repo is explicit: per-brush-move work must be bounded by the **dirty region**, not total canvas size. A brush stroke touches a few hundred pixels; compositing all 67M every move is the actual bug, and no amount of iterator tuning or SIMD saves you from doing 67M pixels of pointless work.\n\nSo the question that decides everything: **where is `blend_normal` called from?**\n\n- **Live drawing / per-frame layer compositing** \u00e2\u2020\u2019 the durable fix is *not* a faster full-canvas pass. It's (a) blend only the dirty rectangle each move, and ideally (b) composite the live canvas on the **GPU**, not the CPU. CPU compositing is for export and thumbnails. That's a [[pixhaus-wgpu]] conversation, and it's where the real 8K win lives.\n- **Export / a one-shot full-canvas filter** \u00e2\u2020\u2019 it genuinely must touch every pixel, so the full pass is correct. *Then* parallelize it across scanline chunks with rayon ([[pixhaus-rayon]]) \u00e2\u20ac\u201d `par_chunks_mut` over the destination, zipped with source. That's the case where rayon's splitting overhead pays off, because the work is genuinely O(whole canvas).\n- **UI stutters but total CPU is low** \u00e2\u2020\u2019 the work is on the egui frame thread blocking it. Move it to `spawn_blocking` and return over a channel the frame loop drains ([[pixhaus-tokio]]). The frame thread must never block.\n\nI can't pick between these for you without seeing the call site, and the right answer is completely different for each. That's the measurement.\n\n## So here's what I'd actually do, in order\n\n1. **Confirm it's slow in `--release`**, not dev. (`cargo run --release`.) If it's fine here, we're done.\n2. **Profile the slow scenario at 8K** with samply on a profilable build \u00e2\u20ac\u201d release optimizations *plus* symbols so the profiler names functions instead of showing `??`:\n   ```bash\n   cargo build --profile release-with-debug\n   samply record ./target/release-with-debug/<binary>\n   ```\n   Reproduce the slow paint/export, then read the flamegraph: hunt the widest box near the top. If `blend_normal` isn't a wide box, the time is somewhere else and we just avoided \"fixing\" the wrong function.\n3. **If `blend_normal` is the wide box, pin it with a criterion benchmark** at a realistic size so \"before\" is a number, not a memory. Add to the core crate:\n   ```toml\n   [dev-dependencies]\n   criterion = \"0.7\"   # confirm latest on crates.io; MIT OR Apache-2.0, clears cargo deny\n\n   [[bench]]\n   name = \"blend\"\n   harness = false\n   ```\n   ```rust\n   use std::hint::black_box;\n   use criterion::{Criterion, criterion_group, criterion_main};\n\n   fn bench_blend(c: &mut Criterion) {\n       let src = PixelBuffer::filled(2048, 2048, Rgba::RED);\n       let mut dst = PixelBuffer::filled(2048, 2048, Rgba::BLUE);\n       c.bench_function(\"blend_normal_2048\", |b| {\n           b.iter(|| blend_normal(black_box(&src), black_box(&mut dst)));\n       });\n   }\n   criterion_group!(benches, bench_blend);\n   criterion_main!(benches);\n   ```\n4. **Apply the iterator + no-unwrap rewrite above**, re-run the bench. criterion prints the delta against the stored baseline (\"change: -X% ... Performance has improved.\").\n5. **Keep it only if it clears ~5%** outside the noise interval. If criterion can't distinguish it from noise, revert \u00e2\u20ac\u201d you'd be spending readability for nothing. (The no-unwrap fix stays regardless; that's a convention fix, not a perf one.)\n6. **Then go after the structural fix** the profile pointed at \u00e2\u20ac\u201d dirty-rect bounding, GPU compositing, off-thread, or rayon \u00e2\u20ac\u201d per the call-site analysis above. That's almost always a bigger win than the inner loop.\n\n## What I won't do\n\n- Won't reach for `unsafe` for speed \u00e2\u20ac\u201d it's forbidden workspace-wide. The safe paths (release profile, iterators, rayon, GPU, dirty-rect) cover the real wins.\n- Won't `#[inline]` or hand-unroll on a hunch before the profiler names the bottleneck.\n- Won't optimize for a canvas size that doesn't actually stall \u00e2\u20ac\u201d a 64\u00c3\u201464 sprite doesn't need any of this.\n\nTell me where `blend_normal` is called from (live paint vs export) and whether the slowness reproduces under `--release`, and I'll take it the rest of the way \u00e2\u20ac\u201d including wiring up the benchmark and doing the rewrite.\n"}], "grading": {"eval_id": 0, "configuration": "with_skill", "summary": {"pass_rate": 1.0, "passed": 5, "failed": 0, "total": 5}, "expectations": [{"text": "Leads with measure-don't-guess before optimizing", "passed": true, "evidence": "Opens: 'I'm not going to rewrite this on the strength of feels slow ... don't guess, measure'."}, {"text": "Does not present a hand-optimized rewrite without a measurement caveat", "passed": true, "evidence": "Separates 'almost certainly true on inspection' from 'needs a number'; the perf rewrite is gated behind profile+bench steps 2-5."}, {"text": "Identifies bounding work to the dirty region as the durable fix", "passed": true, "evidence": "'The thing that matters more than the inner loop: bound the work' \u00e2\u20ac\u201d dirty rectangle, not full-canvas pass."}, {"text": "Mentions building with --release / the correct profile for honest timing", "passed": true, "evidence": "'are you even timing a release build?' + cargo run --release, and release-with-debug for profiling."}, {"text": "Suggests a criterion benchmark to verify the change clears a real margin", "passed": true, "evidence": "Step 3-5: criterion bench with harness=false, std::hint::black_box, keep only if it clears ~5% outside noise."}]}}, {"id": "eval-0-without_skill-run-1", "prompt": "(No prompt found)", "eval_id": null, "outputs": [{"name": "answer.md", "type": "text", "content": "# Optimizing `blend_normal`\n\nShort answer: yes, and the speedup is large. The current version is slow for three separate reasons, and they compound. Let me walk through each, then give you a rewrite.\n\n## Why it's slow\n\n1. **Per-pixel method calls with bounds checks and `Option`.** `src.pixel(x, y).unwrap()` and `dst.set_pixel(x, y, ...)` each recompute the index `y * width + x`, do a bounds check, wrap the result in `Option`, and then you `unwrap()` it. That's a lot of ceremony for \"read four bytes.\" The compiler *might* inline and hoist some of it, but accessor methods that return `Option` rarely optimize down to a clean linear scan. You're paying an index multiply and a bounds check on every one of `width * height` iterations.\n\n2. **Column-major access pattern.** Your inner loop varies `x` while `y` is fixed, which is the right order for a row-major buffer \u00e2\u20ac\u201d good. But you're still addressing pixel-by-pixel through accessors, so you never let the CPU prefetcher and the compiler see that you're walking memory linearly. The whole point of a `Vec<u8>` with explicit stride is that a blend is a *streaming* operation over contiguous bytes.\n\n3. **You blend the entire canvas every call.** This is the big one for painting. When the user drags a brush, you touch maybe a few hundred pixels, but `blend_normal` walks all `width * height` of them. On an 8192\u00c3\u20148192 canvas that's 67 million pixels per brush move regardless of brush size. No amount of micro-optimizing the inner loop fixes an algorithm that does work proportional to canvas size instead of work proportional to what changed.\n\nThe order to fix these: **#3 first** (it's the one that actually bites when painting), then **#1 and #2** (which make the per-pixel cost cheap for whatever region you do touch).\n\n## Fix #3: blend only the dirty region\n\nGive blends a rectangle to operate on. The brush already knows the bounding box of what it just painted; pass that down. Everything else in this answer assumes you've bounded the work \u00e2\u20ac\u201d a tight inner loop over 67M pixels is still 67M pixels.\n\n```rust\n/// Axis-aligned region in pixel coordinates, clamped to the buffer by the caller.\n#[derive(Clone, Copy)]\npub struct Rect {\n    pub x: u32,\n    pub y: u32,\n    pub width: u32,\n    pub height: u32,\n}\n\npub fn blend_normal_in(src: &PixelBuffer, dst: &mut PixelBuffer, region: Rect) {\n    // ... blend only rows region.y .. region.y + region.height,\n    //     columns region.x .. region.x + region.width\n}\n```\n\nIf `src` is a small brush stamp at an offset rather than a full-canvas layer, even better \u00e2\u20ac\u201d its dimensions *are* the dirty region and you never allocate a canvas-sized source.\n\n## Fix #1 and #2: operate on byte slices, not accessors\n\nAssuming RGBA8 (4 bytes per pixel) and a row stride in bytes, work directly on the backing `&[u8]` / `&mut [u8]` and let the iterator carry the bounds proof so the compiler drops per-pixel checks. Here's a region-aware version that processes one row at a time and chunks each row into 4-byte pixels:\n\n```rust\npub fn blend_normal_in(src: &PixelBuffer, dst: &mut PixelBuffer, region: Rect) {\n    const BPP: usize = 4; // bytes per pixel, RGBA8\n\n    let dst_stride = dst.stride(); // bytes per row\n    let src_stride = src.stride();\n\n    let x0 = region.x as usize;\n    let row_bytes = region.width as usize * BPP;\n\n    for row in 0..region.height as usize {\n        let dy = region.y as usize + row;\n\n        let d_start = dy * dst_stride + x0 * BPP;\n        let s_start = row * src_stride; // adjust if src has its own offset\n\n        let dst_row = &mut dst.bytes_mut()[d_start..d_start + row_bytes];\n        let src_row = &src.bytes()[s_start..s_start + row_bytes];\n\n        for (s, d) in src_row\n            .chunks_exact(BPP)\n            .zip(dst_row.chunks_exact_mut(BPP))\n        {\n            let out = alpha_over_rgba([s[0], s[1], s[2], s[3]], [d[0], d[1], d[2], d[3]]);\n            d.copy_from_slice(&out);\n        }\n    }\n}\n```\n\nWhy this is faster:\n\n- **`chunks_exact` gives the optimizer a clean, bounds-check-free loop.** It knows the length is a multiple of 4 and that each chunk is exactly 4 bytes, so the per-pixel bounds checks vanish and it can autovectorize the arithmetic.\n- **One slice index per row instead of two method calls per pixel.** The index multiply happens `height` times, not `width * height` times.\n- **Linear memory walk** within each row keeps the prefetcher happy.\n\nYou'll need `bytes()` / `bytes_mut()` / `stride()` accessors on `PixelBuffer` if they don't exist. They're cheap to add and they're the right primitive for any streaming pixel op (blend, fill, copy, channel swap) \u00e2\u20ac\u201d not just this one.\n\n## Make the per-pixel blend math integer-only\n\nIf your `alpha_over` works in `f32` and divides by 255.0 per channel, that's another hidden cost. The standard integer \"over\" with rounding avoids floats entirely and stays autovectorizable:\n\n```rust\n#[inline]\nfn alpha_over_rgba(src: [u8; 4], dst: [u8; 4]) -> [u8; 4] {\n    let sa = src[3] as u32;\n    let inv = 255 - sa;\n\n    // out = src + dst * (1 - src_a), premultiplied-style with rounding.\n    let blend = |s: u8, d: u8| -> u8 {\n        let s = s as u32 * sa;\n        let d = d as u32 * inv;\n        let sum = s + d + 127; // round-to-nearest\n        ((sum + (sum >> 8)) >> 8) as u8 // fast /255 approximation\n    };\n\n    let out_a = sa + (dst[3] as u32 * inv + 127 >> 8); // or compute the same way\n\n    [\n        blend(src[0], dst[0]),\n        blend(src[1], dst[1]),\n        blend(src[2], dst[2]),\n        out_a.min(255) as u8,\n    ]\n}\n```\n\nAdjust to match whatever your `alpha_over` actually computes (straight vs. premultiplied alpha changes the formula). The point is: keep it `u32` integer math, mark it `#[inline]`, and the row loop above will vectorize across pixels.\n\n## Don't reach for threads yet\n\nA multi-row `rayon` split (`par_chunks_mut` over rows) is a real option, but only *after* you've bounded the work to the dirty region. For a brush-sized region the threading overhead would dominate. Save parallelism for whole-canvas operations \u00e2\u20ac\u201d full-layer composite, filters, export \u00e2\u20ac\u201d where the region genuinely is the canvas. When you do, split `dst.bytes_mut()` into row-stride chunks with `par_chunks_mut(stride)` so each thread owns disjoint rows; that keeps it data-race-free without locks.\n\n## Order of operations\n\n1. Add `bytes()`, `bytes_mut()`, `stride()` to `PixelBuffer` (and confirm RGBA8 / the actual layout).\n2. Add the dirty-`Rect` parameter and have the brush pass its bounding box.\n3. Rewrite the loop with `chunks_exact` over byte slices.\n4. Make `alpha_over` integer-only and `#[inline]`.\n5. Benchmark a realistic brush stroke (a `criterion` bench on a small region) before adding any parallelism.\n\n## One caution\n\nMatch the exact blend math of your existing `alpha_over` before you ship \u00e2\u20ac\u201d straight vs. premultiplied alpha, and the rounding, change pixel values by \u00c2\u00b11, which a snapshot/`image-compare` test will flag. Keep a test that blends a known src over a known dst and asserts the exact output bytes, so the optimization can't silently change what users see.\n"}], "grading": {"eval_id": 0, "configuration": "without_skill", "summary": {"pass_rate": 0.2, "passed": 1, "failed": 4, "total": 5}, "expectations": [{"text": "Leads with measure-don't-guess before optimizing", "passed": false, "evidence": "Opens 'Short answer: yes, and the speedup is large' and proceeds straight to a rewrite; no measure-first framing."}, {"text": "Does not present a hand-optimized rewrite without a measurement caveat", "passed": false, "evidence": "Presents the full byte-slice rewrite as the answer; benchmarking appears only as step 5 before parallelism."}, {"text": "Identifies bounding work to the dirty region as the durable fix", "passed": true, "evidence": "'Fix #3: blend only the dirty region' explicitly called the big one for painting."}, {"text": "Mentions building with --release / the correct profile for honest timing", "passed": false, "evidence": "Never mentions release builds, profiles, or profiling at all."}, {"text": "Suggests a criterion benchmark to verify the change clears a real margin", "passed": false, "evidence": "Mentions a criterion bench 'before adding any parallelism' but not as before/after verification with a margin/revert rule."}]}}, {"id": "eval-1-with_skill-run-1", "prompt": "(No prompt found)", "eval_id": null, "outputs": [{"name": "answer.md", "type": "text", "content": "# Benchmarking the flood-fill before you change it\n\nGood instinct: in this repo no perf change lands without a benchmark or profile showing the\ncurrent code is the bottleneck. For flood-fill the move is to pin the *current* behavior as a\nnumber first, so after your rewrite criterion can tell you whether you got faster, stayed flat,\nor regressed. Here's the full setup.\n\n## 1. Add criterion as a dev-dependency on the core crate\n\nIn `core/Cargo.toml` (the crate that owns flood-fill \u00e2\u20ac\u201d confirm the path; the workspace is a\nclean slate so this may be the first crate you add):\n\n```toml\n[dev-dependencies]\ncriterion = \"0.7\"   # confirm current version on crates.io; MIT OR Apache-2.0, clears cargo deny\n\n[[bench]]\nname = \"flood_fill\"\nharness = false      # required \u00e2\u20ac\u201d criterion provides its own main()\n```\n\n`harness = false` is not optional. Leave it off and `cargo bench` tries to use the built-in\nnightly bench harness and your `criterion_main!` never runs.\n\n## 2. Write the benchmark in `benches/`\n\nCreate `core/benches/flood_fill.rs`. The point of a flood-fill benchmark is to measure it at a\nsize that actually hurts and on inputs that exercise the real cost \u00e2\u20ac\u201d this is a canvas tool, so\nits perf story is dominated by canvas size (the 8K constraint). Benchmark at 4K/8K, not a toy\n256x256 that's instant either way.\n\nFlood-fill cost also depends heavily on *what gets filled*, so benchmark more than one shape:\n\n- **Whole-canvas fill** \u00e2\u20ac\u201d worst case, the fill visits every pixel. This is the case your\n  rewrite most needs to not regress.\n- **A bounded region** \u00e2\u20ac\u201d a fill that hits a boundary early. Catches algorithms that scan the\n  whole canvas regardless of how much they actually fill.\n\n```rust\nuse std::hint::black_box;\nuse criterion::{Criterion, criterion_group, criterion_main};\n// adjust these imports to the real types/fn once they exist\nuse core::{flood_fill, PixelBuffer, Rgba};\n\nfn bench_flood_fill(c: &mut Criterion) {\n    // Worst case: an empty canvas where the fill spreads to every pixel.\n    c.bench_function(\"flood_fill_whole_4096\", |b| {\n        let base = PixelBuffer::filled(4096, 4096, Rgba::TRANSPARENT);\n        b.iter_batched(\n            || base.clone(),                       // fresh buffer per iter \u00e2\u20ac\u201d fill mutates\n            |mut buf| {\n                flood_fill(\n                    black_box(&mut buf),\n                    black_box((0, 0)),             // seed\n                    black_box(Rgba::RED),          // fill color\n                );\n                buf\n            },\n            criterion::BatchSize::LargeInput,\n        );\n    });\n\n    // Bounded case: fill stops at a boundary, touching only part of the canvas.\n    c.bench_function(\"flood_fill_bounded_4096\", |b| {\n        let base = bordered_region(4096, 4096);    // your helper: a fenced-off area\n        b.iter_batched(\n            || base.clone(),\n            |mut buf| {\n                flood_fill(black_box(&mut buf), black_box((10, 10)), black_box(Rgba::RED));\n                buf\n            },\n            criterion::BatchSize::LargeInput,\n        );\n    });\n}\n\ncriterion_group!(benches, bench_flood_fill);\ncriterion_main!(benches);\n```\n\nTwo details that matter:\n\n- **`iter_batched` with a fresh clone per iteration**, not plain `b.iter`. Flood-fill mutates\n  the buffer in place \u00e2\u20ac\u201d once it's filled, a second run fills nothing and you'd be timing a\n  no-op. `iter_batched` rebuilds the input each time; the clone happens in the setup closure,\n  outside the measured section.\n- **`black_box` on inputs and the returned buffer**, using `std::hint::black_box` (not the\n  deprecated `criterion::black_box`). Without it the optimizer can prove the fill result is\n  unused and delete the whole call \u00e2\u20ac\u201d you'd \"benchmark\" nothing and see absurdly fast numbers.\n\n## 3. Capture the baseline, change the code, re-run\n\ncriterion remembers the previous run and prints the delta, so the workflow is:\n\n```bash\n# baseline, on the CURRENT flood-fill\ncargo bench -p core --bench flood_fill\n\n# ... make your change ...\n\n# same command \u00e2\u20ac\u201d criterion compares against the saved baseline\ncargo bench -p core --bench flood_fill\n```\n\nThe second run prints something like `change: -18.3% [...] Performance has improved.` That\ndelta is what justifies the change. The rule of thumb: keep it only if it clears a real margin\n(~5%+). If criterion reports the change as within noise (overlapping confidence intervals), the\nrewrite bought you nothing measurable \u00e2\u20ac\u201d revert it rather than ship less-readable code for an\nimaginary win. Don't trust a single noisy run; criterion's intervals exist precisely so\nbackground load doesn't fool you.\n\n## 4. If you want to know *where* the time goes, profile\n\nA benchmark tells you whether you got faster; a profiler tells you *what* to change. If you're\nnot sure the inner loop is even the bottleneck, profile before rewriting. Build the profilable\nbinary with the right profile and record with samply (preferred here \u00e2\u20ac\u201d cross-platform, works\nthe same on your Windows machine, no sudo/perf setup):\n\n```bash\ncargo install samply\ncargo build --profile release-with-debug\nsamply record ./target/release-with-debug/<binary>   # then drive a flood-fill in the app\n```\n\nUse `release-with-debug`, never `dev`. A `dev`-build profile is a profile of missing\noptimizations (bounds checks, un-inlined calls) \u00e2\u20ac\u201d you'd \"fix\" code that release would erase.\n`release-with-debug` gives you release speed plus the debug symbols samply needs to name\nfunctions instead of showing `??`.\n\n## Build profile \u00e2\u20ac\u201d the thing that's easy to get wrong\n\n| Doing | Profile |\n|---|---|\n| `cargo bench` timings | criterion builds optimized automatically \u00e2\u20ac\u201d don't second-guess it |\n| Profiling with samply/flamegraph | `--profile release-with-debug` |\n| Quoting any \"is it fast\" number by hand | `--release` |\n| Day-to-day editing / `bacon` | `dev` \u00e2\u20ac\u201d never quote its timings |\n\n`bacon` is a correctness loop (check/clippy), not a perf number \u00e2\u20ac\u201d quote timings from a\ndeliberate `cargo bench` or `--release` run, not from whatever bacon happened to compile.\n\n## A note specific to flood-fill\n\nWhen you read the result, the durable win for a canvas-scale path is usually algorithmic, not a\nfaster inner loop. If the profile shows flood-fill burning time proportional to total canvas\nsize even when it fills a small area, the fix is to bound the work to the region actually\ntouched (and track the dirty rect for the redraw) rather than micro-tuning the scan. If it\ngenuinely must visit every pixel (a true whole-canvas fill), that's where parallelizing across\nscanline chunks with rayon earns its keep \u00e2\u20ac\u201d but only after the benchmark or profile names it\nthe bottleneck, and only at a size big enough that the split overhead pays off. A 64x64 sprite\ndoesn't need any of this.\n\nAnd don't reach for `unsafe` to speed up the fill \u00e2\u20ac\u201d it's forbidden workspace-wide. The safe\npaths (release profile, dirty-rect bounding, rayon) cover the real wins.\n\n## TL;DR\n\n1. Add `criterion` dev-dep + `[[bench]]` with `harness = false` on `core`.\n2. Write `core/benches/flood_fill.rs`: realistic 4K/8K sizes, both whole-canvas and bounded\n   cases, `iter_batched` for the per-iteration clone, `std::hint::black_box` on inputs/output.\n3. `cargo bench -p core --bench flood_fill` to capture the baseline, change the code, run it\n   again, read the delta. Keep the change only if it clears ~5%; revert if it's within noise.\n4. Unsure where the time goes? `cargo build --profile release-with-debug` + `samply record`\n   first.\n"}], "grading": {"eval_id": 1, "configuration": "with_skill", "summary": {"pass_rate": 1.0, "passed": 6, "failed": 0, "total": 6}, "expectations": [{"text": "Adds criterion as a dev-dependency", "passed": true, "evidence": "[dev-dependencies] criterion = \"0.7\" on the core crate."}, {"text": "Specifies harness = false for the [[bench]] target", "passed": true, "evidence": "[[bench]] name=flood_fill harness=false, with note that it's not optional."}, {"text": "Uses std::hint::black_box rather than deprecated criterion::black_box", "passed": true, "evidence": "Explicitly 'std::hint::black_box (not the deprecated criterion::black_box)'."}, {"text": "Benchmarks at a realistic (large) canvas size, not a toy input", "passed": true, "evidence": "Benchmarks at 4K/8K with whole-canvas and bounded cases; warns against 256x256 toy."}, {"text": "Says to compare before/after via cargo bench and keep only gains above noise", "passed": true, "evidence": "Baseline-then-rerun workflow; keep only if it clears ~5%, revert if within noise/overlapping intervals."}, {"text": "Notes timing must come from an optimized build, not dev", "passed": true, "evidence": "Build-profile table + 'Use release-with-debug, never dev'; bacon is correctness not perf."}]}}, {"id": "eval-1-without_skill-run-1", "prompt": "(No prompt found)", "eval_id": null, "outputs": [{"name": "answer.md", "type": "text", "content": "# Benchmarking flood-fill in the core crate\n\nThe goal is a stable baseline you can compare against before and after your change. The standard tool for Rust micro/throughput benchmarks is **Criterion** \u00e2\u20ac\u201d it runs the function many times, does statistical analysis, and tells you whether a change is a real regression or just noise. That's exactly the \"don't make it slower\" question you're asking.\n\nHere's the full setup.\n\n## 1. Make sure the `core` crate exists\n\nThe workspace is a clean slate (`members = []`). If you haven't created `core` yet, do that first so there's something to benchmark:\n\n```bash\ncargo new --lib core\n```\n\nThen add it to the root `Cargo.toml`:\n\n```toml\n[workspace]\nmembers = [\"core\"]\n```\n\nYour flood-fill should be a `pub fn` in `core` so the benchmark can call it across the crate boundary. Something like:\n\n```rust\n// core/src/fill.rs\n/// Flood-fill `buffer` (RGBA8, row-major, `width * height * 4` bytes) starting\n/// at `(x, y)`, replacing the contiguous region of the start color with `fill`.\npub fn flood_fill(\n    buffer: &mut [u8],\n    width: u32,\n    height: u32,\n    x: u32,\n    y: u32,\n    fill: [u8; 4],\n) {\n    // ...\n}\n```\n\n## 2. Add Criterion as a dev-dependency\n\nCriterion is dev-only \u00e2\u20ac\u201d it never ships in the library. In `core/Cargo.toml`:\n\n```toml\n[dev-dependencies]\ncriterion = { version = \"0.5\", features = [\"html_reports\"] }\n\n[[bench]]\nname = \"flood_fill\"\nharness = false\n```\n\n`harness = false` is the important line \u00e2\u20ac\u201d it tells Cargo not to use the built-in `libtest` bench harness (which is unstable/nightly-only) and lets Criterion own `main`.\n\nCriterion is MIT/Apache-2.0, so it's clean against the repo's `cargo deny` license gate. As a dev-dependency it doesn't affect the shipped binary's dependency tree.\n\n## 3. Write the benchmark\n\nCreate `core/benches/flood_fill.rs`:\n\n```rust\nuse criterion::{black_box, criterion_group, criterion_main, BenchmarkId, Criterion, Throughput};\nuse pixhaus_core::flood_fill; // match your crate's actual package name\n\n/// Build a `width x height` RGBA8 buffer filled with one color so a fill from\n/// the corner has to traverse the whole canvas \u00e2\u20ac\u201d the worst case for flood-fill.\nfn solid_canvas(width: u32, height: u32) -> Vec<u8> {\n    vec![0u8; (width as usize) * (height as usize) * 4]\n}\n\nfn bench_flood_fill(c: &mut Criterion) {\n    let mut group = c.benchmark_group(\"flood_fill_full_canvas\");\n\n    // Cover small sprites up to the 8K worst case the project cares about.\n    for &size in &[256u32, 1024, 4096, 8192] {\n        let pixels = (size as u64) * (size as u64);\n        group.throughput(Throughput::Elements(pixels)); // gives \"Melem/s\"\n\n        group.bench_with_input(BenchmarkId::from_parameter(size), &size, |b, &size| {\n            // Per-iteration setup: clone a fresh buffer so each run starts from\n            // the same state. iter_batched keeps the clone out of the timed region.\n            b.iter_batched(\n                || solid_canvas(size, size),\n                |mut buf| {\n                    flood_fill(\n                        black_box(&mut buf),\n                        black_box(size),\n                        black_box(size),\n                        black_box(0),\n                        black_box(0),\n                        black_box([255, 0, 0, 255]),\n                    );\n                },\n                criterion::BatchSize::LargeInput,\n            );\n        });\n    }\n\n    group.finish();\n}\n\ncriterion_group!(benches, bench_flood_fill);\ncriterion_main!(benches);\n```\n\nA few things that matter for getting an honest number:\n\n- **`iter_batched` with per-iteration setup.** Flood-fill mutates the buffer in place, so once it's filled the second run has nothing to do. You must hand each iteration a fresh buffer, and the clone must be outside the timed region \u00e2\u20ac\u201d that's what `iter_batched` does (setup closure isn't timed, only the second closure is). Don't use plain `b.iter(|| ...)` with a pre-filled buffer; you'd be timing a no-op.\n- **`black_box` on inputs.** Stops the optimizer from constant-folding or hoisting the call when arguments are known at compile time.\n- **`Throughput::Elements`.** Reports millions of pixels per second, which is far more meaningful across canvas sizes than raw wall-clock, and it's the number that maps to the \"scales to 8K\" concern.\n- **Cover the size range.** A flood-fill change can be neutral at 256x256 and a disaster at 8192x8192 (or vice versa \u00e2\u20ac\u201d e.g. an algorithm with worse constant factors but better cache behavior). Bench the whole range so a regression can't hide.\n- **Pick representative shapes, not just a solid canvas.** A solid canvas is the worst case (every pixel gets visited). Also consider a maze/checkerboard input if your algorithm's behavior depends on region shape \u00e2\u20ac\u201d scanline vs. naive stack fill diverge a lot there. Add more `bench_with_input` cases as needed.\n\n## 4. Capture the baseline, change the code, compare\n\nCriterion's headline feature is automatic before/after comparison \u00e2\u20ac\u201d it saves results under `target/criterion/` and diffs each run against the last.\n\n```bash\n# On the current (unchanged) code, record the baseline:\ncargo bench -p core\n\n# Now make your flood-fill change, then run again:\ncargo bench -p core\n```\n\nThe second run prints something like `change: [-1.2% +0.4%] (p = 0.31 > 0.05) No change in performance detected` or `Performance has regressed.` That's your answer.\n\nFor a cleaner workflow, name the baseline explicitly so a later edit doesn't overwrite it:\n\n```bash\n# Before the change, save a named baseline:\ncargo bench -p core -- --save-baseline before\n\n# After the change, compare against it (this run does NOT overwrite \"before\"):\ncargo bench -p core -- --baseline before\n```\n\nOpen `target/criterion/report/index.html` for the plots if you want to see the distribution.\n\n## 5. Keep the measurement trustworthy\n\n- **Run in release.** `cargo bench` compiles in release mode by default, so don't worry \u00e2\u20ac\u201d but never judge perf from `cargo test` or a debug build.\n- **Quiet the machine.** Close other heavy work; CPU frequency scaling and background load are the usual sources of noisy `p`-values. If results are jittery, bump sample size or measurement time: `group.measurement_time(std::time::Duration::from_secs(10))`.\n- **Watch for allocation in the setup.** Allocating an 8192x8192x4 buffer is ~256 MB per iteration. `BatchSize::LargeInput` tells Criterion to run few iterations per batch so it doesn't try to hold thousands of these at once. If you still hit memory pressure, drop to `BatchSize::PerIteration`.\n- **Compare apples to apples.** Run before and after on the same machine, same power state, ideally back-to-back. A baseline recorded on your laptop on battery vs. plugged in isn't comparable.\n\n## 6. Note on the repo's gates\n\nThe repo's Stop hook runs `cargo test`/`clippy`/`fmt`, not `cargo bench` \u00e2\u20ac\u201d benchmarks aren't part of the gate, so they won't block your session, but `clippy --all-targets` *does* lint bench files. Keep the bench code clean (no `unwrap` outside the bench body is the safe habit, though benches are test-like code). Benchmarks are run on demand, by you, when you want a number.\n\n## Quick recap\n\n1. Create/confirm the `core` crate with `flood_fill` as a `pub fn`.\n2. Add `criterion` as a dev-dependency and a `[[bench]]` with `harness = false`.\n3. Write `core/benches/flood_fill.rs` using `iter_batched` (fresh buffer per run), `black_box` on inputs, `Throughput::Elements`, and a 256\u00e2\u2020\u20198192 size sweep.\n4. `cargo bench -p core -- --save-baseline before`, make your change, then `cargo bench -p core -- --baseline before` to get a pass/regress verdict.\n"}], "grading": {"eval_id": 1, "configuration": "without_skill", "summary": {"pass_rate": 0.8333, "passed": 5, "failed": 1, "total": 6}, "expectations": [{"text": "Adds criterion as a dev-dependency", "passed": true, "evidence": "[dev-dependencies] criterion = { version = \"0.5\", features=[html_reports] }."}, {"text": "Specifies harness = false for the [[bench]] target", "passed": true, "evidence": "[[bench]] name=flood_fill harness=false with explanation."}, {"text": "Uses std::hint::black_box rather than deprecated criterion::black_box", "passed": false, "evidence": "Imports and uses criterion::black_box (the deprecated re-export), and pins criterion 0.5."}, {"text": "Benchmarks at a realistic (large) canvas size, not a toy input", "passed": true, "evidence": "256 -> 8192 size sweep with Throughput::Elements."}, {"text": "Says to compare before/after via cargo bench and keep only gains above noise", "passed": true, "evidence": "--save-baseline before / --baseline before workflow; reads p-value significance and 'No change detected'."}, {"text": "Notes timing must come from an optimized build, not dev", "passed": true, "evidence": "'Run in release ... never judge perf from cargo test or a debug build.'"}]}}, {"id": "eval-2-with_skill-run-1", "prompt": "(No prompt found)", "eval_id": null, "outputs": [{"name": "answer.md", "type": "text", "content": "# Finding where the brush-drawing time actually goes\n\nThe rule before you change anything: don't guess, measure. \"Laggy at 8K, smooth at 256\" is a hypothesis about *what* is slow, not a finding about *where* the time goes. The fact that it scales with canvas size is a strong tell (it points at a full-canvas pass somewhere instead of dirty-region work), but a tell isn't proof. Profile first, then fix the box the profiler shows you. Here's the order I'd run it.\n\n## 0. Make sure you're measuring the real thing\n\nOne trap up front: if you've been judging \"laggy\" from a `cargo run` (dev build) or from whatever `bacon` happened to compile, throw that impression out. A dev build is unoptimized \u00e2\u20ac\u201d bounds checks and un-inlined calls dominate, and you'll end up \"fixing\" code that release would have erased. `bacon` is a correctness loop, not a perf number. Every timing and profile below comes from an optimized build.\n\nAlso confirm the slowness is real at the size that hurts. You already have that: 8192x8192 is exactly the size the canvas has to scale to. Reproduce there, not on a toy.\n\n## 1. Build the right binary\n\nThe workspace defines three profiles. For *timing* you want `--release`. For *profiling* you want `release-with-debug`, which keeps release optimizations but also keeps debug symbols and skips `strip`, so the profiler can name functions instead of showing you a wall of `??`.\n\n```powershell\n# build the profilable binary\ncargo build --profile release-with-debug\n```\n\nIf you just want to confirm the lag is genuine and not a dev-build artifact, first run:\n\n```powershell\ncargo run --release\n```\n\nIf it's smooth in `--release`, you were profiling the debug build's missing optimizations and you're done. I doubt that's the case at 8K, but it's a 30-second check that saves you from chasing a ghost.\n\n## 2. Profile it with samply\n\nUse `samply` here. It's cross-platform and works the same on your Windows machine as on macOS/Linux, needs no admin/perf setup, and opens the Firefox Profiler UI with a flamegraph plus a timeline. (`cargo flamegraph` works too, but on Windows its backend goes through ETW/blondie \u00e2\u20ac\u201d more friction for no benefit.)\n\n```powershell\ncargo install samply\ncargo build --profile release-with-debug\nsamply record .\\target\\release-with-debug\\<binary>.exe\n```\n\nThen actually do the thing that's slow: open an 8192x8192 canvas and drag the brush around for several seconds. You want the profiler to capture the painful path under realistic load, so paint enough to fill a representative sample. Stop the recording and the UI opens.\n\n## 3. Read the flamegraph\n\n- X-axis is total CPU time \u00e2\u20ac\u201d wider box = more time, either slower per call or called more often.\n- Y-axis is stack depth \u00e2\u20ac\u201d `main` at the bottom, leaves on top.\n- Box color is random; ignore it.\n- Hunt the **widest box near the top.** That's the leaf burning your cycles.\n\nCompare mentally against the 256x256 case in your head: the box that's hair-thin at 256 and enormous at 8K is your culprit. That width-scales-with-canvas signature is the whole diagnosis.\n\n## 4. What you'll most likely see (and where each leads)\n\nIn a canvas tool the bottleneck is almost always one of a short list. Match what samply shows to one of these \u00e2\u20ac\u201d I'm naming the fix skills but **don't apply any of them until the profile actually points there:**\n\n- **A per-pixel or per-scanline loop is the wide box.** First question, before any micro-opt: should that loop run over the whole canvas at all? A brush move only touches a small area. If the loop is iterating all 67 million pixels per drag event, the fix is algorithmic \u00e2\u20ac\u201d bound the work to the dirty rectangle, not a faster full-canvas pass. That single change is what makes it scale. (8K-perf-constraint.) Only if it genuinely must touch every pixel \u00e2\u20ac\u201d an export, a full-image filter \u00e2\u20ac\u201d do you parallelize it across scanline chunks with rayon (pixhaus-rayon).\n- **A buffer `clone` / allocation is hot.** An 8192x8192 RGBA buffer is ~256 MB. Cloning it once per brush move *is* the lag, and it'll be invisible at 256x256 (256 KB). pixhaus-rust-conventions covers borrowing over cloning, `Cow`, `mem::take`.\n- **The UI stutters but total CPU is low / there are gaps in the timeline.** The heavy work is sitting on the egui frame thread and blocking it. Move it off-thread (`spawn_blocking`, return over a channel the frame loop drains) \u00e2\u20ac\u201d pixhaus-tokio. The frame thread must never block.\n- **Live compositing is CPU-bound at all.** The live canvas should composite on the GPU; CPU compositing is for export and thumbnails. pixhaus-wgpu.\n\n## 5. Once you know the function, pin a number on it\n\nIf the hot path is a tight, isolatable function, add a criterion benchmark at a realistic size *before* you touch it, so your \"before\" is a number, not a memory.\n\n```toml\n[dev-dependencies]\ncriterion = \"0.7\"   # confirm current version on crates.io\n\n[[bench]]\nname = \"brush\"\nharness = false\n```\n\n```rust\nuse std::hint::black_box;\nuse criterion::{Criterion, criterion_group, criterion_main};\n\nfn bench_brush(c: &mut Criterion) {\n    let mut canvas = PixelBuffer::filled(8192, 8192, Rgba::TRANSPARENT);\n    c.bench_function(\"brush_dab_8192\", |b| {\n        b.iter(|| apply_brush(black_box(&mut canvas), black_box(stroke)));\n    });\n}\ncriterion_group!(benches, bench_brush);\ncriterion_main!(benches);\n```\n\nUse `std::hint::black_box` (not the deprecated `criterion::black_box`) so the optimizer can't fold the work away. Run it, make the change, run it again \u00e2\u20ac\u201d criterion prints the delta and a confidence interval. Keep the change only if it clears a real margin (~5%+). If criterion can't distinguish your \"win\" from noise, it isn't a win \u00e2\u20ac\u201d revert it, because you spent readability and bought nothing.\n\n## What not to do while investigating\n\n- Don't `#[inline]` or hand-unroll loops on a hunch. LTO already inlines aggressively; this is wasted readability before you've confirmed the bottleneck.\n- Don't swap data structures speculatively. Profile first.\n- Don't reach for `unsafe` for speed \u00e2\u20ac\u201d it's forbidden workspace-wide, and the real wins here (dirty-rect bounding, off-thread, GPU) don't need it.\n- Don't trust one noisy run. Background load skews timings; let criterion's intervals decide, or take the best of several `--release` runs.\n\n## The short version\n\n1. `cargo run --release` to confirm the lag survives an optimized build.\n2. `cargo build --profile release-with-debug`, then `samply record` while you actually paint on the 8K canvas.\n3. Read the flamegraph; find the widest box near the top that's huge at 8K but tiny at 256.\n4. Given the size-scaling signature, the likely answer is a full-canvas pass or a full-buffer clone per brush move that should be bounded to the dirty rectangle \u00e2\u20ac\u201d but let the profile name it, don't assume.\n5. Pin the hot function with a criterion bench before changing it, and only keep the change if criterion shows a real, above-noise improvement.\n"}], "grading": {"eval_id": 2, "configuration": "with_skill", "summary": {"pass_rate": 1.0, "passed": 5, "failed": 0, "total": 5}, "expectations": [{"text": "Recommends the release-with-debug profile for profiling", "passed": true, "evidence": "'For profiling you want release-with-debug, which keeps release optimizations but also keeps debug symbols and skips strip'; uses the repo's existing profile."}, {"text": "Recommends samply (cross-platform/Windows) with flamegraph as alternative", "passed": true, "evidence": "'Use samply here ... works the same on your Windows machine ... cargo flamegraph works too but on Windows its backend goes through ETW/blondie'."}, {"text": "Explains how to read a flamegraph (widest box = most CPU time)", "passed": true, "evidence": "X-axis is total CPU time, wider box = more time; hunt the widest box near the top."}, {"text": "Diagnoses likely canvas-tool causes (dirty-rect, per-move clone, frame thread)", "passed": true, "evidence": "Section 4 lists per-pixel full-canvas loop, 256MB buffer clone, work on egui frame thread, CPU compositing."}, {"text": "Does not jump straight to a code rewrite without profiling first", "passed": true, "evidence": "'don't apply any of them until the profile actually points there'; rewrite gated on samply output."}]}}, {"id": "eval-2-without_skill-run-1", "prompt": "(No prompt found)", "eval_id": null, "outputs": [{"name": "answer.md", "type": "text", "content": "# Finding where the time goes on the 8192x8192 canvas\n\nThe smart move here is exactly what you're doing: measure before you touch anything. A 256x256 sprite is ~256 KB of RGBA; an 8192x8192 canvas is 256 MB. A 1000x size jump that produces lag almost always means some piece of work is scaling with *total canvas area* instead of with the area you actually painted. Your job before changing code is to prove which piece. Here's how to do that on Windows, cheapest tools first.\n\n## Step 1: Frame the hypothesis before you profile\n\nBrush drawing on a frame has roughly four cost centers. Write them down so you know what you're looking for:\n\n1. **CPU pixel mutation** \u00e2\u20ac\u201d writing the brush stamp into the layer's `Vec<u8>`.\n2. **CPU->GPU upload** \u00e2\u20ac\u201d pushing changed pixels to the GPU texture each frame (`queue.write_texture`).\n3. **GPU work** \u00e2\u20ac\u201d the wgpu render pass that draws the canvas texture into the viewport.\n4. **egui/eframe overhead** \u00e2\u20ac\u201d layout, tessellation, the paint callback plumbing.\n\nThe 1000x scaling tells you the culprit is something that touches every pixel or every byte of the canvas, not just the brush footprint. The two prime suspects are (1) re-stamping or re-scanning the whole buffer, and (2) re-uploading the entire 256 MB texture on every brush move. A full 256 MB upload per frame at 60 fps is ~15 GB/s of PCIe traffic \u00e2\u20ac\u201d that alone will tank you. But *don't assume* \u00e2\u20ac\u201d measure.\n\n## Step 2: Always run a release build for perf numbers\n\nDebug builds make pixel loops 10-50x slower and the ratio is not uniform, so debug timings lie about *where* the cost is. For any measurement:\n\n```\ncargo run --release\n```\n\nIf you want symbols in the release profile for the profiler in step 5, add to the workspace `Cargo.toml`:\n\n```toml\n[profile.release]\ndebug = true        # line-level symbols, no speed cost\n```\n\nor use a dedicated `[profile.profiling]` that inherits release.\n\n## Step 3: Cheap manual timing to localize the cost (do this first)\n\nBefore reaching for any profiler, drop coarse timers around the four cost centers in the brush/paint path. This takes ten minutes and usually points straight at the problem.\n\n```rust\nlet t = std::time::Instant::now();\nself.layer.stamp_brush(pos, &brush);          // cost center 1\nlet t_stamp = t.elapsed();\n\nlet t = std::time::Instant::now();\nself.upload_dirty_region(&queue);             // cost center 2\nlet t_upload = t.elapsed();\n\nlog::debug!(\"stamp={:?} upload={:?}\", t_stamp, t_upload);\n```\n\nRun it on the 256x256 and then the 8192x8192 and compare. The number that explodes by ~1000x between the two is your answer. Concretely:\n\n- If `t_stamp` scales with canvas size: you're iterating the whole buffer per stroke instead of just the brush's bounding box.\n- If `t_upload` scales with canvas size: you're re-uploading the full texture instead of just the dirty rectangle.\n- If neither CPU number moves but frames are still slow: the cost is on the GPU or in egui repaint \u00e2\u20ac\u201d go to steps 4 and 5.\n\nKeep these timers scoped and behind `log::debug!` so they're easy to pull out later. This is throwaway instrumentation, not something to commit.\n\n## Step 4: Confirm whether it's CPU-side or GPU-side / present-blocked\n\negui repaints, so first make sure you're actually comparing frame times, not idle time. Enable eframe's built-in frame timing or just time your whole `update()`:\n\n```rust\nlet frame_start = std::time::Instant::now();\n// ... all your update work ...\nlog::debug!(\"frame {:?}\", frame_start.elapsed());\n```\n\nTwo important things to separate:\n\n- **Is the CPU frame time high, or is the CPU fast but the GPU/present is stalling?** If your `update()` returns in 1 ms but you still see lag, the cost is on the GPU or you're blocked on `present()`/vsync waiting for the GPU to finish a fat render pass or a huge upload. wgpu work is queued and runs asynchronously, so CPU-side timers around `write_texture`/`submit` measure *encoding* time, not *execution* time.\n- **Is it lag (latency) or low throughput (fps)?** Watch the frame-time distribution, not just the average. A periodic spike every N frames looks different from a uniformly slow frame and points at different causes (e.g., an allocation/reupload on stroke-end vs. per-frame full work).\n\nFor the GPU side on Windows, the most direct tool is below.\n\n## Step 5: Profile properly on Windows\n\nOnce the manual timers tell you which side it's on, confirm with a real profiler. On Windows, in rough order of effort:\n\n**CPU sampling \u00e2\u20ac\u201d `superluminal` or Windows Performance Analyzer (WPA / `xperf`).**\n- Superluminal is the nicest paid option for Rust on Windows; it gives you a flame graph with real symbols.\n- Free path: WPA from the Windows ADK, or use the `samply` crate (`cargo install samply`, then `samply record cargo run --release`) which opens a Firefox-profiler flame graph in the browser. Cross-platform and zero-config. This will show you instantly if `stamp_brush` or a `memcpy`-style upload dominates a hot frame.\n\n**In-process frame profiling \u00e2\u20ac\u201d `puffin`.**\n- Add `puffin` + `puffin_egui` and wrap your paint path in `puffin::profile_scope!(\"stamp\")` / `profile_scope!(\"upload\")`. Since you're already in egui, `puffin_egui` gives you a live flame graph *inside the app* with no external tooling. This is the best fit for your stack: you can drag the brush and watch which scope balloons in real time. Strongly recommended for an egui app.\n\n**GPU profiling \u00e2\u20ac\u201d PIX on Windows or RenderDoc.**\n- If step 3/4 says the CPU is idle and you're GPU/present-bound, capture a frame with PIX (Microsoft's D3D12 tool; wgpu uses DX12 on Windows by default) or RenderDoc. You'll see how long the canvas render pass takes and how big each `write_texture` copy is. This is where you'd confirm a \"uploading 256 MB per frame\" theory directly.\n- `wgpu` also has timestamp queries (`Features::TIMESTAMP_QUERY`) if you want pass timings logged from inside the app without an external capture tool.\n\n## What I'd actually do, in order\n\n1. `cargo run --release` with `debug = true` in the release profile.\n2. Add `puffin` + `puffin_egui` (or just the manual `Instant` timers from step 3) around stamp / upload / submit.\n3. Drag the brush on the 256 and the 8192, read off which scope scales with canvas area.\n4. If it's CPU, you've localized it. If the CPU scopes are flat but it's still laggy, capture a frame in PIX/RenderDoc to look at the render pass and texture-upload sizes.\n5. *Only now* decide what to change \u00e2\u20ac\u201d and the fix will almost certainly be \"bound the per-stroke work to the dirty region\" (both the pixel write and the texture upload), but let the measurement say so rather than guessing.\n\n## Why not just start optimizing\n\nTwo reasons. First, the obvious fix (dirty-region uploads) might already be partly in place, and the real cost could be somewhere you didn't expect (e.g., egui re-tessellating, or a full-buffer clone in your undo path on every brush move). Second, without a baseline number you can't prove a change helped \u00e2\u20ac\u201d you'll be flying blind on whether 8192 went from \"laggy\" to \"fine.\" Get the per-frame breakdown first, then each change has a number to beat.\n"}], "grading": {"eval_id": 2, "configuration": "without_skill", "summary": {"pass_rate": 0.6, "passed": 3, "failed": 2, "total": 5}, "expectations": [{"text": "Recommends the release-with-debug profile for profiling", "passed": false, "evidence": "Recommends adding debug=true to [profile.release] or a new [profile.profiling] \u00e2\u20ac\u201d the right concept, but reinvents it instead of using the repo's existing release-with-debug profile."}, {"text": "Recommends samply (cross-platform/Windows) with flamegraph as alternative", "passed": true, "evidence": "Recommends samply plus Windows-specific options (Superluminal, WPA, PIX, RenderDoc)."}, {"text": "Explains how to read a flamegraph (widest box = most CPU time)", "passed": false, "evidence": "Mentions flame graphs but never explains the x-axis = time / widest-box reading."}, {"text": "Diagnoses likely canvas-tool causes (dirty-rect, per-move clone, frame thread)", "passed": true, "evidence": "Names whole-buffer re-scan, full-texture re-upload, undo-path full-buffer clone, egui re-tessellation; recommends dirty-region bounding."}, {"text": "Does not jump straight to a code rewrite without profiling first", "passed": true, "evidence": "'Why not just start optimizing' section; measure-first ordered plan."}]}}], "previous_feedback": {}, "previous_outputs": {}, "benchmark": {"metadata": {"skill_name": "pixhaus-performance", "skill_path": "C:/Users/luism/Documents/GitHub/pixhaus-worktrees/v2/.claude/skills/pixhaus-performance", "executor_model": "<model-name>", "analyzer_model": "<model-name>", "timestamp": "2026-05-25T22:24:28Z", "evals_run": [0, 1, 2], "runs_per_configuration": 3}, "runs": [{"eval_id": 0, "configuration": "with_skill", "run_number": 1, "result": {"pass_rate": 1.0, "passed": 5, "failed": 0, "total": 5, "time_seconds": 53.7, "tokens": 41416, "tool_calls": 0, "errors": 0}, "expectations": [{"text": "Leads with measure-don't-guess before optimizing", "passed": true, "evidence": "Opens: 'I'm not going to rewrite this on the strength of feels slow ... don't guess, measure'."}, {"text": "Does not present a hand-optimized rewrite without a measurement caveat", "passed": true, "evidence": "Separates 'almost certainly true on inspection' from 'needs a number'; the perf rewrite is gated behind profile+bench steps 2-5."}, {"text": "Identifies bounding work to the dirty region as the durable fix", "passed": true, "evidence": "'The thing that matters more than the inner loop: bound the work' \u00e2\u20ac\u201d dirty rectangle, not full-canvas pass."}, {"text": "Mentions building with --release / the correct profile for honest timing", "passed": true, "evidence": "'are you even timing a release build?' + cargo run --release, and release-with-debug for profiling."}, {"text": "Suggests a criterion benchmark to verify the change clears a real margin", "passed": true, "evidence": "Step 3-5: criterion bench with harness=false, std::hint::black_box, keep only if it clears ~5% outside noise."}], "notes": []}, {"eval_id": 1, "configuration": "with_skill", "run_number": 1, "result": {"pass_rate": 1.0, "passed": 6, "failed": 0, "total": 6, "time_seconds": 43.0, "tokens": 40621, "tool_calls": 0, "errors": 0}, "expectations": [{"text": "Adds criterion as a dev-dependency", "passed": true, "evidence": "[dev-dependencies] criterion = \"0.7\" on the core crate."}, {"text": "Specifies harness = false for the [[bench]] target", "passed": true, "evidence": "[[bench]] name=flood_fill harness=false, with note that it's not optional."}, {"text": "Uses std::hint::black_box rather than deprecated criterion::black_box", "passed": true, "evidence": "Explicitly 'std::hint::black_box (not the deprecated criterion::black_box)'."}, {"text": "Benchmarks at a realistic (large) canvas size, not a toy input", "passed": true, "evidence": "Benchmarks at 4K/8K with whole-canvas and bounded cases; warns against 256x256 toy."}, {"text": "Says to compare before/after via cargo bench and keep only gains above noise", "passed": true, "evidence": "Baseline-then-rerun workflow; keep only if it clears ~5%, revert if within noise/overlapping intervals."}, {"text": "Notes timing must come from an optimized build, not dev", "passed": true, "evidence": "Build-profile table + 'Use release-with-debug, never dev'; bacon is correctness not perf."}], "notes": []}, {"eval_id": 2, "configuration": "with_skill", "run_number": 1, "result": {"pass_rate": 1.0, "passed": 5, "failed": 0, "total": 5, "time_seconds": 43.8, "tokens": 40334, "tool_calls": 0, "errors": 0}, "expectations": [{"text": "Recommends the release-with-debug profile for profiling", "passed": true, "evidence": "'For profiling you want release-with-debug, which keeps release optimizations but also keeps debug symbols and skips strip'; uses the repo's existing profile."}, {"text": "Recommends samply (cross-platform/Windows) with flamegraph as alternative", "passed": true, "evidence": "'Use samply here ... works the same on your Windows machine ... cargo flamegraph works too but on Windows its backend goes through ETW/blondie'."}, {"text": "Explains how to read a flamegraph (widest box = most CPU time)", "passed": true, "evidence": "X-axis is total CPU time, wider box = more time; hunt the widest box near the top."}, {"text": "Diagnoses likely canvas-tool causes (dirty-rect, per-move clone, frame thread)", "passed": true, "evidence": "Section 4 lists per-pixel full-canvas loop, 256MB buffer clone, work on egui frame thread, CPU compositing."}, {"text": "Does not jump straight to a code rewrite without profiling first", "passed": true, "evidence": "'don't apply any of them until the profile actually points there'; rewrite gated on samply output."}], "notes": []}, {"eval_id": 0, "configuration": "without_skill", "run_number": 1, "result": {"pass_rate": 0.2, "passed": 1, "failed": 4, "total": 5, "time_seconds": 41.7, "tokens": 35393, "tool_calls": 0, "errors": 0}, "expectations": [{"text": "Leads with measure-don't-guess before optimizing", "passed": false, "evidence": "Opens 'Short answer: yes, and the speedup is large' and proceeds straight to a rewrite; no measure-first framing."}, {"text": "Does not present a hand-optimized rewrite without a measurement caveat", "passed": false, "evidence": "Presents the full byte-slice rewrite as the answer; benchmarking appears only as step 5 before parallelism."}, {"text": "Identifies bounding work to the dirty region as the durable fix", "passed": true, "evidence": "'Fix #3: blend only the dirty region' explicitly called the big one for painting."}, {"text": "Mentions building with --release / the correct profile for honest timing", "passed": false, "evidence": "Never mentions release builds, profiles, or profiling at all."}, {"text": "Suggests a criterion benchmark to verify the change clears a real margin", "passed": false, "evidence": "Mentions a criterion bench 'before adding any parallelism' but not as before/after verification with a margin/revert rule."}], "notes": []}, {"eval_id": 1, "configuration": "without_skill", "run_number": 1, "result": {"pass_rate": 0.8333, "passed": 5, "failed": 1, "total": 6, "time_seconds": 40.5, "tokens": 35353, "tool_calls": 0, "errors": 0}, "expectations": [{"text": "Adds criterion as a dev-dependency", "passed": true, "evidence": "[dev-dependencies] criterion = { version = \"0.5\", features=[html_reports] }."}, {"text": "Specifies harness = false for the [[bench]] target", "passed": true, "evidence": "[[bench]] name=flood_fill harness=false with explanation."}, {"text": "Uses std::hint::black_box rather than deprecated criterion::black_box", "passed": false, "evidence": "Imports and uses criterion::black_box (the deprecated re-export), and pins criterion 0.5."}, {"text": "Benchmarks at a realistic (large) canvas size, not a toy input", "passed": true, "evidence": "256 -> 8192 size sweep with Throughput::Elements."}, {"text": "Says to compare before/after via cargo bench and keep only gains above noise", "passed": true, "evidence": "--save-baseline before / --baseline before workflow; reads p-value significance and 'No change detected'."}, {"text": "Notes timing must come from an optimized build, not dev", "passed": true, "evidence": "'Run in release ... never judge perf from cargo test or a debug build.'"}], "notes": []}, {"eval_id": 2, "configuration": "without_skill", "run_number": 1, "result": {"pass_rate": 0.6, "passed": 3, "failed": 2, "total": 5, "time_seconds": 48.7, "tokens": 35148, "tool_calls": 0, "errors": 0}, "expectations": [{"text": "Recommends the release-with-debug profile for profiling", "passed": false, "evidence": "Recommends adding debug=true to [profile.release] or a new [profile.profiling] \u00e2\u20ac\u201d the right concept, but reinvents it instead of using the repo's existing release-with-debug profile."}, {"text": "Recommends samply (cross-platform/Windows) with flamegraph as alternative", "passed": true, "evidence": "Recommends samply plus Windows-specific options (Superluminal, WPA, PIX, RenderDoc)."}, {"text": "Explains how to read a flamegraph (widest box = most CPU time)", "passed": false, "evidence": "Mentions flame graphs but never explains the x-axis = time / widest-box reading."}, {"text": "Diagnoses likely canvas-tool causes (dirty-rect, per-move clone, frame thread)", "passed": true, "evidence": "Names whole-buffer re-scan, full-texture re-upload, undo-path full-buffer clone, egui re-tessellation; recommends dirty-region bounding."}, {"text": "Does not jump straight to a code rewrite without profiling first", "passed": true, "evidence": "'Why not just start optimizing' section; measure-first ordered plan."}], "notes": []}], "run_summary": {"with_skill": {"pass_rate": {"mean": 1.0, "stddev": 0.0, "min": 1.0, "max": 1.0}, "time_seconds": {"mean": 46.8333, "stddev": 5.9601, "min": 43.0, "max": 53.7}, "tokens": {"mean": 40790.3333, "stddev": 560.5233, "min": 40334, "max": 41416}}, "without_skill": {"pass_rate": {"mean": 0.5444, "stddev": 0.3203, "min": 0.2, "max": 0.8333}, "time_seconds": {"mean": 43.6333, "stddev": 4.4287, "min": 40.5, "max": 48.7}, "tokens": {"mean": 35298.0, "stddev": 131.4344, "min": 35148, "max": 35393}}, "delta": {"pass_rate": "+0.46", "time_seconds": "+3.2", "tokens": "+5492"}}, "notes": ["Delta +0.46 (with-skill 100% vs baseline 54%). The baselines were strong on their own \u00e2\u20ac\u201d even without the skill, every run led with 'measure before changing', so the skill's value is in Pixhaus specifics, not in teaching the mindset.", "Discriminating assertions (where the skill clearly won): eval-0 'leads with measure-don't-guess' + 'no rewrite without a measurement caveat' (baseline jumped straight to a rewrite, never mentioned --release or profiling); eval-1 'std::hint::black_box not criterion::black_box' (baseline used the deprecated re-export and pinned criterion 0.5); eval-2 'uses the repo's existing release-with-debug profile' and 'explains how to read a flamegraph' (baseline reinvented a profiling profile and skipped the reading explanation).", "Non-discriminating assertions (both configs passed, low signal): 'criterion as dev-dependency', 'harness = false', 'realistic large size', 'diagnoses dirty-region' \u00e2\u20ac\u201d capable models already do these. Consider dropping or tightening for iteration 2.", "Gap surfaced by the eval-2 baseline: it went deeper than the skill on GPU-side profiling for an egui+wgpu canvas (puffin/puffin_egui in-process flamegraph, PIX/RenderDoc, wgpu timestamp queries, the CPU->GPU full-texture-upload hypothesis). The skill currently only delegates 'CPU compositing -> wgpu' and doesn't mention profiling the GPU side or that the bottleneck may be upload bandwidth, not CPU. Worth adding for a tool whose hot path is often the GPU.", "Single run per configuration (no variance data). Pass-rate stddev is 0 by construction; treat the per-eval pass/fail as the signal, not the (absent) variance.", "Time/token cost of the skill: with-skill runs averaged ~47s / ~40.8k tokens vs baseline ~43.6s / ~35.3k \u00e2\u20ac\u201d the skill adds ~3s and ~5k tokens (reading SKILL.md + cross-links), a reasonable cost for the accuracy gain."]}};
+
+    // ---- State ----
+    let feedbackMap = {};  // run_id -> feedback text
+    let currentIndex = 0;
+    let visitedRuns = new Set();
+
+    // ---- Init ----
+    async function init() {
+      // Load saved feedback from server — but only if this isn't a fresh
+      // iteration (indicated by previous_feedback being present). When
+      // previous feedback exists, the feedback.json on disk is stale from
+      // the prior iteration and should not pre-fill the textareas.
+      const hasPrevious = Object.keys(EMBEDDED_DATA.previous_feedback || {}).length > 0
+        || Object.keys(EMBEDDED_DATA.previous_outputs || {}).length > 0;
+      if (!hasPrevious) {
+        try {
+          const resp = await fetch("/api/feedback");
+          const data = await resp.json();
+          if (data.reviews) {
+            for (const r of data.reviews) feedbackMap[r.run_id] = r.feedback;
+          }
+        } catch { /* first run, no feedback yet */ }
+      }
+
+      document.getElementById("skill-name").textContent = EMBEDDED_DATA.skill_name;
+      showRun(0);
+
+      // Wire up feedback auto-save
+      const textarea = document.getElementById("feedback");
+      let saveTimeout = null;
+      textarea.addEventListener("input", () => {
+        clearTimeout(saveTimeout);
+        document.getElementById("feedback-status").textContent = "";
+        saveTimeout = setTimeout(() => saveCurrentFeedback(), 800);
+      });
+    }
+
+    // ---- Navigation ----
+    function navigate(delta) {
+      const newIndex = currentIndex + delta;
+      if (newIndex >= 0 && newIndex < EMBEDDED_DATA.runs.length) {
+        saveCurrentFeedback();
+        showRun(newIndex);
+      }
+    }
+
+    function updateNavButtons() {
+      document.getElementById("prev-btn").disabled = currentIndex === 0;
+      document.getElementById("next-btn").disabled =
+        currentIndex === EMBEDDED_DATA.runs.length - 1;
+    }
+
+    // ---- Show a run ----
+    function showRun(index) {
+      currentIndex = index;
+      const run = EMBEDDED_DATA.runs[index];
+
+      // Progress
+      document.getElementById("progress").textContent =
+        `${index + 1} of ${EMBEDDED_DATA.runs.length}`;
+
+      // Prompt
+      document.getElementById("prompt-text").textContent = run.prompt;
+
+      // Config badge
+      const badge = document.getElementById("config-badge");
+      const configMatch = run.id.match(/(with_skill|without_skill|new_skill|old_skill)/);
+      if (configMatch) {
+        const config = configMatch[1];
+        const isBaseline = config === "without_skill" || config === "old_skill";
+        badge.textContent = config.replace(/_/g, " ");
+        badge.className = "config-badge " + (isBaseline ? "config-baseline" : "config-primary");
+        badge.style.display = "inline-block";
+      } else {
+        badge.style.display = "none";
+      }
+
+      // Outputs
+      renderOutputs(run);
+
+      // Previous outputs
+      renderPrevOutputs(run);
+
+      // Grades
+      renderGrades(run);
+
+      // Previous feedback
+      const prevFb = (EMBEDDED_DATA.previous_feedback || {})[run.id];
+      const prevEl = document.getElementById("prev-feedback");
+      if (prevFb) {
+        document.getElementById("prev-feedback-text").textContent = prevFb;
+        prevEl.style.display = "block";
+      } else {
+        prevEl.style.display = "none";
+      }
+
+      // Feedback
+      document.getElementById("feedback").value = feedbackMap[run.id] || "";
+      document.getElementById("feedback-status").textContent = "";
+
+      updateNavButtons();
+
+      // Track visited runs and promote done button when all visited
+      visitedRuns.add(index);
+      const doneBtn = document.getElementById("done-btn");
+      if (visitedRuns.size >= EMBEDDED_DATA.runs.length) {
+        doneBtn.classList.add("ready");
+      }
+
+      // Scroll main content to top
+      document.querySelector(".main").scrollTop = 0;
+    }
+
+    // ---- Render outputs ----
+    function renderOutputs(run) {
+      const container = document.getElementById("outputs-body");
+      container.innerHTML = "";
+
+      const outputs = run.outputs || [];
+      if (outputs.length === 0) {
+        container.innerHTML = '<div class="empty-state">No output files</div>';
+        return;
+      }
+
+      for (const file of outputs) {
+        const fileDiv = document.createElement("div");
+        fileDiv.className = "output-file";
+
+        // Always show file header with download link
+        const header = document.createElement("div");
+        header.className = "output-file-header";
+        const nameSpan = document.createElement("span");
+        nameSpan.textContent = file.name;
+        header.appendChild(nameSpan);
+        const dlBtn = document.createElement("a");
+        dlBtn.className = "dl-btn";
+        dlBtn.textContent = "Download";
+        dlBtn.download = file.name;
+        dlBtn.href = getDownloadUri(file);
+        header.appendChild(dlBtn);
+        fileDiv.appendChild(header);
+
+        const content = document.createElement("div");
+        content.className = "output-file-content";
+
+        if (file.type === "text") {
+          const pre = document.createElement("pre");
+          pre.textContent = file.content;
+          content.appendChild(pre);
+        } else if (file.type === "image") {
+          const img = document.createElement("img");
+          img.src = file.data_uri;
+          img.alt = file.name;
+          content.appendChild(img);
+        } else if (file.type === "pdf") {
+          const iframe = document.createElement("iframe");
+          iframe.src = file.data_uri;
+          content.appendChild(iframe);
+        } else if (file.type === "xlsx") {
+          renderXlsx(content, file.data_b64);
+        } else if (file.type === "binary") {
+          const a = document.createElement("a");
+          a.className = "download-link";
+          a.href = file.data_uri;
+          a.download = file.name;
+          a.textContent = "Download " + file.name;
+          content.appendChild(a);
+        } else if (file.type === "error") {
+          const pre = document.createElement("pre");
+          pre.textContent = file.content;
+          pre.style.color = "var(--red)";
+          content.appendChild(pre);
+        }
+
+        fileDiv.appendChild(content);
+        container.appendChild(fileDiv);
+      }
+    }
+
+    // ---- XLSX rendering via SheetJS ----
+    function renderXlsx(container, b64Data) {
+      try {
+        const raw = Uint8Array.from(atob(b64Data), c => c.charCodeAt(0));
+        const wb = XLSX.read(raw, { type: "array" });
+
+        for (let i = 0; i < wb.SheetNames.length; i++) {
+          const sheetName = wb.SheetNames[i];
+          const ws = wb.Sheets[sheetName];
+
+          if (wb.SheetNames.length > 1) {
+            const sheetLabel = document.createElement("div");
+            sheetLabel.style.cssText =
+              "font-weight:600; font-size:0.8rem; color:#b0aea5; margin-top:0.5rem; margin-bottom:0.25rem;";
+            sheetLabel.textContent = "Sheet: " + sheetName;
+            container.appendChild(sheetLabel);
+          }
+
+          const htmlStr = XLSX.utils.sheet_to_html(ws, { editable: false });
+          const wrapper = document.createElement("div");
+          wrapper.innerHTML = htmlStr;
+          container.appendChild(wrapper);
+        }
+      } catch (err) {
+        container.textContent = "Error rendering spreadsheet: " + err.message;
+      }
+    }
+
+    // ---- Grades ----
+    function renderGrades(run) {
+      const section = document.getElementById("grades-section");
+      const content = document.getElementById("grades-content");
+
+      if (!run.grading) {
+        section.style.display = "none";
+        return;
+      }
+
+      const grading = run.grading;
+      section.style.display = "block";
+      // Reset to collapsed
+      content.classList.remove("open");
+      document.getElementById("grades-arrow").classList.remove("open");
+
+      const summary = grading.summary || {};
+      const expectations = grading.expectations || [];
+
+      let html = '<div style="padding: 1rem;">';
+
+      // Summary line
+      const passRate = summary.pass_rate != null
+        ? Math.round(summary.pass_rate * 100) + "%"
+        : "?";
+      const badgeClass = summary.pass_rate >= 0.8 ? "grade-pass" : summary.pass_rate >= 0.5 ? "" : "grade-fail";
+      html += '<div class="grades-summary">';
+      html += '<span class="grade-badge ' + badgeClass + '">' + passRate + '</span>';
+      html += '<span>' + (summary.passed || 0) + ' passed, ' + (summary.failed || 0) + ' failed of ' + (summary.total || 0) + '</span>';
+      html += '</div>';
+
+      // Assertions list
+      html += '<ul class="assertion-list">';
+      for (const exp of expectations) {
+        const statusClass = exp.passed ? "pass" : "fail";
+        const statusIcon = exp.passed ? "\u2713" : "\u2717";
+        html += '<li class="assertion-item">';
+        html += '<span class="assertion-status ' + statusClass + '">' + statusIcon + '</span>';
+        html += '<span>' + escapeHtml(exp.text) + '</span>';
+        if (exp.evidence) {
+          html += '<div class="assertion-evidence">' + escapeHtml(exp.evidence) + '</div>';
+        }
+        html += '</li>';
+      }
+      html += '</ul>';
+
+      html += '</div>';
+      content.innerHTML = html;
+    }
+
+    function toggleGrades() {
+      const content = document.getElementById("grades-content");
+      const arrow = document.getElementById("grades-arrow");
+      content.classList.toggle("open");
+      arrow.classList.toggle("open");
+    }
+
+    // ---- Previous outputs (collapsible) ----
+    function renderPrevOutputs(run) {
+      const section = document.getElementById("prev-outputs-section");
+      const content = document.getElementById("prev-outputs-content");
+      const prevOutputs = (EMBEDDED_DATA.previous_outputs || {})[run.id];
+
+      if (!prevOutputs || prevOutputs.length === 0) {
+        section.style.display = "none";
+        return;
+      }
+
+      section.style.display = "block";
+      // Reset to collapsed
+      content.classList.remove("open");
+      document.getElementById("prev-outputs-arrow").classList.remove("open");
+
+      // Render the files into the content area
+      content.innerHTML = "";
+      const wrapper = document.createElement("div");
+      wrapper.style.padding = "1rem";
+
+      for (const file of prevOutputs) {
+        const fileDiv = document.createElement("div");
+        fileDiv.className = "output-file";
+
+        const header = document.createElement("div");
+        header.className = "output-file-header";
+        const nameSpan = document.createElement("span");
+        nameSpan.textContent = file.name;
+        header.appendChild(nameSpan);
+        const dlBtn = document.createElement("a");
+        dlBtn.className = "dl-btn";
+        dlBtn.textContent = "Download";
+        dlBtn.download = file.name;
+        dlBtn.href = getDownloadUri(file);
+        header.appendChild(dlBtn);
+        fileDiv.appendChild(header);
+
+        const fc = document.createElement("div");
+        fc.className = "output-file-content";
+
+        if (file.type === "text") {
+          const pre = document.createElement("pre");
+          pre.textContent = file.content;
+          fc.appendChild(pre);
+        } else if (file.type === "image") {
+          const img = document.createElement("img");
+          img.src = file.data_uri;
+          img.alt = file.name;
+          fc.appendChild(img);
+        } else if (file.type === "pdf") {
+          const iframe = document.createElement("iframe");
+          iframe.src = file.data_uri;
+          fc.appendChild(iframe);
+        } else if (file.type === "xlsx") {
+          renderXlsx(fc, file.data_b64);
+        } else if (file.type === "binary") {
+          const a = document.createElement("a");
+          a.className = "download-link";
+          a.href = file.data_uri;
+          a.download = file.name;
+          a.textContent = "Download " + file.name;
+          fc.appendChild(a);
+        }
+
+        fileDiv.appendChild(fc);
+        wrapper.appendChild(fileDiv);
+      }
+
+      content.appendChild(wrapper);
+    }
+
+    function togglePrevOutputs() {
+      const content = document.getElementById("prev-outputs-content");
+      const arrow = document.getElementById("prev-outputs-arrow");
+      content.classList.toggle("open");
+      arrow.classList.toggle("open");
+    }
+
+    // ---- Feedback (saved to server -> feedback.json) ----
+    function saveCurrentFeedback() {
+      const run = EMBEDDED_DATA.runs[currentIndex];
+      const text = document.getElementById("feedback").value;
+
+      if (text.trim() === "") {
+        delete feedbackMap[run.id];
+      } else {
+        feedbackMap[run.id] = text;
+      }
+
+      // Build reviews array from map
+      const reviews = [];
+      for (const [run_id, feedback] of Object.entries(feedbackMap)) {
+        if (feedback.trim()) {
+          reviews.push({ run_id, feedback, timestamp: new Date().toISOString() });
+        }
+      }
+
+      fetch("/api/feedback", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ reviews, status: "in_progress" }),
+      }).then(() => {
+        document.getElementById("feedback-status").textContent = "Saved";
+      }).catch(() => {
+        // Static mode or server unavailable — no-op on auto-save,
+        // feedback will be downloaded on final submit
+        document.getElementById("feedback-status").textContent = "Will download on submit";
+      });
+    }
+
+    // ---- Done ----
+    function showDoneDialog() {
+      // Save current textarea to feedbackMap (but don't POST yet)
+      const run = EMBEDDED_DATA.runs[currentIndex];
+      const text = document.getElementById("feedback").value;
+      if (text.trim() === "") {
+        delete feedbackMap[run.id];
+      } else {
+        feedbackMap[run.id] = text;
+      }
+
+      // POST once with status: complete — include ALL runs so the model
+      // can distinguish "no feedback" (looks good) from "not reviewed"
+      const reviews = [];
+      const ts = new Date().toISOString();
+      for (const r of EMBEDDED_DATA.runs) {
+        reviews.push({ run_id: r.id, feedback: feedbackMap[r.id] || "", timestamp: ts });
+      }
+      const payload = JSON.stringify({ reviews, status: "complete" }, null, 2);
+      fetch("/api/feedback", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: payload,
+      }).then(() => {
+        document.getElementById("done-overlay").classList.add("visible");
+      }).catch(() => {
+        // Server not available (static mode) — download as file
+        const blob = new Blob([payload], { type: "application/json" });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement("a");
+        a.href = url;
+        a.download = "feedback.json";
+        a.click();
+        URL.revokeObjectURL(url);
+        document.getElementById("done-overlay").classList.add("visible");
+      });
+    }
+
+    function closeDoneDialog() {
+      // Reset status back to in_progress
+      saveCurrentFeedback();
+      document.getElementById("done-overlay").classList.remove("visible");
+    }
+
+    // ---- Toast ----
+    function showToast(message) {
+      const toast = document.getElementById("toast");
+      toast.textContent = message;
+      toast.classList.add("visible");
+      setTimeout(() => toast.classList.remove("visible"), 2000);
+    }
+
+    // ---- Keyboard nav ----
+    document.addEventListener("keydown", (e) => {
+      // Don't capture when typing in textarea
+      if (e.target.tagName === "TEXTAREA") return;
+
+      if (e.key === "ArrowLeft" || e.key === "ArrowUp") {
+        e.preventDefault();
+        navigate(-1);
+      } else if (e.key === "ArrowRight" || e.key === "ArrowDown") {
+        e.preventDefault();
+        navigate(1);
+      }
+    });
+
+    // ---- Util ----
+    function getDownloadUri(file) {
+      if (file.data_uri) return file.data_uri;
+      if (file.data_b64) return "data:application/octet-stream;base64," + file.data_b64;
+      if (file.type === "text") return "data:text/plain;charset=utf-8," + encodeURIComponent(file.content);
+      return "#";
+    }
+
+    function escapeHtml(text) {
+      const div = document.createElement("div");
+      div.textContent = text;
+      return div.innerHTML;
+    }
+
+    // ---- View switching ----
+    function switchView(view) {
+      document.querySelectorAll(".view-tab").forEach(t => t.classList.remove("active"));
+      document.querySelectorAll(".view-panel").forEach(p => p.classList.remove("active"));
+      document.querySelector(`[onclick="switchView('${view}')"]`).classList.add("active");
+      document.getElementById("panel-" + view).classList.add("active");
+    }
+
+    // ---- Benchmark rendering ----
+    function renderBenchmark() {
+      const data = EMBEDDED_DATA.benchmark;
+      if (!data) return;
+
+      // Show the tabs
+      document.getElementById("view-tabs").style.display = "flex";
+
+      const container = document.getElementById("benchmark-content");
+      const summary = data.run_summary || {};
+      const metadata = data.metadata || {};
+      const notes = data.notes || [];
+
+      let html = "";
+
+      // Header
+      html += "<h2 style='font-family: Poppins, sans-serif; margin-bottom: 0.5rem;'>Benchmark Results</h2>";
+      html += "<p style='color: var(--text-muted); font-size: 0.875rem; margin-bottom: 1.25rem;'>";
+      if (metadata.skill_name) html += "<strong>" + escapeHtml(metadata.skill_name) + "</strong> &mdash; ";
+      if (metadata.timestamp) html += metadata.timestamp + " &mdash; ";
+      if (metadata.evals_run) html += "Evals: " + metadata.evals_run.join(", ") + " &mdash; ";
+      html += (metadata.runs_per_configuration || "?") + " runs per configuration";
+      html += "</p>";
+
+      // Summary table
+      html += '<table class="benchmark-table">';
+
+      function fmtStat(stat, pct) {
+        if (!stat) return "—";
+        const suffix = pct ? "%" : "";
+        const m = pct ? (stat.mean * 100).toFixed(0) : stat.mean.toFixed(1);
+        const s = pct ? (stat.stddev * 100).toFixed(0) : stat.stddev.toFixed(1);
+        return m + suffix + " ± " + s + suffix;
+      }
+
+      function deltaClass(val) {
+        if (!val) return "";
+        const n = parseFloat(val);
+        if (n > 0) return "benchmark-delta-positive";
+        if (n < 0) return "benchmark-delta-negative";
+        return "";
+      }
+
+      // Discover config names dynamically (everything except "delta")
+      const configs = Object.keys(summary).filter(k => k !== "delta");
+      const configA = configs[0] || "config_a";
+      const configB = configs[1] || "config_b";
+      const labelA = configA.replace(/_/g, " ").replace(/\b\w/g, c => c.toUpperCase());
+      const labelB = configB.replace(/_/g, " ").replace(/\b\w/g, c => c.toUpperCase());
+      const a = summary[configA] || {};
+      const b = summary[configB] || {};
+      const delta = summary.delta || {};
+
+      html += "<thead><tr><th>Metric</th><th>" + escapeHtml(labelA) + "</th><th>" + escapeHtml(labelB) + "</th><th>Delta</th></tr></thead>";
+      html += "<tbody>";
+
+      html += "<tr><td><strong>Pass Rate</strong></td>";
+      html += "<td>" + fmtStat(a.pass_rate, true) + "</td>";
+      html += "<td>" + fmtStat(b.pass_rate, true) + "</td>";
+      html += '<td class="' + deltaClass(delta.pass_rate) + '">' + (delta.pass_rate || "—") + "</td></tr>";
+
+      // Time (only show row if data exists)
+      if (a.time_seconds || b.time_seconds) {
+        html += "<tr><td><strong>Time (s)</strong></td>";
+        html += "<td>" + fmtStat(a.time_seconds, false) + "</td>";
+        html += "<td>" + fmtStat(b.time_seconds, false) + "</td>";
+        html += '<td class="' + deltaClass(delta.time_seconds) + '">' + (delta.time_seconds ? delta.time_seconds + "s" : "—") + "</td></tr>";
+      }
+
+      // Tokens (only show row if data exists)
+      if (a.tokens || b.tokens) {
+        html += "<tr><td><strong>Tokens</strong></td>";
+        html += "<td>" + fmtStat(a.tokens, false) + "</td>";
+        html += "<td>" + fmtStat(b.tokens, false) + "</td>";
+        html += '<td class="' + deltaClass(delta.tokens) + '">' + (delta.tokens || "—") + "</td></tr>";
+      }
+
+      html += "</tbody></table>";
+
+      // Per-eval breakdown (if runs data available)
+      const runs = data.runs || [];
+      if (runs.length > 0) {
+        const evalIds = [...new Set(runs.map(r => r.eval_id))].sort((a, b) => a - b);
+
+        html += "<h3 style='font-family: Poppins, sans-serif; margin-bottom: 0.75rem;'>Per-Eval Breakdown</h3>";
+
+        const hasTime = runs.some(r => r.result && r.result.time_seconds != null);
+        const hasErrors = runs.some(r => r.result && r.result.errors > 0);
+
+        for (const evalId of evalIds) {
+          const evalRuns = runs.filter(r => r.eval_id === evalId);
+          const evalName = evalRuns[0] && evalRuns[0].eval_name ? evalRuns[0].eval_name : "Eval " + evalId;
+
+          html += "<h4 style='font-family: Poppins, sans-serif; margin: 1rem 0 0.5rem; color: var(--text);'>" + escapeHtml(evalName) + "</h4>";
+          html += '<table class="benchmark-table">';
+          html += "<thead><tr><th>Config</th><th>Run</th><th>Pass Rate</th>";
+          if (hasTime) html += "<th>Time (s)</th>";
+          if (hasErrors) html += "<th>Crashes During Execution</th>";
+          html += "</tr></thead>";
+          html += "<tbody>";
+
+          // Group by config and render with average rows
+          const configGroups = [...new Set(evalRuns.map(r => r.configuration))];
+          for (let ci = 0; ci < configGroups.length; ci++) {
+            const config = configGroups[ci];
+            const configRuns = evalRuns.filter(r => r.configuration === config);
+            if (configRuns.length === 0) continue;
+
+            const rowClass = ci === 0 ? "benchmark-row-with" : "benchmark-row-without";
+            const configLabel = config.replace(/_/g, " ").replace(/\b\w/g, c => c.toUpperCase());
+
+            for (const run of configRuns) {
+              const r = run.result || {};
+              const prClass = r.pass_rate >= 0.8 ? "benchmark-delta-positive" : r.pass_rate < 0.5 ? "benchmark-delta-negative" : "";
+              html += '<tr class="' + rowClass + '">';
+              html += "<td>" + configLabel + "</td>";
+              html += "<td>" + run.run_number + "</td>";
+              html += '<td class="' + prClass + '">' + ((r.pass_rate || 0) * 100).toFixed(0) + "% (" + (r.passed || 0) + "/" + (r.total || 0) + ")</td>";
+              if (hasTime) html += "<td>" + (r.time_seconds != null ? r.time_seconds.toFixed(1) : "—") + "</td>";
+              if (hasErrors) html += "<td>" + (r.errors || 0) + "</td>";
+              html += "</tr>";
+            }
+
+            // Average row
+            const rates = configRuns.map(r => (r.result || {}).pass_rate || 0);
+            const avgRate = rates.reduce((a, b) => a + b, 0) / rates.length;
+            const avgPrClass = avgRate >= 0.8 ? "benchmark-delta-positive" : avgRate < 0.5 ? "benchmark-delta-negative" : "";
+            html += '<tr class="benchmark-row-avg ' + rowClass + '">';
+            html += "<td>" + configLabel + "</td>";
+            html += "<td>Avg</td>";
+            html += '<td class="' + avgPrClass + '">' + (avgRate * 100).toFixed(0) + "%</td>";
+            if (hasTime) {
+              const times = configRuns.map(r => (r.result || {}).time_seconds).filter(t => t != null);
+              html += "<td>" + (times.length ? (times.reduce((a, b) => a + b, 0) / times.length).toFixed(1) : "—") + "</td>";
+            }
+            if (hasErrors) html += "<td></td>";
+            html += "</tr>";
+          }
+          html += "</tbody></table>";
+
+          // Per-assertion detail for this eval
+          const runsWithExpectations = {};
+          for (const config of configGroups) {
+            runsWithExpectations[config] = evalRuns.filter(r => r.configuration === config && r.expectations && r.expectations.length > 0);
+          }
+          const hasAnyExpectations = Object.values(runsWithExpectations).some(runs => runs.length > 0);
+          if (hasAnyExpectations) {
+            // Collect all unique assertion texts across all configs
+            const allAssertions = [];
+            const seen = new Set();
+            for (const config of configGroups) {
+              for (const run of runsWithExpectations[config]) {
+                for (const exp of (run.expectations || [])) {
+                  if (!seen.has(exp.text)) {
+                    seen.add(exp.text);
+                    allAssertions.push(exp.text);
+                  }
+                }
+              }
+            }
+
+            html += '<table class="benchmark-table" style="margin-top: 0.5rem;">';
+            html += "<thead><tr><th>Assertion</th>";
+            for (const config of configGroups) {
+              const label = config.replace(/_/g, " ").replace(/\b\w/g, c => c.toUpperCase());
+              html += "<th>" + escapeHtml(label) + "</th>";
+            }
+            html += "</tr></thead><tbody>";
+
+            for (const assertionText of allAssertions) {
+              html += "<tr><td>" + escapeHtml(assertionText) + "</td>";
+
+              for (const config of configGroups) {
+                html += "<td>";
+                for (const run of runsWithExpectations[config]) {
+                  const exp = (run.expectations || []).find(e => e.text === assertionText);
+                  if (exp) {
+                    const cls = exp.passed ? "benchmark-delta-positive" : "benchmark-delta-negative";
+                    const icon = exp.passed ? "\u2713" : "\u2717";
+                    html += '<span class="' + cls + '" title="Run ' + run.run_number + ': ' + escapeHtml(exp.evidence || "") + '">' + icon + "</span> ";
+                  } else {
+                    html += "— ";
+                  }
+                }
+                html += "</td>";
+              }
+              html += "</tr>";
+            }
+            html += "</tbody></table>";
+          }
+        }
+      }
+
+      // Notes
+      if (notes.length > 0) {
+        html += '<div class="benchmark-notes">';
+        html += "<h3>Analysis Notes</h3>";
+        html += "<ul>";
+        for (const note of notes) {
+          html += "<li>" + escapeHtml(note) + "</li>";
+        }
+        html += "</ul></div>";
+      }
+
+      container.innerHTML = html;
+    }
+
+    // ---- Start ----
+    init();
+    renderBenchmark();
+  </script>
+</body>
+</html>

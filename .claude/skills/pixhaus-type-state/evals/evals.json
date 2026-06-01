@@ -1,0 +1,29 @@
+{
+  "skill_name": "pixhaus-type-state",
+  "evals": [
+    {
+      "id": 0,
+      "name": "export-config-builder",
+      "prompt": "In the Pixhaus `io` crate I'm writing a builder for sprite-sheet export config. It must have a `format` (an enum: Png or Aseprite) and an `output_path` (PathBuf) set before you can call `build()` — forgetting either should be a compile error, not a runtime panic. `columns` is optional and defaults to 1. Write the builder. Keep it in line with our repo conventions.",
+      "expected_output": "A type-state builder generic over per-required-field marker types (PhantomData), where build() exists only once both format and output_path are set. Required fields stored as plain values (or otherwise without an Option that gets unwrapped), no unwrap/expect/unreachable/panic. columns is a plain optional setter available in any state. Should compile, and the illegal partial-build case should be a compile error.",
+      "files": [],
+      "assertions": []
+    },
+    {
+      "id": 1,
+      "name": "verb-job-lifecycle",
+      "prompt": "We have an AI inference job in Pixhaus that goes through three stages: a draft you've configured but not sent, a running job with a spawned task handle, and a finished job that holds the output image. I want it to be impossible to read the output before the job is finished, and impossible to re-submit a job that's already running — enforced by the compiler, not by checking a status field at runtime. How should I model this? Show me the types.",
+      "expected_output": "A type-state state machine with three state types where the output accessor exists only on the finished state and submit() exists only on the draft state. Transitions consume self by value. State-specific data (the task handle, the output image) lives inside the state type rather than as Option fields unwrapped with unreachable!/expect. Fallible transitions return Result, never panic.",
+      "files": [],
+      "assertions": []
+    },
+    {
+      "id": 2,
+      "name": "runtime-tool-overkill",
+      "prompt": "I'm thinking about using the type-state pattern for our editor tools. We have Pencil, Eraser, and Bucket, and the user switches between them by clicking the toolbar. The idea is each tool type would only expose the operations valid for it. I was going to use unsafe to return the right tool type from the toolbar click handler. Does this make sense?",
+      "expected_output": "Should push back: the active tool is chosen at runtime (toolbar click), so you cannot pick a static type for it — this is the runtime-chosen-state boundary where type-state is the wrong fit. Should steer to an enum (or trait object) rather than type-state, and explicitly reject the unsafe idea (no transmute; unsafe is forbidden workspace-wide). Should not produce a contrived type-state design that needs unsafe.",
+      "files": [],
+      "assertions": []
+    }
+  ]
+}

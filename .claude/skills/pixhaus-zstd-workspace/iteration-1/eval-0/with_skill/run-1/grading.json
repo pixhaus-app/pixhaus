@@ -1,0 +1,35 @@
+{
+  "summary": {
+    "pass_rate": 1.0,
+    "passed": 5,
+    "failed": 0,
+    "total": 5
+  },
+  "expectations": [
+    {
+      "text": "Uses streaming zstd Encoder/Decoder for the large project file (not encode_all/decode_all)",
+      "passed": true,
+      "evidence": "Uses zstd::stream::write::Encoder + rmp_serde::encode::write, and stream::read::Decoder + decode::from_read; explicitly justifies streaming at 8K."
+    },
+    {
+      "text": "Calls encoder.finish() so the frame is not left truncated",
+      "passed": true,
+      "evidence": "Calls encoder.finish()? and explains the truncated-frame footgun."
+    },
+    {
+      "text": "All zstd API names used are real (no invented methods)",
+      "passed": true,
+      "evidence": "Untrusted-input guard uses the real method window_log_max(n)."
+    },
+    {
+      "text": "Uses a thiserror enum, no unwrap/anyhow, no leaked io::Error",
+      "passed": true,
+      "evidence": "ProjectIoError enum with #[from] arms; notes anyhow stays in the binary."
+    },
+    {
+      "text": "Gives the Pixhaus-specific rule to run save/load off the UI thread via spawn_blocking",
+      "passed": true,
+      "evidence": "Call-site notes: hand save/load to tokio::task::spawn_blocking, deliver over a channel the egui loop drains; never inline on the update loop."
+    }
+  ]
+}

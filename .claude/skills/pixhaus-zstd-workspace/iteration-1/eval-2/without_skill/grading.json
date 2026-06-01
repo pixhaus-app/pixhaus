@@ -1,0 +1,35 @@
+{
+  "summary": {
+    "pass_rate": 0.8,
+    "passed": 4,
+    "failed": 1,
+    "total": 5
+  },
+  "expectations": [
+    {
+      "text": "Recommends zstd::bulk::Compressor/Decompressor as the fit, over per-tile encode_all",
+      "passed": true,
+      "evidence": "Uses bulk::{Compressor,Decompressor}; also offers the bulk-without-dictionary path as the smaller upgrade."
+    },
+    {
+      "text": "Rationale includes reusing one zstd context across the ~800 tiles",
+      "passed": true,
+      "evidence": "Explains reusing one CCtx/DCtx vs re-initialising 800 times per scrub pass."
+    },
+    {
+      "text": "decompress is called with a capacity bound (correct bulk API)",
+      "passed": true,
+      "evidence": "decompress(frame, capacity) with capacity = width*height*4."
+    },
+    {
+      "text": "All bulk/dict API names are real and correct",
+      "passed": true,
+      "evidence": "from_samples, EncoderDictionary::copy, DecoderDictionary::copy, with_prepared_dictionary \u2014 all correct."
+    },
+    {
+      "text": "Calibrated to the ask: treats a trained dictionary as optional/later, not the headline requirement",
+      "passed": false,
+      "evidence": "Leads with a trained dictionary as the primary recommendation and adds dictionary versioning/invalidation overhead the 'compress each independently' ask did not require."
+    }
+  ]
+}

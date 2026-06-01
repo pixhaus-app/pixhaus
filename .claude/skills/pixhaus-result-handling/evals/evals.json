@@ -1,0 +1,26 @@
+{
+  "skill_name": "pixhaus-result-handling",
+  "evals": [
+    {
+      "id": 0,
+      "name": "clean-up-unwraps",
+      "prompt": "This is in pixhaus_core. `cargo clippy` is failing on every one of these unwraps/expects and I can't commit. Rewrite the file so it passes the workspace lints, picking the right replacement at each call site (some of these can return an error, some have a sensible fallback). Keep the public signatures unless you have a good reason to change one. Show me the rewritten file and a one-line note per change explaining why you chose that replacement.",
+      "files": ["inputs/layer_ops.rs"],
+      "expected_output": "layer_ops.rs rewritten with no unwrap/expect: active_layer_name -> Result with ok_or_else (or Option return); active_opacity -> uses ok_or_else + unwrap_or fallback for the Option<f32>; rename_active -> uses `?` on parse_layer_name and ok_or_else on the get_mut. Per-change rationale referencing the toolbox."
+    },
+    {
+      "id": 1,
+      "name": "stub-blend-branch",
+      "prompt": "I'm filling in the blend-mode match in pixhaus_core. I've implemented Normal and Multiply, but Overlay isn't done yet and I want to come back to it. There's also a catch-all arm for a BlendMode variant that the dispatcher upstream already guarantees never reaches this function. What should I put in the unfinished Overlay arm and the catch-all arm? I want the session's Stop gate to stay green if possible, and I don't want a surprise panic in production. Give me the match with both arms filled in and explain the call.",
+      "files": [],
+      "expected_output": "Should NOT use todo!/unimplemented! for Overlay if the goal is a green Stop gate (they are warn -> -D warnings fails the gate) — should return an Err variant (e.g. Error::UnsupportedBlendMode) or explain the todo! tradeoff explicitly. Catch-all: should prefer encoding impossibility in the type (type-state / exhaustive enum match) over unreachable!, and if unreachable! is used, note it still panics and add a comment. Must surface the gate behavior accurately."
+    },
+    {
+      "id": 2,
+      "name": "async-backend-error",
+      "prompt": "In the shell binary I'm spawning a decode job on the tokio runtime and sending the result back to the egui update loop over a oneshot channel. The decode lives in pixhaus_io and returns its own error type. I keep getting a compile error about the error not being Send when I spawn the task. How should I set up the error type and the channel so this works, and where should I log the failure? Sketch the spawn + the receiver-drain side.",
+      "files": [],
+      "expected_output": "Identifies that the error crossing the spawned .await must be Send + Sync + 'static; checks that the io error type's fields are all Send (no Rc/dyn Error without bounds); sends Result<T, E> over the oneshot; uses inspect_err (not map_err-to-log) to log on the failure path; does not reach for Box<dyn Error> or ?Send to paper over it. Cross-references the binary using anyhow at the boundary."
+    }
+  ]
+}

@@ -1,0 +1,45 @@
+{
+  "expectations": [
+    {
+      "text": "Builder is generic over per-required-field marker types (type-state)",
+      "passed": true,
+      "evidence": "ExportConfigBuilder<Missing/Set, Missing/Set> markers."
+    },
+    {
+      "text": "build() is implemented only for the state where both format and output_path are set",
+      "passed": true,
+      "evidence": "impl on <Set, Set>; negative compile shows E0599 for <Missing, Set>."
+    },
+    {
+      "text": "No unwrap/expect/unreachable/panic anywhere",
+      "passed": true,
+      "evidence": "None present; build() uses match with default arms instead of unwrap."
+    },
+    {
+      "text": "Required fields NOT stored as Option then unwrapped/unreachable'd",
+      "passed": false,
+      "evidence": "Stored required fields as Option<_> (2 Option fields) and recovered them in build() via a match that maps the by-construction-impossible None arms to defaults. No panic, but this is exactly the Option-you-re-check shape the skill steers away from; the skill's idiom stores the data plainly so there is no Option at all."
+    },
+    {
+      "text": "columns is an optional setter available in any state, defaults to 1",
+      "passed": true,
+      "evidence": "columns off the type-state, defaults to 1."
+    },
+    {
+      "text": "Produced Rust compiles on edition 2024",
+      "passed": true,
+      "evidence": "rustc exit 0, tests pass."
+    },
+    {
+      "text": "Calling build() with a required field unset is a compile error",
+      "passed": true,
+      "evidence": "Verified E0599 for <Missing, Set>."
+    }
+  ],
+  "summary": {
+    "pass_rate": 0.8571,
+    "passed": 6,
+    "failed": 1,
+    "total": 7
+  }
+}

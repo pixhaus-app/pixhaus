@@ -1,0 +1,13 @@
+{
+  "eval_id": 2,
+  "eval_name": "wgpu-setup-config",
+  "prompt": "For the Pixhaus eframe app I want to tune the egui-wgpu setup: prefer the discrete / high-performance GPU, keep vsync on but minimize input latency for brush strokes, and request higher texture-dimension limits so we can support an 8K canvas. Where do these settings live in egui-wgpu and how do I configure them? egui-wgpu 0.34.",
+  "assertions": [
+    "Identifies WgpuConfiguration as the home for these settings",
+    "Sets desired_maximum_frame_latency = Some(1) for low input latency",
+    "Uses an AutoVsync present_mode (vsync on)",
+    "Prefers the discrete GPU via PowerPreference::HighPerformance or native_adapter_selector",
+    "Requests higher texture limits via the device_descriptor closure (max_texture_dimension_2d)",
+    "Routes config through eframe NativeOptions wgpu_options"
+  ]
+}

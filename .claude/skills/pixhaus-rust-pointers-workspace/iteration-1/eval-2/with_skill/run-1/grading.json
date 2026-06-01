@@ -1,0 +1,30 @@
+{
+  "expectations": [
+    {
+      "text": "Recommends a static LazyLock<Palette>",
+      "passed": true,
+      "evidence": "static DEFAULT_PALETTE: LazyLock<Palette> = LazyLock::new(|| ...)."
+    },
+    {
+      "text": "Notes it's in std \u00e2\u20ac\u201d no lazy_static/once_cell dependency",
+      "passed": true,
+      "evidence": "'LazyLock is in std ... replaces lazy_static! and once_cell::sync::Lazy; don't pull in a crate.'"
+    },
+    {
+      "text": "Rejects Mutex<Option<T>> and Arc/Arc<RwLock> for read-only global",
+      "passed": true,
+      "evidence": "Rejects Arc<Palette>, Arc<RwLock<Palette>>, and Mutex<Option<Palette>> explicitly."
+    },
+    {
+      "text": "Rules out the single-threaded OnceCell/LazyCell as !Sync",
+      "passed": true,
+      "evidence": "'LazyCell / OnceCell ... are !Sync, so they can't back a static read from multiple threads.'"
+    }
+  ],
+  "summary": {
+    "pass_rate": 1.0,
+    "passed": 4,
+    "failed": 0,
+    "total": 4
+  }
+}

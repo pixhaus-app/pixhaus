@@ -1,0 +1,1325 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Eval Review</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Poppins:wght@500;600&family=Lora:wght@400;500&display=swap" rel="stylesheet">
+  <script src="https://cdn.sheetjs.com/xlsx-0.20.3/package/dist/xlsx.full.min.js" integrity="sha384-EnyY0/GSHQGSxSgMwaIPzSESbqoOLSexfnSMN2AP+39Ckmn92stwABZynq1JyzdT" crossorigin="anonymous"></script>
+  <style>
+    :root {
+      --bg: #faf9f5;
+      --surface: #ffffff;
+      --border: #e8e6dc;
+      --text: #141413;
+      --text-muted: #b0aea5;
+      --accent: #d97757;
+      --accent-hover: #c4613f;
+      --green: #788c5d;
+      --green-bg: #eef2e8;
+      --red: #c44;
+      --red-bg: #fceaea;
+      --header-bg: #141413;
+      --header-text: #faf9f5;
+      --radius: 6px;
+    }
+
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+
+    body {
+      font-family: 'Lora', Georgia, serif;
+      background: var(--bg);
+      color: var(--text);
+      height: 100vh;
+      display: flex;
+      flex-direction: column;
+    }
+
+    /* ---- Header ---- */
+    .header {
+      background: var(--header-bg);
+      color: var(--header-text);
+      padding: 1rem 2rem;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      flex-shrink: 0;
+    }
+    .header h1 {
+      font-family: 'Poppins', sans-serif;
+      font-size: 1.25rem;
+      font-weight: 600;
+    }
+    .header .instructions {
+      font-size: 0.8rem;
+      opacity: 0.7;
+      margin-top: 0.25rem;
+    }
+    .header .progress {
+      font-size: 0.875rem;
+      opacity: 0.8;
+      text-align: right;
+    }
+
+    /* ---- Main content ---- */
+    .main {
+      flex: 1;
+      overflow-y: auto;
+      padding: 1.5rem 2rem;
+      display: flex;
+      flex-direction: column;
+      gap: 1.25rem;
+    }
+
+    /* ---- Sections ---- */
+    .section {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      flex-shrink: 0;
+    }
+    .section-header {
+      font-family: 'Poppins', sans-serif;
+      padding: 0.75rem 1rem;
+      font-size: 0.75rem;
+      font-weight: 500;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+      color: var(--text-muted);
+      border-bottom: 1px solid var(--border);
+      background: var(--bg);
+    }
+    .section-body {
+      padding: 1rem;
+    }
+
+    /* ---- Config badge ---- */
+    .config-badge {
+      display: inline-block;
+      padding: 0.2rem 0.625rem;
+      border-radius: 9999px;
+      font-family: 'Poppins', sans-serif;
+      font-size: 0.6875rem;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.03em;
+      margin-left: 0.75rem;
+      vertical-align: middle;
+    }
+    .config-badge.config-primary {
+      background: rgba(33, 150, 243, 0.12);
+      color: #1976d2;
+    }
+    .config-badge.config-baseline {
+      background: rgba(255, 193, 7, 0.15);
+      color: #f57f17;
+    }
+
+    /* ---- Prompt ---- */
+    .prompt-text {
+      white-space: pre-wrap;
+      font-size: 0.9375rem;
+      line-height: 1.6;
+    }
+
+    /* ---- Outputs ---- */
+    .output-file {
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      overflow: hidden;
+    }
+    .output-file + .output-file {
+      margin-top: 1rem;
+    }
+    .output-file-header {
+      padding: 0.5rem 0.75rem;
+      font-size: 0.8rem;
+      font-weight: 600;
+      color: var(--text-muted);
+      background: var(--bg);
+      border-bottom: 1px solid var(--border);
+      font-family: 'SF Mono', SFMono-Regular, Consolas, 'Liberation Mono', Menlo, monospace;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+    }
+    .output-file-header .dl-btn {
+      font-size: 0.7rem;
+      color: var(--accent);
+      text-decoration: none;
+      cursor: pointer;
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+      font-weight: 500;
+      opacity: 0.8;
+    }
+    .output-file-header .dl-btn:hover {
+      opacity: 1;
+      text-decoration: underline;
+    }
+    .output-file-content {
+      padding: 0.75rem;
+      overflow-x: auto;
+    }
+    .output-file-content pre {
+      font-size: 0.8125rem;
+      line-height: 1.5;
+      white-space: pre-wrap;
+      word-break: break-word;
+      font-family: 'SF Mono', SFMono-Regular, Consolas, 'Liberation Mono', Menlo, monospace;
+    }
+    .output-file-content img {
+      max-width: 100%;
+      height: auto;
+      border-radius: 4px;
+    }
+    .output-file-content iframe {
+      width: 100%;
+      height: 600px;
+      border: none;
+    }
+    .output-file-content table {
+      border-collapse: collapse;
+      font-size: 0.8125rem;
+      width: 100%;
+    }
+    .output-file-content table td,
+    .output-file-content table th {
+      border: 1px solid var(--border);
+      padding: 0.375rem 0.5rem;
+      text-align: left;
+    }
+    .output-file-content table th {
+      background: var(--bg);
+      font-weight: 600;
+    }
+    .output-file-content .download-link {
+      display: inline-flex;
+      align-items: center;
+      gap: 0.5rem;
+      padding: 0.5rem 1rem;
+      background: var(--bg);
+      border: 1px solid var(--border);
+      border-radius: 4px;
+      color: var(--accent);
+      text-decoration: none;
+      font-size: 0.875rem;
+      cursor: pointer;
+    }
+    .output-file-content .download-link:hover {
+      background: var(--border);
+    }
+    .empty-state {
+      color: var(--text-muted);
+      font-style: italic;
+      padding: 2rem;
+      text-align: center;
+    }
+
+    /* ---- Feedback ---- */
+    .prev-feedback {
+      background: var(--bg);
+      border: 1px solid var(--border);
+      border-radius: 4px;
+      padding: 0.625rem 0.75rem;
+      margin-top: 0.75rem;
+      font-size: 0.8125rem;
+      color: var(--text-muted);
+      line-height: 1.5;
+    }
+    .prev-feedback-label {
+      font-size: 0.7rem;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.04em;
+      margin-bottom: 0.25rem;
+      color: var(--text-muted);
+    }
+    .feedback-textarea {
+      width: 100%;
+      min-height: 100px;
+      padding: 0.75rem;
+      border: 1px solid var(--border);
+      border-radius: 4px;
+      font-family: inherit;
+      font-size: 0.9375rem;
+      line-height: 1.5;
+      resize: vertical;
+      color: var(--text);
+    }
+    .feedback-textarea:focus {
+      outline: none;
+      border-color: var(--accent);
+      box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.1);
+    }
+    .feedback-status {
+      font-size: 0.75rem;
+      color: var(--text-muted);
+      margin-top: 0.5rem;
+      min-height: 1.1em;
+    }
+
+    /* ---- Grades (collapsible) ---- */
+    .grades-toggle {
+      display: flex;
+      align-items: center;
+      cursor: pointer;
+      user-select: none;
+    }
+    .grades-toggle:hover {
+      color: var(--accent);
+    }
+    .grades-toggle .arrow {
+      margin-right: 0.5rem;
+      transition: transform 0.15s;
+      font-size: 0.75rem;
+    }
+    .grades-toggle .arrow.open {
+      transform: rotate(90deg);
+    }
+    .grades-content {
+      display: none;
+      margin-top: 0.75rem;
+    }
+    .grades-content.open {
+      display: block;
+    }
+    .grades-summary {
+      font-size: 0.875rem;
+      margin-bottom: 0.75rem;
+      display: flex;
+      align-items: center;
+      gap: 0.5rem;
+    }
+    .grade-badge {
+      display: inline-block;
+      padding: 0.125rem 0.5rem;
+      border-radius: 9999px;
+      font-size: 0.75rem;
+      font-weight: 600;
+    }
+    .grade-pass { background: var(--green-bg); color: var(--green); }
+    .grade-fail { background: var(--red-bg); color: var(--red); }
+    .assertion-list {
+      list-style: none;
+    }
+    .assertion-item {
+      padding: 0.625rem 0;
+      border-bottom: 1px solid var(--border);
+      font-size: 0.8125rem;
+    }
+    .assertion-item:last-child { border-bottom: none; }
+    .assertion-status {
+      font-weight: 600;
+      margin-right: 0.5rem;
+    }
+    .assertion-status.pass { color: var(--green); }
+    .assertion-status.fail { color: var(--red); }
+    .assertion-evidence {
+      color: var(--text-muted);
+      font-size: 0.75rem;
+      margin-top: 0.25rem;
+      padding-left: 1.5rem;
+    }
+
+    /* ---- View tabs ---- */
+    .view-tabs {
+      display: flex;
+      gap: 0;
+      padding: 0 2rem;
+      background: var(--bg);
+      border-bottom: 1px solid var(--border);
+      flex-shrink: 0;
+    }
+    .view-tab {
+      font-family: 'Poppins', sans-serif;
+      padding: 0.625rem 1.25rem;
+      font-size: 0.8125rem;
+      font-weight: 500;
+      cursor: pointer;
+      border: none;
+      background: none;
+      color: var(--text-muted);
+      border-bottom: 2px solid transparent;
+      transition: all 0.15s;
+    }
+    .view-tab:hover { color: var(--text); }
+    .view-tab.active {
+      color: var(--accent);
+      border-bottom-color: var(--accent);
+    }
+    .view-panel { display: none; }
+    .view-panel.active { display: flex; flex-direction: column; flex: 1; overflow: hidden; }
+
+    /* ---- Benchmark view ---- */
+    .benchmark-view {
+      padding: 1.5rem 2rem;
+      overflow-y: auto;
+      flex: 1;
+    }
+    .benchmark-table {
+      border-collapse: collapse;
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      font-size: 0.8125rem;
+      width: 100%;
+      margin-bottom: 1.5rem;
+    }
+    .benchmark-table th, .benchmark-table td {
+      padding: 0.625rem 0.75rem;
+      text-align: left;
+      border: 1px solid var(--border);
+    }
+    .benchmark-table th {
+      font-family: 'Poppins', sans-serif;
+      background: var(--header-bg);
+      color: var(--header-text);
+      font-weight: 500;
+      font-size: 0.75rem;
+      text-transform: uppercase;
+      letter-spacing: 0.04em;
+    }
+    .benchmark-table tr:hover { background: var(--bg); }
+    .benchmark-table tr.benchmark-row-with { background: rgba(33, 150, 243, 0.06); }
+    .benchmark-table tr.benchmark-row-without { background: rgba(255, 193, 7, 0.06); }
+    .benchmark-table tr.benchmark-row-with:hover { background: rgba(33, 150, 243, 0.12); }
+    .benchmark-table tr.benchmark-row-without:hover { background: rgba(255, 193, 7, 0.12); }
+    .benchmark-table tr.benchmark-row-avg { font-weight: 600; border-top: 2px solid var(--border); }
+    .benchmark-table tr.benchmark-row-avg.benchmark-row-with { background: rgba(33, 150, 243, 0.12); }
+    .benchmark-table tr.benchmark-row-avg.benchmark-row-without { background: rgba(255, 193, 7, 0.12); }
+    .benchmark-delta-positive { color: var(--green); font-weight: 600; }
+    .benchmark-delta-negative { color: var(--red); font-weight: 600; }
+    .benchmark-notes {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      padding: 1rem;
+    }
+    .benchmark-notes h3 {
+      font-family: 'Poppins', sans-serif;
+      font-size: 0.875rem;
+      margin-bottom: 0.75rem;
+    }
+    .benchmark-notes ul {
+      list-style: disc;
+      padding-left: 1.25rem;
+    }
+    .benchmark-notes li {
+      font-size: 0.8125rem;
+      line-height: 1.6;
+      margin-bottom: 0.375rem;
+    }
+    .benchmark-empty {
+      color: var(--text-muted);
+      font-style: italic;
+      text-align: center;
+      padding: 3rem;
+    }
+
+    /* ---- Navigation ---- */
+    .nav {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      padding: 1rem 2rem;
+      border-top: 1px solid var(--border);
+      background: var(--surface);
+      flex-shrink: 0;
+    }
+    .nav-btn {
+      font-family: 'Poppins', sans-serif;
+      padding: 0.5rem 1.25rem;
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      background: var(--surface);
+      cursor: pointer;
+      font-size: 0.875rem;
+      font-weight: 500;
+      color: var(--text);
+      transition: all 0.15s;
+    }
+    .nav-btn:hover:not(:disabled) {
+      background: var(--bg);
+      border-color: var(--text-muted);
+    }
+    .nav-btn:disabled {
+      opacity: 0.4;
+      cursor: not-allowed;
+    }
+    .done-btn {
+      font-family: 'Poppins', sans-serif;
+      padding: 0.5rem 1.5rem;
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      background: var(--surface);
+      color: var(--text);
+      cursor: pointer;
+      font-size: 0.875rem;
+      font-weight: 500;
+      transition: all 0.15s;
+    }
+    .done-btn:hover {
+      background: var(--bg);
+      border-color: var(--text-muted);
+    }
+    .done-btn.ready {
+      border: none;
+      background: var(--accent);
+      color: white;
+      font-weight: 600;
+    }
+    .done-btn.ready:hover {
+      background: var(--accent-hover);
+    }
+    /* ---- Done overlay ---- */
+    .done-overlay {
+      display: none;
+      position: fixed;
+      inset: 0;
+      background: rgba(0, 0, 0, 0.5);
+      z-index: 100;
+      justify-content: center;
+      align-items: center;
+    }
+    .done-overlay.visible {
+      display: flex;
+    }
+    .done-card {
+      background: var(--surface);
+      border-radius: 12px;
+      padding: 2rem 3rem;
+      text-align: center;
+      box-shadow: 0 20px 60px rgba(0, 0, 0, 0.3);
+      max-width: 500px;
+    }
+    .done-card h2 {
+      font-size: 1.5rem;
+      margin-bottom: 0.5rem;
+    }
+    .done-card p {
+      color: var(--text-muted);
+      margin-bottom: 1.5rem;
+      line-height: 1.5;
+    }
+    .done-card .btn-row {
+      display: flex;
+      gap: 0.5rem;
+      justify-content: center;
+    }
+    .done-card button {
+      padding: 0.5rem 1.25rem;
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      background: var(--surface);
+      cursor: pointer;
+      font-size: 0.875rem;
+    }
+    .done-card button:hover {
+      background: var(--bg);
+    }
+    /* ---- Toast ---- */
+    .toast {
+      position: fixed;
+      bottom: 5rem;
+      left: 50%;
+      transform: translateX(-50%);
+      background: var(--header-bg);
+      color: var(--header-text);
+      padding: 0.625rem 1.25rem;
+      border-radius: var(--radius);
+      font-size: 0.875rem;
+      opacity: 0;
+      transition: opacity 0.3s;
+      pointer-events: none;
+      z-index: 200;
+    }
+    .toast.visible {
+      opacity: 1;
+    }
+  </style>
+</head>
+<body>
+  <div id="app" style="height:100vh; display:flex; flex-direction:column;">
+    <div class="header">
+      <div>
+        <h1>Eval Review: <span id="skill-name"></span></h1>
+        <div class="instructions">Review each output and leave feedback below. Navigate with arrow keys or buttons. When done, copy feedback and paste into Claude Code.</div>
+      </div>
+      <div class="progress" id="progress"></div>
+    </div>
+
+    <!-- View tabs (only shown when benchmark data exists) -->
+    <div class="view-tabs" id="view-tabs" style="display:none;">
+      <button class="view-tab active" onclick="switchView('outputs')">Outputs</button>
+      <button class="view-tab" onclick="switchView('benchmark')">Benchmark</button>
+    </div>
+
+    <!-- Outputs panel (qualitative review) -->
+    <div class="view-panel active" id="panel-outputs">
+    <div class="main">
+      <!-- Prompt -->
+      <div class="section">
+        <div class="section-header">Prompt <span class="config-badge" id="config-badge" style="display:none;"></span></div>
+        <div class="section-body">
+          <div class="prompt-text" id="prompt-text"></div>
+        </div>
+      </div>
+
+      <!-- Outputs -->
+      <div class="section">
+        <div class="section-header">Output</div>
+        <div class="section-body" id="outputs-body">
+          <div class="empty-state">No output files found</div>
+        </div>
+      </div>
+
+      <!-- Previous Output (collapsible) -->
+      <div class="section" id="prev-outputs-section" style="display:none;">
+        <div class="section-header">
+          <div class="grades-toggle" onclick="togglePrevOutputs()">
+            <span class="arrow" id="prev-outputs-arrow">&#9654;</span>
+            Previous Output
+          </div>
+        </div>
+        <div class="grades-content" id="prev-outputs-content"></div>
+      </div>
+
+      <!-- Grades (collapsible) -->
+      <div class="section" id="grades-section" style="display:none;">
+        <div class="section-header">
+          <div class="grades-toggle" onclick="toggleGrades()">
+            <span class="arrow" id="grades-arrow">&#9654;</span>
+            Formal Grades
+          </div>
+        </div>
+        <div class="grades-content" id="grades-content"></div>
+      </div>
+
+      <!-- Feedback -->
+      <div class="section">
+        <div class="section-header">Your Feedback</div>
+        <div class="section-body">
+          <textarea
+            class="feedback-textarea"
+            id="feedback"
+            placeholder="What do you think of this output? Any issues, suggestions, or things that look great?"
+          ></textarea>
+          <div class="feedback-status" id="feedback-status"></div>
+          <div class="prev-feedback" id="prev-feedback" style="display:none;">
+            <div class="prev-feedback-label">Previous feedback</div>
+            <div id="prev-feedback-text"></div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="nav" id="outputs-nav">
+      <button class="nav-btn" id="prev-btn" onclick="navigate(-1)">&#8592; Previous</button>
+      <button class="done-btn" id="done-btn" onclick="showDoneDialog()">Submit All Reviews</button>
+      <button class="nav-btn" id="next-btn" onclick="navigate(1)">Next &#8594;</button>
+    </div>
+    </div><!-- end panel-outputs -->
+
+    <!-- Benchmark panel (quantitative stats) -->
+    <div class="view-panel" id="panel-benchmark">
+      <div class="benchmark-view" id="benchmark-content">
+        <div class="benchmark-empty">No benchmark data available. Run a benchmark to see quantitative results here.</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Done overlay -->
+  <div class="done-overlay" id="done-overlay">
+    <div class="done-card">
+      <h2>Review Complete</h2>
+      <p>Your feedback has been saved. Go back to your Claude Code session and tell Claude you're done reviewing.</p>
+      <div class="btn-row">
+        <button onclick="closeDoneDialog()">OK</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Toast -->
+  <div class="toast" id="toast"></div>
+
+  <script>
+    // ---- Embedded data (injected by generate_review.py) ----
+    const EMBEDDED_DATA = {"skill_name": "pixhaus-rust-pointers", "runs": [{"id": "eval-0-with_skill-run-1", "prompt": "(No prompt found)", "eval_id": null, "outputs": [{"name": "answer.md", "type": "text", "content": "# Backend registry: what to wrap it in\n\n## Recommendation\n\nWrap it in `Arc<parking_lot::RwLock<BackendRegistry>>`.\n\n```rust\nuse std::sync::Arc;\nuse parking_lot::RwLock;\n\nlet registry: Arc<RwLock<BackendRegistry>> = Arc::new(RwLock::new(BackendRegistry::new()));\n\n// UI thread, every frame: many concurrent readers, no allocation, no contention with each other\nlet names: Vec<String> = registry.read().backend_ids();\n\n// Settings flow, occasionally: one writer, exclusive\nregistry.write().insert(id, backend);\n\n// Background task: clone the Arc into the spawned closure, then look up by id\nlet registry = Arc::clone(&registry);\nrt.spawn(async move {\n    // look up + clone out what you need, THEN drop the guard before any .await\n    let backend = registry.read().get(&id).map(Arc::clone);\n    if let Some(backend) = backend {\n        backend.run(request).await // guard already dropped \u00e2\u20ac\u201d future stays Send\n    } else {\n        Err(BackendError::Unknown(id))\n    }\n});\n```\n\nThe registry itself holds the adapters as `Vec<Box<dyn Backend>>` (or a\n`HashMap<BackendId, Arc<dyn Backend>>` if you want to hand a single adapter out to a\ntask \u00e2\u20ac\u201d see the await note below). That heterogeneous-trait-object store is the one place\n`Box<dyn Trait>` in a collection is the right call.\n\n## Why this and not the alternatives\n\nThis is genuinely shared mutable state across threads. Three independent holders need it\nalive at once: the egui UI thread, the settings flow, and any number of tokio background\ntasks. That rules out plain ownership with `&`/`&mut` \u00e2\u20ac\u201d no single owner can lend borrows\nto a thread it doesn't control. So you need shared ownership (`Arc`) plus a synchronizer.\n\nThe access pattern decides the synchronizer. Reads dominate massively: the UI lists\nbackends every single frame, while writes happen only when a human changes settings.\nThat is the textbook `RwLock` case \u00e2\u20ac\u201d many concurrent readers *or* one exclusive writer.\nThe UI's per-frame reads never block each other; the rare write takes the lock exclusively\nfor the moment it mutates. The skill calls out this exact scenario by name: \"a backend\nregistry the UI reads constantly and a config flow writes occasionally,\" and labels\n`Arc<parking_lot::RwLock<...>>` the *legitimate* `Arc<lock<>>` \u00e2\u20ac\u201d real cross-thread shared\nmutation, not the reflexive wrap around single-owner data.\n\n## What I'd reject, and why\n\n- **`Arc<Mutex<T>>` (the reflex).** A `Mutex` serializes readers against each other, so\n  every per-frame UI listing would contend with every other reader for no reason \u00e2\u20ac\u201d reads\n  don't conflict. `Mutex` is the wrong fit when reads vastly outnumber writes. Reserve it\n  for write-heavy or balanced access; this is read-heavy.\n\n- **`std::sync::RwLock`.** Use `parking_lot`: faster, no lock poisoning to handle, cleaner\n  guard API. This is a workspace convention, not a preference.\n\n- **Plain `Arc<T>` with no lock.** That gives shared *reads* only. The settings flow needs\n  to add and remove backends, so there's real shared mutation \u00e2\u20ac\u201d you need the lock. (If the\n  set of backends were fixed at startup and never changed, `Arc<BackendRegistry>` with no\n  lock would be correct. It isn't \u00e2\u20ac\u201d adds/removes are in the requirements.)\n\n- **`RefCell` / `Rc`.** Single-threaded only. `Rc` is `!Send` and won't cross into a tokio\n  task; `RefCell` is `!Sync` and trades a compile error for a runtime panic. Both are out\n  the moment background tasks are involved.\n\n- **`Mutex<Option<T>>` / lazy-static hacks** for the registry handle \u00e2\u20ac\u201d not relevant here;\n  the registry is built at startup and owned, not lazily initialized on first access.\n\n- **Raw pointers.** Forbidden workspace-wide (`#![forbid(unsafe_code)]`). Not a\n  consideration.\n\n## The one trap to avoid: the lock and the await\n\nA `parking_lot` read/write guard is `!Send`. If you hold it across `.await` \u00e2\u20ac\u201d e.g. call\n`registry.read().get(&id).unwrap().run(req).await` with the guard still live \u00e2\u20ac\u201d the future\nbecomes `!Send` and `tokio::spawn` rejects it, and you'd also serialize every backend run\nthrough the registry lock and risk deadlock. Never hold the lock across an await.\n\nThe fix is in the example above: under the lock, look up the backend and clone out a cheap\nhandle to it (an `Arc<dyn Backend>`, or whatever owned thing the request needs), then let\nthe guard drop at the end of that statement. Do the `.await` afterward with no lock held.\nIf the registry stores `HashMap<BackendId, Arc<dyn Backend>>`, the lookup is a one-line\n`Arc::clone` out \u00e2\u20ac\u201d cheap, and it keeps the await clean. (Full footgun detail is in the\ntokio skill.)\n"}], "grading": {"expectations": [{"text": "Recommends Arc<RwLock<...>> (RwLock, not Mutex, as the synchronizer)", "passed": true, "evidence": "Leads with Arc<parking_lot::RwLock<BackendRegistry>>."}, {"text": "Chooses parking_lot for the lock", "passed": true, "evidence": "use parking_lot::RwLock; in the snippet."}, {"text": "Treats parking_lot-over-std as a firm repo convention, not optional", "passed": true, "evidence": "'Use parking_lot ... This is a workspace convention, not a preference.'"}, {"text": "Explains the never-hold-lock-across-await trap and the clone-the-Arc-out fix", "passed": true, "evidence": "Dedicated section: guard is !Send, clone Arc out under the lock then drop before .await."}, {"text": "Rejects Arc<Mutex> citing read-dominant access", "passed": true, "evidence": "'Mutex serializes readers ... wrong fit when reads vastly outnumber writes.'"}], "summary": {"pass_rate": 1.0, "passed": 5, "failed": 0, "total": 5}}}, {"id": "eval-0-without_skill-run-1", "prompt": "(No prompt found)", "eval_id": null, "outputs": [{"name": "answer.md", "type": "text", "content": "# Wrapping the AI backend registry\n\n## Recommendation\n\nWrap it in `Arc<RwLock<HashMap<BackendId, Arc<dyn Backend>>>>`.\n\nConcretely:\n\n```rust\nuse std::collections::HashMap;\nuse std::sync::Arc;\nuse parking_lot::RwLock; // or std::sync::RwLock\n\n/// A stable id for a backend (newtype, not a bare String).\n#[derive(Clone, PartialEq, Eq, Hash, Debug)]\npub struct BackendId(String);\n\n/// The adapter trait. Object-safe so the registry can hold any backend\n/// behind a pointer.\npub trait Backend: Send + Sync {\n    fn id(&self) -> &BackendId;\n    fn display_name(&self) -> &str;\n    // run(...) etc.\n}\n\n#[derive(Clone, Default)]\npub struct BackendRegistry {\n    inner: Arc<RwLock<HashMap<BackendId, Arc<dyn Backend>>>>,\n}\n\nimpl BackendRegistry {\n    /// Cheap: clones the metadata the UI needs, drops the lock immediately.\n    pub fn list(&self) -> Vec<(BackendId, String)> {\n        self.inner\n            .read()\n            .iter()\n            .map(|(id, b)| (id.clone(), b.display_name().to_owned()))\n            .collect()\n    }\n\n    /// Hand a background task its own owned handle to one backend.\n    pub fn get(&self, id: &BackendId) -> Option<Arc<dyn Backend>> {\n        self.inner.read().get(id).cloned()\n    }\n\n    pub fn insert(&self, backend: Arc<dyn Backend>) {\n        self.inner.write().insert(backend.id().clone(), backend);\n    }\n\n    pub fn remove(&self, id: &BackendId) -> Option<Arc<dyn Backend>> {\n        self.inner.write().remove(id)\n    }\n}\n```\n\nThe two pointer layers each do a distinct job, so pick them deliberately:\n\n- **`Arc<...>` on the outside** \u00e2\u20ac\u201d the registry handle itself is shared across\n  threads. The egui update loop holds a clone; every spawned tokio task gets a\n  clone. `Clone` is a refcount bump, so `BackendRegistry` is `Clone` and you pass\n  copies around freely instead of threading borrows through `'static` task\n  boundaries.\n- **`RwLock` in the middle** \u00e2\u20ac\u201d access is overwhelmingly read (the UI lists\n  backends every frame; tasks look one up per request) and rarely write (a\n  settings flow adds/removes one occasionally). That read-heavy, write-rare shape\n  is exactly what a reader-writer lock is for: any number of concurrent readers,\n  exclusive access only for the rare mutation.\n- **`Arc<dyn Backend>` on the values** \u00e2\u20ac\u201d `Backend` is a trait with multiple\n  concrete implementors (Anthropic, OpenAI, Replicate, Ollama, ComfyUI,\n  Stability), so the map stores trait objects. `Arc` (not `Box`) so `get()` hands\n  a task an owned, refcounted handle to one backend without cloning the adapter\n  or holding the registry lock for the request's lifetime.\n\n## Why this and not the alternatives\n\n**Why not `Mutex` instead of `RwLock`?** A `Mutex` serializes readers against each\nother. The UI thread listing backends would block a background task's lookup and\nvice versa, for no reason \u00e2\u20ac\u201d neither mutates. With reads dominating, `RwLock` lets\nthem run concurrently and only the rare add/remove takes the exclusive path. If\nthe registry were write-heavy or held for long critical sections the calculus\nflips, but this is the canonical read-mostly case.\n\n**Why not `Arc<Mutex<HashMap<...>>>`?** Same point: workable, but it throws away\nfree read concurrency. The repo's own guidance is to avoid reaching for\n`Arc<Mutex<>>` reflexively; here a `RwLock` is the better-fitting primitive.\n\n**Why `parking_lot::RwLock` over `std::sync::RwLock`?** `parking_lot` is smaller,\nfaster, has no poisoning (so `read()`/`write()` return guards directly instead of\n`Result` you'd have to handle or unwrap \u00e2\u20ac\u201d and unwrap is banned outside tests), and\nis fair about writers, which matters so the occasional add/remove doesn't starve\nbehind a constant stream of UI reads. `std::sync::RwLock` is fine if you want zero\nextra deps; you'll just unwrap-or-handle the poison `Result`, and on some\nplatforms it can starve writers. Either works \u00e2\u20ac\u201d the structure is what matters.\n\n**Critical: don't hold the lock across `.await`.** A `parking_lot` guard is not\n`Send` and holding any lock guard across a suspension point is a deadlock and\ncorrectness hazard. The `get()` method clones out an `Arc<dyn Backend>` and drops\nthe read guard before returning \u00e2\u20ac\u201d the task then `.await`s on the backend it owns,\nwith no lock held. Likewise `list()` collects owned data and releases the guard.\nNever do `registry.inner.read().get(id).run(...).await` with the guard live.\n\n**Why `RwLock`, not a lock-free / copy-on-write scheme like `arc-swap` or\n`Arc<RwLock<Arc<Map>>>`?** You could, and for a truly hammered read path it's\nfaster. But the read rate here is per-frame and per-request, not millions/sec, and\nthe registry is tiny. `RwLock` is simpler, obviously correct, and removes a\ndependency and a layer of indirection. Reach for `arc-swap` only if profiling\nshows the lock is actually contended \u00e2\u20ac\u201d it won't be at this scale.\n\n**Why `Arc<dyn Backend>` values, not `Box<dyn Backend>`?** `Box` is single-owner.\nTo run a request you'd either have to keep the registry locked for the whole\nasync call (forbidden \u00e2\u20ac\u201d see above) or move the backend out. `Arc` lets the\nregistry keep its copy while a task holds its own, and multiple concurrent tasks\ncan share one backend. The adapters are effectively immutable config + an HTTP\nclient, so sharing is exactly right.\n\n**Bound on the trait:** `Backend: Send + Sync` is required. The values cross the\nthread boundary into spawned tokio tasks, so `Arc<dyn Backend>` must be `Send +\nSync`, which means the trait carries those bounds. If a backend holds non-`Sync`\ninterior state, wrap that state, not the whole registry.\n\n## When you'd deviate\n\n- If background tasks needed to **mutate** a backend's internal state (not just\n  call it), that state would need its own interior synchronization\n  (`Arc<Mutex<...>>` *inside* the adapter), kept off the registry lock.\n- If you wanted the UI to react to add/remove without polling each frame, layer a\n  change notification (a `tokio::sync::watch` of a version counter, or a channel\n  the loop drains) on top \u00e2\u20ac\u201d the storage choice doesn't change.\n"}], "grading": {"expectations": [{"text": "Recommends Arc<RwLock<...>> (RwLock, not Mutex, as the synchronizer)", "passed": true, "evidence": "Arc<RwLock<HashMap<BackendId, Arc<dyn Backend>>>>."}, {"text": "Chooses parking_lot for the lock", "passed": true, "evidence": "Leads with parking_lot::RwLock and explains the advantages."}, {"text": "Treats parking_lot-over-std as a firm repo convention, not optional", "passed": false, "evidence": "Hedges: 'std::sync::RwLock is fine if you want zero extra deps ... Either works.'"}, {"text": "Explains the never-hold-lock-across-await trap and the clone-the-Arc-out fix", "passed": true, "evidence": "'don't hold the lock across .await' with get() cloning the Arc out."}, {"text": "Rejects Arc<Mutex> citing read-dominant access", "passed": true, "evidence": "'A Mutex serializes readers against each other ... throws away free read concurrency.'"}], "summary": {"pass_rate": 0.8, "passed": 4, "failed": 1, "total": 5}}}, {"id": "eval-1-with_skill-run-1", "prompt": "(No prompt found)", "eval_id": null, "outputs": [{"name": "answer.md", "type": "text", "content": "# Representing a nested layer hierarchy in the core crate\n\n## Recommendation\n\nModel the tree as a recursive `enum` where the recursive arm is held by an\nalready-heap-backed `Vec`. A layer is either a leaf or a group, and a group owns\nits children outright. You do **not** need `Rc`, `Arc`, or any interior-mutability\ncell for this. One owner, plain ownership, `&`/`&mut` to read and write.\n\n```rust\n/// A node in the layer tree: either a single drawable layer or a group that\n/// owns nested children.\npub enum LayerNode {\n    Leaf(Layer),\n    Group(Group),\n}\n\npub struct Group {\n    pub name: String,\n    pub visible: bool,\n    pub opacity: f32,\n    /// Children, top-to-bottom in z-order. Groups nest arbitrarily deep here.\n    pub children: Vec<LayerNode>,\n}\n\npub struct Layer {\n    pub name: String,\n    pub visible: bool,\n    pub opacity: f32,\n    pub pixels: PixelBuffer, // Vec<u8> + stride, per the memory convention\n}\n```\n\nThe whole document owns one `Vec<LayerNode>` (or a single root `Group`), and the\negui loop mutates it through `&mut self`. No pointer past `Vec`.\n\n## Why this is the right shape\n\nA type can't contain itself by value \u00e2\u20ac\u201d the size would be infinite \u00e2\u20ac\u201d so a recursive\nstructure needs a pointer somewhere to break the cycle and give the recursive arm\na known size. The key point the pointers skill makes: **`Vec<T>`, `String`, and the\nlike are already heap-allocated and owned, so they already break the recursion. You\ndon't add a `Box` on top.** A `Vec<LayerNode>` stores its elements behind a heap\npointer; the `Group` struct itself is a fixed size (pointer + len + cap), so\n`LayerNode` is sized and compiles.\n\nThat's exactly the case the skill's recursive-types example calls out:\n\n```rust\nenum LayerNode {\n    Leaf(LayerId),\n    Group(Vec<LayerNode>),          // Vec is already heap-backed \u00e2\u20ac\u201d no Box needed here\n    Masked(Box<LayerNode>, MaskId), // a single recursive child does need the Box\n}\n```\n\nA group's children are a *collection* (the `Vec` arm), so no `Box`. You'd only\nreach for `Box<LayerNode>` if you had a node that owned exactly **one** recursive\nchild by value with no surrounding `Vec` \u00e2\u20ac\u201d for instance a `Masked(Box<LayerNode>,\nMaskId)` wrapper. A single recursive field has no heap-backed container to hide\nbehind, so that one needs the `Box`.\n\nOwnership is clean: a group owns its children, the document owns the roots, and the\nborrow checker proves soundness at compile time. Reading a subtree is `&LayerNode`;\nediting one is `&mut LayerNode`. This is the Pixhaus default \u00e2\u20ac\u201d the cheapest thing\nthat works \u00e2\u20ac\u201d and it costs nothing at runtime beyond the heap the `Vec` already uses.\n\n## Alternatives, and why I'd reject most of them\n\n- **`Rc<RefCell<LayerNode>>` / `Arc<Mutex<LayerNode>>` for the children.** This is\n  the reflex to resist. \"A tree of shared nodes\" sounds like it needs shared\n  ownership, but a layer tree has a *single* owner: the document. No two parents\n  share a child, and nothing outside the UI thread mutates the tree (background work\n  gets a *copy of the slice it needs* and returns results over a channel, per the\n  document-ownership rule). `Rc` is `!Send`/`!Sync` and almost never appears in\n  Pixhaus; `RefCell` trades a compile error for a runtime panic in front of a user,\n  which the no-`unwrap`/no-`panic` rule exists to keep out. `Arc<Mutex>` here is the\n  classic over-share: a lock around data that has one owner, plus a second copy of\n  the tree that would desync the undo stack. Reject all of these.\n\n- **An arena: `Vec<LayerNode>` of flat nodes addressed by index/`LayerId`, with\n  groups storing `Vec<LayerId>` instead of owning children directly.** This is the\n  legitimate alternative, and the one I'd actually consider if requirements grow.\n  The skill points to indices-into-a-`Vec` as the way to model graphs and\n  self-referential structures without back-pointers or `unsafe`. It pays off when\n  you need cheap reparenting/reordering, stable handles that survive tree edits\n  (selection, the undo stack, references from the UI), or many cross-references into\n  the tree. The cost is indirection: every traversal goes through the arena, and you\n  hand-manage node removal. For a plain \"groups own their children, nested deep\"\n  requirement, the owned recursive enum is simpler and I'd start there; promote to an\n  arena (`LayerId` newtype + `Vec` slab) the moment stable ids or frequent reparenting\n  show up. Note these aren't far apart \u00e2\u20ac\u201d the enum already wants a `LayerId` newtype on\n  leaves, so moving to an arena later is a contained refactor.\n\n- **`Box<LayerNode>` on the children.** Wrong for the `Vec` arm \u00e2\u20ac\u201d wrapping each\n  element in a `Box` adds a pointer indirection per child for no reason, since the\n  `Vec` already owns its elements on the heap. `Box` earns its place only for a\n  single recursive field (the `Masked` case above) or to shrink a large rarely-used\n  enum variant measured in hand.\n\n- **A giant flat enum with no recursion** (e.g. encoding depth some other way).\n  Fights the natural shape, makes traversal awkward, and buys nothing. The recursive\n  enum *is* the data.\n\n## Bottom line\n\nRecursive `enum` with the children behind a `Vec`. No `Box` on the group's\nchildren (the `Vec` already breaks the recursion), no `Rc`/`Arc`/`RefCell` (the\ndocument is the single owner, mutated through `&mut self`). Add a `LayerId` newtype\non leaves now so that if stable handles or heavy reparenting arrive, switching to an\nindex-based arena is a contained change rather than a rewrite.\n"}], "grading": {"expectations": [{"text": "Recommends a recursive enum with children behind a Vec", "passed": true, "evidence": "enum LayerNode { Leaf, Group } with Group owning Vec<LayerNode>."}, {"text": "States no Box is needed because Vec is already heap-backed", "passed": true, "evidence": "'Vec ... already heap-allocated and owned, so they already break the recursion. You don't add a Box on top.'"}, {"text": "Rejects Rc<RefCell>/Arc<Mutex> as the GC-language reflex, citing single owner", "passed": true, "evidence": "'This is the reflex to resist ... a layer tree has a single owner: the document.'"}, {"text": "Names an index/arena (LayerId) approach as the legitimate alternative", "passed": true, "evidence": "'An arena: Vec<LayerNode> ... addressed by index/LayerId ... the legitimate alternative.'"}], "summary": {"pass_rate": 1.0, "passed": 4, "failed": 0, "total": 4}}}, {"id": "eval-1-without_skill-run-1", "prompt": "(No prompt found)", "eval_id": null, "outputs": [{"name": "answer.md", "type": "text", "content": "# Representing a recursive layer hierarchy in Rust\n\n## Short answer\n\nUse an enum with two variants \u00e2\u20ac\u201d a leaf and a group \u00e2\u20ac\u201d and have the group own a\n`Vec` of the same enum. Recursion through an owned `Vec` is the idiomatic,\nzero-`unsafe`, single-owner way to model a tree in Rust. Don't reach for `Rc`,\n`RefCell`, or raw pointers; you don't need shared ownership or back-pointers for\na layer tree that one document owns.\n\n```rust\n/// A node in the layer tree. Either a single paintable layer or a group that\n/// nests more nodes.\npub enum LayerNode {\n    Leaf(Layer),\n    Group(Group),\n}\n\npub struct Layer {\n    pub id: LayerId,\n    pub name: String,\n    pub visible: bool,\n    pub opacity: f32,\n    pub blend: BlendMode,\n    pub pixels: PixelBuffer, // Vec<u8> + stride, owned here\n}\n\npub struct Group {\n    pub id: LayerId,\n    pub name: String,\n    pub visible: bool,\n    pub opacity: f32,\n    pub blend: BlendMode,\n    /// Children render bottom-to-top (index 0 = bottom). The Vec owns them,\n    /// so the whole subtree drops when the group drops.\n    pub children: Vec<LayerNode>,\n}\n```\n\n`Vec<LayerNode>` is the recursive edge. Because `Vec<T>` stores its elements\nbehind a heap pointer, the type has a known, finite size even though it refers\nto itself \u00e2\u20ac\u201d so you do **not** need a `Box` here. (You'd only need `Box` if a\nvariant held a single `LayerNode` inline; `Vec`, `Box`, and the like already\nprovide the indirection that breaks the infinite-size cycle.)\n\n## Why this shape\n\n- **Single owner, matches the locked memory rule.** The document owns the root,\n  each group owns its children outright via `Vec`. No `Arc<Mutex<>>`, no\n  reference counting, no interior mutability. Dropping the document drops the\n  whole tree. This is exactly the \"every piece of mutable state has a single\n  owner\" guideline.\n- **The enum makes \"group vs leaf\" a type-level fact.** A leaf cannot\n  accidentally grow children; a group cannot accidentally hold pixels it never\n  composites. The compiler forces every traversal to handle both cases via\n  `match`, so adding a third node kind later (say, an adjustment layer) is a\n  compile-error-driven refactor, not a runtime surprise.\n- **Trivially serializable.** `rmp-serde` + `serde` derive `Serialize` /\n  `Deserialize` on this without any custom code \u00e2\u20ac\u201d recursive enums and `Vec` are\n  handled out of the box. That matters for the `.pixhaus` format.\n- **Traversal is plain recursion.** No pointer chasing, no lifetime gymnastics:\n\n  ```rust\n  impl LayerNode {\n      pub fn visit(&self, depth: usize, f: &mut impl FnMut(&LayerNode, usize)) {\n          f(self, depth);\n          if let LayerNode::Group(g) = self {\n              for child in &g.children {\n                  child.visit(depth + 1, f);\n              }\n          }\n      }\n  }\n  ```\n\n  Mutable traversal is the same with `&mut self` and `&mut g.children`. The\n  borrow checker is happy because at any moment you hold exactly one mutable\n  path into the tree.\n\n## The one real pitfall: addressing nodes\n\nThe recursive-owned tree has a known weakness \u00e2\u20ac\u201d you can't cheaply hold a\n\"pointer to a layer\" while still being able to mutate the tree, because a `&mut\nLayerNode` borrows the whole tree for its lifetime. The fix is **not** to switch\nto `Rc<RefCell<>>`. Instead, address nodes by a stable identity and resolve to a\nborrow only at the moment you need it.\n\nTwo good options, pick based on your needs:\n\n1. **Stable `LayerId` (a newtype over a `u64` or a generational id).** The UI,\n   undo stack, and selection all store `LayerId`, never a borrow. To act on a\n   node you walk the tree to find it. Cheap to copy, survives reorders, and\n   serializes cleanly. This is the right default for an editor \u00e2\u20ac\u201d undo/redo and\n   the panel both need an identity that outlives any single borrow.\n\n   ```rust\n   #[derive(Clone, Copy, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]\n   pub struct LayerId(pub u64);\n\n   impl Group {\n       pub fn find_mut(&mut self, target: LayerId) -> Option<&mut LayerNode> {\n           for child in &mut self.children {\n               match child {\n                   LayerNode::Leaf(l) if l.id == target => return Some(child),\n                   LayerNode::Group(g) if g.id == target => return Some(child),\n                   LayerNode::Group(g) => {\n                       if let Some(found) = g.find_mut(target) {\n                           return Some(found);\n                       }\n                   }\n                   LayerNode::Leaf(_) => {}\n               }\n           }\n           None\n       }\n   }\n   ```\n\n2. **Path as `Vec<usize>` (index per depth).** Useful for \"move this node here\"\n   operations where you need positional context. Cheaper to follow than an id\n   search, but indices shift on insert/remove, so it's a transient handle, not\n   something to store across edits.\n\nFor a pixel-art editor with undo/redo, go with the `LayerId` approach as the\ncanonical handle and keep the tree itself owned-and-recursive.\n\n## Alternatives I considered and rejected\n\n- **`Rc<RefCell<LayerNode>>` (or `Arc<Mutex<>>`) for every node.** This is the\n  reflex port from a GC language, and it's wrong here. You'd trade compile-time\n  borrow checking for runtime `borrow()`/`lock()` panics, lose `Send`/`Sync`\n  clarity, make serialization awkward (you have to dedup or break cycles), and\n  invite reference cycles that leak. You only need this if multiple owners\n  genuinely mutate the same node concurrently \u00e2\u20ac\u201d a single-user, file-based editor\n  with a single-threaded egui update loop does not.\n\n- **A flat arena / slotmap with id-based child lists** (e.g. every node in one\n  `Vec<LayerNode>` or a `SlotMap`, children stored as `Vec<LayerId>`). This is a\n  legitimate and arguably *better* choice at scale \u00e2\u20ac\u201d it sidesteps the\n  borrow-the-whole-tree problem entirely, makes ids stable for free, and is\n  cache-friendly. The cost is one layer of indirection on every access and a bit\n  more ceremony. I'd reach for this if traversal/mutation patterns get hot or if\n  you find yourself fighting the borrow checker constantly. For a layer tree\n  (tens to low hundreds of nodes, not a perf-critical inner loop), the plain\n  owned enum is simpler and clearer; reserve the arena for the pixel data, which\n  is where the real bytes and performance live. Mentioning it because if the tree\n  ever needs back-pointers (child knows its parent), the arena is the clean way\n  to get them without `Weak`.\n\n- **Trait objects: `Vec<Box<dyn LayerNode>>` with a `Layer` / `Group` trait.**\n  Tempting if you imagine many node kinds with shared behavior, but it buys\n  nothing over the enum here and costs you: you can't easily match on the\n  concrete kind, downcasting needs `Any`, and `serde` can't derive through\n  `dyn`. The set of node kinds is closed and known (leaf, group, maybe\n  adjustment) \u00e2\u20ac\u201d that's the textbook case *for* an enum, *against* trait objects.\n  Prefer the enum until the variant set is genuinely open and\n  externally-extensible.\n\n- **`Box<LayerNode>` inside the variant.** Unnecessary because the recursive edge\n  goes through `Vec`, which is already a heap pointer. Adding `Box` would just be\n  a wasted allocation per node.\n\n## Recommendation\n\nRecursive owned enum (`LayerNode { Leaf, Group }`, group owns `Vec<LayerNode>`),\naddressed externally by a `Copy` `LayerId` newtype. It's the least machinery, it\nmatches the single-owner memory rule, it serializes for free, and it keeps the\nborrow checker on your side. If profiling or constant borrow-checker friction\nlater says otherwise, migrate the tree to a slotmap arena keyed by `LayerId` \u00e2\u20ac\u201d\nthe id-based public API means that swap won't ripple through callers.\n"}], "grading": {"expectations": [{"text": "Recommends a recursive enum with children behind a Vec", "passed": true, "evidence": "enum LayerNode { Leaf, Group } with Group { children: Vec<LayerNode> }."}, {"text": "States no Box is needed because Vec is already heap-backed", "passed": true, "evidence": "'Vec<T> stores its elements behind a heap pointer ... you do not need a Box here.'"}, {"text": "Rejects Rc<RefCell>/Arc<Mutex> as the GC-language reflex, citing single owner", "passed": true, "evidence": "'This is the reflex port from a GC language, and it's wrong here.'"}, {"text": "Names an index/arena (LayerId) approach as the legitimate alternative", "passed": true, "evidence": "'A flat arena / slotmap with id-based child lists ... legitimate and arguably better at scale.'"}], "summary": {"pass_rate": 1.0, "passed": 4, "failed": 0, "total": 4}}}, {"id": "eval-2-with_skill-run-1", "prompt": "(No prompt found)", "eval_id": null, "outputs": [{"name": "answer.md", "type": "text", "content": "# Built-in default palette: use `LazyLock<Palette>`\n\n## Recommended container\n\nStore it as a `static LazyLock<Palette>`. Your three constraints line up exactly with what `LazyLock` does:\n\n- **Computed once** \u00e2\u20ac\u201d `LazyLock` runs its closure on the first access and caches the result; every access after is a plain read.\n- **Read all over the app from multiple threads** \u00e2\u20ac\u201d `LazyLock<T>` is `Sync` when `T: Send + Sync`, so the same `static` is readable from the egui thread and any background worker with no extra wrapping.\n- **Expensive, skip it if unused** \u00e2\u20ac\u201d initialization is deferred to first access. If nothing ever reads `DEFAULT_PALETTE`, the closure never runs. That is the whole point versus eager startup work.\n\nNo `Arc`, no lock. A `static` lives for the whole program, so there is nothing to keep alive with a refcount, and the value is built once then never mutated, so there is nothing to guard.\n\n## Snippet\n\n```rust\nuse std::sync::LazyLock;\n\n// Built once on first read, then shared read-only for the life of the process.\nstatic DEFAULT_PALETTE: LazyLock<Palette> = LazyLock::new(|| {\n    // The embedded asset travels in the binary; decoding/building is the\n    // expensive part we defer until something actually asks for the palette.\n    static BYTES: &[u8] = include_bytes!(\"../assets/default_palette.bin\");\n    Palette::from_embedded(BYTES)\n});\n\n// Anywhere, on any thread \u00e2\u20ac\u201d first caller builds it, the rest just borrow.\nfn default_swatches() -> &'static [Rgba8] {\n    DEFAULT_PALETTE.colors()\n}\n```\n\n`include_bytes!` embeds the asset; the cost you care about (parsing/quantizing/constructing the `Palette`) sits inside the closure and is what gets deferred and cached.\n\nOne caveat the type system enforces: the closure must not fail. `LazyLock::new` takes `FnOnce() -> T`, not `-> Result<T, _>`. Since the asset is embedded and known-good at build time, build the `Palette` infallibly \u00e2\u20ac\u201d and if the parse genuinely could fail, that is a build-time bug to catch in a test, not a runtime `unwrap()` in the closure (the no-`unwrap`/no-`panic` rule still applies inside that closure). If you can't make construction infallible, the right move is to encode the data so it can't be malformed, or to validate it in a test, not to panic in front of a user.\n\n## Reasoning\n\nThis is the \"lazily initialize a `static` once, then read forever\" row of the decision table, and in Pixhaus the shared-across-threads case is the common one, so the thread-safe `*Lock` form is correct rather than the single-threaded `*Cell` form. `LazyLock` is the ergonomic default here because the value comes from a self-contained closure \u00e2\u20ac\u201d load the embedded bytes, build the palette, done \u00e2\u20ac\u201d which is exactly the shape `LazyLock::new(|| ...)` wants.\n\n`LazyLock` is in `std`, so this needs no dependency. It replaces the old `lazy_static!` and `once_cell::sync::Lazy` patterns; don't pull in a crate for it.\n\n## What I'd reject\n\n- **`Arc<Palette>` (or `Arc<RwLock<Palette>>`).** The reflex on the word \"shared\" is `Arc`, and on \"shared from threads\" it's `Arc<lock<>>` \u00e2\u20ac\u201d both wrong here. `Arc` is for a value with *no single owner* that several holders must keep alive independently. A `static` already lives forever and has no ownership question, so the refcount buys nothing. And the palette is read-only after construction \u00e2\u20ac\u201d there is no shared *mutation*, so there is nothing for a `Mutex`/`RwLock` to guard. A lock here would just add contention on every read for no reason.\n\n- **`OnceLock<Palette>` with manual `get_or_init`.** Not wrong \u00e2\u20ac\u201d `OnceLock` is the same machinery underneath \u00e2\u20ac\u201d but it's the tool for when something *else* decides the value and calls `set`/`get_or_init` at a call site, i.e. when init isn't a self-contained closure. Here init *is* a self-contained closure, so `LazyLock` says it once at the definition and every call site is just a read. Prefer it for the ergonomics.\n\n- **`Mutex<Option<Palette>>` initialized lazily by hand.** This is the anti-pattern the table calls out: you'd be hand-rolling exactly what `LazyLock` gives you, plus a lock you don't need, plus an `Option` you have to keep unwrapping. Skip it.\n\n- **Eager construction at startup (e.g. building it in `main` or the app constructor).** This violates the \"skip it if nothing uses it\" requirement directly \u00e2\u20ac\u201d it pays the expensive build cost unconditionally. Laziness is a stated goal, so the lazy container is the point.\n\n- **`LazyCell` / `OnceCell` (the single-threaded cells).** They're `!Sync`, so they can't back a `static` read from multiple threads. Ruled out by the cross-thread access requirement.\n\n- **Raw pointers / `unsafe` static init tricks.** Off the table \u00e2\u20ac\u201d the workspace is `#![forbid(unsafe_code)]`. `LazyLock` is the safe, `std` answer and needs none of that.\n"}], "grading": {"expectations": [{"text": "Recommends a static LazyLock<Palette>", "passed": true, "evidence": "static DEFAULT_PALETTE: LazyLock<Palette> = LazyLock::new(|| ...)."}, {"text": "Notes it's in std \u00e2\u20ac\u201d no lazy_static/once_cell dependency", "passed": true, "evidence": "'LazyLock is in std ... replaces lazy_static! and once_cell::sync::Lazy; don't pull in a crate.'"}, {"text": "Rejects Mutex<Option<T>> and Arc/Arc<RwLock> for read-only global", "passed": true, "evidence": "Rejects Arc<Palette>, Arc<RwLock<Palette>>, and Mutex<Option<Palette>> explicitly."}, {"text": "Rules out the single-threaded OnceCell/LazyCell as !Sync", "passed": true, "evidence": "'LazyCell / OnceCell ... are !Sync, so they can't back a static read from multiple threads.'"}], "summary": {"pass_rate": 1.0, "passed": 4, "failed": 0, "total": 4}}}, {"id": "eval-2-without_skill-run-1", "prompt": "(No prompt found)", "eval_id": null, "outputs": [{"name": "answer.md", "type": "text", "content": "# Storing a lazily-built, globally-shared default palette\n\n## Short answer\n\nUse a `static` backed by **`std::sync::LazyLock`**, with the closure doing the\nexpensive build from the embedded asset:\n\n```rust\nuse std::sync::LazyLock;\n\nstatic DEFAULT_PALETTE: LazyLock<Palette> = LazyLock::new(|| {\n    // Embedded at compile time \u00e2\u20ac\u201d no I/O, no path lookup at runtime.\n    const RAW: &[u8] = include_bytes!(\"../assets/default_palette.bin\");\n    Palette::decode(RAW)\n        .expect(\"embedded default palette is a build-time invariant\")\n});\n```\n\nRead it from anywhere, on any thread, by deref:\n\n```rust\npub fn default_palette() -> &'static Palette {\n    &DEFAULT_PALETTE\n}\n\n// in a worker thread, a panel, the renderer \u00e2\u20ac\u201d all fine:\nlet p: &Palette = default_palette();\nlet first = p.colors().first();\n```\n\nThat single declaration satisfies every requirement in the question:\n\n- **Computed once** \u00e2\u20ac\u201d `LazyLock` runs the closure exactly once, on the first\n  access, and caches the result for the program's lifetime.\n- **Not built at startup if unused** \u00e2\u20ac\u201d initialization is deferred to first\n  touch. If no code path reads `DEFAULT_PALETTE`, the closure never runs, so you\n  pay nothing for the expensive build.\n- **Read from multiple threads** \u00e2\u20ac\u201d `LazyLock<T>` is `Sync` when `T: Sync`, and\n  the one-time init is internally synchronized: concurrent first-callers block\n  until the winner finishes, then all get the same `&'static T`. No data race,\n  no double-build.\n- **Cheap to read after init** \u00e2\u20ac\u201d every access after the first is a relaxed\n  atomic load plus a deref. No lock is taken on the hot path.\n\n## Why `LazyLock` specifically\n\n`LazyLock` is in `std` (stabilized in Rust 1.80), so no extra dependency. It is\npurpose-built for \"global, initialized once, on first use.\" The two properties\nthat matter here:\n\n1. **Laziness** is the whole point of the question. A plain `static` requires a\n   `const` initializer \u00e2\u20ac\u201d you can't run an expensive decode in it. `LazyLock`\n   lets the initializer be arbitrary code that runs at first access.\n2. **`&'static` access** means call sites just borrow. No cloning, no reference\n   counting, no lifetimes to thread through APIs. A function returning\n   `&'static Palette` is the simplest possible signature for \"read it from all\n   over the app.\"\n\nThe data is immutable after build, so you want a *shared reference*, not shared\nownership. `&'static T` is exactly that and costs nothing to hand around.\n\n### One real constraint: `T: Sync`\n\nBecause the static is shared across threads, `Palette` must be `Sync` (and\n`Send` is implied for a `'static` value used this way). A palette is almost\ncertainly a `Vec` of color structs, which is `Sync`. The trap is interior\nmutability: if the palette ever held a `Cell`, `RefCell`, or a non-atomic\ncounter, it would not be `Sync` and this wouldn't compile. Keep the cached value\nplain immutable data \u00e2\u20ac\u201d which is what a *default* palette is.\n\n### Panics in the initializer\n\nThe closure here uses `.expect(...)`. That is deliberate and correct for an\n*embedded* asset: a malformed `include_bytes!` blob is a build-time bug, not a\nruntime condition, so failing loud is right. Note that in this repo the\nno-`unwrap`/no-`panic` rule is clippy-enforced, so gate it with an\n`#[allow(clippy::expect_used)]` and a comment explaining it's a compile-time\ninvariant \u00e2\u20ac\u201d or, cleaner, move the parse into a `#[test]` that asserts the\nembedded bytes decode, and keep `expect` as the belt-and-suspenders guard. If\nthe source could genuinely fail at runtime (it can't, since it's embedded), you\nwould not use `LazyLock` at all \u00e2\u20ac\u201d see the rejects below.\n\n## What I'd reject\n\n- **`once_cell::sync::Lazy`** \u00e2\u20ac\u201d the crate that `LazyLock` was lifted from. Fine,\n  but now redundant: prefer the `std` version and drop the dependency. Only\n  reach for `once_cell` if you're pinned to a pre-1.80 toolchain, which this\n  workspace is not.\n\n- **`lazy_static!`** \u00e2\u20ac\u201d the old macro. Works, but it's a macro wrapping the same\n  idea, predates `LazyLock`, and produces a deref-newtype that's slightly\n  awkward in error messages. No reason to add it today.\n\n- **`static mut` + manual init** \u00e2\u20ac\u201d requires `unsafe` to touch, which is\n  forbidden workspace-wide, and you'd hand-roll the once-only synchronization\n  that `LazyLock` already gives you correctly. Hard no.\n\n- **`Arc<Palette>` cloned around the app** \u00e2\u20ac\u201d wrong tool for *immutable global*\n  data. `Arc` is for shared *ownership* with a runtime-determined lifetime; here\n  the lifetime is the whole program, so `&'static` is both simpler and cheaper\n  (no atomic refcount bumps on every clone). Use `Arc` only if the palette's\n  identity must change at runtime (e.g. the user swaps the active palette) \u00e2\u20ac\u201d but\n  that's a different object than the built-in default, which never changes.\n\n- **`OnceLock` with an explicit `get_or_init` call site** \u00e2\u20ac\u201d `OnceLock` is the\n  right primitive when the *initializing value* isn't known at the definition\n  site (e.g. it depends on runtime config). Here the build is a pure function of\n  an embedded constant, so the init closure belongs with the declaration, and\n  `LazyLock` is `OnceLock` + that closure bundled together. Use `LazyLock`.\n  (`lazy_static`/`once_cell` would be the same call; `LazyLock` wins on being in\n  `std`.)\n\n- **`thread_local!`** \u00e2\u20ac\u201d defeats the requirement. You'd build the palette *once\n  per thread*, paying the expensive cost N times and storing N copies of\n  identical immutable data. Thread-local is for per-thread *mutable* scratch, not\n  shared read-only globals.\n\n- **Plain `const` / `static` with a `const fn` builder** \u00e2\u20ac\u201d only works if the\n  build is `const`-evaluable, and an expensive decode of a binary blob generally\n  isn't (and even if it were, you'd lose the laziness \u00e2\u20ac\u201d `const` data is baked at\n  compile time, so \"don't build it if unused\" no longer applies the way you\n  want). `LazyLock` is the move.\n\n## Summary\n\n`static DEFAULT_PALETTE: LazyLock<Palette> = LazyLock::new(|| ...)`, read via a\n`-> &'static Palette` accessor. `std`-only, lazy (skips the build when unused),\nthread-safe, single build, zero-cost reads after init. Reject `Arc`-cloning\n(ownership you don't need), `static mut`/`unsafe` (forbidden and unnecessary),\n`thread_local!` (rebuilds per thread), and the third-party once-init crates\n(superseded by `std`).\n"}], "grading": {"expectations": [{"text": "Recommends a static LazyLock<Palette>", "passed": true, "evidence": "static DEFAULT_PALETTE: LazyLock<Palette> with a -> &'static Palette accessor."}, {"text": "Notes it's in std \u00e2\u20ac\u201d no lazy_static/once_cell dependency", "passed": true, "evidence": "'LazyLock is in std (stabilized in Rust 1.80), so no extra dependency.'"}, {"text": "Rejects Mutex<Option<T>> and Arc/Arc<RwLock> for read-only global", "passed": true, "evidence": "Rejects Arc<Palette> cloning; does not name Mutex<Option<T>> but covers the ownership-vs-borrow point."}, {"text": "Rules out the single-threaded OnceCell/LazyCell as !Sync", "passed": false, "evidence": "Discusses T: Sync and thread_local!, but never rules out LazyCell/OnceCell as the container choice."}], "summary": {"pass_rate": 0.75, "passed": 3, "failed": 1, "total": 4}}}], "previous_feedback": {}, "previous_outputs": {}, "benchmark": {"metadata": {"skill_name": "pixhaus-rust-pointers", "skill_path": "C:\\Users\\luism\\Documents\\GitHub\\pixhaus-worktrees\\v2\\.claude\\skills\\pixhaus-rust-pointers", "executor_model": "<model-name>", "analyzer_model": "<model-name>", "timestamp": "2026-05-25T22:22:49Z", "evals_run": [0, 1, 2], "runs_per_configuration": 3}, "runs": [{"eval_id": 0, "configuration": "with_skill", "run_number": 1, "result": {"pass_rate": 1.0, "passed": 5, "failed": 0, "total": 5, "time_seconds": 31.3, "tokens": 42224, "tool_calls": 0, "errors": 0}, "expectations": [{"text": "Recommends Arc<RwLock<...>> (RwLock, not Mutex, as the synchronizer)", "passed": true, "evidence": "Leads with Arc<parking_lot::RwLock<BackendRegistry>>."}, {"text": "Chooses parking_lot for the lock", "passed": true, "evidence": "use parking_lot::RwLock; in the snippet."}, {"text": "Treats parking_lot-over-std as a firm repo convention, not optional", "passed": true, "evidence": "'Use parking_lot ... This is a workspace convention, not a preference.'"}, {"text": "Explains the never-hold-lock-across-await trap and the clone-the-Arc-out fix", "passed": true, "evidence": "Dedicated section: guard is !Send, clone Arc out under the lock then drop before .await."}, {"text": "Rejects Arc<Mutex> citing read-dominant access", "passed": true, "evidence": "'Mutex serializes readers ... wrong fit when reads vastly outnumber writes.'"}], "notes": []}, {"eval_id": 1, "configuration": "with_skill", "run_number": 1, "result": {"pass_rate": 1.0, "passed": 4, "failed": 0, "total": 4, "time_seconds": 37.0, "tokens": 42574, "tool_calls": 0, "errors": 0}, "expectations": [{"text": "Recommends a recursive enum with children behind a Vec", "passed": true, "evidence": "enum LayerNode { Leaf, Group } with Group owning Vec<LayerNode>."}, {"text": "States no Box is needed because Vec is already heap-backed", "passed": true, "evidence": "'Vec ... already heap-allocated and owned, so they already break the recursion. You don't add a Box on top.'"}, {"text": "Rejects Rc<RefCell>/Arc<Mutex> as the GC-language reflex, citing single owner", "passed": true, "evidence": "'This is the reflex to resist ... a layer tree has a single owner: the document.'"}, {"text": "Names an index/arena (LayerId) approach as the legitimate alternative", "passed": true, "evidence": "'An arena: Vec<LayerNode> ... addressed by index/LayerId ... the legitimate alternative.'"}], "notes": []}, {"eval_id": 2, "configuration": "with_skill", "run_number": 1, "result": {"pass_rate": 1.0, "passed": 4, "failed": 0, "total": 4, "time_seconds": 32.6, "tokens": 42281, "tool_calls": 0, "errors": 0}, "expectations": [{"text": "Recommends a static LazyLock<Palette>", "passed": true, "evidence": "static DEFAULT_PALETTE: LazyLock<Palette> = LazyLock::new(|| ...)."}, {"text": "Notes it's in std \u00e2\u20ac\u201d no lazy_static/once_cell dependency", "passed": true, "evidence": "'LazyLock is in std ... replaces lazy_static! and once_cell::sync::Lazy; don't pull in a crate.'"}, {"text": "Rejects Mutex<Option<T>> and Arc/Arc<RwLock> for read-only global", "passed": true, "evidence": "Rejects Arc<Palette>, Arc<RwLock<Palette>>, and Mutex<Option<Palette>> explicitly."}, {"text": "Rules out the single-threaded OnceCell/LazyCell as !Sync", "passed": true, "evidence": "'LazyCell / OnceCell ... are !Sync, so they can't back a static read from multiple threads.'"}], "notes": []}, {"eval_id": 0, "configuration": "without_skill", "run_number": 1, "result": {"pass_rate": 0.8, "passed": 4, "failed": 1, "total": 5, "time_seconds": 38.4, "tokens": 34860, "tool_calls": 0, "errors": 0}, "expectations": [{"text": "Recommends Arc<RwLock<...>> (RwLock, not Mutex, as the synchronizer)", "passed": true, "evidence": "Arc<RwLock<HashMap<BackendId, Arc<dyn Backend>>>>."}, {"text": "Chooses parking_lot for the lock", "passed": true, "evidence": "Leads with parking_lot::RwLock and explains the advantages."}, {"text": "Treats parking_lot-over-std as a firm repo convention, not optional", "passed": false, "evidence": "Hedges: 'std::sync::RwLock is fine if you want zero extra deps ... Either works.'"}, {"text": "Explains the never-hold-lock-across-await trap and the clone-the-Arc-out fix", "passed": true, "evidence": "'don't hold the lock across .await' with get() cloning the Arc out."}, {"text": "Rejects Arc<Mutex> citing read-dominant access", "passed": true, "evidence": "'A Mutex serializes readers against each other ... throws away free read concurrency.'"}], "notes": []}, {"eval_id": 1, "configuration": "without_skill", "run_number": 1, "result": {"pass_rate": 1.0, "passed": 4, "failed": 0, "total": 4, "time_seconds": 44.4, "tokens": 35342, "tool_calls": 0, "errors": 0}, "expectations": [{"text": "Recommends a recursive enum with children behind a Vec", "passed": true, "evidence": "enum LayerNode { Leaf, Group } with Group { children: Vec<LayerNode> }."}, {"text": "States no Box is needed because Vec is already heap-backed", "passed": true, "evidence": "'Vec<T> stores its elements behind a heap pointer ... you do not need a Box here.'"}, {"text": "Rejects Rc<RefCell>/Arc<Mutex> as the GC-language reflex, citing single owner", "passed": true, "evidence": "'This is the reflex port from a GC language, and it's wrong here.'"}, {"text": "Names an index/arena (LayerId) approach as the legitimate alternative", "passed": true, "evidence": "'A flat arena / slotmap with id-based child lists ... legitimate and arguably better at scale.'"}], "notes": []}, {"eval_id": 2, "configuration": "without_skill", "run_number": 1, "result": {"pass_rate": 0.75, "passed": 3, "failed": 1, "total": 4, "time_seconds": 38.4, "tokens": 34733, "tool_calls": 0, "errors": 0}, "expectations": [{"text": "Recommends a static LazyLock<Palette>", "passed": true, "evidence": "static DEFAULT_PALETTE: LazyLock<Palette> with a -> &'static Palette accessor."}, {"text": "Notes it's in std \u00e2\u20ac\u201d no lazy_static/once_cell dependency", "passed": true, "evidence": "'LazyLock is in std (stabilized in Rust 1.80), so no extra dependency.'"}, {"text": "Rejects Mutex<Option<T>> and Arc/Arc<RwLock> for read-only global", "passed": true, "evidence": "Rejects Arc<Palette> cloning; does not name Mutex<Option<T>> but covers the ownership-vs-borrow point."}, {"text": "Rules out the single-threaded OnceCell/LazyCell as !Sync", "passed": false, "evidence": "Discusses T: Sync and thread_local!, but never rules out LazyCell/OnceCell as the container choice."}], "notes": []}], "run_summary": {"with_skill": {"pass_rate": {"mean": 1.0, "stddev": 0.0, "min": 1.0, "max": 1.0}, "time_seconds": {"mean": 33.6333, "stddev": 2.9872, "min": 31.3, "max": 37.0}, "tokens": {"mean": 42359.6667, "stddev": 187.7933, "min": 42224, "max": 42574}}, "without_skill": {"pass_rate": {"mean": 0.85, "stddev": 0.1323, "min": 0.75, "max": 1.0}, "time_seconds": {"mean": 40.4, "stddev": 3.4641, "min": 38.4, "max": 44.4}, "tokens": {"mean": 34978.3333, "stddev": 321.2823, "min": 34733, "max": 35342}}, "delta": {"pass_rate": "+0.15", "time_seconds": "-6.8", "tokens": "+7381"}}, "notes": ["Baseline (no skill) is already strong on all three: modern Opus picks RwLock/parking_lot, recursive-enum+Vec, and LazyLock unaided when given egui/wgpu/tokio context. The eval set is near-non-discriminating on the CORE recommendation.", "The skill discriminates only at the margins: eval-0 it makes parking_lot a firm repo convention (baseline hedged std is fine); eval-2 it rules out single-threaded OnceCell/LazyCell as a container (baseline omitted that). Delta +0.15 comes entirely from those two assertions.", "eval-1 (recursive hierarchy) is a tie at 100/100 \u2014 the assertions there do not separate skill from baseline. Consider replacing it with a trickier case where baseline reflexes go wrong (e.g. interior mutability behind &self, an Rc<RefCell> UI-cache temptation, or a concrete lock-across-await snippet to fix).", "With-skill runs cost more tokens (~42k vs ~35k) and finished faster (reading the SKILL.md adds input tokens but the answer is more directed). Both well within budget."]}};
+
+    // ---- State ----
+    let feedbackMap = {};  // run_id -> feedback text
+    let currentIndex = 0;
+    let visitedRuns = new Set();
+
+    // ---- Init ----
+    async function init() {
+      // Load saved feedback from server — but only if this isn't a fresh
+      // iteration (indicated by previous_feedback being present). When
+      // previous feedback exists, the feedback.json on disk is stale from
+      // the prior iteration and should not pre-fill the textareas.
+      const hasPrevious = Object.keys(EMBEDDED_DATA.previous_feedback || {}).length > 0
+        || Object.keys(EMBEDDED_DATA.previous_outputs || {}).length > 0;
+      if (!hasPrevious) {
+        try {
+          const resp = await fetch("/api/feedback");
+          const data = await resp.json();
+          if (data.reviews) {
+            for (const r of data.reviews) feedbackMap[r.run_id] = r.feedback;
+          }
+        } catch { /* first run, no feedback yet */ }
+      }
+
+      document.getElementById("skill-name").textContent = EMBEDDED_DATA.skill_name;
+      showRun(0);
+
+      // Wire up feedback auto-save
+      const textarea = document.getElementById("feedback");
+      let saveTimeout = null;
+      textarea.addEventListener("input", () => {
+        clearTimeout(saveTimeout);
+        document.getElementById("feedback-status").textContent = "";
+        saveTimeout = setTimeout(() => saveCurrentFeedback(), 800);
+      });
+    }
+
+    // ---- Navigation ----
+    function navigate(delta) {
+      const newIndex = currentIndex + delta;
+      if (newIndex >= 0 && newIndex < EMBEDDED_DATA.runs.length) {
+        saveCurrentFeedback();
+        showRun(newIndex);
+      }
+    }
+
+    function updateNavButtons() {
+      document.getElementById("prev-btn").disabled = currentIndex === 0;
+      document.getElementById("next-btn").disabled =
+        currentIndex === EMBEDDED_DATA.runs.length - 1;
+    }
+
+    // ---- Show a run ----
+    function showRun(index) {
+      currentIndex = index;
+      const run = EMBEDDED_DATA.runs[index];
+
+      // Progress
+      document.getElementById("progress").textContent =
+        `${index + 1} of ${EMBEDDED_DATA.runs.length}`;
+
+      // Prompt
+      document.getElementById("prompt-text").textContent = run.prompt;
+
+      // Config badge
+      const badge = document.getElementById("config-badge");
+      const configMatch = run.id.match(/(with_skill|without_skill|new_skill|old_skill)/);
+      if (configMatch) {
+        const config = configMatch[1];
+        const isBaseline = config === "without_skill" || config === "old_skill";
+        badge.textContent = config.replace(/_/g, " ");
+        badge.className = "config-badge " + (isBaseline ? "config-baseline" : "config-primary");
+        badge.style.display = "inline-block";
+      } else {
+        badge.style.display = "none";
+      }
+
+      // Outputs
+      renderOutputs(run);
+
+      // Previous outputs
+      renderPrevOutputs(run);
+
+      // Grades
+      renderGrades(run);
+
+      // Previous feedback
+      const prevFb = (EMBEDDED_DATA.previous_feedback || {})[run.id];
+      const prevEl = document.getElementById("prev-feedback");
+      if (prevFb) {
+        document.getElementById("prev-feedback-text").textContent = prevFb;
+        prevEl.style.display = "block";
+      } else {
+        prevEl.style.display = "none";
+      }
+
+      // Feedback
+      document.getElementById("feedback").value = feedbackMap[run.id] || "";
+      document.getElementById("feedback-status").textContent = "";
+
+      updateNavButtons();
+
+      // Track visited runs and promote done button when all visited
+      visitedRuns.add(index);
+      const doneBtn = document.getElementById("done-btn");
+      if (visitedRuns.size >= EMBEDDED_DATA.runs.length) {
+        doneBtn.classList.add("ready");
+      }
+
+      // Scroll main content to top
+      document.querySelector(".main").scrollTop = 0;
+    }
+
+    // ---- Render outputs ----
+    function renderOutputs(run) {
+      const container = document.getElementById("outputs-body");
+      container.innerHTML = "";
+
+      const outputs = run.outputs || [];
+      if (outputs.length === 0) {
+        container.innerHTML = '<div class="empty-state">No output files</div>';
+        return;
+      }
+
+      for (const file of outputs) {
+        const fileDiv = document.createElement("div");
+        fileDiv.className = "output-file";
+
+        // Always show file header with download link
+        const header = document.createElement("div");
+        header.className = "output-file-header";
+        const nameSpan = document.createElement("span");
+        nameSpan.textContent = file.name;
+        header.appendChild(nameSpan);
+        const dlBtn = document.createElement("a");
+        dlBtn.className = "dl-btn";
+        dlBtn.textContent = "Download";
+        dlBtn.download = file.name;
+        dlBtn.href = getDownloadUri(file);
+        header.appendChild(dlBtn);
+        fileDiv.appendChild(header);
+
+        const content = document.createElement("div");
+        content.className = "output-file-content";
+
+        if (file.type === "text") {
+          const pre = document.createElement("pre");
+          pre.textContent = file.content;
+          content.appendChild(pre);
+        } else if (file.type === "image") {
+          const img = document.createElement("img");
+          img.src = file.data_uri;
+          img.alt = file.name;
+          content.appendChild(img);
+        } else if (file.type === "pdf") {
+          const iframe = document.createElement("iframe");
+          iframe.src = file.data_uri;
+          content.appendChild(iframe);
+        } else if (file.type === "xlsx") {
+          renderXlsx(content, file.data_b64);
+        } else if (file.type === "binary") {
+          const a = document.createElement("a");
+          a.className = "download-link";
+          a.href = file.data_uri;
+          a.download = file.name;
+          a.textContent = "Download " + file.name;
+          content.appendChild(a);
+        } else if (file.type === "error") {
+          const pre = document.createElement("pre");
+          pre.textContent = file.content;
+          pre.style.color = "var(--red)";
+          content.appendChild(pre);
+        }
+
+        fileDiv.appendChild(content);
+        container.appendChild(fileDiv);
+      }
+    }
+
+    // ---- XLSX rendering via SheetJS ----
+    function renderXlsx(container, b64Data) {
+      try {
+        const raw = Uint8Array.from(atob(b64Data), c => c.charCodeAt(0));
+        const wb = XLSX.read(raw, { type: "array" });
+
+        for (let i = 0; i < wb.SheetNames.length; i++) {
+          const sheetName = wb.SheetNames[i];
+          const ws = wb.Sheets[sheetName];
+
+          if (wb.SheetNames.length > 1) {
+            const sheetLabel = document.createElement("div");
+            sheetLabel.style.cssText =
+              "font-weight:600; font-size:0.8rem; color:#b0aea5; margin-top:0.5rem; margin-bottom:0.25rem;";
+            sheetLabel.textContent = "Sheet: " + sheetName;
+            container.appendChild(sheetLabel);
+          }
+
+          const htmlStr = XLSX.utils.sheet_to_html(ws, { editable: false });
+          const wrapper = document.createElement("div");
+          wrapper.innerHTML = htmlStr;
+          container.appendChild(wrapper);
+        }
+      } catch (err) {
+        container.textContent = "Error rendering spreadsheet: " + err.message;
+      }
+    }
+
+    // ---- Grades ----
+    function renderGrades(run) {
+      const section = document.getElementById("grades-section");
+      const content = document.getElementById("grades-content");
+
+      if (!run.grading) {
+        section.style.display = "none";
+        return;
+      }
+
+      const grading = run.grading;
+      section.style.display = "block";
+      // Reset to collapsed
+      content.classList.remove("open");
+      document.getElementById("grades-arrow").classList.remove("open");
+
+      const summary = grading.summary || {};
+      const expectations = grading.expectations || [];
+
+      let html = '<div style="padding: 1rem;">';
+
+      // Summary line
+      const passRate = summary.pass_rate != null
+        ? Math.round(summary.pass_rate * 100) + "%"
+        : "?";
+      const badgeClass = summary.pass_rate >= 0.8 ? "grade-pass" : summary.pass_rate >= 0.5 ? "" : "grade-fail";
+      html += '<div class="grades-summary">';
+      html += '<span class="grade-badge ' + badgeClass + '">' + passRate + '</span>';
+      html += '<span>' + (summary.passed || 0) + ' passed, ' + (summary.failed || 0) + ' failed of ' + (summary.total || 0) + '</span>';
+      html += '</div>';
+
+      // Assertions list
+      html += '<ul class="assertion-list">';
+      for (const exp of expectations) {
+        const statusClass = exp.passed ? "pass" : "fail";
+        const statusIcon = exp.passed ? "\u2713" : "\u2717";
+        html += '<li class="assertion-item">';
+        html += '<span class="assertion-status ' + statusClass + '">' + statusIcon + '</span>';
+        html += '<span>' + escapeHtml(exp.text) + '</span>';
+        if (exp.evidence) {
+          html += '<div class="assertion-evidence">' + escapeHtml(exp.evidence) + '</div>';
+        }
+        html += '</li>';
+      }
+      html += '</ul>';
+
+      html += '</div>';
+      content.innerHTML = html;
+    }
+
+    function toggleGrades() {
+      const content = document.getElementById("grades-content");
+      const arrow = document.getElementById("grades-arrow");
+      content.classList.toggle("open");
+      arrow.classList.toggle("open");
+    }
+
+    // ---- Previous outputs (collapsible) ----
+    function renderPrevOutputs(run) {
+      const section = document.getElementById("prev-outputs-section");
+      const content = document.getElementById("prev-outputs-content");
+      const prevOutputs = (EMBEDDED_DATA.previous_outputs || {})[run.id];
+
+      if (!prevOutputs || prevOutputs.length === 0) {
+        section.style.display = "none";
+        return;
+      }
+
+      section.style.display = "block";
+      // Reset to collapsed
+      content.classList.remove("open");
+      document.getElementById("prev-outputs-arrow").classList.remove("open");
+
+      // Render the files into the content area
+      content.innerHTML = "";
+      const wrapper = document.createElement("div");
+      wrapper.style.padding = "1rem";
+
+      for (const file of prevOutputs) {
+        const fileDiv = document.createElement("div");
+        fileDiv.className = "output-file";
+
+        const header = document.createElement("div");
+        header.className = "output-file-header";
+        const nameSpan = document.createElement("span");
+        nameSpan.textContent = file.name;
+        header.appendChild(nameSpan);
+        const dlBtn = document.createElement("a");
+        dlBtn.className = "dl-btn";
+        dlBtn.textContent = "Download";
+        dlBtn.download = file.name;
+        dlBtn.href = getDownloadUri(file);
+        header.appendChild(dlBtn);
+        fileDiv.appendChild(header);
+
+        const fc = document.createElement("div");
+        fc.className = "output-file-content";
+
+        if (file.type === "text") {
+          const pre = document.createElement("pre");
+          pre.textContent = file.content;
+          fc.appendChild(pre);
+        } else if (file.type === "image") {
+          const img = document.createElement("img");
+          img.src = file.data_uri;
+          img.alt = file.name;
+          fc.appendChild(img);
+        } else if (file.type === "pdf") {
+          const iframe = document.createElement("iframe");
+          iframe.src = file.data_uri;
+          fc.appendChild(iframe);
+        } else if (file.type === "xlsx") {
+          renderXlsx(fc, file.data_b64);
+        } else if (file.type === "binary") {
+          const a = document.createElement("a");
+          a.className = "download-link";
+          a.href = file.data_uri;
+          a.download = file.name;
+          a.textContent = "Download " + file.name;
+          fc.appendChild(a);
+        }
+
+        fileDiv.appendChild(fc);
+        wrapper.appendChild(fileDiv);
+      }
+
+      content.appendChild(wrapper);
+    }
+
+    function togglePrevOutputs() {
+      const content = document.getElementById("prev-outputs-content");
+      const arrow = document.getElementById("prev-outputs-arrow");
+      content.classList.toggle("open");
+      arrow.classList.toggle("open");
+    }
+
+    // ---- Feedback (saved to server -> feedback.json) ----
+    function saveCurrentFeedback() {
+      const run = EMBEDDED_DATA.runs[currentIndex];
+      const text = document.getElementById("feedback").value;
+
+      if (text.trim() === "") {
+        delete feedbackMap[run.id];
+      } else {
+        feedbackMap[run.id] = text;
+      }
+
+      // Build reviews array from map
+      const reviews = [];
+      for (const [run_id, feedback] of Object.entries(feedbackMap)) {
+        if (feedback.trim()) {
+          reviews.push({ run_id, feedback, timestamp: new Date().toISOString() });
+        }
+      }
+
+      fetch("/api/feedback", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ reviews, status: "in_progress" }),
+      }).then(() => {
+        document.getElementById("feedback-status").textContent = "Saved";
+      }).catch(() => {
+        // Static mode or server unavailable — no-op on auto-save,
+        // feedback will be downloaded on final submit
+        document.getElementById("feedback-status").textContent = "Will download on submit";
+      });
+    }
+
+    // ---- Done ----
+    function showDoneDialog() {
+      // Save current textarea to feedbackMap (but don't POST yet)
+      const run = EMBEDDED_DATA.runs[currentIndex];
+      const text = document.getElementById("feedback").value;
+      if (text.trim() === "") {
+        delete feedbackMap[run.id];
+      } else {
+        feedbackMap[run.id] = text;
+      }
+
+      // POST once with status: complete — include ALL runs so the model
+      // can distinguish "no feedback" (looks good) from "not reviewed"
+      const reviews = [];
+      const ts = new Date().toISOString();
+      for (const r of EMBEDDED_DATA.runs) {
+        reviews.push({ run_id: r.id, feedback: feedbackMap[r.id] || "", timestamp: ts });
+      }
+      const payload = JSON.stringify({ reviews, status: "complete" }, null, 2);
+      fetch("/api/feedback", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: payload,
+      }).then(() => {
+        document.getElementById("done-overlay").classList.add("visible");
+      }).catch(() => {
+        // Server not available (static mode) — download as file
+        const blob = new Blob([payload], { type: "application/json" });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement("a");
+        a.href = url;
+        a.download = "feedback.json";
+        a.click();
+        URL.revokeObjectURL(url);
+        document.getElementById("done-overlay").classList.add("visible");
+      });
+    }
+
+    function closeDoneDialog() {
+      // Reset status back to in_progress
+      saveCurrentFeedback();
+      document.getElementById("done-overlay").classList.remove("visible");
+    }
+
+    // ---- Toast ----
+    function showToast(message) {
+      const toast = document.getElementById("toast");
+      toast.textContent = message;
+      toast.classList.add("visible");
+      setTimeout(() => toast.classList.remove("visible"), 2000);
+    }
+
+    // ---- Keyboard nav ----
+    document.addEventListener("keydown", (e) => {
+      // Don't capture when typing in textarea
+      if (e.target.tagName === "TEXTAREA") return;
+
+      if (e.key === "ArrowLeft" || e.key === "ArrowUp") {
+        e.preventDefault();
+        navigate(-1);
+      } else if (e.key === "ArrowRight" || e.key === "ArrowDown") {
+        e.preventDefault();
+        navigate(1);
+      }
+    });
+
+    // ---- Util ----
+    function getDownloadUri(file) {
+      if (file.data_uri) return file.data_uri;
+      if (file.data_b64) return "data:application/octet-stream;base64," + file.data_b64;
+      if (file.type === "text") return "data:text/plain;charset=utf-8," + encodeURIComponent(file.content);
+      return "#";
+    }
+
+    function escapeHtml(text) {
+      const div = document.createElement("div");
+      div.textContent = text;
+      return div.innerHTML;
+    }
+
+    // ---- View switching ----
+    function switchView(view) {
+      document.querySelectorAll(".view-tab").forEach(t => t.classList.remove("active"));
+      document.querySelectorAll(".view-panel").forEach(p => p.classList.remove("active"));
+      document.querySelector(`[onclick="switchView('${view}')"]`).classList.add("active");
+      document.getElementById("panel-" + view).classList.add("active");
+    }
+
+    // ---- Benchmark rendering ----
+    function renderBenchmark() {
+      const data = EMBEDDED_DATA.benchmark;
+      if (!data) return;
+
+      // Show the tabs
+      document.getElementById("view-tabs").style.display = "flex";
+
+      const container = document.getElementById("benchmark-content");
+      const summary = data.run_summary || {};
+      const metadata = data.metadata || {};
+      const notes = data.notes || [];
+
+      let html = "";
+
+      // Header
+      html += "<h2 style='font-family: Poppins, sans-serif; margin-bottom: 0.5rem;'>Benchmark Results</h2>";
+      html += "<p style='color: var(--text-muted); font-size: 0.875rem; margin-bottom: 1.25rem;'>";
+      if (metadata.skill_name) html += "<strong>" + escapeHtml(metadata.skill_name) + "</strong> &mdash; ";
+      if (metadata.timestamp) html += metadata.timestamp + " &mdash; ";
+      if (metadata.evals_run) html += "Evals: " + metadata.evals_run.join(", ") + " &mdash; ";
+      html += (metadata.runs_per_configuration || "?") + " runs per configuration";
+      html += "</p>";
+
+      // Summary table
+      html += '<table class="benchmark-table">';
+
+      function fmtStat(stat, pct) {
+        if (!stat) return "—";
+        const suffix = pct ? "%" : "";
+        const m = pct ? (stat.mean * 100).toFixed(0) : stat.mean.toFixed(1);
+        const s = pct ? (stat.stddev * 100).toFixed(0) : stat.stddev.toFixed(1);
+        return m + suffix + " ± " + s + suffix;
+      }
+
+      function deltaClass(val) {
+        if (!val) return "";
+        const n = parseFloat(val);
+        if (n > 0) return "benchmark-delta-positive";
+        if (n < 0) return "benchmark-delta-negative";
+        return "";
+      }
+
+      // Discover config names dynamically (everything except "delta")
+      const configs = Object.keys(summary).filter(k => k !== "delta");
+      const configA = configs[0] || "config_a";
+      const configB = configs[1] || "config_b";
+      const labelA = configA.replace(/_/g, " ").replace(/\b\w/g, c => c.toUpperCase());
+      const labelB = configB.replace(/_/g, " ").replace(/\b\w/g, c => c.toUpperCase());
+      const a = summary[configA] || {};
+      const b = summary[configB] || {};
+      const delta = summary.delta || {};
+
+      html += "<thead><tr><th>Metric</th><th>" + escapeHtml(labelA) + "</th><th>" + escapeHtml(labelB) + "</th><th>Delta</th></tr></thead>";
+      html += "<tbody>";
+
+      html += "<tr><td><strong>Pass Rate</strong></td>";
+      html += "<td>" + fmtStat(a.pass_rate, true) + "</td>";
+      html += "<td>" + fmtStat(b.pass_rate, true) + "</td>";
+      html += '<td class="' + deltaClass(delta.pass_rate) + '">' + (delta.pass_rate || "—") + "</td></tr>";
+
+      // Time (only show row if data exists)
+      if (a.time_seconds || b.time_seconds) {
+        html += "<tr><td><strong>Time (s)</strong></td>";
+        html += "<td>" + fmtStat(a.time_seconds, false) + "</td>";
+        html += "<td>" + fmtStat(b.time_seconds, false) + "</td>";
+        html += '<td class="' + deltaClass(delta.time_seconds) + '">' + (delta.time_seconds ? delta.time_seconds + "s" : "—") + "</td></tr>";
+      }
+
+      // Tokens (only show row if data exists)
+      if (a.tokens || b.tokens) {
+        html += "<tr><td><strong>Tokens</strong></td>";
+        html += "<td>" + fmtStat(a.tokens, false) + "</td>";
+        html += "<td>" + fmtStat(b.tokens, false) + "</td>";
+        html += '<td class="' + deltaClass(delta.tokens) + '">' + (delta.tokens || "—") + "</td></tr>";
+      }
+
+      html += "</tbody></table>";
+
+      // Per-eval breakdown (if runs data available)
+      const runs = data.runs || [];
+      if (runs.length > 0) {
+        const evalIds = [...new Set(runs.map(r => r.eval_id))].sort((a, b) => a - b);
+
+        html += "<h3 style='font-family: Poppins, sans-serif; margin-bottom: 0.75rem;'>Per-Eval Breakdown</h3>";
+
+        const hasTime = runs.some(r => r.result && r.result.time_seconds != null);
+        const hasErrors = runs.some(r => r.result && r.result.errors > 0);
+
+        for (const evalId of evalIds) {
+          const evalRuns = runs.filter(r => r.eval_id === evalId);
+          const evalName = evalRuns[0] && evalRuns[0].eval_name ? evalRuns[0].eval_name : "Eval " + evalId;
+
+          html += "<h4 style='font-family: Poppins, sans-serif; margin: 1rem 0 0.5rem; color: var(--text);'>" + escapeHtml(evalName) + "</h4>";
+          html += '<table class="benchmark-table">';
+          html += "<thead><tr><th>Config</th><th>Run</th><th>Pass Rate</th>";
+          if (hasTime) html += "<th>Time (s)</th>";
+          if (hasErrors) html += "<th>Crashes During Execution</th>";
+          html += "</tr></thead>";
+          html += "<tbody>";
+
+          // Group by config and render with average rows
+          const configGroups = [...new Set(evalRuns.map(r => r.configuration))];
+          for (let ci = 0; ci < configGroups.length; ci++) {
+            const config = configGroups[ci];
+            const configRuns = evalRuns.filter(r => r.configuration === config);
+            if (configRuns.length === 0) continue;
+
+            const rowClass = ci === 0 ? "benchmark-row-with" : "benchmark-row-without";
+            const configLabel = config.replace(/_/g, " ").replace(/\b\w/g, c => c.toUpperCase());
+
+            for (const run of configRuns) {
+              const r = run.result || {};
+              const prClass = r.pass_rate >= 0.8 ? "benchmark-delta-positive" : r.pass_rate < 0.5 ? "benchmark-delta-negative" : "";
+              html += '<tr class="' + rowClass + '">';
+              html += "<td>" + configLabel + "</td>";
+              html += "<td>" + run.run_number + "</td>";
+              html += '<td class="' + prClass + '">' + ((r.pass_rate || 0) * 100).toFixed(0) + "% (" + (r.passed || 0) + "/" + (r.total || 0) + ")</td>";
+              if (hasTime) html += "<td>" + (r.time_seconds != null ? r.time_seconds.toFixed(1) : "—") + "</td>";
+              if (hasErrors) html += "<td>" + (r.errors || 0) + "</td>";
+              html += "</tr>";
+            }
+
+            // Average row
+            const rates = configRuns.map(r => (r.result || {}).pass_rate || 0);
+            const avgRate = rates.reduce((a, b) => a + b, 0) / rates.length;
+            const avgPrClass = avgRate >= 0.8 ? "benchmark-delta-positive" : avgRate < 0.5 ? "benchmark-delta-negative" : "";
+            html += '<tr class="benchmark-row-avg ' + rowClass + '">';
+            html += "<td>" + configLabel + "</td>";
+            html += "<td>Avg</td>";
+            html += '<td class="' + avgPrClass + '">' + (avgRate * 100).toFixed(0) + "%</td>";
+            if (hasTime) {
+              const times = configRuns.map(r => (r.result || {}).time_seconds).filter(t => t != null);
+              html += "<td>" + (times.length ? (times.reduce((a, b) => a + b, 0) / times.length).toFixed(1) : "—") + "</td>";
+            }
+            if (hasErrors) html += "<td></td>";
+            html += "</tr>";
+          }
+          html += "</tbody></table>";
+
+          // Per-assertion detail for this eval
+          const runsWithExpectations = {};
+          for (const config of configGroups) {
+            runsWithExpectations[config] = evalRuns.filter(r => r.configuration === config && r.expectations && r.expectations.length > 0);
+          }
+          const hasAnyExpectations = Object.values(runsWithExpectations).some(runs => runs.length > 0);
+          if (hasAnyExpectations) {
+            // Collect all unique assertion texts across all configs
+            const allAssertions = [];
+            const seen = new Set();
+            for (const config of configGroups) {
+              for (const run of runsWithExpectations[config]) {
+                for (const exp of (run.expectations || [])) {
+                  if (!seen.has(exp.text)) {
+                    seen.add(exp.text);
+                    allAssertions.push(exp.text);
+                  }
+                }
+              }
+            }
+
+            html += '<table class="benchmark-table" style="margin-top: 0.5rem;">';
+            html += "<thead><tr><th>Assertion</th>";
+            for (const config of configGroups) {
+              const label = config.replace(/_/g, " ").replace(/\b\w/g, c => c.toUpperCase());
+              html += "<th>" + escapeHtml(label) + "</th>";
+            }
+            html += "</tr></thead><tbody>";
+
+            for (const assertionText of allAssertions) {
+              html += "<tr><td>" + escapeHtml(assertionText) + "</td>";
+
+              for (const config of configGroups) {
+                html += "<td>";
+                for (const run of runsWithExpectations[config]) {
+                  const exp = (run.expectations || []).find(e => e.text === assertionText);
+                  if (exp) {
+                    const cls = exp.passed ? "benchmark-delta-positive" : "benchmark-delta-negative";
+                    const icon = exp.passed ? "\u2713" : "\u2717";
+                    html += '<span class="' + cls + '" title="Run ' + run.run_number + ': ' + escapeHtml(exp.evidence || "") + '">' + icon + "</span> ";
+                  } else {
+                    html += "— ";
+                  }
+                }
+                html += "</td>";
+              }
+              html += "</tr>";
+            }
+            html += "</tbody></table>";
+          }
+        }
+      }
+
+      // Notes
+      if (notes.length > 0) {
+        html += '<div class="benchmark-notes">';
+        html += "<h3>Analysis Notes</h3>";
+        html += "<ul>";
+        for (const note of notes) {
+          html += "<li>" + escapeHtml(note) + "</li>";
+        }
+        html += "</ul></div>";
+      }
+
+      container.innerHTML = html;
+    }
+
+    // ---- Start ----
+    init();
+    renderBenchmark();
+  </script>
+</body>
+</html>

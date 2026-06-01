@@ -1,0 +1,35 @@
+{
+  "summary": {
+    "pass_rate": 1.0,
+    "passed": 5,
+    "failed": 0,
+    "total": 5
+  },
+  "expectations": [
+    {
+      "text": "Recommends zstd::bulk::Compressor/Decompressor as the fit, over per-tile encode_all",
+      "passed": true,
+      "evidence": "Headline recommendation is bulk::{Compressor,Decompressor} reused across the ~800 tiles."
+    },
+    {
+      "text": "Rationale includes reusing one zstd context across the ~800 tiles",
+      "passed": true,
+      "evidence": "Explains encode_all allocates/tears down a context per call; Compressor holds one alive across calls."
+    },
+    {
+      "text": "decompress is called with a capacity bound (correct bulk API)",
+      "passed": true,
+      "evidence": "decompress_tile passes max_decompressed_len = w*h*4 to Decompressor::decompress; notes upper_bound is only a hint."
+    },
+    {
+      "text": "All bulk/dict API names are real and correct",
+      "passed": true,
+      "evidence": "Compressor::new/compress, Decompressor::new/decompress, with_prepared_dictionary, dict::from_samples \u2014 all correct."
+    },
+    {
+      "text": "Calibrated to the ask: treats a trained dictionary as optional/later, not the headline requirement",
+      "passed": true,
+      "evidence": "Frames a dictionary as a later option 'if profiling shows per-frame overhead dominates' \u2014 matches skill guidance."
+    }
+  ]
+}

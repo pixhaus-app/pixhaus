@@ -1,0 +1,32 @@
+{
+  "eval_id": 0,
+  "eval_name": "canvas-paint-callback",
+  "configuration": "without_skill",
+  "expectations": [
+    {
+      "text": "Implements CallbackTrait with a paint method",
+      "passed": true,
+      "evidence": "## The CallbackTrait implementation"
+    },
+    {
+      "text": "paint takes RenderPass<'static> (the 'static-lifetime pass)",
+      "passed": true,
+      "evidence": "render_pass: &mut wgpu::RenderPass<'static>,"
+    },
+    {
+      "text": "Uploads only the dirty sub-rect via queue.write_texture in prepare (no full-canvas reupload)",
+      "passed": true,
+      "evidence": "`queue.write_texture`. egui's job is purely to schedule a paint callback into the right"
+    },
+    {
+      "text": "Stores GPU resources in the callback_resources / CallbackResources type-map (built once)",
+      "passed": true,
+      "evidence": "`callback_resources` (a `TypeMap`). You insert your resource struct once at startup"
+    },
+    {
+      "text": "Pushes the callback via Callback::new_paint_callback(rect, ...)",
+      "passed": true,
+      "evidence": "and hand it to egui via `egui_wgpu::Callback::new_paint_callback`."
+    }
+  ]
+}

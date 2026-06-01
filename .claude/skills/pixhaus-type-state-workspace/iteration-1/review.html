@@ -1,0 +1,1325 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Eval Review</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Poppins:wght@500;600&family=Lora:wght@400;500&display=swap" rel="stylesheet">
+  <script src="https://cdn.sheetjs.com/xlsx-0.20.3/package/dist/xlsx.full.min.js" integrity="sha384-EnyY0/GSHQGSxSgMwaIPzSESbqoOLSexfnSMN2AP+39Ckmn92stwABZynq1JyzdT" crossorigin="anonymous"></script>
+  <style>
+    :root {
+      --bg: #faf9f5;
+      --surface: #ffffff;
+      --border: #e8e6dc;
+      --text: #141413;
+      --text-muted: #b0aea5;
+      --accent: #d97757;
+      --accent-hover: #c4613f;
+      --green: #788c5d;
+      --green-bg: #eef2e8;
+      --red: #c44;
+      --red-bg: #fceaea;
+      --header-bg: #141413;
+      --header-text: #faf9f5;
+      --radius: 6px;
+    }
+
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+
+    body {
+      font-family: 'Lora', Georgia, serif;
+      background: var(--bg);
+      color: var(--text);
+      height: 100vh;
+      display: flex;
+      flex-direction: column;
+    }
+
+    /* ---- Header ---- */
+    .header {
+      background: var(--header-bg);
+      color: var(--header-text);
+      padding: 1rem 2rem;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      flex-shrink: 0;
+    }
+    .header h1 {
+      font-family: 'Poppins', sans-serif;
+      font-size: 1.25rem;
+      font-weight: 600;
+    }
+    .header .instructions {
+      font-size: 0.8rem;
+      opacity: 0.7;
+      margin-top: 0.25rem;
+    }
+    .header .progress {
+      font-size: 0.875rem;
+      opacity: 0.8;
+      text-align: right;
+    }
+
+    /* ---- Main content ---- */
+    .main {
+      flex: 1;
+      overflow-y: auto;
+      padding: 1.5rem 2rem;
+      display: flex;
+      flex-direction: column;
+      gap: 1.25rem;
+    }
+
+    /* ---- Sections ---- */
+    .section {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      flex-shrink: 0;
+    }
+    .section-header {
+      font-family: 'Poppins', sans-serif;
+      padding: 0.75rem 1rem;
+      font-size: 0.75rem;
+      font-weight: 500;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+      color: var(--text-muted);
+      border-bottom: 1px solid var(--border);
+      background: var(--bg);
+    }
+    .section-body {
+      padding: 1rem;
+    }
+
+    /* ---- Config badge ---- */
+    .config-badge {
+      display: inline-block;
+      padding: 0.2rem 0.625rem;
+      border-radius: 9999px;
+      font-family: 'Poppins', sans-serif;
+      font-size: 0.6875rem;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.03em;
+      margin-left: 0.75rem;
+      vertical-align: middle;
+    }
+    .config-badge.config-primary {
+      background: rgba(33, 150, 243, 0.12);
+      color: #1976d2;
+    }
+    .config-badge.config-baseline {
+      background: rgba(255, 193, 7, 0.15);
+      color: #f57f17;
+    }
+
+    /* ---- Prompt ---- */
+    .prompt-text {
+      white-space: pre-wrap;
+      font-size: 0.9375rem;
+      line-height: 1.6;
+    }
+
+    /* ---- Outputs ---- */
+    .output-file {
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      overflow: hidden;
+    }
+    .output-file + .output-file {
+      margin-top: 1rem;
+    }
+    .output-file-header {
+      padding: 0.5rem 0.75rem;
+      font-size: 0.8rem;
+      font-weight: 600;
+      color: var(--text-muted);
+      background: var(--bg);
+      border-bottom: 1px solid var(--border);
+      font-family: 'SF Mono', SFMono-Regular, Consolas, 'Liberation Mono', Menlo, monospace;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+    }
+    .output-file-header .dl-btn {
+      font-size: 0.7rem;
+      color: var(--accent);
+      text-decoration: none;
+      cursor: pointer;
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+      font-weight: 500;
+      opacity: 0.8;
+    }
+    .output-file-header .dl-btn:hover {
+      opacity: 1;
+      text-decoration: underline;
+    }
+    .output-file-content {
+      padding: 0.75rem;
+      overflow-x: auto;
+    }
+    .output-file-content pre {
+      font-size: 0.8125rem;
+      line-height: 1.5;
+      white-space: pre-wrap;
+      word-break: break-word;
+      font-family: 'SF Mono', SFMono-Regular, Consolas, 'Liberation Mono', Menlo, monospace;
+    }
+    .output-file-content img {
+      max-width: 100%;
+      height: auto;
+      border-radius: 4px;
+    }
+    .output-file-content iframe {
+      width: 100%;
+      height: 600px;
+      border: none;
+    }
+    .output-file-content table {
+      border-collapse: collapse;
+      font-size: 0.8125rem;
+      width: 100%;
+    }
+    .output-file-content table td,
+    .output-file-content table th {
+      border: 1px solid var(--border);
+      padding: 0.375rem 0.5rem;
+      text-align: left;
+    }
+    .output-file-content table th {
+      background: var(--bg);
+      font-weight: 600;
+    }
+    .output-file-content .download-link {
+      display: inline-flex;
+      align-items: center;
+      gap: 0.5rem;
+      padding: 0.5rem 1rem;
+      background: var(--bg);
+      border: 1px solid var(--border);
+      border-radius: 4px;
+      color: var(--accent);
+      text-decoration: none;
+      font-size: 0.875rem;
+      cursor: pointer;
+    }
+    .output-file-content .download-link:hover {
+      background: var(--border);
+    }
+    .empty-state {
+      color: var(--text-muted);
+      font-style: italic;
+      padding: 2rem;
+      text-align: center;
+    }
+
+    /* ---- Feedback ---- */
+    .prev-feedback {
+      background: var(--bg);
+      border: 1px solid var(--border);
+      border-radius: 4px;
+      padding: 0.625rem 0.75rem;
+      margin-top: 0.75rem;
+      font-size: 0.8125rem;
+      color: var(--text-muted);
+      line-height: 1.5;
+    }
+    .prev-feedback-label {
+      font-size: 0.7rem;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.04em;
+      margin-bottom: 0.25rem;
+      color: var(--text-muted);
+    }
+    .feedback-textarea {
+      width: 100%;
+      min-height: 100px;
+      padding: 0.75rem;
+      border: 1px solid var(--border);
+      border-radius: 4px;
+      font-family: inherit;
+      font-size: 0.9375rem;
+      line-height: 1.5;
+      resize: vertical;
+      color: var(--text);
+    }
+    .feedback-textarea:focus {
+      outline: none;
+      border-color: var(--accent);
+      box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.1);
+    }
+    .feedback-status {
+      font-size: 0.75rem;
+      color: var(--text-muted);
+      margin-top: 0.5rem;
+      min-height: 1.1em;
+    }
+
+    /* ---- Grades (collapsible) ---- */
+    .grades-toggle {
+      display: flex;
+      align-items: center;
+      cursor: pointer;
+      user-select: none;
+    }
+    .grades-toggle:hover {
+      color: var(--accent);
+    }
+    .grades-toggle .arrow {
+      margin-right: 0.5rem;
+      transition: transform 0.15s;
+      font-size: 0.75rem;
+    }
+    .grades-toggle .arrow.open {
+      transform: rotate(90deg);
+    }
+    .grades-content {
+      display: none;
+      margin-top: 0.75rem;
+    }
+    .grades-content.open {
+      display: block;
+    }
+    .grades-summary {
+      font-size: 0.875rem;
+      margin-bottom: 0.75rem;
+      display: flex;
+      align-items: center;
+      gap: 0.5rem;
+    }
+    .grade-badge {
+      display: inline-block;
+      padding: 0.125rem 0.5rem;
+      border-radius: 9999px;
+      font-size: 0.75rem;
+      font-weight: 600;
+    }
+    .grade-pass { background: var(--green-bg); color: var(--green); }
+    .grade-fail { background: var(--red-bg); color: var(--red); }
+    .assertion-list {
+      list-style: none;
+    }
+    .assertion-item {
+      padding: 0.625rem 0;
+      border-bottom: 1px solid var(--border);
+      font-size: 0.8125rem;
+    }
+    .assertion-item:last-child { border-bottom: none; }
+    .assertion-status {
+      font-weight: 600;
+      margin-right: 0.5rem;
+    }
+    .assertion-status.pass { color: var(--green); }
+    .assertion-status.fail { color: var(--red); }
+    .assertion-evidence {
+      color: var(--text-muted);
+      font-size: 0.75rem;
+      margin-top: 0.25rem;
+      padding-left: 1.5rem;
+    }
+
+    /* ---- View tabs ---- */
+    .view-tabs {
+      display: flex;
+      gap: 0;
+      padding: 0 2rem;
+      background: var(--bg);
+      border-bottom: 1px solid var(--border);
+      flex-shrink: 0;
+    }
+    .view-tab {
+      font-family: 'Poppins', sans-serif;
+      padding: 0.625rem 1.25rem;
+      font-size: 0.8125rem;
+      font-weight: 500;
+      cursor: pointer;
+      border: none;
+      background: none;
+      color: var(--text-muted);
+      border-bottom: 2px solid transparent;
+      transition: all 0.15s;
+    }
+    .view-tab:hover { color: var(--text); }
+    .view-tab.active {
+      color: var(--accent);
+      border-bottom-color: var(--accent);
+    }
+    .view-panel { display: none; }
+    .view-panel.active { display: flex; flex-direction: column; flex: 1; overflow: hidden; }
+
+    /* ---- Benchmark view ---- */
+    .benchmark-view {
+      padding: 1.5rem 2rem;
+      overflow-y: auto;
+      flex: 1;
+    }
+    .benchmark-table {
+      border-collapse: collapse;
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      font-size: 0.8125rem;
+      width: 100%;
+      margin-bottom: 1.5rem;
+    }
+    .benchmark-table th, .benchmark-table td {
+      padding: 0.625rem 0.75rem;
+      text-align: left;
+      border: 1px solid var(--border);
+    }
+    .benchmark-table th {
+      font-family: 'Poppins', sans-serif;
+      background: var(--header-bg);
+      color: var(--header-text);
+      font-weight: 500;
+      font-size: 0.75rem;
+      text-transform: uppercase;
+      letter-spacing: 0.04em;
+    }
+    .benchmark-table tr:hover { background: var(--bg); }
+    .benchmark-table tr.benchmark-row-with { background: rgba(33, 150, 243, 0.06); }
+    .benchmark-table tr.benchmark-row-without { background: rgba(255, 193, 7, 0.06); }
+    .benchmark-table tr.benchmark-row-with:hover { background: rgba(33, 150, 243, 0.12); }
+    .benchmark-table tr.benchmark-row-without:hover { background: rgba(255, 193, 7, 0.12); }
+    .benchmark-table tr.benchmark-row-avg { font-weight: 600; border-top: 2px solid var(--border); }
+    .benchmark-table tr.benchmark-row-avg.benchmark-row-with { background: rgba(33, 150, 243, 0.12); }
+    .benchmark-table tr.benchmark-row-avg.benchmark-row-without { background: rgba(255, 193, 7, 0.12); }
+    .benchmark-delta-positive { color: var(--green); font-weight: 600; }
+    .benchmark-delta-negative { color: var(--red); font-weight: 600; }
+    .benchmark-notes {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      padding: 1rem;
+    }
+    .benchmark-notes h3 {
+      font-family: 'Poppins', sans-serif;
+      font-size: 0.875rem;
+      margin-bottom: 0.75rem;
+    }
+    .benchmark-notes ul {
+      list-style: disc;
+      padding-left: 1.25rem;
+    }
+    .benchmark-notes li {
+      font-size: 0.8125rem;
+      line-height: 1.6;
+      margin-bottom: 0.375rem;
+    }
+    .benchmark-empty {
+      color: var(--text-muted);
+      font-style: italic;
+      text-align: center;
+      padding: 3rem;
+    }
+
+    /* ---- Navigation ---- */
+    .nav {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      padding: 1rem 2rem;
+      border-top: 1px solid var(--border);
+      background: var(--surface);
+      flex-shrink: 0;
+    }
+    .nav-btn {
+      font-family: 'Poppins', sans-serif;
+      padding: 0.5rem 1.25rem;
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      background: var(--surface);
+      cursor: pointer;
+      font-size: 0.875rem;
+      font-weight: 500;
+      color: var(--text);
+      transition: all 0.15s;
+    }
+    .nav-btn:hover:not(:disabled) {
+      background: var(--bg);
+      border-color: var(--text-muted);
+    }
+    .nav-btn:disabled {
+      opacity: 0.4;
+      cursor: not-allowed;
+    }
+    .done-btn {
+      font-family: 'Poppins', sans-serif;
+      padding: 0.5rem 1.5rem;
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      background: var(--surface);
+      color: var(--text);
+      cursor: pointer;
+      font-size: 0.875rem;
+      font-weight: 500;
+      transition: all 0.15s;
+    }
+    .done-btn:hover {
+      background: var(--bg);
+      border-color: var(--text-muted);
+    }
+    .done-btn.ready {
+      border: none;
+      background: var(--accent);
+      color: white;
+      font-weight: 600;
+    }
+    .done-btn.ready:hover {
+      background: var(--accent-hover);
+    }
+    /* ---- Done overlay ---- */
+    .done-overlay {
+      display: none;
+      position: fixed;
+      inset: 0;
+      background: rgba(0, 0, 0, 0.5);
+      z-index: 100;
+      justify-content: center;
+      align-items: center;
+    }
+    .done-overlay.visible {
+      display: flex;
+    }
+    .done-card {
+      background: var(--surface);
+      border-radius: 12px;
+      padding: 2rem 3rem;
+      text-align: center;
+      box-shadow: 0 20px 60px rgba(0, 0, 0, 0.3);
+      max-width: 500px;
+    }
+    .done-card h2 {
+      font-size: 1.5rem;
+      margin-bottom: 0.5rem;
+    }
+    .done-card p {
+      color: var(--text-muted);
+      margin-bottom: 1.5rem;
+      line-height: 1.5;
+    }
+    .done-card .btn-row {
+      display: flex;
+      gap: 0.5rem;
+      justify-content: center;
+    }
+    .done-card button {
+      padding: 0.5rem 1.25rem;
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      background: var(--surface);
+      cursor: pointer;
+      font-size: 0.875rem;
+    }
+    .done-card button:hover {
+      background: var(--bg);
+    }
+    /* ---- Toast ---- */
+    .toast {
+      position: fixed;
+      bottom: 5rem;
+      left: 50%;
+      transform: translateX(-50%);
+      background: var(--header-bg);
+      color: var(--header-text);
+      padding: 0.625rem 1.25rem;
+      border-radius: var(--radius);
+      font-size: 0.875rem;
+      opacity: 0;
+      transition: opacity 0.3s;
+      pointer-events: none;
+      z-index: 200;
+    }
+    .toast.visible {
+      opacity: 1;
+    }
+  </style>
+</head>
+<body>
+  <div id="app" style="height:100vh; display:flex; flex-direction:column;">
+    <div class="header">
+      <div>
+        <h1>Eval Review: <span id="skill-name"></span></h1>
+        <div class="instructions">Review each output and leave feedback below. Navigate with arrow keys or buttons. When done, copy feedback and paste into Claude Code.</div>
+      </div>
+      <div class="progress" id="progress"></div>
+    </div>
+
+    <!-- View tabs (only shown when benchmark data exists) -->
+    <div class="view-tabs" id="view-tabs" style="display:none;">
+      <button class="view-tab active" onclick="switchView('outputs')">Outputs</button>
+      <button class="view-tab" onclick="switchView('benchmark')">Benchmark</button>
+    </div>
+
+    <!-- Outputs panel (qualitative review) -->
+    <div class="view-panel active" id="panel-outputs">
+    <div class="main">
+      <!-- Prompt -->
+      <div class="section">
+        <div class="section-header">Prompt <span class="config-badge" id="config-badge" style="display:none;"></span></div>
+        <div class="section-body">
+          <div class="prompt-text" id="prompt-text"></div>
+        </div>
+      </div>
+
+      <!-- Outputs -->
+      <div class="section">
+        <div class="section-header">Output</div>
+        <div class="section-body" id="outputs-body">
+          <div class="empty-state">No output files found</div>
+        </div>
+      </div>
+
+      <!-- Previous Output (collapsible) -->
+      <div class="section" id="prev-outputs-section" style="display:none;">
+        <div class="section-header">
+          <div class="grades-toggle" onclick="togglePrevOutputs()">
+            <span class="arrow" id="prev-outputs-arrow">&#9654;</span>
+            Previous Output
+          </div>
+        </div>
+        <div class="grades-content" id="prev-outputs-content"></div>
+      </div>
+
+      <!-- Grades (collapsible) -->
+      <div class="section" id="grades-section" style="display:none;">
+        <div class="section-header">
+          <div class="grades-toggle" onclick="toggleGrades()">
+            <span class="arrow" id="grades-arrow">&#9654;</span>
+            Formal Grades
+          </div>
+        </div>
+        <div class="grades-content" id="grades-content"></div>
+      </div>
+
+      <!-- Feedback -->
+      <div class="section">
+        <div class="section-header">Your Feedback</div>
+        <div class="section-body">
+          <textarea
+            class="feedback-textarea"
+            id="feedback"
+            placeholder="What do you think of this output? Any issues, suggestions, or things that look great?"
+          ></textarea>
+          <div class="feedback-status" id="feedback-status"></div>
+          <div class="prev-feedback" id="prev-feedback" style="display:none;">
+            <div class="prev-feedback-label">Previous feedback</div>
+            <div id="prev-feedback-text"></div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="nav" id="outputs-nav">
+      <button class="nav-btn" id="prev-btn" onclick="navigate(-1)">&#8592; Previous</button>
+      <button class="done-btn" id="done-btn" onclick="showDoneDialog()">Submit All Reviews</button>
+      <button class="nav-btn" id="next-btn" onclick="navigate(1)">Next &#8594;</button>
+    </div>
+    </div><!-- end panel-outputs -->
+
+    <!-- Benchmark panel (quantitative stats) -->
+    <div class="view-panel" id="panel-benchmark">
+      <div class="benchmark-view" id="benchmark-content">
+        <div class="benchmark-empty">No benchmark data available. Run a benchmark to see quantitative results here.</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Done overlay -->
+  <div class="done-overlay" id="done-overlay">
+    <div class="done-card">
+      <h2>Review Complete</h2>
+      <p>Your feedback has been saved. Go back to your Claude Code session and tell Claude you're done reviewing.</p>
+      <div class="btn-row">
+        <button onclick="closeDoneDialog()">OK</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Toast -->
+  <div class="toast" id="toast"></div>
+
+  <script>
+    // ---- Embedded data (injected by generate_review.py) ----
+    const EMBEDDED_DATA = {"skill_name": "pixhaus-type-state", "runs": [{"id": "eval-export-config-builder-with_skill", "prompt": "In the Pixhaus `io` crate I'm writing a builder for sprite-sheet export config. It must have a `format` (an enum: Png or Aseprite) and an `output_path` (PathBuf) set before you can call `build()` \u00e2\u20ac\u201d forgetting either should be a compile error, not a runtime panic. `columns` is optional and defaults to 1. Write the builder. Keep it in line with our repo conventions.", "eval_id": 0, "outputs": [{"name": "export_builder.rs", "type": "text", "content": "//! Type-state builder for sprite-sheet export config.\n//!\n//! `format` and `output_path` are required: `build()` exists only once both\n//! have been set, so forgetting either is a compile error, not a runtime panic.\n//! `columns` is optional and defaults to 1.\n//!\n//! The required fields are tracked with two `Set`/`Unset` type parameters. The\n//! setters are generic over the *other* parameter, so they compose in any order\n//! and we don't have to write out every `impl Builder<A, B>` combination. The\n//! field values are plain (defaulted) values, not `Option`s \u00e2\u20ac\u201d there is nothing\n//! to unwrap in `build()`, which keeps us clear of the workspace no-unwrap rule.\n\nuse std::marker::PhantomData;\nuse std::path::{Path, PathBuf};\n\n/// Sprite-sheet output format.\n#[derive(Debug, Clone, Copy, PartialEq, Eq)]\npub enum Format {\n    Png,\n    Aseprite,\n}\n\n/// A finished, validated export configuration.\n///\n/// The only way to get one is through [`ExportConfigBuilder`], which guarantees\n/// `format` and `output_path` were both set before `build()` was reachable.\n#[derive(Debug, Clone, PartialEq, Eq)]\npub struct ExportConfig {\n    format: Format,\n    output_path: PathBuf,\n    columns: u32,\n}\n\nimpl ExportConfig {\n    /// Start building. Both required fields are still unset.\n    pub fn builder() -> ExportConfigBuilder<Unset, Unset> {\n        ExportConfigBuilder::new()\n    }\n\n    pub fn format(&self) -> Format {\n        self.format\n    }\n\n    pub fn output_path(&self) -> &Path {\n        &self.output_path\n    }\n\n    pub fn columns(&self) -> u32 {\n        self.columns\n    }\n}\n\n/// Marker: a required field has been set.\n#[derive(Debug)]\npub struct Set;\n\n/// Marker: a required field has not been set yet.\n#[derive(Debug)]\npub struct Unset;\n\n/// Builder for [`ExportConfig`].\n///\n/// The two type parameters track whether `format` and `output_path` have been\n/// set. `build()` is implemented only for `ExportConfigBuilder<Set, Set>`, so\n/// the compiler rejects any attempt to build before both are supplied.\npub struct ExportConfigBuilder<HasFormat, HasPath> {\n    format: Format,\n    output_path: PathBuf,\n    columns: u32,\n    _format: PhantomData<HasFormat>,\n    _path: PhantomData<HasPath>,\n}\n\nimpl ExportConfigBuilder<Unset, Unset> {\n    /// A fresh builder with neither required field set.\n    ///\n    /// The required fields hold harmless placeholders until the setters replace\n    /// them \u00e2\u20ac\u201d that's what lets `build()` read plain values instead of unwrapping\n    /// `Option`s. `columns` defaults to 1, its real default.\n    pub fn new() -> Self {\n        ExportConfigBuilder {\n            format: Format::Png,\n            output_path: PathBuf::new(),\n            columns: 1,\n            _format: PhantomData,\n            _path: PhantomData,\n        }\n    }\n}\n\nimpl Default for ExportConfigBuilder<Unset, Unset> {\n    fn default() -> Self {\n        Self::new()\n    }\n}\n\n// `format` flips only the HasFormat parameter; HasPath is carried through\n// unchanged, so the setters compose in any order.\nimpl<HasPath> ExportConfigBuilder<Unset, HasPath> {\n    pub fn format(self, format: Format) -> ExportConfigBuilder<Set, HasPath> {\n        ExportConfigBuilder {\n            format,\n            output_path: self.output_path,\n            columns: self.columns,\n            _format: PhantomData,\n            _path: PhantomData,\n        }\n    }\n}\n\n// `output_path` flips only HasPath.\nimpl<HasFormat> ExportConfigBuilder<HasFormat, Unset> {\n    pub fn output_path(\n        self,\n        output_path: impl Into<PathBuf>,\n    ) -> ExportConfigBuilder<HasFormat, Set> {\n        ExportConfigBuilder {\n            format: self.format,\n            output_path: output_path.into(),\n            columns: self.columns,\n            _format: PhantomData,\n            _path: PhantomData,\n        }\n    }\n}\n\n// `columns` is optional: it moves no type parameter, so it's available in every\n// state and required in none.\nimpl<HasFormat, HasPath> ExportConfigBuilder<HasFormat, HasPath> {\n    pub fn columns(mut self, columns: u32) -> Self {\n        self.columns = columns;\n        self\n    }\n}\n\n// `build()` exists only once both required fields are `Set`. No unwrap needed:\n// the fields are plain values, set by the typed setters above.\nimpl ExportConfigBuilder<Set, Set> {\n    pub fn build(self) -> ExportConfig {\n        ExportConfig {\n            format: self.format,\n            output_path: self.output_path,\n            columns: self.columns,\n        }\n    }\n}\n\n#[cfg(test)]\nmod tests {\n    use super::*;\n\n    #[test]\n    fn builds_with_both_required_fields() {\n        let cfg = ExportConfig::builder()\n            .format(Format::Png)\n            .output_path(\"sheet.png\")\n            .build();\n\n        assert_eq!(cfg.format(), Format::Png);\n        assert_eq!(cfg.output_path(), Path::new(\"sheet.png\"));\n        assert_eq!(cfg.columns(), 1); // default\n    }\n\n    #[test]\n    fn setters_compose_in_any_order() {\n        let cfg = ExportConfig::builder()\n            .output_path(\"out.aseprite\")\n            .format(Format::Aseprite)\n            .build();\n\n        assert_eq!(cfg.format(), Format::Aseprite);\n        assert_eq!(cfg.output_path(), Path::new(\"out.aseprite\"));\n    }\n\n    #[test]\n    fn columns_overrides_the_default() {\n        let cfg = ExportConfig::builder()\n            .format(Format::Png)\n            .columns(8)\n            .output_path(\"grid.png\")\n            .build();\n\n        assert_eq!(cfg.columns(), 8);\n    }\n\n    #[test]\n    fn columns_is_optional_and_position_independent() {\n        let cfg = ExportConfig::builder()\n            .columns(4)\n            .output_path(\"a.png\")\n            .format(Format::Png)\n            .build();\n\n        assert_eq!(cfg.columns(), 4);\n    }\n\n    // The following must NOT compile \u00e2\u20ac\u201d they're the whole point of the type-state\n    // design. Kept as documentation; uncomment to confirm the compiler rejects\n    // them.\n    //\n    // fn missing_path() {\n    //     // error: no method `build` on ExportConfigBuilder<Set, Unset>\n    //     let _ = ExportConfig::builder().format(Format::Png).build();\n    // }\n    //\n    // fn missing_format() {\n    //     // error: no method `build` on ExportConfigBuilder<Unset, Set>\n    //     let _ = ExportConfig::builder().output_path(\"x.png\").build();\n    // }\n    //\n    // fn nothing_set() {\n    //     // error: no method `build` on ExportConfigBuilder<Unset, Unset>\n    //     let _ = ExportConfig::builder().build();\n    // }\n}\n"}, {"name": "response.md", "type": "text", "content": "# Sprite-sheet export config builder\n\nThis is a clean fit for the type-state builder pattern: two required fields\n(`format`, `output_path`) that must be set before `build()`, and one optional\nfield (`columns`, default 1). Forgetting a required field is a compile error,\nnot a runtime panic.\n\n## How the gating works\n\n`ExportConfigBuilder<HasFormat, HasPath>` carries two type parameters, each a\n`Set` / `Unset` marker tracked with `PhantomData`. The setters are generic over\nthe *other* parameter:\n\n- `format(..)` is on `impl<HasPath> ExportConfigBuilder<Unset, HasPath>` and\n  returns `<Set, HasPath>` \u00e2\u20ac\u201d it flips only `HasFormat` and carries `HasPath`\n  through untouched.\n- `output_path(..)` is on `impl<HasFormat> ExportConfigBuilder<HasFormat, Unset>`\n  and returns `<HasFormat, Set>`.\n\nBecause each setter is generic over the parameter it doesn't touch, they compose\nin any order, and we avoid writing out every `impl Builder<A, B>` combination.\n\n`build()` is implemented **only** for `ExportConfigBuilder<Set, Set>`. So:\n\n- `builder().format(..).build()` \u00e2\u2020\u2019 `<Set, Unset>` \u00e2\u2020\u2019 no `build` method.\n- `builder().output_path(..).build()` \u00e2\u2020\u2019 `<Unset, Set>` \u00e2\u2020\u2019 no `build` method.\n- `builder().build()` \u00e2\u2020\u2019 `<Unset, Unset>` \u00e2\u2020\u2019 no `build` method.\n\nEach is a compile error (`E0599: no method named build`), verified below.\n\n`columns(..)` lives on the fully-generic\n`impl<HasFormat, HasPath> ExportConfigBuilder<HasFormat, HasPath>`: it moves no\ntype parameter, so it's available in every state and required in none, and it\ndefaults to 1 in `new()`.\n\n## The Pixhaus-specific detail: no Option, no unwrap\n\nThe naive type-state builder stores required fields as `Option<T>` and unwraps\nthem in `build()` with `unwrap()`/`unreachable!()`, leaning on \"the type proves\nit's set.\" That violates the workspace no-unwrap / no-panic rule (clippy-denied)\nand throws away the type-level proof to re-check it at runtime.\n\nInstead the required fields hold harmless placeholders in `new()`\n(`Format::Png`, an empty `PathBuf`) that the typed setters overwrite before\n`<Set, Set>` is ever reached. `build()` reads plain values \u00e2\u20ac\u201d there is no\n`Option`, nothing to unwrap, no `unreachable!`, and no `unsafe`. The only\nconstructor for `ExportConfig` is the builder, so the invariant holds.\n\n`columns` is a genuine default rather than a sentinel, so it's a plain `u32`\nseeded to 1.\n\n## Conventions applied\n\n- No `unwrap`/`expect`/`unreachable!`/`panic!` outside tests.\n- No `unsafe`.\n- Edition 2024, toolchain 1.95.\n- Marker types and the enum derive only what they need; no `Box<dyn Trait>`\n  where generics fit.\n- `output_path` takes `impl Into<PathBuf>` so callers can pass `&str`, `String`,\n  or `PathBuf` \u00e2\u20ac\u201d standard ergonomic builder input.\n- `Default` is implemented for the empty builder (clippy's\n  `new_without_default`), delegating to `new()`.\n\nWhen this lands in the real `io` crate, the `Set` / `Unset` markers can stay\ncrate-private (the skill's \"don't let callers forge a state\" note) since nothing\ndownstream should name them; only `ExportConfig`, `ExportConfigBuilder`, and\n`Format` need to be `pub`.\n\n## Compile status\n\n`rustc --edition 2024 --crate-type lib export_builder.rs` \u00e2\u20ac\u201d **compiles clean,\nexit 0, no warnings.**\n\nThe four `#[cfg(test)]` tests pass (`cargo`-free: `rustc --edition 2024 --test`),\ncovering both-fields-set, any-order, and the optional `columns` override.\n\nThe three illegal calls were checked from a separate crate and each fails to\ncompile for the right reason:\n\n```\nerror[E0599]: no method named `build` found for struct `ExportConfigBuilder<Set, Unset>`\nerror[E0599]: no method named `build` found for struct `ExportConfigBuilder<Unset, Set>`\nerror[E0599]: no method named `build` found for struct `ExportConfigBuilder<Unset, Unset>`\n```\n\nSo omitting `format` or `output_path` (or both) is a compile error, exactly as\nrequired.\n"}], "grading": {"expectations": [{"text": "Builder is generic over per-required-field marker types (type-state)", "passed": true, "evidence": "ExportConfigBuilder<Set/Unset, Set/Unset>; setters generic over the other param so they compose in any order."}, {"text": "build() is implemented only for the state where both format and output_path are set", "passed": true, "evidence": "impl ExportConfigBuilder<Set, Set> { fn build }. Negative compile confirms E0599 on the three incomplete states."}, {"text": "No unwrap/expect/unreachable/panic anywhere", "passed": true, "evidence": "grep found none; clippy-clean."}, {"text": "Required fields NOT stored as Option then unwrapped/unreachable'd", "passed": true, "evidence": "0 Option fields; required fields hold harmless placeholders in new() overwritten by typed setters, so build() reads plain values."}, {"text": "columns is an optional setter available in any state, defaults to 1", "passed": true, "evidence": "columns() on the fully-generic impl; new() sets 1."}, {"text": "Produced Rust compiles on edition 2024", "passed": true, "evidence": "rustc --edition 2024 --crate-type lib exit 0, no warnings; 4 tests pass."}, {"text": "Calling build() with a required field unset is a compile error", "passed": true, "evidence": "Verified: E0599 no method build for <Set,Unset>, <Unset,Set>, <Unset,Unset>."}], "summary": {"pass_rate": 1.0, "passed": 7, "failed": 0, "total": 7}}}, {"id": "eval-export-config-builder-without_skill", "prompt": "In the Pixhaus `io` crate I'm writing a builder for sprite-sheet export config. It must have a `format` (an enum: Png or Aseprite) and an `output_path` (PathBuf) set before you can call `build()` \u00e2\u20ac\u201d forgetting either should be a compile error, not a runtime panic. `columns` is optional and defaults to 1. Write the builder. Keep it in line with our repo conventions.", "eval_id": 0, "outputs": [{"name": "export_builder.rs", "type": "text", "content": "//! Type-state builder for sprite-sheet export config.\n//!\n//! `format` and `output_path` are required; `columns` defaults to 1. The\n//! type-state pattern moves the \"did you set the required fields\" check from\n//! run time to compile time: `build()` exists only on the fully-configured\n//! builder, so forgetting either field is a type error, not a panic.\n\nuse std::marker::PhantomData;\nuse std::path::PathBuf;\n\n/// Output encoding for a sprite-sheet export.\n#[derive(Debug, Clone, Copy, PartialEq, Eq)]\npub enum ExportFormat {\n    Png,\n    Aseprite,\n}\n\n/// A fully-specified sprite-sheet export configuration.\n///\n/// Built only through [`ExportConfigBuilder`]; the required fields are\n/// guaranteed set by construction, so there are no `Option`s to unwrap here.\n#[derive(Debug, Clone, PartialEq, Eq)]\npub struct ExportConfig {\n    pub format: ExportFormat,\n    pub output_path: PathBuf,\n    pub columns: u32,\n}\n\n// Type-state markers. Each required field is tracked by a zero-sized type that\n// flips from `Missing` to `Set` once the field is provided. `build()` is\n// implemented only for the all-`Set` combination.\n\n/// Marker: a required field has not been provided yet.\n#[derive(Debug)]\npub struct Missing;\n\n/// Marker: a required field has been provided.\n#[derive(Debug)]\npub struct Set;\n\n/// Builder for [`ExportConfig`].\n///\n/// The two type parameters track which required fields are set. Start with\n/// [`ExportConfigBuilder::new`], call [`format`](Self::format) and\n/// [`output_path`](Self::output_path) in any order, then [`build`](Self::build).\n/// `build` is reachable only once both are `Set`.\n#[derive(Debug)]\npub struct ExportConfigBuilder<FormatState, PathState> {\n    format: Option<ExportFormat>,\n    output_path: Option<PathBuf>,\n    columns: u32,\n    _marker: PhantomData<(FormatState, PathState)>,\n}\n\nimpl ExportConfigBuilder<Missing, Missing> {\n    /// Start a new builder with no required fields set and `columns` defaulted to 1.\n    #[must_use]\n    pub fn new() -> Self {\n        Self {\n            format: None,\n            output_path: None,\n            columns: 1,\n            _marker: PhantomData,\n        }\n    }\n}\n\nimpl Default for ExportConfigBuilder<Missing, Missing> {\n    fn default() -> Self {\n        Self::new()\n    }\n}\n\n// Methods available in any state: setting the required fields (which transition\n// the type-state) and the optional `columns`.\n\nimpl<FormatState, PathState> ExportConfigBuilder<FormatState, PathState> {\n    /// Set the output format, marking that requirement satisfied.\n    #[must_use]\n    pub fn format(self, format: ExportFormat) -> ExportConfigBuilder<Set, PathState> {\n        ExportConfigBuilder {\n            format: Some(format),\n            output_path: self.output_path,\n            columns: self.columns,\n            _marker: PhantomData,\n        }\n    }\n\n    /// Set the output path, marking that requirement satisfied.\n    #[must_use]\n    pub fn output_path(self, output_path: impl Into<PathBuf>) -> ExportConfigBuilder<FormatState, Set> {\n        ExportConfigBuilder {\n            format: self.format,\n            output_path: Some(output_path.into()),\n            columns: self.columns,\n            _marker: PhantomData,\n        }\n    }\n\n    /// Set the number of columns. Optional; defaults to 1.\n    #[must_use]\n    pub fn columns(mut self, columns: u32) -> Self {\n        self.columns = columns;\n        self\n    }\n}\n\n// `build` exists only when both required fields are `Set`. Calling it on a\n// builder missing either field is a compile error (no such method), not a panic.\nimpl ExportConfigBuilder<Set, Set> {\n    /// Finalize the configuration.\n    ///\n    /// Reachable only once `format` and `output_path` are both set, so the\n    /// `Option` unwraps here cannot fail: the type-state guarantees both are\n    /// `Some`. We still avoid `unwrap()` by destructuring with a match, keeping\n    /// the no-panic rule honest rather than relying on a comment.\n    #[must_use]\n    pub fn build(self) -> ExportConfig {\n        let format = match self.format {\n            Some(format) => format,\n            // Unreachable by construction: only `Set` format state reaches here.\n            // We map to a default instead of panicking so no panic path exists.\n            None => ExportFormat::Png,\n        };\n        let output_path = match self.output_path {\n            Some(path) => path,\n            None => PathBuf::new(),\n        };\n        ExportConfig {\n            format,\n            output_path,\n            columns: self.columns,\n        }\n    }\n}\n\n#[cfg(test)]\nmod tests {\n    use super::*;\n\n    #[test]\n    fn builds_with_required_fields_and_default_columns() {\n        let config = ExportConfigBuilder::new()\n            .format(ExportFormat::Png)\n            .output_path(\"sheet.png\")\n            .build();\n        assert_eq!(config.format, ExportFormat::Png);\n        assert_eq!(config.output_path, PathBuf::from(\"sheet.png\"));\n        assert_eq!(config.columns, 1);\n    }\n\n    #[test]\n    fn fields_can_be_set_in_any_order() {\n        let config = ExportConfigBuilder::new()\n            .output_path(\"sheet.ase\")\n            .columns(8)\n            .format(ExportFormat::Aseprite)\n            .build();\n        assert_eq!(config.format, ExportFormat::Aseprite);\n        assert_eq!(config.output_path, PathBuf::from(\"sheet.ase\"));\n        assert_eq!(config.columns, 8);\n    }\n\n    #[test]\n    fn columns_override_is_respected() {\n        let config = ExportConfigBuilder::new()\n            .format(ExportFormat::Png)\n            .output_path(\"x.png\")\n            .columns(4)\n            .build();\n        assert_eq!(config.columns, 4);\n    }\n\n    #[test]\n    fn default_matches_new() {\n        let a = ExportConfigBuilder::default()\n            .format(ExportFormat::Png)\n            .output_path(\"x.png\")\n            .build();\n        let b = ExportConfigBuilder::new()\n            .format(ExportFormat::Png)\n            .output_path(\"x.png\")\n            .build();\n        assert_eq!(a, b);\n    }\n}\n"}, {"name": "response.md", "type": "text", "content": "# Sprite-sheet export config builder\n\nThe requirement \u00e2\u20ac\u201d \"forgetting `format` or `output_path` should be a compile\nerror, not a runtime panic\" \u00e2\u20ac\u201d is exactly the type-state builder pattern. The\ntrick: encode \"is this field set yet?\" in the builder's type parameters, and\nimplement `build()` only on the variant where both required fields are `Set`.\nOmit one, and the method literally doesn't exist on that type, so the compiler\nrejects the call.\n\n## How it works\n\n```rust\npub struct ExportConfigBuilder<FormatState, PathState> { ... }\n```\n\nTwo zero-sized marker types, `Missing` and `Set`, ride along as type\nparameters. `new()` returns `ExportConfigBuilder<Missing, Missing>`. Each setter\nconsumes `self` and returns a builder with that parameter flipped to `Set`:\n\n- `.format(..)` -> `ExportConfigBuilder<Set, PathState>`\n- `.output_path(..)` -> `ExportConfigBuilder<FormatState, Set>`\n\nBecause the setters are generic over the *other* parameter, you can call them in\neither order and the states accumulate. `build()` is gated:\n\n```rust\nimpl ExportConfigBuilder<Set, Set> {\n    pub fn build(self) -> ExportConfig { ... }\n}\n```\n\nIt exists only when both parameters are `Set`. Try to build with a field\nmissing and you get `E0599: no method named build found for\nExportConfigBuilder<Missing, Set>` \u00e2\u20ac\u201d a compile error, verified below.\n\n`columns` is the easy case: it's not required, so it doesn't touch the\ntype-state. It's stored with a default of `1` in `new()` and a plain\n`columns(self, u32) -> Self` setter overrides it.\n\n## Repo-convention notes\n\n- **No panics.** `unwrap()`/`expect()`/`panic!()` are clippy-denied outside\n  tests. The internal storage still uses `Option<ExportFormat>` and\n  `Option<PathBuf>` (the markers are separate zero-sized types, not the data\n  itself), so `build()` has to get the values out. Rather than `unwrap()` \u00e2\u20ac\u201d\n  which would be safe-by-construction but still trips the lint and leaves a\n  panic path in the binary \u00e2\u20ac\u201d `build()` destructures with `match` and maps the\n  by-construction-impossible `None` arms to harmless defaults. No panic branch\n  exists, so the lint stays honest and there's nothing to blow up at runtime\n  even if someone later subverts the type-state with unsafe transmutes (which\n  the workspace forbids anyway).\n- **No unsafe.** The pattern is entirely safe; `PhantomData<(FormatState,\n  PathState)>` carries the type parameters without storing a value.\n- **`impl Into<PathBuf>`** on `output_path` so callers can pass `&str`, `String`,\n  or `PathBuf` without ceremony \u00e2\u20ac\u201d matches the ergonomic, iterator-friendly house\n  style.\n- **`#[must_use]`** on the builder constructors/setters and on `build()`: a\n  builder you don't consume is a bug worth a warning.\n- **Edition 2024 / 1.95.** Nothing edition-specific is leaned on; it compiles\n  clean under `--edition 2024`.\n\n## Alternative considered\n\nA runtime-checked builder (`build(self) -> Result<ExportConfig, BuildError>`\nwith `thiserror`) is the other idiomatic option and is the right call when the\nrequired set is large or configured dynamically (e.g. from deserialized data),\nbecause N type parameters get unwieldy fast. Here there are exactly two required\nfields set through a fluent chain, the failure is a programmer mistake rather\nthan bad input, and the task explicitly asked for a *compile* error \u00e2\u20ac\u201d so\ntype-state is the better fit. If this builder later grows many required fields,\nrevisit and switch to the `Result` form.\n\n## Compile + test status\n\n- `rustc --edition 2024 --crate-type lib export_builder.rs` \u00e2\u20ac\u201d exit 0, no\n  warnings.\n- `rustc --edition 2024 --test export_builder.rs` then run \u00e2\u20ac\u201d 4 tests pass.\n- Negative check: appending a `build()` call on a builder that skipped\n  `.format(..)` fails with `error[E0599]: no method named build found for\n  struct ExportConfigBuilder<Missing, Set>`. The gate works.\n"}], "grading": {"expectations": [{"text": "Builder is generic over per-required-field marker types (type-state)", "passed": true, "evidence": "ExportConfigBuilder<Missing/Set, Missing/Set> markers."}, {"text": "build() is implemented only for the state where both format and output_path are set", "passed": true, "evidence": "impl on <Set, Set>; negative compile shows E0599 for <Missing, Set>."}, {"text": "No unwrap/expect/unreachable/panic anywhere", "passed": true, "evidence": "None present; build() uses match with default arms instead of unwrap."}, {"text": "Required fields NOT stored as Option then unwrapped/unreachable'd", "passed": false, "evidence": "Stored required fields as Option<_> (2 Option fields) and recovered them in build() via a match that maps the by-construction-impossible None arms to defaults. No panic, but this is exactly the Option-you-re-check shape the skill steers away from; the skill's idiom stores the data plainly so there is no Option at all."}, {"text": "columns is an optional setter available in any state, defaults to 1", "passed": true, "evidence": "columns off the type-state, defaults to 1."}, {"text": "Produced Rust compiles on edition 2024", "passed": true, "evidence": "rustc exit 0, tests pass."}, {"text": "Calling build() with a required field unset is a compile error", "passed": true, "evidence": "Verified E0599 for <Missing, Set>."}], "summary": {"pass_rate": 0.8571, "passed": 6, "failed": 1, "total": 7}}}, {"id": "eval-verb-job-lifecycle-with_skill", "prompt": "We have an AI inference job in Pixhaus that goes through three stages: a draft you've configured but not sent, a running job with a spawned task handle, and a finished job that holds the output image. I want it to be impossible to read the output before the job is finished, and impossible to re-submit a job that's already running \u00e2\u20ac\u201d enforced by the compiler, not by checking a status field at runtime. How should I model this? Show me the types.", "eval_id": 1, "outputs": [{"name": "job.rs", "type": "text", "content": "//! Type-state model for an AI inference job's lifecycle.\n//!\n//! Three states, each a distinct type:\n//!   - `Job<Draft>`   \u00e2\u20ac\u201d configured but not sent. Can `submit()`. Cannot read output.\n//!   - `Job<Running>` \u00e2\u20ac\u201d spawned, holds the task handle. Can `await_output()`. Cannot re-submit.\n//!   - `Job<Done>`    \u00e2\u20ac\u201d finished, holds the output image. Can `output()`.\n//!\n//! The guarantees the compiler enforces (not a runtime status field):\n//!   - `output()` exists ONLY on `Job<Done>` \u00e2\u20ac\u201d you cannot read the image before the job finishes.\n//!   - `submit()` exists ONLY on `Job<Draft>` \u00e2\u20ac\u201d you cannot re-submit a running or finished job;\n//!     `submit` consumes the draft, so the draft handle is gone after the first call.\n//!\n//! State-specific data lives inside the state type (the skill's Pixhaus rule):\n//! `Running` owns the `JoinHandle`, `Done` owns the `Image`. There is no\n//! `Option` + `unreachable!`/`unwrap` anywhere \u00e2\u20ac\u201d a field exists exactly when\n//! the state that owns it does.\n//!\n//! Stubs for standalone compilation\n//! --------------------------------\n//! In the real crate these are the genuine types and this file carries none of\n//! the stubs below:\n//!   - `JoinHandle<T>` -> `tokio::task::JoinHandle<T>`\n//!   - `Image`         -> the `image` crate's buffer (e.g. `image::RgbaImage`)\n//!   - `submit` would take a `&tokio::runtime::Handle` and call `rt.spawn(..)`,\n//!     and `await_output` would `.await` the real `JoinHandle` (returning\n//!     `Result<Job<Done>, JobError>` for a join/cancel error). The shape of the\n//!     state transitions is identical; only the spawn/await plumbing differs.\n\nuse std::marker::PhantomData;\n\n// ---------------------------------------------------------------------------\n// Stubs (real types noted above). Kept minimal so the file compiles with rustc\n// alone, no external crates.\n// ---------------------------------------------------------------------------\n\n/// Stand-in for `tokio::task::JoinHandle<T>`.\npub struct JoinHandle<T> {\n    _result: T,\n}\n\nimpl<T> JoinHandle<T> {\n    fn new(result: T) -> Self {\n        JoinHandle { _result: result }\n    }\n\n    /// Stand-in for `.await` on a real `JoinHandle`. The real version is async\n    /// and returns `Result<T, JoinError>`; here we just hand back the value.\n    fn join(self) -> T {\n        self._result\n    }\n}\n\n/// Stand-in for the `image` crate's RGBA buffer.\n#[derive(Debug, Clone, PartialEq, Eq)]\npub struct Image {\n    pub width: u32,\n    pub height: u32,\n    pub pixels: Vec<u8>,\n}\n\n// ---------------------------------------------------------------------------\n// State types. `Draft` carries no data, so it's a bare marker used via\n// PhantomData. `Running` and `Done` own their data, so they are real fields.\n// The marker/state types are pub(crate) so downstream code can't forge a\n// `Job<Done>` it never ran (skill pitfall: don't let callers construct states).\n// ---------------------------------------------------------------------------\n\n/// Configured but not yet sent. No state data; pure marker.\npub struct Draft;\n\n/// Spawned and in flight. Owns the task handle.\npub struct Running {\n    handle: JoinHandle<Image>,\n}\n\n/// Finished. Owns the produced image.\npub struct Done {\n    output: Image,\n}\n\n/// An inference job, generic over its lifecycle state.\n///\n/// `prompt` and `config` are shared across every state, so they live on the\n/// outer struct. State-specific data (the handle, the output) lives on `state`.\npub struct Job<S> {\n    prompt: String,\n    config: JobConfig,\n    state: S,\n    // Draft is a zero-data marker, so for the Draft arm `state` is the unit-like\n    // `Draft`. PhantomData isn't strictly needed because `state: S` already ties\n    // the type parameter, but we keep `S` as a real field so Running/Done can\n    // store data without an Option.\n    _phantom: PhantomData<fn() -> S>,\n}\n\n/// Whatever the caller dialed in before sending \u00e2\u20ac\u201d model, steps, seed, etc.\n#[derive(Debug, Clone, Default)]\npub struct JobConfig {\n    pub model: String,\n    pub steps: u32,\n    pub seed: u64,\n}\n\n// ---------------------------------------------------------------------------\n// Draft: the only state that can be constructed from scratch and the only one\n// that can submit().\n// ---------------------------------------------------------------------------\n\nimpl Job<Draft> {\n    /// Start configuring a new job. This is the one public entry point; you\n    /// cannot build a `Job<Running>` or `Job<Done>` directly.\n    pub fn new(prompt: impl Into<String>, config: JobConfig) -> Self {\n        Job {\n            prompt: prompt.into(),\n            config,\n            state: Draft,\n            _phantom: PhantomData,\n        }\n    }\n\n    /// Send the job for inference. Consumes the draft and returns a running job.\n    ///\n    /// Because this takes `self` by value, the draft is gone afterward \u00e2\u20ac\u201d there\n    /// is no handle left to call `submit` on twice. And `submit` exists on no\n    /// other state, so a `Job<Running>` or `Job<Done>` can't be re-submitted.\n    ///\n    /// Real version: `pub fn submit(self, rt: &tokio::runtime::Handle) -> Job<Running>`\n    /// which calls `rt.spawn(async move { run_inference(prompt, config).await })`.\n    pub fn submit(self) -> Job<Running> {\n        let handle = spawn_inference(&self.prompt, &self.config);\n        Job {\n            prompt: self.prompt,\n            config: self.config,\n            state: Running { handle },\n            _phantom: PhantomData,\n        }\n    }\n}\n\n// ---------------------------------------------------------------------------\n// Running: holds the handle. Can be awaited into Done. Cannot read output yet\n// (no `output` method exists here) and cannot be re-submitted (no `submit`).\n// ---------------------------------------------------------------------------\n\nimpl Job<Running> {\n    /// Wait for the spawned task and move to the finished state.\n    ///\n    /// `self.state.handle` is always a real handle here \u00e2\u20ac\u201d `Job<Running>` can\n    /// only be built by `submit`, which always supplies one. No `Option`, no\n    /// `unwrap`, no `unreachable!`.\n    ///\n    /// Real version is `async` and returns `Result<Job<Done>, JobError>` so a\n    /// join/cancel failure surfaces as a typed error rather than a panic.\n    pub fn await_output(self) -> Job<Done> {\n        let output = self.state.handle.join();\n        Job {\n            prompt: self.prompt,\n            config: self.config,\n            state: Done { output },\n            _phantom: PhantomData,\n        }\n    }\n}\n\n// ---------------------------------------------------------------------------\n// Done: holds the output. The ONLY state with an output accessor.\n// ---------------------------------------------------------------------------\n\nimpl Job<Done> {\n    /// Read the produced image. This method exists only on `Job<Done>`, so the\n    /// output is unreadable until the job has actually finished. Always valid:\n    /// `Job<Done>` can only be built by `await_output`, which always supplies it.\n    pub fn output(&self) -> &Image {\n        &self.state.output\n    }\n\n    /// Take ownership of the produced image.\n    pub fn into_output(self) -> Image {\n        self.state.output\n    }\n}\n\n// ---------------------------------------------------------------------------\n// Shared accessors \u00e2\u20ac\u201d valid in every state, so they hang off `impl<S>`.\n// ---------------------------------------------------------------------------\n\nimpl<S> Job<S> {\n    pub fn prompt(&self) -> &str {\n        &self.prompt\n    }\n\n    pub fn config(&self) -> &JobConfig {\n        &self.config\n    }\n}\n\n// ---------------------------------------------------------------------------\n// Stub spawn. Real version: `rt.spawn(async move { run_inference(..).await })`.\n// ---------------------------------------------------------------------------\n\nfn spawn_inference(_prompt: &str, config: &JobConfig) -> JoinHandle<Image> {\n    // The real backend produces this asynchronously; the stub fabricates a\n    // tiny image so the lifecycle compiles and runs end to end.\n    let image = Image {\n        width: 1,\n        height: 1,\n        pixels: vec![0, 0, 0, config.seed as u8],\n    };\n    JoinHandle::new(image)\n}\n\n// ---------------------------------------------------------------------------\n// Standalone demonstration of the happy path. (Present so the file compiles as\n// a standalone binary with `rustc job.rs`; the real crate is a library and\n// would drop this `main`.)\n// ---------------------------------------------------------------------------\n\nfn main() {\n    let done = Job::new(\"a fox in snow\", JobConfig::default())\n        .submit()\n        .await_output();\n    let img = done.output();\n    println!(\n        \"job done: {}x{}, {} bytes\",\n        img.width,\n        img.height,\n        img.pixels.len()\n    );\n}\n\n// ---------------------------------------------------------------------------\n// Tests. The commented lines inside `happy_path` are the calls the type system\n// rejects \u00e2\u20ac\u201d uncommenting any of them is a compile error, which is the whole\n// point of the model.\n// ---------------------------------------------------------------------------\n\n#[cfg(test)]\nmod tests {\n    use super::*;\n\n    fn sample_config() -> JobConfig {\n        JobConfig {\n            model: \"sd-xl\".to_string(),\n            steps: 30,\n            seed: 7,\n        }\n    }\n\n    #[test]\n    fn happy_path_draft_to_running_to_done() {\n        let draft = Job::new(\"a cat\", sample_config());\n        assert_eq!(draft.prompt(), \"a cat\");\n\n        let running = draft.submit();\n        // draft.submit();          // <- won't compile: `draft` was moved by submit()\n        // running.output();        // <- won't compile: no `output` on Job<Running>\n        // running.submit();        // <- won't compile: no `submit` on Job<Running>\n\n        let done = running.await_output();\n        // running.await_output();  // <- won't compile: `running` was moved\n\n        let img = done.output();\n        assert_eq!(img.width, 1);\n        assert_eq!(img.pixels.last().copied(), Some(7));\n    }\n\n    #[test]\n    fn into_output_takes_ownership() {\n        let done = Job::new(\"a dog\", sample_config()).submit().await_output();\n        let img = done.into_output();\n        assert_eq!(img.height, 1);\n    }\n\n    #[test]\n    fn config_readable_in_every_state() {\n        let draft = Job::new(\"p\", sample_config());\n        assert_eq!(draft.config().steps, 30);\n        let running = draft.submit();\n        assert_eq!(running.config().model, \"sd-xl\");\n        let done = running.await_output();\n        assert_eq!(done.config().seed, 7);\n    }\n}\n"}, {"name": "response.md", "type": "text", "content": "# Model the inference job as type-state\n\nYou have three states known at compile time, transitions you drive in code (not\nfrom runtime input), and operations that are only legal in one state \u00e2\u20ac\u201d reading\nthe output, and submitting. That's exactly the case type-state is for. Encode\neach state as its own type and hang the methods off the matching `impl`. Calling\n`output()` on a draft or `submit()` on a running job then isn't a runtime check\nyou can forget \u00e2\u20ac\u201d it's a method that doesn't exist, so the program won't compile.\n\n## The types\n\n```rust\nuse std::marker::PhantomData;\n\n// In the real crate: JoinHandle -> tokio::task::JoinHandle, Image -> image::RgbaImage.\n\npub struct Draft;                              // configured, no extra data \u00e2\u20ac\u201d bare marker\npub struct Running { handle: JoinHandle<Image> } // owns the spawned task handle\npub struct Done    { output: Image }            // owns the finished image\n\npub struct Job<S> {\n    prompt: String,\n    config: JobConfig,\n    state: S,\n    _phantom: PhantomData<fn() -> S>,\n}\n\nimpl Job<Draft> {\n    pub fn new(prompt: impl Into<String>, config: JobConfig) -> Self { /* ... */ }\n    pub fn submit(self) -> Job<Running> { /* spawn, move handle into Running */ }\n}\n\nimpl Job<Running> {\n    pub fn await_output(self) -> Job<Done> { /* join handle, move image into Done */ }\n}\n\nimpl Job<Done> {\n    pub fn output(&self) -> &Image { &self.state.output }   // exists ONLY here\n    pub fn into_output(self) -> Image { self.state.output }\n}\n\nimpl<S> Job<S> {                  // shared, valid in every state\n    pub fn prompt(&self) -> &str { &self.prompt }\n    pub fn config(&self) -> &JobConfig { &self.config }\n}\n```\n\nFull compiling source is in `job.rs`.\n\n## Why this shape\n\n**`submit()` lives only on `Job<Draft>`, and it takes `self` by value.** Two\nguarantees fall out of that. First, no other state has a `submit` method, so you\ncan't re-submit a `Job<Running>` or a `Job<Done>` \u00e2\u20ac\u201d the method isn't there.\nSecond, because `submit` consumes the draft, the draft value is *gone* after the\nfirst call; even a second `submit` on the same draft fails to compile because the\nbinding was moved. There's no live handle to re-submit through.\n\n**`output()` lives only on `Job<Done>`.** A `Job<Draft>` and a `Job<Running>`\nhave no way to expose the image \u00e2\u20ac\u201d the accessor doesn't exist on those types. You\ncannot read a result that hasn't been produced. The transition that *makes* a\n`Job<Done>` (`await_output`) is the only thing that puts an `Image` in your hands,\nand it only runs after the job finishes.\n\n**Transitions consume `self`.** Each step (`submit`, `await_output`) takes the\njob by value and returns the next type, so a stale handle in the old state can't\nlinger \u00e2\u20ac\u201d you can't keep poking a `Job<Running>` after you've awaited it.\n\n## The Pixhaus-specific part: state carries its own data\n\nThe textbook write-up of this pattern keeps one struct with `Option` fields \u00e2\u20ac\u201d\n`handle: Option<JoinHandle>`, `output: Option<Image>` \u00e2\u20ac\u201d and `unwrap`s or\n`unreachable!`s them once the state \"guarantees\" they're set. That's banned here\ntwice over: `unwrap`/`expect`/`unreachable!`/`panic!` are clippy-denied\nworkspace-wide, and the `Option` defeats the point \u00e2\u20ac\u201d you proved the invariant in\nthe type, then re-checked it at runtime.\n\nInstead the data lives **inside the state type**. `Running` owns the\n`JoinHandle`; `Done` owns the `Image`. The field exists exactly when the state\nthat owns it exists, so `self.state.handle` and `self.state.output` are always\nvalid where they're used \u00e2\u20ac\u201d no `Option`, nothing to unwrap. `Draft` carries no\ndata, so it stays a bare marker.\n\nState types are `pub` here for the eval, but in the crate you'd keep `Running`\nand `Done` constructible only through the transitions (don't let downstream code\nforge a `Job<Done>` it never ran) \u00e2\u20ac\u201d export `Job` and `Job<Draft>::new`, and seal\nor crate-private the state markers.\n\n## On the stubs and the real types\n\nThe file stubs `JoinHandle` and `Image` so it compiles with `rustc` alone. In the\ncrate:\n\n- `submit` takes `&tokio::runtime::Handle` and calls `rt.spawn(async move { run_inference(prompt, config).await })`.\n- `await_output` is `async`, `.await`s the real `JoinHandle`, and returns\n  `Result<Job<Done>, JobError>` \u00e2\u20ac\u201d a join/cancel failure is a real runtime error,\n  so it surfaces as a typed `thiserror` error, not a panic. (The type system\n  already removed the *illegal* transitions; the only failures left are genuine\n  runtime ones, and those get a `Result`.) The state-machine shape is identical;\n  only the spawn/await plumbing changes.\n\n## Is type-state the right call here?\n\nYes \u00e2\u20ac\u201d it clears every bar in the skill's decision list: the states are a small\nfixed set known at compile time, the transitions are code-driven, and reading an\nunfinished result or double-submitting are real bugs with costly failure modes\n(a torn AI request, a half-read buffer). The bug class it removes is nameable,\nwhich is the skill's final check. If all three operations were legal in all three\nstates, a plain `enum` + `match` would be simpler and you'd skip this. They\naren't, so the verbosity earns its keep.\n\n## Verification\n\n- `rustc --edition 2024 --test job.rs` \u00e2\u20ac\u201d compiles clean; 3 tests pass.\n- `clippy-driver --edition 2024 --test -Dwarnings -Dclippy::unwrap_used -Dclippy::expect_used -Dclippy::panic -Dclippy::unreachable` \u00e2\u20ac\u201d exit 0, no findings.\n- Negative checks: `r.output()` on a `Job<Running>` and a second `r.submit()` on\n  a `Job<Running>` each fail with `error[E0599]: no method named ... found for\n  struct Job<Running>` \u00e2\u20ac\u201d the compiler, not a runtime status field, rejects them.\n"}], "grading": {"expectations": [{"text": "Three distinct state types model draft, running, finished", "passed": true, "evidence": "Draft (marker), Running { handle }, Done { output }."}, {"text": "output accessor exists only on the finished state", "passed": true, "evidence": "output()/into_output() in impl Job<Done>; negative compile E0599 on Job<Running>."}, {"text": "submit() exists only on the draft state", "passed": true, "evidence": "submit() in impl Job<Draft>, takes self; E0599 on Job<Running>."}, {"text": "Transition methods take self by value", "passed": true, "evidence": "submit(self), await/into_output consume self."}, {"text": "State-specific data lives inside the state type, not Option+unreachable", "passed": true, "evidence": "handle and output are plain fields on Running/Done; no Option, no unwrap/unreachable."}, {"text": "No unwrap/expect/unreachable/panic; fallible transitions return Result", "passed": true, "evidence": "clippy deny set passes; real await_output documented as async returning Result<Job<Done>, JobError>."}], "summary": {"pass_rate": 1.0, "passed": 6, "failed": 0, "total": 6}}}, {"id": "eval-verb-job-lifecycle-without_skill", "prompt": "We have an AI inference job in Pixhaus that goes through three stages: a draft you've configured but not sent, a running job with a spawned task handle, and a finished job that holds the output image. I want it to be impossible to read the output before the job is finished, and impossible to re-submit a job that's already running \u00e2\u20ac\u201d enforced by the compiler, not by checking a status field at runtime. How should I model this? Show me the types.", "eval_id": 1, "outputs": [{"name": "job.rs", "type": "text", "content": "//! Type-state model for an AI inference job's lifecycle.\n//!\n//! Three states, each a distinct type:\n//!   - `Draft`    \u00e2\u20ac\u201d configured but not sent. Can `submit()`. Has no handle, no output.\n//!   - `Running`  \u00e2\u20ac\u201d submitted, owns the spawned task handle. Can `await_output()`.\n//!   - `Finished` \u00e2\u20ac\u201d holds the output image. Can `output()`.\n//!\n//! The state lives in the type parameter `S`, so the compiler \u00e2\u20ac\u201d not a runtime\n//! `status` field \u00e2\u20ac\u201d decides which methods exist. Reading the output before the\n//! job finishes, or submitting a job that's already running, is a type error,\n//! not a runtime check.\n//!\n//! Each state stores exactly the data it owns, inline, with no `Option` and no\n//! `unreachable!()` to \"prove\" a field is present. A `Draft` has no handle field\n//! at all; a `Finished` has no handle field at all. The data that's irrelevant\n//! to a state simply isn't in that state's struct.\n\n// --- Stubs so this file compiles standalone (no tokio / image crate). ---------\n// In the real crate these are `tokio::task::JoinHandle<RgbaImage>` and\n// `image::RgbaImage`; nothing about the type-state design depends on them.\n\n/// Stand-in for `tokio::task::JoinHandle<OutputImage>`.\npub struct JoinHandle<T> {\n    _marker: core::marker::PhantomData<T>,\n}\n\nimpl<T> JoinHandle<T> {\n    /// Stand-in for awaiting the task. Real code would be `self.handle.await`.\n    pub fn join_stub(self, value: T) -> T {\n        // The stub just hands back a value; the real one awaits the future.\n        let _ = self;\n        value\n    }\n}\n\n/// Stand-in for `image::RgbaImage`.\n#[derive(Clone, Debug, PartialEq, Eq)]\npub struct OutputImage {\n    pub width: u32,\n    pub height: u32,\n    pub pixels: Vec<u8>,\n}\n// -----------------------------------------------------------------------------\n\n/// What the user configures before submitting. Shared by every state that needs\n/// to remember the request (here: `Draft` and `Running`).\n#[derive(Clone, Debug, PartialEq, Eq)]\npub struct JobConfig {\n    pub prompt: String,\n    pub seed: u64,\n}\n\n// --- The three state types. ---------------------------------------------------\n// These are the marker types that go into `Job<S>`. Each carries the data that\n// only that state owns. No state carries data it doesn't have.\n\n/// Draft state: a request configured but not yet sent. Owns only the config.\n#[derive(Clone, Debug, PartialEq, Eq)]\npub struct Draft {\n    config: JobConfig,\n}\n\n/// Running state: owns the spawned task handle (and keeps the config around for\n/// diagnostics / retry). The handle is stored directly \u00e2\u20ac\u201d not behind `Option`.\npub struct Running {\n    config: JobConfig,\n    handle: JoinHandle<OutputImage>,\n}\n\n/// Finished state: owns the produced image directly. No `Option`, no handle.\n#[derive(Clone, Debug, PartialEq, Eq)]\npub struct Finished {\n    output: OutputImage,\n}\n\n/// The job, parameterized by its state. One struct, three reachable shapes.\n///\n/// The state value is the single source of truth; there is no separate `status`\n/// enum to keep in sync, and no field that's only \"sometimes\" valid.\npub struct Job<S> {\n    state: S,\n}\n\n// --- Draft: the only state that can submit. -----------------------------------\n\nimpl Job<Draft> {\n    /// Start a new draft from a config. This is the only public constructor that\n    /// hands you a job you can edit and submit.\n    #[must_use]\n    pub fn new(config: JobConfig) -> Self {\n        Self {\n            state: Draft { config },\n        }\n    }\n\n    /// Read or tweak the config while still a draft.\n    #[must_use]\n    pub fn config(&self) -> &JobConfig {\n        &self.state.config\n    }\n\n    /// Submit the draft. Consumes the `Draft` job and returns a `Running` one.\n    ///\n    /// `submit` exists ONLY on `Job<Draft>`. You cannot call it on a\n    /// `Job<Running>` or a `Job<Finished>` \u00e2\u20ac\u201d those types have no such method, so\n    /// re-submitting an in-flight or completed job won't compile.\n    ///\n    /// `self` is taken by value, so the `Draft` is moved out of the caller's\n    /// hands: the old draft no longer exists to be submitted twice.\n    #[must_use]\n    pub fn submit(self, handle: JoinHandle<OutputImage>) -> Job<Running> {\n        Job {\n            state: Running {\n                config: self.state.config,\n                handle,\n            },\n        }\n    }\n}\n\n// --- Running: can be awaited, cannot be re-submitted, output not readable. -----\n\nimpl Job<Running> {\n    /// Config is still available for display while the job runs.\n    #[must_use]\n    pub fn config(&self) -> &JobConfig {\n        &self.state.config\n    }\n\n    /// Await the spawned task and transition to `Finished`.\n    ///\n    /// Consumes the `Running` job and the handle it owns. In the real crate this\n    /// is `async` and does `self.state.handle.await`; here the stub takes the\n    /// produced image to keep the file dependency-free.\n    ///\n    /// Note there is no `output()` here \u00e2\u20ac\u201d you can't read the image off a\n    /// `Running` job, because the field doesn't exist on `Running`.\n    #[must_use]\n    pub fn await_output(self, produced: OutputImage) -> Job<Finished> {\n        let output = self.state.handle.join_stub(produced);\n        Job {\n            state: Finished { output },\n        }\n    }\n}\n\n// --- Finished: the only state that exposes the output. -------------------------\n\nimpl Job<Finished> {\n    /// The output image. This accessor exists ONLY on `Job<Finished>`.\n    ///\n    /// There's nothing to unwrap and nothing to fail: a `Finished` job owns its\n    /// `OutputImage` by value. Reaching for the output on a `Draft` or `Running`\n    /// job is a compile error, because neither of those types has this method.\n    #[must_use]\n    pub fn output(&self) -> &OutputImage {\n        &self.state.output\n    }\n\n    /// Take the output by value, consuming the job.\n    #[must_use]\n    pub fn into_output(self) -> OutputImage {\n        self.state.output\n    }\n}\n\n// --- Compile-time proof of the invariants. ------------------------------------\n// These functions exist only to type-check. The commented-out lines are the\n// errors the compiler would raise; uncommenting any of them fails the build.\n\n/// Happy path: draft -> running -> finished, reading output only at the end.\nfn _lifecycle_typechecks(handle: JoinHandle<OutputImage>, produced: OutputImage) {\n    let draft = Job::<Draft>::new(JobConfig {\n        prompt: \"a small dragon\".to_owned(),\n        seed: 42,\n    });\n    let _ = draft.config();\n\n    let running = draft.submit(handle);\n    // draft.submit(handle);          // ERROR: `draft` was moved \u00e2\u20ac\u201d can't re-submit.\n    // let _ = draft.config();        // ERROR: use of moved value.\n    // let _ = running.output();      // ERROR: no method `output` on Job<Running>.\n    // running.submit(other_handle);  // ERROR: no method `submit` on Job<Running>.\n\n    let finished = running.await_output(produced);\n    // let _ = running.config();      // ERROR: `running` was moved.\n\n    let _img = finished.output(); // OK: output() only here.\n    let _ = finished.into_output();\n}\n\n#[cfg(test)]\nmod tests {\n    use super::*;\n\n    fn fake_handle() -> JoinHandle<OutputImage> {\n        JoinHandle {\n            _marker: core::marker::PhantomData,\n        }\n    }\n\n    fn fake_image() -> OutputImage {\n        OutputImage {\n            width: 2,\n            height: 1,\n            pixels: vec![255, 0, 0, 255, 0, 255, 0, 255],\n        }\n    }\n\n    #[test]\n    fn draft_carries_config() {\n        let job = Job::<Draft>::new(JobConfig {\n            prompt: \"p\".to_owned(),\n            seed: 7,\n        });\n        assert_eq!(job.config().seed, 7);\n    }\n\n    #[test]\n    fn full_lifecycle_yields_output() {\n        let job = Job::<Draft>::new(JobConfig {\n            prompt: \"p\".to_owned(),\n            seed: 7,\n        });\n        let running = job.submit(fake_handle());\n        assert_eq!(running.config().prompt, \"p\");\n        let finished = running.await_output(fake_image());\n        assert_eq!(finished.output().width, 2);\n        let owned = finished.into_output();\n        assert_eq!(owned.height, 1);\n    }\n}\n"}, {"name": "response.md", "type": "text", "content": "# Modeling the inference-job lifecycle with type-state\n\nUse the type-state pattern: make the lifecycle stage a type parameter on the\njob, not a `status` field on it. Then the set of methods you can call is decided\nby the compiler, and the invariants you asked for fall out for free:\n\n- `output()` exists only on `Job<Finished>`. There is no method to read the\n  image on a draft or a running job, so \"read the output before it's finished\"\n  is a compile error, not a runtime check.\n- `submit()` exists only on `Job<Draft>`, and it takes `self` by value. Once you\n  submit, the draft is moved and gone; the `Running` job has no `submit` method.\n  So \"re-submit a job that's already running\" is a compile error too.\n\n## Why type-state, and the rule it follows\n\nThe rule: when an object's legal operations change as it moves through stages,\nencode the stage in the type, not in a field you check at runtime. A `status:\nStage` enum forces every method to start with \"if we're not in the right stage,\nreturn an error\" \u00e2\u20ac\u201d and that error path is dead weight that can still be reached.\nType-state deletes the error path. The wrong call doesn't fail at runtime; it\ndoesn't exist.\n\nThis fits the repo conventions directly. The no-`unwrap`/no-`panic` rule exists\nbecause runtime \"this can't happen\" assertions are a smell. Type-state removes\nthe assertion entirely: there's no `Option<OutputImage>` to unwrap on a job\nthat hasn't finished, because the finished job owns an `OutputImage` by value and\nthe unfinished ones don't have the field at all.\n\n## The shape\n\n```rust\npub struct Job<S> { state: S }\n\npub struct Draft    { config: JobConfig }                              // can submit()\npub struct Running  { config: JobConfig, handle: JoinHandle<Image> }   // can await_output()\npub struct Finished { output: OutputImage }                            // can output()\n\nimpl Job<Draft>    { pub fn submit(self, h: JoinHandle<Image>) -> Job<Running> { \u00e2\u20ac\u00a6 } }\nimpl Job<Running>  { pub fn await_output(self, \u00e2\u20ac\u00a6) -> Job<Finished> { \u00e2\u20ac\u00a6 } }\nimpl Job<Finished> { pub fn output(&self) -> &OutputImage { \u00e2\u20ac\u00a6 } }\n```\n\nEach transition takes `self` by value and returns the next state, so the old\nstate is consumed \u00e2\u20ac\u201d you can't hold a `Draft` and a `Running` for the same job at\nonce, and you can't reuse the spawned handle after awaiting it.\n\n## Data lives inline, per state \u00e2\u20ac\u201d no `Option`, no `unreachable!()`\n\nEach state struct holds exactly what that stage owns:\n\n- `Draft` holds the `JobConfig`. No handle, no output.\n- `Running` holds the `JobConfig` and the `JoinHandle` directly. The handle is a\n  real field, not `Option<JoinHandle>`, because a running job always has one.\n- `Finished` holds the `OutputImage` by value. Not `Option<OutputImage>`,\n  because a finished job always has its output.\n\nThis is the payoff over a one-struct-with-`Option`-fields design. In that design\n`output: Option<OutputImage>` is `None` for most of the job's life, and every\nread is `self.output.as_ref().unwrap()` or a `match` with an `unreachable!()`\narm \u00e2\u20ac\u201d exactly the panic-bait the repo forbids. Here, the field is present\nprecisely when it's valid, so there's nothing to unwrap and no impossible arm to\nmark unreachable.\n\n## Notes for the real crate\n\n- Replace the stub `JoinHandle<T>` with `tokio::task::JoinHandle<RgbaImage>` and\n  `OutputImage` with `image::RgbaImage`.\n- `await_output` becomes `async fn` and does `self.state.handle.await`. Per the\n  repo's async rules the egui loop owns the document, so in practice you poll the\n  handle from the frame loop and swap `Job<Running>` for `Job<Finished>` when it\n  resolves, rather than blocking on `.await` inside the loop. The type-state\n  shape is the same either way \u00e2\u20ac\u201d the transition just happens when the channel /\n  handle yields.\n- The join can fail (task panicked or was cancelled). Model that with a fallible\n  transition returning `Result<Job<Finished>, JobError>` (a `thiserror` enum),\n  or add a `Failed` state. Either keeps the \"output only on success\" invariant.\n- If you store jobs in a single collection, the three `Job<S>` types are\n  distinct, so wrap them in an `enum JobSlot { Draft(Job<Draft>),\n  Running(Job<Running>), Finished(Job<Finished>) }` for storage. You still get\n  type-state safety inside each match arm; the enum is only the storage seam.\n\n## Compile status\n\nBuilt with `rustc --edition 2024` both as a `--crate-type lib` and as a test\nbinary: clean, no warnings. The two unit tests pass. The `_lifecycle_typechecks`\nfunction documents the rejected calls as comments (uncommenting any one fails the\nbuild), proving the negative cases.\n"}], "grading": {"expectations": [{"text": "Three distinct state types model draft, running, finished", "passed": true, "evidence": "Draft { config }, Running { config, handle }, Finished { output }."}, {"text": "output accessor exists only on the finished state", "passed": true, "evidence": "output()/into_output() in impl Job<Finished>."}, {"text": "submit() exists only on the draft state", "passed": true, "evidence": "submit() in impl Job<Draft>, takes self by value."}, {"text": "Transition methods take self by value", "passed": true, "evidence": "submit consumes the draft; commented negative cases show re-submit of moved draft is rejected."}, {"text": "State-specific data lives inside the state type, not Option+unreachable", "passed": true, "evidence": "handle and output are plain fields; 0 Option fields; explicitly avoids the Option+unreachable anti-pattern."}, {"text": "No unwrap/expect/unreachable/panic; fallible transitions return Result", "passed": true, "evidence": "No panic paths; compiles clean under edition 2024. (Result-on-join-failure less explicitly modeled than the with-skill run, but no panic present.)"}], "summary": {"pass_rate": 1.0, "passed": 6, "failed": 0, "total": 6}}}, {"id": "eval-runtime-tool-overkill-with_skill", "prompt": "I'm thinking about using the type-state pattern for our editor tools. We have Pencil, Eraser, and Bucket, and the user switches between them by clicking the toolbar. The idea is each tool type would only expose the operations valid for it. I was going to use unsafe to return the right tool type from the toolbar click handler. Does this make sense?", "eval_id": 2, "outputs": [{"name": "response.md", "type": "text", "content": "# Type-state for editor tools: don't, and drop the unsafe idea entirely\n\nShort answer: type-state is the wrong tool here, and the `unsafe` part is a\nred flag that's actually telling you so. Use a plain `enum` with a `match`.\nHere's the reasoning, because the \"why\" matters more than the verdict.\n\n## Why type-state doesn't fit tool selection\n\nType-state earns its verbosity only when **all** of these hold:\n\n- The states are known at compile time and form a small, fixed set.\n- Some operations are illegal in some states, and calling them in the wrong\n  state is a real bug with a costly failure mode.\n- The transitions are driven by **code you control**, not by runtime input\n  you can't predict.\n\nTool selection fails the one that matters most: **the transition is driven by\nruntime input.** The user clicks the toolbar. You don't know at compile time\nwhether the active tool is a Pencil, an Eraser, or a Bucket \u00e2\u20ac\u201d that's decided\nby a mouse event at runtime. Type-state can't represent \"a value whose type I\nwon't know until the user clicks,\" because a type has to be fixed when the\ncode compiles. That's the textbook runtime-state boundary, and it's exactly\nthe case where type-state stops being applicable.\n\nIt also fails the \"different operations per state\" test more than it looks\nlike it does. Pencil, Eraser, and Bucket aren't a lifecycle where you call\nmethods in a forbidden order. They're three peers that all answer the same\nquestion: \"the user dragged here \u00e2\u20ac\u201d paint.\" They share an interface\n(`on_press`, `on_drag`, `on_release`), they don't transition into one another,\nand there's no illegal call order to forbid. Type-state forbids method\n*sequencing*; you don't have a sequencing problem, you have a *dispatch*\nproblem.\n\nAnd the set churns. You'll add Line, Fill-Selection, Eyedropper, Move,\nRectangle-Select. Every new tool in a type-state design multiplies `impl`\nblocks and forces a new marker type. A `match` arm is cheap; a type parameter\nthat has to thread through your whole app state is not.\n\nSo this is the case the skill flags directly: \"Five states with mostly-shared\nmethods is a `match` wearing a costume.\" You have three-plus peers with a\nfully shared interface. That's an enum, full stop.\n\n## The `unsafe` idea: stop \u00e2\u20ac\u201d it's the signal, not the solution\n\nYou said you'd \"use unsafe to return the right tool type from the click\nhandler.\" That instinct \u00e2\u20ac\u201d wanting `unsafe` to return a different *type* from\neach branch of a runtime decision \u00e2\u20ac\u201d is the precise tell that you've hit a\nruntime-state boundary. A function has one return type. Branches that want to\nreturn `Tool<Pencil>` from one arm and `Tool<Eraser>` from another can't, and\nno `transmute` makes that sound: you'd be lying to the compiler about a type,\nand the first method call reads the wrong layout. It's undefined behavior, not\na clever workaround.\n\nIt's also flatly against repo rules \u00e2\u20ac\u201d `unsafe` is forbidden workspace-wide,\n`cargo deny` / clippy enforce it, and there is no exception worth requesting\nhere because the safe version is *less* code. When you want `unsafe` to return\ndifferent types from one branch, the answer is an enum (or `Box<dyn Trait>`),\nnever a transmute.\n\n## What to do instead\n\nTwo clean options. Pick by how the tools share code.\n\n### Option A \u00e2\u20ac\u201d enum + match (start here)\n\nBest when the tool is mostly data plus a `match` on behavior. It's the\nsimplest thing that's correct, it keeps every tool's state in one owned value\n(no `Arc<Mutex<>>`, no boxing), and adding a tool is one variant plus arms the\ncompiler forces you to fill in.\n\n```rust\npub enum Tool {\n    Pencil(Pencil),\n    Eraser(Eraser),\n    Bucket(Bucket),\n}\n\npub struct Pencil { pub size: u32, pub color: [u8; 4] }\npub struct Eraser { pub size: u32 }\npub struct Bucket { pub tolerance: u8 }\n\npub struct Stroke<'a> { /* dirty-region accumulator, canvas view, etc. */ _p: &'a () }\n\nimpl Tool {\n    // Toolbar click just reassigns the active tool. No unsafe, no type juggling.\n    pub fn select_pencil(&mut self) { *self = Tool::Pencil(Pencil { size: 1, color: [0, 0, 0, 255] }); }\n    pub fn select_eraser(&mut self) { *self = Tool::Eraser(Eraser { size: 1 }); }\n    pub fn select_bucket(&mut self) { *self = Tool::Bucket(Bucket { tolerance: 0 }); }\n\n    pub fn on_press(&mut self, stroke: &mut Stroke<'_>, x: i32, y: i32) {\n        match self {\n            Tool::Pencil(p) => { /* stamp p.color at (x, y) */ }\n            Tool::Eraser(e) => { /* clear a brush of e.size */ }\n            Tool::Bucket(b) => { /* flood fill within b.tolerance */ }\n        }\n    }\n}\n```\n\nThe toolbar handler becomes `self.tool.select_eraser()` \u00e2\u20ac\u201d one line, no `unsafe`,\nno return-type gymnastics. The operations valid for each tool live behind the\n`match`, and the compiler still makes you handle every variant, so adding\n`Tool::Line` won't silently skip a code path.\n\nIf you want each tool's logic in its own module rather than fattening one\n`match`, give each its own struct with inherent methods and have the `match`\narms delegate (`Tool::Pencil(p) => p.on_press(stroke, x, y)`). Same enum, tidier\nfiles.\n\n### Option B \u00e2\u20ac\u201d `Box<dyn ToolBehavior>` (if the tool set is open or plugin-fed)\n\nIf tools will eventually come from Lua/`extism` plugins, or the set is genuinely\nopen-ended, a trait object gives a uniform interface without a central enum you\nhave to edit for every tool:\n\n```rust\npub trait ToolBehavior {\n    fn on_press(&mut self, stroke: &mut Stroke<'_>, x: i32, y: i32);\n    fn on_drag(&mut self, stroke: &mut Stroke<'_>, x: i32, y: i32);\n    fn on_release(&mut self, stroke: &mut Stroke<'_>);\n}\n\n// App state holds the active tool uniformly:\nstruct Editor { tool: Box<dyn ToolBehavior> }\n\n// Toolbar click swaps the boxed tool. Still no unsafe.\nfn on_toolbar_click(editor: &mut Editor, picked: ToolKind) {\n    editor.tool = match picked {\n        ToolKind::Pencil => Box::new(Pencil { size: 1, color: [0, 0, 0, 255] }),\n        ToolKind::Eraser => Box::new(Eraser { size: 1 }),\n        ToolKind::Bucket => Box::new(Bucket { tolerance: 0 }),\n    };\n}\n```\n\nPer repo conventions, prefer the enum (Option A) until you actually have the\nopen-set / plugin requirement \u00e2\u20ac\u201d \"don't reach for `Box<dyn Trait>` when generics\nfit,\" and here even simpler, when an enum fits. The trait is the right call the\nday tools become plugin-supplied; not before.\n\n## Where type-state *would* pay off near this code\n\nSo you know the tool, not just dismiss it: type-state fits a single stroke's\nlifecycle if you ever need to forbid an illegal call order on it \u00e2\u20ac\u201d e.g. a\n`Stroke<Idle>` that only gains `.drag()` and `.commit()` after `.begin()`, so\n\"commit a stroke that never started\" can't compile. That's a real\ncode-driven sequence with a forbidden order. Tool *selection* isn't; tool\n*stroke lifecycle* might be. Reach for it there if the bug ever bites, not for\nthe toolbar.\n\n## Bottom line\n\n- Don't use type-state for tool switching \u00e2\u20ac\u201d the active tool is chosen at\n  runtime, the tools are peers sharing one interface, and the set will grow.\n  All three point away from type-state.\n- Drop the `unsafe` plan completely. Wanting `unsafe` to return different\n  types from a runtime branch is the symptom that you're at a runtime-state\n  boundary; the cure is an enum, and `unsafe` is forbidden here anyway.\n- Use `enum Tool { Pencil, Eraser, Bucket }` + `match`. Move to\n  `Box<dyn ToolBehavior>` only when tools become open-ended or plugin-supplied.\n"}], "grading": {"expectations": [{"text": "Recommends against type-state here", "passed": true, "evidence": "'type-state is the wrong tool here'; quotes 'a match wearing a costume'."}, {"text": "Identifies the runtime-chosen-state boundary", "passed": true, "evidence": "'the transition is driven by runtime input ... you don't know at compile time whether the active tool is a Pencil'."}, {"text": "Explicitly rejects unsafe/transmute", "passed": true, "evidence": "'Drop the unsafe plan completely'; explains transmute is UB and unsafe forbidden workspace-wide."}, {"text": "Suggests enum or trait object instead", "passed": true, "evidence": "Option A enum+match (preferred), Option B Box<dyn ToolBehavior>."}, {"text": "Does not output a type-state design relying on unsafe", "passed": true, "evidence": "No unsafe in any sketch; notes where type-state WOULD fit (stroke lifecycle)."}], "summary": {"pass_rate": 1.0, "passed": 5, "failed": 0, "total": 5}}}, {"id": "eval-runtime-tool-overkill-without_skill", "prompt": "I'm thinking about using the type-state pattern for our editor tools. We have Pencil, Eraser, and Bucket, and the user switches between them by clicking the toolbar. The idea is each tool type would only expose the operations valid for it. I was going to use unsafe to return the right tool type from the toolbar click handler. Does this make sense?", "eval_id": 2, "outputs": [{"name": "response.md", "type": "text", "content": "# Type-state for editor tools: skip it, and definitely skip the unsafe\n\nShort answer: type-state is the wrong tool here, and the `unsafe` plan can't\nwork \u00e2\u20ac\u201d not because the repo bans `unsafe` (it does), but because it wouldn't\ngive you what you want even if it were allowed.\n\n## Why type-state doesn't fit\n\nType-state encodes a state machine in the type system so the *compiler* rejects\ninvalid operations at compile time. It shines when the state transitions are\nknown at the point you write the code \u00e2\u20ac\u201d `Builder<NoUrl>` \u00e2\u2020\u2019 `Builder<HasUrl>`,\nor a `File<Open>` you can't `read()` until you've called `open()`. The win is\nthat calling a wrong-state method is a compile error.\n\nYour tool switch is the opposite situation. Which tool is active is decided at\n**runtime** by a user clicking the toolbar. The compiler has no idea at build\ntime whether the active tool is a `Pencil` or a `Bucket` \u00e2\u20ac\u201d that's data, not a\ntype. When the deciding value only exists at runtime, no amount of type-state\nmachinery can move the check to compile time. You'd just end up storing the\ntool in an enum or a trait object anyway, and writing a `match` (or dynamic\ndispatch) to recover the concrete type \u00e2\u20ac\u201d which is exactly the runtime dispatch\ntype-state was supposed to eliminate.\n\nSo the pattern buys you nothing for the thing you described. The \"each tool only\nexposes its valid operations\" goal is real and worth keeping \u00e2\u20ac\u201d but the active\ntool is a runtime choice, so the natural Rust expression of \"one of N tool\nkinds, each with its own behavior\" is an enum or a trait, not a type parameter.\n\n## Why the `unsafe` idea is a dead end\n\nThe plan \u00e2\u20ac\u201d \"use `unsafe` to return the right tool type from the click handler\" \u00e2\u20ac\u201d\nimplies a function whose return type depends on a runtime value. Rust functions\nhave one fixed return type. `unsafe` doesn't change that; it only unlocks a\nhandful of specific superpowers (deref raw pointers, call `unsafe` fns, etc.).\nNone of them let a function return `Pencil` on one branch and `Bucket` on\nanother. To do that you *still* need an enum or a `Box<dyn Tool>` \u00e2\u20ac\u201d and at that\npoint the `unsafe` is doing nothing except inviting UB if you ever transmute to\n\"reinterpret\" one tool as another.\n\nAnd in this repo it's a non-starter regardless: `unsafe` is forbidden\nworkspace-wide (clippy-enforced). There's no version of this design that needs\nit.\n\n## What to do instead\n\nTwo clean options. Pick by how the tools differ.\n\n### Option A \u00e2\u20ac\u201d enum + match (start here)\n\nIf tools share a small, fixed set of operations (begin a stroke, continue,\ncommit) and differ only in *how* they fill pixels, an enum is the simplest thing\nthat works and keeps all tools in one place:\n\n```rust\npub enum Tool {\n    Pencil(Pencil),\n    Eraser(Eraser),\n    Bucket(Bucket),\n}\n\nimpl Tool {\n    /// Called on pointer-down at a pixel. Each variant does its own thing.\n    pub fn on_press(&mut self, ctx: &mut ToolCtx, at: PixelPos) {\n        match self {\n            Tool::Pencil(p) => p.stamp(ctx, at),\n            Tool::Eraser(e) => e.stamp(ctx, at),\n            Tool::Bucket(b) => b.flood(ctx, at),\n        }\n    }\n}\n```\n\nThe toolbar handler just assigns: `self.active = Tool::Bucket(Bucket::new());`.\nNo unsafe, no generics, exhaustive `match` so adding a fourth tool is a compile\nerror until you handle it everywhere. This is the right default for three tools.\n\n### Option B \u00e2\u20ac\u201d `trait Tool` + `Box<dyn Tool>` (if behaviors diverge a lot)\n\nIf tools grow their own config UI, cursors, option panels, and you want them\npluggable without touching a central enum, a trait is cleaner:\n\n```rust\npub trait Tool {\n    fn on_press(&mut self, ctx: &mut ToolCtx, at: PixelPos);\n    fn on_drag(&mut self, ctx: &mut ToolCtx, at: PixelPos);\n    fn name(&self) -> &'static str;\n}\n\nstruct Pencil { /* ... */ }\nstruct Bucket { /* ... */ }\n// impl Tool for each\n\n// App state holds the active tool behind a trait object:\nactive: Box<dyn Tool>,\n\n// Toolbar click swaps it:\nself.active = Box::new(Bucket::new());\n```\n\nPer the repo's dispatch guidance, don't reach for `Box<dyn Trait>` prematurely \u00e2\u20ac\u201d\nwith only three known tools, Option A is leaner and gives exhaustiveness\nchecking. Move to Option B when the per-tool behavior and state genuinely\ndiverge enough that the enum's `match` arms become unwieldy.\n\n## On \"only expose valid operations\"\n\nThat instinct is good, just aim it at the right level. The way you guarantee\na `Bucket` can't be asked to do a pencil-only thing is: each tool is its own\nstruct with only its own methods, and the active-tool layer talks to them\nthrough the *shared* `Tool` interface (the enum's methods or the trait). A\n`Pencil` simply has no `flood_fill` method to call. You get the \"invalid\noperations don't exist\" property from ordinary structs and a narrow shared\ninterface \u00e2\u20ac\u201d no phantom type parameters required.\n\n## Bottom line\n\n- Don't use type-state \u00e2\u20ac\u201d the active tool is a runtime decision, so it can't\n  buy compile-time safety here.\n- Drop the `unsafe` entirely \u00e2\u20ac\u201d it can't return a runtime-chosen type, and it's\n  banned in this workspace anyway.\n- Use an enum + `match` now (Option A). Promote to a `Tool` trait +\n  `Box<dyn Tool>` only if/when per-tool behavior diverges enough to justify it.\n"}], "grading": {"expectations": [{"text": "Recommends against type-state here", "passed": true, "evidence": "'type-state is the wrong tool here'; pattern buys nothing."}, {"text": "Identifies the runtime-chosen-state boundary", "passed": true, "evidence": "'Which tool is active is decided at runtime by a user clicking the toolbar ... that's data, not a type'."}, {"text": "Explicitly rejects unsafe/transmute", "passed": true, "evidence": "'the unsafe plan can't work' + 'banned in this workspace anyway'; explains one fixed return type."}, {"text": "Suggests enum or trait object instead", "passed": true, "evidence": "Option A enum+match, Option B trait + Box<dyn Tool>."}, {"text": "Does not output a type-state design relying on unsafe", "passed": true, "evidence": "No unsafe; structs behind a narrow shared interface."}], "summary": {"pass_rate": 1.0, "passed": 5, "failed": 0, "total": 5}}}], "previous_feedback": {}, "previous_outputs": {}, "benchmark": {"metadata": {"skill_name": "pixhaus-type-state", "skill_path": "C:/Users/luism/Documents/GitHub/pixhaus-worktrees/v2/.claude/skills/pixhaus-type-state", "executor_model": "<model-name>", "analyzer_model": "<model-name>", "timestamp": "2026-05-25T22:23:59Z", "evals_run": [0, 1, 2], "runs_per_configuration": 3}, "runs": [{"eval_id": 0, "configuration": "with_skill", "run_number": 1, "result": {"pass_rate": 1.0, "passed": 7, "failed": 0, "total": 7, "time_seconds": 77.6, "tokens": 45723, "tool_calls": 0, "errors": 0}, "expectations": [{"text": "Builder is generic over per-required-field marker types (type-state)", "passed": true, "evidence": "ExportConfigBuilder<Set/Unset, Set/Unset>; setters generic over the other param so they compose in any order."}, {"text": "build() is implemented only for the state where both format and output_path are set", "passed": true, "evidence": "impl ExportConfigBuilder<Set, Set> { fn build }. Negative compile confirms E0599 on the three incomplete states."}, {"text": "No unwrap/expect/unreachable/panic anywhere", "passed": true, "evidence": "grep found none; clippy-clean."}, {"text": "Required fields NOT stored as Option then unwrapped/unreachable'd", "passed": true, "evidence": "0 Option fields; required fields hold harmless placeholders in new() overwritten by typed setters, so build() reads plain values."}, {"text": "columns is an optional setter available in any state, defaults to 1", "passed": true, "evidence": "columns() on the fully-generic impl; new() sets 1."}, {"text": "Produced Rust compiles on edition 2024", "passed": true, "evidence": "rustc --edition 2024 --crate-type lib exit 0, no warnings; 4 tests pass."}, {"text": "Calling build() with a required field unset is a compile error", "passed": true, "evidence": "Verified: E0599 no method build for <Set,Unset>, <Unset,Set>, <Unset,Unset>."}], "notes": []}, {"eval_id": 2, "configuration": "with_skill", "run_number": 1, "result": {"pass_rate": 1.0, "passed": 5, "failed": 0, "total": 5, "time_seconds": 50.8, "tokens": 41779, "tool_calls": 0, "errors": 0}, "expectations": [{"text": "Recommends against type-state here", "passed": true, "evidence": "'type-state is the wrong tool here'; quotes 'a match wearing a costume'."}, {"text": "Identifies the runtime-chosen-state boundary", "passed": true, "evidence": "'the transition is driven by runtime input ... you don't know at compile time whether the active tool is a Pencil'."}, {"text": "Explicitly rejects unsafe/transmute", "passed": true, "evidence": "'Drop the unsafe plan completely'; explains transmute is UB and unsafe forbidden workspace-wide."}, {"text": "Suggests enum or trait object instead", "passed": true, "evidence": "Option A enum+match (preferred), Option B Box<dyn ToolBehavior>."}, {"text": "Does not output a type-state design relying on unsafe", "passed": true, "evidence": "No unsafe in any sketch; notes where type-state WOULD fit (stroke lifecycle)."}], "notes": []}, {"eval_id": 1, "configuration": "with_skill", "run_number": 1, "result": {"pass_rate": 1.0, "passed": 6, "failed": 0, "total": 6, "time_seconds": 139.7, "tokens": 51604, "tool_calls": 0, "errors": 0}, "expectations": [{"text": "Three distinct state types model draft, running, finished", "passed": true, "evidence": "Draft (marker), Running { handle }, Done { output }."}, {"text": "output accessor exists only on the finished state", "passed": true, "evidence": "output()/into_output() in impl Job<Done>; negative compile E0599 on Job<Running>."}, {"text": "submit() exists only on the draft state", "passed": true, "evidence": "submit() in impl Job<Draft>, takes self; E0599 on Job<Running>."}, {"text": "Transition methods take self by value", "passed": true, "evidence": "submit(self), await/into_output consume self."}, {"text": "State-specific data lives inside the state type, not Option+unreachable", "passed": true, "evidence": "handle and output are plain fields on Running/Done; no Option, no unwrap/unreachable."}, {"text": "No unwrap/expect/unreachable/panic; fallible transitions return Result", "passed": true, "evidence": "clippy deny set passes; real await_output documented as async returning Result<Job<Done>, JobError>."}], "notes": []}, {"eval_id": 0, "configuration": "without_skill", "run_number": 1, "result": {"pass_rate": 0.8571, "passed": 6, "failed": 1, "total": 7, "time_seconds": 75.1, "tokens": 38935, "tool_calls": 0, "errors": 0}, "expectations": [{"text": "Builder is generic over per-required-field marker types (type-state)", "passed": true, "evidence": "ExportConfigBuilder<Missing/Set, Missing/Set> markers."}, {"text": "build() is implemented only for the state where both format and output_path are set", "passed": true, "evidence": "impl on <Set, Set>; negative compile shows E0599 for <Missing, Set>."}, {"text": "No unwrap/expect/unreachable/panic anywhere", "passed": true, "evidence": "None present; build() uses match with default arms instead of unwrap."}, {"text": "Required fields NOT stored as Option then unwrapped/unreachable'd", "passed": false, "evidence": "Stored required fields as Option<_> (2 Option fields) and recovered them in build() via a match that maps the by-construction-impossible None arms to defaults. No panic, but this is exactly the Option-you-re-check shape the skill steers away from; the skill's idiom stores the data plainly so there is no Option at all."}, {"text": "columns is an optional setter available in any state, defaults to 1", "passed": true, "evidence": "columns off the type-state, defaults to 1."}, {"text": "Produced Rust compiles on edition 2024", "passed": true, "evidence": "rustc exit 0, tests pass."}, {"text": "Calling build() with a required field unset is a compile error", "passed": true, "evidence": "Verified E0599 for <Missing, Set>."}], "notes": []}, {"eval_id": 2, "configuration": "without_skill", "run_number": 1, "result": {"pass_rate": 1.0, "passed": 5, "failed": 0, "total": 5, "time_seconds": 39.6, "tokens": 34716, "tool_calls": 0, "errors": 0}, "expectations": [{"text": "Recommends against type-state here", "passed": true, "evidence": "'type-state is the wrong tool here'; pattern buys nothing."}, {"text": "Identifies the runtime-chosen-state boundary", "passed": true, "evidence": "'Which tool is active is decided at runtime by a user clicking the toolbar ... that's data, not a type'."}, {"text": "Explicitly rejects unsafe/transmute", "passed": true, "evidence": "'the unsafe plan can't work' + 'banned in this workspace anyway'; explains one fixed return type."}, {"text": "Suggests enum or trait object instead", "passed": true, "evidence": "Option A enum+match, Option B trait + Box<dyn Tool>."}, {"text": "Does not output a type-state design relying on unsafe", "passed": true, "evidence": "No unsafe; structs behind a narrow shared interface."}], "notes": []}, {"eval_id": 1, "configuration": "without_skill", "run_number": 1, "result": {"pass_rate": 1.0, "passed": 6, "failed": 0, "total": 6, "time_seconds": 83.5, "tokens": 39454, "tool_calls": 0, "errors": 0}, "expectations": [{"text": "Three distinct state types model draft, running, finished", "passed": true, "evidence": "Draft { config }, Running { config, handle }, Finished { output }."}, {"text": "output accessor exists only on the finished state", "passed": true, "evidence": "output()/into_output() in impl Job<Finished>."}, {"text": "submit() exists only on the draft state", "passed": true, "evidence": "submit() in impl Job<Draft>, takes self by value."}, {"text": "Transition methods take self by value", "passed": true, "evidence": "submit consumes the draft; commented negative cases show re-submit of moved draft is rejected."}, {"text": "State-specific data lives inside the state type, not Option+unreachable", "passed": true, "evidence": "handle and output are plain fields; 0 Option fields; explicitly avoids the Option+unreachable anti-pattern."}, {"text": "No unwrap/expect/unreachable/panic; fallible transitions return Result", "passed": true, "evidence": "No panic paths; compiles clean under edition 2024. (Result-on-join-failure less explicitly modeled than the with-skill run, but no panic present.)"}], "notes": []}], "run_summary": {"with_skill": {"pass_rate": {"mean": 1.0, "stddev": 0.0, "min": 1.0, "max": 1.0}, "time_seconds": {"mean": 89.3667, "stddev": 45.6031, "min": 50.8, "max": 139.7}, "tokens": {"mean": 46368.6667, "stddev": 4944.2209, "min": 41779, "max": 51604}}, "without_skill": {"pass_rate": {"mean": 0.9524, "stddev": 0.0825, "min": 0.8571, "max": 1.0}, "time_seconds": {"mean": 66.0667, "stddev": 23.3024, "min": 39.6, "max": 83.5}, "tokens": {"mean": 37701.6667, "stddev": 2598.6524, "min": 34716, "max": 39454}}, "delta": {"pass_rate": "+0.05", "time_seconds": "+23.3", "tokens": "+8667"}}, "notes": ["Baseline is strong: type-state is a well-known pattern, so no-skill Claude already scores 95.2%. The skill's measurable lift is concentrated, not broad.", "Single discriminating assertion = eval-0 A4 (builder required fields). Without the skill, Claude stored required fields as Option<_> and recovered them via a match on the by-construction-impossible None arm \u2014 avoids the panic but keeps the very 'Option you re-check' shape the skill argues against. With the skill, fields are plain placeholder values, so build() reads them directly. This is exactly the skill's central Pixhaus-specific teaching.", "eval-2 (runtime tool selection, judgment) is non-discriminating: both configs correctly steered away from type-state and rejected the unsafe idea. Keep it as a regression guardrail, or swap for a harder judgment case next iteration.", "eval-1 (job lifecycle) non-discriminating at the assertion level \u2014 both stored state data inline with no Option+unreachable. The with-skill run verified more negative-compile cases (higher tokens/time).", "Cost: with-skill runs spent more tokens and time (read the skill, ran rustc to verify, checked negative cases). Acceptable for a correctness-focused skill; the verification rigor is a feature, not waste."]}};
+
+    // ---- State ----
+    let feedbackMap = {};  // run_id -> feedback text
+    let currentIndex = 0;
+    let visitedRuns = new Set();
+
+    // ---- Init ----
+    async function init() {
+      // Load saved feedback from server — but only if this isn't a fresh
+      // iteration (indicated by previous_feedback being present). When
+      // previous feedback exists, the feedback.json on disk is stale from
+      // the prior iteration and should not pre-fill the textareas.
+      const hasPrevious = Object.keys(EMBEDDED_DATA.previous_feedback || {}).length > 0
+        || Object.keys(EMBEDDED_DATA.previous_outputs || {}).length > 0;
+      if (!hasPrevious) {
+        try {
+          const resp = await fetch("/api/feedback");
+          const data = await resp.json();
+          if (data.reviews) {
+            for (const r of data.reviews) feedbackMap[r.run_id] = r.feedback;
+          }
+        } catch { /* first run, no feedback yet */ }
+      }
+
+      document.getElementById("skill-name").textContent = EMBEDDED_DATA.skill_name;
+      showRun(0);
+
+      // Wire up feedback auto-save
+      const textarea = document.getElementById("feedback");
+      let saveTimeout = null;
+      textarea.addEventListener("input", () => {
+        clearTimeout(saveTimeout);
+        document.getElementById("feedback-status").textContent = "";
+        saveTimeout = setTimeout(() => saveCurrentFeedback(), 800);
+      });
+    }
+
+    // ---- Navigation ----
+    function navigate(delta) {
+      const newIndex = currentIndex + delta;
+      if (newIndex >= 0 && newIndex < EMBEDDED_DATA.runs.length) {
+        saveCurrentFeedback();
+        showRun(newIndex);
+      }
+    }
+
+    function updateNavButtons() {
+      document.getElementById("prev-btn").disabled = currentIndex === 0;
+      document.getElementById("next-btn").disabled =
+        currentIndex === EMBEDDED_DATA.runs.length - 1;
+    }
+
+    // ---- Show a run ----
+    function showRun(index) {
+      currentIndex = index;
+      const run = EMBEDDED_DATA.runs[index];
+
+      // Progress
+      document.getElementById("progress").textContent =
+        `${index + 1} of ${EMBEDDED_DATA.runs.length}`;
+
+      // Prompt
+      document.getElementById("prompt-text").textContent = run.prompt;
+
+      // Config badge
+      const badge = document.getElementById("config-badge");
+      const configMatch = run.id.match(/(with_skill|without_skill|new_skill|old_skill)/);
+      if (configMatch) {
+        const config = configMatch[1];
+        const isBaseline = config === "without_skill" || config === "old_skill";
+        badge.textContent = config.replace(/_/g, " ");
+        badge.className = "config-badge " + (isBaseline ? "config-baseline" : "config-primary");
+        badge.style.display = "inline-block";
+      } else {
+        badge.style.display = "none";
+      }
+
+      // Outputs
+      renderOutputs(run);
+
+      // Previous outputs
+      renderPrevOutputs(run);
+
+      // Grades
+      renderGrades(run);
+
+      // Previous feedback
+      const prevFb = (EMBEDDED_DATA.previous_feedback || {})[run.id];
+      const prevEl = document.getElementById("prev-feedback");
+      if (prevFb) {
+        document.getElementById("prev-feedback-text").textContent = prevFb;
+        prevEl.style.display = "block";
+      } else {
+        prevEl.style.display = "none";
+      }
+
+      // Feedback
+      document.getElementById("feedback").value = feedbackMap[run.id] || "";
+      document.getElementById("feedback-status").textContent = "";
+
+      updateNavButtons();
+
+      // Track visited runs and promote done button when all visited
+      visitedRuns.add(index);
+      const doneBtn = document.getElementById("done-btn");
+      if (visitedRuns.size >= EMBEDDED_DATA.runs.length) {
+        doneBtn.classList.add("ready");
+      }
+
+      // Scroll main content to top
+      document.querySelector(".main").scrollTop = 0;
+    }
+
+    // ---- Render outputs ----
+    function renderOutputs(run) {
+      const container = document.getElementById("outputs-body");
+      container.innerHTML = "";
+
+      const outputs = run.outputs || [];
+      if (outputs.length === 0) {
+        container.innerHTML = '<div class="empty-state">No output files</div>';
+        return;
+      }
+
+      for (const file of outputs) {
+        const fileDiv = document.createElement("div");
+        fileDiv.className = "output-file";
+
+        // Always show file header with download link
+        const header = document.createElement("div");
+        header.className = "output-file-header";
+        const nameSpan = document.createElement("span");
+        nameSpan.textContent = file.name;
+        header.appendChild(nameSpan);
+        const dlBtn = document.createElement("a");
+        dlBtn.className = "dl-btn";
+        dlBtn.textContent = "Download";
+        dlBtn.download = file.name;
+        dlBtn.href = getDownloadUri(file);
+        header.appendChild(dlBtn);
+        fileDiv.appendChild(header);
+
+        const content = document.createElement("div");
+        content.className = "output-file-content";
+
+        if (file.type === "text") {
+          const pre = document.createElement("pre");
+          pre.textContent = file.content;
+          content.appendChild(pre);
+        } else if (file.type === "image") {
+          const img = document.createElement("img");
+          img.src = file.data_uri;
+          img.alt = file.name;
+          content.appendChild(img);
+        } else if (file.type === "pdf") {
+          const iframe = document.createElement("iframe");
+          iframe.src = file.data_uri;
+          content.appendChild(iframe);
+        } else if (file.type === "xlsx") {
+          renderXlsx(content, file.data_b64);
+        } else if (file.type === "binary") {
+          const a = document.createElement("a");
+          a.className = "download-link";
+          a.href = file.data_uri;
+          a.download = file.name;
+          a.textContent = "Download " + file.name;
+          content.appendChild(a);
+        } else if (file.type === "error") {
+          const pre = document.createElement("pre");
+          pre.textContent = file.content;
+          pre.style.color = "var(--red)";
+          content.appendChild(pre);
+        }
+
+        fileDiv.appendChild(content);
+        container.appendChild(fileDiv);
+      }
+    }
+
+    // ---- XLSX rendering via SheetJS ----
+    function renderXlsx(container, b64Data) {
+      try {
+        const raw = Uint8Array.from(atob(b64Data), c => c.charCodeAt(0));
+        const wb = XLSX.read(raw, { type: "array" });
+
+        for (let i = 0; i < wb.SheetNames.length; i++) {
+          const sheetName = wb.SheetNames[i];
+          const ws = wb.Sheets[sheetName];
+
+          if (wb.SheetNames.length > 1) {
+            const sheetLabel = document.createElement("div");
+            sheetLabel.style.cssText =
+              "font-weight:600; font-size:0.8rem; color:#b0aea5; margin-top:0.5rem; margin-bottom:0.25rem;";
+            sheetLabel.textContent = "Sheet: " + sheetName;
+            container.appendChild(sheetLabel);
+          }
+
+          const htmlStr = XLSX.utils.sheet_to_html(ws, { editable: false });
+          const wrapper = document.createElement("div");
+          wrapper.innerHTML = htmlStr;
+          container.appendChild(wrapper);
+        }
+      } catch (err) {
+        container.textContent = "Error rendering spreadsheet: " + err.message;
+      }
+    }
+
+    // ---- Grades ----
+    function renderGrades(run) {
+      const section = document.getElementById("grades-section");
+      const content = document.getElementById("grades-content");
+
+      if (!run.grading) {
+        section.style.display = "none";
+        return;
+      }
+
+      const grading = run.grading;
+      section.style.display = "block";
+      // Reset to collapsed
+      content.classList.remove("open");
+      document.getElementById("grades-arrow").classList.remove("open");
+
+      const summary = grading.summary || {};
+      const expectations = grading.expectations || [];
+
+      let html = '<div style="padding: 1rem;">';
+
+      // Summary line
+      const passRate = summary.pass_rate != null
+        ? Math.round(summary.pass_rate * 100) + "%"
+        : "?";
+      const badgeClass = summary.pass_rate >= 0.8 ? "grade-pass" : summary.pass_rate >= 0.5 ? "" : "grade-fail";
+      html += '<div class="grades-summary">';
+      html += '<span class="grade-badge ' + badgeClass + '">' + passRate + '</span>';
+      html += '<span>' + (summary.passed || 0) + ' passed, ' + (summary.failed || 0) + ' failed of ' + (summary.total || 0) + '</span>';
+      html += '</div>';
+
+      // Assertions list
+      html += '<ul class="assertion-list">';
+      for (const exp of expectations) {
+        const statusClass = exp.passed ? "pass" : "fail";
+        const statusIcon = exp.passed ? "\u2713" : "\u2717";
+        html += '<li class="assertion-item">';
+        html += '<span class="assertion-status ' + statusClass + '">' + statusIcon + '</span>';
+        html += '<span>' + escapeHtml(exp.text) + '</span>';
+        if (exp.evidence) {
+          html += '<div class="assertion-evidence">' + escapeHtml(exp.evidence) + '</div>';
+        }
+        html += '</li>';
+      }
+      html += '</ul>';
+
+      html += '</div>';
+      content.innerHTML = html;
+    }
+
+    function toggleGrades() {
+      const content = document.getElementById("grades-content");
+      const arrow = document.getElementById("grades-arrow");
+      content.classList.toggle("open");
+      arrow.classList.toggle("open");
+    }
+
+    // ---- Previous outputs (collapsible) ----
+    function renderPrevOutputs(run) {
+      const section = document.getElementById("prev-outputs-section");
+      const content = document.getElementById("prev-outputs-content");
+      const prevOutputs = (EMBEDDED_DATA.previous_outputs || {})[run.id];
+
+      if (!prevOutputs || prevOutputs.length === 0) {
+        section.style.display = "none";
+        return;
+      }
+
+      section.style.display = "block";
+      // Reset to collapsed
+      content.classList.remove("open");
+      document.getElementById("prev-outputs-arrow").classList.remove("open");
+
+      // Render the files into the content area
+      content.innerHTML = "";
+      const wrapper = document.createElement("div");
+      wrapper.style.padding = "1rem";
+
+      for (const file of prevOutputs) {
+        const fileDiv = document.createElement("div");
+        fileDiv.className = "output-file";
+
+        const header = document.createElement("div");
+        header.className = "output-file-header";
+        const nameSpan = document.createElement("span");
+        nameSpan.textContent = file.name;
+        header.appendChild(nameSpan);
+        const dlBtn = document.createElement("a");
+        dlBtn.className = "dl-btn";
+        dlBtn.textContent = "Download";
+        dlBtn.download = file.name;
+        dlBtn.href = getDownloadUri(file);
+        header.appendChild(dlBtn);
+        fileDiv.appendChild(header);
+
+        const fc = document.createElement("div");
+        fc.className = "output-file-content";
+
+        if (file.type === "text") {
+          const pre = document.createElement("pre");
+          pre.textContent = file.content;
+          fc.appendChild(pre);
+        } else if (file.type === "image") {
+          const img = document.createElement("img");
+          img.src = file.data_uri;
+          img.alt = file.name;
+          fc.appendChild(img);
+        } else if (file.type === "pdf") {
+          const iframe = document.createElement("iframe");
+          iframe.src = file.data_uri;
+          fc.appendChild(iframe);
+        } else if (file.type === "xlsx") {
+          renderXlsx(fc, file.data_b64);
+        } else if (file.type === "binary") {
+          const a = document.createElement("a");
+          a.className = "download-link";
+          a.href = file.data_uri;
+          a.download = file.name;
+          a.textContent = "Download " + file.name;
+          fc.appendChild(a);
+        }
+
+        fileDiv.appendChild(fc);
+        wrapper.appendChild(fileDiv);
+      }
+
+      content.appendChild(wrapper);
+    }
+
+    function togglePrevOutputs() {
+      const content = document.getElementById("prev-outputs-content");
+      const arrow = document.getElementById("prev-outputs-arrow");
+      content.classList.toggle("open");
+      arrow.classList.toggle("open");
+    }
+
+    // ---- Feedback (saved to server -> feedback.json) ----
+    function saveCurrentFeedback() {
+      const run = EMBEDDED_DATA.runs[currentIndex];
+      const text = document.getElementById("feedback").value;
+
+      if (text.trim() === "") {
+        delete feedbackMap[run.id];
+      } else {
+        feedbackMap[run.id] = text;
+      }
+
+      // Build reviews array from map
+      const reviews = [];
+      for (const [run_id, feedback] of Object.entries(feedbackMap)) {
+        if (feedback.trim()) {
+          reviews.push({ run_id, feedback, timestamp: new Date().toISOString() });
+        }
+      }
+
+      fetch("/api/feedback", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ reviews, status: "in_progress" }),
+      }).then(() => {
+        document.getElementById("feedback-status").textContent = "Saved";
+      }).catch(() => {
+        // Static mode or server unavailable — no-op on auto-save,
+        // feedback will be downloaded on final submit
+        document.getElementById("feedback-status").textContent = "Will download on submit";
+      });
+    }
+
+    // ---- Done ----
+    function showDoneDialog() {
+      // Save current textarea to feedbackMap (but don't POST yet)
+      const run = EMBEDDED_DATA.runs[currentIndex];
+      const text = document.getElementById("feedback").value;
+      if (text.trim() === "") {
+        delete feedbackMap[run.id];
+      } else {
+        feedbackMap[run.id] = text;
+      }
+
+      // POST once with status: complete — include ALL runs so the model
+      // can distinguish "no feedback" (looks good) from "not reviewed"
+      const reviews = [];
+      const ts = new Date().toISOString();
+      for (const r of EMBEDDED_DATA.runs) {
+        reviews.push({ run_id: r.id, feedback: feedbackMap[r.id] || "", timestamp: ts });
+      }
+      const payload = JSON.stringify({ reviews, status: "complete" }, null, 2);
+      fetch("/api/feedback", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: payload,
+      }).then(() => {
+        document.getElementById("done-overlay").classList.add("visible");
+      }).catch(() => {
+        // Server not available (static mode) — download as file
+        const blob = new Blob([payload], { type: "application/json" });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement("a");
+        a.href = url;
+        a.download = "feedback.json";
+        a.click();
+        URL.revokeObjectURL(url);
+        document.getElementById("done-overlay").classList.add("visible");
+      });
+    }
+
+    function closeDoneDialog() {
+      // Reset status back to in_progress
+      saveCurrentFeedback();
+      document.getElementById("done-overlay").classList.remove("visible");
+    }
+
+    // ---- Toast ----
+    function showToast(message) {
+      const toast = document.getElementById("toast");
+      toast.textContent = message;
+      toast.classList.add("visible");
+      setTimeout(() => toast.classList.remove("visible"), 2000);
+    }
+
+    // ---- Keyboard nav ----
+    document.addEventListener("keydown", (e) => {
+      // Don't capture when typing in textarea
+      if (e.target.tagName === "TEXTAREA") return;
+
+      if (e.key === "ArrowLeft" || e.key === "ArrowUp") {
+        e.preventDefault();
+        navigate(-1);
+      } else if (e.key === "ArrowRight" || e.key === "ArrowDown") {
+        e.preventDefault();
+        navigate(1);
+      }
+    });
+
+    // ---- Util ----
+    function getDownloadUri(file) {
+      if (file.data_uri) return file.data_uri;
+      if (file.data_b64) return "data:application/octet-stream;base64," + file.data_b64;
+      if (file.type === "text") return "data:text/plain;charset=utf-8," + encodeURIComponent(file.content);
+      return "#";
+    }
+
+    function escapeHtml(text) {
+      const div = document.createElement("div");
+      div.textContent = text;
+      return div.innerHTML;
+    }
+
+    // ---- View switching ----
+    function switchView(view) {
+      document.querySelectorAll(".view-tab").forEach(t => t.classList.remove("active"));
+      document.querySelectorAll(".view-panel").forEach(p => p.classList.remove("active"));
+      document.querySelector(`[onclick="switchView('${view}')"]`).classList.add("active");
+      document.getElementById("panel-" + view).classList.add("active");
+    }
+
+    // ---- Benchmark rendering ----
+    function renderBenchmark() {
+      const data = EMBEDDED_DATA.benchmark;
+      if (!data) return;
+
+      // Show the tabs
+      document.getElementById("view-tabs").style.display = "flex";
+
+      const container = document.getElementById("benchmark-content");
+      const summary = data.run_summary || {};
+      const metadata = data.metadata || {};
+      const notes = data.notes || [];
+
+      let html = "";
+
+      // Header
+      html += "<h2 style='font-family: Poppins, sans-serif; margin-bottom: 0.5rem;'>Benchmark Results</h2>";
+      html += "<p style='color: var(--text-muted); font-size: 0.875rem; margin-bottom: 1.25rem;'>";
+      if (metadata.skill_name) html += "<strong>" + escapeHtml(metadata.skill_name) + "</strong> &mdash; ";
+      if (metadata.timestamp) html += metadata.timestamp + " &mdash; ";
+      if (metadata.evals_run) html += "Evals: " + metadata.evals_run.join(", ") + " &mdash; ";
+      html += (metadata.runs_per_configuration || "?") + " runs per configuration";
+      html += "</p>";
+
+      // Summary table
+      html += '<table class="benchmark-table">';
+
+      function fmtStat(stat, pct) {
+        if (!stat) return "—";
+        const suffix = pct ? "%" : "";
+        const m = pct ? (stat.mean * 100).toFixed(0) : stat.mean.toFixed(1);
+        const s = pct ? (stat.stddev * 100).toFixed(0) : stat.stddev.toFixed(1);
+        return m + suffix + " ± " + s + suffix;
+      }
+
+      function deltaClass(val) {
+        if (!val) return "";
+        const n = parseFloat(val);
+        if (n > 0) return "benchmark-delta-positive";
+        if (n < 0) return "benchmark-delta-negative";
+        return "";
+      }
+
+      // Discover config names dynamically (everything except "delta")
+      const configs = Object.keys(summary).filter(k => k !== "delta");
+      const configA = configs[0] || "config_a";
+      const configB = configs[1] || "config_b";
+      const labelA = configA.replace(/_/g, " ").replace(/\b\w/g, c => c.toUpperCase());
+      const labelB = configB.replace(/_/g, " ").replace(/\b\w/g, c => c.toUpperCase());
+      const a = summary[configA] || {};
+      const b = summary[configB] || {};
+      const delta = summary.delta || {};
+
+      html += "<thead><tr><th>Metric</th><th>" + escapeHtml(labelA) + "</th><th>" + escapeHtml(labelB) + "</th><th>Delta</th></tr></thead>";
+      html += "<tbody>";
+
+      html += "<tr><td><strong>Pass Rate</strong></td>";
+      html += "<td>" + fmtStat(a.pass_rate, true) + "</td>";
+      html += "<td>" + fmtStat(b.pass_rate, true) + "</td>";
+      html += '<td class="' + deltaClass(delta.pass_rate) + '">' + (delta.pass_rate || "—") + "</td></tr>";
+
+      // Time (only show row if data exists)
+      if (a.time_seconds || b.time_seconds) {
+        html += "<tr><td><strong>Time (s)</strong></td>";
+        html += "<td>" + fmtStat(a.time_seconds, false) + "</td>";
+        html += "<td>" + fmtStat(b.time_seconds, false) + "</td>";
+        html += '<td class="' + deltaClass(delta.time_seconds) + '">' + (delta.time_seconds ? delta.time_seconds + "s" : "—") + "</td></tr>";
+      }
+
+      // Tokens (only show row if data exists)
+      if (a.tokens || b.tokens) {
+        html += "<tr><td><strong>Tokens</strong></td>";
+        html += "<td>" + fmtStat(a.tokens, false) + "</td>";
+        html += "<td>" + fmtStat(b.tokens, false) + "</td>";
+        html += '<td class="' + deltaClass(delta.tokens) + '">' + (delta.tokens || "—") + "</td></tr>";
+      }
+
+      html += "</tbody></table>";
+
+      // Per-eval breakdown (if runs data available)
+      const runs = data.runs || [];
+      if (runs.length > 0) {
+        const evalIds = [...new Set(runs.map(r => r.eval_id))].sort((a, b) => a - b);
+
+        html += "<h3 style='font-family: Poppins, sans-serif; margin-bottom: 0.75rem;'>Per-Eval Breakdown</h3>";
+
+        const hasTime = runs.some(r => r.result && r.result.time_seconds != null);
+        const hasErrors = runs.some(r => r.result && r.result.errors > 0);
+
+        for (const evalId of evalIds) {
+          const evalRuns = runs.filter(r => r.eval_id === evalId);
+          const evalName = evalRuns[0] && evalRuns[0].eval_name ? evalRuns[0].eval_name : "Eval " + evalId;
+
+          html += "<h4 style='font-family: Poppins, sans-serif; margin: 1rem 0 0.5rem; color: var(--text);'>" + escapeHtml(evalName) + "</h4>";
+          html += '<table class="benchmark-table">';
+          html += "<thead><tr><th>Config</th><th>Run</th><th>Pass Rate</th>";
+          if (hasTime) html += "<th>Time (s)</th>";
+          if (hasErrors) html += "<th>Crashes During Execution</th>";
+          html += "</tr></thead>";
+          html += "<tbody>";
+
+          // Group by config and render with average rows
+          const configGroups = [...new Set(evalRuns.map(r => r.configuration))];
+          for (let ci = 0; ci < configGroups.length; ci++) {
+            const config = configGroups[ci];
+            const configRuns = evalRuns.filter(r => r.configuration === config);
+            if (configRuns.length === 0) continue;
+
+            const rowClass = ci === 0 ? "benchmark-row-with" : "benchmark-row-without";
+            const configLabel = config.replace(/_/g, " ").replace(/\b\w/g, c => c.toUpperCase());
+
+            for (const run of configRuns) {
+              const r = run.result || {};
+              const prClass = r.pass_rate >= 0.8 ? "benchmark-delta-positive" : r.pass_rate < 0.5 ? "benchmark-delta-negative" : "";
+              html += '<tr class="' + rowClass + '">';
+              html += "<td>" + configLabel + "</td>";
+              html += "<td>" + run.run_number + "</td>";
+              html += '<td class="' + prClass + '">' + ((r.pass_rate || 0) * 100).toFixed(0) + "% (" + (r.passed || 0) + "/" + (r.total || 0) + ")</td>";
+              if (hasTime) html += "<td>" + (r.time_seconds != null ? r.time_seconds.toFixed(1) : "—") + "</td>";
+              if (hasErrors) html += "<td>" + (r.errors || 0) + "</td>";
+              html += "</tr>";
+            }
+
+            // Average row
+            const rates = configRuns.map(r => (r.result || {}).pass_rate || 0);
+            const avgRate = rates.reduce((a, b) => a + b, 0) / rates.length;
+            const avgPrClass = avgRate >= 0.8 ? "benchmark-delta-positive" : avgRate < 0.5 ? "benchmark-delta-negative" : "";
+            html += '<tr class="benchmark-row-avg ' + rowClass + '">';
+            html += "<td>" + configLabel + "</td>";
+            html += "<td>Avg</td>";
+            html += '<td class="' + avgPrClass + '">' + (avgRate * 100).toFixed(0) + "%</td>";
+            if (hasTime) {
+              const times = configRuns.map(r => (r.result || {}).time_seconds).filter(t => t != null);
+              html += "<td>" + (times.length ? (times.reduce((a, b) => a + b, 0) / times.length).toFixed(1) : "—") + "</td>";
+            }
+            if (hasErrors) html += "<td></td>";
+            html += "</tr>";
+          }
+          html += "</tbody></table>";
+
+          // Per-assertion detail for this eval
+          const runsWithExpectations = {};
+          for (const config of configGroups) {
+            runsWithExpectations[config] = evalRuns.filter(r => r.configuration === config && r.expectations && r.expectations.length > 0);
+          }
+          const hasAnyExpectations = Object.values(runsWithExpectations).some(runs => runs.length > 0);
+          if (hasAnyExpectations) {
+            // Collect all unique assertion texts across all configs
+            const allAssertions = [];
+            const seen = new Set();
+            for (const config of configGroups) {
+              for (const run of runsWithExpectations[config]) {
+                for (const exp of (run.expectations || [])) {
+                  if (!seen.has(exp.text)) {
+                    seen.add(exp.text);
+                    allAssertions.push(exp.text);
+                  }
+                }
+              }
+            }
+
+            html += '<table class="benchmark-table" style="margin-top: 0.5rem;">';
+            html += "<thead><tr><th>Assertion</th>";
+            for (const config of configGroups) {
+              const label = config.replace(/_/g, " ").replace(/\b\w/g, c => c.toUpperCase());
+              html += "<th>" + escapeHtml(label) + "</th>";
+            }
+            html += "</tr></thead><tbody>";
+
+            for (const assertionText of allAssertions) {
+              html += "<tr><td>" + escapeHtml(assertionText) + "</td>";
+
+              for (const config of configGroups) {
+                html += "<td>";
+                for (const run of runsWithExpectations[config]) {
+                  const exp = (run.expectations || []).find(e => e.text === assertionText);
+                  if (exp) {
+                    const cls = exp.passed ? "benchmark-delta-positive" : "benchmark-delta-negative";
+                    const icon = exp.passed ? "\u2713" : "\u2717";
+                    html += '<span class="' + cls + '" title="Run ' + run.run_number + ': ' + escapeHtml(exp.evidence || "") + '">' + icon + "</span> ";
+                  } else {
+                    html += "— ";
+                  }
+                }
+                html += "</td>";
+              }
+              html += "</tr>";
+            }
+            html += "</tbody></table>";
+          }
+        }
+      }
+
+      // Notes
+      if (notes.length > 0) {
+        html += '<div class="benchmark-notes">';
+        html += "<h3>Analysis Notes</h3>";
+        html += "<ul>";
+        for (const note of notes) {
+          html += "<li>" + escapeHtml(note) + "</li>";
+        }
+        html += "</ul></div>";
+      }
+
+      container.innerHTML = html;
+    }
+
+    // ---- Start ----
+    init();
+    renderBenchmark();
+  </script>
+</body>
+</html>

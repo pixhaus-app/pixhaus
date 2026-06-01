@@ -1,0 +1,37 @@
+{
+  "eval_id": 2,
+  "eval_name": "wgpu-setup-config",
+  "configuration": "without_skill",
+  "expectations": [
+    {
+      "text": "Identifies WgpuConfiguration as the home for these settings",
+      "passed": true,
+      "evidence": "`NativeOptions::wgpu_options`, which is an `egui_wgpu::WgpuConfiguration`."
+    },
+    {
+      "text": "Sets desired_maximum_frame_latency = Some(1) for low input latency",
+      "passed": true,
+      "evidence": "//    desired_maximum_frame_latency caps how many frames the present"
+    },
+    {
+      "text": "Uses an AutoVsync present_mode (vsync on)",
+      "passed": true,
+      "evidence": "// present_mode is left at its default (AutoVsync) because we want vsync."
+    },
+    {
+      "text": "Prefers the discrete GPU via PowerPreference::HighPerformance or native_adapter_selector",
+      "passed": true,
+      "evidence": "power_preference: PowerPreference::HighPerformance,"
+    },
+    {
+      "text": "Requests higher texture limits via the device_descriptor closure (max_texture_dimension_2d)",
+      "passed": true,
+      "evidence": "carries the `power_preference` and a `device_descriptor` closure where you set"
+    },
+    {
+      "text": "Routes config through eframe NativeOptions wgpu_options",
+      "passed": true,
+      "evidence": "`NativeOptions::wgpu_options`, which is an `egui_wgpu::WgpuConfiguration`."
+    }
+  ]
+}

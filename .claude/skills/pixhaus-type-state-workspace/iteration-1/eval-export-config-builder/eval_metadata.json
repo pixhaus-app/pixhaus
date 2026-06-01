@@ -1,0 +1,14 @@
+{
+  "eval_id": 0,
+  "eval_name": "export-config-builder",
+  "prompt": "In the Pixhaus `io` crate I'm writing a builder for sprite-sheet export config. It must have a `format` (an enum: Png or Aseprite) and an `output_path` (PathBuf) set before you can call `build()` — forgetting either should be a compile error, not a runtime panic. `columns` is optional and defaults to 1. Write the builder. Keep it in line with our repo conventions.",
+  "assertions": [
+    {"text": "Builder is generic over per-required-field marker types (type-state), so its type changes as format and output_path are set"},
+    {"text": "build() is implemented only for the state where both format and output_path are set"},
+    {"text": "No unwrap(), expect(), unreachable!(), or panic!() anywhere in the produced code"},
+    {"text": "Required fields are NOT stored as Option and then unwrapped/unreachable'd in build() (state carries the data, or values stored directly)"},
+    {"text": "columns is an optional setter available in any state and defaults to 1"},
+    {"text": "Produced Rust compiles on edition 2024"},
+    {"text": "Calling build() with a required field unset is a compile error (by construction)"}
+  ]
+}

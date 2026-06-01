@@ -1,0 +1,12 @@
+{
+  "eval_id": 0,
+  "configuration": "with_skill",
+  "summary": {"pass_rate": 1.0, "passed": 5, "failed": 0, "total": 5},
+  "expectations": [
+    {"text": "Leads with measure-don't-guess before optimizing", "passed": true, "evidence": "Opens: 'I'm not going to rewrite this on the strength of feels slow ... don't guess, measure'."},
+    {"text": "Does not present a hand-optimized rewrite without a measurement caveat", "passed": true, "evidence": "Separates 'almost certainly true on inspection' from 'needs a number'; the perf rewrite is gated behind profile+bench steps 2-5."},
+    {"text": "Identifies bounding work to the dirty region as the durable fix", "passed": true, "evidence": "'The thing that matters more than the inner loop: bound the work' — dirty rectangle, not full-canvas pass."},
+    {"text": "Mentions building with --release / the correct profile for honest timing", "passed": true, "evidence": "'are you even timing a release build?' + cargo run --release, and release-with-debug for profiling."},
+    {"text": "Suggests a criterion benchmark to verify the change clears a real margin", "passed": true, "evidence": "Step 3-5: criterion bench with harness=false, std::hint::black_box, keep only if it clears ~5% outside noise."}
+  ]
+}
