@@ -27,8 +27,11 @@ pub struct ResolvedLayout {
 impl ResolvedLayout {
     /// The fallback layout for an unknown workspace id: everything empty.
     ///
-    /// `default_tool` is a sentinel `ToolId("")`; an unknown workspace renders no
-    /// rail, so it is never read.
+    /// `default_tool` is a sentinel `ToolId("")` that is never read. An empty
+    /// layout has no rail (`primary_tools` is empty), and any reader of
+    /// `default_tool` is gated on `primary_tools` being non-empty first - an
+    /// empty rail has no tool to default to. So the sentinel is never observed
+    /// as a real tool id; it exists only because the field is not `Option`.
     pub fn empty() -> Self {
         Self {
             right_dock: Vec::new(),

@@ -123,7 +123,11 @@ pub struct Prefs {
     pub default_workspace: String,
     /// The theme variant.
     pub variant: ThemeVariant,
-    /// The accent seed as RGB bytes.
+    /// The accent seed as RGB bytes. The live seed is a `Color32` (RGBA); this
+    /// stores RGB only. When persistence is wired (deferred), the conversion must
+    /// deliberately drop the seed's alpha on save and restore it on load - the
+    /// accent seed is opaque, so reconstruct the `Color32` with full alpha
+    /// (`Color32::from_rgb`), not a default-zero one.
     pub accent: [u8; 3],
     /// Right-dock width in points.
     pub dock_width: f32,

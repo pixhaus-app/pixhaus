@@ -24,7 +24,10 @@ const fn glyph(s: &str) -> char {
     let b = s.as_bytes();
     let first = b[0];
     if first < 0x80 {
-        // single-byte ASCII (the `X` close glyph among others)
+        // Single-byte ASCII. No phosphor glyph hits this branch - phosphor
+        // glyphs are all private-use codepoints (U+E000+), decoded by the
+        // 3-byte branch below. This branch only fires for a literal ASCII arg
+        // (the `glyph("X")` test case).
         first as char
     } else if first >> 5 == 0b110 {
         let cp = ((first as u32 & 0x1f) << 6) | (b[1] as u32 & 0x3f);
@@ -231,12 +234,20 @@ mod tests {
         }
     }
 
-    /// The ASCII branch of `glyph` is exercised by `X` (single-byte close glyph)
-    /// and the multi-byte branches by the private-use phosphor glyphs.
+    /// `glyph` decodes each UTF-8 length. Every phosphor glyph is a private-use
+    /// codepoint (U+E000+), so they all take the 3-byte branch; the 1-byte and
+    /// 2-byte branches only ever fire for a literal ASCII or 2-byte arg, so the
+    /// test feeds those directly to keep those branches covered.
     #[test]
-    fn glyph_decodes_ascii_and_multibyte() {
+    fn glyph_decodes_each_utf8_length() {
+        // 1-byte ASCII: only reached by a literal ASCII arg, never by phosphor.
         assert_eq!(glyph("X"), 'X');
-        // PENCIL is a 3-byte private-use codepoint; round-trips to one char.
+        // 2-byte UTF-8 (U+00E9, "e-acute"): exercises the 2-byte branch, which
+        // no phosphor glyph reaches.
+        assert_eq!(glyph("\u{00e9}"), '\u{00e9}');
+        // 3-byte UTF-8: every phosphor glyph lands here. PENCIL round-trips to
+        // one private-use char.
         assert_eq!(PENCIL.len_utf8(), ph::PENCIL.len());
+        assert_eq!(PENCIL.len_utf8(), 3);
     }
 }

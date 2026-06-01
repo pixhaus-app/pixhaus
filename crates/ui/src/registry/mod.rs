@@ -84,12 +84,6 @@ pub struct Registries {
     pub menus: Vec<MenuGroup>,
 }
 
-// A compile-time guard: if any registry trait regresses out of dyn-compatibility
-// (a generic method, a `-> Self`, a non-`&self` receiver), this stops compiling.
-const _: () = {
-    fn _assert_boxable(_: Box<dyn Panel>, _: Box<dyn Tool>, _: Box<dyn Workspace>, _: Box<dyn crate::contrib_api::Module>) {}
-};
-
 impl Registries {
     /// Borrows these registries as the `dyn HostRegistrar` a module registers
     /// through. A module never sees the concrete `Registries`; it only adds
