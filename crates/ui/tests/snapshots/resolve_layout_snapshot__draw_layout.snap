@@ -1,0 +1,90 @@
+---
+source: crates/ui/tests/resolve_layout_snapshot.rs
+expression: resolved
+---
+ResolvedLayout {
+    right_dock: [
+        PanelId(
+            "layers",
+        ),
+        PanelId(
+            "sprites",
+        ),
+        PanelId(
+            "palette",
+        ),
+        PanelId(
+            "selection-actions",
+        ),
+        PanelId(
+            "ai-assistant",
+        ),
+    ],
+    bottom_tray: [
+        PanelId(
+            "frames",
+        ),
+        PanelId(
+            "assets",
+        ),
+        PanelId(
+            "console",
+        ),
+    ],
+    primary_tools: [
+        ToolId(
+            "pencil",
+        ),
+        ToolId(
+            "eraser",
+        ),
+        ToolId(
+            "fill",
+        ),
+        ToolId(
+            "line",
+        ),
+        ToolId(
+            "rectangle",
+        ),
+        ToolId(
+            "ellipse",
+        ),
+        ToolId(
+            "eyedropper",
+        ),
+        ToolId(
+            "selection",
+        ),
+        ToolId(
+            "lasso",
+        ),
+        ToolId(
+            "move",
+        ),
+        ToolId(
+            "transform",
+        ),
+        ToolId(
+            "text",
+        ),
+        ToolId(
+            "hand",
+        ),
+        ToolId(
+            "zoom",
+        ),
+        ToolId(
+            "ai_brush",
+        ),
+    ],
+    default_tool: ToolId(
+        "pencil",
+    ),
+    status_items: [
+        StatusItem {
+            icon: '\u{e296}',
+            text: "Pixel Grid On",
+        },
+    ],
+}

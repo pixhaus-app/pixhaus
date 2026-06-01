@@ -1,0 +1,49 @@
+---
+source: crates/ui/tests/resolve_layout_snapshot.rs
+expression: resolved
+---
+ResolvedLayout {
+    right_dock: [
+        PanelId(
+            "export-format",
+        ),
+        PanelId(
+            "engine-preset",
+        ),
+        PanelId(
+            "animation-metadata",
+        ),
+        PanelId(
+            "qa-warnings",
+        ),
+    ],
+    bottom_tray: [
+        PanelId(
+            "export-log",
+        ),
+        PanelId(
+            "console",
+        ),
+    ],
+    primary_tools: [
+        ToolId(
+            "hand",
+        ),
+        ToolId(
+            "zoom",
+        ),
+    ],
+    default_tool: ToolId(
+        "hand",
+    ),
+    status_items: [
+        StatusItem {
+            icon: '\u{eaf0}',
+            text: "PNG + sheet",
+        },
+        StatusItem {
+            icon: '\u{e184}',
+            text: "0 warnings",
+        },
+    ],
+}

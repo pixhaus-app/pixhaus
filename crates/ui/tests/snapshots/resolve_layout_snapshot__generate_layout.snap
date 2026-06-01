@@ -1,0 +1,64 @@
+---
+source: crates/ui/tests/resolve_layout_snapshot.rs
+expression: resolved
+---
+ResolvedLayout {
+    right_dock: [
+        PanelId(
+            "prompt",
+        ),
+        PanelId(
+            "recipe",
+        ),
+        PanelId(
+            "structure",
+        ),
+        PanelId(
+            "style",
+        ),
+        PanelId(
+            "palette-behavior",
+        ),
+        PanelId(
+            "advanced-settings",
+        ),
+    ],
+    bottom_tray: [
+        PanelId(
+            "results",
+        ),
+        PanelId(
+            "history",
+        ),
+        PanelId(
+            "console",
+        ),
+    ],
+    primary_tools: [
+        ToolId(
+            "hand",
+        ),
+        ToolId(
+            "zoom",
+        ),
+        ToolId(
+            "selection",
+        ),
+        ToolId(
+            "ai_brush",
+        ),
+    ],
+    default_tool: ToolId(
+        "hand",
+    ),
+    status_items: [
+        StatusItem {
+            icon: '\u{e18a}',
+            text: "AI Ready",
+        },
+        StatusItem {
+            icon: '\u{e18a}',
+            text: "Seed 123456",
+        },
+    ],
+}

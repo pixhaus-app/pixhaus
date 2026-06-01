@@ -1,0 +1,98 @@
+---
+source: crates/ui/tests/resolve_layout_snapshot.rs
+expression: resolved
+---
+ResolvedLayout {
+    right_dock: [
+        PanelId(
+            "layers",
+        ),
+        PanelId(
+            "sprites",
+        ),
+        PanelId(
+            "frames",
+        ),
+        PanelId(
+            "clip-properties",
+        ),
+        PanelId(
+            "ai-animation-assistant",
+        ),
+    ],
+    bottom_tray: [
+        PanelId(
+            "timeline",
+        ),
+        PanelId(
+            "frames",
+        ),
+        PanelId(
+            "console",
+        ),
+    ],
+    primary_tools: [
+        ToolId(
+            "pencil",
+        ),
+        ToolId(
+            "eraser",
+        ),
+        ToolId(
+            "fill",
+        ),
+        ToolId(
+            "line",
+        ),
+        ToolId(
+            "rectangle",
+        ),
+        ToolId(
+            "ellipse",
+        ),
+        ToolId(
+            "eyedropper",
+        ),
+        ToolId(
+            "selection",
+        ),
+        ToolId(
+            "lasso",
+        ),
+        ToolId(
+            "move",
+        ),
+        ToolId(
+            "transform",
+        ),
+        ToolId(
+            "text",
+        ),
+        ToolId(
+            "hand",
+        ),
+        ToolId(
+            "zoom",
+        ),
+        ToolId(
+            "ai_brush",
+        ),
+    ],
+    default_tool: ToolId(
+        "pencil",
+    ),
+    status_items: [
+        StatusItem {
+            icon: '\u{e792}',
+            text: "15 frames",
+        },
+        StatusItem {
+            icon: '\u{e220}',
+            text: "Onion Skin Off",
+        },
+        StatusItem {
+            icon: '\u{e18a}',
+            text: "12 FPS",
+        },
+    ],
+}
