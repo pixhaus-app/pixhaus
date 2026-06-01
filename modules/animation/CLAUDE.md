@@ -1,0 +1,18 @@
+# pixhaus-mod-animation
+
+The animation module — the Animate workspace and time (architecture bible
+sections 7.3, 6.4, 15).
+
+- **Registers:** animation clips, the timeline and onion-skin panels, playback
+  controls, the Animate workspace, and the animation commands and export hooks.
+- **Status:** stub.
+
+## Boundaries
+
+- Sibling to `mod-sprite-edit` over the same editing core — reuse its tools and
+  canvas, don't fork them. Animate should feel like Draw plus time.
+- Animation belongs to sprites; it is not a separate document type. Frames,
+  layers, cels, clips, and timing live on the sprite model in `core`.
+- Onion skin renders through the shared canvas renderer, not a private one.
+
+Shared module rules: `modules/CLAUDE.md`. Global rules: root `CLAUDE.md`.

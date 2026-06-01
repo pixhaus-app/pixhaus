@@ -1,0 +1,22 @@
+# pixhaus-mod-providers
+
+The provider modules — AI and compute backends (architecture bible sections 7.3,
+14.2).
+
+- **Registers:** AI/compute providers behind the capability-based provider
+  abstraction — a mock provider for offline development, plus remote and
+  local-model providers.
+- **Status:** stub.
+
+## Boundaries
+
+- The app asks for capabilities ("who can generate a sprite from text?"), not
+  specific providers. Provider-specific settings and logic stay here, never in the
+  Generate workspace.
+- A failing, unavailable, or missing provider must not crash the app — provider
+  failures are isolated and surfaced as actionable errors.
+- Ship the mock provider so UI and generation flows work without API keys, model
+  downloads, or a GPU. Local models run out-of-process where practical.
+
+Reach for `pixhaus-reqwest`/`pixhaus-keyring` skills when wiring real providers.
+Shared module rules: `modules/CLAUDE.md`. Global rules: root `CLAUDE.md`.
