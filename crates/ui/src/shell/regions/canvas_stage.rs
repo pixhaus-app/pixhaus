@@ -34,13 +34,17 @@ pub fn show(host: &mut Host, ui: &mut egui::Ui) {
 
         // 4. Embed the renderer UNCHANGED - exactly the app/src/main.rs seam. The
         //    callback rect tracks the artboard, so the wgpu pass draws there.
+        //    INPUT GAP: nothing senses `artboard` yet, so the stage is display-only.
+        //    A future phase must allocate a sensed rect over the artboard
+        //    (`ui.interact`/`allocate_rect` with click+drag) to route pan/zoom/paint
+        //    off its `Response` - see the canvas-input routing in pixhaus-egui.
         ui.painter().add(egui_wgpu::Callback::new_paint_callback(artboard, CanvasCallback));
 
         // 5. Grid lines over the artboard (minor 8px / major 16px per GridMode).
         paint_grid(&painter, artboard, state.ui.zoom, state.ui.grid, theme);
 
         // 6. Floating HUD via the central Painter, at the stage's lower-left.
-        paint_hud(&painter, stage_rect, state.ui.zoom, theme);
+        paint_hud(&painter, stage_rect, state.ui.zoom, state.ui.grid, theme);
     });
 }
 
@@ -86,8 +90,9 @@ fn paint_grid(painter: &egui::Painter, board: egui::Rect, zoom: f32, grid: GridM
     }
 }
 
-fn paint_hud(painter: &egui::Painter, stage: egui::Rect, zoom: f32, theme: &Theme) {
-    let text = format!("64 x 64   {:.0}%   Grid 8px   Palette: Bit", zoom * 100.0);
+fn paint_hud(painter: &egui::Painter, stage: egui::Rect, zoom: f32, grid: GridMode, theme: &Theme) {
+    // Format the live grid the same way the status bar does so the two agree.
+    let text = format!("64 x 64   {:.0}%   Grid {grid:?}   Palette: Bit", zoom * 100.0);
     let font = egui::FontId::monospace(theme.type_scale.mono);
     let galley = painter.layout_no_wrap(text, font, theme.roles.text_secondary);
     let pad = egui::vec2(6.0, 4.0);

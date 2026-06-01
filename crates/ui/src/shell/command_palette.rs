@@ -58,7 +58,7 @@ pub fn overlay(host: &mut Host, ui: &mut egui::Ui) {
     }
 
     // Filter by the live query (case-insensitive substring). Context-aware ranking
-    // (UX 20.3) is a deferred enhancement that arrives with core; see #ranking.
+    // (UX 20.3) is a deferred enhancement that arrives with core.
     let query = state.ui.palette_query.to_lowercase();
     let filtered: Vec<&Entry> = entries.iter().filter(|e| query.is_empty() || e.label.to_lowercase().contains(&query)).collect();
 
@@ -87,7 +87,7 @@ pub fn overlay(host: &mut Host, ui: &mut egui::Ui) {
                 egui::ScrollArea::vertical().max_height(360.0).auto_shrink([false, false]).show(ui, |ui| {
                     for entry in filtered {
                         if ui.button(&entry.label).clicked() {
-                            push_clone(intents, &entry.intent);
+                            reemit(intents, &entry.intent);
                             intents.push(Intent::CloseModal);
                         }
                     }
@@ -99,7 +99,7 @@ pub fn overlay(host: &mut Host, ui: &mut egui::Ui) {
 // `Intent` is intentionally not `Clone` (the reserved `Command(Box<dyn Command>)`
 // variant would forbid it), so re-emit by matching the palette-reachable variants,
 // whose payloads (`WorkspaceId`/`ToolId`/`ActionId`) are all `Copy`.
-fn push_clone(intents: &mut IntentSink, intent: &Intent) {
+fn reemit(intents: &mut IntentSink, intent: &Intent) {
     match intent {
         Intent::SelectWorkspace(w) => intents.push(Intent::SelectWorkspace(*w)),
         Intent::SelectTool(t) => intents.push(Intent::SelectTool(*t)),
