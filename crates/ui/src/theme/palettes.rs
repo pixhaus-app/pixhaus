@@ -175,9 +175,13 @@ fn accent_from_seed(seed: Color32) -> AccentTokens {
         seed,
         base: seed,
         hover: lighten(seed, 0.15),
-        // Low-alpha fill; the muted value the contrast test reads is the opaque
-        // mix of the seed darkened toward the dark panel, a conservative proxy.
+        // Opaque stand-in for a low-alpha accent overlay over the dark panel: the
+        // seed darkened toward black, which the contrast test reads directly.
         muted: darken(seed, 0.55),
+        // Pure white maximizes contrast on `base`. The default violet seed is
+        // light enough that no foreground clears WCAG 4.5 against it (white tops
+        // out near 4.0), so we take the achievable ceiling rather than the floor.
+        on_accent: Color32::WHITE,
         ai: lighten(seed, 0.10),
         ai_glow: Color32::from_rgba_unmultiplied(seed.r(), seed.g(), seed.b(), 40),
     }
@@ -264,5 +268,17 @@ mod tests {
             "text_primary on accent.muted below 3.0: {}",
             wcag_contrast(t.roles.text_primary, t.accent.muted)
         );
+    }
+
+    /// `on_accent` is the ink for active-widget text painted on `accent.base`.
+    /// The default violet seed is light enough that no foreground clears the 4.5
+    /// floor against it (white tops out near 4.0), so `on_accent` takes that
+    /// achievable ceiling - comfortably past the 3.0 large/structural-text floor
+    /// and a real lift over the ~3.16 the default override text color would give.
+    #[test]
+    fn on_accent_clears_large_text_floor_on_base() {
+        let t = Theme::dark();
+        let ratio = wcag_contrast(t.accent.on_accent, t.accent.base);
+        assert!(ratio >= 3.0, "on_accent on accent.base below 3.0: {ratio}");
     }
 }

@@ -81,8 +81,16 @@ pub struct AccentTokens {
     pub base: Color32,
     /// Hover state of the accent.
     pub hover: Color32,
-    /// Low-alpha fill behind an active tool/tab/row.
+    /// Opaque dark accent fill behind an active tool/tab/row. Stands in for a
+    /// low-alpha accent overlay over `surfaces.panel` - precomputed opaque so it
+    /// composites without an alpha pass and reads consistently regardless of what
+    /// sits beneath it.
     pub muted: Color32,
+    /// Near-white foreground for text/icons painted directly on `base` (egui's
+    /// active-widget fill). `base` is too light to host `text_primary` at the
+    /// 4.5 contrast floor, so active widgets get this dedicated high-contrast ink
+    /// instead of the default override text color.
+    pub on_accent: Color32,
     /// Sparkle marker tint (named for intent).
     pub ai: Color32,
     /// Softer halo behind AI affordances.

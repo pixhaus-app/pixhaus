@@ -32,6 +32,10 @@ pub fn apply_to_visuals(theme: &Theme, ctx: &egui::Context) {
         v.widgets.noninteractive.bg_stroke = egui::Stroke::new(1.0, theme.roles.border);
         v.widgets.hovered.bg_fill = theme.accent.muted;
         v.widgets.active.bg_fill = theme.accent.base;
+        // `override_text_color` would render active-widget text in `text_primary`
+        // on `base` at ~3.16:1. Paint active-widget ink in the dedicated
+        // high-contrast `on_accent` instead so text on the accent fill stays legible.
+        v.widgets.active.fg_stroke = egui::Stroke::new(1.0, theme.accent.on_accent);
         v.window_shadow = theme.elevation.overlay;
         v.popup_shadow = theme.elevation.overlay;
         style.spacing.item_spacing = egui::vec2(theme.spacing.sm, theme.spacing.xs);
