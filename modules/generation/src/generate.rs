@@ -45,7 +45,7 @@ pub const HISTORY: PanelId = PanelId("history");
 const HAND: ToolId = ToolId("hand");
 const ZOOM: ToolId = ToolId("zoom");
 const SELECTION: ToolId = ToolId("selection");
-const AI_BRUSH: ToolId = ToolId("ai-brush");
+const AI_BRUSH: ToolId = ToolId("ai_brush");
 
 // The Console tray panel is owned by sprite-edit, referenced by id.
 const CONSOLE: PanelId = PanelId("console");
