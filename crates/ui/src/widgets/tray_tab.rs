@@ -2,7 +2,7 @@
 
 use crate::theme::Theme;
 
-/// Draw a tray tab chip. Active paints a solid `accent.base` pill; inactive is bare
+/// Draw a tray tab chip. Active paints a solid `accent.muted` pill; inactive is bare
 /// text. Returns the click `Response`; the caller maps a click to
 /// `Intent::SelectTrayTab`.
 // Radius tokens are small, bounded positive constants; the f32 -> u8 cast cannot
@@ -17,9 +17,7 @@ pub fn tray_tab(ui: &mut egui::Ui, theme: &Theme, title: &str, active: bool) -> 
 
     if ui.is_rect_visible(rect) {
         let painter = ui.painter();
-        if active {
-            painter.rect_filled(rect, theme.radius.md as u8, theme.accent.base);
-        } else if response.hovered() {
+        if active || response.hovered() {
             painter.rect_filled(rect, theme.radius.md as u8, theme.accent.muted);
         }
         let text_color = if active { theme.roles.text_primary } else { theme.roles.text_secondary };
