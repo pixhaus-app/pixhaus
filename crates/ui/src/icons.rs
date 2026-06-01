@@ -6,9 +6,10 @@
 //! fonts render emoji as tofu, and phosphor private-use codepoints render blank
 //! until `theme::fonts::install_fonts` merges the phosphor family.
 //!
-//! `crate::icons` is crate-private; later layers reference these as
-//! `crate::icons::PENCIL`. The `allow(dead_code)` keeps the build warning-clean
-//! while the consuming layers are still landing.
+//! `crate::icons` is the shared glyph table the shell and the module crates both
+//! reach for, as `crate::icons::PENCIL` inside `ui` and `pixhaus_ui::icons::PENCIL`
+//! from a module. The `allow(dead_code)` keeps the build warning-clean while not
+//! every constant has a consumer yet.
 #![allow(dead_code)]
 
 use egui_phosphor::regular as ph;
@@ -47,61 +48,111 @@ const fn glyph(s: &str) -> char {
 }
 
 // --- Tool-rail glyphs (spec tool inventory) ---
+/// Pencil tool.
 pub const PENCIL: char = glyph(ph::PENCIL);
+/// Eraser tool.
 pub const ERASER: char = glyph(ph::ERASER);
+/// Flood-fill tool.
 pub const FILL: char = glyph(ph::PAINT_BUCKET);
+/// Line tool.
 pub const LINE: char = glyph(ph::LINE_SEGMENT);
+/// Rectangle tool.
 pub const RECT: char = glyph(ph::RECTANGLE);
+/// Ellipse tool.
 pub const ELLIPSE: char = glyph(ph::CIRCLE);
+/// Eyedropper (color-pick) tool.
 pub const EYEDROPPER: char = glyph(ph::EYEDROPPER);
+/// Marquee selection tool.
 pub const SELECT: char = glyph(ph::SELECTION);
+/// Freeform lasso selection tool.
 pub const LASSO: char = glyph(ph::LASSO);
+/// Move tool.
 pub const MOVE: char = glyph(ph::ARROWS_OUT_CARDINAL);
+/// Transform (scale/rotate/skew) tool.
 pub const TRANSFORM: char = glyph(ph::FRAME_CORNERS);
+/// Pixel-text tool.
 pub const TEXT: char = glyph(ph::TEXT_T);
+/// Pan (hand) tool.
 pub const HAND: char = glyph(ph::HAND);
+/// Zoom tool.
 pub const ZOOM: char = glyph(ph::MAGNIFYING_GLASS);
 /// The AI sparkle marker. Used wherever `AccentTokens::ai` applies.
 pub const SPARKLE: char = glyph(ph::SPARKLE);
 
 // --- Panel / dock glyphs ---
+/// Layers panel.
 pub const LAYERS: char = glyph(ph::STACK);
+/// Sprites panel.
 pub const SPRITES: char = glyph(ph::IMAGES);
+/// Palette panel.
 pub const PALETTE: char = glyph(ph::PALETTE);
+/// Frames panel/tray.
 pub const FRAMES: char = glyph(ph::FILM_STRIP);
+/// Assets panel/tray.
 pub const ASSETS: char = glyph(ph::SQUARES_FOUR);
+/// Console panel/tray.
 pub const CONSOLE: char = glyph(ph::TERMINAL);
+/// Timeline panel.
 pub const TIMELINE: char = glyph(ph::FILM_SLATE);
+/// Tileset panel.
 pub const TILESET: char = glyph(ph::GRID_NINE);
+/// Prompt-composer panel.
 pub const PROMPT: char = glyph(ph::MAGIC_WAND);
+/// Generation-results panel.
 pub const RESULTS: char = glyph(ph::IMAGE);
+/// History panel.
 pub const HISTORY: char = glyph(ph::LIST_BULLETS);
+/// Export panel.
 pub const EXPORT: char = glyph(ph::EXPORT);
+/// Settings panel.
 pub const SETTINGS: char = glyph(ph::GEAR);
 
 // --- Workspace tab glyphs ---
+/// Draw workspace tab.
 pub const DRAW: char = PENCIL;
+/// Animate workspace tab.
 pub const ANIMATE: char = glyph(ph::FILM_STRIP);
+/// Tiles workspace tab.
 pub const TILES: char = glyph(ph::GRID_FOUR);
+/// Generate workspace tab.
 pub const GENERATE: char = SPARKLE;
+/// Export workspace tab.
 pub const EXPORT_WS: char = glyph(ph::EXPORT);
 
 // --- Status / menu / control glyphs ---
+/// Visibility-on toggle.
 pub const EYE: char = glyph(ph::EYE);
+/// Visibility-off toggle.
 pub const EYE_OFF: char = glyph(ph::EYE_SLASH);
+/// Locked toggle.
 pub const LOCK: char = glyph(ph::LOCK);
+/// Unlocked toggle.
 pub const LOCK_OPEN: char = glyph(ph::LOCK_OPEN);
+/// Add / new affordance.
 pub const ADD: char = glyph(ph::PLUS);
+/// Expanded-section caret.
 pub const CARET_DOWN: char = glyph(ph::CARET_DOWN);
+/// Collapsed-section caret.
 pub const CARET_RIGHT: char = glyph(ph::CARET_RIGHT);
+/// The status-bar status dot.
 pub const STATUS_DOT: char = glyph(ph::CIRCLE);
+/// Success / done marker.
 pub const CHECK: char = glyph(ph::CHECK_CIRCLE);
+/// Warning marker.
 pub const WARN: char = glyph(ph::WARNING);
+/// Close / dismiss control.
 pub const CLOSE: char = glyph(ph::X);
+/// Favorite / star marker.
 pub const STAR: char = glyph(ph::STAR);
+/// The pixel-grid status glyph (the "Pixel Grid On" status item).
+pub const GRID: char = glyph(ph::GRID_FOUR);
+/// Playback play control.
 pub const PLAY: char = glyph(ph::PLAY);
+/// Playback previous-frame control.
 pub const PREV: char = glyph(ph::SKIP_BACK);
+/// Playback next-frame control.
 pub const NEXT: char = glyph(ph::SKIP_FORWARD);
+/// Crop control.
 pub const CROP: char = glyph(ph::CROP);
 
 #[cfg(test)]
@@ -170,6 +221,7 @@ mod tests {
             WARN,
             CLOSE,
             STAR,
+            GRID,
             PLAY,
             PREV,
             NEXT,

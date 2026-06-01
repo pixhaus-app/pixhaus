@@ -13,7 +13,7 @@
 #![cfg_attr(test, allow(clippy::unwrap_used, clippy::expect_used, clippy::panic, clippy::float_cmp))]
 
 pub mod contrib_api;
-mod icons;
+pub mod icons;
 pub mod region;
 pub mod registry;
 pub mod shell;
