@@ -3,7 +3,7 @@
 //! [`JobManager::submit`] spawns a provider's work onto the binary's tokio runtime
 //! (it never creates one) and returns immediately. The task emits [`JobMsg`]
 //! notifications over a `std::sync::mpsc` channel the shell drains each frame; the
-//! [`GeneratedAsset`](crate::generated::GeneratedAsset) itself lands in the shared
+//! [`GeneratedResult`](crate::generated::GeneratedResult) itself lands in the shared
 //! [`ResultStore`], keyed by job, so large buffers stay off the channel (bible 31.5).
 //! The worker receives only immutable input and a cancel token — never the live
 //! document (bible 13.6).
@@ -41,7 +41,7 @@ pub enum JobStatus {
 /// worker needs; carries no document handle, no undo stack, no egui context.
 #[derive(Clone, Debug)]
 pub struct GenerationJobInput {
-    /// The user's prompt (content).
+    /// The fully-assembled prompt the provider sends (content, never a key).
     pub prompt: String,
     /// The seed for reproducible output.
     pub seed: u64,
@@ -49,6 +49,8 @@ pub struct GenerationJobInput {
     pub size: (u32, u32),
     /// What the generation is relative to.
     pub context: GenerationContext,
+    /// What to generate and the per-kind parameters.
+    pub kind: GenerationKind,
 }
 
 /// Generation context as immutable data (bible 14.6). Foundation: a new asset only;
@@ -57,6 +59,57 @@ pub struct GenerationJobInput {
 pub enum GenerationContext {
     /// Generate a brand-new asset with no prior context.
     NewAsset,
+}
+
+/// What to generate, with the per-kind parameters a provider needs. The two-pass
+/// sprite pipeline (bible 14.2): an anchor, then an idle animation conditioned on it.
+/// All data is owned and immutable per the worker contract (bible 13.6); a reference
+/// image rides here as decoded bytes, never as a live document handle.
+#[derive(Clone, Debug)]
+pub enum GenerationKind {
+    /// Pass 1: a single neutral character reference on a flat key.
+    Anchor,
+    /// Pass 2: an idle-animation sheet, image-to-image from `reference`.
+    IdleAnimation {
+        /// The anchor image to match, as owned decoded RGBA8.
+        reference: ReferenceImage,
+        /// The clip name the result should carry (e.g. `"idle"`) — content.
+        animation_id: String,
+        /// The sheet layout to request and slice (e.g. 4 columns by 2 rows).
+        grid: Grid,
+        /// The playback rate for the resulting clip.
+        fps: u16,
+    },
+}
+
+/// A decoded reference image handed to a provider for image-to-image (bible 13.6:
+/// owned bytes, never a live document handle).
+#[derive(Clone, Debug)]
+pub struct ReferenceImage {
+    /// Width in pixels.
+    pub width: u32,
+    /// Height in pixels.
+    pub height: u32,
+    /// Bytes per row (`>= width * 4`).
+    pub stride: u32,
+    /// Straight-alpha RGBA8 bytes.
+    pub rgba: Vec<u8>,
+}
+
+/// A sheet layout: a grid of equal cells packed into one image, read row-major.
+#[derive(Copy, Clone, PartialEq, Eq, Debug)]
+pub struct Grid {
+    /// Number of columns.
+    pub cols: u32,
+    /// Number of rows.
+    pub rows: u32,
+}
+
+impl Grid {
+    /// The total number of cells (frames) in the grid.
+    pub fn cell_count(self) -> u32 {
+        self.cols * self.rows
+    }
 }
 
 /// A notification a running job emits toward the UI lane. The shell maps these onto
@@ -128,8 +181,8 @@ impl JobManager {
                 result = provider.generate(&input, cancel.clone()) => result,
             };
             match outcome {
-                Ok(asset) => {
-                    results.put(id, asset);
+                Ok(result) => {
+                    results.put(id, result);
                     let _ = out.send(JobMsg::Completed { job: id });
                 }
                 Err(ProviderError::Cancelled) => {
@@ -174,7 +227,7 @@ mod tests {
     use std::sync::mpsc::{Receiver, TryRecvError};
     use std::time::Duration;
 
-    use crate::generated::{GeneratedAsset, GenerationProvenance};
+    use crate::generated::{GeneratedAsset, GeneratedResult, GenerationProvenance};
     use crate::provider::{GenerateFuture, ProviderCapability, ProviderId};
 
     fn input() -> GenerationJobInput {
@@ -183,6 +236,7 @@ mod tests {
             seed: 1,
             size: (2, 2),
             context: GenerationContext::NewAsset,
+            kind: GenerationKind::Anchor,
         }
     }
 
@@ -211,7 +265,7 @@ mod tests {
         fn generate<'a>(&'a self, _input: &'a GenerationJobInput, cancel: CancellationToken) -> GenerateFuture<'a> {
             match self.behaviour {
                 Behaviour::Ok => Box::pin(async {
-                    Ok(GeneratedAsset {
+                    Ok(GeneratedResult::Sprite(GeneratedAsset {
                         width: 1,
                         height: 1,
                         stride: 4,
@@ -223,7 +277,7 @@ mod tests {
                             model: "fake".to_owned(),
                             created_unix_ms: 0,
                         },
-                    })
+                    }))
                 }),
                 Behaviour::Fail => Box::pin(async { Err(ProviderError::Unavailable("down".to_owned())) }),
                 Behaviour::Stall => Box::pin(async move {

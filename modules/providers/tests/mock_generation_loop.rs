@@ -13,7 +13,7 @@ use std::time::Duration;
 
 use pixhaus_core::{ApplyGeneratedAsset, Document, composite_sprite};
 use pixhaus_mod_providers::MockProvider;
-use pixhaus_services::job::{GenerationContext, GenerationJobInput, JobManager, JobMsg};
+use pixhaus_services::job::{GenerationContext, GenerationJobInput, GenerationKind, JobManager, JobMsg};
 use pixhaus_services::provider::{ProviderCapability, ProviderRegistry};
 use pixhaus_services::{History, ResultStore};
 
@@ -45,6 +45,7 @@ async fn prompt_to_mock_result_to_command_to_undo() {
         seed: 99,
         size: (16, 16),
         context: GenerationContext::NewAsset,
+        kind: GenerationKind::Anchor,
     };
     jobs.submit(provider, input, results.clone());
 

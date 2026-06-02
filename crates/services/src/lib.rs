@@ -28,9 +28,9 @@ pub mod result_store;
 pub mod transaction;
 
 pub use error::ServiceError;
-pub use generated::{GeneratedAsset, GenerationProvenance};
+pub use generated::{GeneratedAnimation, GeneratedAsset, GeneratedFrame, GeneratedResult, GenerationProvenance, ResultKind};
 pub use history::History;
-pub use job::{GenerationContext, GenerationJobInput, JobId, JobManager, JobMsg, JobStatus};
+pub use job::{GenerationContext, GenerationJobInput, GenerationKind, Grid, JobId, JobManager, JobMsg, JobStatus, ReferenceImage};
 pub use provider::{GenerateFuture, Provider, ProviderCapability, ProviderError, ProviderId, ProviderRegistry};
 pub use result_store::ResultStore;
 pub use transaction::Transaction;

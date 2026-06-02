@@ -2,7 +2,7 @@
 //!
 //! The app asks the [`ProviderRegistry`] for a *capability* ("who can generate a
 //! sprite from text?"), never for a named provider (bible 14.2). A [`Provider`]
-//! receives immutable input and returns a [`GeneratedAsset`] — it never touches the
+//! receives immutable input and returns a [`GeneratedResult`] — it never touches the
 //! live document, undo stack, or egui context (bible 13.6).
 //!
 //! `generate` returns a boxed future rather than using `async fn` in the trait, so
@@ -15,7 +15,7 @@ use std::sync::Arc;
 use thiserror::Error;
 use tokio_util::sync::CancellationToken;
 
-use crate::generated::GeneratedAsset;
+use crate::generated::GeneratedResult;
 use crate::job::GenerationJobInput;
 
 /// What a provider can do. The app queries by capability, not by name.
@@ -23,6 +23,10 @@ use crate::job::GenerationJobInput;
 pub enum ProviderCapability {
     /// Generate a sprite image from a text prompt.
     TextToSprite,
+    /// Generate a single neutral character reference (an anchor) on a flat key.
+    GenerateAnchor,
+    /// Generate an idle-animation sheet, conditioned on an anchor reference image.
+    GenerateIdleAnimation,
 }
 
 /// A provider's stable id. A `String`, not `&'static str`, because real providers
@@ -30,8 +34,8 @@ pub enum ProviderCapability {
 #[derive(Clone, PartialEq, Eq, Hash, Debug)]
 pub struct ProviderId(pub String);
 
-/// A future that resolves to a generated asset or a provider error.
-pub type GenerateFuture<'a> = Pin<Box<dyn Future<Output = Result<GeneratedAsset, ProviderError>> + Send + 'a>>;
+/// A future that resolves to a generated result (still or animation) or an error.
+pub type GenerateFuture<'a> = Pin<Box<dyn Future<Output = Result<GeneratedResult, ProviderError>> + Send + 'a>>;
 
 /// A registered AI/compute backend.
 pub trait Provider: Send + Sync {
@@ -45,7 +49,7 @@ pub trait Provider: Send + Sync {
     fn capabilities(&self) -> &[ProviderCapability];
 
     /// Runs one generation request. Receives immutable input and a cancellation
-    /// token; returns a generated asset or an error. Never receives the document.
+    /// token; returns a generated result or an error. Never receives the document.
     fn generate<'a>(&'a self, input: &'a GenerationJobInput, cancel: CancellationToken) -> GenerateFuture<'a>;
 }
 
@@ -101,7 +105,7 @@ pub enum ProviderError {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::generated::{GeneratedAsset, GenerationProvenance};
+    use crate::generated::{GeneratedAsset, GeneratedResult, GenerationProvenance};
 
     struct Fake;
 
@@ -117,7 +121,7 @@ mod tests {
         }
         fn generate<'a>(&'a self, _input: &'a GenerationJobInput, _cancel: CancellationToken) -> GenerateFuture<'a> {
             Box::pin(async {
-                Ok(GeneratedAsset {
+                Ok(GeneratedResult::Sprite(GeneratedAsset {
                     width: 1,
                     height: 1,
                     stride: 4,
@@ -129,7 +133,7 @@ mod tests {
                         model: "fake".to_owned(),
                         created_unix_ms: 0,
                     },
-                })
+                }))
             })
         }
     }

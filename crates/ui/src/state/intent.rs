@@ -8,7 +8,7 @@
 //! bus and the borrow guarantee has no hole (spec bible 21.1).
 
 use pixhaus_core::commands::ApplyGeneratedAsset;
-use pixhaus_services::{GenerationContext, GenerationJobInput, ProviderCapability, i18n};
+use pixhaus_services::{GenerationContext, GenerationJobInput, GenerationKind, ProviderCapability, i18n};
 
 use crate::contrib_api::ids::{ActionId, PanelId, ToolId, WorkspaceId};
 use crate::state::Host;
@@ -238,6 +238,7 @@ fn submit_generate_job(host: &mut Host, prompt: String) {
         seed,
         size: pixhaus_core::DEFAULT_CANVAS_SIZE,
         context: GenerationContext::NewAsset,
+        kind: GenerationKind::Anchor,
     };
     let results = host.edit.results.clone();
     host.edit.jobs.submit(provider, input, results);
