@@ -30,6 +30,14 @@ tokio-util = { version = "0.7", features = ["rt"] }
 parking_lot = "0.12"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+# Logging sinks the app wires up (app/src/diagnostics.rs): the rolling-file
+# appender + its non-blocking writer guard, and the `log`->`tracing` bridge that
+# captures wgpu/winit/naga records. Consumed by `app` only.
+tracing-appender = "0.2"
+tracing-log = "0.2"
+# Platform-standard app directories (config/data/cache/log/autosave). Consumed by
+# `crates/platform` (the dirs capability); MIT/Apache, clears the deny lock.
+directories = "6"
 # egui / wgpu native UI stack (lockstep — pinned together). wgpu is pinned
 # EXACTLY: eframe 0.34 builds against wgpu 29.0.1, and two wgpu versions in the
 # tree are incompatible types. See pixhaus-eframe / pixhaus-egui-wgpu.

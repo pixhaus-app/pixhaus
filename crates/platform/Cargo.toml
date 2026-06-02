@@ -8,5 +8,15 @@ license.workspace = true
 repository.workspace = true
 homepage.workspace = true
 
+[dependencies]
+# App-directory resolution (config/data/cache/log/autosave). `directories` computes
+# the paths; this crate creates the leaf dirs it owns.
+directories.workspace = true
+thiserror.workspace = true
+
+[dev-dependencies]
+# A throwaway dir for the create-failure test, so it never touches a real app dir.
+tempfile.workspace = true
+
 [lints]
 workspace = true
