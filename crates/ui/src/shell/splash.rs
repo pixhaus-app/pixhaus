@@ -1,6 +1,7 @@
-//! Startup splash overlay: a full-screen `egui::Area` showing the brand logo for a
-//! short beat at launch, gated on `UiState.splash == Active`. It auto-dismisses after
-//! a fixed beat (see `SPLASH_SECONDS`) and is skippable by a click or Escape.
+//! Startup splash: a full-window `CentralPanel` showing the brand logo at launch,
+//! gated on `UiState.splash == Active`. While active the runtime draws the splash
+//! ALONE (no regions), so it is the first and only thing on screen until it dismisses
+//! - after a fixed beat (see `SPLASH_SECONDS`) or on a click or Escape.
 //!
 //! Dismissal routes through the intent queue ([`Intent::DismissSplash`]), never a
 //! mid-frame mutation. The overlay requests a repaint every active frame so the timer
@@ -12,7 +13,7 @@ use crate::state::ui_state::SplashPhase;
 use crate::theme::tokens::SurfaceTier;
 
 /// How long the splash shows before it auto-dismisses, in seconds.
-const SPLASH_SECONDS: f64 = 1.8;
+const SPLASH_SECONDS: f64 = 5.0;
 
 /// The widest the logo may render, in points, capped to a share of the viewport so it
 /// never overflows on a small window. NEAREST keeps the pixel art crisp.
@@ -43,28 +44,20 @@ pub fn overlay(host: &mut Host, ui: &mut egui::Ui) {
     // Keep the loop awake so the timer advances without input.
     ui.ctx().request_repaint();
 
-    let theme = &host.theme;
-    let content = ui.ctx().content_rect();
-    let fill = theme.surface(SurfaceTier::AppFrame);
-    let logo_width = LOGO_MAX_WIDTH.min(content.width() * 0.6);
+    // The runtime draws the splash alone (no regions) while active, so a CentralPanel
+    // filling the window is the reliable full cover from the first frame - unlike an
+    // Area sized from `content_rect`, which is not yet the full surface on frame one.
+    let fill = host.theme.surface(SurfaceTier::AppFrame);
+    let logo_width = LOGO_MAX_WIDTH.min(ui.available_width() * 0.6);
 
-    egui::Area::new(egui::Id::new("pixhaus.splash"))
-        .order(egui::Order::Foreground)
-        .fixed_pos(content.min)
-        .show(ui.ctx(), |ui| {
-            // A frame the size of the whole content rect, filled with the app-frame
-            // surface, covers the regions beneath while the splash is active.
-            let frame = egui::Frame::new().fill(fill);
-            frame.show(ui, |ui| {
-                ui.set_min_size(content.size());
-                ui.centered_and_justified(|ui| {
-                    ui.add(
-                        egui::Image::new(crate::brand::LOGO)
-                            .texture_options(egui::TextureOptions::NEAREST)
-                            .max_width(logo_width)
-                            .maintain_aspect_ratio(true),
-                    );
-                });
-            });
+    egui::CentralPanel::default().frame(egui::Frame::new().fill(fill)).show_inside(ui, |ui| {
+        ui.centered_and_justified(|ui| {
+            ui.add(
+                egui::Image::new(crate::brand::LOGO)
+                    .texture_options(egui::TextureOptions::NEAREST)
+                    .max_width(logo_width)
+                    .maintain_aspect_ratio(true),
+            );
         });
+    });
 }

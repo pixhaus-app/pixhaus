@@ -10,6 +10,7 @@
 use crate::shell::{about, command_palette, regions, shortcuts, splash};
 use crate::state::Host;
 use crate::state::intent::apply_intent;
+use crate::state::ui_state::SplashPhase;
 
 /// The shell runtime. Owns the per-frame region composition and intent drain.
 pub struct Shell;
@@ -21,15 +22,22 @@ impl Shell {
     /// `CentralPanel` (canvas stage) last, the palette `Area` after that. The
     /// status bar is declared before the tray so it pins to the lower edge.
     pub fn run(host: &mut Host, ui: &mut egui::Ui) {
-        // Clear last frame's intents, then collect this frame's shortcut intents
-        // before any region runs, so a keystroke and a click land in push order.
+        // Clear last frame's intents before anything pushes this frame's.
         host.intents.0.clear();
-        shortcuts::collect(ui.ctx(), &host.registries, &mut host.intents);
 
-        // Splash first: its full-screen Foreground Area covers the regions while
-        // active, but the regions still run beneath it on the uniform path (no early
-        // return) so layout settles and the first post-splash frame is ready.
-        splash::overlay(host, ui);
+        // While the splash is active it OWNS the frame: draw only the splash (a full
+        // window-covering CentralPanel) and skip every region, so the editor never
+        // flashes underneath before the splash. Timing and the click/Escape skip route
+        // through the intent queue, drained here before returning.
+        if matches!(host.state.ui.splash, SplashPhase::Active { .. }) {
+            splash::overlay(host, ui);
+            drain_intents(host, ui.ctx());
+            return;
+        }
+
+        // Collect this frame's shortcut intents before any region runs, so a keystroke
+        // and a click land in push order.
+        shortcuts::collect(ui.ctx(), &host.registries, &mut host.intents);
 
         // egui panel order: outer panels first, CentralPanel LAST.
         regions::top_bar::show(host, ui);
@@ -42,12 +50,15 @@ impl Shell {
         command_palette::overlay(host, ui); // Area on top if modal == CommandPalette
         about::overlay(host, ui); // Area on top if modal == About
 
-        // All region borrows have dropped. Take the queued intents out so the
-        // `&mut host.intents` borrow ends before `apply_intent(host, ...)` reborrows
-        // the host, then apply them in push order.
-        let intents = std::mem::take(&mut host.intents.0);
-        for intent in intents {
-            apply_intent(host, intent, ui.ctx());
-        }
+        drain_intents(host, ui.ctx());
+    }
+}
+
+/// Apply this frame's queued intents in push order. Taking the vec out first ends the
+/// `&mut host.intents` borrow before `apply_intent` reborrows the whole host.
+fn drain_intents(host: &mut Host, ctx: &egui::Context) {
+    let intents = std::mem::take(&mut host.intents.0);
+    for intent in intents {
+        apply_intent(host, intent, ctx);
     }
 }
