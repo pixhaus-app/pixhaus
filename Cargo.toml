@@ -52,6 +52,14 @@ insta = "1"
 tempfile = "3"
 mockall = "0.13"
 image-compare = "0.4"
+# Headless UI render harness — rasterizes an egui frame to an image off-screen so we
+# can snapshot the shell for visual tuning. egui-family, MIT, pinned in lockstep with
+# egui 0.34. The `wgpu` feature installs the off-screen WgpuTestRenderer that
+# `Harness::render` needs. See app/examples/render_workspaces.rs.
+egui_kittest = { version = "0.34", features = ["wgpu"] }
+# `Harness::render` returns an `image::RgbaImage`; we need the crate in scope to save
+# it as PNG. Pinned to egui_kittest 0.34's image dependency (0.25).
+image = { version = "0.25", default-features = false, features = ["png"] }
 
 [workspace.lints.rust]
 unsafe_code = "forbid"

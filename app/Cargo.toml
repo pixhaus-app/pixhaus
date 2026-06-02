@@ -22,5 +22,9 @@ pixhaus-mod-tiles = { path = "../modules/tiles" }
 pixhaus-mod-generation = { path = "../modules/generation" }
 pixhaus-mod-export = { path = "../modules/export" }
 
+[dev-dependencies]
+egui_kittest.workspace = true
+image.workspace = true
+
 [lints]
 workspace = true
