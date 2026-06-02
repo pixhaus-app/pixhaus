@@ -4,6 +4,14 @@
 //! runtime, boots the window, builds the [`pixhaus_ui::state::Host`], registers the
 //! shell menus and the capability modules, and runs the egui loop; the canvas is
 //! drawn by `render` through the egui-wgpu paint callback installed at startup.
+//!
+//! It also owns the one tracing subscriber ([`diagnostics`]): libraries emit, the
+//! binary configures. The subscriber is built before the runtime so startup itself
+//! is logged.
+
+#![cfg_attr(test, allow(clippy::unwrap_used, clippy::expect_used, clippy::panic))]
+
+mod diagnostics;
 
 use std::sync::Arc;
 
@@ -38,6 +46,9 @@ fn build_host(ctx: &egui::Context) -> Host {
     pixhaus_mod_generation::GenerationModule.register(&mut host.registrar());
     pixhaus_mod_export::ExportModule.register(&mut host.registrar());
 
+    // The count is the five module registrations above; bump it when the list grows.
+    tracing::info!(modules = 5, "registered capability modules");
+
     host
 }
 
@@ -70,6 +81,10 @@ impl PixhausApp {
         // Install the canvas renderer into egui-wgpu's resource store before the
         // first paint; the paint callback retrieves it from there each frame.
         if let Some(render_state) = cc.wgpu_render_state.as_ref() {
+            // The render state only exists here, not in main — so the chosen backend
+            // and adapter are logged at the spot they become known.
+            let info = render_state.adapter.get_info();
+            tracing::info!(backend = ?info.backend, adapter = %info.name, "renderer initialized");
             pixhaus_ui::install_canvas_renderer(render_state);
         }
         let host = build_host(&cc.egui_ctx);
@@ -88,14 +103,22 @@ impl eframe::App for PixhausApp {
 }
 
 fn main() -> anyhow::Result<()> {
-    tracing_subscriber::fmt()
-        .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
-        .init();
+    // Order matters: resolve the log dir, install the subscriber, then log startup —
+    // so the first events land in the file. The guard MUST outlive all of main; on
+    // its drop the non-blocking file writer flushes, so a `let _ =` would lose the tail.
+    let log_dir = pixhaus_platform::log_dir().context("failed to resolve the log directory")?;
+    let _guard = diagnostics::init_tracing(&log_dir);
+    tracing::info!(
+        version = env!("CARGO_PKG_VERSION"),
+        os = std::env::consts::OS,
+        arch = std::env::consts::ARCH,
+        "Pixhaus starting"
+    );
 
     // The binary owns the single tokio runtime; entering it makes tokio::spawn
     // available to the egui loop for the background work the editor will grow.
     let runtime = tokio::runtime::Runtime::new().context("failed to start the tokio runtime")?;
-    let _guard = runtime.enter();
+    let _rt_guard = runtime.enter();
 
     let mut viewport = egui::ViewportBuilder::default()
         .with_title("Pixhaus")
@@ -113,5 +136,8 @@ fn main() -> anyhow::Result<()> {
 
     eframe::run_native("pixhaus", options, Box::new(|cc| Ok(Box::new(PixhausApp::new(cc)))))?;
 
+    // run_native returns when the window closes; _guard drops just after this, flushing
+    // the file writer, so the shutdown line still reaches the log.
+    tracing::info!("Pixhaus shutting down");
     Ok(())
 }
