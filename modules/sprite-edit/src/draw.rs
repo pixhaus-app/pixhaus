@@ -120,7 +120,6 @@ impl Panel for LayersPanel {
 
     fn ui(&self, ui: &mut egui::Ui, scope: &mut PanelScope<'_>) {
         let theme = scope.ctx.theme;
-        widgets::section_header(ui, theme, icons::LAYERS, "Layers");
         if ui.button(format!("{} New Layer", icons::ADD)).clicked() {
             scope.ctx.intents.push(Intent::RunAction(LAYER_NEW));
         }
@@ -151,7 +150,13 @@ impl Panel for LayersPanel {
                     });
                 });
                 let mut opacity = 255.0_f32;
-                ui.add(egui::Slider::new(&mut opacity, 0.0..=255.0).text("Opacity"));
+                // The label rides in its own row at secondary color rather than as the
+                // slider's `.text(...)`, which inherits the active-widget accent ink
+                // inside a selected row and leaks violet onto a plain label.
+                ui.horizontal(|ui| {
+                    ui.label(egui::RichText::new("Opacity").size(theme.type_scale.label).color(theme.roles.text_secondary));
+                    ui.add(egui::Slider::new(&mut opacity, 0.0..=255.0));
+                });
             });
         }
     }
@@ -177,7 +182,6 @@ impl Panel for SpritesPanel {
 
     fn ui(&self, ui: &mut egui::Ui, scope: &mut PanelScope<'_>) {
         let theme = scope.ctx.theme;
-        widgets::section_header(ui, theme, icons::SPRITES, "Sprites");
         widgets::mock_thumbnail_grid(ui, theme, 6);
         if ui.button(format!("{} New Sprite", icons::ADD)).clicked() {
             scope.ctx.intents.push(Intent::RunAction(SPRITE_NEW));
@@ -205,7 +209,6 @@ impl Panel for PalettePanel {
 
     fn ui(&self, ui: &mut egui::Ui, scope: &mut PanelScope<'_>) {
         let theme = scope.ctx.theme;
-        widgets::section_header(ui, theme, icons::PALETTE, "Palette");
         ui.label("Bit");
         swatch_grid(ui, theme);
         ui.label(format!("FG {} BG", icons::CARET_RIGHT));
@@ -268,7 +271,6 @@ impl Panel for SelectionActionsPanel {
 
     fn ui(&self, ui: &mut egui::Ui, scope: &mut PanelScope<'_>) {
         let theme = scope.ctx.theme;
-        widgets::section_header(ui, theme, icons::SELECT, "Selection Actions");
         ui.horizontal_wrapped(|ui| {
             for (label, action) in [
                 ("Cut", SEL_CUT),
@@ -315,11 +317,6 @@ impl Panel for AiAssistantPanel {
     }
 
     fn ui(&self, ui: &mut egui::Ui, scope: &mut PanelScope<'_>) {
-        let theme = scope.ctx.theme;
-        ui.horizontal(|ui| {
-            ui.label(egui::RichText::new(icons::SPARKLE.to_string()).color(theme.accent.ai));
-            ui.label(egui::RichText::new("AI Assistant").color(theme.roles.text_primary).strong());
-        });
         let actions = [
             ("Fill selection", AI_FILL),
             ("Clean up", AI_CLEANUP),

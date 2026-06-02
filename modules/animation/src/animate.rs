@@ -136,7 +136,6 @@ impl Panel for ClipPropertiesPanel {
 
     fn ui(&self, ui: &mut egui::Ui, scope: &mut PanelScope<'_>) {
         let theme = scope.ctx.theme;
-        widgets::section_header(ui, theme, icons::TIMELINE, "Clip Properties");
         widgets::mock_row(ui, theme, "Clip: jump");
         widgets::mock_row(ui, theme, "Frames 8-15");
         widgets::mock_row(ui, theme, "FPS 12");
@@ -170,11 +169,6 @@ impl Panel for AiAnimationAssistantPanel {
     }
 
     fn ui(&self, ui: &mut egui::Ui, scope: &mut PanelScope<'_>) {
-        let theme = scope.ctx.theme;
-        ui.horizontal(|ui| {
-            ui.label(egui::RichText::new(icons::SPARKLE.to_string()).color(theme.accent.ai));
-            ui.label(egui::RichText::new("AI Animation Assistant").color(theme.roles.text_primary).strong());
-        });
         let actions = [
             ("In-between frames", ANIM_INBETWEEN),
             ("Extend animation", ANIM_EXTEND),

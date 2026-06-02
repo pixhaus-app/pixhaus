@@ -20,8 +20,15 @@ pub fn show(host: &mut Host, ui: &mut egui::Ui) {
         let painter = ui.painter().clone();
 
         // 1. Stage backdrop already filled by the frame. Compute the artboard.
+        //    A 64px sprite at 100% zoom is a speck in a large stage, so we derive a
+        //    display scale that fills ~68% of the stage height before applying the
+        //    user zoom. `fit` stays integer (one sprite pixel maps to N device pixels)
+        //    and floored to >= 1 so the board never collapses. `state.ui.zoom` rides
+        //    on top, keeping the HUD/status "100%" honest.
         let sprite_px = egui::vec2(64.0, 64.0);
-        let scaled = sprite_px * state.ui.zoom;
+        let fit = (stage_rect.height() * 0.68 / sprite_px.y).max(1.0).floor();
+        let display_scale = fit * state.ui.zoom;
+        let scaled = sprite_px * display_scale;
         let artboard = egui::Rect::from_center_size(stage_rect.center() + state.ui.pan, scaled);
 
         // 2. Manual drop shadow: an offset translucent dark rect behind the board.
@@ -40,10 +47,20 @@ pub fn show(host: &mut Host, ui: &mut egui::Ui) {
         //    off its `Response` - see the canvas-input routing in pixhaus-egui.
         ui.painter().add(egui_wgpu::Callback::new_paint_callback(artboard, CanvasCallback));
 
-        // 5. Grid lines over the artboard (minor 8px / major 16px per GridMode).
-        paint_grid(&painter, artboard, state.ui.zoom, state.ui.grid, theme);
+        // 5. Grid lines over the artboard, one device step per sprite pixel at the
+        //    enlarged display scale (so the grid tracks the board, not raw zoom).
+        paint_grid(&painter, artboard, display_scale, state.ui.grid, theme);
 
-        // 6. Floating HUD via the central Painter, at the stage's lower-left.
+        // 6. A hairline frame around the board so its edge reads against the stage
+        //    (the drop shadow is already painted behind it in step 2).
+        painter.rect_stroke(
+            artboard,
+            egui::CornerRadius::ZERO,
+            egui::Stroke::new(1.0, theme.roles.border),
+            egui::StrokeKind::Outside,
+        );
+
+        // 7. Floating HUD via the central Painter, at the stage's lower-left.
         paint_hud(&painter, stage_rect, state.ui.zoom, state.ui.grid, theme);
     });
 }
@@ -69,14 +86,14 @@ fn paint_checkerboard(painter: &egui::Painter, board: egui::Rect, theme: &Theme)
     }
 }
 
-fn paint_grid(painter: &egui::Painter, board: egui::Rect, zoom: f32, grid: GridMode, theme: &Theme) {
+fn paint_grid(painter: &egui::Painter, board: egui::Rect, display_scale: f32, grid: GridMode, theme: &Theme) {
     if matches!(grid, GridMode::Off) {
         return;
     }
-    // Mock chrome: one device step per sprite pixel at the current zoom, clamped to
-    // 8px so an extreme zoom-out never produces a sub-pixel step (a tight loop that
-    // would stall). The real grid spacing follows the document once core lands.
-    let step = zoom.max(8.0);
+    // Mock chrome: one device step per sprite pixel at the current display scale,
+    // clamped to 8px so an extreme zoom-out never produces a sub-pixel step (a tight
+    // loop that would stall). The real grid spacing follows the document once core lands.
+    let step = display_scale.max(8.0);
     let stroke = egui::Stroke::new(1.0, theme.roles.border);
     let mut x = board.min.x;
     while x <= board.max.x {

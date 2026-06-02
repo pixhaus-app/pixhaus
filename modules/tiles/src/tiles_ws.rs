@@ -131,7 +131,6 @@ impl Panel for TilesetPanel {
 
     fn ui(&self, ui: &mut egui::Ui, scope: &mut PanelScope<'_>) {
         let theme = scope.ctx.theme;
-        widgets::section_header(ui, theme, icons::TILESET, "Tileset");
         tile_grid(ui, theme, 4, 4);
         if ui.button(format!("{} New Tile", icons::ADD)).clicked() {
             scope.ctx.intents.push(Intent::RunAction(TILE_NEW));
@@ -185,9 +184,7 @@ impl Panel for RuleTypePanel {
         }
     }
 
-    fn ui(&self, ui: &mut egui::Ui, scope: &mut PanelScope<'_>) {
-        let theme = scope.ctx.theme;
-        widgets::section_header(ui, theme, icons::GRID, "Rule Type");
+    fn ui(&self, ui: &mut egui::Ui, _scope: &mut PanelScope<'_>) {
         // Throwaway local selection - mock radios that drive nothing.
         let mut rule = 0_usize;
         ui.radio_value(&mut rule, 0, "Single");
@@ -214,9 +211,7 @@ impl Panel for MaterialPanel {
         }
     }
 
-    fn ui(&self, ui: &mut egui::Ui, scope: &mut PanelScope<'_>) {
-        let theme = scope.ctx.theme;
-        widgets::section_header(ui, theme, icons::PALETTE, "Material");
+    fn ui(&self, ui: &mut egui::Ui, _scope: &mut PanelScope<'_>) {
         ui.horizontal_wrapped(|ui| {
             // Inert chips; "Grass" reads as selected.
             for (i, chip) in ["Grass", "Stone", "Water", "Sand"].iter().enumerate() {
@@ -247,7 +242,6 @@ impl Panel for SeamQaPanel {
 
     fn ui(&self, ui: &mut egui::Ui, scope: &mut PanelScope<'_>) {
         let theme = scope.ctx.theme;
-        widgets::section_header(ui, theme, icons::CHECK, "Seam QA");
         seam_row(ui, theme, true, "Top");
         seam_row(ui, theme, true, "Left");
         seam_row(ui, theme, false, "Bottom seam");
@@ -288,11 +282,6 @@ impl Panel for AiTileAssistantPanel {
     }
 
     fn ui(&self, ui: &mut egui::Ui, scope: &mut PanelScope<'_>) {
-        let theme = scope.ctx.theme;
-        ui.horizontal(|ui| {
-            ui.label(egui::RichText::new(icons::SPARKLE.to_string()).color(theme.accent.ai));
-            ui.label(egui::RichText::new("AI Tile Assistant").color(theme.roles.text_primary).strong());
-        });
         let actions = [
             ("Make seamless", TILE_MAKE_SEAMLESS),
             ("Generate variations", TILE_VARIATIONS),

@@ -119,7 +119,6 @@ impl Panel for PromptPanel {
 
     fn ui(&self, ui: &mut egui::Ui, scope: &mut PanelScope<'_>) {
         let theme = scope.ctx.theme;
-        widgets::section_header(ui, theme, icons::SPARKLE, "Prompt");
 
         // The carve-out: TextEdit needs a live &mut String in-frame. scope.scratch
         // is this panel's own draft buffer - the single, disjoint exception to the
@@ -170,7 +169,6 @@ impl Panel for RecipePanel {
 
     fn ui(&self, ui: &mut egui::Ui, scope: &mut PanelScope<'_>) {
         let theme = scope.ctx.theme;
-        widgets::section_header(ui, theme, icons::HISTORY, "Recipe");
         // (name, built_in): built-ins are locked; user recipes are editable.
         for (name, built_in) in [("Hero sprite", true), ("Top-down tile", true), ("My walk cycle", false)] {
             recipe_row(ui, theme, name, built_in);
@@ -198,7 +196,6 @@ impl Panel for StructurePanel {
 
     fn ui(&self, ui: &mut egui::Ui, scope: &mut PanelScope<'_>) {
         let theme = scope.ctx.theme;
-        widgets::section_header(ui, theme, icons::ASSETS, "Structure");
         widgets::mock_thumbnail_grid(ui, theme, 4);
     }
 }
@@ -223,7 +220,6 @@ impl Panel for StylePanel {
 
     fn ui(&self, ui: &mut egui::Ui, scope: &mut PanelScope<'_>) {
         let theme = scope.ctx.theme;
-        widgets::section_header(ui, theme, icons::PALETTE, "Style");
         widgets::mock_thumbnail_grid(ui, theme, 4);
     }
 }
@@ -273,9 +269,7 @@ impl Panel for PaletteBehaviorPanel {
         }
     }
 
-    fn ui(&self, ui: &mut egui::Ui, scope: &mut PanelScope<'_>) {
-        let theme = scope.ctx.theme;
-        widgets::section_header(ui, theme, icons::PALETTE, "Palette Behavior");
+    fn ui(&self, ui: &mut egui::Ui, _scope: &mut PanelScope<'_>) {
         // (label, default-checked). Inert locals; they reset each frame.
         for (label, default) in [
             ("Use current palette only", true),
@@ -311,7 +305,6 @@ impl Panel for AdvancedSettingsPanel {
 
     fn ui(&self, ui: &mut egui::Ui, scope: &mut PanelScope<'_>) {
         let theme = scope.ctx.theme;
-        widgets::section_header(ui, theme, icons::SETTINGS, "Advanced Settings");
         // Inert mock fields; the values reset each frame (drive nothing this round).
         ui.horizontal(|ui| {
             ui.label("Seed");

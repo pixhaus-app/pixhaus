@@ -7,8 +7,8 @@ use egui::Color32;
 
 use super::tokens::{AccentTokens, Elevation, Radii, Roles, Spacing, SurfaceTier, Surfaces, Theme, ThemeVariant, TypeScale};
 
-/// Default accent seed: a warm violet (~#7c6cef).
-pub const DEFAULT_ACCENT_SEED: Color32 = Color32::from_rgb(0x7c, 0x6c, 0xef);
+/// Default accent seed: a warm violet (~#7b68f0).
+pub const DEFAULT_ACCENT_SEED: Color32 = Color32::from_rgb(0x7b, 0x68, 0xf0);
 
 impl Theme {
     /// The tuned dark theme - the only finished variant this round.
@@ -37,9 +37,9 @@ impl Theme {
         let elevation = Elevation {
             raised: egui::epaint::Shadow {
                 offset: [0, 2],
-                blur: 8,
+                blur: 10,
                 spread: 0,
-                color: Color32::from_black_alpha(96),
+                color: Color32::from_black_alpha(110),
             },
             overlay: egui::epaint::Shadow {
                 offset: [0, 6],
@@ -51,18 +51,21 @@ impl Theme {
 
         let (surfaces, roles) = match v {
             ThemeVariant::Dark => (
+                // Slightly cool near-black neutrals (B a few levels above R), tuned to
+                // the v2 references: a tight dark chrome band, the stage lifted off
+                // black to sit just above app_frame and below panel, hairline borders.
                 Surfaces {
-                    app_frame: Color32::from_rgb(0x12, 0x11, 0x16),
-                    panel: Color32::from_rgb(0x1b, 0x1a, 0x20),
-                    elevated: Color32::from_rgb(0x24, 0x22, 0x2b),
-                    stage: Color32::from_rgb(0x0d, 0x0c, 0x10),
-                    inset: Color32::from_rgb(0x15, 0x14, 0x19),
+                    app_frame: Color32::from_rgb(0x14, 0x17, 0x1c),
+                    panel: Color32::from_rgb(0x19, 0x1d, 0x22),
+                    elevated: Color32::from_rgb(0x1f, 0x22, 0x28),
+                    stage: Color32::from_rgb(0x14, 0x18, 0x1d),
+                    inset: Color32::from_rgb(0x0f, 0x12, 0x16),
                 },
                 Roles {
-                    border: Color32::from_rgb(0x33, 0x31, 0x3c),
-                    text_primary: Color32::from_rgb(0xe6, 0xe3, 0xef),
-                    text_secondary: Color32::from_rgb(0xa8, 0xa4, 0xb4),
-                    text_disabled: Color32::from_rgb(0x6c, 0x69, 0x77),
+                    border: Color32::from_rgb(0x2c, 0x30, 0x37),
+                    text_primary: Color32::from_rgb(0xec, 0xed, 0xf0),
+                    text_secondary: Color32::from_rgb(0x9a, 0xa0, 0xaa),
+                    text_disabled: Color32::from_rgb(0x6e, 0x71, 0x77),
                     success: Color32::from_rgb(0x6f, 0xb5, 0x84),
                     warning: Color32::from_rgb(0xd1, 0xa8, 0x5f),
                     error: Color32::from_rgb(0xd1, 0x6f, 0x6f),
@@ -176,8 +179,11 @@ fn accent_from_seed(seed: Color32) -> AccentTokens {
         base: seed,
         hover: lighten(seed, 0.15),
         // Opaque stand-in for a low-alpha accent overlay over the dark panel: the
-        // seed darkened toward black, which the contrast test reads directly.
-        muted: darken(seed, 0.55),
+        // seed darkened toward black, which the contrast test reads directly. The
+        // 0.66 factor deepens it to the references' low-chroma muted violet (~#2a2352,
+        // the #2f2d51/#202060 family) rather than the lighter, more saturated wash a
+        // shallower darken produced.
+        muted: darken(seed, 0.66),
         // Pure white maximizes contrast on `base`. The default violet seed is
         // light enough that no foreground clears WCAG 4.5 against it (white tops
         // out near 4.0), so we take the achievable ceiling rather than the floor.
