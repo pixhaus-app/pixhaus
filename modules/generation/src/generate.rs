@@ -120,6 +120,14 @@ impl Panel for PromptPanel {
     fn ui(&self, ui: &mut egui::Ui, scope: &mut PanelScope<'_>) {
         let theme = scope.ctx.theme;
 
+        // A secondary-color prompt label so the composer reads as a labeled field,
+        // not a bare box - the references frame the prompt with structure.
+        ui.label(
+            egui::RichText::new("Describe your sprite")
+                .size(theme.type_scale.label)
+                .color(theme.roles.text_secondary),
+        );
+
         // The carve-out: TextEdit needs a live &mut String in-frame. scope.scratch
         // is this panel's own draft buffer - the single, disjoint exception to the
         // intents-only write channel. Never route real mutation through it.
@@ -127,11 +135,14 @@ impl Panel for PromptPanel {
             egui::TextEdit::multiline(scope.scratch)
                 .desired_rows(4)
                 .desired_width(f32::INFINITY)
-                .hint_text("Describe the sprite. Use {variable} chips."),
+                .hint_text("A knight idle pose, side view. Use {variable} chips."),
         );
 
-        // The {variable} chips: inert markers showing the recognized substitutions.
+        // The {variable} chips, led by a secondary-color caption so the accent chips
+        // read as insertable tokens rather than stray violet labels.
+        ui.add_space(theme.spacing.xs);
         ui.horizontal_wrapped(|ui| {
+            ui.label(egui::RichText::new("Variables").size(theme.type_scale.label).color(theme.roles.text_secondary));
             for chip in ["{subject}", "{style}", "{palette}", "{pose}"] {
                 let text = egui::RichText::new(chip).size(theme.type_scale.label).color(theme.accent.base);
                 let _ = ui.selectable_label(false, text);

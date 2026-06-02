@@ -14,9 +14,12 @@ use crate::theme::Theme;
 // casts cannot truncate or lose a sign here.
 #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
 pub fn card(ui: &mut egui::Ui, theme: &Theme, meta: &crate::contrib_api::PanelMeta, collapsed: bool, body: impl FnOnce(&mut egui::Ui)) -> egui::Response {
+    // Tighter vertical than horizontal inner margin: the references run dense, so
+    // cards get a little side breathing room but a trimmed top/bottom so rows stack
+    // closer without cramping the content against the border.
     let frame = egui::Frame {
         fill: theme.surfaces.elevated,
-        inner_margin: egui::Margin::same(theme.spacing.sm as i8),
+        inner_margin: egui::Margin::symmetric(theme.spacing.md as i8, theme.spacing.xs as i8),
         corner_radius: egui::CornerRadius::same(theme.radius.md as u8),
         shadow: theme.elevation.raised,
         stroke: egui::Stroke::new(1.0, theme.roles.border),

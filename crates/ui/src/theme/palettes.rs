@@ -55,11 +55,15 @@ impl Theme {
                 // the v2 references: a tight dark chrome band, the stage lifted off
                 // black to sit just above app_frame and below panel, hairline borders.
                 Surfaces {
-                    app_frame: Color32::from_rgb(0x14, 0x17, 0x1c),
+                    // app_frame dropped a notch deeper than the prior #14171c so the
+                    // elevated chrome strips (top bar, tool options, status bar) read
+                    // as distinct lit bands rather than sharing the frame's gray; the
+                    // stage still sits above the frame and below the panel.
+                    app_frame: Color32::from_rgb(0x0f, 0x13, 0x18),
                     panel: Color32::from_rgb(0x19, 0x1d, 0x22),
-                    elevated: Color32::from_rgb(0x1f, 0x22, 0x28),
+                    elevated: Color32::from_rgb(0x21, 0x25, 0x2c),
                     stage: Color32::from_rgb(0x14, 0x18, 0x1d),
-                    inset: Color32::from_rgb(0x0f, 0x12, 0x16),
+                    inset: Color32::from_rgb(0x0b, 0x0e, 0x12),
                 },
                 Roles {
                     border: Color32::from_rgb(0x2c, 0x30, 0x37),
@@ -250,6 +254,11 @@ fn mock_colors() -> MockColors {
             rgb(0xc9, 0xa2, 0x3a),
             rgb(0x9a, 0x58, 0xc0),
         ],
+        // The artboard checker pair: a cool mid-gray light cell over a one-step
+        // darker cell. Both sit well above the stage backdrop (~#14181d) so the
+        // board reads as a lit surface, with enough cell-to-cell delta that the
+        // transparency pattern is legible without shouting.
+        checker: [rgb(0x2e, 0x33, 0x3b), rgb(0x24, 0x28, 0x2f)],
     }
 }
 
@@ -299,6 +308,20 @@ mod tests {
         // app_frame is darkest; panel sits above it; elevated above that.
         assert!(luma(t.surfaces.app_frame) < luma(t.surfaces.panel), "app_frame must be darker than panel");
         assert!(luma(t.surfaces.panel) < luma(t.surfaces.elevated), "panel must be darker than elevated");
+    }
+
+    #[test]
+    fn dark_checker_reads_above_the_stage() {
+        // The artboard checker must sit clearly above the stage backdrop so the
+        // board reads as a lit surface, and the two cells must differ enough to
+        // show the transparency pattern. Both checked by luma delta.
+        let t = Theme::dark();
+        let stage = luma(t.surfaces.stage);
+        let light = luma(t.mock.checker[0]);
+        let dark = luma(t.mock.checker[1]);
+        assert!(light > dark, "checker light cell must be lighter than the dark cell");
+        assert!(dark > stage + 8.0, "checker must sit clearly above the stage backdrop");
+        assert!(light - dark > 4.0, "checker cells must differ enough to read");
     }
 
     #[test]
@@ -376,6 +399,7 @@ mod tests {
         assert_eq!(dark.mock.palette.len(), 24);
         assert_eq!(dark.mock.clips.len(), 5);
         assert_eq!(dark.mock.thumbnails.len(), 6);
+        assert_eq!(dark.mock.checker.len(), 2);
         // No mock color left at the default all-zero black.
         for c in dark.mock.palette {
             assert_ne!(c, Color32::BLACK, "a mock palette swatch is default black");
@@ -383,5 +407,6 @@ mod tests {
         // Variant-independent: same values in light and dark.
         assert_eq!(dark.mock.palette, light.mock.palette);
         assert_eq!(dark.mock.clips, light.mock.clips);
+        assert_eq!(dark.mock.checker, light.mock.checker);
     }
 }

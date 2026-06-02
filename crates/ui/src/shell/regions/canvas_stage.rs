@@ -31,10 +31,13 @@ pub fn show(host: &mut Host, ui: &mut egui::Ui) {
         let scaled = sprite_px * display_scale;
         let artboard = egui::Rect::from_center_size(stage_rect.center() + state.ui.pan, scaled);
 
-        // 2. Manual drop shadow: an offset translucent dark rect behind the board.
-        //    Shadow is not a paint primitive and cannot be painter.add-ed here.
-        let shadow_rect = artboard.translate(egui::vec2(4.0, 6.0));
-        painter.rect_filled(shadow_rect, egui::CornerRadius::ZERO, egui::Color32::from_black_alpha(110));
+        // 2. Manual drop shadow: two stacked offset translucent rects behind the
+        //    board for a soft falloff. Shadow is not a paint primitive and cannot be
+        //    painter.add-ed here, so the stack stands in for a blurred edge.
+        let shadow_far = artboard.expand(3.0).translate(egui::vec2(6.0, 10.0));
+        painter.rect_filled(shadow_far, egui::CornerRadius::ZERO, egui::Color32::from_black_alpha(70));
+        let shadow_near = artboard.translate(egui::vec2(3.0, 5.0));
+        painter.rect_filled(shadow_near, egui::CornerRadius::ZERO, egui::Color32::from_black_alpha(130));
 
         // 3. Transparency checkerboard behind the artboard.
         paint_checkerboard(&painter, artboard, theme);
@@ -51,12 +54,13 @@ pub fn show(host: &mut Host, ui: &mut egui::Ui) {
         //    enlarged display scale (so the grid tracks the board, not raw zoom).
         paint_grid(&painter, artboard, display_scale, state.ui.grid, theme);
 
-        // 6. A hairline frame around the board so its edge reads against the stage
-        //    (the drop shadow is already painted behind it in step 2).
+        // 6. The board frame: a 1.5px border so its edge reads clearly against the
+        //    stage (the drop shadow is already painted behind it in step 2). The
+        //    checker now carries the interior, so the edge marks the document bounds.
         painter.rect_stroke(
             artboard,
             egui::CornerRadius::ZERO,
-            egui::Stroke::new(1.0, theme.roles.border),
+            egui::Stroke::new(1.5, theme.roles.border),
             egui::StrokeKind::Outside,
         );
 
@@ -72,8 +76,10 @@ pub fn show(host: &mut Host, ui: &mut egui::Ui) {
 #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss, clippy::cast_precision_loss)]
 fn paint_checkerboard(painter: &egui::Painter, board: egui::Rect, theme: &Theme) {
     let cell = 8.0;
-    let light = theme.surface(SurfaceTier::Inset);
-    let dark = theme.surface(SurfaceTier::Stage);
+    // The dedicated checker pair, lifted off the stage backdrop so the artboard
+    // reads as a lit surface rather than near-black-on-near-black.
+    let light = theme.mock.checker[0];
+    let dark = theme.mock.checker[1];
     let cols = (board.width() / cell).ceil() as i32;
     let rows = (board.height() / cell).ceil() as i32;
     for r in 0..rows {

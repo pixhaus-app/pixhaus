@@ -47,6 +47,11 @@ pub struct MockColors {
     /// A small set of warm thumbnail tints so preset/sprite grids read with color
     /// instead of flat checker.
     pub thumbnails: [Color32; 6],
+    /// The artboard transparency-checker pair (light cell, dark cell). Lifted well
+    /// off the stage backdrop so the board reads as a distinct, lit surface rather
+    /// than near-black-on-near-black; the references show a clearly visible checker.
+    /// Decorative content, not a chrome tier - the artboard interior, not the void.
+    pub checker: [Color32; 2],
 }
 
 /// Which theme is active. `serde`-ready so it can round-trip through `Prefs`.
