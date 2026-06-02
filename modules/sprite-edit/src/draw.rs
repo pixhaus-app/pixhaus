@@ -189,8 +189,9 @@ impl Panel for SpritesPanel {
     }
 }
 
-/// The Palette panel. Mock content: the palette name "Bit", an 8x4 swatch grid, an
-/// FG/BG indicator, and the `Ramp` / `Harmony` / `Reduce to palette` buttons.
+/// The Palette panel. Mock content: the palette name "Bit", an 8x3 swatch grid
+/// drawn from the representative `mock.palette` token set, an FG/BG indicator, and
+/// the `Ramp` / `Harmony` / `Reduce to palette` buttons.
 pub struct PalettePanel;
 
 impl Panel for PalettePanel {
@@ -226,23 +227,27 @@ impl Panel for PalettePanel {
     }
 }
 
-/// Paint an 8x4 inert swatch grid alternating two surface tiers (mock palette).
+/// Paint the 8x3 "Bit" swatch grid from the representative `mock.palette` token set
+/// (24 colors). Swatch 0 (the foreground) carries an `accent.base` selection ring;
+/// the rest get a hairline border.
 fn swatch_grid(ui: &mut egui::Ui, theme: &pixhaus_ui::theme::Theme) {
     let cell = 18.0;
+    let cols = 8;
     ui.vertical(|ui| {
-        for row in 0..4 {
+        for row in 0..3 {
             ui.horizontal(|ui| {
-                for col in 0..8 {
+                for col in 0..cols {
+                    let i = row * cols + col;
                     let (rect, _) = ui.allocate_exact_size(egui::Vec2::splat(cell), egui::Sense::hover());
                     if ui.is_rect_visible(rect) {
-                        let fill = if (row + col) % 2 == 0 {
-                            theme.surfaces.inset
+                        ui.painter().rect_filled(rect, theme.radius.sm, theme.mock.palette[i]);
+                        // Swatch 0 reads as the selected foreground color.
+                        let stroke = if i == 0 {
+                            egui::Stroke::new(2.0, theme.accent.base)
                         } else {
-                            theme.surfaces.elevated
+                            egui::Stroke::new(1.0, theme.roles.border)
                         };
-                        ui.painter().rect_filled(rect, theme.radius.sm, fill);
-                        ui.painter()
-                            .rect_stroke(rect, theme.radius.sm, egui::Stroke::new(1.0, theme.roles.border), egui::StrokeKind::Inside);
+                        ui.painter().rect_stroke(rect, theme.radius.sm, stroke, egui::StrokeKind::Inside);
                     }
                 }
             });

@@ -17,24 +17,28 @@ pub fn tool_button(ui: &mut egui::Ui, theme: &Theme, meta: &crate::contrib_api::
     if ui.is_rect_visible(rect) {
         let painter = ui.painter();
 
-        // Active background fill, then the 2px accent left line.
+        // Active background fill, then the 3px accent left line. The active cell uses
+        // the brighter `tool_active_bg` (not the flatter `muted`) so the selection
+        // marks clearly against the panel, matching the reference rail.
         if active {
-            painter.rect_filled(rect, theme.radius.sm as u8, theme.accent.muted);
-            let line_x = rect.left() + 1.0;
+            painter.rect_filled(rect, theme.radius.sm as u8, theme.accent.tool_active_bg);
+            let line_x = rect.left() + 1.5;
             painter.line_segment(
                 [egui::pos2(line_x, rect.top() + 2.0), egui::pos2(line_x, rect.bottom() - 2.0)],
-                egui::Stroke::new(2.0, theme.accent.base),
+                egui::Stroke::new(3.0, theme.accent.base),
             );
         } else if response.hovered() {
             painter.rect_filled(rect, theme.radius.sm as u8, theme.accent.muted.gamma_multiply(0.5));
         }
 
-        // The glyph. AI tools paint in the AI accent; everything else uses primary
-        // text, brightened to the accent when active.
+        // The glyph. AI tools paint in the AI accent; everything else uses secondary
+        // text, lifted to the high-contrast `on_accent` ink when active so it reads
+        // bright against the violet active fill (a bright-violet glyph on the
+        // mid-violet fill would wash out).
         let glyph_color = if meta.is_ai {
             theme.accent.ai
         } else if active {
-            theme.accent.base
+            theme.accent.on_accent
         } else {
             theme.roles.text_secondary
         };

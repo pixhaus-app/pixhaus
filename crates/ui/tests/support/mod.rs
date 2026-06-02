@@ -25,7 +25,7 @@ pub const WORKSPACE_NAMES: [&str; 5] = ["Draw", "Animate", "Tiles", "Generate", 
 /// then sprite-edit (it owns the shared panel and tool ids the other workspaces
 /// reference by value), then the remaining four modules in declaration order.
 pub fn fully_registered_host() -> Host {
-    let mut host = Host::new(Theme::dark());
+    let mut host = Host::new(&Theme::dark());
 
     register_shell_menus(&mut host.registrar());
 

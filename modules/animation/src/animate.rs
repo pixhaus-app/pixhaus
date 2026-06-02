@@ -229,20 +229,24 @@ impl Panel for TimelinePanel {
         let band_h = rect.height() / 3.0;
         let label_size = theme.type_scale.label;
 
-        // Band 2 - Animation clips: named spans.
+        // Band 2 - Animation clips: each clip is a distinct colored span from the
+        // `mock.clips` hue set. The clip name is painted in a near-black ink (the
+        // clip hues are mid-to-light, so dark text reads; these are decorative mock
+        // labels, not role-gated by the WCAG floors).
         let clips_top = rect.top();
         let clips = ["idle", "walk", "run", "jump", "attack"];
         let clip_w = rect.width() / clips.len() as f32;
+        let clip_ink = egui::Color32::from_rgb(0x14, 0x12, 0x18);
         for (i, name) in clips.iter().enumerate() {
             let x = rect.left() + i as f32 * clip_w;
             let span = egui::Rect::from_min_size(egui::pos2(x + 2.0, clips_top + 2.0), Vec2::new(clip_w - 4.0, band_h - 4.0));
-            painter.rect_filled(span, theme.radius.sm, theme.surfaces.inset);
+            painter.rect_filled(span, theme.radius.sm, theme.mock.clips[i % theme.mock.clips.len()]);
             painter.text(
-                span.left_center() + Vec2::new(4.0, 0.0),
+                span.left_center() + Vec2::new(5.0, 0.0),
                 Align2::LEFT_CENTER,
                 name,
                 FontId::proportional(label_size),
-                theme.roles.text_secondary,
+                clip_ink,
             );
         }
 
@@ -274,24 +278,38 @@ impl Panel for TimelinePanel {
             Stroke::new(2.0, theme.accent.base),
         );
 
-        // Band 4 - Layer tracks: a labeled row per track with mock cells.
+        // Band 4 - Layer tracks: a labeled row per track over an alternating band,
+        // with a label gutter so the name never collides with the first cell. Each
+        // track's keyed cells are tinted in that track's clip color; the rest read
+        // as empty wells. The active-frame column (11) gets a muted-accent wash.
         let tracks_top = ruler_top + band_h;
         let tracks = ["Body", "Effects", "Shadow"];
         let track_h = band_h / tracks.len() as f32;
+        let label_gutter = 52.0;
         for (i, track) in tracks.iter().enumerate() {
             let y = tracks_top + i as f32 * track_h;
+            // Alternating row band so the tracks read as distinct lanes.
+            let row = egui::Rect::from_min_size(egui::pos2(rect.left(), y), Vec2::new(rect.width(), track_h));
+            let band = if i % 2 == 0 { theme.surfaces.elevated } else { theme.surfaces.panel };
+            painter.rect_filled(row, 0.0, band);
             painter.text(
-                egui::pos2(rect.left() + 2.0, y),
-                Align2::LEFT_TOP,
+                egui::pos2(rect.left() + 4.0, y + track_h / 2.0),
+                Align2::LEFT_CENTER,
                 *track,
                 FontId::proportional(label_size),
                 theme.roles.text_secondary,
             );
-            // Mock cells for this track, one per frame.
+            // Keyed cells for this track, starting after the label gutter. A cell is
+            // "keyed" on a stride offset per track so the rows differ; keyed cells
+            // carry the track's clip color, the rest a faint inset well.
+            let track_color = theme.mock.clips[i % theme.mock.clips.len()];
+            let cell_area_left = rect.left() + label_gutter;
+            let cell_w = (rect.width() - label_gutter) / frames as f32;
             for f in 0..frames {
-                let cx = rect.left() + f as f32 * frame_w;
-                let cell = egui::Rect::from_min_size(egui::pos2(cx + 1.0, y + 1.0), Vec2::new(frame_w - 2.0, track_h - 2.0));
-                let fill = if f % 3 == 0 { theme.surfaces.elevated } else { theme.surfaces.inset };
+                let cx = cell_area_left + f as f32 * cell_w;
+                let cell = egui::Rect::from_min_size(egui::pos2(cx + 1.0, y + 1.0), Vec2::new(cell_w - 2.0, track_h - 2.0));
+                let keyed = (f + i) % 3 == 0;
+                let fill = if keyed { track_color } else { theme.surfaces.inset };
                 painter.rect_filled(cell, 0.0, fill);
             }
         }

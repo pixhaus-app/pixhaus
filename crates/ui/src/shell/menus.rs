@@ -145,7 +145,7 @@ mod tests {
 
     #[test]
     fn register_shell_menus_populates_the_registry() {
-        let mut host = crate::state::Host::new(crate::theme::Theme::dark());
+        let mut host = crate::state::Host::new(&crate::theme::Theme::dark());
         register_shell_menus(&mut host.registrar());
         let labels: Vec<&str> = host.registries.menus.iter().map(|g| g.label).collect();
         assert!(labels.contains(&"File"));

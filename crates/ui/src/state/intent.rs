@@ -139,7 +139,7 @@ mod tests {
     use crate::theme::{Theme, ThemeVariant};
 
     fn host() -> Host {
-        Host::new(Theme::dark())
+        Host::new(&Theme::dark())
     }
 
     fn ctx() -> egui::Context {

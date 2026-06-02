@@ -25,6 +25,28 @@ pub struct Theme {
     pub type_scale: TypeScale,
     /// The corner-radius scale.
     pub radius: Radii,
+    /// Representative mock-content colors (palette swatches, timeline clip spans,
+    /// preset thumbnails). These exist so mock panels read alive in the references'
+    /// look without a real document; they are not semantic roles.
+    pub mock: MockColors,
+}
+
+/// Representative colors for the mock content that stands in for a real document.
+/// Pure data, no logic. Defined per variant in `palettes.rs` so module/widget code
+/// paints from tokens rather than hex literals. Decorative only - these are not
+/// gated by the role WCAG floors, so labels drawn over them use a dark/light ink
+/// chosen for legibility, not a role color.
+#[derive(Copy, Clone)]
+pub struct MockColors {
+    /// A 24-color "Bit" sprite palette spanning the families the references show:
+    /// near-black outline, warm browns, a stone-gray ramp, golds, greens, blues, a
+    /// red pair, an orange, and white.
+    pub palette: [Color32; 24],
+    /// Five muted clip-span hues for the timeline (green, blue, orange, violet, gold).
+    pub clips: [Color32; 5],
+    /// A small set of warm thumbnail tints so preset/sprite grids read with color
+    /// instead of flat checker.
+    pub thumbnails: [Color32; 6],
 }
 
 /// Which theme is active. `serde`-ready so it can round-trip through `Prefs`.
@@ -86,6 +108,10 @@ pub struct AccentTokens {
     /// composites without an alpha pass and reads consistently regardless of what
     /// sits beneath it.
     pub muted: Color32,
+    /// A brighter desaturated mid-violet for the single active tool cell in the
+    /// rail, where `muted` reads too close to the panel to mark the selection. One
+    /// step up from `muted` toward the seed, matching the references' active-tool fill.
+    pub tool_active_bg: Color32,
     /// Near-white foreground for text/icons painted directly on `base` (egui's
     /// active-widget fill). `base` is too light to host `text_primary` at the
     /// 4.5 contrast floor, so active widgets get this dedicated high-contrast ink

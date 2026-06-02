@@ -80,9 +80,12 @@ const DEFAULT_TOOL: ToolId = ToolId("pencil");
 impl Host {
     /// Build a host with empty registries and the default initial state.
     ///
-    /// Registration happens afterward through [`Host::registrar`]: each module's
-    /// `register` is the only path a capability enters the shell.
-    pub fn new(theme: Theme) -> Self {
+    /// `theme` is taken by reference and copied in: the token set is a large `Copy`
+    /// value, so passing it by reference avoids a by-value move clippy flags, while
+    /// `Host` still owns its own copy. Registration happens afterward through
+    /// [`Host::registrar`]: each module's `register` is the only path a capability
+    /// enters the shell.
+    pub fn new(theme: &Theme) -> Self {
         Self {
             registries: Registries::default(),
             state: ShellState {
@@ -97,7 +100,7 @@ impl Host {
             },
             intents: IntentSink::default(),
             scratch: HashMap::new(),
-            theme,
+            theme: *theme,
             bg: BackgroundChannel::default(),
         }
     }
@@ -143,21 +146,21 @@ mod tests {
 
     #[test]
     fn new_host_starts_in_draw_with_pencil() {
-        let host = Host::new(Theme::dark());
+        let host = Host::new(&Theme::dark());
         assert_eq!(host.state.session.active_workspace, WorkspaceId("draw"), "the default workspace is Draw");
         assert_eq!(host.state.session.active_tool, ToolId("pencil"), "Draw's default tool is Pencil");
     }
 
     #[test]
     fn new_host_has_no_jobs_and_ready_ai() {
-        let host = Host::new(Theme::dark());
+        let host = Host::new(&Theme::dark());
         assert!(host.state.session.jobs.is_empty(), "no jobs queued at boot");
         assert_eq!(host.state.session.ai_status, AiStatus::Ready, "AI starts Ready");
     }
 
     #[test]
     fn new_host_theme_variant_matches_argument() {
-        let host = Host::new(Theme::dark());
+        let host = Host::new(&Theme::dark());
         assert_eq!(host.theme().variant, ThemeVariant::Dark, "the host holds the theme it was built with");
     }
 }

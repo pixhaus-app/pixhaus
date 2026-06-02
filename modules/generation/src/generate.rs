@@ -170,8 +170,11 @@ impl Panel for RecipePanel {
     fn ui(&self, ui: &mut egui::Ui, scope: &mut PanelScope<'_>) {
         let theme = scope.ctx.theme;
         // (name, built_in): built-ins are locked; user recipes are editable.
-        for (name, built_in) in [("Hero sprite", true), ("Top-down tile", true), ("My walk cycle", false)] {
-            recipe_row(ui, theme, name, built_in);
+        for (i, (name, built_in)) in [("Hero sprite", true), ("Top-down tile", true), ("My walk cycle", false)]
+            .into_iter()
+            .enumerate()
+        {
+            recipe_row(ui, theme, i, name, built_in);
         }
     }
 }
@@ -224,17 +227,22 @@ impl Panel for StylePanel {
     }
 }
 
-/// One recipe card row: a thumbnail patch, the name, and a built-in/user badge.
-/// `built_in` reads as a locked `Built-in` chip in disabled text; a user recipe
-/// reads as a `User` chip in the accent.
+/// One recipe card row: a tinted thumbnail patch, the name, and a built-in/user
+/// badge. The thumbnail carries a colored sprite blob from the `mock.thumbnails`
+/// set (indexed by `i`) so the row reads with content. `built_in` reads as a locked
+/// `Built-in` chip in disabled text; a user recipe reads as a `User` chip in the accent.
 // The 28px thumbnail and the radius token are small bounded constants; the casts
 // cannot truncate or lose a sign.
 #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
-fn recipe_row(ui: &mut egui::Ui, theme: &Theme, name: &str, built_in: bool) {
+fn recipe_row(ui: &mut egui::Ui, theme: &Theme, i: usize, name: &str, built_in: bool) {
     ui.horizontal(|ui| {
         let (rect, _) = ui.allocate_exact_size(Vec2::splat(28.0), Sense::hover());
         if ui.is_rect_visible(rect) {
             ui.painter().rect_filled(rect, theme.radius.sm, theme.surfaces.inset);
+            // A small tinted sprite blob so the recipe reads with content.
+            let tint = theme.mock.thumbnails[i % theme.mock.thumbnails.len()];
+            let blob = egui::Rect::from_center_size(rect.center(), Vec2::splat(16.0));
+            ui.painter().rect_filled(blob, theme.radius.sm, tint);
             ui.painter()
                 .rect_stroke(rect, theme.radius.sm, Stroke::new(1.0, theme.roles.border), StrokeKind::Inside);
         }
@@ -397,6 +405,13 @@ fn result_card(ui: &mut egui::Ui, theme: &Theme, index: usize, selected: bool) {
             painter.rect_filled(egui::Rect::from_min_size(min, Vec2::splat(step)), 0.0, fill);
         }
     }
+    // A tinted sprite blob over the checker so each result reads as generated content
+    // rather than empty checker (the references show colored sprites here).
+    let tint = theme.mock.thumbnails[index % theme.mock.thumbnails.len()];
+    let body = egui::Rect::from_min_size(rect.min + Vec2::new(card * 0.3, card * 0.42), Vec2::new(card * 0.4, card * 0.42));
+    painter.rect_filled(body, theme.radius.sm, tint);
+    let head = egui::Rect::from_center_size(rect.center() - Vec2::new(0.0, card * 0.14), Vec2::splat(card * 0.32));
+    painter.rect_filled(head, theme.radius.sm, tint.gamma_multiply(1.4));
     // The number (top-left), the sparkle (top-right, AI accent), the star
     // (bottom-right), the seed (bottom-left).
     let label_size = theme.type_scale.label;

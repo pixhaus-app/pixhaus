@@ -19,7 +19,7 @@ use pixhaus_ui::state::Host;
 /// owns the shared panel and tool ids the other workspaces reference by value
 /// (bible rule 2); the remaining modules append their workspaces after it.
 fn build_host(ctx: &egui::Context) -> Host {
-    let mut host = Host::new(pixhaus_ui::theme::Theme::dark());
+    let mut host = Host::new(&pixhaus_ui::theme::Theme::dark());
 
     pixhaus_ui::theme::apply_to_visuals(host.theme(), ctx);
     pixhaus_ui::theme::install_fonts(ctx);

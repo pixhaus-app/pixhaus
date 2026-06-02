@@ -24,7 +24,7 @@ pub fn workspace_tab(ui: &mut egui::Ui, theme: &Theme, name: &str, active: bool)
                     egui::pos2(rect.left() + theme.spacing.sm, rect.bottom() - 1.0),
                     egui::pos2(rect.right() - theme.spacing.sm, rect.bottom() - 1.0),
                 ],
-                egui::Stroke::new(2.0, theme.accent.base),
+                egui::Stroke::new(2.5, theme.accent.base),
             );
         }
         let text_color = if active { theme.roles.text_primary } else { theme.roles.text_secondary };

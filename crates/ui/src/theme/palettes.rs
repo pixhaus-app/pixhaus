@@ -5,7 +5,7 @@
 
 use egui::Color32;
 
-use super::tokens::{AccentTokens, Elevation, Radii, Roles, Spacing, SurfaceTier, Surfaces, Theme, ThemeVariant, TypeScale};
+use super::tokens::{AccentTokens, Elevation, MockColors, Radii, Roles, Spacing, SurfaceTier, Surfaces, Theme, ThemeVariant, TypeScale};
 
 /// Default accent seed: a warm violet (~#7b68f0).
 pub const DEFAULT_ACCENT_SEED: Color32 = Color32::from_rgb(0x7b, 0x68, 0xf0);
@@ -121,6 +121,7 @@ impl Theme {
             spacing,
             type_scale,
             radius,
+            mock: mock_colors(),
         }
     }
 
@@ -184,12 +185,71 @@ fn accent_from_seed(seed: Color32) -> AccentTokens {
         // the #2f2d51/#202060 family) rather than the lighter, more saturated wash a
         // shallower darken produced.
         muted: darken(seed, 0.66),
+        // One step up from `muted` toward the seed: a desaturated mid-violet (~#3f3879)
+        // that marks the active tool cell where the flatter `muted` reads too close to
+        // the panel. Derived from `muted` so it tracks an accent recolor with it.
+        tool_active_bg: lighten(darken(seed, 0.66), 0.18),
         // Pure white maximizes contrast on `base`. The default violet seed is
         // light enough that no foreground clears WCAG 4.5 against it (white tops
         // out near 4.0), so we take the achievable ceiling rather than the floor.
         on_accent: Color32::WHITE,
         ai: lighten(seed, 0.10),
         ai_glow: Color32::from_rgba_unmultiplied(seed.r(), seed.g(), seed.b(), 40),
+    }
+}
+
+/// The representative mock-content colors. Variant-independent: the references show
+/// the same sprite palette and clip hues whatever the chrome theme is, so these are
+/// fixed rather than re-derived per variant. Decorative content, not semantic roles.
+fn mock_colors() -> MockColors {
+    let rgb = Color32::from_rgb;
+    MockColors {
+        // The 24-color "Bit" palette: outline, warm browns, a stone-gray ramp,
+        // golds, greens, blues, a red pair, an orange, and white - the families the
+        // Draw reference's palette spans.
+        palette: [
+            rgb(0x14, 0x12, 0x18), // near-black outline
+            rgb(0x3a, 0x24, 0x18), // brown - darkest
+            rgb(0x5a, 0x3a, 0x22),
+            rgb(0x8a, 0x5a, 0x38),
+            rgb(0xb6, 0x94, 0x6f),
+            rgb(0xcb, 0xa6, 0x7a), // brown - lightest
+            rgb(0x3a, 0x3a, 0x40), // stone gray - dark
+            rgb(0x6a, 0x6a, 0x72),
+            rgb(0x9a, 0x9a, 0xa2), // stone gray - light
+            rgb(0xc9, 0xa2, 0x3a), // gold - dark
+            rgb(0xe0, 0xb1, 0x33),
+            rgb(0xfb, 0xd8, 0x75), // gold - light
+            rgb(0x20, 0x70, 0x20), // green - dark
+            rgb(0x40, 0xa0, 0x40),
+            rgb(0x5a, 0xa5, 0x6a), // green - light
+            rgb(0x10, 0x30, 0x50), // blue - dark
+            rgb(0x20, 0x60, 0x80),
+            rgb(0x3f, 0x5a, 0x86), // blue - light
+            rgb(0x70, 0x18, 0x18), // red - dark
+            rgb(0xa0, 0x31, 0x21), // red - light
+            rgb(0xcf, 0x6f, 0x47), // orange
+            rgb(0xec, 0xed, 0xf0), // white
+            rgb(0x9a, 0x58, 0xc0), // violet
+            rgb(0x40, 0xa0, 0x9a), // teal
+        ],
+        // Five muted clip-span hues for the timeline.
+        clips: [
+            rgb(0x5a, 0xa5, 0x6a), // green
+            rgb(0x3f, 0x5a, 0x86), // blue
+            rgb(0xcf, 0x6f, 0x47), // orange
+            rgb(0x9a, 0x58, 0xc0), // violet
+            rgb(0xc9, 0xa2, 0x3a), // gold
+        ],
+        // Warm thumbnail tints for preset/sprite grids.
+        thumbnails: [
+            rgb(0x5a, 0x3a, 0x22),
+            rgb(0x8a, 0x5a, 0x38),
+            rgb(0x3f, 0x5a, 0x86),
+            rgb(0x5a, 0xa5, 0x6a),
+            rgb(0xc9, 0xa2, 0x3a),
+            rgb(0x9a, 0x58, 0xc0),
+        ],
     }
 }
 
@@ -286,5 +346,42 @@ mod tests {
         let t = Theme::dark();
         let ratio = wcag_contrast(t.accent.on_accent, t.accent.base);
         assert!(ratio >= 3.0, "on_accent on accent.base below 3.0: {ratio}");
+    }
+
+    /// The active-tool fill must read lighter than `muted` (so the single active
+    /// cell stands out from the flatter active-row wash) yet darker than the seed
+    /// (so it stays a desaturated mid-violet, not the loud accent). And `on_accent`,
+    /// the active-tool glyph ink, must clear the 3.0 structural floor over it.
+    #[test]
+    fn tool_active_bg_sits_between_muted_and_seed() {
+        let t = Theme::dark();
+        assert!(
+            luma(t.accent.tool_active_bg) > luma(t.accent.muted),
+            "tool_active_bg must be lighter than muted"
+        );
+        assert!(
+            luma(t.accent.tool_active_bg) < luma(t.accent.seed),
+            "tool_active_bg must stay darker than the seed"
+        );
+        let ratio = wcag_contrast(t.accent.on_accent, t.accent.tool_active_bg);
+        assert!(ratio >= 3.0, "on_accent on tool_active_bg below 3.0: {ratio}");
+    }
+
+    /// The mock-content token sets are populated and variant-independent (the
+    /// references show the same sprite palette and clip hues whatever the chrome is).
+    #[test]
+    fn mock_colors_are_populated_and_shared_across_variants() {
+        let dark = Theme::dark();
+        let light = Theme::light();
+        assert_eq!(dark.mock.palette.len(), 24);
+        assert_eq!(dark.mock.clips.len(), 5);
+        assert_eq!(dark.mock.thumbnails.len(), 6);
+        // No mock color left at the default all-zero black.
+        for c in dark.mock.palette {
+            assert_ne!(c, Color32::BLACK, "a mock palette swatch is default black");
+        }
+        // Variant-independent: same values in light and dark.
+        assert_eq!(dark.mock.palette, light.mock.palette);
+        assert_eq!(dark.mock.clips, light.mock.clips);
     }
 }

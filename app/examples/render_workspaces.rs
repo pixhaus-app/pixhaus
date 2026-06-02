@@ -43,7 +43,7 @@ const WORKSPACES: [&str; 5] = ["draw", "animate", "tiles", "generate", "export"]
 /// harness's own `egui::Context`, applied per workspace since each gets a fresh
 /// harness.
 fn build_host(ctx: &egui::Context) -> Host {
-    let mut host = Host::new(pixhaus_ui::theme::Theme::dark());
+    let mut host = Host::new(&pixhaus_ui::theme::Theme::dark());
 
     pixhaus_ui::theme::apply_to_visuals(host.theme(), ctx);
     pixhaus_ui::theme::install_fonts(ctx);
