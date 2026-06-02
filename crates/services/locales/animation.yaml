@@ -1,0 +1,48 @@
+# Localization strings owned by the pixhaus-mod-animation module: the Animate
+# workspace, its panels, the AI-animation actions, and the Frame menu group.
+#
+# rust-i18n `_version: 2` layout: one key per entry mapping locale -> value. `en`
+# is the fallback. English-only until a translation lands.
+#
+# The `command.frame.*` keys are shared with the sprite-edit module (it registers
+# the frame.* actions); the same key/value here is harmless - rust-i18n merges the
+# locale dir at compile time and identical duplicates collapse.
+_version: 2
+
+# --- Animate workspace. ---
+workspace.animate.title:
+  en: Animate
+workspace.animate.purpose:
+  en: Animate the sprite across frames
+workspace.animate.status.onion-skin:
+  en: Onion Skin Off
+
+# --- Animation-owned dock and tray panels. ---
+panel.clip-properties.title:
+  en: Clip Properties
+panel.ai-animation-assistant.title:
+  en: AI Animation Assistant
+panel.timeline.title:
+  en: Timeline
+
+# --- AI-animation quick-actions (anim.* action ids). ---
+command.anim.in-between-frames:
+  en: In-between frames
+command.anim.extend-animation:
+  en: Extend animation
+command.anim.clean-frames:
+  en: Clean frames
+command.anim.reduce-colors:
+  en: Reduce colors
+command.anim.create-variations:
+  en: Create variations
+
+# --- Frame menu group and its items (frame.* actions owned by sprite-edit). ---
+app.menu.frame:
+  en: Frame
+command.frame.add:
+  en: Add Frame
+command.frame.duplicate:
+  en: Duplicate Frame
+command.frame.delete:
+  en: Delete Frame

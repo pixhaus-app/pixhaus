@@ -123,7 +123,7 @@ impl HostRegistrar for RegistrarWrapper<'_> {
 
 #[cfg(test)]
 pub(crate) mod fixtures {
-    use crate::contrib_api::{Panel, PanelId, PanelMeta, PanelScope, Workspace, WorkspaceId, WorkspaceLayout, WorkspaceMeta};
+    use crate::contrib_api::{MsgKey, Panel, PanelId, PanelMeta, PanelScope, Workspace, WorkspaceId, WorkspaceLayout, WorkspaceMeta};
     use crate::region::Region;
 
     /// A minimal panel for registry/resolve tests: it carries an id and a relevance
@@ -139,7 +139,7 @@ pub(crate) mod fixtures {
         }
         fn meta(&self) -> PanelMeta {
             PanelMeta {
-                title: "fake",
+                title: MsgKey("fake"),
                 icon: ' ',
                 default_region: Region::RightDock,
                 default_open: true,
@@ -163,9 +163,9 @@ pub(crate) mod fixtures {
         }
         fn meta(&self) -> WorkspaceMeta {
             WorkspaceMeta {
-                name: "Fake",
+                name: MsgKey("fake"),
                 icon: ' ',
-                purpose: "test workspace",
+                purpose: MsgKey("test workspace"),
                 shortcut: egui::KeyboardShortcut::new(egui::Modifiers::COMMAND, egui::Key::Num1),
             }
         }

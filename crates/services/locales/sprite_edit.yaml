@@ -1,0 +1,160 @@
+# Module-owned localization strings for pixhaus-mod-sprite-edit: the Draw
+# workspace, the shared editing panels, the 15 editing tools, and the
+# sprite/layer/palette/selection/ai/frame command labels and menu groups.
+#
+# rust-i18n `_version: 2` layout: one file, each key mapping locale -> value. `en`
+# is the fallback (services lib.rs: i18n!("locales", fallback = "en")).
+_version: 2
+
+# --- Draw workspace meta + status. ---
+workspace.draw.title:
+  en: Draw
+workspace.draw.purpose:
+  en: Paint and edit a single sprite
+workspace.draw.status.grid_on:
+  en: Pixel Grid On
+
+# --- Shared dock/tray panels. ---
+panel.layers.title:
+  en: Layers
+  es: Capas
+panel.layers.count.one:
+  en: "%{count} layer"
+  es: "%{count} capa"
+panel.layers.count.other:
+  en: "%{count} layers"
+  es: "%{count} capas"
+panel.sprites.title:
+  en: Sprites
+panel.palette.title:
+  en: Palette
+panel.selection-actions.title:
+  en: Selection Actions
+panel.ai-assistant.title:
+  en: AI Assistant
+panel.frames.title:
+  en: Frames
+panel.assets.title:
+  en: Assets
+panel.console.title:
+  en: Console
+
+# --- The 15 shared editing tools: label + tooltip. ---
+tool.pencil.label:
+  en: Pencil
+tool.pencil.tooltip:
+  en: Draw individual pixels. Hold Shift for a line.
+tool.eraser.label:
+  en: Eraser
+tool.eraser.tooltip:
+  en: Erase pixels to transparent.
+tool.fill.label:
+  en: Fill
+tool.fill.tooltip:
+  en: Flood-fill contiguous color.
+tool.line.label:
+  en: Line
+tool.line.tooltip:
+  en: Draw a straight line.
+tool.rectangle.label:
+  en: Rectangle
+tool.rectangle.tooltip:
+  en: Draw a rectangle.
+tool.ellipse.label:
+  en: Ellipse
+tool.ellipse.tooltip:
+  en: Draw an ellipse.
+tool.eyedropper.label:
+  en: Eyedropper
+tool.eyedropper.tooltip:
+  en: Pick a color from the canvas.
+tool.selection.label:
+  en: Selection
+tool.selection.tooltip:
+  en: Rectangular marquee selection.
+tool.lasso.label:
+  en: Lasso
+tool.lasso.tooltip:
+  en: Freeform selection.
+tool.move.label:
+  en: Move
+tool.move.tooltip:
+  en: Move the selection or layer.
+tool.transform.label:
+  en: Transform
+tool.transform.tooltip:
+  en: Scale, rotate, and skew.
+tool.text.label:
+  en: Text
+tool.text.tooltip:
+  en: Place pixel text.
+tool.hand.label:
+  en: Hand
+tool.hand.tooltip:
+  en: Pan the canvas.
+tool.zoom.label:
+  en: Zoom
+tool.zoom.tooltip:
+  en: Zoom in and out.
+tool.ai_brush.label:
+  en: AI Brush
+tool.ai_brush.tooltip:
+  en: AI-assisted painting. Describe what to draw.
+
+# --- Command labels (actions + menu items reuse these). ---
+command.layer.new:
+  en: New Layer
+command.layer.delete:
+  en: Delete Layer
+command.layer.merge-down:
+  en: Merge Down
+command.sprite.new:
+  en: New Sprite
+command.sprite.resize:
+  en: Resize Canvas
+command.palette.ramp:
+  en: Ramp
+command.palette.harmony:
+  en: Harmony
+command.palette.reduce:
+  en: Reduce to palette
+command.selection.cut:
+  en: Cut
+command.selection.copy:
+  en: Copy
+command.selection.paste:
+  en: Paste
+command.selection.invert:
+  en: Invert Selection
+command.selection.crop:
+  en: Crop
+command.selection.ai-fill:
+  en: AI Fill
+command.selection.ai-clean-up:
+  en: AI Clean up
+command.selection.ai-make-seamless:
+  en: AI Make seamless
+command.ai.fill-selection:
+  en: Fill selection
+command.ai.clean-up:
+  en: Clean up
+command.ai.reduce-colors:
+  en: Reduce colors
+command.ai.suggest-ramp:
+  en: Suggest ramp
+command.ai.create-variations:
+  en: Create variations
+command.ai.remove-background:
+  en: Remove background
+command.frame.add:
+  en: Add Frame
+command.frame.duplicate:
+  en: Duplicate Frame
+command.frame.delete:
+  en: Delete Frame
+
+# --- Menu groups this module owns. ---
+app.menu.sprite:
+  en: Sprite
+app.menu.layer:
+  en: Layer

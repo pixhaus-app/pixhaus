@@ -1,0 +1,44 @@
+# Localization strings owned by the generation module (pixhaus-mod-generation):
+# the Generate workspace, its dock/tray panels, and the `gen.*` command labels.
+#
+# rust-i18n `_version: 2` layout: each key maps locale -> value; `en` is the
+# fallback. English only until a translation lands.
+_version: 2
+
+# --- Generate workspace. ---
+workspace.generate.title:
+  en: Generate
+workspace.generate.purpose:
+  en: Generate sprites from a prompt
+workspace.generate.status.ai-ready:
+  en: AI Ready
+
+# --- Dock and tray panels. ---
+panel.prompt.title:
+  en: Prompt
+panel.recipe.title:
+  en: Recipe
+panel.structure.title:
+  en: Structure
+panel.style.title:
+  en: Style
+panel.palette-behavior.title:
+  en: Palette Behavior
+panel.advanced-settings.title:
+  en: Advanced Settings
+panel.results.title:
+  en: Results
+panel.history.title:
+  en: History
+
+# --- The `gen.*` command labels. ---
+command.gen.generate:
+  en: Generate sprite from prompt
+command.gen.use-selected:
+  en: Use selected result
+command.gen.insert-sprite:
+  en: Insert result as new sprite
+command.gen.create-variations:
+  en: Create variations
+command.gen.generate-more:
+  en: Generate more

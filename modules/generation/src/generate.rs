@@ -13,7 +13,8 @@
 
 use egui::{Key, KeyboardShortcut, Modifiers, Sense, Stroke, StrokeKind, Vec2};
 use pixhaus_ui::contrib_api::{
-    ActionDesc, ActionId, HostRegistrar, Panel, PanelId, PanelMeta, PanelScope, StatusItem, ToolId, Workspace, WorkspaceId, WorkspaceLayout, WorkspaceMeta,
+    ActionDesc, ActionId, HostRegistrar, MsgKey, Panel, PanelId, PanelMeta, PanelScope, StatusItem, ToolId, Workspace, WorkspaceId, WorkspaceLayout,
+    WorkspaceMeta,
 };
 use pixhaus_ui::region::Region;
 use pixhaus_ui::state::intent::Intent;
@@ -69,9 +70,9 @@ impl Workspace for GenerateWorkspace {
 
     fn meta(&self) -> WorkspaceMeta {
         WorkspaceMeta {
-            name: "Generate",
+            name: MsgKey("workspace.generate.title"),
             icon: icons::GENERATE,
-            purpose: "Generate sprites from a prompt",
+            purpose: MsgKey("workspace.generate.purpose"),
             shortcut: KeyboardShortcut::new(Modifiers::COMMAND, Key::Num4),
         }
     }
@@ -85,7 +86,7 @@ impl Workspace for GenerateWorkspace {
             status_items: vec![
                 StatusItem {
                     icon: icons::STATUS_DOT,
-                    text: "AI Ready".to_owned(),
+                    text: MsgKey("workspace.generate.status.ai-ready").tr(),
                 },
                 StatusItem {
                     icon: icons::STATUS_DOT,
@@ -110,7 +111,7 @@ impl Panel for PromptPanel {
 
     fn meta(&self) -> PanelMeta {
         PanelMeta {
-            title: "Prompt",
+            title: MsgKey("panel.prompt.title"),
             icon: icons::PROMPT,
             default_region: Region::RightDock,
             default_open: true,
@@ -171,7 +172,7 @@ impl Panel for RecipePanel {
 
     fn meta(&self) -> PanelMeta {
         PanelMeta {
-            title: "Recipe",
+            title: MsgKey("panel.recipe.title"),
             icon: icons::HISTORY,
             default_region: Region::RightDock,
             default_open: true,
@@ -201,7 +202,7 @@ impl Panel for StructurePanel {
 
     fn meta(&self) -> PanelMeta {
         PanelMeta {
-            title: "Structure",
+            title: MsgKey("panel.structure.title"),
             icon: icons::ASSETS,
             default_region: Region::RightDock,
             default_open: true,
@@ -225,7 +226,7 @@ impl Panel for StylePanel {
 
     fn meta(&self) -> PanelMeta {
         PanelMeta {
-            title: "Style",
+            title: MsgKey("panel.style.title"),
             icon: icons::PALETTE,
             default_region: Region::RightDock,
             default_open: true,
@@ -281,7 +282,7 @@ impl Panel for PaletteBehaviorPanel {
 
     fn meta(&self) -> PanelMeta {
         PanelMeta {
-            title: "Palette Behavior",
+            title: MsgKey("panel.palette-behavior.title"),
             icon: icons::PALETTE,
             default_region: Region::RightDock,
             default_open: true,
@@ -315,7 +316,7 @@ impl Panel for AdvancedSettingsPanel {
 
     fn meta(&self) -> PanelMeta {
         PanelMeta {
-            title: "Advanced Settings",
+            title: MsgKey("panel.advanced-settings.title"),
             icon: icons::SETTINGS,
             default_region: Region::RightDock,
             default_open: false,
@@ -364,7 +365,7 @@ impl Panel for ResultsPanel {
 
     fn meta(&self) -> PanelMeta {
         PanelMeta {
-            title: "Results",
+            title: MsgKey("panel.results.title"),
             icon: icons::RESULTS,
             default_region: Region::BottomTray,
             default_open: true,
@@ -474,7 +475,7 @@ impl Panel for HistoryPanel {
 
     fn meta(&self) -> PanelMeta {
         PanelMeta {
-            title: "History",
+            title: MsgKey("panel.history.title"),
             icon: icons::HISTORY,
             default_region: Region::BottomTray,
             default_open: true,
@@ -522,11 +523,11 @@ pub fn register(host: &mut dyn HostRegistrar) {
     // The `gen.*` actions the panels above dispatch. The user-facing ones are
     // command-palette visible.
     for (id, label) in [
-        (GEN_GENERATE, "Generate sprite from prompt"),
-        (GEN_USE_SELECTED, "Use selected result"),
-        (GEN_INSERT_SPRITE, "Insert result as new sprite"),
-        (GEN_CREATE_VARIATIONS, "Create variations"),
-        (GEN_GENERATE_MORE, "Generate more"),
+        (GEN_GENERATE, MsgKey("command.gen.generate")),
+        (GEN_USE_SELECTED, MsgKey("command.gen.use-selected")),
+        (GEN_INSERT_SPRITE, MsgKey("command.gen.insert-sprite")),
+        (GEN_CREATE_VARIATIONS, MsgKey("command.gen.create-variations")),
+        (GEN_GENERATE_MORE, MsgKey("command.gen.generate-more")),
     ] {
         host.add_action(ActionDesc {
             id,
@@ -549,21 +550,21 @@ mod tests {
         assert_eq!(layout.default_tool, HAND);
         assert_eq!(layout.primary_tools, vec![HAND, ZOOM, SELECTION, AI_BRUSH]);
         assert_eq!(layout.status_items.len(), 2);
-        assert_eq!(layout.status_items[0].text, "AI Ready");
+        assert_eq!(layout.status_items[0].text, MsgKey("workspace.generate.status.ai-ready").tr());
         assert_eq!(layout.status_items[1].text, "Seed 123456");
     }
 
     #[test]
     fn generate_meta_uses_cmd_4() {
         assert_eq!(GenerateWorkspace.id(), GENERATE);
-        assert_eq!(GenerateWorkspace.meta().name, "Generate");
+        assert_eq!(GenerateWorkspace.meta().name, MsgKey("workspace.generate.title"));
         assert_eq!(GenerateWorkspace.meta().shortcut, KeyboardShortcut::new(Modifiers::COMMAND, Key::Num4));
     }
 
     #[test]
     fn prompt_panel_meta() {
         assert_eq!(PromptPanel.id(), PROMPT);
-        assert_eq!(PromptPanel.meta().title, "Prompt");
+        assert_eq!(PromptPanel.meta().title, MsgKey("panel.prompt.title"));
         assert_eq!(PromptPanel.meta().default_region, Region::RightDock);
         assert!(PromptPanel.meta().default_open);
     }

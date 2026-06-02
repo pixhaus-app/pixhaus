@@ -119,15 +119,6 @@ app.ui.action.close:
   en: Close
   es: Cerrar
 
-# --- Test fixtures exercised by the service unit tests (tr / plural / switch).
-# `panel.layers.*` is owned by the sprite-edit module and moves to
-# sprite_edit.yaml when that module's strings migrate. ---
-panel.layers.title:
-  en: Layers
-  es: Capas
-panel.layers.count.one:
-  en: "%{count} layer"
-  es: "%{count} capa"
-panel.layers.count.other:
-  en: "%{count} layers"
-  es: "%{count} capas"
+# Note: `panel.layers.*` (the keys the service unit tests resolve, with their `es`
+# values) is owned by the sprite-edit module and lives in sprite_edit.yaml. The
+# service tests reach it through the merged bundle - no fixture is needed here.

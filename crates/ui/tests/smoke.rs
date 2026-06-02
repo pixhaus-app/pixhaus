@@ -34,9 +34,11 @@ fn every_workspace_resolves_a_non_empty_tray() {
 #[test]
 fn top_bar_tab_set_is_the_five_workspace_names() {
     let host = fully_registered_host();
-    let names: Vec<&str> = host.registries.workspaces.iter().map(|ws| ws.meta().name).collect();
+    // The tab labels are i18n keys now; resolve them to display text (default
+    // locale en) and assert the resolved set is the five workspace names.
+    let names: Vec<String> = host.registries.workspaces.iter().map(|ws| ws.meta().name.tr()).collect();
     assert_eq!(names.len(), WORKSPACE_NAMES.len(), "expected exactly five registered workspaces, got {names:?}");
     for expected in WORKSPACE_NAMES {
-        assert!(names.contains(&expected), "workspace tab set {names:?} is missing {expected:?}");
+        assert!(names.iter().any(|n| n == expected), "workspace tab set {names:?} is missing {expected:?}");
     }
 }

@@ -1,0 +1,42 @@
+# Tiles module-owned localization strings (pixhaus-mod-tiles): the Tiles
+# workspace, its dock/tray panels, and the AI-tile command labels.
+#
+# rust-i18n `_version: 2` layout: one key mapping locale -> value. English only
+# until a translation lands.
+_version: 2
+
+# --- Workspace meta. ---
+workspace.tiles.title:
+  en: Tiles
+workspace.tiles.purpose:
+  en: Author tilesets and terrain
+
+# --- Status strip (label-only item; numeric mocks carry no key). ---
+workspace.tiles.status.seams_ok:
+  en: Seams OK
+
+# --- Panel titles. ---
+panel.tileset.title:
+  en: Tileset
+panel.rule-type.title:
+  en: Rule Type
+panel.material.title:
+  en: Material
+panel.seam-qa.title:
+  en: Seam QA
+panel.ai-tile-assistant.title:
+  en: AI Tile Assistant
+panel.tile-variants.title:
+  en: Tile Variants
+
+# --- AI-tile command labels. ---
+command.tile.new:
+  en: New Tile
+command.tile.make-seamless:
+  en: Make seamless
+command.tile.generate-variations:
+  en: Generate variations
+command.tile.suggest-material:
+  en: Suggest material
+command.tile.fix-seams:
+  en: Fix seams

@@ -142,7 +142,7 @@ mod tests {
     // The repo bans `unwrap`/`expect` via clippy disallowed-methods even in tests,
     // so groups are looked up with a let-else + `panic!`. Groups are keyed by their
     // stable `MsgKey` identity now, not display text.
-    fn group<'a>(groups: &'a [MenuGroup], key: MsgKey) -> &'a MenuGroup {
+    fn group(groups: &[MenuGroup], key: MsgKey) -> &MenuGroup {
         let Some(g) = groups.iter().find(|g| g.label == key) else {
             panic!("missing menu group: {key:?}");
         };

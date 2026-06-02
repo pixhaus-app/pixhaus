@@ -9,7 +9,8 @@
 
 use egui::{Key, KeyboardShortcut, Modifiers, Sense, Vec2};
 use pixhaus_ui::contrib_api::{
-    ActionDesc, ActionId, HostRegistrar, Panel, PanelId, PanelMeta, PanelScope, StatusItem, ToolId, Workspace, WorkspaceId, WorkspaceLayout, WorkspaceMeta,
+    ActionDesc, ActionId, HostRegistrar, MsgKey, Panel, PanelId, PanelMeta, PanelScope, StatusItem, ToolId, Workspace, WorkspaceId, WorkspaceLayout,
+    WorkspaceMeta,
 };
 use pixhaus_ui::region::Region;
 use pixhaus_ui::state::intent::Intent;
@@ -84,9 +85,9 @@ impl Workspace for TilesWorkspace {
 
     fn meta(&self) -> WorkspaceMeta {
         WorkspaceMeta {
-            name: "Tiles",
+            name: MsgKey("workspace.tiles.title"),
             icon: icons::TILES,
-            purpose: "Author tilesets and terrain",
+            purpose: MsgKey("workspace.tiles.purpose"),
             shortcut: KeyboardShortcut::new(Modifiers::COMMAND, Key::Num3),
         }
     }
@@ -104,7 +105,7 @@ impl Workspace for TilesWorkspace {
                 },
                 StatusItem {
                     icon: icons::CHECK,
-                    text: "Seams OK".to_owned(),
+                    text: MsgKey("workspace.tiles.status.seams_ok").tr(),
                 },
             ],
         }
@@ -122,7 +123,7 @@ impl Panel for TilesetPanel {
 
     fn meta(&self) -> PanelMeta {
         PanelMeta {
-            title: "Tileset",
+            title: MsgKey("panel.tileset.title"),
             icon: icons::TILESET,
             default_region: Region::RightDock,
             default_open: true,
@@ -177,7 +178,7 @@ impl Panel for RuleTypePanel {
 
     fn meta(&self) -> PanelMeta {
         PanelMeta {
-            title: "Rule Type",
+            title: MsgKey("panel.rule-type.title"),
             icon: icons::GRID,
             default_region: Region::RightDock,
             default_open: true,
@@ -204,7 +205,7 @@ impl Panel for MaterialPanel {
 
     fn meta(&self) -> PanelMeta {
         PanelMeta {
-            title: "Material",
+            title: MsgKey("panel.material.title"),
             icon: icons::PALETTE,
             default_region: Region::RightDock,
             default_open: true,
@@ -233,7 +234,7 @@ impl Panel for SeamQaPanel {
 
     fn meta(&self) -> PanelMeta {
         PanelMeta {
-            title: "Seam QA",
+            title: MsgKey("panel.seam-qa.title"),
             icon: icons::CHECK,
             default_region: Region::RightDock,
             default_open: true,
@@ -274,7 +275,7 @@ impl Panel for AiTileAssistantPanel {
 
     fn meta(&self) -> PanelMeta {
         PanelMeta {
-            title: "AI Tile Assistant",
+            title: MsgKey("panel.ai-tile-assistant.title"),
             icon: icons::SPARKLE,
             default_region: Region::RightDock,
             default_open: true,
@@ -307,7 +308,7 @@ impl Panel for TileVariantsPanel {
 
     fn meta(&self) -> PanelMeta {
         PanelMeta {
-            title: "Tile Variants",
+            title: MsgKey("panel.tile-variants.title"),
             icon: icons::TILESET,
             default_region: Region::BottomTray,
             default_open: true,
@@ -367,11 +368,11 @@ pub fn register(host: &mut dyn HostRegistrar) {
 
     // The tile actions the panels above dispatch.
     for (id, label) in [
-        (TILE_NEW, "New Tile"),
-        (TILE_MAKE_SEAMLESS, "Make seamless"),
-        (TILE_VARIATIONS, "Generate variations"),
-        (TILE_SUGGEST_MATERIAL, "Suggest material"),
-        (TILE_FIX_SEAMS, "Fix seams"),
+        (TILE_NEW, MsgKey("command.tile.new")),
+        (TILE_MAKE_SEAMLESS, MsgKey("command.tile.make-seamless")),
+        (TILE_VARIATIONS, MsgKey("command.tile.generate-variations")),
+        (TILE_SUGGEST_MATERIAL, MsgKey("command.tile.suggest-material")),
+        (TILE_FIX_SEAMS, MsgKey("command.tile.fix-seams")),
     ] {
         let icon = if id == TILE_NEW { icons::ADD } else { icons::SPARKLE };
         host.add_action(ActionDesc {
@@ -402,7 +403,7 @@ mod tests {
     #[test]
     fn tiles_meta_uses_cmd_3() {
         assert_eq!(TilesWorkspace.id(), TILES);
-        assert_eq!(TilesWorkspace.meta().name, "Tiles");
+        assert_eq!(TilesWorkspace.meta().name, MsgKey("workspace.tiles.title"));
         assert_eq!(TilesWorkspace.meta().shortcut, KeyboardShortcut::new(Modifiers::COMMAND, Key::Num3));
     }
 

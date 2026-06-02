@@ -12,7 +12,8 @@
 
 use egui::{Key, KeyboardShortcut, Modifiers};
 use pixhaus_ui::contrib_api::{
-    ActionId, HostRegistrar, MenuGroup, MenuItem, Panel, PanelId, PanelMeta, PanelScope, StatusItem, Workspace, WorkspaceId, WorkspaceLayout, WorkspaceMeta,
+    ActionId, HostRegistrar, MenuGroup, MenuItem, MsgKey, Panel, PanelId, PanelMeta, PanelScope, StatusItem, Workspace, WorkspaceId, WorkspaceLayout,
+    WorkspaceMeta,
 };
 use pixhaus_ui::region::Region;
 use pixhaus_ui::state::intent::Intent;
@@ -78,9 +79,9 @@ impl Workspace for DrawWorkspace {
 
     fn meta(&self) -> WorkspaceMeta {
         WorkspaceMeta {
-            name: "Draw",
+            name: MsgKey("workspace.draw.title"),
             icon: icons::PENCIL,
-            purpose: "Paint and edit a single sprite",
+            purpose: MsgKey("workspace.draw.purpose"),
             shortcut: KeyboardShortcut::new(Modifiers::COMMAND, Key::Num1),
         }
     }
@@ -93,7 +94,7 @@ impl Workspace for DrawWorkspace {
             default_tool: tools::PENCIL,
             status_items: vec![StatusItem {
                 icon: icons::GRID,
-                text: "Pixel Grid On".to_owned(),
+                text: MsgKey("workspace.draw.status.grid_on").tr(),
             }],
         }
     }
@@ -111,7 +112,7 @@ impl Panel for LayersPanel {
 
     fn meta(&self) -> PanelMeta {
         PanelMeta {
-            title: "Layers",
+            title: MsgKey("panel.layers.title"),
             icon: icons::LAYERS,
             default_region: Region::RightDock,
             default_open: true,
@@ -173,7 +174,7 @@ impl Panel for SpritesPanel {
 
     fn meta(&self) -> PanelMeta {
         PanelMeta {
-            title: "Sprites",
+            title: MsgKey("panel.sprites.title"),
             icon: icons::SPRITES,
             default_region: Region::RightDock,
             default_open: true,
@@ -201,7 +202,7 @@ impl Panel for PalettePanel {
 
     fn meta(&self) -> PanelMeta {
         PanelMeta {
-            title: "Palette",
+            title: MsgKey("panel.palette.title"),
             icon: icons::PALETTE,
             default_region: Region::RightDock,
             default_open: true,
@@ -267,7 +268,7 @@ impl Panel for SelectionActionsPanel {
 
     fn meta(&self) -> PanelMeta {
         PanelMeta {
-            title: "Selection Actions",
+            title: MsgKey("panel.selection-actions.title"),
             icon: icons::SELECT,
             default_region: Region::RightDock,
             default_open: true,
@@ -314,7 +315,7 @@ impl Panel for AiAssistantPanel {
 
     fn meta(&self) -> PanelMeta {
         PanelMeta {
-            title: "AI Assistant",
+            title: MsgKey("panel.ai-assistant.title"),
             icon: icons::SPARKLE,
             default_region: Region::RightDock,
             default_open: true,
@@ -350,7 +351,7 @@ impl Panel for FramesPanel {
 
     fn meta(&self) -> PanelMeta {
         PanelMeta {
-            title: "Frames",
+            title: MsgKey("panel.frames.title"),
             icon: icons::FRAMES,
             default_region: Region::BottomTray,
             default_open: true,
@@ -402,7 +403,7 @@ impl Panel for AssetsPanel {
 
     fn meta(&self) -> PanelMeta {
         PanelMeta {
-            title: "Assets",
+            title: MsgKey("panel.assets.title"),
             icon: icons::ASSETS,
             default_region: Region::BottomTray,
             default_open: true,
@@ -432,7 +433,7 @@ impl Panel for ConsolePanel {
 
     fn meta(&self) -> PanelMeta {
         PanelMeta {
-            title: "Console",
+            title: MsgKey("panel.console.title"),
             icon: icons::CONSOLE,
             default_region: Region::BottomTray,
             default_open: true,
@@ -469,31 +470,31 @@ pub fn register(host: &mut dyn HostRegistrar) {
 
     // The actions the panels above dispatch (menu items and the AI quick-actions).
     for (id, label, icon) in [
-        (LAYER_NEW, "New Layer", icons::ADD),
-        (LAYER_DELETE, "Delete Layer", icons::CLOSE),
-        (LAYER_MERGE_DOWN, "Merge Down", icons::LAYERS),
-        (SPRITE_NEW, "New Sprite", icons::ADD),
-        (SPRITE_RESIZE, "Resize Canvas", icons::TRANSFORM),
-        (PALETTE_RAMP, "Ramp", icons::PALETTE),
-        (PALETTE_HARMONY, "Harmony", icons::PALETTE),
-        (PALETTE_REDUCE, "Reduce to palette", icons::PALETTE),
-        (SEL_CUT, "Cut", icons::CROP),
-        (SEL_COPY, "Copy", icons::CROP),
-        (SEL_PASTE, "Paste", icons::CROP),
-        (SEL_INVERT, "Invert Selection", icons::SELECT),
-        (SEL_CROP, "Crop", icons::CROP),
-        (SEL_AI_FILL, "AI Fill", icons::SPARKLE),
-        (SEL_AI_CLEANUP, "AI Clean up", icons::SPARKLE),
-        (SEL_AI_SEAMLESS, "AI Make seamless", icons::SPARKLE),
-        (AI_FILL, "Fill selection", icons::SPARKLE),
-        (AI_CLEANUP, "Clean up", icons::SPARKLE),
-        (AI_REDUCE, "Reduce colors", icons::SPARKLE),
-        (AI_RAMP, "Suggest ramp", icons::SPARKLE),
-        (AI_VARIATIONS, "Create variations", icons::SPARKLE),
-        (AI_REMOVE_BG, "Remove background", icons::SPARKLE),
-        (FRAME_ADD, "Add Frame", icons::ADD),
-        (FRAME_DUPLICATE, "Duplicate Frame", icons::FRAMES),
-        (FRAME_DELETE, "Delete Frame", icons::CLOSE),
+        (LAYER_NEW, MsgKey("command.layer.new"), icons::ADD),
+        (LAYER_DELETE, MsgKey("command.layer.delete"), icons::CLOSE),
+        (LAYER_MERGE_DOWN, MsgKey("command.layer.merge-down"), icons::LAYERS),
+        (SPRITE_NEW, MsgKey("command.sprite.new"), icons::ADD),
+        (SPRITE_RESIZE, MsgKey("command.sprite.resize"), icons::TRANSFORM),
+        (PALETTE_RAMP, MsgKey("command.palette.ramp"), icons::PALETTE),
+        (PALETTE_HARMONY, MsgKey("command.palette.harmony"), icons::PALETTE),
+        (PALETTE_REDUCE, MsgKey("command.palette.reduce"), icons::PALETTE),
+        (SEL_CUT, MsgKey("command.selection.cut"), icons::CROP),
+        (SEL_COPY, MsgKey("command.selection.copy"), icons::CROP),
+        (SEL_PASTE, MsgKey("command.selection.paste"), icons::CROP),
+        (SEL_INVERT, MsgKey("command.selection.invert"), icons::SELECT),
+        (SEL_CROP, MsgKey("command.selection.crop"), icons::CROP),
+        (SEL_AI_FILL, MsgKey("command.selection.ai-fill"), icons::SPARKLE),
+        (SEL_AI_CLEANUP, MsgKey("command.selection.ai-clean-up"), icons::SPARKLE),
+        (SEL_AI_SEAMLESS, MsgKey("command.selection.ai-make-seamless"), icons::SPARKLE),
+        (AI_FILL, MsgKey("command.ai.fill-selection"), icons::SPARKLE),
+        (AI_CLEANUP, MsgKey("command.ai.clean-up"), icons::SPARKLE),
+        (AI_REDUCE, MsgKey("command.ai.reduce-colors"), icons::SPARKLE),
+        (AI_RAMP, MsgKey("command.ai.suggest-ramp"), icons::SPARKLE),
+        (AI_VARIATIONS, MsgKey("command.ai.create-variations"), icons::SPARKLE),
+        (AI_REMOVE_BG, MsgKey("command.ai.remove-background"), icons::SPARKLE),
+        (FRAME_ADD, MsgKey("command.frame.add"), icons::ADD),
+        (FRAME_DUPLICATE, MsgKey("command.frame.duplicate"), icons::FRAMES),
+        (FRAME_DELETE, MsgKey("command.frame.delete"), icons::CLOSE),
     ] {
         host.add_action(pixhaus_ui::contrib_api::ActionDesc {
             id,
@@ -505,35 +506,35 @@ pub fn register(host: &mut dyn HostRegistrar) {
 
     // The menu groups this module owns (bible: the shared sprite-editing surface).
     host.add_menu_group(MenuGroup {
-        label: "Sprite",
+        label: MsgKey("app.menu.sprite"),
         items: vec![
             MenuItem {
-                label: "New Sprite",
+                label: MsgKey("command.sprite.new"),
                 shortcut: None,
                 action: SPRITE_NEW,
             },
             MenuItem {
-                label: "Resize Canvas",
+                label: MsgKey("command.sprite.resize"),
                 shortcut: None,
                 action: SPRITE_RESIZE,
             },
         ],
     });
     host.add_menu_group(MenuGroup {
-        label: "Layer",
+        label: MsgKey("app.menu.layer"),
         items: vec![
             MenuItem {
-                label: "New Layer",
+                label: MsgKey("command.layer.new"),
                 shortcut: None,
                 action: LAYER_NEW,
             },
             MenuItem {
-                label: "Delete Layer",
+                label: MsgKey("command.layer.delete"),
                 shortcut: None,
                 action: LAYER_DELETE,
             },
             MenuItem {
-                label: "Merge Down",
+                label: MsgKey("command.layer.merge-down"),
                 shortcut: None,
                 action: LAYER_MERGE_DOWN,
             },
@@ -553,13 +554,13 @@ mod tests {
         assert_eq!(layout.default_tool, tools::PENCIL);
         assert_eq!(layout.primary_tools.len(), 15);
         assert_eq!(layout.status_items.len(), 1);
-        assert_eq!(layout.status_items[0].text, "Pixel Grid On");
+        assert_eq!(layout.status_items[0].text, MsgKey("workspace.draw.status.grid_on").tr());
     }
 
     #[test]
     fn draw_meta_uses_cmd_1() {
         assert_eq!(DrawWorkspace.id(), DRAW);
-        assert_eq!(DrawWorkspace.meta().name, "Draw");
+        assert_eq!(DrawWorkspace.meta().name, MsgKey("workspace.draw.title"));
         assert_eq!(DrawWorkspace.meta().shortcut, KeyboardShortcut::new(Modifiers::COMMAND, Key::Num1));
     }
 
@@ -567,7 +568,7 @@ mod tests {
     fn layers_panel_meta() {
         let meta = LayersPanel.meta();
         assert_eq!(LayersPanel.id(), LAYERS);
-        assert_eq!(meta.title, "Layers");
+        assert_eq!(meta.title, MsgKey("panel.layers.title"));
         assert_eq!(meta.default_region, Region::RightDock);
         assert!(meta.default_open);
     }

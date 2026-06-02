@@ -11,7 +11,8 @@
 
 use egui::{Key, KeyboardShortcut, Modifiers};
 use pixhaus_ui::contrib_api::{
-    ActionDesc, ActionId, HostRegistrar, Panel, PanelId, PanelMeta, PanelScope, StatusItem, ToolId, Workspace, WorkspaceId, WorkspaceLayout, WorkspaceMeta,
+    ActionDesc, ActionId, HostRegistrar, MsgKey, Panel, PanelId, PanelMeta, PanelScope, StatusItem, ToolId, Workspace, WorkspaceId, WorkspaceLayout,
+    WorkspaceMeta,
 };
 use pixhaus_ui::region::Region;
 use pixhaus_ui::state::intent::Intent;
@@ -57,9 +58,9 @@ impl Workspace for ExportWorkspace {
 
     fn meta(&self) -> WorkspaceMeta {
         WorkspaceMeta {
-            name: "Export",
+            name: MsgKey("workspace.export.title"),
             icon: icons::EXPORT_WS,
-            purpose: "Export sprites for the engine",
+            purpose: MsgKey("workspace.export.purpose"),
             shortcut: KeyboardShortcut::new(Modifiers::COMMAND, Key::Num5),
         }
     }
@@ -73,7 +74,7 @@ impl Workspace for ExportWorkspace {
             status_items: vec![
                 StatusItem {
                     icon: icons::EXPORT,
-                    text: "PNG + sheet".to_owned(),
+                    text: MsgKey("workspace.export.status.format").tr(),
                 },
                 StatusItem {
                     icon: icons::CHECK,
@@ -95,7 +96,7 @@ impl Panel for ExportFormatPanel {
 
     fn meta(&self) -> PanelMeta {
         PanelMeta {
-            title: "Export Format",
+            title: MsgKey("panel.export-format.title"),
             icon: icons::EXPORT,
             default_region: Region::RightDock,
             default_open: true,
@@ -125,7 +126,7 @@ impl Panel for EnginePresetPanel {
 
     fn meta(&self) -> PanelMeta {
         PanelMeta {
-            title: "Engine Preset",
+            title: MsgKey("panel.engine-preset.title"),
             icon: icons::SETTINGS,
             default_region: Region::RightDock,
             default_open: true,
@@ -158,7 +159,7 @@ impl Panel for AnimationMetadataPanel {
 
     fn meta(&self) -> PanelMeta {
         PanelMeta {
-            title: "Animation Metadata",
+            title: MsgKey("panel.animation-metadata.title"),
             icon: icons::FRAMES,
             default_region: Region::RightDock,
             default_open: true,
@@ -197,7 +198,7 @@ impl Panel for QaWarningsPanel {
 
     fn meta(&self) -> PanelMeta {
         PanelMeta {
-            title: "QA Warnings",
+            title: MsgKey("panel.qa-warnings.title"),
             icon: icons::CHECK,
             default_region: Region::RightDock,
             default_open: true,
@@ -251,7 +252,7 @@ impl Panel for ExportLogPanel {
 
     fn meta(&self) -> PanelMeta {
         PanelMeta {
-            title: "Export Log",
+            title: MsgKey("panel.export-log.title"),
             icon: icons::CONSOLE,
             default_region: Region::BottomTray,
             default_open: true,
@@ -288,11 +289,11 @@ pub fn register(host: &mut dyn HostRegistrar) {
     // visible; the per-warning Fix/Ignore are not (they only make sense in context).
     host.add_action(ActionDesc {
         id: EXPORT_RUN,
-        label: "Export sprites",
+        label: MsgKey("command.export.run"),
         icon: icons::EXPORT,
         palette_visible: true,
     });
-    for (id, label) in [(EXPORT_FIX, "Fix warning"), (EXPORT_IGNORE, "Ignore warning")] {
+    for (id, label) in [(EXPORT_FIX, MsgKey("command.export.fix")), (EXPORT_IGNORE, MsgKey("command.export.ignore"))] {
         host.add_action(ActionDesc {
             id,
             label,
@@ -321,7 +322,7 @@ mod tests {
     #[test]
     fn export_meta_uses_cmd_5() {
         assert_eq!(ExportWorkspace.id(), EXPORT);
-        assert_eq!(ExportWorkspace.meta().name, "Export");
+        assert_eq!(ExportWorkspace.meta().name, MsgKey("workspace.export.title"));
         assert_eq!(ExportWorkspace.meta().shortcut, KeyboardShortcut::new(Modifiers::COMMAND, Key::Num5));
     }
 

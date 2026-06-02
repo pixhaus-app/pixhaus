@@ -1,0 +1,34 @@
+# Localization strings owned by the pixhaus-mod-export module: the Export
+# workspace, its panels, and the `export.*` commands. English only for now.
+#
+# rust-i18n `_version: 2` layout: one key per entry, mapping locale -> value. `en`
+# is the fallback.
+_version: 2
+
+# --- Export workspace. ---
+workspace.export.title:
+  en: Export
+workspace.export.purpose:
+  en: Export sprites for the engine
+workspace.export.status.format:
+  en: PNG + sheet
+
+# --- Panels. ---
+panel.export-format.title:
+  en: Export Format
+panel.engine-preset.title:
+  en: Engine Preset
+panel.animation-metadata.title:
+  en: Animation Metadata
+panel.qa-warnings.title:
+  en: QA Warnings
+panel.export-log.title:
+  en: Export Log
+
+# --- Commands. ---
+command.export.run:
+  en: Export sprites
+command.export.fix:
+  en: Fix warning
+command.export.ignore:
+  en: Ignore warning

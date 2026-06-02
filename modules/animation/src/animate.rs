@@ -9,7 +9,7 @@
 
 use egui::{Align2, FontId, Key, KeyboardShortcut, Modifiers, Sense, Stroke, Vec2};
 use pixhaus_ui::contrib_api::{
-    ActionDesc, ActionId, HostRegistrar, MenuGroup, MenuItem, Panel, PanelId, PanelMeta, PanelScope, StatusItem, ToolId, Workspace, WorkspaceId,
+    ActionDesc, ActionId, HostRegistrar, MenuGroup, MenuItem, MsgKey, Panel, PanelId, PanelMeta, PanelScope, StatusItem, ToolId, Workspace, WorkspaceId,
     WorkspaceLayout, WorkspaceMeta,
 };
 use pixhaus_ui::region::Region;
@@ -84,9 +84,9 @@ impl Workspace for AnimateWorkspace {
 
     fn meta(&self) -> WorkspaceMeta {
         WorkspaceMeta {
-            name: "Animate",
+            name: MsgKey("workspace.animate.title"),
             icon: icons::ANIMATE,
-            purpose: "Animate the sprite across frames",
+            purpose: MsgKey("workspace.animate.purpose"),
             shortcut: KeyboardShortcut::new(Modifiers::COMMAND, Key::Num2),
         }
     }
@@ -104,7 +104,7 @@ impl Workspace for AnimateWorkspace {
                 },
                 StatusItem {
                     icon: icons::EYE,
-                    text: "Onion Skin Off".to_owned(),
+                    text: MsgKey("workspace.animate.status.onion-skin").tr(),
                 },
                 StatusItem {
                     icon: icons::STATUS_DOT,
@@ -127,7 +127,7 @@ impl Panel for ClipPropertiesPanel {
 
     fn meta(&self) -> PanelMeta {
         PanelMeta {
-            title: "Clip Properties",
+            title: MsgKey("panel.clip-properties.title"),
             icon: icons::TIMELINE,
             default_region: Region::RightDock,
             default_open: true,
@@ -161,7 +161,7 @@ impl Panel for AiAnimationAssistantPanel {
 
     fn meta(&self) -> PanelMeta {
         PanelMeta {
-            title: "AI Animation Assistant",
+            title: MsgKey("panel.ai-animation-assistant.title"),
             icon: icons::SPARKLE,
             default_region: Region::RightDock,
             default_open: true,
@@ -196,7 +196,7 @@ impl Panel for TimelinePanel {
 
     fn meta(&self) -> PanelMeta {
         PanelMeta {
-            title: "Timeline",
+            title: MsgKey("panel.timeline.title"),
             icon: icons::TIMELINE,
             default_region: Region::BottomTray,
             default_open: true,
@@ -333,11 +333,11 @@ pub fn register(host: &mut dyn HostRegistrar) {
 
     // The AI-animation quick-actions the assistant panel dispatches.
     for (id, label) in [
-        (ANIM_INBETWEEN, "In-between frames"),
-        (ANIM_EXTEND, "Extend animation"),
-        (ANIM_CLEAN, "Clean frames"),
-        (ANIM_REDUCE, "Reduce colors"),
-        (ANIM_VARIATIONS, "Create variations"),
+        (ANIM_INBETWEEN, MsgKey("command.anim.in-between-frames")),
+        (ANIM_EXTEND, MsgKey("command.anim.extend-animation")),
+        (ANIM_CLEAN, MsgKey("command.anim.clean-frames")),
+        (ANIM_REDUCE, MsgKey("command.anim.reduce-colors")),
+        (ANIM_VARIATIONS, MsgKey("command.anim.create-variations")),
     ] {
         host.add_action(ActionDesc {
             id,
@@ -350,20 +350,20 @@ pub fn register(host: &mut dyn HostRegistrar) {
     // The Frame menu group. Its items reference sprite-edit's already-registered
     // frame.* actions (menu groups are an ordered Vec, so adding one never collides).
     host.add_menu_group(MenuGroup {
-        label: "Frame",
+        label: MsgKey("app.menu.frame"),
         items: vec![
             MenuItem {
-                label: "Add Frame",
+                label: MsgKey("command.frame.add"),
                 shortcut: None,
                 action: FRAME_ADD,
             },
             MenuItem {
-                label: "Duplicate Frame",
+                label: MsgKey("command.frame.duplicate"),
                 shortcut: None,
                 action: FRAME_DUPLICATE,
             },
             MenuItem {
-                label: "Delete Frame",
+                label: MsgKey("command.frame.delete"),
                 shortcut: None,
                 action: FRAME_DELETE,
             },
@@ -389,7 +389,7 @@ mod tests {
     #[test]
     fn animate_meta_uses_cmd_2() {
         assert_eq!(AnimateWorkspace.id(), ANIMATE);
-        assert_eq!(AnimateWorkspace.meta().name, "Animate");
+        assert_eq!(AnimateWorkspace.meta().name, MsgKey("workspace.animate.title"));
         assert_eq!(AnimateWorkspace.meta().shortcut, KeyboardShortcut::new(Modifiers::COMMAND, Key::Num2));
     }
 

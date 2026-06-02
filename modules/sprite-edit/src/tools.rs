@@ -6,7 +6,7 @@
 //! (they move, they drive nothing this round).
 
 use egui::{Key, KeyboardShortcut, Modifiers};
-use pixhaus_ui::contrib_api::{ContribCtx, HostRegistrar, Tool, ToolId, ToolMeta};
+use pixhaus_ui::contrib_api::{ContribCtx, HostRegistrar, MsgKey, Tool, ToolId, ToolMeta};
 use pixhaus_ui::icons;
 
 /// Pencil tool id.
@@ -57,10 +57,10 @@ impl Tool for PencilTool {
 
     fn meta(&self) -> ToolMeta {
         ToolMeta {
-            label: "Pencil",
+            label: MsgKey("tool.pencil.label"),
             icon: icons::PENCIL,
             shortcut: Some(KeyboardShortcut::new(Modifiers::NONE, Key::B)),
-            tooltip: "Draw individual pixels. Hold Shift for a line.",
+            tooltip: MsgKey("tool.pencil.tooltip"),
             is_ai: false,
         }
     }
@@ -92,10 +92,10 @@ impl Tool for EraserTool {
 
     fn meta(&self) -> ToolMeta {
         ToolMeta {
-            label: "Eraser",
+            label: MsgKey("tool.eraser.label"),
             icon: icons::ERASER,
             shortcut: Some(KeyboardShortcut::new(Modifiers::NONE, Key::E)),
-            tooltip: "Erase pixels to transparent.",
+            tooltip: MsgKey("tool.eraser.tooltip"),
             is_ai: false,
         }
     }
@@ -122,10 +122,10 @@ impl Tool for FillTool {
 
     fn meta(&self) -> ToolMeta {
         ToolMeta {
-            label: "Fill",
+            label: MsgKey("tool.fill.label"),
             icon: icons::FILL,
             shortcut: Some(KeyboardShortcut::new(Modifiers::NONE, Key::G)),
-            tooltip: "Flood-fill contiguous color.",
+            tooltip: MsgKey("tool.fill.tooltip"),
             is_ai: false,
         }
     }
@@ -152,10 +152,10 @@ impl Tool for LineTool {
 
     fn meta(&self) -> ToolMeta {
         ToolMeta {
-            label: "Line",
+            label: MsgKey("tool.line.label"),
             icon: icons::LINE,
             shortcut: Some(KeyboardShortcut::new(Modifiers::NONE, Key::L)),
-            tooltip: "Draw a straight line.",
+            tooltip: MsgKey("tool.line.tooltip"),
             is_ai: false,
         }
     }
@@ -182,10 +182,10 @@ impl Tool for RectangleTool {
 
     fn meta(&self) -> ToolMeta {
         ToolMeta {
-            label: "Rectangle",
+            label: MsgKey("tool.rectangle.label"),
             icon: icons::RECT,
             shortcut: Some(KeyboardShortcut::new(Modifiers::NONE, Key::U)),
-            tooltip: "Draw a rectangle.",
+            tooltip: MsgKey("tool.rectangle.tooltip"),
             is_ai: false,
         }
     }
@@ -212,10 +212,10 @@ impl Tool for EllipseTool {
 
     fn meta(&self) -> ToolMeta {
         ToolMeta {
-            label: "Ellipse",
+            label: MsgKey("tool.ellipse.label"),
             icon: icons::ELLIPSE,
             shortcut: Some(KeyboardShortcut::new(Modifiers::NONE, Key::O)),
-            tooltip: "Draw an ellipse.",
+            tooltip: MsgKey("tool.ellipse.tooltip"),
             is_ai: false,
         }
     }
@@ -242,10 +242,10 @@ impl Tool for EyedropperTool {
 
     fn meta(&self) -> ToolMeta {
         ToolMeta {
-            label: "Eyedropper",
+            label: MsgKey("tool.eyedropper.label"),
             icon: icons::EYEDROPPER,
             shortcut: Some(KeyboardShortcut::new(Modifiers::NONE, Key::I)),
-            tooltip: "Pick a color from the canvas.",
+            tooltip: MsgKey("tool.eyedropper.tooltip"),
             is_ai: false,
         }
     }
@@ -269,10 +269,10 @@ impl Tool for SelectionTool {
 
     fn meta(&self) -> ToolMeta {
         ToolMeta {
-            label: "Selection",
+            label: MsgKey("tool.selection.label"),
             icon: icons::SELECT,
             shortcut: Some(KeyboardShortcut::new(Modifiers::NONE, Key::M)),
-            tooltip: "Rectangular marquee selection.",
+            tooltip: MsgKey("tool.selection.tooltip"),
             is_ai: false,
         }
     }
@@ -299,10 +299,10 @@ impl Tool for LassoTool {
 
     fn meta(&self) -> ToolMeta {
         ToolMeta {
-            label: "Lasso",
+            label: MsgKey("tool.lasso.label"),
             icon: icons::LASSO,
             shortcut: Some(KeyboardShortcut::new(Modifiers::NONE, Key::Q)),
-            tooltip: "Freeform selection.",
+            tooltip: MsgKey("tool.lasso.tooltip"),
             is_ai: false,
         }
     }
@@ -326,10 +326,10 @@ impl Tool for MoveTool {
 
     fn meta(&self) -> ToolMeta {
         ToolMeta {
-            label: "Move",
+            label: MsgKey("tool.move.label"),
             icon: icons::MOVE,
             shortcut: Some(KeyboardShortcut::new(Modifiers::NONE, Key::V)),
-            tooltip: "Move the selection or layer.",
+            tooltip: MsgKey("tool.move.tooltip"),
             is_ai: false,
         }
     }
@@ -353,10 +353,10 @@ impl Tool for TransformTool {
 
     fn meta(&self) -> ToolMeta {
         ToolMeta {
-            label: "Transform",
+            label: MsgKey("tool.transform.label"),
             icon: icons::TRANSFORM,
             shortcut: Some(KeyboardShortcut::new(Modifiers::SHIFT, Key::T)),
-            tooltip: "Scale, rotate, and skew.",
+            tooltip: MsgKey("tool.transform.tooltip"),
             is_ai: false,
         }
     }
@@ -380,10 +380,10 @@ impl Tool for TextTool {
 
     fn meta(&self) -> ToolMeta {
         ToolMeta {
-            label: "Text",
+            label: MsgKey("tool.text.label"),
             icon: icons::TEXT,
             shortcut: Some(KeyboardShortcut::new(Modifiers::NONE, Key::X)),
-            tooltip: "Place pixel text.",
+            tooltip: MsgKey("tool.text.tooltip"),
             is_ai: false,
         }
     }
@@ -407,10 +407,10 @@ impl Tool for HandTool {
 
     fn meta(&self) -> ToolMeta {
         ToolMeta {
-            label: "Hand",
+            label: MsgKey("tool.hand.label"),
             icon: icons::HAND,
             shortcut: Some(KeyboardShortcut::new(Modifiers::NONE, Key::H)),
-            tooltip: "Pan the canvas.",
+            tooltip: MsgKey("tool.hand.tooltip"),
             is_ai: false,
         }
     }
@@ -434,10 +434,10 @@ impl Tool for ZoomTool {
 
     fn meta(&self) -> ToolMeta {
         ToolMeta {
-            label: "Zoom",
+            label: MsgKey("tool.zoom.label"),
             icon: icons::ZOOM,
             shortcut: Some(KeyboardShortcut::new(Modifiers::NONE, Key::Z)),
-            tooltip: "Zoom in and out.",
+            tooltip: MsgKey("tool.zoom.tooltip"),
             is_ai: false,
         }
     }
@@ -462,10 +462,10 @@ impl Tool for AiBrushTool {
 
     fn meta(&self) -> ToolMeta {
         ToolMeta {
-            label: "AI Brush",
+            label: MsgKey("tool.ai_brush.label"),
             icon: icons::SPARKLE,
             shortcut: Some(KeyboardShortcut::new(Modifiers::NONE, Key::J)),
-            tooltip: "AI-assisted painting. Describe what to draw.",
+            tooltip: MsgKey("tool.ai_brush.tooltip"),
             is_ai: true,
         }
     }
@@ -516,7 +516,7 @@ mod tests {
     fn pencil_meta() {
         let m = PencilTool.meta();
         assert_eq!(PencilTool.id(), PENCIL);
-        assert_eq!(m.label, "Pencil");
+        assert_eq!(m.label, MsgKey("tool.pencil.label"));
         assert!(!m.is_ai);
         assert_eq!(m.shortcut, Some(KeyboardShortcut::new(Modifiers::NONE, Key::B)));
     }
