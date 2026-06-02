@@ -6,9 +6,10 @@
 //! applying a result is a command - this round the panels render mock content and
 //! dispatch `gen.*` actions through the intent sink. Provider dispatch arrives with
 //! the services layer.
-#![cfg_attr(test, allow(clippy::unwrap_used, clippy::expect_used))]
+#![cfg_attr(test, allow(clippy::unwrap_used, clippy::expect_used, clippy::disallowed_methods))]
 
 mod generate;
+pub mod prompt;
 
 use pixhaus_ui::contrib_api::{HostRegistrar, Module};
 
