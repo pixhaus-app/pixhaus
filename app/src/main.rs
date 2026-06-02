@@ -49,6 +49,11 @@ fn build_host(ctx: &egui::Context) -> Host {
     // The count is the five module registrations above; bump it when the list grows.
     tracing::info!(modules = 5, "registered capability modules");
 
+    // Register the offline providers into the host's provider registry so the
+    // Generate workspace can answer prompts. Providers register into `EditSession`,
+    // not the capability registries, so this is separate from the module loop above.
+    pixhaus_mod_providers::register(&mut host.edit.providers);
+
     host
 }
 

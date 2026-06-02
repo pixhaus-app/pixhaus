@@ -35,6 +35,9 @@ pixhaus-mod-animation = { path = "../modules/animation" }
 pixhaus-mod-tiles = { path = "../modules/tiles" }
 pixhaus-mod-generation = { path = "../modules/generation" }
 pixhaus-mod-export = { path = "../modules/export" }
+# The offline mock provider, registered into the host's provider registry so the
+# Generate workspace answers prompts without an API key or GPU.
+pixhaus-mod-providers = { path = "../modules/providers" }
 
 [dev-dependencies]
 egui_kittest.workspace = true

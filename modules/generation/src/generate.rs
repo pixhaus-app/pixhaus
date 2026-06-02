@@ -152,11 +152,12 @@ impl Panel for PromptPanel {
 
         ui.add_space(theme.spacing.sm);
 
-        // The primary accent Generate button with the sparkle marker.
+        // The primary accent Generate button with the sparkle marker. Submits the
+        // scratch prompt as a real generation job (the mock provider answers it).
         let label = egui::RichText::new(format!("{} Generate", icons::SPARKLE)).color(theme.roles.text_primary);
         let button = egui::Button::new(label).fill(theme.accent.base);
         if ui.add_sized([ui.available_width(), 28.0], button).clicked() {
-            scope.ctx.intents.push(Intent::RunAction(GEN_GENERATE));
+            scope.ctx.intents.push(Intent::SubmitGenerateJob { prompt: scope.scratch.clone() });
         }
     }
 }
@@ -374,22 +375,49 @@ impl Panel for ResultsPanel {
 
     fn ui(&self, ui: &mut egui::Ui, scope: &mut PanelScope<'_>) {
         let theme = scope.ctx.theme;
+        let count = scope.ctx.session.result_count;
+        let selected = scope.ctx.session.selected_result;
+
+        if count == 0 {
+            ui.label(
+                egui::RichText::new("No results yet. Enter a prompt and click Generate.")
+                    .size(theme.type_scale.label)
+                    .color(theme.roles.text_secondary),
+            );
+            return;
+        }
+
+        // The store may hold more than the tray shows; cap the visible cards.
+        let shown = count.min(12);
+        let mut to_select = None;
         ui.horizontal_wrapped(|ui| {
-            for i in 0..8 {
-                result_card(ui, theme, i, i == 0);
+            for i in 0..shown {
+                if result_card(ui, theme, i, selected == Some(i)).clicked() {
+                    to_select = Some(i);
+                }
             }
         });
+        if let Some(i) = to_select {
+            scope.ctx.intents.push(Intent::SelectResult(i));
+        }
+
         ui.add_space(theme.spacing.sm);
         ui.horizontal_wrapped(|ui| {
-            for (label, action) in [
-                ("Use selected", GEN_USE_SELECTED),
-                ("Insert as new sprite", GEN_INSERT_SPRITE),
-                ("Create variations", GEN_CREATE_VARIATIONS),
-                ("Generate more", GEN_GENERATE_MORE),
-            ] {
-                if ui.button(label).clicked() {
-                    scope.ctx.intents.push(Intent::RunAction(action));
-                }
+            // The real apply path: a selected result becomes a sprite via a command.
+            if ui.button("Insert as new sprite").clicked() {
+                scope.ctx.intents.push(Intent::InsertSelectedResultAsSprite);
+            }
+            if ui.button("Generate more").clicked() {
+                scope.ctx.intents.push(Intent::SubmitGenerateJob {
+                    prompt: scope.ctx.session.last_prompt.clone(),
+                });
+            }
+            // Mock affordances, not part of the apply loop yet.
+            if ui.button("Use selected").clicked() {
+                scope.ctx.intents.push(Intent::RunAction(GEN_USE_SELECTED));
+            }
+            if ui.button("Create variations").clicked() {
+                scope.ctx.intents.push(Intent::RunAction(GEN_CREATE_VARIATIONS));
             }
         });
     }
@@ -400,11 +428,11 @@ impl Panel for ResultsPanel {
 // The 72px card, the inset offsets, and the radius token are small bounded
 // constants; the index-to-f32 casts cannot truncate or lose a sign.
 #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss, clippy::cast_precision_loss)]
-fn result_card(ui: &mut egui::Ui, theme: &Theme, index: usize, selected: bool) {
+fn result_card(ui: &mut egui::Ui, theme: &Theme, index: usize, selected: bool) -> egui::Response {
     let card = 72.0;
-    let (rect, _) = ui.allocate_exact_size(Vec2::splat(card), Sense::hover());
+    let (rect, response) = ui.allocate_exact_size(Vec2::splat(card), Sense::click());
     if !ui.is_rect_visible(rect) {
-        return;
+        return response;
     }
     let painter = ui.painter_at(rect);
     // The checker thumbnail backdrop so transparency reads.
@@ -462,6 +490,7 @@ fn result_card(ui: &mut egui::Ui, theme: &Theme, index: usize, selected: bool) {
         Stroke::new(1.0, theme.roles.border)
     };
     painter.rect_stroke(rect, theme.radius.sm, stroke, StrokeKind::Inside);
+    response
 }
 
 /// The History tray panel. Mock content: a list of prior generations, each a
