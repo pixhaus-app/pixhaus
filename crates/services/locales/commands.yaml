@@ -1,0 +1,10 @@
+# Localization strings for the fundamental core commands (the shared sprite-editing
+# core in pixhaus-core). The shell resolves these history labels at render time.
+#
+# rust-i18n `_version: 2` layout: each key maps locale -> value; `en` is the fallback.
+_version: 2
+
+command.add_sprite:
+  en: Add sprite
+command.apply_generated_asset:
+  en: Insert generated sprite

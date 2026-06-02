@@ -9,6 +9,17 @@ repository.workspace = true
 homepage.workspace = true
 
 [dependencies]
+# The domain model: command execution and undo run over `core`'s Document.
+pixhaus-core = { path = "../core" }
+# Typed error enums for the command/undo and job systems.
+thiserror = { workspace = true }
+# The job system spawns provider work onto the binary's runtime (it never creates
+# one) and cancels with a token; serde derives the generation provenance metadata;
+# parking_lot guards the shared result store (job task writes, UI lane reads).
+tokio = { workspace = true }
+tokio-util = { workspace = true }
+serde = { workspace = true }
+parking_lot = { workspace = true }
 # The localization service wraps rust-i18n (the `i18n!`/`t!` machinery lives in
 # this crate's lib.rs). tracing carries the missing-key warning. See pixhaus-i18n.
 rust-i18n = { workspace = true }
@@ -16,6 +27,7 @@ tracing = { workspace = true }
 
 [dev-dependencies]
 serial_test = { workspace = true }
+rstest = { workspace = true }
 
 [lints]
 workspace = true

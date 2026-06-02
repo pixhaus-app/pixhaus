@@ -1,0 +1,9 @@
+# Localization strings owned by the providers module (pixhaus-mod-providers): the
+# provider display labels the Generate workspace shows. The shell resolves them at
+# render time.
+#
+# rust-i18n `_version: 2` layout: each key maps locale -> value; `en` is the fallback.
+_version: 2
+
+provider.mock.label:
+  en: Mock provider

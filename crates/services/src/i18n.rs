@@ -91,7 +91,7 @@ pub fn available_languages() -> Vec<String> {
     rust_i18n::available_locales!().into_iter().map(std::borrow::Cow::into_owned).collect()
 }
 
-/// Flip the dev key-display toggle (see [`SHOW_KEYS`]).
+/// Flip the dev key-display toggle (the process-global `SHOW_KEYS` flag).
 pub fn set_show_keys(enabled: bool) {
     SHOW_KEYS.store(enabled, Ordering::Relaxed);
 }
