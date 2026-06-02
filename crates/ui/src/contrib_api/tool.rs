@@ -7,7 +7,7 @@
 //! [`Panel`]: crate::contrib_api::panel::Panel
 
 use crate::contrib_api::context::ContribCtx;
-use crate::contrib_api::ids::ToolId;
+use crate::contrib_api::ids::{MsgKey, ToolId};
 
 /// A registered tool: stable identity, metadata, and an options renderer.
 ///
@@ -37,14 +37,15 @@ pub trait Tool {
 
 /// Static, by-value metadata describing a tool.
 pub struct ToolMeta {
-    /// Display label shown in tooltips and the command palette.
-    pub label: &'static str,
+    /// Localization key for the label shown in tooltips and the command palette;
+    /// resolved at render time.
+    pub label: MsgKey,
     /// Phosphor glyph from `crate::icons` painted on the rail button.
     pub icon: char,
     /// Optional keyboard shortcut (e.g. `B` for pencil). `None` means no key.
     pub shortcut: Option<egui::KeyboardShortcut>,
-    /// One-line help, e.g. "Draw individual pixels. Hold Shift for a line.".
-    pub tooltip: &'static str,
+    /// Localization key for the one-line help text; resolved at render time.
+    pub tooltip: MsgKey,
     /// The AI Brush flips this - it renders with the accent AI tint + sparkle.
     pub is_ai: bool,
 }

@@ -5,6 +5,8 @@
 //! Mirrors [`crate::shell::command_palette::overlay`] - the same foreground `Area`,
 //! elevated frame, and `CloseModal` dismiss path.
 
+use pixhaus_services::i18n;
+
 use crate::state::Host;
 use crate::state::intent::Intent;
 use crate::state::ui_state::Modal;
@@ -55,12 +57,12 @@ pub fn overlay(host: &mut Host, ui: &mut egui::Ui) {
                             .maintain_aspect_ratio(true),
                     );
                     ui.add_space(theme.spacing.md);
-                    ui.colored_label(theme.roles.text_secondary, format!("Version {VERSION}"));
-                    ui.colored_label(theme.roles.text_secondary, "MIT licensed");
+                    ui.colored_label(theme.roles.text_secondary, i18n::tr_args("app.ui.about.version", &[("version", VERSION)]));
+                    ui.colored_label(theme.roles.text_secondary, i18n::tr("app.ui.about.license"));
                     ui.add_space(theme.spacing.sm);
-                    ui.colored_label(theme.roles.text_secondary, "An AI-native, native-Rust tool for creating and animating sprites.");
+                    ui.colored_label(theme.roles.text_secondary, i18n::tr("app.ui.about.tagline"));
                     ui.add_space(theme.spacing.lg);
-                    if ui.button("Close").clicked() {
+                    if ui.button(i18n::tr("app.ui.action.close")).clicked() {
                         intents.push(Intent::CloseModal);
                     }
                 });

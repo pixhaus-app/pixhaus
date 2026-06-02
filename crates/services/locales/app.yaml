@@ -1,22 +1,133 @@
-# Shell-owned localization strings (the `app.*` namespace and the shell's menu
-# bar / chrome). rust-i18n `_version: 2` layout: one file, each key mapping locale
-# -> value. Module-owned namespaces live in sibling files (sprite_edit.yaml, ...).
-# `en` is the fallback language (services lib.rs: i18n!("locales", fallback="en")).
-# Translator note: `%{name}` is an interpolation slot; keep it verbatim. Plurals
+# Shell-owned localization strings: the `app.*` namespace (menu bar, chrome,
+# dialogs) plus the `command.*` keys for the shell's own menu items. Module-owned
+# namespaces live in sibling files (sprite_edit.yaml, animation.yaml, ...).
+#
+# rust-i18n `_version: 2` layout: one file, each key mapping locale -> value. `en`
+# is the fallback (services lib.rs: i18n!("locales", fallback = "en")).
+#
+# Translator notes: `%{name}` is an interpolation slot - keep it verbatim. Plurals
 # are authored as `<key>.one` / `<key>.other` and selected by `i18n::tr_plural`.
+# A few keys carry an `es` value as a live example and to exercise the
+# language-switch tests; the rest are English-only until a translation lands.
 _version: 2
 
-# --- Stage 1 proof keys (interpolation, plural, fallback, language switch). The
-# full shell key set is filled in during the string migration. ---
+# --- Menu bar: group labels (also the groups' stable identity for ordering). ---
+app.menu.pixhaus:
+  en: Pixhaus
+app.menu.file:
+  en: File
+  es: Archivo
+app.menu.edit:
+  en: Edit
+  es: Edición
+app.menu.select:
+  en: Select
+app.menu.view:
+  en: View
+app.menu.window:
+  en: Window
+app.menu.help:
+  en: Help
+
+# --- Menu items. The Pixhaus group is app-level; the rest are `command.*`. ---
+app.menu.pixhaus.about:
+  en: About Pixhaus
+app.menu.pixhaus.preferences:
+  en: Preferences
+command.file.new:
+  en: New
+command.file.open:
+  en: Open
+command.file.save:
+  en: Save
+command.file.export:
+  en: Export
+command.edit.undo:
+  en: Undo
+command.edit.redo:
+  en: Redo
+command.edit.cut:
+  en: Cut
+command.edit.copy:
+  en: Copy
+command.edit.paste:
+  en: Paste
+command.select.all:
+  en: Select All
+command.select.none:
+  en: Deselect
+command.select.inverse:
+  en: Inverse
+command.view.theme:
+  en: Theme
+command.view.toggle_grid:
+  en: Toggle Grid
+command.view.zoom_in:
+  en: Zoom In
+command.view.zoom_out:
+  en: Zoom Out
+command.window.command_palette:
+  en: Command Palette
+command.window.reset_layout:
+  en: Reset Layout
+command.help.docs:
+  en: Documentation
+command.help.shortcuts:
+  en: Keyboard Shortcuts
+
+# --- Brand, command palette, status strip, theme submenu. ---
+app.ui.brand.wordmark:
+  en: Pixhaus
 app.ui.palette.switch_to:
   en: "Switch to %{name}"
   es: "Cambiar a %{name}"
+app.ui.palette.select_tool:
+  en: "Select %{name}"
+  es: "Seleccionar %{name}"
+app.ui.palette.hint:
+  en: Type a command
+  es: Escribe un comando
+app.ui.status.saved:
+  en: Saved
+  es: Guardado
+app.ui.status.unsaved:
+  en: Unsaved changes
+  es: Cambios sin guardar
+app.ui.status.grid:
+  en: "Grid %{mode}"
+app.ui.ai_status.ready:
+  en: AI Ready
+app.ui.ai_status.working:
+  en: AI Working
+app.ui.ai_status.offline:
+  en: AI Offline
+app.ui.theme.dark:
+  en: Dark
+app.ui.theme.light:
+  en: Light
+app.ui.theme.accent:
+  en: Accent
+
+# --- About dialog + generic actions. ---
+app.ui.about.version:
+  en: "Version %{version}"
+app.ui.about.license:
+  en: MIT licensed
+app.ui.about.tagline:
+  en: An AI-native, native-Rust tool for creating and animating sprites.
+app.ui.action.close:
+  en: Close
+  es: Cerrar
+
+# --- Test fixtures exercised by the service unit tests (tr / plural / switch).
+# `panel.layers.*` is owned by the sprite-edit module and moves to
+# sprite_edit.yaml when that module's strings migrate. ---
+panel.layers.title:
+  en: Layers
+  es: Capas
 panel.layers.count.one:
   en: "%{count} layer"
   es: "%{count} capa"
 panel.layers.count.other:
   en: "%{count} layers"
   es: "%{count} capas"
-panel.layers.title:
-  en: Layers
-  es: Capas

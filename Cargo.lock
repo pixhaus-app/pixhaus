@@ -2319,6 +2319,7 @@ dependencies = [
  "pixhaus-mod-sprite-edit",
  "pixhaus-mod-tiles",
  "pixhaus-render",
+ "pixhaus-services",
  "rstest",
  "serde",
  "thiserror 2.0.18",

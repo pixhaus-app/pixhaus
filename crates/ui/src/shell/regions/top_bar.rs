@@ -1,7 +1,9 @@
 //! Top bar region: the menu strip, the workspace tab strip, and a thin global
 //! status strip, in one elevated frame.
 
-use crate::contrib_api::ids::ActionId;
+use pixhaus_services::i18n;
+
+use crate::contrib_api::ids::{ActionId, MsgKey};
 use crate::contrib_api::module::MenuGroup;
 use crate::region::region_id;
 use crate::shell::menus::{ACTION_PIXHAUS_ABOUT, ACTION_VIEW_THEME, ACTION_VIEW_TOGGLE_GRID, ACTION_WINDOW_COMMAND_PALETTE, ordered_menu_groups};
@@ -12,8 +14,10 @@ use crate::theme::Theme;
 use crate::theme::tokens::{SurfaceTier, ThemeVariant};
 use crate::widgets;
 
-/// The brand group's label; rendered as the app mark + wordmark, not a flat item.
-const BRAND_LABEL: &str = "Pixhaus";
+/// The brand group's stable key. Matched (not displayed) to pick the Pixhaus
+/// group out of the menu bar so it renders as the app mark + wordmark, not a flat
+/// item. The wordmark text itself is the `app.ui.brand.wordmark` key.
+const BRAND_GROUP: MsgKey = MsgKey("app.menu.pixhaus");
 
 /// Render the top-bar region.
 pub fn show(host: &mut Host, ui: &mut egui::Ui) {
@@ -40,7 +44,7 @@ pub fn show(host: &mut Host, ui: &mut egui::Ui) {
 
                 let groups = ordered_menu_groups(&registries.menus);
                 for group in groups {
-                    if group.label == BRAND_LABEL {
+                    if group.label == BRAND_GROUP {
                         brand(ui, theme, group, intents);
                     } else {
                         menu_group(ui, group, intents, state.ui.grid);
@@ -57,7 +61,7 @@ pub fn show(host: &mut Host, ui: &mut egui::Ui) {
             for ws in registries.workspaces.iter() {
                 let meta = ws.meta();
                 let id = ws.id();
-                if widgets::workspace_tab(ui, theme, meta.name, id == active).clicked() {
+                if widgets::workspace_tab(ui, theme, &meta.name.tr(), id == active).clicked() {
                     intents.push(Intent::SelectWorkspace(id));
                 }
             }
@@ -67,7 +71,12 @@ pub fn show(host: &mut Host, ui: &mut egui::Ui) {
 
         // Row 3: a thin global-status strip.
         ui.horizontal(|ui| {
-            ui.colored_label(theme.roles.text_secondary, if state.session.dirty { "Unsaved changes" } else { "Saved" });
+            let status = if state.session.dirty {
+                "app.ui.status.unsaved"
+            } else {
+                "app.ui.status.saved"
+            };
+            ui.colored_label(theme.roles.text_secondary, i18n::tr(status));
         });
     });
 }
@@ -107,7 +116,7 @@ fn brand(ui: &mut egui::Ui, theme: &Theme, group: &MenuGroup, intents: &mut Inte
     // The Bit face is detailed, so the mark needs more room than the 15px title size
     // the flat-text labels use; 20px reads cleanly against the elevated bar.
     let mark_side = BRAND_MARK_SIDE;
-    let label = egui::RichText::new(BRAND_LABEL).strong().size(theme.type_scale.body);
+    let label = egui::RichText::new(i18n::tr("app.ui.brand.wordmark")).strong().size(theme.type_scale.body);
 
     // The mark sits flush against the wordmark, so drop the inter-item gap just here.
     ui.scope(|ui| {
@@ -143,7 +152,7 @@ fn brand_mark(ui: &mut egui::Ui, theme: &Theme, side: f32) {
 
 /// Draw one menu group as a flat-text `menu_button` with its dropdown items.
 fn menu_group(ui: &mut egui::Ui, group: &MenuGroup, intents: &mut IntentSink, current_grid: GridMode) {
-    ui.menu_button(group.label, |ui| menu_items(ui, group, intents, current_grid));
+    ui.menu_button(group.label.tr(), |ui| menu_items(ui, group, intents, current_grid));
 }
 
 /// Render a group's dropdown items. `View > Theme` expands to the variant submenu;
@@ -153,19 +162,19 @@ fn menu_group(ui: &mut egui::Ui, group: &MenuGroup, intents: &mut IntentSink, cu
 fn menu_items(ui: &mut egui::Ui, group: &MenuGroup, intents: &mut IntentSink, current_grid: GridMode) {
     for menu_item in &group.items {
         if menu_item.action == ACTION_VIEW_THEME {
-            ui.menu_button("Theme", |ui| {
-                for (label, variant) in [
-                    ("Dark", ThemeVariant::Dark),
-                    ("Light", ThemeVariant::Light),
-                    ("Accent", ThemeVariant::AccentHighContrast),
+            ui.menu_button(menu_item.label.tr(), |ui| {
+                for (key, variant) in [
+                    ("app.ui.theme.dark", ThemeVariant::Dark),
+                    ("app.ui.theme.light", ThemeVariant::Light),
+                    ("app.ui.theme.accent", ThemeVariant::AccentHighContrast),
                 ] {
-                    if ui.button(label).clicked() {
+                    if ui.button(i18n::tr(key)).clicked() {
                         intents.push(Intent::SetThemeVariant(variant));
                         ui.close();
                     }
                 }
             });
-        } else if ui.button(menu_item.label).clicked() {
+        } else if ui.button(menu_item.label.tr()).clicked() {
             push_menu_intent(intents, menu_item.action, current_grid);
             ui.close();
         }

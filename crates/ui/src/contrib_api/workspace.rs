@@ -8,7 +8,7 @@
 //! the resolved layout is insta-snapshottable - the registry layer's
 //! highest-value regression test.
 
-use crate::contrib_api::ids::{PanelId, ToolId, WorkspaceId};
+use crate::contrib_api::ids::{MsgKey, PanelId, ToolId, WorkspaceId};
 
 /// A registered workspace: identity, metadata, and a pure layout function.
 ///
@@ -31,12 +31,14 @@ pub trait Workspace {
 
 /// Static, by-value metadata describing a workspace.
 pub struct WorkspaceMeta {
-    /// Display name, e.g. "Draw".
-    pub name: &'static str,
+    /// Localization key for the display name (e.g. `MsgKey("workspace.draw.title")`);
+    /// resolved at render time.
+    pub name: MsgKey,
     /// Phosphor glyph for the workspace tab.
     pub icon: char,
-    /// Tooltip / command-palette description.
-    pub purpose: &'static str,
+    /// Localization key for the tooltip / command-palette description; resolved at
+    /// render time.
+    pub purpose: MsgKey,
     /// The activation shortcut, `Modifiers::COMMAND` + `Key::Num1..Num5`.
     pub shortcut: egui::KeyboardShortcut,
 }

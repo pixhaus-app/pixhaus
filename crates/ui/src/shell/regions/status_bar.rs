@@ -1,6 +1,8 @@
 //! Status-bar region: a compact strip. Always-on size/zoom/grid, then the
 //! workspace's status items, then the AI status dot colored from `session.ai_status`.
 
+use pixhaus_services::i18n;
+
 use crate::region::region_id;
 use crate::registry::resolve_layout;
 use crate::state::Host;
@@ -21,12 +23,17 @@ pub fn show(host: &mut Host, ui: &mut egui::Ui) {
         .frame(frame)
         .show_inside(ui, |ui| {
             ui.horizontal(|ui| {
-                // Always-on items.
+                // Always-on items. The canvas size and zoom are mock placeholders
+                // (numeric, locale-neutral) until `core` provides the real document;
+                // they are deliberately not i18n keys. The "Grid" label is a real
+                // phrase, so it is keyed - the mode value (Off/Px8/Px16) stays a
+                // short technical token shared with the canvas HUD.
                 ui.colored_label(theme.roles.text_secondary, "64 x 64");
                 ui.separator();
                 ui.colored_label(theme.roles.text_secondary, format!("{:.0}%", state.ui.zoom * 100.0));
                 ui.separator();
-                ui.colored_label(theme.roles.text_secondary, format!("Grid {:?}", state.ui.grid));
+                let grid = format!("{:?}", state.ui.grid);
+                ui.colored_label(theme.roles.text_secondary, i18n::tr_args("app.ui.status.grid", &[("mode", &grid)]));
 
                 // Workspace-specific items.
                 for status_item in &status_items {
@@ -36,12 +43,12 @@ pub fn show(host: &mut Host, ui: &mut egui::Ui) {
 
                 // AI status dot, right-aligned.
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                    let (color, text) = match state.session.ai_status {
-                        AiStatus::Ready => (theme.roles.success, "AI Ready"),
-                        AiStatus::Working => (theme.roles.warning, "AI Working"),
-                        AiStatus::Offline => (theme.roles.text_disabled, "AI Offline"),
+                    let (color, key) = match state.session.ai_status {
+                        AiStatus::Ready => (theme.roles.success, "app.ui.ai_status.ready"),
+                        AiStatus::Working => (theme.roles.warning, "app.ui.ai_status.working"),
+                        AiStatus::Offline => (theme.roles.text_disabled, "app.ui.ai_status.offline"),
                     };
-                    ui.colored_label(theme.roles.text_secondary, text);
+                    ui.colored_label(theme.roles.text_secondary, i18n::tr(key));
                     let (rect, _) = ui.allocate_exact_size(egui::vec2(8.0, 8.0), egui::Sense::hover());
                     ui.painter().circle_filled(rect.center(), 4.0, color);
                 });

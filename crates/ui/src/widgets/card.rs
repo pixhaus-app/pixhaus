@@ -34,7 +34,7 @@ pub fn card(ui: &mut egui::Ui, theme: &Theme, meta: &crate::contrib_api::PanelMe
             .horizontal(|ui| {
                 let size = theme.type_scale.section_header;
                 ui.label(egui::RichText::new(meta.icon.to_string()).size(size).color(theme.accent.base));
-                ui.label(egui::RichText::new(meta.title).size(size).color(theme.roles.text_primary).strong());
+                ui.label(egui::RichText::new(meta.title.tr()).size(size).color(theme.roles.text_primary).strong());
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                     let chevron = if collapsed { icons::CARET_RIGHT } else { icons::CARET_DOWN };
                     ui.label(

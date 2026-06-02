@@ -43,7 +43,7 @@ pub fn show(host: &mut Host, ui: &mut egui::Ui) {
                         continue;
                     };
                     let meta = panel.meta();
-                    if widgets::tray_tab(ui, theme, meta.title, id == selected).clicked() {
+                    if widgets::tray_tab(ui, theme, &meta.title.tr(), id == selected).clicked() {
                         intents.push(Intent::SelectTrayTab(id));
                     }
                 }

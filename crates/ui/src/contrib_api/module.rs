@@ -6,7 +6,7 @@
 //! external dynamic plugins). It registers through [`HostRegistrar`], a `dyn`
 //! trait, so a module never sees the concrete `Registries`.
 
-use crate::contrib_api::ids::ActionId;
+use crate::contrib_api::ids::{ActionId, MsgKey};
 use crate::contrib_api::panel::Panel;
 use crate::contrib_api::tool::Tool;
 use crate::contrib_api::workspace::Workspace;
@@ -36,8 +36,8 @@ pub trait HostRegistrar {
 pub struct ActionDesc {
     /// Stable id - also the action registry key.
     pub id: ActionId,
-    /// Display label.
-    pub label: &'static str,
+    /// Localization key for the display label; resolved at render time.
+    pub label: MsgKey,
     /// Phosphor glyph from `crate::icons`.
     pub icon: char,
     /// Whether this action appears in the Ctrl/Cmd+K command palette.
@@ -46,16 +46,18 @@ pub struct ActionDesc {
 
 /// A top-bar menu group, e.g. "Sprite" with its items.
 pub struct MenuGroup {
-    /// The menu button label, e.g. "Sprite".
-    pub label: &'static str,
+    /// Localization key for the menu button label (e.g. `MsgKey("app.menu.sprite")`).
+    /// Also the group's stable identity: the shell orders the bar by matching this
+    /// key against `CANONICAL_MENU_ORDER`, so it must be stable, not display text.
+    pub label: MsgKey,
     /// The items under this group, rendered top to bottom.
     pub items: Vec<MenuItem>,
 }
 
 /// A single menu item: a label, an optional accelerator, and the action it fires.
 pub struct MenuItem {
-    /// Display label, e.g. "New".
-    pub label: &'static str,
+    /// Localization key for the display label; resolved at render time.
+    pub label: MsgKey,
     /// Optional accelerator shown beside the label; `None` means no shortcut.
     pub shortcut: Option<egui::KeyboardShortcut>,
     /// The action dispatched when the item is clicked.

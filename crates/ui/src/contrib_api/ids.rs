@@ -21,6 +21,26 @@ pub struct WorkspaceId(pub &'static str);
 #[derive(Copy, Clone, PartialEq, Eq, Hash, Debug)]
 pub struct ActionId(pub &'static str);
 
+/// A stable localization key (e.g. `MsgKey("panel.layers.title")`).
+///
+/// Registries carry `MsgKey`, not display text. A module names a key at
+/// registration - `const`, no allocation, no locale touched - and the shell
+/// resolves it to text in the active language at render time via [`MsgKey::tr`].
+/// The newtype is what turns "display a key without resolving it" into a compile
+/// error: a raw `MsgKey` cannot be handed to `ui.label(..)`, only the resolved
+/// `String` from `.tr()` can.
+#[derive(Copy, Clone, PartialEq, Eq, Hash, Debug)]
+pub struct MsgKey(pub &'static str);
+
+impl MsgKey {
+    /// Resolve this key to display text in the active language, through the
+    /// localization service. Call at render time, never at registration.
+    #[must_use]
+    pub fn tr(self) -> String {
+        pixhaus_services::i18n::tr(self.0)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::{ActionId, PanelId, ToolId, WorkspaceId};

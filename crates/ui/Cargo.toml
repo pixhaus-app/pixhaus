@@ -24,6 +24,9 @@ serde.workspace = true
 thiserror.workspace = true
 tracing.workspace = true
 pixhaus-render = { path = "../render" }
+# The localization service: the shell resolves `MsgKey`s to display text at
+# render time through `pixhaus_services::i18n`. See the pixhaus-i18n skill.
+pixhaus-services = { path = "../services" }
 
 [dev-dependencies]
 rstest.workspace = true

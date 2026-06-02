@@ -3,6 +3,8 @@
 //! list (workspaces and tools are live; actions and the UX examples are mock).
 //! Escape closes.
 
+use pixhaus_services::i18n;
+
 use crate::state::Host;
 use crate::state::intent::{Intent, IntentSink};
 use crate::state::ui_state::Modal;
@@ -38,20 +40,20 @@ pub fn overlay(host: &mut Host, ui: &mut egui::Ui) {
     let mut entries: Vec<Entry> = Vec::new();
     for ws in registries.workspaces.iter() {
         entries.push(Entry {
-            label: format!("Switch to {}", ws.meta().name),
+            label: i18n::tr_args("app.ui.palette.switch_to", &[("name", &ws.meta().name.tr())]),
             intent: Intent::SelectWorkspace(ws.id()),
         });
     }
     for tool in registries.tools.iter() {
         entries.push(Entry {
-            label: format!("Select {}", tool.meta().label),
+            label: i18n::tr_args("app.ui.palette.select_tool", &[("name", &tool.meta().label.tr())]),
             intent: Intent::SelectTool(tool.id()),
         });
     }
     for action in registries.actions.iter() {
         if action.palette_visible {
             entries.push(Entry {
-                label: action.label.to_owned(),
+                label: action.label.tr(),
                 intent: Intent::RunAction(action.id),
             });
         }
@@ -79,7 +81,7 @@ pub fn overlay(host: &mut Host, ui: &mut egui::Ui) {
                 ui.set_min_width(480.0);
                 let edit = ui.add(
                     egui::TextEdit::singleline(&mut state.ui.palette_query)
-                        .hint_text("Type a command")
+                        .hint_text(i18n::tr("app.ui.palette.hint"))
                         .desired_width(f32::INFINITY),
                 );
                 edit.request_focus();

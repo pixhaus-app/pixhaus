@@ -63,8 +63,10 @@ pub fn tool_button(ui: &mut egui::Ui, theme: &Theme, meta: &crate::contrib_api::
     }
 
     let tooltip = match meta.shortcut {
-        Some(shortcut) => format!("{} ({})\n{}", meta.label, ui.ctx().format_shortcut(&shortcut), meta.tooltip),
-        None => format!("{}\n{}", meta.label, meta.tooltip),
+        Some(shortcut) => {
+            format!("{} ({})\n{}", meta.label.tr(), ui.ctx().format_shortcut(&shortcut), meta.tooltip.tr())
+        }
+        None => format!("{}\n{}", meta.label.tr(), meta.tooltip.tr()),
     };
     response.on_hover_text(tooltip)
 }

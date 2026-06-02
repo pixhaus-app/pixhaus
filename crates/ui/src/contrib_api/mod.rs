@@ -15,7 +15,7 @@ pub mod tool;
 pub mod workspace;
 
 pub use context::{ContribCtx, PanelScope};
-pub use ids::{ActionId, PanelId, ToolId, WorkspaceId};
+pub use ids::{ActionId, MsgKey, PanelId, ToolId, WorkspaceId};
 pub use module::{ActionDesc, HostRegistrar, MenuGroup, MenuItem, Module};
 pub use panel::{Panel, PanelMeta};
 pub use tool::{Tool, ToolMeta};

@@ -6,6 +6,7 @@
 //! value. The compile-time guard in `contrib_api::mod` enforces this.
 
 use crate::contrib_api::context::PanelScope;
+use crate::contrib_api::ids::MsgKey;
 use crate::contrib_api::ids::PanelId;
 use crate::contrib_api::ids::WorkspaceId;
 use crate::region::Region;
@@ -53,8 +54,9 @@ pub trait Panel {
 ///
 /// Returned by value (not borrowed) so [`Panel`] stays dyn-compatible.
 pub struct PanelMeta {
-    /// Display title shown in the card header.
-    pub title: &'static str,
+    /// Localization key for the title shown in the card header; resolved at
+    /// render time.
+    pub title: MsgKey,
     /// Phosphor glyph from `crate::icons`.
     pub icon: char,
     /// Where this panel sits unless a workspace places it elsewhere.
