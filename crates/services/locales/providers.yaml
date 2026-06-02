@@ -7,3 +7,5 @@ _version: 2
 
 provider.mock.label:
   en: Mock provider
+provider.openrouter.label:
+  en: OpenRouter

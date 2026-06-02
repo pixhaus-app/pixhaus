@@ -49,9 +49,17 @@ fn build_host(ctx: &egui::Context) -> Host {
     // The count is the five module registrations above; bump it when the list grows.
     tracing::info!(modules = 5, "registered capability modules");
 
-    // Register the offline providers into the host's provider registry so the
-    // Generate workspace can answer prompts. Providers register into `EditSession`,
-    // not the capability registries, so this is separate from the module loop above.
+    // Register generation providers into the host's provider registry so the Generate
+    // workspace can answer prompts. Providers register into `EditSession`, not the
+    // capability registries, so this is separate from the module loop above. The app
+    // owns the API key: read it from the environment (never logged) and register the
+    // real OpenRouter provider FIRST so capability lookups prefer it; the offline mock
+    // always registers as the fallback so Generate works without a key.
+    if let Ok(api_key) = std::env::var("OPENROUTER_API_KEY") {
+        pixhaus_mod_providers::register_openrouter(&mut host.edit.providers, api_key);
+    } else {
+        tracing::info!("OPENROUTER_API_KEY not set; the offline mock provider answers generation");
+    }
     pixhaus_mod_providers::register(&mut host.edit.providers);
 
     host

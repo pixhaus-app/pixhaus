@@ -1,4 +1,4 @@
-//! The document: the authoritative project state and the single [`Command`] target.
+//! The document: the authoritative project state and the single [`Command`](crate::Command) target.
 //!
 //! A [`Document`] bundles structural data (sprites and their layers) with the
 //! [`PixelBufferStore`] that owns their pixels, so one [`Command`](crate::Command)

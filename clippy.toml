@@ -1,5 +1,8 @@
 avoid-breaking-exported-api = false
 msrv = "1.85"
+# Product/proper names that read as code to the doc linter but are prose here. `..`
+# keeps clippy's default ident allowlist.
+doc-valid-idents = ["OpenRouter", ".."]
 disallowed-methods = [
     { path = "std::option::Option::unwrap", reason = "use `?`, `unwrap_or`, or `ok_or` to surface errors" },
     { path = "std::result::Result::unwrap", reason = "use `?` or pattern-match the error" },

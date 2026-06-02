@@ -46,6 +46,15 @@ directories = "6"
 # `pixhaus-i18n` skill.
 rust-i18n = "4"
 sys-locale = "0.3"
+# OpenRouter image-generation client - the first real AI provider behind the
+# capability registry (pixhaus-mod-providers). Pinned to 0.10: its image-generation
+# surface (.modalities, .image_config, ContentPart::ImageUrl, message.images) is the
+# verified shape the pixhaus-openrouter skill documents, and it drifts across minors.
+# Pulls reqwest + a rustls TLS stack transitively. See the pixhaus-openrouter skill.
+openrouter-rs = "0.10"
+# base64 decode/encode for the data:image/png;base64 payloads OpenRouter returns and
+# the anchor reference image we attach. Small, MIT/Apache; consumed by mod-providers.
+base64 = "0.22"
 # egui / wgpu native UI stack (lockstep — pinned together). wgpu is pinned
 # EXACTLY: eframe 0.34 builds against wgpu 29.0.1, and two wgpu versions in the
 # tree are incompatible types. See pixhaus-eframe / pixhaus-egui-wgpu.
