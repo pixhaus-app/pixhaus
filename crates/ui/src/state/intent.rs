@@ -236,7 +236,7 @@ fn submit_generate_job(host: &mut Host, prompt: String) {
     let input = GenerationJobInput {
         prompt,
         seed,
-        size: (64, 64),
+        size: pixhaus_core::DEFAULT_CANVAS_SIZE,
         context: GenerationContext::NewAsset,
     };
     let results = host.edit.results.clone();

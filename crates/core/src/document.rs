@@ -10,6 +10,14 @@ use crate::buffer_store::PixelBufferStore;
 use crate::ids::{IdCounter, LayerId, PixelBufferId, SpriteId};
 use crate::pixel::BlendMode;
 
+/// Default canvas size `(width, height)` for a new sprite or the empty stage.
+///
+/// 512x512 is a comfortable size for testing the generation pipeline by eye while
+/// staying cheap to composite and upload. The shell uses it both as the size it asks
+/// a provider to generate and as the empty-document board fallback, so the two never
+/// drift.
+pub const DEFAULT_CANVAS_SIZE: (u32, u32) = (512, 512);
+
 /// One raster layer: metadata plus a handle to its pixels in the buffer store.
 #[derive(Clone, Debug)]
 pub struct Layer {

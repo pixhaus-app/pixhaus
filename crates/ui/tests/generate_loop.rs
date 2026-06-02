@@ -49,7 +49,11 @@ async fn prompt_to_result_to_sprite_to_undo() {
         "applying the command advanced the document revision",
     );
     let composite = pixhaus_core::composite_active(&host.edit.document).expect("the active sprite composites");
-    assert_eq!((composite.width(), composite.height()), (64, 64), "the generated sprite is the requested size");
+    assert_eq!(
+        (composite.width(), composite.height()),
+        pixhaus_core::DEFAULT_CANVAS_SIZE,
+        "the generated sprite is the default canvas size",
+    );
 
     // 4. Undo removes it.
     apply_intent(&mut host, Intent::Undo, &ctx);

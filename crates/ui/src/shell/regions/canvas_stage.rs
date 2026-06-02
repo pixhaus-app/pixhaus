@@ -26,13 +26,13 @@ pub fn show(host: &mut Host, ui: &mut egui::Ui) {
         let painter = ui.painter().clone();
 
         // 1. Stage backdrop already filled by the frame. Compute the artboard from the
-        //    active sprite's real size (a default 64x64 board when nothing is open). A
+        //    active sprite's real size (the default board when nothing is open). A
         //    small sprite at 100% zoom is a speck in a large stage, so we derive a
         //    display scale that fills ~68% of the stage height before applying the user
         //    zoom. `fit` stays integer (one sprite pixel maps to N device pixels) and
         //    floored to >= 1 so the board never collapses. `state.ui.zoom` rides on top,
         //    keeping the HUD/status "100%" honest.
-        let (sprite_w, sprite_h) = edit.document.active_sprite_size().unwrap_or((64, 64));
+        let (sprite_w, sprite_h) = edit.document.active_sprite_size().unwrap_or(pixhaus_core::DEFAULT_CANVAS_SIZE);
         let sprite_px = egui::vec2(sprite_w as f32, sprite_h as f32);
         let fit = (stage_rect.height() * 0.68 / sprite_px.y).max(1.0).floor();
         let display_scale = fit * state.ui.zoom;

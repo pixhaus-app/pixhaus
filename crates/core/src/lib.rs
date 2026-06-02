@@ -32,6 +32,6 @@ pub use buffer_store::PixelBufferStore;
 pub use command::{Command, CommandError};
 pub use commands::{AddSprite, ApplyGeneratedAsset, SpriteProto};
 pub use composite::{CompositeError, composite_active, composite_sprite};
-pub use document::{Document, Layer, Sprite};
+pub use document::{DEFAULT_CANVAS_SIZE, Document, Layer, Sprite};
 pub use ids::{IdCounter, LayerId, PixelBufferId, SpriteId};
 pub use pixel::{BlendMode, PixelBuffer, PixelError, Rgba};
