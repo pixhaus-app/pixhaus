@@ -3,11 +3,13 @@
 //!
 //! `Shell::run` is called from `App::ui`; `drain_background` from `App::logic`.
 
+pub mod about;
 pub mod command_palette;
 pub mod menus;
 pub mod regions;
 pub mod runtime;
 pub mod shortcuts;
+pub mod splash;
 
 pub use runtime::Shell;
 

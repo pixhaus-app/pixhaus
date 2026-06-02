@@ -7,7 +7,7 @@
 //! loop, where intents are drained and applied after every region borrow drops.
 //! The one-frame latency is invisible in immediate mode.
 
-use crate::shell::{command_palette, regions, shortcuts};
+use crate::shell::{about, command_palette, regions, shortcuts, splash};
 use crate::state::Host;
 use crate::state::intent::apply_intent;
 
@@ -26,6 +26,11 @@ impl Shell {
         host.intents.0.clear();
         shortcuts::collect(ui.ctx(), &host.registries, &mut host.intents);
 
+        // Splash first: its full-screen Foreground Area covers the regions while
+        // active, but the regions still run beneath it on the uniform path (no early
+        // return) so layout settles and the first post-splash frame is ready.
+        splash::overlay(host, ui);
+
         // egui panel order: outer panels first, CentralPanel LAST.
         regions::top_bar::show(host, ui);
         regions::tool_options::show(host, ui);
@@ -35,6 +40,7 @@ impl Shell {
         regions::right_dock::show(host, ui);
         regions::canvas_stage::show(host, ui); // CentralPanel - fills the rest
         command_palette::overlay(host, ui); // Area on top if modal == CommandPalette
+        about::overlay(host, ui); // Area on top if modal == About
 
         // All region borrows have dropped. Take the queued intents out so the
         // `&mut host.intents` borrow ends before `apply_intent(host, ...)` reborrows

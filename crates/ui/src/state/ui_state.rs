@@ -31,6 +31,8 @@ pub struct UiState {
     pub snap: bool,
     /// The open modal overlay, if any.
     pub modal: Option<Modal>,
+    /// The startup splash phase. Begins `Active` and advances to `Done` once.
+    pub splash: SplashPhase,
     /// Live text in the command-palette search field.
     pub palette_query: String,
 }
@@ -48,8 +50,29 @@ impl Default for UiState {
             onion_skin: false,
             snap: true,
             modal: None,
+            splash: SplashPhase::default(),
             palette_query: String::new(),
         }
+    }
+}
+
+/// The startup splash phase. Not serialized: the splash shows once per launch and the
+/// timestamp is a frame-clock value, meaningless across sessions.
+#[derive(Copy, Clone, Debug, PartialEq)]
+pub enum SplashPhase {
+    /// The splash is showing. `since` is the `ctx.input(|i| i.time)` seconds the splash
+    /// first painted, stamped once; `None` until the first active frame stamps it.
+    Active {
+        /// Frame-clock seconds at which the splash first painted, or `None` pre-stamp.
+        since: Option<f64>,
+    },
+    /// The splash has been dismissed (timed out or skipped).
+    Done,
+}
+
+impl Default for SplashPhase {
+    fn default() -> Self {
+        Self::Active { since: None }
     }
 }
 
@@ -73,6 +96,8 @@ pub enum Modal {
     CommandPalette,
     /// A yes/no confirmation prompt.
     Confirm,
+    /// The About Pixhaus dialog (wordmark, version, license).
+    About,
 }
 
 #[cfg(test)]
@@ -86,6 +111,16 @@ mod tests {
         assert_eq!(ui.zoom, 1.0, "default zoom is 100%");
         assert!(ui.collapsed.is_empty(), "no panel overrides by default");
         assert!(ui.tray_tab.is_empty(), "no tray-tab overrides by default");
+    }
+
+    #[test]
+    fn default_splash_is_active_and_unstamped() {
+        let ui = UiState::default();
+        assert_eq!(
+            ui.splash,
+            SplashPhase::Active { since: None },
+            "the splash starts active and unstamped on a fresh session",
+        );
     }
 
     #[test]

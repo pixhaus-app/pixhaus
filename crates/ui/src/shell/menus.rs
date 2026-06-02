@@ -13,6 +13,8 @@ use crate::contrib_api::module::{HostRegistrar, MenuGroup, MenuItem};
 
 // Stable action ids the top-bar render special-cases. Inert items carry their own
 // "<group>.<verb>" ids and route to the mock RunAction toast.
+/// `Pixhaus > About Pixhaus`; the render maps it to `Intent::OpenAbout`.
+pub const ACTION_PIXHAUS_ABOUT: ActionId = ActionId("pixhaus.about");
 /// `View > Theme` submenu root; the render expands it to Dark/Light/Accent.
 pub const ACTION_VIEW_THEME: ActionId = ActionId("view.theme");
 /// `View > Toggle Grid`; the render maps it to `Intent::SetGrid`.
@@ -54,7 +56,7 @@ pub fn shell_menu_groups() -> Vec<MenuGroup> {
         MenuGroup {
             label: "Pixhaus",
             items: vec![
-                item("About Pixhaus", ActionId("pixhaus.about")),
+                item("About Pixhaus", ACTION_PIXHAUS_ABOUT),
                 item("Preferences", ActionId("pixhaus.preferences")),
             ],
         },

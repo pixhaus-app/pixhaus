@@ -10,7 +10,7 @@
 use crate::contrib_api::ids::{ActionId, PanelId, ToolId, WorkspaceId};
 use crate::state::Host;
 use crate::state::session::JobStub;
-use crate::state::ui_state::{GridMode, Modal};
+use crate::state::ui_state::{GridMode, Modal, SplashPhase};
 use crate::theme::{Theme, ThemeVariant, apply_to_visuals};
 
 /// A requested change to session or UI state. The single write channel for
@@ -34,8 +34,14 @@ pub enum Intent {
     SetZoom(f32),
     /// Open the command palette modal.
     OpenCommandPalette,
+    /// Open the About Pixhaus modal.
+    OpenAbout,
     /// Dismiss any open modal.
     CloseModal,
+    /// Stamp the splash start time (frame-clock seconds), once, on its first frame.
+    SetSplashStart(f64),
+    /// Dismiss the startup splash (timed out or skipped).
+    DismissSplash,
     /// Change the theme variant; `apply_intent` re-applies it to egui's visuals.
     SetThemeVariant(ThemeVariant),
     /// Run an action. Mock: pushes a `JobStub` and emits an Event. Never mutates the
@@ -115,8 +121,21 @@ pub fn apply_intent(host: &mut Host, intent: Intent, ctx: &egui::Context) {
         Intent::OpenCommandPalette => {
             host.state.ui.modal = Some(Modal::CommandPalette);
         }
+        Intent::OpenAbout => {
+            host.state.ui.modal = Some(Modal::About);
+        }
         Intent::CloseModal => {
             host.state.ui.modal = None;
+        }
+        Intent::SetSplashStart(now) => {
+            // Stamp once: the splash overlay pushes this every active frame until the
+            // clock is set, so guard against re-stamping and resetting the timer.
+            if let SplashPhase::Active { since: since @ None } = &mut host.state.ui.splash {
+                *since = Some(now);
+            }
+        }
+        Intent::DismissSplash => {
+            host.state.ui.splash = SplashPhase::Done;
         }
         Intent::SetThemeVariant(v) => {
             host.theme = Theme::for_variant(v, host.theme.accent_seed());
@@ -135,7 +154,7 @@ mod tests {
     use crate::contrib_api::ids::{ActionId, PanelId, ToolId, WorkspaceId};
     use crate::state::Host;
     use crate::state::session::JobState;
-    use crate::state::ui_state::{GridMode, Modal};
+    use crate::state::ui_state::{GridMode, Modal, SplashPhase};
     use crate::theme::{Theme, ThemeVariant};
 
     fn host() -> Host {
@@ -217,6 +236,46 @@ mod tests {
         apply_intent(&mut host, Intent::OpenCommandPalette, &ctx());
         apply_intent(&mut host, Intent::CloseModal, &ctx());
         assert!(host.state.ui.modal.is_none(), "CloseModal clears whatever was open");
+    }
+
+    #[test]
+    fn open_about_sets_modal() {
+        let mut host = host();
+        apply_intent(&mut host, Intent::OpenAbout, &ctx());
+        assert_eq!(host.state.ui.modal, Some(Modal::About), "OpenAbout opens the About modal");
+    }
+
+    #[test]
+    fn close_modal_clears_about() {
+        let mut host = host();
+        apply_intent(&mut host, Intent::OpenAbout, &ctx());
+        apply_intent(&mut host, Intent::CloseModal, &ctx());
+        assert!(host.state.ui.modal.is_none(), "CloseModal clears the About modal");
+    }
+
+    #[test]
+    fn dismiss_splash_sets_done() {
+        let mut host = host();
+        apply_intent(&mut host, Intent::DismissSplash, &ctx());
+        assert_eq!(host.state.ui.splash, SplashPhase::Done, "DismissSplash advances the splash to Done");
+    }
+
+    #[test]
+    fn set_splash_start_stamps_once() {
+        let mut host = host();
+        apply_intent(&mut host, Intent::SetSplashStart(1.5), &ctx());
+        assert_eq!(
+            host.state.ui.splash,
+            SplashPhase::Active { since: Some(1.5) },
+            "the first stamp records the start time",
+        );
+        // A second stamp must not reset the clock, or the timer never elapses.
+        apply_intent(&mut host, Intent::SetSplashStart(9.0), &ctx());
+        assert_eq!(
+            host.state.ui.splash,
+            SplashPhase::Active { since: Some(1.5) },
+            "a later stamp is ignored - the start time is set exactly once",
+        );
     }
 
     #[test]
