@@ -5,6 +5,8 @@
 //! shell menus and the capability modules, and runs the egui loop; the canvas is
 //! drawn by `render` through the egui-wgpu paint callback installed at startup.
 
+use std::sync::Arc;
+
 use anyhow::Context;
 use eframe::egui;
 
@@ -23,6 +25,8 @@ fn build_host(ctx: &egui::Context) -> Host {
 
     pixhaus_ui::theme::apply_to_visuals(host.theme(), ctx);
     pixhaus_ui::theme::install_fonts(ctx);
+    // Install egui_extras' image loaders so the baked-in brand PNGs render.
+    pixhaus_ui::install_image_loaders(ctx);
 
     pixhaus_ui::shell::menus::register_shell_menus(&mut host.registrar());
 
@@ -35,6 +39,21 @@ fn build_host(ctx: &egui::Context) -> Host {
     pixhaus_mod_export::ExportModule.register(&mut host.registrar());
 
     host
+}
+
+/// Decode the brand icon PNG into an `egui::IconData` for the OS window/taskbar.
+///
+/// Returns `None` if the bundled PNG fails to decode - the boot stays infallible and
+/// eframe falls back to its default icon. The app owns this because it owns eframe and
+/// the window; `ui` only exposes the raw bytes ([`pixhaus_ui::brand::ICON_PNG`]).
+fn window_icon() -> Option<egui::IconData> {
+    let rgba = image::load_from_memory(pixhaus_ui::brand::ICON_PNG).ok()?.into_rgba8();
+    let (width, height) = rgba.dimensions();
+    Some(egui::IconData {
+        rgba: rgba.into_raw(),
+        width,
+        height,
+    })
 }
 
 /// Top-level application state, owned across frames by the eframe loop.
@@ -78,12 +97,17 @@ fn main() -> anyhow::Result<()> {
     let runtime = tokio::runtime::Runtime::new().context("failed to start the tokio runtime")?;
     let _guard = runtime.enter();
 
+    let mut viewport = egui::ViewportBuilder::default()
+        .with_title("Pixhaus")
+        .with_inner_size([1280.0, 800.0])
+        .with_min_inner_size([640.0, 480.0]);
+    if let Some(icon) = window_icon() {
+        viewport = viewport.with_icon(Arc::new(icon));
+    }
+
     let options = eframe::NativeOptions {
         renderer: eframe::Renderer::Wgpu,
-        viewport: egui::ViewportBuilder::default()
-            .with_title("Pixhaus")
-            .with_inner_size([1280.0, 800.0])
-            .with_min_inner_size([640.0, 480.0]),
+        viewport,
         ..Default::default()
     };
 

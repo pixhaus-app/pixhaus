@@ -3,9 +3,8 @@
 
 use crate::contrib_api::ids::ActionId;
 use crate::contrib_api::module::MenuGroup;
-use crate::icons;
 use crate::region::region_id;
-use crate::shell::menus::{ACTION_VIEW_THEME, ACTION_VIEW_TOGGLE_GRID, ACTION_WINDOW_COMMAND_PALETTE, ordered_menu_groups};
+use crate::shell::menus::{ACTION_PIXHAUS_ABOUT, ACTION_VIEW_THEME, ACTION_VIEW_TOGGLE_GRID, ACTION_WINDOW_COMMAND_PALETTE, ordered_menu_groups};
 use crate::state::Host;
 use crate::state::intent::{Intent, IntentSink};
 use crate::state::ui_state::GridMode;
@@ -102,10 +101,12 @@ fn flatten_menu_visuals(ui: &mut egui::Ui, theme: &Theme) {
     ui.spacing_mut().item_spacing.x = theme.spacing.xs;
 }
 
-/// Draw the left brand: a small accent rounded-square mark + the "Pixhaus" wordmark,
-/// as a single menu button that opens the Pixhaus app menu (About / Preferences).
+/// Draw the left brand: the Bit icon mark + the "Pixhaus" wordmark, as a single menu
+/// button that opens the Pixhaus app menu (About / Preferences).
 fn brand(ui: &mut egui::Ui, theme: &Theme, group: &MenuGroup, intents: &mut IntentSink) {
-    let mark_side = theme.type_scale.title;
+    // The Bit face is detailed, so the mark needs more room than the 15px title size
+    // the flat-text labels use; 20px reads cleanly against the elevated bar.
+    let mark_side = BRAND_MARK_SIDE;
     let label = egui::RichText::new(BRAND_LABEL).strong().size(theme.type_scale.body);
 
     // The mark sits flush against the wordmark, so drop the inter-item gap just here.
@@ -116,22 +117,27 @@ fn brand(ui: &mut egui::Ui, theme: &Theme, group: &MenuGroup, intents: &mut Inte
     });
 }
 
-/// Paint the accent rounded-square app mark with a sparkle glyph in the on-accent ink.
-// Radius/size tokens are small, bounded positive constants; the f32 -> u8 cast cannot
+/// The brand-mark side in points. Tuned against the headless render: the Bit face is
+/// detailed, so 20px keeps it legible where the ~15px title size goes muddy.
+const BRAND_MARK_SIDE: f32 = 20.0;
+
+/// Draw the Bit icon mark at `side` points, on a faint backing chip.
+///
+/// NEAREST sampling is load-bearing: it keeps the pixel art crisp instead of letting
+/// egui's default bilinear filter soften the hard edges. A faint rounded chip behind
+/// the mark lifts the dark sprite outline off the elevated bar. The rect is allocated
+/// first so the chip paints under the image in one painter pass.
+// Radius token is a small, bounded positive constant; the f32 -> u8 cast cannot
 // truncate or lose a sign here.
 #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
 fn brand_mark(ui: &mut egui::Ui, theme: &Theme, side: f32) {
     let (rect, _) = ui.allocate_exact_size(egui::Vec2::splat(side), egui::Sense::hover());
     if ui.is_rect_visible(rect) {
-        let painter = ui.painter();
-        painter.rect_filled(rect, theme.radius.md as u8, theme.accent.base);
-        painter.text(
-            rect.center(),
-            egui::Align2::CENTER_CENTER,
-            icons::SPARKLE.to_string(),
-            egui::FontId::proportional(side * 0.72),
-            theme.accent.on_accent,
-        );
+        ui.painter().rect_filled(rect, theme.radius.sm as u8, theme.surfaces.inset);
+        egui::Image::new(crate::brand::ICON)
+            .texture_options(egui::TextureOptions::NEAREST)
+            .maintain_aspect_ratio(true)
+            .paint_at(ui, rect);
     }
 }
 
@@ -170,6 +176,7 @@ fn menu_items(ui: &mut egui::Ui, group: &MenuGroup, intents: &mut IntentSink, cu
 /// Palette`) carry real intents; everything else is a mock `RunAction`.
 fn push_menu_intent(intents: &mut IntentSink, action: ActionId, current_grid: GridMode) {
     match action {
+        ACTION_PIXHAUS_ABOUT => intents.push(Intent::OpenAbout),
         ACTION_VIEW_TOGGLE_GRID => intents.push(Intent::SetGrid(toggle_grid(current_grid))),
         ACTION_WINDOW_COMMAND_PALETTE => intents.push(Intent::OpenCommandPalette),
         other => intents.push(Intent::RunAction(other)),
