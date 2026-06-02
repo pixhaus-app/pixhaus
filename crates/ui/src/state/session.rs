@@ -21,6 +21,14 @@ pub struct SessionState {
     pub jobs: Vec<JobStub>,
     /// Drives the status-bar AI dot.
     pub ai_status: AiStatus,
+    /// Read-only mirror of `EditSession.results.len()`, refreshed post-frame in
+    /// `drain_background`. Panels read this; they never touch the result store.
+    pub result_count: usize,
+    /// Read-only mirror of the selected result index, refreshed post-frame.
+    pub selected_result: Option<usize>,
+    /// The last prompt submitted, so "Generate more" can resubmit it without the
+    /// Results panel reaching into the Prompt panel's scratch.
+    pub last_prompt: String,
 }
 
 /// A stand-in for a real job (spec: bible rule 5). Carries only what the mock

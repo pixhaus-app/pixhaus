@@ -12,10 +12,12 @@ use crate::contrib_api::ids::{PanelId, ToolId, WorkspaceId};
 use crate::registry::{RegistrarWrapper, Registries};
 use crate::theme::{Theme, ThemeVariant};
 
+use self::edit_session::EditSession;
 use self::intent::IntentSink;
 use self::session::{AiStatus, SessionState};
 use self::ui_state::{GridMode, UiState};
 
+pub mod edit_session;
 pub mod intent;
 pub mod session;
 pub mod ui_state;
@@ -68,8 +70,12 @@ pub struct Host {
     pub scratch: HashMap<PanelId, String>,
     /// The active theme; owned here so a variant change can re-apply to visuals.
     pub theme: Theme,
-    /// Background results drained in `App::logic`. Empty this round.
+    /// Background results drained in `App::logic`.
     pub bg: BackgroundChannel,
+    /// The live document and the services that act on it (command/undo, jobs,
+    /// providers, result store). Mutated only in `apply_intent`/`drain_background`/
+    /// `canvas_stage`, never borrowed into a `&self` panel.
+    pub edit: EditSession,
 }
 
 /// The default initial workspace (Draw) and tool (Pencil). The strings are the
@@ -95,6 +101,9 @@ impl Host {
                     dirty: false,
                     jobs: Vec::new(),
                     ai_status: AiStatus::Ready,
+                    result_count: 0,
+                    selected_result: None,
+                    last_prompt: String::new(),
                 },
                 ui: UiState::default(),
             },
@@ -102,6 +111,7 @@ impl Host {
             scratch: HashMap::new(),
             theme: *theme,
             bg: BackgroundChannel::default(),
+            edit: EditSession::default(),
         }
     }
 

@@ -23,14 +23,21 @@ wgpu.workspace = true
 serde.workspace = true
 thiserror.workspace = true
 tracing.workspace = true
+# The domain model: the live document the shell composites and mutates through
+# commands, and the fundamental commands themselves.
+pixhaus-core = { path = "../core" }
 pixhaus-render = { path = "../render" }
-# The localization service: the shell resolves `MsgKey`s to display text at
-# render time through `pixhaus_services::i18n`. See the pixhaus-i18n skill.
+# The localization service (the shell resolves `MsgKey`s to display text at render
+# time through `pixhaus_services::i18n`) plus the command/undo, job, and provider
+# systems the `EditSession` holds. See the pixhaus-i18n skill.
 pixhaus-services = { path = "../services" }
 
 [dev-dependencies]
 rstest.workspace = true
 insta.workspace = true
+# Drives the end-to-end Generate-loop test: a runtime for the spawned job and a
+# short sleep while polling the drain.
+tokio = { workspace = true }
 # The five capability modules, for the integration tests only. These are
 # dev-dependencies so the cycle (each module depends on pixhaus-ui) exists only
 # in the test/example/bench build, never in the library graph - Cargo allows a
@@ -40,6 +47,8 @@ pixhaus-mod-animation = { path = "../../modules/animation" }
 pixhaus-mod-tiles = { path = "../../modules/tiles" }
 pixhaus-mod-generation = { path = "../../modules/generation" }
 pixhaus-mod-export = { path = "../../modules/export" }
+# The mock provider, registered in the end-to-end Generate-loop test only.
+pixhaus-mod-providers = { path = "../../modules/providers" }
 
 [lints]
 workspace = true

@@ -3,15 +3,21 @@
 //! painted drop shadow, the unchanged `CanvasCallback` embed, grid strokes, and a
 //! floating HUD painted with the central panel's `Painter`.
 
-use crate::CanvasCallback;
+use std::sync::Arc;
+
 use crate::state::Host;
 use crate::state::ui_state::GridMode;
 use crate::theme::Theme;
 use crate::theme::tokens::SurfaceTier;
+use crate::{CanvasCallback, CanvasFrame};
 
 /// Render the canvas stage.
+//
+// The sprite dimensions are small (a few thousand pixels at most), so casting them to
+// f32 for the layout math is exact; the `cast_precision_loss` allow documents that.
+#[allow(clippy::cast_precision_loss)]
 pub fn show(host: &mut Host, ui: &mut egui::Ui) {
-    let Host { state, theme, .. } = &mut *host;
+    let Host { state, theme, edit, .. } = &mut *host;
 
     let frame = egui::Frame::new().fill(theme.surface(SurfaceTier::Stage));
 
@@ -19,13 +25,15 @@ pub fn show(host: &mut Host, ui: &mut egui::Ui) {
         let stage_rect = ui.available_rect_before_wrap();
         let painter = ui.painter().clone();
 
-        // 1. Stage backdrop already filled by the frame. Compute the artboard.
-        //    A 64px sprite at 100% zoom is a speck in a large stage, so we derive a
-        //    display scale that fills ~68% of the stage height before applying the
-        //    user zoom. `fit` stays integer (one sprite pixel maps to N device pixels)
-        //    and floored to >= 1 so the board never collapses. `state.ui.zoom` rides
-        //    on top, keeping the HUD/status "100%" honest.
-        let sprite_px = egui::vec2(64.0, 64.0);
+        // 1. Stage backdrop already filled by the frame. Compute the artboard from the
+        //    active sprite's real size (a default 64x64 board when nothing is open). A
+        //    small sprite at 100% zoom is a speck in a large stage, so we derive a
+        //    display scale that fills ~68% of the stage height before applying the user
+        //    zoom. `fit` stays integer (one sprite pixel maps to N device pixels) and
+        //    floored to >= 1 so the board never collapses. `state.ui.zoom` rides on top,
+        //    keeping the HUD/status "100%" honest.
+        let (sprite_w, sprite_h) = edit.document.active_sprite_size().unwrap_or((64, 64));
+        let sprite_px = egui::vec2(sprite_w as f32, sprite_h as f32);
         let fit = (stage_rect.height() * 0.68 / sprite_px.y).max(1.0).floor();
         let display_scale = fit * state.ui.zoom;
         let scaled = sprite_px * display_scale;
@@ -42,13 +50,29 @@ pub fn show(host: &mut Host, ui: &mut egui::Ui) {
         // 3. Transparency checkerboard behind the artboard.
         paint_checkerboard(&painter, artboard, theme);
 
-        // 4. Embed the renderer UNCHANGED - exactly the app/src/main.rs seam. The
-        //    callback rect tracks the artboard, so the wgpu pass draws there.
+        // 4. Recomposite the active sprite only when the document changed since the
+        //    last upload (the revision dirty gate), then embed the renderer. The
+        //    callback uploads the frame in its `prepare` phase and draws it in the
+        //    artboard rect. A `None` frame reuses the retained GPU texture untouched.
         //    INPUT GAP: nothing senses `artboard` yet, so the stage is display-only.
-        //    A future phase must allocate a sensed rect over the artboard
-        //    (`ui.interact`/`allocate_rect` with click+drag) to route pan/zoom/paint
-        //    off its `Response` - see the canvas-input routing in pixhaus-egui.
-        ui.painter().add(egui_wgpu::Callback::new_paint_callback(artboard, CanvasCallback));
+        //    A future phase routes pan/zoom/paint off a sensed rect (see pixhaus-egui).
+        let revision = edit.document.revision();
+        let canvas_frame = if revision == edit.last_uploaded_revision {
+            None
+        } else {
+            edit.last_uploaded_revision = revision;
+            pixhaus_core::composite_active(&edit.document).map(|buf| {
+                let width = buf.width();
+                let height = buf.height();
+                CanvasFrame {
+                    rgba: Arc::new(buf.into_bytes()),
+                    width,
+                    height,
+                }
+            })
+        };
+        ui.painter()
+            .add(egui_wgpu::Callback::new_paint_callback(artboard, CanvasCallback { frame: canvas_frame }));
 
         // 5. Grid lines over the artboard, one device step per sprite pixel at the
         //    enlarged display scale (so the grid tracks the board, not raw zoom).
@@ -65,7 +89,7 @@ pub fn show(host: &mut Host, ui: &mut egui::Ui) {
         );
 
         // 7. Floating HUD via the central Painter, at the stage's lower-left.
-        paint_hud(&painter, stage_rect, state.ui.zoom, state.ui.grid, theme);
+        paint_hud(&painter, stage_rect, (sprite_w, sprite_h), state.ui.zoom, state.ui.grid, theme);
     });
 }
 
@@ -113,9 +137,10 @@ fn paint_grid(painter: &egui::Painter, board: egui::Rect, display_scale: f32, gr
     }
 }
 
-fn paint_hud(painter: &egui::Painter, stage: egui::Rect, zoom: f32, grid: GridMode, theme: &Theme) {
+fn paint_hud(painter: &egui::Painter, stage: egui::Rect, sprite: (u32, u32), zoom: f32, grid: GridMode, theme: &Theme) {
     // Format the live grid the same way the status bar does so the two agree.
-    let text = format!("64 x 64   {:.0}%   Grid {grid:?}   Palette: Bit", zoom * 100.0);
+    let (sprite_w, sprite_h) = sprite;
+    let text = format!("{sprite_w} x {sprite_h}   {:.0}%   Grid {grid:?}   Palette: Bit", zoom * 100.0);
     let font = egui::FontId::monospace(theme.type_scale.mono);
     let galley = painter.layout_no_wrap(text, font, theme.roles.text_secondary);
     let pad = egui::vec2(6.0, 4.0);

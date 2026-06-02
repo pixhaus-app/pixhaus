@@ -7,11 +7,12 @@
 //! next frame - never read by panels during render, so there is no intra-frame event
 //! bus and the borrow guarantee has no hole (spec bible 21.1).
 
-use pixhaus_services::i18n;
+use pixhaus_core::commands::ApplyGeneratedAsset;
+use pixhaus_services::{GenerationContext, GenerationJobInput, ProviderCapability, i18n};
 
 use crate::contrib_api::ids::{ActionId, PanelId, ToolId, WorkspaceId};
 use crate::state::Host;
-use crate::state::session::JobStub;
+use crate::state::session::{AiStatus, JobStub};
 use crate::state::ui_state::{GridMode, Modal, SplashPhase};
 use crate::theme::{Theme, ThemeVariant, apply_to_visuals};
 
@@ -51,12 +52,25 @@ pub enum Intent {
     /// turn into a key was never routed through the localization service). Flips the
     /// service's process-global flag (bible 32.3).
     ToggleI18nKeys,
-    /// Run an action. Mock: pushes a `JobStub` and emits an Event. Never mutates the
-    /// model (spec invariant) - when `core` lands, model edits route through the
-    /// reserved `Command` variant below instead.
+    /// Run an action. Mock UI affordance: pushes a `JobStub` and logs an event. Never
+    /// mutates project state - model edits route through `Command` below.
     RunAction(ActionId),
-    // Reserved, lands with core - the named command-path seam (bible rules 3, 4, 13):
-    // Command(Box<dyn core::Command>),
+    /// Execute an undoable command against the live document through the history (the
+    /// named command-path seam, bible rules 3, 4, 13).
+    Command(Box<dyn pixhaus_core::Command>),
+    /// Undo the most recent command.
+    Undo,
+    /// Redo the most recently undone command.
+    Redo,
+    /// Submit a generation job: dispatch `prompt` through a text-to-sprite provider.
+    SubmitGenerateJob {
+        /// The prompt text (content, never a localization key).
+        prompt: String,
+    },
+    /// Apply the selected generation result as a new sprite (an undoable command).
+    InsertSelectedResultAsSprite,
+    /// Select a generation result by its tray index.
+    SelectResult(usize),
 }
 
 /// "Something happened", distinct from a command (spec bible 21.3). Produced only
@@ -155,7 +169,78 @@ pub fn apply_intent(host: &mut Host, intent: Intent, ctx: &egui::Context) {
             host.state.session.jobs.push(JobStub::queued(a));
             tracing::debug!(?a, "ActionDispatched");
         }
+        Intent::Command(cmd) => {
+            match host.edit.history.execute(&mut host.edit.document, cmd) {
+                Ok(()) => host.state.session.dirty = true,
+                Err(error) => tracing::warn!(%error, "command failed"),
+            }
+            // The document changed in the post-frame drain; ask for another frame so
+            // the canvas recomposites (egui would otherwise go idle until next input).
+            ctx.request_repaint();
+        }
+        Intent::Undo => {
+            if host.edit.history.undo(&mut host.edit.document).is_ok() {
+                host.state.session.dirty = true;
+            }
+            ctx.request_repaint();
+        }
+        Intent::Redo => {
+            if host.edit.history.redo(&mut host.edit.document).is_ok() {
+                host.state.session.dirty = true;
+            }
+            ctx.request_repaint();
+        }
+        Intent::SelectResult(index) => {
+            host.edit.results.select(index);
+            host.state.session.selected_result = host.edit.results.selected_index();
+        }
+        Intent::InsertSelectedResultAsSprite => {
+            insert_selected_result(host);
+            ctx.request_repaint();
+        }
+        Intent::SubmitGenerateJob { prompt } => {
+            submit_generate_job(host, prompt);
+            // Show the "Working" status immediately; the result lands via the job
+            // channel `drain_background` drains (which repaints again on completion).
+            ctx.request_repaint();
+        }
     }
+}
+
+/// Builds an [`ApplyGeneratedAsset`] from the selected result and executes it through
+/// the history, marking the session dirty (a no-op if no result is selected).
+fn insert_selected_result(host: &mut Host) {
+    let Some(asset) = host.edit.results.selected() else {
+        return;
+    };
+    let command = ApplyGeneratedAsset::new(asset.provenance.prompt.clone(), asset.width, asset.height, asset.stride, asset.rgba);
+    match host.edit.history.execute(&mut host.edit.document, Box::new(command)) {
+        Ok(()) => host.state.session.dirty = true,
+        Err(error) => tracing::warn!(%error, "failed to insert generated asset"),
+    }
+}
+
+/// Dispatches a generation job through a text-to-sprite provider, if one is
+/// registered. The result returns over the job channel `drain_background` drains.
+fn submit_generate_job(host: &mut Host, prompt: String) {
+    let Some(provider) = host.edit.providers.first_with(ProviderCapability::TextToSprite) else {
+        tracing::warn!("no provider offers text-to-sprite generation");
+        return;
+    };
+    host.state.session.ai_status = AiStatus::Working;
+    // Remember the prompt so "Generate more" can resubmit it from the Results panel.
+    host.state.session.last_prompt.clone_from(&prompt);
+    // Vary the seed by result count so "Generate more" differs, without a random
+    // source (the mock hashes prompt+seed deterministically).
+    let seed = host.edit.results.len() as u64;
+    let input = GenerationJobInput {
+        prompt,
+        seed,
+        size: (64, 64),
+        context: GenerationContext::NewAsset,
+    };
+    let results = host.edit.results.clone();
+    host.edit.jobs.submit(provider, input, results);
 }
 
 #[cfg(test)]
@@ -334,5 +419,27 @@ mod tests {
             host.state.session.dirty, was_dirty,
             "RunAction is a mock UI affordance and must never mutate project state (spec invariant)",
         );
+    }
+
+    fn red_pixel_command() -> Box<dyn pixhaus_core::Command> {
+        Box::new(pixhaus_core::commands::ApplyGeneratedAsset::new("x".to_owned(), 1, 1, 4, vec![10, 20, 30, 255]))
+    }
+
+    #[test]
+    fn command_executes_against_the_document_and_marks_dirty() {
+        let mut host = host();
+        apply_intent(&mut host, Intent::Command(red_pixel_command()), &ctx());
+        assert_eq!(host.edit.document.sprites().len(), 1, "the command added a sprite");
+        assert!(host.state.session.dirty, "a command marks the session dirty");
+    }
+
+    #[test]
+    fn undo_then_redo_round_trips_through_intents() {
+        let mut host = host();
+        apply_intent(&mut host, Intent::Command(red_pixel_command()), &ctx());
+        apply_intent(&mut host, Intent::Undo, &ctx());
+        assert_eq!(host.edit.document.sprites().len(), 0, "Undo removes the sprite");
+        apply_intent(&mut host, Intent::Redo, &ctx());
+        assert_eq!(host.edit.document.sprites().len(), 1, "Redo re-adds the sprite");
     }
 }
