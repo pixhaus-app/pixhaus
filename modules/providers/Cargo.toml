@@ -8,5 +8,17 @@ license.workspace = true
 repository.workspace = true
 homepage.workspace = true
 
+[dependencies]
+# Registers a Provider into the services registry; builds GeneratedAssets from
+# core's pixel invariants. The mock runs as a real tokio task with a cancel token.
+pixhaus-core = { path = "../../crates/core" }
+pixhaus-services = { path = "../../crates/services" }
+tokio = { workspace = true }
+tokio-util = { workspace = true }
+tracing = { workspace = true }
+
+[dev-dependencies]
+rstest = { workspace = true }
+
 [lints]
 workspace = true
