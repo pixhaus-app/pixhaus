@@ -2892,7 +2892,7 @@ Project files store ids and metadata, never localized strings as the only source
 
 ### 32.3 Requirements
 
-The service should support runtime language switching, a fallback language, interpolation, pluralization where available, missing-key diagnostics, and a dev-mode key-display toggle. `egui-i18n` is a candidate to sit behind the Pixhaus-owned service (section 33); the service boundary stays even if the backing crate changes.
+The service should support runtime language switching, a fallback language, interpolation, pluralization where available, missing-key diagnostics, and a dev-mode key-display toggle. The Pixhaus-owned service (`pixhaus_services::i18n`) is backed by `rust-i18n`, adopted in place of the original `egui-i18n` candidate (which is abandoned); the service boundary stays even if the backing crate changes again. `rust-i18n` carries no CLDR plural categories, so plural-form selection (`.one`/`.other`) lives in the service (`tr_plural`), not the backing crate. The dev key-display toggle is surfaced as `View > Show i18n Keys`.
 
 ---
 
@@ -2913,14 +2913,14 @@ The authority for dependencies is the workspace `Cargo.toml` catalog, governed b
 | Serde backbone | `serde`, `serde_json` |
 | Images | `image` (png feature) |
 | Platform paths + dialogs | `directories`, `rfd` |
-| Test stack | `rstest`, `proptest`, `insta`, `tempfile`, `mockall`, `image-compare`, `egui_kittest` |
+| Localization | `rust-i18n`, `sys-locale` |
+| Test stack | `rstest`, `proptest`, `insta`, `tempfile`, `mockall`, `image-compare`, `egui_kittest`, `serial_test` |
 
 ### 33.2 Candidates (not adopted; pull when the capability lands)
 
 | Concern | Candidate | Adoption trigger |
 |---|---|---|
 | Docking | `egui_dock` | when custom dock layouts land (section 20.3) |
-| Localization | `egui-i18n` | when the localization service lands (section 32) |
 | CPU data-parallelism | `rayon` | when a batch workload outgrows `spawn_blocking` (section 31.2) |
 | Heavier channels | `flume`, `crossbeam-channel` | when std mpsc is outgrown (section 31.5) |
 | Shared caches | `arc-swap`, `dashmap` | when a concurrent cache earns it |
@@ -2943,4 +2943,4 @@ The authority for dependencies is the workspace `Cargo.toml` catalog, governed b
 ### 33.4 Defaults
 
 - Docking sits behind the workspace-layout abstraction (`egui_dock` candidate), and default layouts come first (section 20.1).
-- Localization sits behind the Pixhaus localization service (`egui-i18n` candidate), never called from core logic (section 32.1).
+- Localization sits behind the Pixhaus localization service (`rust-i18n` backing), never called from core logic (section 32.1).

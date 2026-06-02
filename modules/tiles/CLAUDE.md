@@ -20,5 +20,9 @@ sections 7.3, 6.6).
 - Instrument autotile and seam-validation passes and the tileset-export jobs
   (`#[instrument]` on the bodies) plus the module registration. See the
   `pixhaus-tracing` skill.
+- Register the Tiles workspace, the tile panels, and the tile commands with keys
+  (`workspace.tiles.*`, `command.tile.*`); ship the values in `tiles.yaml`.
+  Seam/autotile validation messages are keyed, never literal English. See the
+  `pixhaus-i18n` skill.
 
 Shared module rules: `modules/CLAUDE.md`. Global rules: root `CLAUDE.md`.

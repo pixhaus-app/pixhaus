@@ -20,5 +20,9 @@ The sprite-editing module — the Draw workspace and the shared editing surface
 - Instrument the editing commands (`#[instrument]` on apply) and the module's
   registration (`info!`). No per-stroke spans — a stroke is a hot input loop. See
   the `pixhaus-tracing` skill.
+- Register the shared panels, the 15 brush tools, and the Draw workspace with keys in
+  its namespace (`panel.layers.title`, `tool.pencil.label`, `workspace.draw.title`,
+  ...); ship the values in `sprite_edit.yaml`. Keep the shared panel/tool keys stable
+  — other workspaces reference the same ids. See the `pixhaus-i18n` skill.
 
 Shared module rules: `modules/CLAUDE.md`. Global rules: root `CLAUDE.md`.

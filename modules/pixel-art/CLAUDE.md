@@ -18,6 +18,9 @@ The pixel-art module — a deep dedicated art mode (architecture bible sections
   adds constraints and specialized tools, it doesn't replace the editing core.
 - Wrap the palette-reduction and dither jobs in a coarse span (the whole job is the
   perf signal); no per-pixel spans. See the `pixhaus-tracing` skill.
+- Register the indexed-mode tools and the palette/dither controls with keys in its
+  namespace; ship its bundle when it gains UI. Validation findings shown to the user
+  are keyed, not literal English. See the `pixhaus-i18n` skill.
 - Palette analysis and previews are derived cache — recomputable, never the source
   of truth (bible section 22.6).
 

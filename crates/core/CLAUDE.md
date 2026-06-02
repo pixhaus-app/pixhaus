@@ -8,7 +8,7 @@ on it, it depends on nothing in the workspace.
   selections, art-mode metadata, the typed ids that key them, the `Command` trait,
   and pure pixel ops. This is the durable project-state bucket: it holds the stable
   ids and metadata that persist, never localized display strings — translation is a
-  future service layered above, not core's concern (bible section 32).
+  service in `services` layered above, not core's concern (bible section 32).
 - **Depends on:** no workspace crate. External: `serde`, `thiserror`, `glam`,
   `bytemuck` as the model needs them.
 - **Used by:** every other crate.
@@ -25,5 +25,9 @@ on it, it depends on nothing in the workspace.
 - Pure data: a coarse `tracing::debug!` at most. No performance spans in the pixel
   ops — a span per pixel or scanline floods the log and the hot path. See the
   `pixhaus-tracing` skill.
+- Never localize: this crate stores stable keys and ids, never display text.
+  Translation is a service in `services`, never called from here — a renamed label
+  must not invalidate a saved project (bible section 32.1). See the `pixhaus-i18n`
+  skill.
 
 Global rules: root `CLAUDE.md`. Architecture: `docs/pixhaus_architecture_bible.md`.

@@ -35,6 +35,11 @@ The host application binary — the eframe + egui shell (architecture bible sect
   (`let _guard = ...`, never `let _ = ...`) — dropping it early flushes the
   non-blocking writer and loses the log tail. Libraries emit; only `app` configures.
   See the `pixhaus-tracing` skill.
+- This is also the ONLY crate that sets the active language: detect the OS language
+  via `sys-locale`, fall back to the saved pref, then `en`, and call
+  `pixhaus_services::i18n::set_language` BEFORE the egui loop — the string-side
+  parallel to building the subscriber before the runtime. Libraries and modules emit
+  KEYS; only `app` sets the language. See the `pixhaus-i18n` skill.
 
 Reach for `pixhaus-eframe` for boot/window and `pixhaus-egui` for the loop. Global
 rules: root `CLAUDE.md`. Architecture: `docs/pixhaus_architecture_bible.md`.

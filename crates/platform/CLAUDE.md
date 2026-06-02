@@ -23,5 +23,8 @@ The platform layer — the OS-facing edges (architecture bible section 4.6).
   configures logging. `directories` only computes paths; `log_dir` creates the
   directory before returning it. See the `pixhaus-directories` and `pixhaus-tracing`
   skills.
+- This crate detects the OS language (via `sys-locale`) for `app`'s boot-time
+  default; it reads the OS locale, it does not translate, and it does not host the
+  locale bundles — those are compiled into `services`. See the `pixhaus-i18n` skill.
 
 Global rules: root `CLAUDE.md`. Architecture: `docs/pixhaus_architecture_bible.md`.

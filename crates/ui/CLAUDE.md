@@ -25,6 +25,11 @@ egui and `render`.
 - Keep tracing to the shell's coarse `debug!` / `warn!` (the existing intent and
   layout-resolve events). No per-frame tracing — the loop runs at 60fps and would
   flood the log. See the `pixhaus-tracing` skill.
+- Every user-facing label goes through `tr()` at render time; no hardcoded
+  user-facing string literals. The registries carry `MsgKey` (defined here, in
+  `contrib_api`), and the shell resolves each frame. Resolve silently on the hit path
+  (the no-per-frame-tracing rule above); a missing key warns once. See the
+  `pixhaus-i18n` skill.
 
 ## Design system
 
@@ -55,8 +60,8 @@ Load the `pixhaus-ui-conventions` skill for the concrete API and do/don't exampl
   not here — this crate owns the traits, registries, theme, widgets, and shell runtime.
   This crate also owns the session/UI/derived-cache state containers (`Host`,
   `ShellState`, `SessionState`, `UiState`) that map to the bible's target container
-  set (section 22.7); when localization lands, its namespaces are module/registry-owned
-  (section 32).
+  set (section 22.7); localization namespaces are module/registry-owned (section 32),
+  resolved here at render time via `MsgKey::tr()`.
 - **egui 0.34 specifics.** `ctx.global_style_mut`/`global_style` (not
   `style_mut`/`style`); `egui::Panel::left/right/top/bottom` + `default_size`/`exact_size`;
   `ctx.text_edit_focused()` for shortcut focus-gating; no `.unwrap()`/`.expect()` even in

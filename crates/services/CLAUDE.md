@@ -24,6 +24,11 @@ The service layer — shared behavior above the domain model and below the UI
 - `#[instrument]` job bodies and command apply; `info!` on start/finish, `error!` /
   `warn!` on failure. Instrument spawned async tasks so their work is traced off the
   UI thread (pair the `pixhaus-tokio` and `pixhaus-tracing` skills).
+- This crate owns the ONE localization service (`src/i18n.rs`): the single
+  `rust-i18n` wiring (`i18n!`) and the embedded `locales/*.yaml` bundles, parallel to
+  the command executor it owns. It stays egui-free and resolves keys to `String`;
+  `app` sets the active language at boot, libraries and modules emit keys. See the
+  `pixhaus-i18n` skill.
 
 Reach for the `pixhaus-tokio` skill for async work. Global rules: root `CLAUDE.md`.
 Architecture: `docs/pixhaus_architecture_bible.md`.

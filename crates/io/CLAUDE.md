@@ -22,5 +22,8 @@ Import, export, and the on-disk project format (architecture bible sections 18,
 - Trace load, save, and format migration (`#[instrument]` on the load/save bodies);
   `warn!` on corrupt or unknown-extension data rather than failing silently. See the
   `pixhaus-tracing` skill.
+- The on-disk format stores ids and keys, never localized display text as the source
+  of truth. Load/save diagnostics stay English developer text; user-facing strings
+  are keyed in `ui`. See the `pixhaus-i18n` skill.
 
 Global rules: root `CLAUDE.md`. Architecture: `docs/pixhaus_architecture_bible.md`.

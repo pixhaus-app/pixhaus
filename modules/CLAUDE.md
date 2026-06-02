@@ -20,11 +20,15 @@ plugin system.
   (`providers` module, `io`, `platform`) — a feature module wires capabilities up,
   it doesn't reimplement them.
 - A module's jobs follow the background-worker contract and the parallelization
-  priorities (bible sections 13.6 and 23.5), and a module registers its own
-  localization namespace when localization lands (bible section 32).
+  priorities (bible sections 13.6 and 23.5), and a module owns its own localization
+  namespace (bible section 32).
 - Instrument jobs and registration: `#[instrument]` on job bodies (the duration is
   the perf signal), an `info!` when the module registers its capabilities. Emit via
   `tracing`, never `println!`; never log secrets. See the `pixhaus-tracing` skill.
+- Register panels, tools, menus, and commands with KEYS in this module's own
+  namespace (`panel.<x>`, `tool.<x>`, `app.menu.<x>`, `command.<x>`), with the values
+  in this module's `crates/services/locales/<module>.yaml` bundle; the shell resolves
+  them at render time. Never register a display literal. See the `pixhaus-i18n` skill.
 - When you contribute UI (panels, tools, workspaces), build it from the `ui` design
   system — theme tokens via `ContribCtx.theme`, the `widgets` helpers, `icons` glyphs —
   never hex colors, emoji, or bespoke frames. Panels are `&self`: read state, push

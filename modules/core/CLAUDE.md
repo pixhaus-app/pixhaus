@@ -19,5 +19,8 @@ module the others assume is present.
   assume any feature module is present.
 - Trace the host bootstrap: an `info!` as the command and job systems and the asset
   and workspace registries register. See the `pixhaus-tracing` skill.
+- This module wires the localization service into the host alongside the command and
+  job systems; it does not own translations or call `tr()` itself. See the
+  `pixhaus-i18n` skill.
 
 Shared module rules: `modules/CLAUDE.md`. Global rules: root `CLAUDE.md`.

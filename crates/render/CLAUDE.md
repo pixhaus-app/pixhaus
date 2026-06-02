@@ -25,6 +25,9 @@ composited on the GPU and never crosses a CPU copy per painted pixel.
   whole texture upload or composite, not the pixels inside it). A span has real
   cost; at 8K a per-pixel span is the opposite of what the dirty-rect bound buys.
   See the `pixhaus-tracing` skill.
+- No user-facing strings on the GPU path: `render` is UI-agnostic and never
+  localizes. Debug and perf traces stay English developer text. See the
+  `pixhaus-i18n` skill.
 
 Reach for the `pixhaus-wgpu` skill before touching GPU code. Global rules: root
 `CLAUDE.md`. Architecture: `docs/pixhaus_architecture_bible.md`.

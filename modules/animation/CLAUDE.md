@@ -19,5 +19,9 @@ sections 7.3, 6.4, 15).
 - Instrument the playback and onion-skin jobs and the module registration; keep the
   spans coarse (the job, not each frame composited inside it). See the
   `pixhaus-tracing` skill.
+- Register the timeline/clip panels and the Animate workspace with keys
+  (`workspace.animate.*`, `panel.timeline.title`); ship the values in
+  `animation.yaml`. Reuse sprite-edit's shared keys — don't re-key the shared canvas.
+  See the `pixhaus-i18n` skill.
 
 Shared module rules: `modules/CLAUDE.md`. Global rules: root `CLAUDE.md`.

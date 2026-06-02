@@ -60,6 +60,7 @@ inventory — don't maintain a list here that would drift as skills come and go.
   - `pixhaus-claude-code-workflow` — branches, commits, PRs, hook output handling
   - `pixhaus-ui-conventions` — the design system: theme tokens, shared widgets, phosphor icons, the deferred-intent UI model
   - `pixhaus-tracing` — logging/tracing/diagnostics: levels, `#[instrument]`, spans, the one subscriber, the secrets rule
+  - `pixhaus-i18n` — localization: stable keys, the one service in `services`, render-time `tr()`, the dev key-display toggle, `rust-i18n` plurals/interpolation
 - **Per-dependency** — one skill per locked dependency (`pixhaus-egui`,
   `pixhaus-wgpu`, `pixhaus-tokio`, `pixhaus-image`, …), each the verified API and
   idioms for that crate at its pinned version. They fire when you work with that
@@ -170,6 +171,25 @@ Structured `tracing` from day one. The binary (`app/`) owns the ONE subscriber
 the default filter. Profiling for now means reading `#[instrument]` span durations —
 puffin/tracy/criterion are a later, deliberate step. Never log API keys or secrets.
 The full rules are in the `pixhaus-tracing` skill.
+
+## Localization
+
+Strings are addressed by stable key and resolved to display text at render time, in
+the active language. There is ONE localization service, owned by `services`
+(`crates/services/src/i18n.rs`), wrapping `rust-i18n` behind a Pixhaus boundary so
+the backing crate can change (`rust-i18n` is the deliberate substitute for the
+bible's abandoned `egui-i18n` candidate). The binary (`app/`) sets the active
+language at boot — detect the OS language via `sys-locale`, default to `en` — the
+string-side parallel to owning the one subscriber. Libraries and modules emit KEYS
+(`panel.<id>.title`, `tool.<id>.label`, `app.menu.<x>`, `command.<id>`, each module
+owning its namespace), never display literals; the shell resolves them through
+`MsgKey::tr()`. `core` and `render` never localize — they store keys and ids, never
+display text, so a renamed label never invalidates a saved project. Locale bundles
+live in `crates/services/locales/*.yaml`; a missing key warns on the `pixhaus::i18n`
+target and falls back to `en` then the key. `View > Show i18n Keys` flips every label
+to its raw key, a built-in lint for hardcoded strings. Never put untranslatable user
+data — file names, prompts, project content — inside a key. The full rules are in the
+`pixhaus-i18n` skill.
 
 ## Commands
 

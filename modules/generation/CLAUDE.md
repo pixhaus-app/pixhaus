@@ -23,5 +23,9 @@ sections 7.3, 6.5, 14).
 - `#[instrument]` the AI job types; trace job submit and result. Never log prompt
   secrets or API keys — log that a job ran and how long it took, not the key. See the
   `pixhaus-tracing` and `pixhaus-keyring` skills.
+- Register the prompt/recipe/result panels and the Generate workspace with keys
+  (`workspace.generate.*`, `command.gen.*`); ship the values in `generation.yaml`.
+  NEVER put a user's prompt text or generated-asset data inside a key — that is
+  content, interpolated as args. See the `pixhaus-i18n` skill.
 
 Shared module rules: `modules/CLAUDE.md`. Global rules: root `CLAUDE.md`.

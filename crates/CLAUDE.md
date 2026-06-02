@@ -24,6 +24,10 @@ the wrong one — surface the question rather than smearing it across two.
   and `#[instrument]` on fallible/expensive functions — and never install a
   subscriber or `println!`/`eprintln!`. The binary in `app/` owns the one
   subscriber. See the `pixhaus-tracing` skill.
+- User-facing strings are stable keys resolved to text at render time, never
+  hardcoded display literals. One localization service lives in `services`; `core`
+  and `render` never localize, only `ui` resolves keys to text. A crate that builds
+  a user-facing string from a literal is a bug. See the `pixhaus-i18n` skill.
 
 Global conventions (error policy, async, style, commits, the no-unwrap rule) live
 in the root `CLAUDE.md`; the architecture is in

@@ -23,6 +23,10 @@ The provider modules — AI and compute backends (architecture bible sections 7.
   failure (isolated, surfaced as an actionable error). NEVER log an API key — it
   lives in the OS credential vault, not the log. See the `pixhaus-tracing` and
   `pixhaus-keyring` skills.
+- Register provider labels and capability descriptions with keys
+  (`provider.<id>.label`); ship its bundle when it gains UI. Provider-returned text,
+  API model names, and API keys are DATA, never i18n keys — surface provider errors
+  via keyed error strings. See the `pixhaus-i18n` skill.
 
 Reach for `pixhaus-reqwest`/`pixhaus-keyring` skills when wiring real providers.
 Shared module rules: `modules/CLAUDE.md`. Global rules: root `CLAUDE.md`.
