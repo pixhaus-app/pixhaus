@@ -7,8 +7,8 @@
 //! next frame - never read by panels during render, so there is no intra-frame event
 //! bus and the borrow guarantee has no hole (spec bible 21.1).
 
-use pixhaus_core::commands::ApplyGeneratedAsset;
-use pixhaus_services::{GenerationContext, GenerationJobInput, GenerationKind, ProviderCapability, i18n};
+use pixhaus_core::commands::{ApplyGeneratedAnimation, ApplyGeneratedAsset, GeneratedFrameData};
+use pixhaus_services::{GenerationContext, GenerationJobInput, GenerationKind, Grid, ProviderCapability, ReferenceImage, i18n};
 
 use crate::contrib_api::ids::{ActionId, PanelId, ToolId, WorkspaceId};
 use crate::state::Host;
@@ -62,13 +62,35 @@ pub enum Intent {
     Undo,
     /// Redo the most recently undone command.
     Redo,
-    /// Submit a generation job: dispatch `prompt` through a text-to-sprite provider.
-    SubmitGenerateJob {
-        /// The prompt text (content, never a localization key).
+    /// Submit an anchor generation job: dispatch the assembled `prompt` through a
+    /// provider that offers anchor generation. The first pass of the sprite pipeline.
+    SubmitAnchorJob {
+        /// The assembled anchor prompt (content, never a localization key).
         prompt: String,
     },
-    /// Apply the selected generation result as a new sprite (an undoable command).
+    /// Submit an idle-animation job conditioned on a previously generated anchor.
+    /// The second pass: `from_result` is the tray index of the anchor to use as the
+    /// reference image; `prompt` is the assembled idle prompt; the grid/timing come
+    /// from the generation module's idle defaults.
+    SubmitIdleAnimationJob {
+        /// The assembled idle prompt (content, never a localization key).
+        prompt: String,
+        /// Tray index of the anchor result used as the reference image.
+        from_result: usize,
+        /// Sheet columns to request and slice.
+        cols: u32,
+        /// Sheet rows to request and slice.
+        rows: u32,
+        /// Playback rate for the resulting clip.
+        fps: u16,
+        /// The clip name the result should carry (content, e.g. "idle").
+        clip_name: String,
+    },
+    /// Apply the selected generation result as a new still sprite (an undoable command).
     InsertSelectedResultAsSprite,
+    /// Apply the selected animation result as a new animated sprite with a clip (an
+    /// undoable command).
+    InsertSelectedAsAnimatedSprite,
     /// Select a generation result by its tray index.
     SelectResult(usize),
 }
@@ -108,7 +130,9 @@ impl IntentSink {
 /// core::Command>)` variant will move an owned command out of the intent, so the
 /// function must own it and `Intent` cannot be `Copy`. Today's arms only read `Copy`
 /// payloads, which is why clippy sees the value as unconsumed.
-#[allow(clippy::needless_pass_by_value)]
+// apply_intent is the single intent-dispatch match; its length grows with the
+// intent set, so the line-count lint does not apply.
+#[allow(clippy::needless_pass_by_value, clippy::too_many_lines)]
 pub fn apply_intent(host: &mut Host, intent: Intent, ctx: &egui::Context) {
     match intent {
         Intent::SelectWorkspace(w) => {
@@ -198,10 +222,25 @@ pub fn apply_intent(host: &mut Host, intent: Intent, ctx: &egui::Context) {
             insert_selected_result(host);
             ctx.request_repaint();
         }
-        Intent::SubmitGenerateJob { prompt } => {
-            submit_generate_job(host, prompt);
+        Intent::InsertSelectedAsAnimatedSprite => {
+            insert_selected_as_animated_sprite(host);
+            ctx.request_repaint();
+        }
+        Intent::SubmitAnchorJob { prompt } => {
+            submit_anchor_job(host, prompt);
             // Show the "Working" status immediately; the result lands via the job
             // channel `drain_background` drains (which repaints again on completion).
+            ctx.request_repaint();
+        }
+        Intent::SubmitIdleAnimationJob {
+            prompt,
+            from_result,
+            cols,
+            rows,
+            fps,
+            clip_name,
+        } => {
+            submit_idle_animation_job(host, prompt, from_result, cols, rows, fps, clip_name);
             ctx.request_repaint();
         }
     }
@@ -220,11 +259,12 @@ fn insert_selected_result(host: &mut Host) {
     }
 }
 
-/// Dispatches a generation job through a text-to-sprite provider, if one is
-/// registered. The result returns over the job channel `drain_background` drains.
-fn submit_generate_job(host: &mut Host, prompt: String) {
-    let Some(provider) = host.edit.providers.first_with(ProviderCapability::TextToSprite) else {
-        tracing::warn!("no provider offers text-to-sprite generation");
+/// Dispatches an anchor generation job through a provider offering anchor
+/// generation, if one is registered. The result returns over the job channel
+/// `drain_background` drains.
+fn submit_anchor_job(host: &mut Host, prompt: String) {
+    let Some(provider) = host.edit.providers.first_with(ProviderCapability::GenerateAnchor) else {
+        tracing::warn!("no provider offers anchor generation");
         return;
     };
     host.state.session.ai_status = AiStatus::Working;
@@ -242,6 +282,77 @@ fn submit_generate_job(host: &mut Host, prompt: String) {
     };
     let results = host.edit.results.clone();
     host.edit.jobs.submit(provider, input, results);
+}
+
+/// Dispatches an idle-animation job conditioned on the anchor result at
+/// `from_result`, if a provider offers idle-animation generation and that result is
+/// a still anchor. The anchor's pixels travel as owned bytes (a [`ReferenceImage`]),
+/// never as a live document handle (bible 13.6).
+#[allow(clippy::too_many_arguments)]
+fn submit_idle_animation_job(host: &mut Host, prompt: String, from_result: usize, cols: u32, rows: u32, fps: u16, clip_name: String) {
+    let Some(provider) = host.edit.providers.first_with(ProviderCapability::GenerateIdleAnimation) else {
+        tracing::warn!("no provider offers idle-animation generation");
+        return;
+    };
+    let Some(anchor) = host.edit.results.asset_at(from_result) else {
+        tracing::warn!(from_result, "anchor result missing or not a still image");
+        return;
+    };
+    host.state.session.ai_status = AiStatus::Working;
+    let seed = host.edit.results.len() as u64;
+    let reference = ReferenceImage {
+        width: anchor.width,
+        height: anchor.height,
+        stride: anchor.stride,
+        rgba: anchor.rgba,
+    };
+    let input = GenerationJobInput {
+        prompt,
+        seed,
+        size: (anchor.width, anchor.height),
+        context: GenerationContext::NewAsset,
+        kind: GenerationKind::IdleAnimation {
+            reference,
+            animation_id: clip_name,
+            grid: Grid { cols, rows },
+            fps,
+        },
+    };
+    let results = host.edit.results.clone();
+    host.edit.jobs.submit(provider, input, results);
+}
+
+/// Builds an [`ApplyGeneratedAnimation`] from the selected animation result and
+/// executes it through the history (a no-op if the selection is not an animation).
+fn insert_selected_as_animated_sprite(host: &mut Host) {
+    let Some(animation) = host.edit.results.selected_animation() else {
+        return;
+    };
+    let frames = animation.frames;
+    let (width, height) = match frames.first() {
+        Some(frame) => (frame.width, frame.height),
+        None => return,
+    };
+    let data: Vec<GeneratedFrameData> = frames
+        .into_iter()
+        .map(|f| GeneratedFrameData {
+            stride: f.stride,
+            rgba: f.rgba,
+        })
+        .collect();
+    let command = ApplyGeneratedAnimation::new(
+        animation.clip_name.clone(),
+        animation.clip_name,
+        width,
+        height,
+        animation.fps,
+        animation.loop_mode,
+        data,
+    );
+    match host.edit.history.execute(&mut host.edit.document, Box::new(command)) {
+        Ok(()) => host.state.session.dirty = true,
+        Err(error) => tracing::warn!(%error, "failed to insert generated animation"),
+    }
 }
 
 #[cfg(test)]

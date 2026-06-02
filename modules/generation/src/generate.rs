@@ -21,6 +21,8 @@ use pixhaus_ui::state::intent::Intent;
 use pixhaus_ui::theme::Theme;
 use pixhaus_ui::{icons, widgets};
 
+use crate::prompt;
+
 /// The Generate workspace id.
 pub const GENERATE: WorkspaceId = WorkspaceId("generate");
 
@@ -118,6 +120,12 @@ impl Panel for PromptPanel {
         }
     }
 
+    fn default_scratch(&self) -> Option<String> {
+        // Pre-fill the composer with the Bit mascot subject, the working default
+        // until the prompt-library system lands. The user edits it freely.
+        Some(prompt::defaults::BIT_DEFAULT_PROMPT.to_owned())
+    }
+
     fn ui(&self, ui: &mut egui::Ui, scope: &mut PanelScope<'_>) {
         let theme = scope.ctx.theme;
 
@@ -152,12 +160,40 @@ impl Panel for PromptPanel {
 
         ui.add_space(theme.spacing.sm);
 
-        // The primary accent Generate button with the sparkle marker. Submits the
-        // scratch prompt as a real generation job (the mock provider answers it).
-        let label = egui::RichText::new(format!("{} Generate", icons::SPARKLE)).color(theme.roles.text_primary);
-        let button = egui::Button::new(label).fill(theme.accent.base);
-        if ui.add_sized([ui.available_width(), 28.0], button).clicked() {
-            scope.ctx.intents.push(Intent::SubmitGenerateJob { prompt: scope.scratch.clone() });
+        // First pass: generate the anchor. Always available. Assembles the anchor
+        // prompt from the edited subject plus the Bit defaults, then submits it.
+        let anchor_label = egui::RichText::new(format!("{} Generate Anchor", icons::SPARKLE)).color(theme.roles.text_primary);
+        let anchor_button = egui::Button::new(anchor_label).fill(theme.accent.base);
+        if ui.add_sized([ui.available_width(), 28.0], anchor_button).clicked() {
+            let mut identity = prompt::defaults::bit_identity();
+            identity.description.clone_from(scope.scratch);
+            let assembled = prompt::build_anchor_prompt(&identity, &prompt::defaults::default_anchor_spec());
+            scope.ctx.intents.push(Intent::SubmitAnchorJob { prompt: assembled });
+        }
+
+        ui.add_space(theme.spacing.xs);
+
+        // Second pass: generate the idle animation from the selected anchor. Enabled
+        // only once a still anchor result is selected (the reference image).
+        let anchor_selected = scope.ctx.session.selected_is_anchor();
+        let idle_label = egui::RichText::new(format!("{} Generate Idle Animation", icons::SPARKLE)).color(theme.roles.text_primary);
+        let idle_fill = if anchor_selected { theme.accent.base } else { theme.accent.muted };
+        let idle_button = egui::Button::new(idle_label).fill(idle_fill).min_size(Vec2::new(ui.available_width(), 28.0));
+        if ui.add_enabled(anchor_selected, idle_button).clicked()
+            && let Some(from_result) = scope.ctx.session.selected_result
+        {
+            let mut identity = prompt::defaults::bit_identity();
+            identity.description.clone_from(scope.scratch);
+            let idle = prompt::defaults::default_idle_spec();
+            let assembled = prompt::build_idle_prompt(&identity, &idle, &prompt::defaults::default_style(), &prompt::defaults::idle_principles());
+            scope.ctx.intents.push(Intent::SubmitIdleAnimationJob {
+                prompt: assembled,
+                from_result,
+                cols: idle.cols,
+                rows: idle.rows,
+                fps: idle.fps,
+                clip_name: idle.clip_name,
+            });
         }
     }
 }
@@ -387,12 +423,15 @@ impl Panel for ResultsPanel {
             return;
         }
 
-        // The store may hold more than the tray shows; cap the visible cards.
+        // The store may hold more than the tray shows; cap the visible cards. Pull the
+        // per-card frame counts from the mirror first so the card closure borrows no
+        // session state.
         let shown = count.min(12);
+        let frame_counts: Vec<Option<u32>> = (0..shown).map(|i| scope.ctx.session.result_frame_count(i)).collect();
         let mut to_select = None;
         ui.horizontal_wrapped(|ui| {
-            for i in 0..shown {
-                if result_card(ui, theme, i, selected == Some(i)).clicked() {
+            for (i, &frames) in frame_counts.iter().enumerate() {
+                if result_card(ui, theme, i, selected == Some(i), frames).clicked() {
                     to_select = Some(i);
                 }
             }
@@ -401,14 +440,20 @@ impl Panel for ResultsPanel {
             scope.ctx.intents.push(Intent::SelectResult(i));
         }
 
+        // The apply action follows the selected result's kind: an animation inserts as
+        // an animated sprite, a still anchor inserts as a new sprite.
+        let selected_is_animation = scope.ctx.session.selected_is_animation();
         ui.add_space(theme.spacing.sm);
         ui.horizontal_wrapped(|ui| {
-            // The real apply path: a selected result becomes a sprite via a command.
-            if ui.button("Insert as new sprite").clicked() {
+            if selected_is_animation {
+                if ui.button("Insert as animated sprite").clicked() {
+                    scope.ctx.intents.push(Intent::InsertSelectedAsAnimatedSprite);
+                }
+            } else if ui.button("Insert as new sprite").clicked() {
                 scope.ctx.intents.push(Intent::InsertSelectedResultAsSprite);
             }
             if ui.button("Generate more").clicked() {
-                scope.ctx.intents.push(Intent::SubmitGenerateJob {
+                scope.ctx.intents.push(Intent::SubmitAnchorJob {
                     prompt: scope.ctx.session.last_prompt.clone(),
                 });
             }
@@ -428,7 +473,7 @@ impl Panel for ResultsPanel {
 // The 72px card, the inset offsets, and the radius token are small bounded
 // constants; the index-to-f32 casts cannot truncate or lose a sign.
 #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss, clippy::cast_precision_loss)]
-fn result_card(ui: &mut egui::Ui, theme: &Theme, index: usize, selected: bool) -> egui::Response {
+fn result_card(ui: &mut egui::Ui, theme: &Theme, index: usize, selected: bool, frame_count: Option<u32>) -> egui::Response {
     let card = 72.0;
     let (rect, response) = ui.allocate_exact_size(Vec2::splat(card), Sense::click());
     if !ui.is_rect_visible(rect) {
@@ -483,6 +528,14 @@ fn result_card(ui: &mut egui::Ui, theme: &Theme, index: usize, selected: bool) -
         egui::FontId::monospace(label_size),
         theme.roles.text_secondary,
     );
+    // An animation result reads as a frame-count chip in the card centre (no playback
+    // this round); a still anchor has no badge.
+    if let Some(frames) = frame_count {
+        let galley = painter.layout_no_wrap(format!("{frames}f"), egui::FontId::proportional(label_size), theme.roles.text_primary);
+        let chip = egui::Rect::from_center_size(rect.center(), galley.size() + Vec2::new(8.0, 4.0));
+        painter.rect_filled(chip, theme.radius.sm, theme.surfaces.inset);
+        painter.galley(chip.center() - galley.size() / 2.0, galley, theme.roles.text_primary);
+    }
     // The selection ring on the selected card, otherwise a hairline border.
     let stroke = if selected {
         Stroke::new(2.0, theme.accent.base)

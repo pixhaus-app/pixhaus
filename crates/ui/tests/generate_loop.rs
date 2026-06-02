@@ -20,10 +20,10 @@ async fn prompt_to_result_to_sprite_to_undo() {
     pixhaus_mod_providers::register(&mut host.edit.providers);
     let ctx = egui::Context::default();
 
-    // 1. Submit a generation job (spawns a tokio task via the ambient runtime).
+    // 1. Submit an anchor generation job (spawns a tokio task via the ambient runtime).
     apply_intent(
         &mut host,
-        Intent::SubmitGenerateJob {
+        Intent::SubmitAnchorJob {
             prompt: "a small knight".to_owned(),
         },
         &ctx,

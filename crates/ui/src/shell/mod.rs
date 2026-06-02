@@ -69,6 +69,7 @@ pub fn drain_background(host: &mut Host, ctx: &egui::Context) {
     if landed {
         host.state.session.result_count = host.edit.results.len();
         host.state.session.selected_result = host.edit.results.selected_index();
+        host.state.session.result_kinds = host.edit.results.kinds_summary();
         ctx.request_repaint();
     }
 }

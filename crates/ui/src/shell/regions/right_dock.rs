@@ -38,7 +38,8 @@ pub fn show(host: &mut Host, ui: &mut egui::Ui) {
                 // The SHELL scopes ids - not the panel. Distinct call site per PanelId.
                 ui.push_id(id, |ui| {
                     let header = widgets::card(ui, theme, &meta, collapsed, |ui| {
-                        let buf = scratch.entry(id).or_default(); // &mut String for this panel only
+                        // &mut String for this panel only; seeded once from the panel's default.
+                        let buf = scratch.entry(id).or_insert_with(|| panel.default_scratch().unwrap_or_default());
                         let mut scope = panel_scope(
                             &state.session,
                             &state.ui,

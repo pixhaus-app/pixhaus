@@ -53,7 +53,7 @@ pub fn show(host: &mut Host, ui: &mut egui::Ui) {
             // Selected tray panel, via the disjoint-field + push_id path.
             if let Some(panel) = registries.panels.get(selected) {
                 ui.push_id(selected, |ui| {
-                    let buf = scratch.entry(selected).or_default();
+                    let buf = scratch.entry(selected).or_insert_with(|| panel.default_scratch().unwrap_or_default());
                     let mut scope = panel_scope(&state.session, &state.ui, theme, &mut *intents, selected, buf);
                     panel.ui(ui, &mut scope);
                 });

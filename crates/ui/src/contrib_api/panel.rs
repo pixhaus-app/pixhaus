@@ -41,6 +41,13 @@ pub trait Panel {
         true
     }
 
+    /// The initial scratch text for this panel, seeded once when its buffer is first
+    /// created. Default: empty. A panel with a `TextEdit` whose field should open
+    /// pre-filled (the Prompt panel's default subject) overrides this.
+    fn default_scratch(&self) -> Option<String> {
+        None
+    }
+
     /// Render representative content.
     ///
     /// Reads through `scope.ctx`; pushes [`Intent`]s into `scope.ctx.intents`;

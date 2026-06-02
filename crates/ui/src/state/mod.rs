@@ -103,6 +103,7 @@ impl Host {
                     ai_status: AiStatus::Ready,
                     result_count: 0,
                     selected_result: None,
+                    result_kinds: Vec::new(),
                     last_prompt: String::new(),
                 },
                 ui: UiState::default(),

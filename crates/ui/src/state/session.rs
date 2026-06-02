@@ -4,6 +4,8 @@
 //! seams that arrive with `core` (spec "Owners, no overlap"); they are intentionally
 //! absent, not forgotten.
 
+use pixhaus_services::ResultKind;
+
 use crate::contrib_api::ids::{ActionId, ToolId, WorkspaceId};
 
 /// Non-durable session state owned by [`crate::state::Host`].
@@ -26,9 +28,41 @@ pub struct SessionState {
     pub result_count: usize,
     /// Read-only mirror of the selected result index, refreshed post-frame.
     pub selected_result: Option<usize>,
+    /// Read-only mirror of each visible result's kind (still anchor vs animation,
+    /// with the animation's frame count), refreshed post-frame in `drain_background`.
+    /// Panels read this to gate the idle button and draw a frame-count badge without
+    /// reaching into the result store. Capped to the visible tray cards.
+    pub result_kinds: Vec<ResultKind>,
     /// The last prompt submitted, so "Generate more" can resubmit it without the
     /// Results panel reaching into the Prompt panel's scratch.
     pub last_prompt: String,
+}
+
+impl SessionState {
+    /// Whether the selected result is a still anchor - the precondition for driving
+    /// an idle-animation pass. Panels call this to gate the idle button.
+    pub fn selected_is_anchor(&self) -> bool {
+        self.selected_result
+            .and_then(|i| self.result_kinds.get(i))
+            .is_some_and(|kind| matches!(kind, ResultKind::Sprite))
+    }
+
+    /// Whether the selected result is an animation (eligible to insert as an
+    /// animated sprite).
+    pub fn selected_is_animation(&self) -> bool {
+        self.selected_result
+            .and_then(|i| self.result_kinds.get(i))
+            .is_some_and(|kind| matches!(kind, ResultKind::Animation { .. }))
+    }
+
+    /// The frame count of the result at `index` if it is an animation, else `None`.
+    /// Panels use this to draw a frame-count badge on animation cards.
+    pub fn result_frame_count(&self, index: usize) -> Option<u32> {
+        match self.result_kinds.get(index) {
+            Some(ResultKind::Animation { frames }) => Some(*frames),
+            _ => None,
+        }
+    }
 }
 
 /// A stand-in for a real job (spec: bible rule 5). Carries only what the mock
