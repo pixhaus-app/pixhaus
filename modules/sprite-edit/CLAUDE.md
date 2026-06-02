@@ -15,5 +15,8 @@ The sprite-editing module — the Draw workspace and the shared editing surface
   `mod-animation`. Draw is editing in space; Animate is editing in space over time.
 - Tools interpret input and create commands; they never mutate the model directly.
 - Don't fork the canvas or tools per workspace — they are shared capabilities.
+- Instrument the editing commands (`#[instrument]` on apply) and the module's
+  registration (`info!`). No per-stroke spans — a stroke is a hot input loop. See
+  the `pixhaus-tracing` skill.
 
 Shared module rules: `modules/CLAUDE.md`. Global rules: root `CLAUDE.md`.

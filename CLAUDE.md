@@ -59,6 +59,7 @@ inventory — don't maintain a list here that would drift as skills come and go.
   - `pixhaus-testing-conventions` — rstest, proptest, insta, image-compare, mockall
   - `pixhaus-claude-code-workflow` — branches, commits, PRs, hook output handling
   - `pixhaus-ui-conventions` — the design system: theme tokens, shared widgets, phosphor icons, the deferred-intent UI model
+  - `pixhaus-tracing` — logging/tracing/diagnostics: levels, `#[instrument]`, spans, the one subscriber, the secrets rule
 - **Per-dependency** — one skill per locked dependency (`pixhaus-egui`,
   `pixhaus-wgpu`, `pixhaus-tokio`, `pixhaus-image`, …), each the verified API and
   idioms for that crate at its pinned version. They fire when you work with that
@@ -154,6 +155,17 @@ verify a UI change by rendering it (`cargo run -p pixhaus-app --example
 render_workspaces` writes `target/ui-snapshots/`) and comparing to
 `docs/ui_visual_example/`. The full rules live in `crates/ui/CLAUDE.md` and the
 `pixhaus-ui-conventions` skill.
+
+## Logging
+
+Structured `tracing` from day one. The binary (`app/`) owns the ONE subscriber
+(`app/src/diagnostics.rs`): a console sink on stderr plus a rolling daily
+`pixhaus.log` under the OS log dir (`pixhaus_platform::log_dir()`), gated by a single
+`EnvFilter`. Libraries emit (`tracing::info!`/`warn!`/`error!`/`debug!`,
+`#[instrument]`) and never install a subscriber or `println!`. `RUST_LOG` overrides
+the default filter. Profiling for now means reading `#[instrument]` span durations —
+puffin/tracy/criterion are a later, deliberate step. Never log API keys or secrets.
+The full rules are in the `pixhaus-tracing` skill.
 
 ## Commands
 

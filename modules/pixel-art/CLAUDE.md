@@ -16,5 +16,7 @@ The pixel-art module — a deep dedicated art mode (architecture bible sections
   not by forcing indexed color or grid snapping on every sprite.
 - Pixel-art tools still produce commands and reuse the shared canvas; this module
   adds constraints and specialized tools, it doesn't replace the editing core.
+- Wrap the palette-reduction and dither jobs in a coarse span (the whole job is the
+  perf signal); no per-pixel spans. See the `pixhaus-tracing` skill.
 
 Shared module rules: `modules/CLAUDE.md`. Global rules: root `CLAUDE.md`.

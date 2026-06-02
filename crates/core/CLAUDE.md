@@ -20,5 +20,8 @@ on it, it depends on nothing in the workspace.
   abstraction belongs here and the concrete adapter belongs in the consumer.
 - All project-state mutation is expressed as a `Command`; pixel buffers are
   `Vec<u8>` with explicit stride, never `Vec<Vec<u8>>`.
+- Pure data: a coarse `tracing::debug!` at most. No performance spans in the pixel
+  ops — a span per pixel or scanline floods the log and the hot path. See the
+  `pixhaus-tracing` skill.
 
 Global rules: root `CLAUDE.md`. Architecture: `docs/pixhaus_architecture_bible.md`.

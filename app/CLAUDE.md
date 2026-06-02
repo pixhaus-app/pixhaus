@@ -4,9 +4,11 @@ The host application binary — the eframe + egui shell (architecture bible sect
 4.1). Depends on everything; nothing depends on it.
 
 - **Owns:** app and window lifecycle, the single tokio runtime, viewport boot,
-  module registration, the egui loop, and top-level error handling.
-- **Depends on:** the whole workspace (`ui`, and transitively the rest). External:
-  `eframe`, `egui`, `egui-wgpu`, `tokio`, `tracing-subscriber`, `anyhow`.
+  module registration, the egui loop, top-level error handling, and the tracing
+  subscriber + rolling file appender (`src/diagnostics.rs`).
+- **Depends on:** the whole workspace (`ui` and `platform` directly, the rest
+  transitively). External: `eframe`, `egui`, `egui-wgpu`, `tokio`, `tracing`,
+  `tracing-subscriber`, `tracing-appender`, `tracing-log`, `anyhow`.
 - **Status:** runnable spine — boots a window with the wgpu-drawn canvas.
 
 ## Boundaries
@@ -23,6 +25,13 @@ The host application binary — the eframe + egui shell (architecture bible sect
   (`apply_to_visuals`), fonts (`install_fonts`), and image loaders
   (`install_image_loaders`) — and sets the OS window icon from `pixhaus_ui::brand`.
   The look itself belongs to `ui`; the binary only wires it up.
+- This is the ONLY crate that installs a tracing subscriber (`src/diagnostics.rs`):
+  console + rolling file under `pixhaus_platform::log_dir()`, one shared `EnvFilter`,
+  the `log` bridge for wgpu/winit. Build it BEFORE the tokio runtime so startup
+  itself is logged. The `WorkerGuard` it returns MUST be held for all of `main`
+  (`let _guard = ...`, never `let _ = ...`) — dropping it early flushes the
+  non-blocking writer and loses the log tail. Libraries emit; only `app` configures.
+  See the `pixhaus-tracing` skill.
 
 Reach for `pixhaus-eframe` for boot/window and `pixhaus-egui` for the loop. Global
 rules: root `CLAUDE.md`. Architecture: `docs/pixhaus_architecture_bible.md`.

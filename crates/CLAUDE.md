@@ -17,6 +17,10 @@ the wrong one — surface the question rather than smearing it across two.
   survive a UI-toolkit change. `ui` is the only spine crate that may touch egui.
 - Mutation of project state goes through the `Command` trait in `core`; nothing
   here mutates the model behind its back.
+- Libraries instrument with `tracing` — events (`info!`/`warn!`/`error!`/`debug!`)
+  and `#[instrument]` on fallible/expensive functions — and never install a
+  subscriber or `println!`/`eprintln!`. The binary in `app/` owns the one
+  subscriber. See the `pixhaus-tracing` skill.
 
 Global conventions (error policy, async, style, commits, the no-unwrap rule) live
 in the root `CLAUDE.md`; the architecture is in

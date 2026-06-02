@@ -16,5 +16,8 @@ sections 7.3, 6.6).
   with tile-aware overlays and validation, not a separate editor.
 - Tileset export targets register with the export pipeline; the actual codecs live
   in `io`.
+- Instrument autotile and seam-validation passes and the tileset-export jobs
+  (`#[instrument]` on the bodies) plus the module registration. See the
+  `pixhaus-tracing` skill.
 
 Shared module rules: `modules/CLAUDE.md`. Global rules: root `CLAUDE.md`.

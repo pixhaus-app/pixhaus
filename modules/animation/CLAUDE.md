@@ -14,5 +14,8 @@ sections 7.3, 6.4, 15).
 - Animation belongs to sprites; it is not a separate document type. Frames,
   layers, cels, clips, and timing live on the sprite model in `core`.
 - Onion skin renders through the shared canvas renderer, not a private one.
+- Instrument the playback and onion-skin jobs and the module registration; keep the
+  spans coarse (the job, not each frame composited inside it). See the
+  `pixhaus-tracing` skill.
 
 Shared module rules: `modules/CLAUDE.md`. Global rules: root `CLAUDE.md`.

@@ -15,5 +15,7 @@ module the others assume is present.
   the feature modules.
 - Other modules may assume the registries this one sets up exist; it must not
   assume any feature module is present.
+- Trace the host bootstrap: an `info!` as the command and job systems and the asset
+  and workspace registries register. See the `pixhaus-tracing` skill.
 
 Shared module rules: `modules/CLAUDE.md`. Global rules: root `CLAUDE.md`.

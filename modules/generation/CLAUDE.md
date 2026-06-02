@@ -17,5 +17,8 @@ sections 7.3, 6.5, 14).
   capabilities, not specific providers.
 - Generated results carry their metadata (prompt, recipe, provider, seed, source
   context) so results are reproducible and traceable.
+- `#[instrument]` the AI job types; trace job submit and result. Never log prompt
+  secrets or API keys — log that a job ran and how long it took, not the key. See the
+  `pixhaus-tracing` and `pixhaus-keyring` skills.
 
 Shared module rules: `modules/CLAUDE.md`. Global rules: root `CLAUDE.md`.

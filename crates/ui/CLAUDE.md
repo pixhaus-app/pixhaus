@@ -22,6 +22,9 @@ egui and `render`.
   and never mutate the model directly.
 - egui is the presentation layer, not the architecture — keep workspace business
   logic out of widget code.
+- Keep tracing to the shell's coarse `debug!` / `warn!` (the existing intent and
+  layout-resolve events). No per-frame tracing — the loop runs at 60fps and would
+  flood the log. See the `pixhaus-tracing` skill.
 
 ## Design system
 

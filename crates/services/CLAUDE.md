@@ -18,6 +18,9 @@ The service layer — shared behavior above the domain model and below the UI
 - A job produces a result; applying that result is a `Command`. A job never
   mutates the project model directly.
 - Never hold a lock across `.await`; CPU-bound work goes through `spawn_blocking`.
+- `#[instrument]` job bodies and command apply; `info!` on start/finish, `error!` /
+  `warn!` on failure. Instrument spawned async tasks so their work is traced off the
+  UI thread (pair the `pixhaus-tokio` and `pixhaus-tracing` skills).
 
 Reach for the `pixhaus-tokio` skill for async work. Global rules: root `CLAUDE.md`.
 Architecture: `docs/pixhaus_architecture_bible.md`.

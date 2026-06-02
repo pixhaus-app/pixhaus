@@ -14,5 +14,8 @@ The export module — production output (architecture bible sections 7.3, 6.7, 1
 - The engine target is Unity only. No Godot, Unreal, or GameMaker metadata.
 - Codecs live in `io`; this module wires them to the workspace, presets, and
   validators. It doesn't reimplement encoding.
+- `#[instrument]` the validators and the encode jobs — the encode span is the perf
+  signal here. `warn!` on a failed validation (the actionable findings above). See
+  the `pixhaus-tracing` skill.
 
 Shared module rules: `modules/CLAUDE.md`. Global rules: root `CLAUDE.md`.

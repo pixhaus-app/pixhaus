@@ -19,6 +19,9 @@ plugin system.
 - Keep provider-, format-, and OS-specific logic in the crate that owns it
   (`providers` module, `io`, `platform`) — a feature module wires capabilities up,
   it doesn't reimplement them.
+- Instrument jobs and registration: `#[instrument]` on job bodies (the duration is
+  the perf signal), an `info!` when the module registers its capabilities. Emit via
+  `tracing`, never `println!`; never log secrets. See the `pixhaus-tracing` skill.
 - When you contribute UI (panels, tools, workspaces), build it from the `ui` design
   system — theme tokens via `ContribCtx.theme`, the `widgets` helpers, `icons` glyphs —
   never hex colors, emoji, or bespoke frames. Panels are `&self`: read state, push

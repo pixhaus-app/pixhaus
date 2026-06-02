@@ -20,6 +20,10 @@ composited on the GPU and never crosses a CPU copy per painted pixel.
 - MUST NOT begin, end, or submit the egui render pass from `paint()` — record
   draws into the pass egui-wgpu owns.
 - Bound work by the dirty region, not the canvas size (the 8192x8192 ceiling).
+- Tracing spans stay OFF the per-pixel / per-scanline hot path — coarse only (a
+  whole texture upload or composite, not the pixels inside it). A span has real
+  cost; at 8K a per-pixel span is the opposite of what the dirty-rect bound buys.
+  See the `pixhaus-tracing` skill.
 
 Reach for the `pixhaus-wgpu` skill before touching GPU code. Global rules: root
 `CLAUDE.md`. Architecture: `docs/pixhaus_architecture_bible.md`.
