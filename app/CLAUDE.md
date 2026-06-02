@@ -19,6 +19,10 @@ The host application binary — the eframe + egui shell (architecture bible sect
   `core` and the modules.
 - The egui loop runs on one thread and owns the document directly; background task
   results return over channels the loop drains each frame. Never block the loop.
+- Boot installs the design system on the egui `Context` before the loop — theme
+  (`apply_to_visuals`), fonts (`install_fonts`), and image loaders
+  (`install_image_loaders`) — and sets the OS window icon from `pixhaus_ui::brand`.
+  The look itself belongs to `ui`; the binary only wires it up.
 
 Reach for `pixhaus-eframe` for boot/window and `pixhaus-egui` for the loop. Global
 rules: root `CLAUDE.md`. Architecture: `docs/pixhaus_architecture_bible.md`.

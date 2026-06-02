@@ -19,6 +19,13 @@ plugin system.
 - Keep provider-, format-, and OS-specific logic in the crate that owns it
   (`providers` module, `io`, `platform`) — a feature module wires capabilities up,
   it doesn't reimplement them.
+- When you contribute UI (panels, tools, workspaces), build it from the `ui` design
+  system — theme tokens via `ContribCtx.theme`, the `widgets` helpers, `icons` glyphs —
+  never hex colors, emoji, or bespoke frames. Panels are `&self`: read state, push
+  `Intent`s, never mutate directly. Follow `docs/pixhaus_visual_ux_direction.md` and
+  verify the look with the render harness (`cargo run -p pixhaus-app --example
+  render_workspaces`). The rules are in the `pixhaus-ui-conventions` skill and
+  `crates/ui/CLAUDE.md`.
 
 Per the bible's agent contracts (section 25.3): an agent working in one module
 stays in that module's lane. Global conventions live in the root `CLAUDE.md`; the

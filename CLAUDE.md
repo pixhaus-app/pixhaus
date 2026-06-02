@@ -58,6 +58,7 @@ inventory — don't maintain a list here that would drift as skills come and go.
   - `pixhaus-rust-conventions` — Rust patterns, error handling, async, the no-unwrap rule
   - `pixhaus-testing-conventions` — rstest, proptest, insta, image-compare, mockall
   - `pixhaus-claude-code-workflow` — branches, commits, PRs, hook output handling
+  - `pixhaus-ui-conventions` — the design system: theme tokens, shared widgets, phosphor icons, the deferred-intent UI model
 - **Per-dependency** — one skill per locked dependency (`pixhaus-egui`,
   `pixhaus-wgpu`, `pixhaus-tokio`, `pixhaus-image`, …), each the verified API and
   idioms for that crate at its pinned version. They fire when you work with that
@@ -142,6 +143,17 @@ graph above encodes:
 
 When a change spans a boundary the bible draws, follow the bible, not
 convenience.
+
+## Design system
+
+The app has one design system, owned by `crates/ui`: theme tokens (color, spacing,
+type, elevation), the shared `widgets`, and phosphor `icons`. All UI is built from
+them — no hex colors, no emoji, no bespoke chrome — so the look stays consistent and
+survives a theme change. The visual target is `docs/pixhaus_visual_ux_direction.md`;
+verify a UI change by rendering it (`cargo run -p pixhaus-app --example
+render_workspaces` writes `target/ui-snapshots/`) and comparing to
+`docs/ui_visual_example/`. The full rules live in `crates/ui/CLAUDE.md` and the
+`pixhaus-ui-conventions` skill.
 
 ## Commands
 
