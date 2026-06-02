@@ -10,7 +10,9 @@ sections 7.3, 6.4, 15).
 ## Boundaries
 
 - Sibling to `mod-sprite-edit` over the same editing core — reuse its tools and
-  canvas, don't fork them. Animate should feel like Draw plus time.
+  canvas, don't fork them. Animate should feel like Draw plus time. Animating is
+  editing the shared editing context over time (bible section 5.9) — the same
+  context Draw uses.
 - Animation belongs to sprites; it is not a separate document type. Frames,
   layers, cels, clips, and timing live on the sprite model in `core`.
 - Onion skin renders through the shared canvas renderer, not a private one.

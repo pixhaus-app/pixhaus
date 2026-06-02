@@ -179,6 +179,8 @@ Jobs produce results. Results are then applied through undoable commands.
 
 AI generation must never directly mutate the canvas.
 
+The lanes that run jobs and the worker input/output contract are sections 31 and 13.6.
+
 ### 2.8 Commands own mutation
 
 Major changes to project data should happen through commands.
@@ -204,7 +206,7 @@ Pixhaus needs GPU support in two different ways:
 
 These should not share a single abstraction.
 
-The rendering layer should use a cross-platform graphics strategy. The compute layer should use capability-driven backends.
+The rendering layer should use a cross-platform graphics strategy. The compute layer should use capability-driven backends. They run in separate execution lanes (section 31.2).
 
 ### 2.10 Project data is the source of truth
 
@@ -1493,11 +1495,25 @@ A job should have:
 - Context
 - Status
 - Progress
+- Priority
 - Logs
 - Result
 - Error
 - Cancellation state
 - Backend/provider metadata
+- Creation time
+- Completion time
+
+Status is one of:
+
+```text
+queued
+running
+blocked
+complete
+failed
+cancelled
+```
 
 Typical lifecycle:
 
@@ -1519,6 +1535,9 @@ Jobs should declare requirements:
 - Remote provider allowed
 - Local-only
 - Network required
+- Provider required
+- Local model required
+- Large memory required
 - Memory estimate
 - VRAM estimate
 - Can be cancelled
@@ -1531,6 +1550,16 @@ This enables future scheduling decisions.
 The system should include mock providers and mock jobs early.
 
 This allows agents and developers to build UI workflows without relying on paid APIs, downloaded models, or GPUs.
+
+### 13.6 Background worker contract
+
+A worker is handed immutable input and returns a result. It never gets a handle that lets it mutate the live project, so it cannot corrupt project state or undo (section 31.3).
+
+A worker receives one of: an immutable snapshot, an asset handle, an asset path, a content hash, a serialized job input, a copied pixel region, or a read-only project index.
+
+A worker returns one of: a generated asset, a preview image, a metadata result, a validation report, an export artifact path, an import bundle, or an error report.
+
+A worker never receives: mutable app state, a mutable project reference, the egui context, the live undo stack, or the live command bus.
 
 ---
 
@@ -1844,6 +1873,8 @@ The renderer may cache visual data, but project data remains authoritative.
 
 Never rely on GPU texture contents as the only copy of the artwork.
 
+The renderer runs in its own execution lane, isolated from project truth (section 31.2).
+
 ---
 
 ## 17. Asset System
@@ -1964,6 +1995,18 @@ The project format should include:
 If a future module adds data the current app does not understand, the loader should avoid destroying it when possible.
 
 This is important for long-term extensibility.
+
+### 18.6 App directories
+
+Pixhaus puts its own files in platform-standard locations, resolved through the platform crate, never hardcoded paths. The split:
+
+- **Config** — preferences, language, shortcuts, workspace layouts, theme, provider config references.
+- **Data** — user-created global presets, recipe packs, palette and brush libraries, module data.
+- **Cache** — thumbnails, generated previews, decoded-asset cache, local model cache, temporary export cache.
+- **Logs** — the rolling daily log, diagnostic traces, crash reports.
+- **Autosave** — recovery snapshots, unsaved-project autosaves, crash-recovery metadata.
+
+Two traps. `directories` only computes paths — create the directory before the first write or it fails with "no such file or directory." On macOS the config and data directories are the same folder, so logs and autosaves are distinct leaves under local data, not config. This is code today: `pixhaus_platform::app_dirs()` and `log_dir()` (`crates/platform/src/dirs.rs`); see the `pixhaus-directories` skill.
 
 ---
 
@@ -2136,6 +2179,8 @@ Not every event is undoable. Every project mutation should still go through comm
 
 ## 22. State Architecture
 
+Pixhaus state separates into five buckets, each with a different lifetime and owner. Keep them apart: durable project state is saved, session and UI state are not project content, tool interaction state is cleared when an interaction ends, and derived state is recomputable. Mixing them is how a UI scroll position ends up in a save file and how a half-finished brush stroke ends up in undo. The app owns these containers directly; it does not adopt a generic egui state framework (section 22.7).
+
 ### 22.1 Durable project state
 
 Saved in the project:
@@ -2185,27 +2230,71 @@ Belongs to presentation:
 
 UI state should not pollute the creative model.
 
-### 22.4 Preferences
+### 22.4 Settings architecture
 
-User preferences:
+Settings separate by scope, not by panel. Five categories:
 
-- Theme
-- Accent color
-- Default workspace
-- Shortcut bindings
-- Default tool settings
-- Provider settings
-- Performance settings
-- Autosave behavior
-- Recent files
+- **App settings** — theme, accent, language, UI scale, default workspace, startup behavior, recent files. The shell's `Prefs` is the seed for these.
+- **Workspace settings** — dock layouts, visible panels, timeline height, default onion-skin and canvas-background defaults.
+- **Tool settings** — brush size, smoothing, pixel-perfect behavior, selection behavior. Stored at the scope they belong to; section 11.4 keeps the finer document/art-mode scope.
+- **Provider settings** — enabled providers, priority, key references, local model paths, endpoints, usage limits. These live behind provider modules (section 14.3), not hardcoded into the Generate workspace.
+- **Project settings** — default art mode, palette behavior, export presets, project recipe packs, validation rules. These travel with the project.
 
-Project settings:
+App, workspace, tool, and provider settings are user/session scope; project settings are durable project state (section 22.1).
 
-- Default art mode
-- Default palette behavior
-- Export presets
-- Project recipe packs
-- Project validation rules
+### 22.5 Tool interaction state
+
+Tool interaction state is transient — it usually exists only during a direct manipulation and is cleared when the interaction ends or is cancelled.
+
+Examples:
+
+- current brush stroke
+- lasso points
+- transform preview
+- selection drag start
+- frame scrub operation
+- color-picker hover sample
+- canvas pan gesture
+- shape preview rectangle
+- tile-stamp preview
+- AI-brush masked region
+
+Keep it small and explicit. It never leaks into undo or project state — a stroke becomes one undoable command when it commits, not before.
+
+### 22.6 Derived and cache state
+
+Derived state can be recomputed, so it is never the source of truth.
+
+Examples:
+
+- composited frame textures
+- timeline and asset thumbnails
+- generated-result previews
+- palette-usage analysis
+- dirty-region maps
+- coverage analysis
+- compiled prompt previews
+- texture handles and GPU buffers
+- decoded-image cache
+
+Key it by stable id, content hash, revision counter, dirty region, or asset version, and invalidate it on the matching change (sections 2.10, 16.5, 23.2). A cache that becomes load-bearing is a bug.
+
+### 22.7 App-state containers (target shape, current homes)
+
+The app owns its state containers; it does not adopt a generic egui state framework. The target container set, and where each lives today:
+
+| Container | Owns | Current home |
+|---|---|---|
+| ProjectStore | loaded project, lazy asset access, dirty/revision tracking, save/load coordination | reserved for `core`; `SessionState` already reserves `active_document`/`undo_stack` |
+| AppSession | active project/workspace/document/sprite/frame/layer, active tool, editing context, job and command access | `SessionState` inside `ShellState` inside `Host` (`crates/ui/src/state/`) |
+| UiState | dock layout, panel state, list selection, scroll, modal stack, drag, filters, command palette | `crates/ui/src/state/ui_state.rs::UiState`, owned by `Host` |
+| EditingContext | where editing applies: active sprite/layer/frame/cel/palette/selection/tool settings | section 5.9 made concrete; not yet a distinct type |
+| CommandBus | execute/validate command, record undo, group transactions, mark dirty, emit events | today the deferred-intent path (`IntentSink` + `apply_intent`); real bus lands with `services` |
+| JobManager | queue/dispatch/cancel jobs, track progress, deliver results, expose status | today mocked by `SessionState.jobs` + the background channel (section 13) |
+| WorkspaceRegistry, ModuleRegistry | workspace and capability registration | already sections 7–8; today `Registries` on `Host` |
+| AssetCache | thumbnails, texture handles, previews, decoded assets, invalidation | the section 22.6 bucket; lands in `services`/`render` (section 16.2) |
+
+The names are the target. Today the shell owns a subset under `Host`/`ShellState`/`SessionState`/`UiState`; the missing containers are reserved seams in `core` and `services`, not missing decisions. Fill the seam; do not invent a parallel container.
 
 ---
 
@@ -2264,6 +2353,34 @@ The UI thread must not block on:
 
 Use jobs/workers.
 
+### 23.5 Parallelization priorities
+
+Interactive drawing latency beats throughput. Keep brush ops direct and predictable, then schedule expensive derived updates after the command lands.
+
+Parallelize early:
+
+1. thumbnail generation
+2. timeline preview generation
+3. frame compositing batches
+4. project-load indexes
+5. export preparation
+6. large image decode/encode
+7. palette analysis
+8. coverage analysis
+9. AI result post-processing
+10. save compression and hashing
+
+Parallelize later: batch filters and transforms, spritesheet packing search, tile seam QA, multi-frame validation, generated-asset ranking.
+
+Do not rush: pencil strokes, small erases, simple selections, immediate UI state changes, small palette edits. These are latency-sensitive, not throughput-bound — parallelizing them early adds complexity for no felt gain.
+
+### 23.6 Modern hardware usage
+
+- **CPU.** Use multiple cores for thumbnails, exports, batch validation, palette ops, compression, import processing, and coverage (section 31.2, the CPU worker pool).
+- **GPU.** Use it for rendering, canvas previews, compositing where it pays, and local AI where a provider supports it (section 31.2 keeps render and compute separate).
+- **Memory.** Do not eager-load a multi-gigabyte project. Lazy-load, index assets, browse thumbnails first, bound caches with eviction, and memory-map large blobs where it helps (`memmap2` is a candidate, section 33).
+- **Storage.** Content hashes, compressed chunks, atomic saves, autosaves, and incremental asset writes (section 18).
+
 ---
 
 ## 24. Error Handling and Recovery
@@ -2278,6 +2395,8 @@ Errors should be:
 - Developer-diagnostic where logged.
 - Recoverable when possible.
 - Non-fatal unless truly unrecoverable.
+
+A surfaced error should be actionable. "IO error" tells the artist nothing. "Could not load sprite asset. The project manifest references an asset file that is missing from disk. Restore from autosave, relink the asset, or remove the missing reference." tells them what happened and what to do next.
 
 ### 24.2 Project safety
 
@@ -2309,6 +2428,10 @@ The UI should show actionable errors.
 Provider failures should be isolated.
 
 If a local model worker crashes, Pixhaus should continue running.
+
+### 24.5 Diagnostic bundle
+
+Pixhaus should be able to assemble a diagnostic bundle when something fails: recent logs, app version, OS and platform, renderer backend, GPU adapter info, enabled modules, a provider-configuration summary without secrets, a project-manifest summary, and recent job and crash failures. Never include API keys or private project assets without explicit user consent. The bundle is a support and debugging artifact, not telemetry — it is assembled on request, not sent by default.
 
 ---
 
@@ -2376,6 +2499,21 @@ When using agents heavily, give them constrained contracts:
 - What boundaries they must not cross.
 
 This reduces architectural drift.
+
+### 25.4 Runtime architecture acceptance criteria
+
+The runtime, state, and concurrency architecture is healthy when:
+
+- The UI stays responsive during project load, save, and export.
+- AI generation never blocks drawing.
+- Generated results are previewed before they are applied, and applying them is undoable.
+- Background workers cannot corrupt the live project state.
+- Large projects open from metadata and indexes before all assets load.
+- Thumbnail and timeline-preview generation never freezes the app.
+- Localization can change without rewriting panels.
+- Logs explain what happened when a provider, export, or save fails.
+- Dock layouts can be reset or customized.
+- Workspaces share tools and panels without duplication.
 
 ---
 
@@ -2560,6 +2698,10 @@ Candidates:
 13. Every destructive action should be undoable unless explicitly impossible.
 14. Workspaces are layouts over capabilities.
 15. Agents should work within module/capability boundaries.
+16. The app owns its state architecture; no generic egui state framework owns it.
+17. Every mutable state has one owner; there is no single global locked app-state object.
+18. Tokio is the async-I/O lane, owned by the binary — not the whole app.
+19. Large projects open from index and metadata before all assets load.
 
 ---
 
@@ -2679,5 +2821,126 @@ These notes are included to ground current technology assumptions.
 
 - `wgpu` is a cross-platform Rust graphics API that runs natively on Vulkan, Metal, DirectX 12, and OpenGL, aligning with Pixhaus’ Windows/macOS/Linux rendering needs.
 - `eframe` supports renderer selection between `glow` and `wgpu` when corresponding features are enabled, and recent crate documentation indicates wgpu is the default renderer in current eframe releases.
-- `egui_dock` provides docking support for egui, including opening/closing tabs, moving/resizing tabs, and undocking into egui windows. Pixhaus does not need docking immediately, but the panel architecture should leave room for it.
+- `egui_dock` provides docking support for egui — opening/closing tabs, moving/resizing, and undocking into egui windows. It is a candidate for when custom dock layouts land (section 20.3), not an adopted dependency; default layouts come first (section 20.1). The panel architecture leaves room for it.
 - Rust native dynamic plugin systems are complex because Rust does not provide a stable general-purpose Rust ABI for arbitrary dynamic plugin boundaries. Pixhaus should therefore prefer internal modules, data/plugin packs, and out-of-process provider workers rather than external native dynamic plugins.
+
+---
+
+## 31. Runtime and concurrency architecture
+
+Pixhaus is a native creative app on multi-core, GPU-backed workstations, and it should use that hardware. But concurrency belongs in jobs and services, not scattered through UI code. Organize it as a small set of execution lanes, each with one responsibility and a clear isolation rule.
+
+### 31.1 Concurrency philosophy
+
+Concurrency is organized through jobs and services, not spread across panels and tools. A panel collects intent; a command mutates; a job runs expensive work off the UI thread; a channel returns the result. When that discipline holds, the app stays responsive and the threading stays debuggable. When it breaks — a panel spawning its own thread, a tool blocking on I/O — responsiveness and undo correctness go with it.
+
+### 31.2 Execution lanes
+
+Pixhaus has five conceptual lanes. A lane is a responsibility plus an executor, not a literal thread count.
+
+- **UI lane.** Runs the egui frame: input, lightweight state updates, command submission, job-progress display, and applying completed results through commands. One thread; it owns the document directly. It must stay responsive — never block it on I/O, generation, export, or a lock held across `.await`.
+- **Render/GPU lane.** Texture uploads, canvas and preview rendering, wgpu submission, GPU resource and render-cache management. Isolated from project truth: GPU textures are caches and views, not source data (section 16, rule 6).
+- **CPU worker pool.** Image ops, thumbnail batches, palette analysis, color reduction, compression, exports, validation, coverage. Today this runs off the UI thread via tokio `spawn_blocking`; `rayon` is a candidate for data-parallel iteration over independent assets, frames, tiles, or pixels if a workload earns it (section 33).
+- **Async I/O runtime.** Remote provider calls, downloads, local-worker IPC, network and async file work. This is `tokio`, owned by the binary — one runtime, no scattered `#[tokio::main]`. The whole app does not become a Tokio app; Tokio is one lane.
+- **AI/model workers.** Local model inference and provider-specific execution. Keep these out-of-process at first for crash, dependency, and memory isolation (section 14.8) — the app stays up when a model backend does not.
+
+### 31.3 The golden state rule
+
+The running app owns the authoritative project state. Background workers never mutate the live project directly. A worker receives immutable input, does its work, and returns a result; the app applies that result through a command, which records undo/redo and marks caches dirty. This protects undo correctness, save consistency, dirty tracking, cancellation, AI result review, and crash recovery — and it makes the threading predictable to debug. The full input/output contract is section 13.6.
+
+### 31.4 Job results never mutate project state directly
+
+A job produces a result; applying the result is a command (rule 4). The result enters a result store, the UI presents it, the user chooses, and a command applies it to the project under undo. This keeps the artist in control of every change a job proposes.
+
+```text
+GenerateSpriteJob   -> GeneratedAsset          -> user selects -> ApplyGeneratedAssetCommand
+ImportAsepriteJob   -> ImportedAssetBundle      -> user confirms -> AddImportedAssetsCommand
+ReducePaletteJob    -> PaletteReductionPreview  -> user accepts  -> ApplyPaletteReductionCommand
+```
+
+### 31.5 Channels and message passing
+
+Workers talk to the UI lane by message passing, not by sharing a locked app-state object. The shell holds a background channel (today `std::sync::mpsc`) that the egui loop drains each frame, applying results through commands and requesting a repaint. Pass a snapshot, handle, or job request in; get a result, progress update, or error out. A heavier channel (`flume`, `crossbeam-channel`) and shared-cache primitives (`arc-swap`, `dashmap`) are candidates for when the messaging or a concurrent cache earns them (section 33); none is adopted yet.
+
+---
+
+## 32. Localization architecture
+
+Pixhaus is not localized today, but fix the model now so strings do not get hardcoded into panels and project files do not store display text as truth. Localization is a service, not scattered string handling.
+
+### 32.1 Localization is a service
+
+The localization service owns string lookup. Core project logic never calls it — `core` stores stable ids and metadata, never localized strings. Display names are localized at render time, in the UI lane.
+
+### 32.2 Stable keys and module namespaces
+
+Strings are addressed by stable key in a module-owned namespace, so a module ships its own strings without colliding with another's:
+
+```text
+app.menu.file
+workspace.draw.title
+panel.layers.title
+tool.pencil.label
+command.undo.draw_pixels
+provider.openai.label
+export.png.label
+job.generate_sprite.running
+error.project.asset_missing
+```
+
+Project files store ids and metadata, never localized strings as the only source of truth (section 18.5). A renamed display string must not invalidate a saved project.
+
+### 32.3 Requirements
+
+The service should support runtime language switching, a fallback language, interpolation, pluralization where available, missing-key diagnostics, and a dev-mode key-display toggle. `egui-i18n` is a candidate to sit behind the Pixhaus-owned service (section 33); the service boundary stays even if the backing crate changes.
+
+---
+
+## 33. Runtime crate stack (reconciled appendix)
+
+The authority for dependencies is the workspace `Cargo.toml` catalog, governed by the "Stack — locked" policy in the root `CLAUDE.md`. A crate not in the catalog is a candidate for when the capability lands — not an adopted dependency. Adding one is a decision: justify the need, check the license against the MIT lock with `cargo deny`, and load the matching `pixhaus-<dep>` skill before reaching for its API. This appendix maps the runtime concerns above onto that policy; it does not expand the locked stack.
+
+### 33.1 Adopted (in the catalog)
+
+| Concern | Crate |
+|---|---|
+| UI shell + window | `eframe`, `egui`, `egui_extras`, `egui-phosphor` |
+| Canvas render + GPU | `wgpu` (pinned `=29.0.1`), `egui-wgpu`, `glam`, `bytemuck`, `pollster` |
+| Async backbone | `tokio`, `tokio-util`, `futures` |
+| Sync | `parking_lot` |
+| Logging | `tracing`, `tracing-subscriber`, `tracing-appender`, `tracing-log` |
+| Errors | `thiserror` (libs), `anyhow` (binary) |
+| Serde backbone | `serde`, `serde_json` |
+| Images | `image` (png feature) |
+| Platform paths + dialogs | `directories`, `rfd` |
+| Test stack | `rstest`, `proptest`, `insta`, `tempfile`, `mockall`, `image-compare`, `egui_kittest` |
+
+### 33.2 Candidates (not adopted; pull when the capability lands)
+
+| Concern | Candidate | Adoption trigger |
+|---|---|---|
+| Docking | `egui_dock` | when custom dock layouts land (section 20.3) |
+| Localization | `egui-i18n` | when the localization service lands (section 32) |
+| CPU data-parallelism | `rayon` | when a batch workload outgrows `spawn_blocking` (section 31.2) |
+| Heavier channels | `flume`, `crossbeam-channel` | when std mpsc is outgrown (section 31.5) |
+| Shared caches | `arc-swap`, `dashmap` | when a concurrent cache earns it |
+| Ids + collections | `slotmap`, `uuid`, `indexmap`, `petgraph` | when the model needs stable arenas or a dependency graph |
+| Settings + save format | `toml`, `rmp-serde`, `postcard`, `zstd`, `blake3` | when the project/save format lands (section 18) |
+| Large blobs + watching | `memmap2`, `walkdir`, `notify` | when lazy asset loading or folder watching lands |
+| More image formats | `gif`, `resvg` | when GIF export or SVG import lands |
+| Clipboard + open | `arboard`, `open` | when clipboard or open-in-OS lands |
+| Rich diagnostics | `miette`, `color-eyre` | when user-facing diagnostic reports earn it |
+| Caching | `moka`, `lru` | when a bounded eviction cache earns it |
+| Profiling | `puffin`, `criterion`, `divan` | when frame profiling or benchmarks land |
+
+### 33.3 Corrections
+
+- App directories use `directories` v6, not `directories-next` or `dirs-next`.
+- PNG support comes from `image`'s png feature, not a standalone `png` crate.
+- `egui_mobius` is rejected — Pixhaus keeps a custom state architecture and does not adopt a generic reactive egui framework.
+- No channel crate is adopted; the current channel is `std::sync::mpsc`. `flume` and `crossbeam-channel` are candidates only.
+
+### 33.4 Defaults
+
+- Docking sits behind the workspace-layout abstraction (`egui_dock` candidate), and default layouts come first (section 20.1).
+- Localization sits behind the Pixhaus localization service (`egui-i18n` candidate), never called from core logic (section 32.1).

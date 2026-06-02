@@ -13,7 +13,8 @@ sections 7.3, 6.6).
 - May lean on pixel-art tooling heavily, but must not be limited to pixel art —
   tiles exist in other art styles too.
 - Reuse the shared canvas, tools, and commands; tile editing is the editing core
-  with tile-aware overlays and validation, not a separate editor.
+  with tile-aware overlays and validation, not a separate editor — it acts through
+  the shared editing context (architecture bible sections 5.9 and 22.7).
 - Tileset export targets register with the export pipeline; the actual codecs live
   in `io`.
 - Instrument autotile and seam-validation passes and the tileset-export jobs

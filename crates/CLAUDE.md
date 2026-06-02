@@ -16,7 +16,10 @@ the wrong one — surface the question rather than smearing it across two.
 - `core` and `render` stay egui-free, permanently — that is what lets the renderer
   survive a UI-toolkit change. `ui` is the only spine crate that may touch egui.
 - Mutation of project state goes through the `Command` trait in `core`; nothing
-  here mutates the model behind its back.
+  here mutates the model behind its back. State separates into five buckets and
+  concurrency is organized as execution lanes (bible sections 22 and 31), but
+  mutation stays on the `Command`/intent path regardless of which bucket or lane a
+  crate touches.
 - Libraries instrument with `tracing` — events (`info!`/`warn!`/`error!`/`debug!`)
   and `#[instrument]` on fallible/expensive functions — and never install a
   subscriber or `println!`/`eprintln!`. The binary in `app/` owns the one

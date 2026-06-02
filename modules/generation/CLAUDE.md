@@ -17,6 +17,9 @@ sections 7.3, 6.5, 14).
   capabilities, not specific providers.
 - Generated results carry their metadata (prompt, recipe, provider, seed, source
   context) so results are reproducible and traceable.
+- Generation runs in the AI/model-worker lane, out-of-process where practical,
+  under the background-worker contract — it never blocks the UI thread (bible
+  sections 31.2 and 13.6).
 - `#[instrument]` the AI job types; trace job submit and result. Never log prompt
   secrets or API keys — log that a job ran and how long it took, not the key. See the
   `pixhaus-tracing` and `pixhaus-keyring` skills.

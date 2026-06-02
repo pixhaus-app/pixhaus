@@ -53,6 +53,10 @@ Load the `pixhaus-ui-conventions` skill for the concrete API and do/don't exampl
   `apply_intent`); the only mutable carve-out is `PanelScope.scratch` for a `TextEdit`.
   No panel-to-panel coupling. Concrete Panel/Tool/Workspace impls live in `modules/*`,
   not here — this crate owns the traits, registries, theme, widgets, and shell runtime.
+  This crate also owns the session/UI/derived-cache state containers (`Host`,
+  `ShellState`, `SessionState`, `UiState`) that map to the bible's target container
+  set (section 22.7); when localization lands, its namespaces are module/registry-owned
+  (section 32).
 - **egui 0.34 specifics.** `ctx.global_style_mut`/`global_style` (not
   `style_mut`/`style`); `egui::Panel::left/right/top/bottom` + `default_size`/`exact_size`;
   `ctx.text_edit_focused()` for shortcut focus-gating; no `.unwrap()`/`.expect()` even in

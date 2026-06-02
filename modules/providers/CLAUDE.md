@@ -17,6 +17,8 @@ The provider modules — AI and compute backends (architecture bible sections 7.
   failures are isolated and surfaced as actionable errors.
 - Ship the mock provider so UI and generation flows work without API keys, model
   downloads, or a GPU. Local models run out-of-process where practical.
+- Providers run in the AI/model-worker lane, out-of-process where practical, under
+  the background-worker contract (bible sections 31.2 and 13.6).
 - A span per AI request with the provider-response duration; `error!` on a provider
   failure (isolated, surfaced as an actionable error). NEVER log an API key — it
   lives in the OS credential vault, not the log. See the `pixhaus-tracing` and

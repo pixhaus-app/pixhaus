@@ -19,6 +19,9 @@ plugin system.
 - Keep provider-, format-, and OS-specific logic in the crate that owns it
   (`providers` module, `io`, `platform`) — a feature module wires capabilities up,
   it doesn't reimplement them.
+- A module's jobs follow the background-worker contract and the parallelization
+  priorities (bible sections 13.6 and 23.5), and a module registers its own
+  localization namespace when localization lands (bible section 32).
 - Instrument jobs and registration: `#[instrument]` on job bodies (the duration is
   the perf signal), an `info!` when the module registers its capabilities. Emit via
   `tracing`, never `println!`; never log secrets. See the `pixhaus-tracing` skill.

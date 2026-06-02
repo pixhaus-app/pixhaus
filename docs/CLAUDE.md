@@ -4,7 +4,8 @@ Prose design references, not code. Nothing here is built, imported, or executed.
 
 - **`pixhaus_architecture_bible.md`** — the structural source of truth. Read it
   before any structural decision; the crate graph and the root `CLAUDE.md`
-  Architecture section are derived from it.
+  Architecture section are derived from it. It also holds the runtime, state-bucket,
+  concurrency/execution-lane, and localization model (bible sections 22 and 31-33).
 - **`pixhaus_save_file_format_architecture.md`** — the project/save format
   direction; feeds the `io` crate and bible section 18.
 - **`pixhaus_visual_ux_direction.md`** — the visual and UX direction.

@@ -14,6 +14,8 @@ The sprite-editing module — the Draw workspace and the shared editing surface
   also builds on. Keep frame-over-time concerns out — those belong to
   `mod-animation`. Draw is editing in space; Animate is editing in space over time.
 - Tools interpret input and create commands; they never mutate the model directly.
+  They act through the shared editing context, not a private one — that is where the
+  active document, selection, and tool state live (bible sections 5.9 and 22.7).
 - Don't fork the canvas or tools per workspace — they are shared capabilities.
 - Instrument the editing commands (`#[instrument]` on apply) and the module's
   registration (`info!`). No per-stroke spans — a stroke is a hot input loop. See

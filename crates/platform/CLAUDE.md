@@ -3,7 +3,8 @@
 The platform layer — the OS-facing edges (architecture bible section 4.6).
 
 - **Owns:** native dialogs, clipboard, recent-files tracking, OS settings paths,
-  app directories (`app_dirs` / `log_dir`, via `directories`), GPU capability
+  app directories (`app_dirs` / `log_dir`, via `directories` — the five buckets
+  config / data / cache / logs / autosave per bible section 18.6), GPU capability
   detection, and external-process supervision (e.g. local model workers).
 - **Depends on:** `core`. External: `directories`, `thiserror`, and `rfd`/`arboard`
   and similar as they land.

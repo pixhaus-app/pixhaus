@@ -17,6 +17,8 @@ Import, export, and the on-disk project format (architecture bible sections 18,
   types; mutation on load is a command in `core`/`services`.
 - The format is versioned and must preserve unknown extension data on load
   (bible section 18.5), so a future module's data is not destroyed by an older app.
+  Any compact binary-format crate (`rmp-serde`, `zstd`, `blake3`) is a candidate
+  for when the save format lands, not adopted (bible section 33).
 - Trace load, save, and format migration (`#[instrument]` on the load/save bodies);
   `warn!` on corrupt or unknown-extension data rather than failing silently. See the
   `pixhaus-tracing` skill.

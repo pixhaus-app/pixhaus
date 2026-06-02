@@ -139,6 +139,10 @@ graph above encodes:
   result is a command. AI generation never touches the canvas directly.
 - Capabilities are registered by internal modules through registries — no
   external dynamic plugins.
+- State separates into five buckets — durable project, session, UI,
+  tool-interaction, and derived/cache — and concurrency is organized as execution
+  lanes through jobs and services, not scattered in UI code; the runtime, state,
+  and concurrency model lives in the bible (sections 22, 31-33).
 - GPU textures are caches and views; the project model is the source of truth.
 - Pixel art is a deep, dedicated mode, not the whole product.
 

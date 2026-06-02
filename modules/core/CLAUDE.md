@@ -4,7 +4,9 @@ The host bootstrap module (architecture bible section 7.3). The foundational
 module the others assume is present.
 
 - **Registers:** project lifecycle, settings, the command and job systems, the
-  event bus, and the asset and workspace registries.
+  event bus, and the asset and workspace registries — these are the
+  `CommandBus`/`JobManager`/registry seams of the bible's target container set
+  (section 22.7).
 - **Status:** stub.
 
 ## Boundaries

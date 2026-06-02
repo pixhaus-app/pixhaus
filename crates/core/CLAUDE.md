@@ -6,7 +6,9 @@ on it, it depends on nothing in the workspace.
 
 - **Owns:** projects, documents, sprites, layers, frames, cels, palettes,
   selections, art-mode metadata, the typed ids that key them, the `Command` trait,
-  and pure pixel ops.
+  and pure pixel ops. This is the durable project-state bucket: it holds the stable
+  ids and metadata that persist, never localized display strings — translation is a
+  future service layered above, not core's concern (bible section 32).
 - **Depends on:** no workspace crate. External: `serde`, `thiserror`, `glam`,
   `bytemuck` as the model needs them.
 - **Used by:** every other crate.

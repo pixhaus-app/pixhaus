@@ -21,6 +21,9 @@ The host application binary — the eframe + egui shell (architecture bible sect
   `core` and the modules.
 - The egui loop runs on one thread and owns the document directly; background task
   results return over channels the loop drains each frame. Never block the loop.
+  The binary is the UI-lane owner and the single async-I/O runtime owner, draining
+  that channel each frame (bible sections 31.2 and 31.5); the diagnostic bundle is
+  bible section 24.5.
 - Boot installs the design system on the egui `Context` before the loop — theme
   (`apply_to_visuals`), fonts (`install_fonts`), and image loaders
   (`install_image_loaders`) — and sets the OS window icon from `pixhaus_ui::brand`.

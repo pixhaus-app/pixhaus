@@ -16,7 +16,8 @@ composited on the GPU and never crosses a CPU copy per painted pixel.
 - MUST NOT know about `egui` or `egui-wgpu`. It exposes only raw `wgpu` types so
   it survives a UI-toolkit change. The egui glue lives in `ui`.
 - MUST NOT own project data. GPU textures are caches and views; `core` is the
-  source of truth.
+  source of truth. `render` is the render/GPU execution lane and owns the
+  derived-cache bucket, isolated from project truth (bible sections 22.6 and 31.2).
 - MUST NOT begin, end, or submit the egui render pass from `paint()` — record
   draws into the pass egui-wgpu owns.
 - Bound work by the dirty region, not the canvas size (the 8192x8192 ceiling).
