@@ -27,6 +27,7 @@ use pixhaus_ui::contrib_api::Module;
 use pixhaus_ui::contrib_api::ids::WorkspaceId;
 use pixhaus_ui::shell::Shell;
 use pixhaus_ui::state::Host;
+use pixhaus_ui::state::ui_state::{Modal, SplashPhase};
 
 /// Reference screenshots are ~16:10 desktop captures; match that aspect.
 const SIZE: egui::Vec2 = egui::vec2(1440.0, 900.0);
@@ -47,6 +48,8 @@ fn build_host(ctx: &egui::Context) -> Host {
 
     pixhaus_ui::theme::apply_to_visuals(host.theme(), ctx);
     pixhaus_ui::theme::install_fonts(ctx);
+    // Install egui_extras' image loaders so the baked-in brand PNGs render in snapshots.
+    pixhaus_ui::install_image_loaders(ctx);
 
     pixhaus_ui::shell::menus::register_shell_menus(&mut host.registrar());
 
@@ -61,25 +64,40 @@ fn build_host(ctx: &egui::Context) -> Host {
     host
 }
 
-/// Render one workspace to a PNG at `dir/<workspace>.png`. Returns the byte size.
-fn render_workspace(workspace: &'static str, dir: &std::path::Path) -> anyhow::Result<u64> {
+/// Render one snapshot to `dir/<name>.png`, applying `setup` to the fresh host each
+/// frame before `Shell::run`. Returns the byte size.
+///
+/// `setup` runs every frame because the host is rebuilt every frame (the closure is
+/// the only owner, so no borrow escapes it). That makes any state the snapshot needs -
+/// the active workspace, the splash phase, an open modal - sticky across the settle
+/// loop even though the host itself is not persisted.
+fn render_snapshot(name: &str, dir: &std::path::Path, setup: impl Fn(&mut Host) + 'static) -> anyhow::Result<u64> {
     // `.wgpu()` installs the off-screen `WgpuTestRenderer` that `Harness::render` needs;
-    // without it the default lazy renderer can't rasterize a frame.
-    let mut harness = Harness::builder().with_size(SIZE).wgpu().build_ui(move |ui| {
-        // A fresh Host per frame: the closure is the only owner, so no borrow escapes
-        // it. Theme/fonts are applied to this harness's context inside build_host.
-        let mut host = build_host(ui.ctx());
-        host.state.session.active_workspace = WorkspaceId(workspace);
-        Shell::run(&mut host, ui);
-    });
+    // without it the default lazy renderer can't rasterize a frame. A small `step_dt`
+    // with a generous `max_steps` keeps the egui frame-clock (which the splash timer
+    // reads) below the 1.8s dismiss threshold across the whole settle loop, while still
+    // giving egui_extras' async image decode the wall-clock time it needs to land the
+    // brand textures.
+    let mut harness = Harness::builder()
+        .with_size(SIZE)
+        .with_step_dt(0.05)
+        .with_max_steps(30)
+        .wgpu()
+        .build_ui(move |ui| {
+            let mut host = build_host(ui.ctx());
+            setup(&mut host);
+            Shell::run(&mut host, ui);
+        });
 
-    // Run frames until layout settles (panels resolve sizes, fonts upload). `run`
-    // returns the frame count; `run_ok` would return None if it hit the step cap.
-    harness.run();
+    // `try_run_realtime` sleeps `step_dt` of real time between frames so the brand PNGs
+    // finish decoding and upload before the capture. The splash overlay requests a
+    // repaint every active frame, so that snapshot rides the loop to the step cap; we
+    // tolerate that here - the frames still ran and the textures still loaded.
+    let _ = harness.try_run_realtime();
 
-    let image = harness.render().map_err(|e| anyhow!("wgpu render failed for {workspace}: {e}"))?;
+    let image = harness.render().map_err(|e| anyhow!("wgpu render failed for {name}: {e}"))?;
 
-    let path = dir.join(format!("{workspace}.png"));
+    let path = dir.join(format!("{name}.png"));
     image.save(&path).with_context(|| format!("failed to write {}", path.display()))?;
 
     let size = std::fs::metadata(&path).with_context(|| format!("failed to stat {}", path.display()))?.len();
@@ -91,10 +109,27 @@ fn main() -> anyhow::Result<()> {
     let out_dir = std::path::Path::new("target").join("ui-snapshots");
     std::fs::create_dir_all(&out_dir).with_context(|| format!("failed to create {}", out_dir.display()))?;
 
+    // Workspace snapshots: dismiss the splash so the shell chrome (and the brand mark
+    // in the top bar) is what we capture, not the launch splash.
     for workspace in WORKSPACES {
-        render_workspace(workspace, &out_dir)?;
+        render_snapshot(workspace, &out_dir, move |host| {
+            host.state.ui.splash = SplashPhase::Done;
+            host.state.session.active_workspace = WorkspaceId(workspace);
+        })?;
     }
 
-    println!("{} workspace snapshots in {}", WORKSPACES.len(), out_dir.display());
+    // About snapshot: splash done, the About modal open over the Draw workspace.
+    render_snapshot("about", &out_dir, |host| {
+        host.state.ui.splash = SplashPhase::Done;
+        host.state.ui.modal = Some(Modal::About);
+    })?;
+
+    // Splash snapshot: stamp the start time at 0.0 so elapsed stays below the dismiss
+    // threshold across the few settle frames and the logo keeps painting.
+    render_snapshot("splash", &out_dir, |host| {
+        host.state.ui.splash = SplashPhase::Active { since: Some(0.0) };
+    })?;
+
+    println!("{} snapshots in {}", WORKSPACES.len() + 2, out_dir.display());
     Ok(())
 }
