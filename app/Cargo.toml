@@ -13,6 +13,9 @@ anyhow.workspace = true
 eframe.workspace = true
 egui.workspace = true
 egui-wgpu.workspace = true
+# Decodes the brand icon PNG into egui::IconData for the OS window/taskbar icon.
+# The headless render example also reuses it to save snapshot PNGs.
+image.workspace = true
 tokio.workspace = true
 tracing-subscriber.workspace = true
 pixhaus-ui = { path = "../crates/ui" }
@@ -24,7 +27,6 @@ pixhaus-mod-export = { path = "../modules/export" }
 
 [dev-dependencies]
 egui_kittest.workspace = true
-image.workspace = true
 
 [lints]
 workspace = true

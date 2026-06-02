@@ -12,6 +12,13 @@ homepage.workspace = true
 egui.workspace = true
 egui-wgpu.workspace = true
 egui-phosphor.workspace = true
+# Image loaders for the brand assets baked in via egui::include_image!. The `image`
+# feature pulls `image` with default-features off, so a PNG decoder only compiles if
+# some crate activates `image/png` - hence the `image` dep below.
+egui_extras = { workspace = true, features = ["image"] }
+# Feature-activation only: turns on the PNG decoder egui_extras' image loader needs.
+# `ui` never calls `image::*` directly; the OS-icon decode lives in `app`.
+image = { workspace = true, features = ["png"] }
 wgpu.workspace = true
 serde.workspace = true
 thiserror.workspace = true

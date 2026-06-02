@@ -12,6 +12,7 @@
 
 #![cfg_attr(test, allow(clippy::unwrap_used, clippy::expect_used, clippy::panic, clippy::float_cmp))]
 
+pub mod brand;
 pub mod contrib_api;
 pub mod icons;
 pub mod region;
@@ -26,6 +27,13 @@ use egui_wgpu::{CallbackResources, CallbackTrait, RenderState};
 use wgpu::RenderPass;
 
 use pixhaus_render::ViewportRenderer;
+
+/// Install `egui_extras`' image loaders on the context so the [`brand`] PNGs render.
+///
+/// Call once at startup, before the first frame draws a [`brand`] image. Re-exported
+/// here so the app installs loaders without its own `egui_extras` manifest entry -
+/// the PNG decoder behind it is activated by `ui`'s `image/png` feature.
+pub use egui_extras::install_image_loaders;
 
 /// Installs the [`ViewportRenderer`] into egui-wgpu's callback resource store.
 ///
