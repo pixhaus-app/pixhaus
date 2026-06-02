@@ -7,6 +7,8 @@
 //! next frame - never read by panels during render, so there is no intra-frame event
 //! bus and the borrow guarantee has no hole (spec bible 21.1).
 
+use pixhaus_services::i18n;
+
 use crate::contrib_api::ids::{ActionId, PanelId, ToolId, WorkspaceId};
 use crate::state::Host;
 use crate::state::session::JobStub;
@@ -44,6 +46,11 @@ pub enum Intent {
     DismissSplash,
     /// Change the theme variant; `apply_intent` re-applies it to egui's visuals.
     SetThemeVariant(ThemeVariant),
+    /// Toggle the dev key-display mode: render raw i18n keys instead of their
+    /// translations, a built-in lint for hardcoded strings (anything that does not
+    /// turn into a key was never routed through the localization service). Flips the
+    /// service's process-global flag (bible 32.3).
+    ToggleI18nKeys,
     /// Run an action. Mock: pushes a `JobStub` and emits an Event. Never mutates the
     /// model (spec invariant) - when `core` lands, model edits route through the
     /// reserved `Command` variant below instead.
@@ -140,6 +147,9 @@ pub fn apply_intent(host: &mut Host, intent: Intent, ctx: &egui::Context) {
         Intent::SetThemeVariant(v) => {
             host.theme = Theme::for_variant(v, host.theme.accent_seed());
             apply_to_visuals(&host.theme, ctx);
+        }
+        Intent::ToggleI18nKeys => {
+            i18n::set_show_keys(!i18n::show_keys());
         }
         Intent::RunAction(a) => {
             host.state.session.jobs.push(JobStub::queued(a));
@@ -300,6 +310,17 @@ mod tests {
         let mut host = host();
         apply_intent(&mut host, Intent::SetZoom(16.0), &ctx());
         assert_eq!(host.state.ui.zoom, 16.0);
+    }
+
+    #[test]
+    fn toggle_i18n_keys_flips_the_service_flag() {
+        let mut host = host();
+        let before = i18n::show_keys();
+        apply_intent(&mut host, Intent::ToggleI18nKeys, &ctx());
+        assert_eq!(i18n::show_keys(), !before, "the toggle flips the dev key-display flag");
+        // Restore the process-global flag so it does not leak into other tests.
+        apply_intent(&mut host, Intent::ToggleI18nKeys, &ctx());
+        assert_eq!(i18n::show_keys(), before, "the flag returns to its original state");
     }
 
     #[test]

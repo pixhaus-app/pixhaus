@@ -19,6 +19,9 @@ pub const ACTION_PIXHAUS_ABOUT: ActionId = ActionId("pixhaus.about");
 pub const ACTION_VIEW_THEME: ActionId = ActionId("view.theme");
 /// `View > Toggle Grid`; the render maps it to `Intent::SetGrid`.
 pub const ACTION_VIEW_TOGGLE_GRID: ActionId = ActionId("view.toggle_grid");
+/// `View > Show i18n Keys`; the render maps it to `Intent::ToggleI18nKeys` (the dev
+/// key-display lint).
+pub const ACTION_VIEW_TOGGLE_KEYS: ActionId = ActionId("view.toggle_keys");
 /// `Window > Command Palette`; the render maps it to `Intent::OpenCommandPalette`.
 pub const ACTION_WINDOW_COMMAND_PALETTE: ActionId = ActionId("window.command_palette");
 
@@ -103,6 +106,7 @@ pub fn shell_menu_groups() -> Vec<MenuGroup> {
             items: vec![
                 item(MsgKey("command.view.theme"), ACTION_VIEW_THEME),
                 item(MsgKey("command.view.toggle_grid"), ACTION_VIEW_TOGGLE_GRID),
+                item(MsgKey("command.view.toggle_keys"), ACTION_VIEW_TOGGLE_KEYS),
                 item(MsgKey("command.view.zoom_in"), ActionId("view.zoom_in")),
                 item(MsgKey("command.view.zoom_out"), ActionId("view.zoom_out")),
             ],

@@ -6,7 +6,9 @@ use pixhaus_services::i18n;
 use crate::contrib_api::ids::{ActionId, MsgKey};
 use crate::contrib_api::module::MenuGroup;
 use crate::region::region_id;
-use crate::shell::menus::{ACTION_PIXHAUS_ABOUT, ACTION_VIEW_THEME, ACTION_VIEW_TOGGLE_GRID, ACTION_WINDOW_COMMAND_PALETTE, ordered_menu_groups};
+use crate::shell::menus::{
+    ACTION_PIXHAUS_ABOUT, ACTION_VIEW_THEME, ACTION_VIEW_TOGGLE_GRID, ACTION_VIEW_TOGGLE_KEYS, ACTION_WINDOW_COMMAND_PALETTE, ordered_menu_groups,
+};
 use crate::state::Host;
 use crate::state::intent::{Intent, IntentSink};
 use crate::state::ui_state::GridMode;
@@ -187,6 +189,7 @@ fn push_menu_intent(intents: &mut IntentSink, action: ActionId, current_grid: Gr
     match action {
         ACTION_PIXHAUS_ABOUT => intents.push(Intent::OpenAbout),
         ACTION_VIEW_TOGGLE_GRID => intents.push(Intent::SetGrid(toggle_grid(current_grid))),
+        ACTION_VIEW_TOGGLE_KEYS => intents.push(Intent::ToggleI18nKeys),
         ACTION_WINDOW_COMMAND_PALETTE => intents.push(Intent::OpenCommandPalette),
         other => intents.push(Intent::RunAction(other)),
     }

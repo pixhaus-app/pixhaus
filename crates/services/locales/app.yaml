@@ -62,6 +62,8 @@ command.view.theme:
   en: Theme
 command.view.toggle_grid:
   en: Toggle Grid
+command.view.toggle_keys:
+  en: Show i18n Keys
 command.view.zoom_in:
   en: Zoom In
 command.view.zoom_out:

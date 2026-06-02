@@ -121,9 +121,7 @@ fn main() -> anyhow::Result<()> {
     // will take precedence once Prefs persistence and an in-app picker land (deferred,
     // spec open decision 5). The app owns this, the string-side parallel to owning the
     // one tracing subscriber.
-    let language = sys_locale::get_locale()
-        .map(|tag| tag.split(['-', '_']).next().unwrap_or("en").to_ascii_lowercase())
-        .unwrap_or_else(|| "en".to_owned());
+    let language = sys_locale::get_locale().map_or_else(|| "en".to_owned(), |tag| tag.split(['-', '_']).next().unwrap_or("en").to_ascii_lowercase());
     pixhaus_services::i18n::set_language(&language);
     tracing::info!(language = %language, "localization language set");
 
