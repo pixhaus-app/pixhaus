@@ -64,6 +64,10 @@ impl Theme {
                     elevated: Color32::from_rgb(0x21, 0x25, 0x2c),
                     stage: Color32::from_rgb(0x14, 0x18, 0x1d),
                     inset: Color32::from_rgb(0x0b, 0x0e, 0x12),
+                    // One neutral step above elevated: the faint grey lift a flat
+                    // menu item gets on hover/open. Sits below the border value so
+                    // the highlight reads as a fill, not an outline.
+                    hover: Color32::from_rgb(0x2b, 0x30, 0x38),
                 },
                 Roles {
                     border: Color32::from_rgb(0x2c, 0x30, 0x37),
@@ -84,6 +88,9 @@ impl Theme {
                     elevated: Color32::from_rgb(0xf6, 0xf5, 0xf9),
                     stage: Color32::from_rgb(0xc8, 0xc6, 0xd0),
                     inset: Color32::from_rgb(0xff, 0xff, 0xff),
+                    // One neutral step below elevated (a light theme dims to mark a
+                    // hover, rather than brightening): the menu-item hover fill.
+                    hover: Color32::from_rgb(0xe6, 0xe4, 0xec),
                 },
                 Roles {
                     border: Color32::from_rgb(0xc2, 0xc0, 0xcc),
@@ -103,6 +110,8 @@ impl Theme {
                     elevated: Color32::from_rgb(0x16, 0x15, 0x1c),
                     stage: Color32::from_rgb(0x00, 0x00, 0x00),
                     inset: Color32::from_rgb(0x05, 0x05, 0x07),
+                    // One neutral step above elevated: the menu-item hover fill.
+                    hover: Color32::from_rgb(0x24, 0x22, 0x2e),
                 },
                 Roles {
                     border: accent.base,
@@ -308,6 +317,9 @@ mod tests {
         // app_frame is darkest; panel sits above it; elevated above that.
         assert!(luma(t.surfaces.app_frame) < luma(t.surfaces.panel), "app_frame must be darker than panel");
         assert!(luma(t.surfaces.panel) < luma(t.surfaces.elevated), "panel must be darker than elevated");
+        // The neutral menu-hover lift sits one step above elevated in the dark theme,
+        // so a flat menu item brightens (not darkens) under the pointer.
+        assert!(luma(t.surfaces.elevated) < luma(t.surfaces.hover), "hover must be lighter than elevated");
     }
 
     #[test]

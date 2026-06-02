@@ -20,6 +20,30 @@ pub const ACTION_VIEW_TOGGLE_GRID: ActionId = ActionId("view.toggle_grid");
 /// `Window > Command Palette`; the render maps it to `Intent::OpenCommandPalette`.
 pub const ACTION_WINDOW_COMMAND_PALETTE: ActionId = ActionId("window.command_palette");
 
+/// The shell's canonical menu-bar order, left to right.
+///
+/// The registry stores groups in contribution order (shell groups, then each
+/// module's groups as it registers), which is not the order the bar should read.
+/// The shell - not the modules - decides display order: the render walks this
+/// sequence, drawing each registered group whose label matches, then appends any
+/// group whose label is not listed (so a future module's group still shows up).
+pub const CANONICAL_MENU_ORDER: [&str; 10] = ["Pixhaus", "File", "Edit", "Sprite", "Layer", "Frame", "Select", "View", "Window", "Help"];
+
+/// Order the registered menu groups for display: canonical labels first in their
+/// fixed order, then any unlisted group appended in registration order.
+///
+/// Borrows from `groups` - the returned references live as long as the slice. The
+/// shell owns the order here; modules keep contributing through `add_menu_group`
+/// unchanged.
+pub fn ordered_menu_groups(groups: &[MenuGroup]) -> Vec<&MenuGroup> {
+    let mut ordered: Vec<&MenuGroup> = CANONICAL_MENU_ORDER
+        .iter()
+        .filter_map(|label| groups.iter().find(|g| g.label == *label))
+        .collect();
+    ordered.extend(groups.iter().filter(|g| !CANONICAL_MENU_ORDER.contains(&g.label)));
+    ordered
+}
+
 fn item(label: &'static str, action: ActionId) -> MenuItem {
     MenuItem { label, shortcut: None, action }
 }
@@ -151,5 +175,39 @@ mod tests {
         assert!(labels.contains(&"File"));
         assert!(labels.contains(&"View"));
         assert!(labels.contains(&"Window"));
+    }
+
+    fn named(label: &'static str) -> MenuGroup {
+        MenuGroup { label, items: vec![] }
+    }
+
+    /// Display order is the canonical sequence, not registration order. Modules
+    /// contribute Sprite/Layer/Frame after the shell's groups (the registration
+    /// order), but the bar must read Pixhaus File Edit Sprite Layer Frame Select
+    /// View Window Help.
+    #[test]
+    fn ordered_menu_groups_follows_the_canonical_sequence() {
+        // Registration order: shell groups first, then the module groups appended,
+        // exactly as `build_host` produces.
+        let mut groups = shell_menu_groups();
+        groups.push(named("Sprite"));
+        groups.push(named("Layer"));
+        groups.push(named("Frame"));
+
+        let ordered: Vec<&str> = ordered_menu_groups(&groups).iter().map(|g| g.label).collect();
+        assert_eq!(
+            ordered,
+            vec!["Pixhaus", "File", "Edit", "Sprite", "Layer", "Frame", "Select", "View", "Window", "Help"]
+        );
+    }
+
+    /// A group whose label is not in the canonical list still renders - appended
+    /// after the known groups so a future module's menu is never silently dropped.
+    #[test]
+    fn ordered_menu_groups_appends_unknown_groups() {
+        let groups = vec![named("Help"), named("Mystery"), named("File")];
+        let ordered: Vec<&str> = ordered_menu_groups(&groups).iter().map(|g| g.label).collect();
+        // File and Help take their canonical slots; Mystery falls to the end.
+        assert_eq!(ordered, vec!["File", "Help", "Mystery"]);
     }
 }

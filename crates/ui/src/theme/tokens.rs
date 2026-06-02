@@ -78,6 +78,11 @@ pub struct Surfaces {
     pub stage: Color32,
     /// Text fields, wells, HUD.
     pub inset: Color32,
+    /// A faint neutral highlight one step above `elevated`, for the hover/active
+    /// state of flat chrome that has no resting frame - the top-bar menu items.
+    /// Neutral on purpose: `accent` is reserved for the active tool/tab/AI, so a
+    /// menu hover stays a cohesive grey lift rather than reading as a selection.
+    pub hover: Color32,
 }
 
 /// Semantic foreground and status roles.
