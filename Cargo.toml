@@ -38,6 +38,14 @@ tracing-log = "0.2"
 # Platform-standard app directories (config/data/cache/log/autosave). Consumed by
 # `crates/platform` (the dirs capability); MIT/Apache, clears the deny lock.
 directories = "6"
+# Localization. `rust-i18n` (MIT) sits behind the Pixhaus localization service
+# (`pixhaus_services::i18n`): the `t!` macro + compile-time locale embedding, a
+# global active locale, and runtime `set_locale`. The bible's original candidate
+# `egui-i18n` is abandoned; this is the deliberate substitute. `sys-locale`
+# (MIT/Apache) detects the OS language at boot, consumed by `app`. See the
+# `pixhaus-i18n` skill.
+rust-i18n = "4"
+sys-locale = "0.3"
 # egui / wgpu native UI stack (lockstep — pinned together). wgpu is pinned
 # EXACTLY: eframe 0.34 builds against wgpu 29.0.1, and two wgpu versions in the
 # tree are incompatible types. See pixhaus-eframe / pixhaus-egui-wgpu.
@@ -55,6 +63,10 @@ pollster = "0.4"
 rfd = "0.15"
 # Test stack (see pixhaus-testing-conventions).
 rstest = "0.26"
+# Serializes tests that touch process-global state - `rust-i18n`'s active locale
+# is global, so locale-switching tests must not run concurrently with tests that
+# assume `en` (nextest runs tests in parallel). See the `pixhaus-i18n` skill.
+serial_test = "3"
 proptest = "1"
 insta = "1"
 tempfile = "3"

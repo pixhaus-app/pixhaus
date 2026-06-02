@@ -1,0 +1,22 @@
+# Shell-owned localization strings (the `app.*` namespace and the shell's menu
+# bar / chrome). rust-i18n `_version: 2` layout: one file, each key mapping locale
+# -> value. Module-owned namespaces live in sibling files (sprite_edit.yaml, ...).
+# `en` is the fallback language (services lib.rs: i18n!("locales", fallback="en")).
+# Translator note: `%{name}` is an interpolation slot; keep it verbatim. Plurals
+# are authored as `<key>.one` / `<key>.other` and selected by `i18n::tr_plural`.
+_version: 2
+
+# --- Stage 1 proof keys (interpolation, plural, fallback, language switch). The
+# full shell key set is filled in during the string migration. ---
+app.ui.palette.switch_to:
+  en: "Switch to %{name}"
+  es: "Cambiar a %{name}"
+panel.layers.count.one:
+  en: "%{count} layer"
+  es: "%{count} capa"
+panel.layers.count.other:
+  en: "%{count} layers"
+  es: "%{count} capas"
+panel.layers.title:
+  en: Layers
+  es: Capas

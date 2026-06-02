@@ -8,5 +8,14 @@ license.workspace = true
 repository.workspace = true
 homepage.workspace = true
 
+[dependencies]
+# The localization service wraps rust-i18n (the `i18n!`/`t!` machinery lives in
+# this crate's lib.rs). tracing carries the missing-key warning. See pixhaus-i18n.
+rust-i18n = { workspace = true }
+tracing = { workspace = true }
+
+[dev-dependencies]
+serial_test = { workspace = true }
+
 [lints]
 workspace = true
