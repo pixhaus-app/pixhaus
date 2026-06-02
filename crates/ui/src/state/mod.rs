@@ -138,6 +138,12 @@ pub struct Prefs {
     pub tray_height: f32,
     /// The grid mode.
     pub grid: GridMode,
+    /// The persisted UI language (e.g. "en", "es"). `None` follows the OS language
+    /// the binary detects at boot. Applied once Prefs persistence and an in-app
+    /// language picker land (deferred, spec open decision 5); `#[serde(default)]`
+    /// keeps older persisted prefs loadable.
+    #[serde(default)]
+    pub language: Option<String>,
 }
 
 #[cfg(test)]

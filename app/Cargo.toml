@@ -23,7 +23,12 @@ tracing-subscriber.workspace = true
 # guard must live for all of main) plus the log->tracing bridge for wgpu/winit/naga.
 tracing-appender.workspace = true
 tracing-log.workspace = true
+# Detects the OS language at boot so the app launches localized. See pixhaus-i18n.
+sys-locale.workspace = true
 pixhaus-platform = { path = "../crates/platform" }
+# The localization service: the app sets the active language at boot, the string-side
+# parallel to owning the one tracing subscriber.
+pixhaus-services = { path = "../crates/services" }
 pixhaus-ui = { path = "../crates/ui" }
 pixhaus-mod-sprite-edit = { path = "../modules/sprite-edit" }
 pixhaus-mod-animation = { path = "../modules/animation" }

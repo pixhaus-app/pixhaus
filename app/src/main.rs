@@ -115,6 +115,18 @@ fn main() -> anyhow::Result<()> {
         "Pixhaus starting"
     );
 
+    // Localization: launch in the OS language, truncated to the primary subtag
+    // ("es-ES" -> "es") to match the locale codes the bundles use. The service falls
+    // back to en for any key a language is missing. A saved Prefs.language override
+    // will take precedence once Prefs persistence and an in-app picker land (deferred,
+    // spec open decision 5). The app owns this, the string-side parallel to owning the
+    // one tracing subscriber.
+    let language = sys_locale::get_locale()
+        .map(|tag| tag.split(['-', '_']).next().unwrap_or("en").to_ascii_lowercase())
+        .unwrap_or_else(|| "en".to_owned());
+    pixhaus_services::i18n::set_language(&language);
+    tracing::info!(language = %language, "localization language set");
+
     // The binary owns the single tokio runtime; entering it makes tokio::spawn
     // available to the egui loop for the background work the editor will grow.
     let runtime = tokio::runtime::Runtime::new().context("failed to start the tokio runtime")?;
