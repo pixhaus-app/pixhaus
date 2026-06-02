@@ -13,6 +13,7 @@ homepage.workspace = true
 # core's pixel invariants. The mock runs as a real tokio task with a cancel token.
 pixhaus-core = { path = "../../crates/core" }
 pixhaus-services = { path = "../../crates/services" }
+thiserror = { workspace = true }
 tokio = { workspace = true }
 tokio-util = { workspace = true }
 tracing = { workspace = true }

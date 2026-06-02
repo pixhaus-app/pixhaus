@@ -15,8 +15,10 @@ use std::sync::Arc;
 use pixhaus_services::provider::ProviderRegistry;
 
 mod mock;
+mod postprocess;
 
 pub use mock::MockProvider;
+pub use postprocess::{PostProcessError, chroma_key_magenta, slice_sheet};
 
 /// Registers the offline providers (the mock provider) into `registry`.
 pub fn register(registry: &mut ProviderRegistry) {
