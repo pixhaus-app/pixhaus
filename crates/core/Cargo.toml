@@ -8,5 +8,15 @@ license.workspace = true
 repository.workspace = true
 homepage.workspace = true
 
+[dependencies]
+# Pure data + ops only. serde for derive on the leaf value types (forward-looking,
+# the save format lands later); thiserror for the typed error enums.
+serde = { workspace = true }
+thiserror = { workspace = true }
+
+[dev-dependencies]
+rstest = { workspace = true }
+proptest = { workspace = true }
+
 [lints]
 workspace = true
