@@ -8,3 +8,5 @@ command.add_sprite:
   en: Add sprite
 command.apply_generated_asset:
   en: Insert generated sprite
+command.apply_generated_animation:
+  en: Insert generated animation

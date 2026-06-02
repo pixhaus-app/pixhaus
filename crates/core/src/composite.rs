@@ -10,8 +10,8 @@
 
 use thiserror::Error;
 
-use crate::document::Document;
-use crate::ids::SpriteId;
+use crate::document::{Document, Layer};
+use crate::ids::{FrameId, SpriteId};
 use crate::pixel::{PixelBuffer, Rgba};
 
 /// Why a sprite could not be composited.
@@ -20,6 +20,9 @@ pub enum CompositeError {
     /// The sprite id is not present in the document.
     #[error("sprite {0:?} not found")]
     SpriteNotFound(SpriteId),
+    /// The frame id is not present in the sprite.
+    #[error("frame {0:?} not found")]
+    FrameNotFound(FrameId),
     /// A layer references a pixel buffer that is not in the store.
     #[error("layer references a missing pixel buffer")]
     MissingBuffer,
@@ -34,19 +37,34 @@ pub fn composite_active(doc: &Document) -> Option<PixelBuffer> {
     composite_sprite(doc, id).ok()
 }
 
-/// Flattens `sprite`'s visible layers into a fresh tightly-packed RGBA8 buffer.
+/// Flattens the active frame of `sprite` into a fresh tightly-packed RGBA8 buffer.
 ///
 /// # Errors
-/// Returns [`CompositeError`] if the sprite is absent, a layer's buffer is missing,
-/// or a layer's buffer size does not match the sprite.
+/// Returns [`CompositeError`] if the sprite or its active frame is absent, a layer's
+/// buffer is missing, or a layer's buffer size does not match the sprite.
 pub fn composite_sprite(doc: &Document, sprite: SpriteId) -> Result<PixelBuffer, CompositeError> {
     let sprite = doc.sprite(sprite).ok_or(CompositeError::SpriteNotFound(sprite))?;
-    let width = sprite.width;
-    let height = sprite.height;
+    let frame = sprite.active_frame().ok_or(CompositeError::FrameNotFound(sprite.active_frame))?;
+    composite_layers(doc, sprite.width, sprite.height, &frame.layers)
+}
+
+/// Flattens a specific frame of `sprite` into a fresh tightly-packed RGBA8 buffer.
+///
+/// # Errors
+/// Returns [`CompositeError`] if the sprite or `frame` is absent, a layer's buffer is
+/// missing, or a layer's buffer size does not match the sprite.
+pub fn composite_frame(doc: &Document, sprite: SpriteId, frame: FrameId) -> Result<PixelBuffer, CompositeError> {
+    let sprite = doc.sprite(sprite).ok_or(CompositeError::SpriteNotFound(sprite))?;
+    let frame = sprite.frame(frame).ok_or(CompositeError::FrameNotFound(frame))?;
+    composite_layers(doc, sprite.width, sprite.height, &frame.layers)
+}
+
+/// Flattens a layer stack over a transparent backdrop at the given size.
+fn composite_layers(doc: &Document, width: u32, height: u32, layers: &[Layer]) -> Result<PixelBuffer, CompositeError> {
     let row_bytes = width as usize * 4;
     let mut out = vec![0u8; row_bytes * height as usize];
 
-    for layer in &sprite.layers {
+    for layer in layers {
         if !layer.visible || layer.opacity <= 0.0 {
             continue;
         }
@@ -153,8 +171,8 @@ mod tests {
         let mut doc = doc_with_pixel([255, 0, 0, 255]);
         let id = doc.active_sprite().unwrap();
         // Hide the only layer; the composite should be transparent.
-        if let Some(sprite) = doc.sprites.iter_mut().find(|s| s.id == id) {
-            sprite.layers[0].visible = false;
+        if let Some(frame) = doc.sprites.iter_mut().find(|s| s.id == id).and_then(|s| s.active_frame_mut()) {
+            frame.layers[0].visible = false;
         }
         let out = composite_sprite(&doc, id).unwrap();
         assert_eq!(out.pixel(0, 0), Some(Rgba::TRANSPARENT));
@@ -167,11 +185,11 @@ mod tests {
         let mut bottom = ApplyGeneratedAsset::new("b".to_owned(), 1, 1, 4, vec![0, 0, 0, 255]);
         bottom.apply(&mut doc).unwrap();
         let id = doc.active_sprite().unwrap();
-        // Add a white top layer into the same sprite, at half opacity.
+        // Add a white top layer into the same sprite's active frame, at half opacity.
         let white = doc.buffers.insert(PixelBuffer::from_rgba8(1, 1, 4, vec![255, 255, 255, 255]).unwrap());
-        if let Some(sprite) = doc.sprites.iter_mut().find(|s| s.id == id) {
-            let layer_id = sprite.mint_layer_id();
-            sprite.layers.push(crate::Layer {
+        if let Some(frame) = doc.sprites.iter_mut().find(|s| s.id == id).and_then(|s| s.active_frame_mut()) {
+            let layer_id = frame.mint_layer_id();
+            frame.layers.push(crate::Layer {
                 id: layer_id,
                 name: "top".to_owned(),
                 visible: true,

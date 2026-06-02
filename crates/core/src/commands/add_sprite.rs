@@ -1,9 +1,9 @@
 //! [`AddSprite`]: add a blank, single-layer sprite to the document.
 
 use crate::command::{Command, CommandError};
-use crate::document::{Document, Layer, Sprite};
-use crate::ids::{IdCounter, PixelBufferId, SpriteId};
-use crate::pixel::{BlendMode, PixelBuffer};
+use crate::document::{Document, Sprite};
+use crate::ids::{PixelBufferId, SpriteId};
+use crate::pixel::PixelBuffer;
 
 /// The parameters for a new blank sprite.
 #[derive(Clone, Debug)]
@@ -44,23 +44,11 @@ impl Command for AddSprite {
         let proto = self.proto.take().ok_or(CommandError::InvalidState)?;
         let buffer = doc.buffers.insert(PixelBuffer::new(proto.width, proto.height)?);
         let sprite_id = doc.mint_sprite_id();
-        let mut sprite = Sprite {
-            id: sprite_id,
-            name: proto.name,
-            width: proto.width,
-            height: proto.height,
-            layers: Vec::new(),
-            layer_counter: IdCounter::default(),
-        };
-        let layer_id = sprite.mint_layer_id();
-        sprite.layers.push(Layer {
-            id: layer_id,
-            name: "Layer 1".to_owned(),
-            visible: true,
-            opacity: 1.0,
-            blend: BlendMode::Normal,
-            buffer,
-        });
+        let mut sprite = Sprite::new_single_frame(sprite_id, proto.name, proto.width, proto.height);
+        sprite
+            .active_frame_mut()
+            .ok_or(CommandError::InvalidState)?
+            .add_layer("Layer 1".to_owned(), buffer);
         let prev_active = doc.active_sprite;
         doc.sprites.push(sprite);
         doc.active_sprite = Some(sprite_id);

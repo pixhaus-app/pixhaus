@@ -5,9 +5,9 @@
 //! of the generation layer. The generation module builds it from a `GeneratedAsset`.
 
 use crate::command::{Command, CommandError};
-use crate::document::{Document, Layer, Sprite};
-use crate::ids::{IdCounter, PixelBufferId, SpriteId};
-use crate::pixel::{BlendMode, PixelBuffer};
+use crate::document::{Document, Sprite};
+use crate::ids::{PixelBufferId, SpriteId};
+use crate::pixel::PixelBuffer;
 
 /// Records what [`ApplyGeneratedAsset::apply`] inserted, so undo removes exactly that.
 struct Inserted {
@@ -49,23 +49,11 @@ impl Command for ApplyGeneratedAsset {
         let pixels = PixelBuffer::from_rgba8(self.width, self.height, self.stride, rgba)?;
         let buffer = doc.buffers.insert(pixels);
         let sprite_id = doc.mint_sprite_id();
-        let mut sprite = Sprite {
-            id: sprite_id,
-            name: self.name.clone(),
-            width: self.width,
-            height: self.height,
-            layers: Vec::new(),
-            layer_counter: IdCounter::default(),
-        };
-        let layer_id = sprite.mint_layer_id();
-        sprite.layers.push(Layer {
-            id: layer_id,
-            name: self.name.clone(),
-            visible: true,
-            opacity: 1.0,
-            blend: BlendMode::Normal,
-            buffer,
-        });
+        let mut sprite = Sprite::new_single_frame(sprite_id, self.name.clone(), self.width, self.height);
+        sprite
+            .active_frame_mut()
+            .ok_or(CommandError::InvalidState)?
+            .add_layer(self.name.clone(), buffer);
         let prev_active = doc.active_sprite;
         doc.sprites.push(sprite);
         doc.active_sprite = Some(sprite_id);

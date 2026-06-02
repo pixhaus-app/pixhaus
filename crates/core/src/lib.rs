@@ -20,6 +20,7 @@
     allow(clippy::unwrap_used, clippy::expect_used, clippy::disallowed_methods, clippy::panic, clippy::float_cmp)
 )]
 
+pub mod animation;
 pub mod buffer_store;
 pub mod command;
 pub mod commands;
@@ -28,10 +29,11 @@ pub mod document;
 pub mod ids;
 pub mod pixel;
 
+pub use animation::{AnimationClip, LoopMode};
 pub use buffer_store::PixelBufferStore;
 pub use command::{Command, CommandError};
-pub use commands::{AddSprite, ApplyGeneratedAsset, SpriteProto};
-pub use composite::{CompositeError, composite_active, composite_sprite};
-pub use document::{DEFAULT_CANVAS_SIZE, Document, Layer, Sprite};
-pub use ids::{IdCounter, LayerId, PixelBufferId, SpriteId};
+pub use commands::{AddSprite, ApplyGeneratedAnimation, ApplyGeneratedAsset, GeneratedFrameData, SpriteProto};
+pub use composite::{CompositeError, composite_active, composite_frame, composite_sprite};
+pub use document::{DEFAULT_CANVAS_SIZE, DEFAULT_FRAME_DURATION_MS, Document, Frame, Layer, Sprite};
+pub use ids::{ClipId, FrameId, IdCounter, LayerId, PixelBufferId, SpriteId};
 pub use pixel::{BlendMode, PixelBuffer, PixelError, Rgba};

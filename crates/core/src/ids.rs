@@ -12,9 +12,17 @@ use serde::{Deserialize, Serialize};
 #[derive(Copy, Clone, PartialEq, Eq, Hash, Debug, Serialize, Deserialize)]
 pub struct SpriteId(pub u32);
 
-/// Stable identifier for a [`Layer`](crate::Layer) within one sprite.
+/// Stable identifier for a [`Layer`](crate::Layer) within one frame.
 #[derive(Copy, Clone, PartialEq, Eq, Hash, Debug, Serialize, Deserialize)]
 pub struct LayerId(pub u32);
+
+/// Stable identifier for a [`Frame`](crate::Frame) within one sprite.
+#[derive(Copy, Clone, PartialEq, Eq, Hash, Debug, Serialize, Deserialize)]
+pub struct FrameId(pub u32);
+
+/// Stable identifier for an [`AnimationClip`](crate::AnimationClip) within one sprite.
+#[derive(Copy, Clone, PartialEq, Eq, Hash, Debug, Serialize, Deserialize)]
+pub struct ClipId(pub u32);
 
 /// Handle into the [`PixelBufferStore`](crate::PixelBufferStore). Structural data
 /// references pixel bytes by this handle, never by value, so cloning a sprite for an

@@ -5,7 +5,9 @@
 //! sprite/layer/buffer model belongs here so it stays pure and testable.
 
 mod add_sprite;
+mod apply_generated_animation;
 mod apply_generated_asset;
 
 pub use add_sprite::{AddSprite, SpriteProto};
+pub use apply_generated_animation::{ApplyGeneratedAnimation, GeneratedFrameData};
 pub use apply_generated_asset::ApplyGeneratedAsset;
