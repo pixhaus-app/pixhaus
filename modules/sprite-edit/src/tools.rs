@@ -9,42 +9,12 @@ use egui::{Key, KeyboardShortcut, Modifiers};
 use pixhaus_ui::contrib_api::{ContribCtx, HostRegistrar, MsgKey, Tool, ToolId, ToolMeta};
 use pixhaus_ui::icons;
 
-/// Pencil tool id.
-pub const PENCIL: ToolId = ToolId("pencil");
-/// Eraser tool id.
-pub const ERASER: ToolId = ToolId("eraser");
-/// Flood-fill tool id.
-pub const FILL: ToolId = ToolId("fill");
-/// Line tool id.
-pub const LINE: ToolId = ToolId("line");
-/// Rectangle tool id.
-pub const RECTANGLE: ToolId = ToolId("rectangle");
-/// Ellipse tool id.
-pub const ELLIPSE: ToolId = ToolId("ellipse");
-/// Eyedropper tool id.
-pub const EYEDROPPER: ToolId = ToolId("eyedropper");
-/// Marquee selection tool id.
-pub const SELECTION: ToolId = ToolId("selection");
-/// Lasso selection tool id.
-pub const LASSO: ToolId = ToolId("lasso");
-/// Move tool id.
-pub const MOVE: ToolId = ToolId("move");
-/// Transform tool id.
-pub const TRANSFORM: ToolId = ToolId("transform");
-/// Pixel-text tool id.
-pub const TEXT: ToolId = ToolId("text");
-/// Pan (hand) tool id.
-pub const HAND: ToolId = ToolId("hand");
-/// Zoom tool id.
-pub const ZOOM: ToolId = ToolId("zoom");
-/// AI Brush tool id.
-pub const AI_BRUSH: ToolId = ToolId("ai_brush");
-
-/// Full rail order: the manual tools, then the AI Brush last (bible rule 2
-/// ordering). The Draw workspace shows all 15; other workspaces show a subset.
-pub const ALL: [ToolId; 15] = [
-    PENCIL, ERASER, FILL, LINE, RECTANGLE, ELLIPSE, EYEDROPPER, SELECTION, LASSO, MOVE, TRANSFORM, TEXT, HAND, ZOOM, AI_BRUSH,
-];
+// The canonical tool ids and rail order live in the contribution surface
+// (pixhaus_ui::contrib_api) so every workspace consumes one definition. They are
+// re-exported here as `tools::*` (used by the `Tool` impls below) and `tools::ALL`
+// (the rail), the names this crate's call sites already reference.
+pub use pixhaus_ui::contrib_api::TOOL_RAIL as ALL;
+pub use pixhaus_ui::contrib_api::{AI_BRUSH, ELLIPSE, ERASER, EYEDROPPER, FILL, HAND, LASSO, LINE, MOVE, PENCIL, RECTANGLE, SELECTION, TEXT, TRANSFORM, ZOOM};
 
 /// The Pencil tool. Worked `Tool` example: `options_ui` renders the inventory
 /// option row with live widgets bound to throwaway local state.

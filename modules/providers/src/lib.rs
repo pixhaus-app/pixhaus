@@ -11,6 +11,7 @@
 #![cfg_attr(test, allow(clippy::unwrap_used, clippy::expect_used, clippy::disallowed_methods, clippy::panic))]
 
 use std::sync::Arc;
+use std::time::{SystemTime, UNIX_EPOCH};
 
 use pixhaus_services::provider::ProviderRegistry;
 
@@ -40,4 +41,15 @@ pub fn register_openrouter(registry: &mut ProviderRegistry, api_key: String) {
         }
         Err(error) => tracing::warn!(%error, "OpenRouter provider unavailable; using the mock"),
     }
+}
+
+/// Milliseconds since the Unix epoch, saturating to 0 if the clock reads before it.
+/// Both providers stamp `GenerationProvenance.created_unix_ms` with it, so it lives
+/// here rather than as a copy in each.
+pub(crate) fn now_ms() -> u64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .ok()
+        .and_then(|d| u64::try_from(d.as_millis()).ok())
+        .unwrap_or(0)
 }

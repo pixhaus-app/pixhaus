@@ -12,6 +12,7 @@ pub mod ids;
 pub mod module;
 pub mod panel;
 pub mod tool;
+pub mod tool_rail;
 pub mod workspace;
 
 pub use context::{ContribCtx, PanelScope};
@@ -19,6 +20,7 @@ pub use ids::{ActionId, MsgKey, PanelId, ToolId, WorkspaceId};
 pub use module::{ActionDesc, HostRegistrar, MenuGroup, MenuItem, Module};
 pub use panel::{Panel, PanelMeta};
 pub use tool::{Tool, ToolMeta};
+pub use tool_rail::{AI_BRUSH, ELLIPSE, ERASER, EYEDROPPER, FILL, HAND, LASSO, LINE, MOVE, PENCIL, RECTANGLE, SELECTION, TEXT, TOOL_RAIL, TRANSFORM, ZOOM};
 pub use workspace::{StatusItem, Workspace, WorkspaceLayout, WorkspaceMeta};
 
 /// Compile-time dyn-compatibility guard on the actual storage form.

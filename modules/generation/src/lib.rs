@@ -25,6 +25,7 @@ impl Module for GenerationModule {
 
     fn register(&self, host: &mut dyn HostRegistrar) {
         generate::register(host);
+        tracing::info!(module = "generation", "registered the Generate workspace");
     }
 }
 

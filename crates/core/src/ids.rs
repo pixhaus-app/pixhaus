@@ -1,45 +1,49 @@
 //! Stable, typed ids for the domain model.
 //!
-//! Ids are monotonic `u32` newtypes minted from an [`IdCounter`]. A counter never
+//! Ids are monotonic `u64` newtypes minted from an [`IdCounter`]. A counter never
 //! returns the same value twice, even after the thing it identified is deleted
-//! (tombstone-on-delete), so a stale handle can never alias a live one. Newtypes
-//! keep a [`SpriteId`] from ever being passed where a [`LayerId`] is expected.
+//! (tombstone-on-delete), so a stale handle can never alias a live one. The width is
+//! `u64` so the no-reuse guarantee holds for the life of any document (minting one id
+//! per nanosecond would take ~585 years to exhaust the space). Newtypes keep a
+//! [`SpriteId`] from ever being passed where a [`LayerId`] is expected.
 
 use serde::{Deserialize, Serialize};
 
 /// Stable identifier for a [`Sprite`](crate::Sprite) within one
 /// [`Document`](crate::Document).
 #[derive(Copy, Clone, PartialEq, Eq, Hash, Debug, Serialize, Deserialize)]
-pub struct SpriteId(pub u32);
+pub struct SpriteId(pub u64);
 
 /// Stable identifier for a [`Layer`](crate::Layer) within one frame.
 #[derive(Copy, Clone, PartialEq, Eq, Hash, Debug, Serialize, Deserialize)]
-pub struct LayerId(pub u32);
+pub struct LayerId(pub u64);
 
 /// Stable identifier for a [`Frame`](crate::Frame) within one sprite.
 #[derive(Copy, Clone, PartialEq, Eq, Hash, Debug, Serialize, Deserialize)]
-pub struct FrameId(pub u32);
+pub struct FrameId(pub u64);
 
 /// Stable identifier for an [`AnimationClip`](crate::AnimationClip) within one sprite.
 #[derive(Copy, Clone, PartialEq, Eq, Hash, Debug, Serialize, Deserialize)]
-pub struct ClipId(pub u32);
+pub struct ClipId(pub u64);
 
 /// Handle into the [`PixelBufferStore`](crate::PixelBufferStore). Structural data
 /// references pixel bytes by this handle, never by value, so cloning a sprite for an
 /// undo snapshot copies handles, not megabytes of pixels.
 #[derive(Copy, Clone, PartialEq, Eq, Hash, Debug, Serialize, Deserialize)]
-pub struct PixelBufferId(pub u32);
+pub struct PixelBufferId(pub u64);
 
-/// Mints monotonic `u32` ids. Never reuses a value, so a deleted id stays retired
-/// and a dangling handle can never collide with a freshly minted one.
+/// Mints monotonic `u64` ids. Never reuses a value, so a deleted id stays retired
+/// and a dangling handle can never collide with a freshly minted one. The `u64` space
+/// makes exhaustion unreachable for any real document, so the no-reuse guarantee holds
+/// without an overflow guard on the increment.
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 pub struct IdCounter {
-    next: u32,
+    next: u64,
 }
 
 impl IdCounter {
     /// Returns a fresh id, never previously returned by this counter.
-    pub fn mint(&mut self) -> u32 {
+    pub fn mint(&mut self) -> u64 {
         let value = self.next;
         self.next += 1;
         value

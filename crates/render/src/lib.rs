@@ -367,6 +367,33 @@ fn srgb_to_linear(c: f32) -> f32 {
 mod tests {
     use super::ViewportRenderer;
 
+    /// `srgb_to_linear` is the color-correctness transfer the chrome colors pass
+    /// through for an sRGB target; pin its fixed points and both segments. No GPU, so
+    /// this runs on headless CI where the device tests below skip.
+    #[test]
+    fn srgb_to_linear_maps_known_anchors() {
+        // 0 and 1 are fixed points of the transfer.
+        assert!(super::srgb_to_linear(0.0).abs() < 1e-6);
+        assert!((super::srgb_to_linear(1.0) - 1.0).abs() < 1e-6);
+        // Below the 0.04045 breakpoint the transfer is the linear c / 12.92 segment.
+        let toe = 0.04_f32;
+        assert!((super::srgb_to_linear(toe) - toe / 12.92).abs() < 1e-6);
+        // Mid-gray sits on the power segment at ~0.214.
+        let mid = super::srgb_to_linear(0.5);
+        assert!((mid - 0.214_f32).abs() < 1e-3, "0.5 sRGB should linearize to ~0.214, got {mid}");
+    }
+
+    /// `put` is the std140 byte packer behind `set_params`; a wrong offset silently
+    /// corrupts the uniform, so pin the little-endian write and that it stays in lane.
+    #[test]
+    fn put_writes_a_little_endian_f32_at_the_offset() {
+        let mut bytes = [0u8; 12];
+        super::put(&mut bytes, 4, 1.0_f32);
+        assert_eq!(&bytes[0..4], &[0, 0, 0, 0], "bytes before the offset are untouched");
+        assert_eq!(&bytes[4..8], &1.0_f32.to_le_bytes(), "the f32 lands little-endian at the offset");
+        assert_eq!(&bytes[8..12], &[0, 0, 0, 0], "bytes after the write are untouched");
+    }
+
     /// Builds the renderer and uploads two differently-sized frames (forcing a
     /// texture reallocation) on a real device when one is available.
     ///

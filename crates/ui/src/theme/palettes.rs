@@ -254,6 +254,8 @@ fn mock_colors() -> MockColors {
             rgb(0x9a, 0x58, 0xc0), // violet
             rgb(0xc9, 0xa2, 0x3a), // gold
         ],
+        // Near-black ink for clip-name labels drawn over the light clip fills above.
+        clip_ink: rgb(0x14, 0x12, 0x18),
         // Warm thumbnail tints for preset/sprite grids.
         thumbnails: [
             rgb(0x5a, 0x3a, 0x22),

@@ -28,6 +28,7 @@ impl Module for SpriteEditModule {
         // Tools first, then the workspace + shared panels + actions + menus.
         tools::register(host);
         draw::register(host);
+        tracing::info!(module = "sprite-edit", "registered the sprite-editing surface");
     }
 }
 

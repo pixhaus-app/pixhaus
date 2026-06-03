@@ -315,7 +315,7 @@ mod tests {
         assert_eq!(layout.default_tool, HAND);
         assert_eq!(layout.primary_tools, vec![HAND, ZOOM]);
         assert_eq!(layout.status_items.len(), 2);
-        assert_eq!(layout.status_items[0].text, "PNG + sheet");
+        assert_eq!(layout.status_items[0].text, MsgKey("workspace.export.status.format").tr());
         assert_eq!(layout.status_items[1].text, "0 warnings");
     }
 

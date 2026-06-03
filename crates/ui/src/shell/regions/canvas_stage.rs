@@ -391,12 +391,15 @@ fn zoom_control(ui: &egui::Ui, stage: egui::Rect, zoom: f32, pixel_perfect: bool
                     let mode_color = if pixel_perfect { theme.accent.base } else { theme.roles.text_secondary };
                     if ui
                         .add(egui::Button::new(egui::RichText::new(crate::icons::GRID).color(mode_color)).frame(false))
-                        .on_hover_text("Pixel-perfect zoom")
+                        .on_hover_text(i18n::tr("app.ui.canvas.pixel_perfect_zoom"))
                         .clicked()
                     {
                         intents.push(Intent::ToggleZoomMode);
                     }
-                    if icon_button(ui, theme, crate::icons::FIT).on_hover_text("Fit to window").clicked() {
+                    if icon_button(ui, theme, crate::icons::FIT)
+                        .on_hover_text(i18n::tr("app.ui.canvas.fit_to_window"))
+                        .clicked()
+                    {
                         intents.push(Intent::FitView);
                     }
                 });

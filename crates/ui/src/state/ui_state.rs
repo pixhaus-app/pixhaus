@@ -55,7 +55,7 @@ pub struct UiState {
 /// Transient animation-playback state. View-only: the canvas renders the
 /// playhead-selected frame and the document's `active_frame` is never touched, so
 /// nothing here bumps the document revision or emits a command (no undo pollution).
-#[derive(Copy, Clone, Debug, PartialEq)]
+#[derive(Copy, Clone, Debug, PartialEq, Default)]
 pub struct PlaybackState {
     /// Whether the clip is advancing. `false` = paused/stopped (the playhead freezes).
     pub playing: bool,
@@ -66,16 +66,6 @@ pub struct PlaybackState {
     /// The clip whose range is playing. `None` = the sprite's first clip, or the
     /// implicit "all frames" range when the sprite has no clips.
     pub clip: Option<ClipId>,
-}
-
-impl Default for PlaybackState {
-    fn default() -> Self {
-        Self {
-            playing: false,
-            playhead_seconds: 0.0,
-            clip: None,
-        }
-    }
 }
 
 impl Default for UiState {

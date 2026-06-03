@@ -8,7 +8,7 @@
 //! idle animation it bobs that diamond vertically across the frames so the result is
 //! visibly animated while staying deterministic.
 
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use std::time::Duration;
 
 use tokio_util::sync::CancellationToken;
 
@@ -166,7 +166,7 @@ fn provenance(input: &GenerationJobInput, model: &str) -> GenerationProvenance {
         seed: input.seed,
         provider_id: "mock".to_owned(),
         model: model.to_owned(),
-        created_unix_ms: now_ms(),
+        created_unix_ms: crate::now_ms(),
     }
 }
 
@@ -186,14 +186,6 @@ fn hash_prompt(prompt: &str, seed: u64) -> u64 {
         hash = hash.wrapping_mul(0x0000_0100_0000_01b3);
     }
     hash
-}
-
-fn now_ms() -> u64 {
-    SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .ok()
-        .and_then(|d| u64::try_from(d.as_millis()).ok())
-        .unwrap_or(0)
 }
 
 #[cfg(test)]

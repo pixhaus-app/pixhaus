@@ -12,8 +12,6 @@
 //! app from the environment and passed in here - never logged, never stored in a
 //! result. Per-pixel decode and slicing run on a blocking thread, off the reactor.
 
-use std::time::{SystemTime, UNIX_EPOCH};
-
 use base64::Engine as _;
 use base64::engine::general_purpose::STANDARD;
 use tokio_util::sync::CancellationToken;
@@ -124,7 +122,7 @@ impl Provider for OpenRouterProvider {
                 seed: input.seed,
                 provider_id: PROVIDER_ID.to_owned(),
                 model: self.model.clone(),
-                created_unix_ms: now_ms(),
+                created_unix_ms: crate::now_ms(),
             };
             tokio::task::spawn_blocking(move || decode_result(&data_url, decode, provenance))
                 .await
@@ -194,12 +192,32 @@ fn decode_result(data_url: &str, kind: DecodeKind, provenance: GenerationProvena
     }
 }
 
+/// Upper bound, per side in pixels, on a decoded provider image. Generated anchors
+/// (512px) and idle sheets sit far below this; the cap exists only to reject a hostile
+/// or malformed response (a decompression bomb) before it allocates, so a bad job
+/// surfaces as an error instead of OOM-ing the app (bible 24.3). Matches the project's
+/// 8192-px canvas ceiling.
+const MAX_DECODE_DIM: u32 = 8192;
+
 /// Strips the `data:image/png;base64,` prefix, base64-decodes, and decodes the PNG to
 /// tightly-packed RGBA8, returning `(rgba, width, height)`.
+///
+/// The PNG is untrusted network input, so it is decoded through [`image::ImageReader`]
+/// with an explicit dimension [`image::Limits`] rather than the bare
+/// `load_from_memory*` free function: a response declaring enormous dimensions is
+/// rejected as [`ProviderError::BadOutput`] instead of driving a huge allocation. This
+/// already runs on a blocking thread (see [`OpenRouterProvider::generate`]).
 fn decode_png_data_url(data_url: &str) -> Result<(Vec<u8>, u32, u32), ProviderError> {
     let b64 = data_url.split_once(',').map_or(data_url, |(_, payload)| payload);
     let bytes = STANDARD.decode(b64).map_err(|e| ProviderError::BadOutput(format!("base64 decode: {e}")))?;
-    let image = image::load_from_memory_with_format(&bytes, image::ImageFormat::Png).map_err(|e| ProviderError::BadOutput(format!("png decode: {e}")))?;
+
+    let mut limits = image::Limits::default();
+    limits.max_image_width = Some(MAX_DECODE_DIM);
+    limits.max_image_height = Some(MAX_DECODE_DIM);
+    let mut reader = image::ImageReader::with_format(std::io::Cursor::new(bytes), image::ImageFormat::Png);
+    reader.limits(limits);
+    let image = reader.decode().map_err(|e| ProviderError::BadOutput(format!("png decode: {e}")))?;
+
     let rgba = image.to_rgba8();
     let (width, height) = rgba.dimensions();
     Ok((rgba.into_raw(), width, height))
@@ -213,14 +231,6 @@ fn encode_reference(reference: &ReferenceImage) -> Result<String, ProviderError>
         .write_image(&reference.rgba, reference.width, reference.height, image::ExtendedColorType::Rgba8)
         .map_err(|e| ProviderError::BadOutput(format!("reference png encode: {e}")))?;
     Ok(format!("data:image/png;base64,{}", STANDARD.encode(&png)))
-}
-
-fn now_ms() -> u64 {
-    SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .ok()
-        .and_then(|d| u64::try_from(d.as_millis()).ok())
-        .unwrap_or(0)
 }
 
 #[cfg(test)]

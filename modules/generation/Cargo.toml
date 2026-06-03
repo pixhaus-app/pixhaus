@@ -10,6 +10,7 @@ homepage.workspace = true
 
 [dependencies]
 egui.workspace = true
+tracing.workspace = true
 pixhaus-ui = { path = "../../crates/ui" }
 
 [lints]

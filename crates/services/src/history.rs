@@ -2,15 +2,16 @@
 //!
 //! [`History`] is the one entry point for mutating a [`Document`]: a command is
 //! applied through [`History::execute`], which records it for undo. The stack is
-//! linear (no branching) and memory-capped — when the undo data it holds exceeds the
-//! cap, the oldest entries are evicted (the action stays done, it just falls out of
-//! the undo window). Branching undo is a documented later refinement.
+//! linear (no branching) and memory-capped across both the undo and redo stacks —
+//! when the command data they hold exceeds the cap, redo entries are shed first and
+//! then the oldest undo entries (the action stays done, it just falls out of the undo
+//! window). Branching undo is a documented later refinement.
 
 use pixhaus_core::{Command, Document};
 
 use crate::error::ServiceError;
 
-/// Default cap on undo-stack memory: 256 MiB of command-held undo data.
+/// Default cap on history memory: 256 MiB of command-held undo/redo data.
 const DEFAULT_CAP_BYTES: usize = 256 * 1024 * 1024;
 
 /// The command executor plus a linear, memory-capped undo/redo stack over one
@@ -20,9 +21,10 @@ pub struct History {
     done: Vec<Box<dyn Command>>,
     /// Undone commands, available to redo; cleared on a fresh `execute`.
     undone: Vec<Box<dyn Command>>,
-    /// Running sum of `estimated_size_bytes` over `done`, for the cap.
+    /// Running sum of `estimated_size_bytes` over both `done` and `undone` — the total
+    /// command memory the history holds — measured against the cap.
     bytes: usize,
-    /// Eviction threshold for the undo stack's held memory.
+    /// Eviction threshold for the total command memory held across undo and redo.
     cap_bytes: usize,
 }
 
@@ -58,8 +60,10 @@ impl History {
     #[tracing::instrument(skip_all, fields(command = cmd.label_key()))]
     pub fn execute(&mut self, doc: &mut Document, mut cmd: Box<dyn Command>) -> Result<(), ServiceError> {
         cmd.apply(doc)?;
-        // A fresh edit invalidates any redo path.
-        self.undone.clear();
+        // A fresh edit invalidates any redo path; its commands stop counting too.
+        for undone in self.undone.drain(..) {
+            self.bytes = self.bytes.saturating_sub(undone.estimated_size_bytes());
+        }
         self.bytes = self.bytes.saturating_add(cmd.estimated_size_bytes());
         self.done.push(cmd);
         self.evict_over_cap();
@@ -73,9 +77,9 @@ impl History {
     /// [`ServiceError::Command`] if the command's `undo` fails.
     pub fn undo(&mut self, doc: &mut Document) -> Result<(), ServiceError> {
         let mut cmd = self.done.pop().ok_or(ServiceError::NothingToUndo)?;
-        // Account for the removal while the command is still in its applied shape.
-        self.bytes = self.bytes.saturating_sub(cmd.estimated_size_bytes());
         cmd.undo(doc)?;
+        // The command stays resident on the redo stack, so the total is unchanged — the
+        // cap counts both stacks (see `evict_over_cap`).
         self.undone.push(cmd);
         Ok(())
     }
@@ -88,7 +92,7 @@ impl History {
     pub fn redo(&mut self, doc: &mut Document) -> Result<(), ServiceError> {
         let mut cmd = self.undone.pop().ok_or(ServiceError::NothingToRedo)?;
         cmd.apply(doc)?;
-        self.bytes = self.bytes.saturating_add(cmd.estimated_size_bytes());
+        // Moving back onto the undo stack leaves the total unchanged.
         self.done.push(cmd);
         Ok(())
     }
@@ -113,11 +117,20 @@ impl History {
         self.undone.last().map(|c| c.label_key())
     }
 
-    /// Drops the oldest undo entries until under the cap, always keeping at least one.
+    /// Sheds held command memory until under the cap. Redo entries go first (the most
+    /// expendable under memory pressure, oldest end first), then the oldest undo
+    /// entries; the most recent undo step is always kept.
     fn evict_over_cap(&mut self) {
-        while self.bytes > self.cap_bytes && self.done.len() > 1 {
-            let evicted = self.done.remove(0);
-            self.bytes = self.bytes.saturating_sub(evicted.estimated_size_bytes());
+        while self.bytes > self.cap_bytes {
+            if !self.undone.is_empty() {
+                let evicted = self.undone.remove(0);
+                self.bytes = self.bytes.saturating_sub(evicted.estimated_size_bytes());
+            } else if self.done.len() > 1 {
+                let evicted = self.done.remove(0);
+                self.bytes = self.bytes.saturating_sub(evicted.estimated_size_bytes());
+            } else {
+                break;
+            }
         }
     }
 }
@@ -211,5 +224,20 @@ mod tests {
         assert!(history.bytes <= 100, "held {} bytes", history.bytes);
         // The most recent edit is always retained.
         assert!(history.can_undo());
+    }
+
+    #[test]
+    fn redo_stack_counts_against_the_cap() {
+        // Two heavy commands fit (80 <= 100). Undoing both moves them to the redo
+        // stack, where they still hold memory — so the total stays accounted, not
+        // reset to zero (the cap covers both stacks).
+        let mut doc = Document::new();
+        let mut history = History::with_cap(100);
+        history.execute(&mut doc, Box::new(Heavy { bytes: 40 })).unwrap();
+        history.execute(&mut doc, Box::new(Heavy { bytes: 40 })).unwrap();
+        history.undo(&mut doc).unwrap();
+        history.undo(&mut doc).unwrap();
+        assert_eq!(history.bytes, 80, "redo data stays counted against the cap");
+        assert!(history.can_redo());
     }
 }

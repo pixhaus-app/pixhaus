@@ -9,7 +9,7 @@
 
 use egui::{Key, KeyboardShortcut, Modifiers, Sense, Vec2};
 use pixhaus_ui::contrib_api::{
-    ActionDesc, ActionId, HostRegistrar, MsgKey, Panel, PanelId, PanelMeta, PanelScope, StatusItem, ToolId, Workspace, WorkspaceId, WorkspaceLayout,
+    ActionDesc, ActionId, HostRegistrar, MsgKey, PENCIL, Panel, PanelId, PanelMeta, PanelScope, StatusItem, TOOL_RAIL, Workspace, WorkspaceId, WorkspaceLayout,
     WorkspaceMeta,
 };
 use pixhaus_ui::region::Region;
@@ -37,9 +37,6 @@ pub const TILE_VARIANTS: PanelId = PanelId("tile-variants");
 const ASSETS: PanelId = PanelId("assets");
 const CONSOLE: PanelId = PanelId("console");
 
-// The default tool is the shared Pencil (owned by sprite-edit).
-const PENCIL: ToolId = ToolId("pencil");
-
 // AI Tile Assistant quick-actions. Namespaced under `tile.` so they never collide
 // with sprite-edit's `ai.*` action ids.
 const TILE_MAKE_SEAMLESS: ActionId = ActionId("tile.make-seamless");
@@ -49,30 +46,6 @@ const TILE_FIX_SEAMS: ActionId = ActionId("tile.fix-seams");
 
 // The Tileset "+ New Tile" affordance.
 const TILE_NEW: ActionId = ActionId("tile.new");
-
-/// The full 15-tool rail in rail order (shared editing tools owned by sprite-edit).
-fn full_rail() -> Vec<ToolId> {
-    [
-        "pencil",
-        "eraser",
-        "fill",
-        "line",
-        "rectangle",
-        "ellipse",
-        "eyedropper",
-        "selection",
-        "lasso",
-        "move",
-        "transform",
-        "text",
-        "hand",
-        "zoom",
-        "ai_brush",
-    ]
-    .into_iter()
-    .map(ToolId)
-    .collect()
-}
 
 /// The Tiles workspace: tileset and terrain authoring atop the shared editing core
 /// (bible rule 2). Owns layout only, no data.
@@ -96,7 +69,7 @@ impl Workspace for TilesWorkspace {
         WorkspaceLayout {
             right_dock: vec![TILESET, RULE_TYPE, MATERIAL, SEAM_QA, AI_TILE_ASSISTANT],
             bottom_tray: vec![TILE_VARIANTS, ASSETS, CONSOLE],
-            primary_tools: full_rail(),
+            primary_tools: TOOL_RAIL.to_vec(),
             default_tool: PENCIL,
             status_items: vec![
                 StatusItem {

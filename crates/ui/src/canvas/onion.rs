@@ -34,8 +34,11 @@ pub struct Ghost {
 /// has a single frame.
 #[derive(Default)]
 pub struct OnionCache {
-    /// `(revision, centered frame)` the cache was built for; `None` forces a rebuild.
-    key: Option<(u64, FrameId)>,
+    /// `(revision, sprite, centered frame)` the cache was built for; `None` forces a
+    /// rebuild. The `SpriteId` is part of the key because `FrameId`s are minted
+    /// per-sprite, so they repeat across sprites — without it a sprite switch at the
+    /// same revision could serve the previous sprite's ghosts.
+    key: Option<(u64, SpriteId, FrameId)>,
     ghosts: Vec<Ghost>,
 }
 
@@ -43,7 +46,7 @@ impl OnionCache {
     /// The neighbor ghosts to draw under `center`, rebuilding if the document or centered
     /// frame changed. The immediate previous and next frames (when they exist).
     pub fn ghosts(&mut self, ctx: &Context, doc: &Document, sprite: SpriteId, center: FrameId) -> &[Ghost] {
-        let key = Some((doc.revision(), center));
+        let key = Some((doc.revision(), sprite, center));
         if self.key != key {
             self.key = key;
             self.ghosts = build_ghosts(ctx, doc, sprite, center);

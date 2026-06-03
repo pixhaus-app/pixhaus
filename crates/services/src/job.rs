@@ -14,6 +14,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::mpsc::Sender;
 
 use tokio_util::sync::CancellationToken;
+use tracing::Instrument;
 
 use crate::provider::{Provider, ProviderError};
 use crate::result_store::ResultStore;
@@ -162,7 +163,6 @@ impl JobManager {
     /// Spawns the provider future as a tokio task that emits `Status(Running)`, then
     /// deposits the asset into `results` and emits `Completed` on success, or
     /// `Failed`/`Cancelled` otherwise.
-    #[tracing::instrument(skip_all, fields(provider = %provider.id().0))]
     pub fn submit(&mut self, provider: Arc<dyn Provider>, input: GenerationJobInput, results: Arc<ResultStore>) -> JobId {
         let id = JobId(self.counter.fetch_add(1, Ordering::Relaxed));
         let cancel = CancellationToken::new();
@@ -170,35 +170,46 @@ impl JobManager {
         self.cancels.insert(id, cancel.clone());
         let out = self.out.clone();
 
-        tokio::spawn(async move {
-            let _ = out.send(JobMsg::Status {
-                job: id,
-                status: JobStatus::Running,
-            });
-            let outcome = tokio::select! {
-                biased;
-                () = cancel.cancelled() => Err(ProviderError::Cancelled),
-                result = provider.generate(&input, cancel.clone()) => result,
-            };
-            match outcome {
-                Ok(result) => {
-                    results.put(id, result);
-                    let _ = out.send(JobMsg::Completed { job: id });
-                }
-                Err(ProviderError::Cancelled) => {
-                    let _ = out.send(JobMsg::Status {
-                        job: id,
-                        status: JobStatus::Cancelled,
-                    });
-                }
-                Err(error) => {
-                    let _ = out.send(JobMsg::Failed {
-                        job: id,
-                        error: error.to_string(),
-                    });
+        // The work runs detached on the runtime, so it carries its own span: a
+        // #[instrument] on this synchronous fn would cover only the setup that returns
+        // the id, not the off-thread provider call (services CLAUDE.md, bible 13.6).
+        let span = tracing::info_span!("generation_job", job = id.0, provider = %provider.id().0);
+        tokio::spawn(
+            async move {
+                tracing::info!("job started");
+                let _ = out.send(JobMsg::Status {
+                    job: id,
+                    status: JobStatus::Running,
+                });
+                let outcome = tokio::select! {
+                    biased;
+                    () = cancel.cancelled() => Err(ProviderError::Cancelled),
+                    result = provider.generate(&input, cancel.clone()) => result,
+                };
+                match outcome {
+                    Ok(result) => {
+                        results.put(id, result);
+                        tracing::info!("job complete");
+                        let _ = out.send(JobMsg::Completed { job: id });
+                    }
+                    Err(ProviderError::Cancelled) => {
+                        tracing::info!("job cancelled");
+                        let _ = out.send(JobMsg::Status {
+                            job: id,
+                            status: JobStatus::Cancelled,
+                        });
+                    }
+                    Err(error) => {
+                        tracing::error!(%error, "job failed");
+                        let _ = out.send(JobMsg::Failed {
+                            job: id,
+                            error: error.to_string(),
+                        });
+                    }
                 }
             }
-        });
+            .instrument(span),
+        );
 
         id
     }
@@ -368,5 +379,12 @@ mod tests {
             })
         ));
         assert_eq!(results.len(), 0);
+    }
+
+    #[test]
+    fn grid_cell_count_multiplies_cols_by_rows() {
+        assert_eq!(Grid { cols: 4, rows: 2 }.cell_count(), 8);
+        assert_eq!(Grid { cols: 1, rows: 1 }.cell_count(), 1);
+        assert_eq!(Grid { cols: 0, rows: 5 }.cell_count(), 0, "a zero dimension yields no cells");
     }
 }

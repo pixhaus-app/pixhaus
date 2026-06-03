@@ -97,6 +97,10 @@ app.ui.status.unsaved:
   es: Cambios sin guardar
 app.ui.status.grid:
   en: "Grid %{mode}"
+app.ui.canvas.pixel_perfect_zoom:
+  en: Pixel-perfect zoom
+app.ui.canvas.fit_to_window:
+  en: Fit to window
 app.ui.ai_status.ready:
   en: AI Ready
 app.ui.ai_status.working:

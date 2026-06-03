@@ -104,4 +104,36 @@ mod tests {
         let tx = Transaction::new("command.test.group");
         assert_eq!(tx.label_key(), "command.test.group");
     }
+
+    /// A command that always fails to apply, to drive the rollback path.
+    struct FailingApply;
+
+    impl Command for FailingApply {
+        fn apply(&mut self, _doc: &mut Document) -> Result<(), CommandError> {
+            Err(CommandError::InvalidState)
+        }
+        fn undo(&mut self, _doc: &mut Document) -> Result<(), CommandError> {
+            Ok(())
+        }
+        fn label_key(&self) -> &'static str {
+            "command.test.failing"
+        }
+        fn estimated_size_bytes(&self) -> usize {
+            0
+        }
+    }
+
+    #[test]
+    fn a_failed_child_rolls_back_the_applied_ones() {
+        let mut doc = Document::new();
+        let mut tx = Transaction::new("command.test.group");
+        tx.push(add("a"));
+        tx.push(Box::new(FailingApply));
+        tx.push(add("b"));
+
+        // The first child applies, the second fails: the transaction reports the error
+        // and rolls the first one back, leaving the document untouched.
+        assert!(matches!(tx.apply(&mut doc), Err(CommandError::InvalidState)));
+        assert_eq!(doc.sprites().len(), 0, "the applied child was rolled back");
+    }
 }

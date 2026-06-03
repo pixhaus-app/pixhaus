@@ -9,8 +9,8 @@
 
 use egui::{Align2, FontId, Key, KeyboardShortcut, Modifiers, Sense, Stroke, Vec2};
 use pixhaus_ui::contrib_api::{
-    ActionDesc, ActionId, HostRegistrar, MenuGroup, MenuItem, MsgKey, Panel, PanelId, PanelMeta, PanelScope, StatusItem, ToolId, Workspace, WorkspaceId,
-    WorkspaceLayout, WorkspaceMeta,
+    ActionDesc, ActionId, HostRegistrar, MenuGroup, MenuItem, MsgKey, PENCIL, Panel, PanelId, PanelMeta, PanelScope, StatusItem, TOOL_RAIL, Workspace,
+    WorkspaceId, WorkspaceLayout, WorkspaceMeta,
 };
 use pixhaus_ui::region::Region;
 use pixhaus_ui::state::intent::Intent;
@@ -32,9 +32,6 @@ const SPRITES: PanelId = PanelId("sprites");
 const FRAMES: PanelId = PanelId("frames");
 const CONSOLE: PanelId = PanelId("console");
 
-// The default tool is the shared Pencil (owned by sprite-edit).
-const PENCIL: ToolId = ToolId("pencil");
-
 // AI Animation Assistant quick-actions. Namespaced under `anim.` so they never
 // collide with sprite-edit's `ai.*` action ids.
 const ANIM_INBETWEEN: ActionId = ActionId("anim.in-between-frames");
@@ -48,30 +45,6 @@ const ANIM_VARIATIONS: ActionId = ActionId("anim.create-variations");
 const FRAME_ADD: ActionId = ActionId("frame.add");
 const FRAME_DUPLICATE: ActionId = ActionId("frame.duplicate");
 const FRAME_DELETE: ActionId = ActionId("frame.delete");
-
-/// The full 15-tool rail in rail order (shared editing tools owned by sprite-edit).
-fn full_rail() -> Vec<ToolId> {
-    [
-        "pencil",
-        "eraser",
-        "fill",
-        "line",
-        "rectangle",
-        "ellipse",
-        "eyedropper",
-        "selection",
-        "lasso",
-        "move",
-        "transform",
-        "text",
-        "hand",
-        "zoom",
-        "ai_brush",
-    ]
-    .into_iter()
-    .map(ToolId)
-    .collect()
-}
 
 /// The Animate workspace: editing the sprite over time. Reuses the shared editing
 /// panels by id (bible rule 2); owns layout only, no data.
@@ -95,7 +68,7 @@ impl Workspace for AnimateWorkspace {
         WorkspaceLayout {
             right_dock: vec![LAYERS, SPRITES, FRAMES, CLIP_PROPERTIES, AI_ANIM_ASSISTANT],
             bottom_tray: vec![TIMELINE, FRAMES, CONSOLE],
-            primary_tools: full_rail(),
+            primary_tools: TOOL_RAIL.to_vec(),
             default_tool: PENCIL,
             // The live frame count and fps now read off the Timeline panel (driven by
             // the active sprite); the status bar keeps only the onion-skin chrome
@@ -270,7 +243,7 @@ impl Panel for TimelinePanel {
         // Band 2 - the sprite's real clips, each a span over its frame range; the
         // selected clip gets an accent outline. Clip names are mid-light, so dark ink.
         let clips_top = rect.top();
-        let clip_ink = egui::Color32::from_rgb(0x14, 0x12, 0x18);
+        let clip_ink = theme.mock.clip_ink;
         for (i, clip) in clips.iter().enumerate() {
             let start = clip.start.min(frames - 1);
             let end = clip.end.min(frames - 1);
@@ -451,11 +424,9 @@ mod tests {
     }
 
     #[test]
-    fn full_rail_is_the_fifteen_tools_in_order() {
-        let rail = full_rail();
-        assert_eq!(rail.len(), 15);
-        assert_eq!(rail[0], PENCIL);
-        assert_eq!(rail[14], ToolId("ai_brush"));
+    fn animate_uses_the_canonical_tool_rail() {
+        // Animate draws the same shared rail every workspace consumes, in order.
+        assert_eq!(AnimateWorkspace.layout().primary_tools, TOOL_RAIL.to_vec());
     }
 
     #[test]

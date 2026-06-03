@@ -44,6 +44,10 @@ pub struct MockColors {
     pub palette: [Color32; 24],
     /// Five muted clip-span hues for the timeline (green, blue, orange, violet, gold).
     pub clips: [Color32; 5],
+    /// Dark ink for text drawn over the light `clips` hues (clip names on the
+    /// timeline). The clip fills are mid-light decorative colors, so their labels take
+    /// a dark, legibility-chosen ink rather than a role color (see the struct note).
+    pub clip_ink: Color32,
     /// A small set of warm thumbnail tints so preset/sprite grids read with color
     /// instead of flat checker.
     pub thumbnails: [Color32; 6],
