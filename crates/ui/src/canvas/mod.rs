@@ -6,4 +6,6 @@
 //! zoom anchored under the cursor. It is egui-value-typed (`Vec2`/`Rect`/`Pos2`) but
 //! frame-free, so it is unit-tested without a `Context`, like [`crate::playback`].
 
+pub mod onion;
+pub mod overlay;
 pub mod view;

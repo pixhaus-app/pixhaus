@@ -96,14 +96,10 @@ pub fn show(host: &mut Host, ui: &mut egui::Ui) {
         let shadow_near = artboard.translate(egui::vec2(3.0, 5.0));
         canvas.rect_filled(shadow_near, egui::CornerRadius::ZERO, egui::Color32::from_black_alpha(130));
 
-        // 5. Transparency checkerboard behind the artboard.
-        paint_checkerboard(&canvas, artboard, theme);
-
-        // 6. Resolve which frame to display, then recomposite + upload only when it
-        //    changed (the playhead picks the frame during playback; otherwise the range
-        //    start / active frame). A transient view choice — the document is untouched,
-        //    so the dirty gate fires on a revision OR displayed-frame change. `None`
-        //    reuses the retained GPU texture.
+        // 5. Resolve which frame to display (the playhead picks it during playback;
+        //    otherwise the range start / active frame). A transient view choice — the
+        //    document is untouched, so the dirty gate below fires on a revision OR
+        //    displayed-frame change.
         let displayed_frame: Option<pixhaus_core::FrameId> = edit.document.active_sprite().and_then(|id| edit.document.sprite(id)).and_then(|sprite| {
             let range = crate::playback::resolve_range(sprite, state.ui.playback.clip);
             let offset = crate::playback::playhead_index(state.ui.playback.playhead_seconds, range.fps, range.frame_count, range.loop_mode);
@@ -111,6 +107,22 @@ pub fn show(host: &mut Host, ui: &mut egui::Ui) {
             sprite.frames().get(index).or_else(|| sprite.active_frame()).map(|frame| frame.id)
         });
 
+        // 6. Transparency checkerboard behind the artboard.
+        paint_checkerboard(&canvas, artboard, theme);
+
+        // 7. Onion-skin ghosts of the neighbor frames, under the current frame. Real data
+        //    (frames live in core); off by default. The cache is cleared when disabled so
+        //    its textures free.
+        if state.ui.onion_skin
+            && let (Some(sprite_id), Some(center)) = (edit.document.active_sprite(), displayed_frame)
+        {
+            paint_onion(&canvas, artboard, edit.onion.ghosts(ui.ctx(), &edit.document, sprite_id, center), theme);
+        } else {
+            edit.onion.clear();
+        }
+
+        // 8. Recomposite + upload the current frame only when it changed; `None` reuses
+        //    the retained GPU texture. Then blit it via the wgpu callback.
         let revision = edit.document.revision();
         let needs_upload = revision != edit.last_uploaded_revision || displayed_frame != edit.last_uploaded_frame;
         let canvas_frame = if needs_upload {
@@ -134,12 +146,18 @@ pub fn show(host: &mut Host, ui: &mut egui::Ui) {
         };
         canvas.add(egui_wgpu::Callback::new_paint_callback(artboard, CanvasCallback { frame: canvas_frame }));
 
-        // 7. Grid lines: the major grid (8/16 sprite px) plus a per-pixel grid once the
+        // 9. View overlays over the frame, under the HUD: the selection marquee and the
+        //    active tool's preview. Scaffolds — no data until core's selection model and
+        //    the tools land, so they draw nothing today but hold their place in the order.
+        crate::canvas::overlay::paint_selection(&canvas, artboard, scale, None, theme);
+        crate::canvas::overlay::paint_tool_preview(&canvas, artboard, scale, None, theme);
+
+        // 10. Grid lines: the major grid (8/16 sprite px) plus a per-pixel grid once the
         //    board is zoomed in far enough to read it.
         paint_grid(&canvas, artboard, scale, state.ui.grid, theme);
 
-        // 8. Hover crosshair through the pixel under the pointer (Tier-2 tool foundation),
-        //    suppressed while panning so a drag stays clean.
+        // 11. Hover crosshair through the pixel under the pointer (Tier-2 tool
+        //    foundation), suppressed while panning so a drag stays clean.
         let hover_pixel = hovered_pixel(response.hover_pos(), artboard, scale, (sprite_w, sprite_h));
         let panning = is_panning(ui, &response);
         if let Some(pixel) = hover_pixel
@@ -148,7 +166,7 @@ pub fn show(host: &mut Host, ui: &mut egui::Ui) {
             paint_crosshair(&canvas, artboard, scale, pixel, theme);
         }
 
-        // 9. The board frame: a 1.5px border so its edge reads against the stage.
+        // 12. The board frame: a 1.5px border so its edge reads against the stage.
         canvas.rect_stroke(
             artboard,
             egui::CornerRadius::ZERO,
@@ -156,7 +174,7 @@ pub fn show(host: &mut Host, ui: &mut egui::Ui) {
             egui::StrokeKind::Outside,
         );
 
-        // 10. Floating HUD (lower-left) and zoom control (lower-right).
+        // 13. Floating HUD (lower-left) and zoom control (lower-right).
         let readout = HudReadout {
             size: (sprite_w, sprite_h),
             zoom: state.ui.zoom,
@@ -317,6 +335,21 @@ fn paint_crosshair(painter: &egui::Painter, board: egui::Rect, scale: f32, pixel
     let stroke = egui::Stroke::new(1.0, theme.roles.text_secondary.gamma_multiply(0.5));
     painter.line_segment([egui::pos2(board.min.x, center.y), egui::pos2(board.max.x, center.y)], stroke);
     painter.line_segment([egui::pos2(center.x, board.min.y), egui::pos2(center.x, board.max.y)], stroke);
+}
+
+/// Draw the onion-skin ghosts over the artboard, tinting past frames with the warning
+/// role and future frames with the accent, both dimmed and translucent so they read as
+/// references behind the current frame.
+fn paint_onion(painter: &egui::Painter, artboard: egui::Rect, ghosts: &[crate::canvas::onion::Ghost], theme: &Theme) {
+    use crate::canvas::onion::Neighbor;
+    let uv = egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1.0, 1.0));
+    for ghost in ghosts {
+        let tint = match ghost.neighbor {
+            Neighbor::Past => theme.roles.warning.gamma_multiply(0.5),
+            Neighbor::Future => theme.accent.base.gamma_multiply(0.5),
+        };
+        painter.image(ghost.texture.id(), artboard, uv, tint);
+    }
 }
 
 /// The live values the canvas HUD prints, bundled so the painter stays under the

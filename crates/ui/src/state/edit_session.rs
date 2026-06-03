@@ -36,6 +36,10 @@ pub struct EditSession {
     /// revision, so the canvas must also re-upload when this changes. `None` until
     /// the first upload.
     pub last_uploaded_frame: Option<FrameId>,
+    /// Cached onion-skin neighbor textures, the same canvas-derived GPU cache bucket as
+    /// the upload-dedup fields above. Rebuilt when the document or centered frame
+    /// changes; empty when onion skin is off.
+    pub onion: crate::canvas::onion::OnionCache,
 }
 
 impl Default for EditSession {
@@ -50,6 +54,7 @@ impl Default for EditSession {
             job_rx,
             last_uploaded_revision: 0,
             last_uploaded_frame: None,
+            onion: crate::canvas::onion::OnionCache::default(),
         }
     }
 }
