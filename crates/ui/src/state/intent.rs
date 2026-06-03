@@ -7,6 +7,7 @@
 //! next frame - never read by panels during render, so there is no intra-frame event
 //! bus and the borrow guarantee has no hole (spec bible 21.1).
 
+use pixhaus_core::ClipId;
 use pixhaus_core::commands::{ApplyGeneratedAnimation, ApplyGeneratedAsset, GeneratedFrameData};
 use pixhaus_services::{GenerationContext, GenerationJobInput, GenerationKind, Grid, ProviderCapability, ReferenceImage, i18n};
 
@@ -93,6 +94,14 @@ pub enum Intent {
     InsertSelectedAsAnimatedSprite,
     /// Select a generation result by its tray index.
     SelectResult(usize),
+    /// Toggle animation playback (play/pause). Transient view state; never a command.
+    TogglePlayback,
+    /// Stop playback: freeze and snap the playhead to the range start.
+    StopPlayback,
+    /// Scrub the playhead to a frame offset within the active range; pauses playback.
+    ScrubToFrame(u32),
+    /// Select which clip plays (`None` = the sprite's default range). Resets the clock.
+    SelectClip(Option<ClipId>),
 }
 
 /// "Something happened", distinct from a command (spec bible 21.3). Produced only
@@ -136,6 +145,10 @@ impl IntentSink {
 pub fn apply_intent(host: &mut Host, intent: Intent, ctx: &egui::Context) {
     match intent {
         Intent::SelectWorkspace(w) => {
+            // Switching workspaces pauses playback: the canvas is shared, so a running
+            // clock would animate the other workspaces' stages too. The playhead
+            // position is kept, so returning to Animate and pressing play resumes it.
+            host.state.ui.playback.playing = false;
             host.state.session.active_workspace = w;
             tracing::debug!(?w, "WorkspaceChanged");
         }
@@ -243,7 +256,44 @@ pub fn apply_intent(host: &mut Host, intent: Intent, ctx: &egui::Context) {
             submit_idle_animation_job(host, prompt, from_result, cols, rows, fps, clip_name);
             ctx.request_repaint();
         }
+        Intent::TogglePlayback => {
+            host.state.ui.playback.playing = !host.state.ui.playback.playing;
+            ctx.request_repaint(); // wake the loop so the clock starts advancing now
+        }
+        Intent::StopPlayback => {
+            host.state.ui.playback.playing = false;
+            host.state.ui.playback.playhead_seconds = 0.0;
+            ctx.request_repaint();
+        }
+        Intent::ScrubToFrame(offset) => {
+            host.state.ui.playback.playing = false;
+            let fps = f32::from(playback_fps(host).max(1));
+            // Bias to the centre of the target frame's time slice (`+0.5`), so the
+            // canvas's `floor(seconds * fps)` round-trips back to exactly `offset`
+            // even at fps values where `offset / fps` is not f32-exact.
+            #[allow(clippy::cast_precision_loss)]
+            let seconds = (offset as f32 + 0.5) / fps;
+            host.state.ui.playback.playhead_seconds = seconds;
+            ctx.request_repaint();
+        }
+        Intent::SelectClip(clip) => {
+            host.state.ui.playback.clip = clip;
+            host.state.ui.playback.playhead_seconds = 0.0; // restart at the new range's start
+            ctx.request_repaint();
+        }
     }
+}
+
+/// The fps of the active sprite's resolved play range, for scrub math (>= 1). Falls
+/// back to the default rate when there is no active sprite.
+fn playback_fps(host: &Host) -> u16 {
+    host.edit
+        .document
+        .active_sprite()
+        .and_then(|id| host.edit.document.sprite(id))
+        .map_or(crate::playback::DEFAULT_PLAYBACK_FPS, |sprite| {
+            crate::playback::resolve_range(sprite, host.state.ui.playback.clip).fps
+        })
 }
 
 /// Builds an [`ApplyGeneratedAsset`] from the selected result and executes it through
@@ -553,5 +603,56 @@ mod tests {
         assert_eq!(host.edit.document.sprites().len(), 0, "Undo removes the sprite");
         apply_intent(&mut host, Intent::Redo, &ctx());
         assert_eq!(host.edit.document.sprites().len(), 1, "Redo re-adds the sprite");
+    }
+
+    #[test]
+    fn toggle_playback_flips_playing() {
+        let mut host = host();
+        apply_intent(&mut host, Intent::TogglePlayback, &ctx());
+        assert!(host.state.ui.playback.playing, "toggling from stopped starts playback");
+        apply_intent(&mut host, Intent::TogglePlayback, &ctx());
+        assert!(!host.state.ui.playback.playing, "toggling again pauses");
+    }
+
+    #[test]
+    fn stop_playback_clears_playing_and_clock() {
+        let mut host = host();
+        host.state.ui.playback.playing = true;
+        host.state.ui.playback.playhead_seconds = 1.5;
+        apply_intent(&mut host, Intent::StopPlayback, &ctx());
+        assert!(!host.state.ui.playback.playing, "Stop pauses");
+        assert_eq!(host.state.ui.playback.playhead_seconds, 0.0, "Stop snaps the playhead to the start");
+    }
+
+    #[test]
+    fn scrub_pauses_and_sets_the_clock() {
+        let mut host = host();
+        host.state.ui.playback.playing = true;
+        // No active sprite -> the default 12 fps. Frame 6 biases to the centre of its
+        // slice: (6 + 0.5) / 12, which floors back to frame 6.
+        apply_intent(&mut host, Intent::ScrubToFrame(6), &ctx());
+        assert!(!host.state.ui.playback.playing, "scrubbing pauses");
+        let expected = (6.0_f32 + 0.5) / 12.0;
+        assert!(
+            (host.state.ui.playback.playhead_seconds - expected).abs() < 1e-6,
+            "the clock lands at the centre of frame 6's slice"
+        );
+    }
+
+    #[test]
+    fn select_clip_resets_the_clock() {
+        let mut host = host();
+        host.state.ui.playback.playhead_seconds = 2.0;
+        apply_intent(&mut host, Intent::SelectClip(Some(ClipId(3))), &ctx());
+        assert_eq!(host.state.ui.playback.clip, Some(ClipId(3)), "the clip is selected");
+        assert_eq!(host.state.ui.playback.playhead_seconds, 0.0, "selecting a clip restarts the clock");
+    }
+
+    #[test]
+    fn switching_workspace_pauses_playback() {
+        let mut host = host();
+        host.state.ui.playback.playing = true;
+        apply_intent(&mut host, Intent::SelectWorkspace(WorkspaceId("draw")), &ctx());
+        assert!(!host.state.ui.playback.playing, "leaving for another workspace pauses playback");
     }
 }

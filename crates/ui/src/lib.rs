@@ -15,6 +15,7 @@
 pub mod brand;
 pub mod contrib_api;
 pub mod icons;
+pub mod playback;
 pub mod region;
 pub mod registry;
 pub mod shell;

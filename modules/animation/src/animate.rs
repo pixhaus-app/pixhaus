@@ -97,27 +97,21 @@ impl Workspace for AnimateWorkspace {
             bottom_tray: vec![TIMELINE, FRAMES, CONSOLE],
             primary_tools: full_rail(),
             default_tool: PENCIL,
-            status_items: vec![
-                StatusItem {
-                    icon: icons::FRAMES,
-                    text: "15 frames".to_owned(),
-                },
-                StatusItem {
-                    icon: icons::EYE,
-                    text: MsgKey("workspace.animate.status.onion-skin").tr(),
-                },
-                StatusItem {
-                    icon: icons::STATUS_DOT,
-                    text: "12 FPS".to_owned(),
-                },
-            ],
+            // The live frame count and fps now read off the Timeline panel (driven by
+            // the active sprite); the status bar keeps only the onion-skin chrome
+            // rather than the old hardcoded "15 frames"/"12 FPS" placeholders.
+            status_items: vec![StatusItem {
+                icon: icons::EYE,
+                text: MsgKey("workspace.animate.status.onion-skin").tr(),
+            }],
         }
     }
 }
 
-/// The Clip Properties dock panel. Mock content: the current clip's frame range,
-/// FPS, an inert Loop checkbox, and the export name as a read-only label (only the
-/// Prompt panel owns a scratch buffer, so the name is shown, not editable here).
+/// The Clip Properties dock panel. Reads the selected (or first) clip from the
+/// read-only playback mirror and shows its name, frame range, and fps. The Loop
+/// checkbox stays inert this round - `loop_mode` is a durable clip property, so
+/// wiring it is a follow-up `Command`, not transient view state.
 pub struct ClipPropertiesPanel;
 
 impl Panel for ClipPropertiesPanel {
@@ -136,16 +130,22 @@ impl Panel for ClipPropertiesPanel {
 
     fn ui(&self, ui: &mut egui::Ui, scope: &mut PanelScope<'_>) {
         let theme = scope.ctx.theme;
-        widgets::mock_row(ui, theme, "Clip: jump");
-        widgets::mock_row(ui, theme, "Frames 8-15");
-        widgets::mock_row(ui, theme, "FPS 12");
-        // Inert mock control; the value resets each frame (drives nothing).
-        let mut looping = false;
-        ui.checkbox(&mut looping, "Loop");
-        ui.horizontal(|ui| {
-            widgets::mock_row(ui, theme, "Export name");
-            ui.label(egui::RichText::new("bit_jump").color(theme.roles.text_primary));
-        });
+        let playback = &scope.ctx.session.playback;
+        let selected = scope.ctx.ui_state.playback.clip;
+        // The selected clip if still valid, else the sprite's first clip.
+        let clip = selected
+            .and_then(|id| playback.clips.iter().find(|c| c.id == id))
+            .or_else(|| playback.clips.first());
+        if let Some(clip) = clip {
+            widgets::mock_row(ui, theme, &format!("Clip: {}", clip.name));
+            widgets::mock_row(ui, theme, &format!("Frames {}-{}", clip.start, clip.end));
+            widgets::mock_row(ui, theme, &format!("FPS {}", clip.fps));
+            // Inert this round: loop_mode is a durable clip property (a follow-up command).
+            let mut looping = false;
+            ui.checkbox(&mut looping, "Loop");
+        } else {
+            ui.label(egui::RichText::new("No clip on the active sprite.").color(theme.roles.text_secondary));
+        }
     }
 }
 
@@ -184,9 +184,10 @@ impl Panel for AiAnimationAssistantPanel {
     }
 }
 
-/// The Timeline tray panel: the four-band animation timeline drawn with a Painter.
-/// Bands top-to-bottom: Playback controls, Animation clips, the frame ruler with
-/// the violet playhead, and Layer tracks. All content is mock.
+/// The Timeline tray panel: the four-band animation timeline. Band 1 (transport),
+/// Band 2 (the sprite's real clips), and Band 3 (the frame ruler + live playhead)
+/// are driven by the read-only playback mirror and push playback intents; Band 4
+/// (layer tracks) is still decorative - per-layer cel data is not modeled yet.
 pub struct TimelinePanel;
 
 impl Panel for TimelinePanel {
@@ -203,57 +204,94 @@ impl Panel for TimelinePanel {
         }
     }
 
-    // The frame count, band partitions, and radius token are small bounded
-    // constants; the f32 casts of loop indices and `theme.radius.sm` cannot
-    // truncate or lose a sign.
-    #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss, clippy::cast_precision_loss)]
+    // Frame indices and band partitions are small bounded values; the f32 casts of
+    // loop indices, the click hit-test, and the radius token cannot truncate or lose
+    // a sign in practice (frame counts are small). The four painted bands plus the
+    // hit-test make one cohesive draw routine, hence the line-count allow.
+    #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss, clippy::cast_precision_loss, clippy::too_many_lines)]
     fn ui(&self, ui: &mut egui::Ui, scope: &mut PanelScope<'_>) {
         let theme = scope.ctx.theme;
+        // Copy the mirror's scalars and clone its (tiny) clip rows up front, so the
+        // render holds no borrow of `scope` and can push a collected intent at the end.
+        let playing = scope.ctx.ui_state.playback.playing;
+        let selected_clip = scope.ctx.ui_state.playback.clip;
+        let playable = scope.ctx.session.playback.playable;
+        let frame_count = scope.ctx.session.playback.frame_count;
+        let range_start = scope.ctx.session.playback.range_start;
+        let range_fps = scope.ctx.session.playback.range_fps;
+        let playhead_offset = scope.ctx.session.playback.playhead_offset;
+        let clips = scope.ctx.session.playback.clips.clone();
+        // At most one click per frame, applied after the render (the panel reads
+        // `scope.ctx` here, so it cannot also push mid-render).
+        let mut intent: Option<Intent> = None;
 
-        // Band 1 - Playback: real widgets in a horizontal row (interactive controls).
+        // Band 1 - transport. Play/pause, stop, step a frame; disabled when nothing plays.
         ui.horizontal(|ui| {
-            let _ = ui.button(icons::PLAY.to_string());
-            let _ = ui.button(icons::PREV.to_string());
-            let _ = ui.button(icons::NEXT.to_string());
-            ui.label("100ms");
-            ui.label("1.00x");
-            ui.label("12 FPS");
-            let mut looping = false;
-            ui.checkbox(&mut looping, "Loop");
+            let play_glyph = if playing { icons::PAUSE } else { icons::PLAY };
+            if ui.add_enabled(playable, egui::Button::new(play_glyph.to_string())).clicked() {
+                intent = Some(Intent::TogglePlayback);
+            }
+            if ui.add_enabled(playable, egui::Button::new(icons::STOP.to_string())).clicked() {
+                intent = Some(Intent::StopPlayback);
+            }
+            if ui.add_enabled(playable, egui::Button::new(icons::PREV.to_string())).clicked() {
+                intent = Some(Intent::ScrubToFrame(playhead_offset.saturating_sub(1)));
+            }
+            if ui.add_enabled(playable, egui::Button::new(icons::NEXT.to_string())).clicked() {
+                intent = Some(Intent::ScrubToFrame(playhead_offset.saturating_add(1)));
+            }
+            ui.label(format!("{frame_count} frames"));
+            ui.label(format!("{range_fps} FPS"));
         });
 
-        // Bands 2-4 are painted: clips, the frame ruler + playhead, layer tracks.
+        // A still or empty sprite has nothing to scrub: show a hint, skip the bands.
+        if !playable {
+            ui.label(
+                egui::RichText::new("No animation to play - insert an animated sprite from Generate.")
+                    .size(theme.type_scale.label)
+                    .color(theme.roles.text_secondary),
+            );
+            if let Some(intent) = intent {
+                scope.ctx.intents.push(intent);
+            }
+            return;
+        }
+
+        // Bands 2-4 paint on one clickable rect: a click in the clips band selects a
+        // clip; a click in the ruler band scrubs the playhead.
         let desired = Vec2::new(ui.available_width(), 120.0);
-        let (rect, _resp) = ui.allocate_exact_size(desired, Sense::hover());
+        let (rect, resp) = ui.allocate_exact_size(desired, Sense::click());
         let painter = ui.painter_at(rect);
         let band_h = rect.height() / 3.0;
         let label_size = theme.type_scale.label;
+        let frames = frame_count.max(1);
+        let frame_w = rect.width() / frames as f32;
 
-        // Band 2 - Animation clips: each clip is a distinct colored span from the
-        // `mock.clips` hue set. The clip name is painted in a near-black ink (the
-        // clip hues are mid-to-light, so dark text reads; these are decorative mock
-        // labels, not role-gated by the WCAG floors).
+        // Band 2 - the sprite's real clips, each a span over its frame range; the
+        // selected clip gets an accent outline. Clip names are mid-light, so dark ink.
         let clips_top = rect.top();
-        let clips = ["idle", "walk", "run", "jump", "attack"];
-        let clip_w = rect.width() / clips.len() as f32;
         let clip_ink = egui::Color32::from_rgb(0x14, 0x12, 0x18);
-        for (i, name) in clips.iter().enumerate() {
-            let x = rect.left() + i as f32 * clip_w;
-            let span = egui::Rect::from_min_size(egui::pos2(x + 2.0, clips_top + 2.0), Vec2::new(clip_w - 4.0, band_h - 4.0));
+        for (i, clip) in clips.iter().enumerate() {
+            let start = clip.start.min(frames - 1);
+            let end = clip.end.min(frames - 1);
+            let span_x = rect.left() + (start as f32 / frames as f32) * rect.width();
+            let span_w = (((end.saturating_sub(start) + 1) as f32 / frames as f32) * rect.width() - 4.0).max(2.0);
+            let span = egui::Rect::from_min_size(egui::pos2(span_x + 2.0, clips_top + 2.0), Vec2::new(span_w, band_h - 4.0));
             painter.rect_filled(span, theme.radius.sm, theme.mock.clips[i % theme.mock.clips.len()]);
+            if selected_clip == Some(clip.id) {
+                painter.rect_stroke(span, theme.radius.sm, Stroke::new(1.5, theme.accent.base), egui::StrokeKind::Inside);
+            }
             painter.text(
                 span.left_center() + Vec2::new(5.0, 0.0),
                 Align2::LEFT_CENTER,
-                name,
+                &clip.name,
                 FontId::proportional(label_size),
                 clip_ink,
             );
         }
 
-        // Band 3 - Frame ruler 0..14 with the violet playhead at frame 11.
+        // Band 3 - the frame ruler with the live playhead at range_start + offset.
         let ruler_top = clips_top + band_h;
-        let frames = 15;
-        let frame_w = rect.width() / frames as f32;
         for f in 0..frames {
             let x = rect.left() + f as f32 * frame_w;
             painter.line_segment(
@@ -268,27 +306,23 @@ impl Panel for TimelinePanel {
                 theme.roles.text_secondary,
             );
         }
-        // The selected frame cell (frame 11) drawn with a violet outline.
-        let sel = egui::Rect::from_min_size(egui::pos2(rect.left() + 11.0 * frame_w, ruler_top), Vec2::new(frame_w, band_h));
+        let playhead_frame = range_start.saturating_add(playhead_offset).min(frames - 1);
+        let sel = egui::Rect::from_min_size(egui::pos2(rect.left() + playhead_frame as f32 * frame_w, ruler_top), Vec2::new(frame_w, band_h));
         painter.rect_stroke(sel, theme.radius.sm, Stroke::new(1.5, theme.accent.base), egui::StrokeKind::Inside);
-        // The playhead at frame 11, spanning the ruler and the tracks below.
-        let playhead_x = rect.left() + 11.0 * frame_w;
+        let playhead_x = rect.left() + playhead_frame as f32 * frame_w;
         painter.line_segment(
             [egui::pos2(playhead_x, ruler_top), egui::pos2(playhead_x, rect.bottom())],
             Stroke::new(2.0, theme.accent.base),
         );
 
-        // Band 4 - Layer tracks: a labeled row per track over an alternating band,
-        // with a label gutter so the name never collides with the first cell. Each
-        // track's keyed cells are tinted in that track's clip color; the rest read
-        // as empty wells. The active-frame column (11) gets a muted-accent wash.
+        // Band 4 - decorative layer tracks over the real frame count. Per-layer cel
+        // data is not modeled yet, so the keyed cells are a placeholder (follow-up).
         let tracks_top = ruler_top + band_h;
         let tracks = ["Body", "Effects", "Shadow"];
         let track_h = band_h / tracks.len() as f32;
         let label_gutter = 52.0;
         for (i, track) in tracks.iter().enumerate() {
             let y = tracks_top + i as f32 * track_h;
-            // Alternating row band so the tracks read as distinct lanes.
             let row = egui::Rect::from_min_size(egui::pos2(rect.left(), y), Vec2::new(rect.width(), track_h));
             let band = if i % 2 == 0 { theme.surfaces.elevated } else { theme.surfaces.panel };
             painter.rect_filled(row, 0.0, band);
@@ -299,19 +333,42 @@ impl Panel for TimelinePanel {
                 FontId::proportional(label_size),
                 theme.roles.text_secondary,
             );
-            // Keyed cells for this track, starting after the label gutter. A cell is
-            // "keyed" on a stride offset per track so the rows differ; keyed cells
-            // carry the track's clip color, the rest a faint inset well.
             let track_color = theme.mock.clips[i % theme.mock.clips.len()];
             let cell_area_left = rect.left() + label_gutter;
             let cell_w = (rect.width() - label_gutter) / frames as f32;
             for f in 0..frames {
                 let cx = cell_area_left + f as f32 * cell_w;
                 let cell = egui::Rect::from_min_size(egui::pos2(cx + 1.0, y + 1.0), Vec2::new(cell_w - 2.0, track_h - 2.0));
-                let keyed = (f + i) % 3 == 0;
+                let keyed = (f as usize + i) % 3 == 0;
                 let fill = if keyed { track_color } else { theme.surfaces.inset };
                 painter.rect_filled(cell, 0.0, fill);
             }
+        }
+
+        // A click scrubs (ruler band) or selects a clip (clips band).
+        if resp.clicked()
+            && let Some(pos) = resp.interact_pointer_pos()
+        {
+            let local_y = pos.y - rect.top();
+            if local_y < band_h {
+                for clip in &clips {
+                    let start = clip.start.min(frames - 1);
+                    let end = clip.end.min(frames - 1);
+                    let span_x = rect.left() + (start as f32 / frames as f32) * rect.width();
+                    let span_w = ((end.saturating_sub(start) + 1) as f32 / frames as f32) * rect.width();
+                    if pos.x >= span_x && pos.x < span_x + span_w {
+                        intent = Some(Intent::SelectClip(Some(clip.id)));
+                        break;
+                    }
+                }
+            } else if local_y < band_h * 2.0 {
+                let frame = (((pos.x - rect.left()) / frame_w).floor().max(0.0) as u32).min(frames - 1);
+                intent = Some(Intent::ScrubToFrame(frame.saturating_sub(range_start)));
+            }
+        }
+
+        if let Some(intent) = intent {
+            scope.ctx.intents.push(intent);
         }
     }
 }
@@ -382,8 +439,8 @@ mod tests {
         assert_eq!(layout.bottom_tray, vec![TIMELINE, FRAMES, CONSOLE]);
         assert_eq!(layout.default_tool, PENCIL);
         assert_eq!(layout.primary_tools.len(), 15);
-        assert_eq!(layout.status_items.len(), 3);
-        assert_eq!(layout.status_items[0].text, "15 frames");
+        assert_eq!(layout.status_items.len(), 1, "the fake frame/FPS status items moved to the live timeline");
+        assert_eq!(layout.status_items[0].text, MsgKey("workspace.animate.status.onion-skin").tr());
     }
 
     #[test]

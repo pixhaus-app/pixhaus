@@ -73,3 +73,49 @@ pub fn drain_background(host: &mut Host, ctx: &egui::Context) {
         ctx.request_repaint();
     }
 }
+
+/// Refresh the read-only playback mirror the Animate panels render from (they cannot
+/// reach the document). Rebuilds the document-derived shape — frame count, clips, the
+/// resolved play range — and re-derives the playhead offset from the transient
+/// playback clock. Runs once per frame in [`Shell::run`]; the rebuilt clip rows are a
+/// handful of small allocations (the Animate UI, not the pixel hot path).
+pub fn sync_playback_mirror(host: &mut Host) {
+    use crate::state::session::{ClipRow, PlaybackMirror};
+
+    let clip = host.state.ui.playback.clip;
+    let seconds = host.state.ui.playback.playhead_seconds;
+
+    let mirror = host.edit.document.active_sprite().and_then(|id| host.edit.document.sprite(id)).map(|sprite| {
+        let range = crate::playback::resolve_range(sprite, clip);
+        let frame_count = u32::try_from(sprite.frames().len()).unwrap_or(u32::MAX);
+        let clips = sprite
+            .clips()
+            .iter()
+            .map(|clip| ClipRow {
+                id: clip.id,
+                name: clip.name.clone(),
+                start: clip.start,
+                end: clip.end,
+                fps: clip.fps,
+            })
+            .collect();
+        PlaybackMirror {
+            frame_count,
+            clips,
+            range_start: range.start,
+            range_fps: range.fps,
+            playhead_offset: crate::playback::playhead_index(seconds, range.fps, range.frame_count, range.loop_mode),
+            // A single-frame sprite has nothing to play; transport stays disabled.
+            playable: frame_count > 1,
+        }
+    });
+    host.state.session.playback = mirror.unwrap_or_default();
+
+    // Self-heal: if the active sprite can no longer play (e.g. an undo took the
+    // document back to a still or empty sprite), clear the transient playing flag.
+    // Otherwise the loop would keep requesting repaints with the transport disabled
+    // (it gates on `playable`), and there would be no in-UI way to stop it.
+    if !host.state.session.playback.playable {
+        host.state.ui.playback.playing = false;
+    }
+}

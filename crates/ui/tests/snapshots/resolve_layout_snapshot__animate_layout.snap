@@ -83,16 +83,8 @@ ResolvedLayout {
     ),
     status_items: [
         StatusItem {
-            icon: '\u{e792}',
-            text: "15 frames",
-        },
-        StatusItem {
             icon: '\u{e220}',
             text: "Onion Skin Off",
-        },
-        StatusItem {
-            icon: '\u{e18a}',
-            text: "12 FPS",
         },
     ],
 }

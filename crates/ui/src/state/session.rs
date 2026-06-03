@@ -4,6 +4,7 @@
 //! seams that arrive with `core` (spec "Owners, no overlap"); they are intentionally
 //! absent, not forgotten.
 
+use pixhaus_core::ClipId;
 use pixhaus_services::ResultKind;
 
 use crate::contrib_api::ids::{ActionId, ToolId, WorkspaceId};
@@ -36,6 +37,49 @@ pub struct SessionState {
     /// The last prompt submitted, so "Generate more" can resubmit it without the
     /// Results panel reaching into the Prompt panel's scratch.
     pub last_prompt: String,
+    /// Read-only mirror of the active sprite's animation shape, for the Animate
+    /// panels (which cannot reach the document). Document-derived fields refresh when
+    /// the document changes; `playhead_offset` refreshes each frame from the playhead.
+    pub playback: PlaybackMirror,
+}
+
+/// What the Animate panels need to render the timeline without touching the
+/// document: the active sprite's frame count, its clips, the resolved play range,
+/// and the live playhead offset. Panels read playback play/clip state directly from
+/// [`UiState`](crate::state::ui_state::UiState); this mirror carries only the
+/// document-derived data they cannot reach.
+#[derive(Clone, Default, PartialEq, Debug)]
+pub struct PlaybackMirror {
+    /// Frame count of the active sprite (0 if none). Sizes the timeline ruler.
+    pub frame_count: u32,
+    /// The active sprite's clips as plain rows (only `ClipId` is echoed back, via
+    /// `SelectClip`).
+    pub clips: Vec<ClipRow>,
+    /// First frame index of the resolved play range (clip start, or 0).
+    pub range_start: u32,
+    /// Playback rate of the resolved range, for the FPS readout.
+    pub range_fps: u16,
+    /// The playhead's frame offset within the resolved range, derived each frame from
+    /// `UiState::playback.playhead_seconds`. The absolute ruler frame is
+    /// `range_start + playhead_offset`.
+    pub playhead_offset: u32,
+    /// False when there is nothing to play (no active sprite, or a single frame).
+    pub playable: bool,
+}
+
+/// One clip mirrored for the Animate panels. `name` is project content, not a key.
+#[derive(Clone, PartialEq, Debug)]
+pub struct ClipRow {
+    /// Stable id, echoed back into `Intent::SelectClip`.
+    pub id: ClipId,
+    /// User-facing clip name.
+    pub name: String,
+    /// First frame index (inclusive).
+    pub start: u32,
+    /// Last frame index (inclusive).
+    pub end: u32,
+    /// Playback rate in frames per second.
+    pub fps: u16,
 }
 
 impl SessionState {

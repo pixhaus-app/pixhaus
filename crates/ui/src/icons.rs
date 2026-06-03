@@ -151,6 +151,10 @@ pub const STAR: char = glyph(ph::STAR);
 pub const GRID: char = glyph(ph::GRID_FOUR);
 /// Playback play control.
 pub const PLAY: char = glyph(ph::PLAY);
+/// Playback pause control.
+pub const PAUSE: char = glyph(ph::PAUSE);
+/// Playback stop control.
+pub const STOP: char = glyph(ph::STOP);
 /// Playback previous-frame control.
 pub const PREV: char = glyph(ph::SKIP_BACK);
 /// Playback next-frame control.
@@ -226,6 +230,8 @@ mod tests {
             STAR,
             GRID,
             PLAY,
+            PAUSE,
+            STOP,
             PREV,
             NEXT,
             CROP,

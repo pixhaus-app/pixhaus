@@ -50,18 +50,32 @@ pub fn show(host: &mut Host, ui: &mut egui::Ui) {
         // 3. Transparency checkerboard behind the artboard.
         paint_checkerboard(&painter, artboard, theme);
 
-        // 4. Recomposite the active sprite only when the document changed since the
-        //    last upload (the revision dirty gate), then embed the renderer. The
-        //    callback uploads the frame in its `prepare` phase and draws it in the
-        //    artboard rect. A `None` frame reuses the retained GPU texture untouched.
-        //    INPUT GAP: nothing senses `artboard` yet, so the stage is display-only.
-        //    A future phase routes pan/zoom/paint off a sensed rect (see pixhaus-egui).
+        // 4. Resolve which frame to display, then recomposite + upload only when it
+        //    changed. While an animation plays (or is paused mid-clip) the playhead
+        //    picks the frame; otherwise it resolves to the range start / active frame.
+        //    This is a TRANSIENT view choice — the document is never mutated, so the
+        //    revision does not move during playback. The dirty gate therefore fires on
+        //    EITHER a revision change OR a displayed-frame change, so playback advances
+        //    on screen without a command per frame. A `None` frame reuses the retained
+        //    GPU texture untouched. (The clock that drives `playhead_seconds` is
+        //    advanced once per frame in `Shell::run`, before this region reads it.)
+        let displayed_frame: Option<pixhaus_core::FrameId> = edit.document.active_sprite().and_then(|id| edit.document.sprite(id)).and_then(|sprite| {
+            let range = crate::playback::resolve_range(sprite, state.ui.playback.clip);
+            let offset = crate::playback::playhead_index(state.ui.playback.playhead_seconds, range.fps, range.frame_count, range.loop_mode);
+            let index = range.start.saturating_add(offset) as usize;
+            sprite.frames().get(index).or_else(|| sprite.active_frame()).map(|frame| frame.id)
+        });
+
         let revision = edit.document.revision();
-        let canvas_frame = if revision == edit.last_uploaded_revision {
-            None
-        } else {
+        let needs_upload = revision != edit.last_uploaded_revision || displayed_frame != edit.last_uploaded_frame;
+        let canvas_frame = if needs_upload {
             edit.last_uploaded_revision = revision;
-            pixhaus_core::composite_active(&edit.document).map(|buf| {
+            edit.last_uploaded_frame = displayed_frame;
+            let composited = match (edit.document.active_sprite(), displayed_frame) {
+                (Some(sprite_id), Some(frame_id)) => pixhaus_core::composite_frame(&edit.document, sprite_id, frame_id).ok(),
+                _ => pixhaus_core::composite_active(&edit.document),
+            };
+            composited.map(|buf| {
                 let width = buf.width();
                 let height = buf.height();
                 CanvasFrame {
@@ -70,6 +84,8 @@ pub fn show(host: &mut Host, ui: &mut egui::Ui) {
                     height,
                 }
             })
+        } else {
+            None
         };
         ui.painter()
             .add(egui_wgpu::Callback::new_paint_callback(artboard, CanvasCallback { frame: canvas_frame }));

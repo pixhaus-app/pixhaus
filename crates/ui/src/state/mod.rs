@@ -105,6 +105,7 @@ impl Host {
                     selected_result: None,
                     result_kinds: Vec::new(),
                     last_prompt: String::new(),
+                    playback: self::session::PlaybackMirror::default(),
                 },
                 ui: UiState::default(),
             },

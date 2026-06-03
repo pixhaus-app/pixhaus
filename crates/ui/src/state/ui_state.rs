@@ -7,6 +7,8 @@
 
 use std::collections::HashMap;
 
+use pixhaus_core::ClipId;
+
 use crate::contrib_api::ids::{PanelId, WorkspaceId};
 
 /// Mutable, non-durable UI state owned by [`crate::state::Host`].
@@ -35,6 +37,34 @@ pub struct UiState {
     pub splash: SplashPhase,
     /// Live text in the command-palette search field.
     pub palette_query: String,
+    /// Transient animation-playback state (Animate workspace).
+    pub playback: PlaybackState,
+}
+
+/// Transient animation-playback state. View-only: the canvas renders the
+/// playhead-selected frame and the document's `active_frame` is never touched, so
+/// nothing here bumps the document revision or emits a command (no undo pollution).
+#[derive(Copy, Clone, Debug, PartialEq)]
+pub struct PlaybackState {
+    /// Whether the clip is advancing. `false` = paused/stopped (the playhead freezes).
+    pub playing: bool,
+    /// Seconds elapsed within the active range since playback's logical origin. The
+    /// frame index is DERIVED from this (`seconds * fps`), so the canvas and the
+    /// timeline read one scalar and cannot drift. Reset to 0 on Stop.
+    pub playhead_seconds: f32,
+    /// The clip whose range is playing. `None` = the sprite's first clip, or the
+    /// implicit "all frames" range when the sprite has no clips.
+    pub clip: Option<ClipId>,
+}
+
+impl Default for PlaybackState {
+    fn default() -> Self {
+        Self {
+            playing: false,
+            playhead_seconds: 0.0,
+            clip: None,
+        }
+    }
 }
 
 impl Default for UiState {
@@ -52,6 +82,7 @@ impl Default for UiState {
             modal: None,
             splash: SplashPhase::default(),
             palette_query: String::new(),
+            playback: PlaybackState::default(),
         }
     }
 }
@@ -126,5 +157,13 @@ mod tests {
     #[test]
     fn default_grid_mode_is_eight_px() {
         assert_eq!(GridMode::default(), GridMode::Px8, "default grid is the 8px minor grid");
+    }
+
+    #[test]
+    fn default_playback_is_stopped_at_zero() {
+        let ui = UiState::default();
+        assert!(!ui.playback.playing, "playback starts stopped");
+        assert_eq!(ui.playback.playhead_seconds, 0.0, "the playhead starts at zero");
+        assert!(ui.playback.clip.is_none(), "no clip selected on a fresh session");
     }
 }

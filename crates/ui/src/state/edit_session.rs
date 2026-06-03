@@ -10,7 +10,7 @@
 use std::sync::Arc;
 use std::sync::mpsc::{self, Receiver};
 
-use pixhaus_core::Document;
+use pixhaus_core::{Document, FrameId};
 use pixhaus_services::{History, JobManager, JobMsg, ProviderRegistry, ResultStore};
 
 /// The live document plus the services that operate on it.
@@ -31,6 +31,11 @@ pub struct EditSession {
     /// recomposition dirty gate. Starts at the empty document's revision (0), so the
     /// first real edit forces a composite.
     pub last_uploaded_revision: u64,
+    /// The frame last composited for display, paired with `last_uploaded_revision`
+    /// as the dirty gate: playback advances the displayed frame without bumping the
+    /// revision, so the canvas must also re-upload when this changes. `None` until
+    /// the first upload.
+    pub last_uploaded_frame: Option<FrameId>,
 }
 
 impl Default for EditSession {
@@ -44,6 +49,7 @@ impl Default for EditSession {
             providers: ProviderRegistry::new(),
             job_rx,
             last_uploaded_revision: 0,
+            last_uploaded_frame: None,
         }
     }
 }

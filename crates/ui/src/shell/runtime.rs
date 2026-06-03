@@ -39,6 +39,17 @@ impl Shell {
         // and a click land in push order.
         shortcuts::collect(ui.ctx(), &host.registries, &mut host.intents);
 
+        // Advance the animation playhead once per frame, before any region reads it, so
+        // the canvas and the timeline see the same clock; then refresh the read-only
+        // playback mirror the Animate panels render from. Requesting a repaint while
+        // playing keeps the loop awake so the next frame advances too.
+        if host.state.ui.playback.playing {
+            let dt = ui.ctx().input(|input| input.stable_dt);
+            host.state.ui.playback.playhead_seconds += dt;
+            ui.ctx().request_repaint();
+        }
+        super::sync_playback_mirror(host);
+
         // egui panel order: outer panels first, CentralPanel LAST.
         regions::top_bar::show(host, ui);
         regions::tool_options::show(host, ui);
