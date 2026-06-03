@@ -13,6 +13,7 @@
 #![cfg_attr(test, allow(clippy::unwrap_used, clippy::expect_used, clippy::panic, clippy::float_cmp))]
 
 pub mod brand;
+pub mod canvas;
 pub mod contrib_api;
 pub mod icons;
 pub mod playback;
