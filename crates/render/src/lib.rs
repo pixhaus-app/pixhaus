@@ -23,6 +23,10 @@ pub struct ViewportRenderer {
     /// The format for the canvas texture; sRGB iff the target is, so authored bytes
     /// round-trip through the GPU's encode/decode.
     texture_format: wgpu::TextureFormat,
+    /// The view uniform: the board's `[origin_x, origin_y, size_x, size_y]` in physical
+    /// pixels. The fragment shader maps each pixel's framebuffer position through it, so
+    /// the blit stays undistorted even when egui-wgpu clamps the pass viewport.
+    view_buffer: wgpu::Buffer,
     /// The retained texture; recreated only when the sprite size changes.
     texture: Option<CanvasTexture>,
 }
@@ -60,6 +64,16 @@ impl ViewportRenderer {
                     binding: 1,
                     visibility: wgpu::ShaderStages::FRAGMENT,
                     ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
+                    count: None,
+                },
+                wgpu::BindGroupLayoutEntry {
+                    binding: 2,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Buffer {
+                        ty: wgpu::BufferBindingType::Uniform,
+                        has_dynamic_offset: false,
+                        min_binding_size: None,
+                    },
                     count: None,
                 },
             ],
@@ -119,13 +133,36 @@ impl ViewportRenderer {
             wgpu::TextureFormat::Rgba8Unorm
         };
 
+        // 4 f32 (origin xy, size xy); std140-compatible at 16 bytes.
+        let view_buffer = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("pixhaus.viewport.view"),
+            size: 16,
+            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
+
         Self {
             pipeline,
             bind_group_layout,
             sampler,
             texture_format,
+            view_buffer,
             texture: None,
         }
+    }
+
+    /// Sets the board's top-left `origin_px` and `size_px`, in physical pixels, for the
+    /// next paint. The fragment shader derives each pixel's texture coordinate from its
+    /// framebuffer position and these, so the blit is correct no matter how egui-wgpu
+    /// clamps the pass viewport — a board panned or zoomed past the window edge crops
+    /// instead of squashing the texture into the clamped viewport. Call every frame.
+    pub fn set_view(&self, queue: &wgpu::Queue, origin_px: [f32; 2], size_px: [f32; 2]) {
+        let mut bytes = [0u8; 16];
+        bytes[0..4].copy_from_slice(&origin_px[0].to_le_bytes());
+        bytes[4..8].copy_from_slice(&origin_px[1].to_le_bytes());
+        bytes[8..12].copy_from_slice(&size_px[0].to_le_bytes());
+        bytes[12..16].copy_from_slice(&size_px[1].to_le_bytes());
+        queue.write_buffer(&self.view_buffer, 0, &bytes);
     }
 
     /// Uploads a tightly-packed (`stride == width * 4`) RGBA8 frame for display.
@@ -166,8 +203,9 @@ impl ViewportRenderer {
 
     /// Records the canvas draw into `render_pass`. A no-op until a frame is uploaded.
     ///
-    /// egui-wgpu has already set the pass viewport and scissor to the artboard rect,
-    /// so this only binds and draws the fullscreen triangle. It must not end the pass
+    /// Draws a fullscreen triangle over the pass viewport; the fragment shader maps each
+    /// pixel back to texture space via the view uniform ([`Self::set_view`]), so the blit
+    /// does not depend on egui-wgpu's (window-clamped) viewport. It must not end the pass
     /// or begin another.
     pub fn paint(&self, render_pass: &mut wgpu::RenderPass<'_>) {
         let Some(canvas) = self.texture.as_ref() else {
@@ -206,6 +244,10 @@ impl ViewportRenderer {
                 wgpu::BindGroupEntry {
                     binding: 1,
                     resource: wgpu::BindingResource::Sampler(&self.sampler),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 2,
+                    resource: self.view_buffer.as_entire_binding(),
                 },
             ],
         });

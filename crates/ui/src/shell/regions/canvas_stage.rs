@@ -22,9 +22,10 @@ use crate::theme::Theme;
 use crate::theme::tokens::SurfaceTier;
 use crate::{CanvasCallback, CanvasFrame};
 
-/// Multiplicative zoom per unit of wheel scroll: `factor = exp(scroll * this)`. Tuned so
-/// a normal wheel notch is a comfortable step, framerate-independent.
-const ZOOM_WHEEL_SENSITIVITY: f32 = 0.0015;
+/// Continuous-mode zoom per wheel notch: the scale multiplies by this zooming in, and
+/// divides by it zooming out. Magnitude-independent, so it is robust to the OS's
+/// lines-per-notch setting.
+const WHEEL_ZOOM_FACTOR: f32 = 1.2;
 
 /// At or above this scale the per-pixel grid is drawn (one line per sprite pixel). Below
 /// it the 1px cells would be too dense to read, so only the major grid shows.
@@ -144,7 +145,10 @@ pub fn show(host: &mut Host, ui: &mut egui::Ui) {
         } else {
             None
         };
-        canvas.add(egui_wgpu::Callback::new_paint_callback(artboard, CanvasCallback { frame: canvas_frame }));
+        canvas.add(egui_wgpu::Callback::new_paint_callback(
+            artboard,
+            CanvasCallback { frame: canvas_frame, artboard },
+        ));
 
         // 9. View overlays over the frame, under the HUD: the selection marquee and the
         //    active tool's preview. Scaffolds — no data until core's selection model and
@@ -203,23 +207,48 @@ fn handle_navigation(ui: &egui::Ui, response: &egui::Response, state: &mut crate
         ui.ctx().set_cursor_icon(egui::CursorIcon::Grab);
     }
 
-    // Cursor-anchored zoom: plain wheel and trackpad pinch both scale toward the cursor.
-    let (scroll_y, pinch) = ui.ctx().input(|i| (i.smooth_scroll_delta.y, i.zoom_delta()));
+    // Cursor-anchored zoom. The wheel is read from the raw per-frame `MouseWheel` events
+    // rather than `smooth_scroll_delta` (which spreads one notch over several frames and
+    // would step the zoom repeatedly), so one notch is one discrete event: pixel-perfect
+    // mode steps to the next whole zoom level (a small multiplicative factor would round
+    // straight back to the current integer and the wheel would never leave it — the bug
+    // this fixes), continuous mode scales by a fixed per-notch factor. Command/ctrl+wheel
+    // and trackpad pinch arrive through `zoom_delta` instead.
+    let (wheel_y, pinch) = ui.ctx().input(|i| {
+        let mut wheel_y = 0.0;
+        for event in &i.events {
+            if let egui::Event::MouseWheel { delta, modifiers, .. } = event
+                && !modifiers.command
+                && !modifiers.ctrl
+            {
+                wheel_y += delta.y;
+            }
+        }
+        (wheel_y, i.zoom_delta())
+    });
     if !panning
         && response.contains_pointer()
         && let Some(cursor) = response.hover_pos()
     {
-        let factor = (scroll_y * ZOOM_WHEEL_SENSITIVITY).exp() * pinch;
-        if (factor - 1.0).abs() > f32::EPSILON {
-            let scale = view::clamp_scale(state.ui.zoom);
-            let mut new_scale = view::clamp_scale(scale * factor);
+        let scale = view::clamp_scale(state.ui.zoom);
+        let mut new_scale = scale;
+        if wheel_y.abs() > f32::EPSILON {
+            let zoom_in = wheel_y > 0.0;
+            new_scale = if state.ui.pixel_perfect_zoom {
+                view::zoom_step(scale, zoom_in, true)
+            } else {
+                view::clamp_scale(scale * if zoom_in { WHEEL_ZOOM_FACTOR } else { 1.0 / WHEEL_ZOOM_FACTOR })
+            };
+        }
+        if (pinch - 1.0).abs() > f32::EPSILON {
+            new_scale = view::clamp_scale(new_scale * pinch);
             if state.ui.pixel_perfect_zoom {
                 new_scale = view::snap_scale(new_scale);
             }
-            if (new_scale - scale).abs() > f32::EPSILON {
-                state.ui.pan = view::zoom_anchored(stage_rect.center(), sprite_px, scale, state.ui.pan, cursor, new_scale);
-                state.ui.zoom = new_scale;
-            }
+        }
+        if (new_scale - scale).abs() > f32::EPSILON {
+            state.ui.pan = view::zoom_anchored(stage_rect.center(), sprite_px, scale, state.ui.pan, cursor, new_scale);
+            state.ui.zoom = new_scale;
         }
     }
 }

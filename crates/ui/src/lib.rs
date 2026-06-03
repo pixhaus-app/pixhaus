@@ -72,6 +72,10 @@ pub struct CanvasFrame {
 pub struct CanvasCallback {
     /// The frame to upload this draw, or `None` to reuse the retained texture.
     pub frame: Option<CanvasFrame>,
+    /// The on-screen artboard rect in points. The renderer maps texture coordinates
+    /// from this (not the egui-wgpu pass viewport, which is window-clamped), so a board
+    /// panned or zoomed past the window edge crops instead of squashing.
+    pub artboard: egui::Rect,
 }
 
 impl CallbackTrait for CanvasCallback {
@@ -79,16 +83,23 @@ impl CallbackTrait for CanvasCallback {
         &self,
         device: &wgpu::Device,
         queue: &wgpu::Queue,
-        _screen_descriptor: &ScreenDescriptor,
+        screen_descriptor: &ScreenDescriptor,
         _egui_encoder: &mut wgpu::CommandEncoder,
         callback_resources: &mut CallbackResources,
     ) -> Vec<wgpu::CommandBuffer> {
-        // Upload happens in `prepare` (before the egui pass): it has `&mut` resources
-        // and the queue. `paint` only reads. Upload nothing when the frame is unchanged.
-        if let (Some(frame), Some(renderer)) = (self.frame.as_ref(), callback_resources.get_mut::<ViewportRenderer>()) {
-            renderer.upload_frame(device, queue, &frame.rgba, frame.width, frame.height);
+        // `prepare` runs before the egui pass with `&mut` resources and the queue;
+        // `paint` only reads. Upload the frame only when it changed, but refresh the
+        // view every frame since pan/zoom move the board without a re-upload.
+        if let Some(renderer) = callback_resources.get_mut::<ViewportRenderer>() {
+            if let Some(frame) = self.frame.as_ref() {
+                renderer.upload_frame(device, queue, &frame.rgba, frame.width, frame.height);
+            }
+            let ppp = screen_descriptor.pixels_per_point;
+            let origin = [self.artboard.min.x * ppp, self.artboard.min.y * ppp];
+            let size = [self.artboard.width() * ppp, self.artboard.height() * ppp];
+            renderer.set_view(queue, origin, size);
         }
-        // The upload rides the queue; no extra command buffers to submit.
+        // The upload and view write ride the queue; no extra command buffers to submit.
         Vec::new()
     }
 
@@ -108,7 +119,8 @@ mod tests {
     /// never GPU handles — those live in the callback resource store.
     #[test]
     fn canvas_callback_holds_an_optional_frame() {
-        let empty = CanvasCallback { frame: None };
+        let board = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(1.0, 1.0));
+        let empty = CanvasCallback { frame: None, artboard: board };
         assert!(empty.frame.is_none());
         let with_frame = CanvasCallback {
             frame: Some(CanvasFrame {
@@ -116,6 +128,7 @@ mod tests {
                 width: 1,
                 height: 1,
             }),
+            artboard: board,
         };
         assert!(with_frame.frame.is_some());
     }
