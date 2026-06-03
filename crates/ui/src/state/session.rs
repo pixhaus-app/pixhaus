@@ -39,6 +39,12 @@ pub struct SessionState {
 }
 
 impl SessionState {
+    /// Whether a generation job is in flight. Panels call this to disable the
+    /// job-submitting buttons and show the in-progress indicator.
+    pub fn is_generating(&self) -> bool {
+        matches!(self.ai_status, AiStatus::Working)
+    }
+
     /// Whether the selected result is a still anchor - the precondition for driving
     /// an idle-animation pass. Panels call this to gate the idle button.
     pub fn selected_is_anchor(&self) -> bool {

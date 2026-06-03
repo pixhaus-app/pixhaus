@@ -8,6 +8,7 @@
 //! Concrete `Panel`/`Tool`/`Workspace` impls do NOT belong here; they live in the
 //! `modules/*` crates. This module is shared chrome the regions and panels call.
 
+mod busy;
 mod card;
 mod placeholder;
 mod section_header;
@@ -15,6 +16,7 @@ mod tool_button;
 mod tray_tab;
 mod workspace_tab;
 
+pub use busy::busy_indicator;
 pub use card::card;
 pub use placeholder::{mock_log, mock_row, mock_thumbnail_grid};
 pub use section_header::section_header;

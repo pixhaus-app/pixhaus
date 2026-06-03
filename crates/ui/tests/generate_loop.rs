@@ -39,6 +39,7 @@ async fn prompt_to_result_to_sprite_to_undo() {
         },
         &ctx,
     );
+    assert!(host.state.session.is_generating(), "submitting a job marks the session generating");
 
     // 2. Drain the job channel until the result lands (the mock has a short delay).
     for _ in 0..2000 {
@@ -50,6 +51,7 @@ async fn prompt_to_result_to_sprite_to_undo() {
     }
     assert_eq!(host.state.session.result_count, 1, "the mock result landed");
     assert_eq!(host.state.session.selected_result, Some(0), "the first result is selected");
+    assert!(!host.state.session.is_generating(), "a completed job clears the generating state");
 
     // 3. Insert the selected result as a new sprite, through a command.
     let revision_before = host.edit.document.revision();

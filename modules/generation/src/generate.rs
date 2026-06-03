@@ -160,11 +160,16 @@ impl Panel for PromptPanel {
 
         ui.add_space(theme.spacing.sm);
 
-        // First pass: generate the anchor. Always available. Assembles the anchor
-        // prompt from the edited subject plus the Bit defaults, then submits it.
+        // While a job is in flight the submit buttons are disabled (no spamming
+        // billed calls) and the in-progress indicator shows below.
+        let busy = scope.ctx.session.is_generating();
+        let full_width = ui.available_width();
+
+        // First pass: generate the anchor. Assembles the anchor prompt from the
+        // edited subject plus the Bit defaults, then submits it.
         let anchor_label = egui::RichText::new(format!("{} Generate Anchor", icons::SPARKLE)).color(theme.roles.text_primary);
-        let anchor_button = egui::Button::new(anchor_label).fill(theme.accent.base);
-        if ui.add_sized([ui.available_width(), 28.0], anchor_button).clicked() {
+        let anchor_button = egui::Button::new(anchor_label).fill(theme.accent.base).min_size(Vec2::new(full_width, 28.0));
+        if ui.add_enabled(!busy, anchor_button).clicked() {
             let mut identity = prompt::defaults::bit_identity();
             identity.description.clone_from(scope.scratch);
             let assembled = prompt::build_anchor_prompt(&identity, &prompt::defaults::default_anchor_spec());
@@ -174,12 +179,13 @@ impl Panel for PromptPanel {
         ui.add_space(theme.spacing.xs);
 
         // Second pass: generate the idle animation from the selected anchor. Enabled
-        // only once a still anchor result is selected (the reference image).
+        // only once a still anchor result is selected (the reference image) and no
+        // job is running.
         let anchor_selected = scope.ctx.session.selected_is_anchor();
         let idle_label = egui::RichText::new(format!("{} Generate Idle Animation", icons::SPARKLE)).color(theme.roles.text_primary);
         let idle_fill = if anchor_selected { theme.accent.base } else { theme.accent.muted };
-        let idle_button = egui::Button::new(idle_label).fill(idle_fill).min_size(Vec2::new(ui.available_width(), 28.0));
-        if ui.add_enabled(anchor_selected, idle_button).clicked()
+        let idle_button = egui::Button::new(idle_label).fill(idle_fill).min_size(Vec2::new(full_width, 28.0));
+        if ui.add_enabled(anchor_selected && !busy, idle_button).clicked()
             && let Some(from_result) = scope.ctx.session.selected_result
         {
             let mut identity = prompt::defaults::bit_identity();
@@ -194,6 +200,11 @@ impl Panel for PromptPanel {
                 fps: idle.fps,
                 clip_name: idle.clip_name,
             });
+        }
+
+        if busy {
+            ui.add_space(theme.spacing.sm);
+            widgets::busy_indicator(ui, theme, "Generating\u{2026}");
         }
     }
 }
@@ -413,14 +424,26 @@ impl Panel for ResultsPanel {
         let theme = scope.ctx.theme;
         let count = scope.ctx.session.result_count;
         let selected = scope.ctx.session.selected_result;
+        let busy = scope.ctx.session.is_generating();
 
         if count == 0 {
-            ui.label(
-                egui::RichText::new("No results yet. Enter a prompt and click Generate.")
-                    .size(theme.type_scale.label)
-                    .color(theme.roles.text_secondary),
-            );
+            if busy {
+                widgets::busy_indicator(ui, theme, "Generating\u{2026}");
+            } else {
+                ui.label(
+                    egui::RichText::new("No results yet. Enter a prompt and click Generate.")
+                        .size(theme.type_scale.label)
+                        .color(theme.roles.text_secondary),
+                );
+            }
             return;
+        }
+
+        // A job running while results already exist (an idle after an anchor) reads as
+        // active above the grid.
+        if busy {
+            widgets::busy_indicator(ui, theme, "Generating\u{2026}");
+            ui.add_space(theme.spacing.xs);
         }
 
         // The store may hold more than the tray shows; cap the visible cards. Pull the
@@ -452,7 +475,10 @@ impl Panel for ResultsPanel {
             } else if ui.button("Insert as new sprite").clicked() {
                 scope.ctx.intents.push(Intent::InsertSelectedResultAsSprite);
             }
-            if ui.button("Generate more").clicked() {
+            // "Generate more" submits another anchor job, so it is disabled while a
+            // job is in flight (the apply buttons stay enabled - applying a result is
+            // a command independent of the running job).
+            if ui.add_enabled(!busy, egui::Button::new("Generate more")).clicked() {
                 scope.ctx.intents.push(Intent::SubmitAnchorJob {
                     prompt: scope.ctx.session.last_prompt.clone(),
                 });
