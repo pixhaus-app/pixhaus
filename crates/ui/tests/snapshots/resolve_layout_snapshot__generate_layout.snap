@@ -28,6 +28,9 @@ ResolvedLayout {
             "results",
         ),
         PanelId(
+            "timeline",
+        ),
+        PanelId(
             "history",
         ),
         PanelId(

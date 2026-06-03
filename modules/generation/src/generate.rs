@@ -52,6 +52,10 @@ const AI_BRUSH: ToolId = ToolId("ai_brush");
 
 // The Console tray panel is owned by sprite-edit, referenced by id.
 const CONSOLE: PanelId = PanelId("console");
+// The Timeline tray panel is owned by the animation module, referenced by id so a
+// generated animated sprite can be played without leaving Generate (the canvas is
+// shared, and the panel reads the shared playback mirror).
+const TIMELINE: PanelId = PanelId("timeline");
 
 // The actions this module's panels dispatch. Namespaced under `gen.` so they never
 // collide with sprite-edit's `ai.*` or any other module's action ids.
@@ -82,7 +86,7 @@ impl Workspace for GenerateWorkspace {
     fn layout(&self) -> WorkspaceLayout {
         WorkspaceLayout {
             right_dock: vec![PROMPT, RECIPE, STRUCTURE, STYLE, PALETTE_BEHAVIOR, ADVANCED_SETTINGS],
-            bottom_tray: vec![RESULTS, HISTORY, CONSOLE],
+            bottom_tray: vec![RESULTS, TIMELINE, HISTORY, CONSOLE],
             primary_tools: vec![HAND, ZOOM, SELECTION, AI_BRUSH],
             default_tool: HAND,
             status_items: vec![
@@ -654,7 +658,7 @@ mod tests {
     fn generate_layout_matches_the_inventory() {
         let layout = GenerateWorkspace.layout();
         assert_eq!(layout.right_dock, vec![PROMPT, RECIPE, STRUCTURE, STYLE, PALETTE_BEHAVIOR, ADVANCED_SETTINGS]);
-        assert_eq!(layout.bottom_tray, vec![RESULTS, HISTORY, CONSOLE]);
+        assert_eq!(layout.bottom_tray, vec![RESULTS, TIMELINE, HISTORY, CONSOLE]);
         assert_eq!(layout.default_tool, HAND);
         assert_eq!(layout.primary_tools, vec![HAND, ZOOM, SELECTION, AI_BRUSH]);
         assert_eq!(layout.status_items.len(), 2);
