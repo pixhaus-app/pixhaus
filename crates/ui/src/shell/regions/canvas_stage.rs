@@ -27,10 +27,6 @@ use crate::{CanvasCallback, CanvasFrame};
 /// lines-per-notch setting.
 const WHEEL_ZOOM_FACTOR: f32 = 1.2;
 
-/// At or above this scale the per-pixel grid is drawn (one line per sprite pixel). Below
-/// it the 1px cells would be too dense to read, so only the major grid shows.
-const PIXEL_GRID_MIN_SCALE: f32 = 6.0;
-
 /// `Ctrl/Cmd+Shift+0` resets to actual pixels (1:1). Built explicitly so the shift is
 /// part of the match (plain `Ctrl/Cmd+0` is fit-to-window).
 const ACTUAL_PIXELS_MODS: egui::Modifiers = egui::Modifiers {
@@ -108,22 +104,11 @@ pub fn show(host: &mut Host, ui: &mut egui::Ui) {
             sprite.frames().get(index).or_else(|| sprite.active_frame()).map(|frame| frame.id)
         });
 
-        // 6. Transparency checkerboard behind the artboard.
-        paint_checkerboard(&canvas, artboard, theme);
-
-        // 7. Onion-skin ghosts of the neighbor frames, under the current frame. Real data
-        //    (frames live in core); off by default. The cache is cleared when disabled so
-        //    its textures free.
-        if state.ui.onion_skin
-            && let (Some(sprite_id), Some(center)) = (edit.document.active_sprite(), displayed_frame)
-        {
-            paint_onion(&canvas, artboard, edit.onion.ghosts(ui.ctx(), &edit.document, sprite_id, center), theme);
-        } else {
-            edit.onion.clear();
-        }
-
-        // 8. Recomposite + upload the current frame only when it changed; `None` reuses
-        //    the retained GPU texture. Then blit it via the wgpu callback.
+        // 6. Recomposite + upload the current frame only when it changed; `None` reuses
+        //    the retained GPU texture. The wgpu callback draws the transparency
+        //    checkerboard, the grid, and the sprite in one fragment pass — O(visible
+        //    pixels), so it stays fast at any zoom (the per-cell CPU loops are gone).
+        let has_tile = edit.document.active_sprite().is_some();
         let revision = edit.document.revision();
         let needs_upload = revision != edit.last_uploaded_revision || displayed_frame != edit.last_uploaded_frame;
         let canvas_frame = if needs_upload {
@@ -145,22 +130,34 @@ pub fn show(host: &mut Host, ui: &mut egui::Ui) {
         } else {
             None
         };
+        let chrome = crate::chrome_params(state.ui.grid, scale, theme, has_tile);
         canvas.add(egui_wgpu::Callback::new_paint_callback(
             artboard,
-            CanvasCallback { frame: canvas_frame, artboard },
+            CanvasCallback {
+                frame: canvas_frame,
+                artboard,
+                chrome,
+            },
         ));
 
-        // 9. View overlays over the frame, under the HUD: the selection marquee and the
+        // 7. Onion-skin ghosts of the neighbor frames, as a translucent overlay over the
+        //    current frame (the GPU board is opaque, so the ghosts sit on top). Real data
+        //    (frames live in core); off by default. The cache frees when disabled.
+        if state.ui.onion_skin
+            && let (Some(sprite_id), Some(center)) = (edit.document.active_sprite(), displayed_frame)
+        {
+            paint_onion(&canvas, artboard, edit.onion.ghosts(ui.ctx(), &edit.document, sprite_id, center), theme);
+        } else {
+            edit.onion.clear();
+        }
+
+        // 8. View overlays over the frame, under the HUD: the selection marquee and the
         //    active tool's preview. Scaffolds — no data until core's selection model and
         //    the tools land, so they draw nothing today but hold their place in the order.
         crate::canvas::overlay::paint_selection(&canvas, artboard, scale, None, theme);
         crate::canvas::overlay::paint_tool_preview(&canvas, artboard, scale, None, theme);
 
-        // 10. Grid lines: the major grid (8/16 sprite px) plus a per-pixel grid once the
-        //    board is zoomed in far enough to read it.
-        paint_grid(&canvas, artboard, scale, state.ui.grid, theme);
-
-        // 11. Hover crosshair through the pixel under the pointer (Tier-2 tool
+        // 9. Hover crosshair through the pixel under the pointer (Tier-2 tool
         //    foundation), suppressed while panning so a drag stays clean.
         let hover_pixel = hovered_pixel(response.hover_pos(), artboard, scale, (sprite_w, sprite_h));
         let panning = is_panning(ui, &response);
@@ -170,7 +167,7 @@ pub fn show(host: &mut Host, ui: &mut egui::Ui) {
             paint_crosshair(&canvas, artboard, scale, pixel, theme);
         }
 
-        // 12. The board frame: a 1.5px border so its edge reads against the stage.
+        // 10. The board frame: a 1.5px border so its edge reads against the stage.
         canvas.rect_stroke(
             artboard,
             egui::CornerRadius::ZERO,
@@ -178,7 +175,7 @@ pub fn show(host: &mut Host, ui: &mut egui::Ui) {
             egui::StrokeKind::Outside,
         );
 
-        // 13. Floating HUD (lower-left) and zoom control (lower-right).
+        // 11. Floating HUD (lower-left) and zoom control (lower-right).
         let readout = HudReadout {
             size: (sprite_w, sprite_h),
             zoom: state.ui.zoom,
@@ -299,60 +296,6 @@ fn hovered_pixel(hover: Option<egui::Pos2>, artboard: egui::Rect, scale: f32, si
         return None;
     }
     Some((sprite.x.floor() as u32, sprite.y.floor() as u32))
-}
-
-// Checker counts come from a bounded screen rect divided by an 8px cell; the
-// f32 -> i32 cast cannot overflow for any plausible viewport and the value is
-// non-negative by construction. The i32 -> f32 cast back is exact for those small
-// row/column counts.
-#[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss, clippy::cast_precision_loss)]
-fn paint_checkerboard(painter: &egui::Painter, board: egui::Rect, theme: &Theme) {
-    let cell = 8.0;
-    let light = theme.mock.checker[0];
-    let dark = theme.mock.checker[1];
-    let cols = (board.width() / cell).ceil() as i32;
-    let rows = (board.height() / cell).ceil() as i32;
-    for r in 0..rows {
-        for c in 0..cols {
-            let on = (r + c) % 2 == 0;
-            let min = board.min + egui::vec2(c as f32 * cell, r as f32 * cell);
-            let rect = egui::Rect::from_min_size(min, egui::vec2(cell, cell)).intersect(board);
-            painter.rect_filled(rect, egui::CornerRadius::ZERO, if on { light } else { dark });
-        }
-    }
-}
-
-/// Draw the grid over the artboard: a faint per-pixel grid once zoomed in, and the major
-/// grid every 8 or 16 sprite pixels. Both are skipped when their lines would be denser
-/// than ~4px so an extreme zoom-out never stalls in a tight loop.
-fn paint_grid(painter: &egui::Painter, board: egui::Rect, scale: f32, grid: GridMode, theme: &Theme) {
-    let major_px = match grid {
-        GridMode::Off => return,
-        GridMode::Px8 => 8.0,
-        GridMode::Px16 => 16.0,
-    };
-    if scale >= PIXEL_GRID_MIN_SCALE {
-        let faint = egui::Stroke::new(1.0, theme.roles.border.gamma_multiply(0.45));
-        grid_lines(painter, board, scale, faint);
-    }
-    let major_step = major_px * scale;
-    if major_step >= 4.0 {
-        grid_lines(painter, board, major_step, egui::Stroke::new(1.0, theme.roles.border));
-    }
-}
-
-/// Stroke evenly-spaced vertical and horizontal lines across `board` at `step` points.
-fn grid_lines(painter: &egui::Painter, board: egui::Rect, step: f32, stroke: egui::Stroke) {
-    let mut x = board.min.x;
-    while x <= board.max.x {
-        painter.line_segment([egui::pos2(x, board.min.y), egui::pos2(x, board.max.y)], stroke);
-        x += step;
-    }
-    let mut y = board.min.y;
-    while y <= board.max.y {
-        painter.line_segment([egui::pos2(board.min.x, y), egui::pos2(board.max.x, y)], stroke);
-        y += step;
-    }
 }
 
 /// Draw a faint full-board crosshair through the center of the hovered pixel.

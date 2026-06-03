@@ -7,9 +7,9 @@
 //!
 //! Why an example, not a test: this is a re-runnable tuning artifact, not a pass/fail
 //! gate. After a styling change, re-run it and eyeball the PNGs against the reference
-//! screenshots. The wgpu canvas interior is intentionally absent here — the example
-//! never installs a [`pixhaus_ui::ViewportRenderer`], so `CanvasCallback` no-ops and
-//! the egui-drawn canvas chrome (stage, checkerboard, grid, HUD) is what we capture.
+//! screenshots. The wgpu canvas renderer is installed into the harness `RenderState`
+//! (so the GPU-drawn checkerboard, grid, and sprite show in the captures, the same as
+//! the real app); the stage backdrop, board frame, and HUD are still egui-drawn.
 //!
 //! The harness builds a fresh `Host` and a fresh `Harness` per workspace. That avoids
 //! borrowing one `Host` both inside the `build_ui` closure and across the render loop,
@@ -72,17 +72,24 @@ fn build_host(ctx: &egui::Context) -> Host {
 /// the active workspace, the splash phase, an open modal - sticky across the settle
 /// loop even though the host itself is not persisted.
 fn render_snapshot(name: &str, dir: &std::path::Path, setup: impl Fn(&mut Host) + 'static) -> anyhow::Result<u64> {
-    // `.wgpu()` installs the off-screen `WgpuTestRenderer` that `Harness::render` needs;
-    // without it the default lazy renderer can't rasterize a frame. A small `step_dt`
-    // with a generous `max_steps` keeps the egui frame-clock (which the splash timer
-    // reads) below the 1.8s dismiss threshold across the whole settle loop, while still
-    // giving egui_extras' async image decode the wall-clock time it needs to land the
-    // brand textures.
+    // Build the off-screen wgpu renderer that `Harness::render` needs, then install the
+    // Pixhaus canvas renderer into its `RenderState` so the GPU canvas (checkerboard,
+    // grid, sprite) shows in the capture — the chrome moved onto the GPU, so without this
+    // the stage interior would be blank. `from_render_state` only rejects a state that has
+    // already created a managed texture; our renderer goes into `callback_resources`, so a
+    // fresh, install-only state is still accepted. A small `step_dt` with a generous
+    // `max_steps` keeps the egui frame-clock (which the splash timer reads) below the 1.8s
+    // dismiss threshold across the settle loop, while still giving egui_extras' async image
+    // decode the wall-clock time it needs to land the brand textures.
+    let render_state = egui_kittest::wgpu::create_render_state(egui_kittest::wgpu::default_wgpu_setup());
+    pixhaus_ui::install_canvas_renderer(&render_state);
+    let canvas_renderer = egui_kittest::wgpu::WgpuTestRenderer::from_render_state(render_state);
+
     let mut harness = Harness::builder()
         .with_size(SIZE)
         .with_step_dt(0.05)
         .with_max_steps(30)
-        .wgpu()
+        .renderer(canvas_renderer)
         .build_ui(move |ui| {
             let mut host = build_host(ui.ctx());
             setup(&mut host);
