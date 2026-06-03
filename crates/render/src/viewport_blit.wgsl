@@ -41,15 +41,18 @@ fn vs_main(@builtin(vertex_index) index: u32) -> @builtin(position) vec4<f32> {
     return vec4<f32>(positions[index], 0.0, 1.0);
 }
 
-// Whether `coord` (physical px from the board origin) lies within half a pixel of a grid
-// line spaced every `period_px`. Skips when the lines would be denser than 1px (a wash).
-fn grid_hit(coord: f32, period_px: f32) -> bool {
-    if (period_px < 1.0) {
-        return false;
+// Line coverage 0..1 for `coord` (physical px from the board origin) against lines spaced
+// every `period_px`: 1 on a line, fading to 0 about a pixel away. The falloff has a >=1px
+// footprint on purpose — a hard half-pixel threshold drops a line out entirely when it
+// lands exactly between two pixel centers (both at distance 0.5), which made the grid
+// flicker away at certain zoom levels. Returns 0 when the lines are too dense to read.
+fn grid_coverage(coord: f32, period_px: f32) -> f32 {
+    if (period_px < 2.0) {
+        return 0.0;
     }
     let q = coord / period_px;
     let dist = abs(q - round(q)) * period_px;
-    return dist < 0.5;
+    return clamp(1.0 - dist, 0.0, 1.0);
 }
 
 @fragment
@@ -75,13 +78,15 @@ fn fs_main(@builtin(position) frag: vec4<f32>) -> @location(0) vec4<f32> {
     }
 
     // 3. Per-sprite-pixel grid (gated by the UI on zoom).
-    if ((flags & FLAG_MINOR) != 0u && (grid_hit(local.x, ppsp) || grid_hit(local.y, ppsp))) {
-        rgb = mix(rgb, view.minor_color.rgb, view.minor_color.a);
+    if ((flags & FLAG_MINOR) != 0u) {
+        let cov = max(grid_coverage(local.x, ppsp), grid_coverage(local.y, ppsp));
+        rgb = mix(rgb, view.minor_color.rgb, view.minor_color.a * cov);
     }
 
     // 4. Major grid every N sprite pixels.
-    if ((flags & FLAG_MAJOR) != 0u && (grid_hit(local.x, major_px) || grid_hit(local.y, major_px))) {
-        rgb = mix(rgb, view.major_color.rgb, view.major_color.a);
+    if ((flags & FLAG_MAJOR) != 0u) {
+        let cov = max(grid_coverage(local.x, major_px), grid_coverage(local.y, major_px));
+        rgb = mix(rgb, view.major_color.rgb, view.major_color.a * cov);
     }
 
     return vec4<f32>(rgb, 1.0);
