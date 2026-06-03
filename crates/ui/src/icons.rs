@@ -133,6 +133,10 @@ pub const LOCK: char = glyph(ph::LOCK);
 pub const LOCK_OPEN: char = glyph(ph::LOCK_OPEN);
 /// Add / new affordance.
 pub const ADD: char = glyph(ph::PLUS);
+/// Remove / zoom-out affordance (the canvas zoom control's "-").
+pub const REMOVE: char = glyph(ph::MINUS);
+/// Fit-to-window affordance (the canvas zoom control's frame button).
+pub const FIT: char = glyph(ph::CORNERS_OUT);
 /// Expanded-section caret.
 pub const CARET_DOWN: char = glyph(ph::CARET_DOWN);
 /// Collapsed-section caret.

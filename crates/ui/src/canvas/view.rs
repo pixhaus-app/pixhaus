@@ -68,6 +68,34 @@ pub fn snap_scale(scale: f32) -> f32 {
     clamp_scale(snapped)
 }
 
+/// The next zoom scale one discrete step in (`zoom_in`) or out from `scale`.
+///
+/// In pixel-perfect mode the step lands on the adjacent whole points-per-pixel (or unit
+/// fraction below 1x), so it always moves by a visible amount — a fixed multiplier can
+/// round back to the same integer and stick. In continuous mode it scales by a fixed
+/// factor. Always clamped to the reachable range.
+#[must_use]
+pub fn zoom_step(scale: f32, zoom_in: bool, pixel_perfect: bool) -> f32 {
+    if !pixel_perfect {
+        let factor = if zoom_in { 1.25 } else { 0.8 };
+        return clamp_scale(scale * factor);
+    }
+    let snapped = snap_scale(scale);
+    let next = if snapped >= 1.0 {
+        if zoom_in { snapped + 1.0 } else { snapped - 1.0 }
+    } else {
+        let n = (1.0 / snapped).round().max(1.0);
+        if zoom_in {
+            if n <= 1.0 { 1.0 } else { 1.0 / (n - 1.0) }
+        } else {
+            1.0 / (n + 1.0)
+        }
+    };
+    // Crossing 1x downward lands on 0; the step below 1x is a half.
+    let next = if next <= 0.0 { 0.5 } else { next };
+    clamp_scale(next)
+}
+
 /// The on-screen artboard rect: the sprite centered on the stage, displaced by `pan`.
 #[must_use]
 pub fn artboard_rect(stage_rect: Rect, sprite_px: Vec2, scale: f32, pan: Vec2) -> Rect {
@@ -133,7 +161,7 @@ fn clamp_axis(center: f32, half: f32, lo_edge: f32, hi_edge: f32) -> f32 {
     if min_center <= max_center {
         center.clamp(min_center, max_center)
     } else {
-        (min_center + max_center) / 2.0
+        f32::midpoint(min_center, max_center)
     }
 }
 
@@ -192,6 +220,22 @@ mod tests {
         // 0.45 -> 1/round(1/0.45)=1/round(2.22)=1/2=0.5.
         assert!(approx(snap_scale(0.45), 0.5), "snaps to the nearest 1/n below 1x");
         assert!(approx(snap_scale(0.3), 1.0 / 3.0), "0.3 -> 1/3");
+    }
+
+    #[test]
+    fn zoom_step_always_moves_in_pixel_perfect_mode() {
+        // The trap a fixed multiplier hits: 1.0 * 1.25 rounds back to 1. Stepping must move.
+        assert!(approx(zoom_step(1.0, true, true), 2.0), "1x steps up to 2x");
+        assert!(approx(zoom_step(1.0, false, true), 0.5), "1x steps down to 1/2");
+        assert!(approx(zoom_step(0.5, true, true), 1.0), "1/2 steps up to 1x");
+        assert!(approx(zoom_step(0.5, false, true), 1.0 / 3.0), "1/2 steps down to 1/3");
+        assert!(approx(zoom_step(4.0, true, true), 5.0), "4x steps up to 5x");
+    }
+
+    #[test]
+    fn zoom_step_scales_by_a_factor_in_continuous_mode() {
+        assert!(approx(zoom_step(4.0, true, false), 5.0), "continuous zoom-in multiplies by 1.25");
+        assert!(approx(zoom_step(5.0, false, false), 4.0), "continuous zoom-out multiplies by 0.8");
     }
 
     #[test]

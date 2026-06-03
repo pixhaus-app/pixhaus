@@ -13,6 +13,8 @@ use crate::theme::tokens::SurfaceTier;
 pub fn show(host: &mut Host, ui: &mut egui::Ui) {
     let status_items = resolve_layout(host.state.session.active_workspace, &host.registries).status_items;
 
+    let (sprite_w, sprite_h) = host.edit.document.active_sprite_size().unwrap_or(pixhaus_core::DEFAULT_CANVAS_SIZE);
+
     let Host { state, theme, .. } = &mut *host;
 
     let frame = egui::Frame::new().fill(theme.surface(SurfaceTier::Elevated)).inner_margin(theme.spacing.xs);
@@ -23,12 +25,12 @@ pub fn show(host: &mut Host, ui: &mut egui::Ui) {
         .frame(frame)
         .show_inside(ui, |ui| {
             ui.horizontal(|ui| {
-                // Always-on items. The canvas size and zoom are mock placeholders
-                // (numeric, locale-neutral) until `core` provides the real document;
-                // they are deliberately not i18n keys. The "Grid" label is a real
-                // phrase, so it is keyed - the mode value (Off/Px8/Px16) stays a
-                // short technical token shared with the canvas HUD.
-                ui.colored_label(theme.roles.text_secondary, "64 x 64");
+                // Always-on items. The canvas size and zoom are live now (size from the
+                // active sprite, or the default board when nothing is open); both are
+                // numeric and locale-neutral, so they are deliberately not i18n keys. The
+                // "Grid" label is a real phrase, so it is keyed - the mode value
+                // (Off/Px8/Px16) stays a short technical token shared with the canvas HUD.
+                ui.colored_label(theme.roles.text_secondary, format!("{sprite_w} x {sprite_h}"));
                 ui.separator();
                 ui.colored_label(theme.roles.text_secondary, format!("{:.0}%", state.ui.zoom * 100.0));
                 ui.separator();

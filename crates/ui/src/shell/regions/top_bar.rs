@@ -191,6 +191,8 @@ fn push_menu_intent(intents: &mut IntentSink, action: ActionId, current_grid: Gr
         ACTION_VIEW_TOGGLE_GRID => intents.push(Intent::SetGrid(toggle_grid(current_grid))),
         ACTION_VIEW_TOGGLE_KEYS => intents.push(Intent::ToggleI18nKeys),
         ACTION_WINDOW_COMMAND_PALETTE => intents.push(Intent::OpenCommandPalette),
+        ActionId("view.zoom_in") => intents.push(Intent::ZoomStep { zoom_in: true }),
+        ActionId("view.zoom_out") => intents.push(Intent::ZoomStep { zoom_in: false }),
         other => intents.push(Intent::RunAction(other)),
     }
 }

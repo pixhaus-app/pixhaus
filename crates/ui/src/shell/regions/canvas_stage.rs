@@ -1,15 +1,44 @@
-//! Canvas-stage region: the `CentralPanel` (added last). A stage backdrop, the
-//! mock artboard rect from zoom/pan, the transparency checkerboard, a manually
-//! painted drop shadow, the unchanged `CanvasCallback` embed, grid strokes, and a
-//! floating HUD painted with the central panel's `Painter`.
+//! Canvas-stage region: the `CentralPanel` (added last). It owns the navigable view —
+//! the camera (a true scale + pan), cursor-anchored wheel zoom, drag-pan, auto-fit, the
+//! grid and pixel grid, a hover crosshair, and a floating zoom control — over the
+//! GPU-blitted sprite.
+//!
+//! View state (`zoom`/`pan`/`last_fit_size`/`pixel_perfect_zoom`) is the UI bucket the
+//! shell owns; this region mutates it directly for interactive gestures (a one-frame
+//! intent round-trip is visible during a continuous wheel or drag), the same blessed
+//! direct-mutation carve-out it already uses for the upload-dedup fields. Discrete view
+//! actions from outside the canvas (menus, the zoom control, the `+`/`-`/fit keys) route
+//! through `Intent` instead, since their callers cannot reach the stage geometry.
 
 use std::sync::Arc;
 
+use pixhaus_services::i18n;
+
+use crate::canvas::view;
 use crate::state::Host;
+use crate::state::intent::Intent;
 use crate::state::ui_state::GridMode;
 use crate::theme::Theme;
 use crate::theme::tokens::SurfaceTier;
 use crate::{CanvasCallback, CanvasFrame};
+
+/// Multiplicative zoom per unit of wheel scroll: `factor = exp(scroll * this)`. Tuned so
+/// a normal wheel notch is a comfortable step, framerate-independent.
+const ZOOM_WHEEL_SENSITIVITY: f32 = 0.0015;
+
+/// At or above this scale the per-pixel grid is drawn (one line per sprite pixel). Below
+/// it the 1px cells would be too dense to read, so only the major grid shows.
+const PIXEL_GRID_MIN_SCALE: f32 = 6.0;
+
+/// `Ctrl/Cmd+Shift+0` resets to actual pixels (1:1). Built explicitly so the shift is
+/// part of the match (plain `Ctrl/Cmd+0` is fit-to-window).
+const ACTUAL_PIXELS_MODS: egui::Modifiers = egui::Modifiers {
+    alt: false,
+    ctrl: false,
+    shift: true,
+    mac_cmd: false,
+    command: true,
+};
 
 /// Render the canvas stage.
 //
@@ -17,48 +46,64 @@ use crate::{CanvasCallback, CanvasFrame};
 // f32 for the layout math is exact; the `cast_precision_loss` allow documents that.
 #[allow(clippy::cast_precision_loss)]
 pub fn show(host: &mut Host, ui: &mut egui::Ui) {
-    let Host { state, theme, edit, .. } = &mut *host;
+    let Host {
+        state, theme, edit, intents, ..
+    } = &mut *host;
 
     let frame = egui::Frame::new().fill(theme.surface(SurfaceTier::Stage));
 
     egui::CentralPanel::default().frame(frame).show_inside(ui, |ui| {
         let stage_rect = ui.available_rect_before_wrap();
+        // The HUD paints on the full painter; everything that tracks the artboard paints
+        // on a stage-clipped clone, so a zoomed-in board is scissored to the panel and
+        // never bleeds over the docks. egui-wgpu reads this clip for the GPU scissor too.
         let painter = ui.painter().clone();
+        let canvas = painter.with_clip_rect(stage_rect);
 
-        // 1. Stage backdrop already filled by the frame. Compute the artboard from the
-        //    active sprite's real size (the default board when nothing is open). A
-        //    small sprite at 100% zoom is a speck in a large stage, so we derive a
-        //    display scale that fills ~68% of the stage height before applying the user
-        //    zoom. `fit` stays integer (one sprite pixel maps to N device pixels) and
-        //    floored to >= 1 so the board never collapses. `state.ui.zoom` rides on top,
-        //    keeping the HUD/status "100%" honest.
         let (sprite_w, sprite_h) = edit.document.active_sprite_size().unwrap_or(pixhaus_core::DEFAULT_CANVAS_SIZE);
         let sprite_px = egui::vec2(sprite_w as f32, sprite_h as f32);
-        let fit = (stage_rect.height() * 0.68 / sprite_px.y).max(1.0).floor();
-        let display_scale = fit * state.ui.zoom;
-        let scaled = sprite_px * display_scale;
-        let artboard = egui::Rect::from_center_size(stage_rect.center() + state.ui.pan, scaled);
 
-        // 2. Manual drop shadow: two stacked offset translucent rects behind the
-        //    board for a soft falloff. Shadow is not a paint primitive and cannot be
-        //    painter.add-ed here, so the stack stands in for a blurred edge.
+        // 1. Auto-fit bootstrap. When the active sprite's dimensions differ from the last
+        //    fit (first open, switching sprites, a resize, or a FitView request that
+        //    cleared the record), re-fit the board to the stage so a small sprite is not
+        //    a speck. A manual zoom leaves the dimensions unchanged, so it is never
+        //    undone. This runs before input so the fitted view is what the user navigates.
+        let fit_key = (sprite_w, sprite_h);
+        if state.ui.last_fit_size != Some(fit_key) {
+            let fit = view::fit_scale(stage_rect.size(), sprite_px, view::FIT_MARGIN);
+            state.ui.zoom = if state.ui.pixel_perfect_zoom { view::snap_scale(fit) } else { fit };
+            state.ui.pan = egui::Vec2::ZERO;
+            state.ui.last_fit_size = Some(fit_key);
+        }
+
+        // 2. Interactive navigation, mutating view state directly for immediacy. Gated on
+        //    no modal so the palette/about overlays own the pointer when open.
+        let response = ui.interact(stage_rect, ui.id().with("canvas"), egui::Sense::click_and_drag());
+        if state.ui.modal.is_none() {
+            handle_navigation(ui, &response, state, sprite_px, stage_rect);
+            handle_view_keys(ui, intents, state.ui.modal.is_some());
+        }
+
+        // 3. Resolve the on-screen artboard from the (possibly just-updated) view, with a
+        //    pan clamp from the authoritative geometry so the board stays reachable.
+        let scale = view::clamp_scale(state.ui.zoom);
+        state.ui.pan = view::clamp_pan(stage_rect, sprite_px, scale, state.ui.pan);
+        let artboard = view::artboard_rect(stage_rect, sprite_px, scale, state.ui.pan);
+
+        // 4. Manual drop shadow: two stacked offset translucent rects behind the board.
         let shadow_far = artboard.expand(3.0).translate(egui::vec2(6.0, 10.0));
-        painter.rect_filled(shadow_far, egui::CornerRadius::ZERO, egui::Color32::from_black_alpha(70));
+        canvas.rect_filled(shadow_far, egui::CornerRadius::ZERO, egui::Color32::from_black_alpha(70));
         let shadow_near = artboard.translate(egui::vec2(3.0, 5.0));
-        painter.rect_filled(shadow_near, egui::CornerRadius::ZERO, egui::Color32::from_black_alpha(130));
+        canvas.rect_filled(shadow_near, egui::CornerRadius::ZERO, egui::Color32::from_black_alpha(130));
 
-        // 3. Transparency checkerboard behind the artboard.
-        paint_checkerboard(&painter, artboard, theme);
+        // 5. Transparency checkerboard behind the artboard.
+        paint_checkerboard(&canvas, artboard, theme);
 
-        // 4. Resolve which frame to display, then recomposite + upload only when it
-        //    changed. While an animation plays (or is paused mid-clip) the playhead
-        //    picks the frame; otherwise it resolves to the range start / active frame.
-        //    This is a TRANSIENT view choice — the document is never mutated, so the
-        //    revision does not move during playback. The dirty gate therefore fires on
-        //    EITHER a revision change OR a displayed-frame change, so playback advances
-        //    on screen without a command per frame. A `None` frame reuses the retained
-        //    GPU texture untouched. (The clock that drives `playhead_seconds` is
-        //    advanced once per frame in `Shell::run`, before this region reads it.)
+        // 6. Resolve which frame to display, then recomposite + upload only when it
+        //    changed (the playhead picks the frame during playback; otherwise the range
+        //    start / active frame). A transient view choice — the document is untouched,
+        //    so the dirty gate fires on a revision OR displayed-frame change. `None`
+        //    reuses the retained GPU texture.
         let displayed_frame: Option<pixhaus_core::FrameId> = edit.document.active_sprite().and_then(|id| edit.document.sprite(id)).and_then(|sprite| {
             let range = crate::playback::resolve_range(sprite, state.ui.playback.clip);
             let offset = crate::playback::playhead_index(state.ui.playback.playhead_seconds, range.fps, range.frame_count, range.loop_mode);
@@ -87,26 +132,126 @@ pub fn show(host: &mut Host, ui: &mut egui::Ui) {
         } else {
             None
         };
-        ui.painter()
-            .add(egui_wgpu::Callback::new_paint_callback(artboard, CanvasCallback { frame: canvas_frame }));
+        canvas.add(egui_wgpu::Callback::new_paint_callback(artboard, CanvasCallback { frame: canvas_frame }));
 
-        // 5. Grid lines over the artboard, one device step per sprite pixel at the
-        //    enlarged display scale (so the grid tracks the board, not raw zoom).
-        paint_grid(&painter, artboard, display_scale, state.ui.grid, theme);
+        // 7. Grid lines: the major grid (8/16 sprite px) plus a per-pixel grid once the
+        //    board is zoomed in far enough to read it.
+        paint_grid(&canvas, artboard, scale, state.ui.grid, theme);
 
-        // 6. The board frame: a 1.5px border so its edge reads clearly against the
-        //    stage (the drop shadow is already painted behind it in step 2). The
-        //    checker now carries the interior, so the edge marks the document bounds.
-        painter.rect_stroke(
+        // 8. Hover crosshair through the pixel under the pointer (Tier-2 tool foundation),
+        //    suppressed while panning so a drag stays clean.
+        let hover_pixel = hovered_pixel(response.hover_pos(), artboard, scale, (sprite_w, sprite_h));
+        let panning = is_panning(ui, &response);
+        if let Some(pixel) = hover_pixel
+            && !panning
+        {
+            paint_crosshair(&canvas, artboard, scale, pixel, theme);
+        }
+
+        // 9. The board frame: a 1.5px border so its edge reads against the stage.
+        canvas.rect_stroke(
             artboard,
             egui::CornerRadius::ZERO,
             egui::Stroke::new(1.5, theme.roles.border),
             egui::StrokeKind::Outside,
         );
 
-        // 7. Floating HUD via the central Painter, at the stage's lower-left.
-        paint_hud(&painter, stage_rect, (sprite_w, sprite_h), state.ui.zoom, state.ui.grid, theme);
+        // 10. Floating HUD (lower-left) and zoom control (lower-right).
+        let readout = HudReadout {
+            size: (sprite_w, sprite_h),
+            zoom: state.ui.zoom,
+            pixel_perfect: state.ui.pixel_perfect_zoom,
+            grid: state.ui.grid,
+            hover: hover_pixel,
+        };
+        paint_hud(&painter, stage_rect, &readout, theme);
+        zoom_control(ui, stage_rect, state.ui.zoom, state.ui.pixel_perfect_zoom, theme, intents);
     });
+}
+
+/// Whether a pan gesture is active this frame: middle-drag, or Space + left-drag.
+fn is_panning(ui: &egui::Ui, response: &egui::Response) -> bool {
+    let space_down = ui.ctx().input(|i| i.key_down(egui::Key::Space));
+    response.dragged_by(egui::PointerButton::Middle) || (space_down && response.dragged_by(egui::PointerButton::Primary))
+}
+
+/// Apply pan-drag and cursor-anchored wheel/pinch zoom to the view, in points.
+fn handle_navigation(ui: &egui::Ui, response: &egui::Response, state: &mut crate::state::ShellState, sprite_px: egui::Vec2, stage_rect: egui::Rect) {
+    let panning = is_panning(ui, response);
+    if panning {
+        state.ui.pan += response.drag_delta();
+        ui.ctx().set_cursor_icon(egui::CursorIcon::Grabbing);
+    } else if ui.ctx().input(|i| i.key_down(egui::Key::Space)) && response.contains_pointer() {
+        ui.ctx().set_cursor_icon(egui::CursorIcon::Grab);
+    }
+
+    // Cursor-anchored zoom: plain wheel and trackpad pinch both scale toward the cursor.
+    let (scroll_y, pinch) = ui.ctx().input(|i| (i.smooth_scroll_delta.y, i.zoom_delta()));
+    if !panning
+        && response.contains_pointer()
+        && let Some(cursor) = response.hover_pos()
+    {
+        let factor = (scroll_y * ZOOM_WHEEL_SENSITIVITY).exp() * pinch;
+        if (factor - 1.0).abs() > f32::EPSILON {
+            let scale = view::clamp_scale(state.ui.zoom);
+            let mut new_scale = view::clamp_scale(scale * factor);
+            if state.ui.pixel_perfect_zoom {
+                new_scale = view::snap_scale(new_scale);
+            }
+            if (new_scale - scale).abs() > f32::EPSILON {
+                state.ui.pan = view::zoom_anchored(stage_rect.center(), sprite_px, scale, state.ui.pan, cursor, new_scale);
+                state.ui.zoom = new_scale;
+            }
+        }
+    }
+}
+
+/// Read the canvas keyboard shortcuts and queue their intents. Gated by the caller on no
+/// modal; bare `+`/`-` are also gated on no focused text field so typing never zooms.
+fn handle_view_keys(ui: &egui::Ui, intents: &mut crate::state::intent::IntentSink, modal_open: bool) {
+    if modal_open {
+        return;
+    }
+    let text_focused = ui.ctx().text_edit_focused();
+    let (mut step_in, mut step_out, mut fit, mut actual) = (false, false, false, false);
+    ui.ctx().input_mut(|i| {
+        if !text_focused {
+            step_in = i.key_pressed(egui::Key::Plus) || i.key_pressed(egui::Key::Equals);
+            step_out = i.key_pressed(egui::Key::Minus);
+        }
+        // Command-modified, so they fire even with a text field focused.
+        actual = i.consume_key(ACTUAL_PIXELS_MODS, egui::Key::Num0);
+        fit = i.consume_key(egui::Modifiers::COMMAND, egui::Key::Num0);
+    });
+    if actual {
+        intents.push(Intent::SetZoom(1.0));
+        intents.push(Intent::SetPan(egui::Vec2::ZERO));
+    } else if fit {
+        intents.push(Intent::FitView);
+    }
+    if step_in {
+        intents.push(Intent::ZoomStep { zoom_in: true });
+    }
+    if step_out {
+        intents.push(Intent::ZoomStep { zoom_in: false });
+    }
+}
+
+/// The sprite pixel under `hover`, or `None` when the pointer is off the board.
+// Floors a bounded, non-negative in-board coordinate to a pixel index; the f32 -> u32
+// casts cannot truncate or lose a sign for any real sprite size.
+#[allow(clippy::cast_precision_loss, clippy::cast_possible_truncation, clippy::cast_sign_loss)]
+fn hovered_pixel(hover: Option<egui::Pos2>, artboard: egui::Rect, scale: f32, size: (u32, u32)) -> Option<(u32, u32)> {
+    let hover = hover?;
+    if !artboard.contains(hover) {
+        return None;
+    }
+    let sprite = view::screen_to_sprite(hover, artboard.min, scale);
+    let (w, h) = size;
+    if sprite.x < 0.0 || sprite.y < 0.0 || sprite.x >= w as f32 || sprite.y >= h as f32 {
+        return None;
+    }
+    Some((sprite.x.floor() as u32, sprite.y.floor() as u32))
 }
 
 // Checker counts come from a bounded screen rect divided by an 8px cell; the
@@ -116,8 +261,6 @@ pub fn show(host: &mut Host, ui: &mut egui::Ui) {
 #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss, clippy::cast_precision_loss)]
 fn paint_checkerboard(painter: &egui::Painter, board: egui::Rect, theme: &Theme) {
     let cell = 8.0;
-    // The dedicated checker pair, lifted off the stage backdrop so the artboard
-    // reads as a lit surface rather than near-black-on-near-black.
     let light = theme.mock.checker[0];
     let dark = theme.mock.checker[1];
     let cols = (board.width() / cell).ceil() as i32;
@@ -132,15 +275,27 @@ fn paint_checkerboard(painter: &egui::Painter, board: egui::Rect, theme: &Theme)
     }
 }
 
-fn paint_grid(painter: &egui::Painter, board: egui::Rect, display_scale: f32, grid: GridMode, theme: &Theme) {
-    if matches!(grid, GridMode::Off) {
-        return;
+/// Draw the grid over the artboard: a faint per-pixel grid once zoomed in, and the major
+/// grid every 8 or 16 sprite pixels. Both are skipped when their lines would be denser
+/// than ~4px so an extreme zoom-out never stalls in a tight loop.
+fn paint_grid(painter: &egui::Painter, board: egui::Rect, scale: f32, grid: GridMode, theme: &Theme) {
+    let major_px = match grid {
+        GridMode::Off => return,
+        GridMode::Px8 => 8.0,
+        GridMode::Px16 => 16.0,
+    };
+    if scale >= PIXEL_GRID_MIN_SCALE {
+        let faint = egui::Stroke::new(1.0, theme.roles.border.gamma_multiply(0.45));
+        grid_lines(painter, board, scale, faint);
     }
-    // Mock chrome: one device step per sprite pixel at the current display scale,
-    // clamped to 8px so an extreme zoom-out never produces a sub-pixel step (a tight
-    // loop that would stall). The real grid spacing follows the document once core lands.
-    let step = display_scale.max(8.0);
-    let stroke = egui::Stroke::new(1.0, theme.roles.border);
+    let major_step = major_px * scale;
+    if major_step >= 4.0 {
+        grid_lines(painter, board, major_step, egui::Stroke::new(1.0, theme.roles.border));
+    }
+}
+
+/// Stroke evenly-spaced vertical and horizontal lines across `board` at `step` points.
+fn grid_lines(painter: &egui::Painter, board: egui::Rect, step: f32, stroke: egui::Stroke) {
     let mut x = board.min.x;
     while x <= board.max.x {
         painter.line_segment([egui::pos2(x, board.min.y), egui::pos2(x, board.max.y)], stroke);
@@ -153,10 +308,46 @@ fn paint_grid(painter: &egui::Painter, board: egui::Rect, display_scale: f32, gr
     }
 }
 
-fn paint_hud(painter: &egui::Painter, stage: egui::Rect, sprite: (u32, u32), zoom: f32, grid: GridMode, theme: &Theme) {
-    // Format the live grid the same way the status bar does so the two agree.
-    let (sprite_w, sprite_h) = sprite;
-    let text = format!("{sprite_w} x {sprite_h}   {:.0}%   Grid {grid:?}   Palette: Bit", zoom * 100.0);
+/// Draw a faint full-board crosshair through the center of the hovered pixel.
+// The pixel index is small and non-negative; the u32 -> f32 cast is exact here.
+#[allow(clippy::cast_precision_loss)]
+fn paint_crosshair(painter: &egui::Painter, board: egui::Rect, scale: f32, pixel: (u32, u32), theme: &Theme) {
+    let (px, py) = pixel;
+    let center = view::sprite_to_screen(egui::vec2(px as f32 + 0.5, py as f32 + 0.5), board.min, scale);
+    let stroke = egui::Stroke::new(1.0, theme.roles.text_secondary.gamma_multiply(0.5));
+    painter.line_segment([egui::pos2(board.min.x, center.y), egui::pos2(board.max.x, center.y)], stroke);
+    painter.line_segment([egui::pos2(center.x, board.min.y), egui::pos2(center.x, board.max.y)], stroke);
+}
+
+/// The live values the canvas HUD prints, bundled so the painter stays under the
+/// argument-count lint.
+struct HudReadout {
+    /// Sprite dimensions in pixels.
+    size: (u32, u32),
+    /// The true scale (screen points per sprite pixel); shown as a percentage.
+    zoom: f32,
+    /// Whether pixel-perfect zoom is active.
+    pixel_perfect: bool,
+    /// The active grid mode.
+    grid: GridMode,
+    /// The sprite pixel under the pointer, if any.
+    hover: Option<(u32, u32)>,
+}
+
+/// The floating HUD at the stage's lower-left: size, honest zoom %, zoom mode, grid, and
+/// the live pixel coordinate under the pointer.
+// The mock comment from the status bar applies: the numeric size/zoom and the short
+// technical mode tokens are locale-neutral and deliberately not i18n keys; the real word
+// "Grid" routes through the shared key so the HUD and status bar agree.
+fn paint_hud(painter: &egui::Painter, stage: egui::Rect, readout: &HudReadout, theme: &Theme) {
+    let (sprite_w, sprite_h) = readout.size;
+    let grid_text = i18n::tr_args("app.ui.status.grid", &[("mode", &format!("{:?}", readout.grid))]);
+    let mode = if readout.pixel_perfect { "Pixel Perfect" } else { "Smooth" };
+    let coord = readout.hover.map_or_else(String::new, |(x, y)| format!("   [{x}, {y}]"));
+    let text = format!(
+        "{sprite_w} x {sprite_h}   {:.0}%   {mode}   {grid_text}{coord}   Palette: Bit",
+        readout.zoom * 100.0
+    );
     let font = egui::FontId::monospace(theme.type_scale.mono);
     let galley = painter.layout_no_wrap(text, font, theme.roles.text_secondary);
     let pad = egui::vec2(6.0, 4.0);
@@ -164,4 +355,51 @@ fn paint_hud(painter: &egui::Painter, stage: egui::Rect, sprite: (u32, u32), zoo
     let chip = egui::Rect::from_min_size(chip_min, galley.size() + pad * 2.0);
     painter.rect_filled(chip, egui::CornerRadius::same(2), theme.surface(SurfaceTier::Inset));
     painter.galley(chip.min + pad, galley, theme.roles.text_secondary);
+}
+
+/// The floating zoom control at the stage's lower-right: zoom out, the live percentage,
+/// zoom in, a mode toggle, and fit-to-window. Buttons queue intents (the cursor-anchored
+/// path is the wheel); the control floats in its own foreground area.
+#[allow(clippy::cast_precision_loss)]
+fn zoom_control(ui: &egui::Ui, stage: egui::Rect, zoom: f32, pixel_perfect: bool, theme: &Theme, intents: &mut crate::state::intent::IntentSink) {
+    let pos = stage.right_bottom() + egui::vec2(-176.0, -38.0);
+    let frame = egui::Frame::new()
+        .fill(theme.surface(SurfaceTier::Inset))
+        .inner_margin(theme.spacing.xs)
+        .corner_radius(egui::CornerRadius::same(4));
+    egui::Area::new(ui.id().with("zoom_control"))
+        .order(egui::Order::Foreground)
+        .fixed_pos(pos)
+        .show(ui.ctx(), |ui| {
+            frame.show(ui, |ui| {
+                ui.horizontal(|ui| {
+                    ui.spacing_mut().item_spacing.x = theme.spacing.xs;
+                    if icon_button(ui, theme, crate::icons::REMOVE).clicked() {
+                        intents.push(Intent::ZoomStep { zoom_in: false });
+                    }
+                    ui.colored_label(theme.roles.text_secondary, egui::RichText::new(format!("{:>4.0}%", zoom * 100.0)).monospace());
+                    if icon_button(ui, theme, crate::icons::ADD).clicked() {
+                        intents.push(Intent::ZoomStep { zoom_in: true });
+                    }
+                    ui.separator();
+                    // The mode toggle reads in the active accent when pixel-perfect is on.
+                    let mode_color = if pixel_perfect { theme.accent.base } else { theme.roles.text_secondary };
+                    if ui
+                        .add(egui::Button::new(egui::RichText::new(crate::icons::GRID).color(mode_color)).frame(false))
+                        .on_hover_text("Pixel-perfect zoom")
+                        .clicked()
+                    {
+                        intents.push(Intent::ToggleZoomMode);
+                    }
+                    if icon_button(ui, theme, crate::icons::FIT).on_hover_text("Fit to window").clicked() {
+                        intents.push(Intent::FitView);
+                    }
+                });
+            });
+        });
+}
+
+/// A small frameless icon button in the secondary text color.
+fn icon_button(ui: &mut egui::Ui, theme: &Theme, icon: char) -> egui::Response {
+    ui.add(egui::Button::new(egui::RichText::new(icon).color(theme.roles.text_secondary)).frame(false))
 }

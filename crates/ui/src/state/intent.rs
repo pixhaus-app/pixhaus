@@ -36,10 +36,14 @@ pub enum Intent {
     ToggleSnap,
     /// Set canvas zoom to an absolute scale (screen points per sprite pixel). Clamped.
     SetZoom(f32),
-    /// Multiply the canvas zoom by a factor, anchored on the stage center. The
-    /// geometry-free zoom path for menus and the floating zoom control (the cursor-
-    /// anchored wheel path lives in the canvas region, which has the pointer position).
-    ZoomBy(f32),
+    /// Step the canvas zoom one notch in (`true`) or out (`false`), about the board
+    /// center, honoring the pixel-perfect mode. The geometry-free zoom path for menus,
+    /// the floating zoom control, and the `+`/`-` keys (the cursor-anchored wheel path
+    /// lives in the canvas region, which has the pointer position).
+    ZoomStep {
+        /// Zoom in when `true`, out when `false`.
+        zoom_in: bool,
+    },
     /// Set the canvas pan offset in points. The canvas re-clamps it each frame.
     SetPan(egui::Vec2),
     /// Request a fit-to-window: clears the recorded fit so the canvas re-fits the
@@ -187,8 +191,8 @@ pub fn apply_intent(host: &mut Host, intent: Intent, ctx: &egui::Context) {
         Intent::SetZoom(z) => {
             host.state.ui.zoom = crate::canvas::view::clamp_scale(z);
         }
-        Intent::ZoomBy(factor) => {
-            host.state.ui.zoom = crate::canvas::view::clamp_scale(host.state.ui.zoom * factor);
+        Intent::ZoomStep { zoom_in } => {
+            host.state.ui.zoom = crate::canvas::view::zoom_step(host.state.ui.zoom, zoom_in, host.state.ui.pixel_perfect_zoom);
         }
         Intent::SetPan(pan) => {
             host.state.ui.pan = pan;
@@ -595,13 +599,13 @@ mod tests {
     }
 
     #[test]
-    fn zoom_by_multiplies_then_saturates_at_the_ceiling() {
+    fn zoom_step_moves_one_notch_and_saturates() {
         let mut host = host();
-        host.state.ui.zoom = 2.0;
-        apply_intent(&mut host, Intent::ZoomBy(1.5), &ctx());
-        assert_eq!(host.state.ui.zoom, 3.0, "ZoomBy multiplies the current scale");
-        for _ in 0..20 {
-            apply_intent(&mut host, Intent::ZoomBy(2.0), &ctx());
+        host.state.ui.zoom = 2.0; // pixel-perfect mode is the default
+        apply_intent(&mut host, Intent::ZoomStep { zoom_in: true }, &ctx());
+        assert_eq!(host.state.ui.zoom, 3.0, "a pixel-perfect step lands on the next integer scale");
+        for _ in 0..200 {
+            apply_intent(&mut host, Intent::ZoomStep { zoom_in: true }, &ctx());
         }
         assert_eq!(
             host.state.ui.zoom,
