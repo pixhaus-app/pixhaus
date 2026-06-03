@@ -139,7 +139,7 @@ pub fn zoom_anchored(stage_center: Pos2, sprite_px: Vec2, old_scale: f32, pan: V
     (new_min - stage_center) + sprite_px * new_scale / 2.0
 }
 
-/// Clamp `pan` so at least [`MIN_VISIBLE_PX`] of the board stays inside `stage_rect` on
+/// Clamp `pan` so at least `MIN_VISIBLE_PX` of the board stays inside `stage_rect` on
 /// each axis. Re-applied every frame, so the geometry-free `SetPan` intent and any
 /// runaway drag self-correct; idempotent once the board is in bounds.
 #[must_use]

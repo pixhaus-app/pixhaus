@@ -104,7 +104,8 @@ mod tests {
     use pixhaus_core::commands::{ApplyGeneratedAnimation, GeneratedFrameData};
     use pixhaus_core::{Command, LoopMode};
 
-    /// A document with one animated 2x2 sprite of `frames` opaque-black frames.
+    /// A document with one animated 2x2 sprite of `frames` opaque-black frames. The ui
+    /// crate forbids `unwrap`/`expect` even in tests, so failures `panic!` explicitly.
     fn anim_doc(frames: usize) -> Document {
         let data: Vec<GeneratedFrameData> = (0..frames)
             .map(|_| GeneratedFrameData {
@@ -114,22 +115,31 @@ mod tests {
             .collect();
         let mut doc = Document::new();
         let mut cmd = ApplyGeneratedAnimation::new("s".to_owned(), "idle".to_owned(), 2, 2, 8, LoopMode::Loop, data);
-        cmd.apply(&mut doc).unwrap();
+        assert!(cmd.apply(&mut doc).is_ok(), "the test animation applies");
         doc
     }
 
+    fn active(doc: &Document) -> SpriteId {
+        let Some(sprite) = doc.active_sprite() else {
+            panic!("the test document has an active sprite");
+        };
+        sprite
+    }
+
     fn nth_frame(doc: &Document, n: usize) -> FrameId {
-        let sprite = doc.active_sprite().unwrap();
-        doc.sprite(sprite).unwrap().frames()[n].id
+        let frame = doc.active_sprite().and_then(|s| doc.sprite(s)).and_then(|s| s.frames().get(n)).map(|f| f.id);
+        let Some(frame) = frame else {
+            panic!("the test sprite has a frame {n}");
+        };
+        frame
     }
 
     #[test]
     fn a_middle_frame_ghosts_both_neighbors() {
         let ctx = egui::Context::default();
         let doc = anim_doc(3);
-        let sprite = doc.active_sprite().unwrap();
         let mut cache = OnionCache::default();
-        let ghosts = cache.ghosts(&ctx, &doc, sprite, nth_frame(&doc, 1));
+        let ghosts = cache.ghosts(&ctx, &doc, active(&doc), nth_frame(&doc, 1));
         assert_eq!(ghosts.len(), 2, "a middle frame ghosts the previous and next frames");
         assert!(ghosts.iter().any(|g| g.neighbor == Neighbor::Past));
         assert!(ghosts.iter().any(|g| g.neighbor == Neighbor::Future));
@@ -139,18 +149,17 @@ mod tests {
     fn the_first_frame_ghosts_only_the_future() {
         let ctx = egui::Context::default();
         let doc = anim_doc(3);
-        let sprite = doc.active_sprite().unwrap();
         let mut cache = OnionCache::default();
-        let ghosts = cache.ghosts(&ctx, &doc, sprite, nth_frame(&doc, 0));
+        let ghosts = cache.ghosts(&ctx, &doc, active(&doc), nth_frame(&doc, 0));
         assert_eq!(ghosts.len(), 1, "the first frame has no past neighbor");
-        assert_eq!(ghosts[0].neighbor, Neighbor::Future);
+        assert_eq!(ghosts.first().map(|g| g.neighbor), Some(Neighbor::Future));
     }
 
     #[test]
     fn clear_then_request_rebuilds() {
         let ctx = egui::Context::default();
         let doc = anim_doc(3);
-        let sprite = doc.active_sprite().unwrap();
+        let sprite = active(&doc);
         let center = nth_frame(&doc, 1);
         let mut cache = OnionCache::default();
         assert_eq!(cache.ghosts(&ctx, &doc, sprite, center).len(), 2);
