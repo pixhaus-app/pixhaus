@@ -123,9 +123,13 @@ matching the existing generate panel). The command label
 - [x] OpenRouter provider + deps (cargo deny green) + app wiring
 - [x] `pixhaus-openrouter` skill + this journal
 - [ ] Live OpenRouter run (needs a key + network; the ignored integration test)
-- [ ] In-app idle playback (deferred; apply + headless test only this round)
+- [x] In-app playback — the Animate workspace plays the inserted animation on the
+  canvas (transient playhead in `UiState`, the canvas composites the playhead frame,
+  the timeline drives transport/scrub); pure frame math in `crates/ui/src/playback.rs`
 - [ ] Prompt-library / recipe system (Bit is the hardcoded default until then)
 - [ ] Real body plans beyond biped; walk/run/etc. choreography
+- [ ] Per-layer cel data on the timeline (Band 4 tracks are still decorative); a
+  `SetClipLoopMode` command to wire the Clip Properties loop checkbox
 
 ## How to run and test
 
