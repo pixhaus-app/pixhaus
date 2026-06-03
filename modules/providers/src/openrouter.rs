@@ -71,11 +71,14 @@ impl OpenRouterProvider {
             // The anchor is text-only: a single neutral character on a flat key.
             GenerationKind::Anchor => (vec![Message::new(Role::User, input.prompt.clone())], 0.6_f64, "1:1"),
             // The idle pass attaches the anchor as the identity reference (image-to-image)
-            // and runs cool so the eight cells stay on-model.
+            // and runs cool so the eight cells stay on-model. Gemini only accepts a fixed
+            // set of aspect ratios (1:1, 4:3, 16:9, 21:9, ...) - NOT the 2:1 a 4x2
+            // square-cell sheet would want - so request 16:9, the closest supported; for
+            // a 4x2 grid that gives slightly portrait cells, which suit a standing figure.
             GenerationKind::IdleAnimation { reference, .. } => {
                 let data_url = encode_reference(reference)?;
                 let parts = vec![ContentPart::text(input.prompt.clone()), ContentPart::image_url(data_url)];
-                (vec![Message::with_parts(Role::User, parts)], 0.2_f64, "2:1")
+                (vec![Message::with_parts(Role::User, parts)], 0.2_f64, "16:9")
             }
         };
         ChatCompletionRequest::builder()

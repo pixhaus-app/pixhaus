@@ -83,7 +83,7 @@ let request = ChatCompletionRequest::builder()
     .model(model_slug)                                   // impl Into<String>
     .messages(messages)
     .modalities([Modality::Image, Modality::Text])       // REQUIRED for image output
-    .image_config([("aspect_ratio", "2:1")])             // "1:1" anchor, "2:1" for a 4x2 sheet
+    .image_config([("aspect_ratio", "16:9")])            // see the allowed-ratios trap below
     .temperature(0.2_f64)                                // cool for sheet consistency
     .build()?;
 ```
@@ -92,6 +92,16 @@ let request = ChatCompletionRequest::builder()
 get text. `image_config` takes `IntoIterator<Item = (impl Into<String>, impl
 Into<serde_json::Value>)>`; `aspect_ratio` and `image_size` ("1K".."4K") are the
 useful keys.
+
+**Aspect-ratio trap (verified against a 400).** Gemini image models accept only a
+fixed set of `aspect_ratio` values and reject anything else with a 400 listing the
+valid options: `1:1, 1:4, 1:8, 2:3, 3:2, 3:4, 4:1, 4:3, 4:5, 5:4, 8:1, 9:16, 16:9,
+21:9`. Notably **`2:1` is not allowed** — the value a 4x2 square-cell sprite sheet
+naturally wants. Pixhaus requests `16:9` for the idle sheet (the closest supported;
+a 4x2 grid then tiles into slightly portrait cells, fine for a standing figure) and
+`1:1` for the anchor. Pick from that list, and prefer `1:1`/`16:9` since they are the
+most broadly supported across models (the slug is configurable, so don't assume a
+ratio one model accepts works on another).
 
 ### Send and read the generated image
 
