@@ -21,10 +21,21 @@ pub struct UiState {
     pub collapsed: HashMap<PanelId, bool>,
     /// Selected tray tab per workspace. Absent key means "the first tab".
     pub tray_tab: HashMap<WorkspaceId, PanelId>,
-    /// Canvas zoom factor (mock; 1.0 == 100%).
+    /// Canvas zoom: the true scale in screen points per sprite pixel. `1.0` is a
+    /// literal 1:1 (an honest 100%); the canvas auto-fits on the first frame and when
+    /// the active sprite's dimensions change, so a small sprite is never a speck.
     pub zoom: f32,
-    /// Canvas pan offset in points.
+    /// Canvas pan offset in points (the sprite's displacement from the stage center).
     pub pan: egui::Vec2,
+    /// The active sprite dimensions the canvas last auto-fit for. `None` until the
+    /// first fit, and reset to `None` by a "fit to window" request. The canvas re-fits
+    /// whenever this differs from the active sprite's size, so opening or switching to a
+    /// differently-sized sprite re-fits while a manual zoom (same dimensions) is kept.
+    pub last_fit_size: Option<(u32, u32)>,
+    /// Pixel-perfect zoom mode: when set, zoom snaps to whole points-per-pixel steps
+    /// (and unit fractions below 1x) so cells stay even; when clear, zoom is continuous
+    /// for non-pixel art styles. Later drivable by the document's art mode.
+    pub pixel_perfect_zoom: bool,
     /// Active grid spacing mode.
     pub grid: GridMode,
     /// Onion-skin toggle (Animate).
@@ -76,6 +87,8 @@ impl Default for UiState {
             tray_tab: HashMap::new(),
             zoom: 1.0,
             pan: egui::Vec2::ZERO,
+            last_fit_size: None,
+            pixel_perfect_zoom: true,
             grid: GridMode::default(),
             onion_skin: false,
             snap: true,
@@ -139,7 +152,9 @@ mod tests {
     fn default_ui_state_has_no_modal_and_unit_zoom() {
         let ui = UiState::default();
         assert!(ui.modal.is_none(), "nothing is modal on a fresh session");
-        assert_eq!(ui.zoom, 1.0, "default zoom is 100%");
+        assert_eq!(ui.zoom, 1.0, "default zoom is a literal 1:1");
+        assert!(ui.last_fit_size.is_none(), "no fit recorded until the first frame");
+        assert!(ui.pixel_perfect_zoom, "pixel-perfect zoom is the default mode");
         assert!(ui.collapsed.is_empty(), "no panel overrides by default");
         assert!(ui.tray_tab.is_empty(), "no tray-tab overrides by default");
     }

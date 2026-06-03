@@ -34,8 +34,19 @@ pub enum Intent {
     ToggleOnionSkin,
     /// Toggle pixel snap.
     ToggleSnap,
-    /// Set canvas zoom.
+    /// Set canvas zoom to an absolute scale (screen points per sprite pixel). Clamped.
     SetZoom(f32),
+    /// Multiply the canvas zoom by a factor, anchored on the stage center. The
+    /// geometry-free zoom path for menus and the floating zoom control (the cursor-
+    /// anchored wheel path lives in the canvas region, which has the pointer position).
+    ZoomBy(f32),
+    /// Set the canvas pan offset in points. The canvas re-clamps it each frame.
+    SetPan(egui::Vec2),
+    /// Request a fit-to-window: clears the recorded fit so the canvas re-fits the
+    /// active sprite to the stage next frame (where the stage geometry is known).
+    FitView,
+    /// Toggle pixel-perfect zoom (integer-snap) vs. continuous zoom.
+    ToggleZoomMode,
     /// Open the command palette modal.
     OpenCommandPalette,
     /// Open the About Pixhaus modal.
@@ -174,7 +185,22 @@ pub fn apply_intent(host: &mut Host, intent: Intent, ctx: &egui::Context) {
             host.state.ui.snap = !host.state.ui.snap;
         }
         Intent::SetZoom(z) => {
-            host.state.ui.zoom = z;
+            host.state.ui.zoom = crate::canvas::view::clamp_scale(z);
+        }
+        Intent::ZoomBy(factor) => {
+            host.state.ui.zoom = crate::canvas::view::clamp_scale(host.state.ui.zoom * factor);
+        }
+        Intent::SetPan(pan) => {
+            host.state.ui.pan = pan;
+        }
+        Intent::FitView => {
+            // Defer the actual fit to the canvas region, which has the stage rect and
+            // sprite size; clearing the record makes its "dimensions changed?" check fire.
+            host.state.ui.last_fit_size = None;
+            ctx.request_repaint();
+        }
+        Intent::ToggleZoomMode => {
+            host.state.ui.pixel_perfect_zoom = !host.state.ui.pixel_perfect_zoom;
         }
         Intent::OpenCommandPalette => {
             host.state.ui.modal = Some(Modal::CommandPalette);
@@ -557,6 +583,54 @@ mod tests {
         let mut host = host();
         apply_intent(&mut host, Intent::SetZoom(16.0), &ctx());
         assert_eq!(host.state.ui.zoom, 16.0);
+    }
+
+    #[test]
+    fn set_zoom_clamps_out_of_range_values() {
+        let mut host = host();
+        apply_intent(&mut host, Intent::SetZoom(1000.0), &ctx());
+        assert_eq!(host.state.ui.zoom, crate::canvas::view::MAX_SCALE, "an over-large zoom clamps to the ceiling");
+        apply_intent(&mut host, Intent::SetZoom(0.0), &ctx());
+        assert_eq!(host.state.ui.zoom, crate::canvas::view::MIN_SCALE, "a zero zoom clamps to the floor");
+    }
+
+    #[test]
+    fn zoom_by_multiplies_then_saturates_at_the_ceiling() {
+        let mut host = host();
+        host.state.ui.zoom = 2.0;
+        apply_intent(&mut host, Intent::ZoomBy(1.5), &ctx());
+        assert_eq!(host.state.ui.zoom, 3.0, "ZoomBy multiplies the current scale");
+        for _ in 0..20 {
+            apply_intent(&mut host, Intent::ZoomBy(2.0), &ctx());
+        }
+        assert_eq!(
+            host.state.ui.zoom,
+            crate::canvas::view::MAX_SCALE,
+            "repeated zoom-in saturates, never overflows"
+        );
+    }
+
+    #[test]
+    fn set_pan_records_the_pan() {
+        let mut host = host();
+        apply_intent(&mut host, Intent::SetPan(egui::vec2(12.0, -7.0)), &ctx());
+        assert_eq!(host.state.ui.pan, egui::vec2(12.0, -7.0));
+    }
+
+    #[test]
+    fn fit_view_clears_the_recorded_fit() {
+        let mut host = host();
+        host.state.ui.last_fit_size = Some((64, 64));
+        apply_intent(&mut host, Intent::FitView, &ctx());
+        assert!(host.state.ui.last_fit_size.is_none(), "FitView clears the record so the canvas re-fits");
+    }
+
+    #[test]
+    fn toggle_zoom_mode_flips_pixel_perfect() {
+        let mut host = host();
+        let before = host.state.ui.pixel_perfect_zoom;
+        apply_intent(&mut host, Intent::ToggleZoomMode, &ctx());
+        assert_eq!(host.state.ui.pixel_perfect_zoom, !before, "the mode flips");
     }
 
     #[test]
