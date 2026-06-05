@@ -32,7 +32,21 @@ impl PixelBufferStore {
 
     /// Restores a buffer under an exact prior handle (used by undo to bring a
     /// removed buffer back under the id structural data still references).
-    pub fn insert_with_id(&mut self, id: PixelBufferId, buffer: PixelBuffer) {
+    ///
+    /// `pub(crate)` on purpose: this is an internal restore/dedup helper, not public
+    /// API. Inserting under an externally chosen id bypasses `mint`, so a caller
+    /// outside `core` could desync the counter and reintroduce id collisions —
+    /// keeping it crate-private confines that hazard to the undo path that needs it.
+    // No production caller yet — the buffer-removing undo path that restores under a
+    // prior handle isn't wired (bible section 26). Allowed only in non-test builds so
+    // the test below still exercises it; drop this attribute the moment a real caller
+    // lands so dead code can't hide behind it.
+    #[cfg_attr(not(test), allow(dead_code))]
+    pub(crate) fn insert_with_id(&mut self, id: PixelBufferId, buffer: PixelBuffer) {
+        // Advance the counter past the restored id so a later `insert` cannot mint the
+        // same handle and alias this buffer. The id arrived from outside `mint`, so the
+        // monotonic guarantee only holds if we re-establish it here.
+        self.counter.bump_past(id.0);
         self.buffers.insert(id, buffer);
     }
 
@@ -82,5 +96,18 @@ mod tests {
         assert!(store.get(id).is_none());
         store.insert_with_id(id, removed);
         assert!(store.get(id).is_some());
+    }
+
+    #[test]
+    fn insert_with_id_advances_counter_past_restored_id() {
+        // The collision the fix closes: restoring under a handle minted elsewhere must
+        // push the counter past it, so the next mint cannot hand back the same id and
+        // alias the restored buffer.
+        let mut store = PixelBufferStore::new();
+        let restored = PixelBufferId(42);
+        store.insert_with_id(restored, buf());
+        let next = store.insert(buf());
+        assert_ne!(next, restored);
+        assert!(next.0 > restored.0);
     }
 }

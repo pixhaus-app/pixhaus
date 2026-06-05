@@ -57,6 +57,23 @@ impl IdCounter {
         self.next += 1;
         value
     }
+
+    /// Ensures the next minted id is strictly greater than `value`.
+    ///
+    /// Restoring a value under an id minted elsewhere (undo bringing a removed
+    /// buffer back under its prior handle) would leave the counter free to mint
+    /// that same value again and collide. Bumping past the restored id keeps the
+    /// no-reuse guarantee even when ids enter from outside `mint`.
+    // Only caller is `PixelBufferStore::insert_with_id`, itself unreachable outside
+    // tests until the restore-under-prior-handle undo path is wired (bible section 26).
+    // Allowed in non-test builds only; remove once `insert_with_id` gains a real caller.
+    #[cfg_attr(not(test), allow(dead_code))]
+    pub(crate) fn bump_past(&mut self, value: u64) {
+        // saturating add keeps the no-overflow stance of mint: u64 exhaustion is
+        // unreachable for any real document, so a guard here would be dead code that
+        // only obscures the invariant.
+        self.next = self.next.max(value.saturating_add(1));
+    }
 }
 
 #[cfg(test)]
