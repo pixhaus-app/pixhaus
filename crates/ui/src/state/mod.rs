@@ -189,4 +189,50 @@ mod tests {
         let host = Host::new(&Theme::dark());
         assert_eq!(host.theme().variant, ThemeVariant::Dark, "the host holds the theme it was built with");
     }
+
+    /// `Prefs` round-trips through JSON unchanged. Asserted field-by-field because
+    /// `Prefs` does not derive `PartialEq`, and the accent is stored as RGB only.
+    #[test]
+    fn prefs_round_trips_through_json() {
+        let prefs = Prefs {
+            default_workspace: "animate".to_owned(),
+            variant: ThemeVariant::Light,
+            accent: [0x7c, 0x3a, 0xed],
+            dock_width: 312.0,
+            tray_height: 180.0,
+            grid: GridMode::Px16,
+            language: Some("es".to_owned()),
+        };
+        let Ok(json) = serde_json::to_string(&prefs) else {
+            panic!("Prefs serializes to JSON");
+        };
+        let Ok(back) = serde_json::from_str::<Prefs>(&json) else {
+            panic!("the serialized Prefs deserializes");
+        };
+        assert_eq!(back.default_workspace, prefs.default_workspace);
+        assert_eq!(back.variant, prefs.variant);
+        assert_eq!(back.accent, prefs.accent);
+        assert_eq!(back.dock_width, prefs.dock_width);
+        assert_eq!(back.tray_height, prefs.tray_height);
+        assert_eq!(back.grid, prefs.grid);
+        assert_eq!(back.language, prefs.language);
+    }
+
+    /// Older persisted prefs that predate the `language` field still load: the
+    /// `#[serde(default)]` fills it with `None`.
+    #[test]
+    fn prefs_without_language_defaults_to_none() {
+        let json = r#"{
+            "default_workspace": "draw",
+            "variant": "Dark",
+            "accent": [124, 58, 237],
+            "dock_width": 300.0,
+            "tray_height": 160.0,
+            "grid": "Off"
+        }"#;
+        let Ok(prefs) = serde_json::from_str::<Prefs>(json) else {
+            panic!("a payload missing `language` deserializes");
+        };
+        assert_eq!(prefs.language, None, "an omitted language defaults to None (follow the OS)");
+    }
 }

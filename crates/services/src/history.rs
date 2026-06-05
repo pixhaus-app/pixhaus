@@ -159,9 +159,13 @@ mod tests {
         assert!(!history.can_undo());
         assert!(history.can_redo());
         assert_eq!(doc.sprites().len(), 0);
+        // With a command on the redo stack, the redo label reports its top.
+        assert_eq!(history.next_redo_label_key(), Some("command.apply_generated_asset"));
 
         history.redo(&mut doc).unwrap();
         assert_eq!(doc.sprites().len(), 1);
+        // Nothing left to redo once it is re-applied.
+        assert_eq!(history.next_redo_label_key(), None);
     }
 
     #[test]

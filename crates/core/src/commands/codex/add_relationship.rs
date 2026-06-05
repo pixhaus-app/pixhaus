@@ -88,6 +88,10 @@ mod tests {
 
         cmd.undo(&mut doc).unwrap();
         assert_eq!(doc.codex().relationships().len(), 0);
+
+        // Redo: a second apply re-adds the same edge.
+        cmd.apply(&mut doc).unwrap();
+        assert_eq!(doc.codex().relationships(), &[Relationship::new(bit, RelationKind::Uses, pal)]);
     }
 
     #[test]

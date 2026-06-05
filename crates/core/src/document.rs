@@ -270,4 +270,28 @@ mod tests {
         assert_eq!(doc.active_sprite_size(), None);
         assert_eq!(doc.revision(), 0);
     }
+
+    #[test]
+    fn populated_document_read_paths() {
+        use crate::Command;
+        use crate::commands::{AddSprite, SpriteProto};
+
+        let mut doc = Document::new();
+        let rev0 = doc.revision();
+        let mut cmd = AddSprite::new(SpriteProto {
+            name: "hero".to_owned(),
+            width: 8,
+            height: 8,
+        });
+        cmd.apply(&mut doc).expect("add sprite applies");
+
+        assert_eq!(doc.sprites().len(), 1);
+        let id = doc.active_sprite().expect("active sprite after add");
+        let sprite = doc.sprite(id).expect("sprite by id");
+        assert_eq!((sprite.width, sprite.height), (8, 8));
+        assert_eq!(doc.active_sprite_size(), Some((8, 8)));
+        assert_eq!(doc.buffers().len(), 1);
+        // bump_revision ran at least once on the mutation.
+        assert!(doc.revision() > rev0);
+    }
 }

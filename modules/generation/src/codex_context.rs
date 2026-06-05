@@ -196,4 +196,19 @@ mod tests {
         assert_eq!(CodexContextPanel.meta().title, MsgKey("panel.generate-codex-context.title"));
         assert!(CodexContextPanel.meta().default_open);
     }
+
+    #[test]
+    fn anchor_strength_keys_are_distinct_and_correct() {
+        use std::collections::HashSet;
+
+        // The strength labels must reuse the Codex namespace verbatim and stay
+        // one-to-one with the variants, so the selector reads identically to the
+        // Codex workspace and a renamed variant cannot silently collide on a key.
+        assert_eq!(anchor_strength_key(AnchorStrength::Loose), "codex.anchor.strength.loose");
+        assert_eq!(anchor_strength_key(AnchorStrength::Normal), "codex.anchor.strength.normal");
+        assert_eq!(anchor_strength_key(AnchorStrength::Strong), "codex.anchor.strength.strong");
+        assert_eq!(anchor_strength_key(AnchorStrength::Locked), "codex.anchor.strength.locked");
+        let keys = [AnchorStrength::Loose, AnchorStrength::Normal, AnchorStrength::Strong, AnchorStrength::Locked].map(anchor_strength_key);
+        assert_eq!(keys.iter().collect::<HashSet<_>>().len(), 4, "strength keys must be unique");
+    }
 }

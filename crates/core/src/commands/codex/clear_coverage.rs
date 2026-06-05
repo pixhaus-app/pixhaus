@@ -89,6 +89,11 @@ mod tests {
         cmd.undo(&mut doc).unwrap();
         assert_eq!(doc.codex().coverage_status(id, "idle"), CoverageItemStatus::Approved);
         assert_eq!(doc.codex().coverage_status(id, "walk"), CoverageItemStatus::Draft);
+
+        // Redo: a second apply clears the cells back to Missing again.
+        cmd.apply(&mut doc).unwrap();
+        assert_eq!(doc.codex().coverage_status(id, "idle"), CoverageItemStatus::Missing);
+        assert_eq!(doc.codex().coverage_state().len(), 0);
     }
 
     #[test]

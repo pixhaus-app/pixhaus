@@ -209,3 +209,58 @@ fn toggle_grid(current: GridMode) -> GridMode {
         GridMode::Px8 | GridMode::Px16 => GridMode::Off,
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn toggle_grid_flips_between_off_and_px8() {
+        assert_eq!(toggle_grid(GridMode::Off), GridMode::Px8, "off turns the 8px grid on");
+        assert_eq!(toggle_grid(GridMode::Px8), GridMode::Off, "the 8px grid turns off");
+        assert_eq!(toggle_grid(GridMode::Px16), GridMode::Off, "any on-state turns off");
+    }
+
+    #[test]
+    fn push_menu_intent_maps_each_special_case() {
+        // Drive each special-cased action through a fresh sink and inspect the single
+        // pushed intent. Intent is not PartialEq, so pattern-match instead of assert_eq.
+        let mut sink = IntentSink::default();
+        push_menu_intent(&mut sink, ACTION_PIXHAUS_ABOUT, GridMode::Off);
+        assert!(matches!(sink.0.as_slice(), [Intent::OpenAbout]), "About maps to OpenAbout");
+
+        let mut sink = IntentSink::default();
+        push_menu_intent(&mut sink, ACTION_VIEW_TOGGLE_GRID, GridMode::Off);
+        assert!(
+            matches!(sink.0.as_slice(), [Intent::SetGrid(GridMode::Px8)]),
+            "Toggle Grid sets the toggled grid",
+        );
+
+        let mut sink = IntentSink::default();
+        push_menu_intent(&mut sink, ACTION_VIEW_TOGGLE_KEYS, GridMode::Off);
+        assert!(matches!(sink.0.as_slice(), [Intent::ToggleI18nKeys]), "Toggle Keys maps to ToggleI18nKeys");
+
+        let mut sink = IntentSink::default();
+        push_menu_intent(&mut sink, ACTION_WINDOW_COMMAND_PALETTE, GridMode::Off);
+        assert!(
+            matches!(sink.0.as_slice(), [Intent::OpenCommandPalette]),
+            "Command Palette maps to OpenCommandPalette",
+        );
+
+        let mut sink = IntentSink::default();
+        push_menu_intent(&mut sink, ActionId("view.zoom_in"), GridMode::Off);
+        assert!(matches!(sink.0.as_slice(), [Intent::ZoomStep { zoom_in: true }]), "zoom_in steps in");
+
+        let mut sink = IntentSink::default();
+        push_menu_intent(&mut sink, ActionId("view.zoom_out"), GridMode::Off);
+        assert!(matches!(sink.0.as_slice(), [Intent::ZoomStep { zoom_in: false }]), "zoom_out steps out");
+
+        let mut sink = IntentSink::default();
+        let other = ActionId("file.save");
+        push_menu_intent(&mut sink, other, GridMode::Off);
+        assert!(
+            matches!(sink.0.as_slice(), [Intent::RunAction(a)] if *a == other),
+            "anything else is a mock RunAction"
+        );
+    }
+}

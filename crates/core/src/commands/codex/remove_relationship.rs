@@ -81,6 +81,10 @@ mod tests {
 
         cmd.undo(&mut doc).unwrap();
         assert_eq!(doc.codex().relationships(), &[rel]);
+
+        // Redo: a second apply removes the edge again.
+        cmd.apply(&mut doc).unwrap();
+        assert_eq!(doc.codex().relationships().len(), 0);
     }
 
     #[test]

@@ -11,6 +11,15 @@ use serde::{Deserialize, Serialize};
 
 /// Stable identifier for a [`Sprite`](crate::Sprite) within one
 /// [`Document`](crate::Document).
+///
+/// Each id type is a distinct newtype, so passing one where another is expected fails to
+/// compile — the guarantee a same-typed `u64` could not give:
+///
+/// ```compile_fail
+/// use pixhaus_core::ids::{LayerId, SpriteId};
+/// fn takes_sprite(_: SpriteId) {}
+/// takes_sprite(LayerId(7)); // a LayerId is not a SpriteId
+/// ```
 #[derive(Copy, Clone, PartialEq, Eq, Hash, Debug, Serialize, Deserialize)]
 pub struct SpriteId(pub u64);
 
@@ -64,11 +73,27 @@ mod tests {
     }
 
     #[test]
-    fn distinct_id_types_do_not_unify() {
-        // A compile-time guarantee, exercised here so the newtypes stay distinct:
-        // these are different types and cannot be compared or swapped.
+    fn typed_ids_preserve_inner_value() {
+        // The runtime side of the newtype guarantee: each id round-trips its inner u64 and
+        // keys a set independently of the others. The compile-time distinctness (a LayerId
+        // cannot be passed where a SpriteId is expected) is pinned by the compile_fail
+        // doctest on SpriteId, which a runtime assert cannot exercise.
+        use std::collections::HashSet;
+
         let sprite = SpriteId(7);
         let layer = LayerId(7);
-        assert_eq!(sprite.0, layer.0);
+        assert_eq!(sprite.0, 7);
+        assert_eq!(layer.0, 7);
+
+        let mut sprites = HashSet::new();
+        sprites.insert(SpriteId(7));
+        sprites.insert(SpriteId(8));
+        assert!(sprites.contains(&SpriteId(7)));
+        assert!(!sprites.contains(&SpriteId(9)));
+
+        let mut layers = HashSet::new();
+        layers.insert(LayerId(7));
+        assert!(layers.contains(&LayerId(7)));
+        assert_eq!(layers.len(), 1);
     }
 }

@@ -125,6 +125,12 @@ impl Command for ApplyBuiltinCoverageTemplate {
         {
             entry.applied_templates.retain(|t| *t != applied.template);
         }
+        // Removing the template here is safe only because the command history is strict
+        // LIFO (services/history.rs pops newest-first, Transaction::undo reverses in that
+        // order). Any later command that attached this same template to another entry
+        // recorded created_template == false and is undone before this one runs, so no live
+        // entry can still reference the id when we remove it. Do not add a scan-all-entries
+        // guard: it would defend against an out-of-order undo the history never produces.
         if applied.created_template {
             codex.remove_coverage_template(applied.template);
         }
@@ -208,5 +214,42 @@ mod tests {
         let mut doc = Document::new();
         let mut cmd = ApplyBuiltinCoverageTemplate::new(CodexEntryId(99), BuiltinCoveragePreset::PlatformerCharacter);
         assert!(matches!(cmd.apply(&mut doc), Err(CommandError::CodexEntryNotFound(_))));
+    }
+
+    #[test]
+    fn undo_of_a_reusing_apply_leaves_the_shared_template() {
+        // First apply to A creates the template (created_template == true); a second apply
+        // of the same preset to B reuses it (created_template == false). Undoing B's command
+        // must detach only B, never remove the template A still references.
+        let mut doc = Document::new();
+        let a = seed_entry(&mut doc, "bit");
+        let b = seed_entry(&mut doc, "mossy");
+        ApplyBuiltinCoverageTemplate::new(a, BuiltinCoveragePreset::PlatformerCharacter)
+            .apply(&mut doc)
+            .unwrap();
+        let mut cmd_b = ApplyBuiltinCoverageTemplate::new(b, BuiltinCoveragePreset::PlatformerCharacter);
+        cmd_b.apply(&mut doc).unwrap();
+        let template_id = doc.codex().coverage_templates().next().unwrap().id;
+
+        cmd_b.undo(&mut doc).unwrap();
+        assert_eq!(doc.codex().coverage_templates().count(), 1);
+        assert!(doc.codex().entry(a).unwrap().applied_templates.contains(&template_id));
+        assert!(doc.codex().entry(b).unwrap().applied_templates.is_empty());
+    }
+
+    #[test]
+    fn top_down_preset_round_trips_apply_undo() {
+        let mut doc = Document::new();
+        let id = seed_entry(&mut doc, "bit");
+        let expected_slots = CoverageTemplate::top_down_four_direction().slots.len();
+        let mut cmd = ApplyBuiltinCoverageTemplate::new(id, BuiltinCoveragePreset::TopDownFourDirection);
+
+        cmd.apply(&mut doc).unwrap();
+        assert_eq!(doc.codex().coverage_state().len(), expected_slots);
+        assert_eq!(doc.codex().entry(id).unwrap().applied_templates.len(), 1);
+
+        cmd.undo(&mut doc).unwrap();
+        assert_eq!(doc.codex().coverage_state().len(), 0);
+        assert!(doc.codex().entry(id).unwrap().applied_templates.is_empty());
     }
 }

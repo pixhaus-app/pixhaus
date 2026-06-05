@@ -82,3 +82,40 @@ pub fn idle_principles() -> AnimationPrinciples {
         negatives: kb::IDLE_NEGATIVES.to_owned(),
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn anchor_default_keys_on_the_canonical_magenta() {
+        // The anchor builder reads this spec field while the idle builder reads the
+        // const directly; lock the default to the const so both passes key on the
+        // same colour and the chroma-key removal stays consistent across them.
+        assert_eq!(default_anchor_spec().magenta_hex, MAGENTA_KEY_HEX);
+        assert_eq!(default_anchor_spec().magenta_hex, "#FF00FF");
+    }
+
+    #[test]
+    fn idle_default_is_the_shipped_eight_frame_grid() {
+        let idle = default_idle_spec();
+        assert_eq!(idle.cols, 4);
+        assert_eq!(idle.rows, 2);
+        assert_eq!(idle.frame_count(), 8, "the shipped default is a 4x2 eight-frame sheet");
+    }
+
+    #[test]
+    fn bit_identity_carries_a_named_subject_and_a_palette() {
+        let bit = bit_identity();
+        assert_eq!(bit.name, "Bit");
+        assert!(!bit.palette.is_empty(), "Bit ships with an explicit palette the prompt honours");
+    }
+
+    #[test]
+    fn style_and_principle_prose_is_present() {
+        // The builders splice these straight into the prompt; an empty line would
+        // emit a blank section, so the shipped defaults must carry prose.
+        assert!(!default_style().line.is_empty(), "the style line is emitted into the prompt");
+        assert!(!idle_principles().breathing.is_empty(), "the breathing principle drives the idle loop");
+    }
+}

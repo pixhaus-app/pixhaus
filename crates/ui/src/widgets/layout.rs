@@ -132,7 +132,10 @@ mod tests {
 
     #[test]
     fn distribute_with_no_cards_returns_empty_columns() {
-        assert_eq!(distribute(0, 3), vec![Vec::new(), Vec::new(), Vec::new()]);
+        // Annotate the empty inner vecs: with serde_json a dev-dependency, an unannotated
+        // `Vec::new()` here is ambiguous (usize also impls PartialEq<serde_json::Value>).
+        let empty: Vec<Vec<usize>> = vec![Vec::new(), Vec::new(), Vec::new()];
+        assert_eq!(distribute(0, 3), empty);
     }
 
     #[test]

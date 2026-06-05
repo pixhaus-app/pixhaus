@@ -171,6 +171,33 @@ mod tests {
     }
 
     #[test]
+    fn composite_active_is_none_for_empty_document() {
+        assert!(composite_active(&Document::new()).is_none());
+    }
+
+    #[test]
+    fn composite_active_returns_the_active_sprite() {
+        let doc = doc_with_pixel([12, 34, 56, 255]);
+        let out = composite_active(&doc).unwrap();
+        assert_eq!(out.pixel(0, 0), Some(Rgba::new(12, 34, 56, 255)));
+    }
+
+    #[test]
+    fn composite_active_swallows_a_composite_failure_to_none() {
+        // A layer whose buffer size no longer matches the sprite makes composite_sprite
+        // return SizeMismatch; composite_active maps any such failure to None rather than
+        // surfacing the error. Force the mismatch via the same in-module field access the
+        // half_opacity test uses, swapping the layer's buffer for a wrong-sized one.
+        let mut doc = doc_with_pixel([10, 20, 30, 255]);
+        let id = doc.active_sprite().unwrap();
+        let wrong = doc.buffers.insert(PixelBuffer::from_rgba8(2, 2, 8, vec![0u8; 16]).unwrap());
+        if let Some(frame) = doc.sprites.iter_mut().find(|s| s.id == id).and_then(|s| s.active_frame_mut()) {
+            frame.layers[0].buffer = wrong;
+        }
+        assert!(composite_active(&doc).is_none());
+    }
+
+    #[test]
     fn invisible_layer_is_skipped() {
         let mut doc = doc_with_pixel([255, 0, 0, 255]);
         let id = doc.active_sprite().unwrap();

@@ -411,3 +411,57 @@ fn zoom_control(ui: &egui::Ui, stage: egui::Rect, zoom: f32, pixel_perfect: bool
 fn icon_button(ui: &mut egui::Ui, theme: &Theme, icon: char) -> egui::Response {
     ui.add(egui::Button::new(egui::RichText::new(icon).color(theme.roles.text_secondary)).frame(false))
 }
+
+#[cfg(test)]
+mod tests {
+    use super::hovered_pixel;
+
+    // A 32x32 sprite on a 320x320 artboard at 10 points per pixel: min (100,100), max
+    // (420,420). The exact-max point (420,420) is inside the rect but maps to (32,32),
+    // which the `>= w/h` guard rejects - that is the off-by-one the test pins.
+    fn board() -> egui::Rect {
+        egui::Rect::from_min_size(egui::pos2(100.0, 100.0), egui::vec2(320.0, 320.0))
+    }
+
+    #[test]
+    fn hovered_pixel_returns_none_without_a_hover() {
+        assert_eq!(hovered_pixel(None, board(), 10.0, (32, 32)), None);
+    }
+
+    #[test]
+    fn hovered_pixel_returns_none_off_the_board() {
+        assert_eq!(hovered_pixel(Some(egui::pos2(50.0, 50.0)), board(), 10.0, (32, 32)), None);
+    }
+
+    #[test]
+    fn hovered_pixel_floors_to_the_pixel_index() {
+        let b = board();
+        assert_eq!(
+            hovered_pixel(Some(egui::pos2(100.0, 100.0)), b, 10.0, (32, 32)),
+            Some((0, 0)),
+            "top-left maps to (0,0)"
+        );
+        assert_eq!(
+            hovered_pixel(Some(egui::pos2(105.0, 105.0)), b, 10.0, (32, 32)),
+            Some((0, 0)),
+            "a mid-pixel point floors down"
+        );
+        assert_eq!(
+            hovered_pixel(Some(egui::pos2(110.0, 110.0)), b, 10.0, (32, 32)),
+            Some((1, 1)),
+            "the next cell is (1,1)"
+        );
+        assert_eq!(
+            hovered_pixel(Some(egui::pos2(419.9, 419.9)), b, 10.0, (32, 32)),
+            Some((31, 31)),
+            "the far interior is (31,31)"
+        );
+    }
+
+    #[test]
+    fn hovered_pixel_rejects_the_exact_far_edge() {
+        // (420,420) is contained by the rect but is one past the last pixel; the
+        // `>= w/h` check, not `contains`, is what excludes it.
+        assert_eq!(hovered_pixel(Some(egui::pos2(420.0, 420.0)), board(), 10.0, (32, 32)), None);
+    }
+}

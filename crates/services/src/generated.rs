@@ -114,3 +114,61 @@ pub struct GenerationProvenance {
     /// Unix milliseconds when the asset was produced (0 if unavailable).
     pub created_unix_ms: u64,
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn provenance() -> GenerationProvenance {
+        GenerationProvenance {
+            prompt: "a round mascot".to_owned(),
+            seed: 1234,
+            provider_id: "mock".to_owned(),
+            model: "mock-1".to_owned(),
+            created_unix_ms: 42,
+        }
+    }
+
+    // GenerationProvenance does not derive PartialEq (no callers compare it), so the
+    // round-trip asserts field by field rather than comparing the whole struct.
+    // `unwrap` is allowed under cfg(test) crate-wide (see lib.rs).
+    #[test]
+    fn provenance_round_trips_through_json() {
+        let original = provenance();
+        let json = serde_json::to_string(&original).unwrap();
+        let back: GenerationProvenance = serde_json::from_str(&json).unwrap();
+        assert_eq!(back.prompt, original.prompt);
+        assert_eq!(back.seed, original.seed);
+        assert_eq!(back.provider_id, original.provider_id);
+        assert_eq!(back.model, original.model);
+        assert_eq!(back.created_unix_ms, original.created_unix_ms);
+    }
+
+    #[test]
+    fn provenance_accessor_reads_both_result_kinds() {
+        let asset = GeneratedAsset {
+            width: 1,
+            height: 1,
+            stride: 4,
+            rgba: vec![0, 0, 0, 255],
+            provenance: provenance(),
+        };
+        let sprite = GeneratedResult::Sprite(asset);
+        assert_eq!(sprite.provenance().seed, 1234);
+
+        let animation = GeneratedAnimation {
+            frames: vec![GeneratedFrame {
+                width: 1,
+                height: 1,
+                stride: 4,
+                rgba: vec![0, 0, 0, 255],
+            }],
+            clip_name: "idle".to_owned(),
+            fps: 12,
+            loop_mode: LoopMode::Loop,
+            provenance: provenance(),
+        };
+        let animation = GeneratedResult::Animation(animation);
+        assert_eq!(animation.provenance().seed, 1234);
+    }
+}

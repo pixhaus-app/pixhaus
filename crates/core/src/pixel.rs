@@ -157,6 +157,7 @@ pub enum PixelError {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use proptest::prelude::*;
     use rstest::rstest;
 
     #[test]
@@ -190,5 +191,35 @@ mod tests {
         assert_eq!(buf.pixel(1, 0), Some(Rgba::new(50, 60, 70, 80)));
         assert_eq!(buf.pixel(2, 0), None);
         assert_eq!(buf.pixel(0, 1), None);
+    }
+
+    proptest! {
+        // pixel(x,y) must read back from offset y*stride + x*4 for padded strides, not
+        // just tight ones: a wrong offset would still pass for stride == width*4. Small
+        // dimensions keep the case size bounded.
+        #[test]
+        fn pixel_reads_back_at_the_strided_offset(
+            w in 1u32..=16,
+            h in 1u32..=16,
+            pad in 0u32..=8,
+        ) {
+            let stride = w * 4 + pad;
+            let len = (stride * h) as usize;
+            // Deterministic bytes derived from the flat offset (wrapping into a u8), so every
+            // channel is unique enough to catch a misread within a row.
+            let bytes: Vec<u8> = (0..len).map(|i| u8::try_from(i % 256).unwrap_or(0)).collect();
+            let buf = PixelBuffer::from_rgba8(w, h, stride, bytes.clone());
+            prop_assert!(buf.is_ok());
+            let buf = buf.unwrap();
+            for y in 0..h {
+                for x in 0..w {
+                    let offset = (y * stride + x * 4) as usize;
+                    let expected = Rgba::new(bytes[offset], bytes[offset + 1], bytes[offset + 2], bytes[offset + 3]);
+                    prop_assert_eq!(buf.pixel(x, y), Some(expected));
+                }
+            }
+            prop_assert_eq!(buf.pixel(w, 0), None);
+            prop_assert_eq!(buf.pixel(0, h), None);
+        }
     }
 }

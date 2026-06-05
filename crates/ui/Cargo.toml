@@ -35,9 +35,13 @@ pixhaus-services = { path = "../services" }
 [dev-dependencies]
 rstest.workspace = true
 insta.workspace = true
+# JSON round-trip coverage for the serde-derived `Prefs`; test-only.
+serde_json.workspace = true
 # Drives the end-to-end Generate-loop test: a runtime for the spawned job and a
 # short sleep while polling the drain.
 tokio = { workspace = true }
+# Names the `CancellationToken` a test-only fake `Provider` must accept; test-only.
+tokio-util = { workspace = true }
 # The five capability modules, for the integration tests only. These are
 # dev-dependencies so the cycle (each module depends on pixhaus-ui) exists only
 # in the test/example/bench build, never in the library graph - Cargo allows a

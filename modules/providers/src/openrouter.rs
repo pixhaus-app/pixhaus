@@ -51,6 +51,12 @@ impl OpenRouterProvider {
     /// Builds a provider from an API key. The model id comes from
     /// `PIXHAUS_OPENROUTER_MODEL`, falling back to the default model.
     ///
+    /// The key is a transient `String` handed in from the app boundary. Today the app
+    /// reads it from the environment; the destination is the OS credential vault per
+    /// `modules/providers/CLAUDE.md` and bible 22.4. The env var is the foundation-stage
+    /// seam, not the final source — the provider takes the key as data either way, so the
+    /// move to a stored key reference does not touch this signature.
+    ///
     /// # Errors
     /// Returns [`ProviderError::Unavailable`] if the underlying client cannot build.
     pub fn new(api_key: String) -> Result<Self, ProviderError> {
@@ -302,5 +308,158 @@ mod tests {
         let (rgba, w, h) = decode_png_data_url(&url).unwrap();
         assert_eq!((w, h), (1, 1));
         assert_eq!(rgba, vec![255, 0, 0, 255]);
+    }
+
+    // openrouter-rs 0.10 marks CompletionsResponse/Choice/Message #[non_exhaustive]
+    // with no public constructors, so a synthetic response is built by deserializing
+    // JSON, not by a struct literal. `object` must read "chat.completion" and the
+    // untagged Choice enum resolves to NonStreaming when a `message` object is present
+    // (NonChat needs a `text` field, which this omits).
+    fn response_with_image(url: &str) -> CompletionsResponse {
+        let json = serde_json::json!({
+            "id": "x",
+            "created": 0,
+            "model": "m",
+            "object": "chat.completion",
+            "choices": [{
+                "message": {
+                    "role": "assistant",
+                    "images": [{ "image_url": { "url": url } }]
+                }
+            }]
+        });
+        serde_json::from_value(json).expect("synthetic chat.completion deserializes")
+    }
+
+    fn response_without_image() -> CompletionsResponse {
+        let json = serde_json::json!({
+            "id": "x",
+            "created": 0,
+            "model": "m",
+            "object": "chat.completion",
+            "choices": [{ "message": { "role": "assistant" } }]
+        });
+        serde_json::from_value(json).expect("synthetic chat.completion deserializes")
+    }
+
+    #[test]
+    fn first_image_data_url_reads_the_first_image() {
+        let response = response_with_image("data:image/png;base64,AAA");
+        assert_eq!(first_image_data_url(&response), Some("data:image/png;base64,AAA".to_owned()));
+    }
+
+    #[test]
+    fn first_image_data_url_is_none_without_images() {
+        assert_eq!(first_image_data_url(&response_without_image()), None);
+        // An empty choices array also yields no image.
+        let json = serde_json::json!({
+            "id": "x", "created": 0, "model": "m", "object": "chat.completion", "choices": []
+        });
+        let empty: CompletionsResponse = serde_json::from_value(json).expect("deserializes");
+        assert_eq!(first_image_data_url(&empty), None);
+    }
+
+    // A small RGBA image PNG-encoded to a base64 data URL, the same shape a provider
+    // returns. Used to exercise decode and post-process off the network.
+    fn png_data_url(rgba: &[u8], width: u32, height: u32) -> String {
+        use image::ImageEncoder as _;
+        let mut png = Vec::new();
+        image::codecs::png::PngEncoder::new(&mut png)
+            .write_image(rgba, width, height, image::ExtendedColorType::Rgba8)
+            .expect("png encodes");
+        format!("data:image/png;base64,{}", STANDARD.encode(&png))
+    }
+
+    #[test]
+    fn encode_reference_round_trips_through_decode() {
+        // 2x2 known pixels through encode_reference -> decode_png_data_url.
+        let pixels = vec![
+            10, 20, 30, 255, 40, 50, 60, 255, // top row
+            70, 80, 90, 255, 100, 110, 120, 255, // bottom row
+        ];
+        let reference = ReferenceImage {
+            width: 2,
+            height: 2,
+            stride: 8,
+            rgba: pixels.clone(),
+        };
+        let url = encode_reference(&reference).expect("reference encodes");
+        let (rgba, w, h) = decode_png_data_url(&url).expect("round-trips");
+        assert_eq!((w, h), (2, 2));
+        assert_eq!(rgba, pixels);
+    }
+
+    #[test]
+    fn decode_result_anchor_keys_magenta_and_returns_a_sprite() {
+        // A 2x1 sheet: one magenta key pixel, one opaque character pixel.
+        let url = png_data_url(&[255, 0, 255, 255, 12, 34, 56, 255], 2, 1);
+        let result = decode_result(&url, DecodeKind::Anchor, provenance()).expect("decodes");
+        match result {
+            GeneratedResult::Sprite(asset) => {
+                assert_eq!((asset.width, asset.height, asset.stride), (2, 1, 8));
+                assert_eq!(&asset.rgba[0..4], &[0, 0, 0, 0], "magenta keyed to transparent");
+                assert_eq!(&asset.rgba[4..8], &[12, 34, 56, 255], "character pixel kept");
+            }
+            GeneratedResult::Animation(_) => panic!("anchor must decode to a sprite"),
+        }
+    }
+
+    #[test]
+    fn decode_result_idle_slices_a_keyed_sheet_into_frames() {
+        // A 4x1 sheet: each cell one pixel; the first is the magenta key.
+        let sheet = vec![
+            255, 0, 255, 255, // magenta key
+            10, 0, 0, 255, // cell 1
+            20, 0, 0, 255, // cell 2
+            30, 0, 0, 255, // cell 3
+        ];
+        let url = png_data_url(&sheet, 4, 1);
+        let grid = Grid { cols: 4, rows: 1 };
+        let kind = DecodeKind::Idle {
+            grid,
+            fps: 12,
+            clip_name: "idle".to_owned(),
+        };
+        let result = decode_result(&url, kind, provenance()).expect("decodes");
+        match result {
+            GeneratedResult::Animation(animation) => {
+                assert_eq!(animation.frames.len(), grid.cell_count() as usize);
+                assert_eq!(animation.fps, 12);
+                assert_eq!(animation.clip_name, "idle");
+                assert_eq!(animation.frames[0].rgba, vec![0, 0, 0, 0], "first frame is the keyed pixel");
+                assert_eq!(animation.frames[1].rgba, vec![10, 0, 0, 255]);
+            }
+            GeneratedResult::Sprite(_) => panic!("idle must decode to an animation"),
+        }
+    }
+
+    // A provenance fixture for decode tests; the value is irrelevant to decode shaping.
+    fn provenance() -> GenerationProvenance {
+        GenerationProvenance {
+            prompt: "Bit".to_owned(),
+            seed: 1,
+            provider_id: PROVIDER_ID.to_owned(),
+            model: "m".to_owned(),
+            created_unix_ms: 0,
+        }
+    }
+
+    #[test]
+    fn decode_png_data_url_rejects_invalid_base64() {
+        // The base64 step (not the PNG decode) must fail loudly, not silently.
+        let result = decode_png_data_url("data:image/png;base64,!!!not_base64!!!");
+        assert!(matches!(result, Err(ProviderError::BadOutput(_))), "invalid base64 is a BadOutput error");
+    }
+
+    #[test]
+    fn decode_png_data_url_rejects_an_over_limit_image() {
+        // An image one pixel past MAX_DECODE_DIM must trip the Limits guard rather than
+        // allocating. Encode a genuinely oversized PNG so the check fires deterministically
+        // (a crafted header alone is not the safest trigger).
+        let width = MAX_DECODE_DIM + 1;
+        let rgba = vec![0u8; width as usize * 4];
+        let url = png_data_url(&rgba, width, 1);
+        let result = decode_png_data_url(&url);
+        assert!(matches!(result, Err(ProviderError::BadOutput(_))), "an over-limit image is a BadOutput error");
     }
 }
