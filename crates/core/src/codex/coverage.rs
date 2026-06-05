@@ -35,6 +35,19 @@ pub enum CoverageLabel {
     Literal(String),
 }
 
+impl CoverageLabel {
+    /// Byte length of the contained label string.
+    ///
+    /// Both variants wrap a `String`; this collapses the per-variant match into one place
+    /// so the slot-rename commands' `estimated_size_bytes` accounting stays in sync instead
+    /// of duplicating the match in each command.
+    pub fn text_len(&self) -> usize {
+        match self {
+            CoverageLabel::Key(s) | CoverageLabel::Literal(s) => s.len(),
+        }
+    }
+}
+
 /// One slot in a coverage template: a stable key and an editable label.
 #[derive(Clone, PartialEq, Eq, Debug, Serialize, Deserialize)]
 pub struct CoverageSlot {
@@ -168,6 +181,13 @@ mod tests {
         let s = CoverageSlot::custom("crouch", "Crouch");
         assert_eq!(s.key, "crouch");
         assert_eq!(s.label, CoverageLabel::Literal("Crouch".to_owned()));
+    }
+
+    #[test]
+    fn label_text_len_counts_either_variant() {
+        assert_eq!(CoverageLabel::Key("idle".to_owned()).text_len(), 4);
+        assert_eq!(CoverageLabel::Literal("Win Pose".to_owned()).text_len(), 8);
+        assert_eq!(CoverageLabel::Literal(String::new()).text_len(), 0);
     }
 
     #[test]

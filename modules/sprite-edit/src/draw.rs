@@ -123,6 +123,11 @@ impl Panel for LayersPanel {
 
     fn ui(&self, ui: &mut egui::Ui, scope: &mut PanelScope<'_>) {
         let theme = scope.ctx.theme;
+        // TODO(i18n): the body literals below ("New Layer", row names, "Normal"/
+        // "Multiply"/"Screen", "Opacity") are placeholders bound to throwaway
+        // locals. Route them through tr("panel.layers.*") keys in sprite_edit.yaml
+        // when this panel gains a real body; keying mock rows now would pollute the
+        // bundle with strings that drive nothing.
         if ui.button(format!("{} New Layer", icons::ADD)).clicked() {
             scope.ctx.intents.push(Intent::RunAction(LAYER_NEW));
         }
@@ -185,6 +190,8 @@ impl Panel for SpritesPanel {
 
     fn ui(&self, ui: &mut egui::Ui, scope: &mut PanelScope<'_>) {
         let theme = scope.ctx.theme;
+        // TODO(i18n): "New Sprite" is a placeholder literal; route it through a
+        // tr("panel.sprites.*") key in sprite_edit.yaml when this panel goes live.
         widgets::mock_thumbnail_grid(ui, theme, 6);
         if ui.button(format!("{} New Sprite", icons::ADD)).clicked() {
             scope.ctx.intents.push(Intent::RunAction(SPRITE_NEW));
@@ -213,6 +220,9 @@ impl Panel for PalettePanel {
 
     fn ui(&self, ui: &mut egui::Ui, scope: &mut PanelScope<'_>) {
         let theme = scope.ctx.theme;
+        // TODO(i18n): "Ramp"/"Harmony"/"Reduce to palette" are placeholder literals;
+        // route them through tr("command.palette.*") keys when this panel goes live.
+        // "Bit" stays a literal - it is the palette name (project data), not a UI key.
         ui.label("Bit");
         swatch_grid(ui, theme);
         ui.label(format!("FG {} BG", icons::CARET_RIGHT));
@@ -279,6 +289,9 @@ impl Panel for SelectionActionsPanel {
 
     fn ui(&self, ui: &mut egui::Ui, scope: &mut PanelScope<'_>) {
         let theme = scope.ctx.theme;
+        // TODO(i18n): the button labels below ("Cut"/"Copy"/... and the AI row
+        // "Fill"/"Clean up"/"Make seamless") are placeholder literals; route them
+        // through tr("command.selection.*") keys when this panel gains a real body.
         ui.horizontal_wrapped(|ui| {
             for (label, action) in [
                 ("Cut", SEL_CUT),
@@ -325,6 +338,8 @@ impl Panel for AiAssistantPanel {
     }
 
     fn ui(&self, ui: &mut egui::Ui, scope: &mut PanelScope<'_>) {
+        // TODO(i18n): the quick-action labels below are placeholder literals; route
+        // them through tr("command.ai.*") keys when this panel gains a real body.
         let actions = [
             ("Fill selection", AI_FILL),
             ("Clean up", AI_CLEANUP),
@@ -362,6 +377,8 @@ impl Panel for FramesPanel {
 
     fn ui(&self, ui: &mut egui::Ui, scope: &mut PanelScope<'_>) {
         let theme = scope.ctx.theme;
+        // TODO(i18n): "Add"/"Duplicate"/"Delete" are placeholder literals; route them
+        // through tr("command.frame.*") keys when this panel gains a real body.
         ui.horizontal(|ui| {
             if ui.button(format!("{} Add", icons::ADD)).clicked() {
                 scope.ctx.intents.push(Intent::RunAction(FRAME_ADD));
@@ -414,6 +431,9 @@ impl Panel for AssetsPanel {
 
     fn ui(&self, ui: &mut egui::Ui, scope: &mut PanelScope<'_>) {
         let theme = scope.ctx.theme;
+        // TODO(i18n): the chip labels ("All"/"Sprites"/"Tiles"/"Refs") are placeholder
+        // literals; route them through tr("panel.assets.chip.*") keys when this panel
+        // gains a real body.
         ui.horizontal(|ui| {
             // Inert category chips; "All" reads as selected.
             for (i, chip) in ["All", "Sprites", "Tiles", "Refs"].iter().enumerate() {

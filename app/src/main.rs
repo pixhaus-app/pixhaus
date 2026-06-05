@@ -36,19 +36,28 @@ fn build_host(ctx: &egui::Context) -> Host {
     // Install egui_extras' image loaders so the baked-in brand PNGs render.
     pixhaus_ui::install_image_loaders(ctx);
 
+    // Shell menus register before any module: a free function, not a Module, so it
+    // stays out of the module loop below and runs first to seat the File/Edit/Select/
+    // View/Window/Help groups ahead of the module-contributed Sprite/Layer/Frame ones.
     pixhaus_ui::shell::menus::register_shell_menus(&mut host.registrar());
 
-    // sprite-edit FIRST: it registers the shared panels and tools the other
-    // modules name by id, so it must run before any layout references them.
-    pixhaus_mod_sprite_edit::SpriteEditModule.register(&mut host.registrar());
-    pixhaus_mod_animation::AnimationModule.register(&mut host.registrar());
-    pixhaus_mod_tiles::TilesModule.register(&mut host.registrar());
-    pixhaus_mod_generation::GenerationModule.register(&mut host.registrar());
-    pixhaus_mod_export::ExportModule.register(&mut host.registrar());
-    pixhaus_mod_codex::CodexModule.register(&mut host.registrar());
-
-    // The count is the six module registrations above; bump it when the list grows.
-    tracing::info!(modules = 6, "registered capability modules");
+    // sprite-edit FIRST: it registers the shared panels and tools the other modules
+    // name by id (bible rule 2), so it must register before any layout references them.
+    // The order of this array is therefore load-bearing - keep SpriteEditModule at the
+    // head. Driving the count from the array length means the log line below can never
+    // drift from the real registration list the way a hand-kept constant did.
+    let modules: [&dyn Module; 6] = [
+        &pixhaus_mod_sprite_edit::SpriteEditModule,
+        &pixhaus_mod_animation::AnimationModule,
+        &pixhaus_mod_tiles::TilesModule,
+        &pixhaus_mod_generation::GenerationModule,
+        &pixhaus_mod_export::ExportModule,
+        &pixhaus_mod_codex::CodexModule,
+    ];
+    for module in modules {
+        module.register(&mut host.registrar());
+    }
+    tracing::info!(modules = modules.len(), "registered capability modules");
 
     // Register generation providers into the host's provider registry so the Generate
     // workspace can answer prompts. Providers register into `EditSession`, not the
@@ -56,6 +65,14 @@ fn build_host(ctx: &egui::Context) -> Host {
     // owns the API key: read it from the environment (never logged) and register the
     // real OpenRouter provider FIRST so capability lookups prefer it; the offline mock
     // always registers as the fallback so Generate works without a key.
+    //
+    // The env-var read is an interim seam, not the destination. Bible section 22.4 and
+    // modules/providers/CLAUDE.md put credentials in the OS credential vault (the
+    // pixhaus-keyring path) with provider settings holding a key reference, never the
+    // raw key. That needs a settings-persistence layer and a key-reference model that
+    // do not exist yet; until they land, the env var is the only source. When keyring
+    // wiring arrives, demote OPENROUTER_API_KEY to an explicit dev-only override rather
+    // than the primary path.
     if let Ok(api_key) = std::env::var("OPENROUTER_API_KEY") {
         pixhaus_mod_providers::register_openrouter(&mut host.edit.providers, api_key);
     } else {
@@ -175,4 +192,63 @@ fn main() -> anyhow::Result<()> {
     // the file writer, so the shutdown line still reaches the log.
     tracing::info!("Pixhaus shutting down");
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use pixhaus_ui::contrib_api::ids::WorkspaceId;
+
+    /// The bundled brand PNG decodes to a square-buffer `IconData`: a tightly packed
+    /// RGBA8 buffer whose length is exactly `width * height * 4`. A regression here means
+    /// `with_icon` would hand eframe a malformed buffer.
+    #[test]
+    fn window_icon_decodes_to_packed_rgba() {
+        // disallowed_methods bans .expect() even in tests, so destructure with let-else
+        // and panic with a message instead, matching the shell test house style.
+        let Some(icon) = window_icon() else {
+            panic!("the bundled brand PNG must decode at boot");
+        };
+        assert!(icon.width > 0 && icon.height > 0, "icon must have non-zero dimensions");
+        assert_eq!(
+            icon.rgba.len(),
+            icon.width as usize * icon.height as usize * 4,
+            "icon buffer must be tightly packed RGBA8 (4 bytes per pixel, no stride)"
+        );
+    }
+
+    /// `build_host` registers every shell workspace, and Draw (sprite-edit) registers
+    /// first. The order is load-bearing: sprite-edit owns the shared panel and tool ids
+    /// the later workspaces name by value, so Draw must precede every workspace that
+    /// reuses them. This pins both membership and that head-of-list position.
+    #[test]
+    fn build_host_registers_workspaces_with_draw_first() {
+        let ctx = egui::Context::default();
+        let host = build_host(&ctx);
+
+        let ids: Vec<WorkspaceId> = host.registries.workspaces.iter().map(|w| w.id()).collect();
+
+        // Draw is the shared-id owner; it must register before anyone references it.
+        assert_eq!(ids.first(), Some(&WorkspaceId("draw")), "sprite-edit/Draw must register first");
+
+        for expected in ["draw", "animate", "tiles", "generate", "export", "codex"] {
+            assert!(
+                ids.contains(&WorkspaceId(expected)),
+                "expected the {expected} workspace to be registered, got {ids:?}"
+            );
+        }
+    }
+
+    /// `build_host` seeds the canonical Bit demo Codex so a fresh launch opens into the
+    /// demo world rather than an empty bible. A failed seed logs and leaves the codex
+    /// empty, so a non-empty codex confirms the shipped spec still builds.
+    #[test]
+    fn build_host_seeds_the_bit_demo_codex() {
+        let ctx = egui::Context::default();
+        let host = build_host(&ctx);
+        assert!(
+            !host.edit.document.codex().entries().is_empty(),
+            "the Bit demo codex should seed a non-empty set of entries at boot"
+        );
+    }
 }

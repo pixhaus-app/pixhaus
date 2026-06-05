@@ -80,6 +80,9 @@ impl Workspace for TilesWorkspace {
             status_items: vec![
                 StatusItem {
                     icon: icons::GRID,
+                    // A numeric mock placeholder, not a localized label, so it carries no
+                    // i18n key (matching the tiles.yaml note); the sibling seams_ok item is
+                    // a real label and resolves through a MsgKey.
                     text: "Tile 16px".to_owned(),
                 },
                 StatusItem {

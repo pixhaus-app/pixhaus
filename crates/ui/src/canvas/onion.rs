@@ -89,6 +89,12 @@ fn build_ghosts(ctx: &Context, doc: &Document, sprite_id: SpriteId, center: Fram
 
 /// Composite one frame and upload it as a NEAREST egui texture, or `None` if it fails to
 /// composite (a missing buffer or size mismatch — skip rather than surface mid-paint).
+// This CPU composite runs inline on the egui UI lane. That is deliberate only because the
+// cache gate in `ghosts` keeps a static onion view to a single composite (at most the two
+// immediate neighbors), and the canvas is small today. Before large-canvas/8K onion ships
+// this MUST move to the CPU worker pool (tokio spawn_blocking, returning the baked buffer
+// over a channel with ctx.request_repaint, per bible 31.2/23.5) so a multi-frame onion
+// bake never stalls the frame.
 fn bake(ctx: &Context, doc: &Document, sprite: SpriteId, frame: FrameId, neighbor: Neighbor) -> Option<Ghost> {
     let buffer = pixhaus_core::composite_frame(doc, sprite, frame).ok()?;
     let size = [buffer.width() as usize, buffer.height() as usize];

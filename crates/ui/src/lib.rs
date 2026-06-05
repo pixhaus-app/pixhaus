@@ -1,14 +1,14 @@
 //! Pixhaus UI layer: the egui contribution surface and the canvas embedding.
 //!
-//! `ui` is the only crate that knows both egui and `render`. It will host the
-//! Panel/Tool/Workspace/Provider/Importer/Exporter/Validator traits, the
-//! registries, the `Module` trait, and the theme tokens (architecture bible
-//! sections 7 and 8).
+//! `ui` is the only crate that knows both egui and `render`. It owns the
+//! Panel/Tool/Workspace/`Module` contribution traits, the registries, the theme
+//! tokens, the shared widgets, and the shell runtime (architecture bible sections
+//! 7 and 8). The `Provider` trait lives in `services`, not here, and the
+//! import/export surface (Importer/Exporter/Validator) is not yet landed.
 //!
-//! Scaffold stage: it carries the egui-to-`render` seam — installing the
-//! [`ViewportRenderer`] into egui-wgpu's resource store and dispatching the canvas
-//! draw through [`CanvasCallback`]. The registries and trait surface land as the
-//! workspaces are built.
+//! It also carries the egui-to-`render` seam — installing the [`ViewportRenderer`]
+//! into egui-wgpu's resource store and dispatching the canvas draw through
+//! [`CanvasCallback`].
 
 #![cfg_attr(test, allow(clippy::unwrap_used, clippy::expect_used, clippy::panic, clippy::float_cmp))]
 

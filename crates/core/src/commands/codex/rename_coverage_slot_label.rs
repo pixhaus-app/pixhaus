@@ -53,9 +53,7 @@ impl Command for RenameCoverageSlotLabel {
     }
 
     fn estimated_size_bytes(&self) -> usize {
-        let label_len = self.label.as_ref().map_or(0, |l| match l {
-            CoverageLabel::Key(s) | CoverageLabel::Literal(s) => s.len(),
-        });
+        let label_len = self.label.as_ref().map_or(0, CoverageLabel::text_len);
         std::mem::size_of::<Self>() + self.key.len() + label_len
     }
 }

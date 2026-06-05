@@ -36,12 +36,13 @@ impl ChangeRelationshipKind {
 
 impl Command for ChangeRelationshipKind {
     fn apply(&mut self, doc: &mut Document) -> Result<(), CommandError> {
-        let old = Relationship::new(self.from, self.from_kind, self.to);
-        let new = Relationship::new(self.from, self.to_kind, self.to);
-        // A no-op kind change is rejected so undo never targets a phantom edge.
+        // A no-op kind change is rejected so undo never targets a phantom edge. Guard first,
+        // before building the edge values, so the cheap rejection happens up front.
         if self.from_kind == self.to_kind {
             return Err(CommandError::InvalidState);
         }
+        let old = Relationship::new(self.from, self.from_kind, self.to);
+        let new = Relationship::new(self.from, self.to_kind, self.to);
         let codex = doc.codex_mut();
         let pos = codex.relationships.iter().position(|r| *r == old).ok_or(CommandError::InvalidState)?;
         // Retyping onto an edge that already exists would collapse two edges into one,

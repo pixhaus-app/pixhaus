@@ -503,6 +503,26 @@ impl IntentSink {
     }
 }
 
+/// Pin an entry onto the Codex context stack, skipping it if already pinned.
+///
+/// The pin variants (`PinCodexEntry`) are deliberate aliases of the reference variants
+/// (`AddReferenceToContext`), so the pin semantics live in one place and the two paths
+/// can never drift.
+fn pin_reference(host: &mut Host, id: CodexEntryId) {
+    if !host.state.ui.codex.context.iter().any(|c| c.entry == id) {
+        host.state.ui.codex.context.push(ContextRef {
+            entry: id,
+            strength: AnchorStrength::default(),
+        });
+    }
+}
+
+/// Remove an entry from the Codex context stack. The unpin/remove variants share this
+/// so the two paths stay identical (see [`pin_reference`]).
+fn unpin_reference(host: &mut Host, id: CodexEntryId) {
+    host.state.ui.codex.context.retain(|c| c.entry != id);
+}
+
 /// Apply one intent to the host, after the frame's region borrows have dropped.
 ///
 /// Takes the `egui::Context` because the theme path must re-apply to egui's visuals
@@ -780,16 +800,17 @@ pub fn apply_intent(host: &mut Host, intent: Intent, ctx: &egui::Context) {
         Intent::CodexSearch(query) => {
             host.state.ui.codex.search = query;
         }
+        // Pin/Unpin (further down) are deliberate aliases of these reference arms - same
+        // body, distinct intents the panels raise from different controls. Kept as
+        // separate arms (not merged with `|`) so each reads at its call site; the shared
+        // body lives in `pin_reference`/`unpin_reference`.
+        #[allow(clippy::match_same_arms)]
         Intent::AddReferenceToContext(id) => {
-            if !host.state.ui.codex.context.iter().any(|c| c.entry == id) {
-                host.state.ui.codex.context.push(ContextRef {
-                    entry: id,
-                    strength: AnchorStrength::default(),
-                });
-            }
+            pin_reference(host, id);
         }
+        #[allow(clippy::match_same_arms)]
         Intent::RemoveReferenceFromContext(id) => {
-            host.state.ui.codex.context.retain(|c| c.entry != id);
+            unpin_reference(host, id);
         }
         Intent::SetReferenceStrength { id, strength } => {
             if let Some(c) = host.state.ui.codex.context.iter_mut().find(|c| c.entry == id) {
@@ -895,15 +916,10 @@ pub fn apply_intent(host: &mut Host, intent: Intent, ctx: &egui::Context) {
             host.state.ui.codex.nav_filter = filter;
         }
         Intent::PinCodexEntry(id) => {
-            if !host.state.ui.codex.context.iter().any(|c| c.entry == id) {
-                host.state.ui.codex.context.push(ContextRef {
-                    entry: id,
-                    strength: AnchorStrength::default(),
-                });
-            }
+            pin_reference(host, id);
         }
         Intent::UnpinCodexEntry(id) => {
-            host.state.ui.codex.context.retain(|c| c.entry != id);
+            unpin_reference(host, id);
         }
         Intent::DuplicateCodexEntry(id) => {
             duplicate_codex_entry(host, id);
@@ -1186,7 +1202,8 @@ mod tests {
 
     fn ctx() -> egui::Context {
         // A headless Context: no event loop, no GPU. apply_intent's theme path only
-        // touches ctx.style_mut, which a default Context fully supports.
+        // calls apply_to_visuals, which touches ctx.global_style_mut - a default
+        // Context fully supports that.
         egui::Context::default()
     }
 
@@ -2112,5 +2129,77 @@ mod tests {
             Some("animation states".to_owned()),
             "the template name changed",
         );
+    }
+
+    /// A hand-rolled fake provider, not mockall: `Provider::generate` returns a boxed
+    /// future, which is the repo's established pattern (see `struct Fake` in
+    /// `crates/services/src/provider.rs`). It advertises a single capability and
+    /// returns a trivial sprite so the anchor submit path has a provider to dispatch to.
+    struct FakeAnchorProvider;
+
+    impl pixhaus_services::Provider for FakeAnchorProvider {
+        fn id(&self) -> pixhaus_services::ProviderId {
+            pixhaus_services::ProviderId("fake-anchor".to_owned())
+        }
+        fn label_key(&self) -> &'static str {
+            "provider.fake.label"
+        }
+        fn capabilities(&self) -> &[ProviderCapability] {
+            &[ProviderCapability::GenerateAnchor]
+        }
+        fn generate<'a>(&'a self, _input: &'a GenerationJobInput, _cancel: tokio_util::sync::CancellationToken) -> pixhaus_services::GenerateFuture<'a> {
+            Box::pin(async {
+                Ok(pixhaus_services::GeneratedResult::Sprite(pixhaus_services::GeneratedAsset {
+                    width: 1,
+                    height: 1,
+                    stride: 4,
+                    rgba: vec![0, 0, 0, 255],
+                    provenance: pixhaus_services::GenerationProvenance {
+                        prompt: String::new(),
+                        seed: 0,
+                        provider_id: "fake-anchor".to_owned(),
+                        model: "fake".to_owned(),
+                        created_unix_ms: 0,
+                    },
+                }))
+            })
+        }
+    }
+
+    /// Submitting an anchor job with a capable provider registered flips the session to
+    /// Working and records the prompt for "Generate more". Needs a runtime because the
+    /// submit path spawns the provider future onto the ambient tokio runtime.
+    // The #[tokio::test] expansion builds the runtime with `.expect(...)`, which the
+    // crate's disallowed_methods lint forbids; the call is tokio's, not ours.
+    #[allow(clippy::disallowed_methods)]
+    #[tokio::test]
+    async fn submit_anchor_job_marks_the_session_working() {
+        let mut host = host();
+        host.edit.providers.register(std::sync::Arc::new(FakeAnchorProvider));
+        apply_intent(
+            &mut host,
+            Intent::SubmitAnchorJob {
+                prompt: "a small knight".to_owned(),
+            },
+            &ctx(),
+        );
+        assert_eq!(host.state.session.ai_status, AiStatus::Working, "a dispatched job marks the session working");
+        assert_eq!(host.state.session.last_prompt, "a small knight", "the prompt is remembered for resubmit");
+    }
+
+    /// With no provider offering anchor generation, the submit path returns early at the
+    /// `first_with` guard: the session stays Ready and no prompt is recorded.
+    #[test]
+    fn submit_anchor_job_without_a_provider_is_a_no_op() {
+        let mut host = host();
+        apply_intent(
+            &mut host,
+            Intent::SubmitAnchorJob {
+                prompt: "a small knight".to_owned(),
+            },
+            &ctx(),
+        );
+        assert_eq!(host.state.session.ai_status, AiStatus::Ready, "no provider means no working state");
+        assert!(host.state.session.last_prompt.is_empty(), "no provider means no remembered prompt");
     }
 }

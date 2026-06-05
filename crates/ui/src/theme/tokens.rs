@@ -148,42 +148,43 @@ pub struct Elevation {
     pub overlay: egui::epaint::Shadow,
 }
 
-/// Spacing scale: 2, 4, 8, 12, 16.
+/// The spacing scale, smallest to largest. Values live in `Theme::for_variant`.
 #[derive(Copy, Clone)]
 pub struct Spacing {
-    /// 2 px.
+    /// Hairline gaps.
     pub xs: f32,
-    /// 4 px.
+    /// Tightest.
     pub sm: f32,
-    /// 8 px.
+    /// Default.
     pub md: f32,
-    /// 12 px.
+    /// Loose.
     pub lg: f32,
-    /// 16 px.
+    /// Largest.
     pub xl: f32,
 }
 
-/// Type scale: 11, 13, 13, 15, 12.
+/// The type-size scale. Values live in `Theme::for_variant`.
 #[derive(Copy, Clone)]
 pub struct TypeScale {
-    /// Small labels - 11 px.
+    /// Small labels.
     pub label: f32,
-    /// Body text - 13 px.
+    /// Body text.
     pub body: f32,
-    /// Section headers - 13 px.
+    /// Section headers.
     pub section_header: f32,
-    /// Titles - 15 px.
+    /// Titles.
     pub title: f32,
-    /// Monospace - 12 px.
+    /// Monospace.
     pub mono: f32,
 }
 
-/// Corner radii: 2, 3 - a production cockpit, not rounded mobile.
+/// Corner-radius scale - a production cockpit, not rounded mobile. Values live in
+/// `Theme::for_variant`.
 #[derive(Copy, Clone)]
 pub struct Radii {
-    /// Small radius - 2 px.
+    /// Small radius.
     pub sm: f32,
-    /// Medium radius - 3 px.
+    /// Medium radius.
     pub md: f32,
 }
 

@@ -45,6 +45,8 @@ impl Command for AddSprite {
         let buffer = doc.buffers.insert(PixelBuffer::new(proto.width, proto.height)?);
         let sprite_id = doc.mint_sprite_id();
         let mut sprite = Sprite::new_single_frame(sprite_id, proto.name, proto.width, proto.height);
+        // A blank sprite starts with one default-named layer the user can rename; the name
+        // is project content, not a UI label, so it is a plain string here, not an i18n key.
         sprite
             .active_frame_mut()
             .ok_or(CommandError::InvalidState)?

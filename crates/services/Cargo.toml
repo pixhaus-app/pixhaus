@@ -16,7 +16,13 @@ thiserror = { workspace = true }
 # The job system spawns provider work onto the binary's runtime (it never creates
 # one) and cancels with a token; serde derives the generation provenance metadata;
 # parking_lot guards the shared result store (job task writes, UI lane reads).
-tokio = { workspace = true }
+# A library declares only the tokio features it uses, not the workspace `full`:
+# `rt` for `tokio::spawn`, `macros` for `select!`/`#[tokio::test]`, `time` for
+# `time::sleep`. Channels are `std::sync::mpsc`, so `sync` is not needed. The
+# version is set directly here rather than `workspace = true` because a `features`
+# list on a workspace dependency is additive and could not remove `full`. The
+# binary in `app/` keeps the workspace `full`.
+tokio = { version = "1", default-features = false, features = ["rt", "macros", "time"] }
 tokio-util = { workspace = true }
 serde = { workspace = true }
 parking_lot = { workspace = true }

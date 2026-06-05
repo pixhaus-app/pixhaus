@@ -73,6 +73,10 @@ impl Command for ApplyCoverageTemplate {
             return Err(CommandError::InvalidState);
         }
         let codex = doc.codex_mut();
+        // Removing each seeded Missing cell assumes LIFO undo ordering: any later
+        // SetCoverageStatus on one of these cells is undone first (restoring it to Missing)
+        // before this command's undo runs, so dropping the cells here never discards a value
+        // a still-live command edited.
         for slot in std::mem::take(&mut self.seeded_slots) {
             codex.coverage_state.remove(&CoverageKey::new(self.entry, slot));
         }

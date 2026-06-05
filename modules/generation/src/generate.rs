@@ -649,6 +649,14 @@ pub fn register(host: &mut dyn HostRegistrar) {
 
     // The `gen.*` actions the panels above dispatch. The user-facing ones are
     // command-palette visible.
+    //
+    // Not every id here is dispatched yet. GEN_GENERATE, GEN_INSERT_SPRITE, and
+    // GEN_GENERATE_MORE are the registered seam for the result-apply loop: the Prompt
+    // and Results panels currently submit through typed intents (SubmitAnchorJob,
+    // InsertSelectedResultAsSprite) rather than the action ids, but the actions stay
+    // registered so the command palette and any future menu wiring address the same
+    // verbs. Keep them registered, and route them once the apply loop owns dispatch -
+    // dropping them now would just have to be re-added.
     for (id, label) in [
         (GEN_GENERATE, MsgKey("command.gen.generate")),
         (GEN_USE_SELECTED, MsgKey("command.gen.use-selected")),

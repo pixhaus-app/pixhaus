@@ -1400,6 +1400,10 @@ fn render_visual_card(
                         for color in &body.colors {
                             let (rect, _) = ui.allocate_exact_size(egui::Vec2::splat(theme.type_scale.body + 8.0), egui::Sense::hover());
                             if ui.is_rect_visible(rect) {
+                                // Color32 built from artist palette data, not theme chrome - exempt from the
+                                // design-system token rule (the same exception palette_color_row documents). This
+                                // is a non-interactive hover-only swatch, so it paints locally rather than routing
+                                // through a widgets:: helper.
                                 let [r, g, b, a] = color.rgba;
                                 ui.painter().rect_filled(rect, 2.0, egui::Color32::from_rgba_unmultiplied(r, g, b, a));
                             }
@@ -3154,7 +3158,17 @@ fn coverage_body(ui: &mut egui::Ui, theme: &Theme, intents: &mut pixhaus_ui::sta
     // template id so the buffers stay disjoint. A new slot's key is auto-derived and
     // stable for the add; its label is a literal the artist edits.
     for template in &detail.applied_templates {
-        add_slot_field(ui, theme, intents, *template, detail.coverage_items.iter().map(|item| item.slot.as_str()));
+        // Scope the add-field buffer to this surface ("applied"): the same template can also
+        // appear in the manage-templates surface below, and an unscoped buffer id keyed on the
+        // template alone would make the two add fields share one temp buffer.
+        add_slot_field(
+            ui,
+            theme,
+            intents,
+            "applied",
+            *template,
+            detail.coverage_items.iter().map(|item| item.slot.as_str()),
+        );
     }
 
     // Per-slot status cycling: a button per slot steps Missing -> Generated -> Approved
@@ -3248,8 +3262,10 @@ fn manage_templates_section(ui: &mut egui::Ui, theme: &Theme, intents: &mut pixh
             template_heading_row(ui, theme, intents, view, tpl.id);
             manage_template_slots(ui, theme, intents, tpl);
             // Add a slot to this template, addressed by id; the key is auto-derived and
-            // stable for the add, its label the typed literal.
-            add_slot_field(ui, theme, intents, tpl.id, tpl.slots.iter().map(|s| s.key.as_str()));
+            // stable for the add, its label the typed literal. The "manage" surface
+            // discriminator keeps this add field's buffer disjoint from the applied-template
+            // add field above when the same template appears in both surfaces.
+            add_slot_field(ui, theme, intents, "manage", tpl.id, tpl.slots.iter().map(|s| s.key.as_str()));
         }
     });
 }
@@ -3426,18 +3442,23 @@ fn next_free_slot_key<'a>(prefix: &str, existing: impl Iterator<Item = &'a str>)
 }
 
 /// A per-template add-slot row: an inline label field plus an Add button. The buffer
-/// lives in egui temp data keyed to the template, so each template's field is disjoint. A
-/// submit appends a slot whose key is the first free `slot_<n>` not already present (so an
-/// add stays real after any interior remove) and whose label is the typed literal.
+/// lives in egui temp data keyed to the `surface` plus the template, so each template's
+/// field is disjoint - and the same template shown in two surfaces ("applied" vs "manage")
+/// does not collide on one buffer. A submit appends a slot whose key is the first free
+/// `slot_<n>` not already present (so an add stays real after any interior remove) and whose
+/// label is the typed literal.
 fn add_slot_field<'a>(
     ui: &mut egui::Ui,
     theme: &Theme,
     intents: &mut pixhaus_ui::state::intent::IntentSink,
+    // A surface discriminator ("applied" vs "manage") so the same template id rendered in two
+    // surfaces does not share one temp buffer for its in-progress slot label.
+    surface: &'static str,
     template: pixhaus_core::codex::CoverageTemplateId,
     existing_keys: impl Iterator<Item = &'a str>,
 ) {
     let key = next_free_slot_key("slot", existing_keys);
-    let buf_id = ui.make_persistent_id(("codex-coverage-add-slot", template.0));
+    let buf_id = ui.make_persistent_id(("codex-coverage-add-slot", surface, template.0));
     let mut buf = ui.data(|d| d.get_temp::<String>(buf_id).unwrap_or_default());
     ui.horizontal(|ui| {
         ui.spacing_mut().item_spacing.x = theme.spacing.xs;
@@ -3609,6 +3630,12 @@ pub fn register(host: &mut dyn HostRegistrar) {
     host.add_panel(Box::new(TestGenerationPanel));
     host.add_panel(Box::new(CodexHistoryPanel));
 
+    // These ActionIds are surfaced in the command palette but their RunAction handler is
+    // currently the shell-wide mock JobStub - the panels do not dispatch them. The live
+    // create/compile path is the direct Intent the panels push (Intent::CreateCodexEntry /
+    // Intent::CompileCodexPrompt); the palette wiring of ActionId -> Intent arrives with the
+    // real services job dispatch. Keeping them registered preserves palette discoverability
+    // uniformly with the other five modules rather than making Codex the lone exception.
     for (id, label) in [
         (CODEX_NEW_ENTRY, MsgKey("command.codex.add_entry")),
         (CODEX_COMPILE, MsgKey("command.codex.compile_prompt")),
@@ -3675,5 +3702,149 @@ mod tests {
     #[test]
     fn relation_kinds_cover_all_eleven() {
         assert_eq!(RELATION_KINDS.len(), 11);
+    }
+
+    #[test]
+    fn next_free_slot_key_starts_at_one_when_empty() {
+        assert_eq!(next_free_slot_key("slot", std::iter::empty()), "slot_1");
+    }
+
+    #[test]
+    fn next_free_slot_key_skips_past_a_dense_run() {
+        assert_eq!(next_free_slot_key("slot", ["slot_1", "slot_2"].into_iter()), "slot_3");
+    }
+
+    #[test]
+    fn next_free_slot_key_fills_an_interior_gap() {
+        // The whole point of scanning (not counting): an interior remove leaves slot_2 free, so
+        // the next add must reuse it rather than re-mint slot_3 and collide on the next round.
+        assert_eq!(next_free_slot_key("slot", ["slot_1", "slot_3"].into_iter()), "slot_2");
+    }
+
+    #[test]
+    fn next_free_slot_key_honors_a_custom_prefix() {
+        assert_eq!(next_free_slot_key("custom", ["custom_1"].into_iter()), "custom_2");
+    }
+
+    // The enum-to-i18n-key mappers must each return a UNIQUE key per variant under the right
+    // namespace prefix, so a renamed or duplicated key fails the build rather than drifting
+    // silently. We assert prefix + uniqueness, not literal equality - asserting each literal
+    // would just mirror the source and rot. Variant lists are spelled out locally because only
+    // EntryType (via EntryType::all) and RelationKind (via RELATION_KINDS) carry an
+    // enumeration helper; the rest have neither all() nor a strum derive.
+    fn assert_keys_unique_with_prefix(prefix: &str, keys: &[&'static str]) {
+        for key in keys {
+            assert!(key.starts_with(prefix), "{key:?} must start with {prefix:?}");
+        }
+        let unique: std::collections::HashSet<&&str> = keys.iter().collect();
+        assert_eq!(unique.len(), keys.len(), "{prefix} keys must be unique across variants");
+    }
+
+    #[test]
+    fn status_keys_are_unique_and_namespaced() {
+        let keys: Vec<&'static str> = [
+            EntryStatus::Draft,
+            EntryStatus::Candidate,
+            EntryStatus::Canonical,
+            EntryStatus::Deprecated,
+            EntryStatus::Archived,
+            EntryStatus::Rejected,
+        ]
+        .into_iter()
+        .map(status_key)
+        .collect();
+        assert_keys_unique_with_prefix("codex.status.", &keys);
+    }
+
+    #[test]
+    fn relation_keys_are_unique_and_namespaced() {
+        let keys: Vec<&'static str> = RELATION_KINDS.into_iter().map(relation_key).collect();
+        assert_keys_unique_with_prefix("codex.relation.", &keys);
+    }
+
+    #[test]
+    fn entry_type_keys_are_unique_and_namespaced() {
+        let keys: Vec<&'static str> = EntryType::all().iter().copied().map(entry_type_key).collect();
+        assert_keys_unique_with_prefix("codex.entry_type.", &keys);
+    }
+
+    #[test]
+    fn priority_keys_are_unique_and_namespaced() {
+        let keys: Vec<&'static str> = [
+            InclusionPriority::Critical,
+            InclusionPriority::Important,
+            InclusionPriority::Normal,
+            InclusionPriority::Optional,
+            InclusionPriority::NeverInPrompt,
+        ]
+        .into_iter()
+        .map(priority_key)
+        .collect();
+        assert_keys_unique_with_prefix("codex.priority.", &keys);
+    }
+
+    #[test]
+    fn anchor_kind_keys_are_unique_and_namespaced() {
+        let keys: Vec<&'static str> = [
+            AnchorKind::Identity,
+            AnchorKind::Visual,
+            AnchorKind::Palette,
+            AnchorKind::Style,
+            AnchorKind::Animation,
+            AnchorKind::Scale,
+            AnchorKind::Lore,
+            AnchorKind::Negative,
+        ]
+        .into_iter()
+        .map(anchor_kind_key)
+        .collect();
+        assert_keys_unique_with_prefix("codex.anchor.kind.", &keys);
+    }
+
+    #[test]
+    fn anchor_strength_keys_are_unique_and_namespaced() {
+        let keys: Vec<&'static str> = [AnchorStrength::Loose, AnchorStrength::Normal, AnchorStrength::Strong, AnchorStrength::Locked]
+            .into_iter()
+            .map(anchor_strength_key)
+            .collect();
+        assert_keys_unique_with_prefix("codex.anchor.strength.", &keys);
+    }
+
+    #[test]
+    fn color_role_keys_are_unique_and_namespaced() {
+        let keys: Vec<&'static str> = [
+            ColorRole::Shadow,
+            ColorRole::Midtone,
+            ColorRole::Highlight,
+            ColorRole::Outline,
+            ColorRole::Skin,
+            ColorRole::Cloth,
+            ColorRole::Metal,
+            ColorRole::MagicGlow,
+            ColorRole::Danger,
+            ColorRole::Healing,
+            ColorRole::UiAccent,
+        ]
+        .into_iter()
+        .map(color_role_key)
+        .collect();
+        assert_keys_unique_with_prefix("codex.color_role.", &keys);
+    }
+
+    #[test]
+    fn coverage_status_keys_are_unique_and_namespaced() {
+        let keys: Vec<&'static str> = [
+            CoverageItemStatus::Missing,
+            CoverageItemStatus::Draft,
+            CoverageItemStatus::Generated,
+            CoverageItemStatus::NeedsReview,
+            CoverageItemStatus::Approved,
+            CoverageItemStatus::ManuallyFinalized,
+            CoverageItemStatus::Deprecated,
+        ]
+        .into_iter()
+        .map(coverage_status_key)
+        .collect();
+        assert_keys_unique_with_prefix("codex.coverage.status.", &keys);
     }
 }

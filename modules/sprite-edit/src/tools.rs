@@ -36,6 +36,7 @@ impl Tool for PencilTool {
     }
 
     fn options_ui(&self, ui: &mut egui::Ui, _cx: &mut ContribCtx<'_>) {
+        // mock: option labels are literals; key each through tr() when this row goes live.
         ui.horizontal(|ui| {
             let mut size = 1.0_f32;
             ui.add(egui::DragValue::new(&mut size).prefix("Size ").suffix("px"));
@@ -71,6 +72,7 @@ impl Tool for EraserTool {
     }
 
     fn options_ui(&self, ui: &mut egui::Ui, _cx: &mut ContribCtx<'_>) {
+        // mock: option labels are literals; key each through tr() when this row goes live.
         ui.horizontal(|ui| {
             let mut size = 1.0_f32;
             ui.add(egui::DragValue::new(&mut size).prefix("Size ").suffix("px"));
@@ -101,6 +103,7 @@ impl Tool for FillTool {
     }
 
     fn options_ui(&self, ui: &mut egui::Ui, _cx: &mut ContribCtx<'_>) {
+        // mock: option labels are literals; key each through tr() when this row goes live.
         ui.horizontal(|ui| {
             let mut tolerance = 0.0_f32;
             ui.add(egui::DragValue::new(&mut tolerance).prefix("Tolerance "));
@@ -131,6 +134,7 @@ impl Tool for LineTool {
     }
 
     fn options_ui(&self, ui: &mut egui::Ui, _cx: &mut ContribCtx<'_>) {
+        // mock: option labels are literals; key each through tr() when this row goes live.
         ui.horizontal(|ui| {
             let mut size = 1.0_f32;
             ui.add(egui::DragValue::new(&mut size).prefix("Size ").suffix("px"));
@@ -161,6 +165,7 @@ impl Tool for RectangleTool {
     }
 
     fn options_ui(&self, ui: &mut egui::Ui, _cx: &mut ContribCtx<'_>) {
+        // mock: option labels are literals; key each through tr() when this row goes live.
         ui.horizontal(|ui| {
             let mut size = 1.0_f32;
             ui.add(egui::DragValue::new(&mut size).prefix("Size ").suffix("px"));
@@ -191,6 +196,7 @@ impl Tool for EllipseTool {
     }
 
     fn options_ui(&self, ui: &mut egui::Ui, _cx: &mut ContribCtx<'_>) {
+        // mock: option labels are literals; key each through tr() when this row goes live.
         ui.horizontal(|ui| {
             let mut size = 1.0_f32;
             ui.add(egui::DragValue::new(&mut size).prefix("Size ").suffix("px"));
@@ -221,6 +227,7 @@ impl Tool for EyedropperTool {
     }
 
     fn options_ui(&self, ui: &mut egui::Ui, _cx: &mut ContribCtx<'_>) {
+        // mock: option labels are literals; key each through tr() when this row goes live.
         ui.horizontal(|ui| {
             ui.label("Sample Composite");
             let mut add_to_palette = false;
@@ -248,6 +255,7 @@ impl Tool for SelectionTool {
     }
 
     fn options_ui(&self, ui: &mut egui::Ui, _cx: &mut ContribCtx<'_>) {
+        // mock: option labels are literals; key each through tr() when this row goes live.
         ui.horizontal(|ui| {
             ui.label("Mode Replace");
             let mut feather = 0.0_f32;
@@ -278,6 +286,7 @@ impl Tool for LassoTool {
     }
 
     fn options_ui(&self, ui: &mut egui::Ui, _cx: &mut ContribCtx<'_>) {
+        // mock: option labels are literals; key each through tr() when this row goes live.
         ui.horizontal(|ui| {
             ui.label("Mode Replace");
             let mut feather = 0.0_f32;
@@ -305,6 +314,7 @@ impl Tool for MoveTool {
     }
 
     fn options_ui(&self, ui: &mut egui::Ui, _cx: &mut ContribCtx<'_>) {
+        // mock: option labels are literals; key each through tr() when this row goes live.
         ui.horizontal(|ui| {
             ui.label("Origin Center");
             let mut snap = false;
@@ -332,6 +342,7 @@ impl Tool for TransformTool {
     }
 
     fn options_ui(&self, ui: &mut egui::Ui, _cx: &mut ContribCtx<'_>) {
+        // mock: option labels are literals; key each through tr() when this row goes live.
         ui.horizontal(|ui| {
             ui.label("Origin Center");
             let mut snap = false;
@@ -359,6 +370,7 @@ impl Tool for TextTool {
     }
 
     fn options_ui(&self, ui: &mut egui::Ui, _cx: &mut ContribCtx<'_>) {
+        // mock: option labels are literals; key each through tr() when this row goes live.
         ui.horizontal(|ui| {
             ui.label("Font Pixel");
             let mut size = 8.0_f32;
@@ -386,6 +398,7 @@ impl Tool for HandTool {
     }
 
     fn options_ui(&self, ui: &mut egui::Ui, _cx: &mut ContribCtx<'_>) {
+        // mock: option labels are literals; key each through tr() when this row goes live.
         ui.horizontal(|ui| {
             ui.label("Zoom 1600%");
             let _ = ui.button("Fit");
@@ -413,6 +426,7 @@ impl Tool for ZoomTool {
     }
 
     fn options_ui(&self, ui: &mut egui::Ui, _cx: &mut ContribCtx<'_>) {
+        // mock: option labels are literals; key each through tr() when this row goes live.
         ui.horizontal(|ui| {
             ui.label("Zoom 1600%");
             let _ = ui.button("Fit");
@@ -441,6 +455,7 @@ impl Tool for AiBrushTool {
     }
 
     fn options_ui(&self, ui: &mut egui::Ui, cx: &mut ContribCtx<'_>) {
+        // mock: option labels are literals; key each through tr() when this row goes live.
         let ai_tint = cx.theme.accent.ai;
         ui.horizontal(|ui| {
             ui.label(egui::RichText::new(icons::SPARKLE.to_string()).color(ai_tint));

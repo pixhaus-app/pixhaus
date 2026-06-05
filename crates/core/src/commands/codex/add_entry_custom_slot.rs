@@ -70,6 +70,10 @@ impl Command for AddEntryCustomSlot {
         if let Some(entry) = codex.entry_mut(self.entry) {
             entry.custom_slots.retain(|s| s.key != slot.key);
         }
+        // Removing the seeded Missing cell assumes LIFO undo ordering: any later
+        // SetCoverageStatus on this same cell is undone first (restoring it to Missing)
+        // before this command's undo runs, so the unconditional remove never drops a value
+        // a still-live command edited.
         if self.seeded_cell {
             codex.coverage_state.remove(&CoverageKey::new(self.entry, slot.key.clone()));
         }

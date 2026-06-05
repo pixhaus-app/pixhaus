@@ -125,14 +125,20 @@ impl EntryHealth {
 }
 
 /// Converts a `0.0..=1.0` ratio to an integer count of thousandths (`0..=1000`),
-/// rounding to nearest. Out-of-range input is clamped. Avoids a lossy float cast by
-/// stepping through `0..=1000` whole steps.
+/// rounding to nearest. Out-of-range input is clamped.
 fn ratio_to_milli(ratio: f32) -> u16 {
     let clamped = ratio.clamp(0.0, 1.0);
-    // `clamped * 1000.0` lands in `0.0..=1000.0`; find the nearest whole step by
-    // scanning down from the ceiling, avoiding a truncating float-to-int cast.
-    let scaled = clamped * 1000.0;
-    (0_u16..=1000).rev().find(|step| f32::from(*step) <= scaled + 0.5).unwrap_or(0)
+    // `clamped * 1000.0` lands in `0.0..=1000.0`, so `(scaled + 0.5).floor()` is the
+    // nearest whole step and fits a u16 exactly. This replaces an O(1000) scan that
+    // existed only to dodge the float-to-int cast; the conversion is the same value
+    // the scan produced (the largest step <= scaled + 0.5 is floor(scaled + 0.5)), so
+    // the .5 boundary still rounds up exactly as before. The single cast is the only
+    // way to leave the float domain; it is provably in range (0.0..=1000.0, already
+    // floored to a whole number), so truncation and sign loss cannot occur here.
+    let stepped = (clamped * 1000.0 + 0.5).floor();
+    #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
+    let milli = stepped as u32;
+    u16::try_from(milli).unwrap_or(1000)
 }
 
 /// Whether `entry_type` is expected to carry a palette reference (a Character), so a

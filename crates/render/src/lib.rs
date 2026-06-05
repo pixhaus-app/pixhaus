@@ -204,48 +204,12 @@ impl ViewportRenderer {
     /// target is sRGB (the hardware then re-encodes on write) and passed through otherwise,
     /// so the checker and grid land on the same value the UI's theme token defines. Call
     /// every frame.
-    #[allow(clippy::cast_precision_loss)]
     pub fn set_params(&self, queue: &wgpu::Queue, p: &ViewParams) {
-        // 96-byte std140 layout: origin@0 size@8 checker_lo@16 checker_hi@32 minor@48
-        // major@64 params@80. `flags` rides as a float (values <= 7, exactly representable;
-        // the shader reads it back with `u32(params.w)`).
-        // The view uniform is hand-packed byte by byte rather than derived from a bytemuck
-        // Pod, so render keeps wgpu as its only dependency and stays bytemuck-free. The fields
-        // are written at fixed std140 offsets (documented above); a wrong offset would silently
-        // corrupt the uniform, so put() is unit-tested off-GPU.
-        let mut b = [0u8; 96];
-        put(&mut b, 0, p.origin_px[0]);
-        put(&mut b, 4, p.origin_px[1]);
-        put(&mut b, 8, p.size_px[0]);
-        put(&mut b, 12, p.size_px[1]);
-        for (i, v) in self.encode(p.checker_lo).iter().enumerate() {
-            put(&mut b, 16 + i * 4, *v);
-        }
-        for (i, v) in self.encode(p.checker_hi).iter().enumerate() {
-            put(&mut b, 32 + i * 4, *v);
-        }
-        for (i, v) in self.encode(p.minor_color).iter().enumerate() {
-            put(&mut b, 48 + i * 4, *v);
-        }
-        for (i, v) in self.encode(p.major_color).iter().enumerate() {
-            put(&mut b, 64 + i * 4, *v);
-        }
-        put(&mut b, 80, p.checker_cell_px);
-        put(&mut b, 84, p.ppsp);
-        put(&mut b, 88, p.major_period);
-        put(&mut b, 92, p.flags as f32);
+        // The packing is a pure free fn so the std140 offset layout has off-GPU coverage:
+        // a wrong offset silently corrupts the uniform, and the device tests only run on a
+        // box with a GPU adapter. Keeping set_params thin leaves only the queue write here.
+        let b = pack_view(self.srgb, p);
         queue.write_buffer(&self.view_buffer, 0, &b);
-    }
-
-    /// An sRGB-normalized chrome color in the space the color target expects: linearized
-    /// rgb for an sRGB target (re-encoded on write), unchanged otherwise. Alpha (a grid
-    /// line strength, not a color) is never converted.
-    fn encode(&self, c: [f32; 4]) -> [f32; 4] {
-        if self.srgb {
-            [srgb_to_linear(c[0]), srgb_to_linear(c[1]), srgb_to_linear(c[2]), c[3]]
-        } else {
-            c
-        }
     }
 
     /// Uploads a tightly-packed (`stride == width * 4`) RGBA8 frame for display.
@@ -357,6 +321,53 @@ impl ViewportRenderer {
     }
 }
 
+/// Builds the 96-byte view uniform from `p`, encoding the chrome colors for `srgb`.
+///
+/// 96-byte std140 layout: `origin@0` `size@8` `checker_lo@16` `checker_hi@32`
+/// `minor@48` `major@64` `params@80`. `flags` rides as a float (values <= 7, exactly
+/// representable; the shader reads it back with `u32(params.w)`).
+///
+/// The view uniform is hand-packed byte by byte rather than derived from a bytemuck
+/// Pod, so render keeps wgpu as its only dependency and stays bytemuck-free. The fields
+/// are written at fixed std140 offsets (documented above); a wrong offset would silently
+/// corrupt the uniform, so this pure fn is unit-tested off-GPU where the device tests skip.
+#[allow(clippy::cast_precision_loss)]
+fn pack_view(srgb: bool, p: &ViewParams) -> [u8; 96] {
+    let mut b = [0u8; 96];
+    put(&mut b, 0, p.origin_px[0]);
+    put(&mut b, 4, p.origin_px[1]);
+    put(&mut b, 8, p.size_px[0]);
+    put(&mut b, 12, p.size_px[1]);
+    for (i, v) in encode_color(srgb, p.checker_lo).iter().enumerate() {
+        put(&mut b, 16 + i * 4, *v);
+    }
+    for (i, v) in encode_color(srgb, p.checker_hi).iter().enumerate() {
+        put(&mut b, 32 + i * 4, *v);
+    }
+    for (i, v) in encode_color(srgb, p.minor_color).iter().enumerate() {
+        put(&mut b, 48 + i * 4, *v);
+    }
+    for (i, v) in encode_color(srgb, p.major_color).iter().enumerate() {
+        put(&mut b, 64 + i * 4, *v);
+    }
+    put(&mut b, 80, p.checker_cell_px);
+    put(&mut b, 84, p.ppsp);
+    put(&mut b, 88, p.major_period);
+    put(&mut b, 92, p.flags as f32);
+    b
+}
+
+/// Encodes an sRGB-normalized chrome color into the space the color target expects:
+/// linearized rgb for an sRGB target (the hardware re-encodes on write), unchanged
+/// otherwise. Alpha is a grid-line strength, not a color, so it is never converted.
+fn encode_color(srgb: bool, c: [f32; 4]) -> [f32; 4] {
+    if srgb {
+        [srgb_to_linear(c[0]), srgb_to_linear(c[1]), srgb_to_linear(c[2]), c[3]]
+    } else {
+        c
+    }
+}
+
 /// Writes a little-endian f32 into `bytes` at `off` (the std140 uniform packer).
 fn put(bytes: &mut [u8], off: usize, v: f32) {
     bytes[off..off + 4].copy_from_slice(&v.to_le_bytes());
@@ -414,6 +425,86 @@ mod tests {
         assert!(super::frame_upload_is_skippable(0, 0));
         assert!(!super::frame_upload_is_skippable(1, 1));
         assert!(!super::frame_upload_is_skippable(4, 8));
+    }
+
+    /// A representative set of view parameters for the off-GPU packing tests. Distinct,
+    /// non-trivial values per field so a swapped offset shows up as a wrong read-back.
+    fn sample_params(flags: u32) -> super::ViewParams {
+        super::ViewParams {
+            origin_px: [1.0, 2.0],
+            size_px: [3.0, 4.0],
+            checker_lo: [0.10, 0.20, 0.30, 1.0],
+            checker_hi: [0.40, 0.50, 0.60, 1.0],
+            minor_color: [0.70, 0.80, 0.90, 0.4],
+            major_color: [0.15, 0.25, 0.35, 1.0],
+            checker_cell_px: 8.0,
+            ppsp: 4.0,
+            major_period: 16.0,
+            flags,
+        }
+    }
+
+    /// Reads the little-endian f32 at `off` in a packed view uniform.
+    fn read(b: &[u8; 96], off: usize) -> f32 {
+        let mut chunk = [0u8; 4];
+        chunk.copy_from_slice(&b[off..off + 4]);
+        f32::from_le_bytes(chunk)
+    }
+
+    /// Asserts the f32 at `off` packed exactly (compared on bytes to dodge `float_cmp`,
+    /// which is correct here: the value was written via `to_le_bytes` and is unmodified).
+    fn assert_at(b: &[u8; 96], off: usize, want: f32, field: &str) {
+        assert_eq!(&b[off..off + 4], &want.to_le_bytes(), "{field}");
+    }
+
+    /// `encode_color` is the sRGB-vs-passthrough branch behind every chrome color in the
+    /// uniform. Pin both arms off-GPU, where the device tests skip.
+    #[test]
+    fn encode_color_passes_through_unless_srgb() {
+        let c = [0.10_f32, 0.20, 0.30, 0.4];
+        // Non-sRGB target: the color is written through unchanged, alpha included.
+        // Compared as bits so the exact passthrough does not trip the float_cmp lint.
+        assert_eq!(super::encode_color(false, c).map(f32::to_bits), c.map(f32::to_bits));
+        // sRGB target: each rgb channel is linearized; alpha (grid strength) is untouched.
+        let got = super::encode_color(true, c);
+        assert!((got[0] - super::srgb_to_linear(c[0])).abs() < 1e-6);
+        assert!((got[1] - super::srgb_to_linear(c[1])).abs() < 1e-6);
+        assert!((got[2] - super::srgb_to_linear(c[2])).abs() < 1e-6);
+        assert_eq!(got[3].to_bits(), 0.4_f32.to_bits(), "alpha is a grid-line strength, never color-converted");
+    }
+
+    /// `pack_view` lays the uniform out at fixed std140 offsets; a wrong offset silently
+    /// corrupts it on a GPU box only. Pin every field's offset for both color spaces.
+    #[test]
+    fn pack_view_lands_each_field_at_its_std140_offset() {
+        let p = sample_params(0b111);
+
+        // Non-sRGB: colors pass through, so every field reads back its source value.
+        let b = super::pack_view(false, &p);
+        assert_at(&b, 0, 1.0, "origin.x @0");
+        assert_at(&b, 4, 2.0, "origin.y @4");
+        assert_at(&b, 8, 3.0, "size.x @8");
+        assert_at(&b, 12, 4.0, "size.y @12");
+        assert_at(&b, 16, 0.10, "checker_lo.r @16");
+        assert_at(&b, 32, 0.40, "checker_hi.r @32");
+        assert_at(&b, 48, 0.70, "minor.r @48");
+        assert_at(&b, 60, 0.4, "minor.a @60 (grid strength, not linearized)");
+        assert_at(&b, 64, 0.15, "major.r @64");
+        assert_at(&b, 80, 8.0, "checker_cell_px @80");
+        assert_at(&b, 84, 4.0, "ppsp @84");
+        assert_at(&b, 88, 16.0, "major_period @88");
+        assert_at(&b, 92, 7.0, "flags @92 ride as f32");
+
+        // sRGB: rgb channels are linearized in place; the alpha and scalar slots stay raw.
+        let bs = super::pack_view(true, &p);
+        assert!((read(&bs, 16) - super::srgb_to_linear(0.10)).abs() < 1e-6, "checker_lo.r linearized @16");
+        assert!((read(&bs, 48) - super::srgb_to_linear(0.70)).abs() < 1e-6, "minor.r linearized @48");
+        assert_at(&bs, 60, 0.4, "minor.a stays raw under sRGB too");
+        assert_at(&bs, 80, 8.0, "scalar params are never color-encoded");
+
+        // flags round-trip as a float for a second bit pattern.
+        let b6 = super::pack_view(false, &sample_params(0b110));
+        assert_at(&b6, 92, 6.0, "flags 0b110 reads back 6.0");
     }
 
     /// Builds the renderer and uploads two differently-sized frames (forcing a

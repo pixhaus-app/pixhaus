@@ -29,6 +29,13 @@ pub enum DirsError {
     ///
     /// `directories` returns `None` only in a degenerate environment (no `$HOME`,
     /// no Known Folder). There is no path to fall back to, so resolution fails.
+    // Left untested on purpose. Forcing this branch means making `ProjectDirs::from`
+    // return `None`, which requires defeating process-global, platform-specific home
+    // resolution: on Linux/macOS that means unsafe `std::env::set_var` (racy under
+    // nextest in edition 2024), and on Windows the home comes from the Known Folder
+    // API, not env vars, so clearing `HOME`/`XDG` wouldn't reliably produce `None`
+    // there at all. The branch is guarded by the type system and this documented
+    // contract instead.
     #[error("no home directory could be determined for this user")]
     NoHome,
 
@@ -108,9 +115,19 @@ pub fn app_dirs() -> Result<AppDirs, DirsError> {
 /// [`DirsError::Create`] when the directory cannot be created.
 #[tracing::instrument(level = "debug")]
 pub fn log_dir() -> Result<PathBuf, DirsError> {
-    let log = app_dirs()?.log;
-    create(&log, "log")?;
-    Ok(log)
+    log_dir_in(&app_dirs()?)
+}
+
+/// Create the log leaf of an already-resolved [`AppDirs`] and return it.
+///
+/// The leaf-creation logic is split out from [`log_dir`] so it takes the dirs as a
+/// parameter: tests can point `log` at a throwaway temp path and exercise creation
+/// without writing into the developer's real data dir. Resolution stays in
+/// [`log_dir`] — an env override can't redirect [`AppDirs`] on Windows, where the
+/// path comes from the Known Folder API, so injection is the only safe seam.
+fn log_dir_in(dirs: &AppDirs) -> Result<PathBuf, DirsError> {
+    create(&dirs.log, "log")?;
+    Ok(dirs.log.clone())
 }
 
 /// Create a directory and all its parents, mapping the I/O error to [`DirsError`].
@@ -142,12 +159,27 @@ mod tests {
     }
 
     #[test]
-    fn log_dir_returns_an_existing_directory() {
-        let path = match log_dir() {
-            Ok(path) => path,
-            Err(err) => panic!("log_dir should resolve and create on the test host: {err}"),
+    fn log_dir_in_creates_and_returns_the_log_leaf() {
+        // Point the log leaf at a throwaway temp dir so creation is exercised against
+        // a path that auto-cleans on drop, never the developer's real data dir. The
+        // production log_dir() wires app_dirs() into this same helper.
+        let tmp = match tempfile::tempdir() {
+            Ok(tmp) => tmp,
+            Err(err) => panic!("tempdir: {err}"),
         };
-        assert!(path.is_dir(), "log_dir must exist on disk after the call: {}", path.display());
+        let base = tmp.path();
+        let fake = AppDirs {
+            config: base.join("config"),
+            data: base.to_path_buf(),
+            cache: base.join("cache"),
+            log: base.join("logs"),
+            autosave: base.join("autosave"),
+        };
+        let path = match log_dir_in(&fake) {
+            Ok(path) => path,
+            Err(err) => panic!("log_dir_in should create the temp log leaf: {err}"),
+        };
+        assert!(path.is_dir(), "log_dir_in must create the dir on disk: {}", path.display());
         assert_eq!(path.file_name(), Some(std::ffi::OsStr::new("logs")));
     }
 
