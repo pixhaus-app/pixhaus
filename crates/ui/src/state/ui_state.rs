@@ -66,8 +66,10 @@ pub struct UiState {
     pub codex: CodexUi,
 }
 
-/// The center surface a Codex workspace shows. The center panel switches on this; the
-/// bottom strip switches `Coverage`/`Test` views on it too. Plain data so it can later
+/// The center surface a Codex workspace shows. Defined ahead of its wiring: the center
+/// panel and bottom strip will switch on this once Board, Graph, and Browse modes land
+/// (codex bible 8.5, 8.6, 22). Today only `Edit` renders; the other variants are the
+/// planned modes, scaffolded here on purpose, not dead code. Plain data so it can later
 /// persist.
 #[derive(Copy, Clone, Debug, Default, PartialEq, Eq)]
 pub enum CodexMode {
@@ -88,8 +90,8 @@ pub enum CodexMode {
 
 /// The center detail tab for the selected entry (the production-cockpit tab bar).
 ///
-/// Distinct from [`CodexMode`], which still drives the bottom Board/Graph/Coverage
-/// strip's view toggle. This is the per-entry detail view in the center: a rich
+/// Distinct from [`CodexMode`], the workspace-wide mode (the planned Board/Graph/Browse
+/// surfaces, not yet wired). This is the per-entry detail view in the center: a rich
 /// entry page split into tabs, not the workspace-wide mode.
 #[derive(Copy, Clone, Debug, Default, PartialEq, Eq)]
 pub enum CodexDetailTab {
