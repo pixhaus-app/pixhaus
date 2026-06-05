@@ -6,10 +6,12 @@ composited on the GPU and never crosses a CPU copy per painted pixel.
 
 - **Owns:** the canvas render pipelines, the texture cache, dirty-rect uploads,
   overlays drawn on the GPU.
-- **Depends on:** `core`. External: `wgpu` (pinned `=29.0.1`), `bytemuck`/`glam`
-  as needed.
+- **Depends on:** `core`. External: `wgpu` (pinned `=29.0.1`) only — the view
+  uniform is hand-packed byte by byte rather than derived from a `bytemuck` `Pod`,
+  so the crate stays `bytemuck`-free and `wgpu` is its sole dependency.
 - **Used by:** `ui`, through the egui paint callback.
-- **Status:** runnable spine — `ViewportRenderer` draws a flat viewport fill.
+- **Status:** runnable spine — `ViewportRenderer` composites the checkerboard,
+  the pixel grid, and the sprite through a textured shader.
 
 ## Boundaries
 

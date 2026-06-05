@@ -12,7 +12,9 @@ on it, it depends on nothing in the workspace.
 - **Depends on:** no workspace crate. External: `serde`, `thiserror`, `glam`,
   `bytemuck` as the model needs them.
 - **Used by:** every other crate.
-- **Status:** stub.
+- **Status:** foundation landed. The domain model, the `Command` trait and the
+  command set, the compositor, the Codex model, and pure pixel ops have real
+  bodies; the layer fills out as the roadmap (bible section 26) reaches it.
 
 ## Boundaries
 

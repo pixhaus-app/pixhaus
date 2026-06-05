@@ -6,7 +6,9 @@ The provider modules — AI and compute backends (architecture bible sections 7.
 - **Registers:** AI/compute providers behind the capability-based provider
   abstraction — a mock provider for offline development, plus remote and
   local-model providers.
-- **Status:** stub.
+- **Status:** providers registered. The mock provider and the OpenRouter provider
+  are wired in behind the capability abstraction; remote and local-model coverage
+  fills out as the roadmap (bible section 26) reaches it.
 
 ## Boundaries
 

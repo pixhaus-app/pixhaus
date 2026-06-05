@@ -4,7 +4,9 @@ The export module — production output (architecture bible sections 7.3, 6.7, 1
 
 - **Registers:** the Export workspace, export validators and presets, and the
   spritesheet, PNG, GIF/video, and engine-metadata exporters.
-- **Status:** stub.
+- **Status:** workspace registered. The Export workspace and its panels are wired
+  into the shell; the panel bodies fill out as the roadmap (bible section 26)
+  reaches them.
 
 ## Boundaries
 

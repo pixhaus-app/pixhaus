@@ -5,7 +5,9 @@ sections 7.3, 6.4, 15).
 
 - **Registers:** animation clips, the timeline and onion-skin panels, playback
   controls, the Animate workspace, and the animation commands and export hooks.
-- **Status:** stub.
+- **Status:** workspace registered. The Animate workspace and its panels are
+  wired into the shell; the panel bodies fill out as the roadmap (bible section
+  26) reaches them.
 
 ## Boundaries
 

@@ -6,7 +6,9 @@ The sprite-editing module — the Draw workspace and the shared editing surface
 - **Registers:** the sprite document type, the canvas panel, the tool shelf and
   brush tools, the layer/palette/sprite panels, the Draw workspace, and the core
   sprite-editing commands.
-- **Status:** stub.
+- **Status:** workspace registered. The Draw workspace, the shared panels, and
+  the tool shelf are wired into the shell; the panel and tool bodies fill out as
+  the roadmap (bible section 26) reaches them.
 
 ## Boundaries
 

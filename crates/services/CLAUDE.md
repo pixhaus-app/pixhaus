@@ -8,7 +8,10 @@ The service layer — shared behavior above the domain model and below the UI
 - **Depends on:** `core` (and `io` for import/export orchestration). External:
   `tokio`, `tokio-util`.
 - **Used by:** the modules and `app`.
-- **Status:** stub.
+- **Status:** foundation landed. Command execution and undo, the job system,
+  provider dispatch, the one localization service, and the Codex service subtree
+  have real bodies; the layer fills out as the roadmap (bible section 26) reaches
+  it.
 
 ## Boundaries
 

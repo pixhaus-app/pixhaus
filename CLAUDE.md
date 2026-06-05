@@ -15,12 +15,19 @@ breadth — AI backends, local FLUX inference, sprite pipelines — before the c
 editor was solid. `v3` keeps the proven direction and the discipline.
 
 What's landed: the architectural scaffold from
-`docs/pixhaus_architecture_bible.md`. The workspace is now the full layered crate
-graph (see Repo layout) with a runnable egui/wgpu spine — `cargo run -p
-pixhaus-app` opens a window with a wgpu-drawn canvas. The layer and module crates
-beyond that spine are compiling stubs; they gain bodies as the roadmap (bible §26)
-reaches them. Don't mistake a stub for a missing decision — the boundary exists on
-purpose; fill it, don't reshape it without cause.
+`docs/pixhaus_architecture_bible.md`, now with real bodies across most of the
+graph. The workspace is the full layered crate graph (see Repo layout) on a
+runnable egui/wgpu spine — `cargo run -p pixhaus-app` opens a window with a
+wgpu-drawn canvas. `crates/core` (domain model, the command set, the compositor,
+the Codex model), `crates/services` (undo, jobs, providers, the localization
+service, the Codex service subtree), `crates/render` (the textured viewport), and
+`crates/ui` (the registry-driven shell) carry real bodies, as do most modules —
+`sprite-edit`, `animation`, `generation`, `tiles`, `export`, `providers`, and
+`codex` register their workspaces and panels into the shell. Three crates are
+still genuine compiling stubs: `crates/io`, `modules/core`, and
+`modules/pixel-art`; they gain bodies as the roadmap (bible §26) reaches them.
+Don't mistake a stub for a missing decision — the boundary exists on purpose; fill
+it, don't reshape it without cause.
 
 The stack stays narrow: Rust + `egui`/`wgpu` and the async/serde backbone, and
 nothing else until a crate earns the next dependency.
@@ -109,7 +116,7 @@ crates/    the shared spine - layer crates every workspace and module sits on
 modules/   internal capability modules (bible section 7). Each registers
            capabilities with the host; none owns core data. Compiled in, not
            dynamically loaded.
-  core/ sprite-edit/ animation/ generation/ pixel-art/ tiles/ export/ providers/
+  core/ sprite-edit/ animation/ generation/ pixel-art/ tiles/ export/ providers/ codex/
 
 app/       the eframe binary (Host App layer). Owns the tokio runtime, boots the
            window, registers modules, runs the egui loop. Depends on everything;

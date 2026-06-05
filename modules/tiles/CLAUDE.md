@@ -6,7 +6,9 @@ sections 7.3, 6.6).
 - **Registers:** the Tiles workspace, the tile document type, the tile preview
   panel, autotile rules and seam validation, the tile-stamp tools, and tileset
   export targets.
-- **Status:** stub.
+- **Status:** workspace registered. The Tiles workspace and its panels are wired
+  into the shell; the panel bodies fill out as the roadmap (bible section 26)
+  reaches them.
 
 ## Boundaries
 
