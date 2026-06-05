@@ -113,6 +113,7 @@ impl Host {
                     last_prompt: String::new(),
                     playback: self::session::PlaybackMirror::default(),
                     codex: self::session::CodexView::default(),
+                    last_error: None,
                 },
                 ui: UiState::default(),
             },

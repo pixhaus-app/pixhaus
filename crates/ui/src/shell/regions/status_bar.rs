@@ -3,9 +3,11 @@
 
 use pixhaus_services::i18n;
 
+use crate::icons;
 use crate::region::region_id;
 use crate::registry::resolve_layout;
 use crate::state::Host;
+use crate::state::intent::Intent;
 use crate::state::session::AiStatus;
 use crate::theme::tokens::SurfaceTier;
 
@@ -15,7 +17,7 @@ pub fn show(host: &mut Host, ui: &mut egui::Ui) {
 
     let (sprite_w, sprite_h) = host.edit.document.active_sprite_size().unwrap_or(pixhaus_core::DEFAULT_CANVAS_SIZE);
 
-    let Host { state, theme, .. } = &mut *host;
+    let Host { state, theme, intents, .. } = &mut *host;
 
     let frame = egui::Frame::new().fill(theme.surface(SurfaceTier::Elevated)).inner_margin(theme.spacing.xs);
 
@@ -53,6 +55,30 @@ pub fn show(host: &mut Host, ui: &mut egui::Ui) {
                     ui.colored_label(theme.roles.text_secondary, i18n::tr(key));
                     let (rect, _) = ui.allocate_exact_size(egui::vec2(8.0, 8.0), egui::Sense::hover());
                     ui.painter().circle_filled(rect.center(), 4.0, color);
+
+                    // The last generation failure, surfaced as a dismissible line in the
+                    // error role (never a hex literal). A failed job is logged in
+                    // `drain_background`; without this the artist would see only the AI
+                    // dot flip back to Ready and never learn the job failed. Resolve the
+                    // stable key here (the UI lane) at render time, interpolating the
+                    // non-localized detail; a click on the X clears `session.last_error`.
+                    // Sits inside the right-to-left layout, so it grows leftward of the dot.
+                    if let Some(error) = &state.session.last_error {
+                        ui.separator();
+                        let message = match &error.detail {
+                            Some(detail) => i18n::tr_args(error.key, &[("detail", detail.as_str())]),
+                            None => i18n::tr(error.key),
+                        };
+                        if ui
+                            .add(egui::Button::new(egui::RichText::new(icons::CLOSE.to_string()).color(theme.roles.error)).frame(false))
+                            .on_hover_text(i18n::tr("app.ui.ai_status.dismiss_error"))
+                            .clicked()
+                        {
+                            intents.push(Intent::DismissAiError);
+                        }
+                        ui.colored_label(theme.roles.error, message);
+                        ui.colored_label(theme.roles.error, icons::WARN.to_string());
+                    }
                 });
             });
         });

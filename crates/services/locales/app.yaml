@@ -107,6 +107,8 @@ app.ui.ai_status.working:
   en: AI Working
 app.ui.ai_status.offline:
   en: AI Offline
+app.ui.ai_status.dismiss_error:
+  en: Dismiss
 app.ui.theme.dark:
   en: Dark
 app.ui.theme.light:

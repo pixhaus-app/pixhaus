@@ -15,7 +15,7 @@ pub use runtime::Shell;
 
 use pixhaus_services::{JobMsg, JobStatus};
 
-use crate::state::session::AiStatus;
+use crate::state::session::{AiError, AiStatus};
 use crate::state::{BackgroundMsg, Host};
 
 /// Drain background-channel and job results into session state, from `App::logic`.
@@ -66,9 +66,21 @@ pub fn drain_background(host: &mut Host, ctx: &egui::Context) {
                 host.state.session.ai_status = AiStatus::Ready;
                 host.edit.jobs.finish(job);
             }
-            JobMsg::Failed { job, error } => {
-                tracing::warn!(?job, %error, "generation job failed");
+            JobMsg::Failed { job, key, detail } => {
+                // Resolve the stable key to user-facing text here (the UI lane), at the
+                // moment the message is drained, interpolating the non-localized detail.
+                // `services` shipped a key, never English, so the message honors the
+                // active language; the raw key + detail still go to the log untranslated.
+                let message = match &detail {
+                    Some(detail) => pixhaus_services::i18n::tr_args(key, &[("detail", detail.as_str())]),
+                    None => pixhaus_services::i18n::tr(key),
+                };
+                tracing::warn!(?job, key, ?detail, %message, "generation job failed");
                 host.state.session.ai_status = AiStatus::Ready;
+                // Surface the failure to the artist, not just the log. Carry the raw
+                // key + detail (B2's split), not the resolved `message`, so a language
+                // switch re-renders it correctly; the status bar resolves at render time.
+                host.state.session.last_error = Some(AiError { key, detail });
                 host.edit.jobs.finish(job);
             }
         }
@@ -417,11 +429,46 @@ fn map_folder_node(
 
 #[cfg(test)]
 mod tests {
-    use super::sync_codex_view;
+    use super::{drain_background, sync_codex_view};
     use crate::state::Host;
     use crate::state::intent::{Intent, apply_intent};
     use crate::theme::Theme;
     use pixhaus_core::codex::EntryType;
+    use pixhaus_services::{JobId, JobManager, JobMsg};
+    use std::sync::mpsc;
+
+    /// The `JobMsg::Failed` arm surfaces the failure to the artist: it populates
+    /// `session.last_error` with the carried key + detail (not just a log line) and
+    /// resets the AI status to Ready. A failure that is only logged is invisible; this
+    /// is the regression guard that it reaches the status bar.
+    #[test]
+    fn failed_job_populates_last_error() {
+        use crate::state::session::AiStatus;
+
+        let mut host = Host::new(&Theme::dark());
+        let ctx = egui::Context::default();
+        // Rewire the job channel so the test can post a `Failed` message the drain reads.
+        let (tx, rx) = mpsc::channel();
+        host.edit.jobs = JobManager::new(tx.clone());
+        host.edit.job_rx = rx;
+        host.state.session.ai_status = AiStatus::Working;
+
+        let send = tx.send(JobMsg::Failed {
+            job: JobId(0),
+            key: "provider.error.unavailable",
+            detail: Some("backend down".to_owned()),
+        });
+        assert!(send.is_ok(), "the test channel accepts the failure message");
+
+        drain_background(&mut host, &ctx);
+
+        let Some(error) = host.state.session.last_error.as_ref() else {
+            panic!("the failure arm populates last_error");
+        };
+        assert_eq!(error.key, "provider.error.unavailable", "the stable key is carried for render-time resolution");
+        assert_eq!(error.detail.as_deref(), Some("backend down"), "the non-localized detail is carried");
+        assert_eq!(host.state.session.ai_status, AiStatus::Ready, "a failed job returns the status to Ready");
+    }
 
     /// The Codex mirror reflects a created entry, its selection, and the mode. Drives a
     /// real `CreateCodexEntry` intent, then rebuilds the mirror and reads it back.

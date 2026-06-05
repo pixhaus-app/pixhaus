@@ -51,6 +51,26 @@ pub struct SessionState {
     /// reach the document). Rebuilt post-frame from `Document.codex()` plus the
     /// shell-owned Codex UI state, the same way `result_kinds` is rebuilt.
     pub codex: CodexView,
+    /// The last generation failure, surfaced as a dismissible line in the status
+    /// bar. `None` when the last job did not fail (or the artist dismissed it).
+    /// Set in the `JobMsg::Failed` arm of `drain_background`, cleared when the next
+    /// job is submitted or the artist dismisses it. A failure that is only logged is
+    /// a failure the artist never sees - this field is what makes it visible.
+    pub last_error: Option<AiError>,
+}
+
+/// A generation failure carried for display. Holds the stable i18n `key` and the
+/// non-localized `detail` from the job's `JobMsg::Failed` (B2's key+detail split),
+/// NOT pre-resolved text: `services` is egui-free and never localizes, so the status
+/// bar resolves `key` via `tr()` at render time in the active language. Keeping the
+/// raw key (not a String) means a language switch re-renders the message correctly.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct AiError {
+    /// The stable i18n key for the user-facing failure message.
+    pub key: &'static str,
+    /// Non-localized context to interpolate into the resolved message (the provider's
+    /// error string) - DATA, never a key. `None` when the message takes no detail.
+    pub detail: Option<String>,
 }
 
 /// The read-only Codex mirror the Codex-workspace panels render from. Built from

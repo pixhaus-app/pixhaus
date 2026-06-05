@@ -89,6 +89,14 @@ impl ProviderRegistry {
 }
 
 /// Why a provider could not produce a result.
+///
+/// The `thiserror` `Display` here is English and for LOGS only — `job.rs` logs it
+/// with `error!`. The user-facing path is split: [`message_key`](Self::message_key)
+/// names a stable i18n key the UI resolves at render time, and [`detail`](Self::detail)
+/// carries the non-localized provider context (an error string, a model name) to
+/// interpolate. This mirrors the Codex `Diagnostic` (key + non-localized detail), the
+/// established pattern for "a `services` finding the UI must show": never ship an
+/// English literal to the user, and never bake provider DATA into a key.
 #[derive(Debug, Error)]
 pub enum ProviderError {
     /// The provider is not available (offline, missing key, etc.).
@@ -100,6 +108,41 @@ pub enum ProviderError {
     /// The provider produced output that is not a valid image.
     #[error("provider produced invalid image: {0}")]
     BadOutput(String),
+}
+
+/// Stable i18n keys for the user-facing provider-failure messages. The UI resolves
+/// these at render time; `services` only names them. Kept beside the variants they
+/// map from so a new variant gets a key in the same edit.
+pub mod error_keys {
+    /// The provider is unavailable (offline, missing key, transport error).
+    pub const UNAVAILABLE: &str = "provider.error.unavailable";
+    /// The request was cancelled before it finished.
+    pub const CANCELLED: &str = "provider.error.cancelled";
+    /// The provider produced output that is not a valid image.
+    pub const BAD_OUTPUT: &str = "provider.error.bad_output";
+}
+
+impl ProviderError {
+    /// The stable i18n key for this failure's user-facing message. The UI resolves it
+    /// at render time; pair it with [`detail`](Self::detail) to interpolate the
+    /// non-localized context. The English `Display` stays for logs.
+    pub fn message_key(&self) -> &'static str {
+        match self {
+            Self::Unavailable(_) => error_keys::UNAVAILABLE,
+            Self::Cancelled => error_keys::CANCELLED,
+            Self::BadOutput(_) => error_keys::BAD_OUTPUT,
+        }
+    }
+
+    /// The non-localized context to interpolate into the resolved message (a provider
+    /// error string, a decode failure) — DATA, never a key. `None` when the variant
+    /// carries no context. The keyed message's `%{detail}` slot consumes it.
+    pub fn detail(&self) -> Option<&str> {
+        match self {
+            Self::Unavailable(d) | Self::BadOutput(d) => Some(d.as_str()),
+            Self::Cancelled => None,
+        }
+    }
 }
 
 #[cfg(test)]
@@ -153,5 +196,28 @@ mod tests {
         assert!(registry.by_id(&ProviderId("fake".to_owned())).is_some());
         assert!(registry.by_id(&ProviderId("nope".to_owned())).is_none());
         assert_eq!(registry.all().len(), 1);
+    }
+
+    #[test]
+    fn message_key_is_stable_per_variant() {
+        assert_eq!(ProviderError::Unavailable("x".to_owned()).message_key(), error_keys::UNAVAILABLE);
+        assert_eq!(ProviderError::Cancelled.message_key(), error_keys::CANCELLED);
+        assert_eq!(ProviderError::BadOutput("x".to_owned()).message_key(), error_keys::BAD_OUTPUT);
+    }
+
+    #[test]
+    fn detail_carries_context_only_when_present() {
+        assert_eq!(ProviderError::Unavailable("down".to_owned()).detail(), Some("down"));
+        assert_eq!(ProviderError::BadOutput("no image".to_owned()).detail(), Some("no image"));
+        assert_eq!(ProviderError::Cancelled.detail(), None);
+    }
+
+    #[test]
+    fn display_stays_english_for_logs() {
+        // The Display is the LOG path, deliberately not localized; the user path goes
+        // through message_key/detail. Guard the split so a refactor can't quietly route
+        // the English literal back to the UI.
+        assert_eq!(ProviderError::Cancelled.to_string(), "generation cancelled");
+        assert!(ProviderError::Unavailable("down".to_owned()).to_string().contains("down"));
     }
 }

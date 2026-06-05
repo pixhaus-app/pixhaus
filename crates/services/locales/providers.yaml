@@ -9,3 +9,13 @@ provider.mock.label:
   en: Mock provider
 provider.openrouter.label:
   en: OpenRouter
+
+# Provider-failure messages. Keyed (the user path); the English thiserror Display is
+# log-only. `%{detail}` is an interpolation slot for the non-localized provider context
+# (an error string) - keep it verbatim. Resolved by the shell when a Failed job drains.
+provider.error.unavailable:
+  en: "Provider unavailable: %{detail}"
+provider.error.cancelled:
+  en: Generation cancelled
+provider.error.bad_output:
+  en: "Provider returned an invalid image: %{detail}"

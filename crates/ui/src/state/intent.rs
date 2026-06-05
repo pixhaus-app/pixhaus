@@ -106,6 +106,9 @@ pub enum Intent {
         /// The clip name the result should carry (content, e.g. "idle").
         clip_name: String,
     },
+    /// Dismiss the surfaced generation-failure line in the status bar. Clears
+    /// `session.last_error`; the next failure repopulates it.
+    DismissAiError,
     /// Apply the selected generation result as a new still sprite (an undoable command).
     InsertSelectedResultAsSprite,
     /// Apply the selected animation result as a new animated sprite with a clip (an
@@ -637,6 +640,10 @@ pub fn apply_intent(host: &mut Host, intent: Intent, ctx: &egui::Context) {
             }
             ctx.request_repaint();
         }
+        Intent::DismissAiError => {
+            host.state.session.last_error = None;
+            ctx.request_repaint();
+        }
         Intent::SelectResult(index) => {
             host.edit.results.select(index);
             host.state.session.selected_result = host.edit.results.selected_index();
@@ -974,6 +981,9 @@ fn submit_anchor_job(host: &mut Host, prompt: String) {
         return;
     };
     host.state.session.ai_status = AiStatus::Working;
+    // A new job clears the previous failure: the stale error line would otherwise
+    // sit under a fresh "Working" status, reading as if the new job already failed.
+    host.state.session.last_error = None;
     // Remember the prompt so "Generate more" can resubmit it from the Results panel.
     host.state.session.last_prompt.clone_from(&prompt);
     // Vary the seed by result count so "Generate more" differs, without a random
@@ -1005,6 +1015,9 @@ fn submit_idle_animation_job(host: &mut Host, prompt: String, from_result: usize
         return;
     };
     host.state.session.ai_status = AiStatus::Working;
+    // A new job clears the previous failure (see `submit_anchor_job`): the stale error
+    // line must not linger beneath a fresh "Working" status.
+    host.state.session.last_error = None;
     let seed = host.edit.results.len() as u64;
     let reference = ReferenceImage {
         width: anchor.width,
@@ -1111,19 +1124,20 @@ fn create_codex_entry(host: &mut Host, entry_type: EntryType, name: String) {
             }
         }
     };
-    // Keep a copy of the handle to re-resolve the new entry's id after the command is
-    // boxed and executed (the history owns the command, so we cannot read its
-    // `inserted_id` back out).
-    let lookup = handle.clone();
+    // Read the new entry's id straight off the executed command via the typed
+    // `execute_returning` path, instead of re-resolving it by handle after the fact —
+    // the history keeps the command boxed for undo, but the closure runs before boxing
+    // while the concrete type still exposes `inserted_id`.
     let proto = pixhaus_core::commands::CodexEntryProto { handle, name, entry_type };
     match host
         .edit
         .history
-        .execute(&mut host.edit.document, Box::new(pixhaus_core::commands::AddCodexEntry::new(proto)))
-    {
-        Ok(()) => {
+        .execute_returning(&mut host.edit.document, pixhaus_core::commands::AddCodexEntry::new(proto), |cmd| {
+            cmd.inserted_id()
+        }) {
+        Ok(inserted) => {
             host.state.session.dirty = true;
-            if let Some(id) = host.edit.document.codex().resolve_handle(&lookup) {
+            if let Some(id) = inserted {
                 host.state.ui.codex.selected = Some(id);
             }
         }
@@ -1132,15 +1146,23 @@ fn create_codex_entry(host: &mut Host, entry_type: EntryType, name: String) {
 }
 
 /// Duplicate a Codex entry: execute the core `DuplicateCodexEntry` command through the
-/// history and select the clone. The history owns the boxed command after execution, so
-/// the clone's id is recovered by diffing the entry-id set before and after (the same
-/// re-resolve pattern `create_codex_entry` uses for a freshly minted entry).
+/// history and select the clone. The clone's id comes straight off the executed command
+/// via the typed `execute_returning` path (same as `create_codex_entry`), not by diffing
+/// the entry-id set before and after.
 fn duplicate_codex_entry(host: &mut Host, source: CodexEntryId) {
-    let before: std::collections::HashSet<CodexEntryId> = host.edit.document.codex().entries().keys().copied().collect();
-    execute_codex(host, Box::new(pixhaus_core::commands::DuplicateCodexEntry::new(source)));
-    let clone = host.edit.document.codex().entries().keys().copied().find(|id| !before.contains(id));
-    if let Some(id) = clone {
-        host.state.ui.codex.selected = Some(id);
+    match host
+        .edit
+        .history
+        .execute_returning(&mut host.edit.document, pixhaus_core::commands::DuplicateCodexEntry::new(source), |cmd| {
+            cmd.inserted_id()
+        }) {
+        Ok(inserted) => {
+            host.state.session.dirty = true;
+            if let Some(id) = inserted {
+                host.state.ui.codex.selected = Some(id);
+            }
+        }
+        Err(error) => tracing::warn!(%error, "codex command failed"),
     }
 }
 
@@ -2201,5 +2223,43 @@ mod tests {
         );
         assert_eq!(host.state.session.ai_status, AiStatus::Ready, "no provider means no working state");
         assert!(host.state.session.last_prompt.is_empty(), "no provider means no remembered prompt");
+    }
+
+    /// Submitting a new job clears a previous failure: a stale error line must not sit
+    /// under a fresh "Working" status, reading as if the new job already failed.
+    #[allow(clippy::disallowed_methods)] // tokio's runtime build uses .expect, not ours
+    #[tokio::test]
+    async fn submitting_a_job_clears_the_last_error() {
+        use crate::state::session::AiError;
+
+        let mut host = host();
+        host.edit.providers.register(std::sync::Arc::new(FakeAnchorProvider));
+        // Seed a failure as `drain_background` would have on the previous job.
+        host.state.session.last_error = Some(AiError {
+            key: "provider.error.unavailable",
+            detail: Some("timeout".to_owned()),
+        });
+        apply_intent(
+            &mut host,
+            Intent::SubmitAnchorJob {
+                prompt: "a small knight".to_owned(),
+            },
+            &ctx(),
+        );
+        assert!(host.state.session.last_error.is_none(), "a dispatched job clears the prior failure");
+    }
+
+    /// Dismissing the surfaced failure clears `last_error`, hiding the status-bar line.
+    #[test]
+    fn dismiss_ai_error_clears_the_last_error() {
+        use crate::state::session::AiError;
+
+        let mut host = host();
+        host.state.session.last_error = Some(AiError {
+            key: "provider.error.unavailable",
+            detail: None,
+        });
+        apply_intent(&mut host, Intent::DismissAiError, &ctx());
+        assert!(host.state.session.last_error.is_none(), "dismiss clears the surfaced failure");
     }
 }

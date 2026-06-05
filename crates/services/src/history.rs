@@ -52,7 +52,10 @@ impl History {
 
     /// Applies `cmd` to `doc` and records it for undo, clearing the redo stack.
     ///
-    /// This is the single mutation entry point for project state (bible 12.1).
+    /// This is the single mutation entry point for project state (bible 12.1). Use it
+    /// when the caller needs nothing back from the command; when the caller must read a
+    /// value the command computed during apply (e.g. a freshly minted id), reach for
+    /// [`execute_returning`](Self::execute_returning) instead of re-deriving it.
     ///
     /// # Errors
     /// Returns [`ServiceError::Command`] if the command fails to apply; the document
@@ -60,6 +63,43 @@ impl History {
     #[tracing::instrument(skip_all, fields(command = cmd.label_key()))]
     pub fn execute(&mut self, doc: &mut Document, mut cmd: Box<dyn Command>) -> Result<(), ServiceError> {
         cmd.apply(doc)?;
+        self.record(cmd);
+        Ok(())
+    }
+
+    /// Applies a concrete `cmd` to `doc`, records it for undo, and returns a value read
+    /// from the executed command via `read` — run after apply, so it sees whatever the
+    /// command captured (an inserted id, an assigned handle).
+    ///
+    /// This is the typed counterpart to [`execute`](Self::execute). The history stores
+    /// commands as `Box<dyn Command>` for undo, which erases the concrete type and so
+    /// hides per-command accessors like `inserted_id`. Taking the command by its real
+    /// type `C` and reading from it *before* it is boxed lets the caller pull that value
+    /// out directly, instead of recovering it by diffing document state before and after
+    /// (the old set-diff / handle-re-resolve workaround in the Codex intent handlers).
+    /// `read` runs only on success; on an apply error the command is dropped and the
+    /// closure never runs, matching `execute`'s no-record-on-failure contract.
+    ///
+    /// # Errors
+    /// Returns [`ServiceError::Command`] if the command fails to apply; the document
+    /// is left as the command's own rollback leaves it and nothing is recorded.
+    #[tracing::instrument(skip_all, fields(command = cmd.label_key()))]
+    pub fn execute_returning<C, R>(&mut self, doc: &mut Document, mut cmd: C, read: impl FnOnce(&C) -> R) -> Result<R, ServiceError>
+    where
+        C: Command + 'static,
+    {
+        cmd.apply(doc)?;
+        // Read the typed result while the concrete type is still in hand; once boxed
+        // for the undo stack the type is erased and the accessor is gone.
+        let result = read(&cmd);
+        self.record(Box::new(cmd));
+        Ok(result)
+    }
+
+    /// Records an already-applied command on the undo stack: clears the redo path,
+    /// accounts the command's memory, and evicts down to the cap. Shared by `execute`
+    /// and `execute_returning` so both follow the identical post-apply bookkeeping.
+    fn record(&mut self, cmd: Box<dyn Command>) {
         // A fresh edit invalidates any redo path; its commands stop counting too.
         for undone in self.undone.drain(..) {
             self.bytes = self.bytes.saturating_sub(undone.estimated_size_bytes());
@@ -67,7 +107,6 @@ impl History {
         self.bytes = self.bytes.saturating_add(cmd.estimated_size_bytes());
         self.done.push(cmd);
         self.evict_over_cap();
-        Ok(())
     }
 
     /// Undoes the most recent command, moving it to the redo stack.
@@ -138,7 +177,7 @@ impl History {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use pixhaus_core::{ApplyGeneratedAsset, CommandError, composite_sprite};
+    use pixhaus_core::{AddCodexEntry, ApplyGeneratedAsset, CodexEntryProto, CodexHandle, CommandError, EntryType, composite_sprite};
 
     fn red_1x1() -> Box<dyn Command> {
         Box::new(ApplyGeneratedAsset::new("r".to_owned(), 1, 1, 4, vec![255, 0, 0, 255]))
@@ -178,6 +217,72 @@ mod tests {
 
         history.execute(&mut doc, red_1x1()).unwrap();
         assert!(!history.can_redo());
+    }
+
+    #[test]
+    fn execute_returning_hands_back_the_executed_commands_minted_id() {
+        // The typed path must surface the id the command minted during apply, and the
+        // returned id must be the one actually inserted into the document — proving the
+        // caller no longer needs to re-resolve it by handle or diff the entry set.
+        let mut doc = Document::new();
+        let mut history = History::new();
+        let handle = CodexHandle::new("hero").unwrap();
+        let proto = CodexEntryProto {
+            handle: handle.clone(),
+            name: "Hero".to_owned(),
+            entry_type: EntryType::Character,
+        };
+
+        let minted = history
+            .execute_returning(&mut doc, AddCodexEntry::new(proto), AddCodexEntry::inserted_id)
+            .unwrap()
+            .expect("apply assigns an inserted id");
+
+        // The returned id resolves to the entry that was actually inserted.
+        assert_eq!(doc.codex().resolve_handle(&handle), Some(minted));
+        assert!(history.can_undo());
+
+        // The command stayed on the undo stack: undo removes exactly that entry.
+        history.undo(&mut doc).unwrap();
+        assert_eq!(doc.codex().resolve_handle(&handle), None);
+    }
+
+    #[test]
+    fn execute_returning_records_nothing_on_apply_failure() {
+        // A failing apply must not record the command, and the read closure must not run
+        // — same no-record-on-failure contract as `execute`.
+        let mut doc = Document::new();
+        let mut history = History::new();
+        let handle = CodexHandle::new("hero").unwrap();
+        history
+            .execute(
+                &mut doc,
+                Box::new(AddCodexEntry::new(CodexEntryProto {
+                    handle: handle.clone(),
+                    name: "Hero".to_owned(),
+                    entry_type: EntryType::Character,
+                })),
+            )
+            .unwrap();
+
+        // A second entry claiming the same handle fails to apply.
+        let mut closure_ran = false;
+        let result = history.execute_returning(
+            &mut doc,
+            AddCodexEntry::new(CodexEntryProto {
+                handle,
+                name: "Hero II".to_owned(),
+                entry_type: EntryType::Character,
+            }),
+            |cmd| {
+                closure_ran = true;
+                cmd.inserted_id()
+            },
+        );
+        assert!(matches!(result, Err(ServiceError::Command(_))));
+        assert!(!closure_ran, "the read closure must not run when apply fails");
+        // Only the first, successful command is on the undo stack.
+        assert_eq!(doc.codex().entries().len(), 1);
     }
 
     #[test]

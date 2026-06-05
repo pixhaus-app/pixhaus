@@ -130,12 +130,21 @@ pub enum JobMsg {
         /// The job.
         job: JobId,
     },
-    /// The job failed; `error` is a pre-resolved, user-presentable message.
+    /// The job failed. The failure is carried as a stable i18n `key` plus a
+    /// non-localized `detail` (a provider error string), NOT a pre-resolved English
+    /// message — `services` is egui-free and never localizes, so the UI resolves
+    /// `key` via the localization service at render time and interpolates `detail`.
+    /// This mirrors the Codex `Diagnostic` split (key + detail) so no English literal
+    /// is ever shipped to the user.
     Failed {
         /// The job.
         job: JobId,
-        /// The failure message.
-        error: String,
+        /// The stable i18n key for the user-facing failure message (see
+        /// [`ProviderError::message_key`](crate::provider::ProviderError::message_key)).
+        key: &'static str,
+        /// Non-localized context to interpolate into the resolved message (the
+        /// provider's error string) — DATA, never a key.
+        detail: Option<String>,
     },
 }
 
@@ -201,10 +210,14 @@ impl JobManager {
                         });
                     }
                     Err(error) => {
+                        // Log the English Display (the log path); send the stable key +
+                        // non-localized detail so the UI resolves the user-facing message
+                        // at render time. The two paths split deliberately (bible 32.1).
                         tracing::error!(%error, "job failed");
                         let _ = out.send(JobMsg::Failed {
                             job: id,
-                            error: error.to_string(),
+                            key: error.message_key(),
+                            detail: error.detail().map(str::to_owned),
                         });
                     }
                 }
@@ -365,7 +378,13 @@ mod tests {
         jobs.submit(provider, input(), results.clone());
         let msgs = drain_until_terminal(&rx).await;
 
-        assert!(matches!(msgs.last(), Some(JobMsg::Failed { .. })));
+        // The failure carries the stable key + non-localized detail, never a
+        // pre-resolved English message: the Fail behaviour returns Unavailable("down").
+        let Some(JobMsg::Failed { key, detail, .. }) = msgs.last() else {
+            panic!("the last message is a Failed with a keyed payload");
+        };
+        assert_eq!(*key, crate::provider::error_keys::UNAVAILABLE);
+        assert_eq!(detail.as_deref(), Some("down"));
         assert_eq!(results.len(), 0);
     }
 
