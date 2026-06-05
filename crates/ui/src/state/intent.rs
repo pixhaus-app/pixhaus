@@ -728,78 +728,60 @@ pub fn apply_intent(host: &mut Host, intent: Intent, ctx: &egui::Context) {
                 visual_description,
                 tags,
             };
-            execute_codex(host, Box::new(pixhaus_core::commands::UpdateCodexEntry::new(id, delta)));
-            ctx.request_repaint();
+            exec_codex(host, Box::new(pixhaus_core::commands::UpdateCodexEntry::new(id, delta)), ctx);
         }
         Intent::SetCodexEntryStatus { id, status } => {
-            execute_codex(host, Box::new(pixhaus_core::commands::SetEntryStatus::new(id, status)));
-            ctx.request_repaint();
+            exec_codex(host, Box::new(pixhaus_core::commands::SetEntryStatus::new(id, status)), ctx);
         }
         Intent::SetCodexAnchor { id, kind, strength, statement } => {
             let anchor = pixhaus_core::codex::Anchor::new(kind, strength, statement);
-            execute_codex(host, Box::new(pixhaus_core::commands::SetAnchor::new(id, anchor)));
-            ctx.request_repaint();
+            exec_codex(host, Box::new(pixhaus_core::commands::SetAnchor::new(id, anchor)), ctx);
         }
         Intent::RemoveCodexAnchor { id, kind } => {
-            execute_codex(host, Box::new(pixhaus_core::commands::RemoveAnchor::new(id, kind)));
-            ctx.request_repaint();
+            exec_codex(host, Box::new(pixhaus_core::commands::RemoveAnchor::new(id, kind)), ctx);
         }
         Intent::AddCodexRelationship { from, kind, to } => {
             let rel = pixhaus_core::codex::Relationship::new(from, kind, to);
-            execute_codex(host, Box::new(pixhaus_core::commands::AddRelationship::new(rel)));
-            ctx.request_repaint();
+            exec_codex(host, Box::new(pixhaus_core::commands::AddRelationship::new(rel)), ctx);
         }
         Intent::ApplyCoverageTemplate { id, template } => {
-            execute_codex(host, Box::new(pixhaus_core::commands::ApplyCoverageTemplate::new(id, template)));
-            ctx.request_repaint();
+            exec_codex(host, Box::new(pixhaus_core::commands::ApplyCoverageTemplate::new(id, template)), ctx);
         }
         Intent::ApplyBuiltinCoverageTemplate { id, preset } => {
-            execute_codex(host, Box::new(pixhaus_core::commands::ApplyBuiltinCoverageTemplate::new(id, preset)));
-            ctx.request_repaint();
+            exec_codex(host, Box::new(pixhaus_core::commands::ApplyBuiltinCoverageTemplate::new(id, preset)), ctx);
         }
         Intent::CreateCoverageTemplate { name, slots } => {
-            execute_codex(host, Box::new(pixhaus_core::commands::CreateCoverageTemplate::new(name, slots)));
-            ctx.request_repaint();
+            exec_codex(host, Box::new(pixhaus_core::commands::CreateCoverageTemplate::new(name, slots)), ctx);
         }
         Intent::RenameCoverageTemplate { template, name } => {
-            execute_codex(host, Box::new(pixhaus_core::commands::RenameCoverageTemplate::new(template, name)));
-            ctx.request_repaint();
+            exec_codex(host, Box::new(pixhaus_core::commands::RenameCoverageTemplate::new(template, name)), ctx);
         }
         Intent::DeleteCoverageTemplate { template } => {
-            execute_codex(host, Box::new(pixhaus_core::commands::DeleteCoverageTemplate::new(template)));
-            ctx.request_repaint();
+            exec_codex(host, Box::new(pixhaus_core::commands::DeleteCoverageTemplate::new(template)), ctx);
         }
         Intent::AddCoverageSlot { template, slot } => {
-            execute_codex(host, Box::new(pixhaus_core::commands::AddCoverageSlot::new(template, slot)));
-            ctx.request_repaint();
+            exec_codex(host, Box::new(pixhaus_core::commands::AddCoverageSlot::new(template, slot)), ctx);
         }
         Intent::RemoveCoverageSlot { template, key } => {
-            execute_codex(host, Box::new(pixhaus_core::commands::RemoveCoverageSlot::new(template, key)));
-            ctx.request_repaint();
+            exec_codex(host, Box::new(pixhaus_core::commands::RemoveCoverageSlot::new(template, key)), ctx);
         }
         Intent::RenameCoverageSlotLabel { template, key, label } => {
-            execute_codex(host, Box::new(pixhaus_core::commands::RenameCoverageSlotLabel::new(template, key, label)));
-            ctx.request_repaint();
+            exec_codex(host, Box::new(pixhaus_core::commands::RenameCoverageSlotLabel::new(template, key, label)), ctx);
         }
         Intent::ReorderCoverageSlots { template, from, to } => {
-            execute_codex(host, Box::new(pixhaus_core::commands::ReorderCoverageSlots::new(template, from, to)));
-            ctx.request_repaint();
+            exec_codex(host, Box::new(pixhaus_core::commands::ReorderCoverageSlots::new(template, from, to)), ctx);
         }
         Intent::AddEntryCustomSlot { id, slot } => {
-            execute_codex(host, Box::new(pixhaus_core::commands::AddEntryCustomSlot::new(id, slot)));
-            ctx.request_repaint();
+            exec_codex(host, Box::new(pixhaus_core::commands::AddEntryCustomSlot::new(id, slot)), ctx);
         }
         Intent::RemoveEntryCustomSlot { id, key } => {
-            execute_codex(host, Box::new(pixhaus_core::commands::RemoveEntryCustomSlot::new(id, key)));
-            ctx.request_repaint();
+            exec_codex(host, Box::new(pixhaus_core::commands::RemoveEntryCustomSlot::new(id, key)), ctx);
         }
         Intent::RenameEntryCustomSlotLabel { id, key, label } => {
-            execute_codex(host, Box::new(pixhaus_core::commands::RenameEntryCustomSlotLabel::new(id, key, label)));
-            ctx.request_repaint();
+            exec_codex(host, Box::new(pixhaus_core::commands::RenameEntryCustomSlotLabel::new(id, key, label)), ctx);
         }
         Intent::SetCoverageStatus { id, slot, status } => {
-            execute_codex(host, Box::new(pixhaus_core::commands::SetCoverageStatus::new(id, slot, status)));
-            ctx.request_repaint();
+            exec_codex(host, Box::new(pixhaus_core::commands::SetCoverageStatus::new(id, slot, status)), ctx);
         }
         Intent::SetCodexMode(mode) => {
             host.state.ui.codex.mode = mode;
@@ -853,68 +835,54 @@ pub fn apply_intent(host: &mut Host, intent: Intent, ctx: &egui::Context) {
             ctx.request_repaint();
         }
         Intent::SetCodexPromptFragments { id, fragments } => {
-            execute_codex(host, Box::new(pixhaus_core::commands::SetPromptFragments::new(id, fragments)));
-            ctx.request_repaint();
+            exec_codex(host, Box::new(pixhaus_core::commands::SetPromptFragments::new(id, fragments)), ctx);
         }
         Intent::SetCodexNegativeFragments { id, fragments } => {
-            execute_codex(host, Box::new(pixhaus_core::commands::SetNegativeFragments::new(id, fragments)));
-            ctx.request_repaint();
+            exec_codex(host, Box::new(pixhaus_core::commands::SetNegativeFragments::new(id, fragments)), ctx);
         }
         Intent::SetCharacterDetails { id, body } => {
-            execute_codex(host, Box::new(pixhaus_core::commands::SetCharacterDetails::new(id, body)));
-            ctx.request_repaint();
+            exec_codex(host, Box::new(pixhaus_core::commands::SetCharacterDetails::new(id, body)), ctx);
         }
         Intent::SetPaletteDetails { id, body } => {
-            execute_codex(host, Box::new(pixhaus_core::commands::SetPaletteDetails::new(id, body)));
-            ctx.request_repaint();
+            exec_codex(host, Box::new(pixhaus_core::commands::SetPaletteDetails::new(id, body)), ctx);
         }
         Intent::SetStyleDetails { id, body } => {
-            execute_codex(host, Box::new(pixhaus_core::commands::SetStyleDetails::new(id, body)));
-            ctx.request_repaint();
+            exec_codex(host, Box::new(pixhaus_core::commands::SetStyleDetails::new(id, body)), ctx);
         }
         Intent::SetAnimationDetails { id, body } => {
-            execute_codex(host, Box::new(pixhaus_core::commands::SetAnimationDetails::new(id, body)));
-            ctx.request_repaint();
+            exec_codex(host, Box::new(pixhaus_core::commands::SetAnimationDetails::new(id, body)), ctx);
         }
         Intent::SetGenericDetails { id, body } => {
-            execute_codex(host, Box::new(pixhaus_core::commands::SetGenericDetails::new(id, body)));
-            ctx.request_repaint();
+            exec_codex(host, Box::new(pixhaus_core::commands::SetGenericDetails::new(id, body)), ctx);
         }
         Intent::ClearCoverage { id } => {
-            execute_codex(host, Box::new(pixhaus_core::commands::ClearCoverage::new(id)));
-            ctx.request_repaint();
+            exec_codex(host, Box::new(pixhaus_core::commands::ClearCoverage::new(id)), ctx);
         }
         Intent::RemoveCodexRelationship { from, kind, to } => {
             let rel = pixhaus_core::codex::Relationship::new(from, kind, to);
-            execute_codex(host, Box::new(pixhaus_core::commands::RemoveRelationship::new(rel)));
-            ctx.request_repaint();
+            exec_codex(host, Box::new(pixhaus_core::commands::RemoveRelationship::new(rel)), ctx);
         }
         Intent::ChangeRelationshipKind { from, old_kind, to, new_kind } => {
-            execute_codex(
+            exec_codex(
                 host,
                 Box::new(pixhaus_core::commands::ChangeRelationshipKind::new(from, old_kind, to, new_kind)),
+                ctx,
             );
-            ctx.request_repaint();
         }
         Intent::CreateCodexFolder { parent, name } => {
-            execute_codex(host, Box::new(pixhaus_core::commands::CreateCodexFolder::new(parent, name)));
-            ctx.request_repaint();
+            exec_codex(host, Box::new(pixhaus_core::commands::CreateCodexFolder::new(parent, name)), ctx);
         }
         Intent::RenameCodexFolder { id, name } => {
-            execute_codex(host, Box::new(pixhaus_core::commands::RenameCodexFolder::new(id, name)));
-            ctx.request_repaint();
+            exec_codex(host, Box::new(pixhaus_core::commands::RenameCodexFolder::new(id, name)), ctx);
         }
         Intent::DeleteCodexFolder { id } => {
-            execute_codex(host, Box::new(pixhaus_core::commands::DeleteCodexFolder::new(id)));
-            ctx.request_repaint();
+            exec_codex(host, Box::new(pixhaus_core::commands::DeleteCodexFolder::new(id)), ctx);
         }
         Intent::SetCodexFolderParent { id, parent } => {
-            execute_codex(host, Box::new(pixhaus_core::commands::SetCodexFolderParent::new(id, parent)));
-            ctx.request_repaint();
+            exec_codex(host, Box::new(pixhaus_core::commands::SetCodexFolderParent::new(id, parent)), ctx);
         }
         Intent::SetCodexEntryFolder { entry, folder } => {
-            execute_codex(host, Box::new(pixhaus_core::commands::SetCodexEntryFolder::new(entry, folder)));
-            ctx.request_repaint();
+            exec_codex(host, Box::new(pixhaus_core::commands::SetCodexEntryFolder::new(entry, folder)), ctx);
         }
         Intent::SetCodexDetailTab(tab) => {
             host.state.ui.codex.detail_tab = tab;
@@ -933,12 +901,10 @@ pub fn apply_intent(host: &mut Host, intent: Intent, ctx: &egui::Context) {
             ctx.request_repaint();
         }
         Intent::PromoteCodexEntry(id) => {
-            execute_codex(host, Box::new(pixhaus_core::commands::SetEntryStatus::new(id, EntryStatus::Canonical)));
-            ctx.request_repaint();
+            exec_codex(host, Box::new(pixhaus_core::commands::SetEntryStatus::new(id, EntryStatus::Canonical)), ctx);
         }
         Intent::ArchiveCodexEntry(id) => {
-            execute_codex(host, Box::new(pixhaus_core::commands::SetEntryStatus::new(id, EntryStatus::Archived)));
-            ctx.request_repaint();
+            exec_codex(host, Box::new(pixhaus_core::commands::SetEntryStatus::new(id, EntryStatus::Archived)), ctx);
         }
     }
 }
@@ -1082,6 +1048,18 @@ fn execute_codex(host: &mut Host, command: Box<dyn pixhaus_core::Command>) {
         Ok(()) => host.state.session.dirty = true,
         Err(error) => tracing::warn!(%error, "codex command failed"),
     }
+}
+
+/// Execute a Codex command and request a repaint - the whole body of a plain Codex
+/// mutation arm. Most Codex intents do exactly this: run one command through the
+/// history seam, then wake the loop so the center recomposites (egui would otherwise
+/// go idle until the next input). Factored out so the ~30 mechanical arms read as one
+/// line and the execute+repaint pairing can never drift between them. Arms that do
+/// more - clear the selection, recover an inserted id, validate input before executing,
+/// or skip the repaint - call `execute_codex` directly and keep their bespoke body.
+fn exec_codex(host: &mut Host, command: Box<dyn pixhaus_core::Command>, ctx: &egui::Context) {
+    execute_codex(host, command);
+    ctx.request_repaint();
 }
 
 /// Derive a stable handle from a display name: lowercase, non-alphanumerics to
