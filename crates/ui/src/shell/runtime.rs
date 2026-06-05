@@ -45,6 +45,11 @@ impl Shell {
         // playing keeps the loop awake so the next frame advances too.
         if host.state.ui.playback.playing {
             let dt = ui.ctx().input(|input| input.stable_dt);
+            // Advance the playhead by mutating this transient field directly rather than
+            // emitting a Command. Playback is a view concern like zoom/pan/onion: routing it
+            // through the Command/undo path would push a command, an undo entry, and a
+            // revision bump every frame at 60fps, polluting undo and churning the document.
+            // Durable mutation goes through a Command; this clock tick is not durable.
             host.state.ui.playback.playhead_seconds += dt;
             ui.ctx().request_repaint();
         }

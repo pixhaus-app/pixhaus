@@ -24,6 +24,11 @@ async fn drain_until(host: &mut Host, ctx: &egui::Context, done: impl Fn(&Host) 
 }
 
 #[tokio::test]
+// This test exists because Generate was built as one thin vertical slice -
+// core model, Command, job, mock provider, render path driven end to end -
+// rather than front-end-first against mocks. The payoff is the closed loop
+// (prompt -> job -> result -> apply -> canvas -> undo), so the loop is proven
+// here first; the slice also lays ~80% of the spine Draw and Animate reuse.
 async fn prompt_to_result_to_sprite_to_undo() {
     let mut host = Host::new(&Theme::dark());
     // Register the offline mock provider into the host's provider registry, exactly

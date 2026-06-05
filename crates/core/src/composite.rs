@@ -53,6 +53,10 @@ pub fn composite_sprite(doc: &Document, sprite: SpriteId) -> Result<PixelBuffer,
 /// # Errors
 /// Returns [`CompositeError`] if the sprite or `frame` is absent, a layer's buffer is
 /// missing, or a layer's buffer size does not match the sprite.
+// Frames-first model: a still sprite is just a one-frame sprite, so still and
+// animated sprites composite through one path. composite_sprite resolves the active
+// frame and delegates here; this is the per-frame entry playback and onion skin reach
+// for any frame by id. Keep both routing into composite_layers so stills never diverge.
 pub fn composite_frame(doc: &Document, sprite: SpriteId, frame: FrameId) -> Result<PixelBuffer, CompositeError> {
     let sprite = doc.sprite(sprite).ok_or(CompositeError::SpriteNotFound(sprite))?;
     let frame = sprite.frame(frame).ok_or(CompositeError::FrameNotFound(frame))?;

@@ -29,5 +29,10 @@ composited on the GPU and never crosses a CPU copy per painted pixel.
   localizes. Debug and perf traces stay English developer text. See the
   `pixhaus-i18n` skill.
 
+- Record the why: when a choice here is made for a non-obvious reason — a
+  trade-off, a rejected alternative, a constraint, or a workaround — state that
+  reason in a `//` comment at each spot it shaped, not just in the commit. See the
+  root `CLAUDE.md` "Recording decisions" rule.
+
 Reach for the `pixhaus-wgpu` skill before touching GPU code. Global rules: root
 `CLAUDE.md`. Architecture: `docs/pixhaus_architecture_bible.md`.

@@ -24,4 +24,9 @@ The pixel-art module — a deep dedicated art mode (architecture bible sections
 - Palette analysis and previews are derived cache — recomputable, never the source
   of truth (bible section 22.6).
 
+- Record the why: when a choice here is made for a non-obvious reason — a
+  trade-off, a rejected alternative, a constraint, or a workaround — state that
+  reason in a `//` comment at each spot it shaped, not just in the commit. See the
+  root `CLAUDE.md` "Recording decisions" rule.
+
 Shared module rules: `modules/CLAUDE.md`. Global rules: root `CLAUDE.md`.

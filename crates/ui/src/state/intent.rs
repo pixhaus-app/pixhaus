@@ -938,6 +938,10 @@ fn insert_selected_result(host: &mut Host) {
     let Some(asset) = host.edit.results.selected() else {
         return;
     };
+    // A generated result reaches the canvas only as an undoable command run through
+    // the history, never by mutating the live document directly. This keeps generation
+    // results on the same undo/redo path as every other edit and means the job worker
+    // only ever produces immutable input the artist later chooses to apply.
     let command = ApplyGeneratedAsset::new(asset.provenance.prompt.clone(), asset.width, asset.height, asset.stride, asset.rgba);
     match host.edit.history.execute(&mut host.edit.document, Box::new(command)) {
         Ok(()) => host.state.session.dirty = true,

@@ -28,5 +28,10 @@ The provider modules — AI and compute backends (architecture bible sections 7.
   API model names, and API keys are DATA, never i18n keys — surface provider errors
   via keyed error strings. See the `pixhaus-i18n` skill.
 
+- Record the why: when a choice here is made for a non-obvious reason — a
+  trade-off, a rejected alternative, a constraint, or a workaround — state that
+  reason in a `//` comment at each spot it shaped, not just in the commit. See the
+  root `CLAUDE.md` "Recording decisions" rule.
+
 Reach for `pixhaus-reqwest`/`pixhaus-keyring` skills when wiring real providers.
 Shared module rules: `modules/CLAUDE.md`. Global rules: root `CLAUDE.md`.

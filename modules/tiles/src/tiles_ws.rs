@@ -71,6 +71,10 @@ impl Workspace for TilesWorkspace {
             right_dock: vec![TILESET, RULE_TYPE, MATERIAL, SEAM_QA, AI_TILE_ASSISTANT],
             bottom_tray: vec![TILE_VARIANTS, ASSETS, CONSOLE],
             center: CenterSurface::Canvas,
+            // Draw the rail from the one hoisted TOOL_RAIL constant in the contribution
+            // surface rather than re-typing the tool ids as string literals here. The rail
+            // was duplicated per workspace before, which let the ids and order drift apart;
+            // every workspace now references the single definition, so they stay in lockstep.
             primary_tools: TOOL_RAIL.to_vec(),
             default_tool: PENCIL,
             status_items: vec![

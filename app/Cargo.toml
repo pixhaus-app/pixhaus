@@ -44,6 +44,11 @@ pixhaus-mod-codex = { path = "../modules/codex" }
 pixhaus-mod-providers = { path = "../modules/providers" }
 
 [dev-dependencies]
+# The headless render harness: builds each workspace off-screen and rasterizes it to a
+# PNG (app/examples/render_workspaces.rs), the apply-render-compare loop look-tuning runs
+# against. A gated dependency under the locked stack, so it earns its place only as a
+# dev-dep: declined while a layout assertion sufficed, adopted once tuning needed real
+# frames, which also proves headless wgpu rendering works.
 egui_kittest.workspace = true
 # A throwaway log dir for the build_subscriber smoke test, so it never writes to the
 # real OS log dir.

@@ -41,5 +41,10 @@ The host application binary — the eframe + egui shell (architecture bible sect
   parallel to building the subscriber before the runtime. Libraries and modules emit
   KEYS; only `app` sets the language. See the `pixhaus-i18n` skill.
 
+- Record the why: when a choice here is made for a non-obvious reason — a
+  trade-off, a rejected alternative, a constraint, or a workaround — state that
+  reason in a `//` comment at each spot it shaped, not just in the commit. See the
+  root `CLAUDE.md` "Recording decisions" rule.
+
 Reach for `pixhaus-eframe` for boot/window and `pixhaus-egui` for the loop. Global
 rules: root `CLAUDE.md`. Architecture: `docs/pixhaus_architecture_bible.md`.

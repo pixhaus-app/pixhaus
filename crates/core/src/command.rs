@@ -22,6 +22,11 @@ pub trait Command: Send {
     ///
     /// # Errors
     /// Returns a [`CommandError`] if the document is not in the expected state.
+    // The signature mutates one referent, the whole Document, by &mut on the UI
+    // thread with no lock. Bundling structure, the pixel store, selection, and the
+    // revision counter into that single struct gives "apply to current X" one referent
+    // and one ownership point, instead of threading a lock or several mutable handles
+    // through every command.
     fn apply(&mut self, doc: &mut Document) -> Result<(), CommandError>;
 
     /// Reverses a prior [`apply`](Command::apply), restoring the document exactly.

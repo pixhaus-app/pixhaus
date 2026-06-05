@@ -7,8 +7,8 @@ egui and `render`.
 - **Owns:** the Panel/Tool/Workspace/Provider/Importer/Exporter/Validator traits,
   the registries, the `Module` trait, theme tokens, and the egui-to-`render`
   canvas paint callback.
-- **Depends on:** `core`, `services`, `render`, `io`. External: `egui`,
-  `egui-wgpu`, `wgpu`.
+- **Depends on:** `core`, `services`, `render` (and `io` once the import/export
+  surface lands - not wired yet). External: `egui`, `egui-wgpu`, `wgpu`.
 - **Used by:** the modules and `app`.
 - **Status:** runnable spine — `CanvasCallback` and `install_canvas_renderer`.
 
@@ -30,6 +30,10 @@ egui and `render`.
   `contrib_api`), and the shell resolves each frame. Resolve silently on the hit path
   (the no-per-frame-tracing rule above); a missing key warns once. See the
   `pixhaus-i18n` skill.
+- Record the why: when a choice here is made for a non-obvious reason — a
+  trade-off, a rejected alternative, a constraint, or a workaround — state that
+  reason in a `//` comment at each spot it shaped, not just in the commit. See the
+  root `CLAUDE.md` "Recording decisions" rule.
 
 ## Design system
 

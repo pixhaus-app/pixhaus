@@ -76,6 +76,12 @@ pub struct CodexEntry {
     /// The project-level coverage templates applied to this entry, in apply order. The
     /// entry's coverage is the union of these templates' slots and its `custom_slots`.
     #[serde(default)]
+    // Coverage is per entry: an entry's required slots are the union of these applied
+    // templates plus its custom_slots, not the project's whole template set. The earlier
+    // model registered templates globally and leaked every template's slots onto every
+    // entry; making coverage per-entry stops that cross-entry bleed and lets a project
+    // define arbitrary per-entry coverage. A relabel never reaches here — slots key on a
+    // stable key, so renames touch only the label.
     pub applied_templates: Vec<CoverageTemplateId>,
     /// Per-entry ad-hoc coverage slots, for one-off needs no template covers.
     #[serde(default)]

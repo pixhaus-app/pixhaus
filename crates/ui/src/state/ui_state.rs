@@ -40,6 +40,10 @@ pub struct UiState {
     /// Pixel-perfect zoom mode: when set, zoom snaps to whole points-per-pixel steps
     /// (and unit fractions below 1x) so cells stay even; when clear, zoom is continuous
     /// for non-pixel art styles. Later drivable by the document's art mode.
+    // Two zoom modes behind a user-switchable toggle, not integer-snap everywhere:
+    // Pixhaus is multi-style, so non-pixel art must not be forced into integer/unit-
+    // fraction snapping. Pixel-perfect snaps so cells stay even; clear it for
+    // continuous zoom. The camera math itself stays egui-level in canvas/view.rs.
     pub pixel_perfect_zoom: bool,
     /// Active grid spacing mode.
     pub grid: GridMode,

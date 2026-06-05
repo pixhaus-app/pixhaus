@@ -200,6 +200,11 @@ pub fn resolve_reference(codex: &Codex, parsed: &ParsedReference) -> Result<Reso
         .entries()
         .iter()
         .filter(|(_, e)| {
+            // An @-reference resolves to an entry's stable id here, never binding to the handle text.
+            // That decouples the display vocabulary from the reference graph: renaming or aliasing a
+            // handle changes only the token an author types, while every resolved reference keeps
+            // pointing at the same entry. Match against the primary handle or any alias, then hand back
+            // the id — downstream callers store and compare the id, not this string.
             let handle_matches = e.handle == parsed.handle || e.aliases.contains(&parsed.handle);
             let type_matches = parsed.entry_type.is_none_or(|t| e.entry_type == t);
             handle_matches && type_matches

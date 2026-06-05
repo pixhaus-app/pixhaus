@@ -30,4 +30,9 @@ on it, it depends on nothing in the workspace.
   must not invalidate a saved project (bible section 32.1). See the `pixhaus-i18n`
   skill.
 
+- Record the why: when a choice here is made for a non-obvious reason — a
+  trade-off, a rejected alternative, a constraint, or a workaround — state that
+  reason in a `//` comment at each spot it shaped, not just in the commit. See the
+  root `CLAUDE.md` "Recording decisions" rule.
+
 Global rules: root `CLAUDE.md`. Architecture: `docs/pixhaus_architecture_bible.md`.

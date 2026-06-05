@@ -37,6 +37,11 @@ plugin system.
   render_workspaces`). The rules are in the `pixhaus-ui-conventions` skill and
   `crates/ui/CLAUDE.md`.
 
+- Record the why: when a choice here is made for a non-obvious reason — a
+  trade-off, a rejected alternative, a constraint, or a workaround — state that
+  reason in a `//` comment at each spot it shaped, not just in the commit. See the
+  root `CLAUDE.md` "Recording decisions" rule.
+
 Per the bible's agent contracts (section 25.3): an agent working in one module
 stays in that module's lane. Global conventions live in the root `CLAUDE.md`; the
 architecture is in `docs/pixhaus_architecture_bible.md`.

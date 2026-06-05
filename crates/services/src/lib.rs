@@ -28,6 +28,11 @@ pub mod provider;
 pub mod result_store;
 pub mod transaction;
 
+// Re-export the Bit demo builder so the render example, app boot, and the
+// integration test all import one source of truth. Building the world here
+// (in services, which depends on core) rather than hand-constructing structs
+// lets it be shared, and routing through the real undoable commands proves the
+// command API is sufficient and doubles the fixture as a consistency check.
 pub use codex::demo::{BuildError, build_bit_demo_codex};
 pub use error::ServiceError;
 pub use generated::{GeneratedAnimation, GeneratedAsset, GeneratedFrame, GeneratedResult, GenerationProvenance, ResultKind};

@@ -26,4 +26,9 @@ Import, export, and the on-disk project format (architecture bible sections 18,
   of truth. Load/save diagnostics stay English developer text; user-facing strings
   are keyed in `ui`. See the `pixhaus-i18n` skill.
 
+- Record the why: when a choice here is made for a non-obvious reason — a
+  trade-off, a rejected alternative, a constraint, or a workaround — state that
+  reason in a `//` comment at each spot it shaped, not just in the commit. See the
+  root `CLAUDE.md` "Recording decisions" rule.
+
 Global rules: root `CLAUDE.md`. Architecture: `docs/pixhaus_architecture_bible.md`.

@@ -247,6 +247,30 @@ over indexing. Avoid premature `Box<dyn Trait>` when generics fit. Newtype
 wrappers for type safety. Sealed traits where extension is internal-only.
 `unsafe` is forbidden workspace-wide.
 
+## Recording decisions
+
+When something is done for a non-obvious reason, record that reason in a code
+comment at every spot the decision shaped — not only in the commit message or the
+PR thread. Code outlives both, and the next reader has just the file in front of
+them. A decision nobody can see is a decision someone undoes by accident.
+
+- The bar is non-obvious, not everything. Document a trade-off, a rejected
+  alternative, a constraint that forced the shape, a deliberate workaround, or a
+  choice that reads as wrong without the context. Skip what the code already states
+  plainly — a comment restating the obvious buries the signal that matters.
+- Put the why where the decision lives. If one decision shaped three files, the
+  reason belongs at all three, each phrased for what that spot does. A single note
+  in one file leaves the other two looking arbitrary.
+- Use plain `//` line comments for rationale; extend a `///` doc comment only when
+  the reason is part of the item's public contract. State the decision, then the
+  why, then how to apply it — the same shape these rules use.
+- A reversed decision takes its old comments with it. Update or delete the stale
+  rationale in the same change; a comment describing a choice you just undid is
+  worse than no comment at all.
+
+This is the code-side parallel of the Voice rules below — write these comments as
+prose, for a person, in the same voice.
+
 ## Voice
 
 Pragmatic Leader: direct, declarative, opinion-backed, contrarian-with-cause when

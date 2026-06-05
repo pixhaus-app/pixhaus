@@ -93,6 +93,11 @@ pub fn show(host: &mut Host, ui: &mut egui::Ui) {
 // The radius token is a small, bounded positive constant; the f32 -> u8 cast cannot
 // truncate or lose a sign here.
 #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
+// The menu bar is drawn entirely in egui (ui.menu_button), not via native OS
+// menus. eframe/egui has no native-menu API, and bolting one on through muda is
+// off the locked stack and breaks the uniform custom dark look across platforms.
+// This scoped override is the cost of that choice: it strips the per-button frame
+// so egui-drawn items read as one flat bar instead of boxed buttons.
 fn flatten_menu_visuals(ui: &mut egui::Ui, theme: &Theme) {
     let widgets = &mut ui.style_mut().visuals.widgets;
     let radius = egui::CornerRadius::same(theme.radius.sm as u8);

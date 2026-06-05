@@ -39,6 +39,10 @@ pub fn show(host: &mut Host, ui: &mut egui::Ui) {
                 ui.push_id(id, |ui| {
                     let header = widgets::card(ui, theme, &meta, collapsed, |ui| {
                         // &mut String for this panel only; seeded once from the panel's default.
+                        // The seed comes from the panel's own default_scratch(), not a hardcoded
+                        // string here. The default prompt lives in the owning module (the Bit subject
+                        // in generation); calling through the trait keeps this generic shell code from
+                        // reaching across the module boundary for a module-specific default.
                         let buf = scratch.entry(id).or_insert_with(|| panel.default_scratch().unwrap_or_default());
                         let mut scope = panel_scope(
                             &state.session,

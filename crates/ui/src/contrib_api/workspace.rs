@@ -15,6 +15,11 @@ use crate::contrib_api::ids::{MsgKey, PanelId, ToolId, WorkspaceId};
 /// # Object safety
 ///
 /// `&self`, no generics, no `-> Self`: dyn-compatible.
+// crates/ui holds only this permanent trait surface; the concrete workspaces
+// live in the owning modules (sprite-edit -> Draw, animation -> Animate, tiles,
+// generation, export, codex), even for placeholder content. This keeps ui from
+// becoming the new god-object that v2's single hardcoded layout file was; the
+// cost is thin module crates that depend on ui, which the layering allows.
 pub trait Workspace {
     /// This workspace's stable id - also its registry key.
     fn id(&self) -> WorkspaceId;

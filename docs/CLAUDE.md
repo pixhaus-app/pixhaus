@@ -21,4 +21,9 @@ Prose design references, not code. Nothing here is built, imported, or executed.
 - When code and a reference disagree on architecture, the bible wins — fix the
   code or surface the conflict. For non-architecture conflicts, surface them.
 
+- Record the why in code: when a reference here drives a non-obvious
+  implementation choice, the reason travels into a `//` comment in the owning crate
+  at each spot it shaped — the prose here is the source, the code comment is where
+  the next reader meets it. See the root `CLAUDE.md` "Recording decisions" rule.
+
 Global rules: root `CLAUDE.md`.

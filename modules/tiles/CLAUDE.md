@@ -25,4 +25,9 @@ sections 7.3, 6.6).
   Seam/autotile validation messages are keyed, never literal English. See the
   `pixhaus-i18n` skill.
 
+- Record the why: when a choice here is made for a non-obvious reason — a
+  trade-off, a rejected alternative, a constraint, or a workaround — state that
+  reason in a `//` comment at each spot it shaped, not just in the commit. See the
+  root `CLAUDE.md` "Recording decisions" rule.
+
 Shared module rules: `modules/CLAUDE.md`. Global rules: root `CLAUDE.md`.

@@ -29,6 +29,11 @@ the wrong one — surface the question rather than smearing it across two.
   and `render` never localize, only `ui` resolves keys to text. A crate that builds
   a user-facing string from a literal is a bug. See the `pixhaus-i18n` skill.
 
+- Record the why: when a choice here is made for a non-obvious reason — a
+  trade-off, a rejected alternative, a constraint, or a workaround — state that
+  reason in a `//` comment at each spot it shaped, not just in the commit. See the
+  root `CLAUDE.md` "Recording decisions" rule.
+
 Global conventions (error policy, async, style, commits, the no-unwrap rule) live
 in the root `CLAUDE.md`; the architecture is in
 `docs/pixhaus_architecture_bible.md`. The per-crate files below only add that

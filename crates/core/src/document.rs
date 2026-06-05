@@ -191,6 +191,12 @@ pub struct Document {
     pub(crate) sprite_counter: IdCounter,
     pub(crate) buffers: PixelBufferStore,
     pub(crate) active_sprite: Option<SpriteId>,
+    // The Codex (a project's creative bible) is durable project state, so it hangs
+    // off the Document and rides the same command discipline as sprite edits: read
+    // via codex(), mutate only through codex_mut() from a Command, so Codex edits
+    // get undo/redo and revision tracking for free. The search/autocomplete index is
+    // deliberately not here — it lives as a services-side cache, kept out of the
+    // durable model where it would bloat saves and desync.
     pub(crate) codex: Codex,
     pub(crate) revision: u64,
 }

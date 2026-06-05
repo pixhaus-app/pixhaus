@@ -38,6 +38,10 @@ pub enum RelationKind {
 
 /// A directed, typed edge between two entries.
 #[derive(Copy, Clone, PartialEq, Eq, Hash, Debug, Serialize, Deserialize)]
+// Relationships are stored as resolved CodexEntryId edges, not handle text. This is the second
+// of two reference mechanisms: prompt fragments keep human-authored @<handle> text resolved at
+// compile time, while structural edges bind to ids so renaming an entry preserves referential
+// integrity and never silently rewires the graph.
 pub struct Relationship {
     /// The edge's source entry.
     pub from: CodexEntryId,
