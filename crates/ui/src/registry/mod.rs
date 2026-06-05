@@ -179,7 +179,7 @@ pub(crate) mod fixtures {
 mod tests {
     use super::Registry;
     use super::fixtures::{FakePanel, FakeWorkspace};
-    use crate::contrib_api::{HostRegistrar, PanelId, ToolId, WorkspaceId, WorkspaceLayout};
+    use crate::contrib_api::{CenterSurface, HostRegistrar, PanelId, ToolId, WorkspaceId, WorkspaceLayout};
 
     /// `insert` preserves insertion order in `iter()` and indexes by key for `get`.
     #[test]
@@ -218,8 +218,10 @@ mod tests {
             registrar.add_workspace(Box::new(FakeWorkspace {
                 id: WorkspaceId("draw"),
                 layout: WorkspaceLayout {
+                    left_dock: Vec::new(),
                     right_dock: vec![PanelId("layers")],
                     bottom_tray: Vec::new(),
+                    center: CenterSurface::Canvas,
                     primary_tools: Vec::new(),
                     default_tool: ToolId("pencil"),
                     status_items: Vec::new(),

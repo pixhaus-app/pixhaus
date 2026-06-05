@@ -49,15 +49,19 @@ impl Shell {
             ui.ctx().request_repaint();
         }
         super::sync_playback_mirror(host);
+        // Refresh the read-only Codex mirror the Codex-workspace panels render from
+        // (rebuilt from the document plus the shell-owned Codex UI state each frame).
+        super::sync_codex_view(host);
 
         // egui panel order: outer panels first, CentralPanel LAST.
         regions::top_bar::show(host, ui);
         regions::tool_options::show(host, ui);
         regions::left_rail::show(host, ui);
+        regions::left_dock::show(host, ui); // inboard of the rail; empty for the canvas workspaces
         regions::status_bar::show(host, ui); // outermost bottom - pins below the tray
         regions::bottom_tray::show(host, ui);
         regions::right_dock::show(host, ui);
-        regions::canvas_stage::show(host, ui); // CentralPanel - fills the rest
+        regions::center_stage::show(host, ui); // CentralPanel - the canvas or a full-center panel
         command_palette::overlay(host, ui); // Area on top if modal == CommandPalette
         about::overlay(host, ui); // Area on top if modal == About
 

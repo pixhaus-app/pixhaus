@@ -68,6 +68,12 @@ pub struct Host {
     pub intents: IntentSink,
     /// Panel-private draft text, keyed by panel id; mutable per-panel.
     pub scratch: HashMap<PanelId, String>,
+    /// The structured Codex editor draft for the selected entry, a sibling of `scratch`
+    /// (not inside `UiState`, so the center-stage region can borrow it mutably while
+    /// holding a shared borrow of the rest of the state). Reloaded from the selection
+    /// in `sync_codex_view`; the Codex Entry Editor binds its `TextEdit`s to it and
+    /// commits diffs as `Intent`s.
+    pub codex_draft: self::ui_state::CodexEditorDraft,
     /// The active theme; owned here so a variant change can re-apply to visuals.
     pub theme: Theme,
     /// Background results drained in `App::logic`.
@@ -106,11 +112,13 @@ impl Host {
                     result_kinds: Vec::new(),
                     last_prompt: String::new(),
                     playback: self::session::PlaybackMirror::default(),
+                    codex: self::session::CodexView::default(),
                 },
                 ui: UiState::default(),
             },
             intents: IntentSink::default(),
             scratch: HashMap::new(),
+            codex_draft: self::ui_state::CodexEditorDraft::default(),
             theme: *theme,
             bg: BackgroundChannel::default(),
             edit: EditSession::default(),

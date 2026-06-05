@@ -1,0 +1,19 @@
+[package]
+name = "pixhaus-mod-codex"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+
+[dependencies]
+egui.workspace = true
+tracing.workspace = true
+pixhaus-core = { path = "../../crates/core" }
+pixhaus-services = { path = "../../crates/services" }
+pixhaus-ui = { path = "../../crates/ui" }
+
+[lints]
+workspace = true

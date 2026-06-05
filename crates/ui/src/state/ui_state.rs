@@ -8,11 +8,16 @@
 use std::collections::HashMap;
 
 use pixhaus_core::ClipId;
+use pixhaus_core::codex::{AnchorStrength, CodexEntryId, CodexFolderId, CoverageTemplateId};
+use pixhaus_services::codex::CompiledPrompt;
 
 use crate::contrib_api::ids::{PanelId, WorkspaceId};
 
 /// Mutable, non-durable UI state owned by [`crate::state::Host`].
 pub struct UiState {
+    /// Left-dock width in points (resizable by the user). Used by workspaces with a
+    /// left dock (the Codex Navigator); the canvas workspaces have no left dock.
+    pub left_dock_width: f32,
     /// Right-dock width in points (resizable by the user).
     pub right_dock_width: f32,
     /// Bottom-tray height in points (resizable by the user).
@@ -50,6 +55,181 @@ pub struct UiState {
     pub palette_query: String,
     /// Transient animation-playback state (Animate workspace).
     pub playback: PlaybackState,
+    /// Transient Codex-workspace UI state: the center mode, the selected entry, the
+    /// Navigator search query, and the generation context stack. The shell owns it; the
+    /// session-side [`CodexView`](crate::state::session::CodexView) mirror is rebuilt from
+    /// it plus the document each frame.
+    pub codex: CodexUi,
+}
+
+/// The center surface a Codex workspace shows. The center panel switches on this; the
+/// bottom strip switches `Coverage`/`Test` views on it too. Plain data so it can later
+/// persist.
+#[derive(Copy, Clone, Debug, Default, PartialEq, Eq)]
+pub enum CodexMode {
+    /// The entry editor with the navigator-selected entry's fields (the default).
+    #[default]
+    Edit,
+    /// The Navigator-led browse view: entry cards, no editor focus.
+    Browse,
+    /// The visual board: thumbnails, references, generated examples.
+    Board,
+    /// The relationship graph between entries.
+    Graph,
+    /// The coverage checklist for the selected entry.
+    Coverage,
+    /// The in-workspace test-generation view.
+    Test,
+}
+
+/// The center detail tab for the selected entry (the production-cockpit tab bar).
+///
+/// Distinct from [`CodexMode`], which still drives the bottom Board/Graph/Coverage
+/// strip's view toggle. This is the per-entry detail view in the center: a rich
+/// entry page split into tabs, not the workspace-wide mode.
+#[derive(Copy, Clone, Debug, Default, PartialEq, Eq)]
+pub enum CodexDetailTab {
+    /// The multi-card overview grid (the default).
+    #[default]
+    Overview,
+    /// Key visual, palette, silhouette, and generation readiness.
+    Visual,
+    /// The anchor editor: positive/negative rules and per-anchor strength.
+    Anchors,
+    /// The prompt composer: fragments and the compiled preview.
+    Prompt,
+    /// The per-slot coverage cards.
+    Coverage,
+    /// Outgoing/incoming relationships, as a list or a graph.
+    Relations,
+    /// The version-history timeline.
+    History,
+}
+
+/// A Navigator smart filter, set by clicking a COLLECTIONS row. Narrows the entry
+/// list to entries that match a derived condition. Plain data the shell owns.
+#[derive(Copy, Clone, Debug, Default, PartialEq, Eq)]
+pub enum NavFilter {
+    /// No filter: show every entry (the default).
+    #[default]
+    All,
+    /// Only entries with an incomplete coverage report.
+    MissingCoverage,
+    /// Only entries that resolve at least one broken `@`-reference.
+    BrokenReferences,
+}
+
+/// One pinned reference in the generation context stack: the entry and the strength
+/// the compiler should weight it at. Plain data the shell owns.
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+pub struct ContextRef {
+    /// The pinned Codex entry.
+    pub entry: CodexEntryId,
+    /// The strength the compiler weights this reference at.
+    pub strength: AnchorStrength,
+}
+
+/// Transient Codex-workspace UI state owned by [`UiState`].
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct CodexUi {
+    /// The active center mode (editor / board / graph / coverage / test).
+    pub mode: CodexMode,
+    /// The active center detail tab for the selected entry (the cockpit tab bar).
+    pub detail_tab: CodexDetailTab,
+    /// The active Navigator smart filter (none / missing-coverage / broken-refs).
+    pub nav_filter: NavFilter,
+    /// The Navigator-selected entry, if any. The editor and inspector read it.
+    pub selected: Option<CodexEntryId>,
+    /// Live text in the Navigator search field; drives the suggestion list.
+    pub search: String,
+    /// The generation context stack: entries pinned as references, with strengths.
+    pub context: Vec<ContextRef>,
+    /// The latest compiled-prompt preview from the Codex test view, owned by the shell
+    /// (a `CompileCodexPrompt` intent sets it; the session mirror clones it). `None`
+    /// until the user compiles one.
+    pub compiled: Option<CompiledPrompt>,
+    /// The folder the Navigator is filing a new folder under, when the "new folder"
+    /// affordance is open; `None` means the codex root.
+    pub new_folder_parent: Option<CodexFolderId>,
+    /// The coverage-editor scratch: the in-progress new-template name, new-slot label,
+    /// the template selected for editing, and the per-entry add-custom-slot text. Plain
+    /// session UI state, never the model.
+    pub coverage_draft: CoverageEditorDraft,
+}
+
+/// Scratch for the coverage editor: the buffers behind the "new template", "add slot",
+/// and "add custom slot" affordances, plus which project template the slot editor is
+/// focused on. Plain owned data the shell owns; the coverage panel reads it through the
+/// session mirror and edits its `TextEdit` buffers through the `PanelScope.scratch`
+/// carve-out. Holds no model state.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct CoverageEditorDraft {
+    /// The template currently open in the slot editor, or `None` when none is selected.
+    pub selected_template: Option<CoverageTemplateId>,
+    /// Add-field buffer for a new project template's name.
+    pub new_template_name: String,
+    /// Add-field buffer for a new slot's label in the selected template.
+    pub new_slot_label: String,
+    /// Add-field buffer for a per-entry custom slot's label.
+    pub new_custom_slot_label: String,
+}
+
+/// A structured, per-selection editor draft the shell owns and the Codex editor panel
+/// edits in place.
+///
+/// Each field mirrors one editable facet of the selected entry. The draft is reloaded
+/// from the entry whenever the selection changes (`loaded_id` no longer matches the
+/// selection), so editing entry A then selecting B shows B's values, and edits commit
+/// to the right entry. The editor commits a field by diffing the draft against the
+/// detail snapshot on lost-focus and pushing the matching intent. List fields
+/// (aliases, tags, prompt fragments) are edited through the inspector's `editable_list`,
+/// which reads the current values straight off the detail snapshot and commits each
+/// add/remove as its own intent. Plain owned data; no egui types.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct CodexEditorDraft {
+    /// The entry the draft was last loaded from. `None` before the first load; when it
+    /// differs from the selection the shell reloads the draft.
+    pub loaded_id: Option<CodexEntryId>,
+    /// Display name.
+    pub name: String,
+    /// Primary `@`-handle, without the leading `@`.
+    pub handle: String,
+    /// Free-text description.
+    pub description: String,
+    /// Lore / backstory.
+    pub lore: String,
+    /// Visual-identity text.
+    pub visual_description: String,
+    /// Add-field buffer for the alias editable-list.
+    pub alias_add: String,
+    /// Add-field buffer for the tag editable-list.
+    pub tag_add: String,
+    /// Add-field buffer for the prompt-fragment editable-list.
+    pub fragment_add: String,
+    /// Add-field buffer for the negative-fragment editable-list.
+    pub negative_add: String,
+    /// Whether the rename field (name + handle) is open in the editor.
+    pub renaming: bool,
+}
+
+impl CodexEditorDraft {
+    /// Reload every field from `detail`, stamping `loaded_id` so the shell does not
+    /// reload again until the selection changes. Called from the shell when the
+    /// selection differs from `loaded_id`.
+    pub fn load_from(&mut self, detail: &crate::state::session::CodexEntryDetail) {
+        self.loaded_id = Some(detail.summary.id);
+        self.name.clone_from(&detail.summary.name);
+        self.handle.clone_from(&detail.summary.handle);
+        self.description.clone_from(&detail.description);
+        self.lore.clone_from(&detail.lore);
+        self.visual_description.clone_from(&detail.visual_description);
+        // Transient draft-UI buffers reset on a selection change.
+        self.alias_add.clear();
+        self.tag_add.clear();
+        self.fragment_add.clear();
+        self.negative_add.clear();
+        self.renaming = false;
+    }
 }
 
 /// Transient animation-playback state. View-only: the canvas renders the
@@ -71,6 +251,7 @@ pub struct PlaybackState {
 impl Default for UiState {
     fn default() -> Self {
         Self {
+            left_dock_width: 240.0,
             right_dock_width: 280.0,
             bottom_tray_height: 200.0,
             collapsed: HashMap::new(),
@@ -86,6 +267,7 @@ impl Default for UiState {
             splash: SplashPhase::default(),
             palette_query: String::new(),
             playback: PlaybackState::default(),
+            codex: CodexUi::default(),
         }
     }
 }
@@ -162,6 +344,13 @@ mod tests {
     #[test]
     fn default_grid_mode_is_eight_px() {
         assert_eq!(GridMode::default(), GridMode::Px8, "default grid is the 8px minor grid");
+    }
+
+    #[test]
+    fn default_codex_detail_tab_is_overview_and_filter_is_all() {
+        let ui = UiState::default();
+        assert_eq!(ui.codex.detail_tab, CodexDetailTab::Overview, "the cockpit opens on the overview tab");
+        assert_eq!(ui.codex.nav_filter, NavFilter::All, "no smart filter is active on a fresh session");
     }
 
     #[test]

@@ -31,9 +31,19 @@ pub fn show(host: &mut Host, ui: &mut egui::Ui) {
 
     let frame = egui::Frame::new().fill(theme.surface(SurfaceTier::Panel));
 
+    // Cap the tray so a tall tray panel (e.g. the Codex Coverage editor, which has no
+    // scroll of its own) can never grow the resizable bottom panel until it swallows the
+    // center stage. The panel keeps its stored default height and stays user-resizable
+    // between a sane floor and at most ~55% of the window; its content scrolls inside.
+    let available_height = ui.available_height();
+    let min_height = 96.0_f32;
+    let max_height = (available_height * 0.55).max(min_height);
+    let default_height = state.ui.bottom_tray_height.clamp(min_height, max_height);
+
     egui::Panel::bottom(region_id::BOTTOM_TRAY)
         .resizable(true)
-        .default_size(state.ui.bottom_tray_height)
+        .default_size(default_height)
+        .size_range(min_height..=max_height)
         .frame(frame)
         .show_inside(ui, |ui| {
             // Tab row.
@@ -50,12 +60,15 @@ pub fn show(host: &mut Host, ui: &mut egui::Ui) {
             });
             ui.separator();
 
-            // Selected tray panel, via the disjoint-field + push_id path.
+            // Selected tray panel, via the disjoint-field + push_id path. The content
+            // scrolls so it fits the capped tray height instead of forcing the panel taller.
             if let Some(panel) = registries.panels.get(selected) {
-                ui.push_id(selected, |ui| {
-                    let buf = scratch.entry(selected).or_insert_with(|| panel.default_scratch().unwrap_or_default());
-                    let mut scope = panel_scope(&state.session, &state.ui, theme, &mut *intents, selected, buf);
-                    panel.ui(ui, &mut scope);
+                egui::ScrollArea::vertical().auto_shrink([false, false]).show(ui, |ui| {
+                    ui.push_id(selected, |ui| {
+                        let buf = scratch.entry(selected).or_insert_with(|| panel.default_scratch().unwrap_or_default());
+                        let mut scope = panel_scope(&state.session, &state.ui, theme, &mut *intents, selected, buf);
+                        panel.ui(ui, &mut scope);
+                    });
                 });
             }
         });

@@ -3,6 +3,8 @@
 
 pub mod bottom_tray;
 pub mod canvas_stage;
+pub mod center_stage;
+pub mod left_dock;
 pub mod left_rail;
 pub mod right_dock;
 pub mod status_bar;

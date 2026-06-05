@@ -11,8 +11,8 @@
 
 use egui::{Key, KeyboardShortcut, Modifiers};
 use pixhaus_ui::contrib_api::{
-    ActionDesc, ActionId, HostRegistrar, MsgKey, Panel, PanelId, PanelMeta, PanelScope, StatusItem, ToolId, Workspace, WorkspaceId, WorkspaceLayout,
-    WorkspaceMeta,
+    ActionDesc, ActionId, CenterSurface, HostRegistrar, MsgKey, Panel, PanelId, PanelMeta, PanelScope, StatusItem, ToolId, Workspace, WorkspaceId,
+    WorkspaceLayout, WorkspaceMeta,
 };
 use pixhaus_ui::region::Region;
 use pixhaus_ui::state::intent::Intent;
@@ -67,8 +67,10 @@ impl Workspace for ExportWorkspace {
 
     fn layout(&self) -> WorkspaceLayout {
         WorkspaceLayout {
+            left_dock: Vec::new(),
             right_dock: vec![EXPORT_FORMAT, ENGINE_PRESET, ANIMATION_METADATA, QA_WARNINGS],
             bottom_tray: vec![EXPORT_LOG, CONSOLE],
+            center: CenterSurface::Canvas,
             primary_tools: vec![HAND, ZOOM],
             default_tool: HAND,
             status_items: vec![

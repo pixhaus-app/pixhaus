@@ -18,6 +18,7 @@
 // wraps. `en` is the fallback when a key is missing in the active language.
 rust_i18n::i18n!("locales", fallback = "en");
 
+pub mod codex;
 pub mod error;
 pub mod generated;
 pub mod history;
@@ -27,6 +28,7 @@ pub mod provider;
 pub mod result_store;
 pub mod transaction;
 
+pub use codex::demo::{BuildError, build_bit_demo_codex};
 pub use error::ServiceError;
 pub use generated::{GeneratedAnimation, GeneratedAsset, GeneratedFrame, GeneratedResult, GenerationProvenance, ResultKind};
 pub use history::History;

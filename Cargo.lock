@@ -2483,7 +2483,9 @@ dependencies = [
  "egui-wgpu",
  "egui_kittest",
  "image",
+ "pixhaus-core",
  "pixhaus-mod-animation",
+ "pixhaus-mod-codex",
  "pixhaus-mod-export",
  "pixhaus-mod-generation",
  "pixhaus-mod-providers",
@@ -2524,6 +2526,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "pixhaus-mod-codex"
+version = "0.1.0"
+dependencies = [
+ "egui",
+ "pixhaus-core",
+ "pixhaus-services",
+ "pixhaus-ui",
+ "tracing",
+]
+
+[[package]]
 name = "pixhaus-mod-core"
 version = "0.1.0"
 
@@ -2540,6 +2553,8 @@ name = "pixhaus-mod-generation"
 version = "0.1.0"
 dependencies = [
  "egui",
+ "pixhaus-core",
+ "pixhaus-services",
  "pixhaus-ui",
  "tracing",
 ]
@@ -2608,6 +2623,7 @@ dependencies = [
  "rstest",
  "rust-i18n",
  "serde",
+ "serde_json",
  "serial_test",
  "thiserror 2.0.18",
  "tokio",
@@ -2627,6 +2643,7 @@ dependencies = [
  "insta",
  "pixhaus-core",
  "pixhaus-mod-animation",
+ "pixhaus-mod-codex",
  "pixhaus-mod-export",
  "pixhaus-mod-generation",
  "pixhaus-mod-providers",

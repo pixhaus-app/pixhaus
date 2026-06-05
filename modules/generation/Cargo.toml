@@ -11,6 +11,12 @@ homepage.workspace = true
 [dependencies]
 egui.workspace = true
 tracing.workspace = true
+# The domain model: the Codex anchor-strength type the Generate context panel echoes
+# back into the context-stack intents.
+pixhaus-core = { path = "../../crates/core" }
+# The localization service: the Codex context panel resolves its own keys to display
+# text at render time (the same render-time tr() contract the Codex module uses).
+pixhaus-services = { path = "../../crates/services" }
 pixhaus-ui = { path = "../../crates/ui" }
 
 [lints]

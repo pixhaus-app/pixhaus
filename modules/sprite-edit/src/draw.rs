@@ -12,8 +12,8 @@
 
 use egui::{Key, KeyboardShortcut, Modifiers};
 use pixhaus_ui::contrib_api::{
-    ActionId, HostRegistrar, MenuGroup, MenuItem, MsgKey, Panel, PanelId, PanelMeta, PanelScope, StatusItem, Workspace, WorkspaceId, WorkspaceLayout,
-    WorkspaceMeta,
+    ActionId, CenterSurface, HostRegistrar, MenuGroup, MenuItem, MsgKey, Panel, PanelId, PanelMeta, PanelScope, StatusItem, Workspace, WorkspaceId,
+    WorkspaceLayout, WorkspaceMeta,
 };
 use pixhaus_ui::region::Region;
 use pixhaus_ui::state::intent::Intent;
@@ -88,8 +88,10 @@ impl Workspace for DrawWorkspace {
 
     fn layout(&self) -> WorkspaceLayout {
         WorkspaceLayout {
+            left_dock: Vec::new(),
             right_dock: vec![LAYERS, SPRITES, PALETTE, SELECTION_ACTIONS, AI_ASSISTANT],
             bottom_tray: vec![FRAMES, ASSETS, CONSOLE],
+            center: CenterSurface::Canvas,
             primary_tools: tools::ALL.to_vec(),
             default_tool: tools::PENCIL,
             status_items: vec![StatusItem {

@@ -8,6 +8,7 @@
 
 use crate::animation::AnimationClip;
 use crate::buffer_store::PixelBufferStore;
+use crate::codex::Codex;
 use crate::ids::{ClipId, FrameId, IdCounter, LayerId, PixelBufferId, SpriteId};
 use crate::pixel::BlendMode;
 
@@ -190,6 +191,7 @@ pub struct Document {
     pub(crate) sprite_counter: IdCounter,
     pub(crate) buffers: PixelBufferStore,
     pub(crate) active_sprite: Option<SpriteId>,
+    pub(crate) codex: Codex,
     pub(crate) revision: u64,
 }
 
@@ -229,10 +231,20 @@ impl Document {
         self.revision
     }
 
+    /// Read access to the project's Codex (its creative bible).
+    pub fn codex(&self) -> &Codex {
+        &self.codex
+    }
+
     // --- command-only mutators (in-crate; mutation flows through Command) ---
 
     pub(crate) fn mint_sprite_id(&mut self) -> SpriteId {
         SpriteId(self.sprite_counter.mint())
+    }
+
+    /// Mutable access to the Codex, for codex commands only.
+    pub(crate) fn codex_mut(&mut self) -> &mut Codex {
+        &mut self.codex
     }
 
     pub(crate) fn bump_revision(&mut self) {

@@ -8,13 +8,17 @@
 //! bus and the borrow guarantee has no hole (spec bible 21.1).
 
 use pixhaus_core::ClipId;
-use pixhaus_core::commands::{ApplyGeneratedAnimation, ApplyGeneratedAsset, GeneratedFrameData};
+use pixhaus_core::codex::{
+    AnchorKind, AnchorStrength, AnimationDetails, CharacterDetails, CodexEntryId, CodexFolderId, CodexHandle, CoverageItemStatus, CoverageLabel, CoverageSlot,
+    CoverageTemplateId, EntryStatus, EntryType, GenericDetails, PaletteDetails, PromptFragment, RelationKind, StyleDetails,
+};
+use pixhaus_core::commands::{ApplyGeneratedAnimation, ApplyGeneratedAsset, BuiltinCoveragePreset, GeneratedFrameData};
 use pixhaus_services::{GenerationContext, GenerationJobInput, GenerationKind, Grid, ProviderCapability, ReferenceImage, i18n};
 
 use crate::contrib_api::ids::{ActionId, PanelId, ToolId, WorkspaceId};
 use crate::state::Host;
 use crate::state::session::{AiStatus, JobStub};
-use crate::state::ui_state::{GridMode, Modal, SplashPhase};
+use crate::state::ui_state::{CodexDetailTab, CodexMode, ContextRef, GridMode, Modal, NavFilter, SplashPhase};
 use crate::theme::{Theme, ThemeVariant, apply_to_visuals};
 
 /// A requested change to session or UI state. The single write channel for
@@ -117,6 +121,362 @@ pub enum Intent {
     ScrubToFrame(u32),
     /// Select which clip plays (`None` = the sprite's default range). Resets the clock.
     SelectClip(Option<ClipId>),
+
+    // --- Codex workspace ---
+    /// Create a new Codex entry of `entry_type` named `name`. Mints a handle from the
+    /// name, executes `AddCodexEntry`, and selects the new entry on success.
+    CreateCodexEntry {
+        /// The entry type to create.
+        entry_type: EntryType,
+        /// The display name (project content); the handle is derived from it.
+        name: String,
+    },
+    /// Select a Codex entry as the Navigator/editor focus.
+    SelectCodexEntry(CodexEntryId),
+    /// Delete a Codex entry (an undoable command). Clears the selection if it matched.
+    DeleteCodexEntry(CodexEntryId),
+    /// Update editable text fields on a Codex entry (an undoable command). A `None`
+    /// field leaves the entry's value unchanged.
+    UpdateCodexEntryField {
+        /// The entry to edit.
+        id: CodexEntryId,
+        /// New name, or `None` to leave it.
+        name: Option<String>,
+        /// New description, or `None` to leave it.
+        description: Option<String>,
+        /// New lore, or `None` to leave it.
+        lore: Option<String>,
+        /// New visual description, or `None` to leave it.
+        visual_description: Option<String>,
+        /// New tags, or `None` to leave them.
+        tags: Option<Vec<String>>,
+    },
+    /// Set a Codex entry's lifecycle status (an undoable command).
+    SetCodexEntryStatus {
+        /// The entry to update.
+        id: CodexEntryId,
+        /// The new status.
+        status: EntryStatus,
+    },
+    /// Add or replace a Codex entry's anchor of `kind` (an undoable command). One
+    /// anchor per kind; setting an existing kind replaces it.
+    SetCodexAnchor {
+        /// The entry to anchor.
+        id: CodexEntryId,
+        /// What the anchor pins.
+        kind: AnchorKind,
+        /// How firmly it holds.
+        strength: AnchorStrength,
+        /// The anchor statement (project content).
+        statement: String,
+    },
+    /// Remove a Codex entry's anchor of `kind` (an undoable command).
+    RemoveCodexAnchor {
+        /// The entry to update.
+        id: CodexEntryId,
+        /// The anchor kind to remove.
+        kind: AnchorKind,
+    },
+    /// Add a relationship edge between two Codex entries (an undoable command).
+    AddCodexRelationship {
+        /// The source entry.
+        from: CodexEntryId,
+        /// The relationship kind.
+        kind: RelationKind,
+        /// The target entry.
+        to: CodexEntryId,
+    },
+    /// Attach a project coverage template to a Codex entry by id, seeding its vacant
+    /// slots (an undoable command).
+    ApplyCoverageTemplate {
+        /// The entry to seed coverage for.
+        id: CodexEntryId,
+        /// The project template to attach, by id.
+        template: CoverageTemplateId,
+    },
+    /// Apply a built-in coverage preset to a Codex entry: create the matching project
+    /// template if absent, then attach it, in one undo step.
+    ApplyBuiltinCoverageTemplate {
+        /// The entry to seed coverage for.
+        id: CodexEntryId,
+        /// Which built-in preset to apply.
+        preset: BuiltinCoveragePreset,
+    },
+    /// Create a new project coverage template with `name` and `slots` (an undoable
+    /// command). Mints a stable id.
+    CreateCoverageTemplate {
+        /// The template's display name (project content).
+        name: String,
+        /// The template's initial slots.
+        slots: Vec<CoverageSlot>,
+    },
+    /// Rename a project coverage template's display name (an undoable command).
+    RenameCoverageTemplate {
+        /// The template to rename.
+        template: CoverageTemplateId,
+        /// The new display name (project content).
+        name: String,
+    },
+    /// Delete a project coverage template, detaching it from every entry (an undoable
+    /// command). Does not touch coverage-status cells.
+    DeleteCoverageTemplate {
+        /// The template to delete.
+        template: CoverageTemplateId,
+    },
+    /// Add a slot to a project coverage template (an undoable command). A duplicate key
+    /// is rejected by the command.
+    AddCoverageSlot {
+        /// The template to add the slot to.
+        template: CoverageTemplateId,
+        /// The new slot (a stable key plus a label).
+        slot: CoverageSlot,
+    },
+    /// Remove a slot from a project coverage template by its key (an undoable command).
+    RemoveCoverageSlot {
+        /// The template to remove the slot from.
+        template: CoverageTemplateId,
+        /// The stable key of the slot to remove.
+        key: String,
+    },
+    /// Rename a slot's label in a project coverage template, never its key (an undoable
+    /// command). The key stays stable so coverage-status cells survive.
+    RenameCoverageSlotLabel {
+        /// The template that owns the slot.
+        template: CoverageTemplateId,
+        /// The stable key of the slot to relabel.
+        key: String,
+        /// The new label (a key or a literal).
+        label: CoverageLabel,
+    },
+    /// Reorder a slot within a project coverage template (an undoable command). An
+    /// out-of-range index is rejected by the command.
+    ReorderCoverageSlots {
+        /// The template whose slots to reorder.
+        template: CoverageTemplateId,
+        /// The current slot index.
+        from: usize,
+        /// The destination index.
+        to: usize,
+    },
+    /// Add a per-entry custom coverage slot, seeding its cell (an undoable command). A
+    /// duplicate key is rejected by the command.
+    AddEntryCustomSlot {
+        /// The entry to add the custom slot to.
+        id: CodexEntryId,
+        /// The new slot (a stable key plus a literal label).
+        slot: CoverageSlot,
+    },
+    /// Remove a per-entry custom coverage slot by its key (an undoable command).
+    RemoveEntryCustomSlot {
+        /// The entry to remove the custom slot from.
+        id: CodexEntryId,
+        /// The stable key of the slot to remove.
+        key: String,
+    },
+    /// Rename a per-entry custom coverage slot's label, never its key (an undoable
+    /// command). The key stays stable so the coverage-status cell keyed on it survives.
+    RenameEntryCustomSlotLabel {
+        /// The entry that owns the custom slot.
+        id: CodexEntryId,
+        /// The stable key of the slot to relabel.
+        key: String,
+        /// The new label (a literal for a user-created slot).
+        label: CoverageLabel,
+    },
+    /// Set one coverage slot's status on a Codex entry (an undoable command).
+    SetCoverageStatus {
+        /// The entry.
+        id: CodexEntryId,
+        /// The coverage slot key (project content, e.g. "idle").
+        slot: String,
+        /// The new slot status.
+        status: CoverageItemStatus,
+    },
+    /// Switch the Codex center mode (editor / board / graph / coverage / test).
+    SetCodexMode(CodexMode),
+    /// Set the Navigator search query; the suggestion mirror rebuilds from it.
+    CodexSearch(String),
+    /// Pin a Codex entry to the generation context stack at the default strength.
+    AddReferenceToContext(CodexEntryId),
+    /// Unpin a Codex entry from the generation context stack.
+    RemoveReferenceFromContext(CodexEntryId),
+    /// Change the strength a pinned reference is weighted at.
+    SetReferenceStrength {
+        /// The pinned entry.
+        id: CodexEntryId,
+        /// The new strength.
+        strength: AnchorStrength,
+    },
+    /// Compile a Codex-aware prompt from `user_text` plus the context stack, storing
+    /// the inspectable preview. Never submits a job - the artist decides.
+    CompileCodexPrompt {
+        /// The user's prompt text (with `@`-mentions left in place).
+        user_text: String,
+    },
+    /// Generate a sample for a missing coverage slot: compile a Codex prompt from the
+    /// entry's references and submit it through the existing generation job pathway.
+    GenerateFromCoverage {
+        /// The entry whose coverage slot to fill.
+        entry: CodexEntryId,
+        /// The coverage slot key (project content, e.g. "attack").
+        slot: String,
+    },
+
+    // --- Codex CRUD (second pass): identity, fragments, type details, coverage,
+    // relationships, and folders ---
+    /// Rename an entry's primary `@`-handle (an undoable command). The string is parsed
+    /// into a [`CodexHandle`] first; an invalid handle is dropped with a warning.
+    SetCodexHandle {
+        /// The entry to rename.
+        id: CodexEntryId,
+        /// The new handle text, without the leading `@` (parsed and validated).
+        handle: String,
+    },
+    /// Add an alias handle to an entry (an undoable command). Parsed and validated.
+    AddCodexAlias {
+        /// The entry to alias.
+        id: CodexEntryId,
+        /// The new alias text, without `@`.
+        alias: String,
+    },
+    /// Remove an alias handle from an entry (an undoable command).
+    RemoveCodexAlias {
+        /// The entry to update.
+        id: CodexEntryId,
+        /// The alias to remove, without `@`.
+        alias: String,
+    },
+    /// Replace an entry's positive prompt fragments wholesale (an undoable command).
+    SetCodexPromptFragments {
+        /// The entry to update.
+        id: CodexEntryId,
+        /// The new fragment list (each fragment carries its inclusion priority).
+        fragments: Vec<PromptFragment>,
+    },
+    /// Replace an entry's negative prompt fragments wholesale (an undoable command).
+    SetCodexNegativeFragments {
+        /// The entry to update.
+        id: CodexEntryId,
+        /// The new negative-fragment list.
+        fragments: Vec<String>,
+    },
+    /// Replace a Character entry's type-specific body (an undoable command).
+    SetCharacterDetails {
+        /// The entry to update.
+        id: CodexEntryId,
+        /// The full character body.
+        body: CharacterDetails,
+    },
+    /// Replace a Palette entry's type-specific body (an undoable command).
+    SetPaletteDetails {
+        /// The entry to update.
+        id: CodexEntryId,
+        /// The full palette body.
+        body: PaletteDetails,
+    },
+    /// Replace a Style entry's type-specific body (an undoable command).
+    SetStyleDetails {
+        /// The entry to update.
+        id: CodexEntryId,
+        /// The full style body.
+        body: StyleDetails,
+    },
+    /// Replace an Animation entry's type-specific body (an undoable command).
+    SetAnimationDetails {
+        /// The entry to update.
+        id: CodexEntryId,
+        /// The full animation body.
+        body: AnimationDetails,
+    },
+    /// Replace a generic entry's key/value body (an undoable command).
+    SetGenericDetails {
+        /// The entry to update.
+        id: CodexEntryId,
+        /// The full generic body.
+        body: GenericDetails,
+    },
+    /// Clear an entry's coverage (an undoable command).
+    ClearCoverage {
+        /// The entry to clear coverage for.
+        id: CodexEntryId,
+    },
+    /// Remove a relationship edge between two entries (an undoable command). Routes to
+    /// the core `RemoveRelationship` command; the inverse of `AddCodexRelationship`.
+    RemoveCodexRelationship {
+        /// The source entry.
+        from: CodexEntryId,
+        /// The relationship kind.
+        kind: RelationKind,
+        /// The target entry.
+        to: CodexEntryId,
+    },
+    /// Change an existing relationship edge's kind in place (an undoable command). Routes
+    /// to the core `ChangeRelationshipKind` command, which retypes the edge `from
+    /// --old_kind--> to` to `new_kind` in one undo step (no remove + re-add).
+    ChangeRelationshipKind {
+        /// The source entry.
+        from: CodexEntryId,
+        /// The kind currently on the edge.
+        old_kind: RelationKind,
+        /// The target entry.
+        to: CodexEntryId,
+        /// The kind to retype the edge to.
+        new_kind: RelationKind,
+    },
+    /// Create a folder under `parent` (the codex root when `None`); selects nothing.
+    CreateCodexFolder {
+        /// The parent folder, or `None` for the codex root.
+        parent: Option<CodexFolderId>,
+        /// The new folder's display name (project content).
+        name: String,
+    },
+    /// Rename a folder (an undoable command).
+    RenameCodexFolder {
+        /// The folder to rename.
+        id: CodexFolderId,
+        /// The new name (project content).
+        name: String,
+    },
+    /// Delete a folder (an undoable command). Its child folders and entries reparent to
+    /// the deleted folder's parent.
+    DeleteCodexFolder {
+        /// The folder to delete.
+        id: CodexFolderId,
+    },
+    /// Move a folder under a new parent (an undoable command). A cycle is rejected by
+    /// the command.
+    SetCodexFolderParent {
+        /// The folder to move.
+        id: CodexFolderId,
+        /// The new parent, or `None` for the codex root.
+        parent: Option<CodexFolderId>,
+    },
+    /// Move an entry into a folder (the codex root when `None`) (an undoable command).
+    SetCodexEntryFolder {
+        /// The entry to move.
+        entry: CodexEntryId,
+        /// The destination folder, or `None` for the codex root.
+        folder: Option<CodexFolderId>,
+    },
+
+    // --- Codex production-cockpit (the polish pass) ---
+    /// Switch the center detail tab for the selected entry.
+    SetCodexDetailTab(CodexDetailTab),
+    /// Set the Navigator smart filter (none / missing-coverage / broken-refs).
+    SetCodexNavFilter(NavFilter),
+    /// Pin a Codex entry to the generation context stack (the inspector's pin control;
+    /// behaves like `AddReferenceToContext`).
+    PinCodexEntry(CodexEntryId),
+    /// Unpin a Codex entry from the generation context stack (behaves like
+    /// `RemoveReferenceFromContext`).
+    UnpinCodexEntry(CodexEntryId),
+    /// Duplicate a Codex entry under a fresh unique handle (an undoable command) and
+    /// select the clone.
+    DuplicateCodexEntry(CodexEntryId),
+    /// Promote a Codex entry to canonical status (sugar over `SetCodexEntryStatus`).
+    PromoteCodexEntry(CodexEntryId),
+    /// Archive a Codex entry (sugar over `SetCodexEntryStatus`).
+    ArchiveCodexEntry(CodexEntryId),
 }
 
 /// "Something happened", distinct from a command (spec bible 21.3). Produced only
@@ -311,6 +671,252 @@ pub fn apply_intent(host: &mut Host, intent: Intent, ctx: &egui::Context) {
             host.state.ui.playback.playhead_seconds = 0.0; // restart at the new range's start
             ctx.request_repaint();
         }
+        Intent::CreateCodexEntry { entry_type, name } => {
+            create_codex_entry(host, entry_type, name);
+            ctx.request_repaint();
+        }
+        Intent::SelectCodexEntry(id) => {
+            host.state.ui.codex.selected = Some(id);
+        }
+        Intent::DeleteCodexEntry(id) => {
+            execute_codex(host, Box::new(pixhaus_core::commands::DeleteCodexEntry::new(id)));
+            if host.state.ui.codex.selected == Some(id) {
+                host.state.ui.codex.selected = None;
+            }
+            host.state.ui.codex.context.retain(|c| c.entry != id);
+            ctx.request_repaint();
+        }
+        Intent::UpdateCodexEntryField {
+            id,
+            name,
+            description,
+            lore,
+            visual_description,
+            tags,
+        } => {
+            let delta = pixhaus_core::commands::CodexEntryDelta {
+                name,
+                description,
+                lore,
+                visual_description,
+                tags,
+            };
+            execute_codex(host, Box::new(pixhaus_core::commands::UpdateCodexEntry::new(id, delta)));
+            ctx.request_repaint();
+        }
+        Intent::SetCodexEntryStatus { id, status } => {
+            execute_codex(host, Box::new(pixhaus_core::commands::SetEntryStatus::new(id, status)));
+            ctx.request_repaint();
+        }
+        Intent::SetCodexAnchor { id, kind, strength, statement } => {
+            let anchor = pixhaus_core::codex::Anchor::new(kind, strength, statement);
+            execute_codex(host, Box::new(pixhaus_core::commands::SetAnchor::new(id, anchor)));
+            ctx.request_repaint();
+        }
+        Intent::RemoveCodexAnchor { id, kind } => {
+            execute_codex(host, Box::new(pixhaus_core::commands::RemoveAnchor::new(id, kind)));
+            ctx.request_repaint();
+        }
+        Intent::AddCodexRelationship { from, kind, to } => {
+            let rel = pixhaus_core::codex::Relationship::new(from, kind, to);
+            execute_codex(host, Box::new(pixhaus_core::commands::AddRelationship::new(rel)));
+            ctx.request_repaint();
+        }
+        Intent::ApplyCoverageTemplate { id, template } => {
+            execute_codex(host, Box::new(pixhaus_core::commands::ApplyCoverageTemplate::new(id, template)));
+            ctx.request_repaint();
+        }
+        Intent::ApplyBuiltinCoverageTemplate { id, preset } => {
+            execute_codex(host, Box::new(pixhaus_core::commands::ApplyBuiltinCoverageTemplate::new(id, preset)));
+            ctx.request_repaint();
+        }
+        Intent::CreateCoverageTemplate { name, slots } => {
+            execute_codex(host, Box::new(pixhaus_core::commands::CreateCoverageTemplate::new(name, slots)));
+            ctx.request_repaint();
+        }
+        Intent::RenameCoverageTemplate { template, name } => {
+            execute_codex(host, Box::new(pixhaus_core::commands::RenameCoverageTemplate::new(template, name)));
+            ctx.request_repaint();
+        }
+        Intent::DeleteCoverageTemplate { template } => {
+            execute_codex(host, Box::new(pixhaus_core::commands::DeleteCoverageTemplate::new(template)));
+            ctx.request_repaint();
+        }
+        Intent::AddCoverageSlot { template, slot } => {
+            execute_codex(host, Box::new(pixhaus_core::commands::AddCoverageSlot::new(template, slot)));
+            ctx.request_repaint();
+        }
+        Intent::RemoveCoverageSlot { template, key } => {
+            execute_codex(host, Box::new(pixhaus_core::commands::RemoveCoverageSlot::new(template, key)));
+            ctx.request_repaint();
+        }
+        Intent::RenameCoverageSlotLabel { template, key, label } => {
+            execute_codex(host, Box::new(pixhaus_core::commands::RenameCoverageSlotLabel::new(template, key, label)));
+            ctx.request_repaint();
+        }
+        Intent::ReorderCoverageSlots { template, from, to } => {
+            execute_codex(host, Box::new(pixhaus_core::commands::ReorderCoverageSlots::new(template, from, to)));
+            ctx.request_repaint();
+        }
+        Intent::AddEntryCustomSlot { id, slot } => {
+            execute_codex(host, Box::new(pixhaus_core::commands::AddEntryCustomSlot::new(id, slot)));
+            ctx.request_repaint();
+        }
+        Intent::RemoveEntryCustomSlot { id, key } => {
+            execute_codex(host, Box::new(pixhaus_core::commands::RemoveEntryCustomSlot::new(id, key)));
+            ctx.request_repaint();
+        }
+        Intent::RenameEntryCustomSlotLabel { id, key, label } => {
+            execute_codex(host, Box::new(pixhaus_core::commands::RenameEntryCustomSlotLabel::new(id, key, label)));
+            ctx.request_repaint();
+        }
+        Intent::SetCoverageStatus { id, slot, status } => {
+            execute_codex(host, Box::new(pixhaus_core::commands::SetCoverageStatus::new(id, slot, status)));
+            ctx.request_repaint();
+        }
+        Intent::SetCodexMode(mode) => {
+            host.state.ui.codex.mode = mode;
+        }
+        Intent::CodexSearch(query) => {
+            host.state.ui.codex.search = query;
+        }
+        Intent::AddReferenceToContext(id) => {
+            if !host.state.ui.codex.context.iter().any(|c| c.entry == id) {
+                host.state.ui.codex.context.push(ContextRef {
+                    entry: id,
+                    strength: AnchorStrength::default(),
+                });
+            }
+        }
+        Intent::RemoveReferenceFromContext(id) => {
+            host.state.ui.codex.context.retain(|c| c.entry != id);
+        }
+        Intent::SetReferenceStrength { id, strength } => {
+            if let Some(c) = host.state.ui.codex.context.iter_mut().find(|c| c.entry == id) {
+                c.strength = strength;
+            }
+        }
+        Intent::CompileCodexPrompt { user_text } => {
+            host.state.ui.codex.compiled = Some(compile_codex_prompt(host, &user_text));
+        }
+        Intent::GenerateFromCoverage { entry, slot } => {
+            generate_from_coverage(host, entry, &slot);
+            ctx.request_repaint();
+        }
+        Intent::SetCodexHandle { id, handle } => {
+            match CodexHandle::new(handle) {
+                Ok(h) => execute_codex(host, Box::new(pixhaus_core::commands::SetCodexHandle::new(id, h))),
+                Err(error) => tracing::warn!(%error, "rejected an invalid codex handle"),
+            }
+            ctx.request_repaint();
+        }
+        Intent::AddCodexAlias { id, alias } => {
+            match CodexHandle::new(alias) {
+                Ok(h) => execute_codex(host, Box::new(pixhaus_core::commands::AddCodexAlias::new(id, h))),
+                Err(error) => tracing::warn!(%error, "rejected an invalid codex alias"),
+            }
+            ctx.request_repaint();
+        }
+        Intent::RemoveCodexAlias { id, alias } => {
+            match CodexHandle::new(alias) {
+                Ok(h) => execute_codex(host, Box::new(pixhaus_core::commands::RemoveCodexAlias::new(id, h))),
+                Err(error) => tracing::warn!(%error, "rejected an invalid codex alias"),
+            }
+            ctx.request_repaint();
+        }
+        Intent::SetCodexPromptFragments { id, fragments } => {
+            execute_codex(host, Box::new(pixhaus_core::commands::SetPromptFragments::new(id, fragments)));
+            ctx.request_repaint();
+        }
+        Intent::SetCodexNegativeFragments { id, fragments } => {
+            execute_codex(host, Box::new(pixhaus_core::commands::SetNegativeFragments::new(id, fragments)));
+            ctx.request_repaint();
+        }
+        Intent::SetCharacterDetails { id, body } => {
+            execute_codex(host, Box::new(pixhaus_core::commands::SetCharacterDetails::new(id, body)));
+            ctx.request_repaint();
+        }
+        Intent::SetPaletteDetails { id, body } => {
+            execute_codex(host, Box::new(pixhaus_core::commands::SetPaletteDetails::new(id, body)));
+            ctx.request_repaint();
+        }
+        Intent::SetStyleDetails { id, body } => {
+            execute_codex(host, Box::new(pixhaus_core::commands::SetStyleDetails::new(id, body)));
+            ctx.request_repaint();
+        }
+        Intent::SetAnimationDetails { id, body } => {
+            execute_codex(host, Box::new(pixhaus_core::commands::SetAnimationDetails::new(id, body)));
+            ctx.request_repaint();
+        }
+        Intent::SetGenericDetails { id, body } => {
+            execute_codex(host, Box::new(pixhaus_core::commands::SetGenericDetails::new(id, body)));
+            ctx.request_repaint();
+        }
+        Intent::ClearCoverage { id } => {
+            execute_codex(host, Box::new(pixhaus_core::commands::ClearCoverage::new(id)));
+            ctx.request_repaint();
+        }
+        Intent::RemoveCodexRelationship { from, kind, to } => {
+            let rel = pixhaus_core::codex::Relationship::new(from, kind, to);
+            execute_codex(host, Box::new(pixhaus_core::commands::RemoveRelationship::new(rel)));
+            ctx.request_repaint();
+        }
+        Intent::ChangeRelationshipKind { from, old_kind, to, new_kind } => {
+            execute_codex(
+                host,
+                Box::new(pixhaus_core::commands::ChangeRelationshipKind::new(from, old_kind, to, new_kind)),
+            );
+            ctx.request_repaint();
+        }
+        Intent::CreateCodexFolder { parent, name } => {
+            execute_codex(host, Box::new(pixhaus_core::commands::CreateCodexFolder::new(parent, name)));
+            ctx.request_repaint();
+        }
+        Intent::RenameCodexFolder { id, name } => {
+            execute_codex(host, Box::new(pixhaus_core::commands::RenameCodexFolder::new(id, name)));
+            ctx.request_repaint();
+        }
+        Intent::DeleteCodexFolder { id } => {
+            execute_codex(host, Box::new(pixhaus_core::commands::DeleteCodexFolder::new(id)));
+            ctx.request_repaint();
+        }
+        Intent::SetCodexFolderParent { id, parent } => {
+            execute_codex(host, Box::new(pixhaus_core::commands::SetCodexFolderParent::new(id, parent)));
+            ctx.request_repaint();
+        }
+        Intent::SetCodexEntryFolder { entry, folder } => {
+            execute_codex(host, Box::new(pixhaus_core::commands::SetCodexEntryFolder::new(entry, folder)));
+            ctx.request_repaint();
+        }
+        Intent::SetCodexDetailTab(tab) => {
+            host.state.ui.codex.detail_tab = tab;
+        }
+        Intent::SetCodexNavFilter(filter) => {
+            host.state.ui.codex.nav_filter = filter;
+        }
+        Intent::PinCodexEntry(id) => {
+            if !host.state.ui.codex.context.iter().any(|c| c.entry == id) {
+                host.state.ui.codex.context.push(ContextRef {
+                    entry: id,
+                    strength: AnchorStrength::default(),
+                });
+            }
+        }
+        Intent::UnpinCodexEntry(id) => {
+            host.state.ui.codex.context.retain(|c| c.entry != id);
+        }
+        Intent::DuplicateCodexEntry(id) => {
+            duplicate_codex_entry(host, id);
+            ctx.request_repaint();
+        }
+        Intent::PromoteCodexEntry(id) => {
+            execute_codex(host, Box::new(pixhaus_core::commands::SetEntryStatus::new(id, EntryStatus::Canonical)));
+            ctx.request_repaint();
+        }
+        Intent::ArchiveCodexEntry(id) => {
+            execute_codex(host, Box::new(pixhaus_core::commands::SetEntryStatus::new(id, EntryStatus::Archived)));
+            ctx.request_repaint();
+        }
     }
 }
 
@@ -433,6 +1039,132 @@ fn insert_selected_as_animated_sprite(host: &mut Host) {
         Ok(()) => host.state.session.dirty = true,
         Err(error) => tracing::warn!(%error, "failed to insert generated animation"),
     }
+}
+
+/// Execute a Codex command through the history, marking the session dirty on success
+/// and warning on a typed failure. The single Codex command-path seam (bible rules 3,
+/// 4): every Codex model mutation routes through here.
+fn execute_codex(host: &mut Host, command: Box<dyn pixhaus_core::Command>) {
+    match host.edit.history.execute(&mut host.edit.document, command) {
+        Ok(()) => host.state.session.dirty = true,
+        Err(error) => tracing::warn!(%error, "codex command failed"),
+    }
+}
+
+/// Derive a stable handle from a display name: lowercase, non-alphanumerics to
+/// underscores, leading digits stripped (a handle's first char must be a letter).
+/// Falls back to "entry" when the name has no usable characters.
+fn handle_from_name(name: &str) -> String {
+    let mut out = String::new();
+    for ch in name.chars() {
+        if ch.is_ascii_alphanumeric() {
+            out.push(ch.to_ascii_lowercase());
+        } else if (ch.is_whitespace() || ch == '-' || ch == '_') && !out.ends_with('_') && !out.is_empty() {
+            out.push('_');
+        }
+    }
+    let trimmed = out.trim_matches('_');
+    // The handle must start with a letter; strip a leading digit run.
+    let body: String = trimmed.chars().skip_while(char::is_ascii_digit).collect();
+    let body = body.trim_matches('_');
+    if body.is_empty() { "entry".to_owned() } else { body.to_owned() }
+}
+
+/// Create a Codex entry: mint a unique handle from the name, execute `AddCodexEntry`,
+/// and select the new entry on success. The handle gains a numeric suffix if the base
+/// is already taken, so two "Hero" entries do not collide.
+fn create_codex_entry(host: &mut Host, entry_type: EntryType, name: String) {
+    let base = handle_from_name(&name);
+    // Find a free handle: base, base_2, base_3, ...
+    let mut candidate = base.clone();
+    let mut n = 2u32;
+    let handle = loop {
+        match pixhaus_core::codex::CodexHandle::new(&candidate) {
+            Ok(h) if !host.edit.document.codex().handle_in_use(&h) => break h,
+            _ => {
+                candidate = format!("{base}_{n}");
+                n += 1;
+                if n > 9999 {
+                    tracing::warn!("could not mint a free codex handle");
+                    return;
+                }
+            }
+        }
+    };
+    // Keep a copy of the handle to re-resolve the new entry's id after the command is
+    // boxed and executed (the history owns the command, so we cannot read its
+    // `inserted_id` back out).
+    let lookup = handle.clone();
+    let proto = pixhaus_core::commands::CodexEntryProto { handle, name, entry_type };
+    match host
+        .edit
+        .history
+        .execute(&mut host.edit.document, Box::new(pixhaus_core::commands::AddCodexEntry::new(proto)))
+    {
+        Ok(()) => {
+            host.state.session.dirty = true;
+            if let Some(id) = host.edit.document.codex().resolve_handle(&lookup) {
+                host.state.ui.codex.selected = Some(id);
+            }
+        }
+        Err(error) => tracing::warn!(%error, "failed to add codex entry"),
+    }
+}
+
+/// Duplicate a Codex entry: execute the core `DuplicateCodexEntry` command through the
+/// history and select the clone. The history owns the boxed command after execution, so
+/// the clone's id is recovered by diffing the entry-id set before and after (the same
+/// re-resolve pattern `create_codex_entry` uses for a freshly minted entry).
+fn duplicate_codex_entry(host: &mut Host, source: CodexEntryId) {
+    let before: std::collections::HashSet<CodexEntryId> = host.edit.document.codex().entries().keys().copied().collect();
+    execute_codex(host, Box::new(pixhaus_core::commands::DuplicateCodexEntry::new(source)));
+    let clone = host.edit.document.codex().entries().keys().copied().find(|id| !before.contains(id));
+    if let Some(id) = clone {
+        host.state.ui.codex.selected = Some(id);
+    }
+}
+
+/// Compile a Codex-aware prompt from `user_text` plus the current context stack. The
+/// pinned references are appended as `@handle` mentions, the whole text is resolved
+/// against the live Codex, and the resolved references feed the compiler. A pure read
+/// over the document - it submits nothing.
+fn compile_codex_prompt(host: &Host, user_text: &str) -> pixhaus_services::codex::CompiledPrompt {
+    let codex = host.edit.document.codex();
+    let mut text = user_text.to_owned();
+    for c in &host.state.ui.codex.context {
+        if let Some(entry) = codex.entry(c.entry) {
+            text.push_str(" @");
+            text.push_str(entry.handle.as_str());
+        }
+    }
+    let report = pixhaus_services::codex::resolve_text(codex, &text);
+    let request = pixhaus_services::codex::PromptRequest {
+        user_request: text,
+        references: report.resolved,
+        project_rules: Vec::new(),
+        project_negatives: Vec::new(),
+        budget: None,
+    };
+    pixhaus_services::codex::compile(codex, &request)
+}
+
+/// Generate a sample for a missing coverage slot: compile a Codex prompt seeded with
+/// the entry's handle and the slot name, then submit it through the existing anchor
+/// generation pathway. AI proposes; promoting the result stays a separate command.
+fn generate_from_coverage(host: &mut Host, entry: CodexEntryId, slot: &str) {
+    let user_text = {
+        let Some(e) = host.edit.document.codex().entry(entry) else {
+            tracing::warn!(?entry, "coverage generation target is gone");
+            return;
+        };
+        format!("@{} {slot}", e.handle.as_str())
+    };
+    let compiled = compile_codex_prompt(host, &user_text);
+    if compiled.positive.is_empty() {
+        tracing::warn!(slot, "compiled coverage prompt is empty; not submitting");
+        return;
+    }
+    submit_anchor_job(host, compiled.positive);
 }
 
 #[cfg(test)]
@@ -732,5 +1464,649 @@ mod tests {
         host.state.ui.playback.playing = true;
         apply_intent(&mut host, Intent::SelectWorkspace(WorkspaceId("draw")), &ctx());
         assert!(!host.state.ui.playback.playing, "leaving for another workspace pauses playback");
+    }
+
+    // --- Codex intents ---
+
+    /// The handle deriver lowercases, underscores separators, strips leading digits,
+    /// and falls back to "entry" for an unusable name.
+    #[test]
+    fn handle_from_name_normalizes() {
+        assert_eq!(handle_from_name("Mossy Stone"), "mossy_stone");
+        assert_eq!(handle_from_name("  Bit!! "), "bit");
+        assert_eq!(handle_from_name("123abc"), "abc");
+        assert_eq!(handle_from_name("!!!"), "entry");
+    }
+
+    /// Creating a Codex entry adds it to the document, marks the session dirty, and
+    /// selects the new entry.
+    #[test]
+    fn create_codex_entry_adds_and_selects() {
+        let mut host = host();
+        apply_intent(
+            &mut host,
+            Intent::CreateCodexEntry {
+                entry_type: EntryType::Character,
+                name: "Bit".to_owned(),
+            },
+            &ctx(),
+        );
+        assert_eq!(host.edit.document.codex().entries().len(), 1, "the entry was added");
+        assert!(host.state.session.dirty, "creating an entry marks the session dirty");
+        assert!(host.state.ui.codex.selected.is_some(), "the new entry is selected");
+    }
+
+    /// Two entries with the same name get distinct handles (the second gains a suffix),
+    /// so the second add does not fail on a duplicate handle.
+    #[test]
+    fn create_codex_entry_dedupes_handles() {
+        let mut host = host();
+        let make = |host: &mut Host| {
+            apply_intent(
+                host,
+                Intent::CreateCodexEntry {
+                    entry_type: EntryType::Prop,
+                    name: "Crate".to_owned(),
+                },
+                &ctx(),
+            );
+        };
+        make(&mut host);
+        make(&mut host);
+        assert_eq!(host.edit.document.codex().entries().len(), 2, "both entries added under distinct handles");
+    }
+
+    /// Selecting, then deleting the selection clears the selection and removes the entry.
+    #[test]
+    fn delete_codex_entry_clears_selection() {
+        let mut host = host();
+        apply_intent(
+            &mut host,
+            Intent::CreateCodexEntry {
+                entry_type: EntryType::Character,
+                name: "Bit".to_owned(),
+            },
+            &ctx(),
+        );
+        let Some(id) = host.state.ui.codex.selected else {
+            panic!("the created entry should be selected");
+        };
+        apply_intent(&mut host, Intent::DeleteCodexEntry(id), &ctx());
+        assert_eq!(host.edit.document.codex().entries().len(), 0, "the entry was removed");
+        assert!(host.state.ui.codex.selected.is_none(), "deleting the selected entry clears the selection");
+    }
+
+    /// Setting an entry's status routes through a command and changes the model.
+    #[test]
+    fn set_status_updates_the_entry() {
+        let mut host = host();
+        apply_intent(
+            &mut host,
+            Intent::CreateCodexEntry {
+                entry_type: EntryType::Style,
+                name: "Painterly".to_owned(),
+            },
+            &ctx(),
+        );
+        let Some(id) = host.state.ui.codex.selected else {
+            panic!("created entry should be selected");
+        };
+        apply_intent(
+            &mut host,
+            Intent::SetCodexEntryStatus {
+                id,
+                status: EntryStatus::Canonical,
+            },
+            &ctx(),
+        );
+        let status = host.edit.document.codex().entry(id).map(|e| e.status);
+        assert_eq!(status, Some(EntryStatus::Canonical), "the status command applied");
+    }
+
+    /// Setting then removing an anchor round-trips through commands.
+    #[test]
+    fn set_then_remove_anchor() {
+        let mut host = host();
+        apply_intent(
+            &mut host,
+            Intent::CreateCodexEntry {
+                entry_type: EntryType::Character,
+                name: "Bit".to_owned(),
+            },
+            &ctx(),
+        );
+        let Some(id) = host.state.ui.codex.selected else {
+            panic!("created entry should be selected");
+        };
+        apply_intent(
+            &mut host,
+            Intent::SetCodexAnchor {
+                id,
+                kind: AnchorKind::Visual,
+                strength: AnchorStrength::Locked,
+                statement: "round head, two eyes".to_owned(),
+            },
+            &ctx(),
+        );
+        assert!(
+            host.edit
+                .document
+                .codex()
+                .entry(id)
+                .is_some_and(|e| e.anchor_position(AnchorKind::Visual).is_some()),
+            "the anchor was set",
+        );
+        apply_intent(&mut host, Intent::RemoveCodexAnchor { id, kind: AnchorKind::Visual }, &ctx());
+        assert!(
+            host.edit
+                .document
+                .codex()
+                .entry(id)
+                .is_some_and(|e| e.anchor_position(AnchorKind::Visual).is_none()),
+            "the anchor was removed",
+        );
+    }
+
+    /// Codex mode and search are pure UI-state writes, no command.
+    #[test]
+    fn set_mode_and_search_write_ui_state() {
+        let mut host = host();
+        apply_intent(&mut host, Intent::SetCodexMode(CodexMode::Graph), &ctx());
+        assert_eq!(host.state.ui.codex.mode, CodexMode::Graph);
+        apply_intent(&mut host, Intent::CodexSearch("bit".to_owned()), &ctx());
+        assert_eq!(host.state.ui.codex.search, "bit");
+    }
+
+    /// Pinning, restrengthening, and unpinning a context reference.
+    #[test]
+    fn context_stack_pin_strength_unpin() {
+        let mut host = host();
+        apply_intent(
+            &mut host,
+            Intent::CreateCodexEntry {
+                entry_type: EntryType::Palette,
+                name: "Moonlit".to_owned(),
+            },
+            &ctx(),
+        );
+        let Some(id) = host.state.ui.codex.selected else {
+            panic!("created entry should be selected");
+        };
+        apply_intent(&mut host, Intent::AddReferenceToContext(id), &ctx());
+        assert_eq!(host.state.ui.codex.context.len(), 1, "the reference was pinned");
+        // Pinning again does not duplicate.
+        apply_intent(&mut host, Intent::AddReferenceToContext(id), &ctx());
+        assert_eq!(host.state.ui.codex.context.len(), 1, "pinning is idempotent");
+        apply_intent(
+            &mut host,
+            Intent::SetReferenceStrength {
+                id,
+                strength: AnchorStrength::Strong,
+            },
+            &ctx(),
+        );
+        assert_eq!(
+            host.state.ui.codex.context.first().map(|c| c.strength),
+            Some(AnchorStrength::Strong),
+            "the strength was set",
+        );
+        apply_intent(&mut host, Intent::RemoveReferenceFromContext(id), &ctx());
+        assert!(host.state.ui.codex.context.is_empty(), "the reference was unpinned");
+    }
+
+    /// Compiling a Codex prompt stores an inspectable preview without submitting a job.
+    #[test]
+    fn compile_codex_prompt_stores_preview() {
+        let mut host = host();
+        apply_intent(
+            &mut host,
+            Intent::CompileCodexPrompt {
+                user_text: "a knight idle".to_owned(),
+            },
+            &ctx(),
+        );
+        assert!(host.state.ui.codex.compiled.is_some(), "the compiled preview is stored");
+        let positive = host.state.ui.codex.compiled.as_ref().map(|c| c.positive.clone()).unwrap_or_default();
+        assert!(positive.contains("knight"), "the user request leads the positive prompt");
+    }
+
+    /// Seed an entry and return its id, for the CRUD intent tests.
+    fn seed_entry(host: &mut Host, entry_type: EntryType, name: &str) -> CodexEntryId {
+        apply_intent(
+            host,
+            Intent::CreateCodexEntry {
+                entry_type,
+                name: name.to_owned(),
+            },
+            &ctx(),
+        );
+        match host.state.ui.codex.selected {
+            Some(id) => id,
+            None => panic!("the created entry should be selected"),
+        }
+    }
+
+    /// Renaming an entry's handle routes through `SetCodexHandle` and changes the model.
+    #[test]
+    fn set_handle_renames_the_entry() {
+        let mut host = host();
+        let id = seed_entry(&mut host, EntryType::Character, "Bit");
+        apply_intent(
+            &mut host,
+            Intent::SetCodexHandle {
+                id,
+                handle: "bitter".to_owned(),
+            },
+            &ctx(),
+        );
+        let handle = host.edit.document.codex().entry(id).map(|e| e.handle.as_str().to_owned());
+        assert_eq!(handle.as_deref(), Some("bitter"), "the handle command applied");
+    }
+
+    /// An invalid handle is rejected (no command runs, the handle is unchanged).
+    #[test]
+    fn set_handle_rejects_an_invalid_handle() {
+        let mut host = host();
+        let id = seed_entry(&mut host, EntryType::Character, "Bit");
+        apply_intent(
+            &mut host,
+            Intent::SetCodexHandle {
+                id,
+                handle: "9bad space".to_owned(),
+            },
+            &ctx(),
+        );
+        let handle = host.edit.document.codex().entry(id).map(|e| e.handle.as_str().to_owned());
+        assert_eq!(handle.as_deref(), Some("bit"), "an invalid handle leaves the entry unchanged");
+    }
+
+    /// Adding then removing an alias round-trips through the alias commands.
+    #[test]
+    fn add_then_remove_alias() {
+        let mut host = host();
+        let id = seed_entry(&mut host, EntryType::Character, "Bit");
+        apply_intent(&mut host, Intent::AddCodexAlias { id, alias: "byte".to_owned() }, &ctx());
+        assert!(
+            host.edit
+                .document
+                .codex()
+                .entry(id)
+                .is_some_and(|e| e.aliases.iter().any(|a| a.as_str() == "byte")),
+            "the alias was added",
+        );
+        apply_intent(&mut host, Intent::RemoveCodexAlias { id, alias: "byte".to_owned() }, &ctx());
+        assert!(
+            host.edit.document.codex().entry(id).is_some_and(|e| e.aliases.is_empty()),
+            "the alias was removed",
+        );
+    }
+
+    /// Setting prompt fragments and negatives routes through the fragment commands.
+    #[test]
+    fn set_fragments_applies() {
+        let mut host = host();
+        let id = seed_entry(&mut host, EntryType::Character, "Bit");
+        apply_intent(
+            &mut host,
+            Intent::SetCodexPromptFragments {
+                id,
+                fragments: vec![PromptFragment::new("round head", pixhaus_core::codex::InclusionPriority::Critical)],
+            },
+            &ctx(),
+        );
+        apply_intent(
+            &mut host,
+            Intent::SetCodexNegativeFragments {
+                id,
+                fragments: vec!["extra limbs".to_owned()],
+            },
+            &ctx(),
+        );
+        let entry = host.edit.document.codex().entry(id).cloned();
+        assert_eq!(entry.as_ref().map(|e| e.prompt_fragments.len()), Some(1));
+        assert_eq!(entry.as_ref().map(|e| e.negative_fragments.len()), Some(1));
+    }
+
+    /// Editing palette details routes through `SetPaletteDetails`.
+    #[test]
+    fn set_palette_details_applies() {
+        let mut host = host();
+        let id = seed_entry(&mut host, EntryType::Palette, "Moonlit");
+        let body = PaletteDetails {
+            allow_generated_colors: true,
+            ..PaletteDetails::default()
+        };
+        apply_intent(&mut host, Intent::SetPaletteDetails { id, body }, &ctx());
+        assert!(
+            host.edit
+                .document
+                .codex()
+                .entry(id)
+                .is_some_and(|e| matches!(&e.details, pixhaus_core::codex::EntryDetails::Palette(p) if p.allow_generated_colors)),
+            "the palette body was replaced",
+        );
+    }
+
+    /// The detail-tab and nav-filter intents are pure UI-state writes, no command.
+    #[test]
+    fn set_detail_tab_and_nav_filter_write_ui_state() {
+        use crate::state::ui_state::{CodexDetailTab, NavFilter};
+        let mut host = host();
+        apply_intent(&mut host, Intent::SetCodexDetailTab(CodexDetailTab::Anchors), &ctx());
+        assert_eq!(host.state.ui.codex.detail_tab, CodexDetailTab::Anchors);
+        apply_intent(&mut host, Intent::SetCodexNavFilter(NavFilter::MissingCoverage), &ctx());
+        assert_eq!(host.state.ui.codex.nav_filter, NavFilter::MissingCoverage);
+    }
+
+    /// Pin/unpin behave like the context-stack add/remove and stay idempotent.
+    #[test]
+    fn pin_and_unpin_codex_entry() {
+        let mut host = host();
+        let id = seed_entry(&mut host, EntryType::Palette, "Moonlit");
+        apply_intent(&mut host, Intent::PinCodexEntry(id), &ctx());
+        assert_eq!(host.state.ui.codex.context.len(), 1, "the entry was pinned");
+        apply_intent(&mut host, Intent::PinCodexEntry(id), &ctx());
+        assert_eq!(host.state.ui.codex.context.len(), 1, "pinning is idempotent");
+        apply_intent(&mut host, Intent::UnpinCodexEntry(id), &ctx());
+        assert!(host.state.ui.codex.context.is_empty(), "the entry was unpinned");
+    }
+
+    /// Duplicating an entry adds a second entry and selects the clone.
+    #[test]
+    fn duplicate_codex_entry_clones_and_selects() {
+        let mut host = host();
+        let id = seed_entry(&mut host, EntryType::Character, "Bit");
+        apply_intent(&mut host, Intent::DuplicateCodexEntry(id), &ctx());
+        assert_eq!(host.edit.document.codex().entries().len(), 2, "the clone was added");
+        let selected = host.state.ui.codex.selected;
+        assert!(selected.is_some() && selected != Some(id), "the clone is selected, not the source");
+    }
+
+    /// Promote/archive route through the status command path.
+    #[test]
+    fn promote_and_archive_set_status() {
+        let mut host = host();
+        let id = seed_entry(&mut host, EntryType::Character, "Bit");
+        apply_intent(&mut host, Intent::PromoteCodexEntry(id), &ctx());
+        assert_eq!(
+            host.edit.document.codex().entry(id).map(|e| e.status),
+            Some(EntryStatus::Canonical),
+            "promote sets canonical",
+        );
+        apply_intent(&mut host, Intent::ArchiveCodexEntry(id), &ctx());
+        assert_eq!(
+            host.edit.document.codex().entry(id).map(|e| e.status),
+            Some(EntryStatus::Archived),
+            "archive sets archived",
+        );
+    }
+
+    /// Folder create / set-parent / set-entry-folder / delete all route through commands.
+    #[test]
+    fn folder_crud_round_trips() {
+        let mut host = host();
+        let id = seed_entry(&mut host, EntryType::Character, "Bit");
+        apply_intent(
+            &mut host,
+            Intent::CreateCodexFolder {
+                parent: None,
+                name: "Heroes".to_owned(),
+            },
+            &ctx(),
+        );
+        let Some(folder) = host.edit.document.codex().child_folders(None).first().copied() else {
+            panic!("a root folder should exist");
+        };
+        apply_intent(
+            &mut host,
+            Intent::SetCodexEntryFolder {
+                entry: id,
+                folder: Some(folder),
+            },
+            &ctx(),
+        );
+        assert_eq!(
+            host.edit.document.codex().entry(id).and_then(|e| e.folder_id),
+            Some(folder),
+            "the entry moved into the folder"
+        );
+        apply_intent(&mut host, Intent::DeleteCodexFolder { id: folder }, &ctx());
+        assert!(host.edit.document.codex().folder(folder).is_none(), "the folder was deleted");
+        assert_eq!(
+            host.edit.document.codex().entry(id).and_then(|e| e.folder_id),
+            None,
+            "its entry reparented to the root"
+        );
+    }
+
+    // --- Coverage intents ---
+
+    /// Applying a built-in preset creates the project template and attaches it to the
+    /// entry, so the entry's coverage is no longer empty.
+    #[test]
+    fn apply_builtin_coverage_template_attaches() {
+        let mut host = host();
+        let id = seed_entry(&mut host, EntryType::Character, "Bit");
+        apply_intent(
+            &mut host,
+            Intent::ApplyBuiltinCoverageTemplate {
+                id,
+                preset: BuiltinCoveragePreset::PlatformerCharacter,
+            },
+            &ctx(),
+        );
+        let attached = host.edit.document.codex().entry(id).map(|e| e.applied_templates.len());
+        assert_eq!(attached, Some(1), "the entry has one applied template");
+        assert_eq!(host.edit.document.codex().coverage_templates().count(), 1, "the project gained one template");
+    }
+
+    /// Creating a project template, then attaching it to an entry by id, seeds the
+    /// entry's coverage. Round-trips the create + apply intents.
+    #[test]
+    fn create_then_apply_coverage_template() {
+        let mut host = host();
+        let id = seed_entry(&mut host, EntryType::Character, "Bit");
+        apply_intent(
+            &mut host,
+            Intent::CreateCoverageTemplate {
+                name: "states".to_owned(),
+                slots: vec![CoverageSlot::custom("idle", "Idle"), CoverageSlot::custom("walk", "Walk")],
+            },
+            &ctx(),
+        );
+        let Some(template) = host.edit.document.codex().coverage_templates().next().map(|t| t.id) else {
+            panic!("the template should exist");
+        };
+        apply_intent(&mut host, Intent::ApplyCoverageTemplate { id, template }, &ctx());
+        assert!(
+            host.edit.document.codex().entry(id).is_some_and(|e| e.applied_templates.contains(&template)),
+            "the template is attached to the entry",
+        );
+    }
+
+    /// A per-entry custom slot is added and removed through its intents, never touching
+    /// any template.
+    #[test]
+    fn add_then_remove_entry_custom_slot() {
+        let mut host = host();
+        let id = seed_entry(&mut host, EntryType::Character, "Bit");
+        apply_intent(
+            &mut host,
+            Intent::AddEntryCustomSlot {
+                id,
+                slot: CoverageSlot::custom("crouch", "Crouch"),
+            },
+            &ctx(),
+        );
+        assert!(
+            host.edit
+                .document
+                .codex()
+                .entry(id)
+                .is_some_and(|e| e.custom_slots.iter().any(|s| s.key == "crouch")),
+            "the custom slot was added",
+        );
+        apply_intent(&mut host, Intent::RemoveEntryCustomSlot { id, key: "crouch".to_owned() }, &ctx());
+        assert!(
+            host.edit.document.codex().entry(id).is_some_and(|e| e.custom_slots.is_empty()),
+            "the custom slot was removed",
+        );
+    }
+
+    /// Renaming a per-entry custom slot's label routes through the command path and keeps
+    /// the stable slot key, so a coverage-status cell keyed on it survives the rename.
+    #[test]
+    fn rename_entry_custom_slot_label_keeps_the_key() {
+        let mut host = host();
+        let id = seed_entry(&mut host, EntryType::Character, "Bit");
+        apply_intent(
+            &mut host,
+            Intent::AddEntryCustomSlot {
+                id,
+                slot: CoverageSlot::custom("crouch", "Crouch"),
+            },
+            &ctx(),
+        );
+        apply_intent(
+            &mut host,
+            Intent::RenameEntryCustomSlotLabel {
+                id,
+                key: "crouch".to_owned(),
+                label: CoverageLabel::Literal("Sneak".to_owned()),
+            },
+            &ctx(),
+        );
+        let slot = host
+            .edit
+            .document
+            .codex()
+            .entry(id)
+            .and_then(|e| e.custom_slots.iter().find(|s| s.key == "crouch").cloned());
+        assert_eq!(
+            slot.map(|s| s.label),
+            Some(CoverageLabel::Literal("Sneak".to_owned())),
+            "the custom slot's label changed but the key stayed stable",
+        );
+    }
+
+    /// Changing a relationship's kind in place retypes the edge through the command path,
+    /// without a remove + re-add.
+    #[test]
+    fn change_relationship_kind_retypes_the_edge() {
+        let mut host = host();
+        let bit = seed_entry(&mut host, EntryType::Character, "Bit");
+        let style = seed_entry(&mut host, EntryType::Style, "Crisp");
+        apply_intent(
+            &mut host,
+            Intent::AddCodexRelationship {
+                from: bit,
+                kind: RelationKind::Uses,
+                to: style,
+            },
+            &ctx(),
+        );
+        apply_intent(
+            &mut host,
+            Intent::ChangeRelationshipKind {
+                from: bit,
+                old_kind: RelationKind::Uses,
+                to: style,
+                new_kind: RelationKind::Requires,
+            },
+            &ctx(),
+        );
+        let kinds: Vec<RelationKind> = host
+            .edit
+            .document
+            .codex()
+            .relationships()
+            .iter()
+            .filter(|r| r.from == bit && r.to == style)
+            .map(|r| r.kind)
+            .collect();
+        assert_eq!(kinds, vec![RelationKind::Requires], "the single edge was retyped, not duplicated");
+    }
+
+    /// Template-edit intents (create, add slot, rename a slot's label, reorder, delete)
+    /// all route through commands and change the model. A slot rename keeps the key.
+    #[test]
+    fn template_slot_edits_round_trip() {
+        let mut host = host();
+        seed_entry(&mut host, EntryType::Character, "Bit");
+        apply_intent(
+            &mut host,
+            Intent::CreateCoverageTemplate {
+                name: "states".to_owned(),
+                slots: vec![CoverageSlot::custom("idle", "Idle")],
+            },
+            &ctx(),
+        );
+        let Some(template) = host.edit.document.codex().coverage_templates().next().map(|t| t.id) else {
+            panic!("the template should exist");
+        };
+        apply_intent(
+            &mut host,
+            Intent::AddCoverageSlot {
+                template,
+                slot: CoverageSlot::custom("walk", "Walk"),
+            },
+            &ctx(),
+        );
+        apply_intent(
+            &mut host,
+            Intent::RenameCoverageSlotLabel {
+                template,
+                key: "idle".to_owned(),
+                label: CoverageLabel::Literal("Standing".to_owned()),
+            },
+            &ctx(),
+        );
+        apply_intent(&mut host, Intent::ReorderCoverageSlots { template, from: 0, to: 1 }, &ctx());
+        let slots = host
+            .edit
+            .document
+            .codex()
+            .coverage_template(template)
+            .map(|t| t.slots.clone())
+            .unwrap_or_default();
+        assert_eq!(slots.len(), 2, "the template has two slots");
+        // The "idle" slot kept its key after the relabel, and now sits second after the reorder.
+        assert!(slots.iter().any(|s| s.key == "idle"), "the slot key survived the rename");
+        assert!(
+            slots.iter().any(|s| s.label == CoverageLabel::Literal("Standing".to_owned())),
+            "the slot label changed",
+        );
+        apply_intent(&mut host, Intent::DeleteCoverageTemplate { template }, &ctx());
+        assert!(host.edit.document.codex().coverage_template(template).is_none(), "the template was deleted");
+    }
+
+    /// Renaming a project template changes its display name through the command path.
+    #[test]
+    fn rename_coverage_template_applies() {
+        let mut host = host();
+        apply_intent(
+            &mut host,
+            Intent::CreateCoverageTemplate {
+                name: "states".to_owned(),
+                slots: vec![CoverageSlot::custom("idle", "Idle")],
+            },
+            &ctx(),
+        );
+        let Some(template) = host.edit.document.codex().coverage_templates().next().map(|t| t.id) else {
+            panic!("the template should exist");
+        };
+        apply_intent(
+            &mut host,
+            Intent::RenameCoverageTemplate {
+                template,
+                name: "animation states".to_owned(),
+            },
+            &ctx(),
+        );
+        assert_eq!(
+            host.edit.document.codex().coverage_template(template).map(|t| t.name.clone()),
+            Some("animation states".to_owned()),
+            "the template name changed",
+        );
     }
 }

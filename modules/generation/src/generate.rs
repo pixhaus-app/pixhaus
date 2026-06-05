@@ -13,14 +13,15 @@
 
 use egui::{Key, KeyboardShortcut, Modifiers, Sense, Stroke, StrokeKind, Vec2};
 use pixhaus_ui::contrib_api::{
-    ActionDesc, ActionId, HostRegistrar, MsgKey, Panel, PanelId, PanelMeta, PanelScope, StatusItem, ToolId, Workspace, WorkspaceId, WorkspaceLayout,
-    WorkspaceMeta,
+    ActionDesc, ActionId, CenterSurface, HostRegistrar, MsgKey, Panel, PanelId, PanelMeta, PanelScope, StatusItem, ToolId, Workspace, WorkspaceId,
+    WorkspaceLayout, WorkspaceMeta,
 };
 use pixhaus_ui::region::Region;
 use pixhaus_ui::state::intent::Intent;
 use pixhaus_ui::theme::Theme;
 use pixhaus_ui::{icons, widgets};
 
+use crate::codex_context::{self, GENERATE_CODEX_CONTEXT};
 use crate::prompt;
 
 /// The Generate workspace id.
@@ -85,8 +86,10 @@ impl Workspace for GenerateWorkspace {
 
     fn layout(&self) -> WorkspaceLayout {
         WorkspaceLayout {
-            right_dock: vec![PROMPT, RECIPE, STRUCTURE, STYLE, PALETTE_BEHAVIOR, ADVANCED_SETTINGS],
+            left_dock: Vec::new(),
+            right_dock: vec![PROMPT, GENERATE_CODEX_CONTEXT, RECIPE, STRUCTURE, STYLE, PALETTE_BEHAVIOR, ADVANCED_SETTINGS],
             bottom_tray: vec![RESULTS, TIMELINE, HISTORY, CONSOLE],
+            center: CenterSurface::Canvas,
             primary_tools: vec![HAND, ZOOM, SELECTION, AI_BRUSH],
             default_tool: HAND,
             status_items: vec![
@@ -622,6 +625,9 @@ pub fn register(host: &mut dyn HostRegistrar) {
 
     // Dock panels.
     host.add_panel(Box::new(PromptPanel));
+    // The Codex context stack, surfacing the shared pinned-reference state in Generate
+    // (Codex bible 9). It reads the same `CodexView` mirror the Codex workspace uses.
+    host.add_panel(Box::new(codex_context::CodexContextPanel));
     host.add_panel(Box::new(RecipePanel));
     host.add_panel(Box::new(StructurePanel));
     host.add_panel(Box::new(StylePanel));
@@ -657,7 +663,10 @@ mod tests {
     #[test]
     fn generate_layout_matches_the_inventory() {
         let layout = GenerateWorkspace.layout();
-        assert_eq!(layout.right_dock, vec![PROMPT, RECIPE, STRUCTURE, STYLE, PALETTE_BEHAVIOR, ADVANCED_SETTINGS]);
+        assert_eq!(
+            layout.right_dock,
+            vec![PROMPT, GENERATE_CODEX_CONTEXT, RECIPE, STRUCTURE, STYLE, PALETTE_BEHAVIOR, ADVANCED_SETTINGS]
+        );
         assert_eq!(layout.bottom_tray, vec![RESULTS, TIMELINE, HISTORY, CONSOLE]);
         assert_eq!(layout.default_tool, HAND);
         assert_eq!(layout.primary_tools, vec![HAND, ZOOM, SELECTION, AI_BRUSH]);

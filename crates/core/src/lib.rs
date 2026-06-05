@@ -22,6 +22,7 @@
 
 pub mod animation;
 pub mod buffer_store;
+pub mod codex;
 pub mod command;
 pub mod commands;
 pub mod composite;
@@ -31,8 +32,21 @@ pub mod pixel;
 
 pub use animation::{AnimationClip, LoopMode};
 pub use buffer_store::PixelBufferStore;
+pub use codex::{
+    Anchor, AnchorKind, AnchorStrength, Codex, CodexEntry, CodexEntryId, CodexFolder, CodexFolderId, CodexHandle, CoverageItemStatus, CoverageKey,
+    CoverageLabel, CoverageSlot, CoverageTemplate, CoverageTemplateId, EntryDetails, EntryLocks, EntryStatus, EntryType, EntryVersion, HandleError,
+    InclusionPriority, Ownership, PromptFragment, RelationKind, Relationship,
+};
 pub use command::{Command, CommandError};
-pub use commands::{AddSprite, ApplyGeneratedAnimation, ApplyGeneratedAsset, GeneratedFrameData, SpriteProto};
+pub use commands::{
+    AddCodexAlias, AddCodexEntry, AddCoverageSlot, AddEntryCustomSlot, AddRelationship, AddSprite, ApplyBuiltinCoverageTemplate, ApplyCoverageTemplate,
+    ApplyGeneratedAnimation, ApplyGeneratedAsset, BuiltinCoveragePreset, ChangeRelationshipKind, ClearCoverage, CodexEntryDelta, CodexEntryProto,
+    CreateCodexFolder, CreateCoverageTemplate, DeleteCodexEntry, DeleteCodexFolder, DeleteCoverageTemplate, DuplicateCodexEntry, GeneratedFrameData,
+    RemoveAnchor, RemoveCodexAlias, RemoveCoverageSlot, RemoveEntryCustomSlot, RemoveRelationship, RenameCodexFolder, RenameCoverageSlotLabel,
+    RenameCoverageTemplate, RenameEntryCustomSlotLabel, ReorderCoverageSlots, SetAnchor, SetAnimationDetails, SetCharacterDetails, SetCodexEntryFolder,
+    SetCodexFolderParent, SetCodexHandle, SetCoverageStatus, SetEntryStatus, SetGenericDetails, SetNegativeFragments, SetPaletteDetails, SetPromptFragments,
+    SetStyleDetails, SpriteProto, UpdateCodexEntry,
+};
 pub use composite::{CompositeError, composite_active, composite_frame, composite_sprite};
 pub use document::{DEFAULT_CANVAS_SIZE, DEFAULT_FRAME_DURATION_MS, Document, Frame, Layer, Sprite};
 pub use ids::{ClipId, FrameId, IdCounter, LayerId, PixelBufferId, SpriteId};

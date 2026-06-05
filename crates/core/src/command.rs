@@ -7,6 +7,7 @@
 
 use thiserror::Error;
 
+use crate::codex::{CodexEntryId, CodexFolderId, CoverageTemplateId};
 use crate::document::Document;
 use crate::ids::SpriteId;
 use crate::pixel::PixelError;
@@ -53,4 +54,22 @@ pub enum CommandError {
     /// A pixel-buffer invariant was violated while building or restoring data.
     #[error(transparent)]
     Pixel(#[from] PixelError),
+    /// A referenced Codex entry is not present in the document.
+    #[error("codex entry {0:?} not found")]
+    CodexEntryNotFound(CodexEntryId),
+    /// A Codex handle is already claimed by another entry.
+    #[error("codex handle is already in use")]
+    CodexHandleInUse,
+    /// A facet of the entry that the command would change is locked against change.
+    #[error("codex entry facet is locked against change")]
+    CodexEntryLocked,
+    /// A referenced Codex folder is not present in the document.
+    #[error("codex folder {0:?} not found")]
+    CodexFolderNotFound(CodexFolderId),
+    /// Reparenting a folder would make it its own ancestor.
+    #[error("codex folder reparent would create a cycle")]
+    CodexFolderCycle,
+    /// A referenced coverage template is not present in the Codex.
+    #[error("coverage template {0:?} not found")]
+    CoverageTemplateNotFound(CoverageTemplateId),
 }

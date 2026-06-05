@@ -9,8 +9,8 @@
 
 use egui::{Key, KeyboardShortcut, Modifiers, Sense, Vec2};
 use pixhaus_ui::contrib_api::{
-    ActionDesc, ActionId, HostRegistrar, MsgKey, PENCIL, Panel, PanelId, PanelMeta, PanelScope, StatusItem, TOOL_RAIL, Workspace, WorkspaceId, WorkspaceLayout,
-    WorkspaceMeta,
+    ActionDesc, ActionId, CenterSurface, HostRegistrar, MsgKey, PENCIL, Panel, PanelId, PanelMeta, PanelScope, StatusItem, TOOL_RAIL, Workspace, WorkspaceId,
+    WorkspaceLayout, WorkspaceMeta,
 };
 use pixhaus_ui::region::Region;
 use pixhaus_ui::state::intent::Intent;
@@ -67,8 +67,10 @@ impl Workspace for TilesWorkspace {
 
     fn layout(&self) -> WorkspaceLayout {
         WorkspaceLayout {
+            left_dock: Vec::new(),
             right_dock: vec![TILESET, RULE_TYPE, MATERIAL, SEAM_QA, AI_TILE_ASSISTANT],
             bottom_tray: vec![TILE_VARIANTS, ASSETS, CONSOLE],
+            center: CenterSurface::Canvas,
             primary_tools: TOOL_RAIL.to_vec(),
             default_tool: PENCIL,
             status_items: vec![

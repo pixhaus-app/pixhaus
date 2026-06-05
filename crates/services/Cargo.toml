@@ -28,6 +28,10 @@ tracing = { workspace = true }
 [dev-dependencies]
 serial_test = { workspace = true }
 rstest = { workspace = true }
+# Tests build Codex entries with fields core gates behind `pub(crate)` mutators
+# (prompt fragments, aliases, palette refs) by round-tripping a command-built Codex
+# through JSON and patching in the extra fields. Test-only.
+serde_json = { workspace = true }
 
 [lints]
 workspace = true

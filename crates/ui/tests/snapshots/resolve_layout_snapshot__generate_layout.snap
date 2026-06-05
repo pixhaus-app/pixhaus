@@ -3,9 +3,13 @@ source: crates/ui/tests/resolve_layout_snapshot.rs
 expression: resolved
 ---
 ResolvedLayout {
+    left_dock: [],
     right_dock: [
         PanelId(
             "prompt",
+        ),
+        PanelId(
+            "generate-codex-context",
         ),
         PanelId(
             "recipe",
@@ -37,6 +41,7 @@ ResolvedLayout {
             "console",
         ),
     ],
+    center: Canvas,
     primary_tools: [
         ToolId(
             "hand",

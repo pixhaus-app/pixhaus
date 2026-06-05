@@ -9,10 +9,14 @@ use crate::state::intent::Intent;
 use crate::theme::tokens::SurfaceTier;
 use crate::widgets;
 
-/// Render the left tool rail.
+/// Render the left tool rail. A no-op when the active workspace has no tools (the
+/// Codex), so no empty 48px strip renders beside its Navigator.
 pub fn show(host: &mut Host, ui: &mut egui::Ui) {
     // Resolve tool ids by value first; the &registries/&state borrows end here.
     let tool_ids = resolve_layout(host.state.session.active_workspace, &host.registries).primary_tools;
+    if tool_ids.is_empty() {
+        return;
+    }
 
     let Host {
         registries,

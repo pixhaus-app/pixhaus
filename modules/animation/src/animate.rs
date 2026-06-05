@@ -9,8 +9,8 @@
 
 use egui::{Align2, FontId, Key, KeyboardShortcut, Modifiers, Sense, Stroke, Vec2};
 use pixhaus_ui::contrib_api::{
-    ActionDesc, ActionId, HostRegistrar, MenuGroup, MenuItem, MsgKey, PENCIL, Panel, PanelId, PanelMeta, PanelScope, StatusItem, TOOL_RAIL, Workspace,
-    WorkspaceId, WorkspaceLayout, WorkspaceMeta,
+    ActionDesc, ActionId, CenterSurface, HostRegistrar, MenuGroup, MenuItem, MsgKey, PENCIL, Panel, PanelId, PanelMeta, PanelScope, StatusItem, TOOL_RAIL,
+    Workspace, WorkspaceId, WorkspaceLayout, WorkspaceMeta,
 };
 use pixhaus_ui::region::Region;
 use pixhaus_ui::state::intent::Intent;
@@ -66,8 +66,10 @@ impl Workspace for AnimateWorkspace {
 
     fn layout(&self) -> WorkspaceLayout {
         WorkspaceLayout {
+            left_dock: Vec::new(),
             right_dock: vec![LAYERS, SPRITES, FRAMES, CLIP_PROPERTIES, AI_ANIM_ASSISTANT],
             bottom_tray: vec![TIMELINE, FRAMES, CONSOLE],
+            center: CenterSurface::Canvas,
             primary_tools: TOOL_RAIL.to_vec(),
             default_tool: PENCIL,
             // The live frame count and fps now read off the Timeline panel (driven by

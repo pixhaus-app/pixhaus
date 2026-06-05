@@ -45,9 +45,10 @@ fn build_host(ctx: &egui::Context) -> Host {
     pixhaus_mod_tiles::TilesModule.register(&mut host.registrar());
     pixhaus_mod_generation::GenerationModule.register(&mut host.registrar());
     pixhaus_mod_export::ExportModule.register(&mut host.registrar());
+    pixhaus_mod_codex::CodexModule.register(&mut host.registrar());
 
-    // The count is the five module registrations above; bump it when the list grows.
-    tracing::info!(modules = 5, "registered capability modules");
+    // The count is the six module registrations above; bump it when the list grows.
+    tracing::info!(modules = 6, "registered capability modules");
 
     // Register generation providers into the host's provider registry so the Generate
     // workspace can answer prompts. Providers register into `EditSession`, not the
@@ -61,6 +62,17 @@ fn build_host(ctx: &egui::Context) -> Host {
         tracing::info!("OPENROUTER_API_KEY not set; the offline mock provider answers generation");
     }
     pixhaus_mod_providers::register(&mut host.edit.providers);
+
+    // Seed the canonical Bit demo Codex so a fresh launch opens into the demo world. The
+    // builder is fallible (a broken spec would error), but the shipped spec is known
+    // good; on the not-expected error path, log a warning and continue with the empty
+    // codex rather than panicking the boot.
+    if host.edit.document.codex().entries().is_empty() {
+        match pixhaus_services::build_bit_demo_codex() {
+            Ok(doc) => host.edit.document = doc,
+            Err(err) => tracing::warn!(%err, "failed to seed the Bit demo codex; starting with an empty codex"),
+        }
+    }
 
     host
 }

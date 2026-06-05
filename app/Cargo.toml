@@ -26,6 +26,9 @@ tracing-log.workspace = true
 # Detects the OS language at boot so the app launches localized. See pixhaus-i18n.
 sys-locale.workspace = true
 pixhaus-platform = { path = "../crates/platform" }
+# The domain model. Used directly by the render_workspaces example to seed a small
+# Codex (entries, anchors, coverage) so the Codex-workspace snapshot has content.
+pixhaus-core = { path = "../crates/core" }
 # The localization service: the app sets the active language at boot, the string-side
 # parallel to owning the one tracing subscriber.
 pixhaus-services = { path = "../crates/services" }
@@ -35,6 +38,7 @@ pixhaus-mod-animation = { path = "../modules/animation" }
 pixhaus-mod-tiles = { path = "../modules/tiles" }
 pixhaus-mod-generation = { path = "../modules/generation" }
 pixhaus-mod-export = { path = "../modules/export" }
+pixhaus-mod-codex = { path = "../modules/codex" }
 # The offline mock provider, registered into the host's provider registry so the
 # Generate workspace answers prompts without an API key or GPU.
 pixhaus-mod-providers = { path = "../modules/providers" }

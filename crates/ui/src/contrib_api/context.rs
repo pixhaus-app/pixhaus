@@ -16,7 +16,7 @@
 use crate::contrib_api::ids::PanelId;
 use crate::state::intent::IntentSink;
 use crate::state::session::SessionState;
-use crate::state::ui_state::UiState;
+use crate::state::ui_state::{CodexEditorDraft, UiState};
 use crate::theme::Theme;
 
 /// Read view plus the one write channel. Carried by tools and (wrapped) by panels.
@@ -53,4 +53,13 @@ pub struct PanelScope<'a> {
     pub id: PanelId,
     /// A mutable handle to THIS panel's scratch text buffer only.
     pub scratch: &'a mut String,
+    /// The structured Codex editor draft, supplied ONLY to the Codex Entry Editor
+    /// center panel; `None` for every other panel.
+    ///
+    /// A single scratch `String` cannot drive an entry editor with many fields, so the
+    /// shell owns a [`CodexEditorDraft`] and lends it to the editor here. It is the same
+    /// in-frame `&mut`-for-`TextEdit` carve-out the scratch is, widened to a struct for
+    /// the one panel that needs it; reloading it from the selection stays the shell's
+    /// job (in `sync_codex_view`), and commits still flow out as `Intent`s.
+    pub draft: Option<&'a mut CodexEditorDraft>,
 }

@@ -1,0 +1,42 @@
+---
+source: crates/ui/tests/codex_layout_snapshot.rs
+expression: resolved
+---
+ResolvedLayout {
+    left_dock: [
+        PanelId(
+            "codex-navigator",
+        ),
+    ],
+    right_dock: [
+        PanelId(
+            "codex-inspector",
+        ),
+    ],
+    bottom_tray: [
+        PanelId(
+            "codex-coverage",
+        ),
+        PanelId(
+            "codex-test-generation",
+        ),
+        PanelId(
+            "codex-history",
+        ),
+    ],
+    center: Panel(
+        PanelId(
+            "codex-editor",
+        ),
+    ),
+    primary_tools: [],
+    default_tool: ToolId(
+        "",
+    ),
+    status_items: [
+        StatusItem {
+            icon: '\u{eadc}',
+            text: "Coverage",
+        },
+    ],
+}

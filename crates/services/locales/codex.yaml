@@ -1,0 +1,804 @@
+# Localization strings for the Codex workspace, its panels, commands, and the
+# Codex domain vocabulary (entry types, statuses, anchors, relations, coverage,
+# validation). Owned by the Codex module (pixhaus-mod-codex); the shell resolves
+# these at render time.
+#
+# rust-i18n `_version: 2` layout: each key maps locale -> value; `en` is the
+# fallback. English only until a translation lands.
+_version: 2
+
+# --- Codex workspace. ---
+workspace.codex.title:
+  en: Codex
+workspace.codex.purpose:
+  en: Define and maintain the project's creative bible
+workspace.codex.status.coverage:
+  en: Coverage
+
+# --- Codex panels. ---
+panel.codex-navigator.title:
+  en: Navigator
+codex.navigator.search.placeholder:
+  en: Search the Codex…
+panel.codex-editor.title:
+  en: Entry Editor
+panel.codex-board.title:
+  en: Visual Board
+panel.codex-graph.title:
+  en: Graph
+panel.codex-inspector.title:
+  en: Inspector
+panel.codex-coverage.title:
+  en: Coverage
+panel.codex-test-generation.title:
+  en: Test Generation
+panel.codex-history.title:
+  en: History
+
+# --- Codex command labels (history entries). ---
+command.codex.add_entry:
+  en: Add Codex entry
+command.codex.update_entry:
+  en: Update Codex entry
+command.codex.delete_entry:
+  en: Delete Codex entry
+command.codex.set_status:
+  en: Set entry status
+command.codex.set_anchor:
+  en: Set anchor
+command.codex.remove_anchor:
+  en: Remove anchor
+command.codex.add_relationship:
+  en: Add relationship
+command.codex.remove_relationship:
+  en: Remove relationship
+command.codex.apply_coverage_template:
+  en: Apply coverage template
+command.codex.set_coverage_status:
+  en: Set coverage status
+command.codex.compile_prompt:
+  en: Compile Codex prompt
+command.codex.set_handle:
+  en: Rename entry handle
+command.codex.add_alias:
+  en: Add alias
+command.codex.remove_alias:
+  en: Remove alias
+command.codex.set_prompt_fragments:
+  en: Set prompt fragments
+command.codex.set_negative_fragments:
+  en: Set negative fragments
+command.codex.set_character_details:
+  en: Edit character details
+command.codex.set_palette_details:
+  en: Edit palette details
+command.codex.set_style_details:
+  en: Edit style details
+command.codex.set_animation_details:
+  en: Edit animation details
+command.codex.set_generic_details:
+  en: Edit details
+command.codex.clear_coverage:
+  en: Clear coverage
+command.codex.create_folder:
+  en: Create folder
+command.codex.rename_folder:
+  en: Rename folder
+command.codex.delete_folder:
+  en: Delete folder
+command.codex.set_folder_parent:
+  en: Move folder
+command.codex.set_entry_folder:
+  en: Move entry
+command.codex.duplicate_entry:
+  en: Duplicate entry
+command.codex.create_coverage_template:
+  en: Create coverage template
+command.codex.rename_coverage_template:
+  en: Rename coverage template
+command.codex.delete_coverage_template:
+  en: Delete coverage template
+command.codex.add_coverage_slot:
+  en: Add coverage slot
+command.codex.remove_coverage_slot:
+  en: Remove coverage slot
+command.codex.rename_coverage_slot_label:
+  en: Rename coverage slot
+command.codex.reorder_coverage_slots:
+  en: Reorder coverage slots
+command.codex.add_entry_custom_slot:
+  en: Add custom slot
+command.codex.remove_entry_custom_slot:
+  en: Remove custom slot
+command.codex.rename_entry_custom_slot:
+  en: Rename custom slot
+command.codex.change_relationship_kind:
+  en: Change relationship kind
+command.codex.apply_builtin_coverage_template:
+  en: Apply built-in template
+
+# --- Entry types. ---
+codex.entry_type.character:
+  en: Character
+codex.entry_type.enemy:
+  en: Enemy
+codex.entry_type.npc:
+  en: NPC
+codex.entry_type.creature:
+  en: Creature
+codex.entry_type.prop:
+  en: Prop
+codex.entry_type.item:
+  en: Item
+codex.entry_type.weapon:
+  en: Weapon
+codex.entry_type.material:
+  en: Material
+codex.entry_type.palette:
+  en: Palette
+codex.entry_type.style:
+  en: Style
+codex.entry_type.vibe:
+  en: Vibe
+codex.entry_type.location:
+  en: Location
+codex.entry_type.biome:
+  en: Biome
+codex.entry_type.faction:
+  en: Faction
+codex.entry_type.animation:
+  en: Animation
+codex.entry_type.pose:
+  en: Pose
+codex.entry_type.vfx:
+  en: VFX
+codex.entry_type.ui:
+  en: UI Element
+codex.entry_type.rule:
+  en: Rule
+codex.entry_type.recipe:
+  en: Recipe
+codex.entry_type.board:
+  en: Reference Board
+
+# --- Entry statuses. ---
+codex.status.draft:
+  en: Draft
+codex.status.candidate:
+  en: Candidate
+codex.status.canonical:
+  en: Canonical
+codex.status.deprecated:
+  en: Deprecated
+codex.status.archived:
+  en: Archived
+codex.status.rejected:
+  en: Rejected
+
+# --- Anchor kinds. ---
+codex.anchor.kind.identity:
+  en: Identity
+codex.anchor.kind.visual:
+  en: Visual
+codex.anchor.kind.palette:
+  en: Palette
+codex.anchor.kind.style:
+  en: Style
+codex.anchor.kind.animation:
+  en: Animation
+codex.anchor.kind.scale:
+  en: Scale
+codex.anchor.kind.lore:
+  en: Lore
+codex.anchor.kind.negative:
+  en: Negative
+
+# --- Anchor strengths. ---
+codex.anchor.strength.loose:
+  en: Loose
+codex.anchor.strength.normal:
+  en: Normal
+codex.anchor.strength.strong:
+  en: Strong
+codex.anchor.strength.locked:
+  en: Locked
+
+# --- Relationship kinds. ---
+codex.relation.uses:
+  en: Uses
+codex.relation.belongs_to:
+  en: Belongs to
+codex.relation.appears_in:
+  en: Appears in
+codex.relation.compatible_with:
+  en: Compatible with
+codex.relation.incompatible_with:
+  en: Incompatible with
+codex.relation.inherits_from:
+  en: Inherits from
+codex.relation.variant_of:
+  en: Variant of
+codex.relation.requires:
+  en: Requires
+codex.relation.contains:
+  en: Contains
+codex.relation.replaces:
+  en: Replaces
+codex.relation.inspired_by:
+  en: Inspired by
+
+# --- Coverage statuses. ---
+codex.coverage.status.missing:
+  en: Missing
+codex.coverage.status.draft:
+  en: Draft
+codex.coverage.status.generated:
+  en: Generated
+codex.coverage.status.needs_review:
+  en: Needs review
+codex.coverage.status.approved:
+  en: Approved
+codex.coverage.status.manually_finalized:
+  en: Manually finalized
+codex.coverage.status.deprecated:
+  en: Deprecated
+
+# --- Coverage slots (the platformer-character template). ---
+codex.coverage.slot.idle:
+  en: Idle
+codex.coverage.slot.walk:
+  en: Walk
+codex.coverage.slot.run:
+  en: Run
+codex.coverage.slot.jump:
+  en: Jump
+codex.coverage.slot.fall:
+  en: Fall
+codex.coverage.slot.land:
+  en: Land
+codex.coverage.slot.attack:
+  en: Attack
+codex.coverage.slot.hurt:
+  en: Hurt
+codex.coverage.slot.death:
+  en: Death
+
+# --- Coverage slots (the top-down 4-direction template). ---
+codex.coverage.slot.walk_up:
+  en: Walk up
+codex.coverage.slot.walk_down:
+  en: Walk down
+codex.coverage.slot.walk_left:
+  en: Walk left
+codex.coverage.slot.walk_right:
+  en: Walk right
+
+# --- Coverage slots (the UI-button-states template). ---
+codex.coverage.slot.normal:
+  en: Normal
+codex.coverage.slot.hover:
+  en: Hover
+codex.coverage.slot.pressed:
+  en: Pressed
+codex.coverage.slot.disabled:
+  en: Disabled
+
+# --- Validation severities. ---
+codex.validation.severity.info:
+  en: Info
+codex.validation.severity.warning:
+  en: Warning
+codex.validation.severity.error:
+  en: Error
+codex.validation.severity.blocking:
+  en: Blocking
+
+# --- Validation messages. ---
+codex.validation.missing_name:
+  en: Entry has no name
+codex.validation.missing_description:
+  en: Entry has no description
+codex.validation.missing_visual_anchor:
+  en: Character has no visual anchor
+codex.validation.duplicate_handle:
+  en: Two entries share the handle %{handle}
+codex.validation.broken_palette_ref:
+  en: Palette reference %{handle} does not resolve
+codex.validation.deprecated_reference:
+  en: Reference points at a deprecated entry
+codex.validation.unresolved_reference:
+  en: Reference %{handle} could not be resolved
+codex.validation.ambiguous_reference:
+  en: Reference %{handle} is ambiguous
+codex.validation.empty_prompt:
+  en: The compiled prompt is empty
+
+# --- Editor: section headings. ---
+codex.editor.section.identity:
+  en: Identity
+codex.editor.section.description:
+  en: Description
+codex.editor.section.prompt:
+  en: Prompt fragments
+codex.editor.section.anchors:
+  en: Anchors
+codex.editor.section.relationships:
+  en: Relationships
+codex.editor.section.details:
+  en: Type details
+codex.editor.section.coverage:
+  en: Coverage
+
+# --- Editor: field labels. ---
+codex.field.name:
+  en: Name
+codex.field.handle:
+  en: Handle
+codex.field.aliases:
+  en: Aliases
+codex.field.type:
+  en: Type
+codex.field.status:
+  en: Status
+codex.field.folder:
+  en: Folder
+codex.field.description:
+  en: Description
+codex.field.lore:
+  en: Lore
+codex.field.visual_description:
+  en: Visual description
+codex.field.tags:
+  en: Tags
+codex.field.prompt_fragments:
+  en: Prompt fragments
+codex.field.negative_fragments:
+  en: Negatives
+codex.field.fragment_text:
+  en: Fragment
+codex.field.fragment_priority:
+  en: Priority
+
+# --- Editor: field placeholders / hints. ---
+codex.field.name.placeholder:
+  en: Display name
+codex.field.handle.placeholder:
+  en: lowercase_handle
+codex.field.alias.placeholder:
+  en: another_handle
+codex.field.tag.placeholder:
+  en: tag
+codex.field.fragment.placeholder:
+  en: A line the prompt should include
+codex.field.negative.placeholder:
+  en: A thing to avoid
+
+# --- Inclusion priorities (prompt-fragment weight). ---
+codex.priority.critical:
+  en: Critical
+codex.priority.important:
+  en: Important
+codex.priority.normal:
+  en: Normal
+codex.priority.optional:
+  en: Optional
+codex.priority.never_in_prompt:
+  en: Never in prompt
+
+# --- Character details. ---
+codex.character.proportions:
+  en: Proportions
+codex.character.silhouette:
+  en: Silhouette
+codex.character.palette_ref:
+  en: Palette reference
+codex.character.allowed_styles:
+  en: Allowed styles
+codex.character.forbidden_styles:
+  en: Forbidden styles
+codex.character.animation_set:
+  en: Animation set
+
+# --- Palette details. ---
+codex.palette.colors:
+  en: Colors
+codex.palette.ramps:
+  en: Ramps
+codex.palette.allow_generated:
+  en: Allow generated colors
+codex.palette.optional_short:
+  en: opt
+codex.palette.add_color:
+  en: Add color
+codex.palette.color_value:
+  en: Color
+codex.palette.color_role:
+  en: Role
+codex.palette.add_ramp:
+  en: Add ramp
+codex.palette.ramp_name:
+  en: Ramp name
+codex.palette.ramp_name.placeholder:
+  en: Ramp name
+codex.palette.ramp_indices:
+  en: Color indices
+codex.palette.add_index:
+  en: Add index
+
+# --- Palette color roles. ---
+codex.color_role.shadow:
+  en: Shadow
+codex.color_role.midtone:
+  en: Midtone
+codex.color_role.highlight:
+  en: Highlight
+codex.color_role.outline:
+  en: Outline
+codex.color_role.skin:
+  en: Skin
+codex.color_role.cloth:
+  en: Cloth
+codex.color_role.metal:
+  en: Metal
+codex.color_role.magic_glow:
+  en: Magic glow
+codex.color_role.danger:
+  en: Danger
+codex.color_role.healing:
+  en: Healing
+codex.color_role.ui_accent:
+  en: UI accent
+
+# --- Style details. ---
+codex.style.line:
+  en: Line treatment
+codex.style.shading:
+  en: Shading
+codex.style.dithering:
+  en: Dithering
+codex.style.outline:
+  en: Outline
+
+# --- Animation details. ---
+codex.animation.purpose:
+  en: Purpose
+codex.animation.loops:
+  en: Loops
+codex.animation.frames:
+  en: Frames
+codex.animation.fps:
+  en: FPS
+codex.animation.pose_beats:
+  en: Pose beats
+codex.animation.compat:
+  en: Compatibility
+codex.animation.pose_beat_label:
+  en: Beat
+codex.animation.pose_beat_label.placeholder:
+  en: Beat name
+codex.animation.pose_beat_description:
+  en: Description
+codex.animation.pose_beat_description.placeholder:
+  en: What happens on this beat
+codex.animation.add_pose_beat:
+  en: Add pose beat
+
+# --- Generic details. ---
+codex.generic.notes:
+  en: Notes
+
+# --- Folders. ---
+codex.folder.root:
+  en: Codex root
+codex.folder.untitled:
+  en: New folder
+codex.folder.name:
+  en: Folder name
+codex.folder.name.placeholder:
+  en: Folder name
+codex.folder.description:
+  en: Description
+
+# --- Inspector: per-entry prompt preview. ---
+codex.inspector.preview.title:
+  en: Prompt preview
+codex.inspector.preview.positive:
+  en: Positive
+codex.inspector.preview.negative:
+  en: Negative
+codex.inspector.preview.empty:
+  en: This entry contributes nothing to a prompt yet
+codex.inspector.references_used:
+  en: References used
+codex.inspector.included_anchors:
+  en: Included anchors
+
+# --- Buttons / actions. ---
+codex.action.new_entry:
+  en: New entry
+codex.action.delete_entry:
+  en: Delete entry
+codex.action.rename:
+  en: Rename
+codex.action.edit:
+  en: Edit
+codex.action.add:
+  en: Add
+codex.action.remove:
+  en: Remove
+codex.action.save:
+  en: Save
+codex.action.cancel:
+  en: Cancel
+codex.action.add_alias:
+  en: Add alias
+codex.action.add_tag:
+  en: Add tag
+codex.action.add_fragment:
+  en: Add fragment
+codex.action.add_negative:
+  en: Add negative
+codex.action.add_anchor:
+  en: Add anchor
+codex.action.remove_anchor:
+  en: Remove anchor
+codex.action.add_relationship:
+  en: Add relationship
+codex.action.remove_relationship:
+  en: Remove relationship
+codex.action.change_relationship_kind:
+  en: Change kind
+codex.action.new_folder:
+  en: New folder
+codex.action.rename_folder:
+  en: Rename folder
+codex.action.delete_folder:
+  en: Delete folder
+codex.action.move_to:
+  en: Move to
+codex.action.move_to_root:
+  en: Move to root
+codex.action.clear_coverage:
+  en: Clear coverage
+codex.action.apply_template:
+  en: Apply template
+codex.action.new_template:
+  en: New template
+codex.action.rename_template:
+  en: Rename template
+codex.action.delete_template:
+  en: Delete template
+codex.action.add_slot:
+  en: Add slot
+codex.action.remove_slot:
+  en: Remove slot
+codex.action.add_custom_slot:
+  en: Add custom slot
+codex.action.apply_builtin:
+  en: Apply built-in
+codex.action.duplicate:
+  en: Duplicate
+codex.action.promote:
+  en: Promote to canonical
+codex.action.archive:
+  en: Archive
+codex.action.compile:
+  en: Compile
+codex.action.pin_selected:
+  en: Pin selected entry
+codex.action.new_folder_short:
+  en: Folder
+
+# --- Navigator: sections and smart filters. ---
+codex.nav.section.pinned:
+  en: Pinned
+codex.nav.section.world:
+  en: World
+codex.nav.section.collections:
+  en: Collections
+codex.nav.filter.missing_coverage:
+  en: Missing coverage
+codex.nav.filter.broken_refs:
+  en: Broken references
+codex.nav.filter.trash:
+  en: Trash
+codex.nav.empty.pinned:
+  en: No pinned entries yet
+codex.nav.group.characters:
+  en: Characters
+codex.nav.group.locations:
+  en: Locations
+codex.nav.group.props:
+  en: Props & items
+codex.nav.group.materials:
+  en: Materials
+codex.nav.group.palettes:
+  en: Palettes
+codex.nav.group.styles:
+  en: Styles & vibes
+codex.nav.group.animations:
+  en: Animations
+codex.nav.group.factions:
+  en: Factions
+codex.nav.group.rules:
+  en: Rules
+codex.nav.group.recipes:
+  en: Recipes
+codex.nav.group.boards:
+  en: Reference boards
+
+# --- Editor: empty state and mode/detail tabs. ---
+codex.editor.empty:
+  en: Select an entry in the Navigator.
+codex.mode.edit:
+  en: Editor
+codex.mode.board:
+  en: Board
+codex.mode.graph:
+  en: Graph
+codex.mode.coverage:
+  en: Coverage
+codex.tab.overview:
+  en: Overview
+codex.tab.visual:
+  en: Visual
+codex.tab.anchors:
+  en: Anchors
+codex.tab.prompt:
+  en: Prompt
+codex.tab.coverage:
+  en: Coverage
+codex.tab.relations:
+  en: Relations
+codex.tab.history:
+  en: History
+
+# --- Header: actions and key-info strip. ---
+codex.header.action.test_generate:
+  en: Test generate
+codex.keyinfo.created:
+  en: Created
+codex.keyinfo.updated:
+  en: Updated
+codex.keyinfo.author:
+  en: Author
+codex.keyinfo.id:
+  en: ID
+codex.keyinfo.version:
+  en: Version
+codex.keyinfo.none:
+  en: "—"
+
+# --- Overview cards. ---
+codex.overview.card.summary:
+  en: Summary
+codex.overview.card.key_info:
+  en: Key info
+codex.overview.card.lore:
+  en: Lore
+codex.overview.card.role:
+  en: Role in project
+codex.overview.card.tags:
+  en: Tags
+codex.overview.card.quick_links:
+  en: Quick links
+codex.overview.card.notes:
+  en: Notes
+codex.overview.keyinfo.view_all:
+  en: View all metadata
+
+# --- Relations: graph/list toggle. ---
+codex.relations.toggle.graph:
+  en: Graph
+codex.relations.toggle.list:
+  en: List
+
+# --- Board. ---
+codex.board.title:
+  en: Visual board
+codex.board.pinned_relationships:
+  en: Pinned relationships
+
+# --- Inspector and test panel empty states. ---
+codex.inspector.empty:
+  en: No entry selected.
+codex.coverage.empty:
+  en: Select an entry to see its coverage.
+codex.coverage.empty_hint:
+  en: Apply a template or add a slot to start tracking coverage.
+codex.coverage.slots_header:
+  en: Slots
+codex.coverage.custom_slot_default:
+  en: New slot
+codex.coverage.templates_header:
+  en: Templates
+codex.coverage.template_untitled:
+  en: New template
+codex.coverage.template_name.placeholder:
+  en: Template name
+codex.coverage.slot_label.placeholder:
+  en: Slot label
+codex.coverage.add_slot.placeholder:
+  en: New slot label
+codex.coverage.edit_template:
+  en: Edit template
+codex.coverage.manage_templates:
+  en: Manage templates
+codex.coverage.manage_templates_hint:
+  en: Edit any template's slots, whether or not it is applied here.
+codex.coverage.rename_slot:
+  en: Rename slot
+codex.coverage.edit_slot_label:
+  en: Slot label
+codex.coverage.preset.platformer_character:
+  en: Platformer character
+codex.coverage.preset.top_down_four_direction:
+  en: Top-down 4-direction
+codex.coverage.preset.ui_button_states:
+  en: UI button states
+codex.test.empty:
+  en: Pin entries from the inspector to build a context stack.
+codex.test.placeholder:
+  en: Test prompt, e.g. @bit idle pose
+codex.test.compiled:
+  en: Compiled
+
+# --- Inspector: health, linked assets, used-in. ---
+codex.health.title:
+  en: Entry health
+codex.health.excellent:
+  en: Excellent
+codex.health.good:
+  en: Good
+codex.health.needs_work:
+  en: Needs work
+codex.health.check.handle:
+  en: Has handle
+codex.health.check.summary:
+  en: Has summary
+codex.health.check.visual_anchor:
+  en: Has visual anchor
+codex.health.check.palette_ref:
+  en: Has palette reference
+codex.health.check.coverage:
+  en: Coverage
+codex.health.check.no_broken_refs:
+  en: No broken references
+codex.readiness.title:
+  en: Generation readiness
+codex.inspector.linked_assets:
+  en: Linked assets
+codex.inspector.used_in:
+  en: Used in
+codex.used_in.recipes:
+  en: Recipes
+codex.used_in.animations:
+  en: Animations
+codex.used_in.fx:
+  en: FX
+codex.used_in.scenes:
+  en: Scenes
+
+# --- History timeline. ---
+codex.history.empty:
+  en: No version history yet.
+codex.history.author_unknown:
+  en: Unknown
+
+# --- Generate-workspace Codex context panel. ---
+codex.context.empty:
+  en: No Codex references pinned. Pin entries in the Codex workspace to steer generation.
+codex.context.prompt_label:
+  en: Codex-aware prompt
+codex.context.prompt_placeholder:
+  en: e.g. @bit idle pose, side view
+codex.context.matches:
+  en: Matches
+codex.context.compile:
+  en: Compile with Codex
+codex.context.compiled:
+  en: Compiled prompt
+codex.context.negative:
+  en: "Negative: %{text}"
+codex.context.generate:
+  en: Generate from compiled

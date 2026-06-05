@@ -166,6 +166,70 @@ pub const NEXT: char = glyph(ph::SKIP_FORWARD);
 /// Crop control.
 pub const CROP: char = glyph(ph::CROP);
 
+// --- Codex glyphs ---
+/// The Codex workspace / book.
+pub const CODEX: char = glyph(ph::BOOK_OPEN);
+/// An anchor (a Codex anchor badge / the anchor list).
+pub const ANCHOR: char = glyph(ph::ANCHOR);
+/// A reference / `@`-mention link (reference chip, "uses" relation).
+pub const REFERENCE: char = glyph(ph::AT);
+/// A relationship / link between entries.
+pub const LINK: char = glyph(ph::LINK);
+/// The relationship graph view.
+pub const GRAPH: char = glyph(ph::TREE_STRUCTURE);
+/// The coverage checklist view.
+pub const COVERAGE: char = glyph(ph::LIST_CHECKS);
+/// A tag (entry tags, tag filter).
+pub const TAG: char = glyph(ph::TAG);
+/// A reference board / visual board.
+pub const BOARD: char = glyph(ph::SQUARES_FOUR);
+/// A missing / not-yet-covered coverage slot.
+pub const MISSING: char = glyph(ph::CIRCLE);
+/// An inspector / info panel.
+pub const INSPECTOR: char = glyph(ph::INFO);
+/// A character / person entry type.
+pub const CHARACTER: char = glyph(ph::PERSON);
+/// A location / map-pin entry type.
+pub const LOCATION: char = glyph(ph::MAP_PIN);
+/// A material / cube entry type.
+pub const MATERIAL: char = glyph(ph::CUBE);
+/// A rule / scroll entry type.
+pub const RULE: char = glyph(ph::SCROLL);
+/// A closed folder (the Navigator folder tree).
+pub const FOLDER: char = glyph(ph::FOLDER);
+/// An open folder (an expanded Navigator folder).
+pub const FOLDER_OPEN: char = glyph(ph::FOLDER_OPEN);
+/// Delete / trash a thing (an entry, a folder).
+pub const TRASH: char = glyph(ph::TRASH);
+/// Rename / edit a thing in place.
+pub const RENAME: char = glyph(ph::PENCIL_SIMPLE);
+/// Move a thing into a folder / drag handle.
+pub const MOVE_TO: char = glyph(ph::FOLDER_PLUS);
+/// The Navigator WORLD tree header (the project world).
+pub const WORLD: char = glyph(ph::GLOBE);
+/// Pin / pinned-section marker and the pin action (distinct from `REFERENCE`/`@`).
+pub const PIN: char = glyph(ph::PUSH_PIN);
+/// Entry-health pulse marker.
+pub const HEALTH: char = glyph(ph::PULSE);
+/// Generation-readiness gauge marker.
+pub const READINESS: char = glyph(ph::GAUGE);
+/// Duplicate / copy an entry.
+pub const DUPLICATE: char = glyph(ph::COPY);
+/// Promote to canonical (an up arrow).
+pub const PROMOTE: char = glyph(ph::ARROW_FAT_UP);
+/// Archive an entry.
+pub const ARCHIVE: char = glyph(ph::ARCHIVE);
+/// Anchor-weight / Quick-actions sliders.
+pub const SLIDERS: char = glyph(ph::SLIDERS_HORIZONTAL);
+/// A generation recipe entry / the Used-in recipes row.
+pub const RECIPE: char = glyph(ph::COOKING_POT);
+/// A scene reference / the Used-in scenes row.
+pub const SCENE: char = glyph(ph::MOUNTAINS);
+/// Move a list item up one position (coverage slot reorder).
+pub const MOVE_UP: char = glyph(ph::CARET_UP);
+/// Move a list item down one position (coverage slot reorder).
+pub const MOVE_DOWN: char = glyph(ph::CARET_DOWN);
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -239,6 +303,37 @@ mod tests {
             PREV,
             NEXT,
             CROP,
+            CODEX,
+            ANCHOR,
+            REFERENCE,
+            LINK,
+            GRAPH,
+            COVERAGE,
+            TAG,
+            BOARD,
+            MISSING,
+            INSPECTOR,
+            CHARACTER,
+            LOCATION,
+            MATERIAL,
+            RULE,
+            FOLDER,
+            FOLDER_OPEN,
+            TRASH,
+            RENAME,
+            MOVE_TO,
+            WORLD,
+            PIN,
+            HEALTH,
+            READINESS,
+            DUPLICATE,
+            PROMOTE,
+            ARCHIVE,
+            SLIDERS,
+            RECIPE,
+            SCENE,
+            MOVE_UP,
+            MOVE_DOWN,
         ] {
             assert_ne!(c, '\u{fffd}', "alias decoded to the replacement char");
         }

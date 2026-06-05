@@ -32,8 +32,8 @@ use pixhaus_ui::state::ui_state::{Modal, SplashPhase};
 /// Reference screenshots are ~16:10 desktop captures; match that aspect.
 const SIZE: egui::Vec2 = egui::vec2(1440.0, 900.0);
 
-/// The five workspace ids, in shell order. Each becomes one PNG.
-const WORKSPACES: [&str; 5] = ["draw", "animate", "tiles", "generate", "export"];
+/// The workspace ids, in shell order. Each becomes one PNG.
+const WORKSPACES: [&str; 6] = ["draw", "animate", "tiles", "generate", "export", "codex"];
 
 /// Build the shell host with the full registration, mirroring `app/src/main.rs`.
 ///
@@ -60,6 +60,7 @@ fn build_host(ctx: &egui::Context) -> Host {
     pixhaus_mod_tiles::TilesModule.register(&mut host.registrar());
     pixhaus_mod_generation::GenerationModule.register(&mut host.registrar());
     pixhaus_mod_export::ExportModule.register(&mut host.registrar());
+    pixhaus_mod_codex::CodexModule.register(&mut host.registrar());
 
     host
 }
@@ -112,6 +113,53 @@ fn render_snapshot(name: &str, dir: &std::path::Path, setup: impl Fn(&mut Host) 
     Ok(size)
 }
 
+/// Seed the canonical Bit demo Codex so the workspace snapshot exercises every region.
+///
+/// The world itself - 36 entries across 8 folders, rich bodies, every anchor kind,
+/// typed relationships, prompt/negative fragments, and per-entry coverage - is built
+/// by the shared `pixhaus_services::build_bit_demo_codex` fixture, the same data the
+/// app boots into. The example only transplants that document into the host and, for
+/// the snapshot, focuses the editor on Bit and pins it to the generation context stack
+/// so the Navigator's Pinned section shows a real entry.
+///
+/// Idempotent: returns once the codex has entries (the host is rebuilt every frame).
+/// On the (not-expected) build error path it leaves the codex empty rather than
+/// panicking the harness.
+fn seed_codex(host: &mut Host) {
+    use pixhaus_core::AnchorStrength;
+
+    if !host.edit.document.codex().entries().is_empty() {
+        // Already seeded; just keep the editor focused on the first entry.
+        if host.state.ui.codex.selected.is_none() {
+            let first = host.edit.document.codex().entries().keys().next().copied();
+            host.state.ui.codex.selected = first;
+        }
+        return;
+    }
+
+    match pixhaus_services::build_bit_demo_codex() {
+        Ok(doc) => host.edit.document = doc,
+        Err(err) => {
+            tracing::warn!(%err, "failed to build the Bit demo codex; leaving it empty");
+            return;
+        }
+    }
+
+    // Focus the editor on Bit and pin it to the generation context stack.
+    let bit = pixhaus_core::CodexHandle::new("bit")
+        .ok()
+        .and_then(|h| host.edit.document.codex().resolve_handle(&h));
+    if let Some(id) = bit {
+        host.state.ui.codex.selected = Some(id);
+        if !host.state.ui.codex.context.iter().any(|c| c.entry == id) {
+            host.state.ui.codex.context.push(pixhaus_ui::state::ui_state::ContextRef {
+                entry: id,
+                strength: AnchorStrength::default(),
+            });
+        }
+    }
+}
+
 fn main() -> anyhow::Result<()> {
     let out_dir = std::path::Path::new("target").join("ui-snapshots");
     std::fs::create_dir_all(&out_dir).with_context(|| format!("failed to create {}", out_dir.display()))?;
@@ -122,6 +170,12 @@ fn main() -> anyhow::Result<()> {
         render_snapshot(workspace, &out_dir, move |host| {
             host.state.ui.splash = SplashPhase::Done;
             host.state.session.active_workspace = WorkspaceId(workspace);
+            // The Codex starts empty; seed a few entries so its Navigator, editor, and
+            // inspector have content in the snapshot. Idempotent (the host is rebuilt
+            // every frame, so guard on the empty codex).
+            if workspace == "codex" {
+                seed_codex(host);
+            }
         })?;
     }
 

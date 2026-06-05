@@ -7,7 +7,16 @@
 mod add_sprite;
 mod apply_generated_animation;
 mod apply_generated_asset;
+mod codex;
 
 pub use add_sprite::{AddSprite, SpriteProto};
 pub use apply_generated_animation::{ApplyGeneratedAnimation, GeneratedFrameData};
 pub use apply_generated_asset::ApplyGeneratedAsset;
+pub use codex::{
+    AddCodexAlias, AddCodexEntry, AddCoverageSlot, AddEntryCustomSlot, AddRelationship, ApplyBuiltinCoverageTemplate, ApplyCoverageTemplate,
+    BuiltinCoveragePreset, ChangeRelationshipKind, ClearCoverage, CodexEntryDelta, CodexEntryProto, CreateCodexFolder, CreateCoverageTemplate,
+    DeleteCodexEntry, DeleteCodexFolder, DeleteCoverageTemplate, DuplicateCodexEntry, RemoveAnchor, RemoveCodexAlias, RemoveCoverageSlot,
+    RemoveEntryCustomSlot, RemoveRelationship, RenameCodexFolder, RenameCoverageSlotLabel, RenameCoverageTemplate, RenameEntryCustomSlotLabel,
+    ReorderCoverageSlots, SetAnchor, SetAnimationDetails, SetCharacterDetails, SetCodexEntryFolder, SetCodexFolderParent, SetCodexHandle, SetCoverageStatus,
+    SetEntryStatus, SetGenericDetails, SetNegativeFragments, SetPaletteDetails, SetPromptFragments, SetStyleDetails, UpdateCodexEntry,
+};

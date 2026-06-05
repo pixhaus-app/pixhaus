@@ -15,7 +15,10 @@ pub enum Region {
     ToolOptions,
     /// Filled from the tool registry, workspace-filtered.
     LeftRail,
-    /// Shell chrome: the canvas stage; embeds the canvas paint callback.
+    /// Filled from the panel registry: a left-edge card stack inboard of the rail
+    /// (the Codex Navigator). Empty for the canvas workspaces.
+    LeftDock,
+    /// Shell chrome: the canvas stage, or a full-center registered panel.
     Center,
     /// Filled from the panel registry: a top-to-bottom card stack.
     RightDock,

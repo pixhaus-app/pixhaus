@@ -30,6 +30,8 @@ panel.results.title:
   en: Results
 panel.history.title:
   en: History
+panel.generate-codex-context.title:
+  en: Codex Context
 
 # --- The `gen.*` command labels. ---
 command.gen.generate:

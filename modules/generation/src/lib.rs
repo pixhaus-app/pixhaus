@@ -8,6 +8,7 @@
 //! the services layer.
 #![cfg_attr(test, allow(clippy::unwrap_used, clippy::expect_used, clippy::disallowed_methods))]
 
+mod codex_context;
 mod generate;
 pub mod prompt;
 

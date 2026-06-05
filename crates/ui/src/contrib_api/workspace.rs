@@ -43,16 +43,36 @@ pub struct WorkspaceMeta {
     pub shortcut: egui::KeyboardShortcut,
 }
 
+/// What fills the shell's center region for a workspace.
+///
+/// Most workspaces draw the navigable wgpu canvas there. The Codex draws a
+/// registered panel (its Entry Editor / Visual Board / Graph surface), which is not
+/// a pixel canvas, so it asks for a full-center panel instead. `Copy` so a layout
+/// stays cheap to clone per frame.
+#[derive(Copy, Clone, PartialEq, Debug)]
+pub enum CenterSurface {
+    /// The wgpu canvas stage (Draw, Animate, Tiles, Generate, Export).
+    Canvas,
+    /// A registered panel rendered full-center, by id (the Codex editor/board/graph).
+    Panel(PanelId),
+}
+
 /// Where a workspace places registered panels and tools, by id.
 ///
 /// `layout()` returns owned `Vec`s of `Copy` ids - cheap to call once per frame
 /// for the active workspace; no panel object moves.
 #[derive(Clone, PartialEq, Debug)]
 pub struct WorkspaceLayout {
+    /// Left-dock card stack, top to bottom. Empty for the canvas workspaces; the
+    /// Codex uses it for its Navigator. Rendered as a left side panel inboard of the
+    /// tool rail when non-empty.
+    pub left_dock: Vec<PanelId>,
     /// Right-dock card stack, top to bottom.
     pub right_dock: Vec<PanelId>,
     /// Bottom-tray tabs, left to right; the first is the default selected tab.
     pub bottom_tray: Vec<PanelId>,
+    /// What fills the center: the canvas, or a full-center panel.
+    pub center: CenterSurface,
     /// The ordered subset of tools shown in the left rail.
     pub primary_tools: Vec<ToolId>,
     /// The tool selected when this workspace activates.
@@ -75,14 +95,16 @@ pub struct StatusItem {
 
 #[cfg(test)]
 mod tests {
-    use super::{StatusItem, WorkspaceLayout};
+    use super::{CenterSurface, StatusItem, WorkspaceLayout};
     use crate::contrib_api::ids::{PanelId, ToolId};
 
     #[test]
     fn layout_is_clone_eq_debug() {
         let layout = WorkspaceLayout {
+            left_dock: Vec::new(),
             right_dock: vec![PanelId("layers"), PanelId("palette")],
             bottom_tray: vec![PanelId("frames"), PanelId("console")],
+            center: CenterSurface::Canvas,
             primary_tools: vec![ToolId("pencil")],
             default_tool: ToolId("pencil"),
             status_items: vec![StatusItem {
@@ -94,5 +116,12 @@ mod tests {
         assert_eq!(layout.clone(), layout);
         // Debug is populated (insta-snapshottable).
         assert!(format!("{layout:?}").contains("Pixel Grid On"));
+    }
+
+    #[test]
+    fn center_surface_distinguishes_canvas_from_panel() {
+        assert_eq!(CenterSurface::Canvas, CenterSurface::Canvas);
+        assert_ne!(CenterSurface::Canvas, CenterSurface::Panel(PanelId("codex-editor")));
+        assert_eq!(CenterSurface::Panel(PanelId("a")), CenterSurface::Panel(PanelId("a")));
     }
 }
