@@ -26,7 +26,7 @@ impl RemoveCodexAlias {
 impl Command for RemoveCodexAlias {
     fn apply(&mut self, doc: &mut Document) -> Result<(), CommandError> {
         let entry = doc.codex_mut().entry_mut(self.id).ok_or(CommandError::CodexEntryNotFound(self.id))?;
-        let pos = entry.aliases.iter().position(|a| a == &self.alias).ok_or(CommandError::CodexHandleInUse)?;
+        let pos = entry.aliases.iter().position(|a| a == &self.alias).ok_or(CommandError::InvalidState)?;
         entry.aliases.remove(pos);
         self.removed_at = Some(pos);
         doc.bump_revision();
@@ -90,6 +90,6 @@ mod tests {
         let mut doc = Document::new();
         let id = seed(&mut doc, "bit");
         let mut cmd = RemoveCodexAlias::new(id, handle("nope"));
-        assert!(matches!(cmd.apply(&mut doc), Err(CommandError::CodexHandleInUse)));
+        assert!(matches!(cmd.apply(&mut doc), Err(CommandError::InvalidState)));
     }
 }

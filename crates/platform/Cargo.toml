@@ -13,6 +13,8 @@ homepage.workspace = true
 # the paths; this crate creates the leaf dirs it owns.
 directories.workspace = true
 thiserror.workspace = true
+# Libraries instrument fallible/disk-touching work; the binary owns the subscriber.
+tracing.workspace = true
 
 [dev-dependencies]
 # A throwaway dir for the create-failure test, so it never touches a real app dir.

@@ -88,6 +88,11 @@ impl Workspace for GenerateWorkspace {
         WorkspaceLayout {
             left_dock: Vec::new(),
             right_dock: vec![PROMPT, GENERATE_CODEX_CONTEXT, RECIPE, STRUCTURE, STYLE, PALETTE_BEHAVIOR, ADVANCED_SETTINGS],
+            // TIMELINE and CONSOLE here are foreign panel ids - owned by the animation and
+            // sprite-edit modules - composed into this layout rather than duplicated or pulled
+            // in as crate dependencies. Those panels are stateless over the shared canvas,
+            // reading shared mirrors, so referencing them by id costs no new dependency and no
+            // new locale key, and they behave identically here and in their home workspace.
             bottom_tray: vec![RESULTS, TIMELINE, HISTORY, CONSOLE],
             center: CenterSurface::Canvas,
             primary_tools: vec![HAND, ZOOM, SELECTION, AI_BRUSH],
@@ -139,7 +144,7 @@ impl Panel for PromptPanel {
         // A secondary-color prompt label so the composer reads as a labeled field,
         // not a bare box - the references frame the prompt with structure.
         ui.label(
-            egui::RichText::new("Describe your sprite")
+            egui::RichText::new(MsgKey("panel.prompt.describe").tr())
                 .size(theme.type_scale.label)
                 .color(theme.roles.text_secondary),
         );
@@ -151,14 +156,18 @@ impl Panel for PromptPanel {
             egui::TextEdit::multiline(scope.scratch)
                 .desired_rows(4)
                 .desired_width(f32::INFINITY)
-                .hint_text("A knight idle pose, side view. Use {variable} chips."),
+                .hint_text(MsgKey("panel.prompt.hint").tr()),
         );
 
         // The {variable} chips, led by a secondary-color caption so the accent chips
         // read as insertable tokens rather than stray violet labels.
         ui.add_space(theme.spacing.xs);
         ui.horizontal_wrapped(|ui| {
-            ui.label(egui::RichText::new("Variables").size(theme.type_scale.label).color(theme.roles.text_secondary));
+            ui.label(
+                egui::RichText::new(MsgKey("panel.prompt.variables").tr())
+                    .size(theme.type_scale.label)
+                    .color(theme.roles.text_secondary),
+            );
             for chip in ["{subject}", "{style}", "{palette}", "{pose}"] {
                 let text = egui::RichText::new(chip).size(theme.type_scale.label).color(theme.accent.base);
                 let _ = ui.selectable_label(false, text);
@@ -174,7 +183,7 @@ impl Panel for PromptPanel {
 
         // First pass: generate the anchor. Assembles the anchor prompt from the
         // edited subject plus the Bit defaults, then submits it.
-        let anchor_label = egui::RichText::new(format!("{} Generate Anchor", icons::SPARKLE)).color(theme.roles.text_primary);
+        let anchor_label = egui::RichText::new(format!("{} {}", icons::SPARKLE, MsgKey("command.gen.generate-anchor").tr())).color(theme.roles.text_primary);
         let anchor_button = egui::Button::new(anchor_label).fill(theme.accent.base).min_size(Vec2::new(full_width, 28.0));
         if ui.add_enabled(!busy, anchor_button).clicked() {
             let mut identity = prompt::defaults::bit_identity();
@@ -189,7 +198,7 @@ impl Panel for PromptPanel {
         // only once a still anchor result is selected (the reference image) and no
         // job is running.
         let anchor_selected = scope.ctx.session.selected_is_anchor();
-        let idle_label = egui::RichText::new(format!("{} Generate Idle Animation", icons::SPARKLE)).color(theme.roles.text_primary);
+        let idle_label = egui::RichText::new(format!("{} {}", icons::SPARKLE, MsgKey("command.gen.generate-idle").tr())).color(theme.roles.text_primary);
         let idle_fill = if anchor_selected { theme.accent.base } else { theme.accent.muted };
         let idle_button = egui::Button::new(idle_label).fill(idle_fill).min_size(Vec2::new(full_width, 28.0));
         if ui.add_enabled(anchor_selected && !busy, idle_button).clicked()
@@ -211,7 +220,7 @@ impl Panel for PromptPanel {
 
         if busy {
             ui.add_space(theme.spacing.sm);
-            widgets::busy_indicator(ui, theme, "Generating\u{2026}");
+            widgets::busy_indicator(ui, theme, &MsgKey("command.gen.status-generating").tr());
         }
     }
 }
@@ -435,10 +444,10 @@ impl Panel for ResultsPanel {
 
         if count == 0 {
             if busy {
-                widgets::busy_indicator(ui, theme, "Generating\u{2026}");
+                widgets::busy_indicator(ui, theme, &MsgKey("command.gen.status-generating").tr());
             } else {
                 ui.label(
-                    egui::RichText::new("No results yet. Enter a prompt and click Generate.")
+                    egui::RichText::new(MsgKey("panel.results.empty").tr())
                         .size(theme.type_scale.label)
                         .color(theme.roles.text_secondary),
                 );
@@ -449,7 +458,7 @@ impl Panel for ResultsPanel {
         // A job running while results already exist (an idle after an anchor) reads as
         // active above the grid.
         if busy {
-            widgets::busy_indicator(ui, theme, "Generating\u{2026}");
+            widgets::busy_indicator(ui, theme, &MsgKey("command.gen.status-generating").tr());
             ui.add_space(theme.spacing.xs);
         }
 
@@ -476,25 +485,25 @@ impl Panel for ResultsPanel {
         ui.add_space(theme.spacing.sm);
         ui.horizontal_wrapped(|ui| {
             if selected_is_animation {
-                if ui.button("Insert as animated sprite").clicked() {
+                if ui.button(MsgKey("command.gen.insert-animated").tr()).clicked() {
                     scope.ctx.intents.push(Intent::InsertSelectedAsAnimatedSprite);
                 }
-            } else if ui.button("Insert as new sprite").clicked() {
+            } else if ui.button(MsgKey("command.gen.insert-sprite").tr()).clicked() {
                 scope.ctx.intents.push(Intent::InsertSelectedResultAsSprite);
             }
             // "Generate more" submits another anchor job, so it is disabled while a
             // job is in flight (the apply buttons stay enabled - applying a result is
             // a command independent of the running job).
-            if ui.add_enabled(!busy, egui::Button::new("Generate more")).clicked() {
+            if ui.add_enabled(!busy, egui::Button::new(MsgKey("command.gen.generate-more").tr())).clicked() {
                 scope.ctx.intents.push(Intent::SubmitAnchorJob {
                     prompt: scope.ctx.session.last_prompt.clone(),
                 });
             }
             // Mock affordances, not part of the apply loop yet.
-            if ui.button("Use selected").clicked() {
+            if ui.button(MsgKey("command.gen.use-selected").tr()).clicked() {
                 scope.ctx.intents.push(Intent::RunAction(GEN_USE_SELECTED));
             }
-            if ui.button("Create variations").clicked() {
+            if ui.button(MsgKey("command.gen.create-variations").tr()).clicked() {
                 scope.ctx.intents.push(Intent::RunAction(GEN_CREATE_VARIATIONS));
             }
         });

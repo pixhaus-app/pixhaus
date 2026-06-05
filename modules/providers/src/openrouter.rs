@@ -79,6 +79,10 @@ impl OpenRouterProvider {
                 (vec![Message::with_parts(Role::User, parts)], 0.2_f64, "16:9")
             }
         };
+        // input.size is advisory for OpenRouter: output size is constrained by
+        // aspect_ratio only (Gemini ignores a pixel size, and a configurable model
+        // slug may 400 on an image_size key), so it is intentionally not forwarded -
+        // the result is taken at the size the model picks for the aspect ratio.
         ChatCompletionRequest::builder()
             .model(self.model.clone())
             .messages(messages)

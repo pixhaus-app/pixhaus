@@ -25,6 +25,26 @@ panel.ai-animation-assistant.title:
 panel.timeline.title:
   en: Timeline
 
+# --- Clip Properties panel body (clip name is data, interpolated as %{name}). ---
+panel.clip-properties.clip:
+  en: "Clip: %{name}"
+panel.clip-properties.frames:
+  en: Frames %{start}-%{end}
+panel.clip-properties.fps:
+  en: FPS %{fps}
+panel.clip-properties.loop:
+  en: Loop
+panel.clip-properties.empty:
+  en: No clip on the active sprite.
+
+# --- Timeline panel transport readouts and empty state. ---
+panel.timeline.frame-count:
+  en: "%{count} frames"
+panel.timeline.fps:
+  en: "%{fps} FPS"
+panel.timeline.empty:
+  en: No animation to play - insert an animated sprite from Generate.
+
 # --- AI-animation quick-actions (anim.* action ids). ---
 command.anim.in-between-frames:
   en: In-between frames

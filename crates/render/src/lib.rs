@@ -209,6 +209,10 @@ impl ViewportRenderer {
         // 96-byte std140 layout: origin@0 size@8 checker_lo@16 checker_hi@32 minor@48
         // major@64 params@80. `flags` rides as a float (values <= 7, exactly representable;
         // the shader reads it back with `u32(params.w)`).
+        // The view uniform is hand-packed byte by byte rather than derived from a bytemuck
+        // Pod, so render keeps wgpu as its only dependency and stays bytemuck-free. The fields
+        // are written at fixed std140 offsets (documented above); a wrong offset would silently
+        // corrupt the uniform, so put() is unit-tested off-GPU.
         let mut b = [0u8; 96];
         put(&mut b, 0, p.origin_px[0]);
         put(&mut b, 4, p.origin_px[1]);
@@ -250,7 +254,7 @@ impl ViewportRenderer {
     /// the retained texture in place. Full-frame upload is fine for the small
     /// Generate sprites of the foundation; dirty-rect upload is the 8K follow-up.
     pub fn upload_frame(&mut self, device: &wgpu::Device, queue: &wgpu::Queue, rgba: &[u8], width: u32, height: u32) {
-        if width == 0 || height == 0 {
+        if frame_upload_is_skippable(width, height) {
             return;
         }
         let needs_alloc = self.texture.as_ref().is_none_or(|t| t.width != width || t.height != height);
@@ -358,6 +362,13 @@ fn put(bytes: &mut [u8], off: usize, v: f32) {
     bytes[off..off + 4].copy_from_slice(&v.to_le_bytes());
 }
 
+/// True when a frame upload can be skipped entirely: a zero-area frame has no texels
+/// to write and would make `make_texture` create a zero-sized texture. Pure decision,
+/// factored out so it has coverage on headless CI where the GPU upload test skips.
+fn frame_upload_is_skippable(width: u32, height: u32) -> bool {
+    width == 0 || height == 0
+}
+
 /// The standard sRGB → linear transfer for one 0..1 channel.
 fn srgb_to_linear(c: f32) -> f32 {
     if c <= 0.040_45 { c / 12.92 } else { ((c + 0.055) / 1.055).powf(2.4) }
@@ -392,6 +403,17 @@ mod tests {
         assert_eq!(&bytes[0..4], &[0, 0, 0, 0], "bytes before the offset are untouched");
         assert_eq!(&bytes[4..8], &1.0_f32.to_le_bytes(), "the f32 lands little-endian at the offset");
         assert_eq!(&bytes[8..12], &[0, 0, 0, 0], "bytes after the write are untouched");
+    }
+
+    /// `frame_upload_is_skippable` gates `upload_frame`; pin it for both zero-area
+    /// cases and the normal path. No GPU, so this runs on headless CI.
+    #[test]
+    fn frame_upload_is_skippable_only_on_zero_area() {
+        assert!(super::frame_upload_is_skippable(0, 4));
+        assert!(super::frame_upload_is_skippable(4, 0));
+        assert!(super::frame_upload_is_skippable(0, 0));
+        assert!(!super::frame_upload_is_skippable(1, 1));
+        assert!(!super::frame_upload_is_skippable(4, 8));
     }
 
     /// Builds the renderer and uploads two differently-sized frames (forcing a

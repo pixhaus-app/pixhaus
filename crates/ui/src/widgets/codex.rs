@@ -200,9 +200,10 @@ pub fn strength_selector(ui: &mut egui::Ui, theme: &Theme, current: AnchorStreng
 }
 
 /// One coverage slot row for the checklist: a check (complete) or a hollow circle
-/// (missing) plus the slot label, and a trailing `Generate` button on missing slots.
-/// Returns `true` when that button is clicked.
-pub fn coverage_slot_row(ui: &mut egui::Ui, theme: &Theme, label: &str, complete: bool, allow_generate: bool) -> bool {
+/// (missing) plus the slot label, and a trailing generate button on missing slots.
+/// `generate_label` is the already-localized button text (the caller owns the key, as
+/// the sibling widgets do). Returns `true` when that button is clicked.
+pub fn coverage_slot_row(ui: &mut egui::Ui, theme: &Theme, label: &str, complete: bool, allow_generate: bool, generate_label: &str) -> bool {
     let mut generate = false;
     ui.horizontal(|ui| {
         ui.spacing_mut().item_spacing.x = theme.spacing.sm;
@@ -217,7 +218,7 @@ pub fn coverage_slot_row(ui: &mut egui::Ui, theme: &Theme, label: &str, complete
         if !complete && allow_generate {
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                 let btn = egui::Button::new(
-                    egui::RichText::new(format!("{} Generate", icons::SPARKLE))
+                    egui::RichText::new(format!("{} {generate_label}", icons::SPARKLE))
                         .size(theme.type_scale.label)
                         .color(theme.accent.ai),
                 )
@@ -233,8 +234,9 @@ pub fn coverage_slot_row(ui: &mut egui::Ui, theme: &Theme, label: &str, complete
 
 /// A coverage checklist: a header line with the completion ratio, then one row per
 /// slot. `slots` is `(label, complete)` pairs. Returns the index of any slot whose
-/// `Generate` button was clicked. `allow_generate` gates the per-row button.
-pub fn coverage_checklist(ui: &mut egui::Ui, theme: &Theme, slots: &[(String, bool)], allow_generate: bool) -> Option<usize> {
+/// generate button was clicked. `allow_generate` gates the per-row button;
+/// `generate_label` is the already-localized button text passed through to each row.
+pub fn coverage_checklist(ui: &mut egui::Ui, theme: &Theme, slots: &[(String, bool)], allow_generate: bool, generate_label: &str) -> Option<usize> {
     let total = slots.len();
     let complete = slots.iter().filter(|(_, done)| *done).count();
     ui.horizontal(|ui| {
@@ -253,7 +255,7 @@ pub fn coverage_checklist(ui: &mut egui::Ui, theme: &Theme, slots: &[(String, bo
     ui.add_space(theme.spacing.xs);
     let mut generate_index = None;
     for (i, (label, done)) in slots.iter().enumerate() {
-        if coverage_slot_row(ui, theme, label, *done, allow_generate) {
+        if coverage_slot_row(ui, theme, label, *done, allow_generate, generate_label) {
             generate_index = Some(i);
         }
     }

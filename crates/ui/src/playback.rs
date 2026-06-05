@@ -86,6 +86,26 @@ pub fn playhead_index(seconds: f32, fps: u16, frame_count: u32, loop_mode: LoopM
     offset
 }
 
+/// The absolute frame the playhead sits on: `range_start + offset`, clamped into the
+/// sprite's real frames. The Animate timeline ruler highlights this frame.
+#[must_use]
+pub fn playhead_frame(range_start: u32, playhead_offset: u32, frames: u32) -> u32 {
+    range_start.saturating_add(playhead_offset).min(frames.max(1) - 1)
+}
+
+/// The range-relative frame offset for a click at `pos_x` on a frame ruler that starts
+/// at `left` with `frame_w` pixels per frame: the absolute frame under the cursor,
+/// clamped into the real frames, then made relative to `range_start`. Scrubs by click.
+#[must_use]
+pub fn click_to_offset(pos_x: f32, left: f32, frame_w: f32, frames: u32, range_start: u32) -> u32 {
+    let frames = frames.max(1);
+    // A click left of the ruler floors to 0; a NaN from a zero `frame_w` also maxes to
+    // 0. The result is clamped into the real frames before the cast, so it cannot wrap.
+    #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
+    let frame = (((pos_x - left) / frame_w).floor().max(0.0) as u32).min(frames - 1);
+    frame.saturating_sub(range_start)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -132,6 +152,24 @@ mod tests {
         let mut cmd = ApplyGeneratedAnimation::new("s".to_owned(), "idle".to_owned(), 1, 1, fps, LoopMode::Loop, data);
         assert!(cmd.apply(&mut doc).is_ok(), "the test animation applies");
         doc
+    }
+
+    #[test]
+    fn playhead_frame_clamps_into_real_frames() {
+        assert_eq!(playhead_frame(0, 0, 8), 0);
+        assert_eq!(playhead_frame(2, 3, 8), 5);
+        assert_eq!(playhead_frame(0, 99, 8), 7, "an offset past the end clamps to the last frame");
+        assert_eq!(playhead_frame(0, 0, 0), 0, "zero frames clamps to 0 with no underflow");
+    }
+
+    #[test]
+    fn click_to_offset_maps_x_to_a_range_relative_frame() {
+        // 8 frames, ruler from x=0, 10px per frame.
+        assert_eq!(click_to_offset(0.0, 0.0, 10.0, 8, 0), 0, "the left edge is frame 0");
+        assert_eq!(click_to_offset(25.0, 0.0, 10.0, 8, 0), 2, "x=25 lands in frame 2");
+        assert_eq!(click_to_offset(-5.0, 0.0, 10.0, 8, 0), 0, "a click left of the ruler clamps to 0");
+        assert_eq!(click_to_offset(1000.0, 0.0, 10.0, 8, 0), 7, "far right clamps to the last frame");
+        assert_eq!(click_to_offset(25.0, 0.0, 10.0, 8, 2), 0, "range_start 2 makes absolute frame 2 a zero offset");
     }
 
     #[test]

@@ -13,6 +13,18 @@ workspace.generate.purpose:
 workspace.generate.status.ai-ready:
   en: AI Ready
 
+# --- Prompt composer body (the {variable} tokens are inserted literally, not keys). ---
+panel.prompt.describe:
+  en: Describe your sprite
+panel.prompt.hint:
+  en: A knight idle pose, side view. Use {variable} chips.
+panel.prompt.variables:
+  en: Variables
+
+# --- Results panel body. ---
+panel.results.empty:
+  en: No results yet. Enter a prompt and click Generate.
+
 # --- Dock and tray panels. ---
 panel.prompt.title:
   en: Prompt
@@ -36,10 +48,18 @@ panel.generate-codex-context.title:
 # --- The `gen.*` command labels. ---
 command.gen.generate:
   en: Generate sprite from prompt
+command.gen.generate-anchor:
+  en: Generate Anchor
+command.gen.generate-idle:
+  en: Generate Idle Animation
+command.gen.status-generating:
+  en: Generating…
 command.gen.use-selected:
   en: Use selected result
 command.gen.insert-sprite:
   en: Insert result as new sprite
+command.gen.insert-animated:
+  en: Insert as animated sprite
 command.gen.create-variations:
   en: Create variations
 command.gen.generate-more:

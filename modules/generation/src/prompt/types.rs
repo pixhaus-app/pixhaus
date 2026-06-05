@@ -72,9 +72,10 @@ pub struct IdleSpec {
 }
 
 impl IdleSpec {
-    /// The number of frames the sheet holds (`cols * rows`).
+    /// The number of frames the sheet holds (`cols * rows`). Saturates rather than
+    /// overflowing on absurd UI-supplied dimensions.
     pub fn frame_count(&self) -> u32 {
-        self.cols * self.rows
+        self.cols.saturating_mul(self.rows)
     }
 }
 
@@ -96,4 +97,23 @@ pub struct AnimationPrinciples {
     pub secondary: String,
     /// The "what must not happen" line that guards drift and duplicates.
     pub negatives: String,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::IdleSpec;
+
+    #[test]
+    fn frame_count_multiplies_and_saturates() {
+        let spec = |cols, rows| IdleSpec {
+            cols,
+            rows,
+            gutter_percent: 8,
+            fps: 12,
+            clip_name: "idle".to_owned(),
+        };
+        assert_eq!(spec(4, 2).frame_count(), 8);
+        assert_eq!(spec(1, 1).frame_count(), 1);
+        assert_eq!(spec(u32::MAX, 2).frame_count(), u32::MAX, "absurd dimensions saturate, never overflow");
+    }
 }

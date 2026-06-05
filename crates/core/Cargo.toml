@@ -17,6 +17,8 @@ thiserror = { workspace = true }
 [dev-dependencies]
 rstest = { workspace = true }
 proptest = { workspace = true }
+# Exercises the mandated V1 JSON save format (save-format doc section 33) in tests.
+serde_json = { workspace = true }
 
 [lints]
 workspace = true

@@ -1050,6 +1050,11 @@ fn overview_tab(
     detail: &CodexEntryDetail,
 ) {
     let columns = widgets::column_count(ui.available_width());
+    // Responsive Overview grid: column_count picks 1/2/3 columns from pane width and
+    // distribute round-robins the cards, both pure so the layout is tested without a
+    // live egui frame. The cards render in sequential bodies below, not a stored
+    // Vec<closure>, so each can borrow &mut intents / &mut draft; folding this nested
+    // loop into a closure vec would reintroduce that borrow conflict.
     let layout = widgets::distribute(OVERVIEW_CARDS.len(), columns);
     ui.columns(columns, |cols| {
         for (c, idxs) in layout.iter().enumerate() {
@@ -3037,7 +3042,7 @@ fn coverage_body(ui: &mut egui::Ui, theme: &Theme, intents: &mut pixhaus_ui::sta
         .iter()
         .map(|item| (widgets::resolve_coverage_label(&item.label), coverage_complete(item.status)))
         .collect();
-    if let Some(slot_index) = widgets::coverage_checklist(ui, theme, &rows, true) {
+    if let Some(slot_index) = widgets::coverage_checklist(ui, theme, &rows, true, &tr("codex.coverage.generate")) {
         if let Some(item) = detail.coverage_items.get(slot_index) {
             intents.push(Intent::GenerateFromCoverage {
                 entry: id,

@@ -107,9 +107,10 @@ pub struct Grid {
 }
 
 impl Grid {
-    /// The total number of cells (frames) in the grid.
+    /// The total number of cells (frames) in the grid. Saturates rather than overflowing
+    /// on absurd UI-supplied dimensions (mirrors the checked arithmetic in `core`).
     pub fn cell_count(self) -> u32 {
-        self.cols * self.rows
+        self.cols.saturating_mul(self.rows)
     }
 }
 
@@ -229,6 +230,14 @@ impl JobManager {
         if let Some(token) = self.cancels.get(&job) {
             token.cancel();
         }
+    }
+
+    /// Releases a finished job's cancel token. The shell calls this when it drains a
+    /// terminal [`JobMsg`] (Completed/Failed/Cancelled); the token is unobservable once
+    /// the task ends, so without this both maps grow for the manager's whole lifetime.
+    /// The status is kept so [`status`](Self::status) still answers for finished jobs.
+    pub fn finish(&mut self, job: JobId) {
+        self.cancels.remove(&job);
     }
 }
 
@@ -382,9 +391,44 @@ mod tests {
     }
 
     #[test]
+    fn status_round_trips_and_unknown_is_none() {
+        let (tx, _rx) = std::sync::mpsc::channel();
+        let mut jobs = JobManager::new(tx);
+        jobs.set_status(JobId(7), JobStatus::Complete);
+        assert_eq!(jobs.status(JobId(7)), Some(JobStatus::Complete));
+        assert_eq!(jobs.status(JobId(999)), None, "an untracked id has no status");
+    }
+
+    #[test]
+    fn cancel_unknown_job_is_a_noop() {
+        let (tx, _rx) = std::sync::mpsc::channel();
+        let mut jobs = JobManager::new(tx);
+        // No submit, so the id is unknown: cancel must be a silent no-op, not a panic.
+        jobs.cancel(JobId(123));
+    }
+
+    #[test]
+    fn finish_reclaims_the_cancel_token_but_keeps_the_status() {
+        let (tx, _rx) = std::sync::mpsc::channel();
+        let mut jobs = JobManager::new(tx);
+        jobs.cancels.insert(JobId(5), CancellationToken::new());
+        jobs.set_status(JobId(5), JobStatus::Complete);
+
+        jobs.finish(JobId(5));
+
+        assert!(jobs.cancels.is_empty(), "finish drops the dead cancel token");
+        assert_eq!(jobs.status(JobId(5)), Some(JobStatus::Complete), "the status is retained");
+    }
+
+    #[test]
     fn grid_cell_count_multiplies_cols_by_rows() {
         assert_eq!(Grid { cols: 4, rows: 2 }.cell_count(), 8);
         assert_eq!(Grid { cols: 1, rows: 1 }.cell_count(), 1);
         assert_eq!(Grid { cols: 0, rows: 5 }.cell_count(), 0, "a zero dimension yields no cells");
+        assert_eq!(
+            Grid { cols: u32::MAX, rows: 2 }.cell_count(),
+            u32::MAX,
+            "an absurd grid saturates instead of overflowing"
+        );
     }
 }

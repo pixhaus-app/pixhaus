@@ -2510,6 +2510,7 @@ dependencies = [
  "proptest",
  "rstest",
  "serde",
+ "serde_json",
  "thiserror 2.0.18",
 ]
 
@@ -2522,7 +2523,9 @@ name = "pixhaus-mod-animation"
 version = "0.1.0"
 dependencies = [
  "egui",
+ "pixhaus-services",
  "pixhaus-ui",
+ "tracing",
 ]
 
 [[package]]
@@ -2546,6 +2549,7 @@ version = "0.1.0"
 dependencies = [
  "egui",
  "pixhaus-ui",
+ "tracing",
 ]
 
 [[package]]
@@ -2604,6 +2608,7 @@ dependencies = [
  "directories",
  "tempfile",
  "thiserror 2.0.18",
+ "tracing",
 ]
 
 [[package]]

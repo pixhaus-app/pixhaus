@@ -124,7 +124,7 @@ fn miss(key: &str) {
 
 #[cfg(test)]
 mod tests {
-    use super::{current_language, set_language, set_show_keys, tr, tr_args, tr_plural};
+    use super::{available_languages, current_language, set_language, set_show_keys, tr, tr_args, tr_plural};
     use serial_test::serial;
 
     // rust-i18n's active locale is process-global, so every test that reads or
@@ -190,6 +190,16 @@ mod tests {
         set_language("en");
         assert_eq!(tr_plural("panel.layers.count", 1), "1 layer");
         assert_eq!(tr_plural("panel.layers.count", 3), "3 layers");
+    }
+
+    #[test]
+    #[serial]
+    fn available_languages_lists_the_embedded_bundles() {
+        // Reads the embedded bundle set, not the active locale, but stays #[serial]
+        // with the rest since it shares rust-i18n's process-global state.
+        let langs = available_languages();
+        assert!(langs.iter().any(|l| l == "en"), "en bundle is available");
+        assert!(langs.iter().any(|l| l == "es"), "es bundle is available");
     }
 
     #[test]

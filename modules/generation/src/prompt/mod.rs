@@ -149,6 +149,14 @@ mod tests {
     use super::*;
 
     #[test]
+    fn default_anchor_spec_keys_on_the_canonical_magenta() {
+        // The anchor builder reads the spec field, the idle builder reads the const;
+        // lock the spec default to the const so the two passes can never key on
+        // different colours.
+        assert_eq!(defaults::default_anchor_spec().magenta_hex, MAGENTA_KEY_HEX);
+    }
+
+    #[test]
     fn anchor_prompt_carries_identity_palette_and_magenta_key() {
         let prompt = build_anchor_prompt(&defaults::bit_identity(), &defaults::default_anchor_spec());
         assert!(prompt.contains("Bit, the Pixhaus mascot"), "the identity description is present");

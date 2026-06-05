@@ -38,9 +38,10 @@ impl Command for SetCodexHandle {
             return Err(CommandError::CodexEntryNotFound(self.id));
         };
         // A no-op rename is always allowed; only a real change checks locks and uniqueness.
+        // It mutates nothing, so it must not bump the revision (which would mark the
+        // document dirty for a rename that did nothing).
         if entry.handle == new_handle {
             self.prev = Some(new_handle);
-            doc.bump_revision();
             return Ok(());
         }
         if entry.locks.handle {

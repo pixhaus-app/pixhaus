@@ -51,22 +51,35 @@ pub fn drain_background(host: &mut Host, ctx: &egui::Context) {
         landed = true;
         match msg {
             JobMsg::Status { job, status } => {
-                if matches!(status, JobStatus::Cancelled) {
+                let cancelled = matches!(status, JobStatus::Cancelled);
+                if cancelled {
                     host.state.session.ai_status = AiStatus::Ready;
                 }
                 host.edit.jobs.set_status(job, status);
+                if cancelled {
+                    // Terminal: release the dead cancel token so the manager's maps
+                    // don't grow for the host's lifetime.
+                    host.edit.jobs.finish(job);
+                }
             }
-            JobMsg::Completed { .. } => {
+            JobMsg::Completed { job } => {
                 host.state.session.ai_status = AiStatus::Ready;
+                host.edit.jobs.finish(job);
             }
             JobMsg::Failed { job, error } => {
                 tracing::warn!(?job, %error, "generation job failed");
                 host.state.session.ai_status = AiStatus::Ready;
+                host.edit.jobs.finish(job);
             }
         }
     }
 
     if landed {
+        // Copy these document- and result-derived values into the read-only
+        // SessionState mirror each frame. Panels are deferred-intent and read-only
+        // (&self): they render SessionState and never reach the live EditSession, so
+        // anything a panel shows must be mirrored here. The live document and services
+        // stay out of the state panels see, keeping mutation on the command path.
         host.state.session.result_count = host.edit.results.len();
         host.state.session.selected_result = host.edit.results.selected_index();
         host.state.session.result_kinds = host.edit.results.kinds_summary();
@@ -349,6 +362,12 @@ pub fn sync_codex_view(host: &mut Host) {
         })
         .collect();
 
+    // Commit the whole derived mirror in one assignment. Every derived number
+    // (coverage, readiness, suggestions, detail, folder tree) is computed once
+    // above and published together so the center cards and inspector checklist
+    // always read the same values and can't disagree mid-frame; panels render
+    // from this plain owned data and echo ids back as intents, never touching
+    // the live document.
     host.state.session.codex = CodexView {
         entries,
         mode: ui_codex.mode,

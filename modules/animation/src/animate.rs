@@ -8,6 +8,7 @@
 //! menu group.
 
 use egui::{Align2, FontId, Key, KeyboardShortcut, Modifiers, Sense, Stroke, Vec2};
+use pixhaus_services::i18n;
 use pixhaus_ui::contrib_api::{
     ActionDesc, ActionId, CenterSurface, HostRegistrar, MenuGroup, MenuItem, MsgKey, PENCIL, Panel, PanelId, PanelMeta, PanelScope, StatusItem, TOOL_RAIL,
     Workspace, WorkspaceId, WorkspaceLayout, WorkspaceMeta,
@@ -112,14 +113,23 @@ impl Panel for ClipPropertiesPanel {
             .and_then(|id| playback.clips.iter().find(|c| c.id == id))
             .or_else(|| playback.clips.first());
         if let Some(clip) = clip {
-            widgets::mock_row(ui, theme, &format!("Clip: {}", clip.name));
-            widgets::mock_row(ui, theme, &format!("Frames {}-{}", clip.start, clip.end));
-            widgets::mock_row(ui, theme, &format!("FPS {}", clip.fps));
+            // clip.name is user data (the only literal interpolation arg); the chrome
+            // labels are keys resolved at render time.
+            widgets::mock_row(ui, theme, &i18n::tr_args("panel.clip-properties.clip", &[("name", &clip.name)]));
+            widgets::mock_row(
+                ui,
+                theme,
+                &i18n::tr_args(
+                    "panel.clip-properties.frames",
+                    &[("start", &clip.start.to_string()), ("end", &clip.end.to_string())],
+                ),
+            );
+            widgets::mock_row(ui, theme, &i18n::tr_args("panel.clip-properties.fps", &[("fps", &clip.fps.to_string())]));
             // Inert this round: loop_mode is a durable clip property (a follow-up command).
             let mut looping = false;
-            ui.checkbox(&mut looping, "Loop");
+            ui.checkbox(&mut looping, i18n::tr("panel.clip-properties.loop"));
         } else {
-            ui.label(egui::RichText::new("No clip on the active sprite.").color(theme.roles.text_secondary));
+            ui.label(egui::RichText::new(i18n::tr("panel.clip-properties.empty")).color(theme.roles.text_secondary));
         }
     }
 }
@@ -144,15 +154,17 @@ impl Panel for AiAnimationAssistantPanel {
     }
 
     fn ui(&self, ui: &mut egui::Ui, scope: &mut PanelScope<'_>) {
+        // Reuse the keys these actions are registered with (animation.yaml), resolved
+        // at render time - no un-localized English fork of strings that already have keys.
         let actions = [
-            ("In-between frames", ANIM_INBETWEEN),
-            ("Extend animation", ANIM_EXTEND),
-            ("Clean frames", ANIM_CLEAN),
-            ("Reduce colors", ANIM_REDUCE),
-            ("Create variations", ANIM_VARIATIONS),
+            (MsgKey("command.anim.in-between-frames"), ANIM_INBETWEEN),
+            (MsgKey("command.anim.extend-animation"), ANIM_EXTEND),
+            (MsgKey("command.anim.clean-frames"), ANIM_CLEAN),
+            (MsgKey("command.anim.reduce-colors"), ANIM_REDUCE),
+            (MsgKey("command.anim.create-variations"), ANIM_VARIATIONS),
         ];
         for (label, action) in actions {
-            if ui.add_sized([ui.available_width(), 24.0], egui::Button::new(label)).clicked() {
+            if ui.add_sized([ui.available_width(), 24.0], egui::Button::new(label.tr())).clicked() {
                 scope.ctx.intents.push(Intent::RunAction(action));
             }
         }
@@ -215,14 +227,14 @@ impl Panel for TimelinePanel {
             if ui.add_enabled(playable, egui::Button::new(icons::NEXT.to_string())).clicked() {
                 intent = Some(Intent::ScrubToFrame(playhead_offset.saturating_add(1)));
             }
-            ui.label(format!("{frame_count} frames"));
-            ui.label(format!("{range_fps} FPS"));
+            ui.label(i18n::tr_args("panel.timeline.frame-count", &[("count", &frame_count.to_string())]));
+            ui.label(i18n::tr_args("panel.timeline.fps", &[("fps", &range_fps.to_string())]));
         });
 
         // A still or empty sprite has nothing to scrub: show a hint, skip the bands.
         if !playable {
             ui.label(
-                egui::RichText::new("No animation to play - insert an animated sprite from Generate.")
+                egui::RichText::new(i18n::tr("panel.timeline.empty"))
                     .size(theme.type_scale.label)
                     .color(theme.roles.text_secondary),
             );
@@ -249,9 +261,7 @@ impl Panel for TimelinePanel {
         for (i, clip) in clips.iter().enumerate() {
             let start = clip.start.min(frames - 1);
             let end = clip.end.min(frames - 1);
-            let span_x = rect.left() + (start as f32 / frames as f32) * rect.width();
-            let span_w = (((end.saturating_sub(start) + 1) as f32 / frames as f32) * rect.width() - 4.0).max(2.0);
-            let span = egui::Rect::from_min_size(egui::pos2(span_x + 2.0, clips_top + 2.0), Vec2::new(span_w, band_h - 4.0));
+            let span = clip_span_rect(rect, start, end, frames, band_h);
             painter.rect_filled(span, theme.radius.sm, theme.mock.clips[i % theme.mock.clips.len()]);
             if selected_clip == Some(clip.id) {
                 painter.rect_stroke(span, theme.radius.sm, Stroke::new(1.5, theme.accent.base), egui::StrokeKind::Inside);
@@ -281,7 +291,7 @@ impl Panel for TimelinePanel {
                 theme.roles.text_secondary,
             );
         }
-        let playhead_frame = range_start.saturating_add(playhead_offset).min(frames - 1);
+        let playhead_frame = pixhaus_ui::playback::playhead_frame(range_start, playhead_offset, frames);
         let sel = egui::Rect::from_min_size(egui::pos2(rect.left() + playhead_frame as f32 * frame_w, ruler_top), Vec2::new(frame_w, band_h));
         painter.rect_stroke(sel, theme.radius.sm, Stroke::new(1.5, theme.accent.base), egui::StrokeKind::Inside);
         let playhead_x = rect.left() + playhead_frame as f32 * frame_w;
@@ -329,16 +339,21 @@ impl Panel for TimelinePanel {
                 for clip in &clips {
                     let start = clip.start.min(frames - 1);
                     let end = clip.end.min(frames - 1);
-                    let span_x = rect.left() + (start as f32 / frames as f32) * rect.width();
-                    let span_w = ((end.saturating_sub(start) + 1) as f32 / frames as f32) * rect.width();
-                    if pos.x >= span_x && pos.x < span_x + span_w {
+                    // Same rect the draw pass paints, so the clickable span matches the
+                    // visible one exactly.
+                    if clip_span_rect(rect, start, end, frames, band_h).contains(pos) {
                         intent = Some(Intent::SelectClip(Some(clip.id)));
                         break;
                     }
                 }
             } else if local_y < band_h * 2.0 {
-                let frame = (((pos.x - rect.left()) / frame_w).floor().max(0.0) as u32).min(frames - 1);
-                intent = Some(Intent::ScrubToFrame(frame.saturating_sub(range_start)));
+                intent = Some(Intent::ScrubToFrame(pixhaus_ui::playback::click_to_offset(
+                    pos.x,
+                    rect.left(),
+                    frame_w,
+                    frames,
+                    range_start,
+                )));
             }
         }
 
@@ -357,6 +372,8 @@ impl Panel for TimelinePanel {
 /// `frame.*` actions sprite-edit already registers, so this fn only registers the
 /// new `anim.*` AI-animation actions.
 pub fn register(host: &mut dyn HostRegistrar) {
+    tracing::info!(module = "animation", "registered the Animate workspace");
+
     host.add_workspace(Box::new(AnimateWorkspace));
 
     host.add_panel(Box::new(ClipPropertiesPanel));
@@ -401,6 +418,16 @@ pub fn register(host: &mut dyn HostRegistrar) {
             },
         ],
     });
+}
+
+/// The single source of truth for a clip's span rect in the clips band, so the drawn
+/// span and the clickable span are identical by construction. The two were computed
+/// separately and drifted by the 2px/4px inset, so a click could land off the drawn span.
+#[allow(clippy::cast_precision_loss)]
+fn clip_span_rect(rect: egui::Rect, start: u32, end: u32, frames: u32, band_h: f32) -> egui::Rect {
+    let span_x = rect.left() + (start as f32 / frames as f32) * rect.width();
+    let span_w = (((end.saturating_sub(start) + 1) as f32 / frames as f32) * rect.width() - 4.0).max(2.0);
+    egui::Rect::from_min_size(egui::pos2(span_x + 2.0, rect.top() + 2.0), Vec2::new(span_w, band_h - 4.0))
 }
 
 #[cfg(test)]

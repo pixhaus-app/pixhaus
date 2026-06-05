@@ -328,6 +328,8 @@ codex.editor.section.details:
   en: Type details
 codex.editor.section.coverage:
   en: Coverage
+codex.coverage.generate:
+  en: Generate
 
 # --- Editor: field labels. ---
 codex.field.name:

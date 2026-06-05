@@ -39,7 +39,26 @@ impl Command for DeleteCodexEntry {
     }
 
     fn estimated_size_bytes(&self) -> usize {
+        // The undo data is the whole removed entry; walk its heap so the heaviest
+        // deletion is not invisible to the memory-capped history. An estimate, like
+        // the sibling deletion commands: it does not recurse into the strings nested
+        // in fragments/anchors/details.
         std::mem::size_of::<Self>()
+            + self.removed.as_ref().map_or(0, |e| {
+                e.name.len()
+                    + e.description.len()
+                    + e.lore.len()
+                    + e.visual_description.len()
+                    + e.aliases.len() * std::mem::size_of::<crate::codex::CodexHandle>()
+                    + e.tags.iter().map(String::len).sum::<usize>()
+                    + e.prompt_fragments.len() * std::mem::size_of::<crate::codex::PromptFragment>()
+                    + e.negative_fragments.iter().map(String::len).sum::<usize>()
+                    + e.anchors.len() * std::mem::size_of::<crate::codex::Anchor>()
+                    + e.version_history.iter().map(|v| v.author.len() + v.summary.len()).sum::<usize>()
+                    + e.version_history.len() * std::mem::size_of::<crate::codex::EntryVersion>()
+                    + e.applied_templates.len() * std::mem::size_of::<crate::codex::CoverageTemplateId>()
+                    + e.custom_slots.len() * std::mem::size_of::<crate::codex::CoverageSlot>()
+            })
     }
 }
 

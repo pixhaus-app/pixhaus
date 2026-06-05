@@ -494,4 +494,68 @@ mod tests {
         assert_eq!(job.action, action, "queued() must record the action it was given");
         assert_eq!(job.state, JobState::Queued, "a fresh job starts Queued");
     }
+
+    fn summary(id: u64) -> CodexEntrySummary {
+        CodexEntrySummary {
+            id: CodexEntryId(id),
+            handle: format!("h{id}"),
+            name: format!("n{id}"),
+            entry_type: EntryType::Character,
+            status: EntryStatus::default(),
+            anchors: Vec::new(),
+            coverage_ratio: 1.0,
+            coverage_incomplete: false,
+            broken_ref_count: 0,
+        }
+    }
+
+    #[test]
+    fn flat_folders_walks_depth_first() {
+        let child = CodexFolderNode {
+            id: CodexFolderId(2),
+            name: "child".to_owned(),
+            entries: Vec::new(),
+            children: Vec::new(),
+        };
+        let root = CodexFolderNode {
+            id: CodexFolderId(1),
+            name: "root".to_owned(),
+            entries: Vec::new(),
+            children: vec![child],
+        };
+        let view = CodexView {
+            folder_tree: vec![root],
+            ..Default::default()
+        };
+        assert_eq!(
+            view.flat_folders(),
+            vec![(CodexFolderId(1), "root".to_owned()), (CodexFolderId(2), "child".to_owned())],
+            "flat_folders is depth-first and flattens nested children"
+        );
+    }
+
+    #[test]
+    fn is_pinned_matches_only_pinned_ids() {
+        let view = CodexView {
+            context: vec![CodexContextEntry {
+                entry: CodexEntryId(5),
+                strength: AnchorStrength::Normal,
+                handle: "bit".to_owned(),
+                entry_type: EntryType::Character,
+            }],
+            ..Default::default()
+        };
+        assert!(view.is_pinned(CodexEntryId(5)), "a pinned id reports pinned");
+        assert!(!view.is_pinned(CodexEntryId(6)), "an unpinned id reports not pinned");
+    }
+
+    #[test]
+    fn summary_finds_by_id_or_none() {
+        let view = CodexView {
+            entries: vec![summary(7)],
+            ..Default::default()
+        };
+        assert_eq!(view.summary(CodexEntryId(7)).map(|e| e.id), Some(CodexEntryId(7)), "hit returns the summary");
+        assert!(view.summary(CodexEntryId(8)).is_none(), "miss returns None");
+    }
 }

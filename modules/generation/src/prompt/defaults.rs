@@ -4,6 +4,7 @@
 //! prompt-library system lands. These functions build the default instances the
 //! builders consume; the prompt-library will swap these values, not the builders.
 
+use super::MAGENTA_KEY_HEX;
 use super::kb;
 use super::types::{AnchorSpec, AnimationPrinciples, BodyPlan, CharacterIdentity, ColorAnchor, IdleSpec, StylePreset};
 
@@ -50,7 +51,7 @@ pub fn default_anchor_spec() -> AnchorSpec {
         view_label: "2D side-view".to_owned(),
         facing: "RIGHT".to_owned(),
         height_fraction: (70, 85),
-        magenta_hex: "#FF00FF".to_owned(),
+        magenta_hex: MAGENTA_KEY_HEX.to_owned(),
     }
 }
 

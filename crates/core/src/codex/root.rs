@@ -19,7 +19,13 @@ use crate::codex::relationship::Relationship;
 use crate::ids::IdCounter;
 
 /// The key for one coverage cell: an entry and a slot key.
-#[derive(Clone, PartialEq, Eq, Hash, Debug, PartialOrd, Ord, Serialize, Deserialize)]
+///
+/// Serialized as the single string `"<entry_id>:<slot>"` rather than through the derive:
+/// this type keys [`Codex::coverage_state`], and the mandated V1 save format is JSON
+/// (save-format doc section 33), whose maps admit only string/integer keys - a struct
+/// key fails serialization at runtime. The entry id is digits-only, so splitting on the
+/// first `:` round-trips even a slot that itself contains a colon.
+#[derive(Clone, PartialEq, Eq, Hash, Debug, PartialOrd, Ord)]
 pub struct CoverageKey {
     /// The entry the coverage cell belongs to.
     pub entry: CodexEntryId,
@@ -31,6 +37,26 @@ impl CoverageKey {
     /// A coverage key for `entry` and `slot`.
     pub fn new(entry: CodexEntryId, slot: impl Into<String>) -> Self {
         Self { entry, slot: slot.into() }
+    }
+}
+
+impl Serialize for CoverageKey {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        serializer.serialize_str(&format!("{}:{}", self.entry.0, self.slot))
+    }
+}
+
+impl<'de> Deserialize<'de> for CoverageKey {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        let raw = String::deserialize(deserializer)?;
+        let (entry, slot) = raw
+            .split_once(':')
+            .ok_or_else(|| serde::de::Error::custom("a coverage key must be `<entry>:<slot>`"))?;
+        let entry = entry.parse::<u64>().map_err(serde::de::Error::custom)?;
+        Ok(Self {
+            entry: CodexEntryId(entry),
+            slot: slot.to_owned(),
+        })
     }
 }
 
@@ -226,6 +252,32 @@ mod tests {
     fn coverage_status_defaults_missing() {
         let c = Codex::new();
         assert_eq!(c.coverage_status(CodexEntryId(1), "idle"), CoverageItemStatus::Missing);
+    }
+
+    #[test]
+    fn codex_with_coverage_round_trips_through_json() {
+        // CoverageKey is a struct, so the derive would make a JSON map with non-string
+        // keys, which serde_json rejects at runtime. The custom string form must let a
+        // Codex carrying coverage state survive a JSON round-trip (the V1 save format).
+        let mut c = Codex::new();
+        c.coverage_state.insert(CoverageKey::new(CodexEntryId(7), "idle"), CoverageItemStatus::Approved);
+        c.coverage_state
+            .insert(CoverageKey::new(CodexEntryId(7), "walk:left"), CoverageItemStatus::Generated);
+
+        let json = serde_json::to_string(&c).expect("a Codex with coverage serializes to JSON");
+        let back: Codex = serde_json::from_str(&json).expect("it deserializes back");
+
+        assert_eq!(back.coverage_status(CodexEntryId(7), "idle"), CoverageItemStatus::Approved);
+        // A slot key containing a colon survives (split on the first `:` only).
+        assert_eq!(back.coverage_status(CodexEntryId(7), "walk:left"), CoverageItemStatus::Generated);
+    }
+
+    #[test]
+    fn coverage_key_serializes_as_an_entry_colon_slot_string() {
+        let json = serde_json::to_string(&CoverageKey::new(CodexEntryId(42), "idle")).expect("serializes");
+        assert_eq!(json, "\"42:idle\"");
+        let back: CoverageKey = serde_json::from_str(&json).expect("deserializes");
+        assert_eq!(back, CoverageKey::new(CodexEntryId(42), "idle"));
     }
 
     #[test]

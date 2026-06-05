@@ -43,9 +43,17 @@ impl Command for Transaction {
     fn apply(&mut self, doc: &mut Document) -> Result<(), CommandError> {
         for index in 0..self.children.len() {
             if let Err(error) = self.children[index].apply(doc) {
-                // Roll back the children that already applied, newest-first.
+                // Roll back the children that already applied, newest-first. A rollback
+                // undo should not fail, but if one does the document is left partially
+                // mutated — surface that invariant breach rather than swallowing it.
                 for prev in self.children[..index].iter_mut().rev() {
-                    let _ = prev.undo(doc);
+                    if let Err(undo_error) = prev.undo(doc) {
+                        tracing::error!(
+                            %undo_error,
+                            command = prev.label_key(),
+                            "transaction rollback failed; document may be inconsistent"
+                        );
+                    }
                 }
                 return Err(error);
             }

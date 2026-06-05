@@ -303,6 +303,8 @@ pub fn register(host: &mut dyn HostRegistrar) {
             palette_visible: false,
         });
     }
+
+    tracing::info!(module = "export", "registered the Export workspace");
 }
 
 #[cfg(test)]

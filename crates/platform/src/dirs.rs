@@ -106,6 +106,7 @@ pub fn app_dirs() -> Result<AppDirs, DirsError> {
 ///
 /// Returns [`DirsError::NoHome`] when no home directory can be determined, or
 /// [`DirsError::Create`] when the directory cannot be created.
+#[tracing::instrument(level = "debug")]
 pub fn log_dir() -> Result<PathBuf, DirsError> {
     let log = app_dirs()?.log;
     create(&log, "log")?;
@@ -113,6 +114,7 @@ pub fn log_dir() -> Result<PathBuf, DirsError> {
 }
 
 /// Create a directory and all its parents, mapping the I/O error to [`DirsError`].
+#[tracing::instrument(level = "debug")]
 fn create(path: &Path, what: &'static str) -> Result<(), DirsError> {
     std::fs::create_dir_all(path).map_err(|io| DirsError::Create {
         what,
