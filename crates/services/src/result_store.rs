@@ -62,6 +62,45 @@ impl ResultStore {
         }
     }
 
+    /// Discards the result at `index`, removing it from the tray. Out-of-range
+    /// indices are ignored. Returns whether a result was removed.
+    ///
+    /// Selection rule, since a discard renumbers every later tray position:
+    /// - Discarding the selected result keeps the selection on the same tray slot,
+    ///   which now holds what was the next result, clamped to the new last index;
+    ///   the tray emptying clears the selection. Holding the slot rather than
+    ///   dropping to none means the user keeps reviewing results after tossing one,
+    ///   which is the point of a discard-and-move-on tray.
+    /// - Discarding a result before the selected one shifts the selection down by
+    ///   one so it still points at the same result, not its neighbor.
+    /// - Discarding a result after the selected one leaves the selection untouched.
+    pub fn discard(&self, index: usize) -> bool {
+        let mut state = self.inner.lock();
+        if index >= state.results.len() {
+            return false;
+        }
+        state.order.remove(index);
+        state.results.remove(index);
+        state.selected = match state.selected {
+            // Tray emptied: nothing to point at.
+            _ if state.results.is_empty() => None,
+            Some(sel) if sel == index => Some(sel.min(state.results.len() - 1)),
+            // Earlier removal renumbers the selected slot down one.
+            Some(sel) if sel > index => Some(sel - 1),
+            other => other,
+        };
+        true
+    }
+
+    /// Discards every result and clears the selection. The tray returns to empty,
+    /// matching a fresh [`ResultStore::new`].
+    pub fn clear(&self) {
+        let mut state = self.inner.lock();
+        state.order.clear();
+        state.results.clear();
+        state.selected = None;
+    }
+
     /// The selected tray position, if any.
     pub fn selected_index(&self) -> Option<usize> {
         self.inner.lock().selected
@@ -195,6 +234,70 @@ mod tests {
         assert!(store.selected().is_none(), "an animation is not a still asset");
         assert_eq!(store.selected_animation().map(|a| a.frames.len()), Some(8));
         assert!(store.asset_at(1).is_none(), "an animation is not an asset_at");
+    }
+
+    #[test]
+    fn discard_of_selected_holds_the_slot_and_clamps_at_the_end() {
+        let store = ResultStore::new();
+        store.put(JobId(0), sprite(1));
+        store.put(JobId(1), sprite(2));
+        store.put(JobId(2), sprite(3));
+        store.select(1); // selecting the middle result (tag 2)
+
+        // Discarding the selected slot keeps the selection there; it now holds tag 3.
+        assert!(store.discard(1));
+        assert_eq!(store.len(), 2);
+        assert_eq!(store.selected_index(), Some(1));
+        assert_eq!(store.selected().map(|a| a.rgba[0]), Some(3));
+
+        // Discarding the now-last selected slot clamps the selection back one.
+        assert!(store.discard(1));
+        assert_eq!(store.selected_index(), Some(0));
+        assert_eq!(store.selected().map(|a| a.rgba[0]), Some(1));
+
+        // Discarding the final result empties the tray and clears the selection.
+        assert!(store.discard(0));
+        assert!(store.is_empty());
+        assert_eq!(store.selected_index(), None);
+    }
+
+    #[test]
+    fn discard_of_non_selected_keeps_selection_on_the_same_result() {
+        let store = ResultStore::new();
+        store.put(JobId(0), sprite(1));
+        store.put(JobId(1), sprite(2));
+        store.put(JobId(2), sprite(3));
+        store.select(2); // selecting tag 3 at index 2
+
+        // Discarding an earlier result shifts the selection down to still point at tag 3.
+        assert!(store.discard(0));
+        assert_eq!(store.selected_index(), Some(1));
+        assert_eq!(store.selected().map(|a| a.rgba[0]), Some(3));
+
+        // Discarding a later result leaves the selection untouched.
+        store.put(JobId(3), sprite(4)); // tray: [2, 3, 4], selection on 3 at index 1
+        assert!(store.discard(2));
+        assert_eq!(store.selected_index(), Some(1));
+        assert_eq!(store.selected().map(|a| a.rgba[0]), Some(3));
+
+        // An out-of-range discard is a no-op and reports false.
+        assert!(!store.discard(99));
+        assert_eq!(store.len(), 2);
+        assert_eq!(store.selected_index(), Some(1));
+    }
+
+    #[test]
+    fn clear_empties_the_tray_and_drops_the_selection() {
+        let store = ResultStore::new();
+        store.put(JobId(0), sprite(1));
+        store.put(JobId(1), animation(2, 8));
+        store.select(1);
+
+        store.clear();
+        assert!(store.is_empty());
+        assert_eq!(store.len(), 0);
+        assert_eq!(store.selected_index(), None);
+        assert_eq!(store.kinds_summary(), Vec::new());
     }
 
     #[test]
