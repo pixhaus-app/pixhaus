@@ -56,17 +56,14 @@ impl Command for RemoveAnchor {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::codex::{Anchor, AnchorStrength, CodexHandle, EntryType};
-    use crate::commands::{AddCodexEntry, CodexEntryProto, SetAnchor};
+    use crate::codex::AnchorStrength;
+    use crate::commands::SetAnchor;
+    use crate::test_support::seed_bit;
 
+    // Outlier seed: every test here needs the entry to already carry a Visual anchor,
+    // so this layers SetAnchor over the shared entry builder rather than a bare seed.
     fn seed_with_anchor(doc: &mut Document) -> CodexEntryId {
-        let mut add = AddCodexEntry::new(CodexEntryProto {
-            handle: CodexHandle::new("bit").unwrap(),
-            name: "Bit".to_owned(),
-            entry_type: EntryType::Character,
-        });
-        add.apply(doc).unwrap();
-        let id = add.inserted_id().unwrap();
+        let id = seed_bit(doc);
         SetAnchor::new(id, Anchor::new(AnchorKind::Visual, AnchorStrength::Strong, "round head"))
             .apply(doc)
             .unwrap();

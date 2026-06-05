@@ -111,17 +111,13 @@ detail_command!(
 mod tests {
     use super::*;
     use crate::codex::details::{GenericField, PaletteColor};
-    use crate::codex::{CodexHandle, ColorRole, EntryType};
-    use crate::commands::{AddCodexEntry, CodexEntryProto};
+    use crate::codex::{ColorRole, EntryType};
+    use crate::test_support::seed_entry;
 
+    // Local wrapper: these tests use a throwaway name and vary only the type, so they
+    // pin "x" into the shared four-field builder.
     fn seed(doc: &mut Document, handle: &str, ty: EntryType) -> CodexEntryId {
-        let mut add = AddCodexEntry::new(CodexEntryProto {
-            handle: CodexHandle::new(handle).unwrap(),
-            name: "x".to_owned(),
-            entry_type: ty,
-        });
-        add.apply(doc).unwrap();
-        add.inserted_id().unwrap()
+        seed_entry(doc, handle, "x", ty)
     }
 
     #[test]

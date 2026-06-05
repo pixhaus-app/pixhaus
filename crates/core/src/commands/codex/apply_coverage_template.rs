@@ -103,18 +103,9 @@ impl Command for ApplyCoverageTemplate {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::codex::{CodexHandle, EntryType};
-    use crate::commands::{AddCodexEntry, CodexEntryProto, CreateCoverageTemplate};
-
-    fn seed_entry(doc: &mut Document) -> CodexEntryId {
-        let mut add = AddCodexEntry::new(CodexEntryProto {
-            handle: CodexHandle::new("bit").unwrap(),
-            name: "Bit".to_owned(),
-            entry_type: EntryType::Character,
-        });
-        add.apply(doc).unwrap();
-        add.inserted_id().unwrap()
-    }
+    use crate::codex::EntryType;
+    use crate::commands::CreateCoverageTemplate;
+    use crate::test_support::{seed_bit, seed_entry};
 
     fn seed_template(doc: &mut Document) -> CoverageTemplateId {
         let t = crate::codex::CoverageTemplate::platformer_character();
@@ -126,7 +117,7 @@ mod tests {
     #[test]
     fn apply_attaches_and_seeds_then_undo_reverses() {
         let mut doc = Document::new();
-        let id = seed_entry(&mut doc);
+        let id = seed_bit(&mut doc);
         let template = seed_template(&mut doc);
         let mut cmd = ApplyCoverageTemplate::new(id, template);
 
@@ -143,7 +134,7 @@ mod tests {
     #[test]
     fn redo_re_seeds() {
         let mut doc = Document::new();
-        let id = seed_entry(&mut doc);
+        let id = seed_bit(&mut doc);
         let template = seed_template(&mut doc);
         let mut cmd = ApplyCoverageTemplate::new(id, template);
         cmd.apply(&mut doc).unwrap();
@@ -164,7 +155,7 @@ mod tests {
     #[test]
     fn missing_template_errors() {
         let mut doc = Document::new();
-        let id = seed_entry(&mut doc);
+        let id = seed_bit(&mut doc);
         let mut cmd = ApplyCoverageTemplate::new(id, CoverageTemplateId(99));
         assert!(matches!(cmd.apply(&mut doc), Err(CommandError::CoverageTemplateNotFound(_))));
     }
@@ -172,14 +163,8 @@ mod tests {
     #[test]
     fn applying_to_one_entry_does_not_bleed_to_another() {
         let mut doc = Document::new();
-        let a = seed_entry(&mut doc);
-        let mut add = AddCodexEntry::new(CodexEntryProto {
-            handle: CodexHandle::new("mossy").unwrap(),
-            name: "Mossy".to_owned(),
-            entry_type: EntryType::Material,
-        });
-        add.apply(&mut doc).unwrap();
-        let b = add.inserted_id().unwrap();
+        let a = seed_bit(&mut doc);
+        let b = seed_entry(&mut doc, "mossy", "Mossy", EntryType::Material);
         let template = seed_template(&mut doc);
 
         ApplyCoverageTemplate::new(a, template).apply(&mut doc).unwrap();

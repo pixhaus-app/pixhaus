@@ -62,17 +62,15 @@ impl Command for RenameEntryCustomSlotLabel {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::codex::{CodexHandle, CoverageItemStatus, CoverageSlot, EntryType};
-    use crate::commands::{AddCodexEntry, AddEntryCustomSlot, CodexEntryProto, SetCoverageStatus};
+    use crate::codex::{CoverageItemStatus, CoverageSlot};
+    use crate::commands::{AddEntryCustomSlot, SetCoverageStatus};
+    use crate::test_support::seed_bit;
 
+    // Outlier seed: every test here needs the entry to already carry the "victory"
+    // custom slot, so this layers AddEntryCustomSlot over the shared entry builder
+    // rather than reusing a bare seed.
     fn seed(doc: &mut Document) -> CodexEntryId {
-        let mut add = AddCodexEntry::new(CodexEntryProto {
-            handle: CodexHandle::new("bit").unwrap(),
-            name: "Bit".to_owned(),
-            entry_type: EntryType::Character,
-        });
-        add.apply(doc).unwrap();
-        let id = add.inserted_id().unwrap();
+        let id = seed_bit(doc);
         AddEntryCustomSlot::new(id, CoverageSlot::custom("victory", "Victory")).apply(doc).unwrap();
         id
     }

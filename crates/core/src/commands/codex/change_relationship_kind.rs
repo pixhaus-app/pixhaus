@@ -74,17 +74,14 @@ impl Command for ChangeRelationshipKind {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::codex::{CodexHandle, EntryType};
-    use crate::commands::{AddCodexEntry, AddRelationship, CodexEntryProto};
+    use crate::codex::EntryType;
+    use crate::commands::AddRelationship;
+    use crate::test_support::seed_entry;
 
+    // Local wrapper: these relationship tests name each entry after its handle, so
+    // they pass the handle twice into the shared four-field builder.
     fn seed(doc: &mut Document, handle: &str, ty: EntryType) -> CodexEntryId {
-        let mut add = AddCodexEntry::new(CodexEntryProto {
-            handle: CodexHandle::new(handle).unwrap(),
-            name: handle.to_owned(),
-            entry_type: ty,
-        });
-        add.apply(doc).unwrap();
-        add.inserted_id().unwrap()
+        seed_entry(doc, handle, handle, ty)
     }
 
     fn seed_edge(doc: &mut Document) -> (CodexEntryId, CodexEntryId) {

@@ -99,16 +99,13 @@ mod tests {
     use super::*;
     use crate::codex::EntryType;
     use crate::codex::details::{GenericDetails, GenericField};
-    use crate::commands::{AddCodexEntry, CodexEntryProto, SetEntryStatus, SetGenericDetails};
+    use crate::commands::{SetEntryStatus, SetGenericDetails};
+    use crate::test_support::seed_entry;
 
+    // Local wrapper: these tests fix the name to "Bit" and vary only the type, so
+    // they pin that name into the shared four-field builder.
     fn seed(doc: &mut Document, handle: &str, ty: EntryType) -> CodexEntryId {
-        let mut add = AddCodexEntry::new(CodexEntryProto {
-            handle: CodexHandle::new(handle).unwrap(),
-            name: "Bit".to_owned(),
-            entry_type: ty,
-        });
-        add.apply(doc).unwrap();
-        add.inserted_id().unwrap()
+        seed_entry(doc, handle, "Bit", ty)
     }
 
     #[test]

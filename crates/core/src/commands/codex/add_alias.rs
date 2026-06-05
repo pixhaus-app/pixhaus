@@ -63,27 +63,12 @@ impl Command for AddCodexAlias {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::codex::EntryType;
-    use crate::commands::{AddCodexEntry, CodexEntryProto};
-
-    fn seed(doc: &mut Document, handle: &str) -> CodexEntryId {
-        let mut add = AddCodexEntry::new(CodexEntryProto {
-            handle: CodexHandle::new(handle).unwrap(),
-            name: "Bit".to_owned(),
-            entry_type: EntryType::Character,
-        });
-        add.apply(doc).unwrap();
-        add.inserted_id().unwrap()
-    }
-
-    fn handle(s: &str) -> CodexHandle {
-        CodexHandle::new(s).unwrap()
-    }
+    use crate::test_support::{handle, seed_handle};
 
     #[test]
     fn apply_adds_then_undo_removes() {
         let mut doc = Document::new();
-        let id = seed(&mut doc, "bit");
+        let id = seed_handle(&mut doc, "bit");
         let mut cmd = AddCodexAlias::new(id, handle("mascot"));
 
         cmd.apply(&mut doc).unwrap();
@@ -96,8 +81,8 @@ mod tests {
     #[test]
     fn duplicate_alias_is_rejected() {
         let mut doc = Document::new();
-        let id = seed(&mut doc, "bit");
-        seed(&mut doc, "mossy");
+        let id = seed_handle(&mut doc, "bit");
+        seed_handle(&mut doc, "mossy");
         let mut cmd = AddCodexAlias::new(id, handle("mossy"));
         assert!(matches!(cmd.apply(&mut doc), Err(CommandError::CodexHandleInUse)));
     }

@@ -95,23 +95,12 @@ impl Command for AddEntryCustomSlot {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::codex::{CodexHandle, EntryType};
-    use crate::commands::{AddCodexEntry, CodexEntryProto};
-
-    fn seed(doc: &mut Document) -> CodexEntryId {
-        let mut add = AddCodexEntry::new(CodexEntryProto {
-            handle: CodexHandle::new("bit").unwrap(),
-            name: "Bit".to_owned(),
-            entry_type: EntryType::Character,
-        });
-        add.apply(doc).unwrap();
-        add.inserted_id().unwrap()
-    }
+    use crate::test_support::seed_bit;
 
     #[test]
     fn apply_adds_and_seeds_then_undo_reverses() {
         let mut doc = Document::new();
-        let id = seed(&mut doc);
+        let id = seed_bit(&mut doc);
         let mut cmd = AddEntryCustomSlot::new(id, CoverageSlot::custom("victory", "Victory pose"));
 
         cmd.apply(&mut doc).unwrap();
@@ -127,7 +116,7 @@ mod tests {
     #[test]
     fn duplicate_key_errors() {
         let mut doc = Document::new();
-        let id = seed(&mut doc);
+        let id = seed_bit(&mut doc);
         AddEntryCustomSlot::new(id, CoverageSlot::custom("victory", "Victory")).apply(&mut doc).unwrap();
         let mut cmd = AddEntryCustomSlot::new(id, CoverageSlot::custom("victory", "again"));
         assert!(matches!(cmd.apply(&mut doc), Err(CommandError::InvalidState)));

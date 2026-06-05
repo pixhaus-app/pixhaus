@@ -91,23 +91,13 @@ impl Command for SetAnchor {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::codex::{AnchorStrength, CodexHandle, EntryType};
-    use crate::commands::{AddCodexEntry, CodexEntryProto};
-
-    fn seed(doc: &mut Document) -> CodexEntryId {
-        let mut add = AddCodexEntry::new(CodexEntryProto {
-            handle: CodexHandle::new("bit").unwrap(),
-            name: "Bit".to_owned(),
-            entry_type: EntryType::Character,
-        });
-        add.apply(doc).unwrap();
-        add.inserted_id().unwrap()
-    }
+    use crate::codex::AnchorStrength;
+    use crate::test_support::seed_bit;
 
     #[test]
     fn set_new_anchor_then_undo_removes_it() {
         let mut doc = Document::new();
-        let id = seed(&mut doc);
+        let id = seed_bit(&mut doc);
         let mut cmd = SetAnchor::new(id, Anchor::new(AnchorKind::Visual, AnchorStrength::Strong, "round head"));
         cmd.apply(&mut doc).unwrap();
         assert_eq!(doc.codex().entry(id).unwrap().anchors.len(), 1);
@@ -120,7 +110,7 @@ mod tests {
     #[test]
     fn set_over_existing_anchor_replaces_and_undo_restores() {
         let mut doc = Document::new();
-        let id = seed(&mut doc);
+        let id = seed_bit(&mut doc);
         SetAnchor::new(id, Anchor::new(AnchorKind::Visual, AnchorStrength::Normal, "old"))
             .apply(&mut doc)
             .unwrap();
@@ -142,7 +132,7 @@ mod tests {
     #[test]
     fn redo_re_applies() {
         let mut doc = Document::new();
-        let id = seed(&mut doc);
+        let id = seed_bit(&mut doc);
         let mut cmd = SetAnchor::new(id, Anchor::new(AnchorKind::Palette, AnchorStrength::Strong, "keep blues"));
         cmd.apply(&mut doc).unwrap();
         cmd.undo(&mut doc).unwrap();

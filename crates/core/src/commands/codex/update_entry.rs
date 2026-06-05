@@ -124,23 +124,12 @@ impl Command for UpdateCodexEntry {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::codex::{CodexHandle, EntryType};
-    use crate::commands::{AddCodexEntry, CodexEntryProto};
-
-    fn seed(doc: &mut Document, handle: &str) -> CodexEntryId {
-        let mut add = AddCodexEntry::new(CodexEntryProto {
-            handle: CodexHandle::new(handle).unwrap(),
-            name: "Bit".to_owned(),
-            entry_type: EntryType::Character,
-        });
-        add.apply(doc).unwrap();
-        add.inserted_id().unwrap()
-    }
+    use crate::test_support::seed_handle;
 
     #[test]
     fn apply_updates_then_undo_restores() {
         let mut doc = Document::new();
-        let id = seed(&mut doc, "bit");
+        let id = seed_handle(&mut doc, "bit");
         let mut delta = CodexEntryDelta::new();
         delta.name = Some("Bit the Mascot".to_owned());
         delta.description = Some("the canonical mascot".to_owned());
@@ -158,7 +147,7 @@ mod tests {
     #[test]
     fn redo_re_applies() {
         let mut doc = Document::new();
-        let id = seed(&mut doc, "bit");
+        let id = seed_handle(&mut doc, "bit");
         let mut delta = CodexEntryDelta::new();
         delta.lore = Some("born in the catacombs".to_owned());
         let mut cmd = UpdateCodexEntry::new(id, delta);

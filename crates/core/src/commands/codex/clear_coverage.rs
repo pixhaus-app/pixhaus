@@ -61,23 +61,14 @@ impl Command for ClearCoverage {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::codex::{CodexHandle, EntryType};
-    use crate::commands::{AddCodexEntry, CodexEntryProto, SetCoverageStatus};
-
-    fn seed(doc: &mut Document) -> CodexEntryId {
-        let mut add = AddCodexEntry::new(CodexEntryProto {
-            handle: CodexHandle::new("bit").unwrap(),
-            name: "Bit".to_owned(),
-            entry_type: EntryType::Character,
-        });
-        add.apply(doc).unwrap();
-        add.inserted_id().unwrap()
-    }
+    use crate::codex::EntryType;
+    use crate::commands::SetCoverageStatus;
+    use crate::test_support::{seed_bit, seed_entry};
 
     #[test]
     fn apply_clears_then_undo_restores() {
         let mut doc = Document::new();
-        let id = seed(&mut doc);
+        let id = seed_bit(&mut doc);
         SetCoverageStatus::new(id, "idle", CoverageItemStatus::Approved).apply(&mut doc).unwrap();
         SetCoverageStatus::new(id, "walk", CoverageItemStatus::Draft).apply(&mut doc).unwrap();
         let mut cmd = ClearCoverage::new(id);
@@ -99,14 +90,8 @@ mod tests {
     #[test]
     fn clears_only_the_target_entry() {
         let mut doc = Document::new();
-        let id = seed(&mut doc);
-        let mut other = AddCodexEntry::new(CodexEntryProto {
-            handle: CodexHandle::new("mossy").unwrap(),
-            name: "Mossy".to_owned(),
-            entry_type: EntryType::Material,
-        });
-        other.apply(&mut doc).unwrap();
-        let other_id = other.inserted_id().unwrap();
+        let id = seed_bit(&mut doc);
+        let other_id = seed_entry(&mut doc, "mossy", "Mossy", EntryType::Material);
         SetCoverageStatus::new(id, "idle", CoverageItemStatus::Approved).apply(&mut doc).unwrap();
         SetCoverageStatus::new(other_id, "idle", CoverageItemStatus::Draft).apply(&mut doc).unwrap();
 

@@ -88,23 +88,13 @@ impl Command for SetNegativeFragments {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::codex::{CodexHandle, EntryType, InclusionPriority};
-    use crate::commands::{AddCodexEntry, CodexEntryProto};
-
-    fn seed(doc: &mut Document) -> CodexEntryId {
-        let mut add = AddCodexEntry::new(CodexEntryProto {
-            handle: CodexHandle::new("bit").unwrap(),
-            name: "Bit".to_owned(),
-            entry_type: EntryType::Character,
-        });
-        add.apply(doc).unwrap();
-        add.inserted_id().unwrap()
-    }
+    use crate::codex::InclusionPriority;
+    use crate::test_support::seed_bit;
 
     #[test]
     fn set_prompt_fragments_round_trips() {
         let mut doc = Document::new();
-        let id = seed(&mut doc);
+        let id = seed_bit(&mut doc);
         let frags = vec![PromptFragment::new("round head", InclusionPriority::Critical)];
         let mut cmd = SetPromptFragments::new(id, frags);
 
@@ -121,7 +111,7 @@ mod tests {
     #[test]
     fn set_negative_fragments_round_trips() {
         let mut doc = Document::new();
-        let id = seed(&mut doc);
+        let id = seed_bit(&mut doc);
         let mut cmd = SetNegativeFragments::new(id, vec!["extra limbs".to_owned()]);
 
         cmd.apply(&mut doc).unwrap();

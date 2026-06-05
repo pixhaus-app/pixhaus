@@ -150,17 +150,13 @@ impl Command for ApplyBuiltinCoverageTemplate {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::codex::{CodexHandle, EntryType};
-    use crate::commands::{AddCodexEntry, CodexEntryProto};
+    use crate::codex::EntryType;
 
+    // Local 2-arg wrapper: these tests vary the handle but fix name "x" and a
+    // Character type. It delegates to the shared four-field builder by full path so
+    // the local name does not collide with the import.
     fn seed_entry(doc: &mut Document, handle: &str) -> CodexEntryId {
-        let mut add = AddCodexEntry::new(CodexEntryProto {
-            handle: CodexHandle::new(handle).unwrap(),
-            name: "x".to_owned(),
-            entry_type: EntryType::Character,
-        });
-        add.apply(doc).unwrap();
-        add.inserted_id().unwrap()
+        crate::test_support::seed_entry(doc, handle, "x", EntryType::Character)
     }
 
     #[test]

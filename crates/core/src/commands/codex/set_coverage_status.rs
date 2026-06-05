@@ -80,23 +80,12 @@ impl Command for SetCoverageStatus {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::codex::{CodexHandle, EntryType};
-    use crate::commands::{AddCodexEntry, CodexEntryProto};
-
-    fn seed(doc: &mut Document) -> CodexEntryId {
-        let mut add = AddCodexEntry::new(CodexEntryProto {
-            handle: CodexHandle::new("bit").unwrap(),
-            name: "Bit".to_owned(),
-            entry_type: EntryType::Character,
-        });
-        add.apply(doc).unwrap();
-        add.inserted_id().unwrap()
-    }
+    use crate::test_support::seed_bit;
 
     #[test]
     fn apply_sets_then_undo_removes_when_no_prior() {
         let mut doc = Document::new();
-        let id = seed(&mut doc);
+        let id = seed_bit(&mut doc);
         let mut cmd = SetCoverageStatus::new(id, "idle", CoverageItemStatus::Approved);
 
         cmd.apply(&mut doc).unwrap();
@@ -110,7 +99,7 @@ mod tests {
     #[test]
     fn undo_restores_prior_status() {
         let mut doc = Document::new();
-        let id = seed(&mut doc);
+        let id = seed_bit(&mut doc);
         SetCoverageStatus::new(id, "walk", CoverageItemStatus::Draft).apply(&mut doc).unwrap();
         let mut cmd = SetCoverageStatus::new(id, "walk", CoverageItemStatus::Approved);
 

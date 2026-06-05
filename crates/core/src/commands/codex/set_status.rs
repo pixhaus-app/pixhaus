@@ -46,23 +46,12 @@ impl Command for SetEntryStatus {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::codex::{CodexHandle, EntryType};
-    use crate::commands::{AddCodexEntry, CodexEntryProto};
-
-    fn seed(doc: &mut Document) -> CodexEntryId {
-        let mut add = AddCodexEntry::new(CodexEntryProto {
-            handle: CodexHandle::new("bit").unwrap(),
-            name: "Bit".to_owned(),
-            entry_type: EntryType::Character,
-        });
-        add.apply(doc).unwrap();
-        add.inserted_id().unwrap()
-    }
+    use crate::test_support::seed_bit;
 
     #[test]
     fn apply_sets_then_undo_restores() {
         let mut doc = Document::new();
-        let id = seed(&mut doc);
+        let id = seed_bit(&mut doc);
         assert_eq!(doc.codex().entry(id).unwrap().status, EntryStatus::Draft);
         let mut cmd = SetEntryStatus::new(id, EntryStatus::Canonical);
 

@@ -81,27 +81,12 @@ impl Command for SetCodexHandle {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::codex::EntryType;
-    use crate::commands::{AddCodexEntry, CodexEntryProto};
-
-    fn seed(doc: &mut Document, handle: &str) -> CodexEntryId {
-        let mut add = AddCodexEntry::new(CodexEntryProto {
-            handle: CodexHandle::new(handle).unwrap(),
-            name: "Bit".to_owned(),
-            entry_type: EntryType::Character,
-        });
-        add.apply(doc).unwrap();
-        add.inserted_id().unwrap()
-    }
-
-    fn handle(s: &str) -> CodexHandle {
-        CodexHandle::new(s).unwrap()
-    }
+    use crate::test_support::{handle, seed_handle};
 
     #[test]
     fn apply_renames_then_undo_restores() {
         let mut doc = Document::new();
-        let id = seed(&mut doc, "bit");
+        let id = seed_handle(&mut doc, "bit");
         let mut cmd = SetCodexHandle::new(id, handle("bit_v2"));
 
         cmd.apply(&mut doc).unwrap();
@@ -114,7 +99,7 @@ mod tests {
     #[test]
     fn redo_re_applies() {
         let mut doc = Document::new();
-        let id = seed(&mut doc, "bit");
+        let id = seed_handle(&mut doc, "bit");
         let mut cmd = SetCodexHandle::new(id, handle("bit_v2"));
         cmd.apply(&mut doc).unwrap();
         cmd.undo(&mut doc).unwrap();
@@ -125,8 +110,8 @@ mod tests {
     #[test]
     fn handle_in_use_is_rejected() {
         let mut doc = Document::new();
-        let id = seed(&mut doc, "bit");
-        seed(&mut doc, "mossy");
+        let id = seed_handle(&mut doc, "bit");
+        seed_handle(&mut doc, "mossy");
         let mut cmd = SetCodexHandle::new(id, handle("mossy"));
         assert!(matches!(cmd.apply(&mut doc), Err(CommandError::CodexHandleInUse)));
         assert_eq!(doc.codex().entry(id).unwrap().handle.as_str(), "bit");
@@ -135,7 +120,7 @@ mod tests {
     #[test]
     fn renaming_to_own_handle_is_a_noop() {
         let mut doc = Document::new();
-        let id = seed(&mut doc, "bit");
+        let id = seed_handle(&mut doc, "bit");
         let mut cmd = SetCodexHandle::new(id, handle("bit"));
         cmd.apply(&mut doc).unwrap();
         assert_eq!(doc.codex().entry(id).unwrap().handle.as_str(), "bit");
@@ -144,7 +129,7 @@ mod tests {
     #[test]
     fn locked_handle_is_rejected() {
         let mut doc = Document::new();
-        let id = seed(&mut doc, "bit");
+        let id = seed_handle(&mut doc, "bit");
         doc.codex_mut().entry_mut(id).unwrap().locks.handle = true;
         let mut cmd = SetCodexHandle::new(id, handle("bit_v2"));
         assert!(matches!(cmd.apply(&mut doc), Err(CommandError::CodexEntryLocked)));

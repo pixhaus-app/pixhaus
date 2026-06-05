@@ -65,23 +65,12 @@ impl Command for DeleteCodexEntry {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::codex::{CodexHandle, EntryType};
-    use crate::commands::{AddCodexEntry, CodexEntryProto};
-
-    fn seed(doc: &mut Document, handle: &str) -> CodexEntryId {
-        let mut add = AddCodexEntry::new(CodexEntryProto {
-            handle: CodexHandle::new(handle).unwrap(),
-            name: "Bit".to_owned(),
-            entry_type: EntryType::Character,
-        });
-        add.apply(doc).unwrap();
-        add.inserted_id().unwrap()
-    }
+    use crate::test_support::seed_handle;
 
     #[test]
     fn apply_removes_then_undo_restores() {
         let mut doc = Document::new();
-        let id = seed(&mut doc, "bit");
+        let id = seed_handle(&mut doc, "bit");
         let mut cmd = DeleteCodexEntry::new(id);
 
         cmd.apply(&mut doc).unwrap();

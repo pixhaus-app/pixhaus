@@ -74,23 +74,13 @@ impl Command for RemoveEntryCustomSlot {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::codex::{CodexHandle, EntryType};
-    use crate::commands::{AddCodexEntry, AddEntryCustomSlot, CodexEntryProto, SetCoverageStatus};
-
-    fn seed(doc: &mut Document) -> CodexEntryId {
-        let mut add = AddCodexEntry::new(CodexEntryProto {
-            handle: CodexHandle::new("bit").unwrap(),
-            name: "Bit".to_owned(),
-            entry_type: EntryType::Character,
-        });
-        add.apply(doc).unwrap();
-        add.inserted_id().unwrap()
-    }
+    use crate::commands::{AddEntryCustomSlot, SetCoverageStatus};
+    use crate::test_support::seed_bit;
 
     #[test]
     fn apply_removes_then_undo_restores_slot_and_status() {
         let mut doc = Document::new();
-        let id = seed(&mut doc);
+        let id = seed_bit(&mut doc);
         AddEntryCustomSlot::new(id, CoverageSlot::custom("victory", "Victory")).apply(&mut doc).unwrap();
         SetCoverageStatus::new(id, "victory", CoverageItemStatus::Approved).apply(&mut doc).unwrap();
 
@@ -107,7 +97,7 @@ mod tests {
     #[test]
     fn missing_slot_errors() {
         let mut doc = Document::new();
-        let id = seed(&mut doc);
+        let id = seed_bit(&mut doc);
         let mut cmd = RemoveEntryCustomSlot::new(id, "nope");
         assert!(matches!(cmd.apply(&mut doc), Err(CommandError::InvalidState)));
     }

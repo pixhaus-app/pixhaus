@@ -30,6 +30,12 @@ pub mod document;
 pub mod ids;
 pub mod pixel;
 
+// Test-only shared builders for the command tests. Gated to test so it never ships
+// in the library or counts against the public API; pub(crate) so only this crate's
+// own #[cfg(test)] modules can reach it. See test_support.rs for why it exists.
+#[cfg(test)]
+pub(crate) mod test_support;
+
 pub use animation::{AnimationClip, LoopMode};
 pub use buffer_store::PixelBufferStore;
 pub use codex::{
