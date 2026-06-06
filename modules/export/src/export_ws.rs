@@ -107,8 +107,11 @@ impl Panel for ExportFormatPanel {
 
     fn ui(&self, ui: &mut egui::Ui, scope: &mut PanelScope<'_>) {
         let theme = scope.ctx.theme;
-        widgets::section_header(ui, theme, icons::EXPORT, "Export Format");
-        // Throwaway local selection - mock radios that drive nothing this round.
+        // The section header mirrors the panel title, so it reuses that key rather
+        // than forking an un-localized literal of the same text.
+        widgets::section_header(ui, theme, icons::EXPORT, &MsgKey("panel.export-format.title").tr());
+        // TODO(luis): i18n these rows when the panel leaves mock - the format names
+        // are throwaway mock radios with no keys yet (drive nothing this round).
         let mut format = 0_usize;
         for (i, label) in ["PNG", "Spritesheet", "GIF", "APNG", "JSON"].iter().enumerate() {
             ui.radio_value(&mut format, i, *label);
@@ -137,7 +140,11 @@ impl Panel for EnginePresetPanel {
 
     fn ui(&self, ui: &mut egui::Ui, scope: &mut PanelScope<'_>) {
         let theme = scope.ctx.theme;
-        widgets::section_header(ui, theme, icons::SETTINGS, "Engine Preset");
+        // The section header mirrors the panel title, so it reuses that key rather
+        // than forking an un-localized literal of the same text.
+        widgets::section_header(ui, theme, icons::SETTINGS, &MsgKey("panel.engine-preset.title").tr());
+        // TODO(luis): i18n these rows when the panel leaves mock - the engine names
+        // and the "(soon)" tag are throwaway mock content with no keys yet.
         // Unity is selected and enabled; the rest read as future targets.
         let frame = egui::Frame::new().fill(theme.accent.muted).inner_margin(theme.spacing.xs);
         frame.show(ui, |ui| {
@@ -170,8 +177,11 @@ impl Panel for AnimationMetadataPanel {
 
     fn ui(&self, ui: &mut egui::Ui, scope: &mut PanelScope<'_>) {
         let theme = scope.ctx.theme;
-        widgets::section_header(ui, theme, icons::FRAMES, "Animation Metadata");
-        // Inert mock controls; the values reset each frame (drive nothing).
+        // The section header mirrors the panel title, so it reuses that key rather
+        // than forking an un-localized literal of the same text.
+        widgets::section_header(ui, theme, icons::FRAMES, &MsgKey("panel.animation-metadata.title").tr());
+        // TODO(luis): i18n these rows when the panel leaves mock - the control labels
+        // have no keys yet, and the values are inert mock locals (drive nothing).
         let mut per_animation = true;
         ui.checkbox(&mut per_animation, "Per-animation export");
         let mut trim = true;
@@ -209,7 +219,11 @@ impl Panel for QaWarningsPanel {
 
     fn ui(&self, ui: &mut egui::Ui, scope: &mut PanelScope<'_>) {
         let theme = scope.ctx.theme;
-        widgets::section_header(ui, theme, icons::CHECK, "QA Warnings");
+        // The section header mirrors the panel title, so it reuses that key rather
+        // than forking an un-localized literal of the same text.
+        widgets::section_header(ui, theme, icons::CHECK, &MsgKey("panel.qa-warnings.title").tr());
+        // TODO(luis): i18n these rows when the panel leaves mock - the QA finding text
+        // has no keys yet, and a real run would key the findings the validator emits.
         for label in ["All frames same size", "Transparent bg", "Palette < 32"] {
             qa_ok_row(ui, theme, label);
         }
@@ -230,6 +244,11 @@ fn qa_ok_row(ui: &mut egui::Ui, theme: &Theme, label: &str) {
 /// One failing QA row: a warning badge, the label, and Fix/Ignore buttons that push
 /// `RunAction` intents.
 fn qa_warn_row(ui: &mut egui::Ui, theme: &Theme, label: &str, scope: &mut PanelScope<'_>) {
+    // TODO(luis): i18n these rows when the panel leaves mock - the Fix/Ignore button
+    // text stays a literal on purpose; command.export.{fix,ignore} read "Fix warning"
+    // /"Ignore warning" (the palette command names), not these in-row button labels,
+    // so keying them here would change the rendered text. Key both when the real
+    // buttons land.
     ui.horizontal(|ui| {
         ui.label(egui::RichText::new(icons::WARN.to_string()).color(theme.roles.warning));
         ui.label(egui::RichText::new(format!("WARN {label}")).color(theme.roles.text_secondary));
@@ -263,6 +282,9 @@ impl Panel for ExportLogPanel {
 
     fn ui(&self, ui: &mut egui::Ui, scope: &mut PanelScope<'_>) {
         let theme = scope.ctx.theme;
+        // TODO(luis): i18n these rows when the panel leaves mock - the log lines are
+        // throwaway sample content with no keys yet (a real export log streams data,
+        // not localized chrome).
         egui::ScrollArea::vertical().show(ui, |ui| {
             widgets::mock_log(ui, theme, &["info  exporter ready", "info  Unity preset selected"]);
         });

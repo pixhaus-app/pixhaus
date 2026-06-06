@@ -123,12 +123,12 @@ impl Panel for LayersPanel {
 
     fn ui(&self, ui: &mut egui::Ui, scope: &mut PanelScope<'_>) {
         let theme = scope.ctx.theme;
-        // TODO(i18n): the body literals below ("New Layer", row names, "Normal"/
-        // "Multiply"/"Screen", "Opacity") are placeholders bound to throwaway
-        // locals. Route them through tr("panel.layers.*") keys in sprite_edit.yaml
-        // when this panel gains a real body; keying mock rows now would pollute the
-        // bundle with strings that drive nothing.
-        if ui.button(format!("{} New Layer", icons::ADD)).clicked() {
+        // TODO(luis): i18n these rows when the panel leaves mock. The row names,
+        // blend modes, and "Opacity" are placeholder mock content bound to throwaway
+        // locals - keying them now would pollute the bundle with strings that drive
+        // nothing. "New Layer" is the exception: it has a stable command key, so it
+        // resolves through tr() like the menu item that shares the action.
+        if ui.button(format!("{} {}", icons::ADD, MsgKey("command.layer.new").tr())).clicked() {
             scope.ctx.intents.push(Intent::RunAction(LAYER_NEW));
         }
 
@@ -190,10 +190,11 @@ impl Panel for SpritesPanel {
 
     fn ui(&self, ui: &mut egui::Ui, scope: &mut PanelScope<'_>) {
         let theme = scope.ctx.theme;
-        // TODO(i18n): "New Sprite" is a placeholder literal; route it through a
-        // tr("panel.sprites.*") key in sprite_edit.yaml when this panel goes live.
+        // TODO(luis): i18n these rows when the panel leaves mock. The thumbnail grid
+        // is mock content; "New Sprite" already has a stable command key, so it
+        // resolves through tr() like the Sprite menu item that shares the action.
         widgets::mock_thumbnail_grid(ui, theme, 6);
-        if ui.button(format!("{} New Sprite", icons::ADD)).clicked() {
+        if ui.button(format!("{} {}", icons::ADD, MsgKey("command.sprite.new").tr())).clicked() {
             scope.ctx.intents.push(Intent::RunAction(SPRITE_NEW));
         }
     }
@@ -220,20 +221,21 @@ impl Panel for PalettePanel {
 
     fn ui(&self, ui: &mut egui::Ui, scope: &mut PanelScope<'_>) {
         let theme = scope.ctx.theme;
-        // TODO(i18n): "Ramp"/"Harmony"/"Reduce to palette" are placeholder literals;
-        // route them through tr("command.palette.*") keys when this panel goes live.
-        // "Bit" stays a literal - it is the palette name (project data), not a UI key.
+        // TODO(luis): i18n these rows when the panel leaves mock. "Bit" stays a
+        // literal - it is the palette name (project data), not a UI key - and the
+        // "FG > BG" indicator has no key yet. The Ramp/Harmony/Reduce buttons map
+        // exactly onto their command.palette.* keys, so they resolve through tr().
         ui.label("Bit");
         swatch_grid(ui, theme);
         ui.label(format!("FG {} BG", icons::CARET_RIGHT));
         ui.horizontal(|ui| {
-            if ui.button("Ramp").clicked() {
+            if ui.button(MsgKey("command.palette.ramp").tr()).clicked() {
                 scope.ctx.intents.push(Intent::RunAction(PALETTE_RAMP));
             }
-            if ui.button("Harmony").clicked() {
+            if ui.button(MsgKey("command.palette.harmony").tr()).clicked() {
                 scope.ctx.intents.push(Intent::RunAction(PALETTE_HARMONY));
             }
-            if ui.button("Reduce to palette").clicked() {
+            if ui.button(MsgKey("command.palette.reduce").tr()).clicked() {
                 scope.ctx.intents.push(Intent::RunAction(PALETTE_REDUCE));
             }
         });
@@ -289,16 +291,19 @@ impl Panel for SelectionActionsPanel {
 
     fn ui(&self, ui: &mut egui::Ui, scope: &mut PanelScope<'_>) {
         let theme = scope.ctx.theme;
-        // TODO(i18n): the button labels below ("Cut"/"Copy"/... and the AI row
-        // "Fill"/"Clean up"/"Make seamless") are placeholder literals; route them
-        // through tr("command.selection.*") keys when this panel gains a real body.
+        // TODO(luis): i18n these rows when the panel leaves mock. The AI sub-row
+        // ("Fill"/"Clean up"/"Make seamless") stays literal: the sparkle icon already
+        // marks the row AI, so these read shorter than the command.selection.ai-*
+        // values ("AI Fill", ...) and have no exact key. "Invert" likewise reads
+        // shorter than its command.selection.invert value ("Invert Selection"), so it
+        // stays literal. Cut/Copy/Paste/Crop map exactly onto their keys - keyed.
         ui.horizontal_wrapped(|ui| {
             for (label, action) in [
-                ("Cut", SEL_CUT),
-                ("Copy", SEL_COPY),
-                ("Paste", SEL_PASTE),
-                ("Invert", SEL_INVERT),
-                ("Crop", SEL_CROP),
+                (MsgKey("command.selection.cut").tr(), SEL_CUT),
+                (MsgKey("command.selection.copy").tr(), SEL_COPY),
+                (MsgKey("command.selection.paste").tr(), SEL_PASTE),
+                ("Invert".to_string(), SEL_INVERT),
+                (MsgKey("command.selection.crop").tr(), SEL_CROP),
             ] {
                 if ui.button(label).clicked() {
                     scope.ctx.intents.push(Intent::RunAction(action));
@@ -338,18 +343,19 @@ impl Panel for AiAssistantPanel {
     }
 
     fn ui(&self, ui: &mut egui::Ui, scope: &mut PanelScope<'_>) {
-        // TODO(i18n): the quick-action labels below are placeholder literals; route
-        // them through tr("command.ai.*") keys when this panel gains a real body.
+        // Reuse the keys these actions are registered with (command.ai.*), resolved
+        // at render time - no un-localized English fork of strings that already have
+        // keys. Mirrors the animation module's AI assistant panel.
         let actions = [
-            ("Fill selection", AI_FILL),
-            ("Clean up", AI_CLEANUP),
-            ("Reduce colors", AI_REDUCE),
-            ("Suggest ramp", AI_RAMP),
-            ("Create variations", AI_VARIATIONS),
-            ("Remove background", AI_REMOVE_BG),
+            (MsgKey("command.ai.fill-selection"), AI_FILL),
+            (MsgKey("command.ai.clean-up"), AI_CLEANUP),
+            (MsgKey("command.ai.reduce-colors"), AI_REDUCE),
+            (MsgKey("command.ai.suggest-ramp"), AI_RAMP),
+            (MsgKey("command.ai.create-variations"), AI_VARIATIONS),
+            (MsgKey("command.ai.remove-background"), AI_REMOVE_BG),
         ];
         for (label, action) in actions {
-            if ui.add_sized([ui.available_width(), 24.0], egui::Button::new(label)).clicked() {
+            if ui.add_sized([ui.available_width(), 24.0], egui::Button::new(label.tr())).clicked() {
                 scope.ctx.intents.push(Intent::RunAction(action));
             }
         }
@@ -377,8 +383,9 @@ impl Panel for FramesPanel {
 
     fn ui(&self, ui: &mut egui::Ui, scope: &mut PanelScope<'_>) {
         let theme = scope.ctx.theme;
-        // TODO(i18n): "Add"/"Duplicate"/"Delete" are placeholder literals; route them
-        // through tr("command.frame.*") keys when this panel gains a real body.
+        // TODO(luis): i18n these rows when the panel leaves mock. "Add"/"Duplicate"/
+        // "Delete" read shorter than their command.frame.* values ("Add Frame", ...),
+        // so there is no exact key match - they stay literal until the panel goes live.
         ui.horizontal(|ui| {
             if ui.button(format!("{} Add", icons::ADD)).clicked() {
                 scope.ctx.intents.push(Intent::RunAction(FRAME_ADD));
@@ -431,9 +438,9 @@ impl Panel for AssetsPanel {
 
     fn ui(&self, ui: &mut egui::Ui, scope: &mut PanelScope<'_>) {
         let theme = scope.ctx.theme;
-        // TODO(i18n): the chip labels ("All"/"Sprites"/"Tiles"/"Refs") are placeholder
-        // literals; route them through tr("panel.assets.chip.*") keys when this panel
-        // gains a real body.
+        // TODO(luis): i18n these rows when the panel leaves mock. The chip labels
+        // ("All"/"Sprites"/"Tiles"/"Refs") are mock category filters with no keys yet -
+        // they stay literal until the panel goes live.
         ui.horizontal(|ui| {
             // Inert category chips; "All" reads as selected.
             for (i, chip) in ["All", "Sprites", "Tiles", "Refs"].iter().enumerate() {
@@ -464,6 +471,9 @@ impl Panel for ConsolePanel {
 
     fn ui(&self, ui: &mut egui::Ui, scope: &mut PanelScope<'_>) {
         let theme = scope.ctx.theme;
+        // TODO(luis): i18n these rows when the panel leaves mock. The log lines are
+        // throwaway sample content with no keys - real console output is run-time data,
+        // not localized chrome.
         egui::ScrollArea::vertical().show(ui, |ui| {
             widgets::mock_log(ui, theme, &["info  backend ready", "info  project loaded"]);
         });

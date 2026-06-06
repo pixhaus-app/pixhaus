@@ -115,7 +115,9 @@ impl Panel for TilesetPanel {
     fn ui(&self, ui: &mut egui::Ui, scope: &mut PanelScope<'_>) {
         let theme = scope.ctx.theme;
         tile_grid(ui, theme, 4, 4);
-        if ui.button(format!("{} New Tile", icons::ADD)).clicked() {
+        // The button reuses the command.tile.new label (tiles.yaml), resolved at render
+        // time, so the affordance and the registered action never fork their wording.
+        if ui.button(format!("{} {}", icons::ADD, MsgKey("command.tile.new").tr())).clicked() {
             scope.ctx.intents.push(Intent::RunAction(TILE_NEW));
         }
     }
@@ -168,6 +170,7 @@ impl Panel for RuleTypePanel {
     }
 
     fn ui(&self, ui: &mut egui::Ui, _scope: &mut PanelScope<'_>) {
+        // TODO(luis): i18n these rows when the panel leaves mock
         // Throwaway local selection - mock radios that drive nothing.
         let mut rule = 0_usize;
         ui.radio_value(&mut rule, 0, "Single");
@@ -196,6 +199,7 @@ impl Panel for MaterialPanel {
 
     fn ui(&self, ui: &mut egui::Ui, _scope: &mut PanelScope<'_>) {
         ui.horizontal_wrapped(|ui| {
+            // TODO(luis): i18n these rows when the panel leaves mock
             // Inert chips; "Grass" reads as selected.
             for (i, chip) in ["Grass", "Stone", "Water", "Sand"].iter().enumerate() {
                 let mut selected = i == 0;
@@ -224,6 +228,7 @@ impl Panel for SeamQaPanel {
     }
 
     fn ui(&self, ui: &mut egui::Ui, scope: &mut PanelScope<'_>) {
+        // TODO(luis): i18n these rows when the panel leaves mock
         let theme = scope.ctx.theme;
         seam_row(ui, theme, true, "Top");
         seam_row(ui, theme, true, "Left");
@@ -265,14 +270,16 @@ impl Panel for AiTileAssistantPanel {
     }
 
     fn ui(&self, ui: &mut egui::Ui, scope: &mut PanelScope<'_>) {
+        // Reuse the keys these actions are registered with (tiles.yaml), resolved at
+        // render time - no un-localized English fork of strings that already have keys.
         let actions = [
-            ("Make seamless", TILE_MAKE_SEAMLESS),
-            ("Generate variations", TILE_VARIATIONS),
-            ("Suggest material", TILE_SUGGEST_MATERIAL),
-            ("Fix seams", TILE_FIX_SEAMS),
+            (MsgKey("command.tile.make-seamless"), TILE_MAKE_SEAMLESS),
+            (MsgKey("command.tile.generate-variations"), TILE_VARIATIONS),
+            (MsgKey("command.tile.suggest-material"), TILE_SUGGEST_MATERIAL),
+            (MsgKey("command.tile.fix-seams"), TILE_FIX_SEAMS),
         ];
         for (label, action) in actions {
-            if ui.add_sized([ui.available_width(), 24.0], egui::Button::new(label)).clicked() {
+            if ui.add_sized([ui.available_width(), 24.0], egui::Button::new(label.tr())).clicked() {
                 scope.ctx.intents.push(Intent::RunAction(action));
             }
         }
