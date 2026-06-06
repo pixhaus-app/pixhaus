@@ -5,90 +5,46 @@
 //! faithful reverse for list edits where the UI rebuilds the list each time.
 
 use crate::codex::{CodexEntryId, PromptFragment};
-use crate::command::{Command, CommandError};
-use crate::document::Document;
+use crate::command::CommandError;
+use crate::commands::macros::swap_field_command;
 
-/// Replaces an entry's positive prompt fragments. Undo restores the prior list.
-pub struct SetPromptFragments {
+// Both commands are the exact single-field swap: take the submitted list, swap it into
+// the entry, keep the prior list for undo. The only per-command differences the macro
+// threads are the held type, the target field, the label key, and how a held list
+// contributes to the size estimate. `ctor: value` keeps the by-value `new` so a
+// `.collect()` argument at the call site still infers its target type.
+swap_field_command!(
+    /// Replaces an entry's positive prompt fragments. Undo restores the prior list.
+    SetPromptFragments,
+    ctor: value,
     id: CodexEntryId,
-    fragments: Option<Vec<PromptFragment>>,
-}
+    value: Vec<PromptFragment>,
+    accessor: entry_mut,
+    not_found: CommandError::CodexEntryNotFound,
+    field: prompt_fragments,
+    label: "command.codex.set_prompt_fragments",
+    held_size: |fs: &Vec<PromptFragment>| fs.iter().map(|f| f.text.len()).sum::<usize>(),
+);
 
-impl SetPromptFragments {
-    /// A command that will set the entry `id`'s prompt fragments to `fragments`.
-    pub fn new(id: CodexEntryId, fragments: Vec<PromptFragment>) -> Self {
-        Self {
-            id,
-            fragments: Some(fragments),
-        }
-    }
-}
-
-impl Command for SetPromptFragments {
-    fn apply(&mut self, doc: &mut Document) -> Result<(), CommandError> {
-        let fragments = self.fragments.take().ok_or(CommandError::InvalidState)?;
-        let entry = doc.codex_mut().entry_mut(self.id).ok_or(CommandError::CodexEntryNotFound(self.id))?;
-        self.fragments = Some(std::mem::replace(&mut entry.prompt_fragments, fragments));
-        doc.bump_revision();
-        Ok(())
-    }
-
-    fn undo(&mut self, doc: &mut Document) -> Result<(), CommandError> {
-        // apply and undo are symmetric: each swaps the held list with the live one.
-        self.apply(doc)
-    }
-
-    fn label_key(&self) -> &'static str {
-        "command.codex.set_prompt_fragments"
-    }
-
-    fn estimated_size_bytes(&self) -> usize {
-        std::mem::size_of::<Self>() + self.fragments.as_ref().map_or(0, |fs| fs.iter().map(|f| f.text.len()).sum::<usize>())
-    }
-}
-
-/// Replaces an entry's negative prompt fragments. Undo restores the prior list.
-pub struct SetNegativeFragments {
+swap_field_command!(
+    /// Replaces an entry's negative prompt fragments. Undo restores the prior list.
+    SetNegativeFragments,
+    ctor: value,
     id: CodexEntryId,
-    fragments: Option<Vec<String>>,
-}
-
-impl SetNegativeFragments {
-    /// A command that will set the entry `id`'s negative fragments to `fragments`.
-    pub fn new(id: CodexEntryId, fragments: Vec<String>) -> Self {
-        Self {
-            id,
-            fragments: Some(fragments),
-        }
-    }
-}
-
-impl Command for SetNegativeFragments {
-    fn apply(&mut self, doc: &mut Document) -> Result<(), CommandError> {
-        let fragments = self.fragments.take().ok_or(CommandError::InvalidState)?;
-        let entry = doc.codex_mut().entry_mut(self.id).ok_or(CommandError::CodexEntryNotFound(self.id))?;
-        self.fragments = Some(std::mem::replace(&mut entry.negative_fragments, fragments));
-        doc.bump_revision();
-        Ok(())
-    }
-
-    fn undo(&mut self, doc: &mut Document) -> Result<(), CommandError> {
-        self.apply(doc)
-    }
-
-    fn label_key(&self) -> &'static str {
-        "command.codex.set_negative_fragments"
-    }
-
-    fn estimated_size_bytes(&self) -> usize {
-        std::mem::size_of::<Self>() + self.fragments.as_ref().map_or(0, |fs| fs.iter().map(String::len).sum::<usize>())
-    }
-}
+    value: Vec<String>,
+    accessor: entry_mut,
+    not_found: CommandError::CodexEntryNotFound,
+    field: negative_fragments,
+    label: "command.codex.set_negative_fragments",
+    held_size: |fs: &Vec<String>| fs.iter().map(String::len).sum::<usize>(),
+);
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::codex::InclusionPriority;
+    use crate::command::Command;
+    use crate::document::Document;
     use crate::test_support::seed_bit;
 
     #[test]

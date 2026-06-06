@@ -1,53 +1,33 @@
 //! [`RenameCoverageTemplate`]: change a template's display name, reversibly.
 
 use crate::codex::CoverageTemplateId;
-use crate::command::{Command, CommandError};
-use crate::document::Document;
+use crate::command::CommandError;
+use crate::commands::macros::swap_field_command;
 
-/// Renames a project coverage template. Undo restores the prior name. The id and slots
-/// are untouched, so entries that reference the template keep their coverage.
-pub struct RenameCoverageTemplate {
+// The exact single-field swap: replace the template's display name, keep the prior name
+// for undo. The id and slots are untouched, so entries that reference the template keep
+// their coverage. The macro's `new` takes `impl Into<String>`, preserving the
+// `&str`-accepting signature.
+swap_field_command!(
+    /// Renames a project coverage template. Undo restores the prior name. The id and slots
+    /// are untouched, so entries that reference the template keep their coverage.
+    RenameCoverageTemplate,
+    ctor: into,
     id: CoverageTemplateId,
-    name: Option<String>,
-}
-
-impl RenameCoverageTemplate {
-    /// A command that will rename the template `id` to `name`.
-    pub fn new(id: CoverageTemplateId, name: impl Into<String>) -> Self {
-        Self { id, name: Some(name.into()) }
-    }
-}
-
-impl Command for RenameCoverageTemplate {
-    fn apply(&mut self, doc: &mut Document) -> Result<(), CommandError> {
-        let name = self.name.take().ok_or(CommandError::InvalidState)?;
-        let template = doc
-            .codex_mut()
-            .coverage_template_mut(self.id)
-            .ok_or(CommandError::CoverageTemplateNotFound(self.id))?;
-        self.name = Some(std::mem::replace(&mut template.name, name));
-        doc.bump_revision();
-        Ok(())
-    }
-
-    fn undo(&mut self, doc: &mut Document) -> Result<(), CommandError> {
-        // apply and undo are symmetric: each swaps the held name with the live one.
-        self.apply(doc)
-    }
-
-    fn label_key(&self) -> &'static str {
-        "command.codex.rename_coverage_template"
-    }
-
-    fn estimated_size_bytes(&self) -> usize {
-        std::mem::size_of::<Self>() + self.name.as_ref().map_or(0, String::len)
-    }
-}
+    value: String,
+    accessor: coverage_template_mut,
+    not_found: CommandError::CoverageTemplateNotFound,
+    field: name,
+    label: "command.codex.rename_coverage_template",
+    held_size: String::len,
+);
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::command::Command;
     use crate::commands::CreateCoverageTemplate;
+    use crate::document::Document;
 
     fn seed(doc: &mut Document) -> CoverageTemplateId {
         let mut cmd = CreateCoverageTemplate::new("custom", vec![]);

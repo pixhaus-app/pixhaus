@@ -8,6 +8,7 @@ mod add_sprite;
 mod apply_generated_animation;
 mod apply_generated_asset;
 mod codex;
+mod macros;
 
 pub use add_sprite::{AddSprite, SpriteProto};
 pub use apply_generated_animation::{ApplyGeneratedAnimation, GeneratedFrameData};
