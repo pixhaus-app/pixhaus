@@ -21,7 +21,7 @@ pub use module::{ActionDesc, HostRegistrar, MenuGroup, MenuItem, Module};
 pub use panel::{Panel, PanelMeta};
 pub use tool::{Tool, ToolMeta};
 pub use tool_rail::{AI_BRUSH, ELLIPSE, ERASER, EYEDROPPER, FILL, HAND, LASSO, LINE, MOVE, PENCIL, RECTANGLE, SELECTION, TEXT, TOOL_RAIL, TRANSFORM, ZOOM};
-pub use workspace::{CenterSurface, StatusItem, Workspace, WorkspaceLayout, WorkspaceMeta};
+pub use workspace::{CenterSurface, StatusItem, StatusLabel, Workspace, WorkspaceLayout, WorkspaceMeta};
 
 /// Compile-time dyn-compatibility guard on the actual storage form.
 ///

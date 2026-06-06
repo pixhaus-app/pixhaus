@@ -62,11 +62,18 @@ ResolvedLayout {
     status_items: [
         StatusItem {
             icon: '\u{e18a}',
-            text: "AI Ready",
+            label: Key {
+                key: MsgKey(
+                    "workspace.generate.status.ai-ready",
+                ),
+                args: [],
+            },
         },
         StatusItem {
             icon: '\u{e18a}',
-            text: "Seed 123456",
+            label: Data(
+                "Seed 123456",
+            ),
         },
     ],
 }

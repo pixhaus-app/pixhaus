@@ -86,7 +86,12 @@ ResolvedLayout {
     status_items: [
         StatusItem {
             icon: '\u{e220}',
-            text: "Onion Skin Off",
+            label: Key {
+                key: MsgKey(
+                    "workspace.animate.status.onion-skin",
+                ),
+                args: [],
+            },
         },
     ],
 }

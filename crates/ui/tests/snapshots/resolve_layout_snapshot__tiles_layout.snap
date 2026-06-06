@@ -86,11 +86,18 @@ ResolvedLayout {
     status_items: [
         StatusItem {
             icon: '\u{e296}',
-            text: "Tile 16px",
+            label: Data(
+                "Tile 16px",
+            ),
         },
         StatusItem {
             icon: '\u{e184}',
-            text: "Seams OK",
+            label: Key {
+                key: MsgKey(
+                    "workspace.tiles.status.seams_ok",
+                ),
+                args: [],
+            },
         },
     ],
 }

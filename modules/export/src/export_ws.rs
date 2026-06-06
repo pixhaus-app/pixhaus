@@ -74,14 +74,11 @@ impl Workspace for ExportWorkspace {
             primary_tools: vec![HAND, ZOOM],
             default_tool: HAND,
             status_items: vec![
-                StatusItem {
-                    icon: icons::EXPORT,
-                    text: MsgKey("workspace.export.status.format").tr(),
-                },
-                StatusItem {
-                    icon: icons::CHECK,
-                    text: "0 warnings".to_owned(),
-                },
+                // A real label, so it carries a key the shell resolves at render time.
+                StatusItem::key(icons::EXPORT, MsgKey("workspace.export.status.format")),
+                // A mock count placeholder, not a localized label, so it stays verbatim
+                // Data until the validator feeds a real, keyed count.
+                StatusItem::data(icons::CHECK, "0 warnings"),
             ],
         }
     }
@@ -341,8 +338,8 @@ mod tests {
         assert_eq!(layout.default_tool, HAND);
         assert_eq!(layout.primary_tools, vec![HAND, ZOOM]);
         assert_eq!(layout.status_items.len(), 2);
-        assert_eq!(layout.status_items[0].text, MsgKey("workspace.export.status.format").tr());
-        assert_eq!(layout.status_items[1].text, "0 warnings");
+        assert_eq!(layout.status_items[0], StatusItem::key(icons::EXPORT, MsgKey("workspace.export.status.format")));
+        assert_eq!(layout.status_items[1], StatusItem::data(icons::CHECK, "0 warnings"));
     }
 
     #[test]

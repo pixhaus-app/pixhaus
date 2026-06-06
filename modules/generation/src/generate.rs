@@ -98,14 +98,11 @@ impl Workspace for GenerateWorkspace {
             primary_tools: vec![HAND, ZOOM, SELECTION, AI_BRUSH],
             default_tool: HAND,
             status_items: vec![
-                StatusItem {
-                    icon: icons::STATUS_DOT,
-                    text: MsgKey("workspace.generate.status.ai-ready").tr(),
-                },
-                StatusItem {
-                    icon: icons::STATUS_DOT,
-                    text: "Seed 123456".to_owned(),
-                },
+                // A real label, so it carries a key the shell resolves at render time.
+                StatusItem::key(icons::STATUS_DOT, MsgKey("workspace.generate.status.ai-ready")),
+                // A mock seed placeholder, not a localized label, so it stays verbatim
+                // Data - never a key (the i18n rule: never put a seed inside a key).
+                StatusItem::data(icons::STATUS_DOT, "Seed 123456"),
             ],
         }
     }
@@ -697,8 +694,11 @@ mod tests {
         assert_eq!(layout.default_tool, HAND);
         assert_eq!(layout.primary_tools, vec![HAND, ZOOM, SELECTION, AI_BRUSH]);
         assert_eq!(layout.status_items.len(), 2);
-        assert_eq!(layout.status_items[0].text, MsgKey("workspace.generate.status.ai-ready").tr());
-        assert_eq!(layout.status_items[1].text, "Seed 123456");
+        assert_eq!(
+            layout.status_items[0],
+            StatusItem::key(icons::STATUS_DOT, MsgKey("workspace.generate.status.ai-ready"))
+        );
+        assert_eq!(layout.status_items[1], StatusItem::data(icons::STATUS_DOT, "Seed 123456"));
     }
 
     #[test]

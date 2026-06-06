@@ -94,10 +94,9 @@ impl Workspace for DrawWorkspace {
             center: CenterSurface::Canvas,
             primary_tools: tools::ALL.to_vec(),
             default_tool: tools::PENCIL,
-            status_items: vec![StatusItem {
-                icon: icons::GRID,
-                text: MsgKey("workspace.draw.status.grid_on").tr(),
-            }],
+            // A real label, so it carries a key the shell resolves at render time -
+            // never a pre-resolved String baked into the layout.
+            status_items: vec![StatusItem::key(icons::GRID, MsgKey("workspace.draw.status.grid_on"))],
         }
     }
 }
@@ -586,7 +585,7 @@ mod tests {
         assert_eq!(layout.default_tool, tools::PENCIL);
         assert_eq!(layout.primary_tools.len(), 15);
         assert_eq!(layout.status_items.len(), 1);
-        assert_eq!(layout.status_items[0].text, MsgKey("workspace.draw.status.grid_on").tr());
+        assert_eq!(layout.status_items[0], StatusItem::key(icons::GRID, MsgKey("workspace.draw.status.grid_on")));
     }
 
     #[test]

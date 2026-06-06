@@ -36,7 +36,12 @@ ResolvedLayout {
     status_items: [
         StatusItem {
             icon: '\u{eadc}',
-            text: "Coverage",
+            label: Key {
+                key: MsgKey(
+                    "workspace.codex.status.coverage",
+                ),
+                args: [],
+            },
         },
     ],
 }

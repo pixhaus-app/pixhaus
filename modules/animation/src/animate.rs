@@ -75,11 +75,9 @@ impl Workspace for AnimateWorkspace {
             default_tool: PENCIL,
             // The live frame count and fps now read off the Timeline panel (driven by
             // the active sprite); the status bar keeps only the onion-skin chrome
-            // rather than the old hardcoded "15 frames"/"12 FPS" placeholders.
-            status_items: vec![StatusItem {
-                icon: icons::EYE,
-                text: MsgKey("workspace.animate.status.onion-skin").tr(),
-            }],
+            // rather than the old hardcoded "15 frames"/"12 FPS" placeholders. A real
+            // label, so it carries a key the shell resolves at render time.
+            status_items: vec![StatusItem::key(icons::EYE, MsgKey("workspace.animate.status.onion-skin"))],
         }
     }
 }
@@ -442,7 +440,10 @@ mod tests {
         assert_eq!(layout.default_tool, PENCIL);
         assert_eq!(layout.primary_tools.len(), 15);
         assert_eq!(layout.status_items.len(), 1, "the fake frame/FPS status items moved to the live timeline");
-        assert_eq!(layout.status_items[0].text, MsgKey("workspace.animate.status.onion-skin").tr());
+        assert_eq!(
+            layout.status_items[0],
+            StatusItem::key(icons::EYE, MsgKey("workspace.animate.status.onion-skin"))
+        );
     }
 
     #[test]

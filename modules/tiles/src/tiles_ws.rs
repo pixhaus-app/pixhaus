@@ -78,17 +78,11 @@ impl Workspace for TilesWorkspace {
             primary_tools: TOOL_RAIL.to_vec(),
             default_tool: PENCIL,
             status_items: vec![
-                StatusItem {
-                    icon: icons::GRID,
-                    // A numeric mock placeholder, not a localized label, so it carries no
-                    // i18n key (matching the tiles.yaml note); the sibling seams_ok item is
-                    // a real label and resolves through a MsgKey.
-                    text: "Tile 16px".to_owned(),
-                },
-                StatusItem {
-                    icon: icons::CHECK,
-                    text: MsgKey("workspace.tiles.status.seams_ok").tr(),
-                },
+                // A numeric mock placeholder, not a localized label, so it stays verbatim
+                // Data and carries no i18n key (matching the tiles.yaml note); the sibling
+                // seams_ok item is a real label and resolves through a MsgKey.
+                StatusItem::data(icons::GRID, "Tile 16px"),
+                StatusItem::key(icons::CHECK, MsgKey("workspace.tiles.status.seams_ok")),
             ],
         }
     }
@@ -385,8 +379,8 @@ mod tests {
         assert_eq!(layout.default_tool, PENCIL);
         assert_eq!(layout.primary_tools.len(), 15);
         assert_eq!(layout.status_items.len(), 2);
-        assert_eq!(layout.status_items[0].text, "Tile 16px");
-        assert_eq!(layout.status_items[1].text, "Seams OK");
+        assert_eq!(layout.status_items[0], StatusItem::data(icons::GRID, "Tile 16px"));
+        assert_eq!(layout.status_items[1], StatusItem::key(icons::CHECK, MsgKey("workspace.tiles.status.seams_ok")));
     }
 
     #[test]

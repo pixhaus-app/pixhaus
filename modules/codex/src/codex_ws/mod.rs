@@ -118,12 +118,9 @@ impl Workspace for CodexWorkspace {
             primary_tools: Vec::new(),
             default_tool: pixhaus_ui::contrib_api::ToolId(""),
             // The project-wide coverage count is DERIVED into `CodexView.project_coverage`
-            // each frame; the status-item label here is the static caption the shell
-            // resolves at layout-build time (it has no view access). See the return note.
-            status_items: vec![StatusItem {
-                icon: icons::COVERAGE,
-                text: MsgKey("workspace.codex.status.coverage").tr(),
-            }],
+            // each frame; the status-item label here is the static caption, a real label
+            // the shell resolves at render time through its key (it has no view access).
+            status_items: vec![StatusItem::key(icons::COVERAGE, MsgKey("workspace.codex.status.coverage"))],
         }
     }
 }

@@ -41,11 +41,18 @@ ResolvedLayout {
     status_items: [
         StatusItem {
             icon: '\u{eaf0}',
-            text: "PNG + sheet",
+            label: Key {
+                key: MsgKey(
+                    "workspace.export.status.format",
+                ),
+                args: [],
+            },
         },
         StatusItem {
             icon: '\u{e184}',
-            text: "0 warnings",
+            label: Data(
+                "0 warnings",
+            ),
         },
     ],
 }

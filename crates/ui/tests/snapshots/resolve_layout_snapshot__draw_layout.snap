@@ -86,7 +86,12 @@ ResolvedLayout {
     status_items: [
         StatusItem {
             icon: '\u{e296}',
-            text: "Pixel Grid On",
+            label: Key {
+                key: MsgKey(
+                    "workspace.draw.status.grid_on",
+                ),
+                args: [],
+            },
         },
     ],
 }

@@ -3,6 +3,7 @@
 
 use pixhaus_services::i18n;
 
+use crate::contrib_api::StatusLabel;
 use crate::icons;
 use crate::region::region_id;
 use crate::registry::resolve_layout;
@@ -39,10 +40,22 @@ pub fn show(host: &mut Host, ui: &mut egui::Ui) {
                 let grid = format!("{:?}", state.ui.grid);
                 ui.colored_label(theme.roles.text_secondary, i18n::tr_args("app.ui.status.grid", &[("mode", &grid)]));
 
-                // Workspace-specific items.
+                // Workspace-specific items. The label is resolved here, at render time,
+                // in the active language - a module emits a key (or genuine data) at
+                // layout() time and the shell is the one place that calls tr(), the same
+                // contract as every other registry MsgKey.
                 for status_item in &status_items {
                     ui.separator();
-                    ui.label(egui::RichText::new(format!("{} {}", status_item.icon, status_item.text)).color(theme.roles.text_secondary));
+                    let text = match &status_item.label {
+                        StatusLabel::Key { key, args } if args.is_empty() => i18n::tr(key.0),
+                        StatusLabel::Key { key, args } => {
+                            // tr_args needs &[(&str, &str)]; borrow each owned arg in place.
+                            let borrowed: Vec<(&str, &str)> = args.iter().map(|(name, value)| (name.as_str(), value.as_str())).collect();
+                            i18n::tr_args(key.0, &borrowed)
+                        }
+                        StatusLabel::Data(data) => data.clone(),
+                    };
+                    ui.label(egui::RichText::new(format!("{} {}", status_item.icon, text)).color(theme.roles.text_secondary));
                 }
 
                 // AI status dot, right-aligned.
