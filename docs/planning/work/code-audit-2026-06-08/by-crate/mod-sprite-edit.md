@@ -1,0 +1,24 @@
+## mod-sprite-edit
+
+This unit is registration-and-mock-UI only — a `Module` impl, the Draw workspace, eight shared panels, and 15 tool definitions — so the pixel hot-path concerns (flat buffers, per-pixel tracing) do not arise here. Compliance with the load-bearing rules is high: every panel and tool is a `&self` unit struct that reads through `scope.ctx`/`cx`, pushes `Intent::RunAction` for all mutation and never touches the model, draws only from theme tokens and phosphor icons, carries no unwrap/expect/panic/println outside tests, and instruments registration with a single `info!` and no per-frame tracing. The two real defects are both low-severity convention drift: 22 prose `// TODO(luis):` comments the repo's rules ban, and four user-facing button labels rendered as hardcoded literals despite existing command keys — the latter a documented deliberate trade-off, but still a deviation from the stated rule.
+
+### Strengths
+
+- Deferred-intent model followed exactly: every mutating affordance (LayersPanel New Layer, Sprites New Sprite, Palette Ramp/Harmony/Reduce, all Selection actions, AI Assistant quick-actions, Frames add/duplicate/delete) pushes `Intent::RunAction(ActionId)` into `scope.ctx.intents` and never mutates session/project state; mock widget locals are throwaway `let mut` bound to nothing, as the panel-model rules require (draw.rs:130-131, 196-198, 231-239, 307-320, 356-360, 388-398).
+- Tools create commands, never mutate the model: each `Tool` impl is a stateless unit struct whose `options_ui` renders only inert mock widgets, satisfying the bible's "tools create commands" rule (tools.rs throughout).
+- Registration instrumented correctly: lib.rs:31 emits a single `tracing::info!(module = "sprite-edit", ...)` on register, registers tools-first-then-workspace with a why-comment, and carries zero per-frame or per-stroke tracing.
+- Design-system tokens used throughout: fills and strokes come from `theme.accent.*`, `theme.roles.*`, `theme.surfaces.inset`, `theme.radius.sm`, `theme.type_scale.label`, and `theme.mock.palette[i]` (a real `MockColors` token) — no `Color32::from_rgb` or hex literals; all glyphs are phosphor `icons::*`, with `icons::SPARKLE` + `theme.accent.ai` marking AI affordances (draw.rs:257-264, 313-316; tools.rs:474-477).
+- Correct egui 0.34 idioms: `ComboBox::from_id_salt(("blend", i))` and push_id-wrapped scroll areas give stateful widgets-in-loops unique ids; `is_rect_visible()` guards painting in `swatch_grid`/`frame_strip`; the opacity label is split out of `Slider.text()` with a recorded why-comment to keep the active-widget accent off a plain label (draw.rs:151, 160-166, 256, 410).
+- i18n keys used correctly for real labels: `command.layer.new`, `command.sprite.new`, `command.palette.*`, `command.selection.cut/copy/paste/crop`, `command.ai.*` resolve through `MsgKey(...).tr()`; registries carry `MsgKey` not display text; `StatusItem::key(...)` lets the shell resolve at render time; core is never localized (draw.rs:99, 130, 196, 231-237, 348-355).
+- Tests cover the public surface meaningfully — layout inventory, workspace meta/shortcut, panel ids/regions, tool meta/shortcuts, and the all-15-tools-unique invariant — with the `#[cfg(test)]` unwrap/expect allow scoped at the crate root so test-side unwrap is correctly exempt (lib.rs:9; draw.rs:576-636; tools.rs:509-547).
+
+### Findings
+
+| ID | File:Lines | Severity | Category | Issue -> Fix |
+|----|-----------|----------|----------|--------------|
+| U24-2 | modules/sprite-edit/src/draw.rs:304, 389, 392, 395 | low | i18n | Four real button labels ("Invert", "Add", "Duplicate", "Delete") are hardcoded literals despite existing keys (`command.selection.invert`, `command.frame.add/.duplicate/.delete` in `sprite_edit.yaml`), so they stay English under View > Show i18n Keys while sibling Cut/Copy/Paste/Crop buttons flip — the exact drift the dev toggle exists to catch. Resolve the existing keys via `MsgKey(...).tr()`, or, if the shorter wording is intentional, add distinct short keys (e.g. `command.frame.add.short`) and shorten the bundle values rather than hardcoding display text. |
+| U24-1 | modules/sprite-edit/src/tools.rs:39-40, 76-77, 108-109, 140-141, 172-173, 204-205, 236-237, 265-266, 297-298, 326-327, 355-356, 384-385, 413-414, 442-443, 472-473; draw.rs:124-129, 192-194, 223-226, 293-298, 385-387, 440-442, 473-475 | low | docs | 22 prose `// TODO(luis): i18n these rows when the panel leaves mock.` comments violate the pixhaus-rust-conventions no-prose-TODO rule (file an issue, leave a `// see #123` breadcrumb). Drop the `TODO(luis):` prefix, keep the mock-vs-keyed rationale prose, and point at a tracked issue: e.g. `// Mock option labels stay literal until the row goes live; key them then (see #NNN).` |
+
+### Checked and cleared (false positives)
+
+None.
