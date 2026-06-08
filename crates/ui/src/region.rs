@@ -31,8 +31,10 @@ pub enum Region {
 /// Stable id source strings for the regions egui draws as panels.
 ///
 /// Each `egui` panel needs a unique stable id so its size and scroll memory
-/// persist across frames. The four chrome regions (top bar, tool options, status
-/// bar, canvas stage) and the three registry-fed regions each get one.
+/// persist across frames. Three chrome regions (top bar, tool options, status bar)
+/// and three registry-fed regions (left tool rail, right dock, bottom tray) each
+/// get one. The center canvas stage and the left dock draw without a stable
+/// `region_id` here.
 pub mod region_id {
     /// Id source for the top bar panel.
     pub const TOP_BAR: &str = "pixhaus.topbar";

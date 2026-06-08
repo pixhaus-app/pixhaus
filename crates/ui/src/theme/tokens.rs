@@ -6,7 +6,10 @@
 use egui::Color32;
 
 /// The full token set for one resolved theme. Built by `Theme::for_variant`.
-#[derive(Copy, Clone)]
+// Clone, not Copy: at ~300 bytes (`MockColors` alone carries a `[Color32; 24]`) a derived
+// Copy would make every by-value pass a silent ~300-byte memcpy. Callers borrow `&Theme`; the
+// one owner (`Host`) clones it once at construction. The small leaf token structs below stay Copy.
+#[derive(Clone)]
 pub struct Theme {
     /// Which variant produced this token set.
     pub variant: ThemeVariant,
@@ -36,7 +39,9 @@ pub struct Theme {
 /// paints from tokens rather than hex literals. Decorative only - these are not
 /// gated by the role WCAG floors, so labels drawn over them use a dark/light ink
 /// chosen for legibility, not a role color.
-#[derive(Copy, Clone)]
+// Clone, not Copy: a `[Color32; 24]` plus several arrays make this ~150 bytes, and it lives
+// inside `Theme`, which is borrowed rather than copied by value.
+#[derive(Clone)]
 pub struct MockColors {
     /// A 24-color "Bit" sprite palette spanning the families the references show:
     /// near-black outline, warm browns, a stone-gray ramp, golds, greens, blues, a

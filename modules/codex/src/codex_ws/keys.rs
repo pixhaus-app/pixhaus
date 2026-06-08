@@ -7,7 +7,10 @@
 
 // Explicit imports rather than `use super::*`: the repo denies `clippy::wildcard_imports`
 // outside test modules. The set is exactly the enum types these mappers match on, reached
-// through the parent's re-exports.
+// through the parent's re-exports. The style/animation enums come straight from `core`
+// because the parent does not re-export them.
+use pixhaus_core::codex::{AntiAliasingRule, DetailLevel, LineTreatment, LoopBehavior};
+
 use super::{AnchorKind, AnchorStrength, ColorRole, CoverageItemStatus, EntryStatus, EntryType, InclusionPriority, RelationKind};
 
 /// The i18n key for an entry status (`codex.status.*`), resolved to display text at
@@ -131,6 +134,45 @@ pub(super) fn coverage_status_key(status: CoverageItemStatus) -> &'static str {
         CoverageItemStatus::Approved => "codex.coverage.status.approved",
         CoverageItemStatus::ManuallyFinalized => "codex.coverage.status.manually_finalized",
         CoverageItemStatus::Deprecated => "codex.coverage.status.deprecated",
+    }
+}
+
+/// The i18n key for a style line treatment (`codex.style.line_treatment.*`). The Codex
+/// stores the enum; the shell localizes it, so a raw `Debug` name never reaches the artist.
+pub(super) fn line_treatment_key(treatment: LineTreatment) -> &'static str {
+    match treatment {
+        LineTreatment::None => "codex.style.line_treatment.none",
+        LineTreatment::Clean => "codex.style.line_treatment.clean",
+        LineTreatment::Bold => "codex.style.line_treatment.bold",
+        LineTreatment::Selective => "codex.style.line_treatment.selective",
+    }
+}
+
+/// The i18n key for a style detail level (`codex.style.detail_level.*`).
+pub(super) fn detail_level_key(level: DetailLevel) -> &'static str {
+    match level {
+        DetailLevel::Minimal => "codex.style.detail_level.minimal",
+        DetailLevel::Low => "codex.style.detail_level.low",
+        DetailLevel::Medium => "codex.style.detail_level.medium",
+        DetailLevel::High => "codex.style.detail_level.high",
+    }
+}
+
+/// The i18n key for a style anti-aliasing rule (`codex.style.anti_aliasing.*`).
+pub(super) fn anti_aliasing_key(rule: AntiAliasingRule) -> &'static str {
+    match rule {
+        AntiAliasingRule::None => "codex.style.anti_aliasing.none",
+        AntiAliasingRule::Manual => "codex.style.anti_aliasing.manual",
+        AntiAliasingRule::Allowed => "codex.style.anti_aliasing.allowed",
+    }
+}
+
+/// The i18n key for an animation loop behavior (`codex.animation.loop_behavior.*`).
+pub(super) fn loop_behavior_key(behavior: LoopBehavior) -> &'static str {
+    match behavior {
+        LoopBehavior::Loop => "codex.animation.loop_behavior.loop",
+        LoopBehavior::Once => "codex.animation.loop_behavior.once",
+        LoopBehavior::PingPong => "codex.animation.loop_behavior.ping_pong",
     }
 }
 

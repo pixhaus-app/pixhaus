@@ -11,6 +11,8 @@ homepage.workspace = true
 [dependencies]
 egui.workspace = true
 pixhaus-ui = { path = "../../crates/ui" }
+# Module registration emits one `info!` landmark; no per-frame tracing. See pixhaus-tracing.
+tracing.workspace = true
 
 [lints]
 workspace = true

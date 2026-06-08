@@ -1,6 +1,6 @@
 //! Type-specific detail commands: replace an entry's body, reversibly.
 //!
-//! Each command targets one [`EntryDetails`](crate::codex::EntryDetails) variant. It
+//! Each command targets one [`EntryDetails`] variant. It
 //! validates that the entry currently holds that variant (else
 //! [`CommandError::InvalidState`]), swaps in the new body, and keeps the prior body
 //! for a faithful undo. Replacing the whole struct is the simplest reverse: the UI

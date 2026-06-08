@@ -164,7 +164,7 @@ impl Panel for RuleTypePanel {
     }
 
     fn ui(&self, ui: &mut egui::Ui, _scope: &mut PanelScope<'_>) {
-        // TODO(luis): i18n these rows when the panel leaves mock
+        // Mock labels stay literal until the panel leaves mock
         // Throwaway local selection - mock radios that drive nothing.
         let mut rule = 0_usize;
         ui.radio_value(&mut rule, 0, "Single");
@@ -193,7 +193,7 @@ impl Panel for MaterialPanel {
 
     fn ui(&self, ui: &mut egui::Ui, _scope: &mut PanelScope<'_>) {
         ui.horizontal_wrapped(|ui| {
-            // TODO(luis): i18n these rows when the panel leaves mock
+            // Mock labels stay literal until the panel leaves mock
             // Inert chips; "Grass" reads as selected.
             for (i, chip) in ["Grass", "Stone", "Water", "Sand"].iter().enumerate() {
                 let mut selected = i == 0;
@@ -222,7 +222,7 @@ impl Panel for SeamQaPanel {
     }
 
     fn ui(&self, ui: &mut egui::Ui, scope: &mut PanelScope<'_>) {
-        // TODO(luis): i18n these rows when the panel leaves mock
+        // Mock labels stay literal until the panel leaves mock
         let theme = scope.ctx.theme;
         seam_row(ui, theme, true, "Top");
         seam_row(ui, theme, true, "Left");
@@ -365,6 +365,8 @@ pub fn register(host: &mut dyn HostRegistrar) {
             palette_visible: true,
         });
     }
+
+    tracing::info!(module = "tiles", "registered the Tiles workspace");
 }
 
 #[cfg(test)]

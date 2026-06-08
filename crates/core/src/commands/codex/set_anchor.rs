@@ -1,8 +1,8 @@
 //! [`SetAnchor`]: add or replace an entry's anchor of a given kind, reversibly.
 //!
-//! At most one anchor of a given [`AnchorKind`](crate::codex::AnchorKind) is kept per
+//! At most one anchor of a given [`AnchorKind`] is kept per
 //! entry: setting an anchor of a kind that already exists replaces it. Undo restores
-//! whatever was there before — a prior anchor or its absence. [`RemoveAnchor`] lives
+//! whatever was there before — a prior anchor or its absence. [`RemoveAnchor`](super::RemoveAnchor) lives
 //! in its own module.
 
 use crate::codex::{Anchor, AnchorKind, CodexEntryId};

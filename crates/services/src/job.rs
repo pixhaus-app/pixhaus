@@ -286,8 +286,9 @@ mod tests {
     }
 
     impl Provider for Fake {
-        fn id(&self) -> ProviderId {
-            ProviderId("fake".to_owned())
+        fn id(&self) -> &ProviderId {
+            static ID: std::sync::LazyLock<ProviderId> = std::sync::LazyLock::new(|| ProviderId("fake".to_owned()));
+            &ID
         }
         fn label_key(&self) -> &'static str {
             "provider.fake.label"

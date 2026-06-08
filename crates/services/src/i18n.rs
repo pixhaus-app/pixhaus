@@ -124,7 +124,7 @@ fn miss(key: &str) {
 
 #[cfg(test)]
 mod tests {
-    use super::{available_languages, current_language, set_language, set_show_keys, tr, tr_args, tr_plural};
+    use super::{available_languages, current_language, set_language, set_show_keys, show_keys, tr, tr_args, tr_plural};
     use serial_test::serial;
 
     // rust-i18n's active locale is process-global, so every test that reads or
@@ -175,6 +175,15 @@ mod tests {
         assert_eq!(tr("panel.layers.title"), "panel.layers.title");
         set_show_keys(false);
         assert_eq!(tr("panel.layers.title"), "Layers");
+    }
+
+    #[test]
+    #[serial]
+    fn show_keys_reports_the_stored_flag() {
+        set_show_keys(true);
+        assert!(show_keys(), "show_keys must report the flag set_show_keys stored");
+        set_show_keys(false);
+        assert!(!show_keys());
     }
 
     #[test]

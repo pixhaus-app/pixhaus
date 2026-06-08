@@ -153,7 +153,11 @@ pub fn reference_chip(ui: &mut egui::Ui, theme: &Theme, handle: &str, entry_type
 /// owns the `codex.anchor.*` keys); the strength still drives the color.
 pub fn anchor_badge(ui: &mut egui::Ui, theme: &Theme, strength: AnchorStrength, kind_label: &str, strength_label: &str) {
     let color = strength_color(theme, strength);
-    let text = format!("{kind_label} {strength_label}");
+    // Arrange the two labels through a bundle template (`codex.anchor.badge` =
+    // "%{kind} %{strength}") rather than a Rust `format!`, so word order and separator are
+    // localizable - a grammar wanting strength-first or a different separator expresses it in
+    // the bundle. The shell resolving a module-owned key at render time is the normal i18n path.
+    let text = pixhaus_services::i18n::tr_args("codex.anchor.badge", &[("kind", kind_label), ("strength", strength_label)]);
     badge(ui, theme, icons::ANCHOR, &text, color);
 }
 
@@ -953,7 +957,7 @@ pub fn status_check_row(ui: &mut egui::Ui, theme: &Theme, state: Option<bool>, l
 /// An info card: an elevated `card`-style frame with its own `glyph + title` section
 /// header and an optional trailing edit affordance (a pencil). Returns `true` when
 /// the edit affordance was clicked. The Overview grid composes these. (A sibling to
-/// [`card`](crate::widgets::card), which is panel-meta-driven; this one takes a plain
+/// [`card`](fn@crate::widgets::card), which is panel-meta-driven; this one takes a plain
 /// glyph + title so a center tab can lay out many cards without a `PanelMeta` each.)
 pub fn info_card(ui: &mut egui::Ui, theme: &Theme, glyph: char, title: &str, editable: bool, body: impl FnOnce(&mut egui::Ui)) -> bool {
     let mut edit = false;

@@ -140,4 +140,24 @@ mod tests {
         let mut cmd = ApplyGeneratedAsset::new("bad".to_owned(), 2, 2, 4, vec![0u8; 8]);
         assert!(matches!(cmd.apply(&mut doc), Err(CommandError::Pixel(_))));
     }
+
+    #[test]
+    fn size_held_only_while_pending() {
+        let mut cmd = ApplyGeneratedAsset::new("gen".to_owned(), 2, 2, 8, red_2x2());
+        // Pending (before apply): the estimate counts the held pixel bytes.
+        let pending = cmd.estimated_size_bytes();
+        assert!(pending > red_2x2().len(), "pending estimate must include the held pixels");
+
+        let mut doc = Document::new();
+        cmd.apply(&mut doc).unwrap();
+        // Applied: the pixels live in the document's buffer store, so the estimate drops.
+        assert!(
+            cmd.estimated_size_bytes() < pending,
+            "applied estimate must not count pixels the document now holds"
+        );
+
+        cmd.undo(&mut doc).unwrap();
+        // Undone: the command reclaims the pixels, so the estimate returns to the pending size.
+        assert_eq!(cmd.estimated_size_bytes(), pending, "undo must reclaim the held-pixel estimate");
+    }
 }

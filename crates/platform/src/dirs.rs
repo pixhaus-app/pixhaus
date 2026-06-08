@@ -183,6 +183,21 @@ mod tests {
         assert_eq!(path.file_name(), Some(std::ffi::OsStr::new("logs")));
     }
 
+    // Exercises the public log_dir() wiring (app_dirs() -> log_dir_in) and the #[instrument]
+    // on the public surface. #[ignore]d because it creates the leaf under the developer's real
+    // OS data dir; the hermetic creation path is covered by log_dir_in above. Run with
+    // `cargo nextest run --run-ignored all` (or `cargo test -- --ignored`).
+    #[test]
+    #[ignore = "touches the real OS data dir; creation is covered hermetically by log_dir_in"]
+    fn log_dir_resolves_and_creates_the_real_log_leaf() {
+        let path = match log_dir() {
+            Ok(path) => path,
+            Err(err) => panic!("log_dir should resolve on the test host: {err}"),
+        };
+        assert!(path.is_dir(), "log_dir must create the dir on disk: {}", path.display());
+        assert_eq!(path.file_name(), Some(std::ffi::OsStr::new("logs")));
+    }
+
     #[test]
     fn create_reports_what_and_path_on_failure() {
         // Creating a directory whose parent is an existing file must fail; assert the

@@ -2599,6 +2599,7 @@ version = "0.1.0"
 dependencies = [
  "egui",
  "pixhaus-ui",
+ "tracing",
 ]
 
 [[package]]

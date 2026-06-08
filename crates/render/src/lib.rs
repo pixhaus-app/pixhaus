@@ -80,6 +80,12 @@ impl ViewportRenderer {
     /// `target_format` must equal the format egui-wgpu renders into, or pipeline
     /// creation fails. Build this once at startup and reuse it every frame.
     pub fn new(device: &wgpu::Device, target_format: wgpu::TextureFormat) -> Self {
+        // GPU object construction below (shader, pipeline, sampler, textures) is build-once at
+        // startup on controlled, in-crate inputs (a vendored .wgsl, fixed descriptors), so a
+        // validation error here is a programming bug, not a runtime condition: we let wgpu's
+        // default uncaptured-error panic surface it. If render later grows a fallible runtime
+        // path (user shaders, dynamic formats), add a crate-local thiserror Error/Result and an
+        // error scope (or device.on_uncaptured_error) around these calls. See pixhaus-wgpu.
         let shader = device.create_shader_module(wgpu::include_wgsl!("viewport_blit.wgsl"));
 
         let bind_group_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
@@ -217,10 +223,22 @@ impl ViewportRenderer {
     /// Recreates the GPU texture only when the size changes; otherwise it overwrites
     /// the retained texture in place. Full-frame upload is fine for the small
     /// Generate sprites of the foundation; dirty-rect upload is the 8K follow-up.
+    ///
+    /// # Panics
+    ///
+    /// In debug builds, if `rgba` is not exactly `width * height * 4` bytes. The upload
+    /// hardcodes `bytes_per_row = width * 4`, so a loosely-packed slice would otherwise
+    /// trip a wgpu validation error at `write_texture`; the assert turns that into a
+    /// clear failure at the call boundary.
     pub fn upload_frame(&mut self, device: &wgpu::Device, queue: &wgpu::Queue, rgba: &[u8], width: u32, height: u32) {
         if frame_upload_is_skippable(width, height) {
             return;
         }
+        debug_assert_eq!(
+            rgba.len(),
+            width as usize * height as usize * 4,
+            "upload_frame requires a tightly-packed RGBA8 frame (stride == width * 4)"
+        );
         let needs_alloc = self.texture.as_ref().is_none_or(|t| t.width != width || t.height != height);
         if needs_alloc {
             self.texture = Some(Self::make_texture(

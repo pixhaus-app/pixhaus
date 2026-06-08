@@ -51,7 +51,10 @@ use coverage::{CoveragePanel, coverage_body};
 use details::{details_editor, notes_field};
 use editor::{EditorPanel, field_row, history_body};
 use inspector::InspectorPanel;
-use keys::{RELATION_KINDS, anchor_kind_key, anchor_strength_key, color_role_key, coverage_status_key, entry_type_key, priority_key, relation_key, status_key};
+use keys::{
+    RELATION_KINDS, anchor_kind_key, anchor_strength_key, anti_aliasing_key, color_role_key, coverage_status_key, detail_level_key, entry_type_key,
+    line_treatment_key, loop_behavior_key, priority_key, relation_key, status_key,
+};
 use navigator::NavigatorPanel;
 use tray::{CodexHistoryPanel, TestGenerationPanel};
 
@@ -352,5 +355,39 @@ mod tests {
         .map(coverage_status_key)
         .collect();
         assert_keys_unique_with_prefix("codex.coverage.status.", &keys);
+    }
+
+    #[test]
+    fn style_and_animation_enum_keys_are_unique_and_resolve() {
+        use std::collections::HashSet;
+
+        use pixhaus_core::codex::{AntiAliasingRule, DetailLevel, LineTreatment, LoopBehavior};
+
+        // Every variant the detail editors render through enum_picker must resolve to a bundled
+        // string, or the artist sees the raw codex.* key. This guards the keys.rs mappers against
+        // a missing codex.yaml value - the i18n leak (format!("{v:?}")) this work replaced.
+        let keys: Vec<&'static str> = [LineTreatment::None, LineTreatment::Clean, LineTreatment::Bold, LineTreatment::Selective]
+            .into_iter()
+            .map(line_treatment_key)
+            .chain(
+                [DetailLevel::Minimal, DetailLevel::Low, DetailLevel::Medium, DetailLevel::High]
+                    .into_iter()
+                    .map(detail_level_key),
+            )
+            .chain(
+                [AntiAliasingRule::None, AntiAliasingRule::Manual, AntiAliasingRule::Allowed]
+                    .into_iter()
+                    .map(anti_aliasing_key),
+            )
+            .chain(
+                [LoopBehavior::Loop, LoopBehavior::Once, LoopBehavior::PingPong]
+                    .into_iter()
+                    .map(loop_behavior_key),
+            )
+            .collect();
+        assert_eq!(keys.iter().collect::<HashSet<_>>().len(), keys.len(), "enum keys must be unique");
+        for key in keys {
+            assert_ne!(pixhaus_services::i18n::tr(key).as_str(), key, "codex enum key {key} has no codex.yaml value");
+        }
     }
 }

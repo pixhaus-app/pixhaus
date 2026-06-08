@@ -14,7 +14,9 @@
 
 mod support;
 
-use pixhaus_ui::contrib_api::MsgKey;
+use pixhaus_ui::contrib_api::{Module, MsgKey, StatusLabel};
+use pixhaus_ui::state::Host;
+use pixhaus_ui::theme::Theme;
 
 use support::fully_registered_host;
 
@@ -29,10 +31,11 @@ fn assert_resolves(key: MsgKey) {
     );
 }
 
-#[test]
-fn every_registered_key_resolves() {
-    let host = fully_registered_host();
-
+/// Walk every registry-level key on `host` and assert each resolves: menu groups and items,
+/// panel titles, tool labels and tooltips, workspace names/purposes, workspace status-bar
+/// items (the `StatusLabel::Key` ones; `StatusLabel::Data` is verbatim, never localized), and
+/// action labels.
+fn assert_all_registry_keys_resolve(host: &Host) {
     for group in &host.registries.menus {
         assert_resolves(group.label);
         for item in &group.items {
@@ -49,8 +52,29 @@ fn every_registered_key_resolves() {
     for ws in host.registries.workspaces.iter() {
         assert_resolves(ws.meta().name);
         assert_resolves(ws.meta().purpose);
+        for item in ws.layout().status_items {
+            if let StatusLabel::Key { key, .. } = item.label {
+                assert_resolves(key);
+            }
+        }
     }
     for action in host.registries.actions.iter() {
         assert_resolves(action.label);
     }
+}
+
+#[test]
+fn every_registered_key_resolves() {
+    assert_all_registry_keys_resolve(&fully_registered_host());
+}
+
+#[test]
+fn every_codex_key_resolves() {
+    // The Codex module is excluded from fully_registered_host (it is a sixth workspace and the
+    // top-bar smoke test asserts exactly five), so its keys - the workspace name/purpose, the
+    // six panel titles, the codex.* actions, and the coverage status item - need their own
+    // dangling-key gate here.
+    let mut host = Host::new(&Theme::dark());
+    pixhaus_mod_codex::CodexModule.register(&mut host.registrar());
+    assert_all_registry_keys_resolve(&host);
 }

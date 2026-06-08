@@ -358,7 +358,7 @@ fn paint_hud(painter: &egui::Painter, stage: egui::Rect, readout: &HudReadout, t
     let pad = egui::vec2(6.0, 4.0);
     let chip_min = stage.left_bottom() + egui::vec2(8.0, -(galley.size().y + pad.y * 2.0 + 8.0));
     let chip = egui::Rect::from_min_size(chip_min, galley.size() + pad * 2.0);
-    painter.rect_filled(chip, egui::CornerRadius::same(2), theme.surface(SurfaceTier::Inset));
+    painter.rect_filled(chip, theme.radius.sm, theme.surface(SurfaceTier::Inset));
     painter.galley(chip.min + pad, galley, theme.roles.text_secondary);
 }
 
@@ -371,7 +371,7 @@ fn zoom_control(ui: &egui::Ui, stage: egui::Rect, zoom: f32, pixel_perfect: bool
     let frame = egui::Frame::new()
         .fill(theme.surface(SurfaceTier::Inset))
         .inner_margin(theme.spacing.xs)
-        .corner_radius(egui::CornerRadius::same(4));
+        .corner_radius(theme.radius.md);
     egui::Area::new(ui.id().with("zoom_control"))
         .order(egui::Order::Foreground)
         .fixed_pos(pos)

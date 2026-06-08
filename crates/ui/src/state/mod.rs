@@ -120,7 +120,7 @@ impl Host {
             intents: IntentSink::default(),
             scratch: HashMap::new(),
             codex_draft: self::ui_state::CodexEditorDraft::default(),
-            theme: *theme,
+            theme: theme.clone(),
             bg: BackgroundChannel::default(),
             edit: EditSession::default(),
         }
@@ -162,8 +162,9 @@ pub struct Prefs {
     /// The persisted UI language (e.g. "en", "es"). `None` follows the OS language
     /// the binary detects at boot. Applied once Prefs persistence and an in-app
     /// language picker land (deferred, spec open decision 5); `#[serde(default)]`
-    /// keeps older persisted prefs loadable.
-    #[serde(default)]
+    /// keeps older persisted prefs loadable, and `skip_serializing_if` omits `None`
+    /// on save so the round-trip is symmetric rather than writing an explicit null.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub language: Option<String>,
 }
 

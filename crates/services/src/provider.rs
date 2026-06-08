@@ -39,8 +39,10 @@ pub type GenerateFuture<'a> = Pin<Box<dyn Future<Output = Result<GeneratedResult
 
 /// A registered AI/compute backend.
 pub trait Provider: Send + Sync {
-    /// This provider's stable id.
-    fn id(&self) -> ProviderId;
+    /// This provider's stable id. Borrowed, not owned: [`ProviderRegistry::by_id`]
+    /// compares ids in a find loop, so returning a reference avoids allocating a
+    /// `String` per comparison.
+    fn id(&self) -> &ProviderId;
 
     /// i18n key for the provider's display label (resolved by the shell).
     fn label_key(&self) -> &'static str;
@@ -79,7 +81,7 @@ impl ProviderRegistry {
 
     /// The provider with `id`, or `None`.
     pub fn by_id(&self, id: &ProviderId) -> Option<Arc<dyn Provider>> {
-        self.providers.iter().find(|p| &p.id() == id).cloned()
+        self.providers.iter().find(|p| p.id() == id).cloned()
     }
 
     /// All registered providers.
@@ -153,8 +155,9 @@ mod tests {
     struct Fake;
 
     impl Provider for Fake {
-        fn id(&self) -> ProviderId {
-            ProviderId("fake".to_owned())
+        fn id(&self) -> &ProviderId {
+            static ID: std::sync::LazyLock<ProviderId> = std::sync::LazyLock::new(|| ProviderId("fake".to_owned()));
+            &ID
         }
         fn label_key(&self) -> &'static str {
             "provider.fake.label"

@@ -102,12 +102,10 @@ impl Panel for ExportFormatPanel {
         }
     }
 
-    fn ui(&self, ui: &mut egui::Ui, scope: &mut PanelScope<'_>) {
-        let theme = scope.ctx.theme;
-        // The section header mirrors the panel title, so it reuses that key rather
-        // than forking an un-localized literal of the same text.
-        widgets::section_header(ui, theme, icons::EXPORT, &MsgKey("panel.export-format.title").tr());
-        // TODO(luis): i18n these rows when the panel leaves mock - the format names
+    fn ui(&self, ui: &mut egui::Ui, _scope: &mut PanelScope<'_>) {
+        // The shell wraps each right-dock body in widgets::card, which already draws the panel
+        // title, so the body starts straight at its content - no duplicate section header.
+        // Mock labels stay literal until the panel leaves mock - the format names
         // are throwaway mock radios with no keys yet (drive nothing this round).
         let mut format = 0_usize;
         for (i, label) in ["PNG", "Spritesheet", "GIF", "APNG", "JSON"].iter().enumerate() {
@@ -137,10 +135,8 @@ impl Panel for EnginePresetPanel {
 
     fn ui(&self, ui: &mut egui::Ui, scope: &mut PanelScope<'_>) {
         let theme = scope.ctx.theme;
-        // The section header mirrors the panel title, so it reuses that key rather
-        // than forking an un-localized literal of the same text.
-        widgets::section_header(ui, theme, icons::SETTINGS, &MsgKey("panel.engine-preset.title").tr());
-        // TODO(luis): i18n these rows when the panel leaves mock - the engine names
+        // The shell's card already draws the panel title; the body starts at its content.
+        // Mock labels stay literal until the panel leaves mock - the engine names
         // and the "(soon)" tag are throwaway mock content with no keys yet.
         // Unity is selected and enabled; the rest read as future targets.
         let frame = egui::Frame::new().fill(theme.accent.muted).inner_margin(theme.spacing.xs);
@@ -174,10 +170,8 @@ impl Panel for AnimationMetadataPanel {
 
     fn ui(&self, ui: &mut egui::Ui, scope: &mut PanelScope<'_>) {
         let theme = scope.ctx.theme;
-        // The section header mirrors the panel title, so it reuses that key rather
-        // than forking an un-localized literal of the same text.
-        widgets::section_header(ui, theme, icons::FRAMES, &MsgKey("panel.animation-metadata.title").tr());
-        // TODO(luis): i18n these rows when the panel leaves mock - the control labels
+        // The shell's card already draws the panel title; the body starts at its content.
+        // Mock labels stay literal until the panel leaves mock - the control labels
         // have no keys yet, and the values are inert mock locals (drive nothing).
         let mut per_animation = true;
         ui.checkbox(&mut per_animation, "Per-animation export");
@@ -216,10 +210,8 @@ impl Panel for QaWarningsPanel {
 
     fn ui(&self, ui: &mut egui::Ui, scope: &mut PanelScope<'_>) {
         let theme = scope.ctx.theme;
-        // The section header mirrors the panel title, so it reuses that key rather
-        // than forking an un-localized literal of the same text.
-        widgets::section_header(ui, theme, icons::CHECK, &MsgKey("panel.qa-warnings.title").tr());
-        // TODO(luis): i18n these rows when the panel leaves mock - the QA finding text
+        // The shell's card already draws the panel title; the body starts at its content.
+        // Mock labels stay literal until the panel leaves mock - the QA finding text
         // has no keys yet, and a real run would key the findings the validator emits.
         for label in ["All frames same size", "Transparent bg", "Palette < 32"] {
             qa_ok_row(ui, theme, label);
@@ -241,7 +233,7 @@ fn qa_ok_row(ui: &mut egui::Ui, theme: &Theme, label: &str) {
 /// One failing QA row: a warning badge, the label, and Fix/Ignore buttons that push
 /// `RunAction` intents.
 fn qa_warn_row(ui: &mut egui::Ui, theme: &Theme, label: &str, scope: &mut PanelScope<'_>) {
-    // TODO(luis): i18n these rows when the panel leaves mock - the Fix/Ignore button
+    // Mock labels stay literal until the panel leaves mock - the Fix/Ignore button
     // text stays a literal on purpose; command.export.{fix,ignore} read "Fix warning"
     // /"Ignore warning" (the palette command names), not these in-row button labels,
     // so keying them here would change the rendered text. Key both when the real
@@ -279,7 +271,7 @@ impl Panel for ExportLogPanel {
 
     fn ui(&self, ui: &mut egui::Ui, scope: &mut PanelScope<'_>) {
         let theme = scope.ctx.theme;
-        // TODO(luis): i18n these rows when the panel leaves mock - the log lines are
+        // Mock labels stay literal until the panel leaves mock - the log lines are
         // throwaway sample content with no keys yet (a real export log streams data,
         // not localized chrome).
         egui::ScrollArea::vertical().show(ui, |ui| {

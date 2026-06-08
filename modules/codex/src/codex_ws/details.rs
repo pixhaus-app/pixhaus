@@ -10,7 +10,10 @@
 // these editors build, the intent enum, the design-system theme/glyphs/widgets, the i18n
 // helper, the `color_role_key` mapper from the keys area, and the shared `field_row` from
 // the editor area. The per-type body structs are imported locally inside each editor fn.
-use super::{CodexEntryDetail, CodexEntryId, ColorRole, Intent, PaletteColor, PaletteRamp, Theme, color_role_key, field_row, icons, tr, widgets};
+use super::{
+    CodexEntryDetail, CodexEntryId, ColorRole, Intent, PaletteColor, PaletteRamp, Theme, anti_aliasing_key, color_role_key, detail_level_key, field_row, icons,
+    line_treatment_key, loop_behavior_key, tr, widgets,
+};
 
 /// The type-specific details editor: rich editable fields for Character / Palette /
 /// Style / Animation, a key/value list for Generic. Each edit commits the whole body as
@@ -466,6 +469,7 @@ fn style_details(
         &tr("codex.style.line"),
         body.line_treatment,
         &[LineTreatment::None, LineTreatment::Clean, LineTreatment::Bold, LineTreatment::Selective],
+        |v| tr(line_treatment_key(v)),
         |chosen| {
             let mut next = body.clone();
             next.line_treatment = chosen;
@@ -478,6 +482,7 @@ fn style_details(
         &tr("codex.style.outline"),
         body.detail_level,
         &[DetailLevel::Minimal, DetailLevel::Low, DetailLevel::Medium, DetailLevel::High],
+        |v| tr(detail_level_key(v)),
         |chosen| {
             let mut next = body.clone();
             next.detail_level = chosen;
@@ -490,6 +495,7 @@ fn style_details(
         &tr("codex.style.dithering"),
         body.anti_aliasing,
         &[AntiAliasingRule::None, AntiAliasingRule::Manual, AntiAliasingRule::Allowed],
+        |v| tr(anti_aliasing_key(v)),
         |chosen| {
             let mut next = body.clone();
             next.anti_aliasing = chosen;
@@ -519,7 +525,18 @@ fn style_details(
 }
 
 /// A row of selectable labels, one per enum variant, with the current one in the accent.
-fn enum_picker<T: Copy + PartialEq + std::fmt::Debug>(ui: &mut egui::Ui, theme: &Theme, label: &str, current: T, variants: &[T], commit: impl FnOnce(T)) {
+///
+/// `label_for` maps each variant to its display text - always a localized `tr(key)`, never a
+/// `Debug` name - so the row flips under View > Show i18n Keys like every other label.
+fn enum_picker<T: Copy + PartialEq>(
+    ui: &mut egui::Ui,
+    theme: &Theme,
+    label: &str,
+    current: T,
+    variants: &[T],
+    label_for: impl Fn(T) -> String,
+    commit: impl FnOnce(T),
+) {
     let mut chosen = None;
     field_row(ui, theme, label, |ui| {
         ui.horizontal_wrapped(|ui| {
@@ -527,7 +544,7 @@ fn enum_picker<T: Copy + PartialEq + std::fmt::Debug>(ui: &mut egui::Ui, theme: 
                 let active = v == current;
                 let color = if active { theme.accent.base } else { theme.roles.text_secondary };
                 if ui
-                    .selectable_label(active, egui::RichText::new(format!("{v:?}")).size(theme.type_scale.label).color(color))
+                    .selectable_label(active, egui::RichText::new(label_for(v)).size(theme.type_scale.label).color(color))
                     .clicked()
                     && !active
                 {
@@ -654,6 +671,7 @@ fn animation_details(
         &tr("codex.animation.loops"),
         body.loop_behavior,
         &[LoopBehavior::Loop, LoopBehavior::Once, LoopBehavior::PingPong],
+        |v| tr(loop_behavior_key(v)),
         |chosen| {
             let mut next = body.clone();
             next.loop_behavior = chosen;

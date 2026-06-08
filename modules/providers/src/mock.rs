@@ -47,8 +47,12 @@ impl Default for MockProvider {
 }
 
 impl Provider for MockProvider {
-    fn id(&self) -> ProviderId {
-        ProviderId("mock".to_owned())
+    fn id(&self) -> &ProviderId {
+        // Fixed id stored once and borrowed: the registry compares ids in a find loop, so a
+        // reference avoids allocating a String per comparison. A config-driven provider would
+        // hold this in a struct field instead.
+        static ID: std::sync::LazyLock<ProviderId> = std::sync::LazyLock::new(|| ProviderId("mock".to_owned()));
+        &ID
     }
 
     fn label_key(&self) -> &'static str {

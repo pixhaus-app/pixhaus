@@ -11,6 +11,8 @@
 //! Every function here is a pure read over `&Codex`: it mints nothing and mutates
 //! nothing.
 
+use std::collections::HashSet;
+
 use pixhaus_core::{Codex, CodexEntryId, CodexFolderId};
 
 use crate::codex::search::{SearchContext, suggest};
@@ -96,6 +98,10 @@ pub fn search_in_folder(codex: &Codex, folder: Option<CodexFolderId>, query: &st
     // preserving the ranked order.
     let ctx = SearchContext::default();
     let ranked = suggest(codex, query, None, &ctx, SEARCH_IN_FOLDER_LIMIT);
+    // Membership-test the ranked hits against a set, not the Vec, so the filter is O(ranked)
+    // rather than O(ranked * folder_size). Shadowing keeps the empty-query early return above
+    // returning the ordered Vec.
+    let in_folder: HashSet<CodexEntryId> = in_folder.into_iter().collect();
     ranked.into_iter().map(|s| s.entry).filter(|id| in_folder.contains(id)).collect()
 }
 

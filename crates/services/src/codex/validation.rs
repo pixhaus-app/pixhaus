@@ -10,6 +10,8 @@
 //! Findings carry stable message keys (`codex.validation.*`), never display text —
 //! `core`/`services` store keys and the UI resolves them.
 
+use std::collections::HashSet;
+
 use pixhaus_core::{Codex, CodexEntryId, EntryStatus, EntryType};
 
 use crate::codex::compiler::CompiledPrompt;
@@ -133,18 +135,18 @@ pub mod keys {
 pub fn validate_codex(codex: &Codex) -> ValidationReport {
     let mut report = ValidationReport::default();
 
-    // Cross-entry: detect duplicate primary handles.
-    let mut seen: Vec<&str> = Vec::new();
+    // Cross-entry: detect duplicate primary handles. A HashSet gives O(1) membership
+    // (O(n) overall) rather than the Vec scan's O(n^2), matching coverage_report's shape;
+    // `insert` returns false when the handle was already seen.
+    let mut seen: HashSet<&str> = HashSet::new();
     for entry in codex.entries().values() {
         let h = entry.handle.as_str();
-        if seen.contains(&h) {
+        if !seen.insert(h) {
             report.diagnostics.push(
                 Diagnostic::new(Severity::Blocking, keys::DUPLICATE_HANDLE)
                     .with_subject(entry.id)
                     .with_detail(h),
             );
-        } else {
-            seen.push(h);
         }
     }
 

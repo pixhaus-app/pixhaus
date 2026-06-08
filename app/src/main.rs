@@ -109,6 +109,17 @@ fn window_icon() -> Option<egui::IconData> {
     })
 }
 
+/// The OS UI language as a bundle locale code: the primary subtag of the OS locale
+/// ("es-ES" -> "es"), lowercased, or "en" when the OS reports nothing usable - including
+/// an empty or separator-only tag, which the inner `filter` rejects rather than passing
+/// an empty code through. The localization service still falls back to en per missing key;
+/// this only picks the active language.
+fn detect_language() -> String {
+    sys_locale::get_locale()
+        .and_then(|tag| tag.split(['-', '_']).next().filter(|s| !s.is_empty()).map(str::to_ascii_lowercase))
+        .unwrap_or_else(|| "en".to_owned())
+}
+
 /// Top-level application state, owned across frames by the eframe loop.
 ///
 /// The [`Host`] is the single owner of every piece of shell-level mutable state
@@ -157,13 +168,11 @@ fn main() -> anyhow::Result<()> {
         "Pixhaus starting"
     );
 
-    // Localization: launch in the OS language, truncated to the primary subtag
-    // ("es-ES" -> "es") to match the locale codes the bundles use. The service falls
-    // back to en for any key a language is missing. A saved Prefs.language override
-    // will take precedence once Prefs persistence and an in-app picker land (deferred,
-    // spec open decision 5). The app owns this, the string-side parallel to owning the
-    // one tracing subscriber.
-    let language = sys_locale::get_locale().map_or_else(|| "en".to_owned(), |tag| tag.split(['-', '_']).next().unwrap_or("en").to_ascii_lowercase());
+    // Localization: launch in the OS language (primary subtag, lowercased), falling back to
+    // en - see detect_language. A saved Prefs.language override will take precedence once
+    // Prefs persistence and an in-app picker land (deferred, spec open decision 5). The app
+    // owns this, the string-side parallel to owning the one tracing subscriber.
+    let language = detect_language();
     pixhaus_services::i18n::set_language(&language);
     tracing::info!(language = %language, "localization language set");
 

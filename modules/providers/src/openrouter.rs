@@ -101,8 +101,10 @@ impl OpenRouterProvider {
 }
 
 impl Provider for OpenRouterProvider {
-    fn id(&self) -> ProviderId {
-        ProviderId(PROVIDER_ID.to_owned())
+    fn id(&self) -> &ProviderId {
+        // Fixed id stored once and borrowed; see the trait doc on Provider::id.
+        static ID: std::sync::LazyLock<ProviderId> = std::sync::LazyLock::new(|| ProviderId(PROVIDER_ID.to_owned()));
+        &ID
     }
 
     fn label_key(&self) -> &'static str {
@@ -292,6 +294,17 @@ mod tests {
     #[test]
     fn builds_an_idle_request_attaching_the_reference() {
         assert!(provider().build_request(&idle_input()).is_ok());
+    }
+
+    #[tokio::test]
+    async fn generate_returns_cancelled_when_pre_cancelled() {
+        // A token cancelled before generate runs makes the biased select! resolve the cancel
+        // branch first, so generate returns Cancelled without a network call. This pins the
+        // cancel contract in the gate, where the #[ignore]d live test cannot run.
+        let cancel = CancellationToken::new();
+        cancel.cancel();
+        let result = provider().generate(&anchor_input(), cancel).await;
+        assert!(matches!(result, Err(ProviderError::Cancelled)));
     }
 
     #[test]

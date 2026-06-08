@@ -133,6 +133,10 @@ impl Panel for EditorPanel {
 /// generate / Duplicate / overflow). Inline rename (name + handle) edits the shell-owned
 /// draft and commits on lost-focus. The Type/Status/Created/Updated/Author/ID/Version
 /// metadata is NOT repeated here - it lives only in the Overview Key Info card.
+// header() is one cohesive visual block whose sub-sections (portrait, identity, status/
+// handle/type chips, description, tags, action cluster) all thread the same borrow set
+// (ui, theme, intents, draft, summary); splitting them into helpers would re-plumb those
+// args through each call for no readability gain. The allow is deliberate, like coverage_body.
 #[allow(clippy::too_many_lines)]
 fn header(
     ui: &mut egui::Ui,

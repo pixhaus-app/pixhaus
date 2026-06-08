@@ -169,6 +169,8 @@ pub fn fuzzy_score(haystack: &str, needle: &str) -> Option<i32> {
         prev_match = Some(pos);
     }
     // Reward a tighter haystack so a short exact-ish handle beats a long one.
+    // `32usize.saturating_sub(len)` is provably in 0..=32, so the i32 conversion never fails;
+    // the `unwrap_or(0)` is an unreachable defensive fallback, not a real branch.
     score += i32::try_from(32usize.saturating_sub(hay.len())).unwrap_or(0);
     // A full prefix match is worth a strong bonus.
     if haystack.starts_with(&need.iter().collect::<String>()) {

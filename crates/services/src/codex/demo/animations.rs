@@ -14,9 +14,11 @@ use super::{
 
 /// One animation's full specification, grounded in the animation-principles knowledge
 /// base so the demo Codex teaches as it generates. Each field maps to a public Codex
-/// command: `description` to [`UpdateCodexEntry`], the timing/loop/`beats` to
-/// [`SetAnimationDetails`], `fragments` to [`SetPromptFragments`], `negatives` to
-/// [`SetNegativeFragments`], and the three anchors to [`SetAnchor`].
+/// command: `description` to [`UpdateCodexEntry`](pixhaus_core::commands::UpdateCodexEntry),
+/// the timing/loop/`beats` to [`SetAnimationDetails`], `fragments` to
+/// [`SetPromptFragments`](pixhaus_core::commands::SetPromptFragments), `negatives` to
+/// [`SetNegativeFragments`](pixhaus_core::commands::SetNegativeFragments), and the three
+/// anchors to [`SetAnchor`](pixhaus_core::commands::SetAnchor).
 struct AnimSpec {
     handle: &'static str,
     description: &'static str,

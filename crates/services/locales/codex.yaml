@@ -175,6 +175,12 @@ codex.status.archived:
 codex.status.rejected:
   en: Rejected
 
+# --- Anchor badge composition. ---
+# Arranges the already-localized kind and strength labels; word order and separator live here
+# so a grammar can reorder them. The %{...} slots are filled by tr_args in the anchor_badge widget.
+codex.anchor.badge:
+  en: "%{kind} %{strength}"
+
 # --- Anchor kinds. ---
 codex.anchor.kind.identity:
   en: Identity
@@ -460,12 +466,42 @@ codex.style.dithering:
   en: Dithering
 codex.style.outline:
   en: Outline
+# Style enum-picker variants (the line-treatment, detail-level, and anti-aliasing choices).
+codex.style.line_treatment.none:
+  en: None
+codex.style.line_treatment.clean:
+  en: Clean
+codex.style.line_treatment.bold:
+  en: Bold
+codex.style.line_treatment.selective:
+  en: Selective
+codex.style.detail_level.minimal:
+  en: Minimal
+codex.style.detail_level.low:
+  en: Low
+codex.style.detail_level.medium:
+  en: Medium
+codex.style.detail_level.high:
+  en: High
+codex.style.anti_aliasing.none:
+  en: None
+codex.style.anti_aliasing.manual:
+  en: Manual
+codex.style.anti_aliasing.allowed:
+  en: Allowed
 
 # --- Animation details. ---
 codex.animation.purpose:
   en: Purpose
 codex.animation.loops:
   en: Loops
+# Loop-behavior enum-picker variants.
+codex.animation.loop_behavior.loop:
+  en: Loop
+codex.animation.loop_behavior.once:
+  en: Once
+codex.animation.loop_behavior.ping_pong:
+  en: Ping-pong
 codex.animation.frames:
   en: Frames
 codex.animation.fps:

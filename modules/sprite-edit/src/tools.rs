@@ -36,7 +36,7 @@ impl Tool for PencilTool {
     }
 
     fn options_ui(&self, ui: &mut egui::Ui, _cx: &mut ContribCtx<'_>) {
-        // TODO(luis): i18n these rows when the panel leaves mock. The option labels are
+        // Mock labels stay literal until the panel leaves mock. The option labels are
         // throwaway mock placeholders with no keys yet; they stay literal until the row goes live.
         ui.horizontal(|ui| {
             let mut size = 1.0_f32;
@@ -73,7 +73,7 @@ impl Tool for EraserTool {
     }
 
     fn options_ui(&self, ui: &mut egui::Ui, _cx: &mut ContribCtx<'_>) {
-        // TODO(luis): i18n these rows when the panel leaves mock. The option labels are
+        // Mock labels stay literal until the panel leaves mock. The option labels are
         // throwaway mock placeholders with no keys yet; they stay literal until the row goes live.
         ui.horizontal(|ui| {
             let mut size = 1.0_f32;
@@ -105,7 +105,7 @@ impl Tool for FillTool {
     }
 
     fn options_ui(&self, ui: &mut egui::Ui, _cx: &mut ContribCtx<'_>) {
-        // TODO(luis): i18n these rows when the panel leaves mock. The option labels are
+        // Mock labels stay literal until the panel leaves mock. The option labels are
         // throwaway mock placeholders with no keys yet; they stay literal until the row goes live.
         ui.horizontal(|ui| {
             let mut tolerance = 0.0_f32;
@@ -137,7 +137,7 @@ impl Tool for LineTool {
     }
 
     fn options_ui(&self, ui: &mut egui::Ui, _cx: &mut ContribCtx<'_>) {
-        // TODO(luis): i18n these rows when the panel leaves mock. The option labels are
+        // Mock labels stay literal until the panel leaves mock. The option labels are
         // throwaway mock placeholders with no keys yet; they stay literal until the row goes live.
         ui.horizontal(|ui| {
             let mut size = 1.0_f32;
@@ -169,7 +169,7 @@ impl Tool for RectangleTool {
     }
 
     fn options_ui(&self, ui: &mut egui::Ui, _cx: &mut ContribCtx<'_>) {
-        // TODO(luis): i18n these rows when the panel leaves mock. The option labels are
+        // Mock labels stay literal until the panel leaves mock. The option labels are
         // throwaway mock placeholders with no keys yet; they stay literal until the row goes live.
         ui.horizontal(|ui| {
             let mut size = 1.0_f32;
@@ -201,7 +201,7 @@ impl Tool for EllipseTool {
     }
 
     fn options_ui(&self, ui: &mut egui::Ui, _cx: &mut ContribCtx<'_>) {
-        // TODO(luis): i18n these rows when the panel leaves mock. The option labels are
+        // Mock labels stay literal until the panel leaves mock. The option labels are
         // throwaway mock placeholders with no keys yet; they stay literal until the row goes live.
         ui.horizontal(|ui| {
             let mut size = 1.0_f32;
@@ -233,7 +233,7 @@ impl Tool for EyedropperTool {
     }
 
     fn options_ui(&self, ui: &mut egui::Ui, _cx: &mut ContribCtx<'_>) {
-        // TODO(luis): i18n these rows when the panel leaves mock. The option labels are
+        // Mock labels stay literal until the panel leaves mock. The option labels are
         // throwaway mock placeholders with no keys yet; they stay literal until the row goes live.
         ui.horizontal(|ui| {
             ui.label("Sample Composite");
@@ -262,7 +262,7 @@ impl Tool for SelectionTool {
     }
 
     fn options_ui(&self, ui: &mut egui::Ui, _cx: &mut ContribCtx<'_>) {
-        // TODO(luis): i18n these rows when the panel leaves mock. The option labels are
+        // Mock labels stay literal until the panel leaves mock. The option labels are
         // throwaway mock placeholders with no keys yet; they stay literal until the row goes live.
         ui.horizontal(|ui| {
             ui.label("Mode Replace");
@@ -294,7 +294,7 @@ impl Tool for LassoTool {
     }
 
     fn options_ui(&self, ui: &mut egui::Ui, _cx: &mut ContribCtx<'_>) {
-        // TODO(luis): i18n these rows when the panel leaves mock. The option labels are
+        // Mock labels stay literal until the panel leaves mock. The option labels are
         // throwaway mock placeholders with no keys yet; they stay literal until the row goes live.
         ui.horizontal(|ui| {
             ui.label("Mode Replace");
@@ -323,7 +323,7 @@ impl Tool for MoveTool {
     }
 
     fn options_ui(&self, ui: &mut egui::Ui, _cx: &mut ContribCtx<'_>) {
-        // TODO(luis): i18n these rows when the panel leaves mock. The option labels are
+        // Mock labels stay literal until the panel leaves mock. The option labels are
         // throwaway mock placeholders with no keys yet; they stay literal until the row goes live.
         ui.horizontal(|ui| {
             ui.label("Origin Center");
@@ -352,7 +352,7 @@ impl Tool for TransformTool {
     }
 
     fn options_ui(&self, ui: &mut egui::Ui, _cx: &mut ContribCtx<'_>) {
-        // TODO(luis): i18n these rows when the panel leaves mock. The option labels are
+        // Mock labels stay literal until the panel leaves mock. The option labels are
         // throwaway mock placeholders with no keys yet; they stay literal until the row goes live.
         ui.horizontal(|ui| {
             ui.label("Origin Center");
@@ -381,7 +381,7 @@ impl Tool for TextTool {
     }
 
     fn options_ui(&self, ui: &mut egui::Ui, _cx: &mut ContribCtx<'_>) {
-        // TODO(luis): i18n these rows when the panel leaves mock. The option labels are
+        // Mock labels stay literal until the panel leaves mock. The option labels are
         // throwaway mock placeholders with no keys yet; they stay literal until the row goes live.
         ui.horizontal(|ui| {
             ui.label("Font Pixel");
@@ -410,7 +410,7 @@ impl Tool for HandTool {
     }
 
     fn options_ui(&self, ui: &mut egui::Ui, _cx: &mut ContribCtx<'_>) {
-        // TODO(luis): i18n these rows when the panel leaves mock. The option labels are
+        // Mock labels stay literal until the panel leaves mock. The option labels are
         // throwaway mock placeholders with no keys yet; they stay literal until the row goes live.
         ui.horizontal(|ui| {
             ui.label("Zoom 1600%");
@@ -439,7 +439,7 @@ impl Tool for ZoomTool {
     }
 
     fn options_ui(&self, ui: &mut egui::Ui, _cx: &mut ContribCtx<'_>) {
-        // TODO(luis): i18n these rows when the panel leaves mock. The option labels are
+        // Mock labels stay literal until the panel leaves mock. The option labels are
         // throwaway mock placeholders with no keys yet; they stay literal until the row goes live.
         ui.horizontal(|ui| {
             ui.label("Zoom 1600%");
@@ -469,7 +469,7 @@ impl Tool for AiBrushTool {
     }
 
     fn options_ui(&self, ui: &mut egui::Ui, cx: &mut ContribCtx<'_>) {
-        // TODO(luis): i18n these rows when the panel leaves mock. The option labels are
+        // Mock labels stay literal until the panel leaves mock. The option labels are
         // throwaway mock placeholders with no keys yet; they stay literal until the row goes live.
         let ai_tint = cx.theme.accent.ai;
         ui.horizontal(|ui| {

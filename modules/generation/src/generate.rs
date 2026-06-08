@@ -242,7 +242,7 @@ impl Panel for RecipePanel {
 
     fn ui(&self, ui: &mut egui::Ui, scope: &mut PanelScope<'_>) {
         let theme = scope.ctx.theme;
-        // TODO(luis): i18n these rows when the panel leaves mock - the recipe names
+        // Mock labels stay literal until the panel leaves mock - the recipe names
         // and the Built-in/User badges are throwaway placeholders, not real keys.
         // (name, built_in): built-ins are locked; user recipes are editable.
         for (i, (name, built_in)) in [("Hero sprite", true), ("Top-down tile", true), ("My walk cycle", false)]
@@ -353,7 +353,7 @@ impl Panel for PaletteBehaviorPanel {
     }
 
     fn ui(&self, ui: &mut egui::Ui, _scope: &mut PanelScope<'_>) {
-        // TODO(luis): i18n these rows when the panel leaves mock - the checkbox
+        // Mock labels stay literal until the panel leaves mock - the checkbox
         // labels are throwaway placeholders, with no keys yet.
         // (label, default-checked). Inert locals; they reset each frame.
         for (label, default) in [
@@ -390,7 +390,7 @@ impl Panel for AdvancedSettingsPanel {
 
     fn ui(&self, ui: &mut egui::Ui, scope: &mut PanelScope<'_>) {
         let theme = scope.ctx.theme;
-        // TODO(luis): i18n these rows when the panel leaves mock - the Seed/Steps/
+        // Mock labels stay literal until the panel leaves mock - the Seed/Steps/
         // Strength/Negative-prompt/Model field labels and sample values are throwaway
         // placeholders, with no keys yet.
         // Inert mock fields; the values reset each frame (drive nothing this round).
@@ -612,7 +612,7 @@ impl Panel for HistoryPanel {
 
     fn ui(&self, ui: &mut egui::Ui, scope: &mut PanelScope<'_>) {
         let theme = scope.ctx.theme;
-        // TODO(luis): i18n these rows when the panel leaves mock - the history lines
+        // Mock labels stay literal until the panel leaves mock - the history lines
         // are throwaway placeholder data (prompt summary, seed, timestamp), not keys.
         egui::ScrollArea::vertical().show(ui, |ui| {
             widgets::mock_log(

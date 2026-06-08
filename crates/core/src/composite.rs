@@ -76,6 +76,10 @@ fn composite_layers(doc: &Document, width: u32, height: u32, layers: &[Layer]) -
         if buffer.width() != width || buffer.height() != height {
             return Err(CompositeError::SizeMismatch);
         }
+        // BlendMode has only Normal today, so every layer composites straight source-over and
+        // `layer.blend` is not read. When a second variant lands, route this through
+        // `match layer.blend { ... }` so the compiler forces a new arm rather than silently
+        // compositing the new mode as Normal.
         composite_layer(&mut out, row_bytes, buffer, layer.opacity.clamp(0.0, 1.0));
     }
 

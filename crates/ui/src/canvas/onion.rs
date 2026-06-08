@@ -97,6 +97,12 @@ fn build_ghosts(ctx: &Context, doc: &Document, sprite_id: SpriteId, center: Fram
 // bake never stalls the frame.
 fn bake(ctx: &Context, doc: &Document, sprite: SpriteId, frame: FrameId, neighbor: Neighbor) -> Option<Ghost> {
     let buffer = pixhaus_core::composite_frame(doc, sprite, frame).ok()?;
+    // ColorImage::from_rgba_unmultiplied asserts len == width*height*4, so the buffer must be
+    // tightly packed. composite_frame returns stride == width*4 today; guard the invariant so a
+    // future padded buffer skips this frame rather than panicking on the per-frame paint path.
+    if buffer.stride() != buffer.width() * 4 {
+        return None;
+    }
     let size = [buffer.width() as usize, buffer.height() as usize];
     let image = egui::ColorImage::from_rgba_unmultiplied(size, buffer.as_bytes());
     let label = match neighbor {

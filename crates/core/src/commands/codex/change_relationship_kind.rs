@@ -1,6 +1,6 @@
 //! [`ChangeRelationshipKind`]: re-label an existing edge's kind in place, reversibly.
 //!
-//! A [`Relationship`](crate::codex::Relationship) carries no stable id — it is keyed by
+//! A [`Relationship`] carries no stable id — it is keyed by
 //! its `(from, kind, to)` triple — so changing its kind is conceptually a remove plus an
 //! add. This command fuses both into one undoable step so the in-place edit affordance on
 //! a relations row reverses cleanly, instead of leaving the user to remove and re-add by

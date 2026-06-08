@@ -2138,8 +2138,9 @@ mod tests {
     struct FakeAnchorProvider;
 
     impl pixhaus_services::Provider for FakeAnchorProvider {
-        fn id(&self) -> pixhaus_services::ProviderId {
-            pixhaus_services::ProviderId("fake-anchor".to_owned())
+        fn id(&self) -> &pixhaus_services::ProviderId {
+            static ID: std::sync::LazyLock<pixhaus_services::ProviderId> = std::sync::LazyLock::new(|| pixhaus_services::ProviderId("fake-anchor".to_owned()));
+            &ID
         }
         fn label_key(&self) -> &'static str {
             "provider.fake.label"

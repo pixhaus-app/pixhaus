@@ -46,14 +46,9 @@ async fn prompt_to_result_to_sprite_to_undo() {
     );
     assert!(host.state.session.is_generating(), "submitting a job marks the session generating");
 
-    // 2. Drain the job channel until the result lands (the mock has a short delay).
-    for _ in 0..2000 {
-        pixhaus_ui::shell::drain_background(&mut host, &ctx);
-        if host.state.session.result_count > 0 {
-            break;
-        }
-        tokio::time::sleep(Duration::from_millis(1)).await;
-    }
+    // 2. Drain the job channel until the result lands (the mock has a short delay), via the
+    // shared drain_until helper rather than re-coding the budget/sleep loop.
+    drain_until(&mut host, &ctx, |h| h.state.session.result_count > 0).await;
     assert_eq!(host.state.session.result_count, 1, "the mock result landed");
     assert_eq!(host.state.session.selected_result, Some(0), "the first result is selected");
     assert!(!host.state.session.is_generating(), "a completed job clears the generating state");

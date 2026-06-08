@@ -64,8 +64,14 @@ impl Command for SetCodexHandle {
     fn undo(&mut self, doc: &mut Document) -> Result<(), CommandError> {
         let prev = self.prev.take().ok_or(CommandError::InvalidState)?;
         let entry = doc.codex_mut().entry_mut(self.id).ok_or(CommandError::CodexEntryNotFound(self.id))?;
+        // Mirror apply's no-op rule: if the prior handle equals the live one, the matching
+        // apply was a no-op that left the revision untouched, so undo must not bump it either —
+        // otherwise undoing a no-op rename marks the document dirty when nothing changed.
+        let changed = entry.handle != prev;
         self.new_handle = Some(std::mem::replace(&mut entry.handle, prev));
-        doc.bump_revision();
+        if changed {
+            doc.bump_revision();
+        }
         Ok(())
     }
 
@@ -121,9 +127,16 @@ mod tests {
     fn renaming_to_own_handle_is_a_noop() {
         let mut doc = Document::new();
         let id = seed_handle(&mut doc, "bit");
+        let before = doc.revision();
         let mut cmd = SetCodexHandle::new(id, handle("bit"));
         cmd.apply(&mut doc).unwrap();
         assert_eq!(doc.codex().entry(id).unwrap().handle.as_str(), "bit");
+        // A no-op apply mutates nothing, so it must not bump the revision...
+        assert_eq!(doc.revision(), before);
+        // ...and undoing it must not either, or the document is wrongly marked dirty.
+        cmd.undo(&mut doc).unwrap();
+        assert_eq!(doc.codex().entry(id).unwrap().handle.as_str(), "bit");
+        assert_eq!(doc.revision(), before, "undo of a no-op rename must not bump the revision");
     }
 
     #[test]
