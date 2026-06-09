@@ -195,7 +195,7 @@ Io {
 ```
 
 **But the `provide` mechanism (`error_generic_member_access`) is still nightly.**
-Pixhaus builds on stable (toolchain 1.95, see `pixhaus-rust-conventions`), so
+Pixhaus builds on stable (toolchain 1.96, see `pixhaus-rust-conventions`), so
 `#[backtrace]` and the auto-`provide` do nothing useful here — don't add backtrace
 fields expecting them to surface. If you need a stack trace for debugging, that's a
 tracing/logging concern, not the error type.

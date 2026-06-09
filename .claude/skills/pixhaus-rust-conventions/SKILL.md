@@ -157,8 +157,10 @@ type.
 
 ### Edition 2024 niceties
 
-The workspace pins `edition = "2024"` and toolchain `1.95`. A few language
-features stabilized in this window are worth reaching for by default:
+The workspace pins `edition = "2024"` and toolchain `1.96`. A few language
+features stabilized in this window are worth reaching for by default — the full
+catalog of what landed across 1.85-1.96, and which version stabilized each, is the
+`pixhaus-rust-modern` skill:
 
 ```rust
 // async closures — no more `move ||` + async block dance
@@ -169,15 +171,11 @@ if let Some(layer) = doc.layer(id) && layer.is_visible() && !layer.locked {
     paint(layer);
 }
 
-// gen blocks — ergonomic iterator construction without writing an Iterator impl
+// gen blocks and `yield` are RESERVED in edition 2024 but NOT stabilized through
+// 1.96 — `gen { ... }` will not compile. Build iterators with the adapters or an
+// `impl Iterator` by hand until generators land (see pixhaus-rust-modern).
 fn pixels_in(rect: Rect) -> impl Iterator<Item = (u32, u32)> {
-    gen {
-        for y in rect.y_range() {
-            for x in rect.x_range() {
-                yield (x, y);
-            }
-        }
-    }
+    rect.y_range().flat_map(move |y| rect.x_range().map(move |x| (x, y)))
 }
 ```
 
