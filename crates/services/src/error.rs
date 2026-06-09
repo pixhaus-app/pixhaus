@@ -1,7 +1,8 @@
 //! The service-layer error type.
 
-use pixhaus_core::CommandError;
 use thiserror::Error;
+
+use pixhaus_core::CommandError;
 
 /// Why a service operation failed.
 #[derive(Debug, Error)]

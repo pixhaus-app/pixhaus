@@ -191,13 +191,13 @@ pub(super) fn coverage_body(
         .iter()
         .map(|item| (widgets::resolve_coverage_label(&item.label), coverage_complete(item.status)))
         .collect();
-    if let Some(slot_index) = widgets::coverage_checklist(ui, theme, &rows, true, &tr("codex.coverage.generate")) {
-        if let Some(item) = detail.coverage_items.get(slot_index) {
-            intents.push(Intent::GenerateFromCoverage {
-                entry: id,
-                slot: item.slot.clone(),
-            });
-        }
+    if let Some(slot_index) = widgets::coverage_checklist(ui, theme, &rows, true, &tr("codex.coverage.generate"))
+        && let Some(item) = detail.coverage_items.get(slot_index)
+    {
+        intents.push(Intent::GenerateFromCoverage {
+            entry: id,
+            slot: item.slot.clone(),
+        });
     }
 
     // The slot editor: rename, remove, or reorder a slot. A template slot's edit targets

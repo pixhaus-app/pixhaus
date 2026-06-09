@@ -8,6 +8,7 @@
 //! menu group.
 
 use egui::{Align2, FontId, Key, KeyboardShortcut, Modifiers, Sense, Stroke, Vec2};
+
 use pixhaus_services::i18n;
 use pixhaus_ui::contrib_api::{
     ActionDesc, ActionId, CenterSurface, HostRegistrar, MenuGroup, MenuItem, MsgKey, PENCIL, Panel, PanelId, PanelMeta, PanelScope, StatusItem, TOOL_RAIL,
@@ -322,7 +323,7 @@ impl Panel for TimelinePanel {
             for f in 0..frames {
                 let cx = cell_area_left + f as f32 * cell_w;
                 let cell = egui::Rect::from_min_size(egui::pos2(cx + 1.0, y + 1.0), Vec2::new(cell_w - 2.0, track_h - 2.0));
-                let keyed = (f as usize + i) % 3 == 0;
+                let keyed = (f as usize + i).is_multiple_of(3);
                 let fill = if keyed { track_color } else { theme.surfaces.inset };
                 painter.rect_filled(cell, 0.0, fill);
             }

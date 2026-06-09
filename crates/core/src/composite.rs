@@ -92,7 +92,11 @@ fn composite_layer(out: &mut [u8], row_bytes: usize, src: &PixelBuffer, opacity:
     let src_stride = src.stride() as usize;
     for (y, row) in out.chunks_exact_mut(row_bytes).enumerate() {
         let src_row = y * src_stride;
-        for (x, dst) in row.chunks_exact_mut(4).enumerate() {
+        // Destination row is tightly packed (row_bytes == width * 4), so as_chunks_mut::<4>()
+        // splits it into [u8; 4] pixels with an empty remainder; only the destination can use
+        // it — the source reads through src_bytes.get(..) on its own src_stride.
+        let (dst_pixels, _) = row.as_chunks_mut::<4>();
+        for (x, dst) in dst_pixels.iter_mut().enumerate() {
             let offset = src_row + x * 4;
             let Some(s) = src_bytes.get(offset..offset + 4) else {
                 continue;

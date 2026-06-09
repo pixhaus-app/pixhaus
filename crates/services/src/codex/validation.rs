@@ -173,19 +173,19 @@ pub fn validate_codex(codex: &Codex) -> ValidationReport {
                 .push(Diagnostic::new(Severity::Warning, keys::MISSING_VISUAL_ANCHOR).with_subject(entry.id));
         }
         // A character's palette reference must resolve to a palette entry.
-        if let pixhaus_core::EntryDetails::Character(details) = &entry.details {
-            if let Some(palette_ref) = &details.palette_ref {
-                let resolves_to_palette = codex
-                    .resolve_handle(palette_ref)
-                    .and_then(|id| codex.entry(id))
-                    .is_some_and(|e| e.entry_type == EntryType::Palette);
-                if !resolves_to_palette {
-                    report.diagnostics.push(
-                        Diagnostic::new(Severity::Error, keys::BROKEN_PALETTE_REF)
-                            .with_subject(entry.id)
-                            .with_detail(palette_ref.as_str()),
-                    );
-                }
+        if let pixhaus_core::EntryDetails::Character(details) = &entry.details
+            && let Some(palette_ref) = &details.palette_ref
+        {
+            let resolves_to_palette = codex
+                .resolve_handle(palette_ref)
+                .and_then(|id| codex.entry(id))
+                .is_some_and(|e| e.entry_type == EntryType::Palette);
+            if !resolves_to_palette {
+                report.diagnostics.push(
+                    Diagnostic::new(Severity::Error, keys::BROKEN_PALETTE_REF)
+                        .with_subject(entry.id)
+                        .with_detail(palette_ref.as_str()),
+                );
             }
         }
     }

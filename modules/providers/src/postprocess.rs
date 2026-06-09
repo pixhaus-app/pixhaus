@@ -49,7 +49,11 @@ pub enum PostProcessError {
 /// edge without touching the character's own colours (which the prompt keeps off
 /// pure magenta).
 pub fn chroma_key_magenta(rgba: &mut [u8]) {
-    for pixel in rgba.chunks_exact_mut(4) {
+    // as_chunks_mut::<4>() views the buffer as [u8; 4] pixels so the channel writes index
+    // a fixed-size array; a well-formed RGBA buffer is a multiple of 4, so the remainder is
+    // empty (same tail handling as the old chunks_exact_mut(4), which silently skipped it).
+    let (pixels, _rest) = rgba.as_chunks_mut::<4>();
+    for pixel in pixels {
         if pixel[0] > 200 && pixel[1] < 80 && pixel[2] > 200 {
             pixel[0] = 0;
             pixel[1] = 0;
@@ -77,7 +81,7 @@ pub fn slice_sheet(rgba: &[u8], width: u32, height: u32, grid: Grid) -> Result<V
             height,
         });
     }
-    if grid.cols == 0 || grid.rows == 0 || width % grid.cols != 0 || height % grid.rows != 0 {
+    if grid.cols == 0 || grid.rows == 0 || !width.is_multiple_of(grid.cols) || !height.is_multiple_of(grid.rows) {
         return Err(PostProcessError::NotDivisible {
             width,
             height,

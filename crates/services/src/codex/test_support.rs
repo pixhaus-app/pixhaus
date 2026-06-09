@@ -12,8 +12,9 @@
 #![cfg(test)]
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::disallowed_methods, clippy::panic)]
 
-use pixhaus_core::{Codex, CodexEntryId, InclusionPriority};
 use serde_json::{Value, json};
+
+use pixhaus_core::{Codex, CodexEntryId, InclusionPriority};
 
 /// Serializes `codex`, patches `entry`'s entry object via `patch`, and deserializes
 /// the result back into a [`Codex`]. The entry must already exist.

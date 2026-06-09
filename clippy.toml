@@ -1,5 +1,9 @@
 avoid-breaking-exported-api = false
-msrv = "1.85"
+# MSRV tracks the toolchain pin (rust-toolchain.toml), not an older floor: the
+# codebase uses features stabilized after 1.85 (let-chains and as_chunks at 1.88;
+# see the pixhaus-rust-modern skill), so clippy's incompatible_msrv lint must permit
+# them. Moves to 1.96 when the pin does.
+msrv = "1.95"
 # Product/proper names that read as code to the doc linter but are prose here. `..`
 # keeps clippy's default ident allowlist.
 doc-valid-idents = ["OpenRouter", ".."]

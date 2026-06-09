@@ -8,7 +8,12 @@ members = ["crates/*", "modules/*", "app"]
 [workspace.package]
 version = "0.1.0"
 edition = "2024"
-rust-version = "1.85"
+# MSRV tracks the pinned toolchain (rust-toolchain.toml), not an older floor: the
+# codebase reaches for features stabilized after 1.85 (let-chains and as_chunks at
+# 1.88; see the pixhaus-rust-modern skill). This is an app, not a published library,
+# so the minimum it builds on is the pin, not a lagging floor. Moves to 1.96 when
+# the pin does.
+rust-version = "1.95"
 authors = ["Luis <luis@agsense.es>"]
 license = "MIT"
 repository = "https://github.com/pixhaus-app/pixhaus"

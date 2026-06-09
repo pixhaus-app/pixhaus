@@ -10,8 +10,9 @@
 //!
 //! This is a pure read over `&Codex`: it mints no ids and mutates nothing.
 
-use pixhaus_core::{Codex, CodexEntryId, CodexHandle, EntryStatus, EntryType, HandleError};
 use thiserror::Error;
+
+use pixhaus_core::{Codex, CodexEntryId, CodexHandle, EntryStatus, EntryType, HandleError};
 
 /// Why a raw `@`-token could not be parsed into a [`ParsedReference`].
 #[derive(Debug, Error, PartialEq, Eq)]
