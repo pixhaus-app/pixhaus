@@ -112,19 +112,21 @@ Tick the basics yourself before requesting review: format, clippy, test, doc,
 
 ## Reading hook output
 
-The post-edit hook (`scripts/post-edit.ps1` on Windows, `scripts/post-edit.sh`
-on *nix) runs after every Edit/Write. Its output appears in your tool result —
-read it. Both versions emit the same `post-edit: ...` prefixes; PowerShell
-wording for the underlying `cargo` output differs slightly from bash, but the
-signals are the same.
+The post-edit hook (`cargo run -q -p pixhaus-xtask -- post-edit`, the `xtask/`
+crate — one Rust binary so macOS, Linux, and Windows behave identically) runs
+after every Edit/Write. It formats and clippy-checks the crate that owns the
+touched file. When the checks fail it exits 2, so the diagnostics land in your
+tool result — read them; that is the hook doing its job, not an obstacle.
 
 Common signals:
 
+- Silence — the checks passed. Exit 0 keeps hook output out of your context,
+  so a quiet Edit/Write means the touched crate is formatted and clippy-clean.
 - `post-edit: cargo clippy --manifest-path .../Cargo.toml --tests -- -D warnings`
-  — the hook found the owning crate and ran clippy with warnings denied. If
-  you don't see this for a `.rs` file you edited, no owning crate was found
-  (the file isn't under a crate with a `[package]` yet); the hook ran
-  `cargo fmt --all` instead.
+  at the top of failure output — the hook found the owning crate, and the
+  diagnostics below are scoped to it. If the echoed command is `cargo fmt --all`
+  instead, no owning crate was found (the file isn't under a crate with a
+  `[package]` yet — finish the crate's `Cargo.toml` before leaning on the hook).
 - `error[E0XXX]: ...` followed by code — type error from rustc (clippy
   surfaces these the same as `cargo check`). Fix before moving on. Don't
   accumulate errors across multiple edits; the next compile will be

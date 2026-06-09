@@ -19,7 +19,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/post-edit.ps1"
+            "command": "cargo run -q --target-dir target/xtask -p pixhaus-xtask -- post-edit"
           }
         ]
       }

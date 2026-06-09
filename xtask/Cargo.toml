@@ -1,0 +1,25 @@
+[package]
+name = "pixhaus-xtask"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+# A repo-internal dev tool, never a crates.io artifact.
+publish = false
+
+[dependencies]
+# The PostToolUse hook payload arrives as JSON on stdin; serde derives the two
+# fields this tool reads out of it.
+serde = { workspace = true }
+serde_json = { workspace = true }
+
+[dev-dependencies]
+rstest = { workspace = true }
+# Builds throwaway workspace/package trees for the manifest walk-up tests.
+tempfile = { workspace = true }
+
+[lints]
+workspace = true

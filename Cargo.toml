@@ -3,7 +3,7 @@ resolver = "3"
 # The layered crate graph from docs/pixhaus_architecture_bible.md. See CLAUDE.md's
 # Repo layout for the trees and the dependency direction. Globs pick up new layer
 # crates and modules without editing this list.
-members = ["crates/*", "modules/*", "app"]
+members = ["crates/*", "modules/*", "app", "xtask"]
 
 [workspace.package]
 version = "0.1.0"

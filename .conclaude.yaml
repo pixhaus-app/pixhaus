@@ -1,8 +1,10 @@
 # yaml-language-server: $schema=https://github.com/connerohnesorge/conclaude/releases/latest/download/conclaude-schema.json
 #
 # Pixhaus conclaude config. Pairs with .claude/settings.json, which wires
-# conclaude into PreToolUse and Stop. PostToolUse runs scripts/post-edit
-# (Rust-only: per-crate fmt + clippy -D warnings on the touched crate).
+# conclaude into PreToolUse and Stop. PostToolUse runs the xtask post-edit hook
+# (`cargo run -q -p pixhaus-xtask -- post-edit`: per-crate fmt + clippy
+# -D warnings on the touched crate) - a Rust binary, not conclaude, because
+# conclaude's PostToolUse is a logger and runs no commands (verified on 0.2.9).
 
 # Stop hook - runs when Claude declares the session done.
 #

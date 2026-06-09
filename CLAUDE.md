@@ -83,8 +83,19 @@ whenever you commit.
 per machine from https://github.com/connerohnesorge/conclaude) for PreToolUse
 guards and Stop validation. The full rule set lives in `.conclaude.yaml`; the
 `pixhaus-claude-code-workflow` skill explains the agent-facing behavior.
-PostToolUse on Edit/Write runs `scripts/post-edit.{ps1,sh}`, which formats and
-runs `cargo clippy --tests -- -D warnings` on the touched crate.
+PostToolUse on Edit/Write runs `cargo run -q --target-dir target/xtask -p
+pixhaus-xtask -- post-edit` (the `xtask/` crate), which formats and runs
+`cargo clippy --tests -- -D warnings` on the crate that owns the touched file,
+and exits 2 on failure so the diagnostics feed back into the next turn. It is
+one Rust binary on purpose: the dev machines span macOS, Linux, and Windows,
+and `cargo` is the one runner guaranteed on all of them. The launcher gets its
+own `--target-dir` so editing non-Rust files never waits on the build lock a
+`bacon` watcher holds (the scoped clippy itself still shares `target/`, which
+is inherent). The command resolves the workspace from the hook's working
+directory — the one assumption a single cross-shell command string cannot
+avoid, since `$CLAUDE_PROJECT_DIR` expands under sh but not cmd.exe; inside
+the binary, files outside `CLAUDE_PROJECT_DIR` are skipped so a foreign
+repo's diagnostics never feed back into this one.
 
 The Stop hook is the session gate: `cargo fmt --check`, `cargo clippy --workspace
 --all-targets -- -D warnings`, `cargo test --workspace`, `cargo doc`, and
@@ -97,7 +108,7 @@ note above); the gate becomes meaningful with the first crate.
 The root holds the workspace `Cargo.toml`, the toolchain and lint config
 (`rust-toolchain.toml`, `rustfmt.toml`, `clippy.toml`), `.cargo/deny.toml`, the
 hook config (`.conclaude.yaml`, `.claude/`), and `docs/` (the architecture bible
-lives there). Code lives in three trees:
+lives there). Code lives in four trees:
 
 ```
 crates/    the shared spine - layer crates every workspace and module sits on
@@ -121,6 +132,14 @@ modules/   internal capability modules (bible section 7). Each registers
 app/       the eframe binary (Host App layer). Owns the tokio runtime, boots the
            window, registers modules, runs the egui loop. Depends on everything;
            nothing depends on it.
+
+xtask/     repo tooling, run as `cargo run -q -p pixhaus-xtask -- <command>`.
+           Owns the cross-platform post-edit hook (fmt + clippy scoped to the
+           touched crate). A dev tool, not part of the product graph: it depends
+           on no workspace crate and nothing depends on it. It exists because the
+           dev machines span macOS, Linux, and Windows - one Rust implementation
+           behind a `cargo run` command string replaces a sh/ps1 script pair that
+           drifted and broke per-OS.
 ```
 
 Dependency direction is strict and acyclic: `core` is deepest and egui-free;
